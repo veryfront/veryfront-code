@@ -255,8 +255,8 @@ export async function resolveAgentModelTransport(
   // A model that routes to a provider key never reaches Veryfront Cloud, so
   // an ambient run does not load the catalog for it: a stale login must not
   // log a catalog failure for a run that never uses it. Such a run then takes
-  // no thinking defaults from the catalog unless another run already loaded
-  // it, as when no one is logged in.
+  // thinking defaults from the catalog only when another run in this process
+  // already loaded it; with no login it never does.
   const privateCatalog = input.resolveModelRuntime
     ? modelRuntimeResolverCatalogs.get(input.resolveModelRuntime)
     : undefined;

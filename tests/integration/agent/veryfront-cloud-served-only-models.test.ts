@@ -391,12 +391,12 @@ describe("served-only models from a cold process", () => {
       return catalogRequests;
     }
 
-    function resolveWith(model: string) {
-      const hostModel = { provider: "test", modelId: model } as ModelRuntime;
+    function resolveWith(model: string | undefined) {
+      const hostModel = { provider: "test", modelId: model ?? "default" } as ModelRuntime;
       return resolveAgentModelTransport({
         agentId: "agent-1",
         config: {
-          model,
+          ...(model === undefined ? {} : { model }),
           system: "You are concise.",
           resolveModelTransport: () => ({ model: hostModel }),
         },
@@ -413,9 +413,6 @@ describe("served-only models from a cold process", () => {
 
     afterEach(() => {
       deleteEnv("OPENAI_API_KEY");
-    });
-
-    afterEach(() => {
       deleteEnv("ANTHROPIC_API_KEY");
     });
 
@@ -454,6 +451,20 @@ describe("served-only models from a cold process", () => {
 
       assertEquals(catalogRequests.length, 1);
     });
+
+    // With a login, an omitted or `auto` model means the Cloud default, even
+    // when a provider key is set.
+    for (const model of [undefined, "auto"]) {
+      it(`still requests the catalog for ${model ?? "an omitted"} model with a provider key`, async () => {
+        setEnv("OPENAI_API_KEY", "<API_KEY>");
+        const catalogRequests = installExpiredSession();
+
+        const transport = await resolveWith(model);
+
+        assertEquals(transport.resolvedModelString.startsWith("veryfront-cloud/"), true);
+        assertEquals(catalogRequests.length, 1);
+      });
+    }
 
     it("still requests the catalog for a provider model with no provider key", async () => {
       deleteEnv("OPENAI_API_KEY");
