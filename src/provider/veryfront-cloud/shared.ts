@@ -572,6 +572,9 @@ const NEUTRAL_REFUSAL_SHAPES: ReadonlyMap<
 > = new Map([
   ["gateway_project_required", { field: "code", value: "gateway_project_required" }],
   ["eu_inference_policy", { field: "code", value: "eu_inference_policy" }],
+  ["account-model-denied", { field: "code", value: "account-model-denied" }],
+  ["policy-model-denied", { field: "code", value: "policy-model-denied" }],
+  ["key-model-denied", { field: "code", value: "key-model-denied" }],
   ["resource-limit-exceeded", { field: "slug", value: "resource-limit-exceeded" }],
   ["insufficient-credits", {
     field: "slug",
