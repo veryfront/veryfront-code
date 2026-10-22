@@ -12,7 +12,8 @@ export function earlyDocsArguments(args: readonly string[]): string[] | undefine
 
 /** The router must forward unknown/malformed options so the command can reject them. */
 export function parsedDocsArguments(args: ParsedArgs): string[] {
-  const result = args._.slice(1).map(String);
+  const positionals = args._.slice(1).map(String);
+  const result: string[] = [];
   for (const [key, value] of Object.entries(args)) {
     if (key === "_" || key === "__explicit") continue;
     const option = `${key.length === 1 ? "-" : "--"}${key}`;
@@ -22,5 +23,5 @@ export function parsedDocsArguments(args: ParsedArgs): string[] {
       else result.push(option, String(item));
     }
   }
-  return result;
+  return positionals.length ? [...result, "--", ...positionals] : result;
 }

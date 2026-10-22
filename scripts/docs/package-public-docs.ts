@@ -46,15 +46,23 @@ export async function docsSourceIdentity(
   options: { allowLocal?: boolean } = {},
 ) {
   const root = await Deno.realPath(repository);
-  if (options.allowLocal) {
-    try {
+  try {
+    const top = await Deno.realPath(
+      await git(root, ["rev-parse", "--show-toplevel"]),
+    );
+    if (top !== root) {
+      throw new Error(
+        "Select the owning repository root for documentation provenance",
+      );
+    }
+    if (options.allowLocal) {
       await git(root, ["rev-parse", "HEAD"]);
       publicRepositoryUrl(await git(root, ["remote", "get-url", "origin"]));
-    } catch {
-      // Local source archives/mirrors have no publishable provenance. Never
-      // copy their filesystem paths or private remote names into an artifact.
-      return { revision: "", dirty: true, repository: "" };
     }
+  } catch (error) {
+    if (!options.allowLocal) throw error;
+    // Archives and private mirrors never inherit a parent checkout's identity.
+    return { revision: "", dirty: true, repository: "" };
   }
   const revision = await git(root, ["rev-parse", "HEAD"]);
   const status = await git(root, [
@@ -134,7 +142,11 @@ export async function packagePublicDocs(options: PackageDocsOptions) {
     throw new Error("Invalid documentation package version");
   }
   const repository = await Deno.realPath(options.repository);
-  if (await git(repository, ["rev-parse", "--show-toplevel"]) !== repository) {
+  if (
+    await Deno.realPath(
+      await git(repository, ["rev-parse", "--show-toplevel"]),
+    ) !== repository
+  ) {
     throw new Error("Select the owning repository root");
   }
   const revision = await git(repository, ["rev-parse", "HEAD"]);
@@ -143,7 +155,8 @@ export async function packagePublicDocs(options: PackageDocsOptions) {
   );
   if (
     options.mode === "release" &&
-    (dirty || options.revision !== revision || !/^[a-f0-9]{40}$/.test(revision))
+    (dirty || options.revision !== revision ||
+      !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(revision))
   ) {
     throw new Error(
       "Release documentation requires a clean pinned product checkout",
@@ -210,7 +223,7 @@ export async function packagePublicDocs(options: PackageDocsOptions) {
     ) throw new Error("Cloud reference must match its clean pinned API source");
     if (
       !catalog.complete || catalog.sourceDirty !== false ||
-      !/^[a-f0-9]{40}$/.test(catalog.sourceRevision)
+      !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(catalog.sourceRevision)
     ) throw new Error("Cloud catalog requires a clean pinned Code source");
     if (!Array.isArray(generation.files) || generation.files.length === 0) {
       throw new Error("Cloud reference requires a generated file inventory");

@@ -1,5 +1,6 @@
 import { makeTempDirWithOptions } from "#veryfront/testing/deno-compat.ts";
 import path from "node:path";
+import { createHash } from "node:crypto";
 import { assertEquals, assertRejects, assertStringIncludes } from "#std/assert";
 import {
   docsSourceIdentity,
@@ -9,6 +10,8 @@ import { prepareRcBuildVersion } from "../../../scripts/ci/prepare-rc-build.ts";
 
 async function fixture(
   run: (root: string, repository: string, revision: string) => Promise<void>,
+  objectFormat = "sha1",
+  product = "agent",
 ) {
   const root = await makeTempDirWithOptions({ prefix: "docs-package-test-" });
   const repository = path.join(root, "repo");
@@ -24,17 +27,17 @@ async function fixture(
     return new TextDecoder().decode(result.stdout).trim();
   }
   try {
-    await Deno.mkdir(path.join(repository, "docs/public/agent"), {
+    await Deno.mkdir(path.join(repository, "docs/public", product), {
       recursive: true,
     });
     await Deno.mkdir(path.join(repository, "docs/public/assets"));
     await Deno.mkdir(path.join(repository, "docs/internal"));
     await Deno.writeTextFile(
-      path.join(repository, "docs/public/agent/index.md"),
+      path.join(repository, "docs/public", product, "index.md"),
       "---\ntitle: Agent\n---\nRead this guide.",
     );
     await Deno.writeTextFile(
-      path.join(repository, "docs/public/agent/draft.md"),
+      path.join(repository, "docs/public", product, "draft.md"),
       "---\ntitle: Draft\ndraft: true\n---\nDo not publish.",
     );
     await Deno.writeTextFile(
@@ -49,7 +52,7 @@ async function fixture(
       path.join(repository, "docs/public/assets/private.txt"),
       "Not an asset",
     );
-    await command(["init", "-q"]);
+    await command(["init", "-q", `--object-format=${objectFormat}`]);
     await command([
       "remote",
       "add",
@@ -291,12 +294,19 @@ Deno.test("release rejects ignored pages and assets absent from the pinned commi
 Deno.test("local npm documentation supports archives and private mirrors without publishing their origins", async () => {
   const directory = await makeTempDirWithOptions();
   try {
-    assertEquals(await docsSourceIdentity(directory, undefined, { allowLocal: true }), {
-      revision: "",
-      repository: "",
-      dirty: true,
-    });
-    await assertRejects(() => docsSourceIdentity(directory), Error, "source identity");
+    assertEquals(
+      await docsSourceIdentity(directory, undefined, { allowLocal: true }),
+      {
+        revision: "",
+        repository: "",
+        dirty: true,
+      },
+    );
+    await assertRejects(
+      () => docsSourceIdentity(directory),
+      Error,
+      "source identity",
+    );
   } finally {
     await Deno.remove(directory, { recursive: true });
   }
@@ -312,11 +322,92 @@ Deno.test("local npm documentation supports archives and private mirrors without
       ],
     }).output();
     assertEquals(result.success, true);
-    assertEquals(await docsSourceIdentity(repository, undefined, { allowLocal: true }), {
+    assertEquals(
+      await docsSourceIdentity(repository, undefined, { allowLocal: true }),
+      {
+        revision: "",
+        repository: "",
+        dirty: true,
+      },
+    );
+    await assertRejects(
+      () => docsSourceIdentity(repository),
+      Error,
+      "GitHub repository origin",
+    );
+  });
+});
+
+for (const product of ["agent", "cloud"]) {
+  Deno.test(`release packages accept SHA-256 Git identities for ${product}`, async () => {
+    await fixture(
+      async (root, repository, revision) => {
+        assertEquals(revision.length, 64);
+        if (product === "cloud") {
+          await Deno.writeTextFile(
+            path.join(repository, ".git/info/exclude"),
+            "generation.json\ncatalog-source.json\nnavigation.json\n",
+          );
+          const bytes = await Deno.readFile(
+            path.join(repository, "docs/public/cloud/index.md"),
+          );
+          const navigation = new TextEncoder().encode(
+            JSON.stringify({ redirects: [] }),
+          );
+          await Deno.writeFile(
+            path.join(repository, "docs/public/navigation.json"),
+            navigation,
+          );
+          await Deno.writeTextFile(
+            path.join(repository, "docs/public/generation.json"),
+            JSON.stringify({
+              sourceRevision: revision,
+              sourceDirty: false,
+              files: [{
+                path: "cloud/index.md",
+                sha256: createHash("sha256").update(bytes).digest("hex"),
+              }, {
+                path: "navigation.json",
+                sha256: createHash("sha256").update(navigation).digest("hex"),
+              }],
+            }),
+          );
+          await Deno.writeTextFile(
+            path.join(repository, "docs/public/catalog-source.json"),
+            JSON.stringify({
+              complete: true,
+              sourceDirty: false,
+              sourceRevision: "b".repeat(64),
+            }),
+          );
+        }
+        const result = await packagePublicDocs({
+          repository,
+          revision,
+          product,
+          name: `@veryfront/${product}-docs`,
+          version: "1.2.3",
+          output: path.join(root, "package"),
+          mode: "release",
+        });
+        assertEquals(result.revision, revision);
+        assertEquals(result.pages, 1);
+      },
+      "sha256",
+      product,
+    );
+  });
+}
+
+Deno.test("local source archives do not inherit provenance from a parent Git checkout", async () => {
+  await fixture(async (_root, repository) => {
+    const archive = path.join(repository, "nested-archive");
+    await Deno.mkdir(archive);
+    assertEquals(await docsSourceIdentity(archive, undefined, { allowLocal: true }), {
       revision: "",
-      repository: "",
       dirty: true,
+      repository: "",
     });
-    await assertRejects(() => docsSourceIdentity(repository), Error, "GitHub repository origin");
+    await assertRejects(() => docsSourceIdentity(archive), Error, "owning repository root");
   });
 });

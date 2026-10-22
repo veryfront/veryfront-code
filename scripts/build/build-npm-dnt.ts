@@ -8,7 +8,7 @@
  * - Shims for Deno APIs
  *
  * Usage:
- *   deno run -A scripts/build-npm-dnt.ts
+ *   deno task build:npm
  */
 
 import { build, emptyDir } from "#dnt";
@@ -39,13 +39,14 @@ import { assertNpmRuntimeHelperContract } from "./npm-runtime-helper-contract.ts
 import { normalizeEsmShReactNpmShims } from "./npm-react-shims.ts";
 import { NPM_NODE_ENGINE } from "./runtime-support.ts";
 import { copyPublicDocs } from "./copy-public-docs.ts";
-import { docsSourceIdentity } from "../docs/package-public-docs.ts";
+import { isCiNpmBuild, npmDocsBuildContext } from "./npm-docs-build-context.ts";
 
 const denoJson = JSON.parse(await Deno.readTextFile("./deno.json"));
 const version = denoJson.version;
 if (!version) {
 	throw new Error("deno.json must have a 'version' field");
 }
+const docsIdentity = await npmDocsBuildContext.identityForBuild(Deno.cwd(), version, isCiNpmBuild());
 const license = denoJson.license;
 if (!license) {
 	throw new Error("deno.json must have a 'license' field");
@@ -365,7 +366,8 @@ await build({
 		await Deno.copyFile("./LICENSE", "./npm/LICENSE");
 		await Deno.copyFile("./NOTICE", "./npm/NOTICE");
 		await Deno.copyFile("./README.md", "./npm/README.md");
-		await copyPublicDocs(Deno.cwd(), "./npm", version, await docsSourceIdentity(Deno.cwd(), version, { allowLocal: !Deno.env.get("CI") || Deno.env.get("CI") === "false" }));
+		await npmDocsBuildContext.assertStable();
+		await copyPublicDocs(Deno.cwd(), "./npm", version, docsIdentity);
 
 		// Copy base tsconfig for user projects to extend
 		await Deno.writeTextFile("./npm/tsconfig.json", JSON.stringify({
@@ -577,7 +579,7 @@ await runRootBundledSsrProbe("./node_modules/veryfront/esm");
 		stderr: "piped",
 	}).spawn();
 	const outputPromise = child.output();
-	let timeoutId: number | undefined;
+	let timeoutId: ReturnType<typeof setTimeout> | undefined;
 	const result = await Promise.race([
 		outputPromise.then((output) => ({ kind: "complete" as const, output })),
 		new Promise<{ kind: "timeout" }>((resolve) => {

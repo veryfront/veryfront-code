@@ -29,6 +29,9 @@ export async function runDocsCommand(
     warn: console.error,
   },
 ): Promise<number> {
+  const terminator = args.indexOf("--");
+  const positionals = terminator < 0 ? [] : args.slice(terminator + 1);
+  if (terminator >= 0) args = args.slice(0, terminator);
   const booleanFlags = new Map<string, boolean>();
   args = args.filter((argument) => {
     const flag = readGlobalBooleanFlag(argument);
@@ -81,11 +84,11 @@ export async function runDocsCommand(
     deps.print(value);
     return true;
   }
-  const invalid = remaining.find((arg) => {
+  const invalid = positionals[0] ?? remaining.find((arg) => {
     const flag = arg.startsWith("--") ? arg.slice(2) : CLI_FLAG_ALIASES[arg.slice(1)];
     return !flag || !GLOBAL_BOOLEAN_FLAGS.has(flag);
   });
-  if (invalid) {
+  if (invalid !== undefined) {
     const option = /^(--?[a-z][a-z0-9-]*)(?:=|$)/i.exec(invalid)?.[1];
     const message = option ? `Unknown docs option: ${option}` : "Unknown docs argument.";
     if (json) {

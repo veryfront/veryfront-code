@@ -288,3 +288,27 @@ Deno.test("docs accepts the shared CLI boolean value vocabulary", async () => {
     assertEquals(opened, [DOCUMENTATION_URL]);
   }
 });
+
+Deno.test("docs honors option terminators on the early and router entry paths", async () => {
+  for (const raw of [["--", "docs"], ["docs", "--"]]) {
+    const opened: string[] = [];
+    const { deps } = capture((url) => {
+      opened.push(url);
+      return Promise.resolve();
+    });
+    assertEquals(await runDocsCommand(earlyDocsArguments(raw)!, deps), 0);
+    assertEquals(opened, [DOCUMENTATION_URL]);
+  }
+  for (
+    const args of [
+      ["--json", "--", "--help"],
+      parsedDocsArguments({ _: ["docs", "--help"], json: true }),
+    ]
+  ) {
+    const { deps, printed } = capture(() => {
+      throw new Error("Literal arguments must not launch the browser");
+    });
+    assertEquals(await runDocsCommand(args, deps), 2);
+    assertEquals(JSON.parse(printed[0]).error.code, "USAGE_ERROR");
+  }
+});

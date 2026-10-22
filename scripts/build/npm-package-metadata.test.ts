@@ -1160,9 +1160,11 @@ describe("npm generated integration artifacts", () => {
     const buildNpmTask = denoConfig.tasks?.["build:npm"];
 
     assertEquals(typeof buildNpmTask, "string");
+    assertEquals(buildNpmTask.includes("scripts/build/build-npm.ts"), true);
+    const orchestrator = await Deno.readTextFile("scripts/build/build-npm.ts");
     assertEquals(
-      buildNpmTask.indexOf("scripts/build/generate-integrations-module.ts") <
-        buildNpmTask.indexOf("scripts/build/build-npm-dnt.ts"),
+      orchestrator.indexOf("scripts/build/generate-integrations-module.ts") <
+        orchestrator.indexOf('import("./build-npm-dnt.ts")'),
       true,
     );
   });
@@ -1201,7 +1203,7 @@ describe("npm generated integration artifacts", () => {
     );
     assertStringIncludes(
       source,
-      'pkg.files = ["esm", "script", "bin", "assets", "tsconfig.json", "LICENSE", "NOTICE", "README.md"];',
+      'pkg.files = ["esm", "script", "bin", "assets", "docs", "tsconfig.json", "LICENSE", "NOTICE", "README.md"];',
     );
   });
 });

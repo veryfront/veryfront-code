@@ -70,9 +70,9 @@ async function sha256File(path: string): Promise<string> {
 }
 
 function validateGitHead(gitHead: string): void {
-  if (!/^[0-9a-f]{40}$/.test(gitHead)) {
+  if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(gitHead)) {
     throw new Error(
-      "Canonical npm artifact gitHead must be a 40-character lowercase hexadecimal commit",
+      "Canonical npm artifact gitHead must be a full lowercase hexadecimal Git object ID",
     );
   }
 }
@@ -126,6 +126,36 @@ async function verifyPackageMetadata(
       `Canonical package ${entry.name} gitHead does not match the release commit`,
       { packageName: entry.name },
     );
+  }
+  if (expectedGitHead !== undefined && entry.name === "veryfront") {
+    const docs = await new Deno.Command("tar", {
+      args: ["-xOf", tarball, "package/docs/manifest.json"],
+      stdout: "piped",
+      stderr: "piped",
+    }).output();
+    let value;
+    try {
+      value = docs.success
+        ? JSON.parse(new TextDecoder().decode(docs.stdout))
+        : undefined;
+    } catch {
+      value = undefined;
+    }
+    const source = Array.isArray(value?.sources) && value.sources.length === 1
+      ? value.sources[0]
+      : undefined;
+    if (
+      value?.mode !== "release" || value.version !== entry.version ||
+      !Array.isArray(value.pages) || !value.pages.length ||
+      source?.product !== "code" || source.revision !== expectedGitHead ||
+      source.version !== entry.version || source.dirty !== false
+    ) {
+      throw new NpmCompatibilityArtifactError(
+        "verify",
+        "Canonical veryfront package requires release documentation matching its source and version",
+        { packageName: entry.name },
+      );
+    }
   }
 }
 
@@ -240,9 +270,13 @@ export async function createNpmCompatibilityArtifact(
       manifest: await readPackageManifest(directory),
     })),
   );
-  packageSources.sort((left, right) => compareText(left.manifest.name, right.manifest.name));
+  packageSources.sort((left, right) =>
+    compareText(left.manifest.name, right.manifest.name)
+  );
 
-  const root = packageSources.find(({ manifest }) => manifest.name === "veryfront");
+  const root = packageSources.find(({ manifest }) =>
+    manifest.name === "veryfront"
+  );
   if (!root) throw new Error("npm compatibility artifact requires veryfront");
   for (const { manifest } of packageSources) {
     if (manifest.version !== root.manifest.version) {
@@ -266,12 +300,20 @@ export async function createNpmCompatibilityArtifact(
       source.manifest.name,
       options.gitHead,
     );
-    packages.push({
+    const entry = {
       name: source.manifest.name,
       version: source.manifest.version,
       file,
       sha256: await sha256File(join(resolvedDestination, file)),
-    });
+    };
+    if (options.gitHead !== undefined) {
+      await verifyPackageMetadata(
+        join(resolvedDestination, file),
+        entry,
+        options.gitHead,
+      );
+    }
+    packages.push(entry);
   }
 
   const manifest: NpmCompatibilityManifest = {
