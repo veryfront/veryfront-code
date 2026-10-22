@@ -23,12 +23,25 @@ async function openDocumentation(url: string): Promise<void> {
 /** No project discovery, environment loading, authentication, or server startup. */
 export async function runDocsCommand(
   args: readonly string[],
-  deps: DocsDependencies = { open: openDocumentation, print: console.log, warn: console.error },
+  deps: DocsDependencies = {
+    open: openDocumentation,
+    print: console.log,
+    warn: console.error,
+  },
 ): Promise<number> {
-  args = args.flatMap((argument) => {
+  const booleanFlags = new Map<string, boolean>();
+  args = args.filter((argument) => {
     const flag = readGlobalBooleanFlag(argument);
-    return flag ? flag.value ? [`--${flag.name}`] : [] : [argument];
+    if (!flag) return true;
+    booleanFlags.set(flag.name, flag.value);
+    return false;
   });
+  args = [
+    ...args,
+    ...[...booleanFlags].filter(([, enabled]) => enabled).map(([name]) =>
+      `--${name}`
+    ),
+  ];
   const json = args.includes("--json") || args.includes("-j");
   let output: string | undefined;
   const remaining: string[] = [];
@@ -57,7 +70,11 @@ export async function runDocsCommand(
           JSON.stringify({
             success: false,
             command: "docs",
-            error: { code: "OUTPUT_WRITE_FAILED", slug: "output-write-failed", message },
+            error: {
+              code: "OUTPUT_WRITE_FAILED",
+              slug: "output-write-failed",
+              message,
+            },
           }),
         );
       } else deps.warn(message);
@@ -67,7 +84,9 @@ export async function runDocsCommand(
     return true;
   }
   const invalid = remaining.find((arg) => {
-    const flag = arg.startsWith("--") ? arg.slice(2) : CLI_FLAG_ALIASES[arg.slice(1)];
+    const flag = arg.startsWith("--")
+      ? arg.slice(2)
+      : CLI_FLAG_ALIASES[arg.slice(1)];
     return !flag || !GLOBAL_BOOLEAN_FLAGS.has(flag);
   });
   if (invalid) {
@@ -118,7 +137,11 @@ export async function runDocsCommand(
   }
   if (json) {
     const written = await emit(
-      JSON.stringify({ success: true, command: "docs", data: { url: DOCUMENTATION_URL } }),
+      JSON.stringify({
+        success: true,
+        command: "docs",
+        data: { url: DOCUMENTATION_URL },
+      }),
     );
     return written ? 0 : 1;
   }
@@ -126,7 +149,9 @@ export async function runDocsCommand(
   try {
     await deps.open(DOCUMENTATION_URL);
   } catch {
-    deps.warn("Unable to open a browser. Open the URL above to read the documentation.");
+    deps.warn(
+      "Unable to open a browser. Open the URL above to read the documentation.",
+    );
   }
   return 0;
 }

@@ -2,7 +2,9 @@ import { assertEquals } from "#std/assert";
 import { DOCUMENTATION_URL, runDocsCommand } from "./command.ts";
 import { earlyDocsArguments, parsedDocsArguments } from "./arguments.ts";
 
-function capture(open: (url: string) => Promise<void> = () => Promise.resolve()) {
+function capture(
+  open: (url: string) => Promise<void> = () => Promise.resolve(),
+) {
   const printed: string[] = [];
   const warnings: string[] = [];
   return {
@@ -17,8 +19,14 @@ function capture(open: (url: string) => Promise<void> = () => Promise.resolve())
 }
 
 Deno.test("docs keeps global prefixes and router options available for validation", async () => {
-  assertEquals(earlyDocsArguments(["--json", "docs", "--unknown"]), ["--json", "--unknown"]);
-  assertEquals(earlyDocsArguments(["agent", "create", "--name", "docs"]), undefined);
+  assertEquals(earlyDocsArguments(["--json", "docs", "--unknown"]), [
+    "--json",
+    "--unknown",
+  ]);
+  assertEquals(
+    earlyDocsArguments(["agent", "create", "--name", "docs"]),
+    undefined,
+  );
   for (
     const parsed of [{ _: ["docs"], json: true, output: true }, {
       _: ["docs"],
@@ -67,7 +75,11 @@ Deno.test("global-prefixed docs runs without reading broken application configur
         stdout: "piped",
         stderr: "piped",
       }).output();
-      assertEquals(child.code, expected, new TextDecoder().decode(child.stderr));
+      assertEquals(
+        child.code,
+        expected,
+        new TextDecoder().decode(child.stderr),
+      );
       const result = JSON.parse(new TextDecoder().decode(child.stdout));
       assertEquals(result.success, expected === 0);
     }
@@ -78,7 +90,10 @@ Deno.test("global-prefixed docs runs without reading broken application configur
 
 Deno.test("docs preserves true and false boolean assignments", async () => {
   for (
-    const args of [["--json=true"], ["--quiet=false", "--json"], ["--version=false", "--json"]]
+    const args of [["--json=true"], ["--quiet=false", "--json"], [
+      "--version=false",
+      "--json",
+    ]]
   ) {
     const { deps, printed } = capture(() => {
       throw new Error("JSON mode must not launch");
@@ -95,6 +110,31 @@ Deno.test("docs preserves true and false boolean assignments", async () => {
   assertEquals(opened, [DOCUMENTATION_URL]);
 });
 
+Deno.test("docs resolves repeated boolean assignments in order across aliases", async () => {
+  for (
+    const args of [
+      ["--json", "--json=false"],
+      ["-j", "--json=false"],
+      ["--help", "-h=false"],
+      ["--version", "--version=false"],
+    ]
+  ) {
+    const opened: string[] = [];
+    const { deps, printed } = capture((url) => {
+      opened.push(url);
+      return Promise.resolve();
+    });
+    assertEquals(await runDocsCommand(args, deps), 0);
+    assertEquals(opened, [DOCUMENTATION_URL]);
+    assertEquals(printed, [DOCUMENTATION_URL]);
+  }
+  const { deps, printed } = capture(() => {
+    throw new Error("JSON mode must not launch");
+  });
+  assertEquals(await runDocsCommand(["--json=false", "-j"], deps), 0);
+  assertEquals(JSON.parse(printed[0]).command, "docs");
+});
+
 Deno.test("docs prints its destination and opens the fixed public URL", async () => {
   const opened: string[] = [];
   const { deps, printed } = capture((url) => {
@@ -107,7 +147,9 @@ Deno.test("docs prints its destination and opens the fixed public URL", async ()
 });
 
 Deno.test("docs keeps a usable URL and reports failed browser launches", async () => {
-  const { deps, printed, warnings } = capture(() => Promise.reject(new Error("missing opener")));
+  const { deps, printed, warnings } = capture(() =>
+    Promise.reject(new Error("missing opener"))
+  );
   assertEquals(await runDocsCommand([], deps), 0);
   assertEquals(printed, [DOCUMENTATION_URL]);
   assertEquals(warnings.length, 1);
@@ -133,7 +175,10 @@ Deno.test("docs supports the global JSON alias and output destination", async ()
     });
     const output = `${root}/nested/result.json`;
     assertEquals(await runDocsCommand(["-j", "--output", output], deps), 0);
-    assertEquals(JSON.parse(await Deno.readTextFile(output)), JSON.parse(printed[0]));
+    assertEquals(
+      JSON.parse(await Deno.readTextFile(output)),
+      JSON.parse(printed[0]),
+    );
   } finally {
     await Deno.remove(root, { recursive: true });
   }
@@ -143,8 +188,14 @@ Deno.test("docs writes its plain URL when an output destination is requested", a
   const root = await Deno.makeTempDir({ prefix: "docs-url-output-" });
   try {
     const { deps } = capture();
-    assertEquals(await runDocsCommand(["--output", `${root}/url.txt`], deps), 0);
-    assertEquals(await Deno.readTextFile(`${root}/url.txt`), DOCUMENTATION_URL + "\n");
+    assertEquals(
+      await runDocsCommand(["--output", `${root}/url.txt`], deps),
+      0,
+    );
+    assertEquals(
+      await Deno.readTextFile(`${root}/url.txt`),
+      DOCUMENTATION_URL + "\n",
+    );
   } finally {
     await Deno.remove(root, { recursive: true });
   }
@@ -154,7 +205,10 @@ Deno.test("docs preserves global noninteractive flags and version reporting", as
   const { deps, printed } = capture(() => {
     throw new Error("must not launch");
   });
-  assertEquals(await runDocsCommand(["--no-input", "--no-animation", "-j"], deps), 0);
+  assertEquals(
+    await runDocsCommand(["--no-input", "--no-animation", "-j"], deps),
+    0,
+  );
   assertEquals(JSON.parse(printed[0]).command, "docs");
   assertEquals(await runDocsCommand(["--version", "-j"], deps), 0);
   assertEquals(JSON.parse(printed[1]).command, "version");
@@ -168,7 +222,11 @@ Deno.test("docs reports output-file failures as JSON without retrying the destin
       throw new Error("must not launch");
     });
     assertEquals(
-      await runDocsCommand(["--json", "--output", `${root}/occupied/result.json`], deps),
+      await runDocsCommand([
+        "--json",
+        "--output",
+        `${root}/occupied/result.json`,
+      ], deps),
       1,
     );
     assertEquals(JSON.parse(printed[0]).error.code, "OUTPUT_WRITE_FAILED");
