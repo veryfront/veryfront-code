@@ -1,9 +1,7 @@
 'use client'
 
-import { useState } from 'react'
 import { usePageContext } from 'veryfront/context'
-import { csrfMutationHeaders } from 'veryfront/index.client'
-import { useWorkflow } from 'veryfront/workflow'
+import { useApproval, useWorkflow } from 'veryfront/workflow'
 
 const STEP_ICONS: Record<string, string> = {
   completed: '\u2713',
@@ -13,37 +11,76 @@ const STEP_ICONS: Record<string, string> = {
   failed: '\u2717',
 }
 
+/** The drafts `workflows/content-pipeline.ts` attaches to its approval gate. */
+interface ReviewPayload {
+  article?: string
+  summary?: string
+}
+
+function ApprovalPanel({ runId, approvalId, message, onDecided }: {
+  runId: string
+  approvalId: string
+  message?: string
+  onDecided: () => Promise<void>
+}): React.JSX.Element {
+  // The server records the signed-in identity as the approver, not this one.
+  const { approval, approve, reject, isSubmitting, error } = useApproval({
+    runId,
+    approvalId,
+    approver: 'user',
+  })
+  const drafts = (approval?.payload ?? {}) as ReviewPayload
+
+  async function decide(submit: () => Promise<void>) {
+    try {
+      await submit()
+    } catch {
+      // `error` below shows why the decision was refused.
+    }
+    await onDecided()
+  }
+
+  return (
+    <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-xl p-6">
+      <h2 className="font-medium text-amber-900 dark:text-amber-200 mb-2">Approval Required</h2>
+      <p className="text-sm text-amber-700 dark:text-amber-300 mb-4">{message}</p>
+      {drafts.summary && (
+        <p className="text-sm text-neutral-700 dark:text-neutral-300 mb-4 whitespace-pre-wrap">{drafts.summary}</p>
+      )}
+      {drafts.article && (
+        <details className="mb-4">
+          <summary className="text-sm font-medium text-neutral-700 dark:text-neutral-300 cursor-pointer">Article draft</summary>
+          <p className="mt-2 text-sm text-neutral-700 dark:text-neutral-300 whitespace-pre-wrap">{drafts.article}</p>
+        </details>
+      )}
+      <div className="flex gap-3">
+        <button
+          type="button"
+          onClick={() => decide(() => approve())}
+          disabled={isSubmitting}
+          className="px-4 py-2 bg-emerald-500 text-white font-medium rounded-lg hover:bg-emerald-600 disabled:opacity-50 transition-colors text-sm"
+        >
+          Approve
+        </button>
+        <button
+          type="button"
+          onClick={() => decide(() => reject())}
+          disabled={isSubmitting}
+          className="px-4 py-2 bg-white dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 text-neutral-700 dark:text-neutral-300 font-medium rounded-lg hover:bg-neutral-50 dark:hover:bg-neutral-700 disabled:opacity-50 transition-colors text-sm"
+        >
+          Reject
+        </button>
+      </div>
+      {error && <p className="mt-3 text-sm text-red-600 dark:text-red-400">{error.message}</p>}
+    </div>
+  )
+}
+
 export default function WorkflowDetail(): React.JSX.Element {
   const { params } = usePageContext()
   const runId = params.id ?? ''
   const { run, pendingApprovals, isLoading, refresh } = useWorkflow({ runId })
-  const [isSubmitting, setIsSubmitting] = useState(false)
-  const [approvalError, setApprovalError] = useState<string | null>(null)
   const pendingApproval = pendingApprovals[0]
-
-  async function handleApproval(approvalId: string, approved: boolean) {
-    setIsSubmitting(true)
-    setApprovalError(null)
-    try {
-      const endpoint = `/api/workflows/runs/${runId}/approvals/${approvalId}`
-      const response = await fetch(endpoint, {
-        method: 'POST',
-        // CSRF is enforced in every environment, so this POST has to echo the
-        // configured CSRF cookie back or the server answers 403.
-        headers: csrfMutationHeaders(endpoint, {
-          headers: { 'Content-Type': 'application/json' },
-        }),
-        body: JSON.stringify({ approved, approver: 'user' }),
-      })
-      if (!response.ok) {
-        const body = await response.json().catch(() => ({})) as { message?: string }
-        setApprovalError(body.message ?? `Approval failed with HTTP ${response.status}`)
-      }
-      await refresh()
-    } finally {
-      setIsSubmitting(false)
-    }
-  }
 
   if (isLoading) {
     return (
@@ -85,31 +122,13 @@ export default function WorkflowDetail(): React.JSX.Element {
 
         {/* Approval */}
         {pendingApproval && (
-          <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-xl p-6">
-            <h2 className="font-medium text-amber-900 dark:text-amber-200 mb-2">Approval Required</h2>
-            <p className="text-sm text-amber-700 dark:text-amber-300 mb-4">{pendingApproval.message}</p>
-            <div className="flex gap-3">
-              <button
-                type="button"
-                onClick={() => handleApproval(pendingApproval.id, true)}
-                disabled={isSubmitting}
-                className="px-4 py-2 bg-emerald-500 text-white font-medium rounded-lg hover:bg-emerald-600 disabled:opacity-50 transition-colors text-sm"
-              >
-                Approve
-              </button>
-              <button
-                type="button"
-                onClick={() => handleApproval(pendingApproval.id, false)}
-                disabled={isSubmitting}
-                className="px-4 py-2 bg-white dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 text-neutral-700 dark:text-neutral-300 font-medium rounded-lg hover:bg-neutral-50 dark:hover:bg-neutral-700 disabled:opacity-50 transition-colors text-sm"
-              >
-                Reject
-              </button>
-            </div>
-            {approvalError && (
-              <p className="mt-3 text-sm text-red-600 dark:text-red-400">{approvalError}</p>
-            )}
-          </div>
+          <ApprovalPanel
+            key={pendingApproval.id}
+            runId={runId}
+            approvalId={pendingApproval.id}
+            message={pendingApproval.message}
+            onDecided={refresh}
+          />
         )}
       </div>
     </div>

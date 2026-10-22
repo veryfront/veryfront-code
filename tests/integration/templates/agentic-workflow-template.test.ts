@@ -26,20 +26,27 @@ async function scaffoldTemplate(
   }
 }
 
-/** Answer every agent call with fixed text, so no step needs a model key. */
+const STUB_REPLY = "Stub reply to:";
+
+/** Echo the prompt's last message, so no step needs a model key. */
+function stubReply(options: unknown): string {
+  const prompt = (options as { prompt?: unknown[] }).prompt ?? [];
+  return `${STUB_REPLY} ${JSON.stringify(prompt.at(-1))}`;
+}
+
 const stubModel: ModelRuntime = {
   provider: "openai",
   modelId: "stub",
   specificationVersion: "v3",
-  doGenerate: () =>
+  doGenerate: (options) =>
     Promise.resolve({
-      content: [{ type: "text", text: "Stub notes." }],
+      content: [{ type: "text", text: stubReply(options) }],
       finishReason: { unified: "stop", raw: "stop" },
     }),
-  doStream: () =>
+  doStream: (options) =>
     Promise.resolve({
       stream: ReadableStream.from([
-        { type: "text-delta", delta: "Stub notes." },
+        { type: "text-delta", delta: stubReply(options) },
         { type: "finish", finishReason: { unified: "stop", raw: "stop" } },
       ]),
     }),
@@ -147,6 +154,17 @@ describe("agentic-workflow template integration", {
         });
         const [approval] = waiting.pendingApprovals;
         assertEquals(approval?.nodeId, "editorial-review");
+
+        // The reviewer reads the drafts, and the article was written from the
+        // research notes: its prompt carried the research step's own reply.
+        const approvalResponse = await fetch(
+          `${baseUrl}/api/workflows/runs/${runId}/approvals/${approval!.id}`,
+        );
+        const { payload } = await approvalResponse.json() as {
+          payload: { article: string; summary: string };
+        };
+        assertEquals(payload.article.split(STUB_REPLY).length - 1, 2);
+        assertEquals(payload.summary.split(STUB_REPLY).length - 1, 2);
 
         const listResponse = await fetch(`${baseUrl}/api/workflows/runs`);
         const { runs } = await listResponse.json() as { runs: WorkflowRunSummary[] };
