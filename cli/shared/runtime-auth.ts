@@ -9,8 +9,14 @@ import {
   markProcessEnvSource,
 } from "veryfront/utils/env-loader";
 import { join } from "veryfront/platform/path";
-import { DEFAULT_API_URL, isSameApiEndpoint, resolveRestApiBaseUrl } from "./constants.ts";
 import {
+  DEFAULT_API_URL,
+  getApiUrl,
+  isSameApiEndpoint,
+  resolveRestApiBaseUrl,
+} from "./constants.ts";
+import {
+  type ApiCredentialCandidate,
   type ApiTokenSource,
   assertApiUrlAcceptsNewCredential,
   readConfigFile,
@@ -18,6 +24,8 @@ import {
   resolveApiUrlTrust,
 } from "./config.ts";
 import { readProjectLink } from "./project-link.ts";
+import { createVeryfrontApiOriginBoundOutboundFetch } from "#cli/outbound-fetch";
+import { isCredentialRejected } from "./credential-rejection.ts";
 
 export interface RuntimeAuthOptions {
   linkedProjectSlug?: string;
@@ -173,26 +181,91 @@ export async function applyQualifiedRuntimeAuth(
     await assertApiUrlAcceptsNewCredential(requestEnv, projectDir);
   }
   clearStaleRuntimeAuth(staleConfigBase, staleConfigToken);
-  const candidateApiBaseUrl = runtimeApiBaseUrl(candidate?.validationEnv.apiBaseUrl);
+  const runtimeCandidate = await dropRejectedStoredLogin(candidate, linkedProjectSlug);
+  const candidateApiBaseUrl = runtimeApiBaseUrl(runtimeCandidate?.validationEnv.apiBaseUrl);
   const preservesImplicitDefault = candidateApiBaseUrl !== undefined &&
     isSameApiEndpoint(candidateApiBaseUrl, DEFAULT_API_URL) &&
     (apiBaseSource.source === "unset" || staleConfigBase) && env.apiUrl === undefined;
   const context = await applyRuntimeAuthContext({
-    apiToken: candidate?.apiToken ?? null,
-    apiTokenSource: candidate?.apiTokenSource,
+    apiToken: runtimeCandidate?.apiToken ?? null,
+    apiTokenSource: runtimeCandidate?.apiTokenSource,
     apiBaseUrl: preservesImplicitDefault ? undefined : candidateApiBaseUrl,
     linkedProjectSlug,
   });
-  markTrustedRuntimeEndpoint(context, trust, candidate?.apiTokenSource, projectDir);
+  markTrustedRuntimeEndpoint(context, trust, runtimeCandidate?.apiTokenSource, projectDir);
   updateRuntimeAuthProvenance(
     apiBaseSource.source,
-    candidate?.apiTokenSource,
+    runtimeCandidate?.apiTokenSource,
     configFile?.apiUrl,
     configPath,
-    candidate !== undefined,
+    runtimeCandidate !== undefined,
   );
   refreshEnvironmentConfig();
   return context;
+}
+
+/**
+ * Key of the provider a run with no model uses once Cloud is off:
+ * `DEFAULT_AGENT_MODEL` (src/agent/runtime/model-resolution.ts) is an OpenAI
+ * model, and a key for another provider cannot serve it.
+ */
+const DEFAULT_MODEL_PROVIDER_KEY = "OPENAI_API_KEY";
+
+/** Upper bound on the stored-login check, so a slow API cannot stall startup. */
+const STORED_LOGIN_CHECK_TIMEOUT_MS = 5_000;
+
+/**
+ * Stored logins (API URL and token) the API rejected in this process. A
+ * command may qualify its auth more than once; a later check that cannot
+ * reach the API must not bring a rejected login back.
+ */
+const rejectedStoredLogins = new Set<string>();
+// Captured before project code runs: the set holds stored login tokens.
+const setHas = Set.prototype.has;
+const setAdd = Set.prototype.add;
+
+/**
+ * Drop a stored login the API rejects when a direct provider key serves the
+ * runs instead. Cloud would refuse every run anyway, and keeping the login
+ * routes runs with no model through it. A login that is valid, cannot be
+ * checked, or was chosen explicitly (an exported token or service layer) is
+ * kept, and so is any login when no key serves the default model or the
+ * project is linked: a linked project runs through Cloud and must prompt a
+ * fresh login.
+ */
+async function dropRejectedStoredLogin(
+  candidate: ApiCredentialCandidate | undefined,
+  linkedProjectSlug: string | undefined,
+): Promise<ApiCredentialCandidate | undefined> {
+  if (
+    candidate?.apiTokenSource !== "token-store" ||
+    normalizeEnvValue(linkedProjectSlug) ||
+    normalizeEnvValue(getEnv("VERYFRONT_PROJECT_SLUG")) ||
+    normalizeEnvValue(getEnv("VERYFRONT_SERVICE_LAYER")) ||
+    !normalizeEnvValue(getEnv(DEFAULT_MODEL_PROVIDER_KEY))
+  ) {
+    return candidate;
+  }
+  try {
+    const apiUrl = getApiUrl(candidate.validationEnv);
+    const rejection = `${apiUrl}\n${candidate.apiToken}`;
+    if (applyIntrinsic(setHas, rejectedStoredLogins, [rejection])) return undefined;
+    const transport = createVeryfrontApiOriginBoundOutboundFetch(apiUrl);
+    if (
+      !await isCredentialRejected(
+        candidate.apiToken,
+        apiUrl,
+        transport,
+        STORED_LOGIN_CHECK_TIMEOUT_MS,
+      )
+    ) {
+      return candidate;
+    }
+    applyIntrinsic(setAdd, rejectedStoredLogins, [rejection]);
+    return undefined;
+  } catch {
+    return candidate;
+  }
 }
 
 function updateRuntimeAuthProvenance(
