@@ -21,6 +21,7 @@ import { cleanupBundler } from "../../../src/rendering/cleanup.ts";
 import { TestDataFactory } from "../../fixtures/test-data-factory.ts";
 import { withTestContext } from "../../_helpers/context.ts";
 import { drainEventLoop } from "../../_helpers/utils.ts";
+import { createTestDevServer, withTestServer } from "../../_helpers/server.ts";
 import { startDevServer } from "../../../src/server/dev-server.ts";
 
 describe("Dev Server Integration", { sanitizeOps: false, sanitizeResources: false }, () => {
@@ -52,6 +53,33 @@ describe("Dev Server Integration", { sanitizeOps: false, sanitizeResources: fals
         const response = await fetch(`http://127.0.0.1:${server.port}/readyz`);
         assertEquals(response.status, 200);
         await response.body?.cancel();
+      });
+    });
+
+    it("withTestServer reports ready without waiting for a page to render", async () => {
+      await withTestContext("with-test-server-unrendered-page-ready", async (context) => {
+        await mkdir(join(context.projectDir, "app"), { recursive: true });
+        await writeTextFile(
+          join(context.projectDir, "app", "page.tsx"),
+          "await new Promise(() => {});\n" +
+            "export default function Page() { return <p>Never</p>; }\n",
+        );
+
+        let status = 0;
+        await withTestServer(
+          async () =>
+            await createTestDevServer({
+              projectDir: context.projectDir,
+              port: await context.allocatePort(),
+              enableHMR: false,
+            }),
+          async (server) => {
+            const ready = await fetch(`http://${server.hostname}:${server.port}/readyz`);
+            status = ready.status;
+            await ready.body?.cancel();
+          },
+        );
+        assertEquals(status, 200);
       });
     });
 
