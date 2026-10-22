@@ -1,23 +1,12 @@
 ---
 title: "Workflows"
-description: "DAG-based multi-step workflows with branching and parallelism."
+description: "Define, execute, and verify a sequence of agent and tool steps."
 order: 26
 ---
 
-A workflow is a file in `workflows/` that declares ordered steps. Each step runs an agent or a tool. The workflow runtime passes outputs between steps.
+Define and run an ordered sequence of agents and tools. Start with a sequential workflow, then add branches, parallel steps, or approvals where the task requires them.
 
-Use workflows for multi-step work that needs ordering, branching, parallelism, retries, timeouts, or approvals.
-
-Workflow files are definitions. Starting a workflow creates a workflow run. On
-the Veryfront platform, that workflow run is backed by a runtime adapter so it can be
-queued, retried, canceled, logged, and observed in the Runs panel.
-
-| Concept         | Meaning                                                                                                  |
-| --------------- | -------------------------------------------------------------------------------------------------------- |
-| Workflow        | The definition stored in `workflows/`.                                                                   |
-| Workflow run    | The canonical public execution record for a started workflow.                                            |
-| Runtime adapter | The implementation detail that dispatches the workflow run to a runtime target or infrastructure worker. |
-| Schedule        | A trigger definition that creates workflow runs over time when its target starts with `workflow:`.       |
+For the distinction between a workflow definition and its executions, see [Workflow](/code/concepts/workflow).
 
 ## Prerequisites
 
@@ -240,6 +229,45 @@ Use a schedule with a `workflow:<workflow-id>` target when a workflow must run o
 
 Each scheduled trigger creates a workflow run backed by the selected runtime adapter.
 
+## Workflow context persistence
+
+Workflow context must be JSON-representable. Veryfront stores suspended workflow
+runs as JSON, and the memory backend applies the same persistence contract as
+durable backends so local development and production read back the same values.
+
+Use plain JSON values in step output: strings, numbers, booleans, null, arrays,
+and plain objects. Values that JSON cannot encode, such as `BigInt` or circular
+references, fail persistence with a redacted context path. Veryfront keeps the
+fixed `input` and `step` structure and array indices, but replaces runtime
+object keys with `<redacted>` so payload identifiers do not enter logs.
+
+Some JavaScript values can be stored only after JSON rewrites them. By default,
+Veryfront logs a warning and persists the normalized JSON value:
+
+| Value written to context | Value read back from context        |
+| ------------------------ | ----------------------------------- |
+| `new Date(0)`            | `"1970-01-01T00:00:00.000Z"`        |
+| `new Map([["a", 1]])`    | `{}`                                |
+| `{ missing: undefined }` | `{}`                                |
+| `Number.NaN`             | `null`                              |
+| Class instance           | Plain object with enumerable fields |
+
+On edge hosts that cannot identify proxies without invoking project hooks,
+default mode still warns for built-ins that Veryfront can identify from native
+slots. It cannot safely distinguish every class instance from a proxy-backed
+plain object, so use `strictContext` when persistence must reject every value
+whose identity cannot be verified.
+
+Enable `strictContext` on a built-in backend to reject these lossy values
+instead of warning and normalizing:
+
+```ts
+import { MemoryBackend, RedisBackend } from "veryfront/workflow";
+
+const backend = new MemoryBackend({ strictContext: true });
+const durableBackend = new RedisBackend({ url: Deno.env.get("REDIS_URL")!, strictContext: true });
+```
+
 ## Steps
 
 A step runs an agent or a tool:
@@ -402,9 +430,7 @@ await workflows.approve(runId, pending.id, "editor@example.com", "Ship it", {
 The submitted `data` is validated against the wait node's `responseSchema`
 before it is persisted. A non-conformant answer is refused with an error and
 the approval stays pending. Validation only covers wait nodes declared in a
-static step list.
-
-When a workflow's `steps`, or the `steps` of a nested loop,
+static step list. When a workflow's `steps`, or the `steps` of a nested loop,
 is a function, the node list depends on runtime state, so no schema can be
 resolved for the decision and the answer is accepted unvalidated. After
 approval, the decision lands in the workflow context under the wait node's id,
@@ -730,87 +756,13 @@ in-memory client is not readable from any other.
 
 ## Remove old terminal workflow runs
 
-Use `reapTerminalRuns` from a periodic maintenance process to delete old
-completed, failed, and cancelled workflow runs. Waiting and active runs are
-never eligible. The cutoff is exclusive, and each call deletes at most `limit`
-runs. The sweep does not modify workflow definitions, schedules, tasks,
-webhooks, or prompts.
+For retention settings, startup precautions, and the maintenance script, see [Remove old workflow runs](/code/guides/workflow-retention).
 
-Run the scheduler as one long-lived maintenance process. Before its first
-start, stop every workflow worker. Restart the workers only after the initial
-repair finishes, and keep this process running so every scheduled sweep reuses
-the same backend.
+## Next
 
-```ts
-import { reapTerminalRuns, RedisBackend } from "veryfront/workflow";
+- [Extend a workflow](/code/guides/workflows-advanced): Loops, artifacts, and progress interfaces.
+- [Show workflow progress](/code/guides/workflow-ui): Mount authenticated routes and connect a React dashboard.
 
-const redisUrl = Deno.env.get("REDIS_URL");
-if (!redisUrl) throw new Error("Set REDIS_URL before running workflow retention");
+## Related
 
-const backend = new RedisBackend({ url: redisUrl });
-const retentionAgeMs = 30 * 24 * 60 * 60 * 1000;
-const sweepIntervalMs = 24 * 60 * 60 * 1000;
-
-async function runSweep(): Promise<void> {
-  const completedBefore = new Date(Date.now() - retentionAgeMs);
-  while (true) {
-    const result = await reapTerminalRuns(backend, {
-      completedBefore,
-      limit: 100,
-    });
-    if (!result.supported) {
-      throw new Error("The configured workflow backend does not support terminal-run retention");
-    }
-    if (!result.hasMore) break;
-  }
-}
-
-async function runScheduler(): Promise<never> {
-  while (true) {
-    await runSweep();
-    await new Promise<void>((resolve) => setTimeout(resolve, sweepIntervalMs));
-  }
-}
-
-try {
-  await runScheduler();
-} finally {
-  await backend.destroy();
-}
-```
-
-The backend verifies the run identity, terminal status, completion time, and
-mutation revision in the same operation that deletes its state. A failed run
-that starts retrying, or receives another state patch after the sweep reads it,
-is retained. A failed run with accepted retry work still queued or pending is
-not selected.
-
-In that case, or when Redis must resume bounded queue cleanup,
-`hasMore` is `false` so the loop does not immediately reselect the refreshed
-run. The next scheduled maintenance invocation can retry it. After deletion,
-reads return the existing not-found result; this retention API does not create
-tombstones.
-
-Redis stores a completion-time index and reads at most `limit + 1` candidate
-records per sweep without hydrating run input, output, or context. Completion
-times use numeric Redis scores, so ordering stays chronological for every valid
-JavaScript `Date`. One deletion script cleans at most 100 indexed stream
-messages for a run, then defers final deletion if more remain.
-
-Each call
-requests one run-key `SCAN` page with `COUNT 100` and reads at most 100 queue
-entries during repair. Redis completes both repair cycles before
-returning candidates. Once both finish, that backend instance queries the
-completed index directly and does not restart repair between deletion batches.
-
-A new backend instance performs its own bounded repair. The queue cycle uses a
-fixed stream high-water mark, so current queue traffic does not keep the
-one-time repair open forever.
-
-Before a new Redis maintenance backend starts its first retention sweep,
-stop every workflow worker. Run the repair until `hasMore` becomes `false`, then
-restart workers on the version that provides retention and keep the maintenance
-backend long-lived. Repeat this drain if you replace the maintenance backend.
-The repair requeues Redis pending deliveries that the maintenance process does
-not own, so running it beside active workers can duplicate their work. During
-repair, `hasMore` can be `true` even when one sweep examines no eligible runs.
+- [Workflow API](/code/api-reference/veryfront/workflow): Types and configuration.

@@ -51,6 +51,7 @@ import { lintHelp } from "../commands/lint/command-help.ts";
 import { skillsHelp } from "../commands/skills/command-help.ts";
 import { configHelp } from "../commands/config/command-help.ts";
 import { openHelp } from "../commands/open/command-help.ts";
+import { docsHelp } from "../commands/docs/command-help.ts";
 import { completionsHelp } from "../commands/completions/command-help.ts";
 import { extensionHelp } from "../commands/extension/command-help.ts";
 import { webhookHelp } from "../commands/webhook/command-help.ts";
@@ -105,6 +106,7 @@ export const COMMANDS: CommandRegistry = {
   skills: skillsHelp,
   config: configHelp,
   open: openHelp,
+  docs: docsHelp,
   completions: completionsHelp,
   extension: extensionHelp,
   webhook: webhookHelp,

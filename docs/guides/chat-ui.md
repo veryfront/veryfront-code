@@ -15,6 +15,8 @@ For headless state, see [Chat hooks](./chat-hooks.md).
   [Create agent](../getting-started/create-agent.md)).
 - A configured provider for the route's agent (see [Providers](./providers.md)).
 
+The first example imports `app/markdown-renderer.tsx`. If your project wasn't created from a chat starter, [create that renderer first](#render-markdown-in-chat), then return to the preset below.
+
 ## Add the preset UI
 
 Create a client page:
@@ -407,7 +409,7 @@ export function MarkdownRenderer({ source }: MarkdownRendererProps): React.JSX.E
         ),
         // Auto-loading images would let an injected answer beacon to arbitrary
         // hosts. Render inert text, not an anchor: Markdown allows a linked
-        // image wrapped in a link, and an anchor here would nest inside
+        // image (`[![alt](src)](href)`), and an anchor here would nest inside
         // that link, which is invalid HTML and breaks hydration.
         img: ({ src, alt }) => (
           <span title={typeof src === "string" ? src : undefined}>{alt || "image"}</span>

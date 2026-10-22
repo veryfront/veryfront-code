@@ -1,10 +1,10 @@
 ---
 title: "Skills"
-description: "Define project-level agent capabilities as SKILL.md files with prompt augmentation, tool restrictions, and script execution."
+description: "Define project skills with reusable instructions, references, and scripts."
 order: 29
 ---
 
-A skill is a directory under `skills/` containing a `SKILL.md` file. It bundles structured agent instructions, an `allowed_tools` policy, optional resource and reference files, static assets, and executable scripts. The format follows the [agentskills.io](https://agentskills.io) specification.
+A skill is a directory under `skills/` containing a `SKILL.md` file. It bundles structured agent instructions, optional tool pre-approval metadata, optional resource and reference files, static assets, and executable scripts. The format follows the [agentskills.io](https://agentskills.io) specification.
 Use [veryfront/skill](../api-reference/veryfront/skill.md) for parser,
 registry, tool, and policy helpers in framework code.
 
@@ -70,14 +70,14 @@ skills/<skill-id>/
 
 ## Frontmatter fields
 
-| Field           | Required | Description                                                                  |
-| --------------- | -------- | ---------------------------------------------------------------------------- |
-| `name`          | Yes      | Skill identifier (lowercase alphanumeric + hyphens, 1-64 chars)              |
-| `description`   | Yes      | Human-readable description (max 1024 chars)                                  |
-| `allowed_tools` | No       | Space-delimited tool IDs or prefix patterns (e.g. `api:*`) the agent may use |
-| `license`       | No       | SPDX license identifier                                                      |
-| `compatibility` | No       | Compatibility constraints                                                    |
-| `metadata`      | No       | Arbitrary key-value pairs                                                    |
+| Field           | Required | Description                                                               |
+| --------------- | -------- | ------------------------------------------------------------------------- |
+| `name`          | Yes      | Skill identifier (lowercase alphanumeric + hyphens, 1-64 chars)           |
+| `description`   | Yes      | Human-readable description (max 1024 chars)                               |
+| `allowed_tools` | No       | Optional tool pre-approval metadata; not a runtime authorization boundary |
+| `license`       | No       | SPDX license identifier                                                   |
+| `compatibility` | No       | Compatibility constraints                                                 |
+| `metadata`      | No       | Arbitrary key-value pairs                                                 |
 
 ## Discovery
 
@@ -88,6 +88,9 @@ skills/
   code-review/SKILL.md     → skill ID: "code-review"
   data-analysis/SKILL.md   → skill ID: "data-analysis"
 ```
+
+<span id="skill-execution-flow"></span>
+<span id="skill-script-execution"></span>
 
 ## Agent tools
 
@@ -195,36 +198,34 @@ The agent should call `veryfront__load_skill` before applying the skill instruct
 
 ## Tool restrictions
 
-The `allowed_tools` field restricts which tools an agent can use while a skill is active. Use exact IDs or prefix wildcards:
+The `allowed-tools` field (also accepted as `allowed_tools`) records tool pre-approval metadata. Veryfront preserves it but does not enforce it as a runtime authorization boundary. Configure the agent's `tools` to limit available tools. The following values are metadata, not enforced access rules:
 
 ```yaml
 # Exact tool IDs
 allowed_tools: veryfront__load_skill veryfront__load_skill_reference veryfront__execute_skill_script
 
-# Prefix wildcards
-allowed_tools: api:* database:read
+When an agent uses a skill, the flow is:
 
-# No restriction (agent can use all tools)
-# omit the field entirely
+# Omit this optional metadata when it is not needed
 ```
 
 ## CLI commands
 
 ```bash
 # Create a new skill
-veryfront skills create my-skill
+veryfront skills create code-review
 
 # Validate a skill
-veryfront skills validate skills/my-skill
+veryfront skills validate skills/code-review
 ```
 
 ## Verify it worked
 
-1. Run `veryfront skills validate skills/my-skill`. A passing skill prints
+1. Run `veryfront skills validate skills/code-review`. A passing skill prints
    no errors and exits with status `0`.
 2. Restart `veryfront dev`. The dev log should list each registered skill
    under its directory name.
 3. Send a message that should trigger the skill (for example, a code-review
    skill should engage when the message asks to "review this diff"). The
-   AG-UI response should reference the skill's instructions or call only
-   the tools listed in `allowed_tools`.
+   AG-UI response should apply the skill's instructions. Verify tool access
+   separately through the agent's `tools` configuration.

@@ -206,7 +206,7 @@ every query term.
 Search work is bounded to 4,096 catalog candidates. Each parameter schema is
 inspected iteratively with depth, node, and byte budgets, and the whole search
 has an aggregate schema-work budget. A malformed, cyclic, or over-budget schema
-cannot abort the search; that tool cannot match by parameter description.
+cannot abort the search; that tool simply cannot match by parameter description.
 Name and description matching remains available for other healthy tools.
 
 The search loads schemas from the current authorized `tools` catalog. It also
@@ -227,8 +227,7 @@ private loaded-tool checkpoint. It fails the continuation if required
 persistence is unavailable, and it excludes the checkpoint from public
 messages and replay.
 
-Omit `model` to use the Cloud default (`mistral/mistral-small-2503`) with hosted
-context, or `openai/gpt-5-nano` with direct credentials. Set
+In most projects, you can omit `model` and use `openai/gpt-5.4-nano`. Set
 `model: "auto"` when you want runtime defaults to choose local or Veryfront
 Cloud inference automatically.
 

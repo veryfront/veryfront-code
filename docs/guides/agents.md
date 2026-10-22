@@ -8,9 +8,7 @@ An agent is a file in `agents/` that exports a system prompt, optional tools,
 optional memory, and optional skills. The runtime auto-discovers it on startup
 and exposes it via `getAgent(id)` or a route created with `createAgUiHandler()`.
 
-For the normal path, omit `model` and let runtime conventions choose: local
-inference by default, Veryfront Cloud when `VERYFRONT_API_TOKEN` plus project
-context are set.
+Omit `model` to use `openai/gpt-5.4-nano`, or set `model: "auto"` for runtime selection. Configure the inference credentials described in [Providers](/code/guides/providers).
 
 ## Prerequisites
 
@@ -55,11 +53,7 @@ The file path provides the agent id. For example, `agents/support.md` registers
 `support` and can be invoked through the same project runtime and control-plane
 surfaces as `agents/support.ts`.
 
-## Per-agent skills and tools
-
-A markdown agent can own its skills and tools by using a directory instead of a
-single file. Put the agent definition in `AGENT.md` and colocate its
-capabilities beside it:
+## Verify it worked
 
 ```
 agents/
@@ -72,24 +66,21 @@ agents/
       fetch-paper.ts    # a colocated tool, registered as "researcher--fetch-paper"
 ```
 
-The directory name is the agent id. The flat `agents/{id}.md` form still works
-for agents that do not own skills or tools, and both layouts can coexist.
+```ts
+// app/api/debug/agent/route.ts
+import { getAgent } from "veryfront/agent";
 
-Colocated capabilities are registered with owner metadata and namespaced
-`{agentId}--{name}`. Ownership controls visibility everywhere: an agent only
-ever sees unowned (project-global) capabilities plus its own - never another
-agent's. This one rule applies to `skills:` and `tools:` for every agent kind
-(TypeScript, flat markdown, and directory markdown):
+export async function GET() {
+  const agent = getAgent("assistant");
+  if (!agent) throw new Error("Agent not found: assistant");
 
-```md
----
-name: Researcher
-model: anthropic/claude-sonnet-4-6
-skills: true # all skills visible to this agent (global + own)
-tools: [fetch-paper] # own short names resolve first, then global tool ids
----
+  const result = await agent.generate({ input: "Hello" });
+  return Response.json({ text: result.text });
+}
+```
 
-Research the question and cite every claim.
+```bash
+curl http://localhost:3000/api/debug/agent
 ```
 
 - Omit `skills` or use `skills: true` to advertise and authorize every skill
@@ -149,18 +140,6 @@ that support this control. Markdown agents accept `parallel-tool-calls: false`
 or `parallelToolCalls: false` in frontmatter. Omit the option to preserve the
 provider's default. This setting controls tool-call batching; it does not force
 the model to call a tool or change which tools it may use.
-
-File-read results from the immediately preceding user turn retain their content
-and version metadata so follow-up edits can use the file evidence. Older reads
-and large non-file results are compacted normally. Under context pressure, the
-existing best-effort token budget can still summarize the preceding turn.
-
-If a provider stops without producing assistant text or a new tool call after
-a completed tool, the runtime uses one remaining step to ask it to continue
-from the existing tool results. It preserves those results rather than
-rerunning the prior step. A second empty response, or an empty response with no
-remaining step, fails the run with `EMPTY_RESPONSE` instead of completing with
-an empty answer.
 
 ## Load broad tool catalogs progressively
 
@@ -374,7 +353,9 @@ configuration. `VERYFRONT_API_URL` selects the API endpoint;
 `VERYFRONT_API_TOKEN` and `VERYFRONT_PROJECT_SLUG` provide server-side identity.
 These environment variables do not grant tools by themselves.
 
-```ts
+```ts title="agents/project-reader.ts"
+import { agent } from "veryfront/agent";
+
 export default agent({
   id: "project-reader",
   system: "Read project files when needed.",
@@ -501,19 +482,13 @@ which skill's instructions are loaded and which reference and script files
 Ordinary tools are unaffected, whether they were emitted before or after
 `veryfront__load_skill`, and a failed `veryfront__load_skill` does not block the rest of the batch.
 
-## Skill script execution
+See [Skill execution flow](/code/guides/skills#skill-execution-flow) for loading instructions, references, and scripts in each runtime.
 
-Skill scripts run in one of two modes, selected automatically:
+### Skill script execution
 
-- **Local (development)**: When no Veryfront Cloud sandbox credentials are
-  available, scripts run as direct subprocesses on your machine via
-  `runCommand()`. No remote sandbox is needed.
-- **Cloud (production)**: When `SANDBOX_AUTH_TOKEN`, `VERYFRONT_API_TOKEN`, or
-  request-scoped Veryfront credentials are available, scripts are uploaded to
-  and executed inside a remote sandbox session.
+See [Skill script execution](/code/guides/skills#skill-script-execution) for local and sandbox execution.
 
-Local development does not require sandbox infrastructure. Scripts run as direct
-subprocesses.
+### Skill safety model
 
 ## Skill safety model
 
@@ -815,6 +790,67 @@ export default agent({
 });
 ```
 
+## Per-agent skills and tools
+
+A markdown agent can own its skills and tools by using a directory instead of a
+single file. Put the agent definition in `AGENT.md` and colocate its
+capabilities beside it:
+
+```
+agents/
+  researcher/
+    AGENT.md            # the agent definition (frontmatter + instructions)
+    SKILL.md            # the agent's own skill, loaded as load_skill("researcher")
+    skills/
+      cite/SKILL.md     # an extra skill, loaded as load_skill("researcher--cite")
+    tools/
+      fetch-paper.ts    # a colocated tool, registered as "researcher--fetch-paper"
+```
+
+The directory name is the agent id. The flat `agents/{id}.md` form still works
+for agents that do not own skills or tools, and both layouts can coexist.
+
+Colocated capabilities are registered with owner metadata and namespaced
+`{agentId}--{name}`. Ownership controls visibility everywhere: an agent only
+ever sees unowned (project-global) capabilities plus its own - never another
+agent's. This one rule applies to `skills:` and `tools:` for every agent kind
+(TypeScript, flat markdown, and directory markdown):
+
+```md
+---
+name: Researcher
+model: anthropic/claude-sonnet-4-6
+skills: true # all skills visible to this agent (global + own)
+tools: [fetch-paper] # own short names resolve first, then global tool ids
+---
+
+Research the question and cite every claim.
+```
+
+- Omit `skills` or use `skills: true` to advertise and authorize every skill
+  visible to the agent. Use `skills: []` to advertise none and to authorize no
+  project or configured skill for `load_skill`.
+- The difference between omitting `skills` and `skills: true` shows only when a
+  project has no skills at all. An agent that omitted it gets no skill tools,
+  because there is nothing for them to load. `skills: true` is a declaration,
+  so the tools stay whatever the registry holds.
+- `tools: true` - every currently scoped tool is authorized, while non-bootstrap
+  schemas are deferred behind `tool_search` until the agent searches for them.
+- `skills: [..]` / `tools: [..]` - each entry resolves as the agent's own
+  short name first, then as a global id. A colocated short name that shadows a
+  global id is reported at discovery so the reference stays unambiguous.
+- Use `denied-tools: [..]` in Markdown agent frontmatter to preserve explicit
+  tool denials. `deniedTools` is also accepted for serialized definitions. Do
+  not combine either form with `tools: true`: the serialized runtime cannot
+  represent "all except", so it fails closed and disables every project tool.
+  List the allowed tools explicitly when you also need denials.
+- Duplicate agent ids (flat file + directory) and agent ids whose sanitized
+  namespaces collide are reported as discovery errors.
+  The same catalog metadata is used by local and hosted runtime paths. Hosted
+  skill loading uses the catalog `sourcePath`, not a path reconstructed from the
+  namespaced id, so `load_skill("researcher--cite")` resolves to the actual
+  colocated `SKILL.md`.
+
 ## Agent configuration
 
 | Property                 | Type                                                                                                   | Description                                                                                                                                 |
@@ -888,16 +924,12 @@ claiming trusted replay acceptance.
 
 ## Verify it worked
 
-Save the agent file and restart `veryfront dev`. The quickest server-side
-check is a throwaway debug route:
+## Next
 
-```ts
-// app/api/debug/agent/route.ts
-import { getAgent } from "veryfront/agent";
+- [Build a chat UI](/code/guides/chat-ui): Connect an interface to the agent route.
+- [Define evals](/code/guides/evals): Test the agent against saved examples.
 
-export async function GET() {
-  const agent = getAgent("assistant");
-  if (!agent) throw new Error("Agent not found: assistant");
+## Related
 
   const result = await agent.generate({ input: "Hello" });
   return Response.json({ text: result.text });

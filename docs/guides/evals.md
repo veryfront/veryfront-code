@@ -120,28 +120,6 @@ gate failures, failed examples, flake classification for repeated examples,
 duration aggregates, and usage totals. Use `results.jsonl` when you need the
 full input, output, trace, and per-record metric evidence.
 
-## Progress and timeouts
-
-Agent eval cases often take a minute or more each, because every case makes
-real model requests. `veryfront eval` reports progress while cases run:
-
-- In an interactive terminal, one live line shows the eval, finished cases,
-  the current case, and elapsed time, for example
-  `[eval 2/3] disposition-agent 4/11 · case "label-and-move" · 3m 12s`.
-- Elsewhere, such as CI or a piped log, each finished case prints one line with
-  its duration.
-- A model request that fails transiently and is sent again prints a notice,
-  for example `Retrying model request (HTTP 429), attempt 2/3 in 1.0s`.
-
-`--quiet` and `--json` print no progress. Set `LOG_LEVEL=DEBUG` to also log
-each model request with its status, duration, and attempt number.
-
-Each case, including its metrics and checks, fails after 600 seconds by
-default with the `eval-record-timeout` error, and the eval continues with the
-next case. A model stream that stops sending data has no other deadline. Use
-`--record-timeout <seconds>` to change the limit, or `--record-timeout 0` to
-disable it.
-
 ## Tool evals
 
 Use `evalTool` when the target is one tool and the eval should avoid agent
@@ -417,15 +395,14 @@ metrics.agent.toolCallCount("orders_lookup", { exact: 1 }).gate();
 metrics.agent.noFailedTools().gate();
 metrics.ops.latency({ maxMs: 10_000 }).budget();
 metrics.ops.tokens({ maxTotal: 4_000 }).budget();
-metrics.ops.cost({ maxCredits: 0.5 }).budget();
+metrics.ops.cost({ maxUsd: 0.05 }).budget();
 ```
 
-`metrics.ops.cost` budgets the gateway `costCredits` of a record. A credit is
-the unit of account; the framework keeps no pricing table and does not convert
-credits to a currency. `maxUsd` is removed; `metrics.ops.cost({ maxUsd })`
-throws at construction and names `maxCredits`. Token and cost budgets fail
-when the measurement required by their configured limit is missing; absent
-usage evidence never passes a budget.
+`metrics.ops.cost` uses gateway `veryfrontBilledUsd` first, then
+`veryfrontChargeUsd`, legacy `costUsd`, and finally `providerCostUsd`. It does
+not maintain a separate pricing table inside the framework. Token and cost
+budgets fail when the measurement required by their configured limit is
+missing; absent usage evidence never passes a budget.
 
 Use `calledTool` when the agent must call a tool. Add `input` when the tool
 arguments must include specific fields. `match: "partial"` checks that the
@@ -1086,3 +1063,12 @@ veryfront eval deep-research
 
 The command exits with status `0` when all gate and budget checks pass. It exits
 with status `1` when any gate or budget check fails.
+
+## Next
+
+- [Compare eval runs and models](/code/guides/eval-comparison): Check a regression or evaluate another model.
+- [Export eval reports](/code/guides/eval-reporting): Share evidence with an external reporting system.
+
+## Related
+
+- [Eval API](/code/api-reference/veryfront/eval): Definitions, metrics, and reporters.

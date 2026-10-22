@@ -4,6 +4,8 @@ description: "Run and verify the dev-only Storybook workbench for shipped Veryfr
 order: 42
 ---
 
+This page is for framework contributors working in a `veryfront-code` repository checkout. Run these commands from that checkout, not from an application created with `veryfront init`.
+
 Keep shipped UI source under `src/react`.
 
 Storybook lives in the dev-only `storybook/` package. Use it to review the components that Veryfront ships without adding Storybook to the framework runtime.

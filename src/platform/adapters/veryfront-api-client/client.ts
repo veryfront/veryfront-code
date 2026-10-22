@@ -129,7 +129,7 @@ export interface VeryfrontApiStyleArtifacts {
  * aliases. `listEnvironmentFiles()`, `listAllEnvironmentFiles()` and
  * `getEnvironmentFile()` read the files an environment serves, addressed by environment
  * name; `lookupProjectByDomain()` finds the project and environment behind a custom
- * domain. See https://veryfront.com/docs/cloud/apis/environments.
+ * domain. See https://veryfront.com/docs/cloud/apis/deployment#environments-and-deployments.
  */
 export class VeryfrontApiClient {
   private config: VeryfrontAPIConfig & {

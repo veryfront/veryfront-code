@@ -1,25 +1,25 @@
 ---
 title: "Sandbox"
-description: "Run commands and manage files in isolated workspaces."
+description: "Run isolated commands and file operations in ephemeral sandbox sessions."
 order: 36
 ---
 
-A sandbox is an isolated workspace for commands and files. Private always-on sandboxes retain workspace files across runtime restarts. Use it for code generation, repo inspection, file transformation, or script execution that you do not want to run in your trusted runtime.
+A sandbox is a short-lived, isolated workspace for executing commands and file operations away from your app process. Use it for code generation, repo inspection, file transformation, or script execution that you do not want to run in your trusted runtime.
 
-The sandbox client talks to an authenticated sandbox API. You need either Veryfront Cloud credentials or your own compatible backing service for `/sandboxes`.
+The sandbox client talks to an authenticated sandbox session API. You need either Veryfront Cloud credentials or your own compatible backing service for `/sandbox-sessions`.
 
 ## Prerequisites
 
-- A reachable `/sandboxes` API and credentials for that API.
-- Outside a scoped Veryfront Cloud request, set both `VERYFRONT_API_URL` and
-  `VERYFRONT_API_TOKEN`, or pass `apiUrl` and `authToken` explicitly.
+- A Veryfront Cloud token (`VERYFRONT_API_TOKEN`) or a self-hosted
+  `/sandbox-sessions` API and matching `VERYFRONT_API_URL`.
 - A reachable network from the process that calls `Sandbox.create()`.
 
-## Create a sandbox
+## Create a sandbox session
 
 Use `Sandbox.create()` with sandbox API credentials. In local development,
 self-hosted apps, CI, and other runtimes outside a Veryfront-hosted request,
-set both the API URL and credentials. The client has no default API URL:
+provide credentials explicitly. Set `VERYFRONT_API_TOKEN`, and set
+`VERYFRONT_API_URL` when you need a non-default API endpoint.
 
 ```bash
 export VERYFRONT_API_URL="<API_URL>"
@@ -32,10 +32,10 @@ and credentials. You do not need separate environment values for that request.
 ```ts
 import { Sandbox } from "veryfront/sandbox";
 
-const sandbox = await Sandbox.create({ projectReference: "<PROJECT_ID>" });
+const sandbox = await Sandbox.create();
 ```
 
-Verify the sandbox with a command before doing longer work:
+Verify the session with a command before doing longer work:
 
 ```ts
 const result = await sandbox.runCommand("pwd");
@@ -43,32 +43,30 @@ console.log(result.exitCode);
 console.log(result.stdout);
 ```
 
-You can also reconnect to an existing sandbox:
+You can also reconnect to an existing session:
 
 ```ts
 const sandbox = await Sandbox.get(sandboxId);
 ```
 
-If you already know both the sandbox ID and its runtime endpoint, attach without doing a reconnect lookup:
+If you already know both the sandbox session ID and its runtime endpoint, attach without doing a reconnect lookup:
 
 ```ts
 const sandbox = Sandbox.attach({
-  id: sandboxId,
+  id: sessionId,
   endpoint: sandboxEndpoint,
 });
 ```
 
-To defer sandbox creation until the first command or file operation, use the lazy client:
+If you want to defer session creation until the first command or file operation, use the lazy client:
 
 ```ts
 const sandbox = Sandbox.createLazy({
-  projectReference: "<PROJECT_ID>",
+  projectId: "proj_123",
 });
 ```
 
-For custom runtime routing, `resolveRuntimeEndpoint` receives `{ endpoint, sandboxId }` and returns the runtime URL. Supply an explicit `authToken`; custom routing does not use stored login credentials.
-
-Use `getProjectId()` when the billing project is selected at runtime. It is read when the sandbox is created:
+If your project context can change over time, prefer `getProjectId()` so lazy exec and async run calls inherit the latest project reference automatically:
 
 ```ts
 const sandbox = Sandbox.createLazy({
@@ -79,15 +77,16 @@ const sandbox = Sandbox.createLazy({
 To override the resolved credentials, pass `authToken` explicitly. This can be a
 JWT or a Studio-generated API key.
 
-Pass `projectReference` when creating a sandbox to select its billing project.
+For project-scoped billing or isolation, pass `projectId` when creating the
+session.
 
 ```ts
 const sandbox = await Sandbox.create({
-  projectReference: "<PROJECT_ID>",
+  projectId: "proj_123",
 });
 ```
 
-## Run commands
+## Execute commands
 
 Buffered execution:
 
@@ -120,8 +119,8 @@ console.log(content);
 ## Lifecycle best practices
 
 - Always call `await sandbox.close()` in `finally` blocks.
-- Prefer `Sandbox.createLazy()` for agent-style workflows that may not need a sandbox every run.
-- Use `sandbox.heartbeat()` during long operations to avoid idle timeouts.
+- Prefer `Sandbox.createLazy()` for agent-style workflows that may not need a session every run.
+- Use `sandbox.heartbeat()` during long-running sessions to avoid idle timeouts.
 - Persist `sandbox.id` only when you need reconnect semantics.
 - Keep auth tokens and API keys server-side only. Do not expose them to browsers.
 
@@ -130,10 +129,10 @@ console.log(content);
 ```ts
 import { Sandbox } from "veryfront/sandbox";
 
-const sandbox = await Sandbox.create({ projectReference: "<PROJECT_ID>" });
+const sandbox = await Sandbox.create();
 
 try {
-  const result = await sandbox.runCommand("echo 'ready'");
+  const result = await sandbox.executeCommand("echo 'ready'");
   console.log(result.stdout);
 } finally {
   await sandbox.close();
@@ -145,7 +144,7 @@ try {
 Run the example above in a Node script with the env vars set. A working
 sandbox:
 
-- Prints `ready` to stdout from `runCommand`.
+- Prints `ready` to stdout from `executeCommand`.
 - Returns `exitCode: 0` from the command result.
 - Deletes its temporary sandbox on `sandbox.close()`.
 

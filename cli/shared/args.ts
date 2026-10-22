@@ -6,6 +6,9 @@
  * @module cli/shared/args
  */
 
+import { CLI_FLAG_ALIASES, GLOBAL_BOOLEAN_FLAGS } from "./global-flags.ts";
+export { GLOBAL_BOOLEAN_FLAGS } from "./global-flags.ts";
+
 import { INVALID_ARGUMENT } from "veryfront/errors";
 import type { Schema } from "veryfront/extensions/schema";
 import { COMMANDS } from "../help/command-definitions.ts";
@@ -398,20 +401,6 @@ const COMMAND_VALUE_ARG_KEYS: Readonly<Record<string, readonly string[]>> = {
   workflow: ["action", "name", "input"],
 };
 
-/** Boolean options accepted by every command, regardless of the command word. */
-export const GLOBAL_BOOLEAN_FLAGS: ReadonlySet<string> = new Set([
-  "help",
-  "version",
-  "json",
-  "yes",
-  "quiet",
-  "verbose",
-  "no-input",
-  "no-color",
-  "color",
-  "no-animation",
-]);
-
 function getDocumentedFlagKind(
   key: string,
   positionalArgs: string[],
@@ -730,16 +719,6 @@ function parse(
 /** Parse raw CLI arguments into a structured `ParsedArgs` object with aliases. */
 export function parseCliArgs(args: string[]): ParsedArgs {
   return parse(args, {
-    alias: {
-      h: "help",
-      v: "version",
-      q: "quiet",
-      f: "force",
-      s: "strict",
-      j: "json",
-      o: "output",
-      y: "yes",
-      m: "mode",
-    },
+    alias: CLI_FLAG_ALIASES,
   }) as ParsedArgs;
 }

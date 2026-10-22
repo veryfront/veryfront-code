@@ -38,6 +38,8 @@ import { normalizeNpmPackageMetadata } from "./npm-package-metadata.ts";
 import { assertNpmRuntimeHelperContract } from "./npm-runtime-helper-contract.ts";
 import { normalizeEsmShReactNpmShims } from "./npm-react-shims.ts";
 import { NPM_NODE_ENGINE } from "./runtime-support.ts";
+import { copyPublicDocs } from "./copy-public-docs.ts";
+import { docsSourceIdentity } from "../docs/package-public-docs.ts";
 
 const denoJson = JSON.parse(await Deno.readTextFile("./deno.json"));
 const version = denoJson.version;
@@ -363,6 +365,7 @@ await build({
 		await Deno.copyFile("./LICENSE", "./npm/LICENSE");
 		await Deno.copyFile("./NOTICE", "./npm/NOTICE");
 		await Deno.copyFile("./README.md", "./npm/README.md");
+		await copyPublicDocs(Deno.cwd(), "./npm", version, await docsSourceIdentity(Deno.cwd()));
 
 		// Copy base tsconfig for user projects to extend
 		await Deno.writeTextFile("./npm/tsconfig.json", JSON.stringify({
@@ -392,8 +395,10 @@ await build({
 		for (const extensionDirectory of STANDARD_ROOT_NPM_EXTENSION_DIRECTORIES) {
 			pkg.dependencies[`@veryfront/${extensionDirectory}`] = version;
 		}
-		pkg.files = ["esm", "script", "bin", "assets", "tsconfig.json", "LICENSE", "NOTICE", "README.md"];
+		pkg.files = ["esm", "script", "bin", "assets", "docs", "tsconfig.json", "LICENSE", "NOTICE", "README.md"];
 		pkg.exports["./tsconfig.json"] = "./tsconfig.json";
+		pkg.exports["./package.json"] = "./package.json";
+		pkg.exports["./docs/*"] = "./docs/*";
 		addTypesExportEntries(pkg.exports);
 		normalizeNpmPackageMetadata(pkg);
 		await Deno.writeTextFile(pkgPath, JSON.stringify(pkg, null, 2));

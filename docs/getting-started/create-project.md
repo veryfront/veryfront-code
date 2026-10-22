@@ -176,8 +176,6 @@ test-app/
       page.mdx      # /about (MDX page)
   public/
     favicon.svg
-  globals.css       # Tailwind entry stylesheet
-  globals.d.ts
   package.json
   tsconfig.json
 ```

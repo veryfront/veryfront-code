@@ -633,7 +633,7 @@ describe("eval/model-access", () => {
     );
     assertEquals(
       error.suggestion,
-      "Veryfront Cloud refused the model request for billing or entitlement reasons, not authentication. Add AI credits or upgrade the plan for the account that owns the linked project at https://veryfront.com/settings/billing, then run the eval again. See https://veryfront.com/docs/api/errors/insufficient-credits",
+      "Veryfront Cloud refused the model request for billing or entitlement reasons, not authentication. Add AI credits or upgrade the plan for the account that owns the linked project at https://veryfront.com/settings/billing, then run the eval again. See https://veryfront.com/docs/cloud/billing",
     );
     assertEquals(isEvalModelAccessDeniedError(error), true);
     assertEquals(isEvalModelAccessDeniedError(cause), false);

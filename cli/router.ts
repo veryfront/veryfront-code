@@ -127,6 +127,16 @@ const commands: Record<string, CommandLoader> = {
   "skills": async () => (await import("./commands/skills/handler.ts")).handleSkillsCommand,
   "config": async () => (await import("./commands/config/handler.ts")).handleConfigCommand,
   "open": async () => (await import("./commands/open/handler.ts")).handleOpenCommand,
+  "docs": async () => async (args) => {
+    const { runDocsCommand } = await import("./commands/docs/command.ts");
+    const options = [
+      ...args._.slice(1).map(String),
+      ...(args.json || args.j ? ["--json"] : []),
+      ...(args.help || args.h ? ["--help"] : []),
+      ...(typeof args.output === "string" ? ["--output", args.output] : []),
+    ];
+    exitProcess(await runDocsCommand(options));
+  },
   "completions": async () =>
     (await import("./commands/completions/handler.ts")).handleCompletionsCommand,
   "webhook": async () => (await import("./commands/webhook/handler.ts")).handleWebhookCommand,

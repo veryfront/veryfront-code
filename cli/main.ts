@@ -14,6 +14,12 @@ if (Deno.args[0] === "__veryfront_internal_scaffold_writer") {
   Deno.exit(await runSecureScaffoldWriterProcess());
 }
 
+// Documentation is available even outside a project or with broken application configuration.
+if (Deno.args[0] === "docs") {
+  const { runDocsCommand } = await import("./commands/docs/command.ts");
+  Deno.exit(await runDocsCommand(Deno.args.slice(1)));
+}
+
 // Set the CLI logger preset before importing modules that may log during initialization.
 const { setLoggerPreset, setLoggerStderrOnly } = await import("#cli/logger-config");
 setLoggerPreset("cli");

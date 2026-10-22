@@ -4,21 +4,14 @@ description: "Install and connect the Veryfront Salesforce integration with per-
 order: 50
 ---
 
-Use this guide to connect a Salesforce org to the hosted Veryfront API. In the
-managed hosted flow, the lifecycle is catalog, connect, then call a tool. It
-does not require an integration policy or separate enablement step. If the
-agent's source defines an `integrations.allow` map, that source allowlist still
-narrows which Salesforce tools are eligible.
-Local and self-hosted Veryfront Code execution follows the local credential
-and exact-grant requirements described below. Choose per-user OAuth when each action
-must use an individual's Salesforce access. Choose a service account for
-scheduled or project-owned automation.
+Use this guide to connect a Salesforce org to Veryfront. Choose per-user OAuth
+when each action must use an individual's Salesforce access. Choose a service
+account for scheduled or project-owned automation.
 
 ## Prerequisites
 
 - A Salesforce administrator for the target org.
-- A Veryfront project with Salesforce tools declared in an agent, or a local
-  Veryfront Code project that loads the tools explicitly.
+- A Veryfront project with Salesforce tools declared in an agent.
 - The hosted Veryfront API for per-user OAuth, which supplies the Salesforce
   provider adapter. The generic runtime does not scaffold Salesforce OAuth
   routes. An embedding host that supplies its own Salesforce adapter must declare
@@ -40,16 +33,15 @@ authorization request.
 4. Wait for the installation to complete.
 5. In Salesforce Setup, open **External Client App Manager** and select **Veryfront**.
 6. Confirm that the app is **Packaged (Installed)** and **Enabled**.
-7. Under **Policies**, select the Salesforce permitted-users setting. The beta package permits all users to self-authorize. Restrict access to the required profile or permission set when the org uses a tighter Salesforce access setting.
+7. Under **Policies**, select the permitted-users policy. The beta package permits all users to self-authorize. Restrict access to the required profile or permission set when the org uses a tighter access policy.
 
 Install the beta package in a sandbox or test org before installing it in a
 production Salesforce org.
 
-In Veryfront, discover the Salesforce integration and its tools, then start the
-connection from the integration prompt or project integration settings. Sign in
-to the Salesforce org where the package is installed and approve consent. After
-the connection reports `connected`, call a read-only Salesforce tool to verify
-access. No policy update is required before the call.
+In Veryfront, open the project and start the Salesforce connection from the
+integration prompt or project integration settings. Sign in to the Salesforce
+org where the package is installed, approve consent, then run a read-only
+Salesforce tool to verify access.
 
 Never paste a Salesforce consumer secret into an agent prompt, project file,
 ticket, or client-side environment variable.
