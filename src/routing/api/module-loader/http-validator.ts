@@ -181,15 +181,6 @@ export interface LocalWorkerSpecifier {
   readonly resolutionBase: "module" | "route";
 }
 
-/**
- * Validate a handler module's imports, workers and capabilities against the
- * remote-import allow-list, and describe how the loader must execute it.
- *
- * Throws when the module cannot be parsed, imports a host outside the
- * allow-list or a restricted runtime module, starts a worker the allow-list
- * cannot vet, may generate code, or has a dynamic import with a non-literal
- * specifier.
- */
 /** Options for {@linkcode validateHTTPImports}. */
 export interface HTTPImportValidationOptions extends SourceParseOptions {
   /** The module's path or URL, named in a rejection so the reader can find it. */
@@ -214,6 +205,15 @@ function dynamicCodeGenerationMessage(
     `Use a Map, or a literal key such as obj["name"].`;
 }
 
+/**
+ * Validate a handler module's imports, workers and capabilities against the
+ * remote-import allow-list, and describe how the loader must execute it.
+ *
+ * Throws when the module cannot be parsed, imports a host outside the
+ * allow-list or a restricted runtime module, starts a worker the allow-list
+ * cannot vet, may generate code, or has a dynamic import with a non-literal
+ * specifier.
+ */
 export async function validateHTTPImports(
   source: string,
   allowedHosts: string[],

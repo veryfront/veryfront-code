@@ -5814,12 +5814,6 @@ function applyExportedCapabilityAlias(
 }
 
 /**
- * Parse executable JavaScript/TypeScript and classify capabilities that a raw
- * text scan cannot distinguish from inert strings, comments, types, or local
- * bindings. A null result means the parser could not read the source; callers
- * must retain their conservative fail-closed fallback in that case.
- */
-/**
  * Identifier names only: a read such as `c[lookup("<TOKEN>")]` is shown as
  * `c[…]`, so no literal, comment or call argument reaches an error or a log.
  */
@@ -5839,6 +5833,12 @@ function sourceLocation(node: ASTNode): SourceLocation {
   };
 }
 
+/**
+ * Parse executable JavaScript/TypeScript and classify capabilities that a raw
+ * text scan cannot distinguish from inert strings, comments, types, or local
+ * bindings. A null result means the parser could not read the source; callers
+ * must retain their conservative fail-closed fallback in that case.
+ */
 export async function analyzeSourceCapabilities(
   source: string,
   options: SourceParseOptions = {},

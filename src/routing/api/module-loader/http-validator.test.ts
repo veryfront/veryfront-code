@@ -1759,15 +1759,18 @@ describe("routing/api/module-loader/http-validator", () => {
     });
 
     it("should keep the generic message when no unresolved computed read is involved", async () => {
-      const error = await assertRejects(
-        async () => await validateHTTPImports(`eval("1");`, [], { path: "lib/x.ts" }),
-        Error,
-      );
-      assertEquals(
-        error.message,
-        "[API] handler build failed: dynamic code generation cannot be checked against the " +
-          "remote import allow-list.",
-      );
+      for (const source of [`eval("1");`, `export const f = (c) => c.constructor;`]) {
+        const error = await assertRejects(
+          async () => await validateHTTPImports(source, [], { path: "lib/x.ts" }),
+          Error,
+        );
+        assertEquals(
+          error.message,
+          "[API] handler build failed: dynamic code generation cannot be checked against the " +
+            "remote import allow-list.",
+          source,
+        );
+      }
     });
 
     it("should keep rejecting an unresolved computed read even when only a named property is read", async () => {
