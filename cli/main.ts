@@ -15,9 +15,11 @@ if (Deno.args[0] === "__veryfront_internal_scaffold_writer") {
 }
 
 // Documentation is available even outside a project or with broken application configuration.
-if (Deno.args[0] === "docs") {
+const { earlyDocsArguments } = await import("./commands/docs/arguments.ts");
+const docsArgs = earlyDocsArguments(Deno.args);
+if (docsArgs) {
   const { runDocsCommand } = await import("./commands/docs/command.ts");
-  Deno.exit(await runDocsCommand(Deno.args.slice(1)));
+  Deno.exit(await runDocsCommand(docsArgs));
 }
 
 // Set the CLI logger preset before importing modules that may log during initialization.

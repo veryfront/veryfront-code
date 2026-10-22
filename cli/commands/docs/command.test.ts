@@ -1,5 +1,6 @@
 import { assertEquals } from "#std/assert";
 import { DOCUMENTATION_URL, runDocsCommand } from "./command.ts";
+import { earlyDocsArguments, parsedDocsArguments } from "./arguments.ts";
 
 function capture(open: (url: string) => Promise<void> = () => Promise.resolve()) {
   const printed: string[] = [];
@@ -14,6 +15,60 @@ function capture(open: (url: string) => Promise<void> = () => Promise.resolve())
     },
   };
 }
+
+Deno.test("docs keeps global prefixes and router options available for validation", async () => {
+  assertEquals(earlyDocsArguments(["--json", "docs", "--unknown"]), ["--json", "--unknown"]);
+  assertEquals(earlyDocsArguments(["agent", "create", "--name", "docs"]), undefined);
+  for (
+    const parsed of [{ _: ["docs"], json: true, output: true }, {
+      _: ["docs"],
+      json: true,
+      unknown: true,
+    }]
+  ) {
+    const { deps, printed } = capture(() => {
+      throw new Error("Must not launch a browser");
+    });
+    assertEquals(await runDocsCommand(parsedDocsArguments(parsed), deps), 2);
+    assertEquals(JSON.parse(printed[0]).error.code, "USAGE_ERROR");
+  }
+});
+
+Deno.test("global-prefixed docs runs without reading broken application configuration", async () => {
+  const directory = await Deno.makeTempDir({ prefix: "docs-prefixed-cli-" });
+  try {
+    await Deno.writeTextFile(
+      `${directory}/veryfront.config.ts`,
+      'throw new Error("Must not load project configuration");',
+    );
+    for (
+      const [args, expected] of [[["--json", "docs", "--unknown"], 2], [[
+        "--json",
+        "docs",
+        "--output",
+      ], 2], [["--json", "docs"], 0]] as const
+    ) {
+      const child = await new Deno.Command(Deno.execPath(), {
+        args: [
+          "run",
+          "-A",
+          "--config",
+          new URL("../../../deno.json", import.meta.url).pathname,
+          new URL("../../main.ts", import.meta.url).pathname,
+          ...args,
+        ],
+        cwd: directory,
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+      assertEquals(child.code, expected, new TextDecoder().decode(child.stderr));
+      const result = JSON.parse(new TextDecoder().decode(child.stdout));
+      assertEquals(result.success, expected === 0);
+    }
+  } finally {
+    await Deno.remove(directory, { recursive: true });
+  }
+});
 
 Deno.test("docs prints its destination and opens the fixed public URL", async () => {
   const opened: string[] = [];

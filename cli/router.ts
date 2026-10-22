@@ -129,13 +129,8 @@ const commands: Record<string, CommandLoader> = {
   "open": async () => (await import("./commands/open/handler.ts")).handleOpenCommand,
   "docs": async () => async (args) => {
     const { runDocsCommand } = await import("./commands/docs/command.ts");
-    const options = [
-      ...args._.slice(1).map(String),
-      ...(args.json || args.j ? ["--json"] : []),
-      ...(args.help || args.h ? ["--help"] : []),
-      ...(typeof args.output === "string" ? ["--output", args.output] : []),
-    ];
-    exitProcess(await runDocsCommand(options));
+    const { parsedDocsArguments } = await import("./commands/docs/arguments.ts");
+    exitProcess(await runDocsCommand(parsedDocsArguments(args)));
   },
   "completions": async () =>
     (await import("./commands/completions/handler.ts")).handleCompletionsCommand,
