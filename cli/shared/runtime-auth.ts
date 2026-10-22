@@ -25,7 +25,7 @@ import {
 } from "./config.ts";
 import { readProjectLink } from "./project-link.ts";
 import { createCloudOnboardingTransport } from "./cloud-onboarding-transport.ts";
-import { validateCredential } from "../auth/login.ts";
+import { isApiKeyToken } from "../auth/login.ts";
 
 export interface RuntimeAuthOptions {
   linkedProjectSlug?: string;
@@ -204,24 +204,46 @@ export async function applyQualifiedRuntimeAuth(
   return context;
 }
 
-const DIRECT_PROVIDER_KEYS = [
-  "OPENAI_API_KEY",
-  "ANTHROPIC_API_KEY",
-  "GOOGLE_API_KEY",
-  "GOOGLE_GENERATIVE_AI_API_KEY",
-  "MISTRAL_API_KEY",
-] as const;
+/**
+ * Key of the provider a run with no model uses once Cloud is off:
+ * `DEFAULT_AGENT_MODEL` (src/agent/runtime/model-resolution.ts) is an OpenAI
+ * model, and a key for another provider cannot serve it.
+ */
+const DEFAULT_MODEL_PROVIDER_KEY = "OPENAI_API_KEY";
 
 /** Upper bound on the stored-login check, so a slow API cannot stall startup. */
 const STORED_LOGIN_CHECK_TIMEOUT_MS = 5_000;
 
+// Captured before project code runs: `withProjectSourceContext` evaluates the
+// project config before this check, so the check reads only the status, and
+// through intrinsics project code cannot replace.
+const responseStatus = Object.getOwnPropertyDescriptor(Response.prototype, "status")!.get!;
+const responseBody = Object.getOwnPropertyDescriptor(Response.prototype, "body")!.get!;
+const streamCancel = ReadableStream.prototype.cancel;
+
+/** Whether the API rejects the credential outright (401 or 403). */
+async function isCredentialRejected(candidate: ApiCredentialCandidate): Promise<boolean> {
+  const apiUrl = getApiUrl(candidate.validationEnv);
+  // The same endpoints `validateCredential` checks each kind of credential with.
+  const path = isApiKeyToken(candidate.apiToken) ? "/projects?limit=1" : "/me";
+  const transport = createCloudOnboardingTransport(apiUrl, STORED_LOGIN_CHECK_TIMEOUT_MS);
+  const response = await transport(`${apiUrl}${path}`, {
+    headers: { Authorization: `Bearer ${candidate.apiToken}`, Accept: "application/json" },
+  });
+  const body = applyIntrinsic(responseBody, response, []) as ReadableStream | null;
+  if (body) await (applyIntrinsic(streamCancel, body, []) as Promise<void>).catch(() => {});
+  const status = applyIntrinsic(responseStatus, response, []) as number;
+  return status === 401 || status === 403;
+}
+
 /**
- * Drop a stored login the API rejects when a direct provider key can serve
- * inference instead. Cloud would refuse every run anyway, and keeping the
- * login routes runs with no model through it. A login that is valid, cannot
- * be checked, or was chosen explicitly (an exported token or service layer)
- * is kept, and so is any login when no direct key exists or the project is
- * linked: a linked project runs through Cloud and must prompt a fresh login.
+ * Drop a stored login the API rejects when a direct provider key serves the
+ * runs instead. Cloud would refuse every run anyway, and keeping the login
+ * routes runs with no model through it. A login that is valid, cannot be
+ * checked, or was chosen explicitly (an exported token or service layer) is
+ * kept, and so is any login when no key serves the default model or the
+ * project is linked: a linked project runs through Cloud and must prompt a
+ * fresh login.
  */
 async function dropRejectedStoredLogin(
   candidate: ApiCredentialCandidate | undefined,
@@ -232,17 +254,12 @@ async function dropRejectedStoredLogin(
     normalizeEnvValue(linkedProjectSlug) ||
     normalizeEnvValue(getEnv("VERYFRONT_PROJECT_SLUG")) ||
     normalizeEnvValue(getEnv("VERYFRONT_SERVICE_LAYER")) ||
-    !DIRECT_PROVIDER_KEYS.some((key) => normalizeEnvValue(getEnv(key)))
+    !normalizeEnvValue(getEnv(DEFAULT_MODEL_PROVIDER_KEY))
   ) {
     return candidate;
   }
   try {
-    const identity = await validateCredential(candidate.apiToken, candidate.validationEnv, {
-      throwOnCredentialValidationUnavailable: true,
-      timeoutMs: STORED_LOGIN_CHECK_TIMEOUT_MS,
-      transport: createCloudOnboardingTransport(getApiUrl(candidate.validationEnv)),
-    });
-    return identity ? candidate : undefined;
+    return await isCredentialRejected(candidate) ? undefined : candidate;
   } catch {
     return candidate;
   }

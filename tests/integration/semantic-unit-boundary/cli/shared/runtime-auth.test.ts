@@ -19,6 +19,7 @@ import {
   resolveLinkedProjectSlug,
   resolveRuntimeAuthContext,
 } from "#cli/shared/runtime-auth";
+import { DEFAULT_AGENT_MODEL } from "#veryfront/agent/runtime/model-resolution.ts";
 
 const ENV_KEYS = [
   "VERYFRONT_API_TOKEN",
@@ -441,22 +442,33 @@ describe("cli/shared/runtime-auth", () => {
 
     afterEach(restoreMockFetch);
 
-    for (const key of ["OPENAI_API_KEY", "GOOGLE_GENERATIVE_AI_API_KEY"]) {
-      it(`drops a login the API rejects, so runs use ${key}`, async () => {
-        const projectDir = await storedLoginProject();
-        setEnv(key, "<API_KEY>");
-        const paths = installLoginCheck(401);
+    it("drops a login the API rejects, so runs use the provider key", async () => {
+      const projectDir = await storedLoginProject();
+      setEnv("OPENAI_API_KEY", "<API_KEY>");
+      const paths = installLoginCheck(401);
 
-        const context = await applyQualifiedRuntimeAuth(projectDir);
+      const context = await applyQualifiedRuntimeAuth(projectDir);
 
-        assertEquals(context, {});
-        assertEquals(paths, ["/me"]);
-        assertEquals(getHostEnv("VERYFRONT_API_TOKEN"), undefined);
-        assertEquals(getEnv("VERYFRONT_SERVICE_LAYER"), undefined);
-        // The login stays stored; only this run stops using it.
-        assertEquals(await readToken(), "stored-token");
-      });
-    }
+      assertEquals(context, {});
+      assertEquals(paths, ["/me"]);
+      assertEquals(getHostEnv("VERYFRONT_API_TOKEN"), undefined);
+      assertEquals(getEnv("VERYFRONT_SERVICE_LAYER"), undefined);
+      // The login stays stored; only this run stops using it.
+      assertEquals(await readToken(), "stored-token");
+    });
+
+    it("keeps the login when the key cannot serve the default model", async () => {
+      // A run with no model falls back to the framework default, an OpenAI model.
+      assertEquals(DEFAULT_AGENT_MODEL.startsWith("openai/"), true);
+      const projectDir = await storedLoginProject();
+      setEnv("ANTHROPIC_API_KEY", "<API_KEY>");
+      const paths = installLoginCheck(401);
+
+      const context = await applyQualifiedRuntimeAuth(projectDir);
+
+      assertEquals(context.apiToken, "stored-token");
+      assertEquals(paths, []);
+    });
 
     it("keeps an exported token, unchecked, even when the API would reject it", async () => {
       await useTempConfigHome();
