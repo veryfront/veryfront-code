@@ -3,8 +3,8 @@ import { assertEquals, assertRejects, assertStringIncludes } from "#std/assert";
 import {
   docsSourceIdentity,
   packagePublicDocs,
-} from "./package-public-docs.ts";
-import { prepareRcBuildVersion } from "../ci/prepare-rc-build.ts";
+} from "../../../scripts/docs/package-public-docs.ts";
+import { prepareRcBuildVersion } from "../../../scripts/ci/prepare-rc-build.ts";
 
 async function fixture(
   run: (root: string, repository: string, revision: string) => Promise<void>,

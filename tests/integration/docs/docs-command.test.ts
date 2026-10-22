@@ -1,6 +1,6 @@
 import { assertEquals } from "#std/assert";
-import { DOCUMENTATION_URL, runDocsCommand } from "./command.ts";
-import { earlyDocsArguments, parsedDocsArguments } from "./arguments.ts";
+import { DOCUMENTATION_URL, runDocsCommand } from "../../../cli/commands/docs/command.ts";
+import { earlyDocsArguments, parsedDocsArguments } from "../../../cli/commands/docs/arguments.ts";
 
 function capture(
   open: (url: string) => Promise<void> = () => Promise.resolve(),
@@ -68,7 +68,7 @@ Deno.test("global-prefixed docs runs without reading broken application configur
           "-A",
           "--config",
           new URL("../../../deno.json", import.meta.url).pathname,
-          new URL("../../main.ts", import.meta.url).pathname,
+          new URL("../../../cli/main.ts", import.meta.url).pathname,
           ...args,
         ],
         cwd: directory,

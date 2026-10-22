@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { assertEquals, assertRejects, assertStringIncludes } from "#std/assert";
-import { copyPublicDocs, PUBLIC_DOC_ROOTS } from "./copy-public-docs.ts";
+import { copyPublicDocs, PUBLIC_DOC_ROOTS } from "../../../scripts/build/copy-public-docs.ts";
 
 async function fixture(
   run: (root: string, pkg: string) => Promise<void>,
@@ -68,9 +68,7 @@ Deno.test("packages public pages with a versioned task index and excludes privat
     assertEquals(manifest.sources[0].product, "code");
     assertEquals(manifest.sources[0].dirty, true);
     assertEquals(
-      manifest.files.some((file: { path: string }) =>
-        file.path === "config.json"
-      ),
+      manifest.files.some((file: { path: string }) => file.path === "config.json"),
       true,
     );
     assertEquals(
