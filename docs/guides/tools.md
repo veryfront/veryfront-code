@@ -206,7 +206,7 @@ every query term.
 Search work is bounded to 4,096 catalog candidates. Each parameter schema is
 inspected iteratively with depth, node, and byte budgets, and the whole search
 has an aggregate schema-work budget. A malformed, cyclic, or over-budget schema
-cannot abort the search; that tool simply cannot match by parameter description.
+cannot abort the search; that tool cannot match by parameter description.
 Name and description matching remains available for other healthy tools.
 
 The search loads schemas from the current authorized `tools` catalog. It also

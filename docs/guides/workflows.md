@@ -6,7 +6,7 @@ order: 26
 
 Define and run an ordered sequence of agents and tools. Start with a sequential workflow, then add branches, parallel steps, or approvals where the task requires them.
 
-For the distinction between a workflow definition and its executions, see [Workflow](/code/concepts/workflow).
+For the distinction between a workflow definition and its executions, see [Workflow](../concepts/workflow.md).
 
 ## Prerequisites
 
@@ -756,13 +756,13 @@ in-memory client is not readable from any other.
 
 ## Remove old terminal workflow runs
 
-For retention settings, startup precautions, and the maintenance script, see [Remove old workflow runs](/code/guides/workflow-retention).
+For retention settings, startup precautions, and the maintenance script, see [Remove old workflow runs](./workflow-retention.md).
 
 ## Next
 
-- [Extend a workflow](/code/guides/workflows-advanced): Loops, artifacts, and progress interfaces.
-- [Show workflow progress](/code/guides/workflow-ui): Mount authenticated routes and connect a React dashboard.
+- [Extend a workflow](./workflows-advanced.md): Loops, artifacts, and progress interfaces.
+- [Show workflow progress](./workflow-ui.md): Mount authenticated routes and connect a React dashboard.
 
 ## Related
 
-- [Workflow API](/code/api-reference/veryfront/workflow): Types and configuration.
+- [Workflow API](../api-reference/veryfront/workflow.md): Types and configuration.

@@ -168,7 +168,7 @@ Preview deployments serve the same policy as production, so a CSP problem shows 
 
 ## Cross-site request forgery
 
-For browser request tokens, custom header names, and route exclusions, see [Send authenticated browser mutations](/code/guides/csrf-requests).
+For browser request tokens, custom header names, and route exclusions, see [Send authenticated browser mutations](./csrf-requests.md).
 
 ## Related
 

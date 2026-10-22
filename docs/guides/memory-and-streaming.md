@@ -432,7 +432,7 @@ Eight of these types come from the Veryfront Code runtime itself:
 
 ### Non-streaming generation
 
-For a complete response without streaming, use [server-side generation](/code/guides/agents#non-streaming-response). The same configured memory behavior applies.
+For a complete response without streaming, use [server-side generation](./agents.md#non-streaming-response). The same configured memory behavior applies.
 
 ## Verify it worked
 
@@ -458,4 +458,4 @@ tokens arrive incrementally rather than in one chunk.
 
 ## Related
 
-- [Agent API](/code/api-reference/veryfront/agent): Memory configuration and handlers.
+- [Agent API](../api-reference/veryfront/agent.md): Memory configuration and handlers.

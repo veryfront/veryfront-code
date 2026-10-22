@@ -1,9 +1,10 @@
 ---
 title: "Export eval reports"
 description: "Send evaluation evidence to configured reporting systems and inspect the exported result."
+order: 64
 ---
 
-Export a completed evaluation to the reporting system your team uses. First [define and run an eval](/code/guides/evals); its local reports provide the baseline evidence for checking an export.
+Export a completed evaluation to the reporting system your team uses. First [define and run an eval](./evals.md); its local reports provide the baseline evidence for checking an export.
 
 ## Export reports
 
@@ -95,7 +96,7 @@ such as `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_METRICS_ENABLED`, and
 `OTEL_TRACES_ENABLED` do not route eval reports to those vendors; they only
 control runtime trace and metric export.
 
-Use [project metrics](/code/guides/project-metrics) when an eval should also emit
+Use [project metrics](./project-metrics.md) when an eval should also emit
 aggregate dashboard signals such as `vf_eval_result_total` or
 `vf_eval_duration_ms`. Keep report exports for rich per-case eval data, and keep
 project metrics to low-cardinality counters, histograms, and gauges.
@@ -139,7 +140,9 @@ Gateways should treat `context.trace` as correlation metadata. It is not span
 export, does not include logs or metric streams, and does not replace ambient
 OpenTelemetry export.
 
-Use `veryfront/extensions/ext-eval-report-mlflow` when completed reports should become
+Install the exporter with `npm install @veryfront/ext-eval-report-mlflow`.
+
+Use `@veryfront/ext-eval-report-mlflow` when completed reports should become
 MLflow Tracking runs. The CLI path can be environment-only: set
 `MLFLOW_TRACKING_URI` to activate the extension and select the default `mlflow`
 exporter for the run.
@@ -164,7 +167,7 @@ For example, migrate a configured endpoint that previously relied on
 `MLFLOW_TRACKING_TOKEN` to an explicit tenant-scoped token:
 
 ```ts
-import extEvalReportMlflow from "veryfront/extensions/ext-eval-report-mlflow";
+import extEvalReportMlflow from "@veryfront/ext-eval-report-mlflow";
 import { defineConfig, getEnv } from "veryfront";
 
 export default defineConfig({
@@ -308,4 +311,4 @@ Compare the destination record with the local report for the same eval and run. 
 
 ## Related
 
-- [Compare eval runs and models](/code/guides/eval-comparison): Baselines and selection criteria.
+- [Compare eval runs and models](./eval-comparison.md): Baselines and selection criteria.

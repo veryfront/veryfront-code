@@ -1,9 +1,10 @@
 ---
 title: "Repeat workflow steps"
 description: "Choose a conditional loop, fixed repetition, or per-item workflow step."
+order: 60
 ---
 
-Add repetition to a [working workflow](/code/guides/workflows) when a task must retry a refinement, poll for a result, or process a collection.
+Add repetition to a [working workflow](./workflows.md) when a task must retry a refinement, poll for a result, or process a collection.
 
 ## Loops
 
@@ -53,4 +54,4 @@ Test an input that enters the loop and an input that stops it. Inspect node stat
 
 ## Related
 
-- [Workflow configuration](/code/guides/workflows#workflow-configuration): Timeouts and retries.
+- [Workflow configuration](./workflows.md#workflow-configuration): Timeouts and retries.

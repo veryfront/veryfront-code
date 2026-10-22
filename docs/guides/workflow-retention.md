@@ -1,6 +1,7 @@
 ---
 title: "Remove old workflow runs"
 description: "Configure a retention process for terminal workflow runs and verify deletion boundaries."
+order: 62
 ---
 
 Remove old execution records from a persistent workflow backend after the retention period you choose.
@@ -97,4 +98,4 @@ Check that an old terminal run is no longer readable while recent, waiting, and 
 
 ## Related
 
-- [Define and execute workflows](/code/guides/workflows): Application behavior and execution.
+- [Define and execute workflows](./workflows.md): Application behavior and execution.

@@ -1,6 +1,7 @@
 ---
 title: "Send authenticated browser mutations"
 description: "Include CSRF headers in custom browser requests and configure route-specific CSRF behavior."
+order: 65
 ---
 
 Use the CSRF helper when your application sends a custom request that changes server state. Authentication identifies the caller; the CSRF check validates the browser request token.
@@ -90,7 +91,7 @@ This is the only supported opt-out, and it applies in every environment. It stop
 
 ### What Veryfront exempts
 
-- The CSP report endpoint, for the reason given in [Violation reports](/code/guides/security-headers#violation-reports).
+- The CSP report endpoint, for the reason given in [Violation reports](./security-headers.md#violation-reports).
 - Signed platform dispatches. Control-plane operations and channel invocations carry a signed envelope that the receiving handler verifies, and hold no cookie to echo.
 - Two framework-owned local development surfaces: the client log endpoint at `/_veryfront/log` and the dashboard API under `/_dev/api/`. Both admit only a direct loopback connection from a canonical local-development host, and the dashboard requires its own port-scoped session token on top of that. Your own routes get no such exemption, in development or anywhere else.
 
@@ -101,5 +102,5 @@ In a signed-in browser session, submit the same request with and without the hel
 
 ## Related
 
-- [Application authentication](/code/guides/application-auth): Identify and authorize the caller.
-- [Security headers and CSP](/code/guides/security-headers): Control browser resource loading.
+- [Application authentication](./application-auth.md): Identify and authorize the caller.
+- [Security headers and CSP](./security-headers.md): Control browser resource loading.

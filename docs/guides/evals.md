@@ -395,14 +395,15 @@ metrics.agent.toolCallCount("orders_lookup", { exact: 1 }).gate();
 metrics.agent.noFailedTools().gate();
 metrics.ops.latency({ maxMs: 10_000 }).budget();
 metrics.ops.tokens({ maxTotal: 4_000 }).budget();
-metrics.ops.cost({ maxUsd: 0.05 }).budget();
+metrics.ops.cost({ maxCredits: 0.5 }).budget();
 ```
 
-`metrics.ops.cost` uses gateway `veryfrontBilledUsd` first, then
-`veryfrontChargeUsd`, legacy `costUsd`, and finally `providerCostUsd`. It does
-not maintain a separate pricing table inside the framework. Token and cost
-budgets fail when the measurement required by their configured limit is
-missing; absent usage evidence never passes a budget.
+`metrics.ops.cost` budgets the gateway `costCredits` of a record. A credit is
+the unit of account; the framework keeps no pricing table and does not convert
+credits to a currency. `maxUsd` is removed; `metrics.ops.cost({ maxUsd })`
+throws at construction and names `maxCredits`. Token and cost budgets fail
+when the measurement required by their configured limit is missing; absent
+usage evidence never passes a budget.
 
 Use `calledTool` when the agent must call a tool. Add `input` when the tool
 arguments must include specific fields. `match: "partial"` checks that the
@@ -845,7 +846,9 @@ Gateways should treat `context.trace` as correlation metadata. It is not span
 export, does not include logs or metric streams, and does not replace ambient
 OpenTelemetry export.
 
-Use `veryfront/extensions/ext-eval-report-mlflow` when completed reports should become
+Install the exporter with `npm install @veryfront/ext-eval-report-mlflow`.
+
+Use `@veryfront/ext-eval-report-mlflow` when completed reports should become
 MLflow Tracking runs. The CLI path can be environment-only: set
 `MLFLOW_TRACKING_URI` to activate the extension and select the default `mlflow`
 exporter for the run.
@@ -870,7 +873,7 @@ For example, migrate a configured endpoint that previously relied on
 `MLFLOW_TRACKING_TOKEN` to an explicit tenant-scoped token:
 
 ```ts
-import extEvalReportMlflow from "veryfront/extensions/ext-eval-report-mlflow";
+import extEvalReportMlflow from "@veryfront/ext-eval-report-mlflow";
 import { defineConfig, getEnv } from "veryfront";
 
 export default defineConfig({
@@ -1066,9 +1069,9 @@ with status `1` when any gate or budget check fails.
 
 ## Next
 
-- [Compare eval runs and models](/code/guides/eval-comparison): Check a regression or evaluate another model.
-- [Export eval reports](/code/guides/eval-reporting): Share evidence with an external reporting system.
+- [Compare eval runs and models](./eval-comparison.md): Check a regression or evaluate another model.
+- [Export eval reports](./eval-reporting.md): Share evidence with an external reporting system.
 
 ## Related
 
-- [Eval API](/code/api-reference/veryfront/eval): Definitions, metrics, and reporters.
+- [Eval API](../api-reference/veryfront/eval.md): Definitions, metrics, and reporters.

@@ -1,9 +1,10 @@
 ---
 title: "Compare eval runs and models"
 description: "Detect regressions against a saved eval baseline and compare candidate model quality, cost, and latency."
+order: 63
 ---
 
-Compare the same evaluation across a change or model choice. Start with a [working eval](/code/guides/evals) and a reviewed baseline report. Use stable dataset IDs so changed results can be matched to the same examples.
+Compare the same evaluation across a change or model choice. Start with a [working eval](./evals.md) and a reviewed baseline report. Use stable dataset IDs so changed results can be matched to the same examples.
 
 ## Compare with a saved baseline
 
@@ -126,5 +127,5 @@ Inspect the baseline identity, dataset, and failed-example list before accepting
 
 ## Related
 
-- [Define evals](/code/guides/evals): Datasets, metrics, and checks.
-- [Export eval reports](/code/guides/eval-reporting): External report destinations.
+- [Define evals](./evals.md): Datasets, metrics, and checks.
+- [Export eval reports](./eval-reporting.md): External report destinations.

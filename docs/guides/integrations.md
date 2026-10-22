@@ -615,7 +615,7 @@ Managed OAuth connectors do not require project OAuth client credentials. Set
 client ID and client secret environment variables only when the connector
 supports and the project selects a custom OAuth app override:
 
-```bash
+```dotenv
 GITHUB_CLIENT_ID=<GITHUB_CLIENT_ID>
 GITHUB_CLIENT_SECRET=<GITHUB_CLIENT_SECRET>
 ```
@@ -629,7 +629,7 @@ Some connectors use static credentials instead of interactive OAuth. Store
 those credentials in project environment variables named by the connector
 metadata:
 
-```bash
+```dotenv
 STRIPE_SECRET_KEY=<STRIPE_SECRET_KEY>
 TELEGRAM_BOT_TOKEN=<TELEGRAM_BOT_TOKEN>
 PERSONIO_CLIENT_ID=<PERSONIO_CLIENT_ID>

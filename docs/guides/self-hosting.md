@@ -489,7 +489,7 @@ local subset still require the configured API layer.
 
 ## Run Salesforce integration tools locally
 
-Follow [Set up Salesforce](/code/guides/integrations/salesforce#use-a-service-account) for credentials and the complete local agent example.
+Follow [Set up Salesforce](./integrations/salesforce.md#use-a-service-account) for credentials and the complete local agent example.
 
 ## Verify it worked
 

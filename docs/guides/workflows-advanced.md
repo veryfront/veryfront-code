@@ -17,7 +17,7 @@ the base workflow can't do yet.
 
 ## Loops
 
-[Repeat workflow steps](/code/guides/workflow-loops) with a condition, a fixed iteration count, or one step per collection item.
+[Repeat workflow steps](./workflow-loops.md) with a condition, a fixed iteration count, or one step per collection item.
 
 ## Blob storage
 
@@ -34,7 +34,7 @@ hundred kilobytes.
 
 ## React hooks
 
-[Show workflow progress in React](/code/guides/workflow-ui) covers authenticated handler routes, run summaries, approvals, CORS, and event streams.
+[Show workflow progress in React](./workflow-ui.md) covers authenticated handler routes, run summaries, approvals, CORS, and event streams.
 
 ## Verify it worked
 
@@ -42,4 +42,4 @@ Use the verification in the selected guide. For blob storage, run a workflow wit
 
 ## Next
 
-- [Remove old workflow runs](/code/guides/workflow-retention): Set a retention period for terminal execution records.
+- [Remove old workflow runs](./workflow-retention.md): Set a retention period for terminal execution records.

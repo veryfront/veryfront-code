@@ -1,13 +1,14 @@
 ---
 title: "Show workflow progress in React"
 description: "Expose authenticated workflow routes and display run status, approvals, and events in React."
+order: 61
 ---
 
 Connect a React dashboard to a running workflow so users can follow its steps and approvals.
 
 ## Prerequisites
 
-- A working workflow from [Workflows](/code/guides/workflows).
+- A working workflow from [Workflows](./workflows.md).
 - One shared workflow client exported from `lib/workflows.ts`, using a backend that all relevant requests can access.
 - A server-side session implementation for authorizing the routes.
 
@@ -365,4 +366,4 @@ Mount the handler, render the dashboard, and select **Run Pipeline**. Confirm th
 
 ## Related
 
-- [Workflow API](/code/api-reference/veryfront/workflow): Hook and handler options.
+- [Workflow API](../api-reference/veryfront/workflow.md): Hook and handler options.
