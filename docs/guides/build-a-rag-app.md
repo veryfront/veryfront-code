@@ -291,9 +291,16 @@ The manual flow is:
    `/projects/<PROJECT_ID>/knowledge/retrieval-documents`. The list returns
    `data` and `page_info`; follow `page_info.next` until it is `null`.
 2. Split source content into chunks.
-3. Generate vectors through AI Gateway or another embedding provider.
-4. Store vectors with the embeddings endpoint.
-5. Search with a query vector.
+3. Store the chunks with `POST` at
+   `/projects/<PROJECT_ID>/branches/<BRANCH>/files/<ENCODED_FILE_PATH>/chunks`
+   and retain the returned chunk IDs. Each request replaces that file's complete
+   chunk set and accepts at most 500 chunks. For larger documents, use distinct
+   file-part paths; successive requests to the same path do not append chunks.
+4. Generate vectors through AI Gateway or another embedding provider.
+5. Store vectors with the embeddings endpoint, passing the stored IDs as
+   `chunk_ids` in the same order as their vectors. Retrieval-document metadata
+   alone does not create those chunks.
+6. Search with a query vector.
 
 For Veryfront apps, prefer `ragStore()` unless you need that lower-level control.
 It keeps every batch under one document ID and cleans up the file parts when you
