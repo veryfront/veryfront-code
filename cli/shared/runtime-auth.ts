@@ -25,7 +25,7 @@ import {
 } from "./config.ts";
 import { readProjectLink } from "./project-link.ts";
 import { createCloudOnboardingTransport } from "./cloud-onboarding-transport.ts";
-import { isApiKeyToken } from "../auth/login.ts";
+import { isCredentialRejected } from "./credential-rejection.ts";
 
 export interface RuntimeAuthOptions {
   linkedProjectSlug?: string;
@@ -214,28 +214,6 @@ const DEFAULT_MODEL_PROVIDER_KEY = "OPENAI_API_KEY";
 /** Upper bound on the stored-login check, so a slow API cannot stall startup. */
 const STORED_LOGIN_CHECK_TIMEOUT_MS = 5_000;
 
-// Captured before project code runs: `withProjectSourceContext` evaluates the
-// project config before this check, so the check reads only the status, and
-// through intrinsics project code cannot replace.
-const responseStatus = Object.getOwnPropertyDescriptor(Response.prototype, "status")!.get!;
-const responseBody = Object.getOwnPropertyDescriptor(Response.prototype, "body")!.get!;
-const streamCancel = ReadableStream.prototype.cancel;
-
-/** Whether the API rejects the credential outright (401 or 403). */
-async function isCredentialRejected(candidate: ApiCredentialCandidate): Promise<boolean> {
-  const apiUrl = getApiUrl(candidate.validationEnv);
-  // The same endpoints `validateCredential` checks each kind of credential with.
-  const path = isApiKeyToken(candidate.apiToken) ? "/projects?limit=1" : "/me";
-  const transport = createCloudOnboardingTransport(apiUrl, STORED_LOGIN_CHECK_TIMEOUT_MS);
-  const response = await transport(`${apiUrl}${path}`, {
-    headers: { Authorization: `Bearer ${candidate.apiToken}`, Accept: "application/json" },
-  });
-  const body = applyIntrinsic(responseBody, response, []) as ReadableStream | null;
-  if (body) await (applyIntrinsic(streamCancel, body, []) as Promise<void>).catch(() => {});
-  const status = applyIntrinsic(responseStatus, response, []) as number;
-  return status === 401 || status === 403;
-}
-
 /**
  * Drop a stored login the API rejects when a direct provider key serves the
  * runs instead. Cloud would refuse every run anyway, and keeping the login
@@ -259,7 +237,11 @@ async function dropRejectedStoredLogin(
     return candidate;
   }
   try {
-    return await isCredentialRejected(candidate) ? undefined : candidate;
+    const apiUrl = getApiUrl(candidate.validationEnv);
+    const transport = createCloudOnboardingTransport(apiUrl, STORED_LOGIN_CHECK_TIMEOUT_MS);
+    return await isCredentialRejected(candidate.apiToken, apiUrl, transport)
+      ? undefined
+      : candidate;
   } catch {
     return candidate;
   }

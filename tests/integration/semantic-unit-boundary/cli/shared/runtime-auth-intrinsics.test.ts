@@ -25,6 +25,7 @@ import {
 
 import { saveToken } from "../../../../../cli/auth/token-store.ts";
 import { applyRuntimeAuthContext } from "../../../../../cli/shared/runtime-auth.ts";
+import { isCredentialRejected } from "../../../../../cli/shared/credential-rejection.ts";
 
 const TOKEN = "stored-login-token";
 const testApply = Reflect.apply;
@@ -82,5 +83,28 @@ describe("runtime-auth credential intrinsic boundary", () => {
         _resetEnvironmentConfig();
       }
     }, { prefix: "vf-runtime-auth-intrinsics-" });
+  });
+
+  it("checks a stored login without handing identity data to replaced trim", async () => {
+    // Task and workflow commands evaluate project config before the
+    // stored-login check, so the check must not parse the account it returns.
+    const identity = { id: "user-identity-id", email: "identity@example.test" };
+    const transport = (() => Promise.resolve(Response.json(identity))) as typeof fetch;
+    const nativeTrim = String.prototype.trim;
+    let observedIdentity = 0;
+
+    try {
+      String.prototype.trim = function (this: unknown): string {
+        if (this === identity.id || this === identity.email) observedIdentity += 1;
+        return testApply(nativeTrim, this, []) as string;
+      };
+
+      const rejected = await isCredentialRejected(TOKEN, "https://api.example.test", transport);
+
+      assertEquals(rejected, false);
+      assertEquals(observedIdentity, 0);
+    } finally {
+      String.prototype.trim = nativeTrim;
+    }
   });
 });
