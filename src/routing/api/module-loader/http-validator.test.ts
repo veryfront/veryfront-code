@@ -1726,6 +1726,69 @@ describe("routing/api/module-loader/http-validator", () => {
       }
     });
 
+    it("should name the file, line and expression of an unresolved computed read", async () => {
+      const source = `export function textOf(c: Record<string, unknown>, k: string) {\n` +
+        `  return (c[k] as { text?: string } | undefined)?.text ?? "";\n}\n`;
+      const error = await assertRejects(
+        async () => await validateHTTPImports(source, [], { path: "workflows/pipeline.ts" }),
+        Error,
+      );
+      assertEquals(
+        error.message,
+        "[API] handler build failed: dynamic code generation cannot be checked against the " +
+          "remote import allow-list. workflows/pipeline.ts:2:11 reads `c[k]` with a key " +
+          'Veryfront cannot resolve. The key could be "constructor", which reaches Function ' +
+          "and can run code the allow-list never sees. Use a Map, or a literal key such as " +
+          `obj["name"].`,
+      );
+    });
+
+    it("should keep the generic message when no unresolved computed read is involved", async () => {
+      const error = await assertRejects(
+        async () => await validateHTTPImports(`eval("1");`, [], { path: "lib/x.ts" }),
+        Error,
+      );
+      assertEquals(
+        error.message,
+        "[API] handler build failed: dynamic code generation cannot be checked against the " +
+          "remote import allow-list.",
+      );
+    });
+
+    it("should keep rejecting an unresolved computed read even when only a named property is read", async () => {
+      // A getter on a shared prototype runs with `this` bound to whatever the
+      // computed read returned, so reading `.x` off `Function` can still call it.
+      const sources = [
+        `export function f(c, k) { return (c[k] as { text?: string })?.text; }`,
+        `Object.defineProperty(Object.prototype, "x", { get() { return this("return 1"); } });` +
+        ` export function f(c, k) { return c[k].x; }`,
+        `Object.prototype.__defineGetter__("x", function () { return this("return 1"); });` +
+        ` export function f(c, k) { return c[k].x; }`,
+        `export function f(c, k) { return c[k].constructor; }`,
+        `export function f(c, k) { return c[k].call(null, "return 1")(); }`,
+        `export function f(c, k) { return c[k]?.bind(null, "return 1")(); }`,
+        `export function f(c, k) { return c[k].valueOf()("return 1")(); }`,
+        "export function f(c, k) { return c[k].call`return 1`; }",
+        `export function f(c, k1, k2) { return c[k1][k2]; }`,
+        `export function f(c, k) { const make = c[k]; return make("return 1")(); }`,
+        `eval("1");`,
+        `export const g = new Function("return 1");`,
+      ];
+      for (const source of sources) {
+        await assertRejects(
+          async () => await validateHTTPImports(source, []),
+          Error,
+          "dynamic code generation",
+          source,
+        );
+      }
+      await assertRejects(
+        async () => await validateHTTPImports(`export const load = (s) => import(s);`, []),
+        Error,
+        "unconstrained dynamic import",
+      );
+    });
+
     it("should keep rejecting unresolved computed keys on unknown values", async () => {
       const sources = [
         `export function f(arr, k) { return arr[k]; }`,

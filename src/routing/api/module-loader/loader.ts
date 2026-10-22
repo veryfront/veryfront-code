@@ -659,6 +659,7 @@ async function inspectDirectGraphModule(options: {
   // enforce the same remote-import, Worker, and generated-code contract.
   const scan = await validateHTTPImports(source, allowedHosts, {
     commonJS: mayBeCommonJSDependency(filePath),
+    path: filePath,
   });
   if (scan.hasUnconstrainedDynamicImport || scan.requiresBundling) return "bundle";
 
@@ -1424,6 +1425,7 @@ function createNamespaceOnLoadHandler(options: {
       if (executableModule) {
         const scan = await validateHTTPImports(contents, allowedHosts, {
           commonJS: mayBeCommonJSDependency(filePath),
+          path: filePath,
         });
         await validateBundledLocalWorkerEntries({
           sourceSnapshot,
@@ -1574,6 +1576,7 @@ async function validateBundledLocalWorkerGraph(options: {
 
     const scan = await validateHTTPImports(contents, allowedHosts, {
       commonJS: mayBeCommonJSDependency(filePath),
+      path: filePath,
     });
     for (const specifier of scan.specifiers) {
       const localTarget = bundledWorkerImportTarget({
@@ -1824,6 +1827,7 @@ function createProjectBoundaryPlugin(
           if (executableModule) {
             const scan = await validateHTTPImports(source.contents, allowedHosts, {
               commonJS: mayBeCommonJSDependency(source.logicalPath),
+              path: source.logicalPath,
             });
             await validateBundledLocalWorkerEntries({
               sourceSnapshot,
@@ -1918,6 +1922,7 @@ function buildTranspiledModuleSource(
       const workerImportMap = await readDenoImportMap(sourceSnapshot, projectDir);
       const sourceScan = await validateHTTPImports(source, allowedHosts, {
         commonJS: mayBeCommonJSDependency(resolvedPath),
+        path: resolvedPath,
       });
       await validateBundledLocalWorkerEntries({
         sourceSnapshot,
