@@ -35,22 +35,23 @@ describe("Dev Server Integration", { sanitizeOps: false, sanitizeResources: fals
       assertEquals(typeof startDevServer, "function", "Should be a function");
     });
 
-    it("reports ready before a page that is slow to load first renders", async () => {
+    it("reports ready without waiting for a page to render", async () => {
       // A cold first render can outlast the readiness budget (it fetches its
-      // modules), so readiness must not depend on rendering a page.
-      await withTestContext("dev-slow-first-render", async (context) => {
+      // modules), so readiness must not depend on rendering a page. This page
+      // never finishes loading.
+      await withTestContext("dev-unrendered-page-ready", async (context) => {
         await mkdir(join(context.projectDir, "app"), { recursive: true });
         await writeTextFile(
           join(context.projectDir, "app", "page.tsx"),
-          "await new Promise((resolve) => setTimeout(resolve, 11_000));\n" +
-            "export default function Page() { return <p>Slow page</p>; }\n",
+          "await new Promise(() => {});\n" +
+            "export default function Page() { return <p>Never</p>; }\n",
         );
 
         const server = await context.startDevServer({ enableHMR: false });
 
-        const response = await fetch(`http://127.0.0.1:${server.port}/`);
+        const response = await fetch(`http://127.0.0.1:${server.port}/readyz`);
         assertEquals(response.status, 200);
-        assert((await response.text()).includes("Slow page"));
+        await response.body?.cancel();
       });
     });
 
