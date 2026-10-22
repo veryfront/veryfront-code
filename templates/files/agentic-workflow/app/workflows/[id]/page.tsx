@@ -29,6 +29,7 @@ function ApprovalPanel({ runId, approvalId, message, onDecided }: {
     approvalId,
     approver: 'user',
   })
+  // Decisions stay disabled until the drafts have loaded, so nobody approves blind.
   const drafts = (approval?.payload ?? {}) as ReviewPayload
 
   async function decide(submit: () => Promise<void>) {
@@ -36,6 +37,7 @@ function ApprovalPanel({ runId, approvalId, message, onDecided }: {
       await submit()
     } catch {
       // `error` below shows why the decision was refused.
+      return
     }
     await onDecided()
   }
@@ -57,7 +59,7 @@ function ApprovalPanel({ runId, approvalId, message, onDecided }: {
         <button
           type="button"
           onClick={() => decide(() => approve())}
-          disabled={isSubmitting}
+          disabled={isSubmitting || !approval}
           className="px-4 py-2 bg-emerald-500 text-white font-medium rounded-lg hover:bg-emerald-600 disabled:opacity-50 transition-colors text-sm"
         >
           Approve
@@ -65,7 +67,7 @@ function ApprovalPanel({ runId, approvalId, message, onDecided }: {
         <button
           type="button"
           onClick={() => decide(() => reject())}
-          disabled={isSubmitting}
+          disabled={isSubmitting || !approval}
           className="px-4 py-2 bg-white dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 text-neutral-700 dark:text-neutral-300 font-medium rounded-lg hover:bg-neutral-50 dark:hover:bg-neutral-700 disabled:opacity-50 transition-colors text-sm"
         >
           Reject
