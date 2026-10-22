@@ -1901,13 +1901,18 @@ function createProjectBoundaryPlugin(
  * is not a filesystem path and is left alone.
  */
 function redactAbsolutePaths(text: string, projectDir: string): string {
-  // The project root first, so a root containing spaces is still caught whole.
-  // Only where a path starts: a URL may contain the same characters.
+  // `file:` URLs are paths. Then the project root, so a root containing spaces
+  // is caught whole, and only where a path starts: a web URL may contain it.
   const root = pathHelper.resolve(projectDir).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return text.replace(new RegExp(`(?<![\\w.:/\\\\])${root}[\\\\/]`, "g"), "").replace(
-    /(?<![\w.:/\\])(?:[A-Za-z]:[\\/]|\/)[^\s'"`(),;]+/g,
-    (path) => projectModuleLabel(path, projectDir),
-  );
+  return text
+    .replace(
+      /file:\/\/(\/[^\s'"`(),;]+)/gi,
+      (_url, path: string) => projectModuleLabel(path, projectDir),
+    )
+    .replace(new RegExp(`(?<![\\w.:/\\\\])${root}[\\\\/]`, "g"), "").replace(
+      /(?<![\w.:/\\])(?:[A-Za-z]:[\\/]|\/)[^\s'"`(),;]+/g,
+      (path) => projectModuleLabel(path, projectDir),
+    );
 }
 
 /** A remote module by its origin and path, without credentials or query. */

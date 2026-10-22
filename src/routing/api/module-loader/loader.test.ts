@@ -2918,6 +2918,14 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
       ).message,
       "[API] handler build failed: Failed to fetch https://cdn.example/project/mod.ts: 404",
     );
+    assertEquals(
+      buildFailure(
+        [{ text: "Thrown at file:///project/app/api/route.ts and file:///elsewhere/x.ts" }],
+        "/project",
+        "/srv/work",
+      ).message,
+      "[API] handler build failed: Thrown at app/api/route.ts and x.ts",
+    );
   });
 
   it("rejects Function-created imports before direct module evaluation", async () => {
