@@ -432,7 +432,11 @@ export class TestContext {
     testServer.hostname = "127.0.0.1";
     this.servers.push(testServer);
 
-    await waitForServerReady(testServer, { checkPath: options.readinessCheckPath });
+    // `/readyz` answers once the server listens. Probing a page instead ties
+    // readiness to a cold first render, which can outlast the startup budget.
+    await waitForServerReady(testServer, {
+      checkPath: options.readinessCheckPath ?? "/readyz",
+    });
     return testServer;
   }
 

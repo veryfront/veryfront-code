@@ -35,6 +35,25 @@ describe("Dev Server Integration", { sanitizeOps: false, sanitizeResources: fals
       assertEquals(typeof startDevServer, "function", "Should be a function");
     });
 
+    it("reports ready before a page that is slow to load first renders", async () => {
+      // A cold first render can outlast the readiness budget (it fetches its
+      // modules), so readiness must not depend on rendering a page.
+      await withTestContext("dev-slow-first-render", async (context) => {
+        await mkdir(join(context.projectDir, "app"), { recursive: true });
+        await writeTextFile(
+          join(context.projectDir, "app", "page.tsx"),
+          "await new Promise((resolve) => setTimeout(resolve, 11_000));\n" +
+            "export default function Page() { return <p>Slow page</p>; }\n",
+        );
+
+        const server = await context.startDevServer({ enableHMR: false });
+
+        const response = await fetch(`http://127.0.0.1:${server.port}/`);
+        assertEquals(response.status, 200);
+        assert((await response.text()).includes("Slow page"));
+      });
+    });
+
     it("starts and serves basic MDX page", async () => {
       /**
        * Verifies basic dev server functionality:
