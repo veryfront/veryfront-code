@@ -629,6 +629,17 @@ function markDirectGraphVisit(visited: Set<string>, filePath: string): boolean {
   return true;
 }
 
+/**
+ * How an error names a project module: its project-relative path, never an
+ * absolute one, which would expose the machine's directory layout.
+ */
+function projectModuleLabel(filePath: string, projectDir: string): string {
+  if (!pathHelper.isAbsolute(filePath)) return filePath;
+  return isWithinDirectory(projectDir, filePath)
+    ? pathHelper.relative(projectDir, filePath)
+    : pathHelper.basename(filePath);
+}
+
 async function inspectDirectGraphModule(options: {
   filePath: string;
   routeModulePath: string;
@@ -659,6 +670,7 @@ async function inspectDirectGraphModule(options: {
   // enforce the same remote-import, Worker, and generated-code contract.
   const scan = await validateHTTPImports(source, allowedHosts, {
     commonJS: mayBeCommonJSDependency(filePath),
+    path: projectModuleLabel(filePath, projectRoot),
   });
   if (scan.hasUnconstrainedDynamicImport || scan.requiresBundling) return "bundle";
 
@@ -1424,6 +1436,7 @@ function createNamespaceOnLoadHandler(options: {
       if (executableModule) {
         const scan = await validateHTTPImports(contents, allowedHosts, {
           commonJS: mayBeCommonJSDependency(filePath),
+          path: projectModuleLabel(filePath, projectDir),
         });
         await validateBundledLocalWorkerEntries({
           sourceSnapshot,
@@ -1574,6 +1587,7 @@ async function validateBundledLocalWorkerGraph(options: {
 
     const scan = await validateHTTPImports(contents, allowedHosts, {
       commonJS: mayBeCommonJSDependency(filePath),
+      path: projectModuleLabel(filePath, projectDir),
     });
     for (const specifier of scan.specifiers) {
       const localTarget = bundledWorkerImportTarget({
@@ -1824,6 +1838,7 @@ function createProjectBoundaryPlugin(
           if (executableModule) {
             const scan = await validateHTTPImports(source.contents, allowedHosts, {
               commonJS: mayBeCommonJSDependency(source.logicalPath),
+              path: projectModuleLabel(source.logicalPath, projectDir),
             });
             await validateBundledLocalWorkerEntries({
               sourceSnapshot,
@@ -1918,6 +1933,7 @@ function buildTranspiledModuleSource(
       const workerImportMap = await readDenoImportMap(sourceSnapshot, projectDir);
       const sourceScan = await validateHTTPImports(source, allowedHosts, {
         commonJS: mayBeCommonJSDependency(resolvedPath),
+        path: projectModuleLabel(resolvedPath, projectDir),
       });
       await validateBundledLocalWorkerEntries({
         sourceSnapshot,
