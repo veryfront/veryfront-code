@@ -170,7 +170,7 @@ function isCredentialTimeoutFailure(error: unknown): boolean {
     (error.name === "AbortError" || error.name === "TimeoutError");
 }
 
-function isCredentialRejectionStatus(status: number): boolean {
+export function isCredentialRejectionStatus(status: number): boolean {
   return status === 401 || status === 403;
 }
 

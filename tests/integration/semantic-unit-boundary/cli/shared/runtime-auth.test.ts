@@ -534,6 +534,28 @@ describe("cli/shared/runtime-auth", () => {
       assertEquals(context.apiToken, storedToken);
     });
 
+    it("keeps a login when the check request fails", async () => {
+      const projectDir = await storedLoginProject();
+      setEnv("OPENAI_API_KEY", "<API_KEY>");
+      installMockFetch((() => Promise.reject(new TypeError("offline"))) as typeof fetch);
+
+      const context = await applyQualifiedRuntimeAuth(projectDir);
+
+      assertEquals(context.apiToken, storedToken);
+    });
+
+    it("keeps the login of a project linked through VERYFRONT_PROJECT_SLUG", async () => {
+      const projectDir = await storedLoginProject();
+      setEnv("OPENAI_API_KEY", "<API_KEY>");
+      setEnv("VERYFRONT_PROJECT_SLUG", "env-linked-project");
+      const paths = installLoginCheck(401);
+
+      const context = await applyQualifiedRuntimeAuth(projectDir);
+
+      assertEquals(context.apiToken, storedToken);
+      assertEquals(paths, []);
+    });
+
     it("keeps a rejected login, unchecked, when no provider key can serve runs", async () => {
       const projectDir = await storedLoginProject();
       const paths = installLoginCheck(401);

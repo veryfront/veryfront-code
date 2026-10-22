@@ -1,4 +1,4 @@
-import { isApiKeyToken } from "../auth/login.ts";
+import { isApiKeyToken, isCredentialRejectionStatus } from "../auth/login.ts";
 
 // Captured at module load, before project code runs: a caller may check a
 // credential after project config was evaluated. The request init and its
@@ -39,6 +39,5 @@ export async function isCredentialRejected(
   const response = await transport(`${base}${path}`, init);
   const body = applyIntrinsic(responseBody, response, []) as ReadableStream | null;
   if (body) await (applyIntrinsic(streamCancel, body, []) as Promise<void>).catch(() => {});
-  const status = applyIntrinsic(responseStatus, response, []) as number;
-  return status === 401 || status === 403;
+  return isCredentialRejectionStatus(applyIntrinsic(responseStatus, response, []) as number);
 }
