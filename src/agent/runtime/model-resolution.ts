@@ -379,6 +379,8 @@ export function routesDirectWithoutCatalog(model?: string): boolean {
   const slashIndex = configured?.indexOf("/") ?? -1;
   if (!configured || slashIndex <= 0 || slashIndex === configured.length - 1) return false;
   const provider = configured.slice(0, slashIndex);
+  // Mirrors the checks `resolveRuntimeModel` makes before its key branch; keep
+  // the two in step. An application may register a `veryfront-cloud` provider.
   if (provider === "veryfront-cloud") return false;
   return findApplicationRuntimeProvider(provider) !== undefined ||
     hasDirectProviderCredentials(provider);
