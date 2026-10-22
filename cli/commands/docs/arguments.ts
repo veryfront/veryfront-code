@@ -1,4 +1,4 @@
-import { CLI_FLAG_ALIASES, GLOBAL_BOOLEAN_FLAGS } from "../../shared/global-flags.ts";
+import { readGlobalBooleanFlag } from "../../shared/global-flags.ts";
 import type { ParsedArgs } from "../../shared/types.ts";
 
 /** Preserve the complete docs command before project/config initialization. */
@@ -11,12 +11,7 @@ export function earlyDocsArguments(args: readonly string[]): string[] | undefine
       continue;
     }
     if (arg.startsWith("--output=")) continue;
-    const flag = arg.startsWith("--")
-      ? arg.slice(2)
-      : arg.startsWith("-")
-      ? CLI_FLAG_ALIASES[arg.slice(1)]
-      : undefined;
-    if (!flag || !GLOBAL_BOOLEAN_FLAGS.has(flag)) return undefined;
+    if (!readGlobalBooleanFlag(arg)) return undefined;
   }
   return undefined;
 }

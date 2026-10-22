@@ -42,11 +42,17 @@ Deno.test("global-prefixed docs runs without reading broken application configur
       'throw new Error("Must not load project configuration");',
     );
     for (
-      const [args, expected] of [[["--json", "docs", "--unknown"], 2], [[
-        "--json",
-        "docs",
-        "--output",
-      ], 2], [["--json", "docs"], 0]] as const
+      const [args, expected] of [
+        [["--json", "docs", "--unknown"], 2],
+        [[
+          "--json",
+          "docs",
+          "--output",
+        ], 2],
+        [["--json", "docs"], 0],
+        [["--json=true", "docs"], 0],
+        [["--quiet=false", "docs", "--json"], 0],
+      ] as const
     ) {
       const child = await new Deno.Command(Deno.execPath(), {
         args: [
@@ -68,6 +74,25 @@ Deno.test("global-prefixed docs runs without reading broken application configur
   } finally {
     await Deno.remove(directory, { recursive: true });
   }
+});
+
+Deno.test("docs preserves true and false boolean assignments", async () => {
+  for (
+    const args of [["--json=true"], ["--quiet=false", "--json"], ["--version=false", "--json"]]
+  ) {
+    const { deps, printed } = capture(() => {
+      throw new Error("JSON mode must not launch");
+    });
+    assertEquals(await runDocsCommand(args, deps), 0);
+    assertEquals(JSON.parse(printed[0]).command, "docs");
+  }
+  const opened: string[] = [];
+  const { deps } = capture((url) => {
+    opened.push(url);
+    return Promise.resolve();
+  });
+  assertEquals(await runDocsCommand(["--json=false"], deps), 0);
+  assertEquals(opened, [DOCUMENTATION_URL]);
 });
 
 Deno.test("docs prints its destination and opens the fixed public URL", async () => {
@@ -109,6 +134,17 @@ Deno.test("docs supports the global JSON alias and output destination", async ()
     const output = `${root}/nested/result.json`;
     assertEquals(await runDocsCommand(["-j", "--output", output], deps), 0);
     assertEquals(JSON.parse(await Deno.readTextFile(output)), JSON.parse(printed[0]));
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("docs writes its plain URL when an output destination is requested", async () => {
+  const root = await Deno.makeTempDir({ prefix: "docs-url-output-" });
+  try {
+    const { deps } = capture();
+    assertEquals(await runDocsCommand(["--output", `${root}/url.txt`], deps), 0);
+    assertEquals(await Deno.readTextFile(`${root}/url.txt`), DOCUMENTATION_URL + "\n");
   } finally {
     await Deno.remove(root, { recursive: true });
   }

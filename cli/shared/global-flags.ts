@@ -23,3 +23,12 @@ export const CLI_FLAG_ALIASES: Readonly<Record<string, string>> = {
   y: "yes",
   m: "mode",
 };
+
+export function readGlobalBooleanFlag(
+  argument: string,
+): { name: string; value: boolean } | undefined {
+  const match = /^(--[^=]+|-[a-z])(?:=(true|false))?$/.exec(argument);
+  if (!match) return undefined;
+  const name = match[1].startsWith("--") ? match[1].slice(2) : CLI_FLAG_ALIASES[match[1].slice(1)];
+  return name && GLOBAL_BOOLEAN_FLAGS.has(name) ? { name, value: match[2] !== "false" } : undefined;
+}

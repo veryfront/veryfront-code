@@ -1,5 +1,9 @@
 import denoConfig from "../../../deno.json" with { type: "json" };
-import { CLI_FLAG_ALIASES, GLOBAL_BOOLEAN_FLAGS } from "../../shared/global-flags.ts";
+import {
+  CLI_FLAG_ALIASES,
+  GLOBAL_BOOLEAN_FLAGS,
+  readGlobalBooleanFlag,
+} from "../../shared/global-flags.ts";
 import { docsHelp } from "./command-help.ts";
 
 export const DOCUMENTATION_URL = "https://veryfront.com/docs/code";
@@ -21,6 +25,10 @@ export async function runDocsCommand(
   args: readonly string[],
   deps: DocsDependencies = { open: openDocumentation, print: console.log, warn: console.error },
 ): Promise<number> {
+  args = args.flatMap((argument) => {
+    const flag = readGlobalBooleanFlag(argument);
+    return flag ? flag.value ? [`--${flag.name}`] : [] : [argument];
+  });
   const json = args.includes("--json") || args.includes("-j");
   let output: string | undefined;
   const remaining: string[] = [];
@@ -114,7 +122,7 @@ export async function runDocsCommand(
     );
     return written ? 0 : 1;
   }
-  deps.print(DOCUMENTATION_URL);
+  if (!await emit(DOCUMENTATION_URL)) return 1;
   try {
     await deps.open(DOCUMENTATION_URL);
   } catch {
