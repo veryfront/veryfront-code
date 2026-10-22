@@ -1,7 +1,13 @@
 import { makeTempDirWithOptions } from "#veryfront/testing/deno-compat.ts";
 import { assertEquals } from "#std/assert";
-import { DOCUMENTATION_URL, runDocsCommand } from "../../../cli/commands/docs/command.ts";
-import { earlyDocsArguments, parsedDocsArguments } from "../../../cli/commands/docs/arguments.ts";
+import {
+  DOCUMENTATION_URL,
+  runDocsCommand,
+} from "../../../cli/commands/docs/command.ts";
+import {
+  earlyDocsArguments,
+  parsedDocsArguments,
+} from "../../../cli/commands/docs/arguments.ts";
 
 function capture(
   open: (url: string) => Promise<void> = () => Promise.resolve(),
@@ -68,6 +74,7 @@ Deno.test("global-prefixed docs runs without reading broken application configur
           "docs",
           "--output",
         ], 2],
+        [["docs", "--output", "--json", `${directory}/unexpected.json`], 2],
         [["--json", "docs"], 0],
         [["--json=true", "docs"], 0],
         [["--json=1", "docs"], 0],
@@ -161,7 +168,9 @@ Deno.test("docs prints its destination and opens the fixed public URL", async ()
 });
 
 Deno.test("docs keeps a usable URL and reports failed browser launches", async () => {
-  const { deps, printed, warnings } = capture(() => Promise.reject(new Error("missing opener")));
+  const { deps, printed, warnings } = capture(() =>
+    Promise.reject(new Error("missing opener"))
+  );
   assertEquals(await runDocsCommand([], deps), 0);
   assertEquals(printed, [DOCUMENTATION_URL]);
   assertEquals(warnings.length, 1);
@@ -191,6 +200,36 @@ Deno.test("docs supports the global JSON alias and output destination", async ()
       JSON.parse(await Deno.readTextFile(output)),
       JSON.parse(printed[0]),
     );
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("docs does not bridge a missing output value across boolean flags", async () => {
+  const root = await makeTempDirWithOptions({ prefix: "docs-output-order-" });
+  try {
+    for (const flag of ["--json", "-j", "--quiet=false", "--help=false"]) {
+      const output = `${root}/result.json`;
+      let opened = false;
+      const { deps, printed } = capture(() => {
+        opened = true;
+        return Promise.resolve();
+      });
+      assertEquals(
+        await runDocsCommand(["--output", flag, output, "--json"], deps),
+        2,
+      );
+      assertEquals(JSON.parse(printed[0]).error.code, "USAGE_ERROR");
+      assertEquals(opened, false);
+      let created = false;
+      try {
+        await Deno.stat(output);
+        created = true;
+      } catch (error) {
+        if (!(error instanceof Deno.errors.NotFound)) throw error;
+      }
+      assertEquals(created, false);
+    }
   } finally {
     await Deno.remove(root, { recursive: true });
   }
@@ -265,10 +304,19 @@ Deno.test("docs help is available without launching", async () => {
 });
 
 Deno.test("docs errors never echo unknown option values or positional secrets", async () => {
-  for (const argument of ["--token=PRIVATE_CANARY", "/private/PRIVATE_CANARY", "PRIVATE_CANARY"]) {
+  for (
+    const argument of [
+      "--token=PRIVATE_CANARY",
+      "/private/PRIVATE_CANARY",
+      "PRIVATE_CANARY",
+    ]
+  ) {
     const { deps, printed, warnings } = capture();
     assertEquals(await runDocsCommand(["--json", argument], deps), 2);
-    assertEquals([...printed, ...warnings].join("\n").includes("PRIVATE_CANARY"), false);
+    assertEquals(
+      [...printed, ...warnings].join("\n").includes("PRIVATE_CANARY"),
+      false,
+    );
   }
 });
 

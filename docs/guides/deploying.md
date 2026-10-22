@@ -1,7 +1,7 @@
 ---
 title: "Manage Cloud deployments"
 description: "Control source, environments, access, and verification for Veryfront Cloud deployments."
-order: 44
+order: 45
 ---
 
 Use this guide after the first successful deployment when you need explicit

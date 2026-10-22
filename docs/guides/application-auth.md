@@ -1,7 +1,7 @@
 ---
 title: "Application authentication"
 description: "Protect application routes with provider-neutral login on Veryfront Cloud and self-hosted runtimes."
-order: 53
+order: 54
 ---
 
 Use `security.auth` when your application needs a login boundary before project

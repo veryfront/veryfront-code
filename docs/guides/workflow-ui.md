@@ -1,7 +1,7 @@
 ---
 title: "Show workflow progress in React"
 description: "Expose authenticated workflow routes and display run status, approvals, and events in React."
-order: 61
+order: 62
 ---
 
 Connect a React dashboard to a running workflow so users can follow its steps and approvals.

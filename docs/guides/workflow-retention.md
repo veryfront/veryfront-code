@@ -1,7 +1,7 @@
 ---
 title: "Remove old workflow runs"
 description: "Configure a retention process for terminal workflow runs and verify deletion boundaries."
-order: 62
+order: 63
 ---
 
 Remove old execution records from a persistent workflow backend after the retention period you choose.

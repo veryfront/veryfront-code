@@ -1,7 +1,7 @@
 ---
 title: "Integrations"
 description: "Agent-declared tools with optional source and project policy, first-use OAuth, and remote execution."
-order: 35
+order: 36
 ---
 
 Veryfront integrations let applications and agents call third-party services on

@@ -1,7 +1,7 @@
 ---
 title: "Workflows"
 description: "Define, execute, and verify a sequence of agent and tool steps."
-order: 26
+order: 27
 ---
 
 Define and run an ordered sequence of agents and tools. Start with a sequential workflow, then add branches, parallel steps, or approvals where the task requires them.

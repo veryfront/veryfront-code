@@ -1,7 +1,7 @@
 ---
 title: "Self-host Veryfront Code"
 description: "Build and run a Veryfront project in your own environment."
-order: 43
+order: 44
 ---
 
 Self-host Veryfront Code in your own cloud, private network, or on-premises

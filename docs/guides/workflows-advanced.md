@@ -1,7 +1,7 @@
 ---
 title: "Extend a workflow"
 description: "Find the guide for repeated steps, large artifacts, and workflow progress interfaces."
-order: 27
+order: 28
 ---
 
 Three patterns that reach past a single-pass DAG: looping until a condition is
@@ -35,6 +35,10 @@ hundred kilobytes.
 ## React hooks
 
 [Show workflow progress in React](./workflow-ui.md) covers authenticated handler routes, run summaries, approvals, CORS, and event streams.
+
+### Understand run summaries
+
+See [Understand run summaries](./workflow-ui.md#understand-run-summaries) for the shared handler response shape.
 
 ## Verify it worked
 

@@ -1,7 +1,7 @@
 ---
 title: "Set up Jira service-account access"
 description: "Run hosted Veryfront Jira tools as a dedicated Atlassian service account without browser consent."
-order: 52
+order: 53
 ---
 
 This guide is for hosted Veryfront projects using the platform Jira service-identity path. Use a

@@ -1,7 +1,7 @@
 ---
 title: "Set up Salesforce"
 description: "Install and connect the Veryfront Salesforce integration with per-user OAuth or a service account."
-order: 50
+order: 51
 ---
 
 Use this guide to connect a Salesforce org to Veryfront. Choose per-user OAuth

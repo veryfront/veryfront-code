@@ -1,7 +1,7 @@
 ---
 title: "Set up GitHub"
 description: "Connect a GitHub account to Veryfront for repository, issue, and pull-request tools."
-order: 51
+order: 52
 ---
 
 Use GitHub OAuth when an agent needs repository, issue, or pull-request tools.

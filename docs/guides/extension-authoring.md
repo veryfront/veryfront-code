@@ -1,7 +1,7 @@
 ---
 title: "Author extensions"
 description: "Write, test, and package a focused Veryfront extension."
-order: 39
+order: 40
 ---
 
 Use this guide when a runtime capability needs a reusable contract and lifecycle.

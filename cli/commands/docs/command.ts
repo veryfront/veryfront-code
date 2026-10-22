@@ -1,9 +1,5 @@
 import denoConfig from "../../../deno.json" with { type: "json" };
-import {
-  CLI_FLAG_ALIASES,
-  GLOBAL_BOOLEAN_FLAGS,
-  readGlobalBooleanFlag,
-} from "../../shared/global-flags.ts";
+import { readGlobalBooleanFlag } from "../../shared/global-flags.ts";
 import { docsHelp } from "./command-help.ts";
 
 export const DOCUMENTATION_URL = "https://veryfront.com/docs/code";
@@ -33,30 +29,27 @@ export async function runDocsCommand(
   const positionals = terminator < 0 ? [] : args.slice(terminator + 1);
   if (terminator >= 0) args = args.slice(0, terminator);
   const booleanFlags = new Map<string, boolean>();
-  args = args.filter((argument) => {
-    const flag = readGlobalBooleanFlag(argument);
-    if (!flag) return true;
-    booleanFlags.set(flag.name, flag.value);
-    return false;
-  });
-  args = [
-    ...args,
-    ...[...booleanFlags].filter(([, enabled]) => enabled).map(([name]) => `--${name}`),
-  ];
-  const json = args.includes("--json") || args.includes("-j");
   let output: string | undefined;
   const remaining: string[] = [];
   for (let index = 0; index < args.length; index++) {
     const arg = args[index]!;
     if (arg === "--output" || arg === "-o") {
-      const value = args[++index];
+      const value = args[index + 1];
       if (!value || value.startsWith("-")) remaining.push(arg);
-      else output = value;
+      else {
+        output = value;
+        index++;
+      }
     } else if (arg.startsWith("--output=")) {
       output = arg.slice("--output=".length);
       if (!output) remaining.push(arg);
-    } else remaining.push(arg);
+    } else {
+      const flag = readGlobalBooleanFlag(arg);
+      if (flag) booleanFlags.set(flag.name, flag.value);
+      else remaining.push(arg);
+    }
   }
+  const json = booleanFlags.get("json") === true;
   async function emit(value: string): Promise<boolean> {
     try {
       if (output) {
@@ -84,10 +77,7 @@ export async function runDocsCommand(
     deps.print(value);
     return true;
   }
-  const invalid = positionals[0] ?? remaining.find((arg) => {
-    const flag = arg.startsWith("--") ? arg.slice(2) : CLI_FLAG_ALIASES[arg.slice(1)];
-    return !flag || !GLOBAL_BOOLEAN_FLAGS.has(flag);
-  });
+  const invalid = positionals[0] ?? remaining[0];
   if (invalid !== undefined) {
     const option = /^(--?[a-z][a-z0-9-]*)(?:=|$)/i.exec(invalid)?.[1];
     const message = option ? `Unknown docs option: ${option}` : "Unknown docs argument.";
@@ -103,7 +93,7 @@ export async function runDocsCommand(
     } else deps.warn(`${message}\n${docsHelp.usage}`);
     return 2;
   }
-  if (args.includes("--version") || args.includes("-v")) {
+  if (booleanFlags.get("version")) {
     const written = await emit(
       json
         ? JSON.stringify({
@@ -123,7 +113,7 @@ export async function runDocsCommand(
     );
     return written ? 0 : 1;
   }
-  if (args.includes("--help") || args.includes("-h")) {
+  if (booleanFlags.get("help")) {
     const written = await emit(
       json
         ? JSON.stringify({

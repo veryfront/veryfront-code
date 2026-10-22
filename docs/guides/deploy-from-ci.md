@@ -1,7 +1,7 @@
 ---
 title: "Deploy from CI"
 description: "Push a reviewed Git commit to Veryfront and deploy it from a serialized CI job."
-order: 46
+order: 47
 ---
 
 Use this guide to make a reviewed Git commit the source of a Veryfront
@@ -87,6 +87,19 @@ prints the paths it removes, and `--json` runs carry the same list as
 `--dry-run`). Use `veryfront push --prune --dry-run` to review the list before
 a real prune, and move any file you must keep to a path outside the protected
 set.
+
+### Git ignore limitations
+
+Git ignore rules are read when a command scans the project. A rule that
+changes while a push or pull is running applies from the next run; the
+command does not fail.
+
+Checked-out submodules, and Git repositories created inside the project
+directory, follow their own ignore rules. A nested repository inside a
+directory the enclosing repository ignores stays ignored as a whole. Other
+nested repository layouts are not guaranteed to follow the nested repository's
+rules; list anything that must or must not be uploaded from such a repository
+in `.vfignore`, which always applies.
 
 If the project has a `.vfignore`, keep it as a regular file inside the project
 and commit it to Git so the managed source set is reproducible. Symlinked

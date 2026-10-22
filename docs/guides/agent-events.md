@@ -1,7 +1,7 @@
 ---
 title: "Agent Events Protocol"
 description: "Parse target Agent Events Protocol CloudEvents with schema-derived TypeScript payloads."
-order: 58
+order: 59
 ---
 
 Use `veryfront/events` when a surface receives target Agent Events Protocol frames and needs the shared parser, target schemas, and per-type payload typings. Keep `veryfront/run-events` for existing stored run-event rows until your surface has completed the protocol cutover. For all public exports, see the [`veryfront/events` API reference](../api-reference/veryfront/events.md).

@@ -1,7 +1,7 @@
 ---
 title: "Integration credentials and scopes"
 description: "Separate platform login from provider authorization, set up each credential type, and choose connection scopes."
-order: 55
+order: 56
 ---
 
 An integration call combines credentials that come from different owners. Use
