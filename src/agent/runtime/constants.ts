@@ -46,6 +46,8 @@ const MODEL_MAX_OUTPUT_TOKENS: Record<string, number> = {
 };
 
 const MODEL_MAX_OUTPUT_TOKEN_ALIASES: Record<string, string> = {
+  // OpenAI routes the bare gpt-5.6 alias to GPT-5.6 Sol.
+  "openai/gpt-5.6": "openai/gpt-5.6-sol",
   "google/gemini-3.1-pro": "google-ai-studio/gemini-3.1-pro-preview",
   "google/gemini-3.1-pro-preview": "google-ai-studio/gemini-3.1-pro-preview",
   "google/gemini-3.5-flash": "google-ai-studio/gemini-3.5-flash",

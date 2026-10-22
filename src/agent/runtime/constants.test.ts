@@ -86,6 +86,9 @@ describe("getModelMaxOutputTokens", () => {
     assertEquals(getModelMaxOutputTokens("openai/gpt-5.6-sol"), 128_000);
     assertEquals(getModelMaxOutputTokens("openai/gpt-5.6-terra"), 128_000);
     assertEquals(getModelMaxOutputTokens("veryfront-cloud/openai/gpt-5.6-luna"), 128_000);
+    // OpenAI routes the bare gpt-5.6 alias to GPT-5.6 Sol.
+    assertEquals(getModelMaxOutputTokens("openai/gpt-5.6"), 128_000);
+    assertEquals(getModelMaxOutputTokens("veryfront-cloud/openai/gpt-5.6"), 128_000);
   });
 
   it("returns the safe fallback limit for unknown models", () => {
