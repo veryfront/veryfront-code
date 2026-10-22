@@ -4,7 +4,7 @@ import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { installMockFetch, restoreMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { parseProviderError } from "#veryfront/chat/provider-errors.ts";
 import { requestJson } from "#veryfront/provider/runtime-loader/provider-http.ts";
-import { createVeryfrontCloudFetch } from "./shared.ts";
+import { createVeryfrontCloudFetch } from "#veryfront/provider/veryfront-cloud/shared.ts";
 
 describe("gateway scoped model refusals", () => {
   afterEach(() => restoreMockFetch());
