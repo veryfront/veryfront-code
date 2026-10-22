@@ -1910,8 +1910,13 @@ function redactAbsolutePaths(text: string, projectDir: string): string {
       (_url, path: string) => projectModuleLabel(path, projectDir),
     )
     .replace(new RegExp(`(?<![\\w.:/\\\\])${root}[\\\\/]`, "g"), "").replace(
-      /(?<![\w.:/\\])(?:[A-Za-z]:[\\/]|\/)[^\s'"`(),;]+/g,
-      (path) => projectModuleLabel(path, projectDir),
+      /(?<![\w.:/\\])(?:[A-Za-z]:[\\/]|\\\\|\/)[^\s'"`(),;]+/g,
+      // A path another platform calls absolute (a drive or UNC path on POSIX)
+      // keeps only its file name.
+      (path) =>
+        pathHelper.isAbsolute(path)
+          ? projectModuleLabel(path, projectDir)
+          : path.split(/[\\/]/).pop() ?? "",
     );
 }
 

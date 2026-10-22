@@ -2926,6 +2926,11 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
       ).message,
       "[API] handler build failed: Thrown at app/api/route.ts and x.ts",
     );
+    assertEquals(
+      buildFailure([{ text: "Missing \\\\server\\share\\secret.ts" }], "/project", "/srv/work")
+        .message.includes("server"),
+      false,
+    );
   });
 
   it("rejects Function-created imports before direct module evaluation", async () => {
