@@ -1,4 +1,4 @@
-import { join, relative, resolve } from "node:path";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { createHash } from "node:crypto";
 import { releaseDocsInputs } from "../docs/release-inputs.ts";
 import { parse } from "#std/yaml/parse";
@@ -27,13 +27,18 @@ export async function copyPublicDocs(
     throw new Error("Public documentation requires a package version");
   }
   const sourceRoot = await Deno.realPath(join(repositoryRoot, "docs"));
+  await Deno.mkdir(packageRoot, { recursive: true });
+  packageRoot = await Deno.realPath(packageRoot);
   const destination = resolve(packageRoot, "docs");
-  if (destination === sourceRoot || destination.startsWith(`${sourceRoot}/`)) {
+  const destinationRelative = relative(sourceRoot, destination);
+  if (
+    !isAbsolute(destinationRelative) && destinationRelative !== ".." &&
+    !destinationRelative.startsWith(`..${sep}`)
+  ) {
     throw new Error(
       "Package docs output must be outside the authored docs directory",
     );
   }
-  await Deno.mkdir(packageRoot, { recursive: true });
   const staging = await Deno.makeTempDir({
     dir: packageRoot,
     prefix: ".docs-",

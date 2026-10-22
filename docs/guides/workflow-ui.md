@@ -179,6 +179,16 @@ the fields the application needs. Use `useApproval` for approval payloads.
 
 ### Call the hooks across origins
 
+For browser mutations with cookie sessions, use a same-origin proxy and a relative
+`apiBase`. The workflow hooks attach the CSRF token only to same-origin requests.
+Cross-origin cookies and CORS headers alone do not satisfy the CSRF check, so a
+cross-origin start, cancel, or approval request can still receive `403`.
+
+A dedicated cross-origin API may use bearer authentication and a narrowly scoped
+CSRF exclusion only when the route authenticates and authorizes every request
+independently and never accepts cookie-based authentication. Keep CSRF protection
+on browser session routes; see [CSRF requests](./csrf-requests.md).
+
 A cross-origin `apiBase` needs CORS on both the preflight and the actual
 response. Configure the global policy with only the application origins you
 control and every request header the hooks send:

@@ -11,7 +11,7 @@ export function earlyDocsArguments(args: readonly string[]): string[] | undefine
       continue;
     }
     if (arg.startsWith("--output=")) continue;
-    if (!readGlobalBooleanFlag(arg)) return undefined;
+    if (!readGlobalBooleanFlag(arg) && !arg.startsWith("-")) return undefined;
   }
   return undefined;
 }

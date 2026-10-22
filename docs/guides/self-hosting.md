@@ -40,6 +40,8 @@ Choose substitutes for managed capabilities before you deploy.
 | Sandbox sessions                           | Requires a backing API or service layer | Configure authenticated sandbox session APIs.                             |
 | Veryfront Cloud routing, storage, and runs | Requires Veryfront Cloud                | These capabilities depend on project and control-plane context.           |
 
+## Configure local integrations
+
 Allow local integration credentials in the host process before you materialize
 any local source, including the catalog source and the Salesforce and Outlook
 service-account sources below:
@@ -81,6 +83,8 @@ Veryfront. Managed per-user OAuth and connector features outside the supported
 local subset still require the configured API layer.
 
 ## Run Salesforce integration tools locally
+
+[Set up Salesforce](./integrations/salesforce.md#use-a-service-account) covers credentials and the complete local agent example.
 
 The Salesforce service account source runs the catalog's fixed Salesforce
 REST tools without a backing API.
@@ -443,53 +447,6 @@ kubectl -n veryfront-app port-forward service/veryfront-app 3000:80
 Open [http://localhost:3000](http://localhost:3000). Add an Ingress or service
 load balancer according to your cluster platform after the local tunnel works.
 Keep TLS and public access policy at that boundary.
-
-## Configure local integrations
-
-Allow local integration credentials in the host process before you materialize
-any local source, both the catalog source and the Salesforce service-account
-source:
-
-```dotenv title=".env"
-VERYFRONT_HOST_ALLOW_LOCAL_INTEGRATION_CREDENTIALS=1
-```
-
-This is a host-owned capability. Project environment overlays cannot enable it.
-Leave it unset on shared or proxy runtimes. Without it, both sources refuse to
-list or execute a tool. If you already run a local source, set this variable
-before you upgrade, or discovery starts failing. Veryfront does not infer the
-deployment shape. Setting this exact variable authorizes the current non-proxy
-process.
-
-Local integration credentials are unavailable inside an effective isolated
-worker. The `WORKER_ISOLATION_ENABLED=1` master switch enables no surface by
-itself, but an enabled isolation surface runs its project worker with the Deno
-`env` permission denied. That worker cannot read this grant or any host
-credential. Run local integration sources outside effective isolated worker
-surfaces.
-
-For supported fixed REST tools, create a local source with the exact canonical
-tool IDs the application grants:
-
-```ts
-import { createLocalIntegrationToolSource } from "veryfront/integrations";
-import { loadRemoteToolsFromSource } from "veryfront/tool";
-
-const source = createLocalIntegrationToolSource({
-  tools: ["salesforce__find_customer"],
-});
-const integrationTools = await loadRemoteToolsFromSource(source);
-```
-
-Pass `integrationTools` to an agent's `tools` option. The source resolves
-credentials from the project environment by default and never sends them to
-Veryfront. Managed per-user OAuth and connector features outside the supported
-local subset still require the configured API layer.
-
-
-## Run Salesforce integration tools locally
-
-Follow [Set up Salesforce](./integrations/salesforce.md#use-a-service-account) for credentials and the complete local agent example.
 
 ## Verify it worked
 

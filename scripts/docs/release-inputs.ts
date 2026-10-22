@@ -17,6 +17,33 @@ export async function releaseDocsInputs(
     throw new Error("Unable to verify release documentation inputs");
   }
   const tracked = new Set(new TextDecoder().decode(result.stdout).split("\0"));
+  // Validate the complete declared generation, including JSON/snippets not copied into
+  // a content package. Otherwise a deleted reference can silently shrink a release.
+  for (const [relative, expected] of generated) {
+    if (
+      path.isAbsolute(relative) || relative.includes("\\") ||
+      relative.split("/").some((part) =>
+        !part || part === "." || part === ".."
+      ) || !/^[a-f0-9]{64}$/.test(expected)
+    ) {
+      throw new Error("Invalid generated documentation file inventory");
+    }
+    const file = path.join(root, relative);
+    if (await Deno.realPath(file) !== file) {
+      throw new Error("Generated documentation cannot use symlinks");
+    }
+    if (!(await Deno.lstat(file)).isFile) {
+      throw new Error("Generated documentation input must be a file");
+    }
+    if (
+      createHash("sha256").update(await Deno.readFile(file)).digest("hex") !==
+        expected
+    ) {
+      throw new Error(
+        `Generated documentation changed after generation: ${relative}`,
+      );
+    }
+  }
   return (file: string, bytes: Uint8Array) => {
     const relative = path.relative(root, file).split(path.sep).join("/");
     // Generated files can also be tracked: always verify their latest generator fingerprint.

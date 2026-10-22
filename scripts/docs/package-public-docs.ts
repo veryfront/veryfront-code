@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import path from "node:path";
 import { parse } from "#std/yaml/parse";
+import { publicRepositoryUrl } from "./repository-url.ts";
 import { releaseDocsInputs } from "./release-inputs.ts";
 import { prepareRcBuildVersion } from "../ci/prepare-rc-build.ts";
 
@@ -101,8 +102,9 @@ export async function docsSourceIdentity(
       }
     }
   }
-  const remote = (await git(root, ["remote", "get-url", "origin"]))
-    .replace(/^(https?:\/\/)[^/@]+@/, "$1").replace(/\.git$/, "");
+  const remote = publicRepositoryUrl(
+    await git(root, ["remote", "get-url", "origin"]),
+  );
   return {
     revision,
     dirty,
@@ -136,8 +138,9 @@ export async function packagePublicDocs(options: PackageDocsOptions) {
       "Release documentation requires a clean pinned product checkout",
     );
   }
-  const remote = (await git(repository, ["remote", "get-url", "origin"]))
-    .replace(/^(https?:\/\/)[^/@]+@/, "$1").replace(/\.git$/, "");
+  const remote = publicRepositoryUrl(
+    await git(repository, ["remote", "get-url", "origin"]),
+  );
   const root = path.join(
     repository,
     options.product === "code" ? "docs" : "docs/public",
@@ -151,7 +154,11 @@ export async function packagePublicDocs(options: PackageDocsOptions) {
     await Deno.realPath(outputParent),
     path.basename(options.output),
   );
-  if (output === repository || output.startsWith(`${repository}/`)) {
+  const outputRelative = path.relative(repository, output);
+  if (
+    !path.isAbsolute(outputRelative) && outputRelative !== ".." &&
+    !outputRelative.startsWith(`..${path.sep}`)
+  ) {
     throw new Error(
       "Documentation package output must be outside its source repository",
     );

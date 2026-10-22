@@ -1,13 +1,7 @@
 import { makeTempDirWithOptions } from "#veryfront/testing/deno-compat.ts";
 import { assertEquals } from "#std/assert";
-import {
-  DOCUMENTATION_URL,
-  runDocsCommand,
-} from "../../../cli/commands/docs/command.ts";
-import {
-  earlyDocsArguments,
-  parsedDocsArguments,
-} from "../../../cli/commands/docs/arguments.ts";
+import { DOCUMENTATION_URL, runDocsCommand } from "../../../cli/commands/docs/command.ts";
+import { earlyDocsArguments, parsedDocsArguments } from "../../../cli/commands/docs/arguments.ts";
 
 function capture(
   open: (url: string) => Promise<void> = () => Promise.resolve(),
@@ -68,6 +62,9 @@ Deno.test("global-prefixed docs runs without reading broken application configur
         ], 2],
         [["--json", "docs"], 0],
         [["--json=true", "docs"], 0],
+        [["--json=1", "docs"], 0],
+        [["--unknown", "docs", "--json"], 2],
+        [["--json=invalid", "docs", "--json"], 2],
         [["--quiet=false", "docs", "--json"], 0],
       ] as const
     ) {
@@ -156,9 +153,7 @@ Deno.test("docs prints its destination and opens the fixed public URL", async ()
 });
 
 Deno.test("docs keeps a usable URL and reports failed browser launches", async () => {
-  const { deps, printed, warnings } = capture(() =>
-    Promise.reject(new Error("missing opener"))
-  );
+  const { deps, printed, warnings } = capture(() => Promise.reject(new Error("missing opener")));
   assertEquals(await runDocsCommand([], deps), 0);
   assertEquals(printed, [DOCUMENTATION_URL]);
   assertEquals(warnings.length, 1);
@@ -259,4 +254,29 @@ Deno.test("docs help is available without launching", async () => {
   });
   assertEquals(await runDocsCommand(["--help"], deps), 0);
   assertEquals(printed[0].includes("without a project"), true);
+});
+
+Deno.test("docs errors never echo unknown option values or positional secrets", async () => {
+  for (const argument of ["--token=PRIVATE_CANARY", "/private/PRIVATE_CANARY", "PRIVATE_CANARY"]) {
+    const { deps, printed, warnings } = capture();
+    assertEquals(await runDocsCommand(["--json", argument], deps), 2);
+    assertEquals([...printed, ...warnings].join("\n").includes("PRIVATE_CANARY"), false);
+  }
+});
+
+Deno.test("docs accepts the shared CLI boolean value vocabulary", async () => {
+  for (const value of ["true", "1", "yes", "on", "TRUE"]) {
+    const { deps, printed } = capture();
+    assertEquals(await runDocsCommand([`--json=${value}`], deps), 0);
+    assertEquals(JSON.parse(printed[0]).success, true);
+  }
+  for (const value of ["false", "0", "no", "off", ""]) {
+    const opened: string[] = [];
+    const { deps } = capture((url) => {
+      opened.push(url);
+      return Promise.resolve();
+    });
+    assertEquals(await runDocsCommand([`--json=${value}`], deps), 0);
+    assertEquals(opened, [DOCUMENTATION_URL]);
+  }
 });

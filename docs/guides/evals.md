@@ -846,9 +846,9 @@ Gateways should treat `context.trace` as correlation metadata. It is not span
 export, does not include logs or metric streams, and does not replace ambient
 OpenTelemetry export.
 
-Install the exporter with `npm install @veryfront/ext-eval-report-mlflow`.
+The MLflow exporter is bundled with `veryfront`; no separate package installation is required.
 
-Use `@veryfront/ext-eval-report-mlflow` when completed reports should become
+Use `veryfront/extensions/ext-eval-report-mlflow` when completed reports should become
 MLflow Tracking runs. The CLI path can be environment-only: set
 `MLFLOW_TRACKING_URI` to activate the extension and select the default `mlflow`
 exporter for the run.
@@ -873,7 +873,7 @@ For example, migrate a configured endpoint that previously relied on
 `MLFLOW_TRACKING_TOKEN` to an explicit tenant-scoped token:
 
 ```ts
-import extEvalReportMlflow from "@veryfront/ext-eval-report-mlflow";
+import extEvalReportMlflow from "veryfront/extensions/ext-eval-report-mlflow";
 import { defineConfig, getEnv } from "veryfront";
 
 export default defineConfig({
@@ -937,7 +937,8 @@ veryfront eval deep-research \
   --report-dir .veryfront/evals/deep-research \
   --report .veryfront/evals/deep-research/report.json \
   --junit .veryfront/evals/deep-research/junit.xml \
-  --export braintrust,langfuse \
+  --export mlflow \
+  --require-export \
   --json
 ```
 

@@ -54,7 +54,7 @@ async function fixture(
       "remote",
       "add",
       "origin",
-      "https://example.invalid/product.git",
+      "https://github.com/veryfront/veryfront-api.git",
     ]);
     await command(["add", "."]);
     await command([

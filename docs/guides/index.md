@@ -30,6 +30,7 @@ details, see [API reference](../api-reference/index.md).
 | Protect application routes with login           | [Application authentication](./application-auth.md) |
 | Allow Google Fonts or other third-party origins | [Security headers and CSP](./security-headers.md)   |
 | Set page metadata and social previews           | [Head and SEO](./head-and-seo.md)                   |
+| Send protected browser mutations | [CSRF requests](./csrf-requests.md) |
 
 ## Add AI behavior
 
@@ -47,6 +48,8 @@ details, see [API reference](../api-reference/index.md).
 | Search source-controlled project knowledge        | [Project knowledge](./project-knowledge.md)         |
 | Coordinate more than one agent                    | [Multi-agent](./multi-agent.md)                     |
 | Package reusable agent instructions               | [Skills](./skills.md)                               |
+| Compare eval runs | [Eval comparison](./eval-comparison.md) |
+| Export eval reports | [Eval reporting](./eval-reporting.md) |
 
 ## Build chat
 
@@ -67,6 +70,9 @@ details, see [API reference](../api-reference/index.md).
 | Connect a local or self-hosted runtime     | [Connect a runtime](./connect-runtime.md)               |
 | Know what a run stores as input and output | [Run input and output](./run-input-output.md)           |
 | Ingest documents into project knowledge    | [CLI knowledge ingestion](./cli-knowledge-ingestion.md) |
+| Run bounded workflow loops | [Workflow loops](./workflow-loops.md) |
+| Remove terminal workflow runs | [Workflow retention](./workflow-retention.md) |
+| Build workflow controls and progress UI | [Workflow UI](./workflow-ui.md) |
 
 ## Connect external systems
 

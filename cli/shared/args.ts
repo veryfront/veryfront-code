@@ -6,6 +6,7 @@
  * @module cli/shared/args
  */
 
+import { parseBooleanValue } from "./boolean-value.ts";
 import { CLI_FLAG_ALIASES, GLOBAL_BOOLEAN_FLAGS } from "./global-flags.ts";
 export { GLOBAL_BOOLEAN_FLAGS } from "./global-flags.ts";
 
@@ -493,32 +494,6 @@ function isBooleanFlag(key: string, positionalArgs: string[]): boolean {
   const documentedKind = getDocumentedFlagKind(key, positionalArgs);
   if (documentedKind !== undefined) return documentedKind === "boolean";
   return BOOLEAN_FLAGS.has(key);
-}
-
-function parseBooleanValue(value: unknown): boolean | undefined {
-  if (typeof value === "boolean") return value;
-  if (typeof value === "number") {
-    if (value === 1) return true;
-    if (value === 0) return false;
-    return undefined;
-  }
-  if (typeof value !== "string") return undefined;
-
-  switch (value.trim().toLowerCase()) {
-    case "true":
-    case "1":
-    case "yes":
-    case "on":
-      return true;
-    case "false":
-    case "0":
-    case "no":
-    case "off":
-    case "":
-      return false;
-    default:
-      return undefined;
-  }
 }
 
 function isValue(arg: string | undefined): boolean {

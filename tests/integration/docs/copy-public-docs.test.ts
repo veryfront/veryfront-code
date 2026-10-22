@@ -1,10 +1,7 @@
 import { makeTempDirWithOptions } from "#veryfront/testing/deno-compat.ts";
 import { join } from "node:path";
 import { assertEquals, assertRejects, assertStringIncludes } from "#std/assert";
-import {
-  copyPublicDocs,
-  PUBLIC_DOC_ROOTS,
-} from "../../../scripts/build/copy-public-docs.ts";
+import { copyPublicDocs, PUBLIC_DOC_ROOTS } from "../../../scripts/build/copy-public-docs.ts";
 
 async function fixture(
   run: (root: string, pkg: string) => Promise<void>,
@@ -72,9 +69,7 @@ Deno.test("packages public pages with a versioned task index and excludes privat
     assertEquals(manifest.sources[0].product, "code");
     assertEquals(manifest.sources[0].dirty, true);
     assertEquals(
-      manifest.files.some((file: { path: string }) =>
-        file.path === "config.json"
-      ),
+      manifest.files.some((file: { path: string }) => file.path === "config.json"),
       true,
     );
     assertEquals(
@@ -191,6 +186,17 @@ Deno.test("framework release rejects ignored local docs instead of attesting the
     assertEquals(
       (await copyPublicDocs(root, pkg, "1.2.3", identity)).length,
       2,
+    );
+  });
+});
+
+Deno.test("docs output cannot alias the source through a package-directory symlink", async () => {
+  await fixture(async (root, pkg) => {
+    await Deno.symlink(join(root, "docs"), pkg, { type: "dir" });
+    await assertRejects(() => copyPublicDocs(root, pkg, "1.2.3"), Error, "outside the authored");
+    assertStringIncludes(
+      await Deno.readTextFile(join(root, "docs/guides/agents.md")),
+      "Use agents.",
     );
   });
 });

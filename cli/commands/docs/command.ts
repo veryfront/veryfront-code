@@ -86,7 +86,8 @@ export async function runDocsCommand(
     return !flag || !GLOBAL_BOOLEAN_FLAGS.has(flag);
   });
   if (invalid) {
-    const message = `Unknown docs argument: ${invalid}`;
+    const option = /^(--?[a-z][a-z0-9-]*)(?:=|$)/i.exec(invalid)?.[1];
+    const message = option ? `Unknown docs option: ${option}` : "Unknown docs argument.";
     if (json) {
       const written = await emit(
         JSON.stringify({
