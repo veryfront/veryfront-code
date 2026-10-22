@@ -415,13 +415,34 @@ describe("served-only models from a cold process", () => {
       deleteEnv("OPENAI_API_KEY");
     });
 
-    it("requests no catalog for a model a provider key serves", async () => {
-      setEnv("OPENAI_API_KEY", "<API_KEY>");
+    afterEach(() => {
+      deleteEnv("ANTHROPIC_API_KEY");
+    });
+
+    for (
+      const [model, resolved, keyName] of [
+        ["openai/gpt-5.6-luna", "openai/gpt-5.6-luna", "OPENAI_API_KEY"],
+        ["sonnet", "anthropic/claude-sonnet-4-6", "ANTHROPIC_API_KEY"],
+      ] as const
+    ) {
+      it(`requests no catalog for ${model}, which a provider key serves`, async () => {
+        setEnv(keyName, "<API_KEY>");
+        const catalogRequests = installExpiredSession();
+
+        const transport = await resolveWith(model);
+
+        assertEquals(transport.resolvedModelString, resolved);
+        assertEquals(catalogRequests, []);
+      });
+    }
+
+    it("requests no catalog for a model the application serves itself", async () => {
+      registerModelProvider("acme-direct", () => ({}) as ModelRuntime);
       const catalogRequests = installExpiredSession();
 
-      const transport = await resolveWith("openai/gpt-5.6-luna");
+      const transport = await resolveWith("acme-direct/m1");
 
-      assertEquals(transport.resolvedModelString, "openai/gpt-5.6-luna");
+      assertEquals(transport.resolvedModelString, "acme-direct/m1");
       assertEquals(catalogRequests, []);
     });
 

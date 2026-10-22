@@ -368,8 +368,9 @@ export function isVeryfrontCloudRuntimeModel(model?: string): boolean {
 /**
  * Whether `model` routes to a direct provider whatever the served catalog
  * says: an explicit `<provider>/<model>` (or a built-in alias for one) whose
- * provider has a direct key or an application runtime. Such a run never needs
- * the catalog, so it must not request it with a login it does not use.
+ * provider has a direct key or an application runtime. Its route never
+ * depends on the catalog, so loading it is no reason to send a login the run
+ * does not use.
  */
 export function routesDirectWithoutCatalog(model?: string): boolean {
   if (model === undefined) return false;
