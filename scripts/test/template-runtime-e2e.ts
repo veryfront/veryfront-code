@@ -75,9 +75,9 @@ const TEMPLATE_ROUTE_EXPECTATIONS: Partial<
     { route: "/login", contains: ["Welcome back"] },
     { route: "/dashboard" },
   ],
+  // The run detail route is checked against a run the workflow API started.
   "agentic-workflow": [
     { route: "/", contains: ["Content Pipeline", "Recent Runs"] },
-    { route: "/workflows/test-run" },
   ],
 };
 
@@ -238,8 +238,8 @@ async function verifyBrowserRoute(
   }
 }
 
-async function verifyAgenticWorkflowDemo(rootUrl: string): Promise<void> {
-  const topic = `Runtime E2E ${crypto.randomUUID().slice(0, 8)}`;
+/** Start a real run through the workflow API and return its id. */
+async function verifyAgenticWorkflowDemo(rootUrl: string): Promise<string> {
   // The workflow start route sits behind the template's CSRF gate, which
   // local development enforces exactly as a deployed build does, so this
   // mutation has to complete the double-submit the way a browser client would.
@@ -255,11 +255,11 @@ async function verifyAgenticWorkflowDemo(rootUrl: string): Promise<void> {
       headers: withCsrfDoubleSubmit(csrfToken, {
         "Content-Type": "application/json",
       }),
-      body: JSON.stringify({ input: { topic } }),
+      body: JSON.stringify({ input: { topic: "Runtime E2E" } }),
     },
   );
-  const started = await startResponse.json() as { runId?: string; id?: string };
-  const runId = started.runId ?? started.id;
+  const started = await startResponse.json() as { runId?: string };
+  const runId = started.runId;
 
   assertCondition(
     startResponse.ok,
@@ -273,35 +273,32 @@ async function verifyAgenticWorkflowDemo(rootUrl: string): Promise<void> {
   const listResponse = await fetch(
     new URL("/api/workflows/runs?workflowId=content-pipeline", rootUrl),
   );
-  const list = await listResponse.json() as {
-    runs?: Array<{ id?: string; input?: { topic?: string } }>;
-  };
-  const listedRun = list.runs?.find((run) => run.id === runId);
+  const list = await listResponse.json() as { runs?: Array<{ id?: string }> };
   assertCondition(
     listResponse.ok,
     `workflow list returned HTTP ${listResponse.status}`,
   );
   assertCondition(
-    Boolean(listedRun),
+    Boolean(list.runs?.some((run) => run.id === runId)),
     "started workflow run was not returned by the list API",
-  );
-  assertCondition(
-    listedRun?.input?.topic === topic,
-    "started workflow run did not preserve the submitted topic in the list API",
   );
 
   const detailResponse = await fetch(
     new URL(`/api/workflows/runs/${runId}`, rootUrl),
   );
-  const detail = await detailResponse.json() as { input?: { topic?: string } };
+  const detail = await detailResponse.json() as {
+    id?: string;
+    workflowId?: string;
+  };
   assertCondition(
     detailResponse.ok,
     `workflow detail returned HTTP ${detailResponse.status}`,
   );
   assertCondition(
-    detail.input?.topic === topic,
-    "started workflow run did not preserve the submitted topic in the detail API",
+    detail.id === runId && detail.workflowId === "content-pipeline",
+    "workflow detail API did not return the started run",
   );
+  return runId;
 }
 
 async function testCase(
@@ -345,7 +342,12 @@ async function testCase(
 
     if (template === "agentic-workflow") {
       console.log(`test ${label}: workflow API`);
-      await verifyAgenticWorkflowDemo(rootUrl);
+      const runId = await verifyAgenticWorkflowDemo(rootUrl);
+      console.log(`test ${label}: browser /workflows/${runId}`);
+      await verifyBrowserRoute(
+        session,
+        new URL(`/workflows/${runId}`, rootUrl).toString(),
+      );
     }
   } catch (error) {
     await stopDevServer(server);

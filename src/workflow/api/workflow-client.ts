@@ -279,7 +279,9 @@ export class WorkflowClient {
     }
   }
 
-  register(workflow: Workflow | WorkflowDefinition): void {
+  register<TInput, TOutput>(
+    workflow: Workflow<TInput, TOutput> | WorkflowDefinition<TInput, TOutput>,
+  ): void {
     const definition = "definition" in workflow ? workflow.definition : workflow;
     const capturedDefinition = captureWorkflowDefinition(definition);
     const indexedDefinition = this.indexWaitNodeConfigs(capturedDefinition);
@@ -306,7 +308,9 @@ export class WorkflowClient {
    * from the definition after a process restart. During execution, the exact
    * runtime config supplies expiry, approvers, and response validation.
    */
-  private indexWaitNodeConfigs(definition: WorkflowDefinition): WorkflowDefinition {
+  private indexWaitNodeConfigs<TInput, TOutput>(
+    definition: WorkflowDefinition<TInput, TOutput>,
+  ): WorkflowDefinition<TInput, TOutput> {
     const keyPrefix = `${definition.id}::`;
     for (const key of this.waitNodeConfigs.keys()) {
       if (key.startsWith(keyPrefix)) {
