@@ -2868,27 +2868,27 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
       ).message;
     assertEquals(
       failure("../../project/lib/a.ts"),
-      "[API] handler build failed: lib/a.ts:2:4: Expected identifier",
+      "[API] handler build failed: lib/a.ts:2:5: Expected identifier",
     );
     assertEquals(
       failure("vf-project-alias:/project/lib/a.ts"),
-      "[API] handler build failed: lib/a.ts:2:4: Expected identifier",
+      "[API] handler build failed: lib/a.ts:2:5: Expected identifier",
     );
     assertEquals(
       failure("http-url:https://user:secret@cdn.example/lib/mod.ts?token=<TOKEN>"),
-      "[API] handler build failed: https://cdn.example/lib/mod.ts:2:4: Expected identifier",
+      "[API] handler build failed: https://cdn.example/lib/mod.ts:2:5: Expected identifier",
     );
     assertEquals(
       failure("http-url:HTTPS://cdn.example/lib/mod.ts?token=<TOKEN>"),
-      "[API] handler build failed: https://cdn.example/lib/mod.ts:2:4: Expected identifier",
+      "[API] handler build failed: https://cdn.example/lib/mod.ts:2:5: Expected identifier",
     );
     assertEquals(
       failure("https://cdn.example/lib/mod.ts"),
-      "[API] handler build failed: https://cdn.example/lib/mod.ts:2:4: Expected identifier",
+      "[API] handler build failed: https://cdn.example/lib/mod.ts:2:5: Expected identifier",
     );
     assertEquals(
       failure("/elsewhere/other.ts"),
-      "[API] handler build failed: other.ts:2:4: Expected identifier",
+      "[API] handler build failed: other.ts:2:5: Expected identifier",
     );
     assertEquals(
       buildFailure(
@@ -2901,6 +2901,22 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
       ).message,
       "[API] handler build failed: Import escapes the project directory: secret.ts. " +
         "File not found: lib/b.ts, see https://cdn.example/x/y.ts",
+    );
+    assertEquals(
+      buildFailure(
+        [{ text: "File not found: /srv/Jane Doe/app/lib/c.ts" }],
+        "/srv/Jane Doe/app",
+        "/srv/work",
+      ).message,
+      "[API] handler build failed: File not found: lib/c.ts",
+    );
+    assertEquals(
+      buildFailure(
+        [{ text: "Failed to fetch https://cdn.example/project/mod.ts: 404" }],
+        "/project",
+        "/srv/work",
+      ).message,
+      "[API] handler build failed: Failed to fetch https://cdn.example/project/mod.ts: 404",
     );
   });
 

@@ -118,11 +118,14 @@ export function loadHandlerModule(options: LoadHostModuleOptions): Promise<APIRo
         });
         return extractAPIRouteHandlers(module);
       } catch (error: unknown) {
-        const errorMsg = error instanceof Error ? error.message : String(error);
+        const errorMsg = redactAbsolutePaths(
+          error instanceof Error ? error.message : String(error),
+          projectDir,
+        );
         // The reason, not the error: its stack names host-absolute paths.
         logger.error(
           `Failed to load API handler ${projectModuleLabel(modulePath, projectDir)}:`,
-          { reason: redactAbsolutePaths(errorMsg, projectDir) },
+          { reason: errorMsg },
         );
         throw toError(
           createError({
@@ -176,10 +179,13 @@ export function prepareHandlerModule(options: LoadModuleOptions): Promise<Prepar
           sha256: await computeHash(source),
         });
       } catch (error: unknown) {
-        const errorMsg = error instanceof Error ? error.message : String(error);
+        const errorMsg = redactAbsolutePaths(
+          error instanceof Error ? error.message : String(error),
+          projectDir,
+        );
         logger.error(
           `Failed to prepare isolated API handler ${projectModuleLabel(modulePath, projectDir)}:`,
-          { reason: redactAbsolutePaths(errorMsg, projectDir) },
+          { reason: errorMsg },
         );
         throw toError(
           createError({
@@ -1895,7 +1901,10 @@ function createProjectBoundaryPlugin(
  * is not a filesystem path and is left alone.
  */
 function redactAbsolutePaths(text: string, projectDir: string): string {
-  return text.replace(
+  // The project root first, so a root containing spaces is still caught whole.
+  // Only where a path starts: a URL may contain the same characters.
+  const root = pathHelper.resolve(projectDir).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return text.replace(new RegExp(`(?<![\\w.:/\\\\])${root}[\\\\/]`, "g"), "").replace(
     /(?<![\w.:/\\])(?:[A-Za-z]:[\\/]|\/)[^\s'"`(),;]+/g,
     (path) => projectModuleLabel(path, projectDir),
   );
@@ -1937,7 +1946,8 @@ export function buildFailure(
   const file = first?.location?.file?.replace(/^[a-z][a-z-]+:(?!\/\/)/, "");
   const where = file
     ? `${buildLocationLabel(file, projectDir, workingDir)}:` +
-      `${first?.location?.line}:${first?.location?.column}: `
+      // esbuild columns are zero-based; editors count from one.
+      `${first?.location?.line}:${(first?.location?.column ?? 0) + 1}: `
     : "";
   return toError(
     createError({
