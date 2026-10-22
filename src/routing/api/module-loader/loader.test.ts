@@ -2882,6 +2882,18 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
       failure("/elsewhere/other.ts"),
       "[API] handler build failed: other.ts:2:4: Expected identifier",
     );
+    assertEquals(
+      buildFailure(
+        [{
+          text: "Import escapes the project directory: /elsewhere/secret.ts. " +
+            "File not found: /project/lib/b.ts, see https://cdn.example/x/y.ts",
+        }],
+        "/project",
+        "/srv/work",
+      ).message,
+      "[API] handler build failed: Import escapes the project directory: secret.ts. " +
+        "File not found: lib/b.ts, see https://cdn.example/x/y.ts",
+    );
   });
 
   it("rejects Function-created imports before direct module evaluation", async () => {

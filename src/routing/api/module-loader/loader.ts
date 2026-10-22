@@ -1468,7 +1468,7 @@ function createNamespaceOnLoadHandler(options: {
         resolveDir: pathHelper.dirname(filePath),
       };
     } catch (error) {
-      const msg = withoutProjectRoot(
+      const msg = redactAbsolutePaths(
         error instanceof Error ? error.message : String(error),
         projectDir,
       );
@@ -1888,9 +1888,16 @@ function createProjectBoundaryPlugin(
   };
 }
 
-/** `text` with every path under the project root made project-relative. */
-function withoutProjectRoot(text: string, projectDir: string): string {
-  return text.replaceAll(`${pathHelper.resolve(projectDir)}/`, "");
+/**
+ * `text` with every absolute filesystem path replaced by its project label:
+ * project-relative inside the project, the file name outside it. A URL's path
+ * is not a filesystem path and is left alone.
+ */
+function redactAbsolutePaths(text: string, projectDir: string): string {
+  return text.replace(
+    /(?<![\w.:/\\])(?:[A-Za-z]:[\\/]|\/)[^\s'"`(),;]+/g,
+    (path) => projectModuleLabel(path, projectDir),
+  );
 }
 
 /** A remote module by its origin and path, without credentials or query. */
@@ -1935,7 +1942,7 @@ export function buildFailure(
     createError({
       type: "api",
       message: `[API] handler build failed: ${where}${
-        withoutProjectRoot(first?.text || "unknown error", projectDir)
+        redactAbsolutePaths(first?.text || "unknown error", projectDir)
       }`,
     }),
   );
