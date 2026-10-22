@@ -1161,7 +1161,9 @@ describe("npm generated integration artifacts", () => {
 
     assertEquals(typeof buildNpmTask, "string");
     assertEquals(buildNpmTask.includes("scripts/build/build-npm.ts"), true);
-    const orchestrator = await Deno.readTextFile("scripts/build/build-npm.ts");
+    const orchestrator = await Deno.readTextFile(
+      new URL("./build-npm.ts", import.meta.url),
+    );
     assertEquals(
       orchestrator.indexOf("scripts/build/generate-integrations-module.ts") <
         orchestrator.indexOf('import("./build-npm-dnt.ts")'),
