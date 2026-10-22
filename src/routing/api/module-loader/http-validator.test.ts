@@ -1732,7 +1732,7 @@ describe("routing/api/module-loader/http-validator", () => {
       const error = await assertRejects(
         async () => await validateHTTPImports(source, [], { path: "workflows/pipeline.ts" }),
         Error,
-      );
+      ) as Error;
       assertEquals(
         error.message,
         "[API] handler build failed: dynamic code generation cannot be checked against the " +
@@ -1753,7 +1753,7 @@ describe("routing/api/module-loader/http-validator", () => {
           ),
         Error,
         "lib/x.ts:1:25 reads `c[…]`",
-      );
+      ) as Error;
       assertEquals(error.message.includes("<TOKEN>"), false);
       assertEquals(error.message.includes("<SECRET>"), false);
     });
@@ -1763,7 +1763,7 @@ describe("routing/api/module-loader/http-validator", () => {
         const error = await assertRejects(
           async () => await validateHTTPImports(source, [], { path: "lib/x.ts" }),
           Error,
-        );
+        ) as Error;
         assertEquals(
           error.message,
           "[API] handler build failed: dynamic code generation cannot be checked against the " +
