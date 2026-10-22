@@ -10,6 +10,7 @@ import {
 import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import { join, toFileUrl } from "#veryfront/compat/path";
 import {
+  buildFailure,
   bundledModuleScopeDiscriminator,
   bundlerForcesTypeScript,
   canDirectImportSpecifier,
@@ -37,6 +38,7 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { env, getEnv, setEnv } from "#veryfront/compat/process.ts";
 import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
+import { __subscribeLogRecordEmitter } from "#veryfront/utils/logger/logger.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import type { LoadModuleOptions } from "./types.ts";
@@ -2785,20 +2787,62 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
     );
   });
 
-  it("names an imported module's unresolved computed read by its project-relative path", async () => {
+  for (
+    const [label, routeLines] of [
+      ["a direct", []],
+      // `import.meta` sends the route through the bundler, as Node always does.
+      ["a bundled", [`export const url = import.meta.url;`]],
+    ] as const
+  ) {
+    it(`names ${label} route's rejected import by its project-relative path only`, async () => {
+      const tmpDir = await makeTempDir();
+      const modulePath = join(tmpDir, "app", "api", "route.ts");
+      await fs.mkdir(join(tmpDir, "app", "api"), { recursive: true });
+      await fs.mkdir(join(tmpDir, "lib"), { recursive: true });
+      await fs.writeTextFile(
+        join(tmpDir, "lib", "lookup.ts"),
+        `export const lookup = (c: Record<string, unknown>, k: string) => c[k];\n`,
+      );
+      await fs.writeTextFile(
+        modulePath,
+        [
+          `import { lookup } from "../../lib/lookup.ts";`,
+          ...routeLines,
+          `export const GET = () => new Response(String(lookup({}, "a")));`,
+        ].join("\n"),
+      );
+
+      // Neither the error nor any log line may carry the machine's absolute
+      // paths (veryfront-issue-inbox#3820).
+      const logged: string[] = [];
+      const unsubscribe = __subscribeLogRecordEmitter((entry) => {
+        logged.push(JSON.stringify(entry));
+      });
+      let error: Error;
+      try {
+        error = await assertRejects(
+          () => loadHandlerModule({ projectDir: tmpDir, modulePath, adapter, config: undefined }),
+          Error,
+        ) as Error;
+      } finally {
+        unsubscribe();
+      }
+      assertMatch(error.message, /(^|\s)lib\/lookup\.ts:1:66 reads `c\[k\]`/);
+      assertEquals(error.message.includes(tmpDir), false, error.message);
+      assertEquals(logged.filter((line) => line.includes(tmpDir)), []);
+    });
+  }
+
+  it("names a bundled route's build error by its project-relative location", async () => {
     const tmpDir = await makeTempDir();
     const modulePath = join(tmpDir, "app", "api", "route.ts");
     await fs.mkdir(join(tmpDir, "app", "api"), { recursive: true });
-    await fs.mkdir(join(tmpDir, "lib"), { recursive: true });
-    await fs.writeTextFile(
-      join(tmpDir, "lib", "lookup.ts"),
-      `export const lookup = (c: Record<string, unknown>, k: string) => c[k];\n`,
-    );
     await fs.writeTextFile(
       modulePath,
       [
-        `import { lookup } from "../../lib/lookup.ts";`,
-        `export const GET = () => new Response(String(lookup({}, "a")));`,
+        `export const url = import.meta.url;`,
+        `import { missing } from "./missing.ts";`,
+        `export const GET = () => new Response(String(missing));`,
       ].join("\n"),
     );
 
@@ -2806,9 +2850,38 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
       () => loadHandlerModule({ projectDir: tmpDir, modulePath, adapter, config: undefined }),
       Error,
     ) as Error;
-    // The bundler may prefix its own location; the validator's label must
-    // still be the project-relative path, not the absolute one.
-    assertMatch(error.message, /(^|\s)lib\/lookup\.ts:1:66 reads `c\[k\]`/);
+    assertMatch(error.message, /handler build failed: app\/api\/route\.ts:2:\d+: /);
+    assertMatch(error.message, /File not found: app\/api\/missing\.ts/);
+    assertEquals(error.message.includes(tmpDir), false, error.message);
+  });
+
+  it("labels a build error's location without exposing absolute paths or URL secrets", () => {
+    const failure = (file: string) =>
+      buildFailure(
+        [{ text: "Expected identifier", location: { file, line: 2, column: 4 } }],
+        "/project",
+        "/srv/work",
+      ).message;
+    assertEquals(
+      failure("../../project/lib/a.ts"),
+      "[API] handler build failed: lib/a.ts:2:4: Expected identifier",
+    );
+    assertEquals(
+      failure("vf-project-alias:/project/lib/a.ts"),
+      "[API] handler build failed: lib/a.ts:2:4: Expected identifier",
+    );
+    assertEquals(
+      failure("http-url:https://user:secret@cdn.example/lib/mod.ts?token=<TOKEN>"),
+      "[API] handler build failed: https://cdn.example/lib/mod.ts:2:4: Expected identifier",
+    );
+    assertEquals(
+      failure("https://cdn.example/lib/mod.ts"),
+      "[API] handler build failed: https://cdn.example/lib/mod.ts:2:4: Expected identifier",
+    );
+    assertEquals(
+      failure("/elsewhere/other.ts"),
+      "[API] handler build failed: other.ts:2:4: Expected identifier",
+    );
   });
 
   it("rejects Function-created imports before direct module evaluation", async () => {

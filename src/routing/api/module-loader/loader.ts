@@ -28,6 +28,7 @@ import { createFileSystem, realPath } from "#veryfront/platform/compat/fs.ts";
 import type { FileSystem } from "#veryfront/platform/compat/fs.ts";
 import { captureBoundedTextReader } from "#veryfront/platform/adapters/bounded-text-reader.ts";
 import * as pathHelper from "#veryfront/compat/path";
+import { cwd } from "#veryfront/compat/process.ts";
 import { FILE_EXTENSIONS, getLoaderForFile, validateModulePath } from "./loader-helpers.ts";
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
@@ -118,7 +119,10 @@ export function loadHandlerModule(options: LoadHostModuleOptions): Promise<APIRo
         return extractAPIRouteHandlers(module);
       } catch (error: unknown) {
         const errorMsg = error instanceof Error ? error.message : String(error);
-        logger.error(`Failed to load API handler ${modulePath}:`, error);
+        logger.error(
+          `Failed to load API handler ${projectModuleLabel(modulePath, projectDir)}:`,
+          error,
+        );
         throw toError(
           createError({
             type: "api",
@@ -172,7 +176,10 @@ export function prepareHandlerModule(options: LoadModuleOptions): Promise<Prepar
         });
       } catch (error: unknown) {
         const errorMsg = error instanceof Error ? error.message : String(error);
-        logger.error(`Failed to prepare isolated API handler ${modulePath}:`, error);
+        logger.error(
+          `Failed to prepare isolated API handler ${projectModuleLabel(modulePath, projectDir)}:`,
+          error,
+        );
         throw toError(
           createError({
             type: "api",
@@ -1461,8 +1468,14 @@ function createNamespaceOnLoadHandler(options: {
         resolveDir: pathHelper.dirname(filePath),
       };
     } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
-      logger.error(`Failed to load ${errorLabel}: ${args.path}`, error);
+      const msg = withoutProjectRoot(
+        error instanceof Error ? error.message : String(error),
+        projectDir,
+      );
+      logger.error(
+        `Failed to load ${errorLabel}: ${projectModuleLabel(args.path, projectDir)}`,
+        { reason: msg },
+      );
       return { errors: [{ text: `Failed to load: ${msg}` }] };
     }
   });
@@ -1875,6 +1888,59 @@ function createProjectBoundaryPlugin(
   };
 }
 
+/** `text` with every path under the project root made project-relative. */
+function withoutProjectRoot(text: string, projectDir: string): string {
+  return text.replaceAll(`${pathHelper.resolve(projectDir)}/`, "");
+}
+
+/** A remote module by its origin and path, without credentials or query. */
+function buildLocationLabel(file: string, projectDir: string, workingDir: string): string {
+  if (/^https?:\/\//.test(file)) {
+    try {
+      const url = new URL(file);
+      return `${url.origin}${url.pathname}`;
+    } catch {
+      return "remote module";
+    }
+  }
+  return projectModuleLabel(pathHelper.resolve(workingDir, file), projectDir);
+}
+
+interface BuildMessage {
+  text?: string;
+  location?: { file?: string; line?: number; column?: number } | null;
+}
+
+/**
+ * A failed build, reported by its first error with a project-relative
+ * location. esbuild's own failure message gives the location relative to the
+ * build's working directory, a `../` climb that spells out the machine's
+ * absolute path. `workingDir` is that directory.
+ *
+ * @internal Exported for the location-label regression test.
+ */
+export function buildFailure(
+  errors: readonly BuildMessage[],
+  projectDir: string,
+  workingDir: string,
+): Error {
+  const first = errors[0];
+  // Drop an esbuild namespace such as `http-url:`, but not a URL's own scheme.
+  const file = first?.location?.file?.replace(/^[a-z][a-z-]+:(?!\/\/)/, "");
+  const where = file
+    ? `${buildLocationLabel(file, projectDir, workingDir)}:` +
+      `${first?.location?.line}:${first?.location?.column}: `
+    : "";
+  return toError(
+    createError({
+      type: "api",
+      message: `[API] handler build failed: ${where}${
+        withoutProjectRoot(first?.text || "unknown error", projectDir)
+      }`,
+    }),
+  );
+}
+
 async function loadAndTranspileModule(
   modulePath: string,
   projectDir: string,
@@ -2023,6 +2089,10 @@ function buildTranspiledModuleSource(
         "export { require, Worker };",
       ].join("\n");
 
+      const buildOptions = typescriptDecoratorOptions
+        ? typeScriptBuildOptions(projectDir, typescriptDecoratorOptions, bundleTypeScript)
+        : {};
+      const workingDir = buildOptions.absWorkingDir ?? cwd();
       const result: BuildResult = await build({
         bundle: true,
         write: false,
@@ -2093,20 +2163,16 @@ function buildTranspiledModuleSource(
         // Only the opt-in decorator transform needs a working directory: adding
         // it unconditionally would change how the default esbuild path reports
         // paths for every project.
-        ...(typescriptDecoratorOptions
-          ? typeScriptBuildOptions(projectDir, typescriptDecoratorOptions, bundleTypeScript)
-          : {}),
+        ...buildOptions,
+      }).catch((error: unknown) => {
+        const errors = (error as { errors?: unknown }).errors;
+        if (Array.isArray(errors) && errors.length > 0) {
+          throw buildFailure(errors, projectDir, workingDir);
+        }
+        throw error;
       });
 
-      if (result.errors?.length) {
-        const first = result.errors[0]?.text || "unknown error";
-        throw toError(
-          createError({
-            type: "api",
-            message: `[API] handler build failed: ${first}`,
-          }),
-        );
-      }
+      if (result.errors?.length) throw buildFailure(result.errors, projectDir, workingDir);
 
       logger.debug(`built handler ${resolvedPath}`);
       const js = result.outputFiles?.[0]?.text ?? "export {}";
