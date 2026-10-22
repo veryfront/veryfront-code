@@ -24,7 +24,11 @@ import {
 } from "#veryfront/config/environment-config.ts";
 
 import { saveToken } from "../../../../../cli/auth/token-store.ts";
-import { applyRuntimeAuthContext } from "../../../../../cli/shared/runtime-auth.ts";
+import {
+  applyQualifiedRuntimeAuth,
+  applyRuntimeAuthContext,
+} from "../../../../../cli/shared/runtime-auth.ts";
+import { installMockFetch, restoreMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { isCredentialRejected } from "../../../../../cli/shared/credential-rejection.ts";
 
 const TOKEN = "stored-login-token";
@@ -99,12 +103,94 @@ describe("runtime-auth credential intrinsic boundary", () => {
         return testApply(nativeTrim, this, []) as string;
       };
 
-      const rejected = await isCredentialRejected(TOKEN, "https://api.example.test", transport);
+      const rejected = await isCredentialRejected(
+        TOKEN,
+        "https://api.example.test",
+        transport,
+        5_000,
+      );
 
       assertEquals(rejected, false);
       assertEquals(observedIdentity, 0);
     } finally {
       String.prototype.trim = nativeTrim;
     }
+  });
+
+  it("checks a stored login without handing the token to an inherited signal getter", async () => {
+    // A transport probes the request init for a signal, as the onboarding
+    // deadline wrapper does. An inherited getter must never run on it.
+    const transport = ((_input: unknown, init?: RequestInit) => {
+      void (init && "signal" in init && init.signal);
+      return Promise.resolve(new Response(null, { status: 401 }));
+    }) as typeof fetch;
+    let observedCredential = 0;
+
+    Object.defineProperty(Object.prototype, "signal", {
+      configurable: true,
+      get(this: { headers?: Record<string, string> }) {
+        if (containsToken(this.headers?.Authorization)) observedCredential += 1;
+        return undefined;
+      },
+    });
+    try {
+      const rejected = await isCredentialRejected(
+        TOKEN,
+        "https://api.example.test",
+        transport,
+        5_000,
+      );
+
+      assertEquals(rejected, true);
+      assertEquals(observedCredential, 0);
+    } finally {
+      delete (Object.prototype as { signal?: unknown }).signal;
+    }
+  });
+
+  it("remembers a rejected stored login without handing it to replaced Set methods", async () => {
+    await withTempDir(async (configHome) => {
+      setEnv("XDG_CONFIG_HOME", configHome);
+      setEnv("OPENAI_API_KEY", "<API_KEY>");
+      _resetEnvironmentConfig();
+      await saveToken(TOKEN, createTestEnvironmentConfig({ xdgConfigHome: configHome }));
+      installMockFetch(
+        (() => Promise.resolve(new Response(null, { status: 401 }))) as typeof fetch,
+      );
+      const nativeHas = Set.prototype.has;
+      const nativeAdd = Set.prototype.add;
+      let observedCredential = 0;
+
+      try {
+        Set.prototype.has = function (this: Set<unknown>, value: unknown): boolean {
+          if (containsToken(value)) observedCredential += 1;
+          return testApply(nativeHas, this, [value]) as boolean;
+        };
+        Set.prototype.add = function <T>(this: Set<T>, value: T): Set<T> {
+          if (containsToken(value)) observedCredential += 1;
+          return testApply(nativeAdd, this, [value]) as Set<T>;
+        };
+
+        // The second call reads the remembered rejection.
+        await applyQualifiedRuntimeAuth(configHome);
+        const context = await applyQualifiedRuntimeAuth(configHome);
+
+        assertEquals(context, {});
+        assertEquals(observedCredential, 0);
+      } finally {
+        Set.prototype.has = nativeHas;
+        Set.prototype.add = nativeAdd;
+        restoreMockFetch();
+        deleteHostSecret("VERYFRONT_API_TOKEN");
+        for (const key of ["XDG_CONFIG_HOME", "VERYFRONT_SERVICE_LAYER", "OPENAI_API_KEY"]) {
+          try {
+            deleteEnv(key);
+          } catch {
+            // expected: env may already be unset
+          }
+        }
+        _resetEnvironmentConfig();
+      }
+    }, { prefix: "vf-runtime-auth-intrinsics-" });
   });
 });

@@ -432,9 +432,13 @@ describe("cli/shared/runtime-auth", () => {
       return paths;
     }
 
+    // Each case stores its own token: a rejection is remembered per process.
+    let storedToken = "stored-token";
+
     async function storedLoginProject(): Promise<string> {
+      storedToken = `stored-token-${crypto.randomUUID()}`;
       await useTempConfigHome();
-      await saveToken("stored-token");
+      await saveToken(storedToken);
       const projectDir = await makeTempDir({ prefix: "vf-runtime-auth-direct-" });
       tempDirs.push(projectDir);
       return projectDir;
@@ -454,7 +458,7 @@ describe("cli/shared/runtime-auth", () => {
       assertEquals(getHostEnv("VERYFRONT_API_TOKEN"), undefined);
       assertEquals(getEnv("VERYFRONT_SERVICE_LAYER"), undefined);
       // The login stays stored; only this run stops using it.
-      assertEquals(await readToken(), "stored-token");
+      assertEquals(await readToken(), storedToken);
     });
 
     it("keeps the login when the key cannot serve the default model", async () => {
@@ -466,7 +470,21 @@ describe("cli/shared/runtime-auth", () => {
 
       const context = await applyQualifiedRuntimeAuth(projectDir);
 
-      assertEquals(context.apiToken, "stored-token");
+      assertEquals(context.apiToken, storedToken);
+      assertEquals(paths, []);
+    });
+
+    it("remembers a rejection when a later check cannot reach the API", async () => {
+      const projectDir = await storedLoginProject();
+      setEnv("OPENAI_API_KEY", "<API_KEY>");
+      installLoginCheck(401);
+      await applyQualifiedRuntimeAuth(projectDir);
+      restoreMockFetch();
+      const paths = installLoginCheck(503);
+
+      const context = await applyQualifiedRuntimeAuth(projectDir);
+
+      assertEquals(context, {});
       assertEquals(paths, []);
     });
 
@@ -491,7 +509,7 @@ describe("cli/shared/runtime-auth", () => {
 
       const context = await applyQualifiedRuntimeAuth(projectDir, "linked-project");
 
-      assertEquals(context.apiToken, "stored-token");
+      assertEquals(context.apiToken, storedToken);
       assertEquals(paths, []);
     });
 
@@ -502,7 +520,7 @@ describe("cli/shared/runtime-auth", () => {
 
       const context = await applyQualifiedRuntimeAuth(projectDir);
 
-      assertEquals(context.apiToken, "stored-token");
+      assertEquals(context.apiToken, storedToken);
       assertEquals(getEnv("VERYFRONT_SERVICE_LAYER"), "cloud");
     });
 
@@ -513,7 +531,7 @@ describe("cli/shared/runtime-auth", () => {
 
       const context = await applyQualifiedRuntimeAuth(projectDir);
 
-      assertEquals(context.apiToken, "stored-token");
+      assertEquals(context.apiToken, storedToken);
     });
 
     it("keeps a rejected login, unchecked, when no provider key can serve runs", async () => {
@@ -522,7 +540,7 @@ describe("cli/shared/runtime-auth", () => {
 
       const context = await applyQualifiedRuntimeAuth(projectDir);
 
-      assertEquals(context.apiToken, "stored-token");
+      assertEquals(context.apiToken, storedToken);
       assertEquals(paths, []);
     });
 
@@ -534,7 +552,7 @@ describe("cli/shared/runtime-auth", () => {
 
       const context = await applyQualifiedRuntimeAuth(projectDir);
 
-      assertEquals(context.apiToken, "stored-token");
+      assertEquals(context.apiToken, storedToken);
       assertEquals(paths, []);
     });
   });

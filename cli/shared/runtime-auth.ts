@@ -24,7 +24,7 @@ import {
   resolveApiUrlTrust,
 } from "./config.ts";
 import { readProjectLink } from "./project-link.ts";
-import { createCloudOnboardingTransport } from "./cloud-onboarding-transport.ts";
+import { createVeryfrontApiOriginBoundOutboundFetch } from "#cli/outbound-fetch";
 import { isCredentialRejected } from "./credential-rejection.ts";
 
 export interface RuntimeAuthOptions {
@@ -215,6 +215,16 @@ const DEFAULT_MODEL_PROVIDER_KEY = "OPENAI_API_KEY";
 const STORED_LOGIN_CHECK_TIMEOUT_MS = 5_000;
 
 /**
+ * Stored logins (API URL and token) the API rejected in this process. A
+ * command may qualify its auth more than once; a later check that cannot
+ * reach the API must not bring a rejected login back.
+ */
+const rejectedStoredLogins = new Set<string>();
+// Captured before project code runs: the set holds stored login tokens.
+const setHas = Set.prototype.has;
+const setAdd = Set.prototype.add;
+
+/**
  * Drop a stored login the API rejects when a direct provider key serves the
  * runs instead. Cloud would refuse every run anyway, and keeping the login
  * routes runs with no model through it. A login that is valid, cannot be
@@ -238,10 +248,21 @@ async function dropRejectedStoredLogin(
   }
   try {
     const apiUrl = getApiUrl(candidate.validationEnv);
-    const transport = createCloudOnboardingTransport(apiUrl, STORED_LOGIN_CHECK_TIMEOUT_MS);
-    return await isCredentialRejected(candidate.apiToken, apiUrl, transport)
-      ? undefined
-      : candidate;
+    const rejection = `${apiUrl}\n${candidate.apiToken}`;
+    if (applyIntrinsic(setHas, rejectedStoredLogins, [rejection])) return undefined;
+    const transport = createVeryfrontApiOriginBoundOutboundFetch(apiUrl);
+    if (
+      !await isCredentialRejected(
+        candidate.apiToken,
+        apiUrl,
+        transport,
+        STORED_LOGIN_CHECK_TIMEOUT_MS,
+      )
+    ) {
+      return candidate;
+    }
+    applyIntrinsic(setAdd, rejectedStoredLogins, [rejection]);
+    return undefined;
   } catch {
     return candidate;
   }

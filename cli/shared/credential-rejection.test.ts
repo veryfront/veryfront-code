@@ -19,7 +19,7 @@ describe("cli/shared/credential-rejection", () => {
     it(`reports a login rejected with ${status}`, async () => {
       const { transport, urls } = answer(status);
 
-      assertEquals(await isCredentialRejected("login-token", API_URL, transport), true);
+      assertEquals(await isCredentialRejected("login-token", API_URL, transport, 5_000), true);
       assertEquals(urls, [`${API_URL}/me`]);
     });
   }
@@ -28,20 +28,31 @@ describe("cli/shared/credential-rejection", () => {
     it(`does not report a login answered with ${status}`, async () => {
       const { transport } = answer(status);
 
-      assertEquals(await isCredentialRejected("login-token", API_URL, transport), false);
+      assertEquals(await isCredentialRejected("login-token", API_URL, transport, 5_000), false);
     });
   }
 
   it("checks an API key against the endpoint API keys can read", async () => {
     const { transport, urls } = answer(401);
 
-    assertEquals(await isCredentialRejected("vf_api_key", API_URL, transport), true);
+    assertEquals(await isCredentialRejected("vf_api_key", API_URL, transport, 5_000), true);
     assertEquals(urls, [`${API_URL}/projects?limit=1`]);
+  });
+
+  it("joins an API URL that ends in a slash without doubling it", async () => {
+    const { transport, urls } = answer(401);
+
+    await isCredentialRejected("login-token", `${API_URL}/`, transport, 5_000);
+
+    assertEquals(urls, [`${API_URL}/me`]);
   });
 
   it("lets a failed request throw, so callers keep the login", async () => {
     const transport = (() => Promise.reject(new TypeError("offline"))) as typeof fetch;
 
-    await assertRejects(() => isCredentialRejected("login-token", API_URL, transport), TypeError);
+    await assertRejects(
+      () => isCredentialRejected("login-token", API_URL, transport, 5_000),
+      TypeError,
+    );
   });
 });
