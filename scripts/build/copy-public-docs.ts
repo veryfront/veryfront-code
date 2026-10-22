@@ -1,5 +1,6 @@
 import { join, relative, resolve } from "node:path";
 import { createHash } from "node:crypto";
+import { releaseDocsInputs } from "../docs/release-inputs.ts";
 import { parse } from "#std/yaml/parse";
 
 export const PUBLIC_DOC_ROOTS = [
@@ -38,6 +39,9 @@ export async function copyPublicDocs(
     prefix: ".docs-",
   });
   const pages: PublicPage[] = [];
+  const assertReleaseInput = identity && !identity.dirty
+    ? await releaseDocsInputs(repositoryRoot, identity.revision)
+    : undefined;
   try {
     const copyDirectory = async (directory: string): Promise<void> => {
       for await (const entry of Deno.readDir(directory)) {
@@ -53,7 +57,9 @@ export async function copyPublicDocs(
           !entry.isFile || entry.name === "README.md" ||
           !/\.mdx?$/.test(entry.name)
         ) continue;
-        const text = await Deno.readTextFile(file);
+        const bytes = await Deno.readFile(file);
+        assertReleaseInput?.(file, bytes);
+        const text = new TextDecoder().decode(bytes);
         const header = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text);
         if (!header) {
           throw new Error(`Missing public documentation metadata: ${file}`);
@@ -134,7 +140,10 @@ export async function copyPublicDocs(
         } else if (
           entry.isFile && /\.(?:png|jpe?g|svg|webp|gif|avif)$/i.test(entry.name)
         ) {
-          await Deno.copyFile(join(from, entry.name), join(to, entry.name));
+          const file = join(from, entry.name);
+          const bytes = await Deno.readFile(file);
+          assertReleaseInput?.(file, bytes);
+          await Deno.writeFile(join(to, entry.name), bytes);
         }
       }
     }

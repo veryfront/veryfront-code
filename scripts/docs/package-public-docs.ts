@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import path from "node:path";
 import { parse } from "#std/yaml/parse";
+import { releaseDocsInputs } from "./release-inputs.ts";
 import { prepareRcBuildVersion } from "../ci/prepare-rc-build.ts";
 
 const PUBLIC_ROOTS: Record<string, string[]> = {
@@ -163,6 +164,7 @@ export async function packagePublicDocs(options: PackageDocsOptions) {
   }
   let catalogRevision: string | undefined;
   const generationInputs = new Map<string, string>();
+  const generated = new Map<string, string>();
   async function publicationReady() {
     const marker = path.join(
       path.dirname(root),
@@ -192,8 +194,30 @@ export async function packagePublicDocs(options: PackageDocsOptions) {
       !catalog.complete || catalog.sourceDirty !== false ||
       !/^[a-f0-9]{40}$/.test(catalog.sourceRevision)
     ) throw new Error("Cloud catalog requires a clean pinned Code source");
+    if (!Array.isArray(generation.files) || generation.files.length === 0) {
+      throw new Error("Cloud reference requires a generated file inventory");
+    }
+    for (const entry of generation.files) {
+      if (
+        !entry || typeof entry.path !== "string" ||
+        entry.path.split("/").some((part: string) =>
+          !part || part === "." || part === ".."
+        ) ||
+        entry.path.includes("\\") || !/^[a-f0-9]{64}$/.test(entry.sha256)
+      ) {
+        throw new Error("Invalid generated documentation file inventory");
+      }
+      const relative = `docs/public/${entry.path}`;
+      if (generated.has(relative)) {
+        throw new Error("Duplicate generated documentation input");
+      }
+      generated.set(relative, entry.sha256);
+    }
     catalogRevision = catalog.sourceRevision;
   }
+  const assertReleaseInput = options.mode === "release"
+    ? await releaseDocsInputs(repository, revision, generated)
+    : undefined;
   const stage = await Deno.makeTempDir({
     dir: outputParent,
     prefix: ".docs-package-",
@@ -203,6 +227,7 @@ export async function packagePublicDocs(options: PackageDocsOptions) {
   const inputs = new Map<string, string>(generationInputs);
   let pages = 0;
   async function copy(from: string, relative: string, bytes: Uint8Array) {
+    assertReleaseInput?.(from, bytes);
     const target = path.join(contentRoot, relative);
     await Deno.mkdir(path.dirname(target), { recursive: true });
     await Deno.writeFile(target, bytes);
@@ -278,6 +303,7 @@ export async function packagePublicDocs(options: PackageDocsOptions) {
     let redirects: { source: string; destination: string }[] = [];
     try {
       const raw = await Deno.readFile(redirectsFile);
+      assertReleaseInput?.(redirectsFile, raw);
       const value = JSON.parse(new TextDecoder().decode(raw));
       redirects = Array.isArray(value) ? value : value.redirects;
       if (

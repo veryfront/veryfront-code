@@ -249,3 +249,40 @@ Deno.test("Code docs accept only the exact existing RC metadata transformation",
     );
   });
 });
+
+Deno.test("release rejects ignored pages and assets absent from the pinned commit", async () => {
+  await fixture(async (root, repository, revision) => {
+    await Deno.writeTextFile(
+      path.join(repository, ".git/info/exclude"),
+      "private.md\nprivate.svg\n",
+    );
+    const options = {
+      repository,
+      revision,
+      product: "agent",
+      name: "@veryfront/agent-docs",
+      version: "1.2.3",
+      output: path.join(root, "package"),
+      mode: "release" as const,
+    };
+    for (
+      const [relative, content] of [
+        [
+          "docs/public/agent/private.md",
+          "---\ntitle: Private\n---\nLocal note",
+        ],
+        ["docs/public/assets/private.svg", "<svg/>"],
+      ]
+    ) {
+      const file = path.join(repository, relative);
+      await Deno.writeTextFile(file, content);
+      await assertRejects(
+        () => packagePublicDocs(options),
+        Error,
+        "Untracked release documentation input",
+      );
+      await Deno.remove(file);
+    }
+    assertEquals((await packagePublicDocs(options)).pages, 1);
+  });
+});

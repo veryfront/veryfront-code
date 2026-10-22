@@ -134,3 +134,59 @@ Deno.test("symlinks and missing public roots fail closed", async () => {
     );
   });
 });
+
+Deno.test("framework release rejects ignored local docs instead of attesting them as committed", async () => {
+  await fixture(async (root, pkg) => {
+    const git = async (...args: string[]) => {
+      const result = await new Deno.Command("git", {
+        args: ["-C", root, ...args],
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+      if (!result.success) {
+        throw new Error(new TextDecoder().decode(result.stderr));
+      }
+      return new TextDecoder().decode(result.stdout).trim();
+    };
+    await git("init", "-q");
+    await git("add", ".");
+    await git(
+      "-c",
+      "user.name=Fixture",
+      "-c",
+      "user.email=fixture@example.invalid",
+      "-c",
+      "commit.gpgsign=false",
+      "commit",
+      "-qm",
+      "fixture",
+    );
+    const identity = {
+      revision: await git("rev-parse", "HEAD"),
+      dirty: false,
+      repository: "https://example.invalid/code",
+    };
+    await Deno.writeTextFile(
+      join(root, ".git/info/exclude"),
+      "private.md\nprivate.svg\n",
+    );
+    for (
+      const [relative, content] of [
+        ["docs/guides/private.md", "---\ntitle: Private\n---\nLocal note"],
+        ["assets/product-covers/private.svg", "<svg/>"],
+      ]
+    ) {
+      await Deno.writeTextFile(join(root, relative), content);
+      await assertRejects(
+        () => copyPublicDocs(root, pkg, "1.2.3", identity),
+        Error,
+        "Untracked release documentation input",
+      );
+      await Deno.remove(join(root, relative));
+    }
+    assertEquals(
+      (await copyPublicDocs(root, pkg, "1.2.3", identity)).length,
+      2,
+    );
+  });
+});
