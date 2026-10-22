@@ -217,6 +217,34 @@ export async function copyPublicDocs(
         2,
       ) + "\n",
     );
+    if (identity && !identity.dirty) {
+      const head = await new Deno.Command("git", {
+        args: ["-C", repositoryRoot, "rev-parse", "HEAD"],
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+      const changes = await new Deno.Command("git", {
+        args: [
+          "-C",
+          repositoryRoot,
+          "diff",
+          "--quiet",
+          identity.revision,
+          "--",
+          "docs",
+          "assets/product-covers",
+        ],
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+      if (
+        !head.success ||
+        new TextDecoder().decode(head.stdout).trim() !== identity.revision ||
+        !changes.success
+      ) {
+        throw new Error("Documentation source snapshot changed after pinning");
+      }
+    }
     try {
       await Deno.remove(destination, { recursive: true });
     } catch (error) {

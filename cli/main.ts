@@ -14,6 +14,13 @@ if (Deno.args[0] === "__veryfront_internal_scaffold_writer") {
   Deno.exit(await runSecureScaffoldWriterProcess());
 }
 
+// Set the CLI logger preset before importing modules that may log during initialization.
+const { setLoggerPreset, setLoggerStderrOnly } = await import("#cli/logger-config");
+setLoggerPreset("cli");
+// Argument-parser dependencies can log before the command is known. Keep
+// startup diagnostics off stdout until the protocol mode is established.
+setLoggerStderrOnly(true);
+
 // Documentation is available even outside a project or with broken application configuration.
 const { earlyDocsArguments } = await import("./commands/docs/arguments.ts");
 const docsArgs = earlyDocsArguments(Deno.args);
@@ -21,13 +28,6 @@ if (docsArgs) {
   const { runDocsCommand } = await import("./commands/docs/command.ts");
   Deno.exit(await runDocsCommand(docsArgs));
 }
-
-// Set the CLI logger preset before importing modules that may log during initialization.
-const { setLoggerPreset, setLoggerStderrOnly } = await import("#cli/logger-config");
-setLoggerPreset("cli");
-// Argument-parser dependencies can log before the command is known. Keep
-// startup diagnostics off stdout until the protocol mode is established.
-setLoggerStderrOnly(true);
 
 // Establish machine-output mode before startup modules can emit diagnostics.
 const { parseCliArgs } = await import("./shared/args.ts");

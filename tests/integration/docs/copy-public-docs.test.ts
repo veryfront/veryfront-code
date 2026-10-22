@@ -187,6 +187,16 @@ Deno.test("framework release rejects ignored local docs instead of attesting the
       (await copyPublicDocs(root, pkg, "1.2.3", identity)).length,
       2,
     );
+    const page = join(root, "docs/guides/agents.md");
+    const before = await Deno.readTextFile(page);
+    await Deno.remove(page);
+    await assertRejects(
+      () => copyPublicDocs(root, pkg, "1.2.3", identity),
+      Error,
+      "source snapshot changed",
+    );
+    assertEquals(await Deno.readTextFile(join(pkg, "docs/guides/agents.md")), before);
+    await Deno.writeTextFile(page, before);
   });
 });
 
