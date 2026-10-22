@@ -1743,6 +1743,21 @@ describe("routing/api/module-loader/http-validator", () => {
       );
     });
 
+    it("should name only identifiers, never literals or comments, from the rejected read", async () => {
+      const error = await assertRejects(
+        async () =>
+          await validateHTTPImports(
+            `export const f = (c) => c[/* <SECRET> */ lookup("<TOKEN>")];`,
+            [],
+            { path: "lib/x.ts" },
+          ),
+        Error,
+        "lib/x.ts:1:25 reads `c[…]`",
+      );
+      assertEquals(error.message.includes("<TOKEN>"), false);
+      assertEquals(error.message.includes("<SECRET>"), false);
+    });
+
     it("should keep the generic message when no unresolved computed read is involved", async () => {
       const error = await assertRejects(
         async () => await validateHTTPImports(`eval("1");`, [], { path: "lib/x.ts" }),

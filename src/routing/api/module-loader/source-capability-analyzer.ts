@@ -5819,15 +5819,23 @@ function applyExportedCapabilityAlias(
  * bindings. A null result means the parser could not read the source; callers
  * must retain their conservative fail-closed fallback in that case.
  */
-function sourceLocation(node: ASTNode, source: string): SourceLocation {
+/**
+ * Identifier names only: a read such as `c[lookup("<TOKEN>")]` is shown as
+ * `c[…]`, so no literal, comment or call argument reaches an error or a log.
+ */
+function describeOperand(node: unknown): string {
+  if (!isNode(node)) return "…";
+  if (node.type === "Identifier" && typeof node.name === "string") return node.name;
+  if (node.type === "ThisExpression") return "this";
+  return "…";
+}
+
+function sourceLocation(node: ASTNode): SourceLocation {
   const loc = node.loc as { start?: { line?: number; column?: number } } | undefined;
-  const start = typeof node.start === "number" ? node.start : 0;
-  const end = typeof node.end === "number" ? node.end : start;
-  const text = ReflectApply(StringPrototypeSlice, source, [start, end]) as string;
   return {
     line: loc?.start?.line ?? 1,
     column: (loc?.start?.column ?? 0) + 1,
-    expression: text.length > 80 ? `${ReflectApply(StringPrototypeSlice, text, [0, 77])}...` : text,
+    expression: `${describeOperand(node.object)}[${describeOperand(node.property)}]`,
   };
 }
 
@@ -5887,7 +5895,7 @@ export async function analyzeSourceCapabilities(
   const read = analysis.unresolvedComputedRead;
   return {
     hasDynamicCodeGeneration: analysis.hasDynamicCodeGeneration,
-    ...(read ? { unresolvedComputedRead: sourceLocation(read, source) } : {}),
+    ...(read ? { unresolvedComputedRead: sourceLocation(read) } : {}),
     workers: analysis.workers,
     moduleSpecifiers: analysis.moduleSpecifiers,
     hasUnconstrainedDynamicImport: analysis.hasUnconstrainedDynamicImport,
