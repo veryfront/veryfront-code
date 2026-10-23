@@ -409,6 +409,33 @@ describe("served-only models from a cold process", () => {
     });
   });
 
+  it("keeps catalog reasoning defaults for a non-Anthropic model routed through Cloud for want of a key", async () => {
+    setEnv("VERYFRONT_API_TOKEN", AMBIENT_TOKEN);
+    setEnv("VERYFRONT_PROJECT_SLUG", "cold-project");
+    deleteEnv("OPENAI_API_KEY");
+    installMockFetch(
+      (() => Promise.resolve(Response.json(servedCatalogPayload()))) as typeof fetch,
+    );
+    const model = "openai/gpt-5.5";
+
+    const transport = await resolveAgentModelTransport({
+      agentId: "agent-1",
+      config: {
+        model,
+        system: "You are concise.",
+        resolveModelTransport: () => ({
+          model: { provider: "test", modelId: model } as ModelRuntime,
+        }),
+      },
+      context: undefined,
+      modelOverride: undefined,
+      mode: "generate",
+    });
+
+    assertEquals(transport.resolvedModelString, `veryfront-cloud/${model}`);
+    assertEquals(transport.reasoning, { enabled: true });
+  });
+
   describe("with an expired ambient login", () => {
     // The platform refuses every request, as it does for an expired session.
     function installExpiredSession(): string[] {
