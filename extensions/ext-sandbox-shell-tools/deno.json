@@ -13,7 +13,7 @@
   },
   "imports": {
     "ai": "npm:ai@7.0.41",
-    "zod": "npm:zod@4.3.6",
+    "zod": "npm:zod@4.6.7",
     "brace-expansion": "npm:brace-expansion@5.0.12",
     "@std/assert": "jsr:@std/assert@1.0.19",
     "@std/testing/bdd": "jsr:@std/testing@1.0.17/bdd",
