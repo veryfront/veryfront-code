@@ -5,6 +5,7 @@ type Payload = Parameters<Parser>[0];
 type ParseResult = ReturnType<Parser>;
 type Context = Parameters<Parser>[1];
 type Field = z.ZodObject["_zod"]["def"]["shape"][string];
+type SchemaObjectData = Record<PropertyKey, unknown>;
 
 const DATA_KEY = "__proto__";
 const patched = new WeakSet<object>();
@@ -15,6 +16,10 @@ const Apply = Reflect.apply;
 const IsArray = Array.isArray;
 const NativePromise = Promise;
 const PromiseThen = Promise.prototype.then;
+
+function isSchemaObjectData(value: unknown): value is SchemaObjectData {
+  return value !== null && typeof value === "object" && !IsArray(value);
+}
 
 function continueParse(result: ParseResult, next: (value: Payload) => ParseResult): ParseResult {
   return result instanceof NativePromise
@@ -27,7 +32,7 @@ function mergeDeclaredData(
   child: Payload,
   field: Field,
   present: boolean,
-  output: object,
+  output: SchemaObjectData,
 ): Payload {
   for (let index = 0; index < child.issues.length; index++) {
     const issue = child.issues[index]!;
@@ -56,12 +61,12 @@ function mergeDeclaredData(
 
 function parseDeclaredData(
   parent: Payload,
-  input: object,
+  input: SchemaObjectData,
   field: Field,
   context: Context,
 ): ParseResult {
   const output = parent.value;
-  if (output === null || typeof output !== "object" || IsArray(output)) {
+  if (!isSchemaObjectData(output)) {
     throw new TypeError("Object schema parser returned an invalid output");
   }
   const present = HasOwn(input, DATA_KEY);
@@ -89,7 +94,7 @@ export function preserveDeclaredObjectDataProperty(schema: z.ZodType): void {
     const input = payload.value;
     const issueCount = payload.issues.length;
     const result = delegate(payload, context);
-    if (input === null || typeof input !== "object" || IsArray(input)) return result;
+    if (!isSchemaObjectData(input)) return result;
     return continueParse(result, (parent) => {
       if (parent.memo || context.abortEarly && parent.issues.length > issueCount) return parent;
       return parseDeclaredData(parent, input, field, context);
