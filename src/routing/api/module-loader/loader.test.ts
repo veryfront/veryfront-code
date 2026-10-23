@@ -2967,15 +2967,15 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
     );
     assertEquals(
       failure("http-url:https://user:secret@cdn.example/lib/mod.ts?token=<TOKEN>"),
-      "[API] handler build failed: https://cdn.example/lib/mod.ts:2:5: Expected identifier",
+      "[API] handler build failed: https://cdn.example:2:5: Expected identifier",
     );
     assertEquals(
       failure("http-url:HTTPS://cdn.example/lib/mod.ts?token=<TOKEN>"),
-      "[API] handler build failed: https://cdn.example/lib/mod.ts:2:5: Expected identifier",
+      "[API] handler build failed: https://cdn.example:2:5: Expected identifier",
     );
     assertEquals(
       failure("https://cdn.example/lib/mod.ts"),
-      "[API] handler build failed: https://cdn.example/lib/mod.ts:2:5: Expected identifier",
+      "[API] handler build failed: https://cdn.example:2:5: Expected identifier",
     );
     assertEquals(
       failure("/elsewhere/other.ts"),
@@ -3047,6 +3047,39 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
     assertEquals(
       label("Failed to fetch https://[::1]/lib/mod.ts: 404"),
       "Failed to fetch https://[::1]/lib/mod.ts: 404",
+    );
+    // Project code has run in this realm by the time a build fails, and may
+    // have replaced the string and RegExp methods redaction would call.
+    const originals = {
+      replace: String.prototype.replace,
+      split: String.prototype.split,
+      exec: RegExp.prototype.exec,
+      symbolReplace: RegExp.prototype[Symbol.replace],
+    };
+    let patched: string;
+    try {
+      String.prototype.replace = function (this: string) {
+        return String(this);
+      } as typeof String.prototype.replace;
+      String.prototype.split = () => [];
+      RegExp.prototype.exec = () => null;
+      RegExp.prototype[Symbol.replace] = function (_s: string) {
+        return String(_s);
+      } as typeof RegExp.prototype[typeof Symbol.replace];
+      patched = buildFailure(
+        [{ text: "File not found: /elsewhere/secret.ts", location: { file: "/x/a.ts" } }],
+        "/project",
+        "/srv/work",
+      ).message;
+    } finally {
+      String.prototype.replace = originals.replace;
+      String.prototype.split = originals.split;
+      RegExp.prototype.exec = originals.exec;
+      RegExp.prototype[Symbol.replace] = originals.symbolReplace;
+    }
+    assertEquals(
+      patched,
+      "[API] handler build failed: a.ts:undefined:1: File not found: secret.ts",
     );
     for (const text of ["Unknown profile:dev in config", "Set configFile:./x.json"]) {
       assertEquals(

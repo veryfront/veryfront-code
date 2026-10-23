@@ -77,6 +77,12 @@ const IntrinsicReflectOwnKeys = Reflect.ownKeys;
 const MapPrototypeDelete = Map.prototype.delete;
 const MapPrototypeGet = Map.prototype.get;
 const MapPrototypeSet = Map.prototype.set;
+// Redaction runs after project code has evaluated in this realm, so it must
+// not dispatch through prototypes that code could have replaced.
+const IntrinsicRegExp = RegExp;
+const IntrinsicURL = URL;
+const RegExpPrototypeExec = RegExp.prototype.exec;
+const StringPrototypeSlice = String.prototype.slice;
 const trustedRequestContextAccessor = currentRequestContext;
 
 /**
@@ -1919,30 +1925,102 @@ function createProjectBoundaryPlugin(
  * project-relative inside the project, the file name outside it. A URL's path
  * is not a filesystem path and is left alone.
  */
+/** Every match of global `pattern` in `text` replaced, via captured intrinsics. */
+function replaceMatches(
+  text: string,
+  pattern: RegExp,
+  replace: (match: RegExpExecArray) => string,
+): string {
+  let result = "";
+  let last = 0;
+  pattern.lastIndex = 0;
+  for (
+    let match = IntrinsicReflectApply(RegExpPrototypeExec, pattern, [text]) as
+      | RegExpExecArray
+      | null;
+    match !== null;
+    match = IntrinsicReflectApply(RegExpPrototypeExec, pattern, [text]) as RegExpExecArray | null
+  ) {
+    result += IntrinsicReflectApply(StringPrototypeSlice, text, [last, match.index]) as string;
+    result += replace(match);
+    last = match.index + match[0].length;
+    if (match[0].length === 0) pattern.lastIndex++;
+  }
+  return result + (IntrinsicReflectApply(StringPrototypeSlice, text, [last]) as string);
+}
+
+/** The text after the last `/` or `\\`, without reading string prototypes. */
+function lastPathSegment(path: string): string {
+  let start = 0;
+  for (let index = 0; index < path.length; index++) {
+    if (path[index] === "/" || path[index] === "\\") start = index + 1;
+  }
+  return IntrinsicReflectApply(StringPrototypeSlice, path, [start]) as string;
+}
+
+function isSeparator(char: string | undefined): boolean {
+  return char === "/" || char === "\\";
+}
+
+/**
+ * `projectModuleLabel` for redaction, without the path helpers, which read
+ * string prototypes: project-relative inside the project, else the file name.
+ */
+function redactionLabel(path: string, projectDir?: string): string {
+  const absolute = isSeparator(path[0]) ||
+    (path[1] === ":" && isSeparator(path[2]));
+  if (projectDir && absolute) {
+    let rootEnd = projectDir.length;
+    while (rootEnd > 1 && isSeparator(projectDir[rootEnd - 1])) rootEnd--;
+    const root = IntrinsicReflectApply(StringPrototypeSlice, projectDir, [0, rootEnd]) as string;
+    const prefix = IntrinsicReflectApply(StringPrototypeSlice, path, [0, rootEnd]) as string;
+    if (prefix === root && isSeparator(path[rootEnd])) {
+      return IntrinsicReflectApply(StringPrototypeSlice, path, [rootEnd + 1]) as string;
+    }
+  }
+  return lastPathSegment(path);
+}
+
+function testPattern(pattern: RegExp, text: string): boolean {
+  pattern.lastIndex = 0;
+  return IntrinsicReflectApply(RegExpPrototypeExec, pattern, [text]) !== null;
+}
+
+const FILE_URL_PATTERN = /(?<![\w-])file:[^\s'"`(),;]+/gi;
+const REGEXP_SPECIAL_PATTERN = /[.*+?^${}()|[\]\\]/g;
+// A web URL is kept whole, even one whose host is bracketed (`[::1]`).
+const WEB_URL_OR_PATH_PATTERN =
+  /(https?:\/\/[^\s'"`<>]+)|(?<![\w.:/\\\]])(?:[A-Za-z]:[\\/]|\\\\|\/)[^\s'"`(),;[\]<>{}]+/gi;
+
 function redactAbsolutePaths(text: string, projectDir?: string): string {
-  const label = (path: string): string =>
-    projectDir && pathHelper.isAbsolute(path)
-      ? projectModuleLabel(path, projectDir)
-      : path.split(/[\\/]/).pop() ?? "";
-  let redacted = text.replace(
-    /(?<![\w-])file:[^\s'"`(),;]+/gi,
-    (url) => fileUrlLabel(url, projectDir),
+  // A path outside the project, or one another platform calls absolute (a
+  // drive or UNC path on POSIX), keeps only its file name.
+  const label = (path: string): string => redactionLabel(path, projectDir);
+  let redacted = replaceMatches(
+    text,
+    FILE_URL_PATTERN,
+    (match) => fileUrlLabel(match[0], projectDir),
   );
   if (projectDir) {
     // The project root first, so a root containing spaces is caught whole, and
     // only where a path starts: a web URL may contain the same characters.
-    const root = pathHelper.resolve(projectDir).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    redacted = redacted
-      .replace(new RegExp(`(?<![\\w.:/\\\\])${root}[\\\\/]`, "g"), "")
-      .replace(new RegExp(`(?<![\\w.:/\\\\])${root}(?![^\\s'"\`(),;\\[\\]<>{}])`, "g"), ".");
+    const root = replaceMatches(
+      projectDir,
+      REGEXP_SPECIAL_PATTERN,
+      (match) => `\\${match[0]}`,
+    );
+    redacted = replaceMatches(
+      redacted,
+      new IntrinsicRegExp(`(?<![\\w.:/\\\\])${root}[\\\\/]`, "g"),
+      () => "",
+    );
+    redacted = replaceMatches(
+      redacted,
+      new IntrinsicRegExp(`(?<![\\w.:/\\\\])${root}(?![^\\s'"\`(),;\\[\\]<>{}])`, "g"),
+      () => ".",
+    );
   }
-  // A web URL is kept whole, even one whose host is bracketed (`[::1]`). A
-  // path another platform calls absolute (a drive or UNC path on POSIX) keeps
-  // only its file name.
-  return redacted.replace(
-    /(https?:\/\/[^\s'"`<>]+)|(?<![\w.:/\\\]])(?:[A-Za-z]:[\\/]|\\\\|\/)[^\s'"`(),;[\]<>{}]+/gi,
-    (match, url: string | undefined) => url ?? label(match),
-  );
+  return replaceMatches(redacted, WEB_URL_OR_PATH_PATTERN, (match) => match[1] ?? label(match[0]));
 }
 
 /**
@@ -1952,7 +2030,7 @@ function redactAbsolutePaths(text: string, projectDir?: string): string {
 function fileUrlLabel(url: string, projectDir?: string): string {
   let parsed: URL;
   try {
-    parsed = new URL(url);
+    parsed = new IntrinsicURL(url);
   } catch {
     return "file";
   }
@@ -1962,24 +2040,27 @@ function fileUrlLabel(url: string, projectDir?: string): string {
   parsed.hash = "";
   try {
     const path = pathHelper.fromFileUrl(parsed);
-    if (projectDir && pathHelper.isAbsolute(path)) return projectModuleLabel(path, projectDir);
+    return redactionLabel(path, projectDir);
   } catch {
     // Not a path this platform can convert; fall back to the file name.
   }
-  return parsed.pathname.split("/").pop() ?? "";
+  return lastPathSegment(parsed.pathname);
 }
 
-/** A remote module by its origin and path, without credentials or query. */
+/**
+ * A remote module by its origin only, as the validator names it: a path can
+ * carry a token as easily as a query can.
+ */
 function buildLocationLabel(file: string, projectDir: string, workingDir: string): string {
-  if (/^https?:\/\//i.test(file)) {
+  if (testPattern(/^https?:\/\//i, file)) {
     try {
-      const url = new URL(file);
-      return `${url.origin}${url.pathname}`;
+      return new IntrinsicURL(file).origin;
     } catch {
       return "remote module";
     }
   }
-  return projectModuleLabel(pathHelper.resolve(workingDir, file), projectDir);
+  const absolute = isSeparator(file[0]) || (file[1] === ":" && isSeparator(file[2]));
+  return redactionLabel(absolute ? file : pathHelper.resolve(workingDir, file), projectDir);
 }
 
 interface BuildMessage {
@@ -2002,7 +2083,10 @@ export function buildFailure(
 ): Error {
   const first = errors[0];
   // Drop an esbuild namespace such as `http-url:`, but not a URL's own scheme.
-  const file = first?.location?.file?.replace(/^[a-z][a-z-]+:(?!\/\/)/, "");
+  const location = first?.location?.file;
+  const file = location === undefined
+    ? undefined
+    : replaceMatches(location, /^[a-z][a-z-]+:(?!\/\/)/g, () => "");
   const where = file
     ? `${buildLocationLabel(file, projectDir, workingDir)}:` +
       // esbuild columns are zero-based; editors count from one.
