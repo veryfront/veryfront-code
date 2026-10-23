@@ -67,6 +67,7 @@ export function createToolsFromRemoteDefinitions(
         // caller-controlled accessor cannot run inside a schema adapter.
         inputSchema: {},
         inputSchemaJson: definition.parameters,
+        ...(definition.outputSchema ? { outputSchemaJson: definition.outputSchema } : {}),
         mcp: {
           title: definition.title,
           annotations: definition.annotations,

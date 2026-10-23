@@ -26,6 +26,7 @@ function toolDefinition(input: {
   title?: string;
   annotations?: ToolAnnotations;
   discovery?: ToolDefinition["discovery"];
+  outputSchema?: ToolDefinition["outputSchema"];
 }): ToolDefinition {
   return {
     name: input.name,
@@ -38,6 +39,7 @@ function toolDefinition(input: {
     ...(input.title !== undefined ? { title: input.title } : {}),
     ...(input.annotations !== undefined ? { annotations: input.annotations } : {}),
     ...(input.discovery !== undefined ? { discovery: input.discovery } : {}),
+    ...(input.outputSchema !== undefined ? { outputSchema: input.outputSchema } : {}),
   };
 }
 
@@ -279,6 +281,7 @@ it("createProjectScopedRemoteToolCatalog filters, revalidates, and hydrates proj
           name: "list_files",
           required: ["project_reference"],
           title: "List files",
+          outputSchema: { type: "object", properties: { files: { type: "array" } } },
           annotations: { readOnlyHint: true },
           discovery: { version: 1, type: "platform", domain: "files" },
         }),
@@ -301,6 +304,10 @@ it("createProjectScopedRemoteToolCatalog filters, revalidates, and hydrates proj
     "list_files",
   ]);
   assertEquals(listed[1]?.title, "List files", "remote titles survive normalization");
+  assertEquals(listed[1]?.outputSchema, {
+    type: "object",
+    properties: { files: { type: "array" } },
+  });
   assertEquals(
     listed[1]?.annotations,
     { readOnlyHint: true },
@@ -410,6 +417,20 @@ it("createProjectScopedRemoteToolCatalog detaches and validates advertised MCP m
     TypeError,
     "malformed annotations",
   );
+  const accessorOutput = toolDefinition({ name: "list_agents" });
+  let reads = 0;
+  Object.defineProperty(accessorOutput, "outputSchema", {
+    get() {
+      reads++;
+      return { type: "object" };
+    },
+  });
+  await assertRejects(
+    () => createCatalog(accessorOutput).listTools(),
+    TypeError,
+    "accessor output schema",
+  );
+  assertEquals(reads, 0);
 });
 
 it("createProjectScopedRemoteToolCatalog does not reuse definitions across credential contexts", async () => {
