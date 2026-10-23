@@ -37,6 +37,7 @@ import {
   zodToJsonSchema,
 } from "./json-schema.ts";
 import { preserveDeclaredObjectDataProperty } from "./object-data-properties.ts";
+import { preserveUnionCheckDiagnostics } from "./union-diagnostics.ts";
 
 // Deno exposes the CommonJS default as a callable value at runtime while the
 // package declaration describes the imported value as a module namespace.
@@ -58,6 +59,7 @@ function toZod<T>(schema: Schema<T>): AnyZodSchema {
 /** Wrap a zod schema as an opaque Schema<T> with chainables routed through zod. */
 function wrap<T>(zs: AnyZodSchema): Schema<T> {
   preserveDeclaredObjectDataProperty(zs);
+  preserveUnionCheckDiagnostics(zs);
   // The wrapper fakes the full Schema<T> surface; unsupported chainables on
   // unsuitable kinds (e.g. calling `.email()` on a number) throw at runtime
   // just like zod would.
