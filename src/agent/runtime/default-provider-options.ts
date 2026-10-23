@@ -1,10 +1,12 @@
 /**
  * Framework-default `providerOptions` for known providers.
  *
- * Currently: enable Anthropic extended thinking by default only for catalog
- * models that declare a thinking budget. Apps can override or opt out by
- * returning their own `providerOptions.anthropic.thinking` from
- * `AgentConfig.resolveModelTransport`.
+ * Currently: enable Anthropic extended thinking by default only for Veryfront
+ * Cloud models the served catalog gives a thinking budget. A direct-provider
+ * model takes none: the catalog describes what the gateway serves, and a direct
+ * run must resolve the same whether or not a catalog happens to be loaded.
+ * Apps can override or opt out by returning their own
+ * `providerOptions.anthropic.thinking` from `AgentConfig.resolveModelTransport`.
  */
 
 import {
@@ -14,18 +16,15 @@ import {
 } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
 
 const VERYFRONT_CLOUD_PREFIX = "veryfront-cloud/";
-const ANTHROPIC_PREFIX = "anthropic/";
 
 /**
- * Whether a model speaks the Anthropic protocol. A Veryfront Cloud model
- * speaks the surface the served catalog gives its provider, so a newly served
- * provider on the Anthropic surface gets the same defaults as `anthropic/*`.
+ * Whether a Veryfront Cloud model speaks the Anthropic protocol: the surface
+ * the served catalog gives its provider, so a newly served provider on the
+ * Anthropic surface gets the same defaults.
  */
-function isAnthropicModel(modelString: string): boolean {
-  if (modelString.startsWith(VERYFRONT_CLOUD_PREFIX)) {
-    return isVeryfrontCloudAnthropicSurfaceModel(modelString);
-  }
-  return modelString.startsWith(ANTHROPIC_PREFIX);
+function isCloudAnthropicModel(modelString: string): boolean {
+  return modelString.startsWith(VERYFRONT_CLOUD_PREFIX) &&
+    isVeryfrontCloudAnthropicSurfaceModel(modelString);
 }
 
 function hasAnthropicThinkingConfig(existing: Record<string, unknown> | undefined): boolean {
@@ -39,7 +38,7 @@ export function resolveProviderOptionsWithDefaults(
   modelString: string,
   existing: Record<string, unknown> | undefined,
 ): Record<string, unknown> | undefined {
-  if (!isAnthropicModel(modelString)) {
+  if (!isCloudAnthropicModel(modelString)) {
     return existing;
   }
 
