@@ -1,4 +1,4 @@
-import type { Browser, ConsoleMessage, Page, Request, Response } from "npm:playwright@1.60.0";
+import type { Browser, ConsoleMessage, Page, Request, Response } from "npm:playwright@1.61.1";
 import { fromFileUrl } from "#veryfront/compat/path/index.ts";
 
 export interface BrowserDiagnostics {
@@ -215,7 +215,7 @@ export async function launchChromiumWith(chromium: ChromiumLauncher): Promise<Br
 }
 
 export async function launchChromium(): Promise<Browser | null> {
-  const { chromium } = await import("npm:playwright@1.60.0");
+  const { chromium } = await import("npm:playwright@1.61.1");
   try {
     return await launchChromiumThroughNode(chromium);
   } catch (error) {

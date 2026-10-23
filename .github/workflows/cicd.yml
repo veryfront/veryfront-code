@@ -519,7 +519,7 @@ jobs:
           ) | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
       - name: Install Chromium
         timeout-minutes: 10
-        run: deno run -A npm:playwright@1.60.0 install chromium
+        run: deno run -A npm:playwright@1.61.1 install chromium
       - name: Exercise local virtual-host routing
         run: deno run -A scripts/ci/run-windows-localhost-e2e.ts
 

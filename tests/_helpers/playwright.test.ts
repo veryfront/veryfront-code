@@ -1,6 +1,6 @@
 import { assertEquals, assertRejects, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import type { Browser } from "npm:playwright@1.60.0";
+import type { Browser } from "npm:playwright@1.61.1";
 import {
   CHROMIUM_LAUNCH_TIMEOUT_MS,
   cleanupBrowserBridgeProcess,
