@@ -229,7 +229,9 @@ export async function rewriteNodeExternalImports(
   const { pathToFileURL } = await import("node:url");
   const replacements = new Map<string, string>();
 
-  logger.debug(`Rewriting external imports for Node.js, projectDir: ${projectDir}`);
+  // These logs name specifiers, not their targets: a target is an absolute
+  // file URL into the host's node_modules.
+  logger.debug("Rewriting external imports for Node.js");
 
   const importedSpecifiers = new Set(
     (await parseImports(code))
@@ -256,14 +258,14 @@ export async function rewriteNodeExternalImports(
         continue;
       }
       const resolvedSubpath = `${pathToFileURL(target).href}${suffix}`;
-      logger.debug(`Resolved ${specifier} -> ${resolvedSubpath}`);
+      logger.debug(`Resolved ${specifier} to a project package file`);
       replacements.set(specifier, resolvedSubpath);
       continue;
     }
 
     const resolvedUrl = await resolveNodePackageToFileUrl(projectDir, pkg, fs, pathToFileURL);
     if (!resolvedUrl) continue;
-    logger.debug(`Resolved ${pkg} -> ${resolvedUrl}`);
+    logger.debug(`Resolved ${pkg} to a project package`);
     replacements.set(specifier, resolvedUrl);
   }
 
@@ -294,7 +296,7 @@ export async function rewriteNodeExternalImports(
 
       const vfPackagePath = pathHelper.join(projectDir, "node_modules", "veryfront");
       const resolvedPath = pathHelper.join(vfPackagePath, exportEntry.import);
-      logger.debug(`Resolved ${specifier} -> ${resolvedPath}`);
+      logger.debug(`Resolved ${specifier} from the project's veryfront copy`);
       replacements.set(specifier, pathToFileURL(resolvedPath).href);
     };
 
@@ -304,7 +306,7 @@ export async function rewriteNodeExternalImports(
       if (runningPackage) {
         try {
           const resolved = resolveVeryfrontPackageExport(specifier, runningPackage);
-          logger.debug(`Resolved ${specifier} -> ${resolved} (running package)`);
+          logger.debug(`Resolved ${specifier} from the running package`);
           replacements.set(specifier, resolved);
           continue;
         } catch (error) {
