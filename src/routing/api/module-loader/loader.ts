@@ -320,8 +320,11 @@ async function loadModule(args: {
       if (!isSpecifierResolutionError(error)) throw error;
 
       logger.debug("Direct import could not resolve a specifier, bundling instead", {
-        modulePath,
-        error: error instanceof Error ? error.message : String(error),
+        modulePath: projectModuleLabel(modulePath, projectDir),
+        error: redactAbsolutePaths(
+          error instanceof Error ? error.message : String(error),
+          projectDir,
+        ),
       });
       return loadAndTranspileModule(
         modulePath,
@@ -335,7 +338,9 @@ async function loadModule(args: {
     }
   }
 
-  logger.debug(`File not local, using adapter-based loading: ${modulePath}`);
+  logger.debug(
+    `File not local, using adapter-based loading: ${projectModuleLabel(modulePath, projectDir)}`,
+  );
   return loadAndTranspileModule(
     modulePath,
     projectDir,
@@ -535,7 +540,7 @@ function loadTSModuleDirect(modulePath: string, revision: string): Promise<APIRo
     ? `${modulePath}${cacheBuster}`
     : `file://${modulePath}${cacheBuster}`;
 
-  logger.debug(`Direct import (Deno): ${url}`);
+  logger.debug(`Direct import (Deno): ${pathHelper.basename(modulePath)}`);
   return import(url);
 }
 
@@ -1342,7 +1347,9 @@ function createImportMapPlugin(
           const absolutePath = resolveContainedLocalModule(projectDir, args.importer, modulePath);
 
           logger.debug(
-            `[API] Import map relative resolve: ${args.path} (from ${args.importer}) -> ${absolutePath}`,
+            `[API] Import map relative resolve: ${args.path} (from ${
+              projectModuleLabel(args.importer, projectDir)
+            }) -> ${projectModuleLabel(absolutePath, projectDir)}`,
           );
 
           return {
@@ -1389,12 +1396,16 @@ function createImportMapPlugin(
 
         if (!isWithinDirectory(pathHelper.resolve(projectDir), absolutePath)) {
           logger.error(
-            `[API] Import map entry escapes project directory: ${args.path} -> ${absolutePath}`,
+            `[API] Import map entry escapes project directory: ${args.path} -> ${
+              projectModuleLabel(absolutePath, projectDir)
+            }`,
           );
           return { errors: [{ text: `Import map path escapes project: ${args.path}` }] };
         }
 
-        logger.debug(`Import map resolved: ${args.path} -> ${absolutePath}`);
+        logger.debug(
+          `Import map resolved: ${args.path} -> ${projectModuleLabel(absolutePath, projectDir)}`,
+        );
 
         return {
           path: absolutePath,
@@ -1729,7 +1740,9 @@ function createProjectAliasPlugin(
         const absolutePath = pathHelper.resolve(projectRoot, modulePathOfSpecifier(aliasedPath));
         if (!isWithinDirectory(projectRoot, absolutePath)) {
           logger.error(
-            `[API] Project alias escapes project: ${args.path} -> ${absolutePath}`,
+            `[API] Project alias escapes project: ${args.path} -> ${
+              projectModuleLabel(absolutePath, projectRoot)
+            }`,
           );
           return { errors: [{ text: `Project alias escapes project: ${args.path}` }] };
         }
@@ -1778,7 +1791,9 @@ function createAdapterResolvePlugin(
 
         if (!isWithinDirectory(pathHelper.resolve(projectDir), absolutePath)) {
           logger.error(
-            `[API] Adapter resolve path escapes project: ${args.path} -> ${absolutePath}`,
+            `[API] Adapter resolve path escapes project: ${args.path} -> ${
+              projectModuleLabel(absolutePath, projectDir)
+            }`,
           );
           return {
             errors: [{ text: `Relative import escapes project: ${args.path}` }],
@@ -1787,8 +1802,8 @@ function createAdapterResolvePlugin(
 
         logger.debug(
           `[API] Adapter resolve: ${args.path} (from ${
-            args.importer || "stdin"
-          }) -> ${absolutePath}`,
+            args.importer ? projectModuleLabel(args.importer, projectDir) : "stdin"
+          }) -> ${projectModuleLabel(absolutePath, projectDir)}`,
         );
         return {
           path: absolutePath,
@@ -1830,11 +1845,15 @@ function createAdapterResolvePlugin(
  * are admitted only through the project's own canonical `node_modules` root;
  * an unrelated path is never trusted merely because one segment has that name.
  */
-function projectBoundaryError(path: string): { errors: Array<{ text: string }> } {
-  logger.error(`[API] Resolved import escapes project: ${path}`);
+function projectBoundaryError(
+  path: string,
+  projectDir: string,
+): { errors: Array<{ text: string }> } {
+  const label = projectModuleLabel(path, projectDir);
+  logger.error(`[API] Resolved import escapes project: ${label}`);
   return {
     errors: [{
-      text: `Import escapes the project directory: ${path}. ` +
+      text: `Import escapes the project directory: ${label}. ` +
         `API routes may only import project files and project-owned dependencies.`,
     }],
   };
@@ -1883,7 +1902,7 @@ function createProjectBoundaryPlugin(
           };
         } catch (error) {
           if (error instanceof ProjectBoundaryViolationError) {
-            return projectBoundaryError(args.path);
+            return projectBoundaryError(args.path, projectDir);
           }
           const message = error instanceof Error ? error.message : String(error);
           return {
@@ -1900,28 +1919,37 @@ function createProjectBoundaryPlugin(
  * project-relative inside the project, the file name outside it. A URL's path
  * is not a filesystem path and is left alone.
  */
-function redactAbsolutePaths(text: string, projectDir: string): string {
-  // `file:` URLs are paths. Then the project root, so a root containing spaces
-  // is caught whole, and only where a path starts: a web URL may contain it.
-  const root = pathHelper.resolve(projectDir).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return text
-    .replace(/(?<![\w-])file:[^\s'"`(),;]+/gi, (url) => fileUrlLabel(url, projectDir))
-    .replace(new RegExp(`(?<![\\w.:/\\\\])${root}[\\\\/]`, "g"), "").replace(
-      /(?<![\w.:/\\])(?:[A-Za-z]:[\\/]|\\\\|\/)[^\s'"`(),;]+/g,
-      // A path another platform calls absolute (a drive or UNC path on POSIX)
-      // keeps only its file name.
-      (path) =>
-        pathHelper.isAbsolute(path)
-          ? projectModuleLabel(path, projectDir)
-          : path.split(/[\\/]/).pop() ?? "",
-    );
+function redactAbsolutePaths(text: string, projectDir?: string): string {
+  const label = (path: string): string =>
+    projectDir && pathHelper.isAbsolute(path)
+      ? projectModuleLabel(path, projectDir)
+      : path.split(/[\\/]/).pop() ?? "";
+  let redacted = text.replace(
+    /(?<![\w-])file:[^\s'"`(),;]+/gi,
+    (url) => fileUrlLabel(url, projectDir),
+  );
+  if (projectDir) {
+    // The project root first, so a root containing spaces is caught whole, and
+    // only where a path starts: a web URL may contain the same characters.
+    const root = pathHelper.resolve(projectDir).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    redacted = redacted
+      .replace(new RegExp(`(?<![\\w.:/\\\\])${root}[\\\\/]`, "g"), "")
+      .replace(new RegExp(`(?<![\\w.:/\\\\])${root}(?![^\\s'"\`(),;\\[\\]<>{}])`, "g"), ".");
+  }
+  // A web URL is kept whole, even one whose host is bracketed (`[::1]`). A
+  // path another platform calls absolute (a drive or UNC path on POSIX) keeps
+  // only its file name.
+  return redacted.replace(
+    /(https?:\/\/[^\s'"`<>]+)|(?<![\w.:/\\\]])(?:[A-Za-z]:[\\/]|\\\\|\/)[^\s'"`(),;[\]<>{}]+/gi,
+    (match, url: string | undefined) => url ?? label(match),
+  );
 }
 
 /**
  * A `file:` URL by its project label, whatever its authority: a UNC path
  * converts to `file://server/share/...`, which must not leak either.
  */
-function fileUrlLabel(url: string, projectDir: string): string {
+function fileUrlLabel(url: string, projectDir?: string): string {
   let parsed: URL;
   try {
     parsed = new URL(url);
@@ -1934,7 +1962,7 @@ function fileUrlLabel(url: string, projectDir: string): string {
   parsed.hash = "";
   try {
     const path = pathHelper.fromFileUrl(parsed);
-    if (pathHelper.isAbsolute(path)) return projectModuleLabel(path, projectDir);
+    if (projectDir && pathHelper.isAbsolute(path)) return projectModuleLabel(path, projectDir);
   } catch {
     // Not a path this platform can convert; fall back to the file name.
   }
@@ -2223,7 +2251,7 @@ function buildTranspiledModuleSource(
 
       if (result.errors?.length) throw buildFailure(result.errors, projectDir, workingDir);
 
-      logger.debug(`built handler ${resolvedPath}`);
+      logger.debug(`built handler ${projectModuleLabel(resolvedPath, projectDir)}`);
       const js = result.outputFiles?.[0]?.text ?? "export {}";
       logger.debug(`transpiled size ${js.length} bytes`);
 
@@ -2432,8 +2460,9 @@ async function importModuleFromCode(
   try {
     return await import(`file://${tempFile}?v=${Date.now()}`);
   } catch (e: unknown) {
-    const errorMessage = e instanceof Error && e.stack ? e.stack : String(e);
-    logger.error(`dynamic import failed ${tempFile}: ${errorMessage}`);
+    // The message, not the stack: its frames name host-absolute paths.
+    const errorMessage = e instanceof Error ? e.message : String(e);
+    logger.error(`dynamic import failed: ${redactAbsolutePaths(errorMessage)}`);
     throw e;
   } finally {
     await fs.remove(tempDir, { recursive: true });

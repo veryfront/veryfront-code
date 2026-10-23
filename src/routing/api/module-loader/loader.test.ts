@@ -38,7 +38,12 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { env, getEnv, setEnv } from "#veryfront/compat/process.ts";
 import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
-import { __subscribeLogRecordEmitter } from "#veryfront/utils/logger/logger.ts";
+import {
+  __resetLoggerConfigForTests,
+  __subscribeLogRecordEmitter,
+  LogLevel,
+  setLogLevel,
+} from "#veryfront/utils/logger/logger.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import type { LoadModuleOptions } from "./types.ts";
@@ -2837,6 +2842,92 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
     });
   }
 
+  describe("keeps host paths out of every loader log and error (veryfront-issue-inbox#3824)", () => {
+    const HOST_PATH = /[/\\](?:Users|home|var[/\\]folders|private|tmp)[/\\]/;
+
+    async function loadWithDebugLogs(projectDir: string, modulePath: string) {
+      const logged: string[] = [];
+      // The loader's own records; other components have their own sweeps.
+      const unsubscribe = __subscribeLogRecordEmitter((entry) => {
+        if (entry.component === "api") logged.push(JSON.stringify(entry));
+      });
+      setLogLevel(LogLevel.DEBUG);
+      try {
+        const outcome = await loadHandlerModule({
+          projectDir,
+          modulePath,
+          adapter,
+          config: undefined,
+        })
+          .then(() => null, (error: Error) => error);
+        return { error: outcome, logged };
+      } finally {
+        __resetLoggerConfigForTests();
+        unsubscribe();
+      }
+    }
+
+    async function project(files: Record<string, string>): Promise<string> {
+      const tmpDir = await makeTempDir();
+      for (const [path, contents] of Object.entries(files)) {
+        await fs.mkdir(join(tmpDir, path, ".."), { recursive: true });
+        await fs.writeTextFile(join(tmpDir, path), contents);
+      }
+      return tmpDir;
+    }
+
+    it("on a bundled route that loads", async () => {
+      const dir = await project({
+        "lib/ok.ts": `export const ok = "ok";\n`,
+        "app/api/route.ts": [
+          `import { ok } from "../../lib/ok.ts";`,
+          `export const url = import.meta.url;`,
+          `export const GET = () => new Response(ok);`,
+        ].join("\n"),
+      });
+      const { error, logged } = await loadWithDebugLogs(dir, join(dir, "app", "api", "route.ts"));
+      assertEquals(error, null);
+      assertEquals(logged.filter((line) => HOST_PATH.test(line)), []);
+    });
+
+    it("on a relative import that escapes the project", async () => {
+      const dir = await project({
+        "app/api/route.ts": [
+          `import { x } from "../../../outside.ts";`,
+          `export const url = import.meta.url;`,
+          `export const GET = () => new Response(String(x));`,
+        ].join("\n"),
+      });
+      const { error, logged } = await loadWithDebugLogs(dir, join(dir, "app", "api", "route.ts"));
+      assertMatch(error?.message ?? "", /escapes project/);
+      assertEquals(HOST_PATH.test(error?.message ?? ""), false, error?.message);
+      assertEquals(logged.filter((line) => HOST_PATH.test(line)), []);
+    });
+
+    it("on a module path outside the project", async () => {
+      const dir = await project({
+        "app/api/route.ts": `export const GET = () => new Response("");\n`,
+      });
+      const outside = await project({ "route.ts": `export const GET = () => new Response("");\n` });
+      const { error, logged } = await loadWithDebugLogs(dir, join(outside, "route.ts"));
+      assertMatch(error?.message ?? "", /escapes project directory/);
+      assertEquals(HOST_PATH.test(error?.message ?? ""), false, error?.message);
+      assertEquals(logged.filter((line) => HOST_PATH.test(line)), []);
+    });
+
+    it("on a bundled route that throws while it evaluates", async () => {
+      const dir = await project({
+        "app/api/route.ts": [
+          `export const url = import.meta.url;`,
+          `throw new Error("boom");`,
+        ].join("\n"),
+      });
+      const { error, logged } = await loadWithDebugLogs(dir, join(dir, "app", "api", "route.ts"));
+      assertMatch(error?.message ?? "", /boom/);
+      assertEquals(logged.filter((line) => HOST_PATH.test(line)), []);
+    });
+  });
+
   it("names a bundled route's build error by its project-relative location", async () => {
     const tmpDir = await makeTempDir();
     const modulePath = join(tmpDir, "app", "api", "route.ts");
@@ -2946,6 +3037,17 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
       const message = buildFailure([{ text: `At ${url}` }], "/project", "/srv/work").message;
       assertEquals(message, "[API] handler build failed: At x.ts", url);
     }
+    const label = (text: string, projectDir = "/srv/Jane Doe/app") =>
+      buildFailure([{ text }], projectDir, "/srv/work").message.replace(
+        "[API] handler build failed: ",
+        "",
+      );
+    assertEquals(label("Project at /srv/Jane Doe/app has no config"), "Project at . has no config");
+    assertEquals(label("See [/elsewhere/a.ts] and </elsewhere/b.ts>"), "See [a.ts] and <b.ts>");
+    assertEquals(
+      label("Failed to fetch https://[::1]/lib/mod.ts: 404"),
+      "Failed to fetch https://[::1]/lib/mod.ts: 404",
+    );
     for (const text of ["Unknown profile:dev in config", "Set configFile:./x.json"]) {
       assertEquals(
         buildFailure([{ text }], "/project", "/srv/work").message,
