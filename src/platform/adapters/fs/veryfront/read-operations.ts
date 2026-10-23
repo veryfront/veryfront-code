@@ -148,10 +148,29 @@ export class ReadOperations {
             requestBranch,
           });
 
-        try {
+        const hasExplicitFileExtension = () => {
           const lastSlash = normalizedPath.lastIndexOf("/");
-          const hasExplicitExtension = hasKnownExtension ||
-            normalizedPath.indexOf(".", lastSlash + 1) !== -1;
+          return hasKnownExtension || normalizedPath.includes(".", lastSlash + 1);
+        };
+        const rethrowUnlessMissing = (error: unknown) => {
+          if (!isNotFoundLikeError(error)) throw error;
+        };
+        const publishedFallback = (error: unknown) => {
+          if (!isPublished || !isNotFoundLikeError(error)) throw error;
+          if (requiresExactPublishedPath(apiPath)) throw error;
+          const split = splitKnownFileExtension(apiPath);
+          if (!split) throw error;
+          return split;
+        };
+        const failRead = (error: unknown): never => {
+          if (isNotFoundLikeError(error)) {
+            throw createNotFoundLikeError(normalizedPath);
+          }
+          throw error;
+        };
+
+        try {
+          const hasExplicitExtension = hasExplicitFileExtension();
           if (!hasExplicitExtension) {
             for (const candidate of buildExtensionCandidatePaths(normalizedPath)) {
               const candidateApiPath = this.getOriginalApiPath?.(candidate) ?? candidate;
@@ -164,7 +183,7 @@ export class ReadOperations {
                   true,
                 );
               } catch (error) {
-                if (!isNotFoundLikeError(error)) throw error;
+                rethrowUnlessMissing(error);
               }
             }
           }
@@ -177,10 +196,7 @@ export class ReadOperations {
               effectiveContentContext,
             );
           } catch (error) {
-            if (!isPublished || !isNotFoundLikeError(error)) throw error;
-            if (requiresExactPublishedPath(apiPath)) throw error;
-            const split = splitKnownFileExtension(apiPath);
-            if (!split) throw error;
+            const split = publishedFallback(error);
             for (const extension of EXTENSION_PRIORITY) {
               if (extension === split.originalExtension) continue;
               try {
@@ -192,16 +208,13 @@ export class ReadOperations {
                   true,
                 );
               } catch (candidateError) {
-                if (!isNotFoundLikeError(candidateError)) throw candidateError;
+                rethrowUnlessMissing(candidateError);
               }
             }
             throw error;
           }
         } catch (error) {
-          if (isNotFoundLikeError(error)) {
-            throw createNotFoundLikeError(normalizedPath);
-          }
-          throw error;
+          return failRead(error);
         }
       },
       { "fs.path": path, "fs.maximum_bytes": admittedLimit },
@@ -216,6 +229,7 @@ export class ReadOperations {
     expectedMissing = false,
   ): Promise<Uint8Array> {
     const options = expectedMissing ? { expectedMissing: true } : undefined;
+    const clientContext = () => context ? toClientContext(context) : undefined;
     return isPublished
       ? this.client.getPublishedFileContentBytesWithinLimit(
         apiPath,
@@ -228,7 +242,7 @@ export class ReadOperations {
         apiPath,
         admittedLimit,
         options,
-        context ? toClientContext(context) : undefined,
+        clientContext(),
       );
   }
 

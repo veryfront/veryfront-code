@@ -138,6 +138,20 @@ export class StatOperations extends VeryfrontOperationsBase {
       };
     }
 
+    const searchContext = () => ctx ? toClientContext(ctx) : undefined;
+    const reportSearchFailure = (error: unknown) => {
+      const result = this.apiSearchCircuitBreaker.recordFailure();
+      if (result.tripped) {
+        logger.warn("stat API search circuit breaker tripped", {
+          failures: result.failures,
+        });
+      }
+      logger.debug("stat API search failed", {
+        normalizedPath,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    };
+
     // File not in index - try API pattern search as fallback for project files
     // Skip for framework paths (node_modules, _veryfront, etc.) and whenever
     // the index is the authoritative listing for this snapshot: it has already
@@ -157,7 +171,7 @@ export class StatOperations extends VeryfrontOperationsBase {
           // Search for the exact file path
           const matches = await this.client.searchFiles(
             normalizedPath,
-            ctx ? toClientContext(ctx) : undefined,
+            searchContext(),
           );
           this.apiSearchCircuitBreaker.recordSuccess();
 
@@ -183,16 +197,7 @@ export class StatOperations extends VeryfrontOperationsBase {
             };
           }
         } catch (error) {
-          const result = this.apiSearchCircuitBreaker.recordFailure();
-          if (result.tripped) {
-            logger.warn("stat API search circuit breaker tripped", {
-              failures: result.failures,
-            });
-          }
-          logger.debug("stat API search failed", {
-            normalizedPath,
-            error: error instanceof Error ? error.message : String(error),
-          });
+          reportSearchFailure(error);
         }
       }
     }
@@ -227,7 +232,7 @@ export class StatOperations extends VeryfrontOperationsBase {
       };
     }
 
-    if (this.buildingIndex) {
+    if (this.buildingIndex !== null) {
       logger.debug("ensureIndexBuilt - waiting for concurrent build");
       const waitStart = performance.now();
       const building = this.buildingIndex;
@@ -494,47 +499,68 @@ export class StatOperations extends VeryfrontOperationsBase {
     );
     let sawSuccessfulSearch = false;
 
+    const selectMatch = (normalizedMatches: Array<{ path: string }>, pattern: string) => {
+      if (pattern === normalizedPath) {
+        const exactMatch = normalizedMatches.find((match) => match.path === normalizedPath);
+        if (exactMatch) {
+          logger.debug("resolveFile found exact file via API search", {
+            normalizedPath,
+            pattern,
+          });
+          return { path: exactMatch.path, found: true, exact: true };
+        }
+        return { path: undefined, found: false, exact: true };
+      }
+
+      const sortedMatches = sortPathsByExtensionPriority(normalizedMatches, EXTENSION_PRIORITY);
+      const first = sortedMatches[0];
+      if (first) {
+        logger.debug("resolveFile found via API search", {
+          normalizedPath,
+          pattern,
+          resolvedPath: first.path,
+        });
+        return { path: first.path, found: true, exact: false };
+      }
+      return { path: undefined, found: false, exact: false };
+    };
+
+    const reportSearchFailure = (error: unknown, pattern: string) => {
+      const result = this.apiSearchCircuitBreaker.recordFailure();
+      if (result.tripped) {
+        logger.warn("API search circuit breaker tripped", {
+          failures: result.failures,
+        });
+        return true;
+      }
+      logger.error("API pattern search failed", { pattern, error });
+      return false;
+    };
+    const finishSearch = () => {
+      if (sawSuccessfulSearch) {
+        logger.debug("resolveFile not found via API search", { normalizedPath, patterns });
+        return null;
+      }
+      return undefined;
+    };
+
+    const searchContext = () => contentContext ? toClientContext(contentContext) : undefined;
+
     for (const pattern of patterns) {
       try {
         const matches = await this.client.searchFiles(
           pattern,
-          contentContext ? toClientContext(contentContext) : undefined,
+          searchContext(),
         );
         sawSuccessfulSearch = true;
         this.apiSearchCircuitBreaker.recordSuccess();
 
         const normalizedMatches = this.normalizeMatchedPaths(matches);
-        if (pattern === normalizedPath) {
-          const exactMatch = normalizedMatches.find((match) => match.path === normalizedPath);
-          if (exactMatch) {
-            logger.debug("resolveFile found exact file via API search", {
-              normalizedPath,
-              pattern,
-            });
-            return exactMatch.path;
-          }
-          continue;
-        }
-
-        const sortedMatches = sortPathsByExtensionPriority(normalizedMatches, EXTENSION_PRIORITY);
-        const first = sortedMatches[0];
-        if (first) {
-          logger.debug("resolveFile found via API search", {
-            normalizedPath,
-            pattern,
-            resolvedPath: first.path,
-          });
-          return first.path;
-        }
+        const selected = selectMatch(normalizedMatches, pattern);
+        if (selected.found) return selected.path;
+        if (selected.exact) continue;
       } catch (error) {
-        const result = this.apiSearchCircuitBreaker.recordFailure();
-        if (result.tripped) {
-          logger.warn("API search circuit breaker tripped", {
-            failures: result.failures,
-          });
-          return undefined;
-        }
-        logger.error("API pattern search failed", { pattern, error });
+        if (reportSearchFailure(error, pattern)) return undefined;
       }
 
       if (!this.apiSearchCircuitBreaker.canSearch()) {
@@ -545,12 +571,7 @@ export class StatOperations extends VeryfrontOperationsBase {
       }
     }
 
-    if (sawSuccessfulSearch) {
-      logger.debug("resolveFile not found via API search", { normalizedPath, patterns });
-      return null;
-    }
-
-    return undefined;
+    return finishSearch();
   }
 
   private async hasCachedFileList(): Promise<boolean> {
@@ -679,8 +700,7 @@ export class StatOperations extends VeryfrontOperationsBase {
     const hasCachedFileList = await this.hasCachedFileList();
     const attemptedApiResolve = !hasCachedFileList;
 
-    if (!hasCachedFileList) {
-      const apiResolved = await this.tryResolveViaApiSearch(normalizedPath, options, ctx);
+    const cacheApiResolution = (apiResolved: string | null | undefined) => {
       if (typeof apiResolved === "string") {
         this.cacheResolutionIfCurrent(cacheKey, apiResolved, generation, scopeKey);
         return apiResolved;
@@ -690,6 +710,13 @@ export class StatOperations extends VeryfrontOperationsBase {
         this.cacheResolutionIfCurrent(cacheKey, NOT_FOUND_SENTINEL, generation, scopeKey);
         return null;
       }
+      return undefined;
+    };
+
+    if (!hasCachedFileList) {
+      const apiResolved = await this.tryResolveViaApiSearch(normalizedPath, options, ctx);
+      const resolved = cacheApiResolution(apiResolved);
+      if (resolved !== undefined) return resolved;
     }
 
     const indexStart = performance.now();
