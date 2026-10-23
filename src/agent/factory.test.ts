@@ -1677,6 +1677,20 @@ description: Excluded skill
       VeryfrontError,
       "reserved integration tool namespace",
     );
+    // A spread keeps the enumerable provenance marker, so only the id check stops this.
+    assertThrows(
+      () =>
+        agent({
+          id: "remote-reidentified-agent",
+          model: "auto",
+          system: "Test.",
+          tools: {
+            outlook__send_email: { ...remoteTools.outlook__send_email!, id: "gmail__send_email" },
+          },
+        }),
+      VeryfrontError,
+      "reserved integration tool namespace",
+    );
   });
   describe("agent respond request parsing", () => {
     it("rejects a body larger than the configured limit before buffering it", async () => {
