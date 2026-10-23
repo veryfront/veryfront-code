@@ -14,6 +14,11 @@ import {
   runInstalledCredentialProbes,
   withInstalledProbeCleanup,
 } from "../../../scripts/test/installed-credential-probes.ts";
+import {
+  type CredentialProbeRuntime,
+  installedRuntimeCredentialProbeProfile,
+  runInstalledRuntimeCredentialProbes,
+} from "../../../scripts/test/installed-runtime-credential-probes.ts";
 
 type YamlRecord = Record<string, unknown>;
 
@@ -751,5 +756,209 @@ describe("installed credential probe orchestration", () => {
     }
     assertEquals(caught, failure);
     assertEquals(calls, 1);
+  });
+});
+
+function runtimeCredentialOutput(
+  runtime: CredentialProbeRuntime,
+  rejected: number,
+  version?: string,
+) {
+  const identity = {
+    profile: "installed-runtime-credential-boundary-v2",
+    runtime,
+    version: version ?? (runtime === "node" ? "24.14.0" : runtime === "bun" ? "1.3.6" : "2.7.7"),
+  };
+  const output = credentialProbeOutput(
+    runtime === "node" ? rejected : rejected === 3 ? 0 : 1,
+    runtime === "node" ? {} : { safeRequests: rejected === 3 ? 3 : 1 },
+  );
+  return { ...output, stdout: JSON.stringify(identity) + "\n" + output.stdout + "\n" };
+}
+
+describe("installed runtime credential evidence", () => {
+  it("selects only the existing Linux Actions runtime critical-flow lane", () => {
+    assert(
+      installedRuntimeCredentialProbeProfile({
+        githubActions: "true",
+        githubJob: "tests-runtime-critical-flow",
+      }),
+    );
+    for (const githubActions of [undefined, "false"]) {
+      assert(
+        !installedRuntimeCredentialProbeProfile({
+          githubActions,
+          githubJob: "tests-runtime-critical-flow",
+        }),
+      );
+    }
+    for (const githubJob of [undefined, "tests-npm-install-smoke", "tests"]) {
+      assert(!installedRuntimeCredentialProbeProfile({ githubActions: "true", githubJob }));
+    }
+  });
+
+  it("retains actual engine versions separately from Node compatibility versions", async () => {
+    for (const runtime of ["node", "deno", "bun"] as const) {
+      const calls: InstalledCredentialProbe[] = [];
+      const report = await runInstalledRuntimeCredentialProbes({
+        runtime,
+        githubActions: "true",
+        runnerOs: "Linux",
+        execute: (fixture) => {
+          calls.push(fixture);
+          return Promise.resolve(
+            runtimeCredentialOutput(runtime, fixture.includes("header") ? 3 : 2),
+          );
+        },
+      });
+      assertEquals(calls, ["native-header-package-probe.mjs", "native-body-package-probe.mjs"]);
+      assertEquals(report.runtime, runtime);
+      assertEquals(
+        report.version,
+        runtime === "node" ? "24.14.0" : runtime === "bun" ? "1.3.6" : "2.7.7",
+      );
+      assertEquals(report.probes[0].observed.nodeCompatibilityVersion, "24.14.0");
+      assertEquals(report.probes[1].observed.observations, 0);
+      assertEquals(report.probes[1].observed.fetches, 0);
+      assertEquals(report.probes[0].observed.rejected, runtime === "node" ? 3 : 0);
+      assertEquals(report.probes[0].observed.safeRequests, runtime === "node" ? 0 : 3);
+      assertEquals(report.probes[1].observed.rejected, runtime === "node" ? 2 : 1);
+      assertEquals(report.probes[1].observed.safeRequests, runtime === "node" ? 0 : 1);
+      assertEquals(report.deployedBoundaryAccepted, false);
+    }
+  });
+
+  it("refuses local, non-Linux and unsupported runtimes before any process callback", async () => {
+    for (
+      const [githubActions, runnerOs, runtime] of [
+        [undefined, "Linux", "node"],
+        ["true", "Darwin", "deno"],
+        ["true", "Linux", "python"],
+      ]
+    ) {
+      let calls = 0;
+      await assertRejects(() =>
+        runInstalledRuntimeCredentialProbes({
+          runtime: runtime as CredentialProbeRuntime,
+          githubActions,
+          runnerOs,
+          execute: () => {
+            calls++;
+            return Promise.resolve(runtimeCredentialOutput("node", 3));
+          },
+        })
+      );
+      assertEquals(calls, 0);
+    }
+  });
+
+  it("refuses wrong engines, version drift, malformed framing and legacy Node-only output", async () => {
+    const valid = runtimeCredentialOutput("bun", 3);
+    const variants = [
+      valid.stdout.replace('"runtime":"bun"', '"runtime":"node"'),
+      valid.stdout.replace('"version":"1.3.6"', '"version":"unknown-secret"'),
+      valid.stdout.replace('"runtime":"bun"', '"runtime":"bun","runtime":"bun"'),
+      "extra\n" + valid.stdout,
+      credentialProbeOutput().stdout,
+      valid.stdout.replace('"observations":0', '"observations":1'),
+      valid.stdout.replace('"fetches":0', '"fetches":1'),
+      valid.stdout.replace('"cleanRequests":1', '"cleanRequests":0'),
+      valid.stdout.replace('"rejected":0', '"rejected":3'),
+      valid.stdout.replace('"safeRequests":3', '"safeRequests":2'),
+      valid.stdout.replace('"observations":0', '"observations":1,"observations":0'),
+    ];
+    for (const stdout of variants) {
+      let calls = 0;
+      await assertRejects(() =>
+        runInstalledRuntimeCredentialProbes({
+          runtime: "bun",
+          githubActions: "true",
+          runnerOs: "Linux",
+          execute: () => {
+            calls++;
+            return Promise.resolve({ ...valid, stdout });
+          },
+        })
+      );
+      assertEquals(calls, 1);
+    }
+    let calls = 0;
+    await assertRejects(
+      () =>
+        runInstalledRuntimeCredentialProbes({
+          runtime: "bun",
+          githubActions: "true",
+          runnerOs: "Linux",
+          execute: (fixture) =>
+            Promise.resolve(
+              runtimeCredentialOutput(
+                "bun",
+                fixture.includes("header") ? 3 : 2,
+                ++calls === 1 ? "1.3.6" : "1.3.7",
+              ),
+            ),
+        }),
+      Error,
+      "changed between probes",
+    );
+    assertEquals(calls, 2);
+  });
+
+  it("refuses Node compatibility-version substitution and bounded process failures", async () => {
+    const valid = runtimeCredentialOutput("node", 3);
+    for (
+      const output of [
+        { ...valid, stdout: valid.stdout.replace('"node":"24.14.0"', '"node":"22.3.0"') },
+        { ...valid, code: 1 },
+        { ...valid, stderr: "synthetic-sensitive-error" },
+        { ...valid, stdout: "x".repeat(8193) },
+      ]
+    ) {
+      let calls = 0;
+      await assertRejects(() =>
+        runInstalledRuntimeCredentialProbes({
+          runtime: "node",
+          githubActions: "true",
+          runnerOs: "Linux",
+          execute: () => {
+            calls++;
+            return Promise.resolve(output);
+          },
+        })
+      );
+      assertEquals(calls, 1);
+    }
+  });
+
+  it("wires canonical-artifact checks to the existing lane with cleared bounded processes", async () => {
+    const source = await Deno.readTextFile(
+      new URL("../../../scripts/test/runtime-inference-critical-flow.ts", import.meta.url),
+    );
+    assertStringIncludes(source, "credentialProbes && !packedDirectory");
+    assertStringIncludes(
+      source,
+      "await checkInstalledRuntimeCredentialBoundary(projectDir, runtime)",
+    );
+    for (
+      const expected of [
+        "clearEnv: true",
+        "maxOutputBytes: 8192",
+        "timeoutMs: 45_000",
+        "terminateProcessTreeOnExit: true",
+        "--deny-net",
+        "--no-env-file",
+        "--no-install",
+        "preload = []",
+        "withInstalledProbeCleanup",
+      ]
+    ) {
+      assertStringIncludes(source, expected);
+    }
+    const wrapper = await Deno.readTextFile(
+      new URL("../agent/fixtures/native-credential-runtime-probe.mjs", import.meta.url),
+    );
+    assertStringIncludes(wrapper, "Bun.version");
+    assertStringIncludes(wrapper, "Deno.version.deno");
+    assertStringIncludes(wrapper, 'import process from "node:process"');
   });
 });
