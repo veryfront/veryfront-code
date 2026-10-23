@@ -21,6 +21,14 @@ setLoggerPreset("cli");
 // startup diagnostics off stdout until the protocol mode is established.
 setLoggerStderrOnly(true);
 
+// Documentation is available even outside a project or with broken application configuration.
+const { earlyDocsArguments } = await import("./commands/docs/arguments.ts");
+const docsArgs = earlyDocsArguments(Deno.args);
+if (docsArgs) {
+  const { runDocsCommand } = await import("./commands/docs/command.ts");
+  Deno.exit(await runDocsCommand(docsArgs));
+}
+
 // Establish machine-output mode before startup modules can emit diagnostics.
 const { parseCliArgs } = await import("./shared/args.ts");
 const args = parseCliArgs(Deno.args);

@@ -1,7 +1,7 @@
 ---
 title: "Self-host Veryfront Code"
 description: "Build and run a Veryfront project in your own environment."
-order: 43
+order: 490
 ---
 
 Self-host Veryfront Code in your own cloud, private network, or on-premises
@@ -39,6 +39,8 @@ Choose substitutes for managed capabilities before you deploy.
 | Integration tools                          | Supported subset                        | Use a local catalog source or a managed backing API.                      |
 | Sandbox sessions                           | Requires a backing API or service layer | Configure authenticated sandbox session APIs.                             |
 | Veryfront Cloud routing, storage, and runs | Requires Veryfront Cloud                | These capabilities depend on project and control-plane context.           |
+
+## Configure local integrations
 
 Allow local integration credentials in the host process before you materialize
 any local source, including the catalog source and the Salesforce and Outlook
@@ -81,6 +83,8 @@ Veryfront. Managed per-user OAuth and connector features outside the supported
 local subset still require the configured API layer.
 
 ## Run Salesforce integration tools locally
+
+[Set up Salesforce](./integrations/salesforce.md#use-a-service-account) covers credentials and the complete local agent example.
 
 The Salesforce service account source runs the catalog's fixed Salesforce
 REST tools without a backing API.

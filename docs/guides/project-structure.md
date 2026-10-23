@@ -1,7 +1,7 @@
 ---
 title: "Project structure"
 description: "Where to put routes, AI primitives, shared code, and configuration."
-order: 8
+order: 10
 ---
 
 A Veryfront project keeps routes in `app/` or `pages/`. Keep runtime primitives
@@ -30,7 +30,7 @@ my-app/
       [slug]/
         page.tsx         # /blog/:slug (dynamic route)
     api/
-      chat/
+      ag-ui/
         route.ts         # POST /api/ag-ui
   agents/               # AI agent definitions (auto-discovered)
     assistant.ts

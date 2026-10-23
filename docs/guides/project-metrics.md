@@ -1,7 +1,7 @@
 ---
 title: "Project metrics"
 description: "Emit project-scoped counters, histograms, and gauges from app and eval code."
-order: 41
+order: 170
 ---
 
 Project metrics are custom application and eval measurements that show up in
@@ -19,33 +19,29 @@ Use the SDK hook from app, agent, tool, task, workflow, and eval code:
 ```ts
 import { metrics } from "veryfront/metrics";
 
-metrics.counter("signup_total", 1, {
+metrics.counter("vf_signup_total", 1, {
   plan: "pro",
   source: "checkout",
 });
 
-metrics.histogram("checkout_duration_seconds", 1.24, {
+metrics.histogram("vf_checkout_duration_seconds", 1.24, {
   step: "payment",
 });
 
-metrics.gauge("queue_depth", 42, {
+metrics.gauge("vf_queue_depth", 42, {
   queue: "email",
 });
 ```
 
 Use counters for totals, histograms for durations and sizes, and gauges for
-current values. Prefer stable names with a prefix of your own so they are easy
-to discover in Studio. Names that start with `ai_gateway_` or `vf_` are reserved
-for platform metrics, except the `vf_eval_` names used for eval metrics.
+current values. Prefer stable `vf_`-prefixed metric names so they are easy to
+discover in Studio.
 
 When code runs inside Veryfront, the SDK adds request-scoped labels for
 `project_id`, `project_slug`, `environment`, and `branch` for preview requests.
 Preview requests without an explicit branch use `branch="main"`. User code
 should not provide or trust those labels for isolation; the platform-owned
-request context wins. In shared Veryfront runtimes, `service_name`,
-`service_version` and `deployment_environment` name the runtime service, its
-release and the platform deployment, such as `staging`, that exported the
-sample.
+request context wins.
 
 ## Emit eval metrics
 
@@ -88,38 +84,7 @@ Metric labels become query dimensions. Keep them low-cardinality and safe:
 
 Use a small allowlist per metric. Do not put tenant identity, project identity,
 credentials, or personally identifiable data into user-supplied labels.
-Project, environment, and preview branch labels are injected by the platform;
-values that project code passes for them are ignored.
-
-In Veryfront runtimes, the SDK drops a sample instead of exporting it when:
-
-- the metric name does not match `[A-Za-z_][A-Za-z0-9_.:]*` or is longer than
-  128 characters
-- it carries more than 16 labels of its own, a label name that does not match
-  `[A-Za-z_][A-Za-z0-9_.]*` or is longer than 128 characters, or a label value
-  longer than 256 characters
-- it would start a new name and label combination after the project has created
-  500 in the current runtime process
-
-Shared Veryfront runtimes send project metrics through the platform with the
-project's credential, and the platform files them under that project. It drops
-samples whose name is reserved for platform metrics.
-
-## Query sparse counters
-
-Each runtime process exports its own cumulative totals and is identified by the
-`service.instance.id` resource attribute, so sum across instances after taking
-per-series differences. When a counter series is new, or has been idle for more
-than five minutes, the SDK exports its previous total just before the new one.
-That keeps counters from scheduled jobs countable: for events emitted once a day,
-`max_over_time(...) - min_over_time(...)` over the window counts every increment,
-where `increase()` extrapolates from too few samples:
-
-```promql
-sum by (outcome) (
-  max_over_time(job_items_total[1d]) - min_over_time(job_items_total[1d])
-)
-```
+Project, environment, and preview branch labels are injected by the platform.
 
 ## Relationship to OpenTelemetry
 

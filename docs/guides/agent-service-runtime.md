@@ -1,7 +1,7 @@
 ---
 title: "Agent service runtime"
 description: "Run Veryfront agents as separately deployed services."
-order: 19
+order: 550
 ---
 
 An agent service runs your agent as its own process, independent of the app server. Use it when you need a separate process boundary, direct control-plane registration, remote MCP tools, or deployment-owned service telemetry. Use a normal in-app route for everything else.
@@ -110,34 +110,6 @@ trace hooks, or application-error reporters. The framework-owned
 `veryfront serve` runtime owns this setup on shared and managed dedicated
 servers.
 
-The standalone service shares a process with the Agent code it loads. Use it
-for trusted code. Captured request accessors protect specific ingress operations;
-they do not provide process isolation for request bodies or credentials.
-
-Custom host route handlers receive the original request and remain responsible
-for authentication and credential handling.
-Dispatch visits the host route table and matched path segments by index so a
-replaced array iterator cannot inject a handler before host authentication.
-CORS allowlist membership, response header writes, and route path parsing also
-use captured operations.
-
-Sparse route, origin, method, and header arrays ignore inherited
-entries. Route handlers retain ordinary-object params; decoded keys bypass
-inherited setters.
-
-Framework responses supply explicit status, status text, and empty-header defaults
-to native constructors. These defaults override writable inherited data properties,
-including CORS headers for a denied origin, and apply only to omitted values.
-If `Object.prototype` defines an accessor for `headers`, `status`, or `statusText`,
-response construction throws a `TypeError` before native option conversion can
-invoke it.
-
-On Node, non-writable inherited data properties for these fields also
-cause native construction to throw a `TypeError`. The runtime does not remove
-these properties, return an empty response, or
-retry with weaker CORS rules. Invalid response values still fail native
-validation, and host handler errors propagate unchanged.
-
 The service discovers the same project primitives as the app runtime:
 
 - `agents/`
@@ -151,11 +123,6 @@ The service discovers the same project primitives as the app runtime:
 When exactly one code or markdown agent is discovered, that agent becomes the
 default for direct `/api/runs` requests. Pass `agentId` when the service exposes
 multiple agents and direct requests need a predictable default.
-
-Hosted tool execution preserves the selected agent ID and durable run ID. Remote
-tool calls carry these identities so they match the run authorization claims.
-If you customize `createTaskContext`, return the resolved `agentId` in that context.
-Hosted execution uses that identity, including any normalization your hook applies.
 
 ## Keep agent behavior in project files
 
@@ -910,29 +877,3 @@ A working service streams AG-UI events back. If Veryfront Cloud registration
 is enabled, the service should also appear in the cloud dashboard's agent
 service list after the first heartbeat
 (`VERYFRONT_AGENT_SERVICE_HEARTBEAT_INTERVAL_MS`).
-
-Broker model output limits and provider-tool descriptors must stay within the installed model grant.
-Each broker tool capability must also stay within the installed tool allowlist. Startup rejects broader
-broker authority before allocating an executor.
-
-Preparation uses the narrower broker model output
-limits and provider-tool list, so its default model requests fit the broker policy. Anthropic thinking
-with an additive token budget reserves that budget from the total allowance before preparation chooses
-the completion limit. Adaptive thinking uses the total allowance without an additive reservation.
-
-Preparation rejects an explicit completion limit that exceeds the remainder. Source IDs must
-belong to the installed host-facade or remote-source grants. Owner-scoped tool selectors use the same
-canonical names for capability checks and steering refreshes.
-
-Trusted ingress must provide `tools.catalog` with the complete tool inventory and ownership metadata,
-including project-local tools that have no broker capability. The broker resolves short selectors to
-owned tools first, then validates source capabilities against those exact IDs. Preparation and steering
-refreshes receive the same resolved grant.
-
-A shadowed global tool does not gain authority from an owned
-tool's short selector. The catalog must come from trusted source metadata before executor discovery.
-For selected host tools, the broker includes the catalog's owner and short-name mapping in the
-validated installation.
-
-Rebuilt executor facades retain that mapping, so an agent's short selector
-continues to select the same canonical tool. Remote source listings do not supply ownership authority.

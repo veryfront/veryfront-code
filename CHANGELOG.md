@@ -698,7 +698,7 @@ Operational error strings and approval request messages remain visible. Do not
 place secrets, tokens, customer payloads, or private model output in those
 developer-authored fields.
 
-See [Workflows: loops, blob storage, React hooks](./docs/guides/workflows-advanced.md#understand-run-summaries)
+See [Workflows: loops, blob storage, React hooks](./docs/guides/workflow-ui.md#understand-run-summaries)
 for the exact summary shape and authorization guidance.
 
 ### Breaking: `veryfront dev` enforces CSRF

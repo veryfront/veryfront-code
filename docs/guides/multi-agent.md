@@ -1,7 +1,7 @@
 ---
 title: "Multi-agent"
 description: "Agent composition, delegation, and agent-as-tool patterns."
-order: 28
+order: 220
 ---
 
 Veryfront supports two agent composition patterns:

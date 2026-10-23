@@ -179,7 +179,7 @@ export interface SkillMetadata {
   displayName?: string;
   /** Human-readable description */
   description: string;
-  /** Tool access restrictions (space-delimited in YAML, parsed to array) */
+  /** Tool pre-approval metadata (space-delimited in YAML, parsed to array); not a runtime authorization boundary. */
   allowedTools?: string[];
   /** SPDX license identifier */
   license?: string;

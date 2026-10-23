@@ -23,6 +23,7 @@ The CLI groups commands by category. Each command supports `--help` for its full
 | `veryfront clean`          | Clean build artifacts and caches                                      |
 | `veryfront completions`    | Generate shell completion scripts                                     |
 | `veryfront dev`            | Start local development with HMR; sync source when connected to Cloud |
+| `veryfront docs`           | Open the public Veryfront Code documentation                          |
 | `veryfront doctor`         | Check system requirements and project health                          |
 | `veryfront extension`      | Scaffold and validate veryfront extensions                            |
 | `veryfront generate`       | Generate code scaffolds                                               |

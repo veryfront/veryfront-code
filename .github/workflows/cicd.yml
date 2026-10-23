@@ -719,6 +719,10 @@ jobs:
           DENO_COVERAGE_DIR: coverage-profiles/coverage-connected-local
         run: |
           deno task test:file --coverage=coverage-profiles/coverage-connected-local --coverage-raw-data-only \
+            tests/integration/docs/docs-command.test.ts \
+            tests/integration/docs/copy-public-docs.test.ts \
+            tests/integration/docs/package-public-docs.test.ts \
+            tests/integration/docs/release-inputs.test.ts \
             tests/integration/cli/mcp-startup-output.test.ts \
             tests/integration/cli/mcp/notification-transport.test.ts \
             tests/integration/cli/dev/proxy-mode.test.ts \
