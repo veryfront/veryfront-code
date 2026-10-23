@@ -1,4 +1,5 @@
 import { isCompiledBinary, serverLogger } from "#veryfront/utils";
+import { redactFreeText } from "./path-redaction.ts";
 import type { FileSystem } from "#veryfront/platform/compat/fs.ts";
 import * as pathHelper from "#veryfront/compat/path";
 import { isDeno, isNode } from "#veryfront/platform/compat/runtime.ts";
@@ -311,7 +312,7 @@ export async function rewriteNodeExternalImports(
           continue;
         } catch (error) {
           logger.warn(
-            `Running package does not export ${specifier} (${String(error)}); ` +
+            `Running package does not export ${specifier} (${redactFreeText(String(error))}); ` +
               `falling back to the project copy`,
           );
         }
@@ -449,7 +450,7 @@ export async function rewriteExternalImports(
       transformed = await rewriteNodeExternalImports(transformed, projectDir, fs, userDeps);
     } catch (e) {
       rethrowProjectBoundaryViolation(e);
-      logger.warn(`Failed to import node:module: ${e}`);
+      logger.warn(`Failed to import node:module: ${redactFreeText(String(e))}`);
     }
   }
 

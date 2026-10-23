@@ -1,6 +1,7 @@
 // @veryfront-test runtime-guarded-deno
 import "#veryfront/schemas/_test-setup.ts";
 import {
+  assert,
   assertEquals,
   assertMatch,
   assertNotEquals,
@@ -2946,7 +2947,7 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
       Error,
     ) as Error;
     assertMatch(error.message, /handler build failed: app\/api\/route\.ts:2:\d+: /);
-    assertMatch(error.message, /File not found: app\/api\/missing\.ts/);
+    assertMatch(error.message, /File not found: missing\.ts/);
     assertEquals(error.message.includes(tmpDir), false, error.message);
   });
 
@@ -2981,91 +2982,54 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
       failure("/elsewhere/other.ts"),
       "[API] handler build failed: other.ts:2:5: Expected identifier",
     );
-    assertEquals(
-      buildFailure(
-        [{
-          text: "Import escapes the project directory: /elsewhere/secret.ts. " +
-            "File not found: /project/lib/b.ts, see https://cdn.example/x/y.ts",
-        }],
-        "/project",
-        "/srv/work",
-      ).message,
-      "[API] handler build failed: Import escapes the project directory: secret.ts. " +
-        "File not found: lib/b.ts, see https://cdn.example/x/y.ts",
-    );
-    assertEquals(
-      buildFailure(
-        [{ text: "File not found: /srv/Jane Doe/app/lib/c.ts" }],
-        "/srv/Jane Doe/app",
-        "/srv/work",
-      ).message,
-      "[API] handler build failed: File not found: lib/c.ts",
-    );
-    assertEquals(
-      buildFailure(
-        [{ text: "Failed to fetch https://cdn.example/project/mod.ts: 404" }],
-        "/project",
-        "/srv/work",
-      ).message,
-      "[API] handler build failed: Failed to fetch https://cdn.example/project/mod.ts: 404",
-    );
-    assertEquals(
-      buildFailure(
-        [{ text: "Thrown at file:///project/app/api/route.ts and file:///elsewhere/x.ts" }],
-        "/project",
-        "/srv/work",
-      ).message,
-      "[API] handler build failed: Thrown at app/api/route.ts and x.ts",
-    );
-    assertEquals(
-      buildFailure([{ text: "Missing \\\\server\\share\\secret.ts" }], "/project", "/srv/work")
-        .message.includes("server"),
-      false,
-    );
-    assertEquals(
-      buildFailure([{ text: "At file://server/share/app/x.ts" }], "/project", "/srv/work")
-        .message,
-      "[API] handler build failed: At x.ts",
-    );
-    for (
-      const url of [
-        "file://server/share/x.ts?token=<TOKEN>",
-        "file:/elsewhere/x.ts?token=<TOKEN>",
-        "file:/project/x.ts#<TOKEN>",
-      ]
-    ) {
-      const message = buildFailure([{ text: `At ${url}` }], "/project", "/srv/work").message;
-      assertEquals(message, "[API] handler build failed: At x.ts", url);
-    }
-    const label = (text: string, projectDir = "/srv/Jane Doe/app") =>
-      buildFailure([{ text }], projectDir, "/srv/work").message.replace(
+    // Free text is scanned, not parsed: every absolute path or `file:` URL is
+    // cut to its file name and every web URL to its origin.
+    const free = (text: string) =>
+      buildFailure([{ text }], "/project", "/srv/work").message.replace(
         "[API] handler build failed: ",
         "",
       );
-    assertEquals(label("Project at /srv/Jane Doe/app has no config"), "Project at . has no config");
-    assertEquals(label("See [/elsewhere/a.ts] and </elsewhere/b.ts>"), "See [a.ts] and <b.ts>");
-    assertEquals(label("At /home/alice[private]/secret.ts"), "At secret.ts");
-    assertEquals(label("At /tmp/foo{private}/secret.ts"), "At secret.ts");
-    assertEquals(label("At /tmp/a<b>/c(d)/secret.ts"), "At secret.ts");
-    assertEquals(label("Missing (/elsewhere/c.ts); retry"), "Missing (c.ts); retry");
-    assertEquals(
-      label("Files: (/outside/a.ts),(/home/example/secret.ts)"),
-      "Files: (secret.ts)",
-    );
-    assertEquals(label("At /Users/alice]private/secret.ts"), "At secret.ts");
-    assertEquals(label("At /srv/Jane Doe/app/lib/c.ts", "/srv/Jane Doe/app/"), "At lib/c.ts");
-    assertEquals(label("At C:\\Jane Doe\\app\\lib\\c.ts", "C:/Jane Doe/app"), "At lib\\c.ts");
-    assertEquals(label("At /srv/Jane Doe/app/../Users/alice/secret.ts"), "At secret.ts");
-    // A sibling of the root is not the root.
-    assertEquals(label("At /srv/Jane Doe/app-other").startsWith("At ."), false);
-    assertEquals(label("At file:///project/../Users/alice/secret.ts", "/project"), "At secret.ts");
-    assertEquals(label("At file:///Users/alice,private/secret.ts"), "At secret.ts");
-    assertEquals(label("At file:///Users/a(b);c/secret.ts:1:2"), "At secret.ts:1:2");
-    assertEquals(label("At (file:///Users/x/secret.ts)"), "At (secret.ts)");
-    assertEquals(
-      label("Failed to fetch https://[::1]/lib/mod.ts: 404"),
-      "Failed to fetch https://[::1]/lib/mod.ts: 404",
-    );
+    const cases: Array<[string, string]> = [
+      [
+        "Import escapes the project directory: /elsewhere/secret.ts. File not found: " +
+        "/project/lib/b.ts, see https://cdn.example/x/y.ts",
+        "Import escapes the project directory: secret.ts. File not found: b.ts, see " +
+        "https://cdn.example",
+      ],
+      ["x /project/a.ts,/home/u/b.ts", "x b.ts"],
+      ["at file:///project/a.ts,file:///home/u/b.ts", "at b.ts"],
+      ["error:/home/u/a.ts", "error:a.ts"],
+      ["ENOENT:/home/u/a.ts", "ENOENT:a.ts"],
+      ["the end./home/u/a.ts", "the end.a.ts"],
+      [
+        "Thrown at file:///project/app/api/route.ts and file:///home/u/x.ts",
+        "Thrown at route.ts and x.ts",
+      ],
+      ["Missing \\\\server\\share\\secret.ts", "Missing secret.ts"],
+      ["At C:\\Users\\u\\secret.ts", "At secret.ts"],
+      ["At file://server/share/app/x.ts?token=<TOKEN>", "At x.ts"],
+      ["At file:/home/u/x.ts#<TOKEN>", "At x.ts"],
+      ["At file://private-host?token=<TOKEN>", "At "],
+      ["At file:///home/u/a%2Fb.ts", "At b.ts"],
+      ["See [/home/u/a.ts] and </home/u/b.ts>", "See [a.ts] and <b.ts>"],
+      ["At /home/alice[private]/secret.ts", "At secret.ts"],
+      ["At /home/u]private/secret.ts", "At secret.ts"],
+      ["At /tmp/foo{private}/a(b);c/secret.ts:1:2", "At secret.ts:1:2"],
+      ["Failed https://user:p@[::1]:8443/lib/mod.ts?token=<TOKEN>", "Failed https://[::1]:8443"],
+      ["Cannot find './x.ts' or '../lib/y.ts'", "Cannot find './x.ts' or '../lib/y.ts'"],
+      ["Unknown profile:dev in config", "Unknown profile:dev in config"],
+      ["Set configFile:./x.json", "Set configFile:./x.json"],
+    ];
+    for (const [text, expected] of cases) {
+      const output = free(text);
+      assertEquals(output, expected, text);
+      assertEquals(output.includes("/home"), false, text);
+    }
+    // One linear pass: a long crafted message neither throws nor stalls.
+    const crafted = "/x" + ")/y".repeat(20_000);
+    const started = performance.now();
+    assertEquals(free(crafted), "y");
+    assert(performance.now() - started < 1_000);
     // Project code has run in this realm by the time a build fails, and may
     // have replaced the string and RegExp methods redaction would call.
     const originals = {
@@ -3110,12 +3074,6 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
       patched,
       "[API] handler build failed: a.ts:undefined:1: File not found: secret.ts at x.ts",
     );
-    for (const text of ["Unknown profile:dev in config", "Set configFile:./x.json"]) {
-      assertEquals(
-        buildFailure([{ text }], "/project", "/srv/work").message,
-        `[API] handler build failed: ${text}`,
-      );
-    }
   });
 
   it("rejects Function-created imports before direct module evaluation", async () => {
