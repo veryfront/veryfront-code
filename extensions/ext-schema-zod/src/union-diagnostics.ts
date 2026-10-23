@@ -6,6 +6,11 @@ type Context = Parameters<Parser>[1];
 
 const patched = new WeakSet<z.ZodType>();
 
+function isCollectionSizeRefusal(issue: z.core.$ZodRawIssue): boolean {
+  return issue.code === "too_big" &&
+    (issue.origin === "array" || issue.origin === "set" || issue.origin === "map");
+}
+
 function selectUnionResult(
   results: Payload[],
   final: Payload,
@@ -20,8 +25,13 @@ function selectUnionResult(
   }
   let matched = results.filter((result) => !z.core.util.aborted(result));
   if (matched.length === 0) {
+    // Only eager collection caps need the fallback. A failed custom type
+    // predicate must retain its enclosing union's original error boundary.
     matched = results.filter((result) =>
-      !result.aborted && result.issues.every((issue) => issue.continue !== undefined)
+      !result.aborted &&
+      result.issues.every((issue) =>
+        issue.continue === true || issue.continue === false && isCollectionSizeRefusal(issue)
+      ) && result.issues.some(isCollectionSizeRefusal)
     );
   }
   if (matched.length === 1) {
@@ -39,7 +49,7 @@ function selectUnionResult(
   return final;
 }
 
-/** Backport upstream #6662 until its union diagnostic fix is published. */
+/** Adapt upstream #6662 for eager collection bounds without changing custom type errors. */
 export function preserveUnionCheckDiagnostics(schema: z.ZodType): void {
   const def = schema._zod.def;
   if (

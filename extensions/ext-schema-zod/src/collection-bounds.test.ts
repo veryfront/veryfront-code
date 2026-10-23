@@ -86,6 +86,68 @@ describe("SchemaValidator constrained collections", () => {
     );
   });
 
+  it("keeps custom type refusals inside their original union boundary", () => {
+    const validator = createZodAdapter();
+    const origin = validator.union([
+      validator.string(),
+      validator.array(validator.string()).max(2),
+      validator.custom<(value: string) => boolean>(
+        (value) => typeof value === "function",
+        "Expected an origin validator",
+      ),
+    ]);
+    const schema = validator.object({
+      cors: validator.union([
+        validator.boolean(),
+        validator.object({ origin: origin.optional() }),
+      ]),
+    });
+    for (const invalidOrigin of [123, {}]) {
+      const invalid = schema.safeParse({ cors: { origin: invalidOrigin } });
+      assert(!invalid.success);
+      assertEquals(invalid.issues.map(({ code, path }) => ({ code, path })), [{
+        code: "invalid_union",
+        path: ["cors"],
+      }]);
+    }
+    assert(schema.safeParse({ cors: false }).success);
+    assert(schema.safeParse({ cors: { origin: "https://example.com" } }).success);
+    assert(schema.safeParse({ cors: { origin: () => true } }).success);
+  });
+
+  it("does not hide a custom type abort beside an eager collection refusal", () => {
+    const validator = createZodAdapter();
+    let elementChecks = 0;
+    let guardChecks = 0;
+    const schema = validator.union([
+      validator.string(),
+      validator.object({
+        values: validator.array(
+          validator.string().refine(() => {
+            elementChecks++;
+            return true;
+          }),
+        ).max(2),
+        guard: validator.custom<boolean>((value) => {
+          guardChecks++;
+          return value === true;
+        }, "Guard refused"),
+      }),
+    ]);
+    const invalid = schema.safeParse({ values: ["a", "b", "c"], guard: false });
+    assert(!invalid.success);
+    assertEquals(invalid.issues.map(({ code, path }) => ({ code, path })), [{
+      code: "invalid_union",
+      path: [],
+    }]);
+    assertEquals(elementChecks, 0);
+    assertEquals(guardChecks, 1);
+    assert(schema.safeParse({ values: ["a"], guard: true }).success);
+    assert(schema.safeParse("ok").success);
+    assertEquals(elementChecks, 1);
+    assertEquals(guardChecks, 2);
+  });
+
   it("preserves successful alternatives, transforms and cloned union checks", () => {
     const validator = createZodAdapter();
     let checks = 0;
