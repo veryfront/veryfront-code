@@ -129,6 +129,14 @@ describe("Token Store", () => {
       assertEquals(await wasLoginAcceptedRecently(API_URL, "login-e", testEnv, NOW - 1), false);
     });
 
+    it("forgets an accepted login on logout", async () => {
+      await rememberAcceptedLogin(API_URL, "login-f", testEnv, NOW);
+
+      await deleteToken(testEnv);
+
+      assertEquals(await wasLoginAcceptedRecently(API_URL, "login-f", testEnv, NOW), false);
+    });
+
     it("does not carry an acceptance over to another login or API", async () => {
       await rememberAcceptedLogin(API_URL, "login-c", testEnv, NOW);
 

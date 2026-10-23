@@ -1,6 +1,6 @@
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { checkCredential } from "./credential-rejection.ts";
+import { checkCredential } from "./credential-check.ts";
 
 const API_URL = "https://api.example.test";
 
@@ -14,7 +14,7 @@ function answer(status: number): { transport: typeof fetch; urls: string[] } {
   return { transport, urls };
 }
 
-describe("cli/shared/credential-rejection", () => {
+describe("cli/shared/credential-check", () => {
   for (const status of [401, 403]) {
     it(`reports a login rejected with ${status}`, async () => {
       const { transport, urls } = answer(status);

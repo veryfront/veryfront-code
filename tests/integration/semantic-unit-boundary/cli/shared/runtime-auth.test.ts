@@ -544,10 +544,13 @@ describe("cli/shared/runtime-auth", () => {
       assertEquals(context.apiToken, storedToken);
       assertEquals(paths, []);
       // The remembered check names the login by a hash, never by the token.
-      const checkFile = await Deno.readTextFile(
-        getTokenLocation().replace(/token$/, "login-check.json"),
-      );
+      const checkPath = getTokenLocation().replace(/token$/, "login-check.json");
+      const checkFile = await Deno.readTextFile(checkPath);
       assertEquals(checkFile.includes(storedToken), false);
+      // Owner-only, like the token file beside it.
+      if (Deno.build.os !== "windows") {
+        assertEquals(((await Deno.stat(checkPath)).mode ?? 0) & 0o777, 0o600);
+      }
     });
 
     it("checks again after an answer that is neither accepted nor rejected", async () => {
