@@ -1,6 +1,6 @@
 import type { Browser, ConsoleMessage, Page, Request, Response } from "npm:playwright@1.61.1";
 import { fromFileUrl } from "#veryfront/compat/path/index.ts";
-export { findHydrationOrCspFailures } from "./browser-diagnostics.mjs";
+export { findHydrationOrCspFailures } from "../../src/testing/browser-diagnostics.mjs";
 
 export interface BrowserDiagnostics {
   consoleMessages: string[];
