@@ -6,7 +6,7 @@
  */
 
 import { expect, test as base } from "npm:playwright@1.61.1/test";
-import { findHydrationOrCspFailures } from "../../_helpers/playwright.ts";
+import { findHydrationOrCspFailures } from "../../_helpers/browser-diagnostics.mjs";
 import { setupErrorCollection } from "../helpers/assertions.ts";
 
 export const test = base.extend<{ consoleErrors: string[] }>({

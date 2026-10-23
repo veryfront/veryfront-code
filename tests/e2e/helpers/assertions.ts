@@ -5,7 +5,7 @@
  */
 
 import { ConsoleMessage, expect, Page } from "npm:playwright@1.61.1/test";
-import { findHydrationOrCspFailures } from "../../_helpers/playwright.ts";
+import { findHydrationOrCspFailures } from "../../_helpers/browser-diagnostics.mjs";
 
 /**
  * Console error collection for a page.
