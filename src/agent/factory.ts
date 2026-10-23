@@ -802,11 +802,10 @@ function registerConfiguredLocalTools(config: AgentConfig): void {
     const entry = pair[1];
     if (!entry || typeof entry !== "object") continue;
     if (isRuntimeLocalTool(entry) || isAgentKnowledgeTool(entry)) continue;
-    // Remote-source tools keep their canonical integration names, which the
-    // project registry reserves. They resolve from the agent config instead.
+    // A remote-source tool under its own canonical integration name resolves
+    // from the agent config, because the project registry reserves "__".
     if (
-      getRemoteToolProvenance(entry) !== undefined &&
-      (name.includes("__") || entry.id.includes("__"))
+      name.includes("__") && entry.id === name && getRemoteToolProvenance(entry) === name
     ) continue;
     assertLocalToolId(name);
     assertLocalToolId(entry.id);

@@ -1643,7 +1643,7 @@ description: Excluded skill
     assertEquals(isDynamicTool("search_docs"), true);
   });
 
-  it("rejects a project tool that copies a remote tool's shape without its provenance", async () => {
+  it("still rejects unmarked or re-keyed look-alikes of remote integration tools", async () => {
     const remoteTools = await loadRemoteToolsFromSource({
       id: "local-outlook",
       listTools: () =>
@@ -1662,6 +1662,17 @@ description: Excluded skill
           model: "auto",
           system: "Test.",
           tools: { outlook__send_email: lookAlike },
+        }),
+      VeryfrontError,
+      "reserved integration tool namespace",
+    );
+    assertThrows(
+      () =>
+        agent({
+          id: "remote-rekeyed-agent",
+          model: "auto",
+          system: "Test.",
+          tools: { send_email: remoteTools.outlook__send_email! },
         }),
       VeryfrontError,
       "reserved integration tool namespace",
