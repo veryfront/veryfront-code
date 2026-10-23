@@ -48,6 +48,7 @@ const forbiddenForwardedAuthorityFields = new Set([
   "authorization",
   "authtoken",
   "inferenceauthtoken",
+  "sourceauthtoken",
   "credential",
   "credentials",
   "runeventtoken",
@@ -276,6 +277,7 @@ export async function parseBrokerRuntimeAgentIngress<TAuthorization>(
       apiAuthToken,
       runEventToken,
       invocation.credentials?.inferenceAuthToken,
+      invocation.credentials?.sourceAuthToken,
       stopToken,
     ])
   ) {

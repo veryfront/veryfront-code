@@ -17,6 +17,13 @@ import {
   withCsrfDoubleSubmit,
 } from "./runtime-e2e-helpers.ts";
 import { loadNpmCompatibilityArtifact } from "../ci/npm-compatibility-artifact.ts";
+import { runCommand as runManagedCommand } from "../../src/platform/compat/process/command.ts";
+import { withInstalledProbeCleanup } from "./installed-credential-probes.ts";
+import {
+  installedCredentialProcessFailure,
+  installedRuntimeCredentialProbeProfile,
+  runInstalledRuntimeCredentialProbes,
+} from "./installed-runtime-credential-probes.ts";
 
 export type { RuntimeName } from "./runtime-e2e-helpers.ts";
 
@@ -934,11 +941,106 @@ async function assertAgentRoute(
   );
 }
 
+async function checkInstalledRuntimeCredentialBoundary(
+  projectDir: string,
+  runtime: RuntimeName,
+): Promise<void> {
+  // Deno's existing consumer extracts and installs this same canonical npm
+  // package. Its self-reference symlink resolves the public package exports.
+  const consumer = runtime === "deno"
+    ? `${projectDir}/.veryfront-packed-cli/package`
+    : projectDir;
+  const report = await runInstalledRuntimeCredentialProbes({
+    runtime,
+    githubActions: Deno.env.get("GITHUB_ACTIONS"),
+    runnerOs: Deno.env.get("RUNNER_OS"),
+    execute: async (fixture) => {
+      const directory = await Deno.makeTempDir({
+        dir: consumer,
+        prefix: "credential-probe-",
+      });
+      return await withInstalledProbeCleanup(async () => {
+        const wrapper = "native-credential-runtime-probe.mjs";
+        for (const file of [wrapper, fixture]) {
+          await Deno.copyFile(
+            new URL(
+              `../../tests/integration/agent/fixtures/${file}`,
+              import.meta.url,
+            ),
+            `${directory}/${file}`,
+          );
+        }
+        const program = `${directory}/${wrapper}`;
+        if (runtime === "bun") {
+          // An explicit owned config prevents project preload settings. Bun
+          // 1.3.6 rejects an empty preload array, so leave that setting absent.
+          await Deno.writeTextFile(
+            `${directory}/bunfig.toml`,
+            "env = false\n",
+          );
+        }
+        const args = runtime === "deno"
+          ? [
+            "run",
+            "--no-config",
+            "--node-modules-dir=manual",
+            "--cached-only",
+            `--allow-read=${consumer}`,
+            "--allow-env",
+            "--deny-net",
+            program,
+            fixture,
+          ]
+          : runtime === "bun"
+          ? [
+            "run",
+            `--config=${directory}/bunfig.toml`,
+            "--no-env-file",
+            "--no-install",
+            program,
+            fixture,
+          ]
+          : [program, fixture];
+        const output = await runManagedCommand(runtime, {
+          args,
+          cwd: consumer,
+          clearEnv: true,
+          env: {
+            PATH: Deno.env.get("PATH") ?? "",
+            HOME: directory,
+            TMPDIR: directory,
+            DENO_DIR: `${directory}/deno-cache`,
+            NODE_ENV: "production",
+            VF_DISABLE_LRU_INTERVAL: "1",
+          },
+          capture: true,
+          timeoutMs: 45_000,
+          maxOutputBytes: 8192,
+          terminateProcessTreeOnExit: true,
+        });
+        if (
+          !output.success || output.outputTruncated === true ||
+          typeof output.stdout !== "string" || typeof output.stderr !== "string"
+        ) {
+          throw installedCredentialProcessFailure(runtime, fixture, output);
+        }
+        return {
+          code: output.code,
+          stdout: output.stdout,
+          stderr: output.stderr,
+        };
+      }, () => Deno.remove(directory, { recursive: true }));
+    },
+  });
+  console.log(JSON.stringify(report));
+}
+
 async function assertRuntimeJourney(
   workDir: string,
   packed: PackedWorkspace,
   runtime: RuntimeName,
   providerMode: ProviderMode,
+  credentialProbes: boolean,
 ): Promise<void> {
   const label = `${runtime}/${artifactClaim(runtime)}`;
   const scenarioId = `${runtime}-${crypto.randomUUID()}`;
@@ -964,6 +1066,10 @@ async function assertRuntimeJourney(
 
     console.log(`${label}: install`);
     await installDependencies(projectDir, runtime, workDir);
+
+    if (credentialProbes) {
+      await checkInstalledRuntimeCredentialBoundary(projectDir, runtime);
+    }
 
     const port = allocatePort();
     server = startDevServer(projectDir, runtime, port, {
@@ -1140,6 +1246,16 @@ export async function runRuntimeInferenceCriticalFlow(
       const packed = packedDirectory
         ? await loadPackedArtifactDirectory(packedDirectory)
         : await packNpmPackage(rootDir, workDir);
+      // Invalid explicit artifacts fail before optional CI environment access.
+      const credentialProbes = installedRuntimeCredentialProbeProfile({
+        githubActions: Deno.env.get("GITHUB_ACTIONS"),
+        githubJob: Deno.env.get("GITHUB_JOB"),
+      });
+      if (credentialProbes && !packedDirectory) {
+        throw new Error(
+          "Installed credential runtime checks require the canonical package artifact",
+        );
+      }
       const displayRoots = [rootDir, workDir, packed.root];
       for (const extension of packed.extensions) {
         displayRoots.push(extension.tarball);
@@ -1159,6 +1275,7 @@ export async function runRuntimeInferenceCriticalFlow(
             packed,
             runtime,
             providerMode,
+            credentialProbes,
           );
           console.log(`${runtime}/${artifactClaim(runtime)}: passed`);
         }
