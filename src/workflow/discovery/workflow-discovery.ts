@@ -53,7 +53,8 @@ function append<T>(values: T[], value: T): void {
 }
 
 function compareText(left: string, right: string): number {
-  return left < right ? -1 : left > right ? 1 : 0;
+  if (left < right) return -1;
+  return left > right ? 1 : 0;
 }
 
 function sortValues<T>(values: T[], compare: (left: T, right: T) => number): T[] {
@@ -219,6 +220,33 @@ export async function discoverWorkflows(
   const workflows: DiscoveredWorkflow[] = [];
   const errors: Array<{ filePath: string; error: string }> = [];
 
+  const acceptModuleExports = (module: Record<string, unknown>, file: { path: string }) => {
+    // Extract workflows from module exports
+    const exports = objectEntries(module);
+    sortValues(exports, (left, right) => compareText(left[0], right[0]));
+    for (let exportIndex = 0; exportIndex < exports.length; exportIndex++) {
+      const [exportName, value] = exports[exportIndex]!;
+      try {
+        const definition = extractWorkflowDefinition(value);
+        if (!definition) continue;
+        append(workflows, {
+          id: definition.id,
+          filePath: file.path,
+          exportName,
+          definition,
+        });
+
+        if (debug) {
+          logger.info(
+            `[WorkflowDiscovery] Found workflow "${definition.id}" in ${file.path} (export: ${exportName})`,
+          );
+        }
+      } catch (error) {
+        append(errors, { filePath: file.path, error: toErrorMessage(error) });
+      }
+    }
+  };
+
   let baseDir = configuredWorkflowsDir;
 
   try {
@@ -264,30 +292,7 @@ export async function discoverWorkflows(
           allowHostProjectCodeExecution,
         });
 
-        // Extract workflows from module exports
-        const exports = objectEntries(module);
-        sortValues(exports, (left, right) => compareText(left[0], right[0]));
-        for (let exportIndex = 0; exportIndex < exports.length; exportIndex++) {
-          const [exportName, value] = exports[exportIndex]!;
-          try {
-            const definition = extractWorkflowDefinition(value);
-            if (!definition) continue;
-            append(workflows, {
-              id: definition.id,
-              filePath: file.path,
-              exportName,
-              definition,
-            });
-
-            if (debug) {
-              logger.info(
-                `[WorkflowDiscovery] Found workflow "${definition.id}" in ${file.path} (export: ${exportName})`,
-              );
-            }
-          } catch (error) {
-            append(errors, { filePath: file.path, error: toErrorMessage(error) });
-          }
-        }
+        acceptModuleExports(module, file);
       } catch (error) {
         const errorMsg = toErrorMessage(error);
         append(errors, { filePath: file.path, error: errorMsg });

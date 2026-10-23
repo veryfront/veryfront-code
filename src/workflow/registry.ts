@@ -210,6 +210,47 @@ function extractMetadata(definition: WorkflowDefinition): WorkflowMetadata {
   const agentRefs = new NativeSet<string>();
   const toolRefs = new NativeSet<string>();
 
+  function recordStepCollaborators(config: unknown, nodeInfo: NodeInfo): void {
+    const agentValue = getOwnDataProperty<unknown>(config, "agent");
+    const agentRef = getCollaboratorId(agentValue);
+
+    if (agentRef) {
+      setOwnDataProperty(nodeInfo, "agent", agentRef);
+      reflectApply(setAdd, agentRefs, [agentRef]);
+    }
+
+    const toolValue = getOwnDataProperty<unknown>(config, "tool");
+    const toolRef = getCollaboratorId(toolValue);
+
+    if (toolRef) {
+      setOwnDataProperty(nodeInfo, "tool", toolRef);
+      reflectApply(setAdd, toolRefs, [toolRef]);
+    }
+  }
+
+  function extractChildIds(config: unknown): string[] {
+    const children: string[] = [];
+
+    const nodes = getOwnDataProperty<unknown>(config, "nodes");
+    if (arrayIsArray(nodes)) {
+      appendArrayValues(children, extractNodeInfo(nodes as WorkflowNode[]));
+    }
+    const thenNodes = getOwnDataProperty<unknown>(config, "then");
+    if (arrayIsArray(thenNodes)) {
+      appendArrayValues(children, extractNodeInfo(thenNodes as WorkflowNode[]));
+    }
+    const elseNodes = getOwnDataProperty<unknown>(config, "else");
+    if (arrayIsArray(elseNodes)) {
+      appendArrayValues(children, extractNodeInfo(elseNodes as WorkflowNode[]));
+    }
+    const loopSteps = getOwnDataProperty<unknown>(config, "steps");
+    if (arrayIsArray(loopSteps)) {
+      appendArrayValues(children, extractNodeInfo(loopSteps as WorkflowNode[]));
+    }
+
+    return children;
+  }
+
   function extractNodeInfo(nodeList: WorkflowNode[]): string[] {
     const ids: string[] = [];
 
@@ -245,45 +286,14 @@ function extractMetadata(definition: WorkflowDefinition): WorkflowMetadata {
       }
 
       if (type === "step") {
-        const agentValue = getOwnDataProperty<unknown>(config, "agent");
-        const agentRef = getCollaboratorId(agentValue);
-
-        if (agentRef) {
-          setOwnDataProperty(nodeInfo, "agent", agentRef);
-          reflectApply(setAdd, agentRefs, [agentRef]);
-        }
-
-        const toolValue = getOwnDataProperty<unknown>(config, "tool");
-        const toolRef = getCollaboratorId(toolValue);
-
-        if (toolRef) {
-          setOwnDataProperty(nodeInfo, "tool", toolRef);
-          reflectApply(setAdd, toolRefs, [toolRef]);
-        }
+        recordStepCollaborators(config, nodeInfo);
       }
 
       if (type === "wait" && objectHasOwn(config, "message")) {
         setOwnDataProperty(nodeInfo, "message", getOwnDataProperty(config, "message"));
       }
 
-      const children: string[] = [];
-
-      const nodes = getOwnDataProperty<unknown>(config, "nodes");
-      if (arrayIsArray(nodes)) {
-        appendArrayValues(children, extractNodeInfo(nodes as WorkflowNode[]));
-      }
-      const thenNodes = getOwnDataProperty<unknown>(config, "then");
-      if (arrayIsArray(thenNodes)) {
-        appendArrayValues(children, extractNodeInfo(thenNodes as WorkflowNode[]));
-      }
-      const elseNodes = getOwnDataProperty<unknown>(config, "else");
-      if (arrayIsArray(elseNodes)) {
-        appendArrayValues(children, extractNodeInfo(elseNodes as WorkflowNode[]));
-      }
-      const loopSteps = getOwnDataProperty<unknown>(config, "steps");
-      if (arrayIsArray(loopSteps)) {
-        appendArrayValues(children, extractNodeInfo(loopSteps as WorkflowNode[]));
-      }
+      const children = extractChildIds(config);
 
       if (children.length) {
         setOwnDataProperty(nodeInfo, "children", objectFreeze(children));
