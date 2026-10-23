@@ -1966,16 +1966,49 @@ function isSeparator(char: string | undefined): boolean {
  * `projectModuleLabel` for redaction, without the path helpers, which read
  * string prototypes: project-relative inside the project, else the file name.
  */
+/** `projectDir` without trailing separators, so `/app/` and `/app` agree. */
+function trimmedRoot(projectDir: string): string {
+  let end = projectDir.length;
+  while (end > 1 && isSeparator(projectDir[end - 1])) end--;
+  return IntrinsicReflectApply(StringPrototypeSlice, projectDir, [0, end]) as string;
+}
+
+/** Whether `path` starts with `root` followed by a separator, either kind. */
+function startsWithRoot(path: string, root: string): boolean {
+  for (let index = 0; index < root.length; index++) {
+    const same = path[index] === root[index] ||
+      (isSeparator(path[index]) && isSeparator(root[index]));
+    if (!same) return false;
+  }
+  return isSeparator(path[root.length]);
+}
+
+/** Whether `path` climbs with a `..` segment, so its prefix proves nothing. */
+function hasParentSegment(path: string): boolean {
+  let segmentStart = 0;
+  for (let index = 0; index <= path.length; index++) {
+    if (index === path.length || isSeparator(path[index])) {
+      if (
+        index - segmentStart === 2 && path[segmentStart] === "." && path[segmentStart + 1] === "."
+      ) {
+        return true;
+      }
+      segmentStart = index + 1;
+    }
+  }
+  return false;
+}
+
+/**
+ * `projectModuleLabel` for redaction, without the path helpers, which read
+ * string prototypes: project-relative inside the project, else the file name.
+ * A path with a `..` segment is never trusted to be inside.
+ */
 function redactionLabel(path: string, projectDir?: string): string {
-  const absolute = isSeparator(path[0]) ||
-    (path[1] === ":" && isSeparator(path[2]));
-  if (projectDir && absolute) {
-    let rootEnd = projectDir.length;
-    while (rootEnd > 1 && isSeparator(projectDir[rootEnd - 1])) rootEnd--;
-    const root = IntrinsicReflectApply(StringPrototypeSlice, projectDir, [0, rootEnd]) as string;
-    const prefix = IntrinsicReflectApply(StringPrototypeSlice, path, [0, rootEnd]) as string;
-    if (prefix === root && isSeparator(path[rootEnd])) {
-      return IntrinsicReflectApply(StringPrototypeSlice, path, [rootEnd + 1]) as string;
+  if (projectDir && !hasParentSegment(path)) {
+    const root = trimmedRoot(projectDir);
+    if (startsWithRoot(path, root)) {
+      return IntrinsicReflectApply(StringPrototypeSlice, path, [root.length + 1]) as string;
     }
   }
   return lastPathSegment(path);
@@ -2046,20 +2079,28 @@ function redactAbsolutePaths(text: string, projectDir?: string): string {
   if (projectDir) {
     // The project root first, so a root containing spaces is caught whole, and
     // only where a path starts: a web URL may contain the same characters.
-    const root = replaceMatches(
-      projectDir,
-      REGEXP_SPECIAL_PATTERN,
-      (match) => `\\${match[0]}`,
-    );
+    // Either separator matches, and a trailing one on the root is ignored.
+    const root = trimmedRoot(projectDir);
+    let rootPattern = "";
+    for (let index = 0; index < root.length; index++) {
+      rootPattern += isSeparator(root[index])
+        ? "[\\\\/]"
+        : replaceMatches(root[index]!, REGEXP_SPECIAL_PATTERN, (match) => `\\${match[0]}`);
+    }
     redacted = replaceMatches(
       redacted,
-      new IntrinsicRegExp(`(?<![\\w.:/\\\\])${root}[\\\\/]`, "g"),
-      () => "",
-    );
-    redacted = replaceMatches(
-      redacted,
-      new IntrinsicRegExp(`(?<![\\w.:/\\\\])${root}(?![^\\s'"\`(),;\\[\\]<>{}])`, "g"),
-      () => ".",
+      new IntrinsicRegExp(
+        `(?<![\\w.:/\\\\])${rootPattern}(?:[\\\\/][^\\s'"\`]*|(?![^\\s'"\`(),;\\[\\]<>{}]))`,
+        "g",
+      ),
+      (match) => {
+        const parts = splitClosingBrackets(match[0]);
+        if (parts[0].length === root.length) return `.${parts[1]}`;
+        const rest = IntrinsicReflectApply(StringPrototypeSlice, parts[0], [
+          root.length + 1,
+        ]) as string;
+        return (hasParentSegment(rest) ? lastPathSegment(rest) : rest) + parts[1];
+      },
     );
   }
   return redactPathTokens(redacted, label);

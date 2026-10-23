@@ -3053,6 +3053,12 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
       "Files: (secret.ts)",
     );
     assertEquals(label("At /Users/alice]private/secret.ts"), "At secret.ts");
+    assertEquals(label("At /srv/Jane Doe/app/lib/c.ts", "/srv/Jane Doe/app/"), "At lib/c.ts");
+    assertEquals(label("At C:\\Jane Doe\\app\\lib\\c.ts", "C:/Jane Doe/app"), "At lib\\c.ts");
+    assertEquals(label("At /srv/Jane Doe/app/../Users/alice/secret.ts"), "At secret.ts");
+    // A sibling of the root is not the root.
+    assertEquals(label("At /srv/Jane Doe/app-other").startsWith("At ."), false);
+    assertEquals(label("At file:///project/../Users/alice/secret.ts", "/project"), "At secret.ts");
     assertEquals(label("At file:///Users/alice,private/secret.ts"), "At secret.ts");
     assertEquals(label("At file:///Users/a(b);c/secret.ts:1:2"), "At secret.ts:1:2");
     assertEquals(label("At (file:///Users/x/secret.ts)"), "At (secret.ts)");
