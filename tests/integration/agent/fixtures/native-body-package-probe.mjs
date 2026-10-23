@@ -13,6 +13,7 @@ const { createDetachedRunTracker, createHostedAgentServiceRouteSet } = await imp
   "veryfront/agent"
 );
 const canary = "synthetic-package-body-canary";
+const sourceCanary = "synthetic-package-source-canary";
 const runtimeSource = { type: "release", releaseId: "release-42" };
 const apply = Reflect.apply;
 const decode = TextDecoder.prototype.decode;
@@ -45,15 +46,21 @@ function createRequest() {
       tools: [],
       context: [],
       agentSource: runtimeSource,
-      credentials: { authToken: "control-plane-auth-token", inferenceAuthToken: canary },
+      credentials: {
+        authToken: "control-plane-auth-token",
+        inferenceAuthToken: canary,
+        sourceAuthToken: sourceCanary,
+      },
     }),
   });
 }
 
 function contains(value, depth = 0) {
-  if (typeof value === "string") return apply(includes, value, [canary]);
+  if (typeof value === "string") {
+    return apply(includes, value, [canary]) || apply(includes, value, [sourceCanary]);
+  }
   if (value instanceof Uint8Array) {
-    return apply(includes, apply(decode, decoder, [value]), [canary]);
+    return contains(apply(decode, decoder, [value]));
   }
   if (depth > 6 || typeof value !== "object" || value === null) return false;
   return Object.values(value).some((entry) => contains(entry, depth + 1));
