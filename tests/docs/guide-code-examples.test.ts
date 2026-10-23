@@ -1485,6 +1485,15 @@ describe("Guide: integrations.md", () => {
         assertEquals(Object.keys(integrationTools), [
           "salesforce__find_customer",
         ]);
+
+        const assistant = agent({
+          id: "guide-local-integration-agent",
+          system: "Use Salesforce when the user asks about a customer.",
+          tools: integrationTools,
+        });
+        assertEquals(Object.keys(assistant.config.tools as object), [
+          "salesforce__find_customer",
+        ]);
       },
     );
   });

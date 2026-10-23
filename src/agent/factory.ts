@@ -26,6 +26,7 @@ import {
 } from "#veryfront/platform/core-platform.ts";
 import { registerTool } from "#veryfront/mcp";
 import { assertLocalToolId, toolRegistry, toolRegistryInternal } from "#veryfront/tool/registry.ts";
+import { getRemoteToolProvenance } from "#veryfront/tool/remote-tool-provenance.ts";
 import {
   hasTrustedHostToolProvenance,
   markTrustedHostToolProvenance,
@@ -800,7 +801,12 @@ function registerConfiguredLocalTools(config: AgentConfig): void {
     const name = pair[0];
     const entry = pair[1];
     if (!entry || typeof entry !== "object") continue;
-    if (isRuntimeLocalTool(entry) || isAgentKnowledgeTool(entry)) continue;
+    // Remote-source tools keep their integration names and resolve from the
+    // agent config, so they stay out of the project-local registry.
+    if (
+      isRuntimeLocalTool(entry) || isAgentKnowledgeTool(entry) ||
+      getRemoteToolProvenance(entry) !== undefined
+    ) continue;
     assertLocalToolId(name);
     assertLocalToolId(entry.id);
 
