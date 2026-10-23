@@ -225,4 +225,25 @@ describe("resolveAgentModelTransport", () => {
     assertEquals(transport.providerOptions, providerOptions);
     assertEquals(transport.reasoning, { enabled: false });
   });
+
+  // The catalog is loaded (seeded) here, as when another run loaded it first:
+  // a direct run still takes none of its thinking defaults.
+  for (const model of ["anthropic/claude-sonnet-4-6", "openai/gpt-5.5"]) {
+    it(`takes no catalog thinking defaults for direct ${model}`, async () => {
+      const transport = await resolveAgentModelTransport({
+        agentId: "agent-1",
+        config: {
+          model,
+          system: "You are a helpful assistant.",
+          resolveModelTransport: () => ({ model: createModel(model) }),
+        },
+        context: undefined,
+        mode: "generate",
+        modelOverride: undefined,
+      });
+
+      assertEquals(transport.providerOptions, undefined);
+      assertEquals(transport.reasoning, undefined);
+    });
+  }
 });

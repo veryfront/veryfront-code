@@ -227,7 +227,12 @@ function resolveReasoningWithDefaults(
     return { enabled: false };
   }
 
-  if (isVeryfrontCloudAnthropicSurfaceModel(modelString)) {
+  // A direct-provider model takes no catalog defaults, so it resolves the same
+  // whatever another run loaded first.
+  if (
+    !modelString.startsWith(VERYFRONT_CLOUD_MODEL_PREFIX) ||
+    isVeryfrontCloudAnthropicSurfaceModel(modelString)
+  ) {
     return undefined;
   }
 
@@ -254,9 +259,8 @@ export async function resolveAgentModelTransport(
   //
   // A model that routes to a provider key never reaches Veryfront Cloud, so
   // an ambient run does not load the catalog for it: a stale login must not
-  // log a catalog failure for a run that never uses it. Such a run then takes
-  // thinking defaults from the catalog only when another run in this process
-  // already loaded it; with no login it never does.
+  // log a catalog failure for a run that never uses it. It takes no catalog
+  // thinking defaults either way.
   const privateCatalog = input.resolveModelRuntime
     ? modelRuntimeResolverCatalogs.get(input.resolveModelRuntime)
     : undefined;
