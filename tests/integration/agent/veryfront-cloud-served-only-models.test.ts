@@ -14,6 +14,7 @@ import {
   type VeryfrontCloudContext,
 } from "#veryfront/provider/veryfront-cloud/context.ts";
 import { __resetVeryfrontCloudCatalogForTests } from "#veryfront/provider/veryfront-cloud/catalog-client.ts";
+import { servedCatalogPayload } from "#veryfront/provider/veryfront-cloud/catalog-client.test-helpers.ts";
 import { resolveVeryfrontCloudModelId } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
 import { createVeryfrontCloudInferenceModel } from "#veryfront/provider/veryfront-cloud/provider.ts";
 import type { ModelRuntime } from "#veryfront/provider/types.ts";
@@ -375,6 +376,64 @@ describe("served-only models from a cold process", () => {
       ]);
       await runtime.cleanup?.();
     });
+  });
+
+  it("keeps catalog thinking defaults for a provider model routed through Cloud for want of a key", async () => {
+    setEnv("VERYFRONT_API_TOKEN", AMBIENT_TOKEN);
+    setEnv("VERYFRONT_PROJECT_SLUG", "cold-project");
+    deleteEnv("ANTHROPIC_API_KEY");
+    installMockFetch(
+      (() => Promise.resolve(Response.json(servedCatalogPayload()))) as typeof fetch,
+    );
+    const model = "anthropic/claude-sonnet-4-6";
+
+    const transport = await resolveAgentModelTransport({
+      agentId: "agent-1",
+      config: {
+        model,
+        system: "You are concise.",
+        resolveModelTransport: () => ({
+          model: { provider: "test", modelId: model } as ModelRuntime,
+        }),
+      },
+      context: undefined,
+      modelOverride: undefined,
+      mode: "generate",
+    });
+
+    // The configured id names a direct provider; the resolved route is Cloud,
+    // and that route decides the defaults.
+    assertEquals(transport.resolvedModelString, `veryfront-cloud/${model}`);
+    assertEquals(transport.providerOptions, {
+      anthropic: { temperature: 1, thinking: { type: "enabled", budget_tokens: 2048 } },
+    });
+  });
+
+  it("keeps catalog reasoning defaults for a non-Anthropic model routed through Cloud for want of a key", async () => {
+    setEnv("VERYFRONT_API_TOKEN", AMBIENT_TOKEN);
+    setEnv("VERYFRONT_PROJECT_SLUG", "cold-project");
+    deleteEnv("OPENAI_API_KEY");
+    installMockFetch(
+      (() => Promise.resolve(Response.json(servedCatalogPayload()))) as typeof fetch,
+    );
+    const model = "openai/gpt-5.5";
+
+    const transport = await resolveAgentModelTransport({
+      agentId: "agent-1",
+      config: {
+        model,
+        system: "You are concise.",
+        resolveModelTransport: () => ({
+          model: { provider: "test", modelId: model } as ModelRuntime,
+        }),
+      },
+      context: undefined,
+      modelOverride: undefined,
+      mode: "generate",
+    });
+
+    assertEquals(transport.resolvedModelString, `veryfront-cloud/${model}`);
+    assertEquals(transport.reasoning, { enabled: true });
   });
 
   describe("with an expired ambient login", () => {

@@ -242,8 +242,30 @@ describe("resolveAgentModelTransport", () => {
         modelOverride: undefined,
       });
 
+      assertEquals(transport.resolvedModelString, model);
       assertEquals(transport.providerOptions, undefined);
       assertEquals(transport.reasoning, undefined);
     });
   }
+
+  it("keeps a thinking opt-out on a direct model", async () => {
+    const model = "openai/gpt-5.5";
+    const providerOptions = { openai: { thinking: { type: "disabled" } } };
+
+    const transport = await resolveAgentModelTransport({
+      agentId: "agent-1",
+      config: {
+        model,
+        system: "You are a helpful assistant.",
+        resolveModelTransport: () => ({ model: createModel(model), providerOptions }),
+      },
+      context: undefined,
+      mode: "generate",
+      modelOverride: undefined,
+    });
+
+    assertEquals(transport.resolvedModelString, model);
+    assertEquals(transport.providerOptions, providerOptions);
+    assertEquals(transport.reasoning, { enabled: false });
+  });
 });
