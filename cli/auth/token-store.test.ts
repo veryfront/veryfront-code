@@ -122,6 +122,13 @@ describe("Token Store", () => {
       );
     });
 
+    it("checks again when the remembered time is in the future", async () => {
+      // A clock moved back must not stretch the TTL.
+      await rememberAcceptedLogin(API_URL, "login-e", testEnv, NOW);
+
+      assertEquals(await wasLoginAcceptedRecently(API_URL, "login-e", testEnv, NOW - 1), false);
+    });
+
     it("does not carry an acceptance over to another login or API", async () => {
       await rememberAcceptedLogin(API_URL, "login-c", testEnv, NOW);
 

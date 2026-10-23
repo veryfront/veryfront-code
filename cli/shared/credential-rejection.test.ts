@@ -30,7 +30,7 @@ describe("cli/shared/credential-rejection", () => {
     assertEquals(await checkCredential("login-token", API_URL, transport, 5_000), "accepted");
   });
 
-  for (const status of [404, 503]) {
+  for (const status of [302, 404, 503]) {
     it(`reports a login answered with ${status} as unknown`, async () => {
       const { transport } = answer(status);
 

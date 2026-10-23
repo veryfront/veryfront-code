@@ -23,7 +23,11 @@ import {
   createTestEnvironmentConfig,
 } from "#veryfront/config/environment-config.ts";
 
-import { saveToken } from "../../../../../cli/auth/token-store.ts";
+import {
+  rememberAcceptedLogin,
+  saveToken,
+  wasLoginAcceptedRecently,
+} from "../../../../../cli/auth/token-store.ts";
 import {
   applyQualifiedRuntimeAuth,
   applyRuntimeAuthContext,
@@ -190,6 +194,40 @@ describe("runtime-auth credential intrinsic boundary", () => {
           }
         }
         _resetEnvironmentConfig();
+      }
+    }, { prefix: "vf-runtime-auth-intrinsics-" });
+  });
+
+  it("remembers an accepted login without handing the token to replaced encode or digest", async () => {
+    await withTempDir(async (configHome) => {
+      const env = createTestEnvironmentConfig({ xdgConfigHome: configHome, homeDir: configHome });
+      await saveToken(TOKEN, env);
+      const nativeEncode = TextEncoder.prototype.encode;
+      const nativeDigest = SubtleCrypto.prototype.digest;
+      let observedCredential = 0;
+
+      try {
+        TextEncoder.prototype.encode = function (this: TextEncoder, input?: string) {
+          if (containsToken(input)) observedCredential += 1;
+          return testApply(nativeEncode, this, [input]) as Uint8Array<ArrayBuffer>;
+        };
+        SubtleCrypto.prototype.digest = function (
+          this: SubtleCrypto,
+          ...args: Parameters<SubtleCrypto["digest"]>
+        ) {
+          const data = new TextDecoder().decode(args[1] as Uint8Array);
+          if (containsToken(data)) observedCredential += 1;
+          return testApply(nativeDigest, this, args) as Promise<ArrayBuffer>;
+        };
+
+        await rememberAcceptedLogin("https://api.example.test", TOKEN, env);
+        const remembered = await wasLoginAcceptedRecently("https://api.example.test", TOKEN, env);
+
+        assertEquals(remembered, true);
+        assertEquals(observedCredential, 0);
+      } finally {
+        TextEncoder.prototype.encode = nativeEncode;
+        SubtleCrypto.prototype.digest = nativeDigest;
       }
     }, { prefix: "vf-runtime-auth-intrinsics-" });
   });
