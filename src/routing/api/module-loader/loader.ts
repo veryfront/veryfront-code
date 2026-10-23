@@ -1989,44 +1989,46 @@ function testPattern(pattern: RegExp, text: string): boolean {
 const FILE_URL_PATTERN = /(?<![\w-])file:[^\s'"`(),;]+/gi;
 const REGEXP_SPECIAL_PATTERN = /[.*+?^${}()|[\]\\]/g;
 // A web URL is kept whole, even one whose host is bracketed (`[::1]`).
-// A fresh RegExp per call: the suffix after a closing bracket is redacted
-// recursively, and a shared global pattern would lose its place.
 const WEB_URL_OR_PATH_SOURCE =
   /(https?:\/\/[^\s'"`<>]+)|(?<![\w.:/\\])(?:[A-Za-z]:[\\/]|\\\\|\/)[^\s'"`]+/.source;
 
 function redactPathTokens(text: string, label: (path: string) => string): string {
   return replaceMatches(text, new IntrinsicRegExp(WEB_URL_OR_PATH_SOURCE, "gi"), (match) => {
     if (match[1] !== undefined) return match[1];
-    // `(/a.ts),(/b.ts)` is one token; the part after the first closing
-    // bracket may hold another path.
     const parts = splitClosingBrackets(match[0]);
-    return label(parts[0]) + redactPathTokens(parts[1], label);
+    return label(parts[0]) + parts[1];
   });
 }
 
 /**
- * `path` split where a closing bracket ends a pair opened before it, as in
- * `(/x/a.ts)` or `</x/b.ts>`. Any character a filename may hold stays in the
- * path, balanced brackets included, so `/a{b}/c.ts` is redacted whole.
+ * `path` split before a closing bracket that ends the token and closes a pair
+ * opened before it, as in `(/x/a.ts)` or `</x/b.ts>`. A closer followed by
+ * another separator is part of a filename (`/a]b/c.ts`), so the path runs on
+ * through its final segment: when in doubt, redact more.
  */
 function splitClosingBrackets(path: string): [string, string] {
   const OPENERS = "([{<";
   const CLOSERS = ")]}>";
   const depth = [0, 0, 0, 0];
-  let end = path.length;
-  for (let index = 0; index < path.length && end === path.length; index++) {
+  let lastSeparator = -1;
+  for (let index = 0; index < path.length; index++) {
+    if (isSeparator(path[index])) lastSeparator = index;
+  }
+  for (let index = lastSeparator + 1; index < path.length; index++) {
     for (let pair = 0; pair < 4; pair++) {
       if (path[index] === OPENERS[pair]) depth[pair]!++;
       else if (path[index] === CLOSERS[pair]) {
         if (depth[pair]! > 0) depth[pair]!--;
-        else end = index;
+        else {
+          return [
+            IntrinsicReflectApply(StringPrototypeSlice, path, [0, index]) as string,
+            IntrinsicReflectApply(StringPrototypeSlice, path, [index]) as string,
+          ];
+        }
       }
     }
   }
-  return [
-    IntrinsicReflectApply(StringPrototypeSlice, path, [0, end]) as string,
-    IntrinsicReflectApply(StringPrototypeSlice, path, [end]) as string,
-  ];
+  return [path, ""];
 }
 
 function redactAbsolutePaths(text: string, projectDir?: string): string {
