@@ -16,6 +16,7 @@ import {
 } from "../../../scripts/test/installed-credential-probes.ts";
 import {
   type CredentialProbeRuntime,
+  installedCredentialProcessFailure,
   installedRuntimeCredentialProbeProfile,
   runInstalledRuntimeCredentialProbes,
 } from "../../../scripts/test/installed-runtime-credential-probes.ts";
@@ -777,6 +778,52 @@ function runtimeCredentialOutput(
 }
 
 describe("installed runtime credential evidence", () => {
+  it("retains bounded process hints and fixture locations without raw child output", () => {
+    const output = runtimeCredentialOutput("deno", 3);
+    const failure = installedCredentialProcessFailure("deno", "native-header-package-probe.mjs", {
+      ...output,
+      code: 1,
+      stderr:
+        "AssertionError ERR_MODULE_NOT_FOUND private-secret /private/customer/path\n at file:///private/customer/native-header-package-probe.mjs:27:4",
+    });
+    assertStringIncludes(failure.message, '"runtimeVersion":"2.7.7"');
+    assertStringIncludes(failure.message, '"fixtureLine":27');
+    assertStringIncludes(failure.message, "module-resolution");
+    assert(!failure.message.includes("private-secret"));
+    assert(!failure.message.includes("/private/customer"));
+    const unknown = installedCredentialProcessFailure("node", "native-body-package-probe.mjs", {
+      code: 125,
+      stdout: "x".repeat(8193),
+      stderr: "at other-file.mjs:9:2",
+      outputTruncated: true,
+    });
+    assertStringIncludes(unknown.message, '"fixtureLine":null');
+    assertStringIncludes(unknown.message, "output-limit");
+    assert(!unknown.message.includes("other-file"));
+  });
+
+  it("does not reflect unknown process scope or coerce malformed output", () => {
+    const scope = installedCredentialProcessFailure(
+      "private-secret" as CredentialProbeRuntime,
+      "native-header-package-probe.mjs",
+      { code: 1 },
+    );
+    assert(!scope.message.includes("private-secret"));
+    let hooks = 0;
+    const malformed = {
+      toString: () => {
+        hooks++;
+        return "private-secret";
+      },
+    };
+    const failure = installedCredentialProcessFailure("bun", "native-body-package-probe.mjs", {
+      code: 124,
+      stderr: malformed as unknown as string,
+    });
+    assertEquals(hooks, 0);
+    assertStringIncludes(failure.message, "deadline");
+    assert(!failure.message.includes("private-secret"));
+  });
   it("selects only the existing Linux Actions runtime critical-flow lane", () => {
     assert(
       installedRuntimeCredentialProbeProfile({

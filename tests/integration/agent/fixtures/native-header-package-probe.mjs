@@ -23,7 +23,7 @@ const runtime = defineAgentService({
   routes: [{
     method: "GET",
     path: "/check",
-    handler: ({ request }) => {
+    handler: (request) => {
       assert.equal(request.method, "GET", "inherited method changed a valid request");
       handled++;
       return response;

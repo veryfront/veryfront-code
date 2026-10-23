@@ -20,6 +20,7 @@ import { loadNpmCompatibilityArtifact } from "../ci/npm-compatibility-artifact.t
 import { runCommand as runManagedCommand } from "../../src/platform/compat/process/command.ts";
 import { withInstalledProbeCleanup } from "./installed-credential-probes.ts";
 import {
+  installedCredentialProcessFailure,
   installedRuntimeCredentialProbeProfile,
   runInstalledRuntimeCredentialProbes,
 } from "./installed-runtime-credential-probes.ts";
@@ -1019,9 +1020,7 @@ async function checkInstalledRuntimeCredentialBoundary(
           !output.success || output.outputTruncated === true ||
           typeof output.stdout !== "string" || typeof output.stderr !== "string"
         ) {
-          throw new Error(
-            `Installed credential probe ${runtime}/${fixture} failed with exit ${output.code}`,
-          );
+          throw installedCredentialProcessFailure(runtime, fixture, output);
         }
         return {
           code: output.code,
@@ -1220,15 +1219,6 @@ export async function runRuntimeInferenceCriticalFlow(
   const keepWorkDir = hasFlag(args, "keep");
   const skipBuild = hasFlag(args, "skip-build");
   const packedDirectory = parsePackedArtifactDirectory(args);
-  const credentialProbes = installedRuntimeCredentialProbeProfile({
-    githubActions: Deno.env.get("GITHUB_ACTIONS"),
-    githubJob: Deno.env.get("GITHUB_JOB"),
-  });
-  if (credentialProbes && !packedDirectory) {
-    throw new Error(
-      "Installed credential runtime checks require the canonical package artifact",
-    );
-  }
   const workDir = await Deno.makeTempDir({
     prefix: "veryfront-runtime-critical-flow-",
   });
@@ -1254,6 +1244,16 @@ export async function runRuntimeInferenceCriticalFlow(
       const packed = packedDirectory
         ? await loadPackedArtifactDirectory(packedDirectory)
         : await packNpmPackage(rootDir, workDir);
+      // Invalid explicit artifacts fail before optional CI environment access.
+      const credentialProbes = installedRuntimeCredentialProbeProfile({
+        githubActions: Deno.env.get("GITHUB_ACTIONS"),
+        githubJob: Deno.env.get("GITHUB_JOB"),
+      });
+      if (credentialProbes && !packedDirectory) {
+        throw new Error(
+          "Installed credential runtime checks require the canonical package artifact",
+        );
+      }
       const displayRoots = [rootDir, workDir, packed.root];
       for (const extension of packed.extensions) {
         displayRoots.push(extension.tarball);

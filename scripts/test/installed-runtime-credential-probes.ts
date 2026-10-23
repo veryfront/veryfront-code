@@ -25,6 +25,77 @@ interface Output {
   stderr: string;
 }
 
+/** Closed diagnostics only: never copy child output, paths, or error messages. */
+export function installedCredentialProcessFailure(
+  runtime: CredentialProbeRuntime,
+  fixture: InstalledCredentialProbe,
+  output: {
+    code: number;
+    stdout?: string;
+    stderr?: string;
+    outputTruncated?: boolean;
+  },
+): Error {
+  if (
+    !RUNTIMES.includes(runtime) ||
+    !INSTALLED_CREDENTIAL_PROBES.some((p) => p.file === fixture)
+  ) {
+    return new Error(
+      "Installed credential process failed with unconfirmed scope",
+    );
+  }
+  const stdout = typeof output.stdout === "string" ? output.stdout : "";
+  const stderr = typeof output.stderr === "string"
+    ? output.stderr.slice(0, 8192)
+    : "";
+  const hints = [];
+  if (/ERR_ASSERTION|AssertionError/.test(stderr)) hints.push("assertion");
+  if (
+    /ERR_MODULE_NOT_FOUND|Module not found|Cannot find (?:module|package)/i
+      .test(stderr)
+  ) hints.push("module-resolution");
+  if (/NotCapable|PermissionDenied|permission denied/i.test(stderr)) {
+    hints.push("permission");
+  }
+  if (/cached-only|not found in cache/i.test(stderr)) {
+    hints.push("uncached-dependency");
+  }
+  if (/unexpected argument|unrecognized option|unknown option/i.test(stderr)) {
+    hints.push("runtime-arguments");
+  }
+  if (output.code === 124) hints.push("deadline");
+  if (output.code === 125 || output.outputTruncated === true) {
+    hints.push("output-limit");
+  }
+  const escaped = fixture.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = new RegExp(escaped + ":([1-9][0-9]{0,3}):[0-9]{1,4}").exec(
+    stderr,
+  );
+  const line = match ? Number(match[1]) : 0;
+  let version: string | null = null;
+  if (stdout.length <= 8192) {
+    try {
+      version = identityLine(stdout.split("\n")[0] ?? "", runtime);
+    } catch { /* Unconfirmed diagnostic identity. */ }
+  }
+  return new Error(
+    `Installed credential probe ${runtime}/${fixture} failed ${
+      JSON.stringify({
+        code: Number.isSafeInteger(output.code) ? output.code : null,
+        runtimeVersion: version,
+        stdoutCodeUnits: typeof output.stdout === "string"
+          ? output.stdout.length
+          : null,
+        stderrPresent: typeof output.stderr === "string"
+          ? output.stderr !== ""
+          : null,
+        fixtureLine: line > 0 && line <= 2000 ? line : null,
+        hints,
+      })
+    }`,
+  );
+}
+
 function identityLine(text: string, runtime: CredentialProbeRuntime): string {
   let value: unknown;
   try {
