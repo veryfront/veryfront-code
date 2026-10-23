@@ -23,7 +23,7 @@ import { defineSchema } from "#veryfront/schemas/index.ts";
 import { VeryfrontError } from "#veryfront/errors";
 import { getEffectiveAgentSystem } from "./runtime/effective-agent-system.ts";
 import { markRuntimeLocalTool } from "./runtime/local-tool.ts";
-import { executeConfiguredTool, getAvailableTools } from "./runtime/tool-helpers.ts";
+import { executeConfiguredTool, getAvailableTools, isDynamicTool } from "./runtime/tool-helpers.ts";
 import { agentRegistry } from "./composition/index.ts";
 import { agent, createEphemeralAgent, createEphemeralAgentWithRuntimeOptions } from "./factory.ts";
 import { resolveSkillToolDisposition } from "./skill-tool-disposition.ts";
@@ -1609,11 +1609,10 @@ description: Excluded skill
     const source: RemoteToolSource = {
       id: "local-outlook",
       listTools: () =>
-        Promise.resolve([{
-          name: "outlook__list_emails",
-          description: "List emails",
-          parameters: { type: "object", properties: {} },
-        }]),
+        Promise.resolve([
+          { name: "outlook__list_emails", description: "List emails", parameters: {} },
+          { name: "search_docs", description: "Search docs", parameters: {} },
+        ]),
       executeTool: (name) => {
         calls.push(name);
         return Promise.resolve({ emails: [] });
@@ -1629,13 +1628,19 @@ description: Excluded skill
     });
 
     const definitions = await getAvailableTools(assistant.config.tools);
-    assertEquals(definitions.map((definition) => definition.name), ["outlook__list_emails"]);
+    assertEquals(definitions.map((definition) => definition.name), [
+      "outlook__list_emails",
+      "search_docs",
+    ]);
     assertEquals(
       await executeConfiguredTool("outlook__list_emails", {}, assistant.config.tools),
       { emails: [] },
     );
     assertEquals(calls, ["outlook__list_emails"]);
     assertEquals(toolRegistry.get("outlook__list_emails"), undefined);
+    // Remote tools outside the reserved namespace still register, so streams
+    // keep classifying them as dynamic.
+    assertEquals(isDynamicTool("search_docs"), true);
   });
 
   it("rejects a project tool that copies a remote tool's shape without its provenance", async () => {
