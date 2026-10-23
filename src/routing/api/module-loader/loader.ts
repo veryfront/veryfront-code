@@ -1990,7 +1990,30 @@ const FILE_URL_PATTERN = /(?<![\w-])file:[^\s'"`(),;]+/gi;
 const REGEXP_SPECIAL_PATTERN = /[.*+?^${}()|[\]\\]/g;
 // A web URL is kept whole, even one whose host is bracketed (`[::1]`).
 const WEB_URL_OR_PATH_PATTERN =
-  /(https?:\/\/[^\s'"`<>]+)|(?<![\w.:/\\\]])(?:[A-Za-z]:[\\/]|\\\\|\/)[^\s'"`(),;[\]<>{}]+/gi;
+  /(https?:\/\/[^\s'"`<>]+)|(?<![\w.:/\\])(?:[A-Za-z]:[\\/]|\\\\|\/)[^\s'"`(),;<>{}]+/gi;
+
+/**
+ * `path` split into the path and the `]`s that close brackets opened before
+ * it, as in `[/x/a.ts]`. Brackets inside a path, `/a[b]/c.ts`, stay in it.
+ */
+function splitClosingBrackets(path: string): [string, string] {
+  let depth = 0;
+  let end = path.length;
+  for (let index = 0; index < path.length; index++) {
+    if (path[index] === "[") depth++;
+    else if (path[index] === "]") {
+      if (depth > 0) depth--;
+      else {
+        end = index;
+        break;
+      }
+    }
+  }
+  return [
+    IntrinsicReflectApply(StringPrototypeSlice, path, [0, end]) as string,
+    IntrinsicReflectApply(StringPrototypeSlice, path, [end]) as string,
+  ];
+}
 
 function redactAbsolutePaths(text: string, projectDir?: string): string {
   // A path outside the project, or one another platform calls absolute (a
@@ -2020,7 +2043,11 @@ function redactAbsolutePaths(text: string, projectDir?: string): string {
       () => ".",
     );
   }
-  return replaceMatches(redacted, WEB_URL_OR_PATH_PATTERN, (match) => match[1] ?? label(match[0]));
+  return replaceMatches(redacted, WEB_URL_OR_PATH_PATTERN, (match) => {
+    if (match[1] !== undefined) return match[1];
+    const parts = splitClosingBrackets(match[0]);
+    return label(parts[0]) + parts[1];
+  });
 }
 
 /**

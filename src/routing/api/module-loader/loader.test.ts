@@ -3044,6 +3044,7 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
       );
     assertEquals(label("Project at /srv/Jane Doe/app has no config"), "Project at . has no config");
     assertEquals(label("See [/elsewhere/a.ts] and </elsewhere/b.ts>"), "See [a.ts] and <b.ts>");
+    assertEquals(label("At /home/alice[private]/secret.ts"), "At secret.ts");
     assertEquals(
       label("Failed to fetch https://[::1]/lib/mod.ts: 404"),
       "Failed to fetch https://[::1]/lib/mod.ts: 404",
