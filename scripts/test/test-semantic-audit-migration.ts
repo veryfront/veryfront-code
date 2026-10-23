@@ -1445,11 +1445,6 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "tests/integration/semantic-unit-boundary/scripts/build/sentry-runtime-packages.test.ts",
       "removalPr": "PR 4f",
     }),
-    entry(
-      "scripts/ci/automated-review-gate.test.ts",
-      ["filesystem-read"],
-      unresolvedReadRelocation("scripts-tooling", "PR 4f"),
-    ),
     entry("scripts/ci/prepare-rc-build.test.ts", [
       "filesystem-read",
       "filesystem-write",
