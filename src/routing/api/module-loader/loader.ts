@@ -80,7 +80,7 @@ const MapPrototypeSet = Map.prototype.set;
 // Redaction runs after project code has evaluated in this realm, so it must
 // not dispatch through prototypes that code could have replaced.
 const IntrinsicRegExp = RegExp;
-const IntrinsicURL = URL;
+const IntrinsicDecodeURIComponent = decodeURIComponent;
 const RegExpPrototypeExec = RegExp.prototype.exec;
 const StringPrototypeSlice = String.prototype.slice;
 const trustedRequestContextAccessor = currentRequestContext;
@@ -1986,7 +1986,7 @@ function testPattern(pattern: RegExp, text: string): boolean {
   return IntrinsicReflectApply(RegExpPrototypeExec, pattern, [text]) !== null;
 }
 
-const FILE_URL_PATTERN = /(?<![\w-])file:[^\s'"`(),;]+/gi;
+const FILE_URL_PATTERN = /(?<![\w-])file:[^\s'"`]+/gi;
 const REGEXP_SPECIAL_PATTERN = /[.*+?^${}()|[\]\\]/g;
 // A web URL is kept whole, even one whose host is bracketed (`[::1]`).
 const WEB_URL_OR_PATH_SOURCE =
@@ -2038,7 +2038,10 @@ function redactAbsolutePaths(text: string, projectDir?: string): string {
   let redacted = replaceMatches(
     text,
     FILE_URL_PATTERN,
-    (match) => fileUrlLabel(match[0], projectDir),
+    (match) => {
+      const parts = splitClosingBrackets(match[0]);
+      return fileUrlLabel(parts[0], projectDir) + parts[1];
+    },
   );
   if (projectDir) {
     // The project root first, so a root containing spaces is caught whole, and
@@ -2064,26 +2067,35 @@ function redactAbsolutePaths(text: string, projectDir?: string): string {
 
 /**
  * A `file:` URL by its project label, whatever its authority: a UNC path
- * converts to `file://server/share/...`, which must not leak either.
+ * converts to `file://server/share/...`, which must not leak either. Parsed by
+ * hand, not with `URL`, whose accessors project code can redefine.
  */
 function fileUrlLabel(url: string, projectDir?: string): string {
-  let parsed: URL;
-  try {
-    parsed = new IntrinsicURL(url);
-  } catch {
-    return "file";
+  let end = url.length;
+  for (let index = 0; index < url.length; index++) {
+    // A query or fragment can carry a credential and is never part of the path.
+    if (url[index] === "?" || url[index] === "#") {
+      end = index;
+      break;
+    }
   }
-  // Extra safety: a query or fragment can carry a credential. fromFileUrl and
-  // the pathname fallback already ignore both.
-  parsed.search = "";
-  parsed.hash = "";
-  try {
-    const path = pathHelper.fromFileUrl(parsed);
-    return redactionLabel(path, projectDir);
-  } catch {
-    // Not a path this platform can convert; fall back to the file name.
+  let path = IntrinsicReflectApply(StringPrototypeSlice, url, [5, end]) as string;
+  if (path[0] === "/" && path[1] === "/") {
+    // Skip the authority, empty for a local file and a host for a share.
+    let start = 2;
+    while (start < path.length && path[start] !== "/") start++;
+    path = IntrinsicReflectApply(StringPrototypeSlice, path, [start]) as string;
   }
-  return lastPathSegment(parsed.pathname);
+  // `file:///C:/x` names the drive path `C:/x`.
+  if (path[0] === "/" && path[2] === ":") {
+    path = IntrinsicReflectApply(StringPrototypeSlice, path, [1]) as string;
+  }
+  try {
+    path = IntrinsicDecodeURIComponent(path);
+  } catch {
+    // A malformed escape stays encoded; the label still ends at the file name.
+  }
+  return redactionLabel(path, projectDir);
 }
 
 /**
@@ -2092,11 +2104,20 @@ function fileUrlLabel(url: string, projectDir?: string): string {
  */
 function buildLocationLabel(file: string, projectDir: string, workingDir: string): string {
   if (testPattern(/^https?:\/\//i, file)) {
-    try {
-      return new IntrinsicURL(file).origin;
-    } catch {
-      return "remote module";
+    // Scheme and host only, read by hand rather than through URL accessors;
+    // userinfo before `@` is dropped.
+    const schemeEnd = file[4] === ":" ? 7 : 8;
+    let hostEnd = schemeEnd;
+    while (
+      hostEnd < file.length && !isSeparator(file[hostEnd]) && file[hostEnd] !== "?" &&
+      file[hostEnd] !== "#"
+    ) hostEnd++;
+    let hostStart = schemeEnd;
+    for (let index = schemeEnd; index < hostEnd; index++) {
+      if (file[index] === "@") hostStart = index + 1;
     }
+    return (schemeEnd === 7 ? "http://" : "https://") +
+      (IntrinsicReflectApply(StringPrototypeSlice, file, [hostStart, hostEnd]) as string);
   }
   const absolute = isSeparator(file[0]) || (file[1] === ":" && isSeparator(file[2]));
   return redactionLabel(absolute ? file : pathHelper.resolve(workingDir, file), projectDir);

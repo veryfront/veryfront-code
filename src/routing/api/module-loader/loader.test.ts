@@ -3053,6 +3053,9 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
       "Files: (secret.ts)",
     );
     assertEquals(label("At /Users/alice]private/secret.ts"), "At secret.ts");
+    assertEquals(label("At file:///Users/alice,private/secret.ts"), "At secret.ts");
+    assertEquals(label("At file:///Users/a(b);c/secret.ts:1:2"), "At secret.ts:1:2");
+    assertEquals(label("At (file:///Users/x/secret.ts)"), "At (secret.ts)");
     assertEquals(
       label("Failed to fetch https://[::1]/lib/mod.ts: 404"),
       "Failed to fetch https://[::1]/lib/mod.ts: 404",
@@ -3064,6 +3067,7 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
       split: String.prototype.split,
       exec: RegExp.prototype.exec,
       symbolReplace: RegExp.prototype[Symbol.replace],
+      pathname: Object.getOwnPropertyDescriptor(URL.prototype, "pathname")!,
     };
     let patched: string;
     try {
@@ -3071,12 +3075,21 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
         return String(this);
       } as typeof String.prototype.replace;
       String.prototype.split = () => [];
+      Object.defineProperty(URL.prototype, "pathname", {
+        configurable: true,
+        get() {
+          throw new Error("patched");
+        },
+      });
       RegExp.prototype.exec = () => null;
       RegExp.prototype[Symbol.replace] = function (_s: string) {
         return String(_s);
       } as typeof RegExp.prototype[typeof Symbol.replace];
       patched = buildFailure(
-        [{ text: "File not found: /elsewhere/secret.ts", location: { file: "/x/a.ts" } }],
+        [{
+          text: "File not found: /elsewhere/secret.ts at file:///elsewhere/x.ts",
+          location: { file: "/x/a.ts" },
+        }],
         "/project",
         "/srv/work",
       ).message;
@@ -3085,10 +3098,11 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
       String.prototype.split = originals.split;
       RegExp.prototype.exec = originals.exec;
       RegExp.prototype[Symbol.replace] = originals.symbolReplace;
+      Object.defineProperty(URL.prototype, "pathname", originals.pathname);
     }
     assertEquals(
       patched,
-      "[API] handler build failed: a.ts:undefined:1: File not found: secret.ts",
+      "[API] handler build failed: a.ts:undefined:1: File not found: secret.ts at x.ts",
     );
     for (const text of ["Unknown profile:dev in config", "Set configFile:./x.json"]) {
       assertEquals(
