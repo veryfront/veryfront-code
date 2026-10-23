@@ -1905,7 +1905,7 @@ function redactAbsolutePaths(text: string, projectDir: string): string {
   // is caught whole, and only where a path starts: a web URL may contain it.
   const root = pathHelper.resolve(projectDir).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return text
-    .replace(/file:[^\s'"`(),;]+/gi, (url) => fileUrlLabel(url, projectDir))
+    .replace(/(?<![\w-])file:[^\s'"`(),;]+/gi, (url) => fileUrlLabel(url, projectDir))
     .replace(new RegExp(`(?<![\\w.:/\\\\])${root}[\\\\/]`, "g"), "").replace(
       /(?<![\w.:/\\])(?:[A-Za-z]:[\\/]|\\\\|\/)[^\s'"`(),;]+/g,
       // A path another platform calls absolute (a drive or UNC path on POSIX)
@@ -1928,7 +1928,8 @@ function fileUrlLabel(url: string, projectDir: string): string {
   } catch {
     return "file";
   }
-  // A query or fragment can carry a credential and is never part of the path.
+  // Extra safety: a query or fragment can carry a credential. fromFileUrl and
+  // the pathname fallback already ignore both.
   parsed.search = "";
   parsed.hash = "";
   try {

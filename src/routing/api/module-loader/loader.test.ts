@@ -2946,6 +2946,12 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
       const message = buildFailure([{ text: `At ${url}` }], "/project", "/srv/work").message;
       assertEquals(message, "[API] handler build failed: At x.ts", url);
     }
+    for (const text of ["Unknown profile:dev in config", "Set configFile:./x.json"]) {
+      assertEquals(
+        buildFailure([{ text }], "/project", "/srv/work").message,
+        `[API] handler build failed: ${text}`,
+      );
+    }
   });
 
   it("rejects Function-created imports before direct module evaluation", async () => {
