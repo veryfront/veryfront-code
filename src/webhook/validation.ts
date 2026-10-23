@@ -60,7 +60,7 @@ function invalid(detail: string, cause?: unknown): never {
 function truncateDiagnosticKey(key: string): string {
   if (key.length <= MAX_DIAGNOSTIC_KEY_LENGTH) return key;
   let prefix = key.slice(0, MAX_DIAGNOSTIC_KEY_LENGTH);
-  const finalCodeUnit = prefix.charCodeAt(prefix.length - 1);
+  const finalCodeUnit = prefix.codePointAt(prefix.length - 1) ?? 0xffff;
   if (finalCodeUnit >= 0xd800 && finalCodeUnit <= 0xdbff) {
     prefix = prefix.slice(0, -1);
   }
@@ -80,7 +80,7 @@ function assertNoControlCharacters(
   allowFormattingWhitespace = false,
 ): void {
   for (let index = 0; index < value.length; index++) {
-    const codeUnit = value.charCodeAt(index);
+    const codeUnit = value.codePointAt(index) ?? 0xffff;
     const allowedWhitespace = allowFormattingWhitespace &&
       (codeUnit === 0x09 || codeUnit === 0x0a || codeUnit === 0x0d);
     if (
