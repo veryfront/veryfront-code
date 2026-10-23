@@ -6,7 +6,15 @@ import {
   createTestEnvironmentConfig,
   type EnvironmentConfig,
 } from "#veryfront/config/environment-config.ts";
-import { deleteToken, getTokenLocation, readToken, saveToken } from "./token-store.ts";
+import {
+  deleteToken,
+  getTokenLocation,
+  LOGIN_CHECK_TTL_MS,
+  readToken,
+  rememberAcceptedLogin,
+  saveToken,
+  wasLoginAcceptedRecently,
+} from "./token-store.ts";
 
 describe("Token Store", () => {
   const testToken = "test-token-12345";
@@ -92,6 +100,36 @@ describe("Token Store", () => {
 
     it("should not throw when deleting non-existent token", async () => {
       await deleteToken(testEnv);
+    });
+  });
+
+  describe("accepted login check", () => {
+    const API_URL = "https://api.example.test";
+    const NOW = 1_800_000_000_000;
+
+    it("trusts a login the API accepted within the TTL", async () => {
+      await rememberAcceptedLogin(API_URL, "login-a", testEnv, NOW);
+
+      assertEquals(await wasLoginAcceptedRecently(API_URL, "login-a", testEnv, NOW + 1_000), true);
+    });
+
+    it("checks a login again once the TTL has passed", async () => {
+      await rememberAcceptedLogin(API_URL, "login-b", testEnv, NOW);
+
+      assertEquals(
+        await wasLoginAcceptedRecently(API_URL, "login-b", testEnv, NOW + LOGIN_CHECK_TTL_MS),
+        false,
+      );
+    });
+
+    it("does not carry an acceptance over to another login or API", async () => {
+      await rememberAcceptedLogin(API_URL, "login-c", testEnv, NOW);
+
+      assertEquals(await wasLoginAcceptedRecently(API_URL, "login-d", testEnv, NOW), false);
+      assertEquals(
+        await wasLoginAcceptedRecently("https://other.example.test", "login-c", testEnv, NOW),
+        false,
+      );
     });
   });
 });

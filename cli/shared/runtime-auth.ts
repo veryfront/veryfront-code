@@ -25,7 +25,8 @@ import {
 } from "./config.ts";
 import { readProjectLink } from "./project-link.ts";
 import { createVeryfrontApiOriginBoundOutboundFetch } from "#cli/outbound-fetch";
-import { isCredentialRejected } from "./credential-rejection.ts";
+import { checkCredential } from "./credential-rejection.ts";
+import { rememberAcceptedLogin, wasLoginAcceptedRecently } from "#cli/auth/token-store";
 
 export interface RuntimeAuthOptions {
   linkedProjectSlug?: string;
@@ -250,17 +251,16 @@ async function dropRejectedStoredLogin(
     const apiUrl = getApiUrl(candidate.validationEnv);
     const rejection = `${apiUrl}\n${candidate.apiToken}`;
     if (applyIntrinsic(setHas, rejectedStoredLogins, [rejection])) return undefined;
+    if (await wasLoginAcceptedRecently(apiUrl, candidate.apiToken)) return candidate;
     const transport = createVeryfrontApiOriginBoundOutboundFetch(apiUrl);
-    if (
-      !await isCredentialRejected(
-        candidate.apiToken,
-        apiUrl,
-        transport,
-        STORED_LOGIN_CHECK_TIMEOUT_MS,
-      )
-    ) {
-      return candidate;
-    }
+    const answer = await checkCredential(
+      candidate.apiToken,
+      apiUrl,
+      transport,
+      STORED_LOGIN_CHECK_TIMEOUT_MS,
+    );
+    if (answer === "accepted") await rememberAcceptedLogin(apiUrl, candidate.apiToken);
+    if (answer !== "rejected") return candidate;
     applyIntrinsic(setAdd, rejectedStoredLogins, [rejection]);
     return undefined;
   } catch {

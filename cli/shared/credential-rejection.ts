@@ -15,17 +15,18 @@ const responseBody = Object.getOwnPropertyDescriptor(Response.prototype, "body")
 const streamCancel = ReadableStream.prototype.cancel;
 
 /**
- * Whether the API at `apiUrl` rejects `apiToken` outright (401 or 403). Checks
- * the same endpoint `validateCredential` does for each kind of credential, but
- * never reads the response body, so no identity data is parsed. Throws when
- * the request fails or takes longer than `timeoutMs`.
+ * How the API at `apiUrl` answers for `apiToken`: `rejected` on 401 or 403,
+ * `accepted` on a 2xx, and `unknown` otherwise. Checks the same endpoint
+ * `validateCredential` does for each kind of credential, but never reads the
+ * response body, so no identity data is parsed. Throws when the request fails
+ * or takes longer than `timeoutMs`.
  */
-export async function isCredentialRejected(
+export async function checkCredential(
   apiToken: string,
   apiUrl: string,
   transport: typeof fetch,
   timeoutMs: number,
-): Promise<boolean> {
+): Promise<"rejected" | "accepted" | "unknown"> {
   let base = apiUrl;
   while (applyIntrinsic(stringEndsWith, base, ["/"])) {
     base = applyIntrinsic(stringSlice, base, [0, -1]) as string;
@@ -40,5 +41,7 @@ export async function isCredentialRejected(
   const response = await transport(`${base}${path}`, init);
   const body = applyIntrinsic(responseBody, response, []) as ReadableStream | null;
   if (body) await (applyIntrinsic(streamCancel, body, []) as Promise<void>).catch(() => {});
-  return isCredentialRejectionStatus(applyIntrinsic(responseStatus, response, []) as number);
+  const status = applyIntrinsic(responseStatus, response, []) as number;
+  if (isCredentialRejectionStatus(status)) return "rejected";
+  return status >= 200 && status < 300 ? "accepted" : "unknown";
 }

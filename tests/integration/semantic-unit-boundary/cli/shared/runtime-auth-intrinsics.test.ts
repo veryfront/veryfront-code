@@ -29,7 +29,7 @@ import {
   applyRuntimeAuthContext,
 } from "../../../../../cli/shared/runtime-auth.ts";
 import { installMockFetch, restoreMockFetch } from "#veryfront/testing/mock-fetch.ts";
-import { isCredentialRejected } from "../../../../../cli/shared/credential-rejection.ts";
+import { checkCredential } from "../../../../../cli/shared/credential-rejection.ts";
 
 const TOKEN = "stored-login-token";
 const testApply = Reflect.apply;
@@ -103,14 +103,14 @@ describe("runtime-auth credential intrinsic boundary", () => {
         return testApply(nativeTrim, this, []) as string;
       };
 
-      const rejected = await isCredentialRejected(
+      const answer = await checkCredential(
         TOKEN,
         "https://api.example.test",
         transport,
         5_000,
       );
 
-      assertEquals(rejected, false);
+      assertEquals(answer, "accepted");
       assertEquals(observedIdentity, 0);
     } finally {
       String.prototype.trim = nativeTrim;
@@ -134,14 +134,14 @@ describe("runtime-auth credential intrinsic boundary", () => {
       },
     });
     try {
-      const rejected = await isCredentialRejected(
+      const answer = await checkCredential(
         TOKEN,
         "https://api.example.test",
         transport,
         5_000,
       );
 
-      assertEquals(rejected, true);
+      assertEquals(answer, "rejected");
       assertEquals(observedCredential, 0);
     } finally {
       delete (Object.prototype as { signal?: unknown }).signal;
