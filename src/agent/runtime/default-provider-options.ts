@@ -13,9 +13,8 @@ import {
   isVeryfrontCloudAnthropicSurfaceModel,
   resolveVeryfrontCloudModelThinking,
   resolveVeryfrontCloudThinkingProviderOptions,
+  VERYFRONT_CLOUD_MODEL_PREFIX,
 } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
-
-const VERYFRONT_CLOUD_PREFIX = "veryfront-cloud/";
 
 /**
  * Whether a Veryfront Cloud model speaks the Anthropic protocol: the surface
@@ -23,7 +22,7 @@ const VERYFRONT_CLOUD_PREFIX = "veryfront-cloud/";
  * Anthropic surface gets the same defaults.
  */
 function isCloudAnthropicModel(modelString: string): boolean {
-  return modelString.startsWith(VERYFRONT_CLOUD_PREFIX) &&
+  return modelString.startsWith(VERYFRONT_CLOUD_MODEL_PREFIX) &&
     isVeryfrontCloudAnthropicSurfaceModel(modelString);
 }
 

@@ -230,7 +230,9 @@ function resolveReasoningWithDefaults(
   // A direct-provider model takes no catalog defaults, so it resolves the same
   // whatever another run loaded first.
   if (
-    !modelString.startsWith(VERYFRONT_CLOUD_MODEL_PREFIX) ||
+    !(IntrinsicReflectApply(StringStartsWith, modelString, [
+      VERYFRONT_CLOUD_MODEL_PREFIX,
+    ]) as boolean) ||
     isVeryfrontCloudAnthropicSurfaceModel(modelString)
   ) {
     return undefined;
