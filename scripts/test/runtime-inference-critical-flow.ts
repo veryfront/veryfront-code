@@ -972,9 +972,11 @@ async function checkInstalledRuntimeCredentialBoundary(
         }
         const program = `${directory}/${wrapper}`;
         if (runtime === "bun") {
+          // An explicit owned config prevents project preload settings. Bun
+          // 1.3.6 rejects an empty preload array, so leave that setting absent.
           await Deno.writeTextFile(
             `${directory}/bunfig.toml`,
-            "preload = []\nenv = false\n",
+            "env = false\n",
           );
         }
         const args = runtime === "deno"

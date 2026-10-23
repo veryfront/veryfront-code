@@ -800,6 +800,13 @@ describe("installed runtime credential evidence", () => {
     assertStringIncludes(unknown.message, '"fixtureLine":null');
     assertStringIncludes(unknown.message, "output-limit");
     assert(!unknown.message.includes("other-file"));
+    const config = installedCredentialProcessFailure("bun", "native-header-package-probe.mjs", {
+      code: 1,
+      stdout: "",
+      stderr: "Expected preload to be an array /private/config-secret\nInvalid Bunfig",
+    });
+    assertStringIncludes(config.message, "runtime-config");
+    assert(!config.message.includes("config-secret"));
   });
 
   it("does not reflect unknown process scope or coerce malformed output", () => {
@@ -995,12 +1002,13 @@ describe("installed runtime credential evidence", () => {
         "--deny-net",
         "--no-env-file",
         "--no-install",
-        "preload = []",
+        "env = false",
         "withInstalledProbeCleanup",
       ]
     ) {
       assertStringIncludes(source, expected);
     }
+    assert(!source.includes('"preload = []'));
     const wrapper = await Deno.readTextFile(
       new URL("../agent/fixtures/native-credential-runtime-probe.mjs", import.meta.url),
     );

@@ -63,6 +63,9 @@ export function installedCredentialProcessFailure(
   if (/unexpected argument|unrecognized option|unknown option/i.test(stderr)) {
     hints.push("runtime-arguments");
   }
+  if (/Invalid Bunfig|failed to load bunfig|Expected preload/i.test(stderr)) {
+    hints.push("runtime-config");
+  }
   if (output.code === 124) hints.push("deadline");
   if (output.code === 125 || output.outputTruncated === true) {
     hints.push("output-limit");
