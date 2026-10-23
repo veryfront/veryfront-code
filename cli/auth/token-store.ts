@@ -10,6 +10,17 @@ import { CONFIG_DIR_NAME, TOKEN_FILE_NAME, TOKEN_FILE_PERMISSIONS } from "../sha
 // receiver or the apply arguments.
 const applyIntrinsic = Reflect.apply;
 const stringTrim = String.prototype.trim;
+// The login fingerprint hashes the token, so the encoder and digest it passes
+// through are captured before project code runs too.
+const textEncoder = new TextEncoder();
+const textEncode = TextEncoder.prototype.encode;
+// Read through the instance: not every runtime exposes a global `SubtleCrypto`.
+const subtleCrypto = globalThis.crypto.subtle;
+const subtleDigest = subtleCrypto.digest;
+
+const LOGIN_CHECK_FILE_NAME = "login-check.json";
+/** How long a login the API accepted is trusted before startup checks it again. */
+export const LOGIN_CHECK_TTL_MS = 15 * 60_000;
 
 function getConfigDir(env: EnvironmentConfig = getEnvironmentConfig()): string {
   if (env.xdgConfigHome) return join(env.xdgConfigHome, CONFIG_DIR_NAME);
@@ -67,4 +78,58 @@ export async function hasToken(env?: EnvironmentConfig): Promise<boolean> {
 
 export function getTokenLocation(env?: EnvironmentConfig): string {
   return getTokenPath(env);
+}
+
+/** A hash naming one login at one API, so the check file never holds the token. */
+async function loginFingerprint(apiUrl: string, token: string): Promise<string> {
+  const bytes = applyIntrinsic(textEncode, textEncoder, [`${apiUrl}\n${token}`]);
+  const digest = await (applyIntrinsic(subtleDigest, subtleCrypto, ["SHA-256", bytes]) as Promise<
+    ArrayBuffer
+  >);
+  let hex = "";
+  for (const byte of new Uint8Array(digest)) hex += byte.toString(16).padStart(2, "0");
+  return hex;
+}
+
+function getLoginCheckPath(env?: EnvironmentConfig): string {
+  return join(getConfigDir(env), LOGIN_CHECK_FILE_NAME);
+}
+
+/**
+ * Whether the API accepted this login at this API within
+ * {@link LOGIN_CHECK_TTL_MS}. A rejected or unchecked login is never
+ * remembered, so it is always checked again.
+ */
+export async function wasLoginAcceptedRecently(
+  apiUrl: string,
+  token: string,
+  env?: EnvironmentConfig,
+  now: number = Date.now(),
+): Promise<boolean> {
+  try {
+    const record = JSON.parse(await createFileSystem().readTextFile(getLoginCheckPath(env)));
+    return record?.fingerprint === await loginFingerprint(apiUrl, token) &&
+      typeof record.acceptedAt === "number" && record.acceptedAt <= now &&
+      now - record.acceptedAt < LOGIN_CHECK_TTL_MS;
+  } catch {
+    return false;
+  }
+}
+
+/** Remember that the API accepted this login at this API just now. */
+export async function rememberAcceptedLogin(
+  apiUrl: string,
+  token: string,
+  env?: EnvironmentConfig,
+  now: number = Date.now(),
+): Promise<void> {
+  try {
+    const fs = createFileSystem();
+    const path = getLoginCheckPath(env);
+    const fingerprint = await loginFingerprint(apiUrl, token);
+    await fs.writeTextFile(path, JSON.stringify({ fingerprint, acceptedAt: now }));
+    await fs.chmod(path, TOKEN_FILE_PERMISSIONS);
+  } catch (error) {
+    cliLogger.debug("Failed to remember the login check:", error);
+  }
 }

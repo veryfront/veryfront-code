@@ -6,7 +6,7 @@ import { deleteEnv, env, getEnv, setEnv } from "#veryfront/compat/process.ts";
 import { deleteHostSecret, getHostEnv } from "#cli/process-env";
 import { join } from "veryfront/platform/path";
 import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
-import { readToken, saveToken } from "#cli/auth/token-store";
+import { getTokenLocation, readToken, saveToken } from "#cli/auth/token-store";
 import {
   _resetEnvironmentConfig,
   _setEnvironmentConfigForTesting,
@@ -444,6 +444,11 @@ describe("cli/shared/runtime-auth", () => {
       return projectDir;
     }
 
+    function clearProcessAuth(): void {
+      deleteEnv("VERYFRONT_SERVICE_LAYER");
+      deleteHostSecret("VERYFRONT_API_TOKEN");
+    }
+
     afterEach(restoreMockFetch);
 
     it("drops a login the API rejects, so runs use the provider key", async () => {
@@ -522,6 +527,43 @@ describe("cli/shared/runtime-auth", () => {
 
       assertEquals(context.apiToken, storedToken);
       assertEquals(getEnv("VERYFRONT_SERVICE_LAYER"), "cloud");
+    });
+
+    it("skips the check for a login the API accepted recently", async () => {
+      const projectDir = await storedLoginProject();
+      setEnv("OPENAI_API_KEY", "<API_KEY>");
+      installLoginCheck(200);
+      await applyQualifiedRuntimeAuth(projectDir);
+      restoreMockFetch();
+      // A new process: only what was written to disk carries over.
+      clearProcessAuth();
+      const paths = installLoginCheck(401);
+
+      const context = await applyQualifiedRuntimeAuth(projectDir);
+
+      assertEquals(context.apiToken, storedToken);
+      assertEquals(paths, []);
+      // The remembered check names the login by a hash, never by the token.
+      const checkFile = await Deno.readTextFile(
+        getTokenLocation().replace(/token$/, "login-check.json"),
+      );
+      assertEquals(checkFile.includes(storedToken), false);
+    });
+
+    it("checks again after an answer that is neither accepted nor rejected", async () => {
+      const projectDir = await storedLoginProject();
+      setEnv("OPENAI_API_KEY", "<API_KEY>");
+      installLoginCheck(503);
+      await applyQualifiedRuntimeAuth(projectDir);
+      restoreMockFetch();
+      // A new process: only what was written to disk carries over.
+      clearProcessAuth();
+      const paths = installLoginCheck(401);
+
+      const context = await applyQualifiedRuntimeAuth(projectDir);
+
+      assertEquals(context, {});
+      assertEquals(paths, ["/me"]);
     });
 
     it("keeps a login it cannot check", async () => {
