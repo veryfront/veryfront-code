@@ -137,6 +137,22 @@ describe("Token Store", () => {
       assertEquals(await wasLoginAcceptedRecently(API_URL, "login-f", testEnv, NOW), false);
     });
 
+    it("forgets an accepted login on logout even when the token cannot be removed", async () => {
+      // A non-empty directory where the token file belongs makes its removal fail.
+      const tokenPath = getTokenLocation(testEnv);
+      await Deno.mkdir(tokenPath, { recursive: true });
+      await Deno.writeTextFile(`${tokenPath}/blocker`, "");
+      await rememberAcceptedLogin(API_URL, "login-g", testEnv, NOW);
+
+      try {
+        await deleteToken(testEnv);
+
+        assertEquals(await wasLoginAcceptedRecently(API_URL, "login-g", testEnv, NOW), false);
+      } finally {
+        await Deno.remove(tokenPath, { recursive: true });
+      }
+    });
+
     it("does not carry an acceptance over to another login or API", async () => {
       await rememberAcceptedLogin(API_URL, "login-c", testEnv, NOW);
 
