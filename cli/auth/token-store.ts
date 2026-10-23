@@ -14,8 +14,9 @@ const stringTrim = String.prototype.trim;
 // through are captured before project code runs too.
 const textEncoder = new TextEncoder();
 const textEncode = TextEncoder.prototype.encode;
-const subtleCrypto = crypto.subtle;
-const subtleDigest = SubtleCrypto.prototype.digest;
+// Read through the instance: not every runtime exposes a global `SubtleCrypto`.
+const subtleCrypto = globalThis.crypto.subtle;
+const subtleDigest = subtleCrypto.digest;
 
 const LOGIN_CHECK_FILE_NAME = "login-check.json";
 /** How long a login the API accepted is trusted before startup checks it again. */
