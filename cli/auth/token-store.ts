@@ -60,15 +60,16 @@ export async function saveToken(token: string, env?: EnvironmentConfig): Promise
   await fs.chmod(tokenPath, TOKEN_FILE_PERMISSIONS);
 }
 
+/** Remove the stored login, and the record of its last accepted check with it. */
 export async function deleteToken(env?: EnvironmentConfig): Promise<void> {
   const fs = createFileSystem();
-  const tokenPath = getTokenPath(env);
 
-  try {
-    if (!(await fs.exists(tokenPath))) return;
-    await fs.remove(tokenPath);
-  } catch (error) {
-    cliLogger.debug("Failed to delete token:", error);
+  for (const path of [getTokenPath(env), getLoginCheckPath(env)]) {
+    try {
+      if (await fs.exists(path)) await fs.remove(path);
+    } catch (error) {
+      cliLogger.debug("Failed to delete login file:", error);
+    }
   }
 }
 

@@ -33,7 +33,7 @@ import {
   applyRuntimeAuthContext,
 } from "../../../../../cli/shared/runtime-auth.ts";
 import { installMockFetch, restoreMockFetch } from "#veryfront/testing/mock-fetch.ts";
-import { checkCredential } from "../../../../../cli/shared/credential-rejection.ts";
+import { checkCredential } from "../../../../../cli/shared/credential-check.ts";
 
 const TOKEN = "stored-login-token";
 const testApply = Reflect.apply;
