@@ -937,6 +937,83 @@ Deno.test("enforceTokenBudget can compress a large preceding-turn file read afte
   assertStringIncludes(JSON.stringify(compacted), "[Compressed:");
 });
 
+Deno.test("maskOldToolOutputs retains recent bounded collection identities for follow-up reads", () => {
+  const result = {
+    data: [{ id: "event-real-id", summary: "Test event", description: "details ".repeat(100) }],
+    nextPageToken: "page-two",
+  };
+  const messages = [
+    { role: "user", content: "list my events" },
+    {
+      role: "assistant",
+      content: [{
+        type: "tool-call",
+        toolCallId: "list",
+        toolName: "calendar__list_events",
+        input: {},
+      }],
+    },
+    {
+      role: "tool",
+      content: [{
+        type: "tool-result",
+        toolCallId: "list",
+        toolName: "calendar__list_events",
+        output: { type: "json", value: result },
+      }],
+    },
+    { role: "user", content: "open the test event" },
+  ] satisfies ProviderModelMessage[];
+  assertEquals(maskOldToolOutputs(messages)[2], messages[2]);
+  const replayed: ProviderModelMessage[] = structuredClone(messages);
+  const replayedTool = replayed[2];
+  if (replayedTool?.role !== "tool") throw new Error("expected replayed tool result");
+  replayedTool.content[0]!.output = { type: "json", value: { type: "json", value: result } };
+  assertEquals(maskOldToolOutputs(replayed)[2], replayed[2]);
+  replayedTool.content[0]!.output = { type: "text", value: JSON.stringify(result) };
+  assertEquals(maskOldToolOutputs(replayed)[2], replayed[2]);
+  const bounded = {
+    data: Array.from({ length: 55 }, (_, index) => ({
+      id: `resource-${index.toString().padStart(3, "0")}`,
+      name: 'A "quoted" resource',
+      kind: "file",
+    })),
+    nextPageToken: "next-page",
+  };
+  assert(JSON.stringify(bounded).length < 4096);
+  assert(JSON.stringify(JSON.stringify(bounded)).length > 4096);
+  const oversized = { data: [{ id: "resource", description: "x".repeat(4096) }] };
+  for (const page of [bounded, oversized]) {
+    for (
+      const output of [
+        { type: "json", value: page },
+        { type: "text", value: JSON.stringify(page) },
+        { type: "json", value: { type: "json", value: page } },
+        { type: "json", value: { type: "text", value: JSON.stringify(page) } },
+        { type: "text", value: JSON.stringify({ type: "json", value: page }) },
+      ] as const
+    ) {
+      replayedTool.content[0]!.output = output;
+      const compacted = maskOldToolOutputs(replayed)[2];
+      if (page === bounded) assertEquals(compacted, replayed[2]);
+      else assertStringIncludes(JSON.stringify(compacted), "output omitted");
+    }
+  }
+  const older = maskOldToolOutputs([...messages, { role: "assistant", content: "done" }, {
+    role: "user",
+    content: "another request",
+  }]);
+  assertStringIncludes(JSON.stringify(older[2]), "output omitted");
+  const large: ProviderModelMessage[] = structuredClone(messages);
+  const tool = large[2];
+  if (tool?.role !== "tool") throw new Error("expected tool result");
+  tool.content[0]!.output = {
+    type: "json",
+    value: { data: [{ id: "event-real-id", description: "x".repeat(5000) }] },
+  };
+  assertStringIncludes(JSON.stringify(maskOldToolOutputs(large)[2]), "output omitted");
+});
+
 Deno.test("maskOldToolOutputs keeps compact email metadata for historical email list results", () => {
   const messages = [
     { role: "user", content: "check my inbox" },
