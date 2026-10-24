@@ -269,6 +269,7 @@ export function enforceTokenBudgetWithTurnCompression(
 }
 
 const MASK_THRESHOLD = DEFAULT_MESSAGE_PREP_LIMITS.historicalToolOutputMaskChars;
+const RECENT_COLLECTION_MAX_CHARS = 4096;
 const HISTORICAL_TOOL_INPUT_SUMMARY_KIND = "historical_tool_input_summary";
 const PRECEDING_TURN_FILE_READ_TOOL_NAMES = new Set([
   "get_file",
@@ -1258,6 +1259,14 @@ export function maskOldToolOutputs(
       const charCount = serializedLength(rawValue);
 
       if (charCount < MASK_THRESHOLD) return part;
+      const collection = tryParseJson(getOutputValue(tryParseJson(rawValue)));
+      // Keep the preceding turn's bounded collection, including real resource IDs
+      // and pagination, available for follow-ups. Older/large results still compact.
+      if (
+        previousUserIdx >= 0 && idx > previousUserIdx && idx < lastUserIdx &&
+        charCount <= RECENT_COLLECTION_MAX_CHARS && isRecord(collection) &&
+        Array.isArray(collection.data)
+      ) return part;
 
       const input = callInfo?.input;
 
