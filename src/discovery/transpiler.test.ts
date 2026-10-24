@@ -2342,7 +2342,7 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
       // The refreshed graph records the exact framework Zod constraint.
       // It remains external so project bundles share the runtime instance.
       assertEquals(await bare(resolveArgs({ path: "zod" })), {
-        path: "npm:zod@4.3.6",
+        path: "npm:zod@4.6.7",
         external: true,
       });
       assertEquals(await bare(resolveArgs({ path: "veryfront/agents" })), undefined);

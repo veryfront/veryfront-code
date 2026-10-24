@@ -1,4 +1,4 @@
-import { assertEquals, assertThrows } from "@std/assert";
+import { assertEquals, assertStrictEquals, assertThrows } from "@std/assert";
 import { describe, it } from "@std/testing/bdd";
 import { z } from "zod";
 import { createZodAdapter } from "./adapter.ts";
@@ -152,6 +152,110 @@ describe("zodToJsonSchema", () => {
       required: ["__proto__"],
     });
     assertEquals(Object.getPrototypeOf(jsonSchema.properties), Object.prototype);
+  });
+
+  it("validates declared data keys before object refinements without changing prototypes", () => {
+    const adapter = createZodAdapter();
+    let refinements = 0;
+    const schema = adapter.object({
+      ["__proto__"]: adapter.string().transform((value) => value.toUpperCase()),
+    }).extend({ label: adapter.string() }).strict().superRefine((value) => {
+      refinements++;
+      assertEquals(value["__proto__"], "DATA");
+    });
+    const result = schema.parse(JSON.parse('{"__proto__":"data","label":"ok"}'));
+    assertEquals(result["__proto__"], "DATA");
+    assertStrictEquals(Object.getPrototypeOf(result), Object.prototype);
+    assertEquals(refinements, 1);
+
+    const invalid = schema.safeParse(JSON.parse('{"__proto__":3,"label":"ok"}'));
+    assertEquals(invalid.success, false);
+    if (!invalid.success) {
+      assertEquals(invalid.issues.map(({ code, path }) => ({ code, path })), [
+        { code: "invalid_type", path: ["__proto__"] },
+      ]);
+    }
+    assertEquals(refinements, 1);
+    assertEquals(
+      schema.safeParse(JSON.parse(
+        '{"__proto__":"data","label":"ok","unexpected":true}',
+      )).success,
+      false,
+    );
+
+    let observed: unknown;
+    const refining = adapter.object({
+      ["__proto__"]: adapter.string().refine(() => false, "Field refused"),
+    }).superRefine((value) => {
+      observed = value["__proto__"];
+    });
+    assertEquals(refining.safeParse(JSON.parse('{"__proto__":"data"}')).success, false);
+    assertEquals(observed, "data");
+  });
+
+  it("preserves declared data keys through nested, partial and picked objects", () => {
+    const adapter = createZodAdapter();
+    const base = adapter.object({ ["__proto__"]: adapter.string(), label: adapter.string() });
+    const nested = adapter.object({ payload: base });
+    const parsed = nested.parse(JSON.parse('{"payload":{"__proto__":"data","label":"ok"}}'));
+    assertEquals(parsed.payload["__proto__"], "data");
+    assertStrictEquals(Object.getPrototypeOf(parsed.payload), Object.prototype);
+    assertEquals(base.partial().parse({}), {});
+    assertEquals(
+      base.pick({ ["__proto__"]: true }).parse(JSON.parse('{"__proto__":"data"}'))[
+        "__proto__"
+      ],
+      "data",
+    );
+    assertEquals(base.omit({ ["__proto__"]: true }).parse({ label: "ok" }), { label: "ok" });
+  });
+
+  it("preserves the original error when a declared data property cannot be read", () => {
+    const adapter = createZodAdapter();
+    const schema = adapter.object({ ["__proto__"]: adapter.string() }).superRefine((value) => {
+      assertEquals(typeof value["__proto__"], "string");
+    });
+    const failure = new Error("Declared data read failed");
+    const input = Object.defineProperty({}, "__proto__", {
+      enumerable: true,
+      get() {
+        throw failure;
+      },
+    });
+    assertStrictEquals(assertThrows(() => schema.parse(input)), failure);
+    assertEquals(schema.parse(JSON.parse('{"__proto__":"data"}'))["__proto__"], "data");
+    assertEquals(schema.safeParse(JSON.parse('{"__proto__":3}')).success, false);
+  });
+
+  it("keeps declared field validation active during reentrant first parses", () => {
+    const adapter = createZodAdapter();
+    let validateNested = () => {};
+    const schema = adapter.object({
+      label: adapter.string().refine(() => {
+        validateNested();
+        return true;
+      }),
+      ["__proto__"]: adapter.string(),
+    }).superRefine((value) => {
+      assertEquals(value["__proto__"], "data");
+    });
+    let active = false;
+    validateNested = () => {
+      if (active) return;
+      active = true;
+      try {
+        assertEquals(
+          schema.safeParse(JSON.parse('{"label":"nested","__proto__":3}')).success,
+          false,
+        );
+      } finally {
+        active = false;
+      }
+    };
+    assertEquals(
+      schema.parse(JSON.parse('{"label":"outer","__proto__":"data"}'))["__proto__"],
+      "data",
+    );
   });
 
   it("unwraps nullable schemas returned by lazy schemas", () => {

@@ -2006,7 +2006,7 @@
           "jsr:@std/testing@1.0.17",
           "npm:ai@7.0.41",
           "npm:brace-expansion@5.0.12",
-          "npm:zod@4.3.6"
+          "npm:zod@4.6.7"
         ]
       },
       "jsr:@veryfront/ext-schema-zod@0.1.0": {
@@ -2015,7 +2015,7 @@
           "jsr:@std/testing@1.0.17",
           "npm:ajv-formats@3.0.1",
           "npm:ajv@8.18.0",
-          "npm:zod@4.3.6"
+          "npm:zod@4.6.7"
         ]
       },
       "jsr:@veryfront/ext-yaml@0.1.0": {

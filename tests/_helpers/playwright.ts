@@ -1,21 +1,11 @@
-import type { Browser, ConsoleMessage, Page, Request, Response } from "npm:playwright@1.60.0";
+import type { Browser, ConsoleMessage, Page, Request, Response } from "npm:playwright@1.61.1";
 import { fromFileUrl } from "#veryfront/compat/path/index.ts";
+export { findHydrationOrCspFailures } from "../../src/testing/browser-diagnostics.mjs";
 
 export interface BrowserDiagnostics {
   consoleMessages: string[];
   pageErrors: string[];
 }
-
-const HYDRATION_OR_CSP_FAILURE_PATTERNS = [
-  "Page hydration failed",
-  "unsafe-eval",
-  "Failed to fetch dynamically imported module",
-  "WebAssembly.compile()",
-  "Content Security Policy",
-  "violates the following Content Security Policy directive",
-  "Refused to load the script",
-  "Hydration",
-] as const;
 
 export function isMissingBrowserExecutable(error: unknown): boolean {
   return String(error).includes("Executable doesn't exist");
@@ -215,7 +205,7 @@ export async function launchChromiumWith(chromium: ChromiumLauncher): Promise<Br
 }
 
 export async function launchChromium(): Promise<Browser | null> {
-  const { chromium } = await import("npm:playwright@1.60.0");
+  const { chromium } = await import("npm:playwright@1.61.1");
   try {
     return await launchChromiumThroughNode(chromium);
   } catch (error) {
@@ -262,12 +252,6 @@ export function captureBrowserDiagnostics(page: Page): BrowserDiagnostics {
 
 export function getBrowserDiagnosticMessages(diagnostics: BrowserDiagnostics): string[] {
   return [...diagnostics.consoleMessages, ...diagnostics.pageErrors];
-}
-
-export function findHydrationOrCspFailures(messages: string[]): string[] {
-  return messages.filter((message) =>
-    HYDRATION_OR_CSP_FAILURE_PATTERNS.some((pattern) => message.includes(pattern))
-  );
 }
 
 /** Preserve default navigation semantics while retaining failed-load evidence. */
