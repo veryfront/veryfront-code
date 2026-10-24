@@ -1264,8 +1264,8 @@ export function maskOldToolOutputs(
       // and pagination, available for follow-ups. Older/large results still compact.
       if (
         previousUserIdx >= 0 && idx > previousUserIdx && idx < lastUserIdx &&
-        charCount <= RECENT_COLLECTION_MAX_CHARS && isRecord(collection) &&
-        Array.isArray(collection.data)
+        isRecord(collection) && Array.isArray(collection.data) &&
+        serializedLength(collection) <= RECENT_COLLECTION_MAX_CHARS
       ) return part;
 
       const input = callInfo?.input;

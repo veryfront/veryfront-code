@@ -972,6 +972,33 @@ Deno.test("maskOldToolOutputs retains recent bounded collection identities for f
   assertEquals(maskOldToolOutputs(replayed)[2], replayed[2]);
   replayedTool.content[0]!.output = { type: "text", value: JSON.stringify(result) };
   assertEquals(maskOldToolOutputs(replayed)[2], replayed[2]);
+  const bounded = {
+    data: Array.from({ length: 55 }, (_, index) => ({
+      id: `resource-${index.toString().padStart(3, "0")}`,
+      name: 'A "quoted" resource',
+      kind: "file",
+    })),
+    nextPageToken: "next-page",
+  };
+  assert(JSON.stringify(bounded).length < 4096);
+  assert(JSON.stringify(JSON.stringify(bounded)).length > 4096);
+  const oversized = { data: [{ id: "resource", description: "x".repeat(4096) }] };
+  for (const page of [bounded, oversized]) {
+    for (
+      const output of [
+        { type: "json", value: page },
+        { type: "text", value: JSON.stringify(page) },
+        { type: "json", value: { type: "json", value: page } },
+        { type: "json", value: { type: "text", value: JSON.stringify(page) } },
+        { type: "text", value: JSON.stringify({ type: "json", value: page }) },
+      ] as const
+    ) {
+      replayedTool.content[0]!.output = output;
+      const compacted = maskOldToolOutputs(replayed)[2];
+      if (page === bounded) assertEquals(compacted, replayed[2]);
+      else assertStringIncludes(JSON.stringify(compacted), "output omitted");
+    }
+  }
   const older = maskOldToolOutputs([...messages, { role: "assistant", content: "done" }, {
     role: "user",
     content: "another request",
