@@ -643,7 +643,14 @@ run_rc_publish_package() {
 }
 
 is_npm_package_not_found() {
-  printf '%s\n' "$1" | grep -Eq '(^|[[:space:]])(E404|404 Not Found)([[:space:]]|$)'
+  local error_codes
+  error_codes="$(printf '%s\n' "$1" | sed -nE \
+    -e 's/^npm (error|ERR!)[[:space:]]+code[[:space:]]+([^[:space:]]+).*$/\2/p' \
+    -e 's/^npm (error|ERR!)[[:space:]]+([0-9]{3})([[:space:]].*)?$/E\2/p' \
+    | sort -u)"
+  # Only an unambiguous npm not-found code establishes absence. A diagnostic
+  # mentioning E404 must not override an outage, permission error or mixed codes.
+  [[ "${error_codes}" == "E404" ]]
 }
 
 sanitize_npm_lookup_output() {
@@ -709,10 +716,24 @@ run_preflight() {
   ensure_package_names_registered
 
   for PACKAGE_NAME in $(package_names_from_workspace); do
-    if npm view "${PACKAGE_NAME}@${VERSION}" version 2>/dev/null; then
+    set +e
+    NPM_VERSION_LOOKUP_OUTPUT="$(npm view "${PACKAGE_NAME}@${VERSION}" version 2>&1)"
+    NPM_VERSION_LOOKUP_STATUS=$?
+    set -e
+    if [[ "${NPM_VERSION_LOOKUP_STATUS}" -eq 0 ]]; then
+      printf '%s\n' "${NPM_VERSION_LOOKUP_OUTPUT}"
       echo "::error::${PACKAGE_NAME}@${VERSION} already exists on npm. Bump deno.json before releasing."
       exit 1
     fi
+    if is_npm_package_not_found "${NPM_VERSION_LOOKUP_OUTPUT}"; then
+      continue
+    fi
+    echo "::error::npm registry version lookup failed for ${PACKAGE_NAME}@${VERSION} (status ${NPM_VERSION_LOOKUP_STATUS})." >&2
+    SANITIZED_NPM_LOOKUP_OUTPUT="$(sanitize_npm_lookup_output "${NPM_VERSION_LOOKUP_OUTPUT}")"
+    if [[ -n "${SANITIZED_NPM_LOOKUP_OUTPUT}" ]]; then
+      printf '%s\n' "${SANITIZED_NPM_LOOKUP_OUTPUT}" >&2
+    fi
+    return 1
   done
 }
 
