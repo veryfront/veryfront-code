@@ -643,8 +643,9 @@ run_rc_publish_package() {
 }
 
 is_npm_package_not_found() {
+  local lookup_output="$1"
   local error_codes
-  error_codes="$(printf '%s\n' "$1" | sed -nE \
+  error_codes="$(printf '%s\n' "${lookup_output}" | sed -nE \
     -e 's/^npm (error|ERR!)[[:space:]]+code[[:space:]]+([^[:space:]]+).*$/\2/p' \
     -e 's/^npm (error|ERR!)[[:space:]]+([0-9]{3})([[:space:]].*)?$/E\2/p' \
     | sort -u)"
