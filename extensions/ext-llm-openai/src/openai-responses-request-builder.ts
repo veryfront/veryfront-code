@@ -545,13 +545,11 @@ function toOpenAIResponsesUserContent(
       );
     }
     const data = readInlineFileData(part);
-    const filename = fileInputBaseName(part.filename);
     content.push(
       data === undefined
         ? {
           type: "input_file",
           file_url: readRemoteFileUrl("OpenAI Responses", part),
-          ...(filename ? { filename } : {}),
         }
         : toOpenAIResponsesInlineFile(part, data),
     );

@@ -175,7 +175,6 @@ describe("ext-llm-openai/openai-responses-request-builder", () => {
         content: [{
           type: "input_file",
           file_url: "https://example.com/report.pdf",
-          filename: "report.pdf",
         }],
       }]);
     });
@@ -875,7 +874,6 @@ describe("ext-llm-openai/openai-responses-request-builder", () => {
             {
               type: "input_file",
               file_url: "https://example.test/file.pdf",
-              filename: "file.pdf",
             },
           ],
         },
@@ -1331,6 +1329,32 @@ describe("ext-llm-openai/openai-responses-request-builder", () => {
       "OpenAI raw response metadata did not match canonical provider tool history",
     );
   });
+
+  for (const provider of ["openai", "veryfront-cloud"] as const) {
+    it(`does not combine file_url and filename for a named remote file on ${provider}`, () => {
+      const body = buildOpenAIResponsesRequest(
+        "gpt-5.5",
+        provider,
+        {
+          prompt: [{
+            role: "user",
+            content: [{
+              type: "file",
+              url: "https://example.test/fixture.json",
+              mediaType: "text/plain",
+              filename: "fixture.json",
+            }],
+          }],
+        },
+        true,
+        createWarningCollector(),
+      );
+      assertEquals(body.input, [{
+        role: "user",
+        content: [{ type: "input_file", file_url: "https://example.test/fixture.json" }],
+      }]);
+    });
+  }
 
   it("requires raw metadata to replay provider-executed assistant results", () => {
     assertThrows(
