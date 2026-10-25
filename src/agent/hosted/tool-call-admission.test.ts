@@ -1,4 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { VERSION } from "#veryfront/utils/version-constant.ts";
 import { assert, assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { isNode } from "#veryfront/platform/compat/runtime.ts";
@@ -695,6 +696,9 @@ describe("private tool-call admission", () => {
         assertEquals(headers.get("Authorization"), "Bearer synthetic-application-token");
         assertEquals(headers.get("X-Veryfront-Run-Event-Writer-Token"), "synthetic-append-token");
         assertEquals(body.params._meta, {
+          "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+          "io.modelcontextprotocol/clientInfo": { name: "veryfront", version: VERSION },
+          "io.modelcontextprotocol/clientCapabilities": {},
           run_id: "external-run",
           tool_call_admission: {
             occurrence_id: occurrenceId,
