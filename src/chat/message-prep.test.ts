@@ -999,6 +999,31 @@ Deno.test("maskOldToolOutputs retains recent bounded collection identities for f
       else assertStringIncludes(JSON.stringify(compacted), "output omitted");
     }
   }
+  // Exercise the inclusive limit with each supported provider transport.
+  for (const length of [4096, 4097]) {
+    const page = { data: [{ id: "resource", description: "" }] };
+    page.data[0]!.description = "x".repeat(length - JSON.stringify(page).length);
+    assertEquals(JSON.stringify(page).length, length);
+    for (
+      const output of [
+        { type: "json", value: page },
+        { type: "text", value: JSON.stringify(page) },
+        { type: "json", value: { type: "json", value: page } },
+        { type: "json", value: { type: "text", value: JSON.stringify(page) } },
+        { type: "text", value: JSON.stringify({ type: "json", value: page }) },
+      ] as const
+    ) {
+      replayedTool.content[0]!.output = output;
+      const compacted = maskOldToolOutputs(replayed)[2];
+      if (length === 4096) assertEquals(compacted, replayed[2]);
+      else assertStringIncludes(JSON.stringify(compacted), "output omitted");
+    }
+  }
+  // An unrelated object or primitive must not receive collection retention.
+  for (const value of [{ description: "x".repeat(1000) }, "x".repeat(1000)]) {
+    replayedTool.content[0]!.output = { type: "json", value };
+    assertStringIncludes(JSON.stringify(maskOldToolOutputs(replayed)[2]), "output omitted");
+  }
   const older = maskOldToolOutputs([...messages, { role: "assistant", content: "done" }, {
     role: "user",
     content: "another request",

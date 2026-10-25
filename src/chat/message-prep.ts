@@ -1263,8 +1263,11 @@ export function maskOldToolOutputs(
       // Keep the preceding turn's bounded collection, including real resource IDs
       // and pagination, available for follow-ups. Older/large results still compact.
       if (
-        previousUserIdx >= 0 && idx > previousUserIdx && idx < lastUserIdx &&
-        isRecord(collection) && Array.isArray(collection.data) &&
+        previousUserIdx >= 0 &&
+        idx > previousUserIdx &&
+        idx < lastUserIdx &&
+        isRecord(collection) &&
+        Array.isArray(collection.data) &&
         serializedLength(collection) <= RECENT_COLLECTION_MAX_CHARS
       ) return part;
 
