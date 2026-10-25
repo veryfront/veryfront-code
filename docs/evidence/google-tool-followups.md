@@ -18,8 +18,9 @@ change from veryfront-api PR7066.
 
 Both date requests use local-day inputs. The detail call uses the real ID from
 the preceding result. All calls succeed and each run has zero tool errors. The
-model context retains the preceding bounded collection. Larger and older results
-remain compacted. No prompt or tool-name workaround is required.
+model context retains IDs from the preceding bounded collection. Existing field-summary
+contracts still apply, including removal of email bodies and provider-specific fields.
+Larger and older results remain compacted. No prompt or tool-name workaround is required.
 
 ## Checks
 
@@ -50,3 +51,7 @@ test-event search, and event details. All 156 run events were retrieved with zer
 error events or tool errors. Both relative dates and the prior event ID were
 correct. The shared API metadata clarifies the exclusive end date; the agent
 system prompt and skills remain unchanged.
+
+The summary-policy regression covers both collection envelope names across five
+transport shapes. Metadata, IDs and pagination survive; message bodies, provider
+fields and debug output are omitted. The focused suite now passes 74 tests.

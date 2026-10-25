@@ -1259,10 +1259,12 @@ export function maskOldToolOutputs(
       const charCount = serializedLength(rawValue);
 
       if (charCount < MASK_THRESHOLD) return part;
+      const summaryContract = findHistoricalToolSummaryContract(toolName);
       const collection = tryParseJson(getOutputValue(tryParseJson(rawValue)));
       // Keep the preceding turn's bounded collection, including real resource IDs
       // and pagination, available for follow-ups. Older/large results still compact.
       if (
+        !summaryContract &&
         previousUserIdx >= 0 &&
         idx > previousUserIdx &&
         idx < lastUserIdx &&
@@ -1275,9 +1277,8 @@ export function maskOldToolOutputs(
 
       let masked: unknown;
 
-      const summaryContract = findHistoricalToolSummaryContract(toolName);
       if (summaryContract) {
-        masked = compactHistoricalToolSummaryOutput(rawValue, summaryContract) ??
+        masked = compactHistoricalToolSummaryOutput(collection, summaryContract) ??
           maskGeneric(toolName, charCount);
       } else {
         switch (toolName) {

@@ -1039,6 +1039,63 @@ Deno.test("maskOldToolOutputs retains recent bounded collection identities for f
   assertStringIncludes(JSON.stringify(maskOldToolOutputs(large)[2]), "output omitted");
 });
 
+Deno.test("maskOldToolOutputs applies email summary policy to recent collection transports", () => {
+  for (const key of ["data", "messages"]) {
+    const page = {
+      [key]: [{
+        id: "message-real-id",
+        threadId: "thread-real-id",
+        subject: "Follow-up message",
+        body: "BODY_MUST_BE_OMITTED".repeat(50),
+        providerPrivate: "PROVIDER_FIELD_MUST_BE_OMITTED",
+      }],
+      nextPageToken: "page-two",
+      debug: "DEBUG_MUST_BE_OMITTED",
+    };
+    assert(JSON.stringify(page).length > 500);
+    assert(JSON.stringify(page).length < 4096);
+    for (
+      const output of [
+        { type: "json", value: page },
+        { type: "text", value: JSON.stringify(page) },
+        { type: "json", value: { type: "json", value: page } },
+        { type: "json", value: { type: "text", value: JSON.stringify(page) } },
+        { type: "text", value: JSON.stringify({ type: "json", value: page }) },
+      ] as const
+    ) {
+      const messages = [
+        { role: "user", content: "List mail." },
+        {
+          role: "assistant",
+          content: [{
+            type: "tool-call",
+            toolCallId: "email-list",
+            toolName: "gmail__list_emails",
+            input: {},
+          }],
+        },
+        {
+          role: "tool",
+          content: [{
+            type: "tool-result",
+            toolCallId: "email-list",
+            toolName: "gmail__list_emails",
+            output,
+          }],
+        },
+        { role: "user", content: "Open the first message." },
+      ] satisfies ProviderModelMessage[];
+      const serialized = JSON.stringify(maskOldToolOutputs(messages)[2]);
+      assertStringIncludes(serialized, "message-real-id");
+      assertStringIncludes(serialized, "thread-real-id");
+      assertStringIncludes(serialized, "page-two");
+      assertEquals(serialized.includes("BODY_MUST_BE_OMITTED"), false);
+      assertEquals(serialized.includes("PROVIDER_FIELD_MUST_BE_OMITTED"), false);
+      assertEquals(serialized.includes("DEBUG_MUST_BE_OMITTED"), false);
+    }
+  }
+});
+
 Deno.test("maskOldToolOutputs keeps compact email metadata for historical email list results", () => {
   const messages = [
     { role: "user", content: "check my inbox" },
