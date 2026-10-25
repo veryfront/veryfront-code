@@ -1,6 +1,7 @@
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import type { RemoteToolSource } from "#veryfront/tool";
 import {
+  bindRemoteToolSourceToProject,
   createRuntimeMcpSourceCleanup,
   getRuntimeRemoteToolSources,
   type RuntimeRemoteToolConfig,
@@ -94,4 +95,22 @@ Deno.test("MCP cleanup leaves inherited and injected sources with their owner", 
     await using _parentCleanup = createRuntimeMcpSourceCleanup(parentSources);
   }
   assertEquals(disposed, 1);
+});
+
+Deno.test("project-bound cleanup preserves the requested run scope", async () => {
+  const active = new Set(["one", "two"]);
+  let disposedProject: string | undefined;
+  const bound = bindRemoteToolSourceToProject({
+    id: "scoped",
+    listTools: async () => [],
+    executeTool: async () => undefined,
+    dispose: async (context) => {
+      disposedProject = context?.projectId;
+      if (context?.runId) active.delete(context.runId);
+      else active.clear();
+    },
+  }, "project-one");
+  await bound.dispose?.({ runId: "one" });
+  assertEquals([...active], ["two"]);
+  assertEquals(disposedProject, "project-one");
 });

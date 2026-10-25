@@ -2,7 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertInstanceOf, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { observeFetchRequestInit, withMockFetch } from "#veryfront/testing/mock-fetch.ts";
-import { createRemoteMCPToolSource } from "./remote-mcp.ts";
+import { createRemoteMCPToolSource } from "#veryfront/tool/remote-mcp.ts";
 
 const ENDPOINT = "https://93.184.216.34/mcp";
 const TOOL = { name: "ping", description: "Ping", inputSchema: { type: "object" } };

@@ -1221,7 +1221,9 @@ function createRemoteMCPToolSourceWithFetch(
   const listMethod = config.listMethod ?? "tools/list";
   const callMethod = config.callMethod ?? "tools/call";
   const sessions = createPrivateMcpMap<string, RemoteMcpSession>();
-  const cleanupRequests = createPrivateMcpMap<string, {
+  let nextCleanupId = 0;
+  const cleanupRequests = createPrivateMcpMap<number, {
+    sourceKey: string;
     endpoint: string;
     headers: Headers;
     sessionId: string;
@@ -1286,7 +1288,8 @@ function createRemoteMCPToolSourceWithFetch(
       if (sessionId) reflectApply(HeadersPrototypeSet, initHeaders, ["Mcp-Session-Id", sessionId]);
       reflectApply(HeadersPrototypeSet, initHeaders, ["Mcp-Method", "notifications/initialized"]);
       if (sessionId) {
-        cleanupRequests.set(key, {
+        cleanupRequests.set(++nextCleanupId, {
+          sourceKey: key,
           endpoint,
           headers: copyNativeHeaders(initHeaders),
           sessionId,
@@ -1395,8 +1398,8 @@ function createRemoteMCPToolSourceWithFetch(
         const key = entry[0];
         const cleanup = entry[1];
         if (context && cleanup.runId !== context.runId) continue;
-        sessions.delete(key);
-        parameterHeaders.delete(key);
+        sessions.delete(cleanup.sourceKey);
+        parameterHeaders.delete(cleanup.sourceKey);
         cleanupRequests.delete(key);
         const scope = createRequestSignalScope(undefined);
         try {

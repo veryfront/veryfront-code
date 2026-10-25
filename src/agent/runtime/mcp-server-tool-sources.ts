@@ -396,7 +396,12 @@ export function bindRemoteToolSourceToProject(
 
   return inheritTrustedPlatformSource(source, {
     id: source.id,
-    ...(source.dispose ? { dispose: () => source.dispose!() } : {}),
+    ...(source.dispose
+      ? {
+        dispose: (context) =>
+          source.dispose!(context ? withServerProject(context, projectId) : undefined),
+      }
+      : {}),
     listTools: (context) => catalog.listTools(withServerProject(context, projectId)),
     async executeTool(toolName, args, context) {
       const execution = await catalog.prepareExecution({

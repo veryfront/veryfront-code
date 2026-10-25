@@ -2,7 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { observeFetchRequestInit, withMockFetch } from "#veryfront/testing/mock-fetch.ts";
-import { createRemoteMCPToolSource } from "./remote-mcp.ts";
+import { createRemoteMCPToolSource } from "#veryfront/tool/remote-mcp.ts";
 
 const ENDPOINT = "https://93.184.216.34/mcp";
 function fixture(failNotification = false) {
@@ -99,6 +99,19 @@ describe("remote MCP session security", () => {
       assertEquals(server.live.size, 1);
       await source.dispose?.();
       assertEquals(server.live.size, 0);
+    });
+  });
+
+  it("retains every minted session across repeated failed initialization", async () => {
+    const server = fixture(true);
+    await withMockFetch(server.requestFetch, async () => {
+      const source = createRemoteMCPToolSource({ endpoint: ENDPOINT });
+      await assertRejects(() => source.listTools());
+      await assertRejects(() => source.listTools());
+      assertEquals(server.live.size, 2);
+      await source.dispose?.();
+      assertEquals(server.live.size, 0);
+      assertEquals(server.deleted.length, 2);
     });
   });
 
