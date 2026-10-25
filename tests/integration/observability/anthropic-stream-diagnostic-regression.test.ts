@@ -3,6 +3,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { streamAnthropicCompatibleParts } from "../../../extensions/ext-llm-anthropic/src/anthropic-stream.ts";
 import { summarizeErrorCausesForLog } from "../../../src/observability/telemetry-error.ts";
 import { createRuntimeProviderStreamFailure } from "../../../src/runtime/provider-stream-error-provenance.ts";
+import * as providerShared from "../../../src/provider/shared/index.ts";
 
 async function parserFailure(sequence: boolean): Promise<unknown> {
   const events = [
@@ -277,6 +278,41 @@ describe("Anthropic stream diagnostic regression", () => {
     assertEquals(
       summary?.[0]?.streamIssue,
       "Anthropic partial_json exceeded 1048576 UTF-8 bytes",
+    );
+  });
+
+  it("does not export recordStreamProtocolClassification from provider/shared", () => {
+    assertEquals(
+      "recordStreamProtocolClassification" in providerShared,
+      false,
+      "public barrel must not expose the raw WeakMap writer",
+    );
+  });
+
+  it("does not allow annotating an existing application Error via public factories", () => {
+    // The public API must expose factory functions that create their own errors,
+    // not an annotator that accepts an arbitrary Error.
+    const appError = new Error("application error");
+    // createClassifiedProviderStreamProtocolError returns a new ProviderStreamProtocolError;
+    // the original appError must never gain a streamIssue classification.
+    const summary = summarizeErrorCausesForLog(
+      createRuntimeProviderStreamFailure(appError),
+    );
+    assertEquals(summary?.[0]?.streamIssue, undefined);
+  });
+
+  it("exposes createClassifiedProviderStreamProtocolError from provider/shared", () => {
+    assertEquals(
+      typeof (providerShared as Record<string, unknown>)
+        .createClassifiedProviderStreamProtocolError,
+      "function",
+    );
+  });
+
+  it("exposes createClassifiedStreamRangeError from provider/shared", () => {
+    assertEquals(
+      typeof (providerShared as Record<string, unknown>).createClassifiedStreamRangeError,
+      "function",
     );
   });
 });

@@ -4,6 +4,12 @@
  * When a provider stream parser detects a protocol violation, it records the
  * fixed classification here before throwing. Telemetry reads only from this
  * trusted store, so forged error fields cannot inject arbitrary text into logs.
+ *
+ * The WeakMap writer is exported for internal use by the factory module but is
+ * NOT re-exported through the public `veryfront/provider/shared` barrel.
+ * External code uses the factory functions in
+ * `stream-protocol-classification-factories.ts` which create their own errors
+ * and record classification internally.
  */
 
 const apply = Reflect.apply;

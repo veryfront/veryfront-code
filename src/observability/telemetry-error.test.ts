@@ -23,7 +23,7 @@ import {
   telemetryErrorType,
 } from "./telemetry-error.ts";
 import { createRuntimeProviderStreamFailure } from "#veryfront/runtime/provider-stream-error-provenance.ts";
-import { recordStreamProtocolClassification } from "#veryfront/provider/runtime-loader/stream-protocol-classification.ts";
+import { createClassifiedProviderStreamProtocolError } from "#veryfront/provider/runtime-loader/stream-protocol-classification-factories.ts";
 import { isNativeErrorWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
 import {
   buildProviderError,
@@ -1053,28 +1053,20 @@ describe("observability/telemetry-error", () => {
     });
 
     it("records distinct fixed Anthropic stream parser issues in safe telemetry", () => {
-      const jsonFailure = new ProviderStreamProtocolError({
+      const jsonFailure = createClassifiedProviderStreamProtocolError({
         provider: "anthropic",
         status: 200,
         retryable: false,
         message:
           "anthropic request failed: invalid successful stream (tool call arguments were not valid JSON object text)",
-      });
-      recordStreamProtocolClassification(
-        jsonFailure,
-        "tool call arguments were not valid JSON object text",
-      );
-      const sequenceFailure = new ProviderStreamProtocolError({
+      }, "tool call arguments were not valid JSON object text");
+      const sequenceFailure = createClassifiedProviderStreamProtocolError({
         provider: "anthropic",
         status: 200,
         retryable: false,
         message:
           "anthropic request failed: invalid successful stream (message_delta was out of sequence)",
-      });
-      recordStreamProtocolClassification(
-        sequenceFailure,
-        "message_delta was out of sequence",
-      );
+      }, "message_delta was out of sequence");
       const a = summarizeErrorCausesForLog(
         createRuntimeProviderStreamFailure(jsonFailure),
       );
@@ -1108,13 +1100,12 @@ describe("observability/telemetry-error", () => {
           "Anthropic retained content exceeded 16777216 UTF-8 bytes (content block)",
         ]
       ) {
-        const failure = new ProviderStreamProtocolError({
+        const failure = createClassifiedProviderStreamProtocolError({
           provider: "anthropic",
           status: 200,
           retryable: false,
           message: `anthropic request failed: invalid successful stream (${issue})`,
-        });
-        recordStreamProtocolClassification(failure, issue);
+        }, issue);
         assertEquals(
           summarizeErrorCausesForLog(createRuntimeProviderStreamFailure(failure)),
           [{
@@ -1130,17 +1121,13 @@ describe("observability/telemetry-error", () => {
     });
 
     it("records Anthropic stream issues with veryfront-cloud provider label", () => {
-      const failure = new ProviderStreamProtocolError({
+      const failure = createClassifiedProviderStreamProtocolError({
         provider: "anthropic",
         status: 200,
         retryable: false,
         message:
           "veryfront-cloud request failed: invalid successful stream (message_start was out of sequence)",
-      });
-      recordStreamProtocolClassification(
-        failure,
-        "message_start was out of sequence",
-      );
+      }, "message_start was out of sequence");
       assertEquals(
         summarizeErrorCausesForLog(createRuntimeProviderStreamFailure(failure)),
         [{

@@ -1,4 +1,6 @@
 import {
+  createClassifiedProviderStreamProtocolError,
+  createClassifiedStreamRangeError,
   createStreamRetentionBudget,
   mergeUsage,
   parseSseChunk,
@@ -6,11 +8,9 @@ import {
   ProviderOverloadedError,
   ProviderRateLimitError,
   ProviderRequestError,
-  ProviderStreamProtocolError,
   readGatewayBillingMode,
   readGatewayUsageCosts,
   readRecord,
-  recordStreamProtocolClassification,
   reserveStreamRetention,
   StreamFragmentBuffer,
   stringifyJsonValue,
@@ -143,16 +143,14 @@ function invalidAnthropicStream(
   providerLabel: string,
   issue: string,
   cause?: unknown,
-): ProviderStreamProtocolError {
-  const error = new ProviderStreamProtocolError({
+) {
+  return createClassifiedProviderStreamProtocolError({
     provider: "anthropic",
     status: 200,
     message: `${providerLabel} request failed: invalid successful stream (${issue})`,
     retryable: false,
     ...(cause === undefined ? {} : { cause }),
-  });
-  recordStreamProtocolClassification(error, issue);
-  return error;
+  }, issue);
 }
 
 const UNPARSABLE_TOOL_INPUT_ISSUE = "tool call arguments were not valid JSON object text";
@@ -193,18 +191,14 @@ function appendAnthropicToolInput(
   if (!isPartialJsonDelta && delta.length === 0) return;
   const overflow = reserveStreamRetention(toolCall.inputBudget, delta, ANTHROPIC_TOOL_INPUT_LIMITS);
   if (overflow === "empty-fragments") {
-    const message =
-      `Anthropic partial_json exceeded ${MAX_ANTHROPIC_EMPTY_PARTIAL_JSON_DELTAS} empty fragments`;
-    const error = new RangeError(message);
-    recordStreamProtocolClassification(error, message);
-    throw error;
+    throw createClassifiedStreamRangeError(
+      `Anthropic partial_json exceeded ${MAX_ANTHROPIC_EMPTY_PARTIAL_JSON_DELTAS} empty fragments`,
+    );
   }
   if (overflow === "bytes") {
-    const message =
-      `Anthropic partial_json exceeded ${MAX_ANTHROPIC_PARTIAL_JSON_BYTES} UTF-8 bytes`;
-    const error = new RangeError(message);
-    recordStreamProtocolClassification(error, message);
-    throw error;
+    throw createClassifiedStreamRangeError(
+      `Anthropic partial_json exceeded ${MAX_ANTHROPIC_PARTIAL_JSON_BYTES} UTF-8 bytes`,
+    );
   }
   toolCall.input.append(delta);
 }
@@ -326,10 +320,9 @@ class BoundedAnthropicSseParser {
   #appendLineBytes(bytes: Uint8Array): void {
     if (bytes.byteLength === 0) return;
     if (bytes.byteLength > MAX_ANTHROPIC_SSE_REMAINDER_BYTES - this.#lineBytes) {
-      const message = `Anthropic SSE remainder exceeded ${MAX_ANTHROPIC_SSE_REMAINDER_BYTES} bytes`;
-      const error = new RangeError(message);
-      recordStreamProtocolClassification(error, message);
-      throw error;
+      throw createClassifiedStreamRangeError(
+        `Anthropic SSE remainder exceeded ${MAX_ANTHROPIC_SSE_REMAINDER_BYTES} bytes`,
+      );
     }
     const requiredBytes = this.#lineBytes + bytes.byteLength;
     this.#line = this.#growBuffer(
@@ -343,10 +336,9 @@ class BoundedAnthropicSseParser {
 
   #addEventBytes(bytes: number): void {
     if (bytes > MAX_ANTHROPIC_SSE_EVENT_BYTES - this.#eventBytes) {
-      const message = `Anthropic SSE event exceeded ${MAX_ANTHROPIC_SSE_EVENT_BYTES} bytes`;
-      const error = new RangeError(message);
-      recordStreamProtocolClassification(error, message);
-      throw error;
+      throw createClassifiedStreamRangeError(
+        `Anthropic SSE event exceeded ${MAX_ANTHROPIC_SSE_EVENT_BYTES} bytes`,
+      );
     }
     this.#eventBytes += bytes;
   }
