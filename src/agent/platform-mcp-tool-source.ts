@@ -150,6 +150,7 @@ export function createLivePlatformMcpSource(
   };
   return markAdaptedPlatformSource({
     id: source.id,
+    ...(source.dispose ? { dispose: (context) => source.dispose!(context) } : {}),
     listTools,
     executeTool: async (name, args, context) => {
       if (!wireNames.has(name)) await listTools(context);

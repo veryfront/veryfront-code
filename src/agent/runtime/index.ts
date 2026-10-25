@@ -135,6 +135,7 @@ import { convertToolsToRuntimeTools } from "./model-tool-converter.ts";
 import {
   bindRuntimeRemoteToolSourcesToCredentialOwner,
   constrainRuntimeRemoteToolSources,
+  createRuntimeMcpSourceCleanup,
   getRuntimeRemoteToolSources,
   getRuntimeUnavailableOptionalRemoteTools,
 } from "./mcp-server-tool-sources.ts";
@@ -4710,6 +4711,7 @@ export class AgentRuntime {
       const remoteToolSources = hasToolReplacements
         ? undefined
         : getRuntimeRemoteToolSources(this.config, undefined, this.id);
+      await using _remoteMcpCleanup = createRuntimeMcpSourceCleanup(remoteToolSources);
       const unavailableOptionalRemoteTools = hasToolReplacements
         ? { names: [], prefixes: [] }
         : getRuntimeUnavailableOptionalRemoteTools(this.config, remoteToolSources);
@@ -5792,6 +5794,7 @@ export class AgentRuntime {
     const allowedRemoteToolNames = getRuntimeAllowedRemoteTools(this.config);
     const forwardedRemoteToolDefinitions = getRuntimeForwardedIntegrationToolDefs(this.config);
     const remoteToolSources = getRuntimeRemoteToolSources(this.config, undefined, this.id);
+    await using _remoteMcpCleanup = createRuntimeMcpSourceCleanup(remoteToolSources);
     const unavailableOptionalRemoteTools = getRuntimeUnavailableOptionalRemoteTools(
       this.config,
       remoteToolSources,

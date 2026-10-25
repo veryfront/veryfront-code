@@ -22,6 +22,13 @@ import {
   MAX_REMOTE_MCP_TOOL_LIST_RESPONSE_BYTES,
 } from "./remote-mcp.ts";
 import { getToolResultError } from "./result.ts";
+import { VERSION } from "#veryfront/utils/version-constant.ts";
+
+const modernMeta = {
+  "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+  "io.modelcontextprotocol/clientInfo": { name: "veryfront", version: VERSION },
+  "io.modelcontextprotocol/clientCapabilities": {},
+};
 
 function ownHeaderValue(headers: HeadersInit | undefined, name: string): string | undefined {
   if (
@@ -67,9 +74,9 @@ describe("tool/remote-mcp", () => {
       await source.executeTool("get_file", {});
     });
     assertEquals(requests, [
-      { _meta: config.listMeta },
-      { cursor: "page-2", _meta: config.listMeta },
-      { name: "get_file", arguments: {} },
+      { _meta: { ...config.listMeta, ...modernMeta } },
+      { cursor: "page-2", _meta: { ...config.listMeta, ...modernMeta } },
+      { name: "get_file", arguments: {}, _meta: modernMeta },
     ]);
   });
 
@@ -446,6 +453,7 @@ describe("tool/remote-mcp", () => {
       jsonrpc: "2.0",
       id: "docs:tools:list",
       method: "tools/list",
+      params: { _meta: modernMeta },
     });
     assertEquals(tools, [{
       name: "search_docs",
@@ -579,6 +587,7 @@ describe("tool/remote-mcp", () => {
         name: "gmail__get_profile",
         arguments: {},
         _meta: {
+          ...modernMeta,
           run_id: "run-1",
           agent_id: "gmail-agent",
         },
@@ -619,7 +628,7 @@ describe("tool/remote-mcp", () => {
         params: {
           name: "gmail__get_profile",
           arguments: {},
-          _meta: { agent_id: "gmail-agent" },
+          _meta: { ...modernMeta, agent_id: "gmail-agent" },
         },
       });
     });
@@ -653,7 +662,7 @@ describe("tool/remote-mcp", () => {
 
       assertEquals(
         (requestBody as { params?: { _meta?: Record<string, unknown> } }).params?._meta,
-        { agent_id: "gmail-agent" },
+        { ...modernMeta, agent_id: "gmail-agent" },
       );
     });
   });
@@ -698,7 +707,7 @@ describe("tool/remote-mcp", () => {
 
     assertEquals(
       (requestBody as { params?: { _meta?: Record<string, unknown> } }).params?._meta,
-      { agent_id: "gmail-agent" },
+      { ...modernMeta, agent_id: "gmail-agent" },
     );
   });
 
@@ -732,7 +741,7 @@ describe("tool/remote-mcp", () => {
       // Third-party servers still get the id for correlation.
       assertEquals(
         (requestBody as { params?: { _meta?: Record<string, unknown> } }).params?._meta,
-        { run_id: "run-local", agent_id: "gmail-agent" },
+        { ...modernMeta, run_id: "run-local", agent_id: "gmail-agent" },
       );
     });
   });

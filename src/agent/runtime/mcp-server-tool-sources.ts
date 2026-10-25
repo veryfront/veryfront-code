@@ -70,6 +70,31 @@ export const VERYFRONT_STUDIO_TOOL_PREFIX = "studio_";
 /** Canonical naming prefix for Studio MCP tools. */
 export const VERYFRONT_CANONICAL_STUDIO_TOOL_PREFIX = "veryfront__studio_";
 
+const runtimeOwnedMcpSources = createPrivateWeakStore<
+  readonly RemoteToolSource[],
+  readonly RemoteToolSource[]
+>();
+
+/** Release only sources created for this loop; inherited sources belong to their caller. */
+export function createRuntimeMcpSourceCleanup(
+  sources: readonly RemoteToolSource[] | undefined,
+): AsyncDisposable {
+  const ownedSources = sources === undefined ? [] : runtimeOwnedMcpSources.get(sources) ?? [];
+  return {
+    async [Symbol.asyncDispose]() {
+      for (let index = 0; index < ownedSources.length; index++) {
+        if (!hasOwn(ownedSources, index)) continue;
+        const source = ownedSources[index]!;
+        try {
+          await source.dispose?.();
+        } catch {
+          // Session termination is best effort and must preserve the run result.
+        }
+      }
+    },
+  };
+}
+
 const RUNTIME_PROVIDED_BOOLEAN_TOOL_NAMES = new Set(["bash", "invoke_agent"]);
 const FRAMEWORK_KNOWLEDGE_TOOL_NAME = "veryfront__search_knowledge";
 const hasOwn = Object.hasOwn;
@@ -371,6 +396,7 @@ export function bindRemoteToolSourceToProject(
 
   return inheritTrustedPlatformSource(source, {
     id: source.id,
+    ...(source.dispose ? { dispose: () => source.dispose!() } : {}),
     listTools: (context) => catalog.listTools(withServerProject(context, projectId)),
     async executeTool(toolName, args, context) {
       const execution = await catalog.prepareExecution({
@@ -672,6 +698,7 @@ export function getRuntimeRemoteToolSources(
   const remoteToolSources = concatPrivateArrays(guardedKnowledgeSources, nonKnowledgeSources);
 
   if (remoteToolSources.length > 0) {
+    runtimeOwnedMcpSources.set(remoteToolSources, configuredSources);
     return remoteToolSources;
   }
 

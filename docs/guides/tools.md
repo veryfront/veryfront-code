@@ -335,6 +335,29 @@ export default agent({
 });
 ```
 
+### HTTP MCP compatibility
+
+HTTP MCP sources send protocol version, client metadata and routing headers for
+MCP 2026-07-28 tool discovery and calls. Schema-declared `x-mcp-header`
+parameters are mirrored into request headers. Names and values that require
+encoding use the protocol's Base64 format.
+
+For a legacy server that rejects a modern request with an unrecognized HTTP 400
+response, the client initializes a session and reuses its negotiated protocol
+version. Sessions are isolated by endpoint, credentials and run. An explicit
+session-expiry HTTP 404 triggers one initialization and retry. Other failures
+do not replay tool calls.
+
+Agent runs release sessions for the MCP sources they create, including on
+failure or cancellation. Hosts retain ownership of injected sources. If you
+create a source with `createRemoteMCPToolSource`, call its optional `dispose()`
+method when you finish using it. Session termination is best effort; a server
+can reject termination with HTTP 405.
+
+This transport supports remote tool discovery and execution. It does not
+implement deprecated HTTP+SSE endpoint discovery, background subscriptions,
+or server-initiated sampling and elicitation.
+
 ## Tool configuration
 
 | Property      | Type                           | Description                                |
