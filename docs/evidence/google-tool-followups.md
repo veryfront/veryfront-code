@@ -31,16 +31,22 @@ deno lint src/chat/message-prep.ts src/chat/message-prep.test.ts
 
 Local live verification passed on 2026-10-24 using the original slim Calendar
 agent and Mistral model, with this unreleased change applied to both local API
-message preparation and the QA renderer. Conversation
-`95442eb6-3ff4-5073-beff-b4f206ba84c8` completed three chats: today, event
+message preparation and the QA renderer. The local conversation completed three chats: today, event
 details, and tomorrow in Europe/Berlin. All 114 run events were retrieved, with
 zero error events or tool errors. The detail request used the real prior event
 ID; both list requests used local-date inputs.
 
-Demo: <http://localhost:3000/projects/google-qa-calendar-agent-20261024/chat/95442eb6-3ff4-5073-beff-b4f206ba84c8>.
+Demo route: `http://localhost:3000/projects/<PROJECT_SLUG>/chat/<CONVERSATION_ID>`.
+Verified links remain in the private local QA report.
 This requires the dedicated local QA services and is not a production link.
 
 The checkout pins Deno 2.9.7, but the
 available local runtime is 2.9.4 and npm has no 2.9.7 package. The 73 focused tests
 (58 steps), typecheck and lint pass on 2.9.4. No generated files were regenerated.
 Pinned-version CI remains required before readiness.
+
+A fresh local rerun on 2026-10-25 passed four chats: today, tomorrow, yesterday’s
+test-event search, and event details. All 156 run events were retrieved with zero
+error events or tool errors. Both relative dates and the prior event ID were
+correct. The shared API metadata clarifies the exclusive end date; the agent
+system prompt and skills remain unchanged.
