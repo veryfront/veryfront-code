@@ -23,6 +23,7 @@ import {
   telemetryErrorType,
 } from "./telemetry-error.ts";
 import { createRuntimeProviderStreamFailure } from "#veryfront/runtime/provider-stream-error-provenance.ts";
+import { recordStreamProtocolClassification } from "#veryfront/provider/runtime-loader/stream-protocol-classification.ts";
 import { isNativeErrorWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
 import {
   buildProviderError,
@@ -1059,6 +1060,10 @@ describe("observability/telemetry-error", () => {
         message:
           "anthropic request failed: invalid successful stream (tool call arguments were not valid JSON object text)",
       });
+      recordStreamProtocolClassification(
+        jsonFailure,
+        "tool call arguments were not valid JSON object text",
+      );
       const sequenceFailure = new ProviderStreamProtocolError({
         provider: "anthropic",
         status: 200,
@@ -1066,6 +1071,10 @@ describe("observability/telemetry-error", () => {
         message:
           "anthropic request failed: invalid successful stream (message_delta was out of sequence)",
       });
+      recordStreamProtocolClassification(
+        sequenceFailure,
+        "message_delta was out of sequence",
+      );
       const a = summarizeErrorCausesForLog(
         createRuntimeProviderStreamFailure(jsonFailure),
       );
@@ -1105,6 +1114,7 @@ describe("observability/telemetry-error", () => {
           retryable: false,
           message: `anthropic request failed: invalid successful stream (${issue})`,
         });
+        recordStreamProtocolClassification(failure, issue);
         assertEquals(
           summarizeErrorCausesForLog(createRuntimeProviderStreamFailure(failure)),
           [{
@@ -1127,6 +1137,10 @@ describe("observability/telemetry-error", () => {
         message:
           "veryfront-cloud request failed: invalid successful stream (message_start was out of sequence)",
       });
+      recordStreamProtocolClassification(
+        failure,
+        "message_start was out of sequence",
+      );
       assertEquals(
         summarizeErrorCausesForLog(createRuntimeProviderStreamFailure(failure)),
         [{
@@ -1140,7 +1154,7 @@ describe("observability/telemetry-error", () => {
       );
     });
 
-    it("withholds unknown and credential-bearing Anthropic stream issue text", () => {
+    it("withholds Anthropic stream issues not in trusted provenance", () => {
       for (
         const message of [
           "anthropic request failed: invalid successful stream (synthetic-secret)",
@@ -1154,6 +1168,7 @@ describe("observability/telemetry-error", () => {
           retryable: false,
           message,
         });
+        // No recordStreamProtocolClassification call: simulates untrusted error.
         assertEquals(
           summarizeErrorCausesForLog(createRuntimeProviderStreamFailure(failure)),
           [{
@@ -1165,6 +1180,68 @@ describe("observability/telemetry-error", () => {
           }],
         );
       }
+    });
+
+    it("rejects forged plain Error lookalikes with allowlisted Anthropic messages", () => {
+      const forged = Object.assign(
+        new Error(
+          "anthropic request failed: invalid successful stream (message_delta was out of sequence)",
+        ),
+        {
+          name: "ProviderStreamProtocolError",
+          provider: "anthropic",
+          status: 200,
+          retryable: false,
+        },
+      );
+      // No trusted provenance: forged error must not produce streamIssue.
+      const causes = summarizeErrorCausesForLog(
+        createRuntimeProviderStreamFailure(forged),
+      );
+      assertEquals(causes?.[0]?.streamIssue, undefined);
+    });
+
+    it("rejects Anthropic errors with message accessors", () => {
+      const hostile = new ProviderStreamProtocolError({
+        provider: "anthropic",
+        status: 200,
+        retryable: false,
+        message: "stub",
+      });
+      Object.defineProperty(hostile, "message", {
+        configurable: true,
+        get() {
+          return "anthropic request failed: invalid successful stream (message_delta was out of sequence)";
+        },
+      });
+      // No trusted provenance recorded.
+      const causes = summarizeErrorCausesForLog(
+        createRuntimeProviderStreamFailure(hostile),
+      );
+      assertEquals(causes?.[0]?.streamIssue, undefined);
+    });
+
+    it("rejects Anthropic error proxies", () => {
+      let trapCalls = 0;
+      const real = new ProviderStreamProtocolError({
+        provider: "anthropic",
+        status: 200,
+        retryable: false,
+        message:
+          "anthropic request failed: invalid successful stream (message_delta was out of sequence)",
+      });
+      const proxy = new Proxy(real, {
+        get(target, prop, receiver) {
+          trapCalls++;
+          return Reflect.get(target, prop, receiver);
+        },
+      });
+      // Proxy wraps a real error but the WeakMap key is the proxy, not the target.
+      const causes = summarizeErrorCausesForLog(
+        createRuntimeProviderStreamFailure(proxy),
+      );
+      assertEquals(causes?.[0]?.streamIssue, undefined);
+      assertEquals(trapCalls, 0, "proxy traps must not be invoked");
     });
 
     it("logs only allowlisted error names and transient codes", () => {

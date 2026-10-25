@@ -123,5 +123,8 @@ export {
   isProxyWithoutHooks,
 } from "#veryfront/platform/compat/error-introspection.ts";
 
+// Trusted stream protocol classification for provider parsers.
+export { recordStreamProtocolClassification } from "../runtime-loader/stream-protocol-classification.ts";
+
 // Anthropic output_config schema closing, shared with durable model-call capture.
 export { closeSchemaForOutputConfig } from "./anthropic-output-schema.ts";

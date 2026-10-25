@@ -10,6 +10,7 @@ import {
   readGatewayBillingMode,
   readGatewayUsageCosts,
   readRecord,
+  recordStreamProtocolClassification,
   reserveStreamRetention,
   StreamFragmentBuffer,
   stringifyJsonValue,
@@ -143,13 +144,15 @@ function invalidAnthropicStream(
   issue: string,
   cause?: unknown,
 ): ProviderStreamProtocolError {
-  return new ProviderStreamProtocolError({
+  const error = new ProviderStreamProtocolError({
     provider: "anthropic",
     status: 200,
     message: `${providerLabel} request failed: invalid successful stream (${issue})`,
     retryable: false,
     ...(cause === undefined ? {} : { cause }),
   });
+  recordStreamProtocolClassification(error, issue);
+  return error;
 }
 
 const UNPARSABLE_TOOL_INPUT_ISSUE = "tool call arguments were not valid JSON object text";

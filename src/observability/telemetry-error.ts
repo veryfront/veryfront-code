@@ -26,6 +26,7 @@ import {
 } from "#veryfront/platform/compat/error-introspection.ts";
 import { readRuntimeProviderStreamFailureCause } from "#veryfront/runtime/provider-stream-error-provenance.ts";
 import { readProviderErrorDiagnostic } from "#veryfront/provider/runtime-loader/provider-error-diagnostic.ts";
+import { readStreamProtocolClassification } from "#veryfront/provider/runtime-loader/stream-protocol-classification.ts";
 
 const apply = Reflect.apply;
 const createObject = Object.create;
@@ -935,17 +936,13 @@ const SUCCESSFUL_OPENAI_STREAM_MESSAGE =
 
 /** Fixed direct Anthropic parser classifications only; never retain provider text. */
 const LOGGABLE_ANTHROPIC_STREAM_ISSUES = new NativeSet<string>([
+  // SSE framing
   "Anthropic SSE event exceeded 8388608 bytes",
   "Anthropic SSE remainder exceeded 8388608 bytes",
-  "Anthropic partial_json exceeded 1048576 UTF-8 bytes",
-  "Anthropic partial_json exceeded 4096 empty fragments",
-  "Anthropic retained content exceeded 8192 empty fragments (content block)",
-  "Anthropic retained content exceeded 8192 items (content block)",
-  "Anthropic retained content exceeded 16777216 UTF-8 bytes (content block)",
-  "citation delta was malformed",
-  "content block could not be retained safely",
-  "content block delta was malformed",
-  "content block index was reused",
+  "SSE event contained malformed JSON",
+  "SSE event was not valid UTF-8",
+  // Message lifecycle
+  "event followed the terminal message_stop",
   "event type was missing",
   "event was not an object",
   "message delta was malformed",
@@ -955,44 +952,103 @@ const LOGGABLE_ANTHROPIC_STREAM_ISSUES = new NativeSet<string>([
   "message_start message was malformed",
   "message_start was out of sequence",
   "message_stop was out of sequence",
-  "signature delta was malformed",
   "stream contained no provider envelope",
   "stream contained no supported content blocks",
   "stream ended before a stop reason",
   "stream ended before a terminal marker",
   "stream ended with unfinished content blocks",
-  "text content block was malformed",
-  "text delta was malformed",
-  "thinking content block was malformed",
-  "thinking delta was malformed",
-  "tool call arguments were not valid JSON object text",
-  "tool-input delta was malformed",
-  "tool-use content block was malformed",
+  "terminal marker was out of sequence",
   "trailing event type was missing",
+  "trailing event was not a usage-bearing lifecycle event",
+  "unsupported event type",
+  // Content block lifecycle
+  "content_block_start was out of sequence",
+  "content_block_start content block was malformed",
+  "content_block_start index was malformed",
+  "content_block_delta index was malformed",
+  "content_block_stop index was malformed",
+  "content block could not be retained safely",
+  "content block delta referenced an unopened block",
+  "content block delta was malformed",
+  "content block index was reused",
+  "content block stop referenced an unopened block",
   "unsupported content block delta type",
   "unsupported content block type",
+  // Text
+  "text content block was malformed",
+  "text delta did not match its content block",
+  "text delta retention state was missing",
+  "text delta was malformed",
+  "text retention budget was exceeded",
+  // Thinking
+  "thinking content block was malformed",
+  "thinking delta did not match its content block",
+  "thinking delta retention state was missing",
+  "thinking delta was malformed",
+  "thinking retention budget was exceeded",
+  "redacted thinking content block was malformed",
+  // Signature
+  "signature delta did not match its content block",
+  "signature delta was malformed",
+  // Citation
+  "citation delta did not match its content block",
+  "citation delta was malformed",
+  "citation retention budget was exceeded",
+  // Tool use
+  "tool call arguments were not valid JSON object text",
+  "tool-input delta did not match its content block",
+  "tool-input delta was malformed",
+  "tool-use content block was malformed",
+  // Provider tool use
+  "provider tool-result content block was malformed",
+  "provider tool-use content block was malformed",
+  "web-fetch result block was malformed",
+  "web-search result block was malformed",
+  // Retention limits: partial_json
+  "Anthropic partial_json exceeded 1048576 UTF-8 bytes",
+  "Anthropic partial_json exceeded 4096 empty fragments",
+  // Retention limits: content block
+  "Anthropic retained content exceeded 8192 empty fragments (content block)",
+  "Anthropic retained content exceeded 8192 items (content block)",
+  "Anthropic retained content exceeded 16777216 UTF-8 bytes (content block)",
+  // Retention limits: text delta
+  "Anthropic retained content exceeded 8192 empty fragments (text delta)",
+  "Anthropic retained content exceeded 16777216 UTF-8 bytes (text delta)",
+  // Retention limits: thinking delta
+  "Anthropic retained content exceeded 8192 empty fragments (thinking delta)",
+  "Anthropic retained content exceeded 16777216 UTF-8 bytes (thinking delta)",
+  // Retention limits: citation delta
+  "Anthropic retained content exceeded 8192 empty fragments (citation delta)",
+  "Anthropic retained content exceeded 8192 items (citation delta)",
+  "Anthropic retained content exceeded 16777216 UTF-8 bytes (citation delta)",
 ]);
-const SUCCESSFUL_ANTHROPIC_STREAM_MESSAGE =
-  /^(?:Anthropic|anthropic|veryfront-cloud) request failed: invalid successful stream \((.+)\)$/;
 
 function addSuccessfulStreamIssueForLog(error: Error, entry: LoggedErrorCause): void {
   if (
     (entry.name !== "ProviderRequestError" && entry.name !== "ProviderStreamProtocolError") ||
     (entry.provider !== "openai" && entry.provider !== "anthropic") || entry.status !== 200
   ) return;
+
+  // Anthropic: read from trusted WeakMap provenance, not from the error message.
+  if (entry.provider === "anthropic") {
+    const classification = readStreamProtocolClassification(error);
+    if (
+      typeof classification === "string" &&
+      apply(setHas, LOGGABLE_ANTHROPIC_STREAM_ISSUES, [classification]) === true
+    ) {
+      entry.streamIssue = classification;
+    }
+    return;
+  }
+
+  // OpenAI: extract from the error message via regex.
   const message = readOwnErrorDataField(error, "message");
   if (typeof message !== "string" || message.length > MAX_STRING_DISPLAY_LENGTH) return;
-  const pattern = entry.provider === "openai"
-    ? SUCCESSFUL_OPENAI_STREAM_MESSAGE
-    : SUCCESSFUL_ANTHROPIC_STREAM_MESSAGE;
-  const allowlist = entry.provider === "openai"
-    ? LOGGABLE_OPENAI_STREAM_ISSUES
-    : LOGGABLE_ANTHROPIC_STREAM_ISSUES;
-  const match = apply(regExpExec, pattern, [message]) as
+  const match = apply(regExpExec, SUCCESSFUL_OPENAI_STREAM_MESSAGE, [message]) as
     | RegExpExecArray
     | null;
   const issue = match?.[1];
-  if (typeof issue === "string" && apply(setHas, allowlist, [issue]) === true) {
+  if (typeof issue === "string" && apply(setHas, LOGGABLE_OPENAI_STREAM_ISSUES, [issue]) === true) {
     entry.streamIssue = issue;
   }
 }
