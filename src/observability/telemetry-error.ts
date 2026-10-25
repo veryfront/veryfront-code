@@ -636,6 +636,8 @@ export interface LoggedErrorCause {
  * cause message may embed untrusted data and is withheld.
  */
 const LOGGABLE_CAUSE_MESSAGES = new NativeSet<string>([
+  "Anthropic SSE event exceeded 8388608 bytes",
+  "Anthropic SSE remainder exceeded 8388608 bytes",
   "Anthropic partial_json exceeded 4096 deltas",
   "Anthropic partial_json exceeded 4096 empty fragments",
   "Anthropic partial_json exceeded 1048576 UTF-8 bytes",
@@ -1025,31 +1027,45 @@ const LOGGABLE_ANTHROPIC_STREAM_ISSUES = new NativeSet<string>([
 
 function addSuccessfulStreamIssueForLog(error: Error, entry: LoggedErrorCause): void {
   if (
-    (entry.name !== "ProviderRequestError" && entry.name !== "ProviderStreamProtocolError") ||
-    (entry.provider !== "openai" && entry.provider !== "anthropic") || entry.status !== 200
-  ) return;
+    (entry.name === "ProviderRequestError" || entry.name === "ProviderStreamProtocolError") &&
+    (entry.provider === "openai" || entry.provider === "anthropic") && entry.status === 200
+  ) {
+    // Anthropic: read from trusted WeakMap provenance, not from the error message.
+    if (entry.provider === "anthropic") {
+      const classification = readStreamProtocolClassification(error);
+      if (
+        typeof classification === "string" &&
+        apply(setHas, LOGGABLE_ANTHROPIC_STREAM_ISSUES, [classification]) === true
+      ) {
+        entry.streamIssue = classification;
+      }
+      return;
+    }
 
-  // Anthropic: read from trusted WeakMap provenance, not from the error message.
-  if (entry.provider === "anthropic") {
-    const classification = readStreamProtocolClassification(error);
+    // OpenAI: extract from the error message via regex.
+    const message = readOwnErrorDataField(error, "message");
+    if (typeof message !== "string" || message.length > MAX_STRING_DISPLAY_LENGTH) return;
+    const match = apply(regExpExec, SUCCESSFUL_OPENAI_STREAM_MESSAGE, [message]) as
+      | RegExpExecArray
+      | null;
+    const issue = match?.[1];
     if (
-      typeof classification === "string" &&
-      apply(setHas, LOGGABLE_ANTHROPIC_STREAM_ISSUES, [classification]) === true
+      typeof issue === "string" && apply(setHas, LOGGABLE_OPENAI_STREAM_ISSUES, [issue]) === true
     ) {
-      entry.streamIssue = classification;
+      entry.streamIssue = issue;
     }
     return;
   }
 
-  // OpenAI: extract from the error message via regex.
-  const message = readOwnErrorDataField(error, "message");
-  if (typeof message !== "string" || message.length > MAX_STRING_DISPLAY_LENGTH) return;
-  const match = apply(regExpExec, SUCCESSFUL_OPENAI_STREAM_MESSAGE, [message]) as
-    | RegExpExecArray
-    | null;
-  const issue = match?.[1];
-  if (typeof issue === "string" && apply(setHas, LOGGABLE_OPENAI_STREAM_ISSUES, [issue]) === true) {
-    entry.streamIssue = issue;
+  // Raw parser errors (e.g. RangeError) with trusted WeakMap provenance: these
+  // carry no provider/status metadata but the classification is stored in a
+  // private WeakMap that user code cannot forge.
+  const classification = readStreamProtocolClassification(error);
+  if (
+    typeof classification === "string" &&
+    apply(setHas, LOGGABLE_ANTHROPIC_STREAM_ISSUES, [classification]) === true
+  ) {
+    entry.streamIssue = classification;
   }
 }
 

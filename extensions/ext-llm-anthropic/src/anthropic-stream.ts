@@ -193,14 +193,18 @@ function appendAnthropicToolInput(
   if (!isPartialJsonDelta && delta.length === 0) return;
   const overflow = reserveStreamRetention(toolCall.inputBudget, delta, ANTHROPIC_TOOL_INPUT_LIMITS);
   if (overflow === "empty-fragments") {
-    throw new RangeError(
-      `Anthropic partial_json exceeded ${MAX_ANTHROPIC_EMPTY_PARTIAL_JSON_DELTAS} empty fragments`,
-    );
+    const message =
+      `Anthropic partial_json exceeded ${MAX_ANTHROPIC_EMPTY_PARTIAL_JSON_DELTAS} empty fragments`;
+    const error = new RangeError(message);
+    recordStreamProtocolClassification(error, message);
+    throw error;
   }
   if (overflow === "bytes") {
-    throw new RangeError(
-      `Anthropic partial_json exceeded ${MAX_ANTHROPIC_PARTIAL_JSON_BYTES} UTF-8 bytes`,
-    );
+    const message =
+      `Anthropic partial_json exceeded ${MAX_ANTHROPIC_PARTIAL_JSON_BYTES} UTF-8 bytes`;
+    const error = new RangeError(message);
+    recordStreamProtocolClassification(error, message);
+    throw error;
   }
   toolCall.input.append(delta);
 }
@@ -322,9 +326,10 @@ class BoundedAnthropicSseParser {
   #appendLineBytes(bytes: Uint8Array): void {
     if (bytes.byteLength === 0) return;
     if (bytes.byteLength > MAX_ANTHROPIC_SSE_REMAINDER_BYTES - this.#lineBytes) {
-      throw new RangeError(
-        `Anthropic SSE remainder exceeded ${MAX_ANTHROPIC_SSE_REMAINDER_BYTES} bytes`,
-      );
+      const message = `Anthropic SSE remainder exceeded ${MAX_ANTHROPIC_SSE_REMAINDER_BYTES} bytes`;
+      const error = new RangeError(message);
+      recordStreamProtocolClassification(error, message);
+      throw error;
     }
     const requiredBytes = this.#lineBytes + bytes.byteLength;
     this.#line = this.#growBuffer(
@@ -338,9 +343,10 @@ class BoundedAnthropicSseParser {
 
   #addEventBytes(bytes: number): void {
     if (bytes > MAX_ANTHROPIC_SSE_EVENT_BYTES - this.#eventBytes) {
-      throw new RangeError(
-        `Anthropic SSE event exceeded ${MAX_ANTHROPIC_SSE_EVENT_BYTES} bytes`,
-      );
+      const message = `Anthropic SSE event exceeded ${MAX_ANTHROPIC_SSE_EVENT_BYTES} bytes`;
+      const error = new RangeError(message);
+      recordStreamProtocolClassification(error, message);
+      throw error;
     }
     this.#eventBytes += bytes;
   }
