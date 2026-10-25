@@ -937,6 +937,165 @@ Deno.test("enforceTokenBudget can compress a large preceding-turn file read afte
   assertStringIncludes(JSON.stringify(compacted), "[Compressed:");
 });
 
+Deno.test("maskOldToolOutputs retains recent bounded collection identities for follow-up reads", () => {
+  const result = {
+    data: [{ id: "event-real-id", summary: "Test event", description: "details ".repeat(100) }],
+    nextPageToken: "page-two",
+  };
+  const messages = [
+    { role: "user", content: "list my events" },
+    {
+      role: "assistant",
+      content: [{
+        type: "tool-call",
+        toolCallId: "list",
+        toolName: "calendar__list_events",
+        input: {},
+      }],
+    },
+    {
+      role: "tool",
+      content: [{
+        type: "tool-result",
+        toolCallId: "list",
+        toolName: "calendar__list_events",
+        output: { type: "json", value: result },
+      }],
+    },
+    { role: "user", content: "open the test event" },
+  ] satisfies ProviderModelMessage[];
+  assertEquals(maskOldToolOutputs(messages)[2], messages[2]);
+  const replayed: ProviderModelMessage[] = structuredClone(messages);
+  const replayedTool = replayed[2];
+  if (replayedTool?.role !== "tool") throw new Error("expected replayed tool result");
+  replayedTool.content[0]!.output = { type: "json", value: { type: "json", value: result } };
+  assertEquals(maskOldToolOutputs(replayed)[2], replayed[2]);
+  replayedTool.content[0]!.output = { type: "text", value: JSON.stringify(result) };
+  assertEquals(maskOldToolOutputs(replayed)[2], replayed[2]);
+  const bounded = {
+    data: Array.from({ length: 55 }, (_, index) => ({
+      id: `resource-${index.toString().padStart(3, "0")}`,
+      name: 'A "quoted" resource',
+      kind: "file",
+    })),
+    nextPageToken: "next-page",
+  };
+  assert(JSON.stringify(bounded).length < 4096);
+  assert(JSON.stringify(JSON.stringify(bounded)).length > 4096);
+  const oversized = { data: [{ id: "resource", description: "x".repeat(4096) }] };
+  for (const page of [bounded, oversized]) {
+    for (
+      const output of [
+        { type: "json", value: page },
+        { type: "text", value: JSON.stringify(page) },
+        { type: "json", value: { type: "json", value: page } },
+        { type: "json", value: { type: "text", value: JSON.stringify(page) } },
+        { type: "text", value: JSON.stringify({ type: "json", value: page }) },
+      ] as const
+    ) {
+      replayedTool.content[0]!.output = output;
+      const compacted = maskOldToolOutputs(replayed)[2];
+      if (page === bounded) assertEquals(compacted, replayed[2]);
+      else assertStringIncludes(JSON.stringify(compacted), "output omitted");
+    }
+  }
+  // Exercise the inclusive limit with each supported provider transport.
+  for (const length of [4096, 4097]) {
+    const page = { data: [{ id: "resource", description: "" }] };
+    page.data[0]!.description = "x".repeat(length - JSON.stringify(page).length);
+    assertEquals(JSON.stringify(page).length, length);
+    for (
+      const output of [
+        { type: "json", value: page },
+        { type: "text", value: JSON.stringify(page) },
+        { type: "json", value: { type: "json", value: page } },
+        { type: "json", value: { type: "text", value: JSON.stringify(page) } },
+        { type: "text", value: JSON.stringify({ type: "json", value: page }) },
+      ] as const
+    ) {
+      replayedTool.content[0]!.output = output;
+      const compacted = maskOldToolOutputs(replayed)[2];
+      if (length === 4096) assertEquals(compacted, replayed[2]);
+      else assertStringIncludes(JSON.stringify(compacted), "output omitted");
+    }
+  }
+  // An unrelated object or primitive must not receive collection retention.
+  for (const value of [{ description: "x".repeat(1000) }, "x".repeat(1000)]) {
+    replayedTool.content[0]!.output = { type: "json", value };
+    assertStringIncludes(JSON.stringify(maskOldToolOutputs(replayed)[2]), "output omitted");
+  }
+  const older = maskOldToolOutputs([...messages, { role: "assistant", content: "done" }, {
+    role: "user",
+    content: "another request",
+  }]);
+  assertStringIncludes(JSON.stringify(older[2]), "output omitted");
+  const large: ProviderModelMessage[] = structuredClone(messages);
+  const tool = large[2];
+  if (tool?.role !== "tool") throw new Error("expected tool result");
+  tool.content[0]!.output = {
+    type: "json",
+    value: { data: [{ id: "event-real-id", description: "x".repeat(5000) }] },
+  };
+  assertStringIncludes(JSON.stringify(maskOldToolOutputs(large)[2]), "output omitted");
+});
+
+Deno.test("maskOldToolOutputs applies email summary policy to recent collection transports", () => {
+  for (const key of ["data", "messages"]) {
+    const page = {
+      [key]: [{
+        id: "message-real-id",
+        threadId: "thread-real-id",
+        subject: "Follow-up message",
+        body: "BODY_MUST_BE_OMITTED".repeat(50),
+        providerPrivate: "PROVIDER_FIELD_MUST_BE_OMITTED",
+      }],
+      nextPageToken: "page-two",
+      debug: "DEBUG_MUST_BE_OMITTED",
+    };
+    assert(JSON.stringify(page).length > 500);
+    assert(JSON.stringify(page).length < 4096);
+    for (
+      const output of [
+        { type: "json", value: page },
+        { type: "text", value: JSON.stringify(page) },
+        { type: "json", value: { type: "json", value: page } },
+        { type: "json", value: { type: "text", value: JSON.stringify(page) } },
+        { type: "text", value: JSON.stringify({ type: "json", value: page }) },
+      ] as const
+    ) {
+      const messages = [
+        { role: "user", content: "List mail." },
+        {
+          role: "assistant",
+          content: [{
+            type: "tool-call",
+            toolCallId: "email-list",
+            toolName: "gmail__list_emails",
+            input: {},
+          }],
+        },
+        {
+          role: "tool",
+          content: [{
+            type: "tool-result",
+            toolCallId: "email-list",
+            toolName: "gmail__list_emails",
+            output,
+          }],
+        },
+        { role: "user", content: "Open the first message." },
+      ] satisfies ProviderModelMessage[];
+      const serialized = JSON.stringify(maskOldToolOutputs(messages)[2]);
+      assertStringIncludes(serialized, "message-real-id");
+      assertStringIncludes(serialized, "thread-real-id");
+      assertStringIncludes(serialized, "page-two");
+      assertEquals(serialized.includes("BODY_MUST_BE_OMITTED"), false);
+      assertEquals(serialized.includes("PROVIDER_FIELD_MUST_BE_OMITTED"), false);
+      assertEquals(serialized.includes("DEBUG_MUST_BE_OMITTED"), false);
+    }
+  }
+});
+
 Deno.test("maskOldToolOutputs keeps compact email metadata for historical email list results", () => {
   const messages = [
     { role: "user", content: "check my inbox" },

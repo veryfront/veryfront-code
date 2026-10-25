@@ -269,6 +269,7 @@ export function enforceTokenBudgetWithTurnCompression(
 }
 
 const MASK_THRESHOLD = DEFAULT_MESSAGE_PREP_LIMITS.historicalToolOutputMaskChars;
+const RECENT_COLLECTION_MAX_CHARS = 4096;
 const HISTORICAL_TOOL_INPUT_SUMMARY_KIND = "historical_tool_input_summary";
 const PRECEDING_TURN_FILE_READ_TOOL_NAMES = new Set([
   "get_file",
@@ -1258,14 +1259,26 @@ export function maskOldToolOutputs(
       const charCount = serializedLength(rawValue);
 
       if (charCount < MASK_THRESHOLD) return part;
+      const summaryContract = findHistoricalToolSummaryContract(toolName);
+      const collection = tryParseJson(getOutputValue(tryParseJson(rawValue)));
+      // Keep the preceding turn's bounded collection, including real resource IDs
+      // and pagination, available for follow-ups. Older/large results still compact.
+      if (
+        !summaryContract &&
+        previousUserIdx >= 0 &&
+        idx > previousUserIdx &&
+        idx < lastUserIdx &&
+        isRecord(collection) &&
+        Array.isArray(collection.data) &&
+        serializedLength(collection) <= RECENT_COLLECTION_MAX_CHARS
+      ) return part;
 
       const input = callInfo?.input;
 
       let masked: unknown;
 
-      const summaryContract = findHistoricalToolSummaryContract(toolName);
       if (summaryContract) {
-        masked = compactHistoricalToolSummaryOutput(rawValue, summaryContract) ??
+        masked = compactHistoricalToolSummaryOutput(collection, summaryContract) ??
           maskGeneric(toolName, charCount);
       } else {
         switch (toolName) {
