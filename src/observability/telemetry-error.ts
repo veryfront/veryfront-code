@@ -933,18 +933,66 @@ const LOGGABLE_OPENAI_STREAM_ISSUES = new NativeSet<string>([
 const SUCCESSFUL_OPENAI_STREAM_MESSAGE =
   /^(?:OpenAI|openai|veryfront-cloud) request failed: invalid successful stream \(([^)]+)\)$/;
 
+/** Fixed direct Anthropic parser classifications only; never retain provider text. */
+const LOGGABLE_ANTHROPIC_STREAM_ISSUES = new NativeSet<string>([
+  "Anthropic SSE event exceeded 8388608 bytes",
+  "Anthropic SSE remainder exceeded 8388608 bytes",
+  "Anthropic partial_json exceeded 1048576 UTF-8 bytes",
+  "Anthropic partial_json exceeded 4096 empty fragments",
+  "Anthropic retained content exceeded 8192 empty fragments (content block)",
+  "Anthropic retained content exceeded 8192 items (content block)",
+  "Anthropic retained content exceeded 16777216 UTF-8 bytes (content block)",
+  "citation delta was malformed",
+  "content block could not be retained safely",
+  "content block delta was malformed",
+  "content block index was reused",
+  "event type was missing",
+  "event was not an object",
+  "message delta was malformed",
+  "message stop reason was malformed",
+  "message stop reason was repeated",
+  "message_delta was out of sequence",
+  "message_start message was malformed",
+  "message_start was out of sequence",
+  "message_stop was out of sequence",
+  "signature delta was malformed",
+  "stream contained no provider envelope",
+  "stream contained no supported content blocks",
+  "stream ended before a stop reason",
+  "stream ended before a terminal marker",
+  "stream ended with unfinished content blocks",
+  "text content block was malformed",
+  "text delta was malformed",
+  "thinking content block was malformed",
+  "thinking delta was malformed",
+  "tool call arguments were not valid JSON object text",
+  "tool-input delta was malformed",
+  "tool-use content block was malformed",
+  "trailing event type was missing",
+  "unsupported content block delta type",
+  "unsupported content block type",
+]);
+const SUCCESSFUL_ANTHROPIC_STREAM_MESSAGE =
+  /^(?:Anthropic|anthropic|veryfront-cloud) request failed: invalid successful stream \((.+)\)$/;
+
 function addSuccessfulStreamIssueForLog(error: Error, entry: LoggedErrorCause): void {
   if (
     (entry.name !== "ProviderRequestError" && entry.name !== "ProviderStreamProtocolError") ||
-    entry.provider !== "openai" || entry.status !== 200
+    (entry.provider !== "openai" && entry.provider !== "anthropic") || entry.status !== 200
   ) return;
   const message = readOwnErrorDataField(error, "message");
   if (typeof message !== "string" || message.length > MAX_STRING_DISPLAY_LENGTH) return;
-  const match = apply(regExpExec, SUCCESSFUL_OPENAI_STREAM_MESSAGE, [message]) as
+  const pattern = entry.provider === "openai"
+    ? SUCCESSFUL_OPENAI_STREAM_MESSAGE
+    : SUCCESSFUL_ANTHROPIC_STREAM_MESSAGE;
+  const allowlist = entry.provider === "openai"
+    ? LOGGABLE_OPENAI_STREAM_ISSUES
+    : LOGGABLE_ANTHROPIC_STREAM_ISSUES;
+  const match = apply(regExpExec, pattern, [message]) as
     | RegExpExecArray
     | null;
   const issue = match?.[1];
-  if (typeof issue === "string" && apply(setHas, LOGGABLE_OPENAI_STREAM_ISSUES, [issue]) === true) {
+  if (typeof issue === "string" && apply(setHas, allowlist, [issue]) === true) {
     entry.streamIssue = issue;
   }
 }
