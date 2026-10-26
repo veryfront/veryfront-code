@@ -673,14 +673,20 @@ while a parse or validation failure sets
 `response.metadata.outputSchemaError` next to the max-steps warning so the
 failure stays visible.
 
-When the hosted runtime runs an agent, its AG-UI stream reports a JSON snapshot
+When the hosted runtime runs an agent, its SDK AG-UI SSE stream reports a JSON snapshot
 of the parsed value as `result` on the `RunFinished` event, and the Runs API
 stores that snapshot in the new run's `output.data`, alongside `output.text`
 when accepted final text is present. Historical records retain their stored
-output shapes. The event has no `result` when the
+output shapes.
+
+The event has no `result` when the
 agent declares no `outputSchema`, when the output did not parse, or when the run
 failed or was cancelled. See [Run input and output](./run-input-output.md) for
 what an agent run stores as input and output.
+
+This `RunFinished` frame belongs to the SDK runtime stream. The canonical REST
+run-event payload named `RUN_FINISHED` does not declare `result`. Read the
+structured result from the run's `output.data` when consuming canonical REST events.
 
 `response.data` in your own code is always the parsed value; `response.object`
 contains the same value for compatibility. The snapshot

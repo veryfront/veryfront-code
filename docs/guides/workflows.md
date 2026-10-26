@@ -233,17 +233,26 @@ Each scheduled trigger creates a workflow run backed by the selected runtime ada
 
 A step runs an agent or a tool:
 
-```ts
+```ts title="workflows/steps.ts"
+import { step } from "veryfront/workflow";
+
 // Run an agent
-step("research", { agent: "researcher" });
+export const research = step("research", { agent: "researcher" });
 
 // Run a tool
-step("fetch-data", { tool: "webScraper" });
+export const fetchData = step("fetch-data", { tool: "webScraper" });
 
 // With custom input
-step("summarize", {
+export const summarize = step("summarize", {
   agent: "writer",
-  input: (ctx) => `Summarize this: ${ctx.results.research}`,
+  input: (ctx) => {
+    const research = ctx.research;
+    const text = typeof research === "object" && research !== null &&
+        "text" in research && typeof research.text === "string"
+      ? research.text
+      : "";
+    return `Summarize this: ${text}`;
+  },
 });
 ```
 
@@ -292,7 +301,10 @@ parallel("all-required", steps, { strategy: "all" }); // Default: all must succe
 
 ## Branching
 
-Use `branch` for conditional paths:
+Use `branch` for conditional paths. An agent step stores an output envelope
+under its node ID: read generated text from `text` and schema-bound output
+from `data` (also available as `object`). This example assumes the classifier
+has an output schema containing a `category` string:
 
 ```ts
 import { branch, step, workflow } from "veryfront/workflow";
@@ -302,7 +314,14 @@ export default workflow({
   steps: [
     step("classify", { agent: "classifier" }),
     branch("route", {
-      condition: (ctx) => ctx.results.classify.category === "billing",
+      condition: (ctx) => {
+        const result = ctx.classify;
+        const data = typeof result === "object" && result !== null && "data" in result
+          ? result.data
+          : undefined;
+        return typeof data === "object" && data !== null &&
+          "category" in data && data.category === "billing";
+      },
       then: [step("billing", { agent: "billing-agent" })],
       else: [step("technical", { agent: "tech-agent" })],
     }),
@@ -311,16 +330,30 @@ export default workflow({
 });
 ```
 
-Shorthand helpers:
+Shorthand helpers use the same flat node-output context. In this example, the
+`classify` agent's output schema contains a `sensitive` boolean, read from
+its output envelope's `data`. The `cache` tool step returns the raw boolean
+`true` when the requested value is cached.
 
-```ts
-import { unless, when } from "veryfront/workflow";
+```ts title="workflows/conditions.ts"
+import { step, unless, when } from "veryfront/workflow";
 
-when("needs-approval", (ctx) => ctx.results.classify.sensitive, [
-  step("review", { agent: "reviewer" }),
-]);
+export const needsApproval = when(
+  "needs-approval",
+  (ctx) => {
+    const result = ctx.classify;
+    const data = typeof result === "object" && result !== null && "data" in result
+      ? result.data
+      : undefined;
+    return typeof data === "object" && data !== null &&
+      "sensitive" in data && data.sensitive === true;
+  },
+  [
+    step("review", { agent: "reviewer" }),
+  ],
+);
 
-unless("is-cached", (ctx) => ctx.cache.has(key), [
+export const fetchUnlessCached = unless("is-cached", (ctx) => ctx.cache === true, [
   step("fetch", { tool: "fetcher" }),
 ]);
 ```
@@ -495,17 +528,31 @@ Use `waitForRuns` when a workflow starts or receives the IDs of independently du
 must continue only after every one of them reaches a terminal status:
 
 Every listed run must be a direct child of the waiting workflow run. When the child runs are
-created, set their `parentRunId` to that workflow run's ID:
+created, set their `parentRunId` to that workflow run's ID and `nodeId` to
+the parent node that starts them. The request requires that parent's scoped
+execution credential; a project API token cannot assert parent authority.
 
-```ts
+Run the following script only within the trusted parent execution. Its runtime
+must supply the current parent credential as `PARENT_WORKFLOW_EXECUTION_TOKEN`
+and replace the project and workflow-run placeholders. This application-defined
+environment variable is not a credential the SDK creates or discovers:
+
+```ts title="scripts/start-release-check.ts"
+import { createRunsClient } from "veryfront/runs";
+
+const parentToken = process.env.PARENT_WORKFLOW_EXECUTION_TOKEN;
+if (!parentToken) throw new Error("Set the current parent execution credential");
+const runs = createRunsClient({ authToken: parentToken });
+const workflowRunId = "<WORKFLOW_RUN_ID>"; // ID of the waiting parent workflow run
 const child = await runs.createTaskRun({
   projectId: "<PROJECT_ID>",
   parentRunId: workflowRunId,
+  nodeId: "start-children", // Must match the executing parent node
   target: "task:release-check",
 });
 ```
 
-```ts
+```ts title="workflows/batch-release.ts"
 import { dependsOn, step, waitForRuns, workflow } from "veryfront/workflow";
 
 export default workflow({
@@ -536,7 +583,7 @@ child-wait boundary updates before it can resume `waitForRuns` nodes.
 
 ## Workflow configuration
 
-```ts
+```ts title="workflows/pipeline.ts"
 import { defineSchema } from "veryfront/schemas";
 import { step, workflow } from "veryfront/workflow";
 
@@ -578,9 +625,11 @@ By default, a completed run's output is its context without `input`: every
 step's output keyed by step id, plus `env` when the project injects environment
 values. Declare `output` to choose the value callers receive instead. It takes
 the context and returns the output synchronously, like the `output` mapper of a
-nested workflow. Treat the context as read-only: it is also stored on the run.
+nested workflow.
 
-```ts
+Treat the context as read-only: it is also stored on the run.
+
+```ts title="workflows/expense-approval.ts"
 import { defineSchema } from "veryfront/schemas";
 import { step, workflow } from "veryfront/workflow";
 
@@ -602,7 +651,9 @@ export default workflow({
 
 `outputSchema` checks the selected value, or the default output when no
 `output` selector is declared, before the run completes. A selected output
-stores the parsed value. A valid default output keeps its original shape and
+stores the parsed value.
+
+A valid default output keeps its original shape and
 values. A mismatch fails with
 `error.code: "OUTPUT_VALIDATION_FAILED"` and `{ path, message }` entries in
 `error.detail.errors`, so invalid output is never stored as completed.
@@ -614,15 +665,21 @@ When a nested workflow resumes after a wait, downstream steps and its output
 selector receive completed child outputs without rerunning those steps.
 Completed wait values retain approval decision and event delivery metadata.
 Later child updates stay intact when the workflow resumes again or retries its
-output selector. Saved child contexts follow the same persistence policy as
+output selector.
+
+Saved child contexts follow the same persistence policy as
 the durable workflow context.
 
 A started run's steps receive the parsed input: `inputSchema` transforms and
 defaults apply before the first step runs. The run keeps the input as it was
-submitted. A workflow nested with `subWorkflow` or `map` also parses the input its
+submitted.
+
+A workflow nested with `subWorkflow` or `map` also parses the input its
 parent passes through its own `inputSchema` before building or running child steps.
 Invalid input fails the parent run with `INPUT_VALIDATION_FAILED` and validation
-errors containing JSON Pointer paths. A paused nested workflow reuses its parsed
+errors containing JSON Pointer paths.
+
+A paused nested workflow reuses its parsed
 input when it resumes.
 
 Nested workflow retries and resumes use the retained child-context snapshot without
