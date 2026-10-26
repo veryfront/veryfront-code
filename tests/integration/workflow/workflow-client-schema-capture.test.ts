@@ -8,11 +8,11 @@ import {
   captureRunSchemaValidation,
   snapshotRunSchemaPair,
 } from "#veryfront/schemas/schema-identity.ts";
-import { workflow } from "../dsl/workflow.ts";
-import { workflowRegistry } from "../registry.ts";
-import { captureWorkflowDefinition } from "../executor/workflow-definition-snapshot.ts";
-import { MemoryBackend } from "../backends/memory.ts";
-import { createWorkflowClient } from "./workflow-client.ts";
+import { workflow } from "#veryfront/workflow/dsl/workflow.ts";
+import { workflowRegistry } from "#veryfront/workflow/registry.ts";
+import { captureWorkflowDefinition } from "#veryfront/workflow/executor/workflow-definition-snapshot.ts";
+import { MemoryBackend } from "#veryfront/workflow/backends/memory.ts";
+import { createWorkflowClient } from "#veryfront/workflow/api/workflow-client.ts";
 
 describe("workflow captured schema execution", () => {
   it("converts once per host-captured side after discovery and preserves callable transforms through registration", async () => {

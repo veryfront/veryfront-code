@@ -3,13 +3,13 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { register, reset } from "#veryfront/extensions/contracts.ts";
 import type { SchemaValidator } from "#veryfront/extensions/schema/index.ts";
-import { createZodAdapter } from "../../extensions/ext-schema-zod/src/adapter.ts";
+import { createZodAdapter } from "../../../extensions/ext-schema-zod/src/adapter.ts";
 import {
   canonicalJsonSchema,
   captureRunSchemaValidation,
   schemaIdentitySha256,
   snapshotRunSchemaPair,
-} from "./schema-identity.ts";
+} from "#veryfront/schemas/schema-identity.ts";
 
 describe("paired run schema snapshot", () => {
   it("pins raw documents and callable validators while retaining transformations", async () => {
