@@ -1,3 +1,7 @@
+import {
+  hasHostedToolRunAuthorization,
+  inheritHostedToolRunAuthorization,
+} from "./tool-run-authorization.ts";
 import { prepareFacadedHostedChatRuntimeToolAssembly } from "./chat-runtime-tool-assembly.ts";
 import { markTrustedHostToolSet } from "#veryfront/tool/host-tool-provenance.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
@@ -3942,3 +3946,54 @@ for (const toolName of ["form_input", "load_skill"] as const) {
     }
   });
 }
+
+Deno.test("canonical admission privately binds runtime options and trusted copies to its exact project and run", async () => {
+  const runId = "10000000-0000-4000-8000-000000000005";
+  let checked = false;
+  await prepareHostedChatExecution({
+    request: createParsedHostedChatRequest({
+      durableRootRun: {
+        runId,
+        messageId: "message-1",
+        latestEventId: 3,
+        latestExternalEventSequence: 2,
+      },
+    }),
+    agentConfig: { id: "agent-1", model: "configured-model", maxSteps: 3 },
+    apiUrl: "https://api.example.com",
+    abortSignal: new AbortController().signal,
+    resolveModelId: (modelId) => modelId,
+    fetchSteering: () => Promise.resolve({ instructions: "Inspect.", skills: [] }),
+    buildInstructions: () => [],
+    createRuntime: (options) => {
+      checked = true;
+      const expected = { projectId: "project-from-context", runId };
+      assertEquals(hasHostedToolRunAuthorization(options, expected), true);
+      assertEquals(hasHostedToolRunAuthorization({ ...options }, expected), false);
+      const copy = inheritHostedToolRunAuthorization({ ...options }, options);
+      assertEquals(hasHostedToolRunAuthorization(copy, expected), true);
+      assertEquals(
+        hasHostedToolRunAuthorization(copy, { ...expected, runId: "spoofed-run" }),
+        false,
+      );
+      assertEquals(
+        hasHostedToolRunAuthorization(copy, { ...expected, projectId: "spoofed-project" }),
+        false,
+      );
+      assertEquals(JSON.stringify(options).includes("runIdBindsToolAuthorization"), false);
+      return Promise.resolve({
+        runtimeKind: "framework",
+        modelId: "configured-model",
+        cleanup: () => Promise.resolve(),
+        agent: {
+          stream: () =>
+            Promise.resolve({
+              steps: Promise.resolve([]),
+              toUIMessageStream: async function* () {},
+            }),
+        },
+      });
+    },
+  });
+  assertEquals(checked, true);
+});

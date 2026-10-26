@@ -1,3 +1,4 @@
+import { registerHostedToolRunAuthorization } from "./tool-run-authorization.ts";
 import { getAvailableTools } from "#veryfront/agent/runtime/tool-helpers.ts";
 import {
   hasTrustedPlatformPolicyToolDefinition,
@@ -2862,3 +2863,76 @@ it("hosted runtime config keeps authored bootstrap tools for the runtime capping
     ["sleep"],
   );
 });
+
+for (
+  const admission of [
+    "canonical",
+    "raw-identifiers",
+    "mismatched-project",
+    "mismatched-run",
+  ] as const
+) {
+  it(`authored hosted tool receives only matching private canonical run authorization: ${admission}`, async () => {
+    clearModelProviders();
+    const model = scriptedModel([
+      { toolCalls: [{ id: "inspect-call", name: "inspect", input: {} }] },
+      { text: "done" },
+    ], { provider: "test", modelId: "test/canonical-tool-context" });
+    registerModelProvider("test", () => model);
+    let observed: ToolExecutionContext | undefined;
+    const options = {
+      projectId: "project-1",
+      runId: "run-1",
+      agentId: "auth-leaf",
+      authToken: "fixture-token",
+      instructions: "Inspect context.",
+      model: "test/canonical-tool-context",
+      allowedTools: ["inspect"],
+    };
+    if (admission !== "raw-identifiers") {
+      registerHostedToolRunAuthorization(options, {
+        projectId: admission === "mismatched-project" ? "other-project" : options.projectId,
+        runId: admission === "mismatched-run" ? "other-run" : options.runId,
+      });
+    }
+    try {
+      const runtime = await createDefaultHostedChatRuntime({
+        sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+        options,
+        config: { apiUrl: "https://api.example.com", apiMcpUrl: "https://api.example.com/mcp" },
+        buildLocalTools: () => ({
+          inspect: {
+            description: "Inspect authored tool context",
+            inputSchema: defineSchema((v) => v.object({}))(),
+            execute: (_input: unknown, context?: ToolExecutionContext) => {
+              observed = context;
+              return { ok: true };
+            },
+          },
+        }),
+        createRemoteToolSource: emptyRemoteSource,
+        preloadLatestConversationUserText: false,
+      });
+      try {
+        await withMockFetch(() => Promise.resolve(Response.json({ tools: [] })), async () => {
+          const result = await runtime.agent.stream({
+            messages: [],
+            abortSignal: new AbortController().signal,
+          });
+          for await (const _chunk of result.toUIMessageStream()) { /* consume authored callback */ }
+        });
+        assertExists(observed);
+        assertEquals(observed.projectId, "project-1");
+        assertEquals(observed.runId, "run-1");
+        assertEquals(observed.runIdBindsToolAuthorization, admission === "canonical");
+        for (const secret of ["authToken", "apiToken", "runTerminalToken", "runEventToken"]) {
+          assertEquals(secret in observed, false);
+        }
+      } finally {
+        await runtime.cleanup();
+      }
+    } finally {
+      clearModelProviders();
+    }
+  });
+}

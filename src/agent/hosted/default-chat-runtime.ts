@@ -1,3 +1,4 @@
+import { inheritHostedToolRunAuthorization } from "./tool-run-authorization.ts";
 import { type HostedTaskInput, resolveHostedTaskInput } from "./task-input.ts";
 import { captureHostedPlatformDependencyExecution } from "./platform-dependency-credential.ts";
 import { sealToolPlatformDependencies } from "#veryfront/tool/factory.ts";
@@ -801,7 +802,7 @@ export async function createDefaultHostedChatRuntime(
           runtimeKind: "framework",
           modelId,
           cleanup,
-          agent: createHostedChatRuntimeAgentAdapter({
+          agent: createHostedChatRuntimeAgentAdapter(inheritHostedToolRunAuthorization({
             runtimeAgent,
             sourceIntegrationPolicy: input.sourceIntegrationPolicy,
             runId: taskContext.runId,
@@ -836,7 +837,7 @@ export async function createDefaultHostedChatRuntime(
                   : {}),
               });
             },
-          }),
+          }, input.options)),
         };
       } catch (error) {
         try {
