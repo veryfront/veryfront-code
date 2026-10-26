@@ -2455,7 +2455,7 @@ describe("integration endpoint specs", () => {
     }).sort();
     assertEquals(toolFiles.sort(), expectedFiles);
     const clientSource = await Deno.readTextFile(
-      "templates/integrations/gmail/files/lib/gmail-client.ts",
+      new URL("../../templates/integrations/gmail/files/lib/gmail-client.ts", import.meta.url),
     );
     for (const method of ["deleteMessage", "batchDeleteMessages", "deleteThread"]) {
       assertEquals(
