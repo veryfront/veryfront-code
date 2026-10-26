@@ -9,9 +9,14 @@ import {
 
 const apply = Reflect.apply;
 const emitHttpServerEvent = HttpServer.prototype.emit;
+const socketHasInstance = Function.prototype[Symbol.hasInstance];
 const setAdd = Set.prototype.add;
 const setDelete = Set.prototype.delete;
 const setForEach = Set.prototype.forEach;
+
+function isSocket(value: unknown): value is Socket {
+  return apply(socketHasInstance, Socket, [value]);
+}
 
 const HTTP2_PREFACE = new TextEncoder().encode("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n");
 
@@ -44,7 +49,7 @@ export class DualProtocolServer extends HttpServer {
 
   // Delay only connection dispatch until its public protocol parser is known.
   override emit(event: string | symbol, ...args: unknown[]): boolean {
-    if (event === "connection" && args[0] instanceof Socket) {
+    if (event === "connection" && isSocket(args[0])) {
       this.route(args[0]);
       return true;
     }
