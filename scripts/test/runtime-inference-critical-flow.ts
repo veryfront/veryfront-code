@@ -37,7 +37,7 @@ export interface WorkflowRunDetail {
 
 type ProviderMode = "black-hole" | "respond";
 
-const VALID_RUNTIMES: RuntimeName[] = ["node", "bun", "deno"];
+const VALID_RUNTIMES = new Set<RuntimeName>(["node", "bun", "deno"]);
 const AGENT_MODEL = "anthropic/claude-haiku-4-5-20251001";
 const ANTHROPIC_WIRE_MODEL = "claude-haiku-4-5-20251001";
 const ANTHROPIC_API_KEY = "vf-runtime-critical-flow-key";
@@ -117,7 +117,7 @@ export function parseRuntimeSelection(args: string[]): RuntimeName[] {
   const seen = new Set<string>();
   const runtimes: RuntimeName[] = [];
   for (const runtime of requested) {
-    if (!VALID_RUNTIMES.includes(runtime as RuntimeName)) {
+    if (!VALID_RUNTIMES.has(runtime as RuntimeName)) {
       throw new Error(`Unknown runtime: ${runtime}`);
     }
     if (seen.has(runtime)) {
@@ -285,24 +285,29 @@ export async function waitForTerminalRun(
   const deadline = Date.now() + deadlineMs;
   let lastObservation = "none";
 
+  async function observeRun(): Promise<WorkflowRunDetail | undefined> {
+    const response = await fetchWithTimeout(url);
+    const body = await response.text();
+    if (!response.ok) {
+      lastObservation = `HTTP ${response.status}: ${body.slice(0, 500)}`;
+    } else {
+      const detail = JSON.parse(body) as WorkflowRunDetail;
+      lastObservation = JSON.stringify(detail).slice(0, 1_000);
+      if (detail.status && TERMINAL_STATUSES.has(detail.status)) {
+        if (detail.status !== "failed") {
+          throw new UnexpectedTerminalRunError(
+            `Run reached unexpected terminal status ${detail.status}: ${lastObservation}`,
+          );
+        }
+        return detail;
+      }
+    }
+    return undefined;
+  }
   while (Date.now() < deadline) {
     try {
-      const response = await fetchWithTimeout(url);
-      const body = await response.text();
-      if (!response.ok) {
-        lastObservation = `HTTP ${response.status}: ${body.slice(0, 500)}`;
-      } else {
-        const detail = JSON.parse(body) as WorkflowRunDetail;
-        lastObservation = JSON.stringify(detail).slice(0, 1_000);
-        if (detail.status && TERMINAL_STATUSES.has(detail.status)) {
-          if (detail.status !== "failed") {
-            throw new UnexpectedTerminalRunError(
-              `Run reached unexpected terminal status ${detail.status}: ${lastObservation}`,
-            );
-          }
-          return detail;
-        }
-      }
+      const detail = await observeRun();
+      if (detail) return detail;
     } catch (error) {
       if (
         error instanceof UnexpectedTerminalRunError
@@ -753,9 +758,10 @@ export async function startProvider(
     server: {
       shutdown() {
         abort();
-        return shutdown ??= new Promise<void>((resolve, reject) => {
+        shutdown ??= new Promise<void>((resolve, reject) => {
           nativeServer.close((error) => error ? reject(error) : resolve());
         });
+        return shutdown;
       },
     },
     abort,
@@ -775,52 +781,56 @@ export async function waitForProviderReceipt(
 ): Promise<void> {
   const deadline = Date.now() + 5_000;
   let lastRun = "none";
+  function receiptObserved(): boolean {
+    return expectedMarker === undefined
+      ? state.received.length > 0
+      : state.received.includes(expectedMarker);
+  }
+  async function inspectRun(): Promise<boolean> {
+    const response = await fetch(detailUrl, {
+      signal: AbortSignal.timeout(1_000),
+    });
+    const body = await response.text();
+    lastRun = `HTTP ${response.status}: ${body.slice(0, 1_000)}`;
+    if (response.ok) {
+      const detail = JSON.parse(body) as WorkflowRunDetail;
+      const validationFailure = state.validationFailure();
+      if (validationFailure) throw validationFailure;
+      if (detail.status && TERMINAL_STATUSES.has(detail.status)) {
+        if (receiptObserved()) return true;
+        throw new RunTerminatedBeforeProviderReceiptError(
+          `${runtime}/${
+            artifactClaim(runtime)
+          } provider/request: run terminated before provider receipt: ${
+            JSON.stringify(detail)
+          }`,
+        );
+      }
+    }
+    return false;
+  }
+  function rememberRunFailure(error: unknown): void {
+    if (
+      error instanceof Error &&
+      isProviderValidationFailure(error, state)
+    ) {
+      throw error;
+    }
+    if (
+      error instanceof RunTerminatedBeforeProviderReceiptError
+    ) {
+      throw error;
+    }
+    lastRun = error instanceof Error ? error.message : String(error);
+  }
   while (Date.now() < deadline) {
     const validationFailure = state.validationFailure();
     if (validationFailure) throw validationFailure;
-    if (
-      expectedMarker === undefined
-        ? state.received.length > 0
-        : state.received.includes(expectedMarker)
-    ) return;
+    if (receiptObserved()) return;
     try {
-      const response = await fetch(detailUrl, {
-        signal: AbortSignal.timeout(1_000),
-      });
-      const body = await response.text();
-      lastRun = `HTTP ${response.status}: ${body.slice(0, 1_000)}`;
-      if (response.ok) {
-        const detail = JSON.parse(body) as WorkflowRunDetail;
-        const validationFailure = state.validationFailure();
-        if (validationFailure) throw validationFailure;
-        if (detail.status && TERMINAL_STATUSES.has(detail.status)) {
-          if (
-            expectedMarker === undefined
-              ? state.received.length > 0
-              : state.received.includes(expectedMarker)
-          ) return;
-          throw new RunTerminatedBeforeProviderReceiptError(
-            `${runtime}/${
-              artifactClaim(runtime)
-            } provider/request: run terminated before provider receipt: ${
-              JSON.stringify(detail)
-            }`,
-          );
-        }
-      }
+      if (await inspectRun()) return;
     } catch (error) {
-      if (
-        error instanceof Error &&
-        isProviderValidationFailure(error, state)
-      ) {
-        throw error;
-      }
-      if (
-        error instanceof RunTerminatedBeforeProviderReceiptError
-      ) {
-        throw error;
-      }
-      lastRun = error instanceof Error ? error.message : String(error);
+      rememberRunFailure(error);
     }
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
@@ -979,28 +989,33 @@ async function checkInstalledRuntimeCredentialBoundary(
             "env = false\n",
           );
         }
-        const args = runtime === "deno"
-          ? [
-            "run",
-            "--no-config",
-            "--node-modules-dir=manual",
-            "--cached-only",
-            `--allow-read=${consumer}`,
-            "--allow-env",
-            "--deny-net",
-            program,
-            fixture,
-          ]
-          : runtime === "bun"
-          ? [
-            "run",
-            `--config=${directory}/bunfig.toml`,
-            "--no-env-file",
-            "--no-install",
-            program,
-            fixture,
-          ]
-          : [program, fixture];
+        function probeArguments(): string[] {
+          if (runtime === "deno") {
+            return [
+              "run",
+              "--no-config",
+              "--node-modules-dir=manual",
+              "--cached-only",
+              `--allow-read=${consumer}`,
+              "--allow-env",
+              "--deny-net",
+              program,
+              fixture,
+            ];
+          }
+          if (runtime === "bun") {
+            return [
+              "run",
+              `--config=${directory}/bunfig.toml`,
+              "--no-env-file",
+              "--no-install",
+              program,
+              fixture,
+            ];
+          }
+          return [program, fixture];
+        }
+        const args = probeArguments();
         const output = await runManagedCommand(runtime, {
           args,
           cwd: consumer,
@@ -1228,46 +1243,51 @@ export async function runRuntimeInferenceCriticalFlow(
   console.log(`runtimes: ${runtimes.join(", ")}`);
   console.log(`provider mode: ${providerMode}`);
 
+  async function prepareRuntimeArtifact() {
+    await ensureCommand("npm");
+    await ensureCommand("node");
+    if (runtimes.includes("bun")) await ensureCommand("bun");
+    if (runtimes.includes("deno")) await ensureCommand("deno");
+
+    if (!packedDirectory && !skipBuild) {
+      console.log("build npm package");
+      await runChecked("deno", ["task", "build:npm"], {
+        cwd: rootDir,
+        timeoutMs: 300_000,
+      });
+    }
+
+    const packed = packedDirectory
+      ? await loadPackedArtifactDirectory(packedDirectory)
+      : await packNpmPackage(rootDir, workDir);
+    // Invalid explicit artifacts fail before optional CI environment access.
+    const credentialProbes = installedRuntimeCredentialProbeProfile({
+      githubActions: Deno.env.get("GITHUB_ACTIONS"),
+      githubJob: Deno.env.get("GITHUB_JOB"),
+    });
+    if (credentialProbes && !packedDirectory) {
+      throw new Error(
+        "Installed credential runtime checks require the canonical package artifact",
+      );
+    }
+    const displayRoots = [rootDir, workDir, packed.root];
+    for (const extension of packed.extensions) {
+      displayRoots.push(extension.tarball);
+    }
+    if ("manifestSha256" in packed) {
+      console.log(
+        `npm compatibility manifest SHA-256: ${packed.manifestSha256}`,
+      );
+    } else {
+      console.log("pack npm package");
+    }
+
+    return { packed, credentialProbes, displayRoots };
+  }
   try {
     try {
-      await ensureCommand("npm");
-      await ensureCommand("node");
-      if (runtimes.includes("bun")) await ensureCommand("bun");
-      if (runtimes.includes("deno")) await ensureCommand("deno");
-
-      if (!packedDirectory && !skipBuild) {
-        console.log("build npm package");
-        await runChecked("deno", ["task", "build:npm"], {
-          cwd: rootDir,
-          timeoutMs: 300_000,
-        });
-      }
-
-      const packed = packedDirectory
-        ? await loadPackedArtifactDirectory(packedDirectory)
-        : await packNpmPackage(rootDir, workDir);
-      // Invalid explicit artifacts fail before optional CI environment access.
-      const credentialProbes = installedRuntimeCredentialProbeProfile({
-        githubActions: Deno.env.get("GITHUB_ACTIONS"),
-        githubJob: Deno.env.get("GITHUB_JOB"),
-      });
-      if (credentialProbes && !packedDirectory) {
-        throw new Error(
-          "Installed credential runtime checks require the canonical package artifact",
-        );
-      }
-      const displayRoots = [rootDir, workDir, packed.root];
-      for (const extension of packed.extensions) {
-        displayRoots.push(extension.tarball);
-      }
-      if ("manifestSha256" in packed) {
-        console.log(
-          `npm compatibility manifest SHA-256: ${packed.manifestSha256}`,
-        );
-      } else {
-        console.log("pack npm package");
-      }
-
+      const { packed, credentialProbes, displayRoots } =
+        await prepareRuntimeArtifact();
       try {
         for (const runtime of runtimes) {
           await assertRuntimeJourney(
