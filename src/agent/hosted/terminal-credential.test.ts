@@ -1081,9 +1081,7 @@ it("tool authorization rejects public identifiers, invalid terminal authority, a
     };
     bindHostedToolRunAuthorization(target, value);
     assertEquals(hasHostedToolRunAuthorization(target, target), variant === "canonical");
-    assertEquals(
-      hasHostedToolRunAuthorization({ ...target, runIdBindsToolAuthorization: true }, target),
-      false,
-    );
+    const spoofed = { ...target, runIdBindsToolAuthorization: true };
+    assertEquals(hasHostedToolRunAuthorization(spoofed, target), false);
   }
 });
