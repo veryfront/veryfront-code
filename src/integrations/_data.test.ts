@@ -2454,6 +2454,16 @@ describe("integration endpoint specs", () => {
       return getConnectorLocalToolId("gmail", tool.id).replaceAll("_", "-");
     }).sort();
     assertEquals(toolFiles.sort(), expectedFiles);
+    const clientSource = await Deno.readTextFile(
+      "templates/integrations/gmail/files/lib/gmail-client.ts",
+    );
+    for (const method of ["deleteMessage", "batchDeleteMessages", "deleteThread"]) {
+      assertEquals(
+        clientSource.includes(method),
+        false,
+        `${method} needs withdrawn full-mail access`,
+      );
+    }
   });
 
   it("ships scaffolded Outlook tool handlers required by the request-desk demo", async () => {
