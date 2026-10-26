@@ -320,11 +320,11 @@ async function verifyInstallIndex(
 // Keep ordering in parity with the publisher's precision-safe rc_key comparator.
 function prereleaseParts(version: string): string[] | undefined {
   const match =
-    /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)$/
+    /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)$/
       .exec(version);
   if (!match) return undefined;
   const prerelease = match[4].split(".");
-  if (prerelease.some((part) => /^0[0-9]+$/.test(part))) return undefined;
+  if (prerelease.some((part) => /^0\d+$/.test(part))) return undefined;
   return [...match.slice(1, 4), ...prerelease];
 }
 
@@ -332,8 +332,8 @@ function comparePrereleases(left: string[], right: string[]): number {
   for (let index = 0; index < Math.min(left.length, right.length); index++) {
     const a = left[index];
     const b = right[index];
-    const numericA = /^[0-9]+$/.test(a);
-    const numericB = /^[0-9]+$/.test(b);
+    const numericA = /^\d+$/.test(a);
+    const numericB = /^\d+$/.test(b);
     if (numericA !== numericB) return numericA ? -1 : 1;
     if (numericA && a.length !== b.length) return a.length - b.length;
     if (a !== b) return a < b ? -1 : 1;
@@ -398,6 +398,32 @@ async function verifyRcTag(
     );
   }
   return comparePrereleases(current, candidate) < 0 ? missing() : undefined;
+}
+
+function classifyLookupError(
+  error: unknown,
+  options: PollRegistryPackageOptions,
+  spec: string,
+  stage: string,
+): Extract<RegistryAttempt, { kind: "failure" }> {
+  if (error instanceof RegistryReleaseError) throw error;
+  if (!isTimeoutError(error)) {
+    throw new RegistryReleaseError(
+      "lookup",
+      `${spec} registry lookup failed: ${
+        error instanceof Error ? error.message : String(error)
+      }.`,
+      registryErrorContext(options, "registry lookup failed"),
+    );
+  }
+  return {
+    kind: "failure",
+    failure: new RegistryReleaseError(
+      "timeout",
+      `${spec} registry lookup timed out.`,
+      registryErrorContext(options, `${stage} lookup timed out`),
+    ),
+  };
 }
 
 /** One registry lookup. Throws terminal failures; returns retryable ones. */
@@ -469,24 +495,7 @@ async function attemptRegistryLookup(
     }
     return { kind: "metadata", metadata };
   } catch (error) {
-    if (error instanceof RegistryReleaseError) throw error;
-    if (!isTimeoutError(error)) {
-      throw new RegistryReleaseError(
-        "lookup",
-        `${spec} registry lookup failed: ${
-          error instanceof Error ? error.message : String(error)
-        }.`,
-        registryErrorContext(options, "registry lookup failed"),
-      );
-    }
-    return {
-      kind: "failure",
-      failure: new RegistryReleaseError(
-        "timeout",
-        `${spec} registry lookup timed out.`,
-        registryErrorContext(options, `${stage} lookup timed out`),
-      ),
-    };
+    return classifyLookupError(error, options, spec, stage);
   }
 }
 
@@ -652,11 +661,11 @@ export async function diagnoseRegistryPackages(
   ));
   results.forEach((result, index) => {
     const options = packages[index]!;
-    const status = result.status === "fulfilled"
-      ? "published"
-      : result.reason instanceof RegistryReleaseError
-      ? result.reason.classification
-      : "lookup";
+    let status: string;
+    if (result.status === "fulfilled") status = "published";
+    else if (result.reason instanceof RegistryReleaseError) {
+      status = result.reason.classification;
+    } else status = "lookup";
     report(`${options.packageName}@${options.version}: ${status}`);
   });
   throw new RegistryReleaseError(
