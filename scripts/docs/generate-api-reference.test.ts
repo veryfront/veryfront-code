@@ -502,7 +502,10 @@ describe("generate-api-reference", () => {
       assertEquals(agentReference.includes("ExecutorHttpRuntime"), false);
       assertStringIncludes(serverReference, "createVeryfrontServer");
       assertStringIncludes(agentReference, "AgentRuntime");
-      assertEquals(agentReference.includes("serverResolvedResumeToolCall"), false);
+      assertEquals(
+        agentReference.includes("serverResolvedResumeToolCall"),
+        false,
+      );
       assertEquals(
         agentReference.includes("serverResolvedToolExposureCheckpoint"),
         false,
@@ -519,9 +522,32 @@ describe("generate-api-reference", () => {
       );
       assertStringIncludes(
         runEventsReference,
+        'description: "The typed run event contract the Veryfront API publishes."\n',
+      );
+      assertStringIncludes(
+        runEventsReference,
+        '```ts title="run-event-validator.ts"',
+      );
+      assertStringIncludes(
+        runEventsReference,
+        '```ts title="run-event-catalog.ts"',
+      );
+      assertStringIncludes(
+        runEventsReference,
+        '```ts title="read-run-events.ts"',
+      );
+      assertStringIncludes(
+        runEventsReference,
+        'if (!tryResolve("SchemaValidator"))',
+      );
+      assertStringIncludes(
+        runEventsReference,
         "Viewer events expose only the `type` discriminator.",
       );
-      assertEquals(runEventsReference.includes("fall back to the raw payload"), false);
+      assertEquals(
+        runEventsReference.includes("fall back to the raw payload"),
+        false,
+      );
       assertStringIncludes(serverReference, "veryfront/server/http-resolver");
       assertStringIncludes(serverReference, "veryfront/server/http-host");
       const packageConfig = JSON.parse(await Deno.readTextFile("deno.json"));
