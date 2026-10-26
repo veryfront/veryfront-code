@@ -75,6 +75,19 @@ describe("Drive text export responses", () => {
     ) await assertRejects(() => exportText(response));
   });
 
+  it("bounds the final wrapped result including JSON escapes", async () => {
+    for (
+      const content of [
+        "a".repeat(MAX_INTEGRATION_TOOL_CALL_RESPONSE_BYTES),
+        "\u0000".repeat(MAX_INTEGRATION_TOOL_CALL_RESPONSE_BYTES / 2),
+      ]
+    ) {
+      await assertRejects(() =>
+        exportText(new Response(content, { headers: { "content-type": "text/plain" } }))
+      );
+    }
+  });
+
   it("rejects partial or oversized exports", async () => {
     for (
       const response of [

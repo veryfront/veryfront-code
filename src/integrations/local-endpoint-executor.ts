@@ -852,7 +852,15 @@ async function readResponseJson(
   ) {
     return unusable("too_large");
   }
-  if (textResponse) return freeze({ content: text, content_type: mediaType });
+  if (textResponse) {
+    const result = snapshotBoundedJsonValue(
+      { content: text, content_type: mediaType },
+      MAX_INTEGRATION_TOOL_CALL_RESPONSE_BYTES,
+      MAX_INTEGRATION_TOOL_CALL_RESPONSE_BYTES,
+    );
+    if (!result.success) return unusable("too_large");
+    return result.value;
+  }
   // Accepted actions, such as Microsoft Graph sendMail, return 202 with no body.
   if (status === 202 && text === "") return null;
   let parsed: unknown;

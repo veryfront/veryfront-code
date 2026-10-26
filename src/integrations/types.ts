@@ -56,6 +56,8 @@ export interface IntegrationEndpoint {
   body?: Record<string, IntegrationEndpointBodyField>;
   contentType?: string;
   response?: {
+    /** Return recoverable bytes or readable UTF-8 text instead of JSON. */
+    encoding?: "base64" | "text";
     transform?: string;
     enrich?: {
       type: "gmail-message-metadata";
