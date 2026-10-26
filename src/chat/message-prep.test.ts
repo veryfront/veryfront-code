@@ -3021,11 +3021,12 @@ Deno.test("prepareProviderModelMessagesFromUiMessages keeps an inline file's dat
 });
 
 Deno.test("maskOldToolOutputs retains a recent created resource for follow-up mutation", () => {
-  for (
-    const identity of [{ id: "created-event-id" }, { documentId: "created-document-id" }, {
-      spreadsheetId: "created-sheet-id",
-    }]
-  ) {
+  const identities: Record<string, string>[] = [
+    { id: "created-event-id" },
+    { documentId: "created-document-id" },
+    { spreadsheetId: "created-sheet-id" },
+  ];
+  for (const identity of identities) {
     const resource = { ...identity, description: "resource detail ".repeat(75) };
     const messages: ProviderModelMessage[] = [
       { role: "user", content: "Create a disposable resource" },
