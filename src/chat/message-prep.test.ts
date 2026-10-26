@@ -3023,8 +3023,11 @@ Deno.test("prepareProviderModelMessagesFromUiMessages keeps an inline file's dat
 
 describe("recent tool resource results", () => {
   it("retains a created resource for follow-up mutation", () => {
-    const identities: Record<string, string>[] = [
+    const identities: Record<string, string | number>[] = [
       { id: "created-event-id" },
+      { id: 123 },
+      { issueId: 456 },
+      { id: 0 },
       { documentId: "created-document-id" },
       { spreadsheetId: "created-sheet-id" },
     ];

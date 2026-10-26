@@ -1277,7 +1277,8 @@ export function maskOldToolOutputs(
           Object.entries(collection).some(([key, value]) =>
             /(?:^id$|Id$|_id$)/.test(key) &&
             !/^(?:request|trace|(?:parent_?)?span|correlation)_?id$/i.test(key) &&
-            typeof value === "string" && value.length > 0
+            ((typeof value === "string" && value.length > 0) ||
+              (typeof value === "number" && Number.isFinite(value)))
           )) &&
         serializedLength(collection) <= RECENT_COLLECTION_MAX_CHARS
       ) return part;
