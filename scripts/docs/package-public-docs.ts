@@ -143,10 +143,8 @@ export async function docsSourceIdentity(
   };
 }
 
-function isPublicFile(name: string, assets: boolean): boolean {
-  return assets
-    ? ASSET_FILE.test(name)
-    : /\.mdx?$/.test(name) && name !== "README.md";
+function isPublicPageFile(name: string): boolean {
+  return /\.mdx?$/.test(name) && name !== "README.md";
 }
 
 function isPublishedPage(bytes: Uint8Array, file: string): boolean {
@@ -349,6 +347,21 @@ export async function packagePublicDocs(options: PackageDocsOptions) {
     ) throw new Error("Product checkout changed during packaging");
   }
   try {
+    const copySelectedFile = async (file: string, assets: boolean) => {
+      const bytes = await Deno.readFile(file);
+      if (!assets) {
+        if (!isPublishedPage(bytes, file)) return;
+        pages++;
+      }
+      const relative = assets
+        ? `${options.product}/assets/${
+          path.relative(assetSource, file).split(path.sep).join("/")
+        }`
+        : `${options.product}/${
+          path.relative(root, file).split(path.sep).join("/")
+        }`;
+      await copy(file, relative, bytes);
+    };
     const walk = async (directory: string, assets: boolean) => {
       if (await Deno.realPath(directory) !== directory) {
         throw new Error("Public docs paths cannot use symlinks");
@@ -362,20 +375,12 @@ export async function packagePublicDocs(options: PackageDocsOptions) {
           await walk(file, assets);
           continue;
         }
-        if (!entry.isFile || !isPublicFile(entry.name, assets)) continue;
-        const bytes = await Deno.readFile(file);
-        if (!assets) {
-          if (!isPublishedPage(bytes, file)) continue;
-          pages++;
-        }
-        const relative = assets
-          ? `${options.product}/assets/${
-            path.relative(assetSource, file).split(path.sep).join("/")
-          }`
-          : `${options.product}/${
-            path.relative(root, file).split(path.sep).join("/")
-          }`;
-        await copy(file, relative, bytes);
+        if (!entry.isFile) continue;
+        const selected = assets
+          ? ASSET_FILE.test(entry.name)
+          : isPublicPageFile(entry.name);
+        if (!selected) continue;
+        await copySelectedFile(file, assets);
       }
     };
     const assetSource = path.join(

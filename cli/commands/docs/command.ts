@@ -106,49 +106,53 @@ async function reportInvalidArgument(
   return 2;
 }
 
-function versionOutput(json: boolean): string {
-  return json
-    ? JSON.stringify({
-      success: true,
-      command: "version",
-      data: {
-        version: denoConfig.version,
-        deno: Deno.version.deno,
-        v8: Deno.version.v8,
-        typescript: Deno.version.typescript,
-        os: Deno.build.os,
-        arch: Deno.build.arch,
-        standalone: Deno.build.standalone ?? false,
-      },
-    })
-    : `Veryfront CLI v${denoConfig.version}`;
+function versionEnvelope() {
+  return {
+    success: true,
+    command: "version",
+    data: {
+      version: denoConfig.version,
+      deno: Deno.version.deno,
+      v8: Deno.version.v8,
+      typescript: Deno.version.typescript,
+      os: Deno.build.os,
+      arch: Deno.build.arch,
+      standalone: Deno.build.standalone ?? false,
+    },
+  };
+}
+
+function defaultDocsDependencies(): DocsDependencies {
+  return { open: openDocumentation, print: console.log, warn: console.error };
+}
+
+async function docsOutputStatus(value: string, emit: (value: string) => Promise<boolean>) {
+  return await emit(value) ? 0 : 1;
 }
 
 /** No project discovery, environment loading, authentication, or server startup. */
 export async function runDocsCommand(
   args: readonly string[],
-  deps?: DocsDependencies,
+  deps: DocsDependencies = defaultDocsDependencies(),
 ): Promise<number> {
-  const dependencies = deps === undefined
-    ? { open: openDocumentation, print: console.log, warn: console.error }
-    : deps;
+  const dependencies = deps;
   const { positionals, booleanFlags, output, remaining } = parseDocsArguments(
     args,
   );
   const json = booleanFlags.get("json") === true;
   const emit = (value: string) => emitDocsOutput(value, output, json, dependencies);
+  const emitStatus = (value: string) => docsOutputStatus(value, emit);
   const invalid = positionals[0] ?? remaining[0];
   if (invalid !== undefined) {
     return await reportInvalidArgument(invalid, json, emit, dependencies);
   }
   if (booleanFlags.get("version")) {
-    const written = await emit(
-      versionOutput(json),
+    return await emitStatus(
+      json ? JSON.stringify(versionEnvelope()) : `Veryfront CLI v${denoConfig.version}`,
     );
-    return written ? 0 : 1;
   }
   if (booleanFlags.get("help")) {
-    const written = await emit(
+    return await emitStatus(
       json
         ? JSON.stringify({
           success: true,
@@ -157,17 +161,15 @@ export async function runDocsCommand(
         })
         : `${docsHelp.description}\n\n${docsHelp.usage}\n\n--json  Print the URL without opening a browser.\n\nWorks without a project or Veryfront account.`,
     );
-    return written ? 0 : 1;
   }
   if (json) {
-    const written = await emit(
+    return await emitStatus(
       JSON.stringify({
         success: true,
         command: "docs",
         data: { url: DOCUMENTATION_URL },
       }),
     );
-    return written ? 0 : 1;
   }
   if (!await emit(DOCUMENTATION_URL)) return 1;
   try {
