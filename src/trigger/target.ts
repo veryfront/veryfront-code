@@ -1,5 +1,8 @@
 import { isTriggerId } from "./validation.ts";
 
+const reflectApply = Reflect.apply;
+const stringCodePointAt = String.prototype.codePointAt;
+
 /** Hosted conversation behavior for an agent trigger target. */
 export type AgentConversationMode = "create_new" | "existing" | "none";
 
@@ -205,7 +208,8 @@ export function conversationConflictDiagnostic(
 function truncateDiagnosticKey(key: string): string {
   if (key.length <= MAX_DIAGNOSTIC_KEY_LENGTH) return key;
   let prefix = key.slice(0, MAX_DIAGNOSTIC_KEY_LENGTH);
-  const finalCodeUnit = prefix.codePointAt(prefix.length - 1) ?? 0xffff;
+  const finalCodeUnit =
+    (reflectApply(stringCodePointAt, prefix, [prefix.length - 1]) as number | undefined) ?? 0xffff;
   if (finalCodeUnit >= 0xd800 && finalCodeUnit <= 0xdbff) {
     prefix = prefix.slice(0, -1);
   }

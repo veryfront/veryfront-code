@@ -7,6 +7,9 @@ import type { RuntimeAdapter } from "#veryfront/platform";
 import { MAX_PATH_LENGTH_CHARS } from "#veryfront/utils/constants/index.ts";
 import { collectFiles } from "#veryfront/utils/file-discovery.ts";
 
+const reflectApply = Reflect.apply;
+const stringCodePointAt = String.prototype.codePointAt;
+
 const MAX_PROJECT_DISCOVERY_DIRECTORIES = 100;
 
 const TRIGGER_FILE_EXTENSIONS = [".ts", ".tsx", ".js", ".jsx"] as const;
@@ -110,7 +113,7 @@ function invalidDiscoveryConfiguration(detail: string, cause?: unknown): never {
 
 function containsControlCharacter(value: string): boolean {
   for (let index = 0; index < value.length; index++) {
-    const code = value.codePointAt(index) ?? 0xffff;
+    const code = (reflectApply(stringCodePointAt, value, [index]) as number | undefined) ?? 0xffff;
     if (code <= 0x1f || (code >= 0x7f && code <= 0x9f)) return true;
   }
   return false;
