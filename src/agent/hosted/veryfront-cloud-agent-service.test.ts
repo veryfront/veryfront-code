@@ -358,6 +358,9 @@ async function withMockDenoServiceServer(
 ): Promise<void> {
   const denoRuntime = Deno as unknown as TestDenoRuntime;
   const originalServe = denoRuntime.serve;
+  const originalVersion = Deno.version;
+  // These fixtures intentionally exercise the native Deno.serve seam.
+  Object.defineProperty(Deno, "version", { value: { ...originalVersion, deno: "2.7.12" } });
   const originalAddSignalListener = denoRuntime.addSignalListener;
   const originalRemoveSignalListener = denoRuntime.removeSignalListener;
   const originalExit = denoRuntime.exit;
@@ -396,6 +399,7 @@ async function withMockDenoServiceServer(
     });
   } finally {
     denoRuntime.serve = originalServe;
+    Object.defineProperty(Deno, "version", { value: originalVersion });
     denoRuntime.addSignalListener = originalAddSignalListener;
     denoRuntime.removeSignalListener = originalRemoveSignalListener;
     denoRuntime.exit = originalExit;
@@ -1056,6 +1060,9 @@ Deno.test("startAgentService captures, flushes, and resets terminal startup fail
     try {
       const denoRuntime = Deno as unknown as TestDenoRuntime;
       const originalServe = denoRuntime.serve;
+      const originalVersion = Deno.version;
+      // These fixtures intentionally exercise the native Deno.serve seam.
+      Object.defineProperty(Deno, "version", { value: { ...originalVersion, deno: "2.7.12" } });
       denoRuntime.serve = (() => {
         throw startupError;
       }) as typeof Deno.serve;
@@ -1083,6 +1090,7 @@ Deno.test("startAgentService captures, flushes, and resets terminal startup fail
         });
       } finally {
         denoRuntime.serve = originalServe;
+        Object.defineProperty(Deno, "version", { value: originalVersion });
       }
 
       assertEquals(events, ["capture-startup", "flush:default", "reset"]);
@@ -1124,6 +1132,9 @@ Deno.test("startAgentService resets and exits when startup error flush rejects",
     try {
       const denoRuntime = Deno as unknown as TestDenoRuntime;
       const originalServe = denoRuntime.serve;
+      const originalVersion = Deno.version;
+      // These fixtures intentionally exercise the native Deno.serve seam.
+      Object.defineProperty(Deno, "version", { value: { ...originalVersion, deno: "2.7.12" } });
       denoRuntime.serve = (() => {
         throw startupError;
       }) as typeof Deno.serve;
@@ -1151,6 +1162,7 @@ Deno.test("startAgentService resets and exits when startup error flush rejects",
         });
       } finally {
         denoRuntime.serve = originalServe;
+        Object.defineProperty(Deno, "version", { value: originalVersion });
       }
 
       assertEquals(events, ["capture-startup", "flush", "reset"]);
@@ -2946,3 +2958,70 @@ it("hosted child explicit loader grants survive sibling spelling denials", () =>
     assertEquals(tools, granted ? [granted] : []);
   }
 });
+
+for (const rejectFlush of [false, true]) {
+  Deno.test(`selected Deno bind failure captures startup error and resets after flush rejection=${rejectFlush}`, async () => {
+    await withTempDir(async (rootDir) => {
+      writeMarkdownAgentDefinition(rootDir, "support");
+      const occupied = Deno.listen({ hostname: "0.0.0.0", port: 0 });
+      const originalVersion = Deno.version;
+      Object.defineProperty(Deno, "version", { value: { ...originalVersion, deno: "2.9.7" } });
+      const events: string[] = [];
+      const captured: unknown[] = [];
+      const restore = veryfrontCloudAgentServiceInternals.setInitializeApplicationErrorsForTests(
+        () => ({
+          enabled: true,
+          captureStartupError(error) {
+            captured.push(error);
+            events.push("capture-startup");
+          },
+          flush() {
+            events.push("flush");
+            return rejectFlush
+              ? Promise.reject(new Error("synthetic flush failure"))
+              : Promise.resolve(true);
+          },
+          reset() {
+            events.push("reset");
+          },
+        }),
+      );
+      try {
+        await startAgentService({
+          serviceName: "agent-selected-bind-failure-test",
+          agentId: "support",
+          entrypointUrl: pathToFileURL(resolve(rootDir, "main.ts")),
+          signals: [],
+          processTarget: {
+            env: {},
+            on: () => {},
+            off: () => {},
+            exit: (code) => {
+              events.push(`exit:${code}`);
+            },
+          },
+          env: {
+            NODE_ENV: "test",
+            VERYFRONT_API_URL: "https://api.example.com",
+            VERYFRONT_AGENT_SERVICE_REGISTRATION: "disabled",
+            PORT: String(occupied.addr.port),
+            ALLOWED_ORIGINS: "https://studio.example.com",
+          },
+        });
+        assertEquals(events, ["capture-startup", "flush", "reset", "exit:1"]);
+        assertEquals(captured.length, 1);
+        const failure = captured[0];
+        assert(failure instanceof Error);
+        assert(failure.message.includes("Address already in use"));
+        assert(failure.cause instanceof Error);
+        assertEquals(failure.cause.message, "Address already in use");
+      } finally {
+        restore();
+        Object.defineProperty(Deno, "version", { value: originalVersion });
+        occupied.close();
+        __resetLogRecordEmitterForTests();
+        setApplicationErrorReporter(undefined);
+      }
+    });
+  });
+}
