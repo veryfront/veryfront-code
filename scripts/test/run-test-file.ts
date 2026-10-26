@@ -154,7 +154,7 @@ function rewriteJunitPath(
   function appendSeparateOption(
     arg: string,
     index: number,
-  ): number | undefined {
+  ): boolean | undefined {
     if (!arg.startsWith("-")) return undefined;
     const option = arg.split("=", 1)[0]!;
     if (arg.includes("=") || !TEST_OPTIONS_WITH_SEPARATE_VALUE.has(option)) {
@@ -163,9 +163,9 @@ function rewriteJunitPath(
     rewritten.push(arg);
     if (index + 1 < rawArgs.length) {
       rewritten.push(rawArgs[index + 1]!);
-      return index + 1;
+      return true;
     }
-    return index;
+    return false;
   }
   for (let index = 0; index < rawArgs.length; index++) {
     const arg = rawArgs[index]!;
@@ -182,9 +182,9 @@ function rewriteJunitPath(
       rewritten.push(`--junit-path=${junitPath}`);
       continue;
     }
-    const separateOptionIndex = appendSeparateOption(arg, index);
-    if (separateOptionIndex !== undefined) {
-      index = separateOptionIndex;
+    const separateOptionHasValue = appendSeparateOption(arg, index);
+    if (separateOptionHasValue !== undefined) {
+      if (separateOptionHasValue) index += 1;
       continue;
     }
     rewritten.push(arg);
