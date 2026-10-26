@@ -5,10 +5,7 @@ import { DenoAdapter } from "#veryfront/platform/adapters/runtime/deno/adapter.t
 import { withTestContext } from "../../_helpers/context.ts";
 
 // Both public wrappers must preserve the transport-owned upgrade object.
-describe("public handler Deno WebSocket transport", {
-  sanitizeResources: false,
-  sanitizeOps: false,
-}, () => {
+describe("public handler Deno WebSocket transport", () => {
   for (const mode of ["development", "production"] as const) {
     it(`upgrades through the ${mode} public handler`, async () => {
       await withTestContext(`public-handler-websocket-${mode}`, async (context) => {
