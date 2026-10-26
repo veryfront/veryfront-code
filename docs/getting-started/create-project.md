@@ -35,8 +35,7 @@ scripts), `veryfront init` skips every prompt and uses `ai-agent` on Node.js
 without initializing Git. Passing `--template` also skips the whole wizard,
 including the runtime and Git questions.
 
-Choose a starting point directly when you already know what you want to build,
-or when running the command from a non-interactive script:
+To choose a template without the wizard, pass its name:
 
 ```bash
 # Blank full-stack app with pages and routing
@@ -223,9 +222,7 @@ veryfront generate tool search-docs
 veryfront generate skill research
 ```
 
-These names are examples. Use the generated files as starting points, then edit
-the agent instructions, tool implementation, and skill content for the workflow
-you are building.
+Edit the generated instructions, tools and skills for your app.
 
 Every starter includes `AGENTS.md`. Coding agents should read that file first,
 then use `veryfront schema --json` or the Veryfront MCP tools for current CLI

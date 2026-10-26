@@ -17,7 +17,5 @@ A Code project combines application routes, agent behavior and execution primiti
 
 ## Core idea
 
-The shared project model matters more than any single primitive. Routes decide
-how users and HTTP clients enter the system. Agents, tools, workflows, tasks,
-runs, prompts, resources, skills, integrations, and sandboxes define
-capabilities that routes and runtime services can reuse.
+Routes receive requests from users and HTTP clients. Agents, tools, workflows
+and tasks define work that routes and runtime services can reuse.

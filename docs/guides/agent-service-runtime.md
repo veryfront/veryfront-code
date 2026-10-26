@@ -15,43 +15,30 @@ server do not require a `service.ts` entrypoint. Add one only when you
 intentionally run the standalone Agent Service process described in this guide.
 
 Managed runtimes can execute a connected agent from another project's immutable
-release. The control plane authorizes the connection before dispatch: `run.project`
-identifies the project that owns conversations, runs, tools, and billing, while
-`sourceProject` identifies the project and environment supplying agent definitions.
-The signed request audience remains the source runtime's project. Registration
-alone does not authorize another project or relax the runtime's signature checks.
+release. The consuming project owns conversations, runs, tools and billing. The
+source project supplies agent definitions. Registration alone does not authorize
+cross-project access.
 
-Source selection is independent of execution placement. Invocation project context
-retains `sourceTargetEnvironmentId` and `sourceTargetBranchId` separately from
-`runtimeTarget*` execution selectors. Signed environment and preview sources use
-their own persisted source IDs; release sources retain the immutable release ID
-for every execution target. Explicit null source branch identity selects the root
-branch. A branch source executing on an environment requires an explicit source
-branch ID or null; an omitted ID is rejected. Legacy invocations without source IDs retain their matching environment
-or preview selector behavior. Deploy a framework accepting these independent
-selectors before enabling the API producer.
+Source selection and execution placement are independent.
+`sourceTargetEnvironmentId` and `sourceTargetBranchId` select source separately
+from the `runtimeTarget*` execution selectors. Keep the immutable release ID
+when selecting an execution target for a release. A branch source executing on
+an environment requires an explicit branch ID; use `null` for the root branch.
+Omitted IDs are rejected. Legacy invocations retain their matching environment
+or preview selection. Upgrade the runtime before enabling independent selectors.
 
-Source reads use a separate, read-only `credentials.sourceAuthToken`. The source
-project's environment variables and runtime token are not passed to the connected
-execution. Platform tool calls and inference use the consuming run's credentials.
-Child runs must inherit the authorized source connection through the control plane.
+Connected execution uses the consuming run's credentials for tools and inference.
+Source reads use the separate read-only `credentials.sourceAuthToken`. The source project's environment
+variables and runtime token are not passed to the run. Child agents inherit the
+authorized connection.
 
-Connected execution evaluates project modules in an invocation-specific registry
-namespace, including discovery under the consuming project's credential context.
-This prevents reuse of closures containing the source project's secrets or a
-previous invocation's credentials. Framework registries and evaluated-module cache
-entries are retired when the response completes, fails, or is cancelled. Deno's
-ESM module map itself lasts for the process lifetime. The managed shared renderer
-pool bounds this retention with memory-triggered, graceful pod recycling. Dedicated
-runtime deployments need their own equivalent recycling policy before enabling
-repeated connected runs; the shared pool's policy does not cover those deployments.
+For repeated connected runs on a dedicated runtime, configure graceful process
+recycling to bound retained modules. The managed shared runtime provides this
+policy; dedicated deployments must provide their own.
 
-Connected agents and their child agent runs are supported. Starting, resuming, or
-retrying a source-defined durable workflow from connected execution is rejected
-before accessing the workflow backend. Durable workflow recovery needs a separate
-persisted source authorization and credential-renewal contract; ordinary same-project
-workflows and explicit calls to the consuming project's existing APIs keep their
-existing behavior.
+Connected agents and their child agent runs are supported. Starting, resuming or
+retrying a source-defined durable workflow from connected execution is rejected.
+Same-project workflows and calls to the consuming project's APIs remain supported.
 
 ## Runtime identity
 
@@ -67,10 +54,8 @@ UTF-16 code units, valid Unicode, and no control characters. The name header use
 `encodeURIComponent` encoding. These headers identify the accepting process;
 they do not grant access. Existing runtime-owner URL headers remain unchanged.
 
-Signed managed agent streams report the same process identity on HTTP 200 SSE
-responses. Identity is captured from the host before loading project environment
-values. The API records it for the exact dispatched execution, including streams
-without a runtime-owner URL. Error responses do not supply process attribution.
+Signed managed agent streams report the same host-owned process identity on
+HTTP 200 SSE responses. Error responses omit it.
 
 ## Prerequisites
 
@@ -697,72 +682,31 @@ retirement, even when the caller's cancellation signal remains live.
 
 ### Broker composition
 
-The hosted service's `DELETE /api/runs/:runId` route requires verified cancellation
-authority for that exact run before changing execution state or remembering a
-delayed-start cancellation. The default runtime verifies the API's existing signed
-cancellation bearer with its configured public key. Two claim shapes are accepted,
-one for each shape the API mints: a project- and run-scoped `veryfront-server`
-service-account bearer carrying `tokenUse: project_scoped_service_account`, and,
-for a run with no project, the requester's own session bearer, which carries no
-`tokenUse` at all.
+The hosted service's `DELETE /api/runs/:runId` route requires verified
+cancellation authority for that run. The default runtime verifies the signed
+bearer with its configured public key. A user token without a matching run claim
+or a development callback that only decodes a token is insufficient. Custom route sets must
+supply `verifyRunCancellationToken`; omission returns HTTP 403. Request-owned
+AG-UI streams also support cancellation through their request signal.
 
-Both shapes are pinned by a contract fixture holding payloads
-captured from the API's minting code, so a claim change on either side fails a
-test instead of rejecting every cancellation in production. A general user token
-without a matching run claim is insufficient, and development decode-only
-authentication does not grant cancellation. Custom route sets must supply
-`verifyRunCancellationToken`; omission returns HTTP 403.
+`createAgUiCancelHandler` and `createAgUiResumeHandler` require an
+`authorizeRunControl` decision. Authority applies only to the approved run and
+operation; do not use project middleware as a substitute.
 
-The API retains actor and
-collaborator authorization before minting the runtime credential. Request-owned
-AG-UI streams still support cancellation through their request signal.
+Resume is served at `POST /api/control-plane/runs/:runId/resume` and
+`POST /api/runs/:runId/resume`. Both require a valid run-bound bearer before
+changing the waiting run. Projectless resume is unsupported. Custom route sets
+must supply `verifyRunResumeToken`; omission returns HTTP 403.
 
-The requirement sits at the effect, not only at that route. `createAgUiCancelHandler`
-and `createAgUiResumeHandler` both require an `authorizeRunControl` decision, and the
-session manager takes verified authority rather than a run id for the cancel-and-tombstone
-and resume paths. The run the effect reaches is read out of that authority, so a
-surface that mounts either handler cannot reach the registry without a decision, and
-authority granted for one run or operation cannot be redirected to another. Run
-control the runtime itself performs, such as a session or waiting timeout, still
-cancels by run id and cannot create a delayed-start cancellation.
+Resume and cancel handlers enforce a 1 MiB body limit before authentication,
+run-ID resolution or authorization. Oversized declared or chunked bodies return
+HTTP 413 and cancel the remaining stream. Authentication receives a separate
+request with the bounded original body, so reading JSON does not consume the
+handler's input. Cancellation without a body remains supported.
 
-Resume carries the same contract. The default runtime verifies the bearer the API
-signs for `POST /api/control-plane/runs/:runId/resume` against the same public key.
-The default route set also serves `POST /api/runs/:runId/resume` with the same
-verification and signal handler.
-
-Both routes refuse an invalid bearer before
-changing the waiting run. Resume has no separate mint: the API signs it with the run-bound service credential it already
-uses for the stream, so two claim shapes are accepted, both bound to one run and one
-project. A run whose record names an actor service account and an agent access grant
-carries `tokenUse: run_scoped_service_account` with that grant recorded in the token;
-every other project-bound run carries the `veryfront-server` service-account bearer
-with `tokenUse: project_scoped_service_account`.
-
-The API refuses to resume a run with
-no project before it mints anything, so no projectless resume shape exists. Both
-shapes are pinned by a contract fixture holding payloads captured from the API's
-signing path, including the scope ordering, which differs between the two mints. The
-grant relation is recorded rather than re-derived, so the API's collaborator policy
-stays the API's decision.
-
-Custom route sets that serve resume must supply
-`verifyRunResumeToken`; omission returns HTTP 403. Both resume routes enforce the
-1 MiB request-body limit on the incoming stream before calling custom authentication.
-Authentication receives a separate request with the bounded original body, so it may
-read JSON without consuming the signal handler's input.
-
-Oversized declared or chunked
-bodies return HTTP 413 before authentication and cancel the remaining stream.
-Standalone resume and cancel handlers apply the same bound before run-id resolvers
-and authorizers receive a body. Cancellation without a body remains supported.
-
-Cancellation claims and request bindings must be own data properties. The route
-also rejects inherited `then` properties before authentication and rechecks after
-asynchronous verification. This prevents known thenable pollution from replacing
-JWT verification results. These checks do not isolate arbitrary project code
-running in the service process; use a separate trusted broker process for that
-boundary.
+Cancellation claims and request bindings must be own data properties. These
+checks do not isolate arbitrary project code in the service process. Use a
+separate trusted broker process for that boundary.
 
 The broker owns HTTP authentication, credentials, model and tool authorization,
 and durable persistence. Executor facades call these capabilities through the
@@ -784,13 +728,10 @@ adapter's owner in trusted service configuration; project owners reject requests
 for other projects before preparation or allocation. Their `prepare` callbacks
 receive private broker authority and bounded executor data separately. Resolve
 immutable sources and capabilities in the broker before returning the executor
-start input. For signed control-plane managed brokers, when the returned start
-input includes `trustedRuntime`, the handler binds the broker-admitted
-`privateAuthority.apiAuthToken` as `trustedRuntime.hostedKnowledgeAuthToken` and
-the host-owned API base URL as `trustedRuntime.hostedKnowledgeApiUrl`, so
-framework knowledge retrieval stays broker-owned, targets the runtime's API
-origin, and remains outside executor wire data. Without that trusted-runtime
-credential, managed framework knowledge is denied.
+start input. For signed control-plane managed brokers, supply `trustedRuntime`
+in the start input when the run needs framework knowledge retrieval. The broker keeps its
+credential and API origin outside executor data. Without this trusted runtime
+configuration, managed framework knowledge is denied.
 
 These adapters share admission, duplicate handling, and retirement
 with the signed adapter.

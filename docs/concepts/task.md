@@ -6,9 +6,7 @@ order: 24
 
 A task defines background work. It is the target that a task run executes.
 
-Tasks exist because some work should be named and reusable before it is run. A
-task describes what background work does. A run records one durable execution of
-that work.
+A task can be reused across callers. A run records one execution.
 
 ## Characteristics
 
@@ -19,8 +17,7 @@ that work.
 
 ## Boundary
 
-A task is the definition. A run is the durable execution of that definition. Keep
-that boundary clear.
+Keep reusable behavior in the task definition and execution state in the run.
 
 Use a task when work should run outside a request or chat turn. Tasks are useful
 for sync runs, imports, cleanup, and other background operations.

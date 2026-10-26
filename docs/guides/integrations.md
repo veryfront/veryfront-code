@@ -724,11 +724,6 @@ representative read has run against the real provider on a recorded release.
 Every other connector is package-declared and, where enabled, environment-enabled,
 but not operationally qualified.
 
-Use the generated integration metadata reference when you need exact exported
-names or icon metadata:
-
-- [`veryfront/integrations`](../api-reference/veryfront/integrations.md)
-
 ## Verify it worked
 
 1. Confirm the integration tool name is present in the agent source.
@@ -742,9 +737,6 @@ names or icon metadata:
 
 - [Recover integration connections](./integrations/recovery.md)
 - [Integration credentials and scopes](./integrations/credentials.md)
-- [Set up GitHub](./integrations/github.md)
-- [Set up Jira](./integrations/jira.md)
-- [Set up Salesforce](./integrations/salesforce.md)
 
 ## Related
 

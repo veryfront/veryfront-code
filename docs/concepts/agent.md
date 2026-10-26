@@ -8,10 +8,8 @@ An agent owns model reasoning for an interaction. It receives messages, applies
 instructions, chooses whether to call tools, observes tool results, and emits
 output.
 
-Agents follow the same idea as the ReAct prompting pattern: reasoning and
-acting. The model reasons about the current state, acts by calling a tool or
-producing a response, observes the result, then repeats the loop until it can
-finish.
+The ReAct loop alternates reasoning and action: the model calls tools, observes
+results and continues until it can respond.
 
 ## Characteristics
 
@@ -35,10 +33,8 @@ The loop has four parts:
 | Action      | The agent calls a tool or emits output.                       |
 | Observation | Tool results or new messages are added back into context.     |
 
-Veryfront hides most loop plumbing behind the agent runtime. The boundary stays
-visible: the agent decides what to do next. Resources own readable context.
-Executable primitives own execution, including tools, tasks, workflows, runs,
-and app routes.
+The runtime manages the loop. The agent decides what to do next; tools, tasks,
+workflows and app routes execute the work. Resources provide readable context.
 
 ## Boundary
 

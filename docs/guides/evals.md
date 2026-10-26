@@ -328,12 +328,9 @@ Absolute paths are used as given and ignore the base directory.
 
 ### Grading text that was not produced by an agent
 
-`judges.llm.rubric()` grades an agent's answer to a task by default, and sends
-the task input alongside the answer. When the graded value was not produced in
-response to that input -- a stored document, a labelled corpus, a reply written
-earlier -- that framing works against you: the judge sees the same string as
-both the question and the answer and reads it as an agent that echoed its prompt
-instead of doing the work.
+`judges.llm.rubric()` grades an agent's answer against its task by default.
+Stored documents, labelled corpora and earlier replies need text grading;
+otherwise the judge treats the value as both the question and the answer.
 
 Pass `framing: "text"` for those cases:
 
@@ -1007,11 +1004,6 @@ const report = await runEval(definition, {
   },
 });
 ```
-
-Braintrust should follow the same contract as a sibling
-`@veryfront/ext-eval-report-*` exporter, for example a future
-`@veryfront/ext-eval-report-braintrust`, instead of being special-cased in
-project eval definitions or the MLflow exporter.
 
 ## Discovery
 

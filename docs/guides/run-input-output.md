@@ -292,7 +292,3 @@ for its input shows `status: "failed"`, `output: null`, and
 - [Runs](./runs.md): create, observe, and cancel runs.
 - [Runs API reference](../api-reference/veryfront/runs.md): the SDK compatibility
   `Run` shape, including `input_schema_sha256` and `output_schema_sha256`.
-- [Tasks](./tasks.md): task context, `ctx.input`, and `ctx.config`.
-- [Workflows](./workflows.md): steps, the workflow context, and output
-  selection.
-- [Agents](./agents.md): structured output with `outputSchema`.

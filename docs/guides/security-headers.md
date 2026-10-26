@@ -4,7 +4,8 @@ description: "Configure Content-Security-Policy sources and verify the security 
 order: 90
 ---
 
-Every hosted Veryfront project is served with a Content-Security-Policy and a set of hardening headers. You do not switch them on; they apply in production whether or not you configure anything. What you do configure is the extra origins your own site needs.
+Hosted Veryfront projects receive security headers and a Content-Security-Policy
+in production. Configure the additional origins your site needs.
 
 ## The default policy
 
@@ -52,13 +53,18 @@ Both close injection routes, and neither can be widened: they are required direc
 
 On hosted `*.veryfront.com` and `*.veryfront.org` addresses, that enforced header also contains `frame-ancestors 'self' https://veryfront.com https://veryfront.org`. This explicit allowlist lets Studio embed the project while `X-Frame-Options: DENY` remains the fallback for older browsers. Custom domains do not receive this exception.
 
-The exception is `VERYFRONT_CSP`. Setting that environment variable replaces the policy wholesale and serves it enforced on its own, so neither the reported floor nor this pair is added alongside it. Writing a whole policy by hand is an explicit act, and Veryfront does not second-guess it.
+`VERYFRONT_CSP` replaces the entire policy with an enforced policy. It also
+replaces the default report-only policy and required directives.
 
-**Every directive you give a value in `security.csp` is enforced too**, including `form-action` and `frame-ancestors`. Listing your image origins means you have thought about images, so `img-src` binds with your sources in it. Directives you never mentioned keep reporting, and so does one written as `undefined`, which counts as unconfigured rather than as a declaration. Adding one origin does not bind the rest of your policy, because deciding to allow a CDN and deciding to bind script execution across your site are different decisions.
+**Each directive configured in `security.csp` is enforced**, including
+`form-action` and `frame-ancestors`. Other directives remain report-only.
+`undefined` counts as unconfigured. Adding an origin to one directive does not
+enforce the rest of the policy.
 
-One consequence worth knowing: CSP resolves a missing directive by falling back to a broader one, so enforcing `script-src` would otherwise also constrain workers and frames. Veryfront emits those alongside it, with the same sources the reported policy gives them, so declaring one directive never tightens another behind your back.
-
-To bind a directive, configure it. To see what binding it would cost first, read the reports.
+CSP falls back to broader directives when specific ones are missing. When you
+enforce `script-src`, Veryfront also emits worker and frame directives with
+their report-only sources so the fallback does not restrict them further.
+Review violation reports before enforcing another directive.
 
 ## Violation reports
 
@@ -66,7 +72,9 @@ The policy asks browsers to report what it blocks, to `/_vf/csp-report` on your 
 
 You do not configure this and cannot switch it off. Reports are recorded with the violating document, the directive, the blocked URL and the status. Query strings are removed, so identifiers in a URL do not reach a log. They are rate-limited, and the endpoint always answers `204`.
 
-The endpoint is exempt from `security.auth` and `security.csrf`. A browser reports a violation without credentials and without a CSRF token, because a report is not a user action, so a protected project would otherwise report nothing at all. Exempting it discloses nothing: it reads no credentials, changes no state, and its response never varies.
+The reporting endpoint is exempt from `security.auth` and `security.csrf` so
+browsers can submit reports without credentials or a CSRF token. It reads no
+credentials, changes no application state and always returns `204`.
 
 ## Adding an origin
 
@@ -115,7 +123,7 @@ export default {
 };
 ```
 
-Misspelling a directive fails configuration loading rather than silently doing nothing. Browsers ignore unrecognized directive names, so `fontSource: [...]` would otherwise look configured and protect nothing.
+Unknown directive names, such as `fontSource`, fail configuration loading.
 
 ## What you cannot remove
 

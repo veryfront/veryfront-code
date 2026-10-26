@@ -5,8 +5,8 @@ description: "Install Veryfront Code into a TypeScript project you already have.
 order: 5
 ---
 
-Use this page to add Veryfront to a codebase that already exists. To start from
-a scaffold instead, see [Create project](./create-project.md).
+Add Veryfront to an existing TypeScript project. For a new app, see
+[Create project](./create-project.md).
 
 Veryfront installs as a normal dependency. It does not rewrite your
 `package.json` scripts, your `tsconfig.json`, or any source file you already
@@ -31,8 +31,7 @@ variants.
 
 ## Configure TypeScript
 
-The package ships a base config with everything Veryfront needs. Extending it is
-the shortest correct route:
+Extend the package's base TypeScript config:
 
 ```json
 {
@@ -44,12 +43,10 @@ the shortest correct route:
 Make sure `include` covers wherever you keep your own source as well as your
 routes.
 
-The base config sets `"noEmit": true`: Veryfront bundles your routes itself and
-uses `tsc` only for typechecking. If your existing build emits JavaScript with
-`tsc`, do not replace your config with the extends form: the build keeps
-exiting 0 but silently stops emitting, and your output directory goes stale.
-Keep your own config and add the three options below instead, or set
-`"noEmit": false` in the config your build compiles with.
+The base config sets `"noEmit": true` because Veryfront bundles your routes.
+If your build uses `tsc` to emit JavaScript, extending this config stops emitting
+even though the build exits successfully. Keep your config and add the options
+below, or set `"noEmit": false` in the config your build uses.
 
 ### Setting the options yourself
 
@@ -137,9 +134,7 @@ forward and prints the port it actually used, so open the URL the CLI prints.
 
 Open the URL the CLI printed. The page renders `Hello from Veryfront`.
 
-To check it without a browser, use the port from that URL rather than assuming
-3000. If the port fell forward, 3000 still belongs to whatever took it, so
-curling it verifies the wrong server:
+To check without a browser, use the port from the printed URL:
 
 ```bash
 curl -s http://localhost:<PORT>/

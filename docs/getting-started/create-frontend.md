@@ -44,11 +44,9 @@ of a bulleted list.
 
 ## Supply the Markdown renderer
 
-[Create project](./create-project.md) preselects the `ai-agent` template, and
-that starter, like the other chat starters, scaffolds
-`app/markdown-renderer.tsx`, so those projects already have this file. Create it
-yourself if yours does not: the `minimal` and `agentic-workflow` templates ship
-without a renderer, as does a project you added Veryfront to.
+The `ai-agent` and other chat starters include `app/markdown-renderer.tsx`.
+Create it if your project lacks it. The `minimal` and `agentic-workflow`
+templates and existing apps need this step.
 
 ```bash
 npm install --save-exact react-markdown@9.0.3 remark-gfm@4.0.1
