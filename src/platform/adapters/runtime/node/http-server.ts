@@ -583,7 +583,10 @@ export function createNodeRequestListener(
         responseReader = response.body.getReader();
         // Deno commits response headers independently of the first body chunk.
         // Preserve that contract for its selected transport without changing Node.
-        if (flushResponseHeaders) _res.flushHeaders();
+        if (flushResponseHeaders) {
+          if ("flushHeaders" in _res) _res.flushHeaders();
+          else _res.writeHead(response.status);
+        }
         while (true) {
           const { done, value } = await responseReader.read();
           if (done) break;

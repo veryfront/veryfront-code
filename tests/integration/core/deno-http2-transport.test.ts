@@ -198,3 +198,67 @@ it("dual protocol preface handles fragmentation, EOF, malformed input and timeou
     );
   }
 });
+
+for (const protocol of ["http1", "h2c"] as const) {
+  it(`Deno ${protocol} delivers held-body headers and cancellation without stopping its sibling`, async () => {
+    const runtime = new DenoAdapter();
+    const aborted = Promise.withResolvers<void>();
+    const cancelled = Promise.withResolvers<void>();
+    const server = await runtime.serve((request) => {
+      if (new URL(request.url).pathname === "/sibling") return new Response("sibling");
+      request.signal.addEventListener("abort", () => aborted.resolve(), { once: true });
+      return new Response(
+        new ReadableStream<Uint8Array>({
+          cancel() {
+            cancelled.resolve();
+          },
+        }),
+        { status: 202, headers: { "x-held-body": "yes" } },
+      );
+    }, { hostname: "127.0.0.1", port: 0, nodeWebSocketServerProvider: null });
+    const origin = `http://127.0.0.1:${server.addr.port}`;
+    const controller = new AbortController();
+    const client = protocol === "h2c" ? connect(origin) : undefined;
+    try {
+      if (client) {
+        const headers = Promise.withResolvers<void>();
+        const request = client.request({ ":path": "/held" });
+        request.on("error", headers.reject);
+        request.on("response", (values) => {
+          assertEquals(values[":status"], 202);
+          assertEquals(values["x-held-body"], "yes");
+          headers.resolve();
+        });
+        request.end();
+        await bounded(headers.promise);
+        request.close(constants.NGHTTP2_CANCEL);
+      } else {
+        const response = await bounded(fetch(`${origin}/held`, { signal: controller.signal }));
+        assertEquals(response.status, 202);
+        assertEquals(response.headers.get("x-held-body"), "yes");
+        controller.abort();
+      }
+      await bounded(aborted.promise);
+      await bounded(cancelled.promise);
+      if (client) {
+        const finished = Promise.withResolvers<string>();
+        let body = "";
+        const sibling = client.request({ ":path": "/sibling" });
+        sibling.on("error", finished.reject);
+        sibling.on("data", (chunk) => body += new TextDecoder().decode(chunk));
+        sibling.on("end", () => finished.resolve(body));
+        sibling.end();
+        assertEquals(await bounded(finished.promise), "sibling");
+      } else {
+        assertEquals(
+          await bounded(fetch(`${origin}/sibling`).then((response) => response.text())),
+          "sibling",
+        );
+      }
+    } finally {
+      controller.abort();
+      client?.destroy();
+      await bounded(server.stop());
+    }
+  });
+}
