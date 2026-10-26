@@ -34,6 +34,135 @@ function inside(parent: string, child: string): boolean {
     !path.split(/[\\/]/).includes("..");
 }
 
+function requireVendorContainment(
+  parent: string,
+  child: string,
+  message: string,
+): void {
+  if (!inside(parent, child)) throw new TypeError(message);
+}
+
+function requireVendorSizeWithin(
+  size: number,
+  maximum: number,
+  message: string,
+): void {
+  if (size > maximum) throw new TypeError(message);
+}
+
+function parseVendorInventory(inventoryBytes: Uint8Array): unknown[] {
+  const inventory = record(
+    JSON.parse(new TextDecoder().decode(inventoryBytes)),
+  );
+  exactKeys(inventory, ["components"]);
+  if (
+    !Array.isArray(inventory.components) || inventory.components.length < 1 ||
+    inventory.components.length > 8
+  ) {
+    throw new TypeError(
+      "Vendored inventory requires one to eight components",
+    );
+  }
+  return inventory.components;
+}
+
+function parseVendorComponent(raw: unknown, identities: Set<string>) {
+  const component = record(raw);
+  exactKeys(component, [
+    "name",
+    "version",
+    "source",
+    "sha256",
+    "license",
+    "upstream",
+  ]);
+  const name = text(component.name, /^[a-z0-9][a-z0-9.-]*$/, "name");
+  const version = text(
+    component.version,
+    /^\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?$/,
+    "version",
+  );
+  const source = text(
+    component.source,
+    /^vendor\/[A-Za-z0-9._-]+\.js$/,
+    "path",
+  );
+  const sha256 = text(component.sha256, /^[a-f0-9]{64}$/, "digest");
+  if (component.license !== "MIT") {
+    throw new TypeError("Unreviewed vendored source license");
+  }
+  const identity = name + "@" + version;
+  if (identities.has(identity)) {
+    throw new TypeError("Duplicate vendored source identity");
+  }
+  identities.add(identity);
+  return { component, name, version, source, sha256, identity };
+}
+
+function parseVendorUpstream(
+  component: Record<string, unknown>,
+  identity: string,
+  sha256: string,
+  sourceIdentities: Map<string, string>,
+) {
+  const upstream = record(component.upstream);
+  exactKeys(upstream, ["name", "version", "source", "sha256", "url"]);
+  const upstreamName = text(
+    upstream.name,
+    /^(?:@[a-z0-9-]+\/)?[a-z0-9][a-z0-9._-]*$/,
+    "upstream name",
+  );
+  const upstreamVersion = text(
+    upstream.version,
+    /^\d+\.\d+\.\d+$/,
+    "upstream version",
+  );
+  const upstreamSource = text(
+    upstream.source,
+    /^[A-Za-z0-9_-]+(?:\/[A-Za-z0-9._-]+)*$/,
+    "upstream source",
+  );
+  const upstreamDigest = text(
+    upstream.sha256,
+    /^[a-f0-9]{64}$/,
+    "upstream digest",
+  );
+  const upstreamUrl = text(
+    upstream.url,
+    /^https:\/\/registry\.npmjs\.org\/[^?#]+$/,
+    "upstream URL",
+  );
+  const parsedUrl = new URL(upstreamUrl);
+  if (
+    parsedUrl.origin !== "https://registry.npmjs.org" ||
+    parsedUrl.username || parsedUrl.password
+  ) {
+    throw new TypeError("Invalid vendored upstream origin");
+  }
+  const fingerprint = JSON.stringify([
+    sha256,
+    upstreamName,
+    upstreamVersion,
+    upstreamSource,
+    upstreamDigest,
+    upstreamUrl,
+  ]);
+  const prior = sourceIdentities.get(identity);
+  if (prior !== undefined && prior !== fingerprint) {
+    throw new TypeError(
+      "Conflicting vendored source identity across workspaces",
+    );
+  }
+  sourceIdentities.set(identity, fingerprint);
+  return {
+    upstreamName,
+    upstreamVersion,
+    upstreamSource,
+    upstreamDigest,
+    upstreamUrl,
+  };
+}
+
 export async function vendorComponentsByWorkspaceManifest(
   workspaceMembers: string[],
   rootDirectory = ".",
@@ -44,9 +173,11 @@ export async function vendorComponentsByWorkspaceManifest(
   for (const member of workspaceMembers) {
     text(member, /^[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)*$/, "workspace path");
     const directory = await Deno.realPath(resolve(root, member));
-    if (!inside(root, directory)) {
-      throw new TypeError("Vendored workspace escapes the source root");
-    }
+    requireVendorContainment(
+      root,
+      directory,
+      "Vendored workspace escapes the source root",
+    );
     const inventoryPath = resolve(directory, "vendor-sources.json");
     try {
       await Deno.lstat(inventoryPath);
@@ -56,71 +187,45 @@ export async function vendorComponentsByWorkspaceManifest(
     }
     // A present but dangling/escaping inventory is an error, not an absent optional inventory.
     const realInventory = await Deno.realPath(inventoryPath);
-    if (!inside(directory, realInventory)) {
-      throw new TypeError("Vendored inventory escapes its workspace");
-    }
-    if ((await Deno.stat(realInventory)).size > 32768) {
-      throw new TypeError("Vendored inventory exceeds its bound");
-    }
-    const inventoryBytes = await Deno.readFile(realInventory);
-    if (inventoryBytes.length > 32768) {
-      throw new TypeError("Vendored inventory exceeds its bound");
-    }
-    const inventory = record(
-      JSON.parse(new TextDecoder().decode(inventoryBytes)),
+    requireVendorContainment(
+      directory,
+      realInventory,
+      "Vendored inventory escapes its workspace",
     );
-    exactKeys(inventory, ["components"]);
-    if (
-      !Array.isArray(inventory.components) || inventory.components.length < 1 ||
-      inventory.components.length > 8
-    ) {
-      throw new TypeError(
-        "Vendored inventory requires one to eight components",
-      );
-    }
+    requireVendorSizeWithin(
+      (await Deno.stat(realInventory)).size,
+      32768,
+      "Vendored inventory exceeds its bound",
+    );
+    const inventoryBytes = await Deno.readFile(realInventory);
+    requireVendorSizeWithin(
+      inventoryBytes.length,
+      32768,
+      "Vendored inventory exceeds its bound",
+    );
+    const inventoryComponents = parseVendorInventory(inventoryBytes);
     const components: CycloneDXComponent[] = [];
     const identities = new Set<string>();
-    for (const raw of inventory.components) {
-      const component = record(raw);
-      exactKeys(component, [
-        "name",
-        "version",
-        "source",
-        "sha256",
-        "license",
-        "upstream",
-      ]);
-      const name = text(component.name, /^[a-z0-9][a-z0-9.-]*$/, "name");
-      const version = text(
-        component.version,
-        /^\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?$/,
-        "version",
-      );
-      const source = text(
-        component.source,
-        /^vendor\/[A-Za-z0-9._-]+\.js$/,
-        "path",
-      );
-      const sha256 = text(component.sha256, /^[a-f0-9]{64}$/, "digest");
-      if (component.license !== "MIT") {
-        throw new TypeError("Unreviewed vendored source license");
-      }
-      const identity = name + "@" + version;
-      if (identities.has(identity)) {
-        throw new TypeError("Duplicate vendored source identity");
-      }
-      identities.add(identity);
+    for (const raw of inventoryComponents) {
+      const { component, name, version, source, sha256, identity } =
+        parseVendorComponent(raw, identities);
       const sourcePath = await Deno.realPath(resolve(directory, source));
-      if (!inside(directory, sourcePath)) {
-        throw new TypeError("Vendored code escapes its workspace");
-      }
-      if ((await Deno.stat(sourcePath)).size > 1048576) {
-        throw new TypeError("Vendored code exceeds its bound");
-      }
+      requireVendorContainment(
+        directory,
+        sourcePath,
+        "Vendored code escapes its workspace",
+      );
+      requireVendorSizeWithin(
+        (await Deno.stat(sourcePath)).size,
+        1048576,
+        "Vendored code exceeds its bound",
+      );
       const bytes = await Deno.readFile(sourcePath);
-      if (bytes.length > 1048576) {
-        throw new TypeError("Vendored code exceeds its bound");
-      }
+      requireVendorSizeWithin(
+        bytes.length,
+        1048576,
+        "Vendored code exceeds its bound",
+      );
       const digest = Array.from(
         new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)),
       )
@@ -128,55 +233,13 @@ export async function vendorComponentsByWorkspaceManifest(
       if (digest !== sha256) {
         throw new TypeError("Vendored source digest mismatch: " + source);
       }
-      const upstream = record(component.upstream);
-      exactKeys(upstream, ["name", "version", "source", "sha256", "url"]);
-      const upstreamName = text(
-        upstream.name,
-        /^(?:@[a-z0-9-]+\/)?[a-z0-9][a-z0-9._-]*$/,
-        "upstream name",
-      );
-      const upstreamVersion = text(
-        upstream.version,
-        /^\d+\.\d+\.\d+$/,
-        "upstream version",
-      );
-      const upstreamSource = text(
-        upstream.source,
-        /^[A-Za-z0-9_-]+(?:\/[A-Za-z0-9._-]+)*$/,
-        "upstream source",
-      );
-      const upstreamDigest = text(
-        upstream.sha256,
-        /^[a-f0-9]{64}$/,
-        "upstream digest",
-      );
-      const upstreamUrl = text(
-        upstream.url,
-        /^https:\/\/registry\.npmjs\.org\/[^?#]+$/,
-        "upstream URL",
-      );
-      const parsedUrl = new URL(upstreamUrl);
-      if (
-        parsedUrl.origin !== "https://registry.npmjs.org" ||
-        parsedUrl.username || parsedUrl.password
-      ) {
-        throw new TypeError("Invalid vendored upstream origin");
-      }
-      const fingerprint = JSON.stringify([
-        sha256,
+      const {
         upstreamName,
         upstreamVersion,
         upstreamSource,
         upstreamDigest,
         upstreamUrl,
-      ]);
-      const prior = sourceIdentities.get(identity);
-      if (prior !== undefined && prior !== fingerprint) {
-        throw new TypeError(
-          "Conflicting vendored source identity across workspaces",
-        );
-      }
-      sourceIdentities.set(identity, fingerprint);
+      } = parseVendorUpstream(component, identity, sha256, sourceIdentities);
       components.push({
         type: "library",
         name,
