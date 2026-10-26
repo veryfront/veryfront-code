@@ -12,16 +12,15 @@ import { register, unregister } from "#veryfront/extensions/contracts.ts";
 import { SandboxShellToolsProviderName } from "#veryfront/extensions/sandbox/index.ts";
 import { agentRegistry } from "#veryfront/agent/composition/index.ts";
 import { toolRegistryInternal } from "#veryfront/tool/registry.ts";
+import { withTempDir } from "#veryfront/testing/deno-compat.ts";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
 
-async function withTempDir(fn: (dir: string) => Promise<void>): Promise<void> {
-  const dir = Deno.makeTempDirSync();
+async function withAgentFixture(fn: (dir: string) => Promise<void>): Promise<void> {
   register(SandboxShellToolsProviderName, () => Promise.resolve({ tools: {} }));
   try {
-    await fn(dir);
+    await withTempDir(fn);
   } finally {
     await stopEsbuild();
-    Deno.removeSync(dir, { recursive: true });
     agentRegistry.clearAll();
     toolRegistryInternal.clearAll();
     unregister(SandboxShellToolsProviderName);
@@ -45,7 +44,7 @@ Help users build with Veryfront.
 
 for (const rejectFlush of [false, true]) {
   Deno.test(`selected Deno bind failure captures startup error and resets after flush rejection=${rejectFlush}`, async () => {
-    await withTempDir(async (rootDir) => {
+    await withAgentFixture(async (rootDir) => {
       writeMarkdownAgentDefinition(rootDir, "support");
       const occupied = Deno.listen({ hostname: "0.0.0.0", port: 0 });
       const originalVersion = Deno.version;
