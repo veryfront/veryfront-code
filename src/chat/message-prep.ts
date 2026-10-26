@@ -1194,8 +1194,15 @@ function wrapToolResultOutput(
   return original;
 }
 
-function hasRecentResourceIdentity(collection: Record<string, unknown>): boolean {
+function hasRecentResourceIdentity(collection: unknown): boolean {
   try {
+    if (Array.isArray(collection)) {
+      return Object.values(Object.getOwnPropertyDescriptors(collection)).some((descriptor) =>
+        descriptor.enumerable && "value" in descriptor && isRecord(descriptor.value) &&
+        hasRecentResourceIdentity(descriptor.value)
+      );
+    }
+    if (!isRecord(collection)) return false;
     const descriptors = Object.getOwnPropertyDescriptors(collection);
     const data = Object.getOwnPropertyDescriptor(collection, "data");
     return (data?.enumerable === true && Array.isArray(data.value)) ||
@@ -1203,7 +1210,9 @@ function hasRecentResourceIdentity(collection: Record<string, unknown>): boolean
         if (!descriptor.enumerable || !("value" in descriptor)) return false;
         const value: unknown = descriptor.value;
         return /(?:^id$|Id$|ID$|_id$)/.test(key) &&
-          !/^(?:request|provider_?request)_?id$|(?:trace|span|correlation)_?id$/i.test(key) &&
+          !/^(?:request|provider_?request)_?id$|(?:tool_?call|trace|span|correlation)_?id$/i.test(
+            key,
+          ) &&
           ((typeof value === "string" && value.length > 0) ||
             (typeof value === "number" && Number.isFinite(value)));
       });
@@ -1214,8 +1223,8 @@ function hasRecentResourceIdentity(collection: Record<string, unknown>): boolean
 
 /**
  * Mask old tool outputs while retaining preceding-turn file evidence and resource results for follow-ups.
- * Collection results and objects with resource IDs retain up to 4,096 serialized characters;
- * request, trace, span, and correlation IDs alone do not qualify. Existing summary contracts take precedence.
+ * Resource arrays, collection results, and objects with resource IDs retain up to 4,096 output characters;
+ * request, tool-call, trace, span, and correlation IDs alone do not qualify. Existing summary contracts take precedence.
  */
 export function maskOldToolOutputs(
   messages: ProviderModelMessage[],
@@ -1290,7 +1299,8 @@ export function maskOldToolOutputs(
         previousUserIdx >= 0 &&
         idx > previousUserIdx &&
         idx < lastUserIdx &&
-        isRecord(collection) &&
+        (typeof rawValue === "string" ? rawValue.length : charCount) <=
+          RECENT_COLLECTION_MAX_CHARS &&
         serializedLength(collection) <= RECENT_COLLECTION_MAX_CHARS &&
         hasRecentResourceIdentity(collection)
       ) return part;

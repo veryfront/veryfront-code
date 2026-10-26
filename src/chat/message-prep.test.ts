@@ -996,7 +996,12 @@ Deno.test("maskOldToolOutputs retains recent bounded collection identities for f
     ) {
       replayedTool.content[0]!.output = output;
       const compacted = maskOldToolOutputs(replayed)[2];
-      if (page === bounded) assertEquals(compacted, replayed[2]);
+      if (
+        page === bounded &&
+        (typeof output.value === "string"
+            ? output.value.length
+            : JSON.stringify(output.value).length) <= 4096
+      ) assertEquals(compacted, replayed[2]);
       else assertStringIncludes(JSON.stringify(compacted), "output omitted");
     }
   }
@@ -1016,7 +1021,12 @@ Deno.test("maskOldToolOutputs retains recent bounded collection identities for f
     ) {
       replayedTool.content[0]!.output = output;
       const compacted = maskOldToolOutputs(replayed)[2];
-      if (length === 4096) assertEquals(compacted, replayed[2]);
+      if (
+        length === 4096 &&
+        (typeof output.value === "string"
+            ? output.value.length
+            : JSON.stringify(output.value).length) <= 4096
+      ) assertEquals(compacted, replayed[2]);
       else assertStringIncludes(JSON.stringify(compacted), "output omitted");
     }
   }
@@ -3080,6 +3090,35 @@ describe("recent tool resource results", () => {
     }
   });
 
+  it("retains direct resource arrays and masks oversized original text", () => {
+    const resource = { id: "folder-1", description: "x".repeat(1000) };
+    const cases: [ChatToolResultPart["output"], boolean][] = [
+      [{ type: "json", value: [resource] }, true],
+      [{ type: "text", value: JSON.stringify([resource]) }, true],
+      [{ type: "text", value: " ".repeat(5000) + JSON.stringify(resource) }, false],
+      [{ type: "text", value: JSON.stringify(resource).replace(/x/g, "\\u0078") }, false],
+      [{ type: "json", value: [{ toolCallId: "call", detail: "x".repeat(1000) }] }, false],
+    ];
+    for (const [output, retained] of cases) {
+      const messages: ProviderModelMessage[] = [
+        { role: "user", content: "List resources" },
+        {
+          role: "tool",
+          content: [{
+            type: "tool-result",
+            toolCallId: "list",
+            toolName: "integration__list",
+            output,
+          }],
+        },
+        { role: "user", content: "Open that resource" },
+      ];
+      const actual = maskOldToolOutputs(messages)[1];
+      if (retained) assertEquals(actual, messages[1]);
+      else assertStringIncludes(JSON.stringify(actual), "output omitted");
+    }
+  });
+
   it("inspects resource results without invoking getters or proxy reads", () => {
     let getterCalls = 0;
     const valid = { id: "created-resource", description: "x".repeat(1000) };
@@ -3146,6 +3185,13 @@ describe("recent tool resource results", () => {
       const key of [
         "requestId",
         "request_id",
+        "toolCallId",
+        "tool_call_id",
+        "toolCallID",
+        "publicToolCallId",
+        "public_tool_call_id",
+        "waitingToolCallId",
+        "waiting_tool_call_id",
         "providerRequestId",
         "provider_request_id",
         "providerRequestID",
