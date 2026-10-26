@@ -151,6 +151,20 @@ export async function snapshotRunSchemaPair(
   }
 }
 
+/**
+ * Serialize a completed pair produced by snapshotRunSchemaPair without applying a
+ * second, narrower budget to its envelope. Each detached document already has
+ * at most 100,000 value nodes, depth 128 and 4 MiB of serialized JSON. This walk
+ * therefore visits at most 200,009 nodes at depth 131, and the fixed pair fields
+ * add fewer than 256 bytes to the two documents. Array length is not JSON data.
+ * Only detached captured pairs belong at this internal serialization boundary.
+ */
+export function serializeCapturedRunSchemaPair(
+  pair: Extract<RunSchemaPairSnapshot, { state: "captured" }>,
+): string {
+  return serializeCanonical(pair)!;
+}
+
 /** Capture validator methods before an acknowledgment can yield to authored code.
  * Callable adapters retain their transforms/refinements and receiver; raw JSON
  * declarations use the exact detached document that was persisted.

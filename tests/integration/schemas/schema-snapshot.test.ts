@@ -8,6 +8,7 @@ import {
   canonicalJsonSchema,
   captureRunSchemaValidation,
   schemaIdentitySha256,
+  serializeCapturedRunSchemaPair,
   snapshotRunSchemaPair,
 } from "#veryfront/schemas/schema-identity.ts";
 
@@ -175,15 +176,18 @@ describe("paired run schema snapshot", () => {
       },
     });
     let result;
+    let serialized: string | undefined;
     try {
       result = await snapshotRunSchemaPair({ inputSchema: { type: "string" } });
+      if (result.state === "captured") serialized = serializeCapturedRunSchemaPair(result);
     } finally {
       if (previous) Object.defineProperty(Object.prototype, "toJSON", previous);
       else Reflect.deleteProperty(Object.prototype, "toJSON");
     }
     assertEquals(calls, 0);
     assertEquals(result.state, "captured");
-    if (result.state === "captured") assertEquals(result.input?.schema, { type: "string" });
+    if (serialized === undefined) throw new Error("Expected serialized captured pair");
+    assertEquals(JSON.parse(serialized), result);
   });
   it("sorts numeric-looking object keys lexically like the API canonical algorithm", async () => {
     const result = await snapshotRunSchemaPair({

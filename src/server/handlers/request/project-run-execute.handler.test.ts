@@ -19109,13 +19109,23 @@ describe("runtime ownership actual client problem transport", () => {
 });
 
 describe("project run required schema snapshot protocol", () => {
-  for (const kind of ["task", "workflow"] as const) {
-    it(`interrupts a pending ${kind} schema acknowledgment on independent stop`, async () => {
+  for (
+    const [kind, cancellation] of [
+      ["task", "stop"],
+      ["workflow", "stop"],
+      ["task", "disconnect"],
+      ["workflow", "disconnect"],
+      ["task", "deadline"],
+    ] as const
+  ) {
+    it(`interrupts a pending ${kind} schema acknowledgment on ${cancellation}`, async () => {
+      const clock = manualTaskDeadlineClock();
+      const disconnect = new AbortController();
       const registry = new RunStopRegistry();
       const started = Promise.withResolvers<AbortSignal>();
       const blocked = Promise.withResolvers<Response>();
       let businessCalls = 0;
-      const runId = `run_schema_stop_${kind}`;
+      const runId = `run_schema_${cancellation}_${kind}`;
       const canonicalRunId = "11111111-1111-4111-8111-111111111111";
       const signed = await signedRequest(`/api/control-plane/runs/${runId}/execute`, {
         runId,
@@ -19124,6 +19134,9 @@ describe("project run required schema snapshot protocol", () => {
         kind,
         target: kind === "task" ? "task:sync-calendar-events" : "workflow:publish",
         schema_snapshot_protocol: 1,
+        ...(cancellation === "deadline"
+          ? { deadlineAt: new Date(clock.now() + 25).toISOString() }
+          : {}),
       }, {
         "x-veryfront-run-event-token": createProjectRunEventToken({
           runId,
@@ -19142,7 +19155,7 @@ describe("project run required schema snapshot protocol", () => {
             throw new Error("workflow must not start before acknowledgment");
           },
         }),
-        undefined,
+        clock,
         registry,
       );
       await withMockFetch((_url, init) => {
@@ -19152,10 +19165,19 @@ describe("project run required schema snapshot protocol", () => {
         signal.addEventListener("abort", () => blocked.reject(signal.reason), { once: true });
         return blocked.promise;
       }, async () => {
-        const pending = handler.handle(signed.request, createCtx(signed.publicKeyPem));
+        const pending = handler.handle(
+          new Request(signed.request, { signal: disconnect.signal }),
+          createCtx(signed.publicKeyPem),
+        );
         const signal = await started.promise;
         try {
-          assertEquals(registry.requestStop(runId), { accepted: true, stopped: false });
+          if (cancellation === "stop") {
+            assertEquals(registry.requestStop(runId), { accepted: true, stopped: false });
+          } else if (cancellation === "disconnect") {
+            disconnect.abort(new Error("request disconnected"));
+          } else {
+            clock.advance(25);
+          }
           assertEquals(signal.aborted, true);
         } finally {
           blocked.reject(new Error("test acknowledgment released"));
@@ -19164,6 +19186,79 @@ describe("project run required schema snapshot protocol", () => {
         assertEquals(registry.requestStop(runId), { accepted: true, stopped: true });
       });
       assertEquals(businessCalls, 0);
+    });
+  }
+
+  for (const shape of ["array-heavy", "deepest-array", "too-deep", "too-many-nodes"] as const) {
+    it(`preserves per-document schema limits through the append envelope: ${shape}`, async () => {
+      let document: Record<string, unknown> = { enum: [] };
+      if (shape === "array-heavy" || shape === "too-many-nodes") {
+        document = {
+          enum: Array.from({ length: shape === "array-heavy" ? 60_000 : 100_000 }, () => []),
+        };
+      } else {
+        for (let depth = 1; depth < (shape === "deepest-array" ? 128 : 129); depth++) {
+          document = { not: document };
+        }
+      }
+      const supported = shape === "array-heavy" || shape === "deepest-array";
+      const digest = await schemaIdentitySha256(document);
+      const runId = `run_schema_budget_${shape}`;
+      const canonicalRunId = "11111111-1111-4111-8111-111111111111";
+      let appends = 0;
+      let executions = 0;
+      const signed = await signedRequest(`/api/control-plane/runs/${runId}/execute`, {
+        runId,
+        canonicalRunId,
+        projectId: "proj-1",
+        kind: "task",
+        target: "task:bounded",
+        schema_snapshot_protocol: 1,
+      }, {
+        "x-veryfront-run-event-token": createProjectRunEventToken({
+          runId,
+          canonicalRunId,
+          projectId: "proj-1",
+        }),
+      });
+      const handler = new ProjectRunExecuteHandler(createDeps({
+        ensureProjectDiscovery: async () => {
+          const discovery = createEmptyDiscoveryResult();
+          discovery.tasks.set("bounded", {
+            name: "Bounded",
+            inputSchema: document,
+            outputSchema: document,
+            run: async () => null,
+          });
+          return discovery;
+        },
+        runTask: async () => {
+          executions++;
+          return { success: true, durationMs: 1 };
+        },
+      }));
+      await withMockFetch((_url, init) => {
+        appends++;
+        const body = requestJsonBody(init);
+        assertExists(body);
+        assertEquals(body.events, []);
+        assertEquals(body.schema_snapshot, {
+          version: 1,
+          state: "captured",
+          input: { schema: document, sha256: digest },
+          output: { schema: document, sha256: digest },
+        });
+        assert(typeof init?.body === "string");
+        assert(new TextEncoder().encode(init.body).length < 10 * 1024 * 1024);
+        return Promise.resolve(Response.json({
+          run_id: canonicalRunId,
+          latest_event_id: 0,
+          appended_count: 0,
+          schema_snapshot_ack: { version: 1, outcome: "stored" },
+        }));
+      }, () => handler.handle(signed.request, createCtx(signed.publicKeyPem)));
+      assertEquals(appends, supported ? 1 : 0);
+      assertEquals(executions, supported ? 1 : 0);
     });
   }
 

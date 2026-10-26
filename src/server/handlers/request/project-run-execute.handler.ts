@@ -3,6 +3,7 @@ import { captureWorkflowDefinition } from "#veryfront/workflow/executor/workflow
 import {
   captureRunSchemaValidation,
   type RunSchemaPairSnapshot,
+  serializeCapturedRunSchemaPair,
   snapshotRunSchemaPair,
 } from "#veryfront/schemas/schema-identity.ts";
 import {
@@ -336,6 +337,7 @@ function getOwnDataProperty(value: Record<string, unknown>, key: string): unknow
 type CapturedRunSchemas = Extract<RunSchemaPairSnapshot, { state: "captured" }>;
 type HostSchemaCapture = (
   definition: { readonly inputSchema?: unknown; readonly outputSchema?: unknown },
+  signal?: AbortSignal,
 ) => Promise<CapturedRunSchemas>;
 
 export interface ProjectRunExecuteRequest {
@@ -1369,7 +1371,10 @@ async function executeDiscoveredTaskRun(
   const pinOutput = captureSchemas
     ? captureRunSchemaValidation(definition.outputSchema)
     : undefined;
-  const schemas = captureSchemas ? await captureSchemas(definition) : undefined;
+  const taskSignal = control
+    ? ReflectApply(TaskAbortSignalAny, AbortSignal, [[signal, control.signal]]) as AbortSignal
+    : signal;
+  const schemas = captureSchemas ? await captureSchemas(definition, taskSignal) : undefined;
   const executionDefinition = schemas
     ? {
       ...definition,
@@ -1391,9 +1396,7 @@ async function executeDiscoveredTaskRun(
       : request.runtimeTargetEnvironmentId ?? undefined,
     // The control plane aborts its request when the run is cancelled; the
     // task sees that, or its deadline, as ctx.signal and can stop cooperatively.
-    signal: control
-      ? ReflectApply(TaskAbortSignalAny, AbortSignal, [[signal, control.signal]])
-      : signal,
+    signal: taskSignal,
     debug: ctx.debug,
   }, schemas);
 
@@ -2753,11 +2756,17 @@ function createHostSchemaCapture(
   const parent = requireProjectRunObservationParent(request, eventToken);
   const apiUrl = requireHostPrivateApiHttps(resolveHostOwnedSourceApiBaseUrl());
   const transport = createVeryfrontApiOriginBoundOutboundFetch(apiUrl);
-  return async (definition) => {
+  return async (definition, executionSignal) => {
+    const signal = executionSignal === undefined
+      ? abortSignal
+      : ReflectApply(TaskAbortSignalAny, AbortSignal, [[
+        abortSignal,
+        executionSignal,
+      ]]) as AbortSignal;
     const pair = await snapshotRunSchemaPair(definition);
     if (pair.state !== "captured") throw new Error("Run schema snapshot is unavailable");
     await withProjectRunObservationDeadline({
-      abortSignal,
+      abortSignal: signal,
       timeoutMs: PROJECT_RUN_OBSERVATION_APPEND_TIMEOUT_MS,
       operation: async (signal) => {
         const response = await transport(`${apiUrl}/runs/${parent.canonicalRunId}/events`, {
@@ -2766,7 +2775,7 @@ function createHostSchemaCapture(
             Authorization: `Bearer ${parent.eventToken}`,
             "Content-Type": "application/json",
           },
-          body: privateJsonStringify({ events: [], schema_snapshot: pair }),
+          body: `{"events":[],"schema_snapshot":${serializeCapturedRunSchemaPair(pair)}}`,
           signal,
         });
         if (IntrinsicReflectApply(ResponseStatusGetter, response, []) !== 200) {
