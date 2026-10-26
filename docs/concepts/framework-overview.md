@@ -4,7 +4,7 @@ description: "How application routes, agents and execution primitives share one 
 order: 1
 ---
 
-A Code project combines application routes, agent behavior and execution primitives. File conventions let the runtime discover their definitions.
+A Veryfront project combines application routes, agent behavior and execution primitives. File conventions let the runtime discover their definitions.
 
 ## Main surfaces
 

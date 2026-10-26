@@ -543,7 +543,7 @@ its `id` matches the value passed to `createAgUiHandler()`.
 ## Non-streaming response
 
 Use `generate()` for server-side generation, such as in `getServerData`.
-`getAgent()` can return `undefined`; check that the agent exists before calling it.
+`getAgent()` can return `undefined`; ensure the agent exists before calling it.
 
 ```ts
 import { getAgent } from "veryfront/agent";
@@ -874,7 +874,7 @@ For hosted replay, set `serverResolvedTrustedHostedHistoryMessageIds` only after
 matching the replayed platform result contents against immutable canonical run or
 input-response evidence, or an original host-authored content digest retained
 before edits. Mutable row IDs, roles, senders, tool names and editable parts alone
-do not prove origin. Edited replacements lose the grant. Verify trusted replay against the deployed API, runtime and Studio versions.
+do not prove origin. Edited replacements lose the grant. Ensure trusted replay works with the deployed API, runtime and Studio versions.
 
 ## Verify it worked
 

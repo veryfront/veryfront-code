@@ -23,9 +23,10 @@ Source selection and execution placement are independent.
 `sourceTargetEnvironmentId` and `sourceTargetBranchId` select source separately
 from the `runtimeTarget*` execution selectors. Keep the immutable release ID
 when selecting an execution target for a release. A branch source executing on
-an environment requires an explicit branch ID; use `null` for the root branch.
-Omitted IDs are rejected. Legacy invocations retain their matching environment
-or preview selection. Upgrade the runtime before enabling independent selectors.
+an environment must set `sourceTargetBranchId` to its branch ID or `null` for
+the root branch; omission is rejected on that path. Release sources need neither
+source-target ID. Legacy invocations retain their matching environment or preview
+selection. Upgrade the runtime before enabling independent selectors.
 
 Connected execution uses the consuming run's credentials for tools and inference.
 Source reads use the separate read-only `credentials.sourceAuthToken`. The source project's environment
