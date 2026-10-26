@@ -195,47 +195,47 @@ async function appendAuthTemplates(
 ): Promise<void> {
   // Process auth templates. Each preset layers the shared base files first,
   // then provider-specific files in sorted path order.
-  if (await directoryExists(authDir)) {
-    const baseAuthPath = `${authDir}/_base/files`;
-    requireAuthTemplateDirectory(
-      await directoryExists(baseAuthPath),
-      "Required auth base template directory is missing: templates/auth/_base/files",
-    );
-    const baseAuthFiles: Record<string, string> = {};
-    for (const file of await collectSortedFiles(baseAuthPath)) {
-      const relativePath = relative(baseAuthPath, file.path);
-      const mappedPath = mapFileName(relativePath);
-      baseAuthFiles[mappedPath] = await Deno.readTextFile(file.path);
-    }
+  if (!(await directoryExists(authDir))) return;
+  const baseAuthPath = `${authDir}/_base/files`;
+  requireAuthTemplateDirectory(
+    await directoryExists(baseAuthPath),
+    "Required auth base template directory is missing: templates/auth/_base/files",
+  );
+  const baseAuthFiles: Record<string, string> = {};
+  for (const file of await collectSortedFiles(baseAuthPath)) {
+    const relativePath = relative(baseAuthPath, file.path);
+    const mappedPath = mapFileName(relativePath);
+    baseAuthFiles[mappedPath] = await Deno.readTextFile(file.path);
+  }
 
-    for (const entry of await collectSortedDirectoryEntries(authDir)) {
-      if (!entry.isDirectory || entry.name === "_base") continue;
-      requireKnownAuthPreset(entry);
+  for (const entry of await collectSortedDirectoryEntries(authDir)) {
+    if (!entry.isDirectory || entry.name === "_base") continue;
+    requireKnownAuthPreset(entry);
 
-      const presetName = entry.name;
-      const presetPath = `${authDir}/${presetName}/files`;
+    const presetName = entry.name;
+    const presetPath = `${authDir}/${presetName}/files`;
 
-      requireAuthTemplateDirectory(
-        await directoryExists(presetPath),
+    if (!(await directoryExists(presetPath))) {
+      throw new Error(
         `Required auth preset files directory is missing: templates/auth/${presetName}/files`,
       );
-
-      const files: Record<string, string> = { ...baseAuthFiles };
-      for (const file of await collectSortedFiles(presetPath)) {
-        const relativePath = relative(presetPath, file.path);
-        const mappedPath = mapFileName(relativePath);
-        requireSeparateAuthProviderFile(
-          baseAuthFiles,
-          mappedPath,
-          presetName,
-          relativePath,
-        );
-        files[mappedPath] = await Deno.readTextFile(file.path);
-      }
-
-      if (Object.keys(files).length === 0) continue;
-      manifest.templates[`auth:${presetName}`] = { files };
     }
+
+    const files: Record<string, string> = { ...baseAuthFiles };
+    for (const file of await collectSortedFiles(presetPath)) {
+      const relativePath = relative(presetPath, file.path);
+      const mappedPath = mapFileName(relativePath);
+      requireSeparateAuthProviderFile(
+        baseAuthFiles,
+        mappedPath,
+        presetName,
+        relativePath,
+      );
+      files[mappedPath] = await Deno.readTextFile(file.path);
+    }
+
+    if (Object.keys(files).length === 0) continue;
+    manifest.templates[`auth:${presetName}`] = { files };
   }
 }
 

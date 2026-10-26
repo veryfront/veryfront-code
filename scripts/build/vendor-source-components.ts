@@ -50,6 +50,16 @@ function requireVendorSizeWithin(
   if (size > maximum) throw new TypeError(message);
 }
 
+function requireVendorDigestMatch(
+  digest: string,
+  expected: string,
+  source: string,
+): void {
+  if (digest !== expected) {
+    throw new TypeError("Vendored source digest mismatch: " + source);
+  }
+}
+
 function parseVendorInventory(inventoryBytes: Uint8Array): unknown[] {
   const inventory = record(
     JSON.parse(new TextDecoder().decode(inventoryBytes)),
@@ -192,11 +202,9 @@ export async function vendorComponentsByWorkspaceManifest(
       realInventory,
       "Vendored inventory escapes its workspace",
     );
-    requireVendorSizeWithin(
-      (await Deno.stat(realInventory)).size,
-      32768,
-      "Vendored inventory exceeds its bound",
-    );
+    if ((await Deno.stat(realInventory)).size > 32768) {
+      throw new TypeError("Vendored inventory exceeds its bound");
+    }
     const inventoryBytes = await Deno.readFile(realInventory);
     requireVendorSizeWithin(
       inventoryBytes.length,
@@ -215,11 +223,9 @@ export async function vendorComponentsByWorkspaceManifest(
         sourcePath,
         "Vendored code escapes its workspace",
       );
-      requireVendorSizeWithin(
-        (await Deno.stat(sourcePath)).size,
-        1048576,
-        "Vendored code exceeds its bound",
-      );
+      if ((await Deno.stat(sourcePath)).size > 1048576) {
+        throw new TypeError("Vendored code exceeds its bound");
+      }
       const bytes = await Deno.readFile(sourcePath);
       requireVendorSizeWithin(
         bytes.length,
@@ -230,9 +236,7 @@ export async function vendorComponentsByWorkspaceManifest(
         new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)),
       )
         .map((byte) => byte.toString(16).padStart(2, "0")).join("");
-      if (digest !== sha256) {
-        throw new TypeError("Vendored source digest mismatch: " + source);
-      }
+      requireVendorDigestMatch(digest, sha256, source);
       const {
         upstreamName,
         upstreamVersion,
