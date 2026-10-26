@@ -18,13 +18,23 @@ Project runtimes expose these signed control-plane paths:
 | `DELETE /api/control-plane/runs/:runId`      | Cancel a project agent run.                               |
 
 Each `agents/list` entry carries `id`, `name`, `description`, `avatar_url`,
-`model`, `version`, `skills` and `suggestions`. When the agent declares an
-`outputSchema`, the entry also carries `output_schema`: the agent's output
-schema as a JSON Schema document, the same document its schema identity
-(the sha256 of the canonical JSON Schema) is computed from. The API hashes it
-into the run's `output_schema_sha256` when it admits the run. The field is
-absent when the agent declares no `outputSchema` or it cannot be converted to
-JSON Schema.
+`model`, `version`, `skills` and `suggestions`. A successful schema conversion
+also includes the authoritative complete `schema_snapshot` pair:
+`{ version: 1, state: "captured", input: Identity | null, output: Identity | null }`.
+Each identity contains `schema` (a boolean or JSON Schema object) and `sha256`
+(the digest of its canonical JSON). The pair comes from the same resolved agent
+definition. Agent input has no declared schema, so its captured input is `null`.
+An agent without an output declaration still emits a captured pair with both
+sides `null`: this means confirmed absence, rather than unknown schema state.
+If conversion fails, the complete marker is omitted; absence of the marker
+means unknown and must not qualify an authoritative schema pair.
+
+For compatibility, convertible object output declarations also carry
+`output_schema`. Boolean declarations appear only in `schema_snapshot`.
+The legacy field is absent for undeclared or unconvertible output schemas;
+its absence alone does not establish a captured null declaration. Consumers
+should use the complete marker for authoritative admission instead of inferring
+schema state from the legacy field.
 
 Primary source areas:
 

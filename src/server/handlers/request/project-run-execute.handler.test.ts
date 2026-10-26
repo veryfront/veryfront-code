@@ -19109,6 +19109,64 @@ describe("runtime ownership actual client problem transport", () => {
 });
 
 describe("project run required schema snapshot protocol", () => {
+  for (const kind of ["task", "workflow"] as const) {
+    it(`interrupts a pending ${kind} schema acknowledgment on independent stop`, async () => {
+      const registry = new RunStopRegistry();
+      const started = Promise.withResolvers<AbortSignal>();
+      const blocked = Promise.withResolvers<Response>();
+      let businessCalls = 0;
+      const runId = `run_schema_stop_${kind}`;
+      const canonicalRunId = "11111111-1111-4111-8111-111111111111";
+      const signed = await signedRequest(`/api/control-plane/runs/${runId}/execute`, {
+        runId,
+        canonicalRunId,
+        projectId: "proj-1",
+        kind,
+        target: kind === "task" ? "task:sync-calendar-events" : "workflow:publish",
+        schema_snapshot_protocol: 1,
+      }, {
+        "x-veryfront-run-event-token": createProjectRunEventToken({
+          runId,
+          canonicalRunId,
+          projectId: "proj-1",
+        }),
+      });
+      const handler = new ProjectRunExecuteHandler(
+        createDeps({
+          runTask: async () => {
+            businessCalls++;
+            return { success: true, durationMs: 1 };
+          },
+          createWorkflowClient: () => {
+            businessCalls++;
+            throw new Error("workflow must not start before acknowledgment");
+          },
+        }),
+        undefined,
+        registry,
+      );
+      await withMockFetch((_url, init) => {
+        const signal = init?.signal;
+        assertExists(signal);
+        started.resolve(signal);
+        signal.addEventListener("abort", () => blocked.reject(signal.reason), { once: true });
+        return blocked.promise;
+      }, async () => {
+        const pending = handler.handle(signed.request, createCtx(signed.publicKeyPem));
+        const signal = await started.promise;
+        try {
+          assertEquals(registry.requestStop(runId), { accepted: true, stopped: false });
+          assertEquals(signal.aborted, true);
+        } finally {
+          blocked.reject(new Error("test acknowledgment released"));
+          await pending;
+        }
+        assertEquals(registry.requestStop(runId), { accepted: true, stopped: true });
+      });
+      assertEquals(businessCalls, 0);
+    });
+  }
+
   for (const mode of ["mutated", "mutated_schema", "invalid_input", "unknown_schema"] as const) {
     it(`uses the detached definition and halts unsafe work: ${mode}`, async () => {
       const runId = "run_schema_definition";

@@ -347,8 +347,6 @@ export async function runTask(
     debug = false,
   } = options;
   const start = performance.now();
-  const definition = task.definition;
-  const { inputSchema, outputSchema, run } = definition;
   let schemaViolation: SchemaViolation | null = null;
   let inputSchemaSha256: string | null = null;
   let outputSchemaSha256: string | null = null;
@@ -367,6 +365,8 @@ export async function runTask(
   };
 
   try {
+    const definition = task.definition;
+    const { inputSchema, outputSchema, run } = definition;
     signal?.throwIfAborted();
 
     if (debug) {

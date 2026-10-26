@@ -6005,14 +6005,14 @@ export class ProjectRunExecuteHandler extends BaseHandler {
         }
         const inferenceToken = readProjectRunInferenceToken(req);
         const eventToken = readIngressCredential(req, INGRESS_RUN_EVENT_TOKEN_HEADER) ?? undefined;
-        const captureSchemas = request.schema_snapshot_protocol === 1
-          ? createHostSchemaCapture(request, eventToken, req.signal)
-          : undefined;
         const stopController = new TaskAbortController();
         const executionSignal = ReflectApply(TaskAbortSignalAny, AbortSignal, [[
           IntrinsicReflectApply(RequestSignalGetter, req, []) as AbortSignal,
           stopController.signal,
         ]]) as AbortSignal;
+        const captureSchemas = request.schema_snapshot_protocol === 1
+          ? createHostSchemaCapture(request, eventToken, executionSignal)
+          : undefined;
         const startedAt = this.deps.now();
         const hostObservedAt = this.taskDeadlineClock.now();
         const runtimeOwnershipProbe = this.deps.createRuntimeOwnershipProbe?.(hostObservedAt);
