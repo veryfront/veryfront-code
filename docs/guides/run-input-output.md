@@ -43,8 +43,9 @@ as `{text}`. A project-owned agent run started without input stores `input: null
 
 For new agent runs, `run.output.text` holds the accepted final text, and
 `run.output.data` holds the validated structured result when the agent declares
-`outputSchema`. A structured result can include both fields. JSON-looking text
-stays text; Veryfront does not parse it into `data`. If the run produces neither
+`outputSchema`. A structured result can include both fields. Without `outputSchema`, JSON-looking
+text stays text; Veryfront does not parse it into `data`. With `outputSchema`,
+the runtime parses and validates the final text before returning structured data. If the run produces neither
 final text nor structured data, `run.output` is `null`.
 
 The final text is the text the agent wrote after its last tool call. Text
@@ -220,8 +221,9 @@ with a 4xx response and creates no run.
 - A task, workflow, or eval returned `null` or returned nothing (`undefined`).
 - An agent produced neither final text nor structured data. A structured JSON
   `null` is instead retained as `output.data: null`.
-- An agent's last step ended on a tool call, for example when its step budget
-  ran out, so it has no final text or structured result.
+- An agent's terminal turn contains only tool calls and produces neither final
+  text nor structured data. Reaching the step limit alone does not imply null:
+  same-turn text or a valid structured result can still populate the output.
 - A workflow's `output` selector returned `undefined`.
 
 A top-level `output: null` does not distinguish an explicit null output from no output.
