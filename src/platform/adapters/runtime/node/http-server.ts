@@ -461,6 +461,7 @@ export type NodeRequestHandler = (
 export function createNodeRequestListener(
   handler: NodeRequestHandler,
   fallbackHostname = "localhost",
+  flushResponseHeaders = false,
 ): (
   request: IncomingRequest,
   response: OutgoingResponse,
@@ -580,6 +581,9 @@ export function createNodeRequestListener(
 
       if (response.body) {
         responseReader = response.body.getReader();
+        // Deno commits response headers independently of the first body chunk.
+        // Preserve that contract for its selected transport without changing Node.
+        if (flushResponseHeaders) _res.flushHeaders();
         while (true) {
           const { done, value } = await responseReader.read();
           if (done) break;
@@ -747,7 +751,7 @@ async function createNodeServerInternal(
     return attempt;
   };
 
-  const listener = createNodeRequestListener(handler, hostname);
+  const listener = createNodeRequestListener(handler, hostname, dualProtocol);
   const server = dualProtocol
     ? new (await import("./dual-protocol-server.ts")).DualProtocolServer(listener)
     : createServer(listener);
@@ -833,7 +837,7 @@ async function createNodeServerInternal(
           denial.shouldKeepAlive = false;
           denial.assignSocket(socket as import("node:net").Socket);
           denial.once("finish", () => socket.end());
-          await createNodeRequestListener(() => response, hostname)(request, denial);
+          await createNodeRequestListener(() => response, hostname, dualProtocol)(request, denial);
           transportSettled = true;
           if (!requestAbort.signal.aborted) requestAbort.abort(denied);
           clearTransportState();
