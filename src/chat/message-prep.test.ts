@@ -3019,3 +3019,53 @@ Deno.test("prepareProviderModelMessagesFromUiMessages keeps an inline file's dat
     },
   );
 });
+
+Deno.test("maskOldToolOutputs retains a recent created resource for follow-up mutation", () => {
+  for (
+    const identity of [{ id: "created-event-id" }, { documentId: "created-document-id" }, {
+      spreadsheetId: "created-sheet-id",
+    }]
+  ) {
+    const resource = { ...identity, description: "resource detail ".repeat(75) };
+    const messages: ProviderModelMessage[] = [
+      { role: "user", content: "Create a disposable resource" },
+      {
+        role: "assistant",
+        content: [{
+          type: "tool-call",
+          toolCallId: "create",
+          toolName: "integration__create",
+          input: {},
+        }],
+      },
+      {
+        role: "tool",
+        content: [{
+          type: "tool-result",
+          toolCallId: "create",
+          toolName: "integration__create",
+          output: { type: "json", value: resource },
+        }],
+      },
+      { role: "user", content: "Update that resource" },
+    ];
+    assertEquals(maskOldToolOutputs(messages)[2], messages[2]);
+    assertStringIncludes(
+      JSON.stringify(
+        maskOldToolOutputs([...messages, { role: "assistant", content: "done" }, {
+          role: "user",
+          content: "Unrelated",
+        }])[2],
+      ),
+      "output omitted",
+    );
+    const oversized = structuredClone(messages);
+    const tool = oversized[2];
+    if (tool?.role !== "tool") throw new Error("expected result");
+    tool.content[0]!.output = {
+      type: "json",
+      value: { ...identity, description: "x".repeat(5000) },
+    };
+    assertStringIncludes(JSON.stringify(maskOldToolOutputs(oversized)[2]), "output omitted");
+  }
+});
