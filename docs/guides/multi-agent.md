@@ -305,8 +305,9 @@ Evidence reads require verified canonical parent identity. The hosted service ve
 
 If you use a custom hosted request parser or route set, supply `verifyRunTerminalToken` when the writer credential has no canonical generation. Pass the verifier returned by `createHostedServiceAuth` with the same host authentication configuration. The standard hosted service supplies this verifier.
 
-The hosted runtime verifies the receipt's lineage, target, successful source events and
-artifact version before accepting one immutable child input. Replaying the same
+The hosted runtime submits the receipt through its private event writer. Native
+child admission verifies the lineage, target, successful source events and
+artifact version content before storing one immutable input. Replaying the same
 receipt restores that input; altered receipts conflict. Application code receives
 no event credential or general HTTP client.
 
