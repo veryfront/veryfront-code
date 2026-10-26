@@ -1,3 +1,4 @@
+import { snapshotRunSchemaPair } from "#veryfront/schemas/schema-identity.ts";
 import { SECURITY_VIOLATION } from "#veryfront/errors";
 import { createPrivateTextDecoder, encodePrivateText } from "#veryfront/security/private-text.ts";
 import type { Agent } from "#veryfront/agent/types.ts";
@@ -11,8 +12,7 @@ import {
   setPrivateBytes,
 } from "#veryfront/security/private-bytes.ts";
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
-import type { InferSchema, JsonSchema, Schema } from "#veryfront/extensions/schema/index.ts";
-import { resolveJsonSchemaDocument } from "#veryfront/schemas/schema-identity.ts";
+import type { InferSchema, Schema } from "#veryfront/extensions/schema/index.ts";
 import {
   CONTROL_PLANE_RUN_OPERATION_PATH,
   CONTROL_PLANE_RUN_PATH,
@@ -333,6 +333,18 @@ export const getRuntimeAgentSchema = defineSchema((v) =>
      * (veryfront-issue-inbox#2108).
      */
     output_schema: v.record(v.string(), v.unknown()).optional(),
+    schema_snapshot: v.object({
+      version: v.literal(1),
+      state: v.literal("captured"),
+      input: v.object({
+        schema: v.union([v.boolean(), v.record(v.string(), v.unknown())]),
+        sha256: v.string(),
+      }).nullable(),
+      output: v.object({
+        schema: v.union([v.boolean(), v.record(v.string(), v.unknown())]),
+        sha256: v.string(),
+      }).nullable(),
+    }).optional(),
   })
 );
 /** Zod schema for runtime agent. */
@@ -905,30 +917,29 @@ export function getRuntimeAgentPublicMetadata(
   };
 }
 
-/**
- * The JSON Schema document of a declared agent `outputSchema`, resolved like the schema identity
- * helper does. `undefined` when none is declared or it cannot be converted; running such an agent
- * fails on its own, so the list stays usable.
- */
-function resolveDeclaredOutputSchemaDocument(outputSchema: unknown): JsonSchema | undefined {
-  try {
-    return resolveJsonSchemaDocument(outputSchema);
-  } catch {
-    return undefined;
-  }
-}
-
-function getRuntimeAgentMetadata(id: string, agent: Agent): RuntimeAgent {
-  const rawConfig = agent.config as { version?: unknown };
+async function getRuntimeAgentMetadata(id: string, agent: Agent): Promise<RuntimeAgent> {
+  const config = agent.config;
+  const rawConfig = config as { version?: unknown };
   const publicMetadata = getRuntimeAgentPublicMetadata(id, agent);
-  const outputSchema = resolveDeclaredOutputSchemaDocument(agent.config.outputSchema);
-
+  // Detach each declaration before either hash awaits. A failed input conversion
+  // must not remove the legacy output document from an otherwise usable listing.
+  const inputCapture = snapshotRunSchemaPair({});
+  const outputCapture = snapshotRunSchemaPair({ outputSchema: config.outputSchema });
+  const inputPair = await inputCapture;
+  const outputPair = await outputCapture;
+  const pair = inputPair.state === "captured" && outputPair.state === "captured"
+    ? { version: 1, state: "captured", input: inputPair.input, output: outputPair.output }
+    : undefined;
+  const outputSchema = outputPair.state === "captured" ? outputPair.output?.schema : undefined;
   return RuntimeAgentSchema.parse({
     ...publicMetadata,
-    model: agent.config.model ?? null,
+    model: config.model ?? null,
     version: typeof rawConfig.version === "string" ? rawConfig.version : null,
     skills: resolveAgentSkills(agent),
-    ...(outputSchema === undefined ? {} : { output_schema: outputSchema }),
+    ...(outputSchema !== undefined && typeof outputSchema === "object"
+      ? { output_schema: outputSchema }
+      : {}),
+    ...(pair === undefined ? {} : { schema_snapshot: pair }),
   });
 }
 
@@ -939,10 +950,12 @@ export async function listRuntimeAgents(
 ): Promise<RuntimeAgentListResponse> {
   await deps.ensureProjectDiscovery(ctx);
 
-  const agents = deps.getAllAgentIds()
-    .map((id) => ({ id, agent: deps.getAgent(id) }))
-    .filter((entry): entry is { id: string; agent: Agent } => Boolean(entry.agent))
-    .map(({ id, agent }) => getRuntimeAgentMetadata(id, agent))
+  const agents = (await Promise.all(
+    deps.getAllAgentIds()
+      .map((id) => ({ id, agent: deps.getAgent(id) }))
+      .filter((entry): entry is { id: string; agent: Agent } => Boolean(entry.agent))
+      .map(({ id, agent }) => getRuntimeAgentMetadata(id, agent)),
+  ))
     .sort((left, right) => left.name.localeCompare(right.name));
 
   return RuntimeAgentListResponseSchema.parse({ agents });

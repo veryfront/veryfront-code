@@ -235,7 +235,10 @@ describe("server/handlers/monitoring/health", () => {
 
       assertExists(result.response);
       const body = await result.response.json() as { capabilities?: string[] };
-      assertEquals(body.capabilities, [DEPENDENCY_ARTIFACT_BUILD_CAPABILITY]);
+      assertEquals(body.capabilities, [
+        DEPENDENCY_ARTIFACT_BUILD_CAPABILITY,
+        "run-schema-snapshot-v1",
+      ]);
     });
   });
 });

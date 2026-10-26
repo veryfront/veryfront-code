@@ -5,6 +5,7 @@
  * with the appropriate context.
  */
 
+import type { RunSchemaPairSnapshot } from "#veryfront/schemas/schema-identity.ts";
 import { getErrorMessage } from "#veryfront/errors";
 import { type HostRuntime, liveHostRuntime } from "#veryfront/platform/compat/process.ts";
 import { buildTaskContextEnv } from "#veryfront/runs/runtime-env.ts";
@@ -329,6 +330,7 @@ export async function runTask(
   options: RunTaskOptions,
   host: HostRuntime = liveHostRuntime(),
   scratchFs: TaskScratchFs = liveScratchFs,
+  preparedSchemas?: Extract<RunSchemaPairSnapshot, { state: "captured" }>,
 ): Promise<TaskRunResult> {
   const {
     task,
@@ -345,7 +347,8 @@ export async function runTask(
     debug = false,
   } = options;
   const start = performance.now();
-  const { inputSchema, outputSchema } = task.definition;
+  const definition = task.definition;
+  const { inputSchema, outputSchema, run } = definition;
   let schemaViolation: SchemaViolation | null = null;
   let inputSchemaSha256: string | null = null;
   let outputSchemaSha256: string | null = null;
@@ -370,8 +373,12 @@ export async function runTask(
       logger.info(`Running task "${task.id}" (${task.name})`);
     }
 
-    inputSchemaSha256 = await schemaIdentitySha256(inputSchema);
-    outputSchemaSha256 = await schemaIdentitySha256(outputSchema);
+    inputSchemaSha256 = preparedSchemas
+      ? preparedSchemas.input?.sha256 ?? null
+      : await schemaIdentitySha256(inputSchema);
+    outputSchemaSha256 = preparedSchemas
+      ? preparedSchemas.output?.sha256 ?? null
+      : await schemaIdentitySha256(outputSchema);
     const identities = { inputSchemaSha256, outputSchemaSha256 };
 
     const inputCheck = await resolveTaskInput(inputSchema, input, config);
@@ -418,7 +425,7 @@ export async function runTask(
     // Schema identity and input validation await; a cancel in that window must not start the task.
     signal?.throwIfAborted();
     onExecutionStarted?.();
-    let result = await task.definition.run(ctx);
+    let result = await reflectApply(run, definition, [ctx]);
     if (outputSchema !== undefined) {
       let check: Awaited<ReturnType<typeof checkDeclaredSchema>>;
       try {

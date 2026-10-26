@@ -1,3 +1,4 @@
+import { createControlPlaneSignature } from "../handlers/request/internal-agent-run.test-helpers.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertInstanceOf, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
@@ -199,6 +200,66 @@ async function resolveMutablePreviewAdapter(
 }
 
 describe("adapter-factory", () => {
+  it("rejects unsupported execution protocol before non-proxy config or filesystem work", async () => {
+    const runId = "run_protocol_gate";
+    const pathname = `/api/control-plane/runs/${runId}/execute`;
+    const body = JSON.stringify({ runId, projectId: "proj_123", schema_snapshot_protocol: 2 });
+    const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
+      requestId: runId,
+      projectId: "proj_123",
+      audience: "demo-project",
+      requestMethod: "POST",
+      requestPath: pathname,
+    });
+    let configCalls = 0;
+    let filesystemCalls = 0;
+    const adapter = createMockAdapter({});
+    adapter.env.get = (key) =>
+      key === "CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY" ? publicKeyPem : undefined;
+    adapter.fs.stat = async () => {
+      filesystemCalls++;
+      throw new Error("must not inspect project");
+    };
+    await assertRejects(
+      () =>
+        resolveAdapter({
+          projectDir: "/base/project",
+          adapter,
+          config: undefined,
+          projectSlug: "demo-project",
+          projectId: "proj_123",
+          proxyToken: undefined,
+          releaseId: undefined,
+          proxyEnv: undefined,
+          branch: undefined,
+          environmentName: undefined,
+          parsedDomain: {
+            slug: null,
+            branch: null,
+            environment: null,
+            isVeryfrontDomain: false,
+            isDraft: false,
+            allowIframeEmbed: false,
+          },
+          req: new Request(`https://example.test${pathname}`, {
+            method: "POST",
+            headers: { "x-veryfront-control-plane-jws": jws },
+            body,
+          }),
+          pathname,
+          isProxyMode: false,
+          prepareHostedConfigContext: async () => {
+            configCalls++;
+            return await preparePreviewHostedConfigContext();
+          },
+        }),
+      Error,
+      "Unsupported schema snapshot protocol",
+    );
+    assertEquals(configCalls, 0);
+    assertEquals(filesystemCalls, 0);
+  });
+
   afterEach(() => {
     localProjectCache.clear();
     localAdapterCache.clear();

@@ -19107,3 +19107,166 @@ describe("runtime ownership actual client problem transport", () => {
     }
   }
 });
+
+describe("project run required schema snapshot protocol", () => {
+  for (const mode of ["mutated", "mutated_schema", "invalid_input", "unknown_schema"] as const) {
+    it(`uses the detached definition and halts unsafe work: ${mode}`, async () => {
+      const runId = "run_schema_definition";
+      const canonicalRunId = "11111111-1111-4111-8111-111111111111";
+      const order: string[] = [];
+      const definition = {
+        name: "Captured task",
+        inputSchema: mode === "unknown_schema"
+          ? { bad: () => "must not execute" }
+          : { type: "object", required: ["name"], properties: { name: { type: "string" } } },
+        run: async () => {
+          order.push("original");
+          return { ok: true };
+        },
+      };
+      const signed = await signedRequest(`/api/control-plane/runs/${runId}/execute`, {
+        runId,
+        canonicalRunId,
+        projectId: "proj-1",
+        kind: "task",
+        target: "task:captured",
+        input: mode === "invalid_input" ? {} : { name: "valid" },
+        schema_snapshot_protocol: 1,
+      }, {
+        "x-veryfront-run-event-token": createProjectRunEventToken({
+          runId,
+          canonicalRunId,
+          projectId: "proj-1",
+        }),
+      });
+      const handler = new ProjectRunExecuteHandler(createDeps({
+        ensureProjectDiscovery: async () => {
+          const discovery = createEmptyDiscoveryResult();
+          discovery.tasks.set("captured", definition);
+          return discovery;
+        },
+        runTask: (options, pair) => runTask(options, createInMemoryHostRuntime(), undefined, pair),
+      }));
+      await withMockFetch(async () => {
+        order.push("ack");
+        if (mode === "mutated_schema") {
+          Object.assign(definition.inputSchema, { type: "number" });
+        }
+        definition.run = async () => {
+          order.push("replacement");
+          return { ok: false };
+        };
+        return Response.json({
+          run_id: canonicalRunId,
+          latest_event_id: 0,
+          appended_count: 0,
+          schema_snapshot_ack: { version: 1, outcome: "stored" },
+        });
+      }, () => handler.handle(signed.request, createCtx(signed.publicKeyPem)));
+      assertEquals(
+        order,
+        mode === "mutated" || mode === "mutated_schema"
+          ? ["ack", "original"]
+          : mode === "invalid_input"
+          ? ["ack"]
+          : [],
+      );
+    });
+  }
+
+  it("awaits workflow capture before client creation or registration", async () => {
+    const runId = "run_schema_workflow";
+    const canonicalRunId = "11111111-1111-4111-8111-111111111111";
+    const order: string[] = [];
+    const signed = await signedRequest(`/api/control-plane/runs/${runId}/execute`, {
+      runId,
+      canonicalRunId,
+      projectId: "proj-1",
+      kind: "workflow",
+      target: "workflow:publish",
+      schema_snapshot_protocol: 1,
+    }, {
+      "x-veryfront-run-event-token": createProjectRunEventToken({
+        runId,
+        canonicalRunId,
+        projectId: "proj-1",
+      }),
+    });
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      createWorkflowClient: () => {
+        order.push("client");
+        throw new Error("stop after host ack");
+      },
+    }));
+    await withMockFetch(async (_url, init) => {
+      assertEquals(requestJsonBody(init)?.schema_snapshot, {
+        version: 1,
+        state: "captured",
+        input: null,
+        output: null,
+      });
+      order.push("ack");
+      return Response.json({
+        run_id: canonicalRunId,
+        latest_event_id: 0,
+        appended_count: 0,
+        schema_snapshot_ack: { version: 1, outcome: "stored" },
+      });
+    }, () => handler.handle(signed.request, createCtx(signed.publicKeyPem)));
+    assertEquals(order, ["ack", "client"]);
+  });
+
+  for (const outcome of ["stored", "exact_replay", "mismatch_warning", "invalid", "refused"]) {
+    it(`awaits schema capture before task callback, acknowledgment ${outcome}`, async () => {
+      const runId = "run_schema_capture";
+      const canonicalRunId = "11111111-1111-4111-8111-111111111111";
+      const order: string[] = [];
+      const signed = await signedRequest(`/api/control-plane/runs/${runId}/execute`, {
+        runId,
+        canonicalRunId,
+        projectId: "proj-1",
+        kind: "task",
+        target: "task:sync-calendar-events",
+        schema_snapshot_protocol: 1,
+      }, {
+        "x-veryfront-run-event-token": createProjectRunEventToken({
+          runId,
+          canonicalRunId,
+          projectId: "proj-1",
+        }),
+      });
+      const handler = new ProjectRunExecuteHandler(createDeps({
+        runTask: async (options, pair) => {
+          order.push("run");
+          assertEquals(pair?.state, "captured");
+          assertEquals(pair?.input, null);
+          return runTask(options, createInMemoryHostRuntime(), undefined, pair);
+        },
+      }));
+      const result = await withMockFetch(async (url, init) => {
+        assertEquals(String(url), `https://api.veryfront.com/runs/${canonicalRunId}/events`);
+        const body = requestJsonBody(init);
+        assertEquals(body?.events, []);
+        assertEquals(body?.schema_snapshot, {
+          version: 1,
+          state: "captured",
+          input: null,
+          output: null,
+        });
+        order.push("ack");
+        if (outcome === "refused") return Response.json({}, { status: 403 });
+        return Response.json({
+          run_id: canonicalRunId,
+          latest_event_id: 0,
+          appended_count: 0,
+          schema_snapshot_ack: { version: 1, outcome },
+        });
+      }, () => handler.handle(signed.request, createCtx(signed.publicKeyPem)));
+      assertEquals(
+        order,
+        outcome === "invalid" || outcome === "refused" ? ["ack"] : ["ack", "run"],
+      );
+      assertExists(result.response);
+    });
+  }
+});

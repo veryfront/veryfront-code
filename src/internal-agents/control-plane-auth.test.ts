@@ -10,6 +10,7 @@ import {
   consumeVerifiedControlPlaneCacheCredential,
   ControlPlaneRequestError,
   getControlPlaneVerificationPublicKey,
+  prepareControlPlaneExecuteIngress,
   verifyControlPlaneRequest,
 } from "./control-plane-auth.ts";
 
@@ -282,5 +283,35 @@ describe("internal-agents/control-plane-auth", () => {
     ) as ControlPlaneRequestError;
 
     assertEquals(error.status, 401);
+  });
+});
+
+describe("early schema snapshot protocol gate", () => {
+  it("rejects unsupported signed protocol before returning an ingress receipt", async () => {
+    const runId = "run_schema_protocol";
+    const path = `/api/control-plane/runs/${runId}/execute`;
+    const body = JSON.stringify({
+      runId,
+      projectId: "proj-1",
+      kind: "task",
+      target: "task:demo",
+      schema_snapshot_protocol: 2,
+    });
+    const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
+      requestId: runId,
+      projectId: "proj-1",
+      requestMethod: "POST",
+      requestPath: path,
+    });
+    const req = new Request(`https://example.test${path}`, {
+      method: "POST",
+      headers: { "x-veryfront-control-plane-jws": jws },
+      body,
+    });
+    await assertRejects(
+      () => prepareControlPlaneExecuteIngress(req, createVerificationCtx(publicKeyPem)),
+      ControlPlaneRequestError,
+      "Unsupported schema snapshot protocol",
+    );
   });
 });

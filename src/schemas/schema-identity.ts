@@ -16,7 +16,7 @@
  * @module schemas/schema-identity
  */
 
-import type { JsonSchema } from "#veryfront/extensions/schema/index.ts";
+import type { JsonSchema, Schema } from "#veryfront/extensions/schema/index.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
 import { schemaToJsonSchema } from "./json-schema.ts";
 import { isCallableContractSchema, snapshotJsonSchemaObject } from "./schema-input.ts";
@@ -27,6 +27,9 @@ const arrayIsArray = Array.isArray;
 const arrayPrototypeSort = Array.prototype.sort;
 const jsonStringify = JSON.stringify;
 const objectKeys = Object.keys;
+const objectCreate = Object.create;
+const objectDefineProperties = Object.defineProperties;
+const objectFreeze = Object.freeze;
 const reflectApply = Reflect.apply;
 
 function compareCodeUnits(a: string, b: string): number {
@@ -76,7 +79,7 @@ export function resolveJsonSchemaDocument(schema: unknown): JsonSchema | undefin
 
 /** Serialize a JSON Schema document in the canonical form the identity hashes. */
 export function canonicalJsonSchema(schema: unknown): string | undefined {
-  const document = resolveJsonSchemaDocument(schema);
+  const document = typeof schema === "boolean" ? schema : resolveJsonSchemaDocument(schema);
   return document === undefined ? undefined : serializeCanonical(document);
 }
 
@@ -93,4 +96,82 @@ export async function schemaIdentitySha256(schema: unknown): Promise<string | nu
     return null;
   }
   return canonical === undefined ? null : await computeHash(canonical);
+}
+
+/** A detached JSON Schema document and its canonical identity. */
+export interface RunSchemaIdentity {
+  schema: JsonSchema | boolean;
+  sha256: string;
+}
+
+/** Missing declarations are captured null; an unconvertible declaration stays unknown. */
+export type RunSchemaPairSnapshot =
+  | {
+    version: 1;
+    state: "captured";
+    input: RunSchemaIdentity | null;
+    output: RunSchemaIdentity | null;
+  }
+  | { state: "unknown" };
+
+function snapshotDeclaredSchema(schema: unknown): JsonSchema | boolean | null | undefined {
+  if (schema === undefined || schema === null) return null;
+  return typeof schema === "boolean" ? schema : resolveJsonSchemaDocument(schema);
+}
+
+async function identifyDetachedSchema(
+  document: JsonSchema | boolean | null,
+): Promise<RunSchemaIdentity | null> {
+  if (document === null) return null;
+  const canonical = serializeCanonical(document);
+  if (canonical === undefined) throw new TypeError("Schema snapshot has no canonical form");
+  return { schema: document, sha256: await computeHash(canonical) };
+}
+
+/**
+ * Capture both declarations from one loaded definition before awaiting persistence.
+ * Each declaration is read and converted once. Documents use the existing bounded,
+ * data-only snapshot boundary; conversion failures never become observed absence.
+ */
+export async function snapshotRunSchemaPair(
+  definition: { readonly inputSchema?: unknown; readonly outputSchema?: unknown },
+): Promise<RunSchemaPairSnapshot> {
+  try {
+    const input = snapshotDeclaredSchema(definition.inputSchema);
+    const output = snapshotDeclaredSchema(definition.outputSchema);
+    if (input === undefined || output === undefined) return { state: "unknown" };
+    return {
+      version: 1,
+      state: "captured",
+      input: await identifyDetachedSchema(input),
+      output: await identifyDetachedSchema(output),
+    };
+  } catch {
+    return { state: "unknown" };
+  }
+}
+
+/** Capture validator methods before an acknowledgment can yield to authored code.
+ * Callable adapters retain their transforms/refinements and receiver; raw JSON
+ * declarations use the exact detached document that was persisted.
+ */
+export function captureRunSchemaValidation<T>(
+  declaration: T,
+): (identity: RunSchemaIdentity | null) => T {
+  if (!isCallableContractSchema(declaration)) {
+    // The declaration's accepted schema representation remains the same at this
+    // internal boundary: absent stays absent; raw JSON becomes its detached copy.
+    return (identity) => (identity === null ? declaration : identity.schema) as T;
+  }
+  const safeParse = declaration.safeParse;
+  const parse = declaration.parse;
+  const pinned: Schema<unknown> = objectCreate(declaration);
+  objectDefineProperties(pinned, {
+    safeParse: { value: (value: unknown) => reflectApply(safeParse, declaration, [value]) },
+    parse: { value: (value: unknown) => reflectApply(parse, declaration, [value]) },
+  });
+  objectFreeze(pinned);
+  // isCallableContractSchema established the Schema surface. The wrapper keeps
+  // its original schema type while sealing the two validation entry points.
+  return () => pinned as T;
 }

@@ -1,3 +1,10 @@
+import { captureTaskDefinition } from "#veryfront/task/definition-snapshot.ts";
+import { captureWorkflowDefinition } from "#veryfront/workflow/executor/workflow-definition-snapshot.ts";
+import {
+  captureRunSchemaValidation,
+  type RunSchemaPairSnapshot,
+  snapshotRunSchemaPair,
+} from "#veryfront/schemas/schema-identity.ts";
 import {
   getServiceRuntimeIdentity,
   RUNTIME_ID_HEADER,
@@ -326,7 +333,13 @@ function getOwnDataProperty(value: Record<string, unknown>, key: string): unknow
   return descriptor && "value" in descriptor ? descriptor.value : undefined;
 }
 
+type CapturedRunSchemas = Extract<RunSchemaPairSnapshot, { state: "captured" }>;
+type HostSchemaCapture = (
+  definition: { readonly inputSchema?: unknown; readonly outputSchema?: unknown },
+) => Promise<CapturedRunSchemas>;
+
 export interface ProjectRunExecuteRequest {
+  schema_snapshot_protocol?: 1;
   runId: string;
   /** Persisted Run UUID authenticated by the control-plane request signature. */
   canonicalRunId?: string;
@@ -526,7 +539,7 @@ export interface ProjectRunExecuteHandlerDeps {
     setTimeout: typeof globalThis.setTimeout;
     clearTimeout: typeof globalThis.clearTimeout;
   };
-  runTask(options: RunTaskOptions): Promise<TaskRunResult>;
+  runTask(options: RunTaskOptions, preparedSchemas?: CapturedRunSchemas): Promise<TaskRunResult>;
   findWorkflowById(
     workflowId: string,
     options: {
@@ -813,6 +826,11 @@ function parseProjectRunDeadline(deadlineAt: unknown): string | undefined {
   return deadlineAt;
 }
 
+function parseSchemaSnapshotProtocol(value: unknown): 1 {
+  if (value !== 1) throw new ControlPlaneRequestError(400, "Unsupported schema snapshot protocol");
+  return 1;
+}
+
 function parseExecuteRequest(value: unknown, pathRunId: string): ProjectRunExecuteRequest {
   if (!isRecord(value)) throw INPUT_VALIDATION_FAILED.create({ detail: "Expected object" });
 
@@ -871,6 +889,9 @@ function parseExecuteRequest(value: unknown, pathRunId: string): ProjectRunExecu
 
   return {
     runId,
+    ...(value.schema_snapshot_protocol === undefined
+      ? {}
+      : { schema_snapshot_protocol: parseSchemaSnapshotProtocol(value.schema_snapshot_protocol) }),
     ...(canonicalRunId === undefined ? {} : { canonicalRunId }),
     kind,
     target,
@@ -1321,6 +1342,7 @@ async function executeDiscoveredTaskRun(
   runChild?: ReturnType<typeof createTaskChildRunner>,
   onCompleted?: () => void,
   onExecutionOwned?: () => void,
+  captureSchemas?: HostSchemaCapture,
 ): Promise<ProjectRunExecuteResponse> {
   const taskId = stripTargetPrefix(request.target, "task:");
   if (taskId === "knowledge-ingest") {
@@ -1342,8 +1364,21 @@ async function executeDiscoveredTaskRun(
   }
 
   control?.throwIfExpired();
+  const definition = captureTaskDefinition(task.definition);
+  const pinInput = captureSchemas ? captureRunSchemaValidation(definition.inputSchema) : undefined;
+  const pinOutput = captureSchemas
+    ? captureRunSchemaValidation(definition.outputSchema)
+    : undefined;
+  const schemas = captureSchemas ? await captureSchemas(definition) : undefined;
+  const executionDefinition = schemas
+    ? {
+      ...definition,
+      inputSchema: pinInput!(schemas.input),
+      outputSchema: pinOutput!(schemas.output),
+    }
+    : definition;
   const result = await deps.runTask({
-    task,
+    task: { id: task.id, name: task.name, definition: executionDefinition },
     onExecutionStarted: onExecutionOwned,
     ...(runChild === undefined ? {} : { runChild }),
     ...(request.attempt === undefined ? {} : { attempt: request.attempt }),
@@ -1360,7 +1395,7 @@ async function executeDiscoveredTaskRun(
       ? ReflectApply(TaskAbortSignalAny, AbortSignal, [[signal, control.signal]])
       : signal,
     debug: ctx.debug,
-  });
+  }, schemas);
 
   if (result.success && !signal.aborted && !control?.signal.aborted) onCompleted?.();
 
@@ -2080,6 +2115,7 @@ async function executeWorkflowRun(
   runAgentNode?: ReturnType<typeof createWorkflowAgentNodeRunner>,
   onCompleted?: () => void,
   onExecutionOwned?: () => void,
+  captureSchemas?: HostSchemaCapture,
 ): Promise<ProjectRunExecuteResponse> {
   let executionEntered = false;
   try {
@@ -2107,16 +2143,31 @@ async function executeWorkflowRun(
 
     // The same identity a task run reports, from the same helper, so the API stores one
     // canonical sha256 per declared schema whatever the run kind (#2108).
-    const { inputSchema, outputSchema } = workflow.definition;
-    const inputSchemaSha256 = await schemaIdentitySha256(inputSchema);
-    const outputSchemaSha256 = await schemaIdentitySha256(outputSchema);
+    const definition = captureWorkflowDefinition(workflow.definition, { allowEmptySteps: true });
+    const { inputSchema, outputSchema } = definition;
+    const pinInput = captureSchemas ? captureRunSchemaValidation(inputSchema) : undefined;
+    const pinOutput = captureSchemas ? captureRunSchemaValidation(outputSchema) : undefined;
+    const schemas = captureSchemas ? await captureSchemas(definition) : undefined;
+    const executionDefinition = schemas
+      ? {
+        ...definition,
+        inputSchema: pinInput!(schemas.input),
+        outputSchema: pinOutput!(schemas.output),
+      }
+      : definition;
+    const inputSchemaSha256 = schemas
+      ? schemas.input?.sha256 ?? null
+      : await schemaIdentitySha256(inputSchema);
+    const outputSchemaSha256 = schemas
+      ? schemas.output?.sha256 ?? null
+      : await schemaIdentitySha256(outputSchema);
     let response: ProjectRunExecuteResponse;
     try {
       executionEntered = true;
       response = await runDiscoveredWorkflow(
         request,
         ctx,
-        workflow,
+        { ...workflow, definition: executionDefinition },
         signal,
         deps,
         startedAt,
@@ -2692,6 +2743,52 @@ async function withProjectRunObservationDeadline<T>(input: {
     removeAbortSignalListener(input.abortSignal, forwardAbort);
     removeAbortSignalListener(signal, onAbort);
   }
+}
+
+function createHostSchemaCapture(
+  request: ProjectRunExecuteRequest,
+  eventToken: string | undefined,
+  abortSignal: AbortSignal,
+): HostSchemaCapture {
+  const parent = requireProjectRunObservationParent(request, eventToken);
+  const apiUrl = requireHostPrivateApiHttps(resolveHostOwnedSourceApiBaseUrl());
+  const transport = createVeryfrontApiOriginBoundOutboundFetch(apiUrl);
+  return async (definition) => {
+    const pair = await snapshotRunSchemaPair(definition);
+    if (pair.state !== "captured") throw new Error("Run schema snapshot is unavailable");
+    await withProjectRunObservationDeadline({
+      abortSignal,
+      timeoutMs: PROJECT_RUN_OBSERVATION_APPEND_TIMEOUT_MS,
+      operation: async (signal) => {
+        const response = await transport(`${apiUrl}/runs/${parent.canonicalRunId}/events`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${parent.eventToken}`,
+            "Content-Type": "application/json",
+          },
+          body: privateJsonStringify({ events: [], schema_snapshot: pair }),
+          signal,
+        });
+        if (IntrinsicReflectApply(ResponseStatusGetter, response, []) !== 200) {
+          throw new Error("Run schema snapshot acknowledgment failed");
+        }
+        const body: unknown = await IntrinsicReflectApply(ResponsePrototypeJson, response, []);
+        if (
+          !isRecord(body) || body.run_id !== parent.canonicalRunId || body.appended_count !== 0 ||
+          !NumberIsSafeInteger(body.latest_event_id) || typeof body.latest_event_id !== "number" ||
+          body.latest_event_id < 0 ||
+          !isRecord(body.schema_snapshot_ack) || body.schema_snapshot_ack.version !== 1 ||
+          (body.schema_snapshot_ack.outcome !== "stored" &&
+            body.schema_snapshot_ack.outcome !== "exact_replay" &&
+            body.schema_snapshot_ack.outcome !== "mismatch_warning")
+        ) {
+          throw new Error("Run schema snapshot acknowledgment is invalid");
+        }
+        if (isAbortSignalAborted(signal)) throw getProjectRunObservationAbortReason(signal);
+      },
+    });
+    return pair;
+  };
 }
 
 type ProjectRunObservationEvent = Record<string, unknown> & { type: string };
@@ -5661,7 +5758,7 @@ async function executeStyleArtifactBuildRun(input: {
 }
 
 const defaultDeps: ProjectRunExecuteHandlerDeps = {
-  runTask,
+  runTask: (options, schemas) => runTask(options, undefined, undefined, schemas),
   findWorkflowById,
   findEvalById,
   createWorkflowClient: createRuntimeWorkflowClient,
@@ -5695,7 +5792,17 @@ async function executeProjectRun(
   ) => Promise<ProjectRunExecuteResponse>,
   onCompleted?: () => void,
   onExecutionOwned?: () => void,
+  captureSchemas?: HostSchemaCapture,
 ): Promise<ProjectRunExecuteResponse> {
+  if (
+    captureSchemas && request.kind === "task" &&
+    (request.target === "task:eval" || request.target === "task:knowledge-ingest" ||
+      request.target === "task:release-asset-build" ||
+      request.target === "task:dependency-artifact-build" ||
+      request.target === "task:style-artifact-build")
+  ) {
+    throw new Error("Schema snapshot protocol is unavailable for this internal task");
+  }
   if (request.kind === "task") {
     return executeTaskRun(
       request,
@@ -5772,6 +5879,7 @@ async function executeProjectRun(
                   },
                   onCompleted,
                   onExecutionOwned,
+                  captureSchemas,
                 );
             }
           };
@@ -5815,6 +5923,7 @@ async function executeProjectRun(
       },
       onCompleted,
       onExecutionOwned,
+      captureSchemas,
     );
   };
   try {
@@ -5896,6 +6005,9 @@ export class ProjectRunExecuteHandler extends BaseHandler {
         }
         const inferenceToken = readProjectRunInferenceToken(req);
         const eventToken = readIngressCredential(req, INGRESS_RUN_EVENT_TOKEN_HEADER) ?? undefined;
+        const captureSchemas = request.schema_snapshot_protocol === 1
+          ? createHostSchemaCapture(request, eventToken, req.signal)
+          : undefined;
         const stopController = new TaskAbortController();
         const executionSignal = ReflectApply(TaskAbortSignalAny, AbortSignal, [[
           IntrinsicReflectApply(RequestSignalGetter, req, []) as AbortSignal,
@@ -6110,6 +6222,7 @@ export class ProjectRunExecuteHandler extends BaseHandler {
                   () => {
                     executionOwned = true;
                   },
+                  captureSchemas,
                 );
               };
               const limited = enforceRunOutputLimit(
