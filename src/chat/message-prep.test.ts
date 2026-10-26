@@ -3028,6 +3028,9 @@ describe("recent tool resource results", () => {
       { id: 123 },
       { issueId: 456 },
       { id: 0 },
+      { ID: "upper-id" },
+      { sandboxID: "sandbox-id" },
+      { InvoiceID: "invoice-id" },
       { documentId: "created-document-id" },
       { spreadsheetId: "created-sheet-id" },
     ];
@@ -3074,6 +3077,64 @@ describe("recent tool resource results", () => {
       };
       assertStringIncludes(JSON.stringify(maskOldToolOutputs(oversized)[2]), "output omitted");
     }
+  });
+
+  it("inspects resource results without invoking getters or proxy reads", () => {
+    let getterCalls = 0;
+    const valid = { id: "created-resource", description: "x".repeat(1000) };
+    Object.defineProperty(valid, "detail", {
+      enumerable: true,
+      get() {
+        getterCalls++;
+        throw new Error("getter invoked");
+      },
+    });
+    const accessorId = { description: "x".repeat(1000) };
+    Object.defineProperty(accessorId, "id", {
+      enumerable: true,
+      get() {
+        getterCalls++;
+        throw new Error("ID getter invoked");
+      },
+    });
+    const proxy = new Proxy({ id: "proxy-resource", description: "x".repeat(1000) }, {
+      get(target, key, receiver) {
+        if (key === "id") throw new Error("proxy ID read");
+        return Reflect.get(target, key, receiver);
+      },
+    });
+    const hiddenId = { description: "x".repeat(1000) };
+    Object.defineProperty(hiddenId, "id", { value: "hidden-resource" });
+    const unreadable = new Proxy({ id: "unreadable", description: "x".repeat(1000) }, {
+      getOwnPropertyDescriptor(target, key) {
+        if (key === "id") throw new Error("unreadable descriptor");
+        return Reflect.getOwnPropertyDescriptor(target, key);
+      },
+    });
+    for (
+      const [resource, retained] of [[valid, true], [accessorId, false], [proxy, true], [
+        unreadable,
+        false,
+      ]] as const
+    ) {
+      const messages: ProviderModelMessage[] = [
+        { role: "user", content: "Create" },
+        {
+          role: "tool",
+          content: [{
+            type: "tool-result",
+            toolCallId: "create",
+            toolName: "integration__create",
+            output: { type: "json", value: resource as Record<string, string> },
+          }],
+        },
+        { role: "user", content: "Continue" },
+      ];
+      const result = maskOldToolOutputs(messages);
+      if (retained) assertEquals(result[1], messages[1]);
+      else assertStringIncludes(JSON.stringify(result[1]), "output omitted");
+    }
+    assertEquals(getterCalls, 0);
   });
 
   it("compacts correlation-only results instead of treating them as resources", () => {

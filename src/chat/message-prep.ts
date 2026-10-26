@@ -1194,6 +1194,24 @@ function wrapToolResultOutput(
   return original;
 }
 
+function hasRecentResourceIdentity(collection: Record<string, unknown>): boolean {
+  try {
+    const descriptors = Object.getOwnPropertyDescriptors(collection);
+    const data = Object.getOwnPropertyDescriptor(collection, "data");
+    return (data?.enumerable === true && Array.isArray(data.value)) ||
+      Object.entries(descriptors).some(([key, descriptor]) => {
+        if (!descriptor.enumerable || !("value" in descriptor)) return false;
+        const value: unknown = descriptor.value;
+        return /(?:^id$|Id$|ID$|_id$)/.test(key) &&
+          !/^(?:request|trace|(?:parent_?)?span|correlation)_?id$/i.test(key) &&
+          ((typeof value === "string" && value.length > 0) ||
+            (typeof value === "number" && Number.isFinite(value)));
+      });
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Mask old tool outputs while retaining preceding-turn file evidence and resource results for follow-ups.
  * Collection results and objects with resource IDs retain up to 4,096 serialized characters;
@@ -1273,14 +1291,8 @@ export function maskOldToolOutputs(
         idx > previousUserIdx &&
         idx < lastUserIdx &&
         isRecord(collection) &&
-        (Array.isArray(collection.data) ||
-          Object.entries(collection).some(([key, value]) =>
-            /(?:^id$|Id$|_id$)/.test(key) &&
-            !/^(?:request|trace|(?:parent_?)?span|correlation)_?id$/i.test(key) &&
-            ((typeof value === "string" && value.length > 0) ||
-              (typeof value === "number" && Number.isFinite(value)))
-          )) &&
-        serializedLength(collection) <= RECENT_COLLECTION_MAX_CHARS
+        serializedLength(collection) <= RECENT_COLLECTION_MAX_CHARS &&
+        hasRecentResourceIdentity(collection)
       ) return part;
 
       const input = callInfo?.input;
