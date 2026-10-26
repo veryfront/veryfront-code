@@ -675,7 +675,9 @@ failure stays visible.
 
 When the hosted runtime runs an agent, its AG-UI stream reports a JSON snapshot
 of the parsed value as `result` on the `RunFinished` event, and the Runs API
-stores that snapshot as the run's `output`. The event has no `result` when the
+stores that snapshot in the new run's `output.data`, alongside `output.text`
+when accepted final text is present. Historical records retain their stored
+output shapes. The event has no `result` when the
 agent declares no `outputSchema`, when the output did not parse, or when the run
 failed or was cancelled. See [Run input and output](./run-input-output.md) for
 what an agent run stores as input and output.
