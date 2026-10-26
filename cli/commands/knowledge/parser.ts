@@ -190,6 +190,7 @@ function isAbsoluteProvenanceUrl(source: string): boolean {
 }
 
 function buildFrontmatter(source: string, sourceType: string, description: string): string {
+  const generatedBy = `veryfront/${VERSION}`;
   const lines = [
     "---",
     `type: ${yamlQuote("Generated Document")}`,
@@ -197,7 +198,7 @@ function buildFrontmatter(source: string, sourceType: string, description: strin
     `source_type: ${yamlQuote(sourceType)}`,
     `description: ${yamlQuote(description)}`,
     "generated:",
-    `  by: ${yamlQuote(`veryfront/${VERSION}`)}`,
+    `  by: ${yamlQuote(generatedBy)}`,
   ];
   if (isAbsoluteProvenanceUrl(source)) {
     lines.push(
@@ -400,7 +401,7 @@ function tableToMarkdown(rows: string[][]): string {
   const normalized = rows.map((row) =>
     Array.from(
       { length: maxColumns },
-      (_, index) => (row[index] ?? "").replaceAll("|", "\\|").replaceAll("\n", " ").trim(),
+      (_, index) => (row[index] ?? "").replaceAll("|", String.raw`\|`).replaceAll("\n", " ").trim(),
     )
   );
   const [header = [], ...body] = normalized;
@@ -676,6 +677,32 @@ export async function runKnowledgeParsers(input: {
   await Deno.mkdir(input.outputDir, { recursive: true });
   const results: KnowledgeParserResult[] = [];
 
+  function preserveOkfFile(file: KnowledgeParserInput): Promise<KnowledgeParserResult> {
+    return file.okfRelativePath!.toLowerCase().endsWith(".md") && file.okfRole !== "companion"
+      ? preserveOkfDocument({
+        filePath: file.filePath,
+        outputDir: input.outputDir,
+        relativePath: file.okfRelativePath!,
+        signal: deps.signal,
+        sourceReference: file.sourceReference,
+      })
+      : preserveOkfCompanion({
+        filePath: file.filePath,
+        outputDir: input.outputDir,
+        relativePath: file.okfRelativePath!,
+        signal: deps.signal,
+        sourceReference: file.sourceReference,
+      });
+  }
+  function throwParserFailure(error: unknown): never {
+    deps.signal?.throwIfAborted();
+    if (error instanceof Error && error.message.startsWith("knowledge ingest parser failed")) {
+      throw error;
+    }
+
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`knowledge ingest parser failed: ${message}`);
+  }
   for (const file of input.files) {
     try {
       deps.signal?.throwIfAborted();
@@ -686,22 +713,7 @@ export async function runKnowledgeParsers(input: {
 
       deps.signal?.throwIfAborted();
       if (file.okfRelativePath !== undefined) {
-        const preserve =
-          file.okfRelativePath.toLowerCase().endsWith(".md") && file.okfRole !== "companion"
-            ? preserveOkfDocument({
-              filePath: file.filePath,
-              outputDir: input.outputDir,
-              relativePath: file.okfRelativePath,
-              signal: deps.signal,
-              sourceReference: file.sourceReference,
-            })
-            : preserveOkfCompanion({
-              filePath: file.filePath,
-              outputDir: input.outputDir,
-              relativePath: file.okfRelativePath,
-              signal: deps.signal,
-              sourceReference: file.sourceReference,
-            });
+        const preserve = preserveOkfFile(file);
         results.push(await preserve);
         continue;
       }
@@ -748,13 +760,7 @@ export async function runKnowledgeParsers(input: {
         document_kind: "generated",
       });
     } catch (error) {
-      deps.signal?.throwIfAborted();
-      if (error instanceof Error && error.message.startsWith("knowledge ingest parser failed")) {
-        throw error;
-      }
-
-      const message = error instanceof Error ? error.message : String(error);
-      throw new Error(`knowledge ingest parser failed: ${message}`);
+      throwParserFailure(error);
     }
   }
 

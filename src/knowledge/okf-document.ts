@@ -116,26 +116,8 @@ export function inspectOkfDocument(
   const diagnostics: OkfDocumentDiagnostic[] = [];
   let metadata: Record<string, unknown> = {};
 
-  if (!framed) {
-    if (/^---\r?\n/.test(envelopeSource)) {
-      diagnostics.push({
-        code: "invalid_frontmatter",
-        message: "Close the leading YAML frontmatter with a line containing ---.",
-      });
-    } else if (kind === "concept") {
-      diagnostics.push({
-        code: "missing_frontmatter",
-        message: "Add leading YAML frontmatter containing a non-empty type.",
-      });
-    }
-  } else {
-    if (kind === "index" && normalizedPath !== rootIndexPath) {
-      diagnostics.push({
-        code: "invalid_frontmatter",
-        message:
-          "Nested index.md files must not contain frontmatter; only the bundle-root index.md may declare okf_version.",
-      });
-    }
+  function inspectMetadata(): void {
+    if (!framed) return;
     try {
       metadata = decodeOkfMetadata(framed.frontMatter);
       if (kind === "index" && normalizedPath === rootIndexPath) {
@@ -162,6 +144,28 @@ export function inspectOkfDocument(
         message: "Use one valid YAML mapping between the frontmatter delimiters.",
       });
     }
+  }
+  if (!framed) {
+    if (/^---\r?\n/.test(envelopeSource)) {
+      diagnostics.push({
+        code: "invalid_frontmatter",
+        message: "Close the leading YAML frontmatter with a line containing ---.",
+      });
+    } else if (kind === "concept") {
+      diagnostics.push({
+        code: "missing_frontmatter",
+        message: "Add leading YAML frontmatter containing a non-empty type.",
+      });
+    }
+  } else {
+    if (kind === "index" && normalizedPath !== rootIndexPath) {
+      diagnostics.push({
+        code: "invalid_frontmatter",
+        message:
+          "Nested index.md files must not contain frontmatter; only the bundle-root index.md may declare okf_version.",
+      });
+    }
+    inspectMetadata();
   }
 
   return {
