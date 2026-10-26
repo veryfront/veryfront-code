@@ -58,7 +58,7 @@ export function decideRecovery(
   if (
     run.event !== "push" || run.head_branch !== "main" ||
     run.path.split("@")[0] !== ".github/workflows/cicd.yml" ||
-    run.status === "completed" || !gate || gate.status !== "queued" ||
+    run.status === "completed" || gate?.status !== "queued" ||
     gate.steps.length !== 0
   ) return no("healthy, no action");
   const minutes = (now - Date.parse(gate.created_at)) / 60_000;
@@ -130,6 +130,58 @@ async function finishRecovery(
   return message;
 }
 
+type RecoveryState =
+  | { kind: "message"; message: string }
+  | { kind: "cancelled"; minutes: number };
+
+function inspectRecoveryIntent(
+  candidate: Inspection,
+  intent: RecoveryIntent | undefined,
+  id: number,
+  now: () => number,
+): RecoveryState | undefined {
+  if (!intent) return undefined;
+  if (intent.sha !== candidate.run.head_sha || intent.runId !== id) {
+    return undefined;
+  }
+  if (candidate.run.run_attempt > intent.attempt) {
+    const message =
+      `Run ${id}: recovery already accepted as attempt ${candidate.run.run_attempt}, no action`;
+    return { kind: "message", message };
+  }
+  const cancelledGate = candidate.jobs.find((job) => job.id === intent.gateId);
+  if (
+    candidate.run.status === "completed" &&
+    candidate.run.run_attempt === intent.attempt &&
+    cancelledGate?.conclusion === "cancelled"
+  ) {
+    // A durable intent authorizes only the same zero-step cancellation. All
+    // other original checks must still be successful, never failed/cancelled.
+    const projected = {
+      run: { ...candidate.run, status: "in_progress" },
+      jobs: candidate.jobs.map((job) =>
+        job.id === intent.gateId
+          ? { ...job, status: "queued", conclusion: null }
+          : job
+      ),
+    };
+    const resumed = decideRecovery(projected, [], now());
+    if (resumed.recover) {
+      return { kind: "cancelled", minutes: resumed.minutes };
+    }
+  }
+  if (
+    candidate.run.status === "completed" &&
+    candidate.run.run_attempt === intent.attempt
+  ) {
+    const message = `Run ${id}: original attempt finished with ${
+      cancelledGate?.conclusion ?? "missing gate"
+    }, no action`;
+    return { kind: "message", message };
+  }
+  return undefined;
+}
+
 export async function recoverGate(
   client: WatchdogClient,
   id: number,
@@ -138,49 +190,16 @@ export async function recoverGate(
   const now = options.now ?? Date.now;
   let candidate = await client.inspect(id);
   const intent = await client.recoveryIntent(candidate.run);
-  if (intent && intent.sha === candidate.run.head_sha && intent.runId === id) {
-    if (candidate.run.run_attempt > intent.attempt) {
-      const message =
-        `Run ${id}: recovery already accepted as attempt ${candidate.run.run_attempt}, no action`;
-      if (!options.dryRun) await client.comment(candidate.run, message);
-      return message;
+  const prior = inspectRecoveryIntent(candidate, intent, id, now);
+  if (prior?.kind === "message") {
+    if (!options.dryRun) await client.comment(candidate.run, prior.message);
+    return prior.message;
+  }
+  if (prior?.kind === "cancelled") {
+    if (options.dryRun) {
+      return "verified cancelled gate with pending recovery, would rerun";
     }
-    const cancelledGate = candidate.jobs.find((job) =>
-      job.id === intent.gateId
-    );
-    if (
-      candidate.run.status === "completed" &&
-      candidate.run.run_attempt === intent.attempt &&
-      cancelledGate?.conclusion === "cancelled"
-    ) {
-      // A durable intent authorizes only the same zero-step cancellation. All
-      // other original checks must still be successful, never failed/cancelled.
-      const projected = {
-        run: { ...candidate.run, status: "in_progress" },
-        jobs: candidate.jobs.map((job) =>
-          job.id === intent.gateId
-            ? { ...job, status: "queued", conclusion: null }
-            : job
-        ),
-      };
-      const resumed = decideRecovery(projected, [], now());
-      if (resumed.recover) {
-        if (options.dryRun) {
-          return "verified cancelled gate with pending recovery, would rerun";
-        }
-        return await finishRecovery(client, candidate, resumed.minutes);
-      }
-    }
-    if (
-      candidate.run.status === "completed" &&
-      candidate.run.run_attempt === intent.attempt
-    ) {
-      const message = `Run ${id}: original attempt finished with ${
-        cancelledGate?.conclusion ?? "missing gate"
-      }, no action`;
-      if (!options.dryRun) await client.comment(candidate.run, message);
-      return message;
-    }
+    return await finishRecovery(client, candidate, prior.minutes);
   }
   let decision = decideRecovery(candidate, [], now());
   if (!decision.recover) return decision.message;
@@ -217,7 +236,7 @@ export async function recoverGate(
   // GitHub fills started_at on cancellation even for a job with no steps.
   // Compare steps instead, and permit only the target job to be cancelled.
   if (
-    !cancelledGate || cancelledGate.conclusion !== "cancelled" ||
+    cancelledGate?.conclusion !== "cancelled" ||
     cancelledGate.steps.length !== 0 ||
     cancelled.some((job) =>
       job.id !== gate.id && !SAFE_RESULTS.has(job.conclusion ?? "")
@@ -362,7 +381,7 @@ export function createWatchdogClient(
     if (!trusted(comment) || !comment.body.includes(pendingHeading)) {
       return undefined;
     }
-    const match = comment.body.match(/<!-- intent:(.+) -->/);
+    const match = /<!-- intent:(.+) -->/.exec(comment.body);
     if (!match) return undefined;
     const intent = JSON.parse(match[1]!) as RecoveryIntent;
     if (
@@ -494,7 +513,7 @@ if (import.meta.main) {
       throw new Error("GITHUB_REPOSITORY and GH_TOKEN are required");
     }
     const { client, candidates } = createWatchdogClient(repository, token);
-    if (runId && !/^[1-9][0-9]*$/.test(runId)) {
+    if (runId && !/^[1-9]\d*$/.test(runId)) {
       throw new Error("Invalid run id");
     }
     const runs = runId ? [Number(runId)] : await candidates();
