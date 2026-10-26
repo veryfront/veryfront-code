@@ -555,7 +555,7 @@ before rendering.
 
 Message preparation keeps collection results (`{ data: [...] }`) and objects with
 a root resource ID, up to 4,096 serialized characters, from the preceding user
-turn. Request, trace and correlation IDs alone do not qualify. This preserves resource IDs and continuation tokens for follow-up requests. Older or larger results
+turn. Request, trace, span and correlation IDs alone do not qualify. This preserves resource IDs and continuation tokens for follow-up requests. Older or larger results
 still use the existing history compaction and overall token budget. Refetch a
 resource when the retained context no longer identifies it.
 

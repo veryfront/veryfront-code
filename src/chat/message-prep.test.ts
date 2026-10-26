@@ -3080,6 +3080,10 @@ describe("recent tool resource results", () => {
         "request_id",
         "traceId",
         "trace_id",
+        "spanId",
+        "span_id",
+        "parentSpanId",
+        "parent_span_id",
         "correlationId",
         "correlation_id",
       ]
