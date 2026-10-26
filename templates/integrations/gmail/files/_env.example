@@ -13,8 +13,7 @@
 #   Visit: https://console.cloud.google.com/apis/credentials/consent
 #   - Choose "External" user type (or "Internal" for Workspace)
 #   - Fill in app name, support email
-#   - Add scopes: gmail.readonly, gmail.send, gmail.modify, gmail.labels, gmail.compose
-#   - Add https://mail.google.com/ if you use permanent delete tools
+#   - Add scope: gmail.modify (read, drafts, send, labels, and Trash)
 #   - Add your email as a test user (required for development)
 #
 # STEP 4: Create OAuth Credentials

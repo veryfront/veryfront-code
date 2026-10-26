@@ -21324,14 +21324,7 @@ export const connectors: IntegrationConfig[] = [
       "provider": "google",
       "authorizationUrl": "https://accounts.google.com/o/oauth2/v2/auth",
       "tokenUrl": "https://oauth2.googleapis.com/token",
-      "scopes": [
-        "https://www.googleapis.com/auth/gmail.readonly",
-        "https://www.googleapis.com/auth/gmail.send",
-        "https://www.googleapis.com/auth/gmail.modify",
-        "https://www.googleapis.com/auth/gmail.labels",
-        "https://www.googleapis.com/auth/gmail.compose",
-        "https://mail.google.com/",
-      ],
+      "scopes": ["https://www.googleapis.com/auth/gmail.modify"],
       "requiredApis": [{
         "name": "Gmail API",
         "enableUrl": "https://console.cloud.google.com/apis/library/gmail.googleapis.com",
@@ -21735,23 +21728,6 @@ export const connectors: IntegrationConfig[] = [
         },
       },
     }, {
-      "id": "gmail__delete_email",
-      "name": "Delete Email",
-      "description": "Permanently delete email",
-      "requiresWrite": true,
-      "endpoint": {
-        "method": "DELETE",
-        "url": "https://gmail.googleapis.com/gmail/v1/users/me/messages/{messageId}",
-        "params": {
-          "messageId": {
-            "type": "string",
-            "in": "path",
-            "description": "Email message ID",
-            "required": true,
-          },
-        },
-      },
-    }, {
       "id": "gmail__batch_modify_emails",
       "name": "Batch Modify Emails",
       "description": "Batch modify emails",
@@ -21763,18 +21739,6 @@ export const connectors: IntegrationConfig[] = [
           "ids": { "type": "array", "description": "Email message IDs", "required": true },
           "addLabelIds": { "type": "array", "description": "Label IDs to add" },
           "removeLabelIds": { "type": "array", "description": "Label IDs to remove" },
-        },
-      },
-    }, {
-      "id": "gmail__batch_delete_emails",
-      "name": "Batch Delete Emails",
-      "description": "Permanently delete multiple emails",
-      "requiresWrite": true,
-      "endpoint": {
-        "method": "POST",
-        "url": "https://gmail.googleapis.com/gmail/v1/users/me/messages/batchDelete",
-        "body": {
-          "ids": { "type": "array", "description": "Email message IDs", "required": true },
         },
       },
     }, {
@@ -21886,23 +21850,6 @@ export const connectors: IntegrationConfig[] = [
       "endpoint": {
         "method": "POST",
         "url": "https://gmail.googleapis.com/gmail/v1/users/me/threads/{threadId}/untrash",
-        "params": {
-          "threadId": {
-            "type": "string",
-            "in": "path",
-            "description": "Thread ID",
-            "required": true,
-          },
-        },
-      },
-    }, {
-      "id": "gmail__delete_thread",
-      "name": "Delete Thread",
-      "description": "Permanently delete thread",
-      "requiresWrite": true,
-      "endpoint": {
-        "method": "DELETE",
-        "url": "https://gmail.googleapis.com/gmail/v1/users/me/threads/{threadId}",
         "params": {
           "threadId": {
             "type": "string",
@@ -22174,7 +22121,7 @@ export const connectors: IntegrationConfig[] = [
           "Run List Emails (read-only). It returns message summaries for the connected mailbox without changing it.",
       }],
       "notes": [
-        "The connection requests gmail.readonly, gmail.send, gmail.modify, gmail.labels, gmail.compose and the full-access https://mail.google.com/ scope. The full-access scope is what allows the permanent delete tools; the read tools only need gmail.readonly.",
+        "The connection requests gmail.modify for reading, drafts, sending, labels, and reversible Trash. Permanent message and thread deletion is not exposed.",
         "Every list, get and search tool is read-only. Tools that send, draft, label, archive, trash or delete mail are marked as writes and need write authority.",
         "Each Gmail connection belongs to the Google account that approved consent; the tools act on that mailbox only.",
       ],
