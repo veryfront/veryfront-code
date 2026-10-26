@@ -1203,7 +1203,7 @@ function hasRecentResourceIdentity(collection: Record<string, unknown>): boolean
         if (!descriptor.enumerable || !("value" in descriptor)) return false;
         const value: unknown = descriptor.value;
         return /(?:^id$|Id$|ID$|_id$)/.test(key) &&
-          !/^(?:request|trace|(?:parent_?)?span|correlation)_?id$/i.test(key) &&
+          !/^(?:request|provider_?request)_?id$|(?:trace|span|correlation)_?id$/i.test(key) &&
           ((typeof value === "string" && value.length > 0) ||
             (typeof value === "number" && Number.isFinite(value)));
       });

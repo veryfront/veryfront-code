@@ -3031,6 +3031,7 @@ describe("recent tool resource results", () => {
       { ID: "upper-id" },
       { sandboxID: "sandbox-id" },
       { InvoiceID: "invoice-id" },
+      { inputRequestId: "input-request-resource" },
       { documentId: "created-document-id" },
       { spreadsheetId: "created-sheet-id" },
     ];
@@ -3145,6 +3146,13 @@ describe("recent tool resource results", () => {
       const key of [
         "requestId",
         "request_id",
+        "providerRequestId",
+        "provider_request_id",
+        "providerRequestID",
+        "messageSpanId",
+        "message_span_id",
+        "runtimeMessageSpanId",
+        "reasoningSpanId",
         "traceId",
         "trace_id",
         "spanId",
