@@ -737,6 +737,10 @@ names or icon metadata:
 
 - [`veryfront/integrations`](../api-reference/veryfront/integrations.md)
 
+## Text exports
+
+Drive document exports return readable UTF-8 text with its content type. Use `text/plain` for Docs or `text/csv` for Sheets. The `drive__download_file` tool uses a separate byte-safe binary response contract and is not enabled in the Drive catalog agent.
+
 ## Verify it worked
 
 1. Confirm the integration tool name is present in the agent source.

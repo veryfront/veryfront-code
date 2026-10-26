@@ -425,7 +425,8 @@ export const getIntegrationEndpointSchema = defineSchema((v) =>
       // { encoding, content_base64, size, content_type } instead of parsed JSON.
       // Honoured by the local endpoint executor and the hosted API executor;
       // service-account sources (such as Salesforce) do not serve such endpoints.
-      encoding: v.enum(["base64"]).optional(),
+      // "text": bounded UTF-8 text/* content as { content, content_type }.
+      encoding: v.enum(["base64", "text"]).optional(),
       enrich: getIntegrationEndpointResponseEnrichmentSchema().optional(),
       historicalSummary: getIntegrationEndpointHistoricalSummarySchema().optional(),
     }).optional(),
