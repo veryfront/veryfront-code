@@ -246,3 +246,41 @@ it("Deno lazy provider cannot create a server after listener shutdown", async ()
     await server.stop();
   }
 });
+
+it("malformed upgrade authority returns 400 before handler or default provider loading", async () => {
+  let calls = 0;
+  let loads = 0;
+  const server = await createDenoNodeServerWithStartupOwner(
+    () => {
+      calls++;
+      return new Response("unexpected");
+    },
+    { hostname: "127.0.0.1", port: 0 },
+    undefined,
+    () => {
+      loads++;
+      return Promise.resolve(WsNodeWebSocketServerProvider);
+    },
+  );
+  const connection = await Deno.connect({ hostname: "127.0.0.1", port: server.addr.port });
+  try {
+    await connection.write(new TextEncoder().encode(
+      "GET / HTTP/1.1\r\nHost: [\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n",
+    ));
+    const chunks: string[] = [];
+    while (true) {
+      const bytes = new Uint8Array(1024);
+      const count = await connection.read(bytes);
+      if (count === null) break;
+      chunks.push(new TextDecoder().decode(bytes.subarray(0, count)));
+    }
+    const response = chunks.join("");
+    assertStringIncludes(response, "HTTP/1.1 400 Bad Request");
+    assertStringIncludes(response, "Bad Request");
+    assertEquals(calls, 0);
+    assertEquals(loads, 0);
+  } finally {
+    connection.close();
+    await server.stop();
+  }
+});

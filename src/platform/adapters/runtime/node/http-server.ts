@@ -816,6 +816,28 @@ async function createNodeServerInternal(
         failUpgrade(new DOMException("WebSocket client disconnected", "AbortError"));
       };
       socket.once("close", onSocketClose);
+      const denyUpgrade = async (response: Response, denied: Error): Promise<void> => {
+        rejectWebSocketUpgrade(requestId, denied);
+        const { ServerResponse } = await import("node:http");
+        const denial = new ServerResponse(request);
+        denial.once("error", (error) => {
+          failUpgrade(error);
+          socket.destroy();
+        });
+        denial.shouldKeepAlive = false;
+        denial.assignSocket(socket as import("node:net").Socket);
+        denial.once("finish", () => socket.end());
+        await createNodeRequestListener(() => response, hostname, dualProtocol)(request, denial);
+        transportSettled = true;
+        if (!requestAbort.signal.aborted) requestAbort.abort(denied);
+        clearTransportState();
+        // A peer may leave a denial unread. Keep ownership until its socket
+        // actually closes so stop() can force-close this half-closed stream.
+        if (!socket.destroyed) {
+          rawUpgradeSockets.add(socket);
+          socket.once("close", () => rawUpgradeSockets.delete(socket));
+        }
+      };
 
       try {
         if (upgradesDisposed) {
@@ -825,7 +847,16 @@ async function createNodeServerInternal(
 
         // On Node.js, upgrade events bypass the normal request callback. Run a
         // synthetic request through the handler as the authorization boundary.
-        const url = new URL(request.url ?? "/", `http://${request.headers.host ?? hostname}`);
+        let url: URL;
+        try {
+          url = new URL(request.url ?? "/", `http://${request.headers.host ?? hostname}`);
+        } catch {
+          await denyUpgrade(
+            new Response("Bad Request", { status: 400 }),
+            new Error("Malformed WebSocket request authority"),
+          );
+          return;
+        }
         const headersRecord: Record<string, string> = {};
         for (const [key, value] of Object.entries(request.headers)) {
           if (typeof value === "string") headersRecord[key] = value;
@@ -853,26 +884,7 @@ async function createNodeServerInternal(
           // Upgrade denials are ordinary HTTP responses. Reuse the same writer
           // as regular requests so status, cookies and streamed bodies survive.
           const denied = new Error("Request handler did not authorize a WebSocket upgrade");
-          rejectWebSocketUpgrade(requestId, denied);
-          const { ServerResponse } = await import("node:http");
-          const denial = new ServerResponse(request);
-          denial.once("error", (error) => {
-            failUpgrade(error);
-            socket.destroy();
-          });
-          denial.shouldKeepAlive = false;
-          denial.assignSocket(socket as import("node:net").Socket);
-          denial.once("finish", () => socket.end());
-          await createNodeRequestListener(() => response, hostname, dualProtocol)(request, denial);
-          transportSettled = true;
-          if (!requestAbort.signal.aborted) requestAbort.abort(denied);
-          clearTransportState();
-          // A peer may leave a denial unread. Keep ownership until its socket
-          // actually closes so stop() can force-close this half-closed stream.
-          if (!socket.destroyed) {
-            rawUpgradeSockets.add(socket);
-            socket.once("close", () => rawUpgradeSockets.delete(socket));
-          }
+          await denyUpgrade(response, denied);
           return;
         }
         if (upgradesDisposed || !isWebSocketUpgradeResponse(response)) {

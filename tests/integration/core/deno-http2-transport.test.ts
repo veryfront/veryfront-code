@@ -398,17 +398,21 @@ it("Deno transport rejects malformed HTTP1 and h2 authorities before handlers", 
     return new Response("unexpected");
   }, { hostname: "127.0.0.1", port: 0, nodeWebSocketServerProvider: null });
   try {
-    const socket = await Deno.connect({ hostname: "127.0.0.1", port: server.addr.port });
-    try {
-      await socket.write(
-        new TextEncoder().encode("GET / HTTP/1.1\r\nHost: [\r\nConnection: close\r\n\r\n"),
-      );
-      const bytes = new Uint8Array(1024);
-      const count = await bounded(socket.read(bytes));
-      assert(count !== null);
-      assert(new TextDecoder().decode(bytes.subarray(0, count)).startsWith("HTTP/1.1 400"));
-    } finally {
-      socket.close();
+    for (const connection of ["close", "Upgrade\r\nUpgrade: websocket"]) {
+      const socket = await Deno.connect({ hostname: "127.0.0.1", port: server.addr.port });
+      try {
+        await socket.write(
+          new TextEncoder().encode(
+            `GET / HTTP/1.1\r\nHost: [\r\nConnection: ${connection}\r\n\r\n`,
+          ),
+        );
+        const bytes = new Uint8Array(1024);
+        const count = await bounded(socket.read(bytes));
+        assert(count !== null);
+        assert(new TextDecoder().decode(bytes.subarray(0, count)).startsWith("HTTP/1.1 400"));
+      } finally {
+        socket.close();
+      }
     }
     const client = connect(`http://127.0.0.1:${server.addr.port}`);
     try {
