@@ -3637,7 +3637,7 @@ const cases = [
   },
 ] as const;
 
-describe("Interactive sign-in completion", { sanitizeOps: false, sanitizeResources: false }, () => {
+describe("Interactive sign-in completion", () => {
   for (const method of ["token", "github"] as const) {
     for (const scenario of cases) {
       it(`${method} handles ${scenario.name} and only stores validated credentials`, async () => {
