@@ -219,7 +219,8 @@ export interface WaitNodeConfig extends BaseNodeConfig {
   type: "wait";
   waitType: WaitType;
   message?: string;
-  payload?: unknown | ((context: WorkflowContext) => unknown);
+  /** Literal payload or a function that derives it from workflow context. */
+  payload?: unknown;
   /**
    * Explicit identities allowed to decide the approval. When omitted, the
    * authenticated host boundary is responsible for supplying the caller's
@@ -273,7 +274,8 @@ export interface PendingEventWait {
 export interface SubWorkflowNodeConfig extends BaseNodeConfig {
   type: "subWorkflow";
   workflow: string | WorkflowDefinition;
-  input?: unknown | ((context: WorkflowContext) => unknown);
+  /** Literal input or a function that derives it from workflow context. */
+  input?: unknown;
   output?: (result: unknown) => unknown;
 }
 
@@ -579,6 +581,23 @@ export function parseDuration(duration: string | number): number {
   return parseDurationWithLabel(duration, "Duration");
 }
 
+function validateNumericDuration(duration: number, label: string): number {
+  if (duration < 0) {
+    throw INVALID_ARGUMENT.create({ detail: `${label} cannot be negative: ${duration}` });
+  }
+  if (!numberIsSafeInteger(duration)) {
+    throw INVALID_ARGUMENT.create({
+      detail: `${label} must be a safe integer number of milliseconds, got: ${duration}`,
+    });
+  }
+  if (duration > MAX_TIMER_DELAY_MS) {
+    throw INVALID_ARGUMENT.create({
+      detail: `${label} cannot exceed ${MAX_TIMER_DELAY_MS} milliseconds, got: ${duration}`,
+    });
+  }
+  return duration === 0 ? 0 : duration;
+}
+
 /**
  * Parse a duration with a boundary-specific label for actionable errors.
  *
@@ -588,22 +607,7 @@ export function parseDurationWithLabel(
   duration: string | number,
   label: string,
 ): number {
-  if (typeof duration === "number") {
-    if (duration < 0) {
-      throw INVALID_ARGUMENT.create({ detail: `${label} cannot be negative: ${duration}` });
-    }
-    if (!numberIsSafeInteger(duration)) {
-      throw INVALID_ARGUMENT.create({
-        detail: `${label} must be a safe integer number of milliseconds, got: ${duration}`,
-      });
-    }
-    if (duration > MAX_TIMER_DELAY_MS) {
-      throw INVALID_ARGUMENT.create({
-        detail: `${label} cannot exceed ${MAX_TIMER_DELAY_MS} milliseconds, got: ${duration}`,
-      });
-    }
-    return duration === 0 ? 0 : duration;
-  }
+  if (typeof duration === "number") return validateNumericDuration(duration, label);
   if (typeof duration !== "string") {
     throw INVALID_ARGUMENT.create({
       detail: `${label} has invalid duration type: ${typeof duration}`,
@@ -613,7 +617,7 @@ export function parseDurationWithLabel(
   const match = reflectApply(regExpExec, DURATION_PATTERN, [duration]) as
     | RegExpExecArray
     | null;
-  if (!match || !match[1] || !match[2]) {
+  if (!match?.[1] || !match[2]) {
     throw INVALID_ARGUMENT.create({
       detail: label === "Duration"
         ? `Invalid duration format: ${duration}`
