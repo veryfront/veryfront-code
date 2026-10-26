@@ -1,7 +1,7 @@
 ---
 title: "Self-host Veryfront Code"
 description: "Build and run a Veryfront project in your own environment."
-order: 43
+order: 490
 ---
 
 Self-host Veryfront Code in your own cloud, private network, or on-premises
@@ -40,9 +40,11 @@ Choose substitutes for managed capabilities before you deploy.
 | Sandbox sessions                           | Requires a backing API or service layer | Configure authenticated sandbox session APIs.                             |
 | Veryfront Cloud routing, storage, and runs | Requires Veryfront Cloud                | These capabilities depend on project and control-plane context.           |
 
+## Configure local integrations
+
 Allow local integration credentials in the host process before you materialize
-any local source, both the catalog source and the Salesforce service-account
-source below:
+any local source, including the catalog source and the Salesforce and Outlook
+service-account sources below:
 
 ```dotenv title=".env"
 VERYFRONT_HOST_ALLOW_LOCAL_INTEGRATION_CREDENTIALS=1
@@ -81,6 +83,8 @@ Veryfront. Managed per-user OAuth and connector features outside the supported
 local subset still require the configured API layer.
 
 ## Run Salesforce integration tools locally
+
+[Set up Salesforce](./integrations/salesforce.md#use-a-service-account) covers credentials and the complete local agent example.
 
 The Salesforce service account source runs the catalog's fixed Salesforce
 REST tools without a backing API.
@@ -139,6 +143,137 @@ metadata, URLs, logs, or project files.
 
 The source does not implement interactive user OAuth. Use the managed backing
 API when each tool call must use an individual user's Salesforce connection.
+
+## Run Outlook integration tools locally
+
+Outlook supports two access modes outside Veryfront Cloud. App-only access is
+the preferred mode:
+
+- **App-only access** uses Microsoft Entra client credentials and reads one
+  configured mailbox. Use it for unattended ingestion, scheduled runs, and
+  other project-owned automation.
+- **Delegated access** signs in a user with your own Entra app through the
+  scaffolded Outlook OAuth template. Use it when each action must run as that
+  user.
+
+For app-only access, register an Entra app in the target tenant and grant it
+the Microsoft Graph **application** permissions for the tools you list. Grant
+only what those tools need:
+
+| Tools                                                                | Application permission      |
+| -------------------------------------------------------------------- | --------------------------- |
+| Read mail, such as `outlook__list_emails` and `outlook__get_email`   | `Mail.Read`                 |
+| Change mail, such as `outlook__move_email` and `outlook__flag_email` | `Mail.ReadWrite`            |
+| Send mail, such as `outlook__send_email` and `outlook__reply_email`  | `Mail.Send`                 |
+| Read calendars, such as `outlook__list_events`                       | `Calendars.Read`            |
+| Change calendars, such as `outlook__create_event`                    | `Calendars.ReadWrite`       |
+| Read categories, such as `outlook__list_categories`                  | `MailboxSettings.Read`      |
+| Change categories, such as `outlook__create_category`                | `MailboxSettings.ReadWrite` |
+
+An administrator must grant consent for application permissions. Restrict the
+app to the configured mailbox with Exchange Online RBAC for Applications or an
+application access policy, because an unrestricted application permission
+covers every mailbox in the tenant.
+
+Set these values in the project environment used by the self-hosted runtime:
+
+```dotenv title=".env"
+OUTLOOK_SERVICE_ACCOUNT_CLIENT_ID=<CLIENT_ID>
+OUTLOOK_SERVICE_ACCOUNT_CLIENT_SECRET=<CLIENT_SECRET>
+OUTLOOK_SERVICE_ACCOUNT_TENANT_ID=<TENANT_ID>
+OUTLOOK_SERVICE_ACCOUNT_MAILBOX=intake@example.com
+```
+
+The tenant must be a tenant ID or verified domain. Multi-tenant aliases such as
+`common` are rejected. The mailbox must be its user principal name or Entra
+user ID. Graph does not resolve an SMTP address that differs from the user
+principal name. A missing or invalid value fails with an error that names the
+variable, before any request is sent.
+
+Create a source with the exact Outlook tools the agent can use:
+
+```ts title="lib/mail-intake-outlook-tools.ts"
+import { createOutlookServiceAccountToolSource } from "veryfront/integrations";
+import { loadRemoteToolsFromSource } from "veryfront/tool";
+
+const outlookSource = createOutlookServiceAccountToolSource({
+  allowedTools: [
+    "outlook__list_emails",
+    "outlook__get_email",
+    "outlook__list_attachments",
+    "outlook__get_attachment",
+  ],
+});
+
+export const outlookTools = await loadRemoteToolsFromSource(outlookSource);
+```
+
+Every Microsoft Graph request targets `/users/<MAILBOX>`, never `/me`. Catalog
+tools whose path is `/users/{mailbox}/...`, such as
+`outlook__list_shared_mailbox_emails`, are bound to the configured mailbox and
+take no `mailbox` input. Other tools that let the caller choose another
+mailbox, including the free/busy tools `outlook__get_schedule` and
+`outlook__find_free_time`, are rejected, and so are delegated-only operations
+such as `outlook__find_meeting_times`. Tools that change
+mailbox or calendar state, such as `outlook__move_email`, are rejected unless
+you also pass `allowWrites: true`. `allowWrites` covers every listed write
+tool, including `outlook__send_email`, which sends mail as the mailbox. List
+only the write tools the project needs.
+
+Each tool request and response is limited to 4 MiB in total, which fits base64
+attachment content up to the 3 MB Microsoft Graph inline limit. Larger content
+fails with `local-integration-request-invalid` on upload, or
+`local-integration-response-invalid` from `outlook__get_attachment`. Agent runs
+on the managed hosted executor still limit each whole tool result to just under
+1 MiB, so there `outlook__get_attachment` returns attachments up to about 750 KB.
+
+To read a larger attachment in project code, call `readAttachment` on the
+source. It requires `outlook__get_attachment` or
+`outlook__get_shared_mailbox_attachment` in `allowedTools`, and returns the raw
+bytes from Graph `/$value` instead of base64 JSON, up to 32 MiB. A larger
+attachment fails with `local-integration-response-invalid`; it is never
+truncated. Pass the bytes to `planFileParts`, which reports every file it
+leaves out:
+
+```ts title="lib/read-attachment.ts"
+import { createOutlookServiceAccountToolSource } from "veryfront/integrations";
+import { planFileParts } from "veryfront/llm";
+
+const outlookSource = createOutlookServiceAccountToolSource({
+  allowedTools: ["outlook__get_attachment"],
+});
+
+export async function attachmentParts(messageId: string, attachmentId: string, filename: string) {
+  const content = await outlookSource.readAttachment({ messageId, attachmentId });
+  return planFileParts({
+    files: [{ bytes: content.bytes, filename, mediaType: content.contentType }],
+    maxFileBytes: 10 * 1024 * 1024,
+  });
+}
+```
+
+The source exchanges the client secret at
+`login.microsoftonline.com/<TENANT_ID>` for a Graph token and keeps that token
+in process memory until shortly before it expires. It stores no refresh token
+and writes nothing to disk. Changing any credential variable mints a new token,
+so rotate the client secret in Entra and then update the project environment.
+Concurrent tool calls share one token request. When Graph rejects a token with
+HTTP 401, the source drops it and retries the call once with a new token. A
+rejected token request fails with an error that names the credential
+variables.
+Requests go only to Microsoft origins and never to Veryfront APIs.
+
+This source runs only in your own process. In a run on Veryfront Cloud, use
+the hosted `outlook__upload_attachment` tool for a large attachment instead. It
+returns an upload reference, not bytes: the API downloads the attachment with
+the project's Outlook connection, saves it to project uploads, and returns
+`upload_id`, `file_name`, `content_type` and `size`. Delegated connections and
+app-only access to the configured mailbox both work. Attachments up to 25 MiB
+fit; a larger one fails with an error that names the size and the limit. Pass
+`project_reference`, `message_id`, `attachment_id`, and the destination upload
+path as `file_path`. An existing upload at that path is returned as is, without
+a new download. The tool needs `outlook__get_attachment` enabled for the
+project, and the caller needs write access to project uploads.
 
 ## Build the project
 

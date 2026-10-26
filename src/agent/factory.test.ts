@@ -13,12 +13,17 @@ import {
   assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { type RemoteToolSource, tool, toolRegistry } from "#veryfront/tool";
+import {
+  loadRemoteToolsFromSource,
+  type RemoteToolSource,
+  tool,
+  toolRegistry,
+} from "#veryfront/tool";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { VeryfrontError } from "#veryfront/errors";
 import { getEffectiveAgentSystem } from "./runtime/effective-agent-system.ts";
 import { markRuntimeLocalTool } from "./runtime/local-tool.ts";
-import { getAvailableTools } from "./runtime/tool-helpers.ts";
+import { executeConfiguredTool, getAvailableTools, isDynamicTool } from "./runtime/tool-helpers.ts";
 import { agentRegistry } from "./composition/index.ts";
 import { agent, createEphemeralAgent, createEphemeralAgentWithRuntimeOptions } from "./factory.ts";
 import { resolveSkillToolDisposition } from "./skill-tool-disposition.ts";
@@ -1593,6 +1598,95 @@ description: Excluded skill
           model: "auto",
           system: "Test.",
           tools: { gmail__list_emails: localIntegrationShadow },
+        }),
+      VeryfrontError,
+      "reserved integration tool namespace",
+    );
+  });
+
+  it("accepts integration-named tools materialized from a remote tool source", async () => {
+    const calls: string[] = [];
+    const source: RemoteToolSource = {
+      id: "local-outlook",
+      listTools: () =>
+        Promise.resolve([
+          { name: "outlook__list_emails", description: "List emails", parameters: {} },
+          { name: "search_docs", description: "Search docs", parameters: {} },
+        ]),
+      executeTool: (name) => {
+        calls.push(name);
+        return Promise.resolve({ emails: [] });
+      },
+    };
+    const remoteTools = await loadRemoteToolsFromSource(source);
+
+    const assistant = agent({
+      id: "remote-source-integration-agent",
+      model: "auto",
+      system: "Test.",
+      tools: remoteTools,
+    });
+
+    const definitions = await getAvailableTools(assistant.config.tools);
+    assertEquals(definitions.map((definition) => definition.name), [
+      "outlook__list_emails",
+      "search_docs",
+    ]);
+    assertEquals(
+      await executeConfiguredTool("outlook__list_emails", {}, assistant.config.tools),
+      { emails: [] },
+    );
+    assertEquals(calls, ["outlook__list_emails"]);
+    assertEquals(toolRegistry.get("outlook__list_emails"), undefined);
+    // Remote tools outside the reserved namespace still register, so streams
+    // keep classifying them as dynamic.
+    assertEquals(isDynamicTool("search_docs"), true);
+  });
+
+  it("still rejects unmarked or re-keyed look-alikes of remote integration tools", async () => {
+    const remoteTools = await loadRemoteToolsFromSource({
+      id: "local-outlook",
+      listTools: () =>
+        Promise.resolve([{ name: "outlook__send_email", description: "Send", parameters: {} }]),
+      executeTool: () => Promise.resolve({}),
+    });
+    const lookAlike = { ...remoteTools.outlook__send_email! };
+    for (const symbol of Object.getOwnPropertySymbols(lookAlike)) {
+      delete (lookAlike as unknown as Record<symbol, unknown>)[symbol];
+    }
+
+    assertThrows(
+      () =>
+        agent({
+          id: "remote-look-alike-agent",
+          model: "auto",
+          system: "Test.",
+          tools: { outlook__send_email: lookAlike },
+        }),
+      VeryfrontError,
+      "reserved integration tool namespace",
+    );
+    assertThrows(
+      () =>
+        agent({
+          id: "remote-rekeyed-agent",
+          model: "auto",
+          system: "Test.",
+          tools: { send_email: remoteTools.outlook__send_email! },
+        }),
+      VeryfrontError,
+      "reserved integration tool namespace",
+    );
+    // A spread keeps the enumerable provenance marker, so only the id check stops this.
+    assertThrows(
+      () =>
+        agent({
+          id: "remote-reidentified-agent",
+          model: "auto",
+          system: "Test.",
+          tools: {
+            outlook__send_email: { ...remoteTools.outlook__send_email!, id: "gmail__send_email" },
+          },
         }),
       VeryfrontError,
       "reserved integration tool namespace",

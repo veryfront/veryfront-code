@@ -9194,6 +9194,43 @@ describe("authenticated summary finding order", () => {
     return { ...summary, body: lines.join("\n") };
   };
 
+  it("does not let resolved historical findings revoke an exact-head clean receipt", async () => {
+    for (const section of ["code_review", "security_review"]) {
+      const summary = findingSummary(section);
+      summary.body = summary.body.replace(
+        '"has_unresolved_findings":true',
+        '"has_unresolved_findings":false',
+      );
+      const clean = codexComment(undefined, {
+        created_at: "2026-09-06T14:30:00Z",
+      });
+      const evidence = { reviews: [], comments: [summary, clean] };
+      assertEquals(
+        (await findAutomatedReview(evidence, HEAD, () => Promise.resolve(HEAD)))
+          ?.source,
+        "codex-comment",
+      );
+      // Resolved history alone is not a new clean review.
+      assertEquals(
+        await findAutomatedReview(
+          { reviews: [], comments: [summary] },
+          HEAD,
+          () => Promise.resolve(HEAD),
+        ),
+        undefined,
+      );
+      // Unknown resolution must still block the earlier clean receipt.
+      summary.body = summary.body.replace(
+        '"has_any_findings":true,"has_unresolved_findings":false',
+        '"has_any_findings":true,"has_unresolved_findings":null',
+      );
+      assertEquals(
+        await findAutomatedReview(evidence, HEAD, () => Promise.resolve(HEAD)),
+        undefined,
+      );
+    }
+  });
+
   it("requires a later clean verdict after explicit code or security findings", async () => {
     for (const section of ["code_review", "security_review"]) {
       const comments = [findingSummary(section), codexComment(undefined, {

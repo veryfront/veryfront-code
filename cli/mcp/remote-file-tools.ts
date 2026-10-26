@@ -190,10 +190,19 @@ async function apiRequest<T>(
   return await sendApiRequest<T>(endpoint, method, path, token, options.body);
 }
 
-interface RemoteFile {
+interface RemoteFileIdentity {
   id?: string;
+  version_id?: string;
+  binary?: {
+    content_type: string;
+    byte_size: number;
+    content_hash: string;
+  } | null;
+}
+
+interface RemoteFile extends RemoteFileIdentity {
   path: string;
-  content: string;
+  content: string | null;
   /** File size in bytes. */
   size_bytes?: number;
   /** Earlier spelling of `size_bytes`; the only size field on branch file routes. */
@@ -303,7 +312,7 @@ type RemoteListFilesInput = InferSchema<ReturnType<typeof getRemoteListFilesInpu
 
 interface RemoteListFilesOutput {
   success: boolean;
-  files?: Array<{ path: string; type: string; size: number }>;
+  files?: Array<RemoteFileIdentity & { path: string; type: string; size: number }>;
   error?: string;
   total?: number;
 }
@@ -313,7 +322,7 @@ export const vfRemoteListFiles: MCPTool<RemoteListFilesInput, RemoteListFilesOut
   title: "List Remote Files",
   annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
   description:
-    "List files in a remote Veryfront project. Returns file paths, types, and sizes. Use this to explore a project's structure.",
+    "List files in a remote Veryfront project. Returns file paths, types, sizes, version IDs, and binary metadata. Use this to explore a project's structure.",
   inputSchema: remoteListFilesInput,
   execute: (input) =>
     withSpan(
@@ -324,7 +333,12 @@ export const vfRemoteListFiles: MCPTool<RemoteListFilesInput, RemoteListFilesOut
         params.set("limit", String(input.limit));
         // The branch file route answers `size` only; the project route answers
         // `size_bytes` beside it.
-        params.set("fields", input.branch ? "(path,type,size)" : "(path,type,size_bytes,size)");
+        params.set(
+          "fields",
+          input.branch
+            ? "(id,path,type,size,version_id,binary)"
+            : "(id,path,type,size_bytes,size,version_id,binary)",
+        );
 
         const apiPath = `${
           buildProjectApiPath(input.project, "files", input.branch)
@@ -335,7 +349,14 @@ export const vfRemoteListFiles: MCPTool<RemoteListFilesInput, RemoteListFilesOut
         const files = result.data?.data ?? [];
         return {
           success: true,
-          files: files.map((f) => ({ path: f.path, type: f.type, size: remoteFileSize(f) })),
+          files: files.map((f) => ({
+            path: f.path,
+            type: f.type,
+            size: remoteFileSize(f),
+            ...(f.id !== undefined ? { id: f.id } : {}),
+            ...(f.version_id !== undefined ? { version_id: f.version_id } : {}),
+            ...(f.binary !== undefined ? { binary: f.binary } : {}),
+          })),
           total: files.length,
         };
       },
@@ -360,7 +381,7 @@ type RemoteGetFileInput = InferSchema<ReturnType<typeof getRemoteGetFileInput>>;
 
 interface RemoteGetFileOutput {
   success: boolean;
-  file?: { path: string; content: string; size: number; type: string };
+  file?: RemoteFileIdentity & { path: string; content: string | null; size: number; type: string };
   error?: string;
 }
 
@@ -369,7 +390,7 @@ export const vfRemoteGetFile: MCPTool<RemoteGetFileInput, RemoteGetFileOutput> =
   title: "Get Remote File",
   annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
   description:
-    "Read the content of a file from a remote Veryfront project. Always use this before modifying a file.",
+    "Read a remote project file and its version and binary metadata. Binary content uses the asset API; an empty content field does not mean an empty binary file. Always use this before modifying a file.",
   inputSchema: remoteGetFileInput,
   execute: (input) =>
     withSpan(
@@ -389,6 +410,9 @@ export const vfRemoteGetFile: MCPTool<RemoteGetFileInput, RemoteGetFileOutput> =
             content: file.content,
             size: remoteFileSize(file),
             type: file.type,
+            ...(file.id !== undefined ? { id: file.id } : {}),
+            ...(file.version_id !== undefined ? { version_id: file.version_id } : {}),
+            ...(file.binary !== undefined ? { binary: file.binary } : {}),
           },
         };
       },
@@ -852,6 +876,46 @@ interface RemoteCloneProjectOutput {
   error?: string;
 }
 
+async function prepareCloneSourceFiles({
+  project,
+  files,
+}: {
+  project: string;
+  files: readonly RemoteFile[];
+}): Promise<{ files: RemoteFile[]; error?: never } | { error: string; files?: never }> {
+  const prepared: RemoteFile[] = [];
+  for (const file of files) {
+    if (file.binary !== undefined && file.binary !== null) {
+      return {
+        error:
+          `Cannot clone binary file "${file.path}" as text. No destination project was created.`,
+      };
+    }
+    const getResult = await apiRequest<RemoteFile>(
+      "GET",
+      buildProjectFilePath(project, file.path),
+    );
+    if (!getResult.ok || !getResult.data) {
+      return {
+        error: `Failed to read ${file.path}. No destination project was created.`,
+      };
+    }
+    if (getResult.data.binary !== undefined && getResult.data.binary !== null) {
+      return {
+        error:
+          `Cannot clone binary file "${file.path}" as text. No destination project was created.`,
+      };
+    }
+    if (typeof getResult.data.content !== "string") {
+      return {
+        error: `Invalid text content for ${file.path}. No destination project was created.`,
+      };
+    }
+    prepared.push(getResult.data);
+  }
+  return { files: prepared };
+}
+
 export const vfRemoteCloneProject: MCPTool<RemoteCloneProjectInput, RemoteCloneProjectOutput> = {
   name: "vf_remote_clone_project",
   title: "Clone Remote Project",
@@ -863,15 +927,6 @@ export const vfRemoteCloneProject: MCPTool<RemoteCloneProjectInput, RemoteCloneP
     withSpan(
       "cli.mcp.tool.vf_remote_clone_project",
       async () => {
-        const createResult = await createProjectWithRetry(input.target_slug, {});
-
-        if (!createResult.ok) {
-          return { success: false, error: `Failed to create project: ${createResult.error}` };
-        }
-
-        const newProject = createResult.data;
-        if (!newProject) return { success: false, error: "Project created but no data returned" };
-
         const params = new URLSearchParams();
         params.set("limit", "1000");
         if (input.file_pattern) params.set("pattern", input.file_pattern);
@@ -884,30 +939,33 @@ export const vfRemoteCloneProject: MCPTool<RemoteCloneProjectInput, RemoteCloneP
         if (!listResult.ok) {
           return {
             success: false,
-            error: `Project created but failed to list source files: ${listResult.error}`,
-            project: newProject,
+            error: `Failed to list source files: ${listResult.error}`,
           };
         }
 
         const sourceFiles = listResult.data?.data ?? [];
+        const prepared = await prepareCloneSourceFiles({
+          project: input.source_project,
+          files: sourceFiles,
+        });
+        if (prepared.error !== undefined) return { success: false, error: prepared.error };
+
+        const createResult = await createProjectWithRetry(input.target_slug, {});
+
+        if (!createResult.ok) {
+          return { success: false, error: `Failed to create project: ${createResult.error}` };
+        }
+
+        const newProject = createResult.data;
+        if (!newProject) return { success: false, error: "Project created but no data returned" };
+
         let filesCopied = 0;
         const errors: string[] = [];
-
-        for (const file of sourceFiles) {
-          const getResult = await apiRequest<RemoteFile>(
-            "GET",
-            buildProjectFilePath(input.source_project, file.path),
-          );
-
-          if (!getResult.ok || !getResult.data) {
-            errors.push(`Failed to read ${file.path}`);
-            continue;
-          }
-
+        for (const file of prepared.files) {
           const createFileResult = await apiRequest<{ id: string; path: string }>(
             "PUT",
             buildProjectFilePath(createResult.slug, file.path),
-            { body: { content: getResult.data.content } },
+            { body: { content: file.content } },
           );
 
           if (createFileResult.ok) {

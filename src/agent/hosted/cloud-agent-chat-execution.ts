@@ -1,5 +1,8 @@
 import { fetchHostedProjectAgentDefinition } from "./project-agent-definition-resolver.ts";
-import { configureHostedPlatformDependencySource } from "./platform-dependency-credential.ts";
+import {
+  configureHostedPlatformDependencySource,
+  hostedPlatformDependencyCredential,
+} from "./platform-dependency-credential.ts";
 import { createHostedProjectRemoteToolSources } from "./project-remote-tool-source.ts";
 import { inheritHostedAgentPauseCapability } from "./manual-pause-credential.ts";
 import { hostedTerminalToolSourceFactory } from "./terminal-credential.ts";
@@ -275,6 +278,7 @@ export async function createAgentRuntime(
             owner,
             config.VERYFRONT_MCP_URL,
             sourceFactory,
+            () => hostedPlatformDependencyCredential(owner),
           ),
         })[0];
       },
@@ -342,6 +346,7 @@ export async function createAgentRuntime(
             terminalRequest,
             config.VERYFRONT_MCP_URL,
             getRemoteToolSourceFactory(context),
+            terminalRequest ? () => hostedPlatformDependencyCredential(terminalRequest) : undefined,
           ),
           traceLocalTools: {
             trace: (spanName, operation) =>

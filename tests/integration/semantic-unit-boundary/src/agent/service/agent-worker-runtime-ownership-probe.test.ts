@@ -2462,7 +2462,7 @@ it("does not send mutation requests after the probe deadline expires", async () 
   Date.now = () => now;
   try {
     const probe = createAgentWorkerRuntimeOwnershipProbe(
-      { ...activation, operationTimeoutMs: 1_000 },
+      { ...activation, operationTimeoutMs: 1 },
       (receipt) => receipts.push(receipt),
     );
 
@@ -2471,8 +2471,8 @@ it("does not send mutation requests after the probe deadline expires", async () 
       fetch: (input, init) => {
         const request = new Request(input, init);
         methods.push(request.method);
-        // Expire the operation after its first read, before the next dispatch.
-        now += 1_001;
+        // Expire after the first read dispatch, before the next page check.
+        now += 2;
         return Promise.resolve(Response.json({ data: [], page_info: { next: "again" } }));
       },
       workerId,
@@ -2480,13 +2480,13 @@ it("does not send mutation requests after the probe deadline expires", async () 
       credentials: credentials(),
       embedder: managedTestEmbedder(),
     });
-
-    assertEquals(methods, ["GET"]);
-    assertEquals(receipts[0]?.status, "error");
-    assertEquals(receipts[0]?.reason, "operation-deadline-exceeded");
   } finally {
     Date.now = originalNow;
   }
+
+  assertEquals(methods, ["GET"]);
+  assertEquals(receipts[0]?.status, "error");
+  assertEquals(receipts[0]?.reason, "operation-deadline-exceeded");
 });
 
 it("reconciles claim cursor when the probe append outcome is ambiguous", async () => {

@@ -5,6 +5,8 @@ import type {
 } from "#veryfront/provider/types.ts";
 import {
   closeSchemaForOutputConfig,
+  promptHasDocumentInput,
+  routesOpenAIDocumentInputToResponses,
   unwrapToolInputSchema,
 } from "#veryfront/provider/shared/index.ts";
 import { snapshotProviderJsonValue } from "#veryfront/provider/runtime-loader/json-snapshot.ts";
@@ -43,12 +45,14 @@ import type {
 
 type ModelCallRuntimeMetadata = Pick<
   RuntimeMetadata,
-  "modelId" | "provider" | "modelProvider" | "openAITransport"
+  "modelId" | "provider" | "modelProvider" | "openAITransport" | "openAIResponsesDocumentInput"
 >;
 type ModelCallRequestSource =
   & Pick<ModelRuntimeCallOptions, keyof ModelCallRequest | "tools" | "responseFormat">
   & {
     providerOptions?: unknown;
+    /** Read only to see whether a document moves an `auto` request to Responses. */
+    prompt?: unknown;
   };
 
 type ModelCallOpenAITransport = "chat-completions" | "responses" | undefined;
@@ -446,6 +450,15 @@ function requestUsesOpenAIHostedTool(options: ModelCallRequestSource): boolean {
     );
 }
 
+/** Whether a request moves to Responses on an unpinned `auto` transport. */
+function requestRequiresOpenAIResponses(
+  options: ModelCallRequestSource,
+  documentsOnResponses: boolean,
+): boolean {
+  return requestUsesOpenAIHostedTool(options) ||
+    (documentsOnResponses && promptHasDocumentInput(options.prompt));
+}
+
 function managedOpenAITransport(
   model: ModelCallRuntimeMetadata,
   options: ModelCallRequestSource,
@@ -457,13 +470,17 @@ function managedOpenAITransport(
   // against the call is the one the request is built with. A provider that is
   // not native to the OpenAI surface never reaches the Responses transport,
   // whatever its model IDs look like.
-  const usesHostedTool = requestUsesOpenAIHostedTool(options);
+  // The unpinned plan builds the adaptive runtime as "veryfront-cloud".
+  const requiresResponses = requestRequiresOpenAIResponses(
+    options,
+    routesOpenAIDocumentInputToResponses("veryfront-cloud"),
+  );
   const built = readVeryfrontCloudModelFacts(model);
   if (built) {
     if (built.transportPlan.pinned) return built.transportPlan.transport;
-    return usesHostedTool ? "responses" : "chat-completions";
+    return requiresResponses ? "responses" : "chat-completions";
   }
-  return resolveVeryfrontCloudOpenAICallTransport(provider, model.modelId, usesHostedTool);
+  return resolveVeryfrontCloudOpenAICallTransport(provider, model.modelId, requiresResponses);
 }
 
 function directOpenAITransport(
@@ -475,8 +492,13 @@ function directOpenAITransport(
     return model.openAITransport;
   }
   if (model.openAITransport !== "auto" || !usesOpenAIBuilder(model)) return undefined;
-  return isOpenAIReasoningModel(model.modelId, openAIProviderName(model)) ||
-      requestUsesOpenAIHostedTool(options)
+  const providerName = openAIProviderName(model);
+  // The runtime records its base URL decision; a model without it uses the default URL.
+  const documentsOnResponses = typeof model.openAIResponsesDocumentInput === "boolean"
+    ? model.openAIResponsesDocumentInput
+    : routesOpenAIDocumentInputToResponses(providerName);
+  return isOpenAIReasoningModel(model.modelId, providerName) ||
+      requestRequiresOpenAIResponses(options, documentsOnResponses)
     ? "responses"
     : "chat-completions";
 }

@@ -65,9 +65,23 @@ function admission(
   id = childId,
   publicId = "run_child",
   parent = parentId,
+  outputFormat?: "text-data-v1",
 ) {
-  return json(
-    {
+  const responseBody = outputFormat
+    ? {
+      version: 1,
+      canonicalRunId: id,
+      parentRunId: parent,
+      projectId: "11111111-1111-4111-8111-111111111111",
+      agentId: "coordinator",
+      dispatchNonce: id === childId ? "nonce" : "nonce-child",
+      conversationId,
+      outputMessageId: "44444444-4444-4444-8444-444444444444",
+      status,
+      output,
+      outputFormat,
+    }
+    : {
       id,
       status,
       output,
@@ -76,10 +90,13 @@ function admission(
       target: { type: "agent", id: "coordinator" },
       conversation_id: conversationId,
       output_message_id: "44444444-4444-4444-8444-444444444444",
-    },
+    };
+  return json(
+    responseBody,
     202,
     {
       "Cache-Control": "no-store",
+      ...(outputFormat ? { "Content-Type": "application/vnd.veryfront.inherited-run+json" } : {}),
       "X-Veryfront-Run-Terminal-Token": id === childId ? terminalToken : encode({
         tokenUse: "run_event_writer",
         writerPurpose: "current_run_terminal",
@@ -144,13 +161,128 @@ describe("workflow agent child protocol", () => {
             throw new Error("Completed child must not execute again");
           },
         }),
-        { success: true, output: { result: 42 }, executionTime: 0 },
+        {
+          success: true,
+          output: { result: 42 },
+          executionTime: 0,
+        },
       );
     }
     assertEquals(starts[0], starts[1]);
     assertEquals(starts[0] === starts[2], false);
     assertEquals(children, [children[0], children[0], children[0]]);
   });
+
+  for (const structured of [false, true]) {
+    it(`stores only ${structured ? "structured" : "text-only"} workflow agent results`, async () => {
+      const output = {
+        text: "brief",
+        toolCalls: [],
+        status: "completed",
+        usage: { totalTokens: 1 },
+        ...(structured ? { object: { category: "billing" } } : {}),
+      };
+      let finalized: unknown;
+      const persistedText: string[] = [];
+      let cursor = 0;
+      const send: typeof fetch = (url, init) => {
+        if (String(url).endsWith("/runs")) return Promise.resolve(admission());
+        if (String(url).endsWith(`/runs/${childId}/events`)) {
+          const events = requestJsonBody(init).events;
+          for (const event of events) {
+            if (event.type === "TEXT_MESSAGE_CONTENT") persistedText.push(event.delta);
+          }
+          cursor += events.length;
+          return Promise.resolve(json({
+            run_id: childId,
+            latest_event_id: cursor,
+            latest_external_event_sequence: cursor,
+            appended_count: events.length,
+          }));
+        }
+        if (String(url).endsWith("/finalize")) {
+          finalized = requestJsonBody(init);
+          return Promise.resolve(json({ id: childId, status: "completed" }));
+        }
+        return Promise.resolve(json({}));
+      };
+      const result = await runner(send)({
+        ...invocation,
+        execute: () => Promise.resolve({ success: true, output, executionTime: 1 }),
+      });
+      assertEquals(result.output, output);
+      assertEquals(persistedText, ["brief"]);
+      assertEquals(finalized, {
+        status: "completed",
+        final_text: "brief",
+        ...(structured ? { output: { category: "billing" } } : {}),
+      });
+    });
+  }
+
+  for (const filteredText of ["Contact [REDACTED]", ""]) {
+    it(`replays authoritative post-middleware text ${JSON.stringify(filteredText)}`, async () => {
+      let stored: unknown;
+      let cursor = 0;
+      let finalized = false;
+      const deltas: string[] = [];
+      const send: typeof fetch = (url, init) => {
+        const path = new URL(String(url)).pathname;
+        const body = requestJsonBody(init);
+        if (path === `/runs/${parentId}/events`) return Promise.resolve(json({}));
+        if (path === "/runs") {
+          return Promise.resolve(
+            finalized
+              ? admission("completed", stored, childId, "run_child", parentId, "text-data-v1")
+              : admission(),
+          );
+        }
+        if (path.endsWith("/events")) {
+          for (const event of body.events) {
+            if (event.type === "TEXT_MESSAGE_CONTENT") deltas.push(event.delta);
+          }
+          cursor += body.events.length;
+          return Promise.resolve(
+            json({
+              run_id: childId,
+              latest_event_id: cursor,
+              latest_external_event_sequence: cursor,
+              appended_count: body.events.length,
+            }),
+          );
+        }
+        assertEquals(body.final_text, filteredText);
+        assertEquals(body.output, undefined);
+        stored = { text: body.final_text };
+        finalized = true;
+        return Promise.resolve(json({ id: childId, status: "completed" }));
+      };
+      const fresh = await runner(send)({
+        ...invocation,
+        execute: async () => {
+          await observeGeneratedAgentTurn("provider-message", {
+            text: "Contact synthetic-person@example.test",
+            toolCalls: [],
+          });
+          return {
+            success: true,
+            output: { text: filteredText, toolCalls: 0, status: "completed" },
+            executionTime: 1,
+          };
+        },
+      });
+      assertEquals(fresh.success, true);
+      assertEquals(fresh.output, { text: filteredText, toolCalls: 0, status: "completed" });
+      const replay = await runner(send)({
+        ...invocation,
+        execute: () => {
+          throw new Error("Replay must not execute");
+        },
+      });
+      assertEquals(replay.output, { text: filteredText, status: "completed" });
+      assertEquals(deltas, ["Contact synthetic-person@example.test"]);
+    });
+  }
 
   it("acknowledges node start then admits, executes locally once and finalizes with exact child authority", async () => {
     const order: string[] = [];
@@ -171,7 +303,7 @@ describe("workflow agent child protocol", () => {
         assertEquals(headers.get("Authorization"), "Bearer parent-invocation");
         assertEquals(body.parent_run_id, parentId);
         assertEquals(body.node_id, "research");
-        assertEquals(body.input, { prompt: JSON.stringify(invocation.input) });
+        assertEquals(body.input, { text: JSON.stringify(invocation.input) });
         return Promise.resolve(admission());
       }
       assertEquals(url, `https://api.example.test/runs/${childId}/finalize`);
@@ -193,6 +325,76 @@ describe("workflow agent child protocol", () => {
     assertEquals(order, ["start", "admit", "execute", "finalize"]);
     assertEquals(getActiveHostedRunEventWriterCapability(), undefined);
   });
+
+  for (
+    const stored of [
+      { text: "classified", data: { category: "billing" } },
+      { text: "classified", object: { category: "billing" }, toolCalls: [], status: "completed" },
+    ]
+  ) {
+    it(`restores structured workflow replay for downstream context ${JSON.stringify(stored)}`, async () => {
+      const model = scriptedModel([{ text: "must not execute" }], { only: "generate" });
+      const actualAgent = agent({
+        id: "coordinator",
+        model: "test/workflow",
+        system: "Classify",
+        skills: false,
+        resolveModelTransport: () => ({ model }),
+      });
+      const consumed: unknown[] = [];
+      const consumer = tool({
+        id: "consume",
+        description: "Consume classification",
+        inputSchema: defineSchema((v) => v.object({ category: v.string() }))(),
+        execute: (input) => {
+          consumed.push(input);
+          return input;
+        },
+      });
+      const nodes: WorkflowNode[] = [
+        step("research", { agent: actualAgent, input: "Classify" }),
+        {
+          ...step("consume", {
+            tool: consumer,
+            input: (context) => (context.research as { object: unknown }).object,
+          }),
+          dependsOn: ["research"],
+        },
+      ];
+      const send: typeof fetch = (url) =>
+        Promise.resolve(
+          String(url).endsWith("/runs")
+            ? admission(
+              "completed",
+              stored,
+              childId,
+              "run_child",
+              parentId,
+              "data" in stored && !("object" in stored) ? "text-data-v1" : undefined,
+            )
+            : json({}),
+        );
+      const run: WorkflowRun = {
+        id: "run_parent",
+        workflowId: "workflow",
+        status: "running",
+        input: {},
+        context: { input: {} },
+        nodeStates: {},
+        currentNodes: [],
+        checkpoints: [],
+        pendingApprovals: [],
+        createdAt: new Date(),
+        sourceIntegrationPolicy: normalizeSourceIntegrationPolicy(undefined),
+      };
+      const outcome = await new DAGExecutor({
+        stepExecutor: new StepExecutor({ runAgentNode: runner(send) }),
+      }).execute(nodes, run);
+      assertEquals(outcome.completed, true, JSON.stringify(outcome));
+      assertEquals(consumed, [{ category: "billing" }]);
+      assertEquals(model.callCount, 0);
+    });
+  }
 
   it("keeps repeated local agent nodes distinct across composite owners and loop iterations with stable replay", async () => {
     const model = scriptedModel([
@@ -298,10 +500,10 @@ describe("workflow agent child protocol", () => {
     assertEquals(model.callCount, 4);
     assertEquals(records.size, 4);
     assertEquals([...records.values()].map((record) => record.input), [
-      { prompt: "first-input" },
-      { prompt: "second-input" },
-      { prompt: "iteration-0" },
-      { prompt: "iteration-1" },
+      { text: "first-input" },
+      { text: "second-input" },
+      { text: "iteration-0" },
+      { text: "iteration-1" },
     ]);
     assertEquals((await run()).completed, true);
     assertEquals(model.callCount, 4);
@@ -341,6 +543,7 @@ describe("workflow agent child protocol", () => {
     >();
     const starts = new Set<string>();
     const cursors = new Map<string, number>();
+    const texts = new Map<string, string>();
     const send: typeof fetch = (url, init) => {
       const path = new URL(String(url)).pathname;
       const body = requestJsonBody(init);
@@ -367,6 +570,11 @@ describe("workflow agent child protocol", () => {
       }
       const id = path.split("/")[2]!;
       if (path.endsWith("/events")) {
+        for (const event of body.events) {
+          if (event.type === "TEXT_MESSAGE_CONTENT") {
+            texts.set(id, (texts.get(id) ?? "") + event.delta);
+          }
+        }
         const cursor = (cursors.get(id) ?? 0) + body.events.length;
         cursors.set(id, cursor);
         return Promise.resolve(
@@ -380,7 +588,7 @@ describe("workflow agent child protocol", () => {
       }
       const record = [...records.values()].find((value) => value.id === id)!;
       record.status = body.status;
-      record.output = body.output;
+      record.output = Object.hasOwn(body, "output") ? body.output : { text: texts.get(id) ?? "" };
       return Promise.resolve(json({ id, status: body.status }));
     };
     const freshRun = (): WorkflowRun => ({
@@ -751,12 +959,13 @@ describe("workflow agent child protocol", () => {
       }
       assertEquals(
         order,
-        terminalReplay ? ["tool-evidence", "admit-research", "finish-coordinator"] : [
+        terminalReplay ? ["tool-evidence", "admit-research", "child-text", "finish-coordinator"] : [
           "tool-evidence",
           "admit-research",
           "local-research",
           "child-text",
           "finish-research",
+          "child-text",
           "finish-coordinator",
         ],
       );
@@ -1087,7 +1296,11 @@ describe("workflow agent child protocol", () => {
         throw new Error("must not execute");
       },
     });
-    assertEquals(result, { success: true, output, executionTime: 0 });
+    assertEquals(result, {
+      success: true,
+      output,
+      executionTime: 0,
+    });
     assertEquals(calls, 2);
   });
 
@@ -1102,7 +1315,11 @@ describe("workflow agent child protocol", () => {
         throw new Error("must not execute");
       },
     });
-    assertEquals(result, { success: true, output, executionTime: 0 });
+    assertEquals(result, {
+      success: true,
+      output,
+      executionTime: 0,
+    });
     assertEquals(calls, 2);
   });
 

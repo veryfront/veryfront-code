@@ -1,4 +1,6 @@
 import {
+  createClassifiedProviderStreamProtocolError,
+  createClassifiedStreamRangeError,
   createStreamRetentionBudget,
   mergeUsage,
   parseSseChunk,
@@ -6,7 +8,6 @@ import {
   ProviderOverloadedError,
   ProviderRateLimitError,
   ProviderRequestError,
-  ProviderStreamProtocolError,
   readGatewayBillingMode,
   readGatewayUsageCosts,
   readRecord,
@@ -142,14 +143,14 @@ function invalidAnthropicStream(
   providerLabel: string,
   issue: string,
   cause?: unknown,
-): ProviderStreamProtocolError {
-  return new ProviderStreamProtocolError({
+) {
+  return createClassifiedProviderStreamProtocolError({
     provider: "anthropic",
     status: 200,
     message: `${providerLabel} request failed: invalid successful stream (${issue})`,
     retryable: false,
     ...(cause === undefined ? {} : { cause }),
-  });
+  }, issue);
 }
 
 const UNPARSABLE_TOOL_INPUT_ISSUE = "tool call arguments were not valid JSON object text";
@@ -190,12 +191,12 @@ function appendAnthropicToolInput(
   if (!isPartialJsonDelta && delta.length === 0) return;
   const overflow = reserveStreamRetention(toolCall.inputBudget, delta, ANTHROPIC_TOOL_INPUT_LIMITS);
   if (overflow === "empty-fragments") {
-    throw new RangeError(
+    throw createClassifiedStreamRangeError(
       `Anthropic partial_json exceeded ${MAX_ANTHROPIC_EMPTY_PARTIAL_JSON_DELTAS} empty fragments`,
     );
   }
   if (overflow === "bytes") {
-    throw new RangeError(
+    throw createClassifiedStreamRangeError(
       `Anthropic partial_json exceeded ${MAX_ANTHROPIC_PARTIAL_JSON_BYTES} UTF-8 bytes`,
     );
   }
@@ -319,7 +320,7 @@ class BoundedAnthropicSseParser {
   #appendLineBytes(bytes: Uint8Array): void {
     if (bytes.byteLength === 0) return;
     if (bytes.byteLength > MAX_ANTHROPIC_SSE_REMAINDER_BYTES - this.#lineBytes) {
-      throw new RangeError(
+      throw createClassifiedStreamRangeError(
         `Anthropic SSE remainder exceeded ${MAX_ANTHROPIC_SSE_REMAINDER_BYTES} bytes`,
       );
     }
@@ -335,7 +336,7 @@ class BoundedAnthropicSseParser {
 
   #addEventBytes(bytes: number): void {
     if (bytes > MAX_ANTHROPIC_SSE_EVENT_BYTES - this.#eventBytes) {
-      throw new RangeError(
+      throw createClassifiedStreamRangeError(
         `Anthropic SSE event exceeded ${MAX_ANTHROPIC_SSE_EVENT_BYTES} bytes`,
       );
     }

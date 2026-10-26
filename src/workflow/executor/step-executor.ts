@@ -1,3 +1,4 @@
+import { readStructuredAgentOutput } from "#veryfront/agent/output-schema.ts";
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { Agent, AgentResponse } from "#veryfront/agent/types.ts";
 import type { Tool } from "#veryfront/tool/types.ts";
@@ -537,7 +538,7 @@ export class StepExecutor {
       toolCalls: response.toolCalls,
       status: response.status,
       usage: response.usage,
-      object: response.object,
+      ...readStructuredAgentOutput(response),
     });
   }
 

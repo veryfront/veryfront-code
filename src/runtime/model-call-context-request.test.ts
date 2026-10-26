@@ -2444,6 +2444,68 @@ describe("model call request projection", () => {
       options,
     );
   });
+
+  describe("document input on the auto transport", () => {
+    const documentPrompt: ModelRuntimeCallOptions["prompt"] = [{
+      role: "user",
+      content: [
+        { type: "text", text: "Synthetic request" },
+        {
+          type: "file",
+          url: "data:application/pdf;base64,JVBERi0=",
+          mediaType: "application/pdf",
+          filename: "request.pdf",
+        },
+      ],
+    }];
+    const providerOptions = { openai: { max_output_tokens: 666, max_tokens: 777 } };
+
+    it("projects Responses controls when a direct OpenAI model routes a document there", () => {
+      const options: ModelRuntimeCallOptions = {
+        prompt: documentPrompt,
+        maxOutputTokens: 100,
+        seed: 7,
+        providerOptions,
+      };
+      const projected = buildModelCallContextRequest({
+        provider: "openai",
+        modelProvider: "openai",
+        modelId: "gpt-4.1",
+        openAITransport: "auto",
+      }, options);
+      const body = buildOpenAIResponsesRequest(
+        "gpt-4.1",
+        "openai",
+        options,
+        false,
+        createWarningCollector(),
+      );
+      assertEquals(projected?.maxOutputTokens, body.max_output_tokens);
+      assertEquals(projected?.seed, undefined);
+    });
+
+    it("projects Responses controls when a managed OpenAI model routes a document there", () => {
+      const projected = buildModelCallContextRequest({
+        provider: "veryfront-cloud",
+        modelProvider: "openai",
+        modelId: "gpt-4o",
+      }, { prompt: documentPrompt, seed: 7, stopSequences: ["STOP"] });
+      assertEquals(projected?.seed, undefined);
+      assertEquals(projected?.stopSequences, undefined);
+    });
+
+    for (const modelProvider of ["mistral", "openai-compatible"]) {
+      it(`keeps Chat Completions controls for ${modelProvider}, which never routes documents`, () => {
+        const projected = buildModelCallContextRequest({
+          provider: modelProvider,
+          modelProvider,
+          modelId: "compatible-model",
+          openAITransport: "auto",
+        }, { prompt: documentPrompt, maxOutputTokens: 100, providerOptions });
+        assertEquals(projected?.maxOutputTokens, 777);
+      });
+    }
+  });
 });
 
 for (const provider of ["anthropic", "google", "openai"] as const) {

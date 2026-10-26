@@ -14,6 +14,7 @@ import {
   resolveConfiguredAgentModel,
   resolveModelProviderOptionKey,
   resolveRuntimeModel,
+  routesDirectWithoutCatalog,
 } from "./model-resolution.ts";
 import {
   isVeryfrontCloudAnthropicSurfaceModel,
@@ -226,7 +227,14 @@ function resolveReasoningWithDefaults(
     return { enabled: false };
   }
 
-  if (isVeryfrontCloudAnthropicSurfaceModel(modelString)) {
+  // A direct-provider model takes no catalog defaults, so it resolves the same
+  // whatever another run loaded first.
+  if (
+    !(IntrinsicReflectApply(StringStartsWith, modelString, [
+      VERYFRONT_CLOUD_MODEL_PREFIX,
+    ]) as boolean) ||
+    isVeryfrontCloudAnthropicSurfaceModel(modelString)
+  ) {
     return undefined;
   }
 
@@ -250,13 +258,21 @@ export async function resolveAgentModelTransport(
   // A private resolver that carries its own catalog (a project-run execution)
   // loads and reads that catalog with its own credential instead: the ambient
   // credential must not decide which model its credential pays for.
+  //
+  // A model that routes to a provider key never reaches Veryfront Cloud, so
+  // an ambient run does not load the catalog for it: a stale login must not
+  // log a catalog failure for a run that never uses it. It takes no catalog
+  // thinking defaults either way.
   const privateCatalog = input.resolveModelRuntime
     ? modelRuntimeResolverCatalogs.get(input.resolveModelRuntime)
     : undefined;
   const isLocalModel = typeof configuredModel === "string" && configuredModel.startsWith("local/");
   if (privateCatalog) {
     if (!isLocalModel) await privateCatalog.load();
-  } else if (!input.resolveModelRuntime && isVeryfrontCloudEnabled() && !isLocalModel) {
+  } else if (
+    !input.resolveModelRuntime && isVeryfrontCloudEnabled() && !isLocalModel &&
+    !routesDirectWithoutCatalog(configuredModel)
+  ) {
     await warmVeryfrontCloudCatalog();
   }
   const readCatalog = <T>(fn: () => T): T => privateCatalog ? privateCatalog.read(fn) : fn();

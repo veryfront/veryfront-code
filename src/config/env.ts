@@ -13,6 +13,7 @@
 
 import { type EnvironmentConfig, getEnvironmentConfig } from "./environment-config.ts";
 import { getEnv } from "#veryfront/platform/compat/process/env.ts";
+import { readVeryfrontApiTokenFile } from "#veryfront/platform/cloud/credential-file.ts";
 
 function toEnabledFlag<T extends string>(enabled: boolean, truthyValue: T): T | undefined {
   return enabled ? truthyValue : undefined;
@@ -76,9 +77,13 @@ export function getGithubEnvConfig(env: EnvironmentConfig = getEnvironmentConfig
 }
 
 export function getApiTokenEnv(
-  env: EnvironmentConfig = getEnvironmentConfig(),
+  env?: EnvironmentConfig,
 ): string | undefined {
-  return env.apiToken;
+  if (env !== undefined) return env.apiToken;
+  const tokenFile = getEnv("VERYFRONT_API_TOKEN_FILE");
+  return tokenFile !== undefined
+    ? readVeryfrontApiTokenFile(tokenFile)
+    : getEnvironmentConfig().apiToken;
 }
 
 export function getOpenAIEnvConfig(): {

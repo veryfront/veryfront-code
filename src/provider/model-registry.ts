@@ -25,6 +25,7 @@ import { ensureBuiltinLLMProviders } from "#veryfront/extensions/builtin-extensi
 import { ProjectScopedRegistryManager } from "#veryfront/registry/project-scoped-registry-manager.ts";
 import { tryGetRegistryScopeId } from "#veryfront/cache/cache-key-builder.ts";
 import { DEFAULT_GOOGLE_BASE_URL } from "#veryfront/provider/runtime-loader/provider-endpoints.ts";
+import { isOpenAIBaseURL } from "#veryfront/provider/runtime-loader/inline-file.ts";
 import { createOriginBoundOutboundFetch } from "#veryfront/security/http/outbound-fetch.ts";
 import { createLocalModel } from "./local/model-runtime-adapter.ts";
 import { createVeryfrontCloudModel } from "./veryfront-cloud/provider.ts";
@@ -82,16 +83,6 @@ function requireModelRuntime(value: unknown, modelString: string): ModelRuntime 
   }
 
   return value as ModelRuntime;
-}
-
-function isOpenAIBaseURL(baseURL: string | undefined): boolean {
-  if (!baseURL) return true;
-  try {
-    const hostname = new URL(baseURL).hostname.toLowerCase();
-    return hostname === "api.openai.com" || hostname.endsWith(".api.openai.com");
-  } catch {
-    return false;
-  }
 }
 
 function getOpenAIEnvProviderName(baseURL: string | undefined): "openai" | "openai-compatible" {

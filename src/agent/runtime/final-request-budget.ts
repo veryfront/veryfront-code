@@ -232,6 +232,8 @@ function resolveEffectiveBudget(
       ...(providerOptions === undefined ? {} : { providerOptions }),
       ...(budget.responseFormat === undefined ? {} : { responseFormat: budget.responseFormat }),
       tools: toolDescriptors(budget.tools),
+      // A document can move an adaptive OpenAI request to Responses.
+      prompt: budget.messages,
     } as ModelCallSource);
   const low = probe(1);
   const high = probe(2);

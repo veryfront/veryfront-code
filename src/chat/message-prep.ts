@@ -31,17 +31,18 @@ import {
 } from "./provider-message-tool-pair-repair.ts";
 import { findProviderVisibleToolReplayMatches } from "./tool-replay-reconciliation.ts";
 import {
-  buildDataFileAnnotation,
   type ChatAssistantContentPart,
   type ChatToolResultOutput,
   type ChatToolResultPart,
   type ChatUiMessage,
   type ChatUiMessagePart,
   type ChatUserContentPart,
-  normalizeInlineAttachmentMediaType,
   type ProviderModelMessage,
-  type UploadedFileReference,
 } from "./types.ts";
+import {
+  normalizeMessageFilePartMediaTypes,
+  rewriteUnsupportedFilePartsAsAnnotations,
+} from "./message-file-parts.ts";
 import { historicalToolSummaries } from "../integrations/_tool_summaries.ts";
 import type { IntegrationEndpointHistoricalSummary } from "../integrations/schema.ts";
 import { safeJsonParse } from "#veryfront/utils/json.ts";
@@ -62,6 +63,11 @@ import type {
 } from "./message-prep-types.ts";
 export { DEFAULT_MESSAGE_PREP_LIMITS } from "./message-prep-types.ts";
 export { repairToolPairs } from "./provider-message-tool-pair-repair.ts";
+export {
+  isModelSupportedFileMediaType,
+  normalizeMessageFilePartMediaTypes,
+  rewriteUnsupportedFilePartsAsAnnotations,
+} from "./message-file-parts.ts";
 export type {
   HistoricalToolInputCompactionDiagnostic,
   HistoricalToolInputRetainedField,
@@ -263,6 +269,7 @@ export function enforceTokenBudgetWithTurnCompression(
 }
 
 const MASK_THRESHOLD = DEFAULT_MESSAGE_PREP_LIMITS.historicalToolOutputMaskChars;
+const RECENT_COLLECTION_MAX_CHARS = 4096;
 const HISTORICAL_TOOL_INPUT_SUMMARY_KIND = "historical_tool_input_summary";
 const PRECEDING_TURN_FILE_READ_TOOL_NAMES = new Set([
   "get_file",
@@ -625,102 +632,6 @@ function collectHistoricalUiToolResultIds(
 interface ToolCallInfo {
   toolName: string;
   input: unknown;
-}
-
-/** Check whether the model supports the file media type. */
-export function isModelSupportedFileMediaType(mediaType: string): boolean {
-  return mediaType.startsWith("image/") || mediaType === "application/pdf" ||
-    mediaType === "text/plain";
-}
-
-/** Normalizes message file part media types. */
-export function normalizeMessageFilePartMediaTypes(messages: ChatUiMessage[]): ChatUiMessage[] {
-  return messages.map((message) => {
-    if (!message.parts.some((part) => part.type === "file")) {
-      return message;
-    }
-
-    const parts = message.parts.map((part) => {
-      if (part.type !== "file") {
-        return part;
-      }
-
-      const mediaType = normalizeInlineAttachmentMediaType(part.filename, part.mediaType);
-      if (mediaType === part.mediaType) {
-        return part;
-      }
-
-      return {
-        ...part,
-        mediaType,
-      };
-    });
-
-    return { ...message, parts };
-  });
-}
-
-function appendDataFileAnnotation(
-  kept: ChatUiMessagePart[],
-  dataFiles: UploadedFileReference[],
-): void {
-  const annotation = buildDataFileAnnotation(dataFiles);
-  const lastTextIndex = kept.findLastIndex((part) => part.type === "text");
-
-  if (lastTextIndex >= 0) {
-    const textPart = kept[lastTextIndex];
-    if (textPart?.type === "text") {
-      kept[lastTextIndex] = { type: "text", text: textPart.text + annotation };
-    }
-  } else {
-    kept.push({ type: "text", text: annotation.trimStart() });
-  }
-}
-
-/** Rewrite unsupported file parts as annotations. */
-export function rewriteUnsupportedFilePartsAsAnnotations(
-  messages: ChatUiMessage[],
-): ChatUiMessage[] {
-  return messages.map((message) => {
-    if (message.parts.length === 0) {
-      return message;
-    }
-
-    const kept: ChatUiMessagePart[] = [];
-    const dataFiles: UploadedFileReference[] = [];
-
-    for (const part of message.parts) {
-      if (part.type !== "file") {
-        kept.push(part);
-        continue;
-      }
-
-      const normalizedMediaType = normalizeInlineAttachmentMediaType(part.filename, part.mediaType);
-      if (isModelSupportedFileMediaType(normalizedMediaType)) {
-        kept.push({
-          ...part,
-          mediaType: normalizedMediaType,
-        });
-        continue;
-      }
-
-      dataFiles.push({
-        name: part.filename || "file",
-        mediaType: normalizedMediaType,
-        ...(part.url ? { url: part.url } : {}),
-        ...(part.uploadId ? { uploadId: part.uploadId } : {}),
-        ...(part.uploadPath ? { path: part.uploadPath } : {}),
-      });
-    }
-
-    if (dataFiles.length === 0) {
-      return message;
-    }
-
-    appendDataFileAnnotation(kept, dataFiles);
-
-    return { ...message, parts: kept };
-  });
 }
 
 function isPendingToolPart(part: unknown): boolean {
@@ -1348,14 +1259,26 @@ export function maskOldToolOutputs(
       const charCount = serializedLength(rawValue);
 
       if (charCount < MASK_THRESHOLD) return part;
+      const summaryContract = findHistoricalToolSummaryContract(toolName);
+      const collection = tryParseJson(getOutputValue(tryParseJson(rawValue)));
+      // Keep the preceding turn's bounded collection, including real resource IDs
+      // and pagination, available for follow-ups. Older/large results still compact.
+      if (
+        !summaryContract &&
+        previousUserIdx >= 0 &&
+        idx > previousUserIdx &&
+        idx < lastUserIdx &&
+        isRecord(collection) &&
+        Array.isArray(collection.data) &&
+        serializedLength(collection) <= RECENT_COLLECTION_MAX_CHARS
+      ) return part;
 
       const input = callInfo?.input;
 
       let masked: unknown;
 
-      const summaryContract = findHistoricalToolSummaryContract(toolName);
       if (summaryContract) {
-        masked = compactHistoricalToolSummaryOutput(rawValue, summaryContract) ??
+        masked = compactHistoricalToolSummaryOutput(collection, summaryContract) ??
           maskGeneric(toolName, charCount);
       } else {
         switch (toolName) {

@@ -107,6 +107,12 @@ const EXISTING_GUIDE_EXAMPLE_SUITE = [
 ] as const;
 
 const THIS_GUIDE_EXAMPLE_SUITE = [
+  "csrf-requests.md",
+  "eval-comparison.md",
+  "eval-reporting.md",
+  "workflow-loops.md",
+  "workflow-retention.md",
+  "workflow-ui.md",
   "agent-events.md",
   "agent-service-runtime.md",
   "ai-gateway-quickstart.md",
@@ -151,7 +157,6 @@ const THIS_GUIDE_EXAMPLE_SUITE = [
   "storybook-ui-workbench.md",
   "tasks.md",
   "ui-components.md",
-  "workflows-advanced.md",
   "eval.md",
 ] as const;
 
@@ -167,7 +172,11 @@ const noopLogger = {
   error: () => {},
 };
 
-const GUIDE_DIRS = ["docs/getting-started", "docs/guides", "docs/concepts"] as const;
+const GUIDE_DIRS = [
+  "docs/getting-started",
+  "docs/guides",
+  "docs/concepts",
+] as const;
 
 async function readGuide(filename: string): Promise<string> {
   for (const dir of GUIDE_DIRS) {
@@ -278,7 +287,10 @@ describe("Guide: providers.md", () => {
   async function gatewayClientSection(): Promise<string> {
     const guide = await readGuide("providers.md");
     const start = guide.indexOf("### Call the AI Gateway from other clients");
-    assert(start !== -1, "providers.md documents calling the AI Gateway from other clients");
+    assert(
+      start !== -1,
+      "providers.md documents calling the AI Gateway from other clients",
+    );
     const end = guide.indexOf("\n## ", start);
     return guide.slice(start, end === -1 ? undefined : end);
   }
@@ -286,7 +298,10 @@ describe("Guide: providers.md", () => {
   it("shows how to export a project key for the client examples", async () => {
     const section = await gatewayClientSection();
 
-    assertStringIncludes(section, 'export VERYFRONT_API_KEY="<your-project-api-key>"');
+    assertStringIncludes(
+      section,
+      'export VERYFRONT_API_KEY="<your-project-api-key>"',
+    );
   });
 
   // The guide documents the default routes, so a host that opts back into
@@ -347,13 +362,31 @@ describe("Guide: ai-gateway-quickstart.md", () => {
     const guide = await readGuide("ai-gateway-quickstart.md");
     const base = await neutralBaseUrl("openai");
 
-    assertStringIncludes(section(guide, "### Codex CLI"), `base_url = "${base}"`);
-    assertStringIncludes(section(guide, "### Aider"), `OPENAI_API_BASE="${base}"`);
+    assertStringIncludes(
+      section(guide, "### Codex CLI"),
+      `base_url = "${base}"`,
+    );
+    assertStringIncludes(
+      section(guide, "### Aider"),
+      `OPENAI_API_BASE="${base}"`,
+    );
     assertStringIncludes(section(guide, "### Continue"), `apiBase: ${base}`);
-    assertStringIncludes(section(guide, "### OpenCode"), `"baseURL": "${base}"`);
-    assertStringIncludes(section(guide, "### OpenAI SDK (TypeScript)"), `baseURL: "${base}"`);
-    assertStringIncludes(section(guide, "### OpenAI SDK (Python)"), `base_url="${base}"`);
-    assertStringIncludes(section(guide, "### LangChain (Python)"), `base_url="${base}"`);
+    assertStringIncludes(
+      section(guide, "### OpenCode"),
+      `"baseURL": "${base}"`,
+    );
+    assertStringIncludes(
+      section(guide, "### OpenAI SDK (TypeScript)"),
+      `baseURL: "${base}"`,
+    );
+    assertStringIncludes(
+      section(guide, "### OpenAI SDK (Python)"),
+      `base_url="${base}"`,
+    );
+    assertStringIncludes(
+      section(guide, "### LangChain (Python)"),
+      `base_url="${base}"`,
+    );
     assertStringIncludes(
       section(guide, "### Vercel AI SDK"),
       `createOpenAI({\n  baseURL: "${base}"`,
@@ -394,16 +427,28 @@ describe("Guide: ai-gateway-quickstart.md", () => {
     // The SDK sends `apiKey` as x-goog-api-key, not as a Bearer token (pinned in
     // tests/integration/docs/provider-client-examples.test.ts), so the guide must
     // name that header wherever it states how the key is sent.
-    assertStringIncludes(section(guide, "### Google GenAI (TypeScript)"), "`x-goog-api-key`");
-    assertStringIncludes(section(guide, "## Base URLs and key types"), "`x-goog-api-key`");
+    assertStringIncludes(
+      section(guide, "### Google GenAI (TypeScript)"),
+      "`x-goog-api-key`",
+    );
+    assertStringIncludes(
+      section(guide, "## Base URLs and key types"),
+      "`x-goog-api-key`",
+    );
   });
 
   it("lists models from the neutral model list and names the project for account keys", async () => {
     const guide = await readGuide("ai-gateway-quickstart.md");
     const models = section(guide, "## Choose a model");
 
-    assertStringIncludes(models, `curl ${await neutralBaseUrl("openai")}/models`);
-    assertStringIncludes(models, `curl ${await neutralBaseUrl("google")}/models`);
+    assertStringIncludes(
+      models,
+      `curl ${await neutralBaseUrl("openai")}/models`,
+    );
+    assertStringIncludes(
+      models,
+      `curl ${await neutralBaseUrl("google")}/models`,
+    );
     assertStringIncludes(models, "`<provider>/<model>`");
     assertStringIncludes(
       section(guide, "## Base URLs and key types"),
@@ -416,9 +461,14 @@ describe("Guide: ai-gateway-quickstart.md", () => {
     const header = "x-veryfront-project-slug";
 
     // Every curl command has a twin that sends the project header.
-    const curls = [...guide.matchAll(/```bash\n(curl [\s\S]*?)```/g)].map((match) => match[1]!);
+    const curls = [...guide.matchAll(/```bash\n(curl [\s\S]*?)```/g)].map((
+      match,
+    ) => match[1]!);
     const urls = new Set(curls.map((curl) => curl.split(/\s/)[1]!));
-    assert(urls.size >= 3, "the guide lists models and verifies a request with curl");
+    assert(
+      urls.size >= 3,
+      "the guide lists models and verifies a request with curl",
+    );
     for (const url of urls) {
       const forms = curls.filter((curl) => curl.split(/\s/)[1] === url);
       assert(
@@ -433,8 +483,8 @@ describe("Guide: ai-gateway-quickstart.md", () => {
 
     // Every SDK snippet carries the header line to uncomment.
     const sdks = section(guide, "## SDKs");
-    const snippets = [...sdks.matchAll(/```(?:ts|python)\n([\s\S]*?)```/g)].map((match) =>
-      match[1]!
+    const snippets = [...sdks.matchAll(/```(?:ts|python)\n([\s\S]*?)```/g)].map(
+      (match) => match[1]!,
     );
     assertEquals(snippets.length, 7);
     for (const snippet of snippets) {
@@ -480,14 +530,21 @@ describe("Guide: middleware.md", () => {
       }),
       config: corsConfig,
     });
-    assertEquals(preflight.headers.get("access-control-allow-origin"), "https://example.com");
+    assertEquals(
+      preflight.headers.get("access-control-allow-origin"),
+      "https://example.com",
+    );
 
     const request = new Request("http://localhost/api/report", {
       headers: { origin: "https://example.com" },
     });
     const response = Response.json({ report: "ready" });
-    const actual = await applyCORSHeaders({ request, response, config: corsConfig }) ?? response;
-    assertEquals(actual.headers.get("access-control-allow-origin"), "https://example.com");
+    const actual = await applyCORSHeaders({ request, response, config: corsConfig }) ??
+      response;
+    assertEquals(
+      actual.headers.get("access-control-allow-origin"),
+      "https://example.com",
+    );
   });
 });
 
@@ -496,8 +553,14 @@ describe("Guide: concepts/schedule.md", () => {
     const definition = schedule({
       id: "triage-new-cases",
       schedule: "*/10 * * * *",
-      target: { kind: "agent", id: "case-triage", conversationMode: "create_new" },
-      agentMessage: { prompt: "Triage every open case created since the last run." },
+      target: {
+        kind: "agent",
+        id: "case-triage",
+        conversationMode: "create_new",
+      },
+      agentMessage: {
+        prompt: "Triage every open case created since the last run.",
+      },
     });
 
     assertEquals(definition.target, {
@@ -514,8 +577,14 @@ describe("Guide: concepts/schedule.md", () => {
     const definition = schedule({
       id: "triage-new-cases",
       schedule: "*/10 * * * *",
-      target: { kind: "agent", id: "case-triage", conversationMode: "create_new" },
-      agentMessage: { prompt: "Triage every open case created since the last run." },
+      target: {
+        kind: "agent",
+        id: "case-triage",
+        conversationMode: "create_new",
+      },
+      agentMessage: {
+        prompt: "Triage every open case created since the last run.",
+      },
       input: {
         _schedule_target: { conversationMode: "create_new" },
         prompt: "Triage every open case created since the last run.",
@@ -555,7 +624,11 @@ describe("Guide: concepts/webhook.md", () => {
         conditions: [
           { path: "action", operator: "in", value: ["opened", "reopened"] },
           { path: "pull_request.draft", operator: "equals", value: false },
-          { path: "pull_request.labels", operator: "contains", value: "backend" },
+          {
+            path: "pull_request.labels",
+            operator: "contains",
+            value: "backend",
+          },
         ],
       },
     });
@@ -571,7 +644,11 @@ describe("Guide: concepts/webhook.md", () => {
   it("normalizes the documented agent prompt mapping example", () => {
     const definition = webhook({
       id: "support-escalation",
-      target: { kind: "agent", id: "support-agent", conversationMode: "create_new" },
+      target: {
+        kind: "agent",
+        id: "support-agent",
+        conversationMode: "create_new",
+      },
       agentMessage: {
         promptTemplate: "Triage {{payload.summary}} for account {{payload.account.id}}.",
       },
@@ -591,7 +668,11 @@ describe("Guide: concepts/webhook.md", () => {
   it("accepts the documented dual declaration that spans a platform upgrade", () => {
     const definition = webhook({
       id: "support-escalation",
-      target: { kind: "agent", id: "support-agent", conversationMode: "create_new" },
+      target: {
+        kind: "agent",
+        id: "support-agent",
+        conversationMode: "create_new",
+      },
       agentMessage: {
         promptTemplate: "Triage {{payload.summary}} for account {{payload.account.id}}.",
         conversationMode: "create_new",
@@ -652,7 +733,11 @@ describe("Guide: connect-runtime.md", () => {
     const events = [
       ...encoder.encode({ type: "start", messageId }),
       ...encoder.encode({ type: "text-start", id: messageId }),
-      ...encoder.encode({ type: "text-delta", id: messageId, delta: result.text }),
+      ...encoder.encode({
+        type: "text-delta",
+        id: messageId,
+        delta: result.text,
+      }),
       ...encoder.encode({ type: "text-end", id: messageId }),
     ];
     assertEquals(events.map((event) => event.type), [
@@ -713,8 +798,13 @@ describe("Guide: application-auth.md", () => {
       },
     });
 
-    assertEquals(config.security?.auth?.trustedProxy?.trustedPeers, ["10.0.0.10"]);
-    assertEquals(config.security?.auth?.trustedProxy?.headers.subject, "x-auth-subject");
+    assertEquals(config.security?.auth?.trustedProxy?.trustedPeers, [
+      "10.0.0.10",
+    ]);
+    assertEquals(
+      config.security?.auth?.trustedProxy?.headers.subject,
+      "x-auth-subject",
+    );
   });
 
   it("documents real auth presets, reserved routes, and horizontal-scale constraints", async () => {
@@ -755,7 +845,10 @@ describe("Guide: storybook-ui-workbench.md", () => {
 
     for (const task of ["storybook", "build:storybook", "storybook:check"]) {
       assertStringIncludes(guide, `deno task ${task}`);
-      assertExists(denoJson.tasks?.[task], `deno.json task "${task}" should exist`);
+      assertExists(
+        denoJson.tasks?.[task],
+        `deno.json task "${task}" should exist`,
+      );
     }
   });
 });
@@ -772,7 +865,10 @@ describe("Guide: security-headers.md", () => {
 
   it("documents that Google Fonts needs no config, and it actually does not", async () => {
     const guide = await readGuide("security-headers.md");
-    assertStringIncludes(guide, "Google Fonts therefore works with no configuration");
+    assertStringIncludes(
+      guide,
+      "Google Fonts therefore works with no configuration",
+    );
 
     // The claim the guide now makes: a project that configures nothing can
     // still load what `veryfront/fonts` emits.
@@ -780,10 +876,16 @@ describe("Guide: security-headers.md", () => {
     const directive = (name: string) =>
       csp.split("; ").find((part) => part.startsWith(`${name} `)) ?? "";
 
-    assertStringIncludes(directive("style-src"), "https://fonts.googleapis.com");
+    assertStringIncludes(
+      directive("style-src"),
+      "https://fonts.googleapis.com",
+    );
     assertStringIncludes(directive("font-src"), "https://fonts.gstatic.com");
     assertStringIncludes(directive("script-src"), "'nonce-n'");
-    assert(!csp.includes("style-src-elem"), "no directive shadows the documented style-src");
+    assert(
+      !csp.includes("style-src-elem"),
+      "no directive shadows the documented style-src",
+    );
   });
 
   it("documents a third-party font service addition that actually admits it", async () => {
@@ -803,7 +905,10 @@ describe("Guide: security-headers.md", () => {
     assertStringIncludes(directive("style-src"), "https://use.typekit.net");
     assertStringIncludes(directive("font-src"), "https://use.typekit.net");
     // The guide promises the floor survives an addition.
-    assertStringIncludes(directive("style-src"), "https://fonts.googleapis.com");
+    assertStringIncludes(
+      directive("style-src"),
+      "https://fonts.googleapis.com",
+    );
     assertStringIncludes(directive("script-src"), "'nonce-n'");
   });
 
@@ -861,7 +966,10 @@ describe("Guide: chat-ui.md", () => {
     const layout = guide.slice(guide.indexOf("## Compose a custom layout"));
     const gate = layout.indexOf("<Chat.If condition={(ctx) => ctx.isEmpty}>");
     const empty = layout.indexOf("<Chat.Empty");
-    assert(gate !== -1, "custom layout sample gates the empty state with <Chat.If>");
+    assert(
+      gate !== -1,
+      "custom layout sample gates the empty state with <Chat.If>",
+    );
     assert(gate < empty, "the <Chat.If> gate wraps <Chat.Empty>");
 
     const chatComponents = Chat as unknown as Record<
@@ -879,7 +987,11 @@ describe("Guide: chat-ui.md", () => {
 
     const messages = [
       { id: "u1", role: "user", parts: [{ type: "text", text: "128 / 8?" }] },
-      { id: "a1", role: "assistant", parts: [{ type: "text", text: "128 / 8 = 16" }] },
+      {
+        id: "a1",
+        role: "assistant",
+        parts: [{ type: "text", text: "128 / 8 = 16" }],
+      },
     ];
     const layoutElement = (msgs: unknown[]) =>
       React.createElement(
@@ -913,7 +1025,10 @@ describe("Guide: memory-and-streaming.md", () => {
 
     assertStringIncludes(guide, "handleInputChange");
     assertStringIncludes(guide, "handleSubmit");
-    assertEquals(guide.includes("const { messages, input, onChange, onSubmit"), false);
+    assertEquals(
+      guide.includes("const { messages, input, onChange, onSubmit"),
+      false,
+    );
   });
 });
 
@@ -967,7 +1082,10 @@ describe("Guide: build-a-rag-app.md", () => {
     assertStringIncludes(guide, "AttachmentsPanel");
     assertStringIncludes(guide, 'import { store } from "../../../store.ts";');
     assertStringIncludes(guide, "await store.indexContentDir();");
-    assertStringIncludes(guide, "const results = await store.search(query, { topK: 5 });");
+    assertStringIncludes(
+      guide,
+      "const results = await store.search(query, { topK: 5 });",
+    );
     assertStringIncludes(guide, ".veryfront/rag/uploads/");
     assertStringIncludes(guide, "DocumentExtractor");
     assertStringIncludes(guide, "XLS, XLSX");
@@ -1005,7 +1123,9 @@ describe("Guide: coding-agents.md", () => {
     assertEquals(guide.includes("Unknown command: mcp"), false);
     assertEquals(guide.includes("deno run -A cli/main.ts mcp"), false);
     assertEquals(
-      guide.includes("HTTP MCP only listens while `veryfront dev` or `veryfront start`"),
+      guide.includes(
+        "HTTP MCP only listens while `veryfront dev` or `veryfront start`",
+      ),
       false,
     );
   });
@@ -1344,24 +1464,38 @@ describe("Guide: integrations.md", () => {
   });
 
   it("loads an exact-grant local integration source with named credentials", async () => {
-    await withEnv({ [HOST_LOCAL_INTEGRATION_CREDENTIALS_ENV]: "1" }, async () => {
-      const credentials = new Map([
-        ["SALESFORCE_SERVICE_ACCOUNT_CLIENT_ID", "client-id"],
-        ["SALESFORCE_SERVICE_ACCOUNT_CLIENT_SECRET", "client-secret"],
-        [
-          "SALESFORCE_SERVICE_ACCOUNT_LOGIN_URL",
-          "https://acme.my.salesforce.com",
-        ],
-      ]);
-      const source = createLocalIntegrationToolSource({
-        tools: ["salesforce__find_customer"],
-        credentialProvider: (name) => credentials.get(name),
-      });
+    await withEnv(
+      { [HOST_LOCAL_INTEGRATION_CREDENTIALS_ENV]: "1" },
+      async () => {
+        const credentials = new Map([
+          ["SALESFORCE_SERVICE_ACCOUNT_CLIENT_ID", "client-id"],
+          ["SALESFORCE_SERVICE_ACCOUNT_CLIENT_SECRET", "client-secret"],
+          [
+            "SALESFORCE_SERVICE_ACCOUNT_LOGIN_URL",
+            "https://acme.my.salesforce.com",
+          ],
+        ]);
+        const source = createLocalIntegrationToolSource({
+          tools: ["salesforce__find_customer"],
+          credentialProvider: (name) => credentials.get(name),
+        });
 
-      const integrationTools = await loadRemoteToolsFromSource(source);
+        const integrationTools = await loadRemoteToolsFromSource(source);
 
-      assertEquals(Object.keys(integrationTools), ["salesforce__find_customer"]);
-    });
+        assertEquals(Object.keys(integrationTools), [
+          "salesforce__find_customer",
+        ]);
+
+        const assistant = agent({
+          id: "guide-local-integration-agent",
+          system: "Use Salesforce when the user asks about a customer.",
+          tools: integrationTools,
+        });
+        assertEquals(Object.keys(assistant.config.tools as object), [
+          "salesforce__find_customer",
+        ]);
+      },
+    );
   });
 });
 
@@ -1431,7 +1565,11 @@ describe("Guide: pages-and-routing.md", () => {
     assertEquals(router.type, RouterProvider);
 
     const prefetchLink = Link({ href: "/about", children: "About" });
-    const noPrefetchLink = Link({ href: "/about", prefetch: false, children: "About" });
+    const noPrefetchLink = Link({
+      href: "/about",
+      prefetch: false,
+      children: "About",
+    });
 
     const prefetchProps = prefetchLink.props as Record<string, unknown>;
     const noPrefetchProps = noPrefetchLink.props as Record<string, unknown>;
@@ -1590,7 +1728,10 @@ describe("Guide: add-to-existing-project.md", () => {
     const template = await getTemplate("ai-agent");
     assertExists(template);
     const tsconfig = template.find((file) => file.path === "tsconfig.json");
-    assertExists(tsconfig, "expected the ai-agent template to ship a tsconfig.json");
+    assertExists(
+      tsconfig,
+      "expected the ai-agent template to ship a tsconfig.json",
+    );
 
     for (const option of ['"jsx": "react-jsx"', '"skipLibCheck": true']) {
       assertStringIncludes(guide, option);
@@ -1611,7 +1752,10 @@ describe("Guide: add-to-existing-project.md", () => {
     assertExists(template);
     const tsconfig = template.find((file) => file.path === "tsconfig.json");
     assertExists(tsconfig);
-    assertStringIncludes(tsconfig.content.toLowerCase(), '"moduleresolution": "bundler"');
+    assertStringIncludes(
+      tsconfig.content.toLowerCase(),
+      '"moduleresolution": "bundler"',
+    );
   });
 
   it("points at the base config the package actually publishes", async () => {
@@ -1796,13 +1940,17 @@ describe("Guide: skills.md", () => {
       guide,
       "allowed_tools: veryfront__load_skill veryfront__load_skill_reference veryfront__execute_skill_script",
     );
-    assertStringIncludes(guide, "veryfront skills validate skills/my-skill");
+    assertStringIncludes(guide, "veryfront skills validate skills/code-review");
   });
 });
 
-describe("Guide: workflows-advanced.md", () => {
+describe("Guides: workflow loops, artifacts, and UI", () => {
   it("documents loop helpers, blob storage, and React hook surface", async () => {
-    const guide = await readGuide("workflows-advanced.md");
+    const guide = (await Promise.all(
+      ["workflow-loops.md", "workflows-advanced.md", "workflow-ui.md"].map(
+        readGuide,
+      ),
+    )).join("\n");
 
     for (
       const snippet of [

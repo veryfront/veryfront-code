@@ -1669,9 +1669,9 @@ const METHOD_DESCRIPTIONS: Record<
   Agent: {
     generate: {
       desc:
-        "Run the agent and return a complete response. Accepts a string or message array as input.",
+        "Run the agent and return a complete response. Pass an object whose `input` is a string or message array, such as `agent.generate({ input: \"Hello\" })`.",
       params: {
-        input: "Prompt string or message history",
+        input: "Request object whose `input` is a prompt string or message history",
         context: "Additional context passed to the agent",
       },
     },

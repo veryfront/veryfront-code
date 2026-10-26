@@ -90,6 +90,7 @@ export type PrepareDefaultHostedChildForkSandboxToolSourcesInput =
   & PrepareDefaultHostedChildForkToolSourcesInput
   & {
     apiUrl: string;
+    getAuthToken?: AgentServiceSandboxToolsOptions["getAuthToken"];
     createBashTool: AgentServiceSandboxToolsOptions["createBashTool"];
     createAgentServiceSandboxTools?: (
       input: AgentServiceSandboxToolsOptions,
@@ -235,6 +236,7 @@ export async function prepareDefaultHostedChildForkSandboxToolSources(
 ): Promise<DefaultHostedChildForkToolAssemblySourceResult> {
   const {
     apiUrl,
+    getAuthToken,
     createBashTool,
     createAgentServiceSandboxTools: createAgentServiceSandboxToolsOverride,
     globalTools,
@@ -244,6 +246,7 @@ export async function prepareDefaultHostedChildForkSandboxToolSources(
     createAgentServiceSandboxTools;
   const sandboxResult = await createSandboxTools({
     authToken: input.authToken,
+    ...(getAuthToken ? { getAuthToken } : {}),
     apiUrl,
     getProjectId: input.getProjectId,
     createBashTool,

@@ -19,7 +19,7 @@ describe("runs/runtime-env", () => {
     assertEquals(
       readInjectedProjectEnv({
         [INJECTED_TASK_ENV_JSON]:
-          '{"SAFE_VALUE":"ok","VERYFRONT_API_TOKEN":"secret","TENANT_SECRET":"tenant-secret","nonString":123,"__proto__":"polluted"}',
+          '{"SAFE_VALUE":"ok","VERYFRONT_API_TOKEN":"secret","VERYFRONT_PUBLIC_API_BASE_URL":"https://attacker.test","TENANT_SECRET":"tenant-secret","nonString":123,"__proto__":"polluted"}',
       }),
       {
         SAFE_VALUE: "ok",

@@ -1,3 +1,4 @@
+import { createVeryfrontCloudInferenceModelResolver } from "#veryfront/agent/hosted/inference-credential.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { installMockFetch, restoreMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
@@ -309,6 +310,56 @@ describe("provider/veryfront-cloud", () => {
     assertEquals(capturedAuthorization, "Bearer run-scoped-inference-token");
     assertEquals(projectVisibleToken, "vf_test_provider");
     assertEquals(extensionVisibleCredential, undefined);
+  });
+
+  it("reads renewed inference authority for each request from a retained child model", async () => {
+    setCloudBootstrap();
+    let credential = "child-inference-1";
+    const observed: string[] = [];
+    installMockFetch((input, init) => {
+      const request = new Request(input, init);
+      observed.push(request.headers.get("Authorization") ?? "");
+      return Promise.resolve(
+        new Response(
+          readableStreamFrom([
+            new TextEncoder().encode('data: {"choices":[{"finish_reason":"stop"}]}\n\n'),
+            new TextEncoder().encode("data: [DONE]\n\n"),
+          ]),
+          { headers: { "content-type": "text/event-stream" } },
+        ),
+      );
+    });
+    const resolver = createVeryfrontCloudInferenceModelResolver(() => credential);
+    const model = resolver("veryfront-cloud/openai/gpt-test")!;
+    await drainStream((await model.doStream({ prompt: [] })).stream);
+    assertEquals(observed.every((token) => token === "Bearer child-inference-1"), true);
+    observed.length = 0;
+    credential = "child-inference-2";
+    await drainStream((await model.doStream({ prompt: [] })).stream);
+    assertEquals(observed.length > 0, true);
+    assertEquals(observed.every((token) => token === "Bearer child-inference-2"), true);
+  });
+
+  it("rejects a retained child model before HTTP when its credential reader is unavailable", async () => {
+    setCloudBootstrap();
+    let active = true;
+    let requests = 0;
+    installMockFetch(() => {
+      requests++;
+      throw new Error("unexpected HTTP request");
+    });
+    const resolver = createVeryfrontCloudInferenceModelResolver(() => {
+      if (!active) throw new Error("child authority unavailable");
+      return "child-inference";
+    });
+    const model = resolver("veryfront-cloud/openai/gpt-test")!;
+    active = false;
+    await assertRejects(
+      async () => await model.doStream({ prompt: [] }),
+      Error,
+      "child authority unavailable",
+    );
+    assertEquals(requests, 0);
   });
 
   it("does not expose explicit inference authority to mutable runtime config hooks", async () => {

@@ -10,6 +10,7 @@ import {
 } from "#veryfront/provider/runtime-loader/provider-http.ts";
 import { readRuntimeCost } from "#veryfront/provider/runtime-usage.ts";
 import {
+  ACCOUNT_MODEL_DENIED_ERROR,
   AGENT_PROVIDER_AUTH_ERROR,
   AI_PROVIDER_BILLING_ERROR,
   AI_PROVIDER_SPEND_CHECK_UNAVAILABLE_ERROR,
@@ -17,6 +18,7 @@ import {
   AI_PROVIDER_WORKSPACE_LIMIT_ERROR,
   GATEWAY_PROJECT_REQUIRED_ERROR,
   INFERENCE_POLICY_DENIED_ERROR,
+  KEY_MODEL_DENIED_ERROR,
   MODEL_NOT_PERMITTED_ERROR,
   MODEL_UNSUPPORTED_ASSISTANT_PREFILL_ERROR,
   OUTPUT_SCHEMA_INVALID_ERROR,
@@ -214,6 +216,17 @@ function parseKnownProblemBodyInternal(
   // this structured code. Its wording is fixed locally, never copied.
   if (getOwnDataProperty(body, "code") === "gateway_project_required") {
     return { ...GATEWAY_PROJECT_REQUIRED_ERROR };
+  }
+
+  if (allowInferencePolicy) {
+    switch (getOwnDataProperty(body, "code")) {
+      case "account-model-denied":
+        return { ...ACCOUNT_MODEL_DENIED_ERROR };
+      case "policy-model-denied":
+        return { ...MODEL_NOT_PERMITTED_ERROR };
+      case "key-model-denied":
+        return { ...KEY_MODEL_DENIED_ERROR };
+    }
   }
 
   // The gateway refuses a request its EU-only inference policy cannot serve,

@@ -30,7 +30,14 @@ import type {
   ValidationIssue,
   ValidationResult,
 } from "veryfront/extensions/schema";
-import { isOptionalSchema, recordStaticJsonSchemaDefault, zodToJsonSchema } from "./json-schema.ts";
+import {
+  isOptionalSchema,
+  recordStaticJsonSchemaDefault,
+  recordTransparentSchemaInput,
+  zodToJsonSchema,
+} from "./json-schema.ts";
+import { preserveDeclaredObjectDataProperty } from "./object-data-properties.ts";
+import { preserveUnionCheckDiagnostics } from "./union-diagnostics.ts";
 
 // Deno exposes the CommonJS default as a callable value at runtime while the
 // package declaration describes the imported value as a module namespace.
@@ -51,6 +58,8 @@ function toZod<T>(schema: Schema<T>): AnyZodSchema {
 
 /** Wrap a zod schema as an opaque Schema<T> with chainables routed through zod. */
 function wrap<T>(zs: AnyZodSchema): Schema<T> {
+  preserveDeclaredObjectDataProperty(zs);
+  preserveUnionCheckDiagnostics(zs);
   // The wrapper fakes the full Schema<T> surface; unsupported chainables on
   // unsuitable kinds (e.g. calling `.email()` on a number) throw at runtime
   // just like zod would.
@@ -137,6 +146,15 @@ function wrap<T>(zs: AnyZodSchema): Schema<T> {
   // widening the public Schema<T> surface.
   (s as ZodBackedSchema<T>).__zod = zs;
   return s;
+}
+
+// An unconstrained input stage preserves omission for unknown/any/custom fields.
+// The actual validator stays outside optional(), so required refinements still
+// run. A validation pipeline also keeps opaque promises synchronous.
+function withMissingInputValidation(schema: AnyZodSchema): AnyZodSchema {
+  const input = z.unknown().optional().pipe(schema);
+  recordTransparentSchemaInput(input, schema);
+  return input;
 }
 
 function toZodShape(
@@ -852,10 +870,10 @@ export function createZodAdapter(): SchemaValidator {
     boolean: (): Schema<boolean> => wrap(z.boolean()),
     date: (): Schema<Date> => wrap(z.date()),
     null: (): Schema<null> => wrap(z.null()),
-    unknown: (): Schema<unknown> => wrap(z.unknown()),
+    unknown: (): Schema<unknown> => wrap(withMissingInputValidation(z.unknown())),
     bigint: (): Schema<bigint> => wrap(z.bigint()),
     // deno-lint-ignore no-explicit-any -- contract mirrors zod's `any` constructor
-    any: (): Schema<any> => wrap(z.any()),
+    any: (): Schema<any> => wrap(withMissingInputValidation(z.any())),
     function: (): Schema<(...args: unknown[]) => unknown> =>
       // zod 4's z.function() is callable without args/returns and produces a
       // schema accepting any function. We wrap it as Schema<AnyFunction>.
@@ -929,7 +947,7 @@ export function createZodAdapter(): SchemaValidator {
       ),
 
     custom: <T>(check?: (value: unknown) => boolean, message?: string): Schema<T> =>
-      wrap<T>(z.custom<T>(check as (v: unknown) => boolean, message)),
+      wrap<T>(withMissingInputValidation(z.custom<T>(check as (v: unknown) => boolean, message))),
 
     coerce,
 

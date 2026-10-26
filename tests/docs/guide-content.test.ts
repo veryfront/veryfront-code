@@ -1,17 +1,55 @@
-import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import {
+  assert,
+  assertEquals,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { basename } from "#veryfront/compat/path";
-import { deleteEnv, getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
+import {
+  deleteEnv,
+  getHostEnv,
+  setEnv,
+} from "#veryfront/platform/compat/process.ts";
 import {
   getCacheBaseDir,
   getHttpBundleCacheDir,
   getMdxEsmCacheDir,
 } from "#veryfront/utils/cache-dir.ts";
-import { MINIMUM_DENO_VERSION, MINIMUM_NODE_VERSION } from "../../scripts/build/runtime-support.ts";
+import {
+  MINIMUM_DENO_VERSION,
+  MINIMUM_NODE_VERSION,
+} from "../../scripts/build/runtime-support.ts";
 
 const repoRoot = new URL("../../", import.meta.url);
 
 describe("guide content contracts", () => {
+  it("keeps the guide index reading sequence aligned with sidebar order", async () => {
+    const index = await Deno.readTextFile(
+      new URL("docs/guides/index.md", repoRoot),
+    );
+    const seen = new Set<string>();
+    let previous = Number.NEGATIVE_INFINITY;
+    for (const link of index.matchAll(/\]\(\.\/([^#)]+\.md)(?:#[^)]*)?\)/g)) {
+      const target = link[1]!;
+      assert(!target.split("/").includes(".."));
+      // Goal-based sections may link a guide again; its first occurrence sets the sequence.
+      if (seen.has(target)) continue;
+      seen.add(target);
+      const guide = await Deno.readTextFile(
+        new URL(`docs/guides/${target}`, repoRoot),
+      );
+      const order = /^order: (\d+)$/m.exec(guide);
+      assert(order, `${target} must declare its sidebar order`);
+      const current = Number(order[1]);
+      assert(
+        current > previous,
+        `${target} must follow the preceding index entry in the sidebar`,
+      );
+      previous = current;
+    }
+    assert(seen.size > 0, "the guide index must list its reading sequence");
+  });
+
   it("uses canonical model tool names in run and delegation guidance", async () => {
     const expected = {
       "docs/guides/multi-agent.md": ["invoke_agent"],
@@ -26,7 +64,9 @@ describe("guide content contracts", () => {
     };
     for (const [path, names] of Object.entries(expected)) {
       const content = await Deno.readTextFile(new URL(path, repoRoot));
-      for (const name of names) assertStringIncludes(content, `\`veryfront__${name}\``);
+      for (const name of names) {
+        assertStringIncludes(content, `\`veryfront__${name}\``);
+      }
     }
   });
 
@@ -49,7 +89,10 @@ describe("guide content contracts", () => {
     assertStringIncludes(installation, "Model weights are not included");
     assertStringIncludes(providers, "Embedded ONNX inference");
     assertStringIncludes(providers, "npm install @huggingface/transformers");
-    assertStringIncludes(providers, "not available from compiled standalone binaries");
+    assertStringIncludes(
+      providers,
+      "not available from compiled standalone binaries",
+    );
     assertStringIncludes(
       providers,
       "For local chat development, use Ollama or LM Studio",
@@ -75,12 +118,21 @@ describe("guide content contracts", () => {
       );
 
     const created = [...guide.matchAll(/(?:app\/api\/[^\s"'`]*?)\/route\.ts/g)]
-      .map((match) => toSegments((match[0] ?? "").replace(/^app/, "").replace(/\/route\.ts$/, "")));
+      .map((match) =>
+        toSegments(
+          (match[0] ?? "").replace(/^app/, "").replace(/\/route\.ts$/, ""),
+        )
+      );
 
-    const called = [...guide.matchAll(/http:\/\/localhost:\d+(\/api\/[^\s"'`)]*)/g)]
+    const called = [
+      ...guide.matchAll(/http:\/\/localhost:\d+(\/api\/[^\s"'`)]*)/g),
+    ]
       .map((match) => match[1] ?? "");
 
-    assert(called.length > 0, "expected the guide to show at least one API call");
+    assert(
+      called.length > 0,
+      "expected the guide to show at least one API call",
+    );
     assertStringIncludes(
       guide,
       "await handle.settled();",
@@ -107,7 +159,10 @@ describe("guide content contracts", () => {
     const mutatingCurlBlocks = [...guide.matchAll(/```bash\n([\s\S]*?)```/g)]
       .map((match) => match[1] ?? "")
       .filter((block) => block.includes("curl ") && block.includes(" -d "));
-    assert(mutatingCurlBlocks.length > 0, "expected the guide to show a mutating curl call");
+    assert(
+      mutatingCurlBlocks.length > 0,
+      "expected the guide to show a mutating curl call",
+    );
     for (const block of mutatingCurlBlocks) {
       assertStringIncludes(block, "Cookie: __Host-vf_csrf=local-check");
       assertStringIncludes(block, "x-csrf-token: local-check");
@@ -116,14 +171,17 @@ describe("guide content contracts", () => {
 
   it("requires server-verified authentication for the workflow handler example", async () => {
     const guide = await Deno.readTextFile(
-      new URL("docs/guides/workflows-advanced.md", repoRoot),
+      new URL("docs/guides/workflow-ui.md", repoRoot),
     );
 
     assertStringIncludes(
       guide,
       "Its `getSession(request)` function must verify",
     );
-    assertStringIncludes(guide, "a signed, HttpOnly, same-origin session cookie");
+    assertStringIncludes(
+      guide,
+      "a signed, HttpOnly, same-origin session cookie",
+    );
     assertStringIncludes(
       guide,
       "Do not decode an unsigned cookie or",
@@ -132,7 +190,7 @@ describe("guide content contracts", () => {
 
   it("documents the complete cross-origin workflow hook CORS surface", async () => {
     const guide = await Deno.readTextFile(
-      new URL("docs/guides/workflows-advanced.md", repoRoot),
+      new URL("docs/guides/workflow-ui.md", repoRoot),
     );
 
     assertStringIncludes(guide, "security: {");
@@ -166,9 +224,15 @@ describe("guide content contracts", () => {
       guide,
       "Method-local `cors()` middleware runs only inside the handler that calls it",
     );
-    assertStringIncludes(guide, "An explicit `OPTIONS` export is authoritative");
+    assertStringIncludes(
+      guide,
+      "An explicit `OPTIONS` export is authoritative",
+    );
     assertStringIncludes(guide, "A callable default Pages route is");
-    assertStringIncludes(guide, "cannot override the global policy after route dispatch");
+    assertStringIncludes(
+      guide,
+      "cannot override the global policy after route dispatch",
+    );
     assertStringIncludes(guide, "validated global `security.cors` policy");
     assertStringIncludes(
       guide,
@@ -176,7 +240,10 @@ describe("guide content contracts", () => {
     );
     assertStringIncludes(guide, "without executing the explicit handler");
     assertStringIncludes(guide, "at the API router boundary");
-    assertStringIncludes(guide, "Root middleware resumes after the route returns");
+    assertStringIncludes(
+      guide,
+      "Root middleware resumes after the route returns",
+    );
     assertEquals(
       guide.includes('import { cors } from "veryfront/middleware";'),
       false,
@@ -191,13 +258,22 @@ describe("guide content contracts", () => {
 
   it("requires a worker drain and a long-lived Redis retention backend", async () => {
     const guide = await Deno.readTextFile(
-      new URL("docs/guides/workflows.md", repoRoot),
+      new URL("docs/guides/workflow-retention.md", repoRoot),
     );
 
     assertStringIncludes(guide, "stop every workflow worker");
-    assertStringIncludes(guide, "Repeat this drain if you replace the maintenance backend");
-    assertStringIncludes(guide, "running it beside active workers can duplicate their work");
-    assertStringIncludes(guide, "async function runScheduler(): Promise<never>");
+    assertStringIncludes(
+      guide,
+      "Repeat this drain if you replace the maintenance backend",
+    );
+    assertStringIncludes(
+      guide,
+      "running it beside active workers can duplicate their work",
+    );
+    assertStringIncludes(
+      guide,
+      "async function runScheduler(): Promise<never>",
+    );
     assertStringIncludes(guide, "await runSweep();");
     assertStringIncludes(guide, "await runScheduler();");
     assertStringIncludes(guide, "every scheduled sweep reuses");
@@ -209,13 +285,19 @@ describe("guide content contracts", () => {
     );
 
     assertStringIncludes(guide, "The body-level `approver`");
-    assertStringIncludes(guide, "is compatibility input, not an identity claim");
-    assertStringIncludes(guide, "server-derived identity is what the workflow context persists");
+    assertStringIncludes(
+      guide,
+      "is compatibility input, not an identity claim",
+    );
+    assertStringIncludes(
+      guide,
+      "server-derived identity is what the workflow context persists",
+    );
   });
 
   it("keeps the workflow EventSource example terminal-safe and wire-accurate", async () => {
     const guide = await Deno.readTextFile(
-      new URL("docs/guides/workflows-advanced.md", repoRoot),
+      new URL("docs/guides/workflow-ui.md", repoRoot),
     );
 
     assertStringIncludes(
@@ -239,7 +321,10 @@ describe("guide content contracts", () => {
       events.close();
     }`,
     );
-    assertStringIncludes(guide, "Native `EventSource` reconnects automatically");
+    assertStringIncludes(
+      guide,
+      "Native `EventSource` reconnects automatically",
+    );
 
     for (
       const type of [
@@ -274,7 +359,10 @@ describe("guide content contracts", () => {
     assertStringIncludes(overview, "[Local quickstart](./quickstart.md)");
     assertStringIncludes(overview, "[Cloud quickstart](./cloud-quickstart.md)");
     assertStringIncludes(overview, "[Self-host](../guides/self-hosting.md)");
-    assertStringIncludes(selfHostingGuide, "does not require a Veryfront account");
+    assertStringIncludes(
+      selfHostingGuide,
+      "does not require a Veryfront account",
+    );
     assertEquals(selfHostingGuide.includes("veryfront login"), false);
   });
 
@@ -310,16 +398,31 @@ describe("guide content contracts", () => {
     );
     assertStringIncludes(providerGuide, "### Ollama");
     assertStringIncludes(providerGuide, "### LM Studio");
-    assertStringIncludes(providerGuide, "VERYFRONT_HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS");
+    assertStringIncludes(
+      providerGuide,
+      "VERYFRONT_HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS",
+    );
     assertStringIncludes(providerGuide, "Other internal destinations");
-    assertEquals(providerGuide.includes("VERYFRONT_HOST_ALLOW_INTERNAL_EGRESS=1"), false);
-    assertStringIncludes(providerGuide, 'OPENAI_BASE_URL="http://localhost:11434/v1"');
+    assertEquals(
+      providerGuide.includes("VERYFRONT_HOST_ALLOW_INTERNAL_EGRESS=1"),
+      false,
+    );
+    assertStringIncludes(
+      providerGuide,
+      'OPENAI_BASE_URL="http://localhost:11434/v1"',
+    );
     assertStringIncludes(
       providerGuide,
       'VERYFRONT_HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS="http://localhost:11434"',
     );
-    assertStringIncludes(providerGuide, 'agent({ model: "openai/qwen3:1.7b" })');
-    assertStringIncludes(providerGuide, 'OPENAI_BASE_URL="http://localhost:1234/v1"');
+    assertStringIncludes(
+      providerGuide,
+      'agent({ model: "openai/qwen3:1.7b" })',
+    );
+    assertStringIncludes(
+      providerGuide,
+      'OPENAI_BASE_URL="http://localhost:1234/v1"',
+    );
     assertStringIncludes(
       providerGuide,
       'VERYFRONT_HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS="http://localhost:1234"',
@@ -348,7 +451,10 @@ describe("guide content contracts", () => {
     assertStringIncludes(quickstart, "`agent_researcher`");
     assertStringIncludes(quickstart, "`agent_writer`");
     assertStringIncludes(quickstart, "runs in the same Veryfront process");
-    assertStringIncludes(quickstart, "If the development server is still running");
+    assertStringIncludes(
+      quickstart,
+      "If the development server is still running",
+    );
     assertEquals(quickstart.includes("tools: { invoke_agent: true }"), false);
 
     assertStringIncludes(
@@ -381,7 +487,10 @@ describe("guide content contracts", () => {
     assertStringIncludes(quickstart, "Veryfront Cloud AI Gateway");
     assertStringIncludes(quickstart, "browser sign-in prompt when needed");
     assertStringIncludes(quickstart, "new or existing cloud project");
-    assertStringIncludes(quickstart, "npx veryfront@latest pull <PROJECT_SLUG>");
+    assertStringIncludes(
+      quickstart,
+      "npx veryfront@latest pull <PROJECT_SLUG>",
+    );
     assertStringIncludes(quickstart, "Studio link printed beside the run ID");
     assertStringIncludes(quickstart, "protected by default");
     assertStringIncludes(quickstart, "## Verify it worked");
@@ -425,7 +534,10 @@ describe("guide content contracts", () => {
     assertStringIncludes(guide, "does not require a Veryfront account");
     assertStringIncludes(guide, "veryfront build");
     assertStringIncludes(guide, "veryfront serve");
-    assertStringIncludes(guide, "ship the whole project directory, not just `dist/`");
+    assertStringIncludes(
+      guide,
+      "ship the whole project directory, not just `dist/`",
+    );
     assertStringIncludes(guide, "## Verify it worked");
     assertEquals(guide.includes("veryfront login"), false);
     assertEquals(guide.includes("veryfront deploy"), false);
@@ -446,7 +558,10 @@ describe("guide content contracts", () => {
     assertStringIncludes(guide, "loadRemoteToolsFromSource");
     assertStringIncludes(guide, "SALESFORCE_SERVICE_ACCOUNT_CLIENT_ID");
     assertStringIncludes(guide, "tools: salesforceTools");
-    assertStringIncludes(guide, "Credentials stay in the local runtime process");
+    assertStringIncludes(
+      guide,
+      "Credentials stay in the local runtime process",
+    );
     assertEquals(guide.includes("remoteTools:"), false);
     assertEquals(
       guide.includes(
@@ -456,9 +571,15 @@ describe("guide content contracts", () => {
     );
     assertStringIncludes(guide, "## Deploy to Kubernetes");
     assertStringIncludes(guide, "kubectl create namespace veryfront-app");
-    assertStringIncludes(guide, "kubectl create secret generic provider-credentials");
+    assertStringIncludes(
+      guide,
+      "kubectl create secret generic provider-credentials",
+    );
     assertStringIncludes(guide, "--from-env-file=.env");
-    assertStringIncludes(guide, "--dry-run=client -o yaml | kubectl apply -f -");
+    assertStringIncludes(
+      guide,
+      "--dry-run=client -o yaml | kubectl apply -f -",
+    );
     assertStringIncludes(guide, "Replace `<API_KEY>`");
     assertStringIncludes(guide, "apiVersion: apps/v1");
     assertStringIncludes(guide, "kind: Deployment");
@@ -517,11 +638,20 @@ describe("guide content contracts", () => {
     assertStringIncludes(guide, "agent source");
     assertStringIncludes(guide, "integrations.allow");
     assertStringIncludes(guide, "Source configuration is monotonic");
-    assertStringIncludes(guide, "There is no project integration policy");
+    assertStringIncludes(
+      guide,
+      "Project integration policy is an optional control-plane guardrail",
+    );
     assertStringIncludes(guide, "Connection inventory");
     assertStringIncludes(guide, "Managed OAuth");
-    assertStringIncludes(guide.replaceAll("\n", " "), "cannot enable an integration");
-    assertStringIncludes(guide, "`scope`, `perUser`, and `tools` fields are rejected");
+    assertStringIncludes(
+      guide.replaceAll("\n", " "),
+      "cannot enable an integration",
+    );
+    assertStringIncludes(
+      guide.replace(/\s+/g, " "),
+      "`scope`, `perUser`, and `tools` fields are rejected",
+    );
   });
 
   it("documents account-free local integration credentials without weakening grants", async () => {
@@ -542,10 +672,16 @@ describe("guide content contracts", () => {
     assertStringIncludes(docs, "SALESFORCE_SERVICE_ACCOUNT_CLIENT_SECRET");
     assertStringIncludes(docs, "SALESFORCE_SERVICE_ACCOUNT_LOGIN_URL");
     assertStringIncludes(integrations, "integrations.allow only narrows");
-    assertStringIncludes(integrations, "never sends local credentials to Veryfront");
+    assertStringIncludes(
+      integrations,
+      "never sends local credentials to Veryfront",
+    );
     assertStringIncludes(integrations, "authorization-code OAuth");
     assertStringIncludes(integrations, "query-string credentials");
-    assertEquals(selfHosting.includes("have no standalone credential path"), false);
+    assertEquals(
+      selfHosting.includes("have no standalone credential path"),
+      false,
+    );
   });
 
   it("documents fail-closed extension activation modes", async () => {
@@ -579,12 +715,24 @@ describe("guide content contracts", () => {
     );
     const docs = [agentsGuide, toolsGuide, architecture].join("\n");
 
-    assertStringIncludes(toolsGuide, "`veryfront__form_input` is authorized but deferred");
+    assertStringIncludes(
+      toolsGuide,
+      "`veryfront__form_input` is authorized but deferred",
+    );
     assertStringIncludes(docs, "configured `providerTools`");
-    assertStringIncludes(docs, "provider's native schema on the next model step");
-    assertEquals(docs.includes("does not search or load provider-native `providerTools`"), false);
+    assertStringIncludes(
+      docs,
+      "provider's native schema on the next model step",
+    );
+    assertEquals(
+      docs.includes("does not search or load provider-native `providerTools`"),
+      false,
+    );
     assertEquals(docs.includes("does not search `providerTools`"), false);
-    assertEquals(docs.includes("bootstrap tools (`veryfront__form_input`"), false);
+    assertEquals(
+      docs.includes("bootstrap tools (`veryfront__form_input`"),
+      false,
+    );
   });
 
   it("documents the exact-run writer capability migration", async () => {
@@ -595,12 +743,18 @@ describe("guide content contracts", () => {
       "docs/api-reference/veryfront/agent.md",
     );
 
-    assertStringIncludes(guide, "## Migrate custom durable child event writers");
+    assertStringIncludes(
+      guide,
+      "## Migrate custom durable child event writers",
+    );
     assertStringIncludes(guide, "createHostedRunEventWriterCapability");
     assertStringIncludes(guide, "mintChildRunEventWriterCapability");
     assertStringIncludes(guide, "runEventWriterCapability: childWriter");
     assertStringIncludes(guide, "fails before\nprovider dispatch");
-    assertStringIncludes(guide, "must not retry by falling back to a user API token");
+    assertStringIncludes(
+      guide,
+      "must not retry by falling back to a user API token",
+    );
     for (
       const contract of [
         "ParsedHostedChatRequest",
@@ -623,8 +777,14 @@ describe("guide content contracts", () => {
       "hostedRunEventWriterCapability.mintChildRunEventWriterCapability",
     );
     assertStringIncludes(reference, "### `ExecuteHostedDurableChildForkInput`");
-    assertStringIncludes(reference, "### `HostedDurableRunStartExecutionInput`");
-    assertStringIncludes(reference, "### `HostedAgentServiceDetachedExecutionInput`");
+    assertStringIncludes(
+      reference,
+      "### `HostedDurableRunStartExecutionInput`",
+    );
+    assertStringIncludes(
+      reference,
+      "### `HostedAgentServiceDetachedExecutionInput`",
+    );
   });
 
   it("keeps privileged MCP transport limited to deployment-owned exact endpoints", async () => {
@@ -636,7 +796,10 @@ describe("guide content contracts", () => {
     );
 
     assertStringIncludes(guide, "exact allowed endpoints once at startup");
-    assertStringIncludes(guide, "createRemoteMCPToolSourceFactoryWithTransport");
+    assertStringIncludes(
+      guide,
+      "createRemoteMCPToolSourceFactoryWithTransport",
+    );
     assertStringIncludes(guide, "trustedEndpoints:");
     assertStringIncludes(guide, "requestFetch: hostFetch");
     assertStringIncludes(guide, "exact normalized URL match");
@@ -679,7 +842,10 @@ describe("guide content contracts", () => {
     for (const path of docs) {
       const text = await Deno.readTextFile(path);
 
-      assertStringIncludes(text, "open` opens the project in the Cloud dashboard");
+      assertStringIncludes(
+        text,
+        "open` opens the project in the Cloud dashboard",
+      );
       assertEquals(text.includes("open` opens the deployed"), false);
     }
 
@@ -722,7 +888,10 @@ describe("guide content contracts", () => {
     assertStringIncludes(prose, "Public Environment");
     assertStringIncludes(prose, "not a member of the project gets a `403`");
     assertStringIncludes(doc, "-w '%{http_code} %{redirect_url}\\n'");
-    assertEquals(doc.includes("```bash\ncurl -sSf <environment-url>\n```"), false);
+    assertEquals(
+      doc.includes("```bash\ncurl -sSf <environment-url>\n```"),
+      false,
+    );
   });
 
   it("does not present a browser as the only client a protected environment serves", async () => {
@@ -774,7 +943,9 @@ describe("guide content contracts", () => {
     const prose = doc.replace(/\s+/g, " ");
 
     const signInApexes = new Set(
-      [...doc.matchAll(/https:\/\/(veryfront\.(?:com|org))\/sign-in/g)].map((match) => match[1]),
+      [...doc.matchAll(/https:\/\/(veryfront\.(?:com|org))\/sign-in/g)].map((
+        match,
+      ) => match[1]),
     );
     assertEquals(signInApexes.has("veryfront.com"), true);
     assertEquals(signInApexes.has("veryfront.org"), true);
@@ -822,16 +993,24 @@ describe("guide content contracts", () => {
       "-w '%{http_code} %{redirect_url}\\n' \\\n  <environment-url>/<route>",
     );
     assertEquals(
-      accessGuide.includes("-w '%{http_code} %{redirect_url}\\n' <environment-url>\n"),
+      accessGuide.includes(
+        "-w '%{http_code} %{redirect_url}\\n' <environment-url>\n",
+      ),
       false,
     );
 
     // And the prose must tell the reader to validate that route's own status
     // rather than a blanket 200.
     assertStringIncludes(accessProse, "probe a route the project serves");
-    assertStringIncludes(accessProse, "Validate the status that route normally returns");
+    assertStringIncludes(
+      accessProse,
+      "Validate the status that route normally returns",
+    );
     assertStringIncludes(deploymentProse, "skips the browser readiness probe");
-    assertEquals(accessProse.includes("A public environment answers `200`."), false);
+    assertEquals(
+      accessProse.includes("A public environment answers `200`."),
+      false,
+    );
   });
 
   it("offers open --site as the way back to the deployed environment URL", async () => {
@@ -955,13 +1134,22 @@ describe("guide content contracts", () => {
     assertStringIncludes(guide, "NDJSON records");
     assertStringIncludes(guide, "git revert");
     assertStringIncludes(guide, "Start with staging");
-    assertStringIncludes(guide, "veryfront push --branch main --prune --force --dry-run");
+    assertStringIncludes(
+      guide,
+      "veryfront push --branch main --prune --force --dry-run",
+    );
     assertStringIncludes(guide, "intentional overwrite authority");
     assertStringIncludes(guide, "preserves remote-only files");
     assertStringIncludes(guide, "does not create a missing project or branch");
-    assertStringIncludes(guide, "veryfront deploy --branch main --env staging --yes");
+    assertStringIncludes(
+      guide,
+      "veryfront deploy --branch main --env staging --yes",
+    );
     assertStringIncludes(guide, "veryfront open --env staging");
-    assertStringIncludes(guide, "Do not edit or publish directly from Studio `main`");
+    assertStringIncludes(
+      guide,
+      "Do not edit or publish directly from Studio `main`",
+    );
     assertStringIncludes(guide, "before anyone starts new Studio work");
     assertStringIncludes(guide, "supported text files only");
     assertStringIncludes(guide, "Binary images, fonts, archives");
@@ -1046,7 +1234,9 @@ describe("guide content contracts", () => {
     assertStringIncludes(guide, "`vf_get_schema`");
     assertStringIncludes(guide, "CLI command schema");
     assertEquals(
-      guide.includes("For the full toolset and current argument shapes, call `vf_get_schema`"),
+      guide.includes(
+        "For the full toolset and current argument shapes, call `vf_get_schema`",
+      ),
       false,
     );
   });
@@ -1230,7 +1420,10 @@ describe("guide content contracts", () => {
     // context, which would answer with the forced path in both modes and pass
     // no matter what the guide says.
     const home = "/tmp/veryfront-guide-content-home";
-    const noOverride = { VERYFRONT_CACHE_DIR: undefined, VF_CACHE_DIR: undefined };
+    const noOverride = {
+      VERYFRONT_CACHE_DIR: undefined,
+      VF_CACHE_DIR: undefined,
+    };
     const resolveRoots = (mode: string | undefined) =>
       withHostEnv(
         { ...noOverride, HOME: home, NODE_ENV: mode, VERYFRONT_MODE: mode },
@@ -1286,8 +1479,16 @@ describe("guide content contracts", () => {
   it("links the CI and configuration guides to the API keys concept section", async () => {
     const apiKeysLink =
       "[API keys](https://veryfront.com/docs/cloud/apis/identity-and-access#api-keys) to create one.";
-    for (const path of ["docs/guides/deploy-from-ci.md", "docs/guides/configuration.md"]) {
-      const guide = (await Deno.readTextFile(new URL(path, repoRoot))).replace(/\s+/g, " ");
+    for (
+      const path of [
+        "docs/guides/deploy-from-ci.md",
+        "docs/guides/configuration.md",
+      ]
+    ) {
+      const guide = (await Deno.readTextFile(new URL(path, repoRoot))).replace(
+        /\s+/g,
+        " ",
+      );
       assertStringIncludes(guide, apiKeysLink);
     }
   });
@@ -1315,7 +1516,10 @@ describe("guide content contracts", () => {
       "[Webhooks](https://veryfront.com/docs/cloud/webhooks)",
     );
     // The runs-owned webhook run list keeps its released operation name.
-    assertStringIncludes(guide, "| `webhook-list` | `listProjectWebhookRuns` |");
+    assertStringIncludes(
+      guide,
+      "| `webhook-list` | `listProjectWebhookRuns` |",
+    );
   });
 
   it("documents the pinned runs contract, getRun and the RUN_* error kinds", async () => {
@@ -1333,13 +1537,22 @@ describe("guide content contracts", () => {
     assertEquals(guide.includes("runs.get("), false);
     assertStringIncludes(guide, "The older `get()` is deprecated");
     // Field guidance describes the grouped getRun() shape, with flat names scoped to get().
-    assertStringIncludes(guide, "`execution` holds `logs`, `duration_ms`, `exit_code`");
+    assertStringIncludes(
+      guide,
+      "`execution` holds `logs`, `duration_ms`, `exit_code`",
+    );
     assertStringIncludes(guide, "carries `schemas.input` and `schemas.output`");
-    assertEquals(guide.includes("stores the terminal execution shape directly"), false);
+    assertEquals(
+      guide.includes("stores the terminal execution shape directly"),
+      false,
+    );
     // A non-Problem error body surfaces the SDK fallback code, not a RUN_* code.
     assertStringIncludes(guide, "with the code `UNEXPECTED_RESPONSE`");
     // Valid Problems may carry non-RUN_* server codes; the guide must not say match only RUN_*.
-    assertStringIncludes(guide, "fall back to the Problem `status` for any other code");
+    assertStringIncludes(
+      guide,
+      "fall back to the Problem `status` for any other code",
+    );
     assertEquals(guide.includes("Match on the `RUN_*` code"), false);
     for (
       const [code, kind] of [
@@ -1358,7 +1571,10 @@ describe("guide content contracts", () => {
       assertStringIncludes(guide, `| \`${code}\` | \`${kind}\` |`);
     }
     // succeed and fail are the primary terminal actions; finalize is compatibility.
-    assert(guide.indexOf("runs succeed --run-id") < guide.indexOf("runs finalize --run-id"));
+    assert(
+      guide.indexOf("runs succeed --run-id") <
+        guide.indexOf("runs finalize --run-id"),
+    );
     assertStringIncludes(guide, "`finalize` remains for compatibility");
   });
 });
@@ -1374,7 +1590,9 @@ function withHostEnv<T>(
   const previous = Object.keys(vars).map(
     (key) => [key, getHostEnv(key)] as const,
   );
-  const apply = (entries: readonly (readonly [string, string | undefined])[]) => {
+  const apply = (
+    entries: readonly (readonly [string, string | undefined])[],
+  ) => {
     for (const [key, value] of entries) {
       if (value === undefined) deleteEnv(key);
       else setEnv(key, value);
@@ -1406,7 +1624,9 @@ function productionCacheTriggerEnvKeys(source: string): string[] {
   }
 
   const body = source.slice(open, end);
-  const keys = [...body.matchAll(/getHostEnv\("([A-Z_]+)"\)/g)].map((m) => m[1]!);
+  const keys = [...body.matchAll(/getHostEnv\("([A-Z_]+)"\)/g)].map((m) =>
+    m[1]!
+  );
   assert(keys.length > 0, "getDefaultCacheBaseDir() must read the host env");
   return [...new Set(keys)];
 }

@@ -325,8 +325,13 @@ export const getIntegrationEndpointParamSchema = defineSchema((v) =>
     // For query params only: provider-specific formatting applied to the value
     // before sending. Search encloses the AQS query in double quotes. Conversation
     // ID formatting escapes the value and builds a fixed conversationId predicate.
+    // Skiptoken formatting decodes a token copied from @odata.nextLink.
     queryValueFormat: v
-      .enum(["microsoft-graph-search", "microsoft-graph-conversation-id"])
+      .enum([
+        "microsoft-graph-search",
+        "microsoft-graph-conversation-id",
+        "microsoft-graph-skiptoken",
+      ])
       .optional(),
     // For header params only: the HTTP header name to send when it differs from
     // the agent-facing parameter key (e.g. input account_id → header Harvest-Account-Id).
@@ -416,6 +421,11 @@ export const getIntegrationEndpointSchema = defineSchema((v) =>
     contentType: v.string().optional(),
     response: v.object({
       transform: v.string().optional(),
+      // "base64": a GET endpoint returns its body bytes unchanged as
+      // { encoding, content_base64, size, content_type } instead of parsed JSON.
+      // Honoured by the local endpoint executor and the hosted API executor;
+      // service-account sources (such as Salesforce) do not serve such endpoints.
+      encoding: v.enum(["base64"]).optional(),
       enrich: getIntegrationEndpointResponseEnrichmentSchema().optional(),
       historicalSummary: getIntegrationEndpointHistoricalSummarySchema().optional(),
     }).optional(),

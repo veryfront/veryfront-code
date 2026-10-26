@@ -621,7 +621,12 @@ function classifyInferencePolicyRefusal(
   context: ProviderErrorBodyContext,
   response: Response,
 ): ProviderError | undefined {
-  if (context.truncated || context.parsedBody?.code !== "eu_inference_policy") return undefined;
+  const code = context.parsedBody?.code;
+  if (
+    context.truncated || typeof code !== "string" ||
+    !["eu_inference_policy", "account-model-denied", "policy-model-denied", "key-model-denied"]
+      .includes(code)
+  ) return undefined;
   if (!isVeryfrontGatewayResponse(response)) return undefined;
   return preserveStructuredResponseBody(
     new ProviderRequestError({

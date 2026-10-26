@@ -1,7 +1,7 @@
 ---
 title: "Integrations"
-description: "Discover, connect, and call provider integrations through OAuth or connector credentials."
-order: 35
+description: "Agent-declared tools with optional source and project policy, first-use OAuth, and remote execution."
+order: 400
 ---
 
 Veryfront integrations let applications and agents call third-party services on
@@ -472,8 +472,7 @@ export default agent({
 ```
 
 The exact canonical IDs passed to `tools` are the source's capability grant.
-Source configuration is monotonic. It is source-qualified and monotonic:
-integrations.allow only narrows that grant
+Source configuration is monotonic: integrations.allow only narrows that grant
 when the source runs inside a Veryfront project runtime. It never enables
 another tool or selects a credential. The runtime resolves each credential
 immediately before the request and never sends local credentials to Veryfront,
@@ -497,6 +496,10 @@ Salesforce service-account specialization. It rejects authorization-code OAuth,
 query-string credentials, GraphQL, response enrichment, multipart bodies, raw
 bodies, dynamic endpoint origins, and tools outside the exact grant. Use managed
 execution for per-user OAuth and other unsupported connector features.
+
+For unattended Outlook mail access, use `createOutlookServiceAccountToolSource`.
+It reads one configured mailbox with Microsoft Entra app-only credentials. See
+[Run Outlook integration tools locally](./self-hosting.md#run-outlook-integration-tools-locally).
 
 ## Prerequisites for agent tools
 
@@ -525,7 +528,7 @@ Search Confluence when the user asks about internal documentation.
 
 The agent source is the capability declaration. Its tool list determines which
 remote integration tools the agent can call. Removing a tool from agent source
-removes it from that agent without changing connections or credentials.
+removes it from that agent without changing project-wide policy or credentials.
 
 ## Narrow capabilities in source configuration
 
@@ -558,13 +561,14 @@ IDs. The `integration__tool` namespace is reserved for integration tools, so
 restricted runs treat every name in that namespace as an integration even when
 the running framework build does not yet know its connector.
 
-This source configuration is local capability selection. The runtime loads it
-from the same branch, release, or environment as the agent and intersects it
-with the agent declaration and connector catalog. It cannot enable an
-integration, select a credential scope, create a connection, or grant access
-to an account. The removed `scope`, `perUser`, and `tools` fields are rejected
-rather than normalized or silently ignored. Source configuration intentionally
-has no credential, provider-configuration, or execution-mode fields.
+This policy is source-qualified and monotonic. The runtime loads it from the
+same branch, release, or environment as the agent and intersects it with the
+agent declaration, connector catalog, and control-plane policy. It cannot
+enable an integration, select a credential scope, create a connection, or
+override a control-plane restriction. The removed `scope`, `perUser`, and
+`tools` fields are rejected rather than normalized or silently ignored. Source
+policy intentionally has no credential, provider-configuration, or execution-mode
+fields because those values do not have a generic monotonic merge rule.
 
 The project runtime establishes this restriction once per request. Direct
 `agent.generate`, `agent.stream`, and `agent.respond` calls made by project
@@ -573,30 +577,22 @@ or durable child processes receive the already-narrowed manifest explicitly at
 their execution boundary. A standalone `agent()` invoked outside a Veryfront
 project runtime has no project source configuration to load.
 
-## Connection state
+## Project policy and connection state
 
-There is no project integration policy or policy setup step. These are the
-independent contracts:
+Project integration policy is an optional control-plane guardrail. Use Studio
+or the integration policy API when a project must restrict an integration to a
+scope or tool subset. An absent policy means there is no extra project-level
+override. Deleting a policy returns it to that absent state.
+
+These are four independent contracts:
 
 - Agent source controls which tools belong to an agent.
-- Source configuration can narrow integrations and tools for an exact source
-  target.
+- Source configuration can narrow integrations and tools for an exact source target.
+- Project policy can narrow scope, tools, configuration, or execution mode.
 - Connection inventory records which project or user has authenticated.
 
-The agent source and source configuration select eligible tools from the
-catalog. Managed OAuth tools additionally require an authenticated connection
-to run. Local static-credential tools resolve their credentials from the host
-environment or credential provider and do not use connection inventory.
-
-Adding
-a tool does not create a connection. Connecting OAuth does not
-rewrite agent source or source configuration. If a project has several
-accessible accounts, a REST, GraphQL, MCP, TypeScript client, or CLI call can
-select an exact connection; Veryfront validates that it belongs to the project
-and is visible to the caller, and never falls back to another account.
-
-Framework
-tool calls use the runtime-selected connection.
+Adding a tool does not create policy or credentials. Connecting OAuth does not
+rewrite agent source, source configuration, or project policy.
 
 ## Authentication flow
 
@@ -606,10 +602,8 @@ When an agent calls an OAuth integration tool and no valid connection exists:
 2. The agent surfaces the connect action to the user.
 3. The user completes provider consent and the OAuth callback.
 4. The control plane stores the connection for the selected project or user scope.
-5. The run calls the tool again with the new connection. This is safe because
-   `authentication_required` means no provider request was sent.
-6. Later calls reuse or refresh that connection according to the provider's
-   token lifecycle.
+5. The run retries the tool with the new connection.
+6. Later calls reuse or refresh that connection according to provider policy.
 
 OAuth connection happens during use. Adding a tool to agent source does not
 require a connection in advance. A call that failed with any other error is not
@@ -730,6 +724,7 @@ representative read has run against the real provider on a recorded release.
 | `twilio`         | Basic                                      | Fixture and published metadata only                           |
 | `personio`       | OAuth client credentials                   | Fixture and published metadata only                           |
 | `salesforce`     | OAuth client credentials (service account) | Fixture and published metadata only                           |
+| `outlook`        | Entra client credentials (app-only)        | Fixture only                                                  |
 
 Every other connector is package-declared and, where enabled, environment-enabled,
 but not operationally qualified.
@@ -744,9 +739,9 @@ names or icon metadata:
 1. Confirm the integration tool name is present in the agent source.
 2. Start a new agent run and request an action that uses the tool.
 3. If an OAuth connection is absent, complete the connect action and callback.
-4. Confirm the next tool call receives a result with `isError` unset or `false`.
+4. Confirm the run retries the tool and receives a non-error result.
 5. Reload the project and confirm connection inventory still reports the
-   connection independently of agent source and source configuration.
+   connection independently of agent source and both policy layers.
 
 ## Next
 

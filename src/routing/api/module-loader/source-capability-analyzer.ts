@@ -93,8 +93,21 @@ export type WorkerUrlClassification =
     resolutionBase: "module" | "route";
   };
 
+/** A 1-based line and column and the source text of one expression. */
+export interface SourceLocation {
+  readonly line: number;
+  readonly column: number;
+  readonly expression: string;
+}
+
 export interface SourceCapabilityAnalysis {
   readonly hasDynamicCodeGeneration: boolean;
+  /**
+   * Where the first read with a key this analysis cannot resolve sits, when
+   * that read is one reason for `hasDynamicCodeGeneration`. It is the case
+   * ordinary code hits most, so the caller can name it in its error.
+   */
+  readonly unresolvedComputedRead?: SourceLocation;
   readonly workers: readonly WorkerUrlClassification[];
   readonly moduleSpecifiers: readonly string[];
   readonly hasUnconstrainedDynamicImport: boolean;
@@ -4459,6 +4472,7 @@ function isReflectGetGlobalArgument(
 
 interface MutableSourceCapabilityAnalysis {
   hasDynamicCodeGeneration: boolean;
+  unresolvedComputedRead?: ASTNode;
   workers: WorkerUrlClassification[];
   moduleSpecifiers: string[];
   hasUnconstrainedDynamicImport: boolean;
@@ -4609,7 +4623,10 @@ function applyMemberCapability(
   // is a computed read on a callable this analysis rejects on its own.
   const objectConstructorIsInert = objectIsProvablyPlain ||
     object !== undefined && hasIntrinsicNonCallablePrototype(object, scope, nodeScopes);
-  if (mayReadConstructor && !objectConstructorIsInert) analysis.hasDynamicCodeGeneration = true;
+  if (mayReadConstructor && !objectConstructorIsInert) {
+    analysis.hasDynamicCodeGeneration = true;
+    if (property === null) analysis.unresolvedComputedRead ??= node;
+  }
   if (
     property === "extensions" && object !== undefined &&
     resolvesToUnboundIdentifier(object, "require", scope, nodeScopes)
@@ -5797,6 +5814,26 @@ function applyExportedCapabilityAlias(
 }
 
 /**
+ * Identifier names only: a read such as `c[lookup("<TOKEN>")]` is shown as
+ * `c[…]`, so no literal, comment or call argument reaches an error or a log.
+ */
+function describeOperand(node: unknown): string {
+  if (!isNode(node)) return "…";
+  if (node.type === "Identifier" && typeof node.name === "string") return node.name;
+  if (node.type === "ThisExpression") return "this";
+  return "…";
+}
+
+function sourceLocation(node: ASTNode): SourceLocation {
+  const loc = node.loc as { start?: { line?: number; column?: number } } | undefined;
+  return {
+    line: loc?.start?.line ?? 1,
+    column: (loc?.start?.column ?? 0) + 1,
+    expression: `${describeOperand(node.object)}[${describeOperand(node.property)}]`,
+  };
+}
+
+/**
  * Parse executable JavaScript/TypeScript and classify capabilities that a raw
  * text scan cannot distinguish from inert strings, comments, types, or local
  * bindings. A null result means the parser could not read the source; callers
@@ -5855,8 +5892,10 @@ export async function analyzeSourceCapabilities(
   };
 
   visit(program);
+  const read = analysis.unresolvedComputedRead;
   return {
     hasDynamicCodeGeneration: analysis.hasDynamicCodeGeneration,
+    ...(read ? { unresolvedComputedRead: sourceLocation(read) } : {}),
     workers: analysis.workers,
     moduleSpecifiers: analysis.moduleSpecifiers,
     hasUnconstrainedDynamicImport: analysis.hasUnconstrainedDynamicImport,

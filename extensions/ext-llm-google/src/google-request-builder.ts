@@ -1,4 +1,12 @@
-import { jsonValuesEqual, readRecord, unwrapToolInputSchema } from "veryfront/provider/shared";
+import {
+  isImageFileInput,
+  jsonValuesEqual,
+  readInlineFileData,
+  readRecord,
+  readRemoteFileUrl,
+  unsupportedFileInputError,
+  unwrapToolInputSchema,
+} from "veryfront/provider/shared";
 import type {
   ModelRuntimeCallOptions,
   ModelRuntimePromptMessage,
@@ -632,6 +640,38 @@ function toGoogleContents(
   };
 }
 
+/** A URI the Gemini Files API returned; Gemini reads any supported type from it. */
+function isGeminiFileUri(url: string): boolean {
+  if (!URL.canParse(url)) return false;
+  const { protocol, hostname, pathname } = new URL(url);
+  return protocol === "https:" && hostname === "generativelanguage.googleapis.com" &&
+    /^\/v1[a-z0-9]*\/files\/[^/]+$/.test(pathname);
+}
+
+/**
+ * Inline types Gemini reads, besides images, audio, video, `text/*`, and
+ * `+json`/`+xml` types.
+ * Other types, such as archives, fail before inference.
+ */
+const GOOGLE_INLINE_DOCUMENT_TYPES: ReadonlySet<string> = new Set([
+  "application/pdf",
+  "application/json",
+  "application/xml",
+  "application/rtf",
+  "application/javascript",
+  "application/x-javascript",
+  "application/x-python",
+  "application/x-typescript",
+  "application/typescript",
+  "application/yaml",
+  "application/x-yaml",
+]);
+
+function isGoogleInlineMediaType(mimeType: string): boolean {
+  return /^(image|audio|video|text)\//.test(mimeType) || /\+(json|xml)$/.test(mimeType) ||
+    GOOGLE_INLINE_DOCUMENT_TYPES.has(mimeType);
+}
+
 function toGoogleUserParts(
   parts: Extract<ModelRuntimePromptMessage, { readonly role: "user" }>["content"],
 ): Array<Record<string, unknown>> {
@@ -645,13 +685,27 @@ function toGoogleUserParts(
       continue;
     }
 
-    if (part.type === "image" || part.mediaType.startsWith("image/")) {
-      content.push({
-        fileData: {
-          mimeType: part.mediaType,
-          fileUri: part.url,
-        },
-      });
+    const mimeType = part.mediaType.toLowerCase();
+    const data = readInlineFileData(part);
+    if (data !== undefined) {
+      if (!isGoogleInlineMediaType(mimeType)) {
+        throw unsupportedFileInputError(
+          "Google",
+          part,
+          "Send a supported type such as an image, audio, video, PDF, or text file.",
+        );
+      }
+      content.push({ inlineData: { mimeType, data } });
+    } else if (isGeminiFileUri(part.url)) {
+      content.push({ fileData: { mimeType, fileUri: part.url } });
+    } else if (isImageFileInput(part)) {
+      content.push({ fileData: { mimeType, fileUri: readRemoteFileUrl("Google", part) } });
+    } else {
+      throw unsupportedFileInputError(
+        "Google",
+        part,
+        "Send non-image files as inline data, for example with fileFromBytes, or as a Gemini Files API URI.",
+      );
     }
   }
 

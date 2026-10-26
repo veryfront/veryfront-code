@@ -181,13 +181,13 @@ Create an exact-run event-writer capability from a credential verified by truste
 
 ### `agent.generate(input)`
 
-Run the agent and return a complete response. Accepts a string or message array as input.
+Run the agent and return a complete response. Pass an object whose `input` is a string or message array, such as `agent.generate({ input: "Hello" })`.
 
 **Returns:** <code>Promise&lt;AgentResponse&lt;InferAgentOutputSchema&lt;TOutputSchema&gt;&gt;&gt;</code>
 
 ### `agent.generate(input)`
 
-Run the agent and return a complete response. Accepts a string or message array as input.
+Run the agent and return a complete response. Pass an object whose `input` is a string or message array, such as `agent.generate({ input: "Hello" })`.
 
 **Returns:** <code>Promise&lt;AgentResponse&lt;TOutput&gt;&gt;</code>
 

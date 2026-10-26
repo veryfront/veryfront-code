@@ -37770,6 +37770,7 @@ export const connectors: IntegrationConfig[] = [
         "Mail.Send",
         "Mail.ReadWrite",
         "Mail.Read.Shared",
+        "Mail.ReadWrite.Shared",
         "Calendars.Read",
         "Calendars.ReadWrite",
         "offline_access",
@@ -37817,6 +37818,12 @@ export const connectors: IntegrationConfig[] = [
             "in": "query",
             "description": "Maximum messages to return",
             "default": 25,
+          },
+          "$skip": {
+            "type": "number",
+            "in": "query",
+            "description":
+              "Messages to skip; use the $skip value from the previous page's @odata.nextLink",
           },
           "$select": {
             "type": "string",
@@ -37932,6 +37939,13 @@ export const connectors: IntegrationConfig[] = [
             "description": "Maximum messages to return",
             "default": 25,
           },
+          "$skiptoken": {
+            "type": "string",
+            "in": "query",
+            "description":
+              "Search page token; copy the $skiptoken value from the previous page's @odata.nextLink as-is",
+            "queryValueFormat": "microsoft-graph-skiptoken",
+          },
           "$select": {
             "type": "string",
             "in": "query",
@@ -37989,6 +38003,12 @@ export const connectors: IntegrationConfig[] = [
             "in": "query",
             "description": "Maximum folders to return",
             "default": 100,
+          },
+          "$skip": {
+            "type": "number",
+            "in": "query",
+            "description":
+              "Folders to skip; use the $skip value from the previous page's @odata.nextLink",
           },
         },
         "response": {
@@ -38374,6 +38394,12 @@ export const connectors: IntegrationConfig[] = [
             "description": "Maximum drafts to return",
             "default": 25,
           },
+          "$skip": {
+            "type": "number",
+            "in": "query",
+            "description":
+              "Drafts to skip; use the $skip value from the previous page's @odata.nextLink",
+          },
           "$select": {
             "type": "string",
             "in": "query",
@@ -38741,6 +38767,12 @@ export const connectors: IntegrationConfig[] = [
             "description": "Maximum messages to return",
             "default": 25,
           },
+          "$skip": {
+            "type": "number",
+            "in": "query",
+            "description":
+              "Messages to skip; use the $skip value from the previous page's @odata.nextLink",
+          },
           "$select": {
             "type": "string",
             "in": "query",
@@ -38799,6 +38831,12 @@ export const connectors: IntegrationConfig[] = [
             "in": "query",
             "description": "Maximum recent messages to inspect as thread representatives",
             "default": 25,
+          },
+          "$skip": {
+            "type": "number",
+            "in": "query",
+            "description":
+              "Messages to skip; use the $skip value from the previous page's @odata.nextLink",
           },
           "$select": {
             "type": "string",
@@ -38909,6 +38947,12 @@ export const connectors: IntegrationConfig[] = [
             "description": "Maximum messages to return",
             "default": 25,
           },
+          "$skip": {
+            "type": "number",
+            "in": "query",
+            "description":
+              "Messages to skip; use the $skip value from the previous page's @odata.nextLink",
+          },
           "$select": {
             "type": "string",
             "in": "query",
@@ -38923,6 +38967,14 @@ export const connectors: IntegrationConfig[] = [
             "default": "receivedDateTime desc",
           },
           "$filter": { "type": "string", "in": "query", "description": "OData filter expression" },
+          "prefer": {
+            "type": "string",
+            "in": "header",
+            "description":
+              'Set to IdType="ImmutableId" to read and address messages by immutable ID. Immutable IDs do not change when a message moves to another folder.',
+            "pattern": '^IdType="ImmutableId"$',
+            "headerName": "Prefer",
+          },
         },
         "response": {
           "transform": "value",
@@ -38983,12 +39035,27 @@ export const connectors: IntegrationConfig[] = [
             "description": "Maximum messages to return",
             "default": 25,
           },
+          "$skiptoken": {
+            "type": "string",
+            "in": "query",
+            "description":
+              "Search page token; copy the $skiptoken value from the previous page's @odata.nextLink as-is",
+            "queryValueFormat": "microsoft-graph-skiptoken",
+          },
           "$select": {
             "type": "string",
             "in": "query",
             "description": "Comma-separated message fields to return",
             "default":
               "id,conversationId,internetMessageId,subject,from,sender,toRecipients,ccRecipients,receivedDateTime,sentDateTime,bodyPreview,categories,isRead,importance,hasAttachments,webLink,flag",
+          },
+          "prefer": {
+            "type": "string",
+            "in": "header",
+            "description":
+              'Set to IdType="ImmutableId" to read and address messages by immutable ID. Immutable IDs do not change when a message moves to another folder.',
+            "pattern": '^IdType="ImmutableId"$',
+            "headerName": "Prefer",
           },
         },
         "response": {
@@ -39021,6 +39088,326 @@ export const connectors: IntegrationConfig[] = [
         },
       },
     }, {
+      "id": "outlook__get_shared_mailbox_email",
+      "name": "Get Shared Mailbox Email",
+      "description": "Get shared mailbox email",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://graph.microsoft.com/v1.0/users/{mailbox}/messages/{messageId}",
+        "params": {
+          "mailbox": {
+            "type": "string",
+            "in": "path",
+            "description": "Mailbox user principal name or Microsoft Graph user ID",
+            "required": true,
+          },
+          "messageId": {
+            "type": "string",
+            "in": "path",
+            "description": "Microsoft Graph message ID",
+            "required": true,
+          },
+          "$select": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated message fields to return",
+            "default":
+              "id,conversationId,internetMessageId,subject,body,bodyPreview,from,sender,toRecipients,ccRecipients,bccRecipients,replyTo,receivedDateTime,sentDateTime,categories,isRead,importance,hasAttachments,webLink,flag",
+          },
+          "prefer": {
+            "type": "string",
+            "in": "header",
+            "description":
+              'Set to IdType="ImmutableId" to read and address messages by immutable ID. Immutable IDs do not change when a message moves to another folder.',
+            "pattern": '^IdType="ImmutableId"$',
+            "headerName": "Prefer",
+          },
+        },
+      },
+    }, {
+      "id": "outlook__list_shared_mailbox_folders",
+      "name": "List Shared Mailbox Folders",
+      "description": "List shared mailbox folders",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://graph.microsoft.com/v1.0/users/{mailbox}/mailFolders",
+        "params": {
+          "mailbox": {
+            "type": "string",
+            "in": "path",
+            "description": "Mailbox user principal name or Microsoft Graph user ID",
+            "required": true,
+          },
+          "includeHiddenFolders": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Include hidden folders",
+            "default": false,
+          },
+          "$top": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum folders to return",
+            "default": 100,
+          },
+          "$skip": {
+            "type": "number",
+            "in": "query",
+            "description":
+              "Folders to skip; use the $skip value from the previous page's @odata.nextLink",
+          },
+        },
+        "response": {
+          "transform": "value",
+          "historicalSummary": {
+            "collectionKeys": ["value", "folders", "data"],
+            "collectionName": "folders",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "displayName" },
+              { "name": "parentFolderId" },
+              { "name": "childFolderCount" },
+              { "name": "unreadItemCount" },
+              { "name": "totalItemCount" },
+            ],
+            "outputFields": [{ "name": "@odata.nextLink" }, { "name": "@odata.count" }],
+            "omitted": "folder provider-specific payload fields",
+          },
+        },
+      },
+    }, {
+      "id": "outlook__list_shared_mailbox_child_folders",
+      "name": "List Shared Mailbox Child Folders",
+      "description": "List shared mailbox child folders",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url":
+          "https://graph.microsoft.com/v1.0/users/{mailbox}/mailFolders/{folderId}/childFolders",
+        "params": {
+          "mailbox": {
+            "type": "string",
+            "in": "path",
+            "description": "Mailbox user principal name or Microsoft Graph user ID",
+            "required": true,
+          },
+          "folderId": {
+            "type": "string",
+            "in": "path",
+            "description": "Parent folder ID or well-known folder name such as inbox",
+            "required": true,
+          },
+          "includeHiddenFolders": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Include hidden folders",
+            "default": false,
+          },
+          "$top": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum folders to return",
+            "default": 100,
+          },
+          "$skip": {
+            "type": "number",
+            "in": "query",
+            "description":
+              "Folders to skip; use the $skip value from the previous page's @odata.nextLink",
+          },
+        },
+        "response": {
+          "transform": "value",
+          "historicalSummary": {
+            "collectionKeys": ["value", "folders", "data"],
+            "collectionName": "folders",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "displayName" },
+              { "name": "parentFolderId" },
+              { "name": "childFolderCount" },
+              { "name": "unreadItemCount" },
+              { "name": "totalItemCount" },
+            ],
+            "outputFields": [{ "name": "@odata.nextLink" }, { "name": "@odata.count" }],
+            "omitted": "folder provider-specific payload fields",
+          },
+        },
+      },
+    }, {
+      "id": "outlook__list_shared_mailbox_attachments",
+      "name": "List Shared Mailbox Attachments",
+      "description": "List shared mailbox attachments",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://graph.microsoft.com/v1.0/users/{mailbox}/messages/{messageId}/attachments",
+        "params": {
+          "mailbox": {
+            "type": "string",
+            "in": "path",
+            "description": "Mailbox user principal name or Microsoft Graph user ID",
+            "required": true,
+          },
+          "messageId": {
+            "type": "string",
+            "in": "path",
+            "description": "Message ID",
+            "required": true,
+          },
+          "$select": {
+            "type": "string",
+            "in": "query",
+            "description":
+              "Comma-separated attachment fields to return. The default omits file contents; use Get Shared Mailbox Attachment to read them.",
+            "default": "id,name,contentType,size,isInline,lastModifiedDateTime",
+          },
+          "prefer": {
+            "type": "string",
+            "in": "header",
+            "description":
+              'Set to IdType="ImmutableId" to read and address messages by immutable ID. Immutable IDs do not change when a message moves to another folder.',
+            "pattern": '^IdType="ImmutableId"$',
+            "headerName": "Prefer",
+          },
+        },
+        "response": {
+          "transform": "value",
+          "historicalSummary": {
+            "collectionKeys": ["value", "attachments", "data"],
+            "collectionName": "attachments",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "name" },
+              { "name": "contentType" },
+              { "name": "size" },
+              { "name": "isInline" },
+              { "name": "lastModifiedDateTime" },
+            ],
+            "outputFields": [{ "name": "@odata.nextLink" }, { "name": "@odata.count" }],
+            "omitted": "attachment binary content and provider-specific payload fields",
+          },
+        },
+      },
+    }, {
+      "id": "outlook__get_shared_mailbox_attachment",
+      "name": "Get Shared Mailbox Attachment",
+      "description": "Get shared mailbox attachment",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url":
+          "https://graph.microsoft.com/v1.0/users/{mailbox}/messages/{messageId}/attachments/{attachmentId}",
+        "params": {
+          "mailbox": {
+            "type": "string",
+            "in": "path",
+            "description": "Mailbox user principal name or Microsoft Graph user ID",
+            "required": true,
+          },
+          "messageId": {
+            "type": "string",
+            "in": "path",
+            "description": "Message ID",
+            "required": true,
+          },
+          "attachmentId": {
+            "type": "string",
+            "in": "path",
+            "description": "Attachment ID",
+            "required": true,
+          },
+          "$expand": {
+            "type": "string",
+            "in": "query",
+            "description":
+              "Set to microsoft.graph.itemattachment/item to return the attached message, event or contact of an item attachment",
+            "pattern": "^microsoft\\.graph\\.itemattachment/item$",
+          },
+          "prefer": {
+            "type": "string",
+            "in": "header",
+            "description":
+              'Set to IdType="ImmutableId" to read and address messages by immutable ID. Immutable IDs do not change when a message moves to another folder.',
+            "pattern": '^IdType="ImmutableId"$',
+            "headerName": "Prefer",
+          },
+        },
+      },
+    }, {
+      "id": "outlook__move_shared_mailbox_email",
+      "name": "Move Shared Mailbox Email",
+      "description": "Move shared mailbox email",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://graph.microsoft.com/v1.0/users/{mailbox}/messages/{messageId}/move",
+        "params": {
+          "mailbox": {
+            "type": "string",
+            "in": "path",
+            "description": "Mailbox user principal name or Microsoft Graph user ID",
+            "required": true,
+          },
+          "messageId": {
+            "type": "string",
+            "in": "path",
+            "description": "Message ID",
+            "required": true,
+          },
+          "prefer": {
+            "type": "string",
+            "in": "header",
+            "description":
+              'Set to IdType="ImmutableId" to read and address messages by immutable ID. Immutable IDs do not change when a message moves to another folder.',
+            "pattern": '^IdType="ImmutableId"$',
+            "headerName": "Prefer",
+          },
+        },
+        "body": {
+          "destinationId": {
+            "type": "string",
+            "description":
+              "Destination folder ID or well-known folder name in the same mailbox. The folder must already exist.",
+            "required": true,
+          },
+        },
+      },
+    }, {
+      "id": "outlook__get_shared_mailbox_email_mime",
+      "name": "Get Shared Mailbox Email MIME",
+      "description": "Get shared mailbox email MIME",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://graph.microsoft.com/v1.0/users/{mailbox}/messages/{messageId}/$value",
+        "params": {
+          "mailbox": {
+            "type": "string",
+            "in": "path",
+            "description": "Mailbox user principal name or Microsoft Graph user ID",
+            "required": true,
+          },
+          "messageId": {
+            "type": "string",
+            "in": "path",
+            "description": "Microsoft Graph message ID",
+            "required": true,
+          },
+          "prefer": {
+            "type": "string",
+            "in": "header",
+            "description":
+              'Set to IdType="ImmutableId" to read and address messages by immutable ID. Immutable IDs do not change when a message moves to another folder.',
+            "pattern": '^IdType="ImmutableId"$',
+            "headerName": "Prefer",
+          },
+        },
+        "response": { "encoding": "base64" },
+      },
+    }, {
       "id": "outlook__list_calendars",
       "name": "List Calendars",
       "description": "List calendars",
@@ -39034,6 +39421,12 @@ export const connectors: IntegrationConfig[] = [
             "in": "query",
             "description": "Maximum calendars to return",
             "default": 100,
+          },
+          "$skip": {
+            "type": "number",
+            "in": "query",
+            "description":
+              "Calendars to skip; use the $skip value from the previous page's @odata.nextLink",
           },
         },
         "response": {
@@ -39141,6 +39534,12 @@ export const connectors: IntegrationConfig[] = [
             "description": "Maximum events to return",
             "default": 25,
           },
+          "$skip": {
+            "type": "number",
+            "in": "query",
+            "description":
+              "Events to skip; use the $skip value from the previous page's @odata.nextLink",
+          },
           "$select": {
             "type": "string",
             "in": "query",
@@ -39206,6 +39605,12 @@ export const connectors: IntegrationConfig[] = [
             "in": "query",
             "description": "Maximum events to return",
             "default": 50,
+          },
+          "$skip": {
+            "type": "number",
+            "in": "query",
+            "description":
+              "Events to skip; use the $skip value from the previous page's @odata.nextLink",
           },
           "$select": {
             "type": "string",
@@ -39455,6 +39860,12 @@ export const connectors: IntegrationConfig[] = [
             "in": "query",
             "description": "Maximum instances to return",
             "default": 50,
+          },
+          "$skip": {
+            "type": "number",
+            "in": "query",
+            "description":
+              "Occurrences to skip; use the $skip value from the previous page's @odata.nextLink",
           },
           "$select": {
             "type": "string",
@@ -39776,7 +40187,7 @@ export const connectors: IntegrationConfig[] = [
         "step": 4,
         "title": "Add Microsoft Graph permissions",
         "description":
-          "Under API permissions, add these delegated Microsoft Graph permissions: Mail.Read, Mail.Send, Mail.ReadWrite, Mail.Read.Shared, Calendars.Read, Calendars.ReadWrite, offline_access. If your tenant does not let users consent to apps, an administrator must grant consent for the organization.",
+          "Under API permissions, add these delegated Microsoft Graph permissions: Mail.Read, Mail.Send, Mail.ReadWrite, Mail.Read.Shared, Mail.ReadWrite.Shared, Calendars.Read, Calendars.ReadWrite, offline_access. If your tenant does not let users consent to apps, an administrator must grant consent for the organization.",
         "docsUrl": "https://learn.microsoft.com/en-us/graph/permissions-reference",
       }, {
         "step": 5,
@@ -39790,7 +40201,8 @@ export const connectors: IntegrationConfig[] = [
           "Run List Emails (read-only). It returns message summaries from the connected mailbox without changing it.",
       }],
       "notes": [
-        "The connection requests Mail.Read, Mail.Send, Mail.ReadWrite, Mail.Read.Shared, Calendars.Read, Calendars.ReadWrite and offline_access. offline_access lets the connection refresh its access token. Mail.Read.Shared lets the tools read mailboxes shared with the user.",
+        "The connection requests Mail.Read, Mail.Send, Mail.ReadWrite, Mail.Read.Shared, Mail.ReadWrite.Shared, Calendars.Read, Calendars.ReadWrite and offline_access. offline_access lets the connection refresh its access token. Mail.Read.Shared lets the tools read mailboxes shared with the user. Mail.ReadWrite.Shared lets Move Shared Mailbox Email move messages in those mailboxes.",
+        "The shared mailbox tools address the mailbox you name in the mailbox argument and never fall back to the signed-in user's mailbox. This connector signs in with delegated OAuth only, so the signed-in user must have access to that mailbox in Exchange. Application (app-only) permissions are not used by this connector.",
         "Tools that create, update, send or delete data are marked as writes and need write authority; the other tools are read-only.",
       ],
       "documentation": "https://learn.microsoft.com/en-us/graph/auth-register-app-v2",

@@ -145,6 +145,7 @@ export class StandaloneMCPServer {
       isRunning: () => this.running,
       parseRequest: (payload) => JSONRPCRequestSchema.parse(payload),
       handleRequest: (request) => this.handleRequest(request),
+      isNotification: (request) => request.id === undefined,
       toParseErrorResponse: (error) => parseError(error),
       toInvalidRequestResponse: (error) => invalidRequestError(error),
       toErrorResponse: (_error, request) => internalError(request.id),

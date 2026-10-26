@@ -1,4 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { AdapterTestTransport } from "./adapter.test-helpers.ts";
 
 import {
   assertEquals,
@@ -1764,7 +1765,7 @@ describe("ProxyFSAdapterManager", () => {
               contentSource: { type: "branch", branch: "main" },
               cache: { enabled: false },
             },
-          });
+          }, { createWebSocket: new AdapterTestTransport().createWebSocket });
           const client = (adapter as unknown as {
             client: {
               operations: {
@@ -1775,7 +1776,6 @@ describe("ProxyFSAdapterManager", () => {
               };
               listAllFiles(): Promise<Array<{ path: string; content: string }>>;
             };
-            wsManager: { connect(projectId: string): void };
           }).client;
           Object.defineProperty(client.operations, "getProject", {
             value: (_projectRef: string, signal?: AbortSignal) => {
@@ -1789,8 +1789,6 @@ describe("ProxyFSAdapterManager", () => {
             listAllFilesCalls++;
             return Promise.resolve([]);
           };
-          (adapter as unknown as { wsManager: { connect(projectId: string): void } }).wsManager
-            .connect = () => {};
           return adapter;
         },
       });

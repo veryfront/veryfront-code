@@ -264,7 +264,8 @@ describe("generate-api-reference", () => {
         integrationsImport.includes("executeRemoteIntegrationTool"),
         false,
       );
-      assertStringIncludes(integrationsImport, "getConnectorNames");
+      // The short import sample is curated; every public helper must still be documented.
+      assertStringIncludes(integrationsReference, "| `getConnectorNames`");
       // Deprecated APIs remain documented for existing callers.
       assertStringIncludes(
         integrationsReference,

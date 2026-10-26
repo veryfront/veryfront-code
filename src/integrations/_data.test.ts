@@ -1505,7 +1505,7 @@ describe("integration endpoint specs", () => {
       ["gitlab", 10],
       ["jira", 12],
       ["confluence", 7],
-      ["outlook", 60],
+      ["outlook", 67],
       ["teams", 7],
     ]);
 
@@ -2740,6 +2740,7 @@ describe("integration endpoint specs", () => {
       "Mail.Send",
       "Mail.ReadWrite",
       "Mail.Read.Shared",
+      "Mail.ReadWrite.Shared",
       "Calendars.Read",
       "Calendars.ReadWrite",
       "offline_access",
@@ -2787,6 +2788,13 @@ describe("integration endpoint specs", () => {
       "get_thread",
       "list_shared_mailbox_emails",
       "search_shared_mailbox_emails",
+      "get_shared_mailbox_email",
+      "list_shared_mailbox_folders",
+      "list_shared_mailbox_child_folders",
+      "list_shared_mailbox_attachments",
+      "get_shared_mailbox_attachment",
+      "move_shared_mailbox_email",
+      "get_shared_mailbox_email_mime",
       "list_calendars",
       "get_calendar",
       "create_calendar",
@@ -2874,6 +2882,63 @@ describe("integration endpoint specs", () => {
         ?.queryValueFormat,
       "microsoft-graph-search",
     );
+    const sharedMailboxRoutes = {
+      list_shared_mailbox_emails: ["GET", "/users/{mailbox}/mailFolders/{folderId}/messages"],
+      search_shared_mailbox_emails: ["GET", "/users/{mailbox}/messages"],
+      get_shared_mailbox_email: ["GET", "/users/{mailbox}/messages/{messageId}"],
+      list_shared_mailbox_folders: ["GET", "/users/{mailbox}/mailFolders"],
+      list_shared_mailbox_child_folders: [
+        "GET",
+        "/users/{mailbox}/mailFolders/{folderId}/childFolders",
+      ],
+      list_shared_mailbox_attachments: [
+        "GET",
+        "/users/{mailbox}/messages/{messageId}/attachments",
+      ],
+      get_shared_mailbox_attachment: [
+        "GET",
+        "/users/{mailbox}/messages/{messageId}/attachments/{attachmentId}",
+      ],
+      move_shared_mailbox_email: ["POST", "/users/{mailbox}/messages/{messageId}/move"],
+      get_shared_mailbox_email_mime: ["GET", "/users/{mailbox}/messages/{messageId}/$value"],
+    } as const;
+    for (const [toolId, [method, path]] of Object.entries(sharedMailboxRoutes)) {
+      const sharedEndpoint = getTool("outlook", toolId).endpoint;
+      assertEquals(sharedEndpoint?.method, method, toolId);
+      assertEquals(sharedEndpoint?.url, `https://graph.microsoft.com/v1.0${path}`, toolId);
+      assertEquals(sharedEndpoint?.params?.mailbox?.in, "path", toolId);
+      assertEquals(sharedEndpoint?.params?.mailbox?.required, true, toolId);
+      assertEquals(sharedEndpoint?.params?.mailbox?.default, undefined, toolId);
+      // Graph immutable IDs cover messages and attachments, not mail folders.
+      assertEquals(
+        sharedEndpoint?.params?.prefer,
+        toolId.endsWith("folders") ? undefined : {
+          type: "string",
+          in: "header",
+          headerName: "Prefer",
+          pattern: '^IdType="ImmutableId"$',
+          description:
+            'Set to IdType="ImmutableId" to read and address messages by immutable ID. Immutable IDs do not change when a message moves to another folder.',
+        },
+        toolId,
+      );
+      assertEquals(
+        getTool("outlook", toolId).requiresWrite,
+        toolId === "move_shared_mailbox_email",
+        toolId,
+      );
+    }
+    assertEquals(getTool("outlook", "get_shared_mailbox_email_mime").endpoint?.response, {
+      encoding: "base64",
+    });
+    assertEquals(getTool("outlook", "move_shared_mailbox_email").endpoint?.body, {
+      destinationId: {
+        type: "string",
+        description:
+          "Destination folder ID or well-known folder name in the same mailbox. The folder must already exist.",
+        required: true,
+      },
+    });
     assertEquals(
       connectors.find((connector) => connector.name === "outlook")?.tools.some(
         (tool) => tool.id === "outlook__find_group_by_mail",

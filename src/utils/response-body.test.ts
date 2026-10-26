@@ -7,6 +7,7 @@ import {
   JsonNonValueBytesTooLargeError,
   JsonStringValueTooLargeError,
   maximumJsonStringDocumentBytes,
+  readResponseBytesPrefix,
   readResponseJsonStringBytesWithinLimit,
   readResponseJsonStringWithinLimit,
   readResponseTextPrefix,
@@ -766,5 +767,90 @@ describe("utils/response-body", () => {
     } finally {
       if (timeoutId !== undefined) clearTimeout(timeoutId);
     }
+  });
+  describe("readResponseBytesPrefix", () => {
+    it("rejects invalid byte limits before reading", async () => {
+      for (const limit of [-1, 1.5, Number.NaN, Number.MAX_SAFE_INTEGER + 1]) {
+        await assertRejects(
+          () => readResponseBytesPrefix(new Response("body"), limit),
+          RangeError,
+        );
+      }
+    });
+
+    it("returns no bytes for a response without a body", async () => {
+      const result = await readResponseBytesPrefix({ body: null }, 10);
+
+      assertEquals(result.bytes.byteLength, 0);
+      assertEquals(result.truncated, false);
+    });
+
+    it("returns every byte unchanged when the body ends exactly at the limit", async () => {
+      const body = new Uint8Array([0xff, 0x00, 0xc3, 0x28, 0x80]);
+      const response = new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(body.slice(0, 2));
+            controller.enqueue(body.slice(2));
+            controller.close();
+          },
+        }),
+      );
+
+      const result = await readResponseBytesPrefix(response, body.byteLength);
+
+      assertEquals(result.bytes, body);
+      assertEquals(result.truncated, false);
+    });
+
+    it("reports truncation and cancels the stream once a chunk exceeds the limit", async () => {
+      let cancelled = false;
+      const response = new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new Uint8Array([1, 2, 3]));
+            controller.enqueue(new Uint8Array([4, 5]));
+          },
+          cancel() {
+            cancelled = true;
+          },
+        }),
+      );
+
+      const result = await readResponseBytesPrefix(response, 4);
+
+      assertEquals(result.bytes, new Uint8Array([1, 2, 3]));
+      assertEquals(result.truncated, true);
+      assertEquals(cancelled, true);
+    });
+
+    it("aborts a stalled body read and cancels the unread stream", async () => {
+      let cancelled = false;
+      const response = new Response(
+        new ReadableStream<Uint8Array>({
+          pull: () => new Promise<void>(() => {}),
+          cancel() {
+            cancelled = true;
+          },
+        }),
+      );
+      const abortController = new AbortController();
+      const read = readResponseBytesPrefix(response, 100, abortController.signal);
+      abortController.abort(new Error("body read timed out"));
+
+      await assertRejects(() => read, Error, "body read timed out");
+      assertEquals(cancelled, true);
+    });
+
+    it("refuses a read whose abort signal already fired", async () => {
+      const abortController = new AbortController();
+      abortController.abort(new Error("already aborted"));
+
+      await assertRejects(
+        () => readResponseBytesPrefix(new Response("body"), 10, abortController.signal),
+        Error,
+        "already aborted",
+      );
+    });
   });
 });

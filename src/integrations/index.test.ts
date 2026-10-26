@@ -19,15 +19,24 @@ import {
 import { HOST_LOCAL_INTEGRATION_CREDENTIALS_ENV } from "./local-credential-host-policy.ts";
 import {
   createLocalIntegrationToolSource,
+  createOutlookServiceAccountToolSource,
   createSalesforceServiceAccountToolSource,
   executeRemoteIntegrationTool,
   getConnector,
   getConnectorNames,
   getIcon,
   listConnectors,
+  OUTLOOK_SERVICE_ACCOUNT_ENV_VARS,
   runRemoteIntegrationTool,
   SALESFORCE_SERVICE_ACCOUNT_ENV_VARS,
 } from "./index.ts";
+
+const OUTLOOK_TEST_CREDENTIALS: Record<string, string> = {
+  OUTLOOK_SERVICE_ACCOUNT_CLIENT_ID: "client-id",
+  OUTLOOK_SERVICE_ACCOUNT_CLIENT_SECRET: "client-secret",
+  OUTLOOK_SERVICE_ACCOUNT_TENANT_ID: "tenant.example.test",
+  OUTLOOK_SERVICE_ACCOUNT_MAILBOX: "intake@example.test",
+};
 
 describe("integrations/index", () => {
   afterEach(() => {
@@ -122,6 +131,24 @@ describe("integrations/index", () => {
     assertEquals(Object.keys(tools), ["salesforce__get_case"]);
   });
 
+  it("exports the explicit local Outlook service-account source", async () => {
+    setEnv(HOST_LOCAL_INTEGRATION_CREDENTIALS_ENV, "1");
+    assertEquals(OUTLOOK_SERVICE_ACCOUNT_ENV_VARS, [
+      "OUTLOOK_SERVICE_ACCOUNT_CLIENT_ID",
+      "OUTLOOK_SERVICE_ACCOUNT_CLIENT_SECRET",
+      "OUTLOOK_SERVICE_ACCOUNT_TENANT_ID",
+      "OUTLOOK_SERVICE_ACCOUNT_MAILBOX",
+    ]);
+    const source = createOutlookServiceAccountToolSource({
+      allowedTools: ["outlook__list_emails"],
+      credentialProvider: (name) => OUTLOOK_TEST_CREDENTIALS[name],
+    });
+    assertEquals(source.id, "outlook-service-account");
+
+    const tools = await loadRemoteToolsFromSource(source);
+    assertEquals(Object.keys(tools), ["outlook__list_emails"]);
+  });
+
   it("keeps every exported local credential source behind the host grant", async () => {
     deleteEnv(HOST_LOCAL_INTEGRATION_CREDENTIALS_ENV);
     const sources = [
@@ -132,12 +159,17 @@ describe("integrations/index", () => {
       createSalesforceServiceAccountToolSource({
         allowedTools: ["salesforce__get_case"],
       }),
+      createOutlookServiceAccountToolSource({
+        allowedTools: ["outlook__list_emails"],
+        credentialProvider: (name) => OUTLOOK_TEST_CREDENTIALS[name],
+      }),
     ];
 
     for (const source of sources) {
       const error = await assertRejects(() => source.listTools(), VeryfrontError);
       assertInstanceOf(error, VeryfrontError);
       assertEquals(error.slug, "local-integration-config-invalid");
+      assertEquals(error.message.includes(HOST_LOCAL_INTEGRATION_CREDENTIALS_ENV), true);
     }
   });
 });

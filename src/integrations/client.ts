@@ -178,9 +178,13 @@ function requireRedirectUri(redirectUri: unknown): string {
   }
   return redirectUri;
 }
-function boundedObject(value: unknown, responseBytes?: number): IntegrationJsonObject {
+function boundedObject(
+  value: unknown,
+  responseBytes?: number,
+  maxStringBytes?: number,
+): IntegrationJsonObject {
   const snapshot = responseBytes === undefined
-    ? snapshotBoundedJsonValue(value)
+    ? snapshotBoundedJsonValue(value, maxStringBytes)
     : snapshotBoundedParsedJsonValue(value, responseBytes);
   if (!snapshot.success || !record(snapshot.value)) {
     throw new TypeError("Expected a bounded JSON object without accessors or cycles");
@@ -800,7 +804,7 @@ export async function createIntegrationClient(
         : context.abortSignal ?? options.abortSignal;
       signal?.throwIfAborted();
       const body = JSON.stringify({
-        arguments: boundedObject(args),
+        arguments: boundedObject(args, undefined, MAX_INTEGRATION_CALL_REQUEST_BYTES),
         ...(options.connectionId !== undefined ? { connection_id: options.connectionId } : {}),
         ...(options.expectedConnectionGenerationId !== undefined
           ? { expected_connection_generation_id: options.expectedConnectionGenerationId }

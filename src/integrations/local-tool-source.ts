@@ -889,7 +889,8 @@ function inputPropertySchema(
   return schema as JsonSchema;
 }
 
-function toolDefinition(
+/** @internal Build a credential-free tool definition from one catalog endpoint. */
+export function toolDefinition(
   tool: IntegrationToolMeta & { id: string },
   endpoint: IntegrationEndpoint,
   credentialNames: readonly string[],
@@ -1124,6 +1125,7 @@ function createLocalIntegrationToolSourceInternal(
         // Serialized before the credential step below; re-serializing after it
         // could send a body that was never bound-checked.
         body: validated.body,
+        requiresWrite: tool.tool.requiresWrite,
         authHeaders: auth.headers,
         allowedOrigin,
         signal: context?.abortSignal,

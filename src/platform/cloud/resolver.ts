@@ -13,6 +13,7 @@ import {
   getCurrentVeryfrontCloudContext,
   type VeryfrontCloudContext,
 } from "#veryfront/provider/veryfront-cloud/context.ts";
+import { readVeryfrontApiTokenFile } from "./credential-file.ts";
 
 const IntrinsicReflectApply = Reflect.apply;
 const StringPrototypeCharCodeAt = String.prototype.charCodeAt;
@@ -96,9 +97,14 @@ export function resolveVeryfrontPublicApiBaseUrlFromHostEnv(): string | undefine
 }
 
 function resolveHostCredentialApiBaseUrl(): string {
-  return normalizeVeryfrontApiBaseUrl(getHostEnvExcludingEnvFile("VERYFRONT_API_URL")) ??
-    normalizeVeryfrontApiBaseUrl(getHostEnvExcludingEnvFile("VERYFRONT_API_BASE_URL")) ??
-    DEFAULT_API_BASE_URL;
+  const apiUrl = normalizeVeryfrontApiBaseUrl(getHostEnvExcludingEnvFile("VERYFRONT_API_URL"));
+  const apiBaseUrl = normalizeVeryfrontApiBaseUrl(
+    getHostEnvExcludingEnvFile("VERYFRONT_API_BASE_URL"),
+  );
+  const resolved = getHostEnv("VERYFRONT_API_TOKEN_FILE") !== undefined
+    ? apiBaseUrl ?? apiUrl
+    : apiUrl ?? apiBaseUrl;
+  return resolved ?? DEFAULT_API_BASE_URL;
 }
 
 /**
@@ -167,16 +173,30 @@ function hasScopedRuntimeContext(context: VeryfrontCloudContext | undefined): bo
   );
 }
 
-function getResolvedVeryfrontCloudContext(): Omit<VeryfrontCloudBootstrap, "apiBaseUrl"> {
+function resolveHostCredential(): { apiToken?: string; usesHostCredential: boolean } {
+  const tokenFile = getHostEnv("VERYFRONT_API_TOKEN_FILE");
+  const apiToken = readVeryfrontApiTokenFile(tokenFile) ?? getHostEnv("VERYFRONT_API_TOKEN");
+  return {
+    apiToken,
+    usesHostCredential: tokenFile !== undefined ||
+      (apiToken !== undefined && apiToken === getHostSecret("VERYFRONT_API_TOKEN")),
+  };
+}
+
+function getResolvedVeryfrontCloudContext():
+  & Omit<VeryfrontCloudBootstrap, "apiBaseUrl">
+  & { usesHostCredential: boolean } {
   const requestContext = getRuntimeRequestContext();
   const scopedContext = getCurrentVeryfrontCloudContext();
   const runtimeBootstrap = getRuntimeBootstrap();
+  const scopedToken = requestContext?.token ?? scopedContext?.apiToken;
+  const hostCredential = scopedToken === undefined ? resolveHostCredential() : undefined;
+  const apiToken = scopedToken ?? hostCredential?.apiToken ?? runtimeBootstrap.apiToken;
 
   return {
-    apiToken: requestContext?.token ??
-      scopedContext?.apiToken ??
-      getHostEnv("VERYFRONT_API_TOKEN") ??
-      runtimeBootstrap.apiToken,
+    apiToken,
+    usesHostCredential: hostCredential?.usesHostCredential === true ||
+      (apiToken !== undefined && apiToken === getHostSecret("VERYFRONT_API_TOKEN")),
     projectSlug: requestContext?.projectSlug ??
       scopedContext?.projectSlug ??
       getHostEnv("VERYFRONT_PROJECT_SLUG") ??
@@ -199,7 +219,7 @@ export function getVeryfrontCloudProjectSlug(): string | undefined {
 export function getVeryfrontCloudBootstrap(): VeryfrontCloudBootstrap {
   const scopedContext = getCurrentVeryfrontCloudContext();
   const scopedApiBaseUrl = scopedContext?.apiBaseUrl?.trim();
-  const resolvedContext = getResolvedVeryfrontCloudContext();
+  const { usesHostCredential, ...resolvedContext } = getResolvedVeryfrontCloudContext();
 
   // A scoped endpoint is a different credential domain. Never attach a
   // request- or host-owned platform token to it: callers that select an
@@ -212,8 +232,6 @@ export function getVeryfrontCloudBootstrap(): VeryfrontCloudBootstrap {
     };
   }
 
-  const usesHostCredential = resolvedContext.apiToken !== undefined &&
-    resolvedContext.apiToken === getHostSecret("VERYFRONT_API_TOKEN");
   return {
     apiBaseUrl: usesHostCredential
       ? resolveHostCredentialApiBaseUrl()
@@ -224,11 +242,9 @@ export function getVeryfrontCloudBootstrap(): VeryfrontCloudBootstrap {
 
 /** Resolve the trusted host identity used by direct server-side platform clients. */
 export function getVeryfrontCloudHostBootstrap(): VeryfrontCloudBootstrap {
-  const apiToken = getHostEnv("VERYFRONT_API_TOKEN");
-  const usesHostPrivateCredential = apiToken !== undefined &&
-    apiToken === getHostSecret("VERYFRONT_API_TOKEN");
+  const { apiToken, usesHostCredential } = resolveHostCredential();
   return {
-    apiBaseUrl: usesHostPrivateCredential
+    apiBaseUrl: usesHostCredential
       ? resolveHostCredentialApiBaseUrl()
       : resolveVeryfrontApiBaseUrlFromHostEnv(),
     apiToken,

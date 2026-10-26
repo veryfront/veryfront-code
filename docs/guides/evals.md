@@ -1,7 +1,7 @@
 ---
 title: "Evals"
 description: "Define and run quality checks for agents and datasets."
-order: 40
+order: 160
 ---
 
 Evals are project-defined quality checks in `evals/`. Use `veryfront eval` to
@@ -119,28 +119,6 @@ includes pass/fail counts, metric aggregates, skipped metric or check results,
 gate failures, failed examples, flake classification for repeated examples,
 duration aggregates, and usage totals. Use `results.jsonl` when you need the
 full input, output, trace, and per-record metric evidence.
-
-## Progress and timeouts
-
-Agent eval cases often take a minute or more each, because every case makes
-real model requests. `veryfront eval` reports progress while cases run:
-
-- In an interactive terminal, one live line shows the eval, finished cases,
-  the current case, and elapsed time, for example
-  `[eval 2/3] disposition-agent 4/11 · case "label-and-move" · 3m 12s`.
-- Elsewhere, such as CI or a piped log, each finished case prints one line with
-  its duration.
-- A model request that fails transiently and is sent again prints a notice,
-  for example `Retrying model request (HTTP 429), attempt 2/3 in 1.0s`.
-
-`--quiet` and `--json` print no progress. Set `LOG_LEVEL=DEBUG` to also log
-each model request with its status, duration, and attempt number.
-
-Each case, including its metrics and checks, fails after 600 seconds by
-default with the `eval-record-timeout` error, and the eval continues with the
-next case. A model stream that stops sending data has no other deadline. Use
-`--record-timeout <seconds>` to change the limit, or `--record-timeout 0` to
-disable it.
 
 ## Tool evals
 
@@ -630,7 +608,11 @@ export default evalAgent({
 ```
 
 `mockTools` can also be a resolver. The local CLI calls it once for each
-example repetition so each record can receive fresh state:
+example repetition so each record can receive fresh state. The resolver receives
+`runId`, the same host-created UUID shown in the agent’s `runtime_context` for that
+case. Each case gets a separate ID. This does not create a persisted platform run
+or bind tool authorization; mock run
+lookups should validate this ID instead of accepting any model-supplied value.
 
 ```ts
 export default evalAgent({
@@ -702,6 +684,18 @@ proxy. The adapter reads AG-UI events into `record.trace.events`, records tool
 calls as `record.trace.toolCalls`, captures tool call IDs, status, streamed
 arguments, result payloads, and denied/error state when the AG-UI endpoint emits
 them, and puts the parsed text at `record.output.text`.
+
+If request construction, transport, response reading, or result processing throws,
+the agent-service adapter adds `record.output.agUi.failure`. Its `stage` is
+`request-build`, `request-fetch`, `response-read`, or `result-processing`.
+`errorName` contains an allowlisted native error name, and `transportCode`
+contains an allowlisted code from the error or its immediate native error cause.
+Unknown values are `redacted`. This metadata excludes error messages, URLs,
+stacks, request bodies, and model content. Existing `record.error` and
+`record.output.agUi.runError` retain their existing behavior and can contain
+sensitive error details. Use the fixed failure metadata when you need a safe
+diagnostic projection. Successful results and ordinary HTTP or AG-UI failures
+do not add this field.
 
 Live adapters and CLI helpers require a non-empty `VERYFRONT_TOKEN`. CLI case
 filters cannot opt into mutation: a requested write case still requires
@@ -852,6 +846,8 @@ Gateways should treat `context.trace` as correlation metadata. It is not span
 export, does not include logs or metric streams, and does not replace ambient
 OpenTelemetry export.
 
+The MLflow exporter is bundled with `veryfront`; no separate package installation is required.
+
 Use `veryfront/extensions/ext-eval-report-mlflow` when completed reports should become
 MLflow Tracking runs. The CLI path can be environment-only: set
 `MLFLOW_TRACKING_URI` to activate the extension and select the default `mlflow`
@@ -941,7 +937,8 @@ veryfront eval deep-research \
   --report-dir .veryfront/evals/deep-research \
   --report .veryfront/evals/deep-research/report.json \
   --junit .veryfront/evals/deep-research/junit.xml \
-  --export braintrust,langfuse \
+  --export mlflow \
+  --require-export \
   --json
 ```
 
@@ -1070,3 +1067,12 @@ veryfront eval deep-research
 
 The command exits with status `0` when all gate and budget checks pass. It exits
 with status `1` when any gate or budget check fails.
+
+## Next
+
+- [Compare eval runs and models](./eval-comparison.md): Check a regression or evaluate another model.
+- [Export eval reports](./eval-reporting.md): Share evidence with an external reporting system.
+
+## Related
+
+- [Eval API](../api-reference/veryfront/eval.md): Definitions, metrics, and reporters.

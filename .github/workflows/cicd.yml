@@ -519,7 +519,7 @@ jobs:
           ) | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
       - name: Install Chromium
         timeout-minutes: 10
-        run: deno run -A npm:playwright@1.60.0 install chromium
+        run: deno run -A npm:playwright@1.61.1 install chromium
       - name: Exercise local virtual-host routing
         run: deno run -A scripts/ci/run-windows-localhost-e2e.ts
 
@@ -688,8 +688,11 @@ jobs:
       # The public pool runs its trusted main definition, so PR-only collector
       # additions must execute here against the checked-out source.
       - name: Collect context ownership coverage from checked-out source
+        env:
+          DENO_COVERAGE_DIR: coverage-profiles/coverage-context-ownership
         run: |
           deno task test:file --coverage=coverage-profiles/coverage-context-ownership \
+            tests/integration/semantic-unit-boundary/cli/commands/pull/binary-preflight.test.ts \
             tests/integration/semantic-unit-boundary/server/handlers/request/project-run-runtime-ownership-probe.test.ts \
             tests/integration/semantic-unit-boundary/src/agent/service/agent-worker-runtime-ownership-probe.test.ts \
             tests/integration/semantic-unit-boundary/src/channels/control-plane-signatures.test.ts \
@@ -702,10 +705,12 @@ jobs:
             tests/integration/semantic-unit-boundary/server/handlers/request/project-run-runtime-ownership-index-probe.test.ts \
             tests/integration/semantic-unit-boundary/server/handlers/request/project-run-runtime-ownership-okf-inspector.test.ts \
             tests/integration/semantic-unit-boundary/cli/commands/knowledge/indexing.test.ts \
+            tests/integration/semantic-unit-boundary/cli/commands/knowledge/binary-assets.test.ts \
             tests/integration/semantic-unit-boundary/agent/service/auth.test.ts \
             tests/integration/internal-agents/control-plane-platform-dependencies.test.ts \
             tests/integration/internal-agents/run-stream-platform-dependencies.test.ts \
             tests/integration/server/agent-stream.programmatic-platform.test.ts \
+            tests/integration/server/agent-stream.project-event-persistence.test.ts \
             tests/integration/agent/managed-recovery
           deno run --config=scripts/test.deno.json --no-npm --allow-read --allow-write --allow-run --allow-env \
             scripts/test/coverage-ci.ts report coverage-profiles/coverage-context-ownership
@@ -714,6 +719,12 @@ jobs:
           DENO_COVERAGE_DIR: coverage-profiles/coverage-connected-local
         run: |
           deno task test:file --coverage=coverage-profiles/coverage-connected-local --coverage-raw-data-only \
+            tests/integration/docs/docs-command.test.ts \
+            tests/integration/docs/copy-public-docs.test.ts \
+            tests/integration/docs/package-public-docs.test.ts \
+            tests/integration/docs/release-inputs.test.ts \
+            tests/integration/cli/mcp-startup-output.test.ts \
+            tests/integration/cli/mcp/notification-transport.test.ts \
             tests/integration/cli/dev/proxy-mode.test.ts \
             tests/integration/cli/dev/display-options.test.ts \
             tests/integration/cli/pull/project-bootstrap.test.ts \
@@ -721,7 +732,14 @@ jobs:
             tests/integration/semantic-unit-boundary/cli/commands/dev/connected-dev.test.ts \
             tests/integration/semantic-unit-boundary/src/agent/ag-ui/connected-local-runtime-security.test.ts \
             tests/integration/semantic-unit-boundary/src/agent/service/external-worker-client.test.ts \
-            tests/integration/agent/connected-local-inference.test.ts
+            tests/integration/agent/connected-local-inference.test.ts \
+            tests/integration/agent/connected-local-tools.test.ts \
+            tests/integration/agent/connected-local-platform-boundary.test.ts \
+            tests/integration/agent/inherited-local-platform-scope.test.ts \
+            tests/integration/agent/run-stream-project-observation.test.ts \
+            tests/integration/agent/connected-writer-verifier.test.ts \
+            tests/integration/agent/connected-local-setup-cleanup.test.ts \
+            tests/integration/agent/connected-platform-cleanup.test.ts
           deno run --config=scripts/test.deno.json --no-npm --allow-read --allow-write --allow-run --allow-env \
             scripts/test/coverage-ci.ts report coverage-profiles/coverage-connected-local
       - name: Merge coverage reports for SonarQube
@@ -1966,7 +1984,7 @@ jobs:
 
       - name: Create release GitHub App token
         id: release-app-token
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
           client-id: ${{ vars.VERYFRONT_RELEASE_APP_CLIENT_ID }}
           private-key: ${{ secrets.VERYFRONT_RELEASE_APP_PRIVATE_KEY }}
@@ -2436,6 +2454,8 @@ jobs:
             --env DENO_DIR=/registry/deno-cache \
             --env TMPDIR=/registry/tmp \
             --env npm_config_cache=/registry/npm-cache \
+            --env GITHUB_ACTIONS \
+            --env RUNNER_OS \
             --env CI=true \
             "$REGISTRY_IMAGE" \
             bash -euo pipefail -c 'mkdir -p /registry/home /registry/deno-cache /registry/tmp /registry/npm-cache /registry/workspace
@@ -2572,6 +2592,8 @@ jobs:
             --env DENO_DIR=/registry/deno-cache \
             --env TMPDIR=/registry/tmp \
             --env npm_config_cache=/registry/npm-cache \
+            --env GITHUB_ACTIONS \
+            --env RUNNER_OS \
             --env CI=true \
             "$REGISTRY_IMAGE" \
             bash -euo pipefail -c 'mkdir -p /registry/home /registry/deno-cache /registry/tmp /registry/npm-cache /registry/workspace
@@ -2666,7 +2688,7 @@ jobs:
         if: ${{ success() && needs.publish-public-release.result == 'success' && ((needs.version-check.outputs.is_stable == 'true' && needs.release.result == 'success') || (needs.version-check.outputs.is_stable == 'false' && needs.prerelease.result == 'success' && needs.github-prerelease.result == 'success' && needs.registry-validation-rc.result == 'success')) && steps.current.outputs.dispatch == 'true' && !(github.event_name == 'workflow_dispatch' && inputs.maintenance_release_number != '') }}
         timeout-minutes: 5
         id: release-app-token
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
           client-id: ${{ vars.VERYFRONT_RELEASE_APP_CLIENT_ID }}
           private-key: ${{ secrets.VERYFRONT_RELEASE_APP_PRIVATE_KEY }}
@@ -2738,7 +2760,7 @@ jobs:
             needs.version-check.outputs.stable_release_requested == 'false') ||
            needs.quality-gate-registry.result == 'success') }}
     runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || 'ubuntu-latest' }}
-    timeout-minutes: 10
+    timeout-minutes: 20
     permissions:
       contents: read
     steps:
@@ -2783,7 +2805,7 @@ jobs:
 
       - name: Create Homebrew tap GitHub App token
         id: homebrew-app-token
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
           client-id: ${{ vars.HOMEBREW_TAP_APP_CLIENT_ID }}
           private-key: ${{ secrets.HOMEBREW_TAP_APP_PRIVATE_KEY }}

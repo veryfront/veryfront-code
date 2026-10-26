@@ -116,7 +116,7 @@ interface ConfigFileResolution {
 }
 
 export type ProjectReferenceSource =
-  | { kind: "argument"; name: "--project" }
+  | { kind: "argument"; name: "--project" | "resolved project ID" }
   | { kind: "environment"; name: "environment configuration" }
   | { kind: "module-config"; name: string }
   | { kind: "json-config"; name: "veryfront.json" }
@@ -872,6 +872,13 @@ export interface ApiReadOptions {
 }
 
 export interface ApiClient {
+  /** Authenticated raw-byte PUT. Never retries or follows redirects. */
+  putBytes?<T>(
+    path: string,
+    bytes: Uint8Array,
+    headers: Record<string, string>,
+    options?: ApiReadOptions,
+  ): Promise<T>;
   /** Authenticated binary GET. Redirects are rejected. */
   getStream?(path: string, options?: ApiReadOptions): Promise<ReadableStream<Uint8Array>>;
   get<T>(
@@ -925,18 +932,20 @@ export function createApiClient(
     body?: unknown,
     signal?: AbortSignal,
     binary = false,
+    raw?: { bytes: Uint8Array; headers: Record<string, string> },
   ): Promise<T> {
     const response = await transport(url, {
       method,
-      ...(binary ? { redirect: "error" as const } : {}),
+      ...((binary || raw) ? { redirect: "error" as const } : {}),
       ...(signal ? { signal } : {}),
       headers: {
         Authorization: `Bearer ${apiToken}`,
         "Content-Type": "application/json",
         Accept: binary ? "application/octet-stream" : "application/json",
         "x-veryfront-client-version": VERSION,
+        ...(raw ? { ...raw.headers, "Content-Type": "application/octet-stream" } : {}),
       },
-      body: body ? JSON.stringify(body) : undefined,
+      body: raw ? new Uint8Array(raw.bytes) : body ? JSON.stringify(body) : undefined,
     });
 
     const status = applyIntrinsic(ResponseStatusGet, response, []) as number;
@@ -1033,6 +1042,22 @@ export function createApiClient(
   }
 
   return {
+    putBytes<T>(
+      path: string,
+      bytes: Uint8Array,
+      headers: Record<string, string>,
+      options?: ApiReadOptions,
+    ): Promise<T> {
+      const url = new URL(`${apiUrl}${path}`);
+      if (url.origin !== new URL(apiUrl).origin || !path.startsWith("/")) {
+        throw new Error("Binary asset requests must use the configured API origin");
+      }
+      options?.signal?.throwIfAborted();
+      return requestOnce<T>("PUT", url.toString(), undefined, options?.signal, false, {
+        bytes,
+        headers,
+      });
+    },
     getStream(path: string, options?: ApiReadOptions): Promise<ReadableStream<Uint8Array>> {
       return request<ReadableStream<Uint8Array>>("GET", path, undefined, undefined, options, true);
     },

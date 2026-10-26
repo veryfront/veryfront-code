@@ -53,6 +53,14 @@ npx veryfront@latest pull <PROJECT_SLUG>
 npm run dev
 ```
 
+Connected dev syncs your source before starting the local runtime. No manual
+`veryfront push` is required. Sync uses the existing push ignore rules and conflict
+checks. It does not deploy, prune remote files, or change local dependency pins.
+If sync fails, resolve the reported error and restart dev. Restart dev after
+changing source declarations to sync them again.
+
+Projects without a Cloud connection still run locally without Cloud login or sync.
+
 The CLI prints the selected cloud project, shared cloud environment, local runtime and
 service URLs. The default environment is `preview`. To select another existing
 environment, run:

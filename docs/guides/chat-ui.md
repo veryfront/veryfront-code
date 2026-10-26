@@ -1,7 +1,7 @@
 ---
 title: "Build a chat UI"
 description: "Add a preset or custom chat interface with the Veryfront chat components."
-order: 22
+order: 270
 ---
 
 Use this guide to add a chat interface to an AG-UI route. Start with the preset
@@ -14,6 +14,8 @@ For headless state, see [Chat hooks](./chat-hooks.md).
 - A Veryfront project with an AG-UI route, such as `/api/ag-ui` (see
   [Create agent](../getting-started/create-agent.md)).
 - A configured provider for the route's agent (see [Providers](./providers.md)).
+
+The first example imports `app/markdown-renderer.tsx`. If your project wasn't created from a chat starter, [create that renderer first](#render-markdown-in-chat), then return to the preset below.
 
 ## Add the preset UI
 
@@ -48,6 +50,27 @@ source until a renderer is installed, so a `<Chat>` without one shows
 not already have it. See
 [Render Markdown in chat](#render-markdown-in-chat). Wrap the other samples on
 this page the same way.
+
+## Choose the level of control
+
+All three forms use the same message renderer and streaming contracts:
+
+| Need            | Interface                                                    |
+| --------------- | ------------------------------------------------------------ |
+| Default layout  | `<Chat agentId="assistant" />`                               |
+| Own the session | `<Chat chat={chat} />` with `useChat({ api: "/api/ag-ui" })` |
+| Own the layout  | `<Chat.Root chat={chat}>` with the composed parts below      |
+
+Chat does not require a Cloud project, Studio, or a Cloud account. The browser
+sends messages to the AG-UI route you configure. That route owns agent execution,
+provider credentials and authorization. Use a provider configured on your server
+for standalone execution; Cloud inference and integrations are optional server
+capabilities. Never put provider keys in browser props.
+
+Keep application navigation and run links outside the transcript renderer.
+Conversation persistence is optional: use an ephemeral session, a memory or local
+store, or your own `ConversationStore` adapter. Connecting Cloud must not require
+a different message renderer or a second child-stream implementation.
 
 ## Add request preprocessing
 
@@ -165,14 +188,7 @@ export default function CustomLayout() {
   const chat = useChat();
 
   return (
-    <Chat.Root
-      messages={chat.messages}
-      input={chat.input}
-      setInput={chat.setInput}
-      onSubmit={chat.handleSubmit}
-      onStop={chat.stop}
-      onReload={chat.reload}
-    >
+    <Chat.Root chat={chat}>
       <header className="border-b p-4">
         <h1>Assistant</h1>
       </header>
@@ -183,23 +199,30 @@ export default function CustomLayout() {
           onSuggestionSelect={(suggestion) => chat.setInput(suggestion.prompt)}
         />
       </Chat.If>
-      <Chat.MessageList messages={chat.messages} />
-      <Chat.Input.Root
-        input={chat.input}
-        onChange={chat.handleInputChange}
-        onSubmit={chat.handleSubmit}
-        stop={chat.stop}
-      >
+      <Chat.MessageList messages={chat.messages} isLoading={chat.isLoading} />
+      {chat.error && <Chat.ErrorBanner error={chat.error} onRetry={chat.reload} />}
+      <Chat.Input.Root>
         <Chat.Input.Field placeholder="Ask me anything..." />
         <Chat.Input.Toolbar>
           <Chat.Input.Export messages={chat.messages} />
-          <Chat.Input.Send />
+          <Chat.Input.Submit />
         </Chat.Input.Toolbar>
       </Chat.Input.Root>
     </Chat.Root>
   );
 }
 ```
+
+`Chat.Root` shares the session with nested parts. The composer inherits input,
+submission and Stop from that context. `Chat.Input.Submit` switches between Send
+and Stop. Pass messages and loading state to `Chat.MessageList`; keep the same
+session on the root so message parts receive the current streaming status and
+message ID. Explicit props override the inherited state when needed.
+
+Child transcripts render through the same message parts as parent transcripts.
+The renderer consumes child-stream events and snapshots; it does not fetch
+transcripts from Studio or Cloud. Keep the default `Message.Content` in custom
+message layouts to retain tool and child-agent rendering.
 
 `<Chat.Empty>` renders whatever it is given; it does not hide itself. The preset
 `<Chat>` decides when to show its empty state for you, but a custom layout owns
@@ -386,7 +409,7 @@ export function MarkdownRenderer({ source }: MarkdownRendererProps): React.JSX.E
         ),
         // Auto-loading images would let an injected answer beacon to arbitrary
         // hosts. Render inert text, not an anchor: Markdown allows a linked
-        // image wrapped in a link, and an anchor here would nest inside
+        // image (`[![alt](src)](href)`), and an anchor here would nest inside
         // that link, which is invalid HTML and breaks hydration.
         img: ({ src, alt }) => (
           <span title={typeof src === "string" ? src : undefined}>{alt || "image"}</span>
@@ -563,3 +586,11 @@ agent errors and confirm the AG-UI route is mounted.
 - [veryfront/markdown](../api-reference/veryfront/markdown.md): Markdown props
   and renderer extension points
 - [veryfront/agent](../api-reference/veryfront/agent.md): Agent route helpers
+
+## Tool results in follow-up requests
+
+Message preparation keeps a collection result (`{ data: [...] }`) of up to
+4,096 serialized characters from the preceding user turn. This preserves resource
+IDs and continuation tokens for follow-up requests. Older or larger collections
+still use the existing history compaction and overall token budget. Refetch a
+resource when the retained context no longer identifies it.

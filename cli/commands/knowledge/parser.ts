@@ -7,6 +7,7 @@ import type {
 } from "veryfront/extensions/compat";
 import { inspectOkfDocument, type OkfDocumentDiagnostic } from "veryfront/knowledge";
 import { VERSION } from "#cli/utils";
+import { isTextKnowledgeCompanionPath } from "./source-policy.ts";
 
 export interface KnowledgeParserResult {
   success: true;
@@ -21,6 +22,7 @@ export interface KnowledgeParserResult {
   summary: string;
   stats: Record<string, unknown>;
   warnings: string[];
+  storage_kind?: "binary";
   document_kind?: "generated" | "okf_concept" | "okf_index" | "okf_log";
   okf?: {
     path: string;
@@ -232,6 +234,25 @@ function validateOkfCompanionRelativePath(path: string): string {
   return validateOkfBundleRelativePath(path);
 }
 
+export function isOkfTextCompanionPath(path: string): boolean {
+  return isTextKnowledgeCompanionPath(path);
+}
+
+export function isOkfTextCompanion(path: string, bytes: Uint8Array): boolean {
+  if (!isOkfTextCompanionPath(path)) return false;
+  if (extname(path)) return true;
+  try {
+    decodeOkfUtf8(path, bytes);
+    return !bytes.includes(0);
+  } catch {
+    return false;
+  }
+}
+
+export function validateOkfTextCompanionBytes(path: string, bytes: Uint8Array): void {
+  decodeOkfUtf8(path, bytes);
+}
+
 function decodeOkfUtf8(relativePath: string, bytes: Uint8Array): string {
   let decoded: string;
   try {
@@ -284,8 +305,9 @@ async function preserveOkfCompanion(input: {
   input.signal?.throwIfAborted();
   const bytes = await Deno.readFile(input.filePath);
   input.signal?.throwIfAborted();
-  const source = decodeOkfUtf8(relativePath, bytes);
+  if (isOkfTextCompanion(relativePath, bytes)) validateOkfTextCompanionBytes(relativePath, bytes);
   if (relativePath.toLowerCase().endsWith(".md")) {
+    const source = decodeOkfUtf8(relativePath, bytes);
     const inspected = inspectOkfDocument(relativePath, source);
     // A reference does not demote canonical documents. Unknown explicit types
     // remain OKF types. Otherwise the explicit artifact role preserves its bytes,
@@ -304,6 +326,7 @@ async function preserveOkfCompanion(input: {
     source_path: input.filePath,
     source_filename: basename(input.filePath),
     source_type: "okf_companion",
+    storage_kind: isOkfTextCompanion(relativePath, bytes) ? undefined : "binary",
     slug: slugifyKnowledgeValue(relativePath.replace(/\.[^.]+$/i, "")),
     sandbox_output_path: outputPath,
     suggested_project_path: `knowledge/${relativePath}`,

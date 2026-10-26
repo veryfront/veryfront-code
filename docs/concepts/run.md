@@ -1,11 +1,10 @@
 ---
 title: "Run"
-description: "How runs execute tasks, workflows, and evals durably."
+description: "How the Code runs client starts and tracks durable task, workflow, and eval executions."
 order: 25
 ---
 
-A run owns durable execution. It records status, events, and result state for
-background work.
+A [run](https://veryfront.com/docs/concepts/runs) records one execution. This page describes the durable background-work path exposed by the Code runs client for tasks, workflows, and evals.
 
 Runs exist because background work needs a durable runtime record. The caller can
 start work and later inspect whether it is pending, running, waiting, completed,
@@ -29,9 +28,7 @@ disconnects. A run can execute a task, workflow, or eval target.
 
 ## Wrong fit
 
-Do not use a run for work that must return synchronously in the current request.
-Do not put business logic in the run record. Put the logic in the target the run
-runs.
+Use the durable runs client when the caller can start work and inspect the result later. For a synchronous agent response, call the agent's generation method instead. Both are execution paths; business logic belongs in the agent, task, or workflow definition.
 
 For implementation steps, see [Runs](../guides/runs.md).
 

@@ -1,7 +1,7 @@
 ---
 title: "Agents"
 description: "Create an AI agent with a system prompt, tools, and memory."
-order: 18
+order: 120
 ---
 
 An agent is a file in `agents/` that exports a system prompt, optional tools,
@@ -240,6 +240,15 @@ Each list accepts up to 16 exact executable names. In Markdown, use
 `optional-bootstrap-tools`. Both startup selections apply to root runs;
 hosted child runs do not inherit them.
 
+### Child transcripts in chat
+
+`veryfront__invoke_agent` forwards child text and tool activity through the parent
+chat stream. The child card updates while the child runs and retains its visible
+transcript after completion. This uses the same event format with or without a
+Veryfront Cloud connection. Standalone execution requires model credentials;
+Cloud run history is optional. Reload replay depends on the application's chat
+storage.
+
 ### Bound large tool results
 
 Set `toolResultContext: true` to keep oversized results out of later model calls.
@@ -264,6 +273,7 @@ export default agent({
 Persisted messages, result events, and callbacks retain the original data. Small
 results remain inline. Skill instructions, schema lookup results, and retrieved
 sections remain visible rather than being wrapped in another reference.
+
 For `invoke_agent` and `veryfront__invoke_agent`, provider replay includes identical
 child response text once while preserving summary metadata and the original
 durable result envelope.
@@ -575,6 +585,11 @@ const { text } = await generate({
 It runs one step with no tools, skills or memory, and takes the same
 `outputSchema` an agent does.
 
+Like an agent, `generate` blocks prompt injection in its input and masks PII
+such as email addresses in its output by default. Pass `security: false` to
+keep those values, for example when you extract contact details. This turns off
+both protections, so only use it on input you trust.
+
 Reach for an agent instead when you need the thing itself rather than the
 answer: a registered id other code resolves, tools, memory across turns, or a
 system prompt built at request time. To hold such an agent to a single
@@ -599,8 +614,8 @@ it will never open.
 
 Set `outputSchema` to constrain every response to a schema. Veryfront maps it to
 the selected provider's native structured-output field, then parses and
-validates the model's text back into `response.object`, typed from the schema
-with no annotation of your own.
+validates the model's text back into `response.data`, typed from the schema
+with no annotation of your own. `response.object` remains a compatibility alias.
 
 ```ts
 // agents/weather.ts
@@ -635,13 +650,16 @@ const result = await weather.generate({
   outputSchema: getForecastSchema(),
 });
 
-console.log(result.object.city); // string
-console.log(result.object.tempC); // number
+if (result.data === undefined) {
+  throw new Error(result.metadata?.outputSchemaError ?? "Forecast output is missing");
+}
+console.log(result.data.city); // string
+console.log(result.data.tempC); // number
 ```
 
 Pass `outputSchema` to `generate()` or `stream()` to constrain a single request
-instead; a per-call schema replaces the configured one. `generate()` returns an
-`object` typed from the per-call schema when you pass one. A raw JSON Schema
+instead; a per-call schema replaces the configured one. `generate()` returns
+`data` typed from the per-call schema when you pass one. A raw JSON Schema
 object is accepted in both places and is sent to the provider unchanged.
 
 A requested schema is never dropped silently. A model runtime that does not
@@ -650,7 +668,8 @@ does not validate raises rather than returning a partial object.
 
 A run that stops at the step limit still returns its partial result instead of
 raising. On that path the final assistant text is parsed best effort: a
-successful parse sets `response.object`, and a parse or validation failure sets
+successful parse sets `response.data` and its `response.object` compatibility alias,
+while a parse or validation failure sets
 `response.metadata.outputSchemaError` next to the max-steps warning so the
 failure stays visible.
 
@@ -661,7 +680,8 @@ agent declares no `outputSchema`, when the output did not parse, or when the run
 failed or was cancelled. See [Run input and output](./run-input-output.md) for
 what an agent run stores as input and output.
 
-`response.object` in your own code is always the parsed value. The snapshot
+`response.data` in your own code is always the parsed value; `response.object`
+contains the same value for compatibility. The snapshot
 equals it when the value is plain JSON (strings, finite numbers, booleans,
 `null`, arrays and plain objects) and stays within the size limits below.
 Otherwise, for example when an `outputSchema` transform returns a `Date`, a
@@ -741,6 +761,13 @@ replace the UTC snapshot. Non-streaming results expose the exact values at
 `result.metadata?.runtimeContext`; streaming runs emit them in the initial data
 event named `veryfront.runtime_context` for durable replay and diagnostics.
 
+When the platform tool source has a trusted canonical run identity,
+`veryfront__get_run({})` reads the current run. Veryfront supplies `run_id` before
+sending the request to the API. An explicit `run_id` reads that run instead and
+still requires normal API authorization. Without a binding runtime identity,
+`run_id` remains required. This default applies to the native platform tool,
+not project-defined tools with the same name.
+
 Runtime context does not count as assistant output.
 A detached stream that ends without cancellation, assistant output, or a reported
 stream error fails with `EMPTY_RESPONSE`.
@@ -806,7 +833,7 @@ export default agent({
 | `bootstrapTools`         | `string[]`                                                                                             | Up to 16 exact authorized tool names exposed immediately in deferred mode                                                                   |
 | `optionalBootstrapTools` | `string[]`                                                                                             | Up to 16 exact tool names exposed initially only when already authorized and provider capacity permits; missing or denied tools are skipped |
 | `bootstrapSkill`         | `string`                                                                                               | One authorized skill whose root loads before the first model call                                                                           |
-| `outputSchema`           | `Schema<T> \| JsonSchema`                                                                              | Constrain responses to a schema and expose the parsed value as `response.object`                                                            |
+| `outputSchema`           | `Schema<T> \| JsonSchema`                                                                              | Constrain responses to a schema and expose the parsed value as `response.data` (`response.object` remains an alias)                         |
 | `temperature`            | `number`                                                                                               | Sampling temperature for model generation (default: `0`)                                                                                    |
 | `maxSteps`               | `number`                                                                                               | Max tool-call iterations per request                                                                                                        |
 | `parallelToolCalls`      | `boolean`                                                                                              | Optional provider tool-call batching control; omission preserves the provider default                                                       |

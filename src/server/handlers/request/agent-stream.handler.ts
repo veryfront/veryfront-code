@@ -1,3 +1,13 @@
+import {
+  type CachedSourceObservation,
+  observeCachedSource,
+} from "#veryfront/platform/adapters/fs/cached-source-observation.ts";
+import { bindSourceObservationStages } from "#veryfront/internal-agents/source-observation.ts";
+import {
+  bindProjectEventWriter,
+  createProjectEventWriter,
+  getProjectEventPersistenceSchema,
+} from "#veryfront/internal-agents/project-event-writer.ts";
 import { bindManagedRecoveryCredentials } from "#veryfront/internal-agents/managed-recovery-http.ts";
 import {
   assertManagedRecoveryExecutionBinding,
@@ -141,6 +151,7 @@ import { createRunPlatformToolSource } from "./run-terminal-tool-source.ts";
 import { requireInferenceProviderCredential } from "#veryfront/provider/runtime-loader/provider-request-init.ts";
 import { isServerShuttingDown } from "../../shutdown-state.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
+import { terminalRoute } from "#veryfront/agent/conversation/terminal-route.ts";
 import { resolveVeryfrontApiBaseUrlFromHostEnv } from "#veryfront/platform/cloud/resolver.ts";
 import { serverLogger } from "#veryfront/utils";
 import {
@@ -160,6 +171,7 @@ import {
   capturePlatformDependencySource,
   getVerifiedPlatformToolDependencies,
   registerPlatformDependencyOwner,
+  verifyOperatorRunTerminalToken,
 } from "#veryfront/agent/service/auth.ts";
 import { prepareDeclarativeConfigContext } from "#veryfront/config/declarative-evaluator.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
@@ -192,6 +204,9 @@ export interface AgentStreamHandlerDeps
   normalizeSourceIntegrationPolicy?: typeof normalizeSourceIntegrationPolicy;
   createRunScopedProviderReplayCheckpointPersister?:
     typeof createRunScopedProviderReplayCheckpointPersister;
+  verifyRunTerminalToken?: (
+    input: { token: string; projectId: string; runId: string },
+  ) => Promise<boolean>;
 }
 
 type AgentSourceTargetIdentity = Pick<
@@ -221,6 +236,7 @@ const defaultDeps: AgentStreamHandlerDeps = {
     getDiscoveredHostTools({ agentId }) as RuntimeAgentStreamExecutionDeps["localTools"],
   providerReplayCheckpointEmissionEnabled: isProviderReplayCheckpointEmissionEnabled(),
   createRunScopedProviderReplayCheckpointPersister,
+  verifyRunTerminalToken: verifyOperatorRunTerminalToken,
 };
 const logger = serverLogger.component("agent-stream-handler");
 const createInvocationNamespace = crypto.randomUUID.bind(crypto);
@@ -625,6 +641,29 @@ function readRunTerminalToken(req: Request): string | null {
   }
 }
 
+async function verifiedCanonicalRunId(
+  input: {
+    token: string | null;
+    projectId: string | undefined;
+    publicRunId: string;
+    verify: AgentStreamHandlerDeps["verifyRunTerminalToken"];
+  },
+): Promise<string | undefined> {
+  if (!input.token || !input.projectId || !input.verify) return undefined;
+  try {
+    if (
+      await input.verify({
+        token: input.token,
+        projectId: input.projectId,
+        runId: input.publicRunId,
+      }) !== true
+    ) return undefined;
+    return terminalRoute(input.token, input.publicRunId).id;
+  } catch {
+    return undefined;
+  }
+}
+
 function requestedProgrammaticPlatformNames(
   input: Parameters<typeof withVeryfrontPlatformRemoteTools>[0],
 ): string[] {
@@ -658,6 +697,8 @@ function includeRequestedPlatformAliases(
 }
 
 export async function withVeryfrontPlatformRemoteTools(input: {
+  /** Canonical identity supplied by the host runtime, never model arguments. */
+  currentRunId?: string;
   agent: Agent;
   token?: string | null;
   projectId?: string | null;
@@ -722,6 +763,7 @@ export async function withVeryfrontPlatformRemoteTools(input: {
   const platformCatalog = createPlatformMcpCatalogSource(
     platformRemoteToolSource,
     platformToolDefinitions,
+    { runId: input.currentRunId, runIdBindsToolAuthorization: true },
   );
   platformToolDefinitions = platformCatalog.definitions;
   includeRequestedPlatformAliases(platformToolDefinitions, requestedToolNames, input);
@@ -909,6 +951,8 @@ function appendMissingStudioSources(
 }
 
 async function withExplicitVeryfrontStudioRemoteTools(input: {
+  /** Canonical identity supplied by the verified host request, never model arguments. */
+  currentRunId?: string;
   agent: Agent;
   token?: string | null;
   projectId?: string | null;
@@ -971,7 +1015,10 @@ async function withExplicitVeryfrontStudioRemoteTools(input: {
     resolvedStudioSources.push({
       policy: createMcpToolPolicyGate(withPlatformMcpPolicyAliases(server.toolPolicy)),
       remoteConfig,
-      source: createLivePlatformMcpSource(createRemoteMCPToolSource(remoteConfig)),
+      source: createLivePlatformMcpSource(createRemoteMCPToolSource(remoteConfig), {
+        runId: input.currentRunId,
+        runIdBindsToolAuthorization: true,
+      }),
     });
   }
   if (resolvedStudioSources.length === 0) return input.agent;
@@ -1543,6 +1590,36 @@ export class AgentStreamHandler extends BaseHandler {
         ? payload.credentials?.sourceAuthToken || ""
         : apiAuthToken;
       const executionProject = payload.executionProject;
+      const currentRunId = await verifiedCanonicalRunId({
+        token: terminalToken,
+        projectId: executionProject?.projectId ?? ctx.projectId,
+        publicRunId: payload.runId,
+        verify: this.deps.verifyRunTerminalToken,
+      });
+      const projectEventPersistence = platformDependencies !== undefined
+        ? getProjectEventPersistenceSchema().optional().parse(
+          IntrinsicReflectApply(JsonParse, JSON, [rawBody]).projectEventPersistence,
+        )
+        : undefined;
+      const projectEventWriter = projectEventPersistence
+        ? (() => {
+          if (payload.managedRecoveryAdmission || !runEventAppendToken) {
+            throw new Error("Invalid project event writer admission");
+          }
+          const projectId = executionProject?.projectId ?? ctx.projectId;
+          if (!projectId) throw new Error("Project writer requires an exact project");
+          return createProjectEventWriter({
+            apiUrl: resolveVeryfrontApiBaseUrlFromHostEnv(),
+            runId: payload.runId,
+            canonicalRunId: projectEventPersistence.canonicalRunId,
+            projectId,
+            threadId: payload.threadId,
+            token: runEventAppendToken,
+            latestEventId: projectEventPersistence.latestEventId,
+            latestExternalEventSequence: projectEventPersistence.latestExternalEventSequence,
+          });
+        })()
+        : undefined;
       if (payload.agentSource.type === "environment" && !apiAuthToken) {
         throw AUTHENTICATION_REQUIRED.create({
           detail: "Named agent source environment requires a request-scoped API token",
@@ -1615,6 +1692,7 @@ export class AgentStreamHandler extends BaseHandler {
         envVarsForAgent: Record<string, string>,
         requestSourceFingerprint: string | undefined,
         sourceFingerprintOptions: SourceSnapshotFingerprintOptions,
+        configSourceObservation: CachedSourceObservation | undefined,
       ) =>
       async () => {
         await assertRecoveryActive();
@@ -1643,12 +1721,38 @@ export class AgentStreamHandler extends BaseHandler {
 
         // veryfront-api is the trusted control-plane caller; it resolves
         // authorization before attaching request-scoped project-agent config.
+        const discoverySourceObservation = configSourceObservation &&
+            projectScopedContext.projectId && projectScopedContext.branchId
+          ? await observeCachedSource(projectScopedContext.adapter.fs)
+          : undefined;
         const runtimeBaseAgent = resolveRuntimeBaseAgent(payload, agent);
         const runtimeInput = sanitizeRuntimeRunAgentInput(
           toRuntimeRunAgentInput(payload),
           runtimeBaseAgent as Agent,
         );
+        // Preview qualification requires a concrete branch UUID. Main-branch runs
+        // execute normally without private proof and cannot qualify this protocol.
+        if (
+          configSourceObservation && discoverySourceObservation && currentRunId &&
+          projectScopedContext.projectId &&
+          projectScopedContext.branchId && payload.agentSource.type === "branch" &&
+          !payload.sourceProject &&
+          !payload.managedRecoveryAdmission
+        ) {
+          bindSourceObservationStages(runtimeInput, {
+            identity: {
+              projectId: projectScopedContext.projectId,
+              branchId: projectScopedContext.branchId,
+              canonicalRunId: currentRunId,
+              publicRunId: payload.runId,
+              agentId: runtimeBaseAgent.id,
+            },
+            config: configSourceObservation,
+            discovery: discoverySourceObservation,
+          });
+        }
         bindManagedRecoveryInput(runtimeInput, verifiedClaims);
+        if (projectEventWriter) bindProjectEventWriter(runtimeInput, projectEventWriter);
         if (reservedRecovery) {
           bindManagedRecoveryRunSession(runtimeInput, reservedRecovery, () => {
             pendingRecovery = undefined;
@@ -1679,6 +1783,7 @@ export class AgentStreamHandler extends BaseHandler {
           });
         const localTools = this.deps.getLocalTools?.(runtimeBaseAgent.id);
         const platformRuntimeAgent = await withVeryfrontPlatformRemoteTools({
+          currentRunId: projectEventPersistence?.canonicalRunId ?? currentRunId,
           agent: runtimeBaseAgent as Agent,
           token: apiAuthToken || null,
           projectId: executionProject?.projectId ??
@@ -1700,6 +1805,7 @@ export class AgentStreamHandler extends BaseHandler {
         });
         await assertRecoveryActive();
         const runtimeAgent = await withExplicitVeryfrontStudioRemoteTools({
+          currentRunId: projectEventPersistence?.canonicalRunId ?? currentRunId,
           agent: platformRuntimeAgent,
           token: projectRuntimeToken || null,
           projectId: executionProject?.projectId ??
@@ -1847,6 +1953,12 @@ export class AgentStreamHandler extends BaseHandler {
                 assertRecoveryActive,
               );
               await assertRecoveryActive();
+              const configSourceObservation =
+                payload.agentSource.type === "branch" && !payload.sourceProject &&
+                  !payload.managedRecoveryAdmission && currentRunId &&
+                  requestScopedContext.projectId && requestScopedContext.branchId
+                  ? await observeCachedSource(requestScopedContext.adapter.fs)
+                  : undefined;
               const sourceFingerprintOptions = getAgentSourceFingerprintOptions(sourceConfig);
               const requestSourceFingerprint = payload.agentSource.type === "branch"
                 ? await requireAgentSourceSnapshotFingerprint(
@@ -1912,6 +2024,7 @@ export class AgentStreamHandler extends BaseHandler {
                     envVarsForAgent,
                     requestSourceFingerprint,
                     sourceFingerprintOptions,
+                    configSourceObservation,
                   ),
                 );
               };

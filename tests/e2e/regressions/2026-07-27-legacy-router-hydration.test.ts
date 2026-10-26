@@ -142,7 +142,7 @@ function javascript(source: string): Response {
 }
 
 async function waitForHydration(
-  page: import("npm:playwright@1.60.0").Page,
+  page: import("npm:playwright@1.61.1").Page,
   diagnostics: ReturnType<typeof captureBrowserDiagnostics>,
 ): Promise<void> {
   try {
@@ -247,6 +247,7 @@ describe(
         const renderer = new PageRenderer({
           projectDir,
           mode: "production",
+          environment: "production",
           config: {},
           adapter,
           componentRegistry: {} as never,

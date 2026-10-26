@@ -1,7 +1,9 @@
-// Run with Node from an installed veryfront package directory:
+// Linux Actions only. Retained Node v1 invocation from an installed package:
 // node --input-type=module < native-body-package-probe.mjs
 // Only synthetic data is used. Install the transport stub before importing the package.
 import assert from "node:assert/strict";
+import process from "node:process";
+const isNode = typeof Bun === "undefined" && typeof Deno === "undefined";
 let fetches = 0;
 globalThis.fetch = async () => {
   fetches++;
@@ -11,6 +13,7 @@ const { createDetachedRunTracker, createHostedAgentServiceRouteSet } = await imp
   "veryfront/agent"
 );
 const canary = "synthetic-package-body-canary";
+const sourceCanary = "synthetic-package-source-canary";
 const runtimeSource = { type: "release", releaseId: "release-42" };
 const apply = Reflect.apply;
 const decode = TextDecoder.prototype.decode;
@@ -43,15 +46,21 @@ function createRequest() {
       tools: [],
       context: [],
       agentSource: runtimeSource,
-      credentials: { authToken: "control-plane-auth-token", inferenceAuthToken: canary },
+      credentials: {
+        authToken: "control-plane-auth-token",
+        inferenceAuthToken: canary,
+        sourceAuthToken: sourceCanary,
+      },
     }),
   });
 }
 
 function contains(value, depth = 0) {
-  if (typeof value === "string") return apply(includes, value, [canary]);
+  if (typeof value === "string") {
+    return apply(includes, value, [canary]) || apply(includes, value, [sourceCanary]);
+  }
   if (value instanceof Uint8Array) {
-    return apply(includes, apply(decode, decoder, [value]), [canary]);
+    return contains(apply(decode, decoder, [value]));
   }
   if (depth > 6 || typeof value !== "object" || value === null) return false;
   return Object.values(value).some((entry) => contains(entry, depth + 1));
@@ -90,6 +99,9 @@ const pending = [];
 // A replaced tee observes the body when the invocation request is cloned.
 const teeDescriptor = Object.getOwnPropertyDescriptor(ReadableStream.prototype, "tee");
 let dispatches = 0;
+let teeResponse;
+let teeFailure;
+let teeRequest;
 Object.defineProperty(ReadableStream.prototype, "tee", {
   ...teeDescriptor,
   value: function () {
@@ -102,11 +114,15 @@ Object.defineProperty(ReadableStream.prototype, "tee", {
   },
 });
 try {
-  await createRoutes(() => {}, () => dispatches++).handleRuntimeAgentRunInvocationExecuteRequest({
+  teeResponse = await createRoutes(() => {}, (request) => {
+    teeRequest = request;
+    dispatches++;
+  }).handleRuntimeAgentRunInvocationExecuteRequest({
     request: createRequest(),
     runId: "run-1",
   });
 } catch (error) {
+  teeFailure = error;
   assert(error instanceof TypeError);
   rejected++;
 } finally {
@@ -114,7 +130,21 @@ try {
 }
 await Promise.allSettled(pending);
 assert.equal(observations, 0, "body credential reached a modified stream tee");
-assert.equal(dispatches, 0);
+if (isNode) {
+  assert.equal(rejected, 1);
+  assert.equal(dispatches, 0);
+  assert.equal(teeResponse, undefined);
+} else {
+  assert.equal(teeFailure, undefined);
+  assert.equal(teeResponse.status, 202);
+  assert.equal(dispatches, 1);
+  assert.equal(teeRequest.method, "POST");
+  assert.equal(teeRequest.headers.get("content-type"), "application/json");
+  const payload = await teeRequest.json();
+  assert.deepEqual(payload.credentials, { authToken: "control-plane-auth-token" });
+  assert.equal(contains(payload), false, "native body transfer retained the inference canary");
+}
+const safeRequests = dispatches;
 
 // An inherited then observes stream read results and parsed payloads.
 let thenActive = false;
@@ -145,8 +175,8 @@ try {
   Reflect.deleteProperty(Object.prototype, "then");
 }
 assert.equal(observations, 0, "body credential reached an inherited then");
-assert.equal(dispatches, 0);
-assert.equal(rejected, 2);
+assert.equal(dispatches, safeRequests);
+assert.equal(rejected, isNode ? 2 : 1);
 
 // A clean invocation dispatches an application request without the credential.
 let applicationRequest;
@@ -155,7 +185,7 @@ const response = await createRoutes(() => {}, (request) => {
   dispatches++;
 }).handleRuntimeAgentRunInvocationExecuteRequest({ request: createRequest(), runId: "run-1" });
 assert.equal(response.status, 202);
-assert.equal(dispatches, 1);
+assert.equal(dispatches, safeRequests + 1);
 assert.equal(applicationRequest.method, "POST");
 assert.equal(applicationRequest.headers.get("content-type"), "application/json");
 const payload = await applicationRequest.json();
@@ -167,5 +197,6 @@ console.log(JSON.stringify({
   observations,
   fetches,
   rejected,
-  cleanRequests: dispatches,
+  cleanRequests: dispatches - safeRequests,
+  ...(!isNode ? { safeRequests } : {}),
 }));

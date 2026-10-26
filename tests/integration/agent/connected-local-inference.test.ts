@@ -1,3 +1,4 @@
+import { generateKeyPairSync, sign } from "node:crypto";
 import "#veryfront/schemas/_test-setup.ts";
 import { createEphemeralAgent } from "../../../src/agent/factory.ts";
 import { createConnectedLocalRuntime } from "../../../src/agent/ag-ui/connected-local-runtime.ts";
@@ -13,6 +14,25 @@ describe("connected local inference authority", () => {
       const conversationId = "33333333-3333-4333-8333-333333333333";
       const canonicalId = "77777777-7777-4777-8777-777777777777";
       const runId = "run_local_prepare";
+      const { publicKey, privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+      const encode = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64url");
+      const unsigned = `${encode({ alg: "RS256", kid: "inference-test" })}.${
+        encode({
+          projectId,
+          runId,
+          agentId: "assistant",
+          userId: "server",
+          serviceAccountId: "server",
+          actorType: "service_account",
+          tokenUse: "run_event_writer",
+          scopes: ["agent-runs:events:append"],
+          exp: Math.floor(Date.now() / 1000) + 60,
+          platformToolDependencies: [],
+        })
+      }`;
+      const writerToken = `${unsigned}.${
+        sign("RSA-SHA256", Buffer.from(unsigned), privateKey).toString("base64url")
+      }`;
       const terminalToken = `header.${
         btoa(
           JSON.stringify({
@@ -34,6 +54,13 @@ describe("connected local inference authority", () => {
       const transport = ((input: string | Request | URL, init?: RequestInit) => {
         const path = new URL(String(input)).pathname;
         requests.push({ path, authorization: new Headers(init?.headers).get("authorization") });
+        if (path === "/.well-known/jwks.json") {
+          return Promise.resolve(
+            Response.json({
+              keys: [{ ...publicKey.export({ format: "jwk" }), kid: "inference-test" }],
+            }),
+          );
+        }
         if (path.endsWith("/workers")) {
           return Promise.resolve(Response.json({ worker, token: "worker-token" }));
         }
@@ -46,7 +73,7 @@ describe("connected local inference authority", () => {
           return Promise.resolve(Response.json({
             credentials: {
               auth_token: "invocation-token",
-              run_event_token: "event-token",
+              run_event_token: writerToken,
               run_terminal_token: terminalToken,
               ...(inferenceToken ? { inference_token: inferenceToken } : {}),
             },
@@ -72,6 +99,7 @@ describe("connected local inference authority", () => {
         }
         throw new Error(`Unexpected local runtime request: ${path}`);
       }) as typeof fetch;
+      Deno.env.set("VERYFRONT_API_URL", "https://api.example.com");
       await withMockFetch(transport, async () => {
         const runtime = createConnectedLocalRuntime({
           apiBaseUrl: "https://api.example.com",

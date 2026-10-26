@@ -83,11 +83,16 @@ import {
 } from "#veryfront/internal-agents/managed-recovery-http.ts";
 import { readManagedRecoveryBootConfig } from "#veryfront/internal-agents/managed-recovery-runtime-bootstrap.ts";
 import { createHash, Hash } from "node:crypto";
+import { Buffer } from "node:buffer";
 import { assertThrows } from "#veryfront/testing/assert.ts";
 
 it("paired transport keeps original credentials private, bound and redirect-free", async () => {
   const previous = Deno.env.get(envKey);
-  const files = [{ path: "a.ts", entityType: "function", content: "hello" }];
+  const files: Array<{ path: string; entityType: "function"; content: string }> = [{
+    path: "a.ts",
+    entityType: "function",
+    content: "hello",
+  }];
   const value = admission();
   value.identity = { ...identity, sourceHash: createRecoverySourceManifest(files).hash };
   const contentHash = createHash("sha256").update("hello").digest("hex");
@@ -466,5 +471,517 @@ it("legacy ownership receipts cannot grant private recovery authority", async ()
   } finally {
     if (previous === undefined) Deno.env.delete(envKey);
     else Deno.env.set(envKey, previous);
+  }
+});
+
+it("native release transport preserves exact binary bytes and refuses incomplete or corrupted source", async () => {
+  const previous = Deno.env.get(envKey);
+  const value = admission();
+  value.identity = {
+    ...identity,
+    sourceHash: "f41a2ea57c6e706a4c469dcf8167adf5882e810d1f3dece05de0ba2de17b8e58",
+  };
+  const text = {
+    kind: "text",
+    version_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    path: "a.ts",
+    entity_type: "function",
+    content: "hello",
+    byte_size: 5,
+    content_hash: "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+  };
+  const binary = {
+    kind: "binary",
+    version_id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+    path: "knowledge/raw.bin",
+    entity_type: "virtual_file",
+    content_base64: "AP+ACg==",
+    content_type: "application/octet-stream",
+    byte_size: 4,
+    content_hash: "6d6f7836f1e146dc0204afb5133dae52fdc05603d8ac2dc793b481b0e0829fd1",
+  };
+  const valid = {
+    project_id: value.sourceBinding.projectId,
+    release_id: value.sourceBinding.releaseId,
+    manifest_version: 2,
+    manifest_hash: value.identity.sourceHash,
+    file_count: 2,
+    total_bytes: 9,
+    files: [text, binary],
+  };
+  let response: unknown = valid;
+  let oversized = false;
+  let oversizedCancelled = false;
+  const fetcher: typeof fetch = async (input, init) => {
+    const url = new URL(String(input));
+    assertEquals(
+      url.pathname,
+      `/projects/${value.sourceBinding.projectId}/releases/${value.sourceBinding.releaseId}/source-manifest`,
+    );
+    assertEquals(url.search, "?representation=native");
+    assertEquals(new Headers(init?.headers).get("authorization"), "Bearer original-source");
+    if (oversized) {
+      const chunk = new Uint8Array(1024 * 1024);
+      let emitted = 0;
+      return new Response(
+        new ReadableStream({
+          pull(controller) {
+            if (++emitted <= 98) controller.enqueue(chunk);
+            else controller.close();
+          },
+          cancel() {
+            oversizedCancelled = true;
+          },
+        }),
+        { headers: { "content-length": "1" } },
+      );
+    }
+    return Response.json(response);
+  };
+  try {
+    const claims = await signed(value);
+    bindManagedRecoveryCredentials(claims, {
+      authToken: "original-invocation",
+      sourceAuthToken: "original-source",
+      terminalToken: "original-terminal",
+    });
+    const transport = createManagedRecoveryHttpTransport("https://trusted.test", fetcher);
+    const originalSome = Array.prototype.some;
+    let exposedListings = 0;
+    let listing: Awaited<ReturnType<typeof transport.listImmutableReleaseFiles>>;
+    try {
+      Array.prototype.some = function () {
+        exposedListings++;
+        this.length = 0;
+        return true;
+      };
+      listing = await transport.listImmutableReleaseFiles(claims);
+      response = { ...valid, files: [text] };
+      await assertRejects(() => transport.listImmutableReleaseFiles(claims));
+      response = valid;
+    } finally {
+      Array.prototype.some = originalSome;
+    }
+    assertEquals(exposedListings, 0);
+    const mimeDescriptor = Object.getOwnPropertyDescriptor(Object.prototype, "content_type");
+    const { content_type: _omitted, ...missingMime } = binary;
+    const kindDescriptor = Object.getOwnPropertyDescriptor(Object.prototype, "kind");
+    const versionDescriptor = Object.getOwnPropertyDescriptor(Object.prototype, "manifest_version");
+    const filesDescriptor = Object.getOwnPropertyDescriptor(Object.prototype, "files");
+    let mimeExposures = 0;
+    try {
+      Object.defineProperty(Object.prototype, "content_type", {
+        configurable: true,
+        get() {
+          mimeExposures++;
+          return "application/octet-stream";
+        },
+      });
+      response = { ...valid, files: [text, missingMime] };
+      await assertRejects(() => transport.listImmutableReleaseFiles(claims));
+      const { kind: _kind, ...withoutKind } = missingMime;
+      Object.defineProperty(Object.prototype, "kind", { configurable: true, value: "binary" });
+      response = { ...valid, files: [text, withoutKind] };
+      await assertRejects(() => transport.listImmutableReleaseFiles(claims));
+      if (kindDescriptor) Object.defineProperty(Object.prototype, "kind", kindDescriptor);
+      else Reflect.deleteProperty(Object.prototype, "kind");
+      const { manifest_version: _version, ...withoutVersion } = valid;
+      Object.defineProperty(Object.prototype, "manifest_version", {
+        configurable: true,
+        get() {
+          mimeExposures++;
+          return 2;
+        },
+      });
+      response = withoutVersion;
+      await assertRejects(() => transport.listImmutableReleaseFiles(claims));
+      const { files: _files, ...withoutFiles } = valid;
+      Object.defineProperty(Object.prototype, "files", {
+        configurable: true,
+        get() {
+          mimeExposures++;
+          return valid.files;
+        },
+      });
+      response = withoutFiles;
+      await assertRejects(() => transport.listImmutableReleaseFiles(claims));
+      response = valid;
+      await transport.listImmutableReleaseFiles(claims);
+    } finally {
+      if (filesDescriptor) Object.defineProperty(Object.prototype, "files", filesDescriptor);
+      else Reflect.deleteProperty(Object.prototype, "files");
+      if (versionDescriptor) {
+        Object.defineProperty(Object.prototype, "manifest_version", versionDescriptor);
+      } else Reflect.deleteProperty(Object.prototype, "manifest_version");
+      if (kindDescriptor) Object.defineProperty(Object.prototype, "kind", kindDescriptor);
+      else Reflect.deleteProperty(Object.prototype, "kind");
+      if (mimeDescriptor) Object.defineProperty(Object.prototype, "content_type", mimeDescriptor);
+      else Reflect.deleteProperty(Object.prototype, "content_type");
+    }
+    assertEquals(mimeExposures, 0);
+    assertEquals(createRecoverySourceManifest(listing.files), {
+      version: 2,
+      hash: value.identity.sourceHash,
+      fileCount: 2,
+      totalBytes: 9,
+    });
+    for (
+      const invalid of [
+        { ...valid, files: [text] },
+        { ...valid, files: [text, { ...binary, content_base64: "AP+ACg=" }] },
+        { ...valid, files: [text, { ...binary, content_base64: "AP+ACn==" }] },
+        { ...valid, files: [text, { ...binary, content_hash: "a".repeat(64) }] },
+        { ...valid, files: [text, { ...binary, byte_size: 3 }] },
+        { ...valid, files: [text, { ...binary, content_type: "image/png" }] },
+        { ...valid, files: [text, { ...binary, content_type: undefined }] },
+        { ...valid, files: [text, { ...binary, content_type: "image/png\n" }] },
+        { ...valid, files: [text, { ...binary, byte_size: 8 * 1024 * 1024 + 1 }] },
+        { ...valid, release_id: "88888888-8888-4888-8888-888888888888" },
+        { ...valid, project_id: "88888888-8888-4888-8888-888888888888" },
+        { ...valid, total_bytes: 8 },
+        { ...valid, manifest_version: 1 },
+      ]
+    ) {
+      response = invalid;
+      await assertRejects(() => transport.listImmutableReleaseFiles(claims));
+    }
+    oversized = true;
+    await assertRejects(
+      () => transport.listImmutableReleaseFiles(claims),
+      Error,
+      "response exceeds its bound",
+    );
+    assertEquals(oversizedCancelled, true);
+  } finally {
+    if (previous === undefined) Deno.env.delete(envKey);
+    else Deno.env.set(envKey, previous);
+  }
+});
+
+it("native API fixture passes transport integrity and independent host admission without omitting binary members", async () => {
+  for (
+    const fixture of [
+      (await import("../../../fixtures/contracts/api-native-release-source-manifest.json", {
+        with: { type: "json" },
+      })).default,
+      (await import(
+        "../../../fixtures/contracts/api-native-release-source-manifest-legacy-metadata.json",
+        { with: { type: "json" } }
+      )).default,
+    ]
+  ) {
+    const { createManagedRecoveryHostFactory } = await import(
+      "#veryfront/internal-agents/managed-recovery-host.ts"
+    );
+    const { AgentRunSessionManager } = await import(
+      "#veryfront/internal-agents/session-manager.ts"
+    );
+    const previous = Deno.env.get(envKey);
+    const directory = await makeTempDir();
+    const value = admission();
+    value.sourceBinding = {
+      ...value.sourceBinding,
+      projectId: fixture.project_id,
+      releaseId: fixture.release_id,
+    };
+    value.identity = { ...identity, sourceHash: fixture.manifest_hash };
+    let payload: unknown = fixture;
+    let overrideFiles: unknown;
+    const transport = createManagedRecoveryHttpTransport("https://trusted.test", async (input) => {
+      const url = new URL(String(input));
+      assertEquals(
+        url.pathname,
+        `/projects/${fixture.project_id}/releases/${fixture.release_id}/source-manifest`,
+      );
+      assertEquals(url.searchParams.get("representation"), "native");
+      return Response.json(payload);
+    });
+    const manager = new AgentRunSessionManager({
+      recoveryOwnerFactory: createManagedRecoveryHostFactory({
+        sourceBinding: value.sourceBinding,
+        durableDirectory: directory,
+        listImmutableReleaseFiles: async (claims) => {
+          const listing = await transport.listImmutableReleaseFiles(claims);
+          return overrideFiles === undefined ? listing : { ...listing, files: overrideFiles };
+        },
+        validateCurrentOwnership: async () => receipt(value),
+        loadAcknowledgedSnapshot: async () => undefined,
+      }),
+    });
+    try {
+      const claims = await signed(value);
+      bindManagedRecoveryCredentials(claims, {
+        authToken: "fixture-invocation",
+        sourceAuthToken: "fixture-source",
+        terminalToken: "fixture-terminal",
+      });
+      const listing = await transport.listImmutableReleaseFiles(claims);
+      assertEquals(createRecoverySourceManifest(listing.files), {
+        version: fixture.manifest_version,
+        hash: fixture.manifest_hash,
+        fileCount: fixture.file_count,
+        totalBytes: fixture.total_bytes,
+      });
+      const binary = fixture.files.find((file) => file.kind === "binary");
+      assert(typeof binary?.content_base64 === "string");
+      assert(typeof binary.content_type === "string");
+      const listedBinary = listing.files.find((file) => "kind" in file && file.kind === "binary");
+      assert(listedBinary && "contentType" in listedBinary);
+      assertEquals(listedBinary.contentType, binary.content_type);
+      assertEquals(Array.from(Buffer.from(binary.content_base64, "base64")), [
+        239,
+        187,
+        191,
+        0,
+        255,
+        128,
+        10,
+      ]);
+      assert(
+        fixture.files.some((file) =>
+          file.kind === "text" && typeof file.content === "string" &&
+          file.content.startsWith("\uFEFF")
+        ),
+      );
+      for (
+        const invalid of [
+          { ...fixture, files: fixture.files.slice(0, -1) },
+          {
+            ...fixture,
+            files: fixture.files.map((file) =>
+              file.kind === "binary" ? { ...file, content_base64: "AAAA" } : file
+            ),
+          },
+          {
+            ...fixture,
+            files: fixture.files.map((file) =>
+              file.kind === "text" && typeof file.content === "string"
+                ? { ...file, content: file.content.replace(/^\uFEFF/, "") }
+                : file
+            ),
+          },
+        ]
+      ) {
+        payload = invalid;
+        await assertRejects(() => transport.listImmutableReleaseFiles(claims));
+      }
+      payload = {
+        ...fixture,
+        files: fixture.files.map((file) =>
+          file.kind === "binary"
+            ? {
+              ...file,
+              content_type: file.content_type === "image/png"
+                ? "application/octet-stream"
+                : "image/png",
+            }
+            : file
+        ),
+      };
+      await assertRejects(() => transport.listImmutableReleaseFiles(claims));
+      payload = fixture;
+      overrideFiles = listing.files.map((file) =>
+        "kind" in file && file.kind === "binary"
+          ? {
+            ...file,
+            contentType: "contentType" in file && file.contentType === "image/png"
+              ? "application/octet-stream"
+              : "image/png",
+          }
+          : file
+      );
+      await assertRejects(() =>
+        manager.startManagedRecoveryRun({
+          runId: identity.publicRunId,
+          threadId: "fixture-thread",
+          claims,
+        })
+      );
+      overrideFiles = listing.files.slice(0, -1);
+      await assertRejects(() =>
+        manager.startManagedRecoveryRun({
+          runId: identity.publicRunId,
+          threadId: "fixture-thread",
+          claims,
+        })
+      );
+      overrideFiles = undefined;
+      const started = await manager.startManagedRecoveryRun({
+        runId: identity.publicRunId,
+        threadId: "fixture-thread",
+        claims,
+      });
+      assertEquals(started.signal.aborted, false);
+      manager.completeRun(identity.publicRunId, started.signal);
+      started.settle();
+    } finally {
+      manager.reset();
+      await Deno.remove(directory, { recursive: true });
+      if (previous === undefined) Deno.env.delete(envKey);
+      else Deno.env.set(envKey, previous);
+    }
+  }
+});
+
+it("empty and all-text release transport stays v1 and rejects internally consistent v2 without binary membership", async () => {
+  const previous = Deno.env.get(envKey);
+  try {
+    const cases: Array<Array<{ path: string; entityType: "function"; content: string }>> = [
+      [],
+      [{ path: "a.ts", entityType: "function", content: "hello" }],
+    ];
+    for (const files of cases) {
+      const legacy = createRecoverySourceManifest(files);
+      const value = admission();
+      value.identity = { ...identity, sourceHash: legacy.hash };
+      const wireFiles = files.map((file) => ({
+        version_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        path: file.path,
+        entity_type: file.entityType,
+        content: file.content,
+        byte_size: Buffer.byteLength(file.content),
+        content_hash: createHash("sha256").update(file.content).digest("hex"),
+      }));
+      let payload: unknown = {
+        project_id: value.sourceBinding.projectId,
+        release_id: value.sourceBinding.releaseId,
+        manifest_version: 1,
+        manifest_hash: legacy.hash,
+        file_count: legacy.fileCount,
+        total_bytes: legacy.totalBytes,
+        files: wireFiles,
+      };
+      const transport = createManagedRecoveryHttpTransport(
+        "https://trusted.test",
+        async () => Response.json(payload),
+      );
+      const claims = await signed(value);
+      bindManagedRecoveryCredentials(claims, {
+        authToken: "text-invocation",
+        sourceAuthToken: "text-source",
+        terminalToken: "text-terminal",
+      });
+      assertEquals((await transport.listImmutableReleaseFiles(claims)).files, files);
+      const nativeHash = createHash("sha256").update(
+        JSON.stringify({
+          version: 2,
+          files: wireFiles.map((file) => ({
+            path: file.path,
+            type: file.entity_type,
+            kind: "text",
+            contentHash: file.content_hash,
+            byteSize: file.byte_size,
+          })),
+        }),
+      ).digest("hex");
+      value.identity = { ...identity, sourceHash: nativeHash };
+      payload = {
+        project_id: value.sourceBinding.projectId,
+        release_id: value.sourceBinding.releaseId,
+        manifest_version: 2,
+        manifest_hash: nativeHash,
+        file_count: legacy.fileCount,
+        total_bytes: legacy.totalBytes,
+        files: wireFiles.map((file) => ({ ...file, kind: "text" })),
+      };
+      const nativeClaims = await signed(value);
+      bindManagedRecoveryCredentials(nativeClaims, {
+        authToken: "native-invocation",
+        sourceAuthToken: "native-source",
+        terminalToken: "native-terminal",
+      });
+      await assertRejects(() => transport.listImmutableReleaseFiles(nativeClaims));
+    }
+  } finally {
+    if (previous === undefined) Deno.env.delete(envKey);
+    else Deno.env.set(envKey, previous);
+  }
+});
+
+it("transport preserves the producer-admitted 96 MiB JSON boundary for v1 and native v2", async () => {
+  const { createHash } = await import("node:crypto");
+  const { Buffer } = await import("node:buffer");
+  const { createRecoverySourceManifest } = await import(
+    "#veryfront/internal-agents/recovery-source-manifest.ts"
+  );
+  const { bindManagedRecoveryCredentials, createManagedRecoveryHttpTransport } = await import(
+    "#veryfront/internal-agents/managed-recovery-http.ts"
+  );
+  // Same admitted recipe exercised through the API producer and registered Hono route:
+  // two valid UTF-8 control-character text files, plus seven raw bytes for v2.
+  // Encoded JSON, rather than raw text/base64 capacity, is limited to 96 MiB.
+  for (const native of [false, true]) {
+    const value = admission();
+    const texts = ["\u0001".repeat(8 * 1024 * 1024), "x"];
+    const bytes = Buffer.from([239, 187, 191, 0, 255, 128, 10]);
+    const build = () => {
+      const files = texts.map((content, index) => ({
+        path: `knowledge/text-${index}.md`,
+        entityType: "virtual_file" as const,
+        ...(native ? { kind: "text" as const } : {}),
+        content,
+      }));
+      const all = native
+        ? [...files, {
+          kind: "binary" as const,
+          path: "knowledge/raw.bin",
+          entityType: "virtual_file" as const,
+          contentBase64: bytes.toString("base64"),
+          contentType: "application/octet-stream",
+          contentHash: createHash("sha256").update(bytes).digest("hex"),
+          byteSize: bytes.length,
+        }]
+        : files;
+      const digest = createRecoverySourceManifest(all);
+      const payload = {
+        project_id: value.sourceBinding.projectId,
+        release_id: value.sourceBinding.releaseId,
+        manifest_version: native ? 2 : 1,
+        manifest_hash: digest.hash,
+        file_count: digest.fileCount,
+        total_bytes: digest.totalBytes,
+        files: all.map((file, index) => ({
+          version_id: `30000000-3000-4000-8000-00000000000${index}`,
+          path: file.path,
+          entity_type: file.entityType,
+          ...(native ? { kind: file.kind } : {}),
+          content_hash: "content" in file
+            ? createHash("sha256").update(file.content).digest("hex")
+            : file.contentHash,
+          byte_size: "content" in file ? Buffer.byteLength(file.content) : file.byteSize,
+          ...("content" in file
+            ? { content: file.content }
+            : { content_base64: file.contentBase64, content_type: file.contentType }),
+        })),
+      };
+      return { digest, payload };
+    };
+    const cap = 96 * 1024 * 1024;
+    const seed = Buffer.byteLength(JSON.stringify(build().payload));
+    // Leave room for total_bytes digit growth, then fill the exact encoded remainder.
+    const available = cap - seed - 64;
+    texts[1] = "\u0001".repeat(Math.floor(available / 6)) + "x".repeat(available % 6);
+    texts[1] += "x".repeat(cap - Buffer.byteLength(JSON.stringify(build().payload)));
+    const { digest, payload } = build();
+    assertEquals(Buffer.byteLength(JSON.stringify(payload)), cap);
+    value.identity = { ...identity, sourceHash: digest.hash };
+    const previous = Deno.env.get(envKey);
+    try {
+      const claims = await signed(value);
+      bindManagedRecoveryCredentials(claims, {
+        authToken: "original-invocation",
+        sourceAuthToken: "original-source",
+        terminalToken: "original-terminal",
+      });
+      const transport = createManagedRecoveryHttpTransport(
+        "https://trusted.test",
+        async () => Response.json(payload),
+      );
+      const actual = await transport.listImmutableReleaseFiles(claims);
+      assertEquals(createRecoverySourceManifest(actual.files), digest);
+    } finally {
+      if (previous === undefined) Deno.env.delete(envKey);
+      else Deno.env.set(envKey, previous);
+    }
   }
 });

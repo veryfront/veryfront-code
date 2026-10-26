@@ -7,7 +7,11 @@ import {
   type AdmitExecutorToolCall,
   bindToolCallAdmissionOwner,
 } from "#veryfront/runtime/tool-call-admission-dispatch.ts";
-import { mapPrivateArray, pushPrivateArray } from "#veryfront/security/private-array.ts";
+import {
+  mapPrivateArray,
+  pushPrivateArray,
+  somePrivateArray,
+} from "#veryfront/security/private-array.ts";
 import {
   privateByteLength,
   PrivateUint8Array,
@@ -25,6 +29,7 @@ import {
 } from "#veryfront/platform/compat/http/native-request-init.ts";
 import { createVeryfrontApiOriginBoundOutboundFetch } from "#veryfront/security/http/outbound-fetch.ts";
 import { privateSha256Hex } from "#veryfront/security/private-sha256.ts";
+import { testPrivateRegExp } from "#veryfront/security/private-regexp.ts";
 import { Buffer } from "node:buffer";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
@@ -37,8 +42,17 @@ import {
   type RecoveryAdmission,
 } from "./recovery-admission-schema.ts";
 import { MAX_RECOVERY_SUFFIX_SINGLE_ENTRY_PAGE_BYTES } from "./recovery-suffix.ts";
-import { createRecoverySourceManifest } from "./recovery-source-manifest.ts";
+import {
+  assertOwnRecoveryBinaryContentType,
+  createRecoverySourceManifest,
+  MAX_RECOVERY_SOURCE_RESPONSE_BYTES,
+} from "./recovery-source-manifest.ts";
 
+const hasOwn = Object.hasOwn;
+const defineProperty = Object.defineProperty;
+const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const isArray = Array.isArray;
+const ceil = Math.ceil;
 const byteLength = Buffer.byteLength;
 const NativeURL = URL;
 const parseJson = JSON.parse;
@@ -92,12 +106,12 @@ export function bindManagedRecoveryCredentials(
   );
 }
 
-const getManifestSchema = defineSchema((v) =>
+const getLegacyManifestSchema = defineSchema((v) =>
   v.object({
     project_id: v.string().uuid(),
     release_id: v.string().uuid(),
     manifest_version: v.literal(1),
-    manifest_hash: v.string().regex(/^[a-f0-9]{64}$/),
+    manifest_hash: v.string().refine((value) => testPrivateRegExp(/^[a-f0-9]{64}$/, value)),
     file_count: v.number().int().min(0).max(10_000),
     total_bytes: v.number().int().min(0).max(64 * 1024 * 1024),
     files: v.array(
@@ -105,12 +119,47 @@ const getManifestSchema = defineSchema((v) =>
         version_id: v.string().uuid(),
         path: v.string().min(1).max(1_024),
         entity_type: v.enum(["page", "component", "function", "virtual_file"]),
-        content_hash: v.string().regex(/^[a-f0-9]{64}$/),
+        content_hash: v.string().refine((value) => testPrivateRegExp(/^[a-f0-9]{64}$/, value)),
         byte_size: v.number().int().min(0).max(8 * 1024 * 1024),
         content: v.string(),
       }).strict(),
     ).max(10_000),
   }).strict()
+);
+
+const getNativeManifestSchema = defineSchema((v) => {
+  const identity = {
+    version_id: v.string().uuid(),
+    path: v.string().min(1).max(1_024),
+    entity_type: v.enum(["page", "component", "function", "virtual_file"]),
+    content_hash: v.string().refine((value) => testPrivateRegExp(/^[a-f0-9]{64}$/, value)),
+    byte_size: v.number().int().min(0).max(8 * 1024 * 1024),
+  };
+  return v.object({
+    project_id: v.string().uuid(),
+    release_id: v.string().uuid(),
+    manifest_version: v.literal(2),
+    manifest_hash: v.string().refine((value) => testPrivateRegExp(/^[a-f0-9]{64}$/, value)),
+    file_count: v.number().int().min(0).max(10_000),
+    total_bytes: v.number().int().min(0).max(64 * 1024 * 1024),
+    files: v.array(v.discriminatedUnion("kind", [
+      v.object({ ...identity, kind: v.literal("text"), content: v.string() }).strict(),
+      v.object({
+        ...identity,
+        kind: v.literal("binary"),
+        content_base64: v.string().max(4 * ceil(8 * 1024 * 1024 / 3)),
+        content_type: v.string().min(1).max(200).refine((value) =>
+          testPrivateRegExp(/^[\x20-\x7e]+$/, value)
+        ),
+      }).strict(),
+    ])).min(1).max(10_000).refine(
+      (files) => somePrivateArray(files, (file) => file.kind === "binary"),
+      "Native version two requires binary source membership",
+    ),
+  }).strict();
+});
+const getManifestSchema = defineSchema((v) =>
+  v.union([getLegacyManifestSchema(), getNativeManifestSchema()])
 );
 
 async function readBoundedJson(response: Response, maximum: number): Promise<unknown> {
@@ -353,24 +402,81 @@ export function createManagedRecoveryHttpTransport(
       const credentials = credentialsFor(claims);
       const binding = credentials.admission.sourceBinding;
       const response = await request(
-        `/projects/${binding.projectId}/releases/${binding.releaseId}/source-manifest`,
+        `/projects/${binding.projectId}/releases/${binding.releaseId}/source-manifest?representation=native`,
         {
           authorization: `Bearer ${credentials.source}`,
         },
       );
-      const manifest = getManifestSchema().parse(await readBoundedJson(response, 96 * 1024 * 1024));
-      const files = mapPrivateArray(manifest.files, (file) => {
+      const rawManifest = await readBoundedJson(response, MAX_RECOVERY_SOURCE_RESPONSE_BYTES);
+      if (typeof rawManifest !== "object" || rawManifest === null) {
+        throw new Error("Managed recovery release manifest must be an object");
+      }
+      const versionDescriptor = getOwnPropertyDescriptor(rawManifest, "manifest_version");
+      const filesDescriptor = getOwnPropertyDescriptor(rawManifest, "files");
+      if (
+        !versionDescriptor || !hasOwn(versionDescriptor, "value") ||
+        !filesDescriptor || !hasOwn(filesDescriptor, "value")
+      ) throw new Error("Managed recovery manifest requires its own version and files");
+      const rawVersion: unknown = versionDescriptor.value;
+      const rawFiles: unknown = filesDescriptor.value;
+      if (!isArray(rawFiles)) throw new Error("Managed recovery release files must be an array");
+      const rawContentTypes = mapPrivateArray(rawFiles, (file) => {
+        if (
+          rawVersion === 2 &&
+          (typeof file !== "object" || file === null || !hasOwn(file, "kind"))
+        ) throw new Error("Native recovery source requires its own discriminator");
+        return assertOwnRecoveryBinaryContentType(file, "content_type");
+      });
+      const manifest = getManifestSchema().parse(rawManifest);
+      defineProperty(manifest, "manifest_version", { value: rawVersion, enumerable: true });
+      // These are strict, transform-free schemas over privately parsed JSON data.
+      // Preserve the validated own collection if a prototype getter swallowed Zod's assignment.
+      defineProperty(manifest, "files", { value: rawFiles, enumerable: true });
+      if (manifest.manifest_version === 2) {
+        mapPrivateArray(manifest.files, (file, index) => {
+          if (file.kind === "binary") {
+            defineProperty(file, "content_type", {
+              value: rawContentTypes[index],
+              enumerable: true,
+            });
+          }
+        });
+      }
+      const verifyText = (file: { content: string; byte_size: number; content_hash: string }) => {
         if (
           byteLength(file.content, "utf8") !== file.byte_size ||
           privateSha256Hex(file.content) !== file.content_hash
-        ) {
-          throw new Error("Managed recovery release file integrity failed");
-        }
-        return { path: file.path, entityType: file.entity_type, content: file.content };
-      });
+        ) throw new Error("Managed recovery release file integrity failed");
+      };
+      const files = manifest.manifest_version === 1
+        ? mapPrivateArray(manifest.files, (file) => {
+          verifyText(file);
+          return { path: file.path, entityType: file.entity_type, content: file.content };
+        })
+        : mapPrivateArray(manifest.files, (file) => {
+          if (file.kind === "text") {
+            verifyText(file);
+            return {
+              kind: file.kind,
+              path: file.path,
+              entityType: file.entity_type,
+              content: file.content,
+            };
+          }
+          return {
+            kind: file.kind,
+            path: file.path,
+            entityType: file.entity_type,
+            contentBase64: file.content_base64,
+            contentType: file.content_type,
+            contentHash: file.content_hash,
+            byteSize: file.byte_size,
+          };
+        });
       const computed = createRecoverySourceManifest(files);
       if (
         manifest.project_id !== binding.projectId || manifest.release_id !== binding.releaseId ||
+        manifest.manifest_version !== computed.version ||
         manifest.manifest_hash !== computed.hash || manifest.file_count !== computed.fileCount ||
         manifest.total_bytes !== computed.totalBytes ||
         computed.hash !== credentials.admission.identity.sourceHash

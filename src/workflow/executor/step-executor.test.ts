@@ -850,6 +850,21 @@ describe("StepExecutor agent structured output", () => {
     });
   }
 
+  for (const data of [false, 0, null, "", [1, 2]]) {
+    it(`preserves data and object for ${JSON.stringify(data)}`, async () => {
+      const result = await new StepExecutor({}).execute(
+        makeAgentStepNode({ text: JSON.stringify(data), data, status: "completed" }),
+        makeContext(),
+      );
+      assertEquals(result.output, {
+        text: JSON.stringify(data),
+        data,
+        object: data,
+        status: "completed",
+      });
+    });
+  }
+
   it("forwards the validated object from an agent declaring an outputSchema", async () => {
     const node = makeAgentStepNode({
       text: '{"name":"Max"}',
@@ -883,6 +898,7 @@ describe("StepExecutor agent structured output", () => {
       toolCalls,
       status: "completed",
       usage: { totalTokens: 7 },
+      data: { name: "Max" },
       object: { name: "Max" },
     });
   });

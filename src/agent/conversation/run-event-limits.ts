@@ -17,6 +17,9 @@ export const MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES = 240 * 1024;
 /** Maximum JSON body accepted by the trusted conversation run-event endpoint. */
 export const MAX_CONVERSATION_RUN_EVENT_APPEND_REQUEST_BYTES = 10 * 1024 * 1024;
 
+/** Maximum event count accepted by one trusted conversation run-event append. */
+export const MAX_CONVERSATION_RUN_EVENTS_PER_APPEND = 100;
+
 /** Maximum root writer credential size, including configured integration grants. */
 export const MAX_ROOT_RUN_EVENT_WRITER_TOKEN_BYTES = 32 * 1024;
 
@@ -56,6 +59,10 @@ export function buildConversationRunEventBatches<T>(input: {
 }): T[][] {
   const maxBatchPayloadBytes = input.maxBatchPayloadBytes ??
     DEFAULT_MAX_CONVERSATION_RUN_BATCH_BYTES;
+  const maxEventsPerBatch = Math.min(
+    input.maxEventsPerBatch,
+    MAX_CONVERSATION_RUN_EVENTS_PER_APPEND,
+  );
   const batches: T[][] = [];
   let currentBatch: T[] = [];
   let currentBatchBytes = 0;
@@ -65,7 +72,7 @@ export function buildConversationRunEventBatches<T>(input: {
 
     if (
       currentBatch.length > 0 &&
-      (currentBatch.length >= input.maxEventsPerBatch ||
+      (currentBatch.length >= maxEventsPerBatch ||
         currentBatchBytes + eventBytes > maxBatchPayloadBytes)
     ) {
       primordialArrayPush(batches, currentBatch);
