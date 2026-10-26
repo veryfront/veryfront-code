@@ -229,11 +229,6 @@ export async function fetchProjectEnvVars(
   const managementUrl = `${projectPath}/environments/${
     encodeURIComponent(environmentId)
   }/variables?limit=${ENV_VARS_FETCH_LIMIT}`;
-  // The query-parameter list is the deprecated name of the same operation. It is
-  // read only when the API answers 404 because it predates the environment route.
-  const legacyManagementUrl = `${projectPath}/environment-variables?environment_id=${
-    encodeURIComponent(environmentId)
-  }&limit=${ENV_VARS_FETCH_LIMIT}`;
   const internalUrl = `${origin}/internal/project-environment-variables?environment_id=${
     encodeURIComponent(environmentId)
   }&project_slug=${encodeURIComponent(projectSlug)}`;
@@ -245,16 +240,6 @@ export async function fetchProjectEnvVars(
     environmentId,
     signal,
   );
-  if (response.status === 404) {
-    discardResponseBody(response);
-    response = await fetchEnvironmentVariables(
-      legacyManagementUrl,
-      `Bearer ${token}`,
-      projectSlug,
-      environmentId,
-      signal,
-    );
-  }
 
   if (!response.ok) {
     discardResponseBody(response);
