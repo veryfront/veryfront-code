@@ -262,3 +262,68 @@ for (const protocol of ["http1", "h2c"] as const) {
     }
   });
 }
+
+for (const transport of ["native", "selected"] as const) {
+  for (const protocol of transport === "native" ? ["http1"] as const : ["http1", "h2c"] as const) {
+    for (const cleanup of ["resolve", "pending", "reject"] as const) {
+      it(`${transport} Deno ${protocol} HEAD completes independently of ${cleanup} body cleanup`, async () => {
+        const cancelled = Promise.withResolvers<void>();
+        const handler = () =>
+          new Response(
+            new ReadableStream<Uint8Array>({
+              cancel() {
+                cancelled.resolve();
+                if (cleanup === "pending") return new Promise<void>(() => {});
+                if (cleanup === "reject") {
+                  return Promise.reject(new Error("synthetic cleanup failure"));
+                }
+              },
+            }),
+            { status: 202, headers: { "x-head-contract": "preserve" } },
+          );
+        const native = transport === "native"
+          ? Deno.serve({ hostname: "127.0.0.1", port: 0, onListen() {} }, handler)
+          : undefined;
+        const selected = transport === "selected"
+          ? await new DenoAdapter().serve(handler, {
+            hostname: "127.0.0.1",
+            port: 0,
+            nodeWebSocketServerProvider: null,
+          })
+          : undefined;
+        const origin = `http://127.0.0.1:${native?.addr.port ?? selected!.addr.port}`;
+        const client = protocol === "h2c" ? connect(origin) : undefined;
+        try {
+          if (client) {
+            const finished = Promise.withResolvers<void>();
+            const request = client.request({ ":path": "/", ":method": "HEAD" });
+            request.on("error", finished.reject);
+            request.on("response", (headers) => {
+              assertEquals(headers[":status"], 202);
+              assertEquals(headers["x-head-contract"], "preserve");
+            });
+            request.on("data", () => finished.reject(new Error("HEAD must not send body bytes")));
+            request.on("end", () => finished.resolve());
+            request.resume();
+            request.end();
+            await bounded(finished.promise).catch((error) => {
+              throw new Error("HEAD response did not end", { cause: error });
+            });
+          } else {
+            const response = await bounded(fetch(origin, { method: "HEAD" }));
+            assertEquals(response.status, 202);
+            assertEquals(response.headers.get("x-head-contract"), "preserve");
+            assertEquals(await response.text(), "");
+          }
+          await bounded(cancelled.promise).catch((error) => {
+            throw new Error("HEAD body was not cancelled", { cause: error });
+          });
+        } finally {
+          client?.destroy();
+          await native?.shutdown();
+          await selected?.stop();
+        }
+      });
+    }
+  }
+}

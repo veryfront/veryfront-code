@@ -579,6 +579,13 @@ export function createNodeRequestListener(
         _res.setHeader("set-cookie", setCookies);
       }
 
+      if (flushResponseHeaders && method === "HEAD") {
+        // Native Deno suppresses and cancels HEAD bodies rather than consuming them.
+        void response.body?.cancel().catch(() => undefined);
+        _res.end();
+        return;
+      }
+
       if (response.body) {
         responseReader = response.body.getReader();
         // Deno commits response headers independently of the first body chunk.
