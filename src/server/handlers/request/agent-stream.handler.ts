@@ -664,6 +664,19 @@ async function verifiedCanonicalRunId(
   }
 }
 
+/**
+ * @internal Authored project tools may treat the run ID as authority only after the
+ * terminal capability verified this run for the same project the tools execute in.
+ */
+export function bindsAuthoredToolRun(input: {
+  currentRunId: string | undefined;
+  terminalProjectId: string | undefined;
+  sandboxProjectId: string | null;
+}): boolean {
+  return input.currentRunId !== undefined && !!input.sandboxProjectId &&
+    input.sandboxProjectId === input.terminalProjectId;
+}
+
 function requestedProgrammaticPlatformNames(
   input: Parameters<typeof withVeryfrontPlatformRemoteTools>[0],
 ): string[] {
@@ -1590,9 +1603,10 @@ export class AgentStreamHandler extends BaseHandler {
         ? payload.credentials?.sourceAuthToken || ""
         : apiAuthToken;
       const executionProject = payload.executionProject;
+      const terminalProjectId = executionProject?.projectId ?? ctx.projectId;
       const currentRunId = await verifiedCanonicalRunId({
         token: terminalToken,
-        projectId: executionProject?.projectId ?? ctx.projectId,
+        projectId: terminalProjectId,
         publicRunId: payload.runId,
         verify: this.deps.verifyRunTerminalToken,
       });
@@ -1833,9 +1847,16 @@ export class AgentStreamHandler extends BaseHandler {
         // verifyControlPlaneRequest above authenticates the raw envelope before
         // this verified credential can be bound to the runtime input.
         registerAgentStreamRuntimeCredentials(runtimeInput, payload, verifiedClaims, pauseToken);
+        const sandboxProjectId = executionProject?.projectId ??
+          projectScopedContext.projectId ?? null;
         const runAgentStream = () =>
           createRuntimeAgentStreamResponse(runtimeInput, runtimeAgent, {
             ...this.deps,
+            runIdBindsToolAuthorization: bindsAuthoredToolRun({
+              currentRunId,
+              terminalProjectId,
+              sandboxProjectId,
+            }),
             localTools,
             providerReplayCheckpoints,
             persistProviderReplayCheckpoint,
@@ -1851,8 +1872,7 @@ export class AgentStreamHandler extends BaseHandler {
               branchId: executionProject
                 ? executionProject.runtimeTargetBranchId
                 : payload.runtimeTargetBranchId,
-              projectId: executionProject?.projectId ??
-                projectScopedContext.projectId ?? null,
+              projectId: sandboxProjectId,
             },
           });
         const shouldIsolateEnv = apiAuthToken.length > 0;

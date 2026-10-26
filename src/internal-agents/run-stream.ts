@@ -279,6 +279,8 @@ export interface RuntimeAgentStreamExecutionDeps {
     projectId?: string | null;
     sandboxEndpoint?: string;
   };
+  /** Set by the host only after it verified this run's terminal capability for the sandbox project. */
+  runIdBindsToolAuthorization?: boolean;
   createBashTool?: AgentServiceSandboxToolsOptions["createBashTool"];
   createAgentServiceSandboxTools?: (
     input: AgentServiceSandboxToolsOptions,
@@ -1667,6 +1669,9 @@ export async function createRuntimeAgentStreamResponse(
       runId: input.runId,
       ...(deps.projectAgentSandbox?.projectId
         ? { projectId: deps.projectAgentSandbox.projectId }
+        : {}),
+      ...(deps.runIdBindsToolAuthorization === true && deps.projectAgentSandbox?.projectId
+        ? { runIdBindsToolAuthorization: true }
         : {}),
       ...(deps.projectAgentSandbox?.authToken
         ? { authToken: deps.projectAgentSandbox.authToken }
