@@ -79,7 +79,7 @@ Continue with [Local delegation](../guides/multi-agent.md#local-delegation) when
 ## Next steps
 
 - [Add tools](../guides/tools.md) to give the agent another capability.
-- [Write evaluations](../guides/evals.md) to check behavior after changes.
+- [Write evaluations](../guides/evals.md) to ensure changes preserve expected behavior.
 - [Deploy with Cloud](./cloud-quickstart.md) or [Self-host the app](../guides/self-hosting.md).
 
 [Use another inference provider](../guides/providers.md) when you need a different model or local inference.

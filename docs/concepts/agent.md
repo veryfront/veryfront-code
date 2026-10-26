@@ -33,8 +33,10 @@ The loop has four parts:
 | Action      | The agent calls a tool or emits output.                       |
 | Observation | Tool results or new messages are added back into context.     |
 
-The runtime manages the loop. The agent decides what to do next; tools, tasks,
-workflows and app routes execute the work. Resources provide readable context.
+The runtime manages the loop. The agent decides what to do next and uses tools
+or app routes to act. Tasks define background work; workflows coordinate steps.
+Runs record each execution, its status and result. Resources provide readable
+context.
 
 ## Boundary
 

@@ -134,7 +134,7 @@ forward and prints the port it actually used, so open the URL the CLI prints.
 
 Open the URL the CLI printed. The page renders `Hello from Veryfront`.
 
-To check without a browser, use the port from the printed URL:
+To ensure the server returns the page, use the port from the printed URL:
 
 ```bash
 curl -s http://localhost:<PORT>/

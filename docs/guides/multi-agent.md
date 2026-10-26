@@ -92,7 +92,7 @@ Open [http://localhost:3000](http://localhost:3000) and ask:
 Compare two ways a small team could reduce support response time. Recommend one.
 ```
 
-Confirm the run calls `agent_researcher` and `agent_writer`, then returns one
+Ensure the run calls `agent_researcher` and `agent_writer`, then returns one
 combined recommendation.
 
 ## Agent-as-tool
