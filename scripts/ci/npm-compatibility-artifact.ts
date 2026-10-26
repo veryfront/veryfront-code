@@ -77,6 +77,34 @@ function validateGitHead(gitHead: string): void {
   }
 }
 
+function validatePackageIdentity(
+  manifest: PackageManifest,
+  entry: NpmCompatibilityPackage,
+  expectedGitHead: string | undefined,
+): void {
+  if (manifest.name !== entry.name) {
+    throw new NpmCompatibilityArtifactError(
+      "verify",
+      `Canonical package ${entry.name} name does not match the canonical manifest`,
+      { packageName: entry.name },
+    );
+  }
+  if (manifest.version !== entry.version) {
+    throw new NpmCompatibilityArtifactError(
+      "verify",
+      `Canonical package ${entry.name} version does not match the canonical manifest`,
+      { packageName: entry.name },
+    );
+  }
+  if (expectedGitHead !== undefined && manifest.gitHead !== expectedGitHead) {
+    throw new NpmCompatibilityArtifactError(
+      "verify",
+      `Canonical package ${entry.name} gitHead does not match the release commit`,
+      { packageName: entry.name },
+    );
+  }
+}
+
 async function verifyPackageMetadata(
   tarball: string,
   entry: NpmCompatibilityPackage,
@@ -106,27 +134,7 @@ async function verifyPackageMetadata(
       { packageName: entry.name },
     );
   }
-  if (manifest.name !== entry.name) {
-    throw new NpmCompatibilityArtifactError(
-      "verify",
-      `Canonical package ${entry.name} name does not match the canonical manifest`,
-      { packageName: entry.name },
-    );
-  }
-  if (manifest.version !== entry.version) {
-    throw new NpmCompatibilityArtifactError(
-      "verify",
-      `Canonical package ${entry.name} version does not match the canonical manifest`,
-      { packageName: entry.name },
-    );
-  }
-  if (expectedGitHead !== undefined && manifest.gitHead !== expectedGitHead) {
-    throw new NpmCompatibilityArtifactError(
-      "verify",
-      `Canonical package ${entry.name} gitHead does not match the release commit`,
-      { packageName: entry.name },
-    );
-  }
+  validatePackageIdentity(manifest, entry, expectedGitHead);
   if (expectedGitHead !== undefined && entry.name === "veryfront") {
     const docs = await new Deno.Command("tar", {
       args: ["-xOf", tarball, "package/docs/manifest.json"],
@@ -483,9 +491,9 @@ export function formatNpmCompatibilityArtifactCliError(
 ): string {
   const requestedIsKnown = requestedOperation === "pack" ||
     requestedOperation === "verify" || requestedOperation === "materialize";
-  const operation = error instanceof NpmCompatibilityArtifactError
-    ? error.operation
-    : (requestedIsKnown ? requestedOperation : undefined);
+  let operation: NpmCompatibilityArtifactOperation | undefined;
+  if (error instanceof NpmCompatibilityArtifactError) operation = error.operation;
+  else if (requestedIsKnown) operation = requestedOperation;
   const packageName = error instanceof NpmCompatibilityArtifactError
     ? safePackageName(error.context.packageName)
     : undefined;
