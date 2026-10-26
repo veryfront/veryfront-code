@@ -174,29 +174,81 @@ interface SourceSnapshotFile {
   updated_at?: string;
 }
 
+function captureCachedReceiptFile(file: SourceSnapshotFile): SourceSnapshotFile | undefined {
+  const path = getOwnSourceSnapshotValue(file, "path");
+  if (typeof path !== "string") return undefined;
+  const record: SourceSnapshotFile = { path };
+  const keys = ["id", "version_id", "content", "type", "updated_at"] as const;
+  for (let keyIndex = 0; keyIndex < keys.length; keyIndex++) {
+    const key = keys[keyIndex]!;
+    const value = getOwnSourceSnapshotValue(file, key);
+    if (value === null) continue;
+    if (typeof value !== "string") return undefined;
+    SourceObservationDefineProperty(record, key, sourceObservationDescriptor(value));
+  }
+  const size = getOwnSourceSnapshotValue(file, "size");
+  if (size !== null) {
+    if (typeof size !== "number") return undefined;
+    SourceObservationDefineProperty(record, "size", sourceObservationDescriptor(size));
+  }
+  return record;
+}
+
 function captureCachedReceiptFiles(files: SourceSnapshotFile[]): SourceSnapshotFile[] | undefined {
   const captured: SourceSnapshotFile[] = [];
   for (let index = 0; index < files.length; index++) {
-    const file = files[index]!;
-    const path = getOwnSourceSnapshotValue(file, "path");
-    if (typeof path !== "string") return undefined;
-    const record: SourceSnapshotFile = { path };
-    const keys = ["id", "version_id", "content", "type", "updated_at"] as const;
-    for (let keyIndex = 0; keyIndex < keys.length; keyIndex++) {
-      const key = keys[keyIndex]!;
-      const value = getOwnSourceSnapshotValue(file, key);
-      if (value === null) continue;
-      if (typeof value !== "string") return undefined;
-      SourceObservationDefineProperty(record, key, sourceObservationDescriptor(value));
-    }
-    const size = getOwnSourceSnapshotValue(file, "size");
-    if (size !== null) {
-      if (typeof size !== "number") return undefined;
-      SourceObservationDefineProperty(record, "size", sourceObservationDescriptor(size));
-    }
+    const record = captureCachedReceiptFile(files[index]!);
+    if (!record) return undefined;
     SourceObservationDefineProperty(captured, captured.length, sourceObservationDescriptor(record));
   }
   return captured;
+}
+
+function isSafeSourceObservationPath(path: string): boolean {
+  if (!path || privateByteLength(encodePrivateText(path)) > 1024) return false;
+  for (let offset = 0; offset < path.length; offset++) {
+    const code = IntrinsicReflectApply(StringPrototypeCharCodeAt, path, [offset]) as number;
+    if (code < 32 || (code >= 127 && code <= 159) || code === 92) return false;
+  }
+  const parts = IntrinsicReflectApply(StringPrototypeSplit, path, ["/"]) as string[];
+  for (let part = 0; part < parts.length; part++) {
+    if (!parts[part] || parts[part] === "." || parts[part] === "..") return false;
+  }
+  return true;
+}
+
+function captureSourceObservationMembers(
+  captured: SourceSnapshotFile[],
+): { path: string; sha256: string }[] | undefined {
+  const members: { path: string; sha256: string }[] = [];
+  for (let index = 0; index < captured.length; index++) {
+    const file = captured[index]!;
+    const path = IntrinsicReflectApply(StringPrototypeStartsWith, file.path, ["/"])
+      ? IntrinsicReflectApply(StringPrototypeSlice, file.path, [1]) as string
+      : file.path;
+    if (typeof file.content !== "string" || !isSafeSourceObservationPath(path)) return undefined;
+    const hash = createHash("sha256");
+    IntrinsicReflectApply(HashPrototypeUpdate, hash, [file.content, "utf8"]);
+    SourceObservationDefineProperty(
+      members,
+      members.length,
+      sourceObservationDescriptor({
+        path,
+        sha256: IntrinsicReflectApply(HashPrototypeDigest, hash, ["hex"]) as string,
+      }),
+    );
+  }
+  IntrinsicReflectApply(SourceObservationArraySort, members, [
+    (a: { path: string }, b: { path: string }) =>
+      SourceObservationBufferCompare(
+        SourceObservationBufferFrom(a.path, "utf8"),
+        SourceObservationBufferFrom(b.path, "utf8"),
+      ),
+  ]);
+  for (let index = 1; index < members.length; index++) {
+    if (members[index - 1]!.path === members[index]!.path) return undefined;
+  }
+  return members;
 }
 
 type SourceSnapshotFileKey = keyof SourceSnapshotFile;
@@ -524,14 +576,14 @@ async function collectActiveSkillDirectories(
   const projectPaths = new IntrinsicMap<number, string>();
   const records = new IntrinsicMap<number, SourceSnapshotRecord>();
   const fileCount = files.length;
-  for (let fileIndex = 0; fileIndex < fileCount; fileIndex++) {
+  const captureFile = (fileIndex: number): boolean => {
     const record = captureSourceSnapshotRecord(files[fileIndex]!);
     const path = record[0];
     if (
       typeof path !== "string" ||
       IntrinsicReflectApply(MapPrototypeGet, seenPaths, [path]) === true
     ) {
-      return undefined;
+      return false;
     }
     IntrinsicReflectApply(MapPrototypeSet, seenPaths, [path, true]);
     IntrinsicReflectApply(MapPrototypeSet, records, [fileIndex, record]);
@@ -539,6 +591,10 @@ async function collectActiveSkillDirectories(
       ? IntrinsicReflectApply(StringPrototypeSlice, path, [1]) as string
       : path;
     IntrinsicReflectApply(MapPrototypeSet, projectPaths, [fileIndex, projectPath]);
+    return true;
+  };
+  for (let fileIndex = 0; fileIndex < fileCount; fileIndex++) {
+    if (!captureFile(fileIndex)) return undefined;
     if ((fileIndex + 1) % SOURCE_SNAPSHOT_YIELD_RECORDS === 0) {
       await yieldSourceSnapshotTask();
     }
@@ -554,8 +610,7 @@ async function collectActiveSkillDirectories(
   }
 
   const agentDirectories = new IntrinsicMap<string, true>();
-  for (let fileIndex = 0; fileIndex < fileCount; fileIndex++) {
-    const projectPath = IntrinsicReflectApply(MapPrototypeGet, projectPaths, [fileIndex]) as string;
+  const collectAgentDirectories = (projectPath: string): void => {
     for (let rootIndex = 0; rootIndex < paths.agent.length; rootIndex++) {
       const root = paths.agent[rootIndex]!;
       const relativePath = relativeDiscoveryPath(projectPath, root);
@@ -571,14 +626,17 @@ async function collectActiveSkillDirectories(
         ]);
       }
     }
+  };
+  for (let fileIndex = 0; fileIndex < fileCount; fileIndex++) {
+    const projectPath = IntrinsicReflectApply(MapPrototypeGet, projectPaths, [fileIndex]) as string;
+    collectAgentDirectories(projectPath);
     if ((fileIndex + 1) % SOURCE_SNAPSHOT_YIELD_RECORDS === 0) {
       await yieldSourceSnapshotTask();
     }
   }
 
   const skillDirectories = new IntrinsicMap<string, true>();
-  for (let fileIndex = 0; fileIndex < fileCount; fileIndex++) {
-    const projectPath = IntrinsicReflectApply(MapPrototypeGet, projectPaths, [fileIndex]) as string;
+  const collectConfiguredSkillDirectories = (projectPath: string): void => {
     for (let rootIndex = 0; rootIndex < paths.skill.length; rootIndex++) {
       const root = paths.skill[rootIndex]!;
       const relativePath = relativeDiscoveryPath(projectPath, root);
@@ -591,6 +649,8 @@ async function collectActiveSkillDirectories(
         addActiveSkillDirectory(skillDirectories, joinDiscoveryPath(root, segments[0]!));
       }
     }
+  };
+  const collectAgentSkillDirectories = (projectPath: string): void => {
     for (let rootIndex = 0; rootIndex < paths.agent.length; rootIndex++) {
       const root = paths.agent[rootIndex]!;
       const relativePath = relativeDiscoveryPath(projectPath, root);
@@ -612,6 +672,11 @@ async function collectActiveSkillDirectories(
         );
       }
     }
+  };
+  for (let fileIndex = 0; fileIndex < fileCount; fileIndex++) {
+    const projectPath = IntrinsicReflectApply(MapPrototypeGet, projectPaths, [fileIndex]) as string;
+    collectConfiguredSkillDirectories(projectPath);
+    collectAgentSkillDirectories(projectPath);
     if ((fileIndex + 1) % SOURCE_SNAPSHOT_YIELD_RECORDS === 0) {
       await yieldSourceSnapshotTask();
     }
@@ -891,12 +956,12 @@ export class VeryfrontFSAdapter implements FSAdapter {
   readonly maxWholeFileReadBytes = DEFAULT_VERYFRONT_API_SUCCESS_BODY_BYTES;
   readonly symlinkSemantics = "none" as const;
   readonly projectContextSemantics: "fixed" | undefined;
-  private client: VeryfrontApiClient;
-  private cache: FileCache;
-  private normalizer: PathNormalizer;
-  private readOps: ReadOperations;
-  private dirOps: DirectoryOperations;
-  private statOps: StatOperations;
+  private readonly client: VeryfrontApiClient;
+  private readonly cache: FileCache;
+  private readonly normalizer: PathNormalizer;
+  private readonly readOps: ReadOperations;
+  private readonly dirOps: DirectoryOperations;
+  private readonly statOps: StatOperations;
   private initialized = false;
   private initializationFlight: SharedInitialization | null = null;
   private exactReadInitializationPromise: Promise<void> | null = null;
@@ -2678,45 +2743,8 @@ export class VeryfrontFSAdapter implements FSAdapter {
     if (files.length === 0 || files.length > 256) return undefined;
     const captured = captureCachedReceiptFiles(files);
     if (!captured) return undefined;
-    const members: { path: string; sha256: string }[] = [];
-    for (let index = 0; index < captured.length; index++) {
-      const file = captured[index]!;
-      const path = IntrinsicReflectApply(StringPrototypeStartsWith, file.path, ["/"])
-        ? IntrinsicReflectApply(StringPrototypeSlice, file.path, [1]) as string
-        : file.path;
-      if (
-        typeof file.content !== "string" || !path ||
-        privateByteLength(encodePrivateText(path)) > 1024
-      ) return undefined;
-      for (let offset = 0; offset < path.length; offset++) {
-        const code = IntrinsicReflectApply(StringPrototypeCharCodeAt, path, [offset]) as number;
-        if (code < 32 || (code >= 127 && code <= 159) || code === 92) return undefined;
-      }
-      const parts = IntrinsicReflectApply(StringPrototypeSplit, path, ["/"]) as string[];
-      for (let part = 0; part < parts.length; part++) {
-        if (!parts[part] || parts[part] === "." || parts[part] === "..") return undefined;
-      }
-      const hash = createHash("sha256");
-      IntrinsicReflectApply(HashPrototypeUpdate, hash, [file.content, "utf8"]);
-      SourceObservationDefineProperty(
-        members,
-        members.length,
-        sourceObservationDescriptor({
-          path,
-          sha256: IntrinsicReflectApply(HashPrototypeDigest, hash, ["hex"]) as string,
-        }),
-      );
-    }
-    IntrinsicReflectApply(SourceObservationArraySort, members, [
-      (a: { path: string }, b: { path: string }) =>
-        SourceObservationBufferCompare(
-          SourceObservationBufferFrom(a.path, "utf8"),
-          SourceObservationBufferFrom(b.path, "utf8"),
-        ),
-    ]);
-    for (let index = 1; index < members.length; index++) {
-      if (members[index - 1]!.path === members[index]!.path) return undefined;
-    }
+    const members = captureSourceObservationMembers(captured);
+    if (!members) return undefined;
     const fingerprint = await computeSourceSnapshotFingerprint(captured, "complete");
     if (
       !fingerprint || this.#sourceSnapshotFiles !== files ||
@@ -2758,13 +2786,12 @@ export class VeryfrontFSAdapter implements FSAdapter {
     }
 
     const version = this.#sourceSnapshotVersion;
-    const cached = purpose === "agent-config"
-      ? hasMarkdownPaths
-        ? this.scopedAgentConfigSourceSnapshotFingerprint?.scopeKey === markdownScopeKey
-          ? this.scopedAgentConfigSourceSnapshotFingerprint
-          : undefined
-        : this.agentConfigSourceSnapshotFingerprint
-      : this.sourceSnapshotFingerprint;
+    let cached: { version: number; value: Promise<string | undefined> } | undefined;
+    if (purpose !== "agent-config") cached = this.sourceSnapshotFingerprint;
+    else if (!hasMarkdownPaths) cached = this.agentConfigSourceSnapshotFingerprint;
+    else if (this.scopedAgentConfigSourceSnapshotFingerprint?.scopeKey === markdownScopeKey) {
+      cached = this.scopedAgentConfigSourceSnapshotFingerprint;
+    }
     if (cached?.version === version) {
       return cached.value;
     }
@@ -2885,7 +2912,8 @@ export class VeryfrontFSAdapter implements FSAdapter {
     try {
       await this.#withBranchSnapshotRecovery(path, () => this.statOps.stat(path));
       return true;
-    } catch (_) {
+    } catch {
+      // Existence probes report any failed lookup as absent, preserving their boolean contract.
       return false;
     }
   }
