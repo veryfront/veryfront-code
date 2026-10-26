@@ -319,9 +319,8 @@ async function verifyInstallIndex(
 
 // Keep ordering in parity with the publisher's precision-safe rc_key comparator.
 function prereleaseParts(version: string): string[] | undefined {
-  const match =
-    /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)$/
-      .exec(version);
+  const match = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)$/
+    .exec(version);
   if (!match) return undefined;
   const prerelease = match[4].split(".");
   if (prerelease.some((part) => /^0\d+$/.test(part))) return undefined;
@@ -410,9 +409,7 @@ function classifyLookupError(
   if (!isTimeoutError(error)) {
     throw new RegistryReleaseError(
       "lookup",
-      `${spec} registry lookup failed: ${
-        error instanceof Error ? error.message : String(error)
-      }.`,
+      `${spec} registry lookup failed: ${error instanceof Error ? error.message : String(error)}.`,
       registryErrorContext(options, "registry lookup failed"),
     );
   }
