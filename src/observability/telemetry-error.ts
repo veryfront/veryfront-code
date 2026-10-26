@@ -67,7 +67,8 @@ function readOwnDescriptorGetter(
     if (!descriptor || !hasOwn(descriptor, "get")) return undefined;
     const getter = descriptor.get;
     return typeof getter === "function" ? getter : undefined;
-  } catch (_) {
+  } catch {
+    // Unavailable native URL accessors disable URL inspection.
     return undefined;
   }
 }
@@ -82,7 +83,8 @@ function readOwnErrorString(
     if (!hasOwn(descriptor, "value")) return INVALID_ERROR_FIELD;
     const value = descriptor.value;
     return typeof value === "string" ? value : INVALID_ERROR_FIELD;
-  } catch (_) {
+  } catch {
+    // An uninspectable field is invalid; never invoke an accessor as a fallback.
     return INVALID_ERROR_FIELD;
   }
 }
@@ -92,7 +94,8 @@ function readOwnErrorDataField(error: Error, key: PropertyKey): unknown {
     const descriptor = getOwnPropertyDescriptor(error, key);
     if (!descriptor || !hasOwn(descriptor, "value")) return undefined;
     return descriptor.value;
-  } catch (_) {
+  } catch {
+    // Uninspectable error data is omitted from telemetry.
     return undefined;
   }
 }
@@ -116,7 +119,8 @@ function readNativeErrorStack(error: Error): string | undefined {
     if (descriptor && hasOwn(descriptor, "value")) {
       return typeof descriptor.value === "string" ? descriptor.value : undefined;
     }
-  } catch (_) {
+  } catch {
+    // A failed own-stack inspection omits the stack instead of invoking a formatter.
     return undefined;
   }
   // Accessor-valued runtime stacks are delegated to the compat reader, which
@@ -200,6 +204,18 @@ export function sanitizeTelemetryText(value: string, maxLength: number): string 
   return `${apply(stringSlice, sanitized, [0, end]) as string}…`;
 }
 
+function isNonFiniteTelemetryNumber(value: unknown): boolean {
+  return typeof value === "number" && !Number.isFinite(value);
+}
+
+type TelemetryArrayItem = string | number | boolean;
+
+function sanitizeTelemetryArrayItem(item: TelemetryArrayItem): TelemetryArrayItem {
+  return typeof item === "string"
+    ? sanitizeTelemetryText(item, MAX_TRACE_ATTRIBUTE_VALUE_SIZE)
+    : item;
+}
+
 /** Redact a single flattened telemetry attribute. */
 export function sanitizeTelemetryAttributeValue(
   key: string,
@@ -209,26 +225,29 @@ export function sanitizeTelemetryAttributeValue(
   if (typeof value === "string") {
     return sanitizeTelemetryText(value, MAX_TRACE_ATTRIBUTE_VALUE_SIZE);
   }
-  if (typeof value === "number" && !Number.isFinite(value)) return undefined;
+  if (isNonFiniteTelemetryNumber(value)) return undefined;
   if (Array.isArray(value)) {
     try {
       if (value.length > MAX_TELEMETRY_ATTRIBUTE_ARRAY_LENGTH) return REDACTED;
-      const sanitized: (string | number | boolean)[] = [];
+      const sanitized: TelemetryArrayItem[] = [];
       for (let index = 0; index < value.length; index++) {
         const item = value[index];
-        if (typeof item === "number" && !Number.isFinite(item)) return REDACTED;
-        sanitized.push(
-          typeof item === "string"
-            ? sanitizeTelemetryText(item, MAX_TRACE_ATTRIBUTE_VALUE_SIZE)
-            : item,
-        );
+        if (isNonFiniteTelemetryNumber(item)) return REDACTED;
+        sanitized.push(sanitizeTelemetryArrayItem(item));
       }
       return sanitized;
-    } catch (_) {
+    } catch {
+      // A hostile array redacts the whole attribute instead of escaping sanitization.
       return REDACTED;
     }
   }
   return value;
+}
+
+function boundedTelemetryAttributeKey(key: string): string {
+  return key.length <= MAX_TELEMETRY_ATTRIBUTE_KEY_LENGTH
+    ? key
+    : apply(stringSlice, key, [0, MAX_TELEMETRY_ATTRIBUTE_KEY_LENGTH]) as string;
 }
 
 /** Return a redacted copy of a flattened telemetry attribute record. */
@@ -252,9 +271,7 @@ export function sanitizeTelemetryAttributes<
   for (let index = 0; index < keyCount; index++) {
     const key = keys[index];
     if (key === undefined) continue;
-    const boundedKey = key.length <= MAX_TELEMETRY_ATTRIBUTE_KEY_LENGTH
-      ? key
-      : apply(stringSlice, key, [0, MAX_TELEMETRY_ATTRIBUTE_KEY_LENGTH]) as string;
+    const boundedKey = boundedTelemetryAttributeKey(key);
     if (!boundedKey || retainedKeys.has(boundedKey)) continue;
 
     let value: TelemetryAttributeValue = REDACTED;
@@ -286,7 +303,8 @@ function cloneNativeDate(value: object): Date | undefined {
   try {
     const timestamp = apply(dateGetTime, value, []) as number;
     return new NativeDate(timestamp);
-  } catch (_) {
+  } catch {
+    // A failed native Date brand check leaves the value for ordinary container handling.
     return undefined;
   }
 }
@@ -306,7 +324,8 @@ function cloneNativeUrl(value: object): URL | string | typeof NOT_NATIVE_URL {
     const sanitizedHref = sanitizeUrlCredentials(href);
     if (sanitizedHref.length > MAX_OBSERVABILITY_CONFIG_TEXT_LENGTH) return REDACTED;
     return new NativeURL(sanitizedHref);
-  } catch (_) {
+  } catch {
+    // A URL that cannot be safely cloned is redacted, including its credentials.
     return REDACTED;
   }
 }
@@ -318,6 +337,83 @@ function snapshotStructuredError(value: Error): Record<string, unknown> {
     name: snapshot.name,
     stack: snapshot.stack,
   };
+}
+
+function readStructuredJson(
+  value: unknown,
+  depth: number,
+  seen: Set<object>,
+  budget: StructuredTelemetryBudget,
+): { value: unknown } | undefined {
+  let toJSON: unknown;
+  try {
+    toJSON = (value as { toJSON?: unknown }).toJSON;
+  } catch {
+    // A throwing serialization getter cannot supply safe telemetry data.
+    return { value: REDACTED };
+  }
+  if (typeof toJSON !== "function") return undefined;
+  try {
+    return { value: sanitizeStructuredValue(toJSON.call(value), depth + 1, seen, budget) };
+  } catch {
+    // A failed custom serialization redacts the container and preserves the original failure.
+    return { value: REDACTED };
+  }
+}
+
+function sanitizeStructuredRecord(
+  value: Record<string, unknown>,
+  depth: number,
+  seen: Set<object>,
+  budget: StructuredTelemetryBudget,
+): unknown {
+  let keys: string[];
+  try {
+    keys = objectKeys(value);
+  } catch (_) {
+    return REDACTED;
+  }
+  if (keys.length > MAX_STRUCTURED_TELEMETRY_CONTAINER_ENTRIES) {
+    return REDACTED;
+  }
+
+  const copy: Record<string, unknown> = {};
+  const retainedKeys = new Set<string>();
+  for (const key of keys) {
+    const boundedKey = sanitizeTelemetryText(key, LOG_PREVIEW_MAX_LENGTH_CHARS);
+    if (retainedKeys.has(boundedKey)) return REDACTED;
+    let child: unknown = REDACTED;
+    if (!isSensitiveKey(key)) {
+      try {
+        child = sanitizeStructuredValue(
+          value[key],
+          depth + 1,
+          seen,
+          budget,
+        );
+      } catch (_) {
+        child = REDACTED;
+      }
+    }
+    if (budget.exhausted) return REDACTED;
+    defineProperty(copy, boundedKey, {
+      configurable: true,
+      enumerable: true,
+      value: child,
+      writable: true,
+    });
+    retainedKeys.add(boundedKey);
+  }
+  return copy;
+}
+
+function cloneNativeStructuredValue(value: unknown): { value: unknown } | undefined {
+  if (typeof value !== "object" || value === null) return undefined;
+  if (isNativeErrorWithoutHooks(value)) return { value: snapshotStructuredError(value) };
+  const clonedDate = cloneNativeDate(value);
+  if (clonedDate) return { value: clonedDate };
+  const clonedUrl = cloneNativeUrl(value);
+  return clonedUrl === NOT_NATIVE_URL ? undefined : { value: clonedUrl };
 }
 
 function sanitizeStructuredValue(
@@ -345,85 +441,28 @@ function sanitizeStructuredValue(
   if (depth >= MAX_STRUCTURED_TELEMETRY_DEPTH || seen.has(value)) return REDACTED;
   if (isProxyWithoutHooks(value)) return REDACTED;
 
-  if (isNativeErrorWithoutHooks(value)) return snapshotStructuredError(value);
-  const clonedDate = cloneNativeDate(value);
-  if (clonedDate) return clonedDate;
-  const clonedUrl = cloneNativeUrl(value);
-  if (clonedUrl !== NOT_NATIVE_URL) return clonedUrl;
+  const nativeSnapshot = cloneNativeStructuredValue(value);
+  if (nativeSnapshot) return nativeSnapshot.value;
 
   seen.add(value);
   try {
-    let toJSON: unknown;
-    try {
-      toJSON = (value as { toJSON?: unknown }).toJSON;
-    } catch (_) {
+    const jsonSnapshot = readStructuredJson(value, depth, seen, budget);
+    if (jsonSnapshot) return jsonSnapshot.value;
+
+    if (!Array.isArray(value)) {
+      return sanitizeStructuredRecord(value as Record<string, unknown>, depth, seen, budget);
+    }
+    if (value.length > MAX_STRUCTURED_TELEMETRY_CONTAINER_ENTRIES) {
       return REDACTED;
     }
-    if (typeof toJSON === "function") {
+    const copy: unknown[] = [];
+    for (let index = 0; index < value.length; index++) {
       try {
-        return sanitizeStructuredValue(
-          toJSON.call(value),
-          depth + 1,
-          seen,
-          budget,
-        );
+        copy.push(sanitizeStructuredValue(value[index], depth + 1, seen, budget));
       } catch (_) {
-        return REDACTED;
-      }
-    }
-
-    if (Array.isArray(value)) {
-      if (value.length > MAX_STRUCTURED_TELEMETRY_CONTAINER_ENTRIES) {
-        return REDACTED;
-      }
-      const copy: unknown[] = [];
-      for (let index = 0; index < value.length; index++) {
-        try {
-          copy.push(sanitizeStructuredValue(value[index], depth + 1, seen, budget));
-        } catch (_) {
-          copy.push(REDACTED);
-        }
-        if (budget.exhausted) return REDACTED;
-      }
-      return copy;
-    }
-
-    let keys: string[];
-    try {
-      keys = objectKeys(value);
-    } catch (_) {
-      return REDACTED;
-    }
-    if (keys.length > MAX_STRUCTURED_TELEMETRY_CONTAINER_ENTRIES) {
-      return REDACTED;
-    }
-
-    const copy: Record<string, unknown> = {};
-    const retainedKeys = new Set<string>();
-    for (const key of keys) {
-      const boundedKey = sanitizeTelemetryText(key, LOG_PREVIEW_MAX_LENGTH_CHARS);
-      if (retainedKeys.has(boundedKey)) return REDACTED;
-      let child: unknown = REDACTED;
-      if (!isSensitiveKey(key)) {
-        try {
-          child = sanitizeStructuredValue(
-            (value as Record<string, unknown>)[key],
-            depth + 1,
-            seen,
-            budget,
-          );
-        } catch (_) {
-          child = REDACTED;
-        }
+        copy.push(REDACTED);
       }
       if (budget.exhausted) return REDACTED;
-      defineProperty(copy, boundedKey, {
-        configurable: true,
-        enumerable: true,
-        value: child,
-        writable: true,
-      });
-      retainedKeys.add(boundedKey);
     }
     return copy;
   } finally {
@@ -487,21 +526,21 @@ export function sanitizeErrorForTelemetry(
       source ? readNativeErrorMessage(source) : primitiveErrorMessage(error),
       MAX_STRING_DISPLAY_LENGTH,
     );
-    const name = source
-      ? sanitizeTelemetryText(
+    let name: string;
+    if (source) {
+      name = sanitizeTelemetryText(
         readNativeErrorNameWithoutHooks(source),
         LOG_PREVIEW_MAX_LENGTH_CHARS,
-      )
-      : safeName === undefined
-      ? "Unknown"
-      : sanitizeTelemetryText(safeName, LOG_PREVIEW_MAX_LENGTH_CHARS);
+      );
+    } else if (safeName === undefined) name = "Unknown";
+    else name = sanitizeTelemetryText(safeName, LOG_PREVIEW_MAX_LENGTH_CHARS);
     const sourceStack = source && detail === "withStack" ? readNativeErrorStack(source) : undefined;
     const stack = sourceStack === undefined
       ? undefined
       : sanitizeTelemetryText(sourceStack, MAX_STRING_DISPLAY_LENGTH);
 
     return createDetachedTelemetryError(message, name, stack);
-  } catch (_) {
+  } catch {
     // Telemetry is best effort and must never replace the application outcome.
     return createErrorShapedRecord("Unknown error", "Unknown");
   }
@@ -531,7 +570,8 @@ function matchTransientErrorCode(text: string): string | undefined {
   try {
     const match = apply(regExpExec, TELEMETRY_ERROR_CODE_RE, [text]) as RegExpExecArray | null;
     return typeof match?.[1] === "string" ? match[1] : undefined;
-  } catch (_) {
+  } catch {
+    // A failed code classification omits the code instead of exposing the error text.
     return undefined;
   }
 }
@@ -566,7 +606,7 @@ export function telemetryErrorType(error: unknown): string {
 
     const name = readNativeErrorNameWithoutHooks(error);
     return apply(setHas, SAFE_TELEMETRY_ERROR_NAMES, [name]) === true ? name : "Error";
-  } catch (_) {
+  } catch {
     // Classification is best effort and must never change the outcome it reports on.
     return "Error";
   }
@@ -587,7 +627,8 @@ function readErrorCause(error: unknown): unknown {
     const descriptor = getOwnPropertyDescriptor(error, "cause");
     if (!descriptor || !hasOwn(descriptor, "value")) return NO_CAUSE;
     return descriptor.value;
-  } catch (_) {
+  } catch {
+    // An uninspectable cause stops traversal rather than running an accessor.
     return NO_CAUSE;
   }
 }
@@ -601,7 +642,8 @@ export function telemetryErrorCauseType(error: unknown): string | undefined {
   try {
     const cause = readErrorCause(error);
     return cause === NO_CAUSE ? undefined : telemetryErrorType(cause);
-  } catch (_) {
+  } catch {
+    // Failure to classify a cause must not replace the application failure.
     return undefined;
   }
 }
@@ -1025,11 +1067,13 @@ const LOGGABLE_ANTHROPIC_STREAM_ISSUES = new NativeSet<string>([
   "Anthropic retained content exceeded 16777216 UTF-8 bytes (citation delta)",
 ]);
 
+function isSuccessfulProviderStream(entry: LoggedErrorCause): boolean {
+  return (entry.name === "ProviderRequestError" || entry.name === "ProviderStreamProtocolError") &&
+    (entry.provider === "openai" || entry.provider === "anthropic") && entry.status === 200;
+}
+
 function addSuccessfulStreamIssueForLog(error: Error, entry: LoggedErrorCause): void {
-  if (
-    (entry.name === "ProviderRequestError" || entry.name === "ProviderStreamProtocolError") &&
-    (entry.provider === "openai" || entry.provider === "anthropic") && entry.status === 200
-  ) {
+  if (isSuccessfulProviderStream(entry)) {
     // Anthropic: read from trusted WeakMap provenance, not from the error message.
     if (entry.provider === "anthropic") {
       const classification = readStreamProtocolClassification(error);
@@ -1109,6 +1153,18 @@ function addBoundedProviderDiagnostics(error: Error, entry: LoggedErrorCause): v
   }
 }
 
+function addNativeCauseMetadata(cause: unknown, entry: LoggedErrorCause): void {
+  if (isNativeErrorWithoutHooks(cause)) {
+    const rawName = readNativeErrorNameWithoutHooks(cause);
+    entry.name = apply(setHas, SAFE_TELEMETRY_ERROR_NAMES, [rawName]) === true ? rawName : "Error";
+    const code = readOwnErrorDataField(cause, "code");
+    const knownCode = typeof code === "string" ? matchTransientErrorCode(code) : undefined;
+    if (knownCode !== undefined) entry.code = knownCode;
+    addBoundedProviderDiagnostics(cause, entry);
+    addSuccessfulStreamIssueForLog(cause, entry);
+  }
+}
+
 /**
  * Summarize the failures an error wraps for a server log: name, a
  * exact allowlisted diagnostics when present. Stacks and arbitrary messages
@@ -1128,17 +1184,7 @@ export function summarizeErrorCausesForLog(error: unknown): LoggedErrorCause[] |
       // Name and code are logged only as fixed classifications: an allowlisted
       // error name (else "Error"/"Unknown") and a known transient code token.
       const entry: LoggedErrorCause = { name: "Unknown" };
-      if (isNativeErrorWithoutHooks(cause)) {
-        const rawName = readNativeErrorNameWithoutHooks(cause);
-        entry.name = apply(setHas, SAFE_TELEMETRY_ERROR_NAMES, [rawName]) === true
-          ? rawName
-          : "Error";
-        const code = readOwnErrorDataField(cause, "code");
-        const knownCode = typeof code === "string" ? matchTransientErrorCode(code) : undefined;
-        if (knownCode !== undefined) entry.code = knownCode;
-        addBoundedProviderDiagnostics(cause, entry);
-        addSuccessfulStreamIssueForLog(cause, entry);
-      }
+      addNativeCauseMetadata(cause, entry);
       if (isLoggableCauseMessage(snapshot.message)) {
         entry.message = snapshot.message;
       } else if (snapshot.message.length > 0) {
