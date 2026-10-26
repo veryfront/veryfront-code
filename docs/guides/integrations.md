@@ -32,6 +32,14 @@ project has multiple accessible accounts. Framework tool calls inside an agent
 run use the connection selected by the hosted runtime, and a `connection_id`
 passed inside tool arguments is provider input rather than an account selector.
 
+## Google permissions
+
+Gmail requests `gmail.modify` for reading, drafts, sending, labels, and reversible
+Trash. Permanent message and thread deletion is not exposed. Existing broader
+grants remain active until the user revokes access and reconnects. Update the
+Google Cloud consent configuration to match the runtime scopes before recording
+verification evidence.
+
 ## Make your first call
 
 This walkthrough reads one Gmail message summary with `gmail__list_emails` and
