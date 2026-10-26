@@ -749,3 +749,7 @@ names or icon metadata:
 ## Related
 
 - [veryfront/integrations](../api-reference/veryfront/integrations.md): Connector catalog and helper API.
+
+### Text exports
+
+Drive document exports return readable UTF-8 text with its content type. Use `text/plain` for Docs or `text/csv` for Sheets. Binary downloads use a separate byte-safe response contract and are not enabled in the Drive catalog agent.

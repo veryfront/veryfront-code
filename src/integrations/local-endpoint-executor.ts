@@ -553,15 +553,15 @@ function isBinaryResponse(endpoint: IntegrationEndpoint): boolean {
   return endpoint.response?.encoding === "base64";
 }
 
-/** A binary response is a byte-exact download: GET only, never reshaped by a transform. */
+/** Encoded content is GET-only and never reshaped by a JSON transform. */
 function assertSupportedResponseEncoding(endpoint: IntegrationEndpoint): void {
-  if (!isBinaryResponse(endpoint)) return;
+  if (endpoint.response?.encoding === undefined) return;
   if (endpoint.method !== "GET") {
-    requestInvalid("Local integration binary responses require a GET endpoint");
+    requestInvalid("Local integration encoded responses require a GET endpoint");
   }
   const transform = endpoint.response?.transform;
   if (transform !== undefined && transform !== "") {
-    requestInvalid("Local integration binary responses cannot declare a transform");
+    requestInvalid("Local integration encoded responses cannot declare a transform");
   }
 }
 
@@ -813,12 +813,26 @@ async function readResponseJson(
   identity: LocalIntegrationDiagnosticIdentity,
   status: number,
   write: boolean,
+  textResponse = false,
 ): Promise<unknown> {
   const unusable = (reason: OmittedResponse): ResponseOmitted => {
     cancelResponseBody(response);
     if (!write) responseInvalid(identity, status);
     return new ResponseOmitted(reason);
   };
+  const rawContentType = responseHeaderValue(response, "content-type") ?? "";
+  const parameterStart = apply(stringIndexOf, rawContentType, [";"]) as number;
+  const bareContentType = parameterStart < 0
+    ? rawContentType
+    : slice(rawContentType, 0, parameterStart);
+  const mediaType = apply(stringToLowerCase, apply(stringTrim, bareContentType, []), []) as string;
+  if (
+    textResponse &&
+    (status !== 200 || slice(mediaType, 0, 5) !== "text/" ||
+      mediaType.length > MAX_BINARY_CONTENT_TYPE_LENGTH)
+  ) {
+    return unusable("unreadable");
+  }
   if (!contentLengthWithinLimit(response)) return unusable("too_large");
   let text: string;
   let truncated: boolean;
@@ -838,6 +852,7 @@ async function readResponseJson(
   ) {
     return unusable("too_large");
   }
+  if (textResponse) return freeze({ content: text, content_type: mediaType });
   // Accepted actions, such as Microsoft Graph sendMail, return 202 with no body.
   if (status === 202 && text === "") return null;
   let parsed: unknown;
@@ -975,6 +990,7 @@ async function executeTransportRequest(
   binary = false,
   write = false,
   rawBinaryMaxBytes?: number,
+  textResponse = false,
 ): Promise<{ readonly status: number; readonly value: unknown }> {
   let response: Response;
   try {
@@ -999,10 +1015,10 @@ async function executeTransportRequest(
       value: await readResponseBinary(response, signal, identity, status, rawBinaryMaxBytes),
     });
   }
-  if (status === 204) return freeze({ status, value: null });
+  if (status === 204 && !textResponse) return freeze({ status, value: null });
   return freeze({
     status,
-    value: await readResponseJson(response, signal, identity, status, write),
+    value: await readResponseJson(response, signal, identity, status, write, textResponse),
   });
 }
 
@@ -1082,6 +1098,7 @@ export async function executeLocalIntegrationEndpoint(
       binary,
       write,
       options.rawBinaryMaxBytes,
+      options.endpoint.response?.encoding === "text",
     );
     throwIfCallerAborted(options.signal);
     if (binary) return result.value;

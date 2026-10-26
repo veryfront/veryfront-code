@@ -15945,7 +15945,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "drive__export_file",
       "name": "Export File",
-      "description": "Export file",
+      "description": "Export document text",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -15960,10 +15960,12 @@ export const connectors: IntegrationConfig[] = [
           "mimeType": {
             "type": "string",
             "in": "query",
-            "description": "Export MIME type, e.g. text/plain, text/csv, application/pdf",
-            "required": true,
+            "description": "Text export format: text/plain for Docs or text/csv for Sheets",
+            "default": "text/plain",
+            "pattern": "^text/(plain|csv)$",
           },
         },
+        "response": { "encoding": "text" },
       },
     }],
     "prompts": [{
