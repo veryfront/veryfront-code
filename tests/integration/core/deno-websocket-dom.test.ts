@@ -204,7 +204,9 @@ for (const transport of ["native", "selected"] as const) {
         : runtime.server.upgradeWebSocket(request, { idleTimeout: 0 });
       upgrade.socket.onopen = () => {
         upgrade.socket.send(new Blob(["before-close"]));
-        assertEquals(upgrade.socket.bufferedAmount, 0);
+        // Native Deno 2.9.7 omits its JS Blob queue; the selected facade counts
+        // owned unsent bytes as required by the DOM bufferedAmount contract.
+        assertEquals(upgrade.socket.bufferedAmount, transport === "native" ? 0 : 12);
         if (transport === "selected") {
           assertThrows(() => upgrade.socket.close(1005), TypeError);
           assertEquals(upgrade.socket.readyState, WebSocket.OPEN);

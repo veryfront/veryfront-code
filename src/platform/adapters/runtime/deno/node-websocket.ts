@@ -17,6 +17,7 @@ export class DenoNodeWebSocket extends EventTarget implements WebSocket {
   private binary: BinaryType = "arraybuffer";
   private readonly sendQueue: Array<string | ArrayBuffer | Blob> = [];
   private sending = false;
+  private pendingSendBytes = 0;
   private queuedClose?: { code?: number; reason?: string };
 
   private openHandler: WebSocket["onopen"] = null;
@@ -73,6 +74,7 @@ export class DenoNodeWebSocket extends EventTarget implements WebSocket {
     inner.addEventListener("open", () => this.deliver(new Event("open")));
     inner.addEventListener("close", (event) => {
       this.sendQueue.length = 0;
+      this.pendingSendBytes = 0;
       const close = event as CloseEvent;
       this.deliver(
         new CloseEvent("close", {
@@ -103,7 +105,9 @@ export class DenoNodeWebSocket extends EventTarget implements WebSocket {
     throw new TypeError("Invalid WebSocket transport state");
   }
   get bufferedAmount(): number {
-    return this.readyState === this.OPEN ? this.inner._getBufferedAmount() : 0;
+    return this.readyState === this.OPEN
+      ? this.pendingSendBytes + this.inner._getBufferedAmount()
+      : 0;
   }
   get binaryType(): BinaryType {
     return this.binary;
@@ -129,6 +133,7 @@ export class DenoNodeWebSocket extends EventTarget implements WebSocket {
       this.inner.send(normalized);
       return;
     }
+    this.pendingSendBytes += this.sendByteLength(normalized);
     this.sendQueue.push(normalized);
     if (!this.sending) void this.flushSends();
   }
@@ -172,12 +177,15 @@ export class DenoNodeWebSocket extends EventTarget implements WebSocket {
         const item = this.sendQueue.shift()!;
         const data = item instanceof Blob ? await item.slice().arrayBuffer() : item;
         if (this.inner.readyState !== this.OPEN) break;
+        this.pendingSendBytes -= this.sendByteLength(item);
         this.inner.send(data);
       }
     } catch (error) {
+      this.pendingSendBytes = 0;
       this.inner._emitError(error instanceof Error ? error : new Error(String(error)));
     } finally {
       this.sendQueue.length = 0;
+      this.pendingSendBytes = 0;
       this.sending = false;
       const close = this.queuedClose;
       this.queuedClose = undefined;
@@ -189,6 +197,11 @@ export class DenoNodeWebSocket extends EventTarget implements WebSocket {
         }
       }
     }
+  }
+
+  private sendByteLength(data: string | ArrayBuffer | Blob): number {
+    if (typeof data === "string") return new TextEncoder().encode(data).byteLength;
+    return data instanceof Blob ? data.size : data.byteLength;
   }
 
   private updateHandler(
