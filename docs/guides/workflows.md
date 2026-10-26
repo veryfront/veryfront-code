@@ -233,17 +233,26 @@ Each scheduled trigger creates a workflow run backed by the selected runtime ada
 
 A step runs an agent or a tool:
 
-```ts
+```ts title="workflows/steps.ts"
+import { step } from "veryfront/workflow";
+
 // Run an agent
-step("research", { agent: "researcher" });
+export const research = step("research", { agent: "researcher" });
 
 // Run a tool
-step("fetch-data", { tool: "webScraper" });
+export const fetchData = step("fetch-data", { tool: "webScraper" });
 
 // With custom input
-step("summarize", {
+export const summarize = step("summarize", {
   agent: "writer",
-  input: (ctx) => `Summarize this: ${ctx.research}`,
+  input: (ctx) => {
+    const research = ctx.research;
+    const text = typeof research === "object" && research !== null &&
+        "text" in research && typeof research.text === "string"
+      ? research.text
+      : "";
+    return `Summarize this: ${text}`;
+  },
 });
 ```
 
@@ -292,7 +301,10 @@ parallel("all-required", steps, { strategy: "all" }); // Default: all must succe
 
 ## Branching
 
-Use `branch` for conditional paths:
+Use `branch` for conditional paths. An agent step stores an output envelope
+under its node ID: read generated text from `text` and schema-bound output
+from `data` (also available as `object`). This example assumes the classifier
+has an output schema containing a `category` string:
 
 ```ts
 import { branch, step, workflow } from "veryfront/workflow";
@@ -302,9 +314,14 @@ export default workflow({
   steps: [
     step("classify", { agent: "classifier" }),
     branch("route", {
-      condition: (ctx) =>
-        typeof ctx.classify === "object" && ctx.classify !== null &&
-        "category" in ctx.classify && ctx.classify.category === "billing",
+      condition: (ctx) => {
+        const result = ctx.classify;
+        const data = typeof result === "object" && result !== null && "data" in result
+          ? result.data
+          : undefined;
+        return typeof data === "object" && data !== null &&
+          "category" in data && data.category === "billing";
+      },
       then: [step("billing", { agent: "billing-agent" })],
       else: [step("technical", { agent: "tech-agent" })],
     }),
@@ -314,17 +331,23 @@ export default workflow({
 ```
 
 Shorthand helpers use the same flat node-output context. In this example, the
-`classify` step returns an object with a `sensitive` boolean, and the `cache`
-step returns `true` when the requested value is cached.
+`classify` agent's output schema contains a `sensitive` boolean, read from
+its output envelope's `data`. The `cache` tool step returns the raw boolean
+`true` when the requested value is cached.
 
 ```ts title="workflows/conditions.ts"
 import { step, unless, when } from "veryfront/workflow";
 
 export const needsApproval = when(
   "needs-approval",
-  (ctx) =>
-    typeof ctx.classify === "object" && ctx.classify !== null &&
-    "sensitive" in ctx.classify && ctx.classify.sensitive === true,
+  (ctx) => {
+    const result = ctx.classify;
+    const data = typeof result === "object" && result !== null && "data" in result
+      ? result.data
+      : undefined;
+    return typeof data === "object" && data !== null &&
+      "sensitive" in data && data.sensitive === true;
+  },
   [
     step("review", { agent: "reviewer" }),
   ],
@@ -505,18 +528,26 @@ Use `waitForRuns` when a workflow starts or receives the IDs of independently du
 must continue only after every one of them reaches a terminal status:
 
 Every listed run must be a direct child of the waiting workflow run. When the child runs are
-created, set their `parentRunId` to that workflow run's ID:
+created, set their `parentRunId` to that workflow run's ID and `nodeId` to
+the parent node that starts them. The request requires that parent's scoped
+execution credential; a project API token cannot assert parent authority.
+
+Run the following script only within the trusted parent execution. Its runtime
+must supply the current parent credential as `PARENT_WORKFLOW_EXECUTION_TOKEN`
+and replace the project and workflow-run placeholders. This application-defined
+environment variable is not a credential the SDK creates or discovers:
 
 ```ts title="scripts/start-release-check.ts"
 import { createRunsClient } from "veryfront/runs";
 
-const runs = createRunsClient({
-  authToken: process.env.VERYFRONT_API_TOKEN,
-});
+const parentToken = process.env.PARENT_WORKFLOW_EXECUTION_TOKEN;
+if (!parentToken) throw new Error("Set the current parent execution credential");
+const runs = createRunsClient({ authToken: parentToken });
 const workflowRunId = "<WORKFLOW_RUN_ID>"; // ID of the waiting parent workflow run
 const child = await runs.createTaskRun({
   projectId: "<PROJECT_ID>",
   parentRunId: workflowRunId,
+  nodeId: "start-children", // Must match the executing parent node
   target: "task:release-check",
 });
 ```

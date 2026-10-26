@@ -194,7 +194,7 @@ describe("Guide: middleware.mdx", () => {
 import type { Workflow, WorkflowNode } from "../../src/workflow/types.ts";
 import { MemoryBackend } from "../../src/workflow/backends/memory.ts";
 import { WorkflowExecutor } from "../../src/workflow/executor/workflow-executor.ts";
-import { branch, parallel, step, workflow } from "../../src/workflow/dsl/index.ts";
+import { parallel, step, workflow } from "../../src/workflow/dsl/index.ts";
 
 describe("Guide: workflows.mdx", () => {
   it("completes the guide content-generation configuration with the writer article", async () => {
@@ -281,22 +281,95 @@ describe("Guide: workflows.mdx", () => {
     assertEquals(report.id, "report");
   });
 
-  it("should create a workflow with branch", () => {
-    const support = workflow({
-      id: "support",
-      steps: [
-        step("classify", { agent: "classifier" }),
-        branch("route", {
-          condition: (ctx) =>
-            (ctx.results as Record<string, Record<string, string>>)?.classify?.category ===
-              "billing",
-          then: [step("billing", { agent: "billing-agent" })],
-          else: [step("technical", { agent: "tech-agent" })],
-        }),
-      ],
-    });
+  it("routes the documented branch using a real agent step-output envelope", async () => {
+    const guide = await Deno.readTextFile(
+      new URL("../../docs/guides/workflows.md", import.meta.url),
+    );
+    const section = guide.split("## Branching\n")[1];
+    assertExists(section);
+    const snippet = /```ts(?:[ \t]+[^\n]*)?\n([\s\S]*?)\n```/.exec(section)?.[1];
+    assertExists(snippet);
+    const source = snippet.replace(
+      '"veryfront/workflow"',
+      JSON.stringify(new URL("../../src/workflow/index.ts", import.meta.url).href),
+    );
+    const { default: support }: { default: Workflow } = await import(
+      `data:application/typescript,${encodeURIComponent(source)}`
+    );
+    for (const category of ["billing", "technical"]) {
+      const calls: string[] = [];
+      const agents = new Map(
+        ["classifier", "billing-agent", "tech-agent", "responder"].map((id) => [id, {
+          ...createGuideAgent({ id }),
+          generate: () => {
+            calls.push(id);
+            return Promise.resolve({
+              text: category,
+              messages: [],
+              toolCalls: [],
+              object: { category },
+              status: "completed" as const,
+            });
+          },
+        }]),
+      );
+      const backend = new MemoryBackend();
+      const executor = new WorkflowExecutor({
+        backend,
+        enableLocking: false,
+        stepExecutor: { agentRegistry: agents },
+      });
+      executor.register(support.definition);
+      const handle = await executor.start(support.id, {});
+      await handle.settled();
+      assertEquals((await backend.getRun(handle.runId))?.status, "completed");
+      assertEquals(calls, [
+        "classifier",
+        category === "billing" ? "billing-agent" : "tech-agent",
+        "responder",
+      ]);
+    }
+  });
 
-    assertExists(support);
+  it("passes agent text to the documented summarizer step", async () => {
+    const guide = await Deno.readTextFile(
+      new URL("../../docs/guides/workflows.md", import.meta.url),
+    );
+    const section = guide.split("## Steps\n")[1];
+    assertExists(section);
+    const snippet = /```ts(?:[ \t]+[^\n]*)?\n([\s\S]*?)\n```/.exec(section)?.[1];
+    assertExists(snippet);
+    const source = snippet.replace(
+      '"veryfront/workflow"',
+      JSON.stringify(new URL("../../src/workflow/index.ts", import.meta.url).href),
+    );
+    const { research, summarize }: { research: WorkflowNode; summarize: WorkflowNode } =
+      await import(`data:application/typescript,${encodeURIComponent(source)}`);
+    const inputs: string[] = [];
+    const agents = new Map(["researcher", "writer"].map((id) => [id, {
+      ...createGuideAgent({ id }),
+      generate: (options: { input: string }) => {
+        inputs.push(options.input);
+        return Promise.resolve({
+          text: "research facts",
+          messages: [],
+          toolCalls: [],
+          status: "completed" as const,
+        });
+      },
+    }]));
+    const definition = workflow({ id: "guide-summary", steps: [research, summarize] });
+    const backend = new MemoryBackend();
+    const executor = new WorkflowExecutor({
+      backend,
+      enableLocking: false,
+      stepExecutor: { agentRegistry: agents },
+    });
+    executor.register(definition.definition);
+    const handle = await executor.start(definition.id, {});
+    await handle.settled();
+    assertEquals((await backend.getRun(handle.runId))?.status, "completed");
+    assertEquals(inputs[1], "Summarize this: research facts");
   });
 
   it("executes the documented when/unless predicates with flat node outputs", async () => {
@@ -318,17 +391,69 @@ describe("Guide: workflows.mdx", () => {
     assert(needsApproval.config.type === "branch");
     assert(fetchUnlessCached.config.type === "branch");
     assertEquals(
-      await needsApproval.config.condition({ input: {}, classify: { sensitive: true } }),
+      await needsApproval.config.condition({
+        input: {},
+        classify: { text: "classified", data: { sensitive: true } },
+      }),
       true,
     );
     assertEquals(
-      await needsApproval.config.condition({ input: {}, classify: { sensitive: false } }),
+      await needsApproval.config.condition({
+        input: {},
+        classify: { text: "classified", data: { sensitive: false } },
+      }),
       false,
     );
     assertEquals(await needsApproval.config.condition({ input: {} }), false);
     assertEquals(await fetchUnlessCached.config.condition({ input: {}, cache: true }), false);
     assertEquals(await fetchUnlessCached.config.condition({ input: {}, cache: false }), true);
     assertEquals(await fetchUnlessCached.config.condition({ input: {} }), true);
+  });
+
+  it("sends parent execution authority and node correlation from the child-run script", async () => {
+    const guide = await Deno.readTextFile(
+      new URL("../../docs/guides/workflows.md", import.meta.url),
+    );
+    const snippet = /```ts title="scripts\/start-release-check\.ts"\n([\s\S]*?)\n```/.exec(guide)
+      ?.[1];
+    assertExists(snippet);
+    const source = snippet.replace(
+      '"veryfront/runs"',
+      JSON.stringify(new URL("../../src/runs/index.ts", import.meta.url).href),
+    );
+    const previousToken = Deno.env.get("PARENT_WORKFLOW_EXECUTION_TOKEN");
+    Deno.env.set("PARENT_WORKFLOW_EXECUTION_TOKEN", "test-parent-execution-token");
+    try {
+      await withMockedFetch([jsonResponse({
+        id: "11111111-1111-4111-8111-111111111111",
+        project_id: "22222222-2222-4222-8222-222222222222",
+        target: { type: "task", id: "release-check" },
+        status: "pending",
+        input: null,
+        output: null,
+        config: {},
+        created_at: "2026-03-20T12:00:00.000Z",
+        updated_at: "2026-03-20T12:00:00.000Z",
+      }, 202)], async (calls) => {
+        await import(`data:application/typescript,${encodeURIComponent(source)}`);
+        assertEquals(calls.length, 1);
+        const call = calls[0];
+        assertExists(call);
+        assertEquals(
+          new Headers(call.init?.headers).get("Authorization"),
+          "Bearer test-parent-execution-token",
+        );
+        const body: unknown = JSON.parse(String(call.init?.body));
+        assert(typeof body === "object" && body !== null);
+        assert("parent_run_id" in body && "node_id" in body && "target" in body);
+        assertEquals(body.parent_run_id, "<WORKFLOW_RUN_ID>");
+        assertEquals(body.node_id, "start-children");
+        assertEquals(body.target, { type: "task", id: "release-check" });
+      });
+    } finally {
+      if (previousToken === undefined) Deno.env.delete("PARENT_WORKFLOW_EXECUTION_TOKEN");
+      else Deno.env.set("PARENT_WORKFLOW_EXECUTION_TOKEN", previousToken);
+    }
   });
 
   it("should support input schema validation", () => {

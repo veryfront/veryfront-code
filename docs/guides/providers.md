@@ -83,7 +83,7 @@ AI SDK, see the [AI Gateway quickstart](./ai-gateway-quickstart.md).
 
 Set the project API key in your shell before running the examples:
 
-```bash title="set-gateway-key.sh"
+```bash title="Terminal"
 export VERYFRONT_API_KEY="<your-project-api-key>"
 ```
 
