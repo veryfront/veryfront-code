@@ -1,7 +1,7 @@
 import { Socket } from "node:net";
 import { it } from "#veryfront/testing/bdd.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
-import { DualProtocolServer } from "./dual-protocol-server.ts";
+import { DualProtocolServer } from "#veryfront/platform/adapters/runtime/node/dual-protocol-server.ts";
 
 it("dual protocol ownership does not expose raw sockets to authored Set observers", async () => {
   const server = new DualProtocolServer(() => {});

@@ -11,7 +11,7 @@ import {
   recordWebSocketBufferedAmount,
   recordWebSocketUpgradeIdleTimeout,
   revokeNodeWebSocketUpgradeRequest,
-} from "./http-upgrade-provenance.ts";
+} from "#veryfront/platform/adapters/runtime/shared/http-upgrade-provenance.ts";
 
 it("upgrade provenance does not expose requests to replaced collection methods", () => {
   const request = new Request("http://localhost", { headers: { authorization: "synthetic" } });
