@@ -25,7 +25,8 @@ import {
   type EnvironmentConfig,
 } from "#veryfront/config/environment-config.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
-import type { UserInfo } from "./login.ts";
+import { __setOAuthBrowserLauncherForTests, login, type UserInfo } from "./login.ts";
+import { setJsonMode } from "../shared/json-output.ts";
 import { resetInteractiveMode, setNonInteractive } from "../shared/interactive.ts";
 
 const STORED_CREDENTIAL_OUTAGES: ReadonlyArray<{
@@ -3589,5 +3590,132 @@ Deno.test("authentication preflight does not use project-mutated fetch when give
       },
     );
     assertEquals(loggedIn, { authenticated: true, type: "apiKey" });
+  });
+});
+
+const user = { id: "sign-in-user", email: "sign-in@example.test" };
+const unexpectedFailure = new Error("unexpected validation failure");
+const cases = [
+  {
+    name: "a user token",
+    token: "sign-in-user-token",
+    response: () => Response.json(user),
+    identity: user,
+    message: "Logged in as",
+  },
+  {
+    name: "an API key",
+    token: "vf_sign_in_test_key",
+    response: () => Response.json({}),
+    identity: { authenticated: true, type: "apiKey" },
+    message: "Authenticated with an API key",
+  },
+  {
+    name: "a rejected token",
+    token: "rejected-sign-in-token",
+    response: () => new Response(null, { status: 401 }),
+    identity: null,
+    message: "Invalid token",
+  },
+  {
+    name: "a network failure",
+    token: "unreachable-sign-in-token",
+    response: (): Response => {
+      throw new TypeError("network unavailable");
+    },
+    identity: null,
+    message: "Could not reach the Veryfront API",
+  },
+  {
+    name: "an unexpected failure",
+    token: "unexpected-sign-in-token",
+    response: (): Response => {
+      throw unexpectedFailure;
+    },
+    identity: null,
+    message: "Invalid token",
+  },
+] as const;
+
+describe("Interactive sign-in completion", { sanitizeOps: false, sanitizeResources: false }, () => {
+  for (const method of ["token", "github"] as const) {
+    for (const scenario of cases) {
+      it(`${method} handles ${scenario.name} and only stores validated credentials`, async () => {
+        const dir = await makeTempDir({ prefix: "sign-in-test-" });
+        const env = createTestEnvironmentConfig({
+          homeDir: dir,
+          xdgConfigHome: dir,
+          ci: false,
+          continuousIntegration: false,
+          sshClient: undefined,
+          sshTty: undefined,
+          display: ":test",
+        });
+        const originalPrompt = globalThis.prompt;
+        const originalLog = console.log;
+        const realFetch = globalThis.fetch;
+        const output: string[] = [];
+        const requested: string[] = [];
+        resetInteractiveMode();
+        setJsonMode(false);
+        globalThis.prompt = () => scenario.token;
+        console.log = (...args: unknown[]) => output.push(args.map(String).join(" "));
+        __setOAuthBrowserLauncherForTests(async (url) => {
+          const authUrl = new URL(url);
+          assertEquals(authUrl.pathname, "/auth/github");
+          const callback = new URL(authUrl.searchParams.get("redirect_uri")!);
+          assertEquals(callback.searchParams.get("state"), authUrl.searchParams.get("state"));
+          callback.searchParams.set("token", scenario.token);
+          const response = await realFetch(callback);
+          assertEquals(response.status, 200);
+          await response.body?.cancel();
+        });
+        try {
+          const result = await withMockFetch((_input, init) => {
+            requested.push(String(new Headers(init?.headers).get("authorization")));
+            return Promise.resolve(scenario.response());
+          }, () => login(method, env, dir));
+          assertEquals(result, scenario.identity);
+          assertEquals(requested, [`Bearer ${scenario.token}`]);
+          assertEquals(await readToken(env), scenario.identity ? scenario.token : null);
+          if (method === "token" || scenario.name === "a network failure") {
+            assertStringIncludes(output.join("\n"), scenario.message);
+          }
+          assertEquals(output.join("\n").includes(scenario.token), false);
+        } finally {
+          __setOAuthBrowserLauncherForTests();
+          globalThis.prompt = originalPrompt;
+          console.log = originalLog;
+          resetInteractiveMode();
+          await remove(dir, { recursive: true });
+        }
+      });
+    }
+  }
+
+  it("does not validate or store an empty entered token", async () => {
+    const dir = await makeTempDir({ prefix: "sign-in-empty-" });
+    const env = createTestEnvironmentConfig({ homeDir: dir, xdgConfigHome: dir });
+    const originalPrompt = globalThis.prompt;
+    const originalLog = console.log;
+    const output: string[] = [];
+    resetInteractiveMode();
+    setJsonMode(false);
+    globalThis.prompt = () => "   ";
+    console.log = (...args: unknown[]) => output.push(args.map(String).join(" "));
+    try {
+      await withMockFetch(() => {
+        throw new Error("Empty token must not be sent");
+      }, async () => {
+        assertEquals(await login("token", env, dir), null);
+      });
+      assertEquals(await readToken(env), null);
+      assertStringIncludes(output.join("\n"), "No token entered");
+    } finally {
+      globalThis.prompt = originalPrompt;
+      console.log = originalLog;
+      resetInteractiveMode();
+      await remove(dir, { recursive: true });
+    }
   });
 });

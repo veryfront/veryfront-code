@@ -76,7 +76,8 @@ function describeApiTokenSource(token: string): string {
   return `(via VERYFRONT_API_TOKEN from ${formatEnvSourcePathForDisplay(origin.file)})`;
 }
 
-export type AuthMethod = "google" | "github" | "microsoft" | "token";
+type BrowserAuthMethod = "google" | "github" | "microsoft";
+export type AuthMethod = BrowserAuthMethod | "token";
 
 export interface UserInfo {
   id: string;
@@ -254,7 +255,7 @@ export function createOAuthState(): string {
 }
 
 export function createOAuthAuthorizationUrl(
-  provider: "google" | "github" | "microsoft",
+  provider: BrowserAuthMethod,
   callbackUrl: string,
   state: string,
   env: EnvironmentConfig = getEnvironmentConfig(),
@@ -459,7 +460,7 @@ export async function openOAuthLogin(
 }
 
 async function loginWithOAuth(
-  provider: "google" | "github" | "microsoft",
+  provider: BrowserAuthMethod,
   env: EnvironmentConfig,
   spinner: SpinnerController,
 ): Promise<string | null> {
@@ -781,7 +782,7 @@ async function describeExistingSession(
 }
 
 async function loginWithBrowserCredential(
-  authMethod: "google" | "github" | "microsoft",
+  authMethod: BrowserAuthMethod,
   env: EnvironmentConfig,
   validationOptions: CredentialValidationOptions,
 ): Promise<AuthIdentity | null> {
@@ -959,7 +960,13 @@ export async function ensureAuthenticated(
   const humanOutput = !isJsonMode();
 
   const candidates = await resolveApiCredentialCandidatesForAuth(env, projectDir);
-  for (const candidate of candidates) {
+  async function authenticateCandidate(index: number): Promise<AuthIdentity | null> {
+    const candidate = candidates[index];
+    if (!candidate) {
+      return humanOutput
+        ? requestInteractiveAuthentication(env, projectDir, validationOptions)
+        : null;
+    }
     let credential: AuthIdentity | null;
     try {
       credential = await validateCredential(
@@ -987,11 +994,10 @@ export async function ensureAuthenticated(
     if (candidate.apiTokenSource === "token-store") {
       await removeRejectedStoredToken(env, humanOutput);
     }
+    return authenticateCandidate(index + 1);
   }
 
-  if (!humanOutput) return null;
-
-  return requestInteractiveAuthentication(env, projectDir, validationOptions);
+  return authenticateCandidate(0);
 }
 
 const CREDENTIAL_VALIDATION_UNAVAILABLE = Symbol("credential-validation-unavailable");
