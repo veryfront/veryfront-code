@@ -1,3 +1,5 @@
+import type { HttpHandlerResponse } from "../../base.ts";
+import type { NodeWebSocketConnection } from "#veryfront/extensions/websocket/node-websocket-server-provider.ts";
 import { INVALID_ARGUMENT } from "#veryfront/errors/error-registry/general.ts";
 
 // Capture before authored code can replace collection methods and observe
@@ -11,7 +13,7 @@ const setAdd = WeakSet.prototype.add;
 const setHas = WeakSet.prototype.has;
 
 const requests = new WeakMap<Request, string>();
-const idleTimeouts = new WeakMap<object, number>();
+const idleTimeouts = new WeakMap<HttpHandlerResponse, number>();
 
 /** @internal Only the listener grants upgrade ownership to its exact request. */
 export function recordNodeWebSocketUpgradeRequest(request: Request, id: string): void {
@@ -36,12 +38,15 @@ export function consumeNodeWebSocketUpgradeRequest(request: Request): string {
 }
 
 /** @internal Response policy never travels through caller-controlled headers. */
-export function recordWebSocketUpgradeIdleTimeout(response: object, seconds: number): void {
+export function recordWebSocketUpgradeIdleTimeout(
+  response: HttpHandlerResponse,
+  seconds: number,
+): void {
   apply(mapSet, idleTimeouts, [response, seconds]);
 }
 
 /** @internal Read the policy attached by the trusted upgrade adapter. */
-export function getWebSocketUpgradeIdleTimeout(response: object): number | undefined {
+export function getWebSocketUpgradeIdleTimeout(response: HttpHandlerResponse): number | undefined {
   return apply(mapGet, idleTimeouts, [response]) as number | undefined;
 }
 
@@ -50,19 +55,22 @@ export function revokeNodeWebSocketUpgradeRequest(request: Request): void {
   apply(mapDelete, requests, [request]);
 }
 
-const domResponses = new WeakSet<object>();
-const bufferedAmounts = new WeakMap<object, () => number>();
+const domResponses = new WeakSet<HttpHandlerResponse>();
+const bufferedAmounts = new WeakMap<NodeWebSocketConnection, () => number>();
 
-export function recordDenoWebSocketResponse(response: object): void {
+export function recordDenoWebSocketResponse(response: HttpHandlerResponse): void {
   apply(setAdd, domResponses, [response]);
 }
-export function isDenoWebSocketResponse(response: object): boolean {
+export function isDenoWebSocketResponse(response: HttpHandlerResponse): boolean {
   return apply(setHas, domResponses, [response]);
 }
-export function recordWebSocketBufferedAmount(connection: object, read: () => number): void {
+export function recordWebSocketBufferedAmount(
+  connection: NodeWebSocketConnection,
+  read: () => number,
+): void {
   apply(mapSet, bufferedAmounts, [connection, read]);
 }
-export function readWebSocketBufferedAmount(connection: object): number {
+export function readWebSocketBufferedAmount(connection: NodeWebSocketConnection): number {
   const read = apply(mapGet, bufferedAmounts, [connection]) as (() => number) | undefined;
   if (!read) {
     throw new TypeError("WebSocket provider does not expose its transport buffered amount");

@@ -16,8 +16,14 @@ import {
 it("upgrade provenance does not expose requests to replaced collection methods", () => {
   const request = new Request("http://localhost", { headers: { authorization: "synthetic" } });
   const clone = request.clone();
-  const response = {};
-  const connection = {};
+  const response = new Response(null);
+  const connection = new class extends EventTarget {
+    on() {
+      return this;
+    }
+    send() {}
+    close() {}
+  }();
   const map = Object.getOwnPropertyDescriptors(WeakMap.prototype);
   const set = Object.getOwnPropertyDescriptors(WeakSet.prototype);
   let observations = 0;
