@@ -226,7 +226,8 @@ const _nativeGlobal = new Function("return this")() as typeof globalThis;
 const _NativeResponse: typeof Response = _nativeGlobal.Response;
 
 function toNativeResponse(res: Response): Response {
-  if (res instanceof _NativeResponse) return res;
+  // The serving transport must receive its exact registered upgrade signal.
+  if (isWebSocketUpgradeResponse(res) || res instanceof _NativeResponse) return res;
   // TS narrows to `never` after the instanceof check because it can't see the
   // runtime class divergence between DNT's polyfill Response and native Response.
   const src = res as Response;
