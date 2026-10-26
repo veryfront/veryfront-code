@@ -337,13 +337,11 @@ async function prepareProxyConfigLoad(
 export async function resolveAdapter(
   opts: AdapterResolutionOptions,
 ): Promise<AdapterResolutionResult> {
-  if (opts.isProxyMode) {
-    await prepareControlPlaneExecuteIngress(opts.req, {
-      adapter: opts.adapter,
-      projectSlug: opts.projectSlug,
-      projectId: opts.projectId,
-    });
-  }
+  await prepareControlPlaneExecuteIngress(opts.req, {
+    adapter: opts.adapter,
+    projectSlug: opts.projectSlug,
+    projectId: opts.projectId,
+  });
   const cache = opts.cache ?? defaultDiscoveryCache;
 
   let effectiveProjectDir = opts.projectDir;
