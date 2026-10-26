@@ -191,10 +191,10 @@ describe("Guide: middleware.mdx", () => {
 });
 
 // === Guide: workflows.mdx ===
-import type { Workflow } from "../../src/workflow/types.ts";
+import type { Workflow, WorkflowNode } from "../../src/workflow/types.ts";
 import { MemoryBackend } from "../../src/workflow/backends/memory.ts";
 import { WorkflowExecutor } from "../../src/workflow/executor/workflow-executor.ts";
-import { branch, parallel, step, unless, when, workflow } from "../../src/workflow/dsl/index.ts";
+import { branch, parallel, step, workflow } from "../../src/workflow/dsl/index.ts";
 
 describe("Guide: workflows.mdx", () => {
   it("completes the guide content-generation configuration with the writer article", async () => {
@@ -299,16 +299,36 @@ describe("Guide: workflows.mdx", () => {
     assertExists(support);
   });
 
-  it("should support when/unless shorthand", () => {
-    const node1 = when("needs-approval", () => true, [
-      step("review", { agent: "reviewer" }),
-    ]);
-    assertExists(node1);
-
-    const node2 = unless("is-cached", () => false, [
-      step("fetch", { tool: "fetcher" }),
-    ]);
-    assertExists(node2);
+  it("executes the documented when/unless predicates with flat node outputs", async () => {
+    const guide = await Deno.readTextFile(
+      new URL("../../docs/guides/workflows.md", import.meta.url),
+    );
+    const section = guide.split("Shorthand helpers use the same flat node-output context.")[1];
+    assertExists(section);
+    const snippet = /```ts(?:[ \t]+[^\n]*)?\n([\s\S]*?)\n```/.exec(section)?.[1];
+    assertExists(snippet);
+    const source = snippet.replace(
+      '"veryfront/workflow"',
+      JSON.stringify(new URL("../../src/workflow/index.ts", import.meta.url).href),
+    );
+    const { needsApproval, fetchUnlessCached }: {
+      needsApproval: WorkflowNode;
+      fetchUnlessCached: WorkflowNode;
+    } = await import(`data:application/typescript,${encodeURIComponent(source)}`);
+    assert(needsApproval.config.type === "branch");
+    assert(fetchUnlessCached.config.type === "branch");
+    assertEquals(
+      await needsApproval.config.condition({ input: {}, classify: { sensitive: true } }),
+      true,
+    );
+    assertEquals(
+      await needsApproval.config.condition({ input: {}, classify: { sensitive: false } }),
+      false,
+    );
+    assertEquals(await needsApproval.config.condition({ input: {} }), false);
+    assertEquals(await fetchUnlessCached.config.condition({ input: {}, cache: true }), false);
+    assertEquals(await fetchUnlessCached.config.condition({ input: {}, cache: false }), true);
+    assertEquals(await fetchUnlessCached.config.condition({ input: {} }), true);
   });
 
   it("should support input schema validation", () => {

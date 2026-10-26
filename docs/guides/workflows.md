@@ -313,18 +313,24 @@ export default workflow({
 });
 ```
 
-Shorthand helpers:
+Shorthand helpers use the same flat node-output context. In this example, the
+`classify` step returns an object with a `sensitive` boolean, and the `cache`
+step returns `true` when the requested value is cached.
 
-```ts
-import { unless, when } from "veryfront/workflow";
+```ts title="workflows/conditions.ts"
+import { step, unless, when } from "veryfront/workflow";
 
-when("needs-approval", (ctx) =>
-  typeof ctx.classify === "object" && ctx.classify !== null &&
-  "sensitive" in ctx.classify && ctx.classify.sensitive === true, [
-  step("review", { agent: "reviewer" }),
-]);
+export const needsApproval = when(
+  "needs-approval",
+  (ctx) =>
+    typeof ctx.classify === "object" && ctx.classify !== null &&
+    "sensitive" in ctx.classify && ctx.classify.sensitive === true,
+  [
+    step("review", { agent: "reviewer" }),
+  ],
+);
 
-unless("is-cached", (ctx) => ctx.cache.has(key), [
+export const fetchUnlessCached = unless("is-cached", (ctx) => ctx.cache === true, [
   step("fetch", { tool: "fetcher" }),
 ]);
 ```
