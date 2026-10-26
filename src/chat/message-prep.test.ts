@@ -6,7 +6,8 @@ import {
   assertStrictEquals,
   assertStringIncludes,
   assertThrows,
-} from "#std/assert";
+} from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { ChatToolResultPart, ChatUiMessage, ProviderModelMessage } from "./types.ts";
 import { withProviderModelMessageSourceId } from "./conversation.ts";
 import { repairToolPairsForPreparation } from "./provider-message-tool-pair-repair.ts";
@@ -995,7 +996,12 @@ Deno.test("maskOldToolOutputs retains recent bounded collection identities for f
     ) {
       replayedTool.content[0]!.output = output;
       const compacted = maskOldToolOutputs(replayed)[2];
-      if (page === bounded) assertEquals(compacted, replayed[2]);
+      if (
+        page === bounded &&
+        (typeof output.value === "string"
+            ? output.value.length
+            : JSON.stringify(output.value).length) <= 4096
+      ) assertEquals(compacted, replayed[2]);
       else assertStringIncludes(JSON.stringify(compacted), "output omitted");
     }
   }
@@ -1015,7 +1021,12 @@ Deno.test("maskOldToolOutputs retains recent bounded collection identities for f
     ) {
       replayedTool.content[0]!.output = output;
       const compacted = maskOldToolOutputs(replayed)[2];
-      if (length === 4096) assertEquals(compacted, replayed[2]);
+      if (
+        length === 4096 &&
+        (typeof output.value === "string"
+            ? output.value.length
+            : JSON.stringify(output.value).length) <= 4096
+      ) assertEquals(compacted, replayed[2]);
       else assertStringIncludes(JSON.stringify(compacted), "output omitted");
     }
   }
@@ -3018,4 +3029,200 @@ Deno.test("prepareProviderModelMessagesFromUiMessages keeps an inline file's dat
       url: "data:text/plain;base64,e30=",
     },
   );
+});
+
+describe("recent tool resource results", () => {
+  it("retains a created resource for follow-up mutation", () => {
+    const identities: Record<string, string | number>[] = [
+      { id: "created-event-id" },
+      { id: 123 },
+      { issueId: 456 },
+      { id: 0 },
+      { ID: "upper-id" },
+      { sandboxID: "sandbox-id" },
+      { InvoiceID: "invoice-id" },
+      { inputRequestId: "input-request-resource" },
+      { documentId: "created-document-id" },
+      { spreadsheetId: "created-sheet-id" },
+    ];
+    for (const identity of identities) {
+      const resource = { ...identity, description: "resource detail ".repeat(75) };
+      const messages: ProviderModelMessage[] = [
+        { role: "user", content: "Create a disposable resource" },
+        {
+          role: "assistant",
+          content: [{
+            type: "tool-call",
+            toolCallId: "create",
+            toolName: "integration__create",
+            input: {},
+          }],
+        },
+        {
+          role: "tool",
+          content: [{
+            type: "tool-result",
+            toolCallId: "create",
+            toolName: "integration__create",
+            output: { type: "json", value: resource },
+          }],
+        },
+        { role: "user", content: "Update that resource" },
+      ];
+      assertEquals(maskOldToolOutputs(messages)[2], messages[2]);
+      assertStringIncludes(
+        JSON.stringify(
+          maskOldToolOutputs([...messages, { role: "assistant", content: "done" }, {
+            role: "user",
+            content: "Unrelated",
+          }])[2],
+        ),
+        "output omitted",
+      );
+      const oversized = structuredClone(messages);
+      const tool = oversized[2];
+      if (tool?.role !== "tool") throw new Error("expected result");
+      tool.content[0]!.output = {
+        type: "json",
+        value: { ...identity, description: "x".repeat(5000) },
+      };
+      assertStringIncludes(JSON.stringify(maskOldToolOutputs(oversized)[2]), "output omitted");
+    }
+  });
+
+  it("retains direct resource arrays and masks oversized original text", () => {
+    const resource = { id: "folder-1", description: "x".repeat(1000) };
+    const cases: [ChatToolResultPart["output"], boolean][] = [
+      [{ type: "json", value: [resource] }, true],
+      [{ type: "text", value: JSON.stringify([resource]) }, true],
+      [{ type: "text", value: " ".repeat(5000) + JSON.stringify(resource) }, false],
+      [{ type: "text", value: JSON.stringify(resource).replace(/x/g, "\\u0078") }, false],
+      [{ type: "json", value: [{ toolCallId: "call", detail: "x".repeat(1000) }] }, false],
+    ];
+    for (const [output, retained] of cases) {
+      const messages: ProviderModelMessage[] = [
+        { role: "user", content: "List resources" },
+        {
+          role: "tool",
+          content: [{
+            type: "tool-result",
+            toolCallId: "list",
+            toolName: "integration__list",
+            output,
+          }],
+        },
+        { role: "user", content: "Open that resource" },
+      ];
+      const actual = maskOldToolOutputs(messages)[1];
+      if (retained) assertEquals(actual, messages[1]);
+      else assertStringIncludes(JSON.stringify(actual), "output omitted");
+    }
+  });
+
+  it("inspects resource results without invoking getters or proxy reads", () => {
+    let getterCalls = 0;
+    const valid = { id: "created-resource", description: "x".repeat(1000) };
+    Object.defineProperty(valid, "detail", {
+      enumerable: true,
+      get() {
+        getterCalls++;
+        throw new Error("getter invoked");
+      },
+    });
+    const accessorId = { description: "x".repeat(1000) };
+    Object.defineProperty(accessorId, "id", {
+      enumerable: true,
+      get() {
+        getterCalls++;
+        throw new Error("ID getter invoked");
+      },
+    });
+    const proxy = new Proxy({ id: "proxy-resource", description: "x".repeat(1000) }, {
+      get(target, key, receiver) {
+        if (key === "id") throw new Error("proxy ID read");
+        return Reflect.get(target, key, receiver);
+      },
+    });
+    const hiddenId = { description: "x".repeat(1000) };
+    Object.defineProperty(hiddenId, "id", { value: "hidden-resource" });
+    const unreadable = new Proxy({ id: "unreadable", description: "x".repeat(1000) }, {
+      getOwnPropertyDescriptor(target, key) {
+        if (key === "id") throw new Error("unreadable descriptor");
+        return Reflect.getOwnPropertyDescriptor(target, key);
+      },
+    });
+    for (
+      const [resource, retained] of [[valid, true], [accessorId, false], [hiddenId, false], [
+        proxy,
+        true,
+      ], [
+        unreadable,
+        false,
+      ]] as const
+    ) {
+      const messages: ProviderModelMessage[] = [
+        { role: "user", content: "Create" },
+        {
+          role: "tool",
+          content: [{
+            type: "tool-result",
+            toolCallId: "create",
+            toolName: "integration__create",
+            output: { type: "json", value: resource as Record<string, string> },
+          }],
+        },
+        { role: "user", content: "Continue" },
+      ];
+      const result = maskOldToolOutputs(messages);
+      if (retained) assertEquals(result[1], messages[1]);
+      else assertStringIncludes(JSON.stringify(result[1]), "output omitted");
+    }
+    assertEquals(getterCalls, 0);
+  });
+
+  it("compacts correlation-only results instead of treating them as resources", () => {
+    for (
+      const key of [
+        "requestId",
+        "request_id",
+        "toolCallId",
+        "tool_call_id",
+        "toolCallID",
+        "publicToolCallId",
+        "public_tool_call_id",
+        "waitingToolCallId",
+        "waiting_tool_call_id",
+        "providerRequestId",
+        "provider_request_id",
+        "providerRequestID",
+        "messageSpanId",
+        "message_span_id",
+        "runtimeMessageSpanId",
+        "reasoningSpanId",
+        "traceId",
+        "trace_id",
+        "spanId",
+        "span_id",
+        "parentSpanId",
+        "parent_span_id",
+        "correlationId",
+        "correlation_id",
+      ]
+    ) {
+      const messages: ProviderModelMessage[] = [
+        { role: "user", content: "Run an operation" },
+        {
+          role: "tool",
+          content: [{
+            type: "tool-result",
+            toolCallId: "diagnostic",
+            toolName: "integration__status",
+            output: { type: "json", value: { [key]: "diagnostic-id", detail: "x".repeat(1000) } },
+          }],
+        },
+        { role: "user", content: "Continue" },
+      ];
+      assertStringIncludes(JSON.stringify(maskOldToolOutputs(messages)[1]), "output omitted");
+    }
+  });
 });
