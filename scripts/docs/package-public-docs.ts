@@ -39,6 +39,49 @@ async function git(root: string, args: string[], trim = true) {
   return trim ? value.trim() : value;
 }
 
+async function matchesRcPreparation(
+  root: string,
+  buildVersion: string,
+  versionFiles: string[],
+) {
+  const base = new Map<string, string>();
+  for (const file of versionFiles) {
+    base.set(file, await git(root, ["show", `HEAD:${file}`], false));
+  }
+  const manifest = JSON.parse(base.get("deno.json")!);
+  const suffix = typeof manifest.version === "string" &&
+      buildVersion.startsWith(`${manifest.version}.`)
+    ? buildVersion.slice(manifest.version.length + 1)
+    : "";
+  if (/^[1-9]\d*$/.test(suffix) && /^\d+\.\d+\.\d+-/.test(manifest.version)) {
+    const temporary = await Deno.makeTempDir({ prefix: "docs-rc-identity-" });
+    try {
+      for (const [file, source] of base) {
+        await Deno.mkdir(path.dirname(path.join(temporary, file)), {
+          recursive: true,
+        });
+        await Deno.writeTextFile(path.join(temporary, file), source);
+      }
+      await prepareRcBuildVersion({
+        rootDir: temporary,
+        version: buildVersion,
+      });
+      const matches = await Promise.all(
+        versionFiles.map(async (file) =>
+          await Deno.readTextFile(path.join(root, file)) ===
+            await Deno.readTextFile(path.join(temporary, file))
+        ),
+      );
+      if (matches.every(Boolean)) {
+        return true;
+      }
+    } finally {
+      await Deno.remove(temporary, { recursive: true });
+    }
+  }
+  return false;
+}
+
 /** Permit only the existing deterministic RC version preparation, never arbitrary source edits. */
 export async function docsSourceIdentity(
   repository: string,
@@ -84,41 +127,9 @@ export async function docsSourceIdentity(
       !line.startsWith("??") && versionFiles.includes(line.slice(3))
     )
   ) {
-    const base = new Map<string, string>();
-    for (const file of versionFiles) {
-      base.set(file, await git(root, ["show", `HEAD:${file}`], false));
-    }
-    const manifest = JSON.parse(base.get("deno.json")!);
-    const suffix = typeof manifest.version === "string" &&
-        buildVersion.startsWith(`${manifest.version}.`)
-      ? buildVersion.slice(manifest.version.length + 1)
-      : "";
-    if (/^[1-9]\d*$/.test(suffix) && /^\d+\.\d+\.\d+-/.test(manifest.version)) {
-      const temporary = await Deno.makeTempDir({ prefix: "docs-rc-identity-" });
-      try {
-        for (const [file, source] of base) {
-          await Deno.mkdir(path.dirname(path.join(temporary, file)), {
-            recursive: true,
-          });
-          await Deno.writeTextFile(path.join(temporary, file), source);
-        }
-        await prepareRcBuildVersion({
-          rootDir: temporary,
-          version: buildVersion,
-        });
-        const matches = await Promise.all(
-          versionFiles.map(async (file) =>
-            await Deno.readTextFile(path.join(root, file)) ===
-              await Deno.readTextFile(path.join(temporary, file))
-          ),
-        );
-        if (matches.every(Boolean)) {
-          dirty = false;
-          versionPreparation = "ci-rc";
-        }
-      } finally {
-        await Deno.remove(temporary, { recursive: true });
-      }
+    if (await matchesRcPreparation(root, buildVersion, versionFiles)) {
+      dirty = false;
+      versionPreparation = "ci-rc";
     }
   }
   const remote = publicRepositoryUrl(
@@ -132,8 +143,31 @@ export async function docsSourceIdentity(
   };
 }
 
-/** Publishable content only; the owning product's source and dependencies never enter this package. */
-export async function packagePublicDocs(options: PackageDocsOptions) {
+function isPublicPageFile(name: string): boolean {
+  return /\.mdx?$/.test(name) && name !== "README.md";
+}
+
+function isPublishedPage(bytes: Uint8Array, file: string): boolean {
+  const text = new TextDecoder().decode(bytes);
+  const header = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(text);
+  if (!header) {
+    throw new Error(`Missing public docs frontmatter: ${file}`);
+  }
+  const fields = parse(header[1]) as Record<string, unknown>;
+  if (
+    !fields || typeof fields !== "object" || Array.isArray(fields)
+  ) throw new Error("Invalid public docs frontmatter");
+  if (
+    fields.draft === true || fields.internal === true ||
+    fields.status === "draft"
+  ) return false;
+  if (typeof fields.title !== "string" || !fields.title.trim()) {
+    throw new Error("Missing public docs title");
+  }
+  return true;
+}
+
+async function preparePackageDestination(options: PackageDocsOptions) {
   const directories = PUBLIC_ROOTS[options.product];
   if (!directories || !/^@[a-z0-9-]+\/[a-z0-9-]+$/.test(options.name)) {
     throw new Error("Invalid documentation package identity");
@@ -193,6 +227,30 @@ export async function packagePublicDocs(options: PackageDocsOptions) {
   } catch (error) {
     if (!(error instanceof Deno.errors.NotFound)) throw error;
   }
+  return {
+    directories,
+    repository,
+    revision,
+    dirty,
+    remote,
+    root,
+    outputParent,
+    output,
+  };
+}
+
+/** Publishable content only; the owning product's source and dependencies never enter this package. */
+export async function packagePublicDocs(options: PackageDocsOptions) {
+  const {
+    directories,
+    repository,
+    revision,
+    dirty,
+    remote,
+    root,
+    outputParent,
+    output,
+  } = await preparePackageDestination(options);
   let catalogRevision: string | undefined;
   const generationInputs = new Map<string, string>();
   const generated = new Map<string, string>();
@@ -209,7 +267,7 @@ export async function packagePublicDocs(options: PackageDocsOptions) {
     }
   }
   await publicationReady();
-  if (options.product === "cloud" && options.mode === "release") {
+  async function readCloudGeneration() {
     const generationFile = path.join(root, "generation.json");
     const catalogFile = path.join(root, "catalog-source.json");
     const generationBytes = await Deno.readFile(generationFile);
@@ -244,7 +302,10 @@ export async function packagePublicDocs(options: PackageDocsOptions) {
       }
       generated.set(relative, entry.sha256);
     }
-    catalogRevision = catalog.sourceRevision;
+    return catalog.sourceRevision as string;
+  }
+  if (options.product === "cloud" && options.mode === "release") {
+    catalogRevision = await readCloudGeneration();
   }
   const assertReleaseInput = options.mode === "release"
     ? await releaseDocsInputs(repository, revision, generated)
@@ -266,8 +327,42 @@ export async function packagePublicDocs(options: PackageDocsOptions) {
     records.push({ path: relative, sha256: hash });
     inputs.set(from, hash);
   }
+  async function verifySourceSnapshot() {
+    for (const [file, hash] of inputs) {
+      if (sha256(await Deno.readFile(file)) !== hash) {
+        throw new Error("Documentation source changed during packaging");
+      }
+    }
+    await publicationReady();
+    if (
+      await git(repository, ["rev-parse", "HEAD"]) !== revision ||
+      (options.mode === "release" &&
+        Boolean(
+          await git(repository, [
+            "status",
+            "--porcelain",
+            "--untracked-files=all",
+          ]),
+        ))
+    ) throw new Error("Product checkout changed during packaging");
+  }
   try {
-    async function walk(directory: string, assets: boolean) {
+    const copySelectedFile = async (file: string, assets: boolean) => {
+      const bytes = await Deno.readFile(file);
+      if (!assets) {
+        if (!isPublishedPage(bytes, file)) return;
+        pages++;
+      }
+      const relative = assets
+        ? `${options.product}/assets/${
+          path.relative(assetSource, file).split(path.sep).join("/")
+        }`
+        : `${options.product}/${
+          path.relative(root, file).split(path.sep).join("/")
+        }`;
+      await copy(file, relative, bytes);
+    };
+    const walk = async (directory: string, assets: boolean) => {
       if (await Deno.realPath(directory) !== directory) {
         throw new Error("Public docs paths cannot use symlinks");
       }
@@ -276,44 +371,18 @@ export async function packagePublicDocs(options: PackageDocsOptions) {
         if (entry.isSymlink) {
           throw new Error("Public docs cannot contain symlinks");
         }
-        if (entry.isDirectory) await walk(file, assets);
-        else if (
-          entry.isFile &&
-          (assets
-            ? ASSET_FILE.test(entry.name)
-            : /\.mdx?$/.test(entry.name) && entry.name !== "README.md")
-        ) {
-          const bytes = await Deno.readFile(file);
-          if (!assets) {
-            const text = new TextDecoder().decode(bytes);
-            const header = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(text);
-            if (!header) {
-              throw new Error(`Missing public docs frontmatter: ${file}`);
-            }
-            const fields = parse(header[1]) as Record<string, unknown>;
-            if (
-              !fields || typeof fields !== "object" || Array.isArray(fields)
-            ) throw new Error("Invalid public docs frontmatter");
-            if (
-              fields.draft === true || fields.internal === true ||
-              fields.status === "draft"
-            ) continue;
-            if (typeof fields.title !== "string" || !fields.title.trim()) {
-              throw new Error("Missing public docs title");
-            }
-            pages++;
-          }
-          const relative = assets
-            ? `${options.product}/assets/${
-              path.relative(assetSource, file).split(path.sep).join("/")
-            }`
-            : `${options.product}/${
-              path.relative(root, file).split(path.sep).join("/")
-            }`;
-          await copy(file, relative, bytes);
+        if (entry.isDirectory) {
+          await walk(file, assets);
+          continue;
         }
+        if (!entry.isFile) continue;
+        const selected = assets
+          ? ASSET_FILE.test(entry.name)
+          : isPublicPageFile(entry.name);
+        if (!selected) continue;
+        await copySelectedFile(file, assets);
       }
-    }
+    };
     const assetSource = path.join(
       repository,
       options.product === "code" ? "assets" : "docs/public/assets",
@@ -331,28 +400,33 @@ export async function packagePublicDocs(options: PackageDocsOptions) {
     const redirectsFile = options.product === "cloud"
       ? path.join(root, "navigation.json")
       : path.join(root, "redirects.json");
-    let redirects: { source: string; destination: string }[] = [];
-    try {
-      const raw = await Deno.readFile(redirectsFile);
-      assertReleaseInput?.(redirectsFile, raw);
-      const value = JSON.parse(new TextDecoder().decode(raw));
-      redirects = Array.isArray(value) ? value : value.redirects;
-      if (
-        !Array.isArray(redirects) ||
-        redirects.some((entry) =>
-          !entry || typeof entry.source !== "string" ||
-          typeof entry.destination !== "string" ||
-          !entry.source.startsWith("/") || entry.source.startsWith("//") ||
-          !entry.destination.startsWith("/") ||
-          entry.destination.startsWith("//")
-        )
-      ) throw new Error("Invalid public documentation redirects");
-      inputs.set(redirectsFile, sha256(raw));
-    } catch (error) {
-      if (
-        !(error instanceof Deno.errors.NotFound) || options.product === "cloud"
-      ) throw error;
-    }
+    const readRedirects = async () => {
+      let redirects: { source: string; destination: string }[] = [];
+      try {
+        const raw = await Deno.readFile(redirectsFile);
+        assertReleaseInput?.(redirectsFile, raw);
+        const value = JSON.parse(new TextDecoder().decode(raw));
+        redirects = Array.isArray(value) ? value : value.redirects;
+        if (
+          !Array.isArray(redirects) ||
+          redirects.some((entry) =>
+            !entry || typeof entry.source !== "string" ||
+            typeof entry.destination !== "string" ||
+            !entry.source.startsWith("/") || entry.source.startsWith("//") ||
+            !entry.destination.startsWith("/") ||
+            entry.destination.startsWith("//")
+          )
+        ) throw new Error("Invalid public documentation redirects");
+        inputs.set(redirectsFile, sha256(raw));
+      } catch (error) {
+        if (
+          !(error instanceof Deno.errors.NotFound) ||
+          options.product === "cloud"
+        ) throw error;
+      }
+      return redirects;
+    };
+    const redirects = await readRedirects();
     const config = {
       mode: options.mode,
       mounts: [{
@@ -379,23 +453,7 @@ export async function packagePublicDocs(options: PackageDocsOptions) {
       await Deno.writeFile(path.join(contentRoot, filename), bytes);
       records.push({ path: filename, sha256: sha256(bytes) });
     }
-    for (const [file, hash] of inputs) {
-      if (sha256(await Deno.readFile(file)) !== hash) {
-        throw new Error("Documentation source changed during packaging");
-      }
-    }
-    await publicationReady();
-    if (
-      await git(repository, ["rev-parse", "HEAD"]) !== revision ||
-      (options.mode === "release" &&
-        Boolean(
-          await git(repository, [
-            "status",
-            "--porcelain",
-            "--untracked-files=all",
-          ]),
-        ))
-    ) throw new Error("Product checkout changed during packaging");
+    await verifySourceSnapshot();
     const manifest = {
       mode: options.mode,
       pages,
