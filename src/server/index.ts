@@ -1,10 +1,3 @@
-import {
-  getWebSocketUpgradeIdleTimeout,
-  isDenoWebSocketResponse,
-  recordNodeWebSocketUpgradeRequest,
-  recordWebSocketBufferedAmount,
-  revokeNodeWebSocketUpgradeRequest,
-} from "#veryfront/platform/adapters/runtime/shared/http-upgrade-provenance.ts";
 /**
  * Create and run Veryfront servers.
  *
@@ -27,6 +20,14 @@ import {
  * @see docs/deployment.md
  * @see docs/security.md
  */
+
+import {
+  getWebSocketUpgradeIdleTimeout,
+  isDenoWebSocketResponse,
+  recordNodeWebSocketUpgradeRequest,
+  recordWebSocketBufferedAmount,
+  revokeNodeWebSocketUpgradeRequest,
+} from "#veryfront/platform/adapters/runtime/shared/http-upgrade-provenance.ts";
 
 import {
   DevServer,

@@ -58,7 +58,9 @@ function isAddressInUseError(error: unknown): boolean {
  */
 function isAddressResolutionError(error: unknown): boolean {
   if (!isErrorAcrossRealms(error)) return false;
-  return error.message.toLowerCase().includes("failed to lookup address");
+  return error.message.toLowerCase().includes("failed to lookup address") ||
+    ("syscall" in error && error.syscall === "getaddrinfo" && "code" in error &&
+      (error.code === "ENOTFOUND" || error.code === "EAI_AGAIN"));
 }
 
 /**
@@ -91,6 +93,64 @@ function describeBindHost(hostname: string): string | undefined {
     host === "::" || host === "0.0.0.0" || isIpv4LoopbackLiteral(host);
   if (!isLoopbackOrWildcard) return undefined;
   return host.includes(":") ? `[${hostname}]` : hostname;
+}
+
+function throwDenoBindError(error: unknown, hostname: string, port: number): never {
+  // `Deno.serve()` throws synchronously when the address cannot be bound, and
+  // the raw `AddrInUse: Address already in use (os error 98)` carried no
+  // hostname or port -- so an operator saw which process died but not which
+  // address collided (veryfront-issue-inbox#806).
+  //
+  // A bind hostname that fails DNS resolution throws the same way, and the
+  // raw `failed to lookup address information: ...` reached Sentry as an
+  // unhandled error with no port and no classification
+  // (veryfront-issue-inbox#810). The message deliberately does not contain
+  // the canonical in-use phrase: retrying other ports cannot fix a
+  // resolution fault, so the dev server's port fallback must not trigger.
+  if (isAddressResolutionError(error)) {
+    const safeHost = describeBindHost(hostname);
+    throw INITIALIZATION_ERROR.create({
+      detail: safeHost === undefined
+        ? `Bind hostname could not be resolved: port ${port}`
+        : `Bind hostname could not be resolved: ${safeHost}:${port}`,
+      context: {
+        platform: "deno",
+        operation: "serve",
+        port,
+        ...(safeHost === undefined ? {} : { hostname: safeHost }),
+      },
+      cause: isErrorAcrossRealms(error) && "syscall" in error && error.syscall === "getaddrinfo"
+        ? new Error("Bind hostname lookup failed")
+        : error,
+    });
+  }
+  // Only a bind failure is relabelled. Catching everything here would report
+  // an unrelated startup fault as an address collision, which is worse than
+  // the raw error it replaces, so anything else is rethrown untouched.
+  if (!isAddressInUseError(error)) throw error;
+  // The canonical phrase is kept at the front of the message on purpose. The
+  // CLI classifies a taken port by matching it (`isPortInUseError`,
+  // cli/commands/dev/port-fallback.ts), and dropping it silently disabled the
+  // dev server's port fallback and broke
+  // server-start-failure.integration.test.ts, which asserts the surfaced
+  // message still says the port is in use. Naming the port is the point of
+  // this change; keeping the phrase is what lets it be added without
+  // rewriting a contract other code already depends on.
+  const safeHost = describeBindHost(hostname);
+  throw INITIALIZATION_ERROR.create({
+    detail: safeHost === undefined
+      ? `Address already in use: port ${port}`
+      : `Address already in use: ${safeHost}:${port}`,
+    context: {
+      platform: "deno",
+      operation: "serve",
+      port,
+      ...(safeHost === undefined ? {} : { hostname: safeHost }),
+    },
+    cause: isErrorAcrossRealms(error) && "code" in error && error.code === "EADDRINUSE"
+      ? new Error("Address already in use")
+      : error,
+  });
 }
 
 export interface DenoNativeHttpServer {
@@ -274,57 +334,7 @@ export async function createDenoServerWithRuntime(
       onListen: () => {},
     });
   } catch (error) {
-    // `Deno.serve()` throws synchronously when the address cannot be bound, and
-    // the raw `AddrInUse: Address already in use (os error 98)` carried no
-    // hostname or port -- so an operator saw which process died but not which
-    // address collided (veryfront-issue-inbox#806).
-    //
-    // A bind hostname that fails DNS resolution throws the same way, and the
-    // raw `failed to lookup address information: ...` reached Sentry as an
-    // unhandled error with no port and no classification
-    // (veryfront-issue-inbox#810). The message deliberately does not contain
-    // the canonical in-use phrase: retrying other ports cannot fix a
-    // resolution fault, so the dev server's port fallback must not trigger.
-    if (isAddressResolutionError(error)) {
-      const safeHost = describeBindHost(hostname);
-      throw INITIALIZATION_ERROR.create({
-        detail: safeHost === undefined
-          ? `Bind hostname could not be resolved: port ${port}`
-          : `Bind hostname could not be resolved: ${safeHost}:${port}`,
-        context: {
-          platform: "deno",
-          operation: "serve",
-          port,
-          ...(safeHost === undefined ? {} : { hostname: safeHost }),
-        },
-        cause: error,
-      });
-    }
-    // Only a bind failure is relabelled. Catching everything here would report
-    // an unrelated startup fault as an address collision, which is worse than
-    // the raw error it replaces, so anything else is rethrown untouched.
-    if (!isAddressInUseError(error)) throw error;
-    // The canonical phrase is kept at the front of the message on purpose. The
-    // CLI classifies a taken port by matching it (`isPortInUseError`,
-    // cli/commands/dev/port-fallback.ts), and dropping it silently disabled the
-    // dev server's port fallback and broke
-    // server-start-failure.integration.test.ts, which asserts the surfaced
-    // message still says the port is in use. Naming the port is the point of
-    // this change; keeping the phrase is what lets it be added without
-    // rewriting a contract other code already depends on.
-    const safeHost = describeBindHost(hostname);
-    throw INITIALIZATION_ERROR.create({
-      detail: safeHost === undefined
-        ? `Address already in use: port ${port}`
-        : `Address already in use: ${safeHost}:${port}`,
-      context: {
-        platform: "deno",
-        operation: "serve",
-        port,
-        ...(safeHost === undefined ? {} : { hostname: safeHost }),
-      },
-      cause: error,
-    });
+    throwDenoBindError(error, hostname, port);
   }
 
   // Nothing is leaked when the bind fails: the AbortController above is never
@@ -392,10 +402,15 @@ export async function createDenoServer(
     });
   }
   if (needsDenoNodeHttpTransport()) {
-    return await createDenoNodeServerWithStartupOwner(
-      scopeDenoNodeHttpHandler(handler),
-      await resolveDenoNodeHttpOptions(options),
-    );
+    const resolved = await resolveDenoNodeHttpOptions(options);
+    try {
+      return await createDenoNodeServerWithStartupOwner(
+        scopeDenoNodeHttpHandler(handler),
+        resolved,
+      );
+    } catch (error) {
+      throwDenoBindError(error, options.hostname ?? "localhost", options.port ?? DEFAULT_PORT);
+    }
   }
   return createDenoServerWithRuntime(
     runtime as DenoServeRuntime,
