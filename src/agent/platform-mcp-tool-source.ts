@@ -33,20 +33,7 @@ export function createPlatformMcpCatalogSource(
     if (names.has(name)) continue;
     names.add(name);
     if (name !== definition.name) aliases.set(name, definition.name);
-    catalog.push({
-      ...definition,
-      name,
-      ...(name === "veryfront__get_run" && currentRunId
-        ? {
-          parameters: {
-            ...definition.parameters,
-            ...(definition.parameters.required
-              ? { required: definition.parameters.required.filter((key) => key !== "run_id") }
-              : {}),
-          },
-        }
-        : {}),
-    });
+    catalog.push(buildPlatformCatalogDefinition(definition, name, currentRunId));
   }
   return {
     definitions: catalog,
@@ -67,6 +54,27 @@ export function createPlatformMcpCatalogSource(
         );
       },
     }),
+  };
+}
+
+function buildPlatformCatalogDefinition(
+  definition: ToolDefinition,
+  name: string,
+  currentRunId: string | undefined,
+): ToolDefinition {
+  return {
+    ...definition,
+    name,
+    ...(name === "veryfront__get_run" && currentRunId
+      ? {
+        parameters: {
+          ...definition.parameters,
+          ...(definition.parameters.required
+            ? { required: definition.parameters.required.filter((key) => key !== "run_id") }
+            : {}),
+        },
+      }
+      : {}),
   };
 }
 

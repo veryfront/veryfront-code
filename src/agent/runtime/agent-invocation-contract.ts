@@ -768,19 +768,7 @@ function normalizeDenyAllRuntimeAgentInvocationValue(value: unknown): DenyAllNor
 
   // Deny-all exposes no caller-injected tools either. A malformed value is
   // left in place for the invocation schema to reject.
-  if (ObjectHasOwn(value, "tools")) {
-    const injectedTools = readOwn(value, "tools");
-    if (
-      injectedTools !== undefined &&
-      !trustedSafeParseSucceeds(
-        TrustedDenyAllInjectedToolsSafeParse,
-        trustedDenyAllInjectedToolsSchema,
-        injectedTools,
-      )
-    ) {
-      return { value: normalized, denyAll: true };
-    }
-  }
+  if (!hasValidDenyAllInjectedTools(value)) return { value: normalized, denyAll: true };
   defineOwnData(normalized, "tools", []);
 
   const forwardedProps = readOwn(value, "forwardedProps");
@@ -827,6 +815,38 @@ function normalizeDenyAllRuntimeAgentInvocationValue(value: unknown): DenyAllNor
     return { value: normalized, denyAll: true };
   }
 
+  assignDenyAllProviderToolAllowlist(
+    agentConfig,
+    runtimeOverridesRecord,
+    callerAllowedTools,
+    callerToolAllowlist,
+  );
+  return { value: normalized, denyAll: true };
+}
+
+function hasValidDenyAllInjectedTools(value: Record<string, unknown>): boolean {
+  if (ObjectHasOwn(value, "tools")) {
+    const injectedTools = readOwn(value, "tools");
+    if (
+      injectedTools !== undefined &&
+      !trustedSafeParseSucceeds(
+        TrustedDenyAllInjectedToolsSafeParse,
+        trustedDenyAllInjectedToolsSchema,
+        injectedTools,
+      )
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function assignDenyAllProviderToolAllowlist(
+  agentConfig: Record<string, unknown>,
+  runtimeOverridesRecord: Record<string, unknown>,
+  callerAllowedTools: readonly string[] | undefined,
+  callerToolAllowlist: readonly string[] | undefined,
+): void {
   // Constant-time membership keeps the intersection linear in its inputs.
   const callerAllowedToolSet = callerAllowedTools === undefined
     ? undefined
@@ -864,7 +884,6 @@ function normalizeDenyAllRuntimeAgentInvocationValue(value: unknown): DenyAllNor
   // (which also caps provider-native and caller-supplied tools). Set both.
   defineOwnData(runtimeOverridesRecord, "allowedTools", allowedTools);
   defineOwnData(runtimeOverridesRecord, "toolAllowlist", copyStringArray(allowedTools));
-  return { value: normalized, denyAll: true };
 }
 
 /**

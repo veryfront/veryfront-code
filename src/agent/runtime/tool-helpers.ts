@@ -261,6 +261,8 @@ export function isDynamicTool(name: string): boolean {
 // deno-lint-ignore no-explicit-any -- generic erasure: accepts Tool with any input/output types
 export type ToolConfigEntry = Tool<any, any> | boolean;
 
+type ConfiguredTools = true | Record<string, ToolConfigEntry> | undefined;
+
 function getConfiguredRemoteToolName(
   entry: ToolConfigEntry | undefined,
 ): string | undefined {
@@ -364,15 +366,7 @@ async function getRemoteToolDefinitions(options?: {
     const source = sources[index]!;
     try {
       const sourceDefs = await source.listTools(remoteToolContext);
-      for (let index = 0; index < sourceDefs.length; index++) {
-        if (intrinsicHasOwn(sourceDefs, index)) {
-          const definition = sourceDefs[index]!;
-          if (isReservedPlatformToolName(definition.name) && !hasTrustedPlatformSource(source)) {
-            continue;
-          }
-          addDefinition(definition, hasTrustedPlatformSource(source));
-        }
-      }
+      appendSourceDefinitions(source, sourceDefs, addDefinition);
     } catch (error) {
       logger.warn("Failed to fetch remote tool definitions from source", {
         sourceId: source.id,
@@ -401,6 +395,22 @@ async function getRemoteToolDefinitions(options?: {
   }
 
   return definitions;
+}
+
+function appendSourceDefinitions(
+  source: RemoteToolSource,
+  sourceDefs: ToolDefinition[],
+  addDefinition: (definition: ToolDefinition, trustedPlatform?: boolean) => void,
+): void {
+  for (let index = 0; index < sourceDefs.length; index++) {
+    if (intrinsicHasOwn(sourceDefs, index)) {
+      const definition = sourceDefs[index]!;
+      if (isReservedPlatformToolName(definition.name) && !hasTrustedPlatformSource(source)) {
+        continue;
+      }
+      addDefinition(definition, hasTrustedPlatformSource(source));
+    }
+  }
 }
 
 async function sourceHasTool(
@@ -457,7 +467,7 @@ async function executeRemoteToolFromSources(
 }
 
 export function resolveConfiguredTool(
-  toolsConfig: true | Record<string, ToolConfigEntry> | undefined,
+  toolsConfig: ConfiguredTools,
   toolName: string,
   context?: ToolExecutionContext,
   options?: {
@@ -511,7 +521,7 @@ export function executeConfiguredTool(
 async function executeConfiguredToolImplementation(
   toolName: string,
   input: Record<string, unknown>,
-  toolsConfig: true | Record<string, ToolConfigEntry> | undefined,
+  toolsConfig: ConfiguredTools,
   context?: ToolExecutionContext,
   allowedRemoteToolNames?: string[],
   remoteToolSources?: RemoteToolSource[],
@@ -554,17 +564,9 @@ async function executeConfiguredToolImplementation(
     );
   }
 
-  if (
-    configuredRemoteToolName !== undefined &&
-    !isRemoteToolAllowed(configuredRemoteToolName, allowedRemoteToolNames)
-  ) {
-    throw PERMISSION_DENIED.create({
-      detail: `Tool "${configuredRemoteToolName}" is not allowed for this run`,
-    });
-  }
+  assertConfiguredRemoteToolAllowed(configuredRemoteToolName, allowedRemoteToolNames);
 
-  const frameworkLocalTool = options?.frameworkLocalTools?.[toolName];
-  if (frameworkLocalTool !== undefined && (toolsConfig === true || configuredEntry === true)) {
+  if (shouldProbeFrameworkRemoteSource(options, toolName, toolsConfig, configuredEntry)) {
     const remoteSourceResult = await executeRemoteToolFromSources(
       toolName,
       input,
@@ -627,9 +629,7 @@ async function executeConfiguredToolImplementation(
 
   // Route canonical integration tools to the project-scoped API executor.
   if (isRemoteIntegrationTool(toolName)) {
-    if (allowedRemoteToolNames && !intrinsicIncludes(allowedRemoteToolNames, toolName)) {
-      throw PERMISSION_DENIED.create({ detail: `Tool "${toolName}" is not allowed for this run` });
-    }
+    assertIntegrationToolAllowed(toolName, allowedRemoteToolNames);
     return await dispatchWithTerminalRunControl(
       context,
       () => runRemoteIntegrationTool(toolName, input, context),
@@ -637,6 +637,39 @@ async function executeConfiguredToolImplementation(
   }
 
   return await dispatchWithTerminalRunControl(context, () => executeTool(toolName, input, context));
+}
+
+function assertConfiguredRemoteToolAllowed(
+  configuredRemoteToolName: string | undefined,
+  allowedRemoteToolNames: string[] | undefined,
+): void {
+  if (
+    configuredRemoteToolName !== undefined &&
+    !isRemoteToolAllowed(configuredRemoteToolName, allowedRemoteToolNames)
+  ) {
+    throw PERMISSION_DENIED.create({
+      detail: `Tool "${configuredRemoteToolName}" is not allowed for this run`,
+    });
+  }
+}
+
+function shouldProbeFrameworkRemoteSource(
+  options: { frameworkLocalTools?: Record<string, Tool> } | undefined,
+  toolName: string,
+  toolsConfig: ConfiguredTools,
+  configuredEntry: ToolConfigEntry | undefined,
+): boolean {
+  const frameworkLocalTool = options?.frameworkLocalTools?.[toolName];
+  return frameworkLocalTool !== undefined && (toolsConfig === true || configuredEntry === true);
+}
+
+function assertIntegrationToolAllowed(
+  toolName: string,
+  allowedRemoteToolNames: string[] | undefined,
+): void {
+  if (allowedRemoteToolNames && !intrinsicIncludes(allowedRemoteToolNames, toolName)) {
+    throw PERMISSION_DENIED.create({ detail: `Tool "${toolName}" is not allowed for this run` });
+  }
 }
 
 function logToolDefinition(name: string, def: ToolDefinition): void {
@@ -711,7 +744,7 @@ function isUnavailableOptionalRemoteTool(
  * @param options.includeSkillTools - When true, include skill tools for `tools: true` agents
  */
 export async function getAvailableTools(
-  toolsConfig: true | Record<string, ToolConfigEntry> | undefined,
+  toolsConfig: ConfiguredTools,
   options?: {
     includeSkillTools?: boolean;
     includeIntegrationTools?: boolean;
@@ -756,8 +789,7 @@ export async function getAvailableTools(
       return def;
     }).filter((def) => {
       // Exclude skill tools unless explicitly included
-      if (isSkillInfrastructureToolId(def.name) && !options?.includeSkillTools) return false;
-      return true;
+      return !(isSkillInfrastructureToolId(def.name) && !options?.includeSkillTools);
     });
 
     if (!strictConfiguredToolsOnly) {
@@ -797,12 +829,69 @@ export async function getAvailableTools(
   const unresolvedConfiguredToolNames: string[] = [];
   const configuredAuthorizationToolNames = createPrivateMap<string, string>();
 
-  const configuredEntries = intrinsicReflectApply(intrinsicObjectEntries, Object, [
-    toolsConfig,
-  ]) as Array<[string, (typeof toolsConfig)[string]]>;
-  for (let index = 0; index < configuredEntries.length; index++) {
-    const configuredEntry = configuredEntries[index];
-    if (configuredEntry === undefined) continue;
+  const addConfiguredRegistryReference = (name: string): void => {
+    if (strictConfiguredToolsOnly) {
+      intrinsicReflectApply(intrinsicArrayPush, unresolvedConfiguredToolNames, [name]);
+      return;
+    }
+
+    // Own short name first, then exact id; owned tools of other agents are
+    // invisible and fall through to the unresolved diagnostic. Definitions
+    // are exposed under the tool's full registry id so execution resolves
+    // through the same owner-aware gate.
+    const tool = resolveVisibleRegistryTool(name, options?.callerAgentId);
+    if (tool) {
+      addToolDefinition(tools, tool.id, tool);
+      return;
+    }
+
+    if (remoteToolNames.has(name)) {
+      explicitlyRequestedRemoteToolNames.add(name);
+      return;
+    }
+
+    if (
+      isUnavailableOptionalRemoteTool(
+        name,
+        options?.unavailableOptionalRemoteToolNames,
+        options?.unavailableOptionalRemoteToolPrefixes,
+      )
+    ) {
+      return;
+    }
+
+    intrinsicReflectApply(intrinsicArrayPush, unresolvedConfiguredToolNames, [name]);
+  };
+  const addConfiguredConcreteTool = (
+    name: string,
+    entry: Tool,
+    configuredRemoteToolName: string | undefined,
+    authorizationToolName: string,
+  ): void => {
+    const providerSchemaHidden = isRuntimeProviderSchemaHiddenTool(entry);
+    if (providerSchemaHidden && !hasTrustedHostToolProvenance(entry)) {
+      return;
+    }
+    if (
+      configuredRemoteToolName !== undefined &&
+      !isRemoteToolAllowed(configuredRemoteToolName, options?.allowedRemoteToolNames)
+    ) {
+      return;
+    }
+    if (
+      !strictConfiguredToolsOnly && configuredRemoteToolName === undefined &&
+      !hasTrustedHostToolProvenance(entry)
+    ) {
+      assertLocalToolId(name);
+      assertLocalToolId(entry.id);
+    }
+    configuredAuthorizationToolNames.set(name, authorizationToolName);
+    if (providerSchemaHidden && options?.includeProviderSchemaHiddenTools !== true) {
+      return;
+    }
+    addToolDefinition(tools, name, entry);
+  };
+  const processConfiguredEntry = (configuredEntry: [string, ToolConfigEntry]): void => {
     const name = configuredEntry[0];
     const entry = configuredEntry[1];
     const configuredRemoteToolName = getConfiguredRemoteToolName(entry);
@@ -817,93 +906,55 @@ export async function getAvailableTools(
         strictConfiguredToolsOnly,
       )
     ) {
-      continue;
+      return;
     }
 
     if (entry === true) {
-      if (strictConfiguredToolsOnly) {
-        intrinsicReflectApply(intrinsicArrayPush, unresolvedConfiguredToolNames, [name]);
-        continue;
-      }
-
-      // Own short name first, then exact id; owned tools of other agents are
-      // invisible and fall through to the unresolved diagnostic. Definitions
-      // are exposed under the tool's full registry id so execution resolves
-      // through the same owner-aware gate.
-      const tool = resolveVisibleRegistryTool(name, options?.callerAgentId);
-      if (tool) {
-        addToolDefinition(tools, tool.id, tool);
-        continue;
-      }
-
-      if (remoteToolNames.has(name)) {
-        explicitlyRequestedRemoteToolNames.add(name);
-        continue;
-      }
-
-      if (
-        isUnavailableOptionalRemoteTool(
-          name,
-          options?.unavailableOptionalRemoteToolNames,
-          options?.unavailableOptionalRemoteToolPrefixes,
-        )
-      ) {
-        continue;
-      }
-
-      intrinsicReflectApply(intrinsicArrayPush, unresolvedConfiguredToolNames, [name]);
-      continue;
+      addConfiguredRegistryReference(name);
+      return;
     }
 
     if (entry && typeof entry === "object") {
-      const providerSchemaHidden = isRuntimeProviderSchemaHiddenTool(entry);
-      if (providerSchemaHidden && !hasTrustedHostToolProvenance(entry)) {
-        continue;
-      }
-      if (
-        configuredRemoteToolName !== undefined &&
-        !isRemoteToolAllowed(configuredRemoteToolName, options?.allowedRemoteToolNames)
-      ) {
-        continue;
-      }
-      if (
-        !strictConfiguredToolsOnly && configuredRemoteToolName === undefined &&
-        !hasTrustedHostToolProvenance(entry)
-      ) {
-        assertLocalToolId(name);
-        assertLocalToolId(entry.id);
-      }
-      configuredAuthorizationToolNames.set(name, authorizationToolName);
-      if (providerSchemaHidden && options?.includeProviderSchemaHiddenTools !== true) {
-        continue;
-      }
-      addToolDefinition(tools, name, entry);
+      addConfiguredConcreteTool(name, entry, configuredRemoteToolName, authorizationToolName);
     }
+  };
+
+  const appendRequestedRemoteDefinitions = (): void => {
+    // Explicit-object configs should only expose remote definitions that were
+    // explicitly requested, except for the internal runtime path that expands
+    // `tools: true` into an explicit local-tool map and passes the remote allowlist.
+    const remoteDefsToAppend: ToolDefinition[] = [];
+    for (let index = 0; index < remoteDefs.length; index++) {
+      const definition = remoteDefs[index];
+      if (definition === undefined) continue;
+      const allowed = explicitlyRequestedRemoteToolNames.size > 0
+        ? explicitlyRequestedRemoteToolNames.has(definition.name)
+        : options?.allowedRemoteToolNames !== undefined &&
+          intrinsicIncludes(options.allowedRemoteToolNames, definition.name);
+      if (allowed) remoteDefsToAppend[remoteDefsToAppend.length] = definition;
+    }
+
+    for (let index = 0; index < remoteDefsToAppend.length; index++) {
+      const def = remoteDefsToAppend[index];
+      if (def === undefined) continue;
+      // Skip if already present (e.g., explicitly configured by name)
+      if (!hasToolDefinitionName(tools, def.name)) {
+        logToolDefinition(def.name, def);
+        intrinsicReflectApply(intrinsicArrayPush, tools, [def]);
+      }
+    }
+  };
+
+  const configuredEntries = intrinsicReflectApply(intrinsicObjectEntries, Object, [
+    toolsConfig,
+  ]) as Array<[string, (typeof toolsConfig)[string]]>;
+  for (let index = 0; index < configuredEntries.length; index++) {
+    const configuredEntry = configuredEntries[index];
+    if (configuredEntry === undefined) continue;
+    processConfiguredEntry(configuredEntry);
   }
 
-  // Explicit-object configs should only expose remote definitions that were
-  // explicitly requested, except for the internal runtime path that expands
-  // `tools: true` into an explicit local-tool map and passes the remote allowlist.
-  const remoteDefsToAppend: ToolDefinition[] = [];
-  for (let index = 0; index < remoteDefs.length; index++) {
-    const definition = remoteDefs[index];
-    if (definition === undefined) continue;
-    const allowed = explicitlyRequestedRemoteToolNames.size > 0
-      ? explicitlyRequestedRemoteToolNames.has(definition.name)
-      : options?.allowedRemoteToolNames !== undefined &&
-        intrinsicIncludes(options.allowedRemoteToolNames, definition.name);
-    if (allowed) remoteDefsToAppend[remoteDefsToAppend.length] = definition;
-  }
-
-  for (let index = 0; index < remoteDefsToAppend.length; index++) {
-    const def = remoteDefsToAppend[index];
-    if (def === undefined) continue;
-    // Skip if already present (e.g., explicitly configured by name)
-    if (!hasToolDefinitionName(tools, def.name)) {
-      logToolDefinition(def.name, def);
-      intrinsicReflectApply(intrinsicArrayPush, tools, [def]);
-    }
-  }
+  appendRequestedRemoteDefinitions();
 
   if (unresolvedConfiguredToolNames.length > 0) {
     // Enumerate only tools visible to the caller — never another agent's
