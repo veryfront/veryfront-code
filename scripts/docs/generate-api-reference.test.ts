@@ -550,7 +550,9 @@ describe("generate-api-reference", () => {
       );
       assertStringIncludes(serverReference, "veryfront/server/http-resolver");
       assertStringIncludes(serverReference, "veryfront/server/http-host");
-      const packageConfig = JSON.parse(await Deno.readTextFile("deno.json"));
+      const packageConfig = JSON.parse(
+        await Deno.readTextFile(new URL("../../deno.json", import.meta.url)),
+      );
       assertEquals(
         packageConfig.exports["./server/http-runtime"],
         "./src/server/isolated-http/application-runtime.ts",
