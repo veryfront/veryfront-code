@@ -1,3 +1,4 @@
+import { bindHostedToolRunAuthorization } from "./terminal-credential.ts";
 import { somePrivateArray } from "#veryfront/security/private-array.ts";
 import {
   bindHostedTerminalRun,
@@ -912,6 +913,7 @@ export async function prepareHostedChatExecution<
       : {}),
     ...(submittedFormInputResult ? { submittedFormInputResult } : {}),
   };
+  bindHostedToolRunAuthorization(creationOptions, input.request);
   registerHostedAgentPauseCreationOptions(
     creationOptions,
     input.request,

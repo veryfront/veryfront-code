@@ -81,6 +81,34 @@ function readPath(payload: BoundedJsonValue, path: string): unknown {
   return current;
 }
 
+function enqueueArrayPairs(
+  leftArray: unknown[],
+  rightArray: unknown[],
+  pending: Array<readonly [unknown, unknown]>,
+): boolean {
+  if (leftArray.length !== rightArray.length) return false;
+  for (let index = 0; index < leftArray.length; index++) {
+    reflectApply(arrayPush, pending, [[leftArray[index], rightArray[index]]]);
+  }
+  return true;
+}
+
+function enqueueRecordPairs(
+  leftRecord: Record<string, unknown>,
+  rightRecord: Record<string, unknown>,
+  pending: Array<readonly [unknown, unknown]>,
+): boolean {
+  const leftKeys = objectKeys(leftRecord);
+  const rightKeys = objectKeys(rightRecord);
+  if (leftKeys.length !== rightKeys.length) return false;
+  for (let index = 0; index < leftKeys.length; index++) {
+    const key = leftKeys[index]!;
+    if (!objectHasOwn(rightRecord, key)) return false;
+    reflectApply(arrayPush, pending, [[leftRecord[key], rightRecord[key]]]);
+  }
+  return true;
+}
+
 function stableEquals(left: unknown, right: unknown): boolean {
   const pending: Array<readonly [unknown, unknown]> = [[left, right]];
   while (pending.length > 0) {
@@ -100,28 +128,38 @@ function stableEquals(left: unknown, right: unknown): boolean {
 
     const leftIsArray = arrayIsArray(currentLeft);
     if (leftIsArray !== arrayIsArray(currentRight)) return false;
-    if (leftIsArray) {
-      const leftArray = currentLeft as unknown[];
-      const rightArray = currentRight as unknown[];
-      if (leftArray.length !== rightArray.length) return false;
-      for (let index = 0; index < leftArray.length; index++) {
-        reflectApply(arrayPush, pending, [[leftArray[index], rightArray[index]]]);
-      }
-      continue;
-    }
-
-    const leftRecord = currentLeft as Record<string, unknown>;
-    const rightRecord = currentRight as Record<string, unknown>;
-    const leftKeys = objectKeys(leftRecord);
-    const rightKeys = objectKeys(rightRecord);
-    if (leftKeys.length !== rightKeys.length) return false;
-    for (let index = 0; index < leftKeys.length; index++) {
-      const key = leftKeys[index]!;
-      if (!objectHasOwn(rightRecord, key)) return false;
-      reflectApply(arrayPush, pending, [[leftRecord[key], rightRecord[key]]]);
-    }
+    const matched = leftIsArray
+      ? enqueueArrayPairs(currentLeft as unknown[], currentRight as unknown[], pending)
+      : enqueueRecordPairs(
+        currentLeft as Record<string, unknown>,
+        currentRight as Record<string, unknown>,
+        pending,
+      );
+    if (!matched) return false;
   }
   return true;
+}
+
+function matchesOneOf(condition: WebhookEventFilterCondition, actual: unknown): boolean {
+  if (!arrayIsArray(condition.value)) return false;
+  for (let index = 0; index < condition.value.length; index++) {
+    if (stableEquals(actual, condition.value[index])) return true;
+  }
+  return false;
+}
+
+function containsConditionValue(actual: unknown, condition: WebhookEventFilterCondition): boolean {
+  if (
+    typeof actual === "string" &&
+    typeof condition.value === "string"
+  ) {
+    return reflectApply(stringIncludes, actual, [condition.value]) as boolean;
+  }
+  if (!arrayIsArray(actual)) return false;
+  for (let index = 0; index < actual.length; index++) {
+    if (stableEquals(actual[index], condition.value)) return true;
+  }
+  return false;
 }
 
 function matchesCondition(
@@ -134,27 +172,12 @@ function matchesCondition(
       return stableEquals(actual, condition.value);
     case "not_equals":
       return !stableEquals(actual, condition.value);
-    case "in": {
-      if (!arrayIsArray(condition.value)) return false;
-      for (let index = 0; index < condition.value.length; index++) {
-        if (stableEquals(actual, condition.value[index])) return true;
-      }
-      return false;
-    }
+    case "in":
+      return matchesOneOf(condition, actual);
     case "exists":
       return actual !== undefined;
     case "contains":
-      if (
-        typeof actual === "string" &&
-        typeof condition.value === "string"
-      ) {
-        return reflectApply(stringIncludes, actual, [condition.value]) as boolean;
-      }
-      if (!arrayIsArray(actual)) return false;
-      for (let index = 0; index < actual.length; index++) {
-        if (stableEquals(actual[index], condition.value)) return true;
-      }
-      return false;
+      return containsConditionValue(actual, condition);
   }
 }
 
@@ -203,7 +226,7 @@ function stringifyWebhookJson(
   const separator = spaces > 0 ? ",\n" : ",";
   const beforeValue = spaces > 0 ? " " : "";
 
-  if (arrayIsArray(value)) {
+  const serializeArray = (value: BoundedJsonValue[]) => {
     if (value.length === 0) return "[]";
     let serialized = spaces > 0 ? "[\n" : "[";
     for (let index = 0; index < value.length; index++) {
@@ -215,8 +238,10 @@ function stringifyWebhookJson(
         depth + 1,
       );
     }
-    return `${serialized}${spaces > 0 ? `\n${currentIndent}` : ""}]`;
-  }
+    const closingIndent = spaces > 0 ? "\n" + currentIndent : "";
+    return `${serialized}${closingIndent}]`;
+  };
+  if (arrayIsArray(value)) return serializeArray(value);
 
   const keys = objectKeys(value);
   if (keys.length === 0) return "{}";
@@ -232,7 +257,8 @@ function stringifyWebhookJson(
         depth + 1,
       );
   }
-  return `${serialized}${spaces > 0 ? `\n${currentIndent}` : ""}}`;
+  const closingIndent = spaces > 0 ? "\n" + currentIndent : "";
+  return `${serialized}${closingIndent}}`;
 }
 
 /** Render an agent webhook prompt exactly as the hosted runtime does. */

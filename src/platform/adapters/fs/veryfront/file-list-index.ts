@@ -57,7 +57,7 @@ export class FileListIndex {
   }
 
   private async ensureReady(): Promise<void> {
-    if (this.readyPromise) {
+    if (this.readyPromise !== null) {
       try {
         await this.readyPromise;
       } catch (_) {
@@ -205,7 +205,7 @@ export class FileListIndex {
     const stableSnapshotVersion = versionBeforeRead === versionAfterRead
       ? versionAfterRead
       : undefined;
-    if (!fileList) {
+    const reusePreviousIndex = () => {
       // Cache entry expired or unavailable. If we already have a built index from a
       // previous successful cache read, keep using it rather than forcing network fetches.
       // The index stays valid until explicitly cleared via clear() (triggered by WebSocket pokes)
@@ -238,7 +238,8 @@ export class FileListIndex {
         "[ReadOperations] getOrBuildFileListIndex: getFileListCache returned null/undefined",
       );
       return null;
-    }
+    };
+    if (!fileList) return reusePreviousIndex();
 
     const currentIndex = this.index;
     const currentPathSet = this.pathSet;

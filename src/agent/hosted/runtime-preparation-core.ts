@@ -1,3 +1,4 @@
+import { registerHostedToolRunAuthorization } from "./tool-run-authorization.ts";
 import { getToolResultReaderReservedToolSlots } from "#veryfront/agent/runtime/tool-result-context.ts";
 import { retainTrustedSkillLoaderAliases } from "../platform-host-tools.ts";
 import {
@@ -1213,6 +1214,12 @@ export function createRuntimePreparationCore(input: RuntimePreparationCoreOption
                 }
                 : {}),
             };
+            if (execution.kind === "canonical" && execution.projectId) {
+              registerHostedToolRunAuthorization(streamOptions, {
+                projectId: execution.projectId,
+                runId: execution.runId,
+              });
+            }
             objectSetPrototypeOf(streamOptions, null);
             return createHostedChatRuntimeDataStream(streamOptions, streamInput);
           });

@@ -1,3 +1,4 @@
+import { inheritHostedToolRunAuthorization } from "./tool-run-authorization.ts";
 import { fetchHostedProjectAgentDefinition } from "./project-agent-definition-resolver.ts";
 import {
   configureHostedPlatformDependencySource,
@@ -544,6 +545,7 @@ export async function prepareChatExecutionWithinProjectRuntime(
       context.trace("chat.createRuntime", () => {
         const options = { ...creationOptions, userId: req.userId };
         inheritHostedAgentPauseCapability(options, creationOptions);
+        inheritHostedToolRunAuthorization(options, creationOptions);
         return createAgentRuntime(
           context,
           options,

@@ -1,3 +1,4 @@
+import { registerHostedToolRunAuthorization } from "./tool-run-authorization.ts";
 import { MAX_ROOT_RUN_EVENT_WRITER_TOKEN_BYTES } from "../conversation/run-event-limits.ts";
 import { snapshotOwnDataRecords } from "#veryfront/security/own-data-record.ts";
 import { getPrivateStreamReader } from "#veryfront/security/private-stream.ts";
@@ -160,6 +161,22 @@ export function hostedTerminalCanonicalRunId(request: ParsedHostedChatRequest): 
   } catch {
     return undefined;
   }
+}
+
+/** Bind tool context only to the privately admitted project and current run. */
+export function bindHostedToolRunAuthorization(
+  target: { projectId?: string | null; runId?: string },
+  request: ParsedHostedChatRequest,
+): void {
+  const authority = credentials.get(request);
+  if (
+    !authority || !authority.projectId || authority.projectId !== target.projectId ||
+    authority.runId !== target.runId || !hostedTerminalCanonicalRunId(request)
+  ) return;
+  registerHostedToolRunAuthorization(target, {
+    projectId: authority.projectId,
+    runId: authority.runId,
+  });
 }
 
 /** Transfer the verified request capability to its private durable run descriptor. */

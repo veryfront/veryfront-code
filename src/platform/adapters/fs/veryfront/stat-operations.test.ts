@@ -991,6 +991,74 @@ describe("StatOperations", () => {
   });
 
   describe("circuit breaker for API search", () => {
+    it("bounds stat fallback failures after index expiry and recovers after cooldown", async () => {
+      const originalNow = Date.now;
+      let now = originalNow();
+      Date.now = () => now;
+      try {
+        let searchCalls = 0;
+        let failing = true;
+        const client = createMockClient({
+          searchFiles: (path: string) => {
+            searchCalls++;
+            if (failing) {
+              return Promise.reject(searchCalls === 1 ? new Error("offline") : "offline");
+            }
+            return Promise.resolve([{ id: path, path }]);
+          },
+        });
+        const statOps = createStatOps(
+          client,
+          new PathNormalizer(),
+          createBranchContextWithFiles([makeFile("pages/index.tsx")]),
+        );
+        await statOps.stat("pages/index.tsx");
+        assertEquals(statOps.isIndexAuthoritative(), true);
+        now += 5 * 60_000 + 1;
+        assertEquals(statOps.isIndexAuthoritative(), false);
+
+        for (let attempt = 0; attempt < 5; attempt++) {
+          await assertRejects(() => statOps.stat(`pages/missing-${attempt}.tsx`));
+        }
+        assertEquals(searchCalls, 5);
+        await assertRejects(() => statOps.stat("pages/recovered.tsx"));
+        assertEquals(searchCalls, 5);
+
+        failing = false;
+        now += 30_001;
+        assertEquals((await statOps.stat("pages/recovered.tsx")).isFile, true);
+        assertEquals(searchCalls, 6);
+        assertEquals((await statOps.stat("pages/recovered.tsx")).isFile, true);
+        assertEquals(searchCalls, 6);
+      } finally {
+        Date.now = originalNow;
+      }
+    });
+
+    it("retains an exact API resolution without repeating the search", async () => {
+      const searches: string[] = [];
+      let listings = 0;
+      const statOps = createStatOps(
+        createMockClient({
+          searchFiles: (path: string) => {
+            searches.push(path);
+            return Promise.resolve([{ id: path, path }]);
+          },
+          listAllFiles: () => {
+            listings++;
+            return Promise.resolve([]);
+          },
+        }),
+        new PathNormalizer(),
+        createBranchContextWithFiles([]),
+      );
+
+      assertEquals(await statOps.resolveFile("pages/late.tsx"), "pages/late.tsx");
+      assertEquals(await statOps.resolveFile("pages/late.tsx"), "pages/late.tsx");
+      assertEquals(searches, ["pages/late.tsx"]);
+      assertEquals(listings, 0);
+    });
+
     it("should disable API search after repeated failures", async () => {
       let searchCallCount = 0;
       const client = createMockClient({

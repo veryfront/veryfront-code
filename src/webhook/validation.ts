@@ -48,6 +48,7 @@ const MAX_PROMPT_TEMPLATE_LENGTH = 20_000;
 const MAX_DIAGNOSTIC_KEY_LENGTH = 80;
 const SIMPLE_DIAGNOSTIC_KEY_PATTERN = /^[A-Za-z_$][A-Za-z0-9_$-]*$/;
 const reflectApply = Reflect.apply;
+const stringCodePointAt = String.prototype.codePointAt;
 const setHas = Set.prototype.has;
 
 function invalid(detail: string, cause?: unknown): never {
@@ -60,7 +61,8 @@ function invalid(detail: string, cause?: unknown): never {
 function truncateDiagnosticKey(key: string): string {
   if (key.length <= MAX_DIAGNOSTIC_KEY_LENGTH) return key;
   let prefix = key.slice(0, MAX_DIAGNOSTIC_KEY_LENGTH);
-  const finalCodeUnit = prefix.charCodeAt(prefix.length - 1);
+  const finalCodeUnit =
+    (reflectApply(stringCodePointAt, prefix, [prefix.length - 1]) as number | undefined) ?? 0xffff;
   if (finalCodeUnit >= 0xd800 && finalCodeUnit <= 0xdbff) {
     prefix = prefix.slice(0, -1);
   }
@@ -80,7 +82,8 @@ function assertNoControlCharacters(
   allowFormattingWhitespace = false,
 ): void {
   for (let index = 0; index < value.length; index++) {
-    const codeUnit = value.charCodeAt(index);
+    const codeUnit = (reflectApply(stringCodePointAt, value, [index]) as number | undefined) ??
+      0xffff;
     const allowedWhitespace = allowFormattingWhitespace &&
       (codeUnit === 0x09 || codeUnit === 0x0a || codeUnit === 0x0d);
     if (
