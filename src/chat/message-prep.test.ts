@@ -6,7 +6,8 @@ import {
   assertStrictEquals,
   assertStringIncludes,
   assertThrows,
-} from "#std/assert";
+} from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { ChatToolResultPart, ChatUiMessage, ProviderModelMessage } from "./types.ts";
 import { withProviderModelMessageSourceId } from "./conversation.ts";
 import { repairToolPairsForPreparation } from "./provider-message-tool-pair-repair.ts";
@@ -3020,53 +3021,83 @@ Deno.test("prepareProviderModelMessagesFromUiMessages keeps an inline file's dat
   );
 });
 
-Deno.test("maskOldToolOutputs retains a recent created resource for follow-up mutation", () => {
-  const identities: Record<string, string>[] = [
-    { id: "created-event-id" },
-    { documentId: "created-document-id" },
-    { spreadsheetId: "created-sheet-id" },
-  ];
-  for (const identity of identities) {
-    const resource = { ...identity, description: "resource detail ".repeat(75) };
-    const messages: ProviderModelMessage[] = [
-      { role: "user", content: "Create a disposable resource" },
-      {
-        role: "assistant",
-        content: [{
-          type: "tool-call",
-          toolCallId: "create",
-          toolName: "integration__create",
-          input: {},
-        }],
-      },
-      {
-        role: "tool",
-        content: [{
-          type: "tool-result",
-          toolCallId: "create",
-          toolName: "integration__create",
-          output: { type: "json", value: resource },
-        }],
-      },
-      { role: "user", content: "Update that resource" },
+describe("recent tool resource results", () => {
+  it("retains a created resource for follow-up mutation", () => {
+    const identities: Record<string, string>[] = [
+      { id: "created-event-id" },
+      { documentId: "created-document-id" },
+      { spreadsheetId: "created-sheet-id" },
     ];
-    assertEquals(maskOldToolOutputs(messages)[2], messages[2]);
-    assertStringIncludes(
-      JSON.stringify(
-        maskOldToolOutputs([...messages, { role: "assistant", content: "done" }, {
-          role: "user",
-          content: "Unrelated",
-        }])[2],
-      ),
-      "output omitted",
-    );
-    const oversized = structuredClone(messages);
-    const tool = oversized[2];
-    if (tool?.role !== "tool") throw new Error("expected result");
-    tool.content[0]!.output = {
-      type: "json",
-      value: { ...identity, description: "x".repeat(5000) },
-    };
-    assertStringIncludes(JSON.stringify(maskOldToolOutputs(oversized)[2]), "output omitted");
-  }
+    for (const identity of identities) {
+      const resource = { ...identity, description: "resource detail ".repeat(75) };
+      const messages: ProviderModelMessage[] = [
+        { role: "user", content: "Create a disposable resource" },
+        {
+          role: "assistant",
+          content: [{
+            type: "tool-call",
+            toolCallId: "create",
+            toolName: "integration__create",
+            input: {},
+          }],
+        },
+        {
+          role: "tool",
+          content: [{
+            type: "tool-result",
+            toolCallId: "create",
+            toolName: "integration__create",
+            output: { type: "json", value: resource },
+          }],
+        },
+        { role: "user", content: "Update that resource" },
+      ];
+      assertEquals(maskOldToolOutputs(messages)[2], messages[2]);
+      assertStringIncludes(
+        JSON.stringify(
+          maskOldToolOutputs([...messages, { role: "assistant", content: "done" }, {
+            role: "user",
+            content: "Unrelated",
+          }])[2],
+        ),
+        "output omitted",
+      );
+      const oversized = structuredClone(messages);
+      const tool = oversized[2];
+      if (tool?.role !== "tool") throw new Error("expected result");
+      tool.content[0]!.output = {
+        type: "json",
+        value: { ...identity, description: "x".repeat(5000) },
+      };
+      assertStringIncludes(JSON.stringify(maskOldToolOutputs(oversized)[2]), "output omitted");
+    }
+  });
+
+  it("compacts correlation-only results instead of treating them as resources", () => {
+    for (
+      const key of [
+        "requestId",
+        "request_id",
+        "traceId",
+        "trace_id",
+        "correlationId",
+        "correlation_id",
+      ]
+    ) {
+      const messages: ProviderModelMessage[] = [
+        { role: "user", content: "Run an operation" },
+        {
+          role: "tool",
+          content: [{
+            type: "tool-result",
+            toolCallId: "diagnostic",
+            toolName: "integration__status",
+            output: { type: "json", value: { [key]: "diagnostic-id", detail: "x".repeat(1000) } },
+          }],
+        },
+        { role: "user", content: "Continue" },
+      ];
+      assertStringIncludes(JSON.stringify(maskOldToolOutputs(messages)[1]), "output omitted");
+    }
+  });
 });

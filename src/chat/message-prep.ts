@@ -1194,7 +1194,11 @@ function wrapToolResultOutput(
   return original;
 }
 
-/** Mask old tool outputs while retaining preceding-turn file evidence for follow-up edits. */
+/**
+ * Mask old tool outputs while retaining preceding-turn file evidence and resource results for follow-ups.
+ * Collection results and objects with resource IDs retain up to 4,096 serialized characters;
+ * request, trace, and correlation IDs alone do not qualify. Existing summary contracts take precedence.
+ */
 export function maskOldToolOutputs(
   messages: ProviderModelMessage[],
   options: Pick<HistoricalToolInputRetentionOptions, "preserveSourceMessageIds"> = {},
@@ -1271,7 +1275,9 @@ export function maskOldToolOutputs(
         isRecord(collection) &&
         (Array.isArray(collection.data) ||
           Object.entries(collection).some(([key, value]) =>
-            /(?:^id$|Id$|_id$)/.test(key) && typeof value === "string" && value.length > 0
+            /(?:^id$|Id$|_id$)/.test(key) &&
+            !/^(?:request|trace|correlation)_?id$/i.test(key) &&
+            typeof value === "string" && value.length > 0
           )) &&
         serializedLength(collection) <= RECENT_COLLECTION_MAX_CHARS
       ) return part;
