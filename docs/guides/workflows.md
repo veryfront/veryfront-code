@@ -243,7 +243,7 @@ step("fetch-data", { tool: "webScraper" });
 // With custom input
 step("summarize", {
   agent: "writer",
-  input: (ctx) => `Summarize this: ${ctx.results.research}`,
+  input: (ctx) => `Summarize this: ${ctx.research}`,
 });
 ```
 
@@ -302,7 +302,9 @@ export default workflow({
   steps: [
     step("classify", { agent: "classifier" }),
     branch("route", {
-      condition: (ctx) => ctx.results.classify.category === "billing",
+      condition: (ctx) =>
+        typeof ctx.classify === "object" && ctx.classify !== null &&
+        "category" in ctx.classify && ctx.classify.category === "billing",
       then: [step("billing", { agent: "billing-agent" })],
       else: [step("technical", { agent: "tech-agent" })],
     }),
@@ -316,7 +318,9 @@ Shorthand helpers:
 ```ts
 import { unless, when } from "veryfront/workflow";
 
-when("needs-approval", (ctx) => ctx.results.classify.sensitive, [
+when("needs-approval", (ctx) =>
+  typeof ctx.classify === "object" && ctx.classify !== null &&
+  "sensitive" in ctx.classify && ctx.classify.sensitive === true, [
   step("review", { agent: "reviewer" }),
 ]);
 
@@ -497,7 +501,13 @@ must continue only after every one of them reaches a terminal status:
 Every listed run must be a direct child of the waiting workflow run. When the child runs are
 created, set their `parentRunId` to that workflow run's ID:
 
-```ts
+```ts title="scripts/start-release-check.ts"
+import { createRunsClient } from "veryfront/runs";
+
+const runs = createRunsClient({
+  authToken: process.env.VERYFRONT_API_TOKEN,
+});
+const workflowRunId = "<WORKFLOW_RUN_ID>"; // ID of the waiting parent workflow run
 const child = await runs.createTaskRun({
   projectId: "<PROJECT_ID>",
   parentRunId: workflowRunId,
@@ -505,7 +515,7 @@ const child = await runs.createTaskRun({
 });
 ```
 
-```ts
+```ts title="workflows/batch-release.ts"
 import { dependsOn, step, waitForRuns, workflow } from "veryfront/workflow";
 
 export default workflow({
@@ -536,7 +546,7 @@ child-wait boundary updates before it can resume `waitForRuns` nodes.
 
 ## Workflow configuration
 
-```ts
+```ts title="workflows/pipeline.ts"
 import { defineSchema } from "veryfront/schemas";
 import { step, workflow } from "veryfront/workflow";
 
@@ -578,9 +588,11 @@ By default, a completed run's output is its context without `input`: every
 step's output keyed by step id, plus `env` when the project injects environment
 values. Declare `output` to choose the value callers receive instead. It takes
 the context and returns the output synchronously, like the `output` mapper of a
-nested workflow. Treat the context as read-only: it is also stored on the run.
+nested workflow.
 
-```ts
+Treat the context as read-only: it is also stored on the run.
+
+```ts title="workflows/expense-approval.ts"
 import { defineSchema } from "veryfront/schemas";
 import { step, workflow } from "veryfront/workflow";
 
@@ -602,7 +614,9 @@ export default workflow({
 
 `outputSchema` checks the selected value, or the default output when no
 `output` selector is declared, before the run completes. A selected output
-stores the parsed value. A valid default output keeps its original shape and
+stores the parsed value.
+
+A valid default output keeps its original shape and
 values. A mismatch fails with
 `error.code: "OUTPUT_VALIDATION_FAILED"` and `{ path, message }` entries in
 `error.detail.errors`, so invalid output is never stored as completed.
@@ -614,15 +628,21 @@ When a nested workflow resumes after a wait, downstream steps and its output
 selector receive completed child outputs without rerunning those steps.
 Completed wait values retain approval decision and event delivery metadata.
 Later child updates stay intact when the workflow resumes again or retries its
-output selector. Saved child contexts follow the same persistence policy as
+output selector.
+
+Saved child contexts follow the same persistence policy as
 the durable workflow context.
 
 A started run's steps receive the parsed input: `inputSchema` transforms and
 defaults apply before the first step runs. The run keeps the input as it was
-submitted. A workflow nested with `subWorkflow` or `map` also parses the input its
+submitted.
+
+A workflow nested with `subWorkflow` or `map` also parses the input its
 parent passes through its own `inputSchema` before building or running child steps.
 Invalid input fails the parent run with `INPUT_VALIDATION_FAILED` and validation
-errors containing JSON Pointer paths. A paused nested workflow reuses its parsed
+errors containing JSON Pointer paths.
+
+A paused nested workflow reuses its parsed
 input when it resumes.
 
 Nested workflow retries and resumes use the retained child-context snapshot without

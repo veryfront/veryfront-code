@@ -28,8 +28,12 @@ as input. `run.output` is the final business result.
 
 Task, workflow, and eval `input` is any JSON value: an object, an array, a
 string, a number, a boolean, or `null`. `null` counts as no input, the same as
-leaving the field out. `run.input` keeps the submitted value, and Veryfront
-forwards it to the runtime unchanged. What your code receives can differ: a
+leaving the field out.
+
+`run.input` keeps the submitted value, and Veryfront
+forwards it to the runtime unchanged.
+
+What your code receives can differ: a
 task falls back to `config`, a workflow starts from `{}` without input, and a
 declared `inputSchema` can apply defaults and transforms. The sections below
 describe each run kind.
@@ -50,8 +54,13 @@ final text nor structured data, `run.output` is `null`.
 
 The final text is the text the agent wrote after its last tool call. Text
 written before a tool call is intermediate narration and is not part of the
-output. The hosted runtime reports the structured result as `result` on its
-terminal `RunFinished` event; the stored run wraps that value in `output.data`.
+output.
+
+The hosted runtime's SDK AG-UI SSE stream reports the structured result as
+`result` on its terminal `RunFinished` frame. The canonical REST `RUN_FINISHED`
+run-event payload does not declare this field; read `run.output.data` instead.
+
+The stored run wraps the structured result in `output.data`.
 The value is a JSON snapshot of the parsed result and can contain capture markers
 when it exceeds the snapshot limits. See [Agents](./agents.md) for structured
 output, the size limits and the marker fields.
@@ -69,9 +78,15 @@ stays `null`.
 Without an `output` selector, a completed run's output is its context without
 `input`: every step's output keyed by step id, plus `env` when the project
 injects environment values. Declare `output` on the workflow to choose the
-value callers receive. `outputSchema` checks the selected or default output
-before the run completes. A selected output stores the parsed schema value. A
-valid default output keeps its original shape and values. A mismatch fails the
+value callers receive.
+
+`outputSchema` checks the selected or default output
+before the run completes.
+
+A selected output stores the parsed schema value. A
+valid default output keeps its original shape and values.
+
+A mismatch fails the
 run without storing the invalid output. See [Workflows](./workflows.md).
 
 ### Tasks
@@ -148,7 +163,7 @@ The task rows marked "Warns" are the warning phase for task schemas. A later
 release fails those mismatches too. A recorded mismatch has this shape. A run
 keeps the first mismatch detected, with at most 20 errors:
 
-```json
+```json title="schema-violation.json"
 {
   "phase": "output",
   "reason": "invalid",
@@ -161,10 +176,16 @@ keeps the first mismatch detected, with at most 20 errors:
 For a valid checked task or selected workflow output, the run stores the
 parsed value: schema defaults and transforms apply, and a schema that strips
 unknown keys strips them from the stored output. Task schema validation must
-be available in the runtime. A new agent run stores its structured result in `output.data` as a JSON
+be available in the runtime.
+
+A new agent run stores its structured result in `output.data` as a JSON
 snapshot of the parsed value. That value can contain capture markers, as described in
-[Agents](#agents). A workflow without `output` stores its default
-output unchanged, even when `outputSchema` accepts it. `ctx.input` on a task run created with `input`, and the
+[Agents](#agents).
+
+A workflow without `output` stores its default
+output unchanged, even when `outputSchema` accepts it.
+
+`ctx.input` on a task run created with `input`, and the
 workflow's steps, receive the parsed input. `run.input` keeps the input as
 submitted.
 
@@ -179,11 +200,13 @@ never revalidated or reinterpreted with a newer schema.
 ## Rejected input
 
 A run whose submitted input violates the declared `inputSchema` is created,
-never executes, and fails. Your code never sees the rejected value. REST,
-GraphQL, and MCP behave the same way. On a project runtime with task schema
-validation, a rejected task run looks like this:
+never executes, and fails. Your code never sees the rejected value.
 
-```json
+The task and workflow examples here use the REST Runs API. They do not imply
+that every GraphQL or MCP surface exposes a corresponding run-start operation.
+On a project runtime with task schema validation, a rejected task run looks like this:
+
+```json title="rejected-task-run.json"
 {
   "status": "failed",
   "input": { "ticketText": 42 },
@@ -263,7 +286,9 @@ assume every run reports an identity.
 
 Each reported identity is the lowercase sha256 hex of the canonical JSON Schema.
 A `defineSchema` schema is converted to JSON Schema first. Object keys are sorted
-at every depth, and the result is serialized without whitespace. A recorded
+at every depth, and the result is serialized without whitespace.
+
+A recorded
 identity names the admitted schema, not the current definition.
 
 The SDK's compatibility `Run` shape exposes `input_schema_sha256` and
@@ -274,10 +299,11 @@ runs are not revalidated by reading them.
 
 ## Verify it worked
 
-Read a finished run and compare its fields with this contract:
+Set `VERYFRONT_API_BASE_URL` to your REST base URL, then read a finished run
+and compare its fields with this contract:
 
-```bash
-curl -fsS "$VERYFRONT_API_URL/runs/<RUN_ID>" \
+```bash title="read-run.sh"
+curl -fsS "$VERYFRONT_API_BASE_URL/runs/<RUN_ID>" \
   -H "Authorization: Bearer <TOKEN>" |
   jq '{status, input, output, error, schemas: {input: .schemas.input.sha256, output: .schemas.output.sha256}, artifacts}'
 ```
@@ -287,12 +313,15 @@ A completed task run shows the submitted `input` and the returned value as
 for its input shows `status: "failed"`, `output: null`, and
 `error.code: "INPUT_VALIDATION_FAILED"`.
 
-## Next steps
+## Next
 
 - [Runs](./runs.md): create, observe, and cancel runs.
-- [Runs API reference](../api-reference/veryfront/runs.md): the SDK compatibility
-  `Run` shape, including `input_schema_sha256` and `output_schema_sha256`.
 - [Tasks](./tasks.md): task context, `ctx.input`, and `ctx.config`.
 - [Workflows](./workflows.md): steps, the workflow context, and output
   selection.
 - [Agents](./agents.md): structured output with `outputSchema`.
+
+## Related
+
+- [Runs API reference](../api-reference/veryfront/runs.md): the SDK compatibility
+  `Run` shape, including `input_schema_sha256` and `output_schema_sha256`.

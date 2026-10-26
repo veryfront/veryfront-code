@@ -63,13 +63,15 @@ console.log(accepted.run.status);
 
 `input` on task, workflow and eval runs is any JSON value: an object, an
 array, a string, a number, a boolean or `null`. A task reads it as
-`ctx.input` and its execution settings as `ctx.config`. A task run created
+`ctx.input` and its execution settings as `ctx.config`.
+
+A task run created
 without `input`, or with `input: null`, gives the task `ctx.input` equal to
 `ctx.config`, so tasks that read business data from `config` keep working. A
 task that needs a nullable input should wrap it, for example
 `{ "value": null }`.
 
-```ts
+```ts title="scripts/create-task-run.ts"
 await runs.createTaskRun({
   projectId: "22222222-2222-4222-8222-222222222222",
   target: "task:classify-ticket",

@@ -203,7 +203,7 @@ describe("Guide: workflows.mdx", () => {
     );
     const section = guide.split("## Workflow configuration\n")[1];
     assertExists(section);
-    const snippet = /```ts\n([\s\S]*?)\n```/.exec(section)?.[1];
+    const snippet = /```ts(?:[ \t]+[^\n]*)?\n([\s\S]*?)\n```/.exec(section)?.[1];
     assertExists(snippet);
     const source = snippet
       .replace(
