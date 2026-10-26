@@ -10,7 +10,7 @@ function isCanonicalKnowledgePath(path: string): boolean {
     new TextEncoder().encode(path).length <= 1024 && path.split("/").length <= 64 &&
     path === path.normalize("NFC") && !/[\\<>:"|?*]/.test(path) &&
     ![...path].some((character) =>
-      character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127
+      character.codePointAt(0)! < 32 || character.codePointAt(0)! === 127
     ) &&
     path.split("/").every((part) =>
       part.length > 0 && part !== "." && part !== ".." && !/[. ]$/.test(part) &&
@@ -96,7 +96,7 @@ export async function putBinaryKnowledgeAsset(input: {
   if (bytes.byteLength > MAX_ASSET_BYTES) throw new Error("Binary asset exceeds the 8 MiB limit");
   const hash = await hashAssetBytes(bytes);
   input.signal?.throwIfAborted();
-  if (input.expected.kind === "absent") {
+  async function reconcileAbsentAsset(branch: string): Promise<PublishedFileReceipt | undefined> {
     // Earlier bundle attempts can commit this exact companion before a later write fails.
     // Reconcile only the target file, without imposing bundle-wide limits on publication.
     let current: unknown;
@@ -114,45 +114,48 @@ export async function putBinaryKnowledgeAsset(input: {
       absent = true;
     }
     input.signal?.throwIfAborted();
-    if (!absent) {
-      if (
-        !current || typeof current !== "object" || !("path" in current) ||
-        current.path !== input.path ||
-        !("id" in current) || typeof current.id !== "string" || !UUID.test(current.id) ||
-        !("version_id" in current) || typeof current.version_id !== "string" ||
-        !UUID.test(current.version_id) ||
-        !("binary" in current) || !current.binary || typeof current.binary !== "object" ||
-        !("byte_size" in current.binary) || current.binary.byte_size !== bytes.byteLength ||
-        !("content_hash" in current.binary) || current.binary.content_hash !== hash ||
-        !("content_type" in current.binary) || typeof current.binary.content_type !== "string"
-      ) throw new Error("Binary asset path conflicts with the requested immutable companion (409)");
-      const rawPath = `/projects/${encodeURIComponent(input.project)}/knowledge/assets/${
-        encodeURIComponent(input.path)
-      }?${new URLSearchParams({
-        branch_id: branch,
-        file_version_id: current.version_id,
-        content_hash: hash,
-      })}`;
-      const remote = await readBinaryBytes({
-        client: input.client,
-        path: rawPath,
-        byteSize: bytes.byteLength,
-        signal: input.signal,
-      });
-      if (
-        remote.byteLength !== bytes.byteLength || await hashAssetBytes(remote) !== hash ||
-        !remote.every((byte, index) => byte === bytes[index])
-      ) {
-        throw new Error("Binary asset readback does not match its immutable bytes");
-      }
-      input.signal?.throwIfAborted();
-      return {
-        path: input.path,
-        file_id: current.id,
-        version_id: current.version_id,
-        checksum: hash,
-      };
+    if (absent) return undefined;
+    if (
+      !current || typeof current !== "object" || !("path" in current) ||
+      current.path !== input.path ||
+      !("id" in current) || typeof current.id !== "string" || !UUID.test(current.id) ||
+      !("version_id" in current) || typeof current.version_id !== "string" ||
+      !UUID.test(current.version_id) ||
+      !("binary" in current) || !current.binary || typeof current.binary !== "object" ||
+      !("byte_size" in current.binary) || current.binary.byte_size !== bytes.byteLength ||
+      !("content_hash" in current.binary) || current.binary.content_hash !== hash ||
+      !("content_type" in current.binary) || typeof current.binary.content_type !== "string"
+    ) throw new Error("Binary asset path conflicts with the requested immutable companion (409)");
+    const rawPath = `/projects/${encodeURIComponent(input.project)}/knowledge/assets/${
+      encodeURIComponent(input.path)
+    }?${new URLSearchParams({
+      branch_id: branch,
+      file_version_id: current.version_id,
+      content_hash: hash,
+    })}`;
+    const remote = await readBinaryBytes({
+      client: input.client,
+      path: rawPath,
+      byteSize: bytes.byteLength,
+      signal: input.signal,
+    });
+    if (
+      remote.byteLength !== bytes.byteLength || await hashAssetBytes(remote) !== hash ||
+      !remote.every((byte, index) => byte === bytes[index])
+    ) {
+      throw new Error("Binary asset readback does not match its immutable bytes");
     }
+    input.signal?.throwIfAborted();
+    return {
+      path: input.path,
+      file_id: current.id,
+      version_id: current.version_id,
+      checksum: hash,
+    };
+  }
+  if (input.expected.kind === "absent") {
+    const reconciled = await reconcileAbsentAsset(branch);
+    if (reconciled) return reconciled;
   }
   const path = `/projects/${encodeURIComponent(input.project)}/knowledge/assets/${
     encodeURIComponent(input.path)
@@ -217,30 +220,54 @@ export async function readKnowledgeBundle(input: {
   ) {
     throw new Error("Invalid knowledge bundle manifest");
   }
-  const expectedSelector = input.scope.kind === "release"
-    ? { type: "release", id: input.scope.releaseId }
-    : input.scope.branchId === "main"
-    ? { type: "main_branch", id: input.project }
-    : { type: "preview_branch", id: input.scope.branchId };
-  if (
-    !("project_id" in manifest) || manifest.project_id !== input.project ||
-    !("root_path" in manifest) || manifest.root_path !== root ||
-    !("selector" in manifest) || !manifest.selector || typeof manifest.selector !== "object" ||
-    !("type" in manifest.selector) || manifest.selector.type !== expectedSelector.type ||
-    !("id" in manifest.selector) || manifest.selector.id !== expectedSelector.id ||
-    !("file_count" in manifest) || manifest.file_count !== manifest.files.length ||
-    !("total_bytes" in manifest) || typeof manifest.total_bytes !== "number" ||
-    !Number.isSafeInteger(manifest.total_bytes) || manifest.total_bytes < 0 ||
-    manifest.total_bytes > 64 * 1024 * 1024
-  ) {
-    throw new Error("Knowledge bundle manifest does not match its requested owner");
+  function ownerSelector() {
+    if (input.scope.kind === "release") return { type: "release", id: input.scope.releaseId };
+    if (input.scope.branchId === "main") return { type: "main_branch", id: input.project };
+    return { type: "preview_branch", id: input.scope.branchId };
   }
+  const expectedSelector = ownerSelector();
+  function validateManifestOwner(
+    manifest: { files: unknown },
+  ): asserts manifest is { files: unknown[]; total_bytes: number } {
+    if (
+      !("project_id" in manifest) || manifest.project_id !== input.project ||
+      !("root_path" in manifest) || manifest.root_path !== root ||
+      !("selector" in manifest) || !manifest.selector || typeof manifest.selector !== "object" ||
+      !("type" in manifest.selector) || manifest.selector.type !== expectedSelector.type ||
+      !("id" in manifest.selector) || manifest.selector.id !== expectedSelector.id ||
+      !("file_count" in manifest) || manifest.file_count !== (manifest.files as unknown[]).length ||
+      !("total_bytes" in manifest) || typeof manifest.total_bytes !== "number" ||
+      !Number.isSafeInteger(manifest.total_bytes) || manifest.total_bytes < 0 ||
+      manifest.total_bytes > 64 * 1024 * 1024
+    ) {
+      throw new Error("Knowledge bundle manifest does not match its requested owner");
+    }
+  }
+  validateManifestOwner(manifest);
   const entries: { path: string; bytes: Uint8Array; fileId: string; versionId: string }[] = [];
   const paths = new Set<string>();
   let total = 0;
   const files: unknown[] = manifest.files;
-  for (const entry of files) {
-    input.signal?.throwIfAborted();
+  interface BundleEntry {
+    path: string;
+    file_id: string;
+    file_version_id: string;
+    byte_size: number;
+    content_hash: string;
+  }
+  function isTextEntry(
+    entry: BundleEntry,
+  ): entry is BundleEntry & { kind: "text"; content: string } {
+    return "kind" in entry && entry.kind === "text" && "content" in entry &&
+      typeof entry.content === "string";
+  }
+  function isBinaryEntry(
+    entry: BundleEntry,
+  ): entry is BundleEntry & { kind: "binary"; content_path: string } {
+    return "kind" in entry && entry.kind === "binary" && "content_path" in entry &&
+      typeof entry.content_path === "string";
+  }
+  function validateEntry(entry: unknown): asserts entry is BundleEntry {
     if (
       !entry || typeof entry !== "object" || !("path" in entry) || typeof entry.path !== "string" ||
       !entry.path.startsWith(`${root}/`) || !isCanonicalKnowledgePath(entry.path) ||
@@ -263,33 +290,35 @@ export async function readKnowledgeBundle(input: {
     if (total > 64 * 1024 * 1024) {
       throw new Error("Knowledge bundle exceeds the 64 MiB limit");
     }
-    let bytes: Uint8Array;
+  }
+  function boundBinaryUrl(entry: BundleEntry & { content_path: string }): URL {
+    const expectedPath = `/projects/${encodeURIComponent(input.project)}/knowledge/assets/${
+      encodeURIComponent(entry.path)
+    }`;
+    const url = new URL(entry.content_path, "https://bundle.invalid");
+    const historical = url.searchParams.has("historical");
     if (
-      "kind" in entry && entry.kind === "text" && "content" in entry &&
-      typeof entry.content === "string"
+      (historical &&
+        (scope.key !== "branch_id" || url.searchParams.get("historical") !== "true")) ||
+      url.origin !== "https://bundle.invalid" || url.hash !== "" ||
+      [...url.searchParams].length !== (historical ? 4 : 3) || url.pathname !== expectedPath ||
+      url.searchParams.get(scope.key) !== scope.id ||
+      url.searchParams.has(scope.key === "branch_id" ? "release_id" : "branch_id") ||
+      url.searchParams.get("file_version_id") !== entry.file_version_id ||
+      url.searchParams.get("content_hash") !== entry.content_hash || !input.client.getStream
     ) {
+      throw new Error("Binary bundle entry is not bound to its owner and immutable version");
+    }
+    return url;
+  }
+  for (const entry of files) {
+    input.signal?.throwIfAborted();
+    validateEntry(entry);
+    let bytes: Uint8Array;
+    if (isTextEntry(entry)) {
       bytes = new TextEncoder().encode(entry.content);
-    } else if (
-      "kind" in entry && entry.kind === "binary" && "content_path" in entry &&
-      typeof entry.content_path === "string"
-    ) {
-      const expectedPath = `/projects/${encodeURIComponent(input.project)}/knowledge/assets/${
-        encodeURIComponent(entry.path)
-      }`;
-      const url = new URL(entry.content_path, "https://bundle.invalid");
-      const historical = url.searchParams.has("historical");
-      if (
-        (historical &&
-          (scope.key !== "branch_id" || url.searchParams.get("historical") !== "true")) ||
-        url.origin !== "https://bundle.invalid" || url.hash !== "" ||
-        [...url.searchParams].length !== (historical ? 4 : 3) || url.pathname !== expectedPath ||
-        url.searchParams.get(scope.key) !== scope.id ||
-        url.searchParams.has(scope.key === "branch_id" ? "release_id" : "branch_id") ||
-        url.searchParams.get("file_version_id") !== entry.file_version_id ||
-        url.searchParams.get("content_hash") !== entry.content_hash || !input.client.getStream
-      ) {
-        throw new Error("Binary bundle entry is not bound to its owner and immutable version");
-      }
+    } else if (isBinaryEntry(entry)) {
+      const url = boundBinaryUrl(entry);
       bytes = await readBinaryBytes({
         client: input.client,
         path: `${url.pathname}${url.search}`,
