@@ -3112,7 +3112,10 @@ describe("recent tool resource results", () => {
       },
     });
     for (
-      const [resource, retained] of [[valid, true], [accessorId, false], [proxy, true], [
+      const [resource, retained] of [[valid, true], [accessorId, false], [hiddenId, false], [
+        proxy,
+        true,
+      ], [
         unreadable,
         false,
       ]] as const
