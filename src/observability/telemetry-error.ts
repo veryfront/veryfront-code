@@ -408,7 +408,7 @@ function sanitizeStructuredRecord(
 }
 
 function cloneNativeStructuredValue(value: unknown): { value: unknown } | undefined {
-  if (typeof value !== "object" || value === null) return undefined;
+  if (!value || typeof value !== "object") return undefined;
   if (isNativeErrorWithoutHooks(value)) return { value: snapshotStructuredError(value) };
   const clonedDate = cloneNativeDate(value);
   if (clonedDate) return { value: clonedDate };
