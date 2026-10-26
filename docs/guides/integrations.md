@@ -731,7 +731,7 @@ names or icon metadata:
 
 ## Text exports
 
-Drive document exports return readable UTF-8 text with its content type. Use `text/plain` for Docs or `text/csv` for Sheets. The `drive__download_file` tool uses a separate byte-safe binary response contract and are not enabled in the Drive catalog agent.
+Drive document exports return readable UTF-8 text with its content type. Use `text/plain` for Docs or `text/csv` for Sheets. The `drive__download_file` tool uses a separate byte-safe binary response contract and is not enabled in the Drive catalog agent.
 
 ## Verify it worked
 
