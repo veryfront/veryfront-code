@@ -1,4 +1,5 @@
 ---
+sidebarSection: guides
 title: "Deploy with Veryfront Cloud"
 description: "Push and deploy an existing Veryfront project."
 order: 9

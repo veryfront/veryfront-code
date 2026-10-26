@@ -1,4 +1,5 @@
 ---
+sidebarSection: guides
 title: "Create project"
 description: "Scaffold a new Veryfront project from a template and run it locally."
 order: 4

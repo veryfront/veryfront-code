@@ -1,4 +1,5 @@
 ---
+sidebarSection: guides
 title: "Create frontend"
 description: "Add a chat page that streams responses from a Veryfront agent."
 order: 8

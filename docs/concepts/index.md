@@ -13,7 +13,7 @@ clear.
 
 | Concept                                               | Explains                                                   |
 | ----------------------------------------------------- | ---------------------------------------------------------- |
-| [Veryfront Code](./framework-overview.md)             | How the main framework surfaces fit together.              |
+| [Framework architecture](./framework-overview.md)     | How the main framework surfaces fit together.              |
 | [Framework primitives](./framework-primitives.md)     | Overview of framework primitives.                          |
 | [App](./app.md)                                       | The user-facing route and rendering boundary.              |
 | [Agent](./agent.md)                                   | The model reasoning loop and output boundary.              |

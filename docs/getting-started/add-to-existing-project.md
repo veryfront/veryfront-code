@@ -1,4 +1,5 @@
 ---
+sidebarSection: guides
 title: "Add to an existing project"
 description: "Install Veryfront Code into a TypeScript project you already have."
 order: 5
