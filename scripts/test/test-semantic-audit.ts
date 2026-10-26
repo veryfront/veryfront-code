@@ -2999,15 +2999,9 @@ function objectAssignAccessorMarkers(
 ): readonly SemanticMarker[] {
   const markers: SemanticMarker[] = [];
   let targetBinding = runtimeBindingForExpression(args[0], imports, scopes);
-  objectAssignSources:
-  for (const source of args.slice(1)) {
-    const sourceBinding = runtimeBindingForExpression(source, imports, scopes);
-    const sourceSymbol = invocationSymbol(
-      unwrapExpression(source) ?? {
-        type: "Identifier",
-        name: "source",
-      },
-    );
+  function exactSourceEntries(
+    source: unknown,
+  ): readonly LocalMutationAssignedEntry[] | undefined {
     const sourceNode = unwrapExpression(source);
     const sourceProperties = sourceNode?.type === "ObjectExpression" &&
         Array.isArray(sourceNode.properties)
@@ -3021,25 +3015,15 @@ function objectAssignAccessorMarkers(
         isNode(property) && staticObjectPropertyName(property) !== undefined
       ) && entries !== undefined &&
       entries.every((entry) => entry.property !== undefined);
-    if (!hasExactOrder || !entries) {
-      markers.push(
-        ...getterRuntimeEffectMarkers(
-          runtimeUnknownPropertyGetterEffectBinding(sourceBinding, true),
-          `Object.assign(${sourceSymbol} getter)`,
-          line,
-        ),
-        ...memberSetterRuntimeEffectMarkers(
-          runtimeUnknownPropertyExpression(args[0]),
-          line,
-          imports,
-          scopes,
-          unknownRuntimeValueExpression(),
-        ),
-      );
-      continue;
-    }
+    return hasExactOrder && entries ? entries : undefined;
+  }
 
-    for (const entry of entries) {
+  function appendSourceEntries(
+    sourceEntries: readonly LocalMutationAssignedEntry[],
+    sourceBinding: RuntimeBinding | undefined,
+    sourceSymbol: string,
+  ): boolean {
+    for (const entry of sourceEntries) {
       const property = entry.property;
       if (property === undefined) continue;
       markers.push(
@@ -3075,8 +3059,41 @@ function objectAssignAccessorMarkers(
         imports,
         scopes,
       );
-      if (applied.write.outcome === "blocked") break objectAssignSources;
+      if (applied.write.outcome === "blocked") return false;
       targetBinding = applied.result;
+    }
+    return true;
+  }
+
+  for (const source of args.slice(1)) {
+    const sourceBinding = runtimeBindingForExpression(source, imports, scopes);
+    const sourceSymbol = invocationSymbol(
+      unwrapExpression(source) ?? {
+        type: "Identifier",
+        name: "source",
+      },
+    );
+    const entries = exactSourceEntries(source);
+    if (!entries) {
+      markers.push(
+        ...getterRuntimeEffectMarkers(
+          runtimeUnknownPropertyGetterEffectBinding(sourceBinding, true),
+          `Object.assign(${sourceSymbol} getter)`,
+          line,
+        ),
+        ...memberSetterRuntimeEffectMarkers(
+          runtimeUnknownPropertyExpression(args[0]),
+          line,
+          imports,
+          scopes,
+          unknownRuntimeValueExpression(),
+        ),
+      );
+      continue;
+    }
+
+    if (!appendSourceEntries(entries, sourceBinding, sourceSymbol)) {
+      break;
     }
   }
   return markers;
@@ -3277,11 +3294,9 @@ function processGlobalMarker(
   scopes: readonly Scope[],
   importedNames: ReadonlySet<string>,
 ): SemanticMarker | undefined {
-  if (
-    node.type === "MemberExpression" ||
-    node.type === "OptionalMemberExpression"
-  ) {
-    const chain = memberChain(node);
+  function environmentMarker(
+    chain: readonly string[] | undefined,
+  ): SemanticMarker | undefined {
     if (
       chain?.[0] === "Deno" && chain[1] === "env" &&
       (chain.length === 2 || PROCESS_ENV_METHODS.has(chain[2])) &&
@@ -3307,6 +3322,13 @@ function processGlobalMarker(
         symbol: `globalThis.${chain[1]}`,
       };
     }
+    return undefined;
+  }
+
+  function memberMarker(): SemanticMarker | undefined {
+    const chain = memberChain(node);
+    const environment = environmentMarker(chain);
+    if (environment) return environment;
     if (
       chain?.length === 2 &&
       (chain[0] === "Deno" || chain[0] === "process") &&
@@ -3333,6 +3355,15 @@ function processGlobalMarker(
     ) {
       return { effect: "process", line, symbol: `process.${chain[1]}` };
     }
+    return undefined;
+  }
+
+  if (
+    node.type === "MemberExpression" ||
+    node.type === "OptionalMemberExpression"
+  ) {
+    const marker = memberMarker();
+    if (marker) return marker;
   }
 
   if (!isCallLikeExpression(node) || !isNode(node.callee)) {
@@ -3405,110 +3436,151 @@ function collectImportBindings(program: Node, file: string): ImportBindings {
     createRequire: new Set(),
     importedNames: new Set(),
   };
-  const body = Array.isArray(program.body) ? program.body : [];
-  for (const statement of body) {
-    if (!isNode(statement)) continue;
-    if (statement.type === "TSImportEqualsDeclaration") {
-      const reference = isNode(statement.moduleReference)
-        ? statement.moduleReference
-        : undefined;
-      const literalSource = reference?.type === "TSExternalModuleReference"
-        ? literalValue(reference.expression)
-        : undefined;
-      const source = literalSource
-        ? normalizeImportSource(literalSource, file)
-        : undefined;
-      if (
-        statement.importKind !== "type" && source && isNode(statement.id) &&
-        statement.id.type === "Identifier"
-      ) {
-        addRuntimeNamespaceImport(
-          bindings,
-          statement.id.name as string,
-          source,
-        );
-      }
-      continue;
+  function registerImportEquals(statement: Node): void {
+    const reference = isNode(statement.moduleReference)
+      ? statement.moduleReference
+      : undefined;
+    const literalSource = reference?.type === "TSExternalModuleReference"
+      ? literalValue(reference.expression)
+      : undefined;
+    const source = literalSource
+      ? normalizeImportSource(literalSource, file)
+      : undefined;
+    if (
+      statement.importKind !== "type" && source && isNode(statement.id) &&
+      statement.id.type === "Identifier"
+    ) {
+      addRuntimeNamespaceImport(
+        bindings,
+        statement.id.name as string,
+        source,
+      );
     }
-    if (statement.type !== "ImportDeclaration") continue;
-    if (statement.importKind === "type") continue;
+  }
+
+  function importedSpecifierName(specifier: Node, local: string): string {
+    if (
+      isNode(specifier.imported) && specifier.imported.type === "Identifier"
+    ) return specifier.imported.name as string;
+    if (isNode(specifier.imported)) {
+      return literalValue(specifier.imported) ?? local;
+    }
+    return local;
+  }
+
+  function registerFilesystemImport(
+    source: string,
+    importedName: string,
+    local: string,
+  ): void {
+    if (isFilesystemSpecifier(source)) {
+      if (FILESYSTEM_OPEN_METHODS.has(importedName)) {
+        bindings.filesystemOpen.set(local, source);
+      } else if (WATCH_METHODS.has(importedName)) {
+        bindings.filesystemWatch.add(local);
+      } else if (READ_METHODS.has(importedName)) {
+        bindings.filesystemRead.add(local);
+      } else if (WRITE_METHODS.has(importedName)) {
+        bindings.filesystemWrite.add(local);
+      }
+    }
+  }
+
+  function registerProcessImport(
+    source: string,
+    importedName: string,
+    local: string,
+  ): void {
+    if (isProcessEffectSpecifier(source)) {
+      if (SHARED_CWD_METHODS.has(importedName)) {
+        bindings.sharedCwd.add(local);
+      } else if (
+        isProcessEffectMethod(importedName) ||
+        isPublicPlatformProcessMethod(source, importedName)
+      ) {
+        bindings.process.add(local);
+      }
+    }
+  }
+
+  function registerNetworkImport(
+    source: string,
+    importedName: string,
+    local: string,
+  ): void {
+    if (isServerSpecifier(source) && SERVER_METHODS.has(importedName)) {
+      bindings.server.add(local);
+    }
+    if (isServerSpecifier(source) && NETWORK_METHODS.has(importedName)) {
+      bindings.network.add(local);
+    }
+    if (isDnsSpecifier(source) && DNS_NETWORK_METHODS.has(importedName)) {
+      bindings.network.add(local);
+    }
+    if (isDnsSpecifier(source) && importedName === "promises") {
+      addRuntimeNamespaceImport(bindings, local, "node:dns/promises");
+    }
+    if (
+      isDnsSpecifier(source) && DNS_RESOLVER_CONSTRUCTORS.has(importedName)
+    ) {
+      bindings.runtimeConstructors.set(local, source);
+    }
+  }
+
+  function registerImportSpecifier(specifier: unknown, source: string): void {
+    if (!isNode(specifier) || !isNode(specifier.local)) return;
+    if (specifier.importKind === "type") return;
+    const local = specifier.local.name as string;
+    if (
+      specifier.type === "ImportNamespaceSpecifier" ||
+      specifier.type === "ImportDefaultSpecifier"
+    ) {
+      addRuntimeNamespaceImport(bindings, local, source);
+      return;
+    }
+    bindings.importedNames.add(local);
+    const importedName = importedSpecifierName(specifier, local);
+    if (importedName === "default" && isRuntimeEffectModule(source)) {
+      addRuntimeNamespaceImport(bindings, local, source);
+      return;
+    }
+    registerFilesystemImport(source, importedName, local);
+    registerProcessImport(source, importedName, local);
+    if (isTestingRuntimeSpecifier(source)) {
+      const effect = effectForModuleMethod(source, importedName);
+      if (effect) addEffectImportBinding(bindings, local, effect);
+    }
+    registerNetworkImport(source, importedName, local);
+    if (isPlaywrightSpecifier(source)) bindings.playwright.add(local);
+    if (
+      isCreateRequireSpecifier(source) && importedName === "createRequire"
+    ) {
+      bindings.createRequire.add(local);
+    }
+  }
+
+  function registerImportStatement(statement: unknown): void {
+    if (!isNode(statement)) return;
+    if (statement.type === "TSImportEqualsDeclaration") {
+      registerImportEquals(statement);
+      return;
+    }
+    if (statement.type !== "ImportDeclaration") return;
+    if (statement.importKind === "type") return;
     const literalSource = literalValue(statement.source);
-    if (!literalSource) continue;
+    if (!literalSource) return;
     const source = normalizeImportSource(literalSource, file);
     const specifiers = Array.isArray(statement.specifiers)
       ? statement.specifiers
       : [];
     for (const specifier of specifiers) {
-      if (!isNode(specifier) || !isNode(specifier.local)) continue;
-      if (specifier.importKind === "type") continue;
-      const local = specifier.local.name as string;
-      if (
-        specifier.type === "ImportNamespaceSpecifier" ||
-        specifier.type === "ImportDefaultSpecifier"
-      ) {
-        addRuntimeNamespaceImport(bindings, local, source);
-        continue;
-      }
-      bindings.importedNames.add(local);
-      const importedName =
-        isNode(specifier.imported) && specifier.imported.type === "Identifier"
-          ? specifier.imported.name as string
-          : isNode(specifier.imported)
-          ? literalValue(specifier.imported) ?? local
-          : local;
-      if (importedName === "default" && isRuntimeEffectModule(source)) {
-        addRuntimeNamespaceImport(bindings, local, source);
-        continue;
-      }
-      if (isFilesystemSpecifier(source)) {
-        if (FILESYSTEM_OPEN_METHODS.has(importedName)) {
-          bindings.filesystemOpen.set(local, source);
-        } else if (WATCH_METHODS.has(importedName)) {
-          bindings.filesystemWatch.add(local);
-        } else if (READ_METHODS.has(importedName)) {
-          bindings.filesystemRead.add(local);
-        } else if (WRITE_METHODS.has(importedName)) {
-          bindings.filesystemWrite.add(local);
-        }
-      }
-      if (isProcessEffectSpecifier(source)) {
-        if (SHARED_CWD_METHODS.has(importedName)) {
-          bindings.sharedCwd.add(local);
-        } else if (
-          isProcessEffectMethod(importedName) ||
-          isPublicPlatformProcessMethod(source, importedName)
-        ) {
-          bindings.process.add(local);
-        }
-      }
-      if (isTestingRuntimeSpecifier(source)) {
-        const effect = effectForModuleMethod(source, importedName);
-        if (effect) addEffectImportBinding(bindings, local, effect);
-      }
-      if (isServerSpecifier(source) && SERVER_METHODS.has(importedName)) {
-        bindings.server.add(local);
-      }
-      if (isServerSpecifier(source) && NETWORK_METHODS.has(importedName)) {
-        bindings.network.add(local);
-      }
-      if (isDnsSpecifier(source) && DNS_NETWORK_METHODS.has(importedName)) {
-        bindings.network.add(local);
-      }
-      if (isDnsSpecifier(source) && importedName === "promises") {
-        addRuntimeNamespaceImport(bindings, local, "node:dns/promises");
-      }
-      if (
-        isDnsSpecifier(source) && DNS_RESOLVER_CONSTRUCTORS.has(importedName)
-      ) {
-        bindings.runtimeConstructors.set(local, source);
-      }
-      if (isPlaywrightSpecifier(source)) bindings.playwright.add(local);
-      if (
-        isCreateRequireSpecifier(source) && importedName === "createRequire"
-      ) {
-        bindings.createRequire.add(local);
-      }
+      registerImportSpecifier(specifier, source);
     }
+  }
+
+  const body = Array.isArray(program.body) ? program.body : [];
+  for (const statement of body) {
+    registerImportStatement(statement);
   }
   return bindings;
 }
@@ -3625,6 +3697,44 @@ function collectAssignedIdentifierNames(
   node: unknown,
   names: Set<string>,
 ): void {
+  function collectInitializedVarNames(declaration: Node): void {
+    for (
+      const declarator of Array.isArray(declaration.declarations)
+        ? declaration.declarations
+        : []
+    ) {
+      if (isNode(declarator) && declarator.init) {
+        collectPatternNames(declarator.id, names);
+      }
+    }
+  }
+
+  function collectLoopAssignedNames(left: Node): void {
+    if (left.type !== "VariableDeclaration") {
+      collectPatternNames(left, names);
+    } else if (left.kind === "var") {
+      for (
+        const declarator of Array.isArray(left.declarations)
+          ? left.declarations
+          : []
+      ) {
+        if (isNode(declarator)) collectPatternNames(declarator.id, names);
+      }
+    }
+  }
+
+  function collectAssignedChildren(node: Node): void {
+    for (const key of Object.keys(node)) {
+      if (key === "loc" || COMMENT_KEYS.has(key)) continue;
+      const value = node[key];
+      if (Array.isArray(value)) {
+        for (const item of value) collectAssignedIdentifierNames(item, names);
+      } else {
+        collectAssignedIdentifierNames(value, names);
+      }
+    }
+  }
+
   if (!isNode(node)) return;
   if (isOpaqueBindingWrite(node)) names.add(OPAQUE_BINDING_WRITE);
   if (node.type === "AssignmentExpression") {
@@ -3632,40 +3742,14 @@ function collectAssignedIdentifierNames(
   } else if (node.type === "UpdateExpression") {
     collectPatternNames(node.argument, names);
   } else if (node.type === "VariableDeclaration" && node.kind === "var") {
-    for (
-      const declarator of Array.isArray(node.declarations)
-        ? node.declarations
-        : []
-    ) {
-      if (isNode(declarator) && declarator.init) {
-        collectPatternNames(declarator.id, names);
-      }
-    }
+    collectInitializedVarNames(node);
   } else if (
     (node.type === "ForOfStatement" || node.type === "ForInStatement") &&
     isNode(node.left)
   ) {
-    if (node.left.type !== "VariableDeclaration") {
-      collectPatternNames(node.left, names);
-    } else if (node.left.kind === "var") {
-      for (
-        const declarator of Array.isArray(node.left.declarations)
-          ? node.left.declarations
-          : []
-      ) {
-        if (isNode(declarator)) collectPatternNames(declarator.id, names);
-      }
-    }
+    collectLoopAssignedNames(node.left);
   }
-  for (const key of Object.keys(node)) {
-    if (key === "loc" || COMMENT_KEYS.has(key)) continue;
-    const value = node[key];
-    if (Array.isArray(value)) {
-      for (const item of value) collectAssignedIdentifierNames(item, names);
-    } else {
-      collectAssignedIdentifierNames(value, names);
-    }
-  }
+  collectAssignedChildren(node);
 }
 
 function createScope(
@@ -3771,31 +3855,45 @@ function collectLocalDeclaredNames(
   assignedNames: Set<string>,
   playwrightFixtures: Set<string>,
 ): void {
-  const statements = lexicalScopeStatements(node);
-  if (statements) {
+  function collectNamedDeclaration(statement: Node): void {
+    if (
+      (statement.type === "FunctionDeclaration" ||
+        statement.type === "ClassDeclaration") && isNode(statement.id)
+    ) {
+      const name = statement.id.name as string;
+      names.add(name);
+      definitelyNonUndefinedNames.add(name);
+      // `declare` bindings are erased at runtime; reassigned names lose
+      // their declaration-form truthiness.
+      if (
+        statement.declare !== true && !assignedNames.has(name) &&
+        !assignedNames.has(OPAQUE_BINDING_WRITE)
+      ) {
+        definitelyTruthyNames.add(name);
+        definitelyNonNullishNames.add(name);
+      }
+      if (statement.type === "FunctionDeclaration") {
+        definitelyInitializedNames.add(name);
+      }
+    }
+  }
+
+  function collectLexicalVariableNames(statement: Node): void {
+    if (statement.kind === "var") return;
+    for (
+      const declaration of Array.isArray(statement.declarations)
+        ? statement.declarations
+        : []
+    ) {
+      if (isNode(declaration)) collectPatternNames(declaration.id, names);
+    }
+  }
+
+  function collectStatementDeclarations(statements: readonly Node[]): void {
     for (const child of statements) {
       if (!isNode(child)) continue;
       const statement = unwrapExportDeclaration(child);
-      if (
-        (statement.type === "FunctionDeclaration" ||
-          statement.type === "ClassDeclaration") && isNode(statement.id)
-      ) {
-        const name = statement.id.name as string;
-        names.add(name);
-        definitelyNonUndefinedNames.add(name);
-        // `declare` bindings are erased at runtime; reassigned names lose
-        // their declaration-form truthiness.
-        if (
-          statement.declare !== true && !assignedNames.has(name) &&
-          !assignedNames.has(OPAQUE_BINDING_WRITE)
-        ) {
-          definitelyTruthyNames.add(name);
-          definitelyNonNullishNames.add(name);
-        }
-        if (statement.type === "FunctionDeclaration") {
-          definitelyInitializedNames.add(name);
-        }
-      }
+      collectNamedDeclaration(statement);
       if (
         statement.type === "TSModuleDeclaration" &&
         isNode(statement.id) && statement.id.type === "Identifier"
@@ -3810,26 +3908,12 @@ function collectLocalDeclaredNames(
         names.add(statement.id.name as string);
       }
       if (statement.type === "VariableDeclaration") {
-        if (statement.kind === "var") continue;
-        for (
-          const declaration of Array.isArray(statement.declarations)
-            ? statement.declarations
-            : []
-        ) {
-          if (isNode(declaration)) collectPatternNames(declaration.id, names);
-        }
+        collectLexicalVariableNames(statement);
       }
     }
-    return;
   }
-  if (
-    node.type === "FunctionDeclaration" ||
-    node.type === "FunctionExpression" ||
-    node.type === "ArrowFunctionExpression" ||
-    node.type === "ObjectMethod" ||
-    node.type === "ClassMethod" ||
-    node.type === "ClassPrivateMethod"
-  ) {
+
+  function collectFunctionDeclarations(): void {
     if (node.type === "FunctionExpression" && isNode(node.id)) {
       const name = node.id.name as string;
       names.add(name);
@@ -3844,13 +3928,10 @@ function collectLocalDeclaredNames(
       collectPatternNames(param, names);
       collectPlaywrightFixtureNames(param, playwrightFixtures);
     }
-    return;
   }
-  if (
-    (node.type === "ClassDeclaration" || node.type === "ClassExpression") &&
-    isNode(node.id)
-  ) {
-    const name = node.id.name as string;
+
+  function collectClassName(id: Node): void {
+    const name = id.name as string;
     names.add(name);
     definitelyInitializedNames.add(name);
     definitelyNonUndefinedNames.add(name);
@@ -3858,12 +3939,9 @@ function collectLocalDeclaredNames(
       definitelyTruthyNames.add(name);
       definitelyNonNullishNames.add(name);
     }
-    return;
   }
-  if (
-    node.type === "ForStatement" || node.type === "ForInStatement" ||
-    node.type === "ForOfStatement"
-  ) {
+
+  function collectLoopDeclarations(): void {
     const declaration = node.type === "ForStatement" ? node.init : node.left;
     if (isNode(declaration) && declaration.type === "VariableDeclaration") {
       if (declaration.kind === "var") return;
@@ -3875,6 +3953,36 @@ function collectLocalDeclaredNames(
         if (isNode(declarator)) collectPatternNames(declarator.id, names);
       }
     }
+  }
+
+  const statements = lexicalScopeStatements(node);
+  if (statements) {
+    collectStatementDeclarations(statements);
+    return;
+  }
+  if (
+    node.type === "FunctionDeclaration" ||
+    node.type === "FunctionExpression" ||
+    node.type === "ArrowFunctionExpression" ||
+    node.type === "ObjectMethod" ||
+    node.type === "ClassMethod" ||
+    node.type === "ClassPrivateMethod"
+  ) {
+    collectFunctionDeclarations();
+    return;
+  }
+  if (
+    (node.type === "ClassDeclaration" || node.type === "ClassExpression") &&
+    isNode(node.id)
+  ) {
+    collectClassName(node.id);
+    return;
+  }
+  if (
+    node.type === "ForStatement" || node.type === "ForInStatement" ||
+    node.type === "ForOfStatement"
+  ) {
+    collectLoopDeclarations();
     return;
   }
   if (node.type === "CatchClause") {
@@ -3889,26 +3997,7 @@ function collectLocalRuntimeBindings(
   scopes: readonly Scope[],
   assignedNames: Set<string>,
 ): void {
-  const statements = lexicalScopeStatements(node);
-  if (!statements) return;
-  const scope = scopes.at(-1);
-  if (!scope) return;
-
-  for (const statement of statements) {
-    if (!isNode(statement)) continue;
-    const declaration = unwrapExportDeclaration(statement);
-    if (declaration.type === "TSModuleDeclaration") {
-      bindRuntimeNamespaceDeclaration(declaration, imports, scopes, scope);
-      continue;
-    }
-    if (declaration.type === "TSImportEqualsDeclaration") {
-      bindRuntimeImportEqualsDeclaration(declaration, imports, scopes, scope);
-      continue;
-    }
-    if (declaration.type !== "VariableDeclaration") {
-      continue;
-    }
-    if (declaration.kind === "var") continue;
+  function bindVariableDeclarations(declaration: Node, scope: Scope): void {
     for (
       const declarator of Array.isArray(declaration.declarations)
         ? declaration.declarations
@@ -3933,6 +4022,29 @@ function collectLocalRuntimeBindings(
       }
       bindRuntimeDeclaration(declarator, imports, scopes, scope);
     }
+  }
+
+  const statements = lexicalScopeStatements(node);
+  if (!statements) return;
+  const scope = scopes.at(-1);
+  if (!scope) return;
+
+  for (const statement of statements) {
+    if (!isNode(statement)) continue;
+    const declaration = unwrapExportDeclaration(statement);
+    if (declaration.type === "TSModuleDeclaration") {
+      bindRuntimeNamespaceDeclaration(declaration, imports, scopes, scope);
+      continue;
+    }
+    if (declaration.type === "TSImportEqualsDeclaration") {
+      bindRuntimeImportEqualsDeclaration(declaration, imports, scopes, scope);
+      continue;
+    }
+    if (declaration.type !== "VariableDeclaration") {
+      continue;
+    }
+    if (declaration.kind === "var") continue;
+    bindVariableDeclarations(declaration, scope);
   }
 }
 
@@ -4069,37 +4181,17 @@ function collectClassRuntimeBindings(
   scope: Scope,
 ): void {
   if (!isClassScopeNode(node) || !scope.classRuntimeBindings) return;
+  const classBindings = scope.classRuntimeBindings;
   const body = isNode(node.body) && Array.isArray(node.body.body)
     ? node.body.body
     : [];
-  for (const member of body) {
-    if (!isNode(member)) continue;
-    if (member.type === "StaticBlock") {
-      scope.classRuntimeBindings.memberEntries.set(
-        member,
-        scope.classRuntimeBindings.static,
-      );
-      const blockBinding = summarizeClassStaticBlockRuntimeBinding(
-        member,
-        imports,
-        scopes,
-      );
-      if (blockBinding) setClassRuntimeBinding(scope, "static", blockBinding);
-      continue;
-    }
-    if (
-      (member.type !== "ClassProperty" &&
-        member.type !== "ClassPrivateProperty") ||
-      member.declare === true || member.abstract === true
-    ) {
-      continue;
-    }
-    const name = staticObjectPropertyName(member);
-    const hasUnknownComputedName = member.computed === true && !name;
-    if (!name && !hasUnknownComputedName) continue;
-    const receiverKind = member.static === true ? "static" : "instance";
-    const existing = scope.classRuntimeBindings[receiverKind];
-    scope.classRuntimeBindings.memberEntries.set(member, existing);
+  function bindFieldValue(
+    member: Node,
+    name: string | undefined,
+    receiverKind: Parameters<typeof setClassRuntimeBinding>[1],
+  ): void {
+    const existing = classBindings[receiverKind];
+    classBindings.memberEntries.set(member, existing);
     const receiverScope = runtimeReceiverScope(existing, scope, receiverKind);
     const fieldScopes = [...scopes, receiverScope];
     const binding = runtimeBindingForExpression(
@@ -4147,26 +4239,63 @@ function collectClassRuntimeBindings(
     setClassRuntimeBinding(scope, receiverKind, nextBinding);
     syncClassStaticRuntimeBinding(scope);
   }
-  for (const method of body) {
+
+  function collectFieldMember(member: Node): void {
+    if (member.type === "StaticBlock") {
+      classBindings.memberEntries.set(
+        member,
+        classBindings.static,
+      );
+      const blockBinding = summarizeClassStaticBlockRuntimeBinding(
+        member,
+        imports,
+        scopes,
+      );
+      if (blockBinding) setClassRuntimeBinding(scope, "static", blockBinding);
+      return;
+    }
+    if (
+      (member.type !== "ClassProperty" &&
+        member.type !== "ClassPrivateProperty") ||
+      member.declare === true || member.abstract === true
+    ) {
+      return;
+    }
+    const name = staticObjectPropertyName(member);
+    const hasUnknownComputedName = member.computed === true && !name;
+    if (!name && !hasUnknownComputedName) return;
+    const receiverKind = member.static === true ? "static" : "instance";
+    bindFieldValue(member, name, receiverKind);
+  }
+
+  function collectMethodMember(method: unknown): void {
     if (
       !isNode(method) ||
       (method.type !== "ClassMethod" && method.type !== "ClassPrivateMethod")
     ) {
-      continue;
+      return;
     }
     const receiverKind = method.static === true ? "static" : "instance";
-    const existing = scope.classRuntimeBindings[receiverKind];
+    const existing = classBindings[receiverKind];
     const methodBinding = summarizeClassMethodRuntimeBinding(
       method,
       imports,
       scopes,
     );
-    if (!methodBinding) continue;
+    if (!methodBinding) return;
     const nextBinding = existing
       ? unionRuntimeBindings([existing, methodBinding]) ?? methodBinding
       : methodBinding;
     setClassRuntimeBinding(scope, receiverKind, nextBinding);
     syncClassStaticRuntimeBinding(scope);
+  }
+
+  for (const member of body) {
+    if (!isNode(member)) continue;
+    collectFieldMember(member);
+  }
+  for (const method of body) {
+    collectMethodMember(method);
   }
 }
 
@@ -4294,7 +4423,7 @@ function visitRuntimeBindingSummary(
   if (tryEntryCall) {
     definitelyReachedTryEntryPrefixClearingCalls.add(tryEntryCall);
   }
-  if (node.type === "VariableDeclarator") {
+  function bindVariableDeclaration(): void {
     const scope = nextScopes.at(-1);
     if (scope && declarationBelongsToScope(node, scope)) {
       bindRuntimeDeclaration(
@@ -4307,26 +4436,8 @@ function visitRuntimeBindingSummary(
       );
     }
   }
-  bindRuntimeClassDeclaration(node, nextScopes);
-  bindRuntimeAssignment(node, imports, nextScopes, allowClearing);
-  bindRuntimeDeleteMutation(node, imports, nextScopes, allowClearing);
-  for (const key of Object.keys(node)) {
-    if (
-      key === "loc" || COMMENT_KEYS.has(key) ||
-      TYPE_ONLY_CHILD_KEYS.has(key)
-    ) {
-      continue;
-    }
-    if (key === "body" && isFunctionScopeNode(node)) {
-      markRuntimeFunctionParametersInitialized(
-        node,
-        nextScopes,
-        allowClearing,
-      );
-    }
-    const value = node[key];
-    const childAllowsClearing = allowClearing &&
-      !isConditionalBranch(node, key);
+
+  function visitChildValue(value: unknown, childAllowsClearing: boolean): void {
     if (Array.isArray(value)) {
       for (const item of value) {
         if (isNode(item)) {
@@ -4348,6 +4459,32 @@ function visitRuntimeBindingSummary(
         definitelyReachedTryEntryPrefixClearingCalls,
       );
     }
+  }
+
+  if (node.type === "VariableDeclarator") {
+    bindVariableDeclaration();
+  }
+  bindRuntimeClassDeclaration(node, nextScopes);
+  bindRuntimeAssignment(node, imports, nextScopes, allowClearing);
+  bindRuntimeDeleteMutation(node, imports, nextScopes, allowClearing);
+  for (const key of Object.keys(node)) {
+    if (
+      key === "loc" || COMMENT_KEYS.has(key) ||
+      TYPE_ONLY_CHILD_KEYS.has(key)
+    ) {
+      continue;
+    }
+    if (key === "body" && isFunctionScopeNode(node)) {
+      markRuntimeFunctionParametersInitialized(
+        node,
+        nextScopes,
+        allowClearing,
+      );
+    }
+    const value = node[key];
+    const childAllowsClearing = allowClearing &&
+      !isConditionalBranch(node, key);
+    visitChildValue(value, childAllowsClearing);
   }
   markRuntimeDeclarationInitialized(node, nextScopes, allowClearing);
   bindRuntimeCallMutation(
@@ -4667,7 +4804,29 @@ function runtimeNamespaceBinding(
 
   const namespaceScope = createScope(declaration.body, imports, scopes);
   const properties = new Map<string, RuntimeBinding>();
-  for (const statement of lexicalScopeStatements(declaration.body) ?? []) {
+  function exportedDeclarationNames(exportedDeclaration: Node): Set<string> {
+    const names = new Set<string>();
+    if (exportedDeclaration.type === "VariableDeclaration") {
+      for (
+        const declarator of Array.isArray(exportedDeclaration.declarations)
+          ? exportedDeclaration.declarations
+          : []
+      ) {
+        if (isNode(declarator)) collectPatternNames(declarator.id, names);
+      }
+    } else if (
+      (exportedDeclaration.type === "TSModuleDeclaration" ||
+        exportedDeclaration.type === "FunctionDeclaration" ||
+        exportedDeclaration.type === "ClassDeclaration") &&
+      isNode(exportedDeclaration.id) &&
+      exportedDeclaration.id.type === "Identifier"
+    ) {
+      names.add(exportedDeclaration.id.name as string);
+    }
+    return names;
+  }
+
+  function collectExportedStatement(statement: Node): void {
     if (
       statement.type === "TSImportEqualsDeclaration" &&
       statement.isExport === true && isNode(statement.id) &&
@@ -4676,34 +4835,20 @@ function runtimeNamespaceBinding(
       const name = statement.id.name as string;
       const binding = namespaceScope.runtimeBindings.get(name);
       if (binding) properties.set(name, binding);
-      continue;
+      return;
     }
-    if (statement.type !== "ExportNamedDeclaration") continue;
+    if (statement.type !== "ExportNamedDeclaration") return;
     if (isNode(statement.declaration)) {
-      const names = new Set<string>();
-      const exportedDeclaration = statement.declaration;
-      if (exportedDeclaration.type === "VariableDeclaration") {
-        for (
-          const declarator of Array.isArray(exportedDeclaration.declarations)
-            ? exportedDeclaration.declarations
-            : []
-        ) {
-          if (isNode(declarator)) collectPatternNames(declarator.id, names);
-        }
-      } else if (
-        (exportedDeclaration.type === "TSModuleDeclaration" ||
-          exportedDeclaration.type === "FunctionDeclaration" ||
-          exportedDeclaration.type === "ClassDeclaration") &&
-        isNode(exportedDeclaration.id) &&
-        exportedDeclaration.id.type === "Identifier"
-      ) {
-        names.add(exportedDeclaration.id.name as string);
-      }
+      const names = exportedDeclarationNames(statement.declaration);
       for (const name of names) {
         const binding = namespaceScope.runtimeBindings.get(name);
         if (binding) properties.set(name, binding);
       }
     }
+  }
+
+  for (const statement of lexicalScopeStatements(declaration.body) ?? []) {
+    collectExportedStatement(statement);
   }
   return { kind: "namespace-object", properties };
 }
@@ -8743,6 +8888,34 @@ function runtimeBindingForExpression(
   imports: ImportBindings,
   scopes: readonly Scope[],
 ): RuntimeBinding | undefined {
+  function memberExpressionBinding(member: Node): RuntimeBinding | undefined {
+    if (
+      member.type !== "MemberExpression" &&
+      member.type !== "OptionalMemberExpression"
+    ) return undefined;
+    const property = memberProperty(member);
+    const objectBinding = runtimeBindingForExpression(
+      member.object,
+      imports,
+      scopes,
+    );
+    if (!objectBinding) return undefined;
+    if (property) return runtimePropertyBinding(objectBinding, property);
+    const unknownProperty = runtimeUnknownPropertyResolution(objectBinding)
+      .binding;
+    const unknownArrayMutation = flattenRuntimeBindings(objectBinding).some(
+        (binding) =>
+          binding.kind === "namespace-object" && binding.shape === "array",
+      )
+      ? mutationMethodBinding("Array", "*")
+      : undefined;
+    return unionRuntimeBindings(
+      [unknownProperty, unknownArrayMutation].flatMap((binding) =>
+        binding ?? []
+      ),
+    );
+  }
+
   const value = unwrapExpression(expression);
   if (!value) return undefined;
   const assignment = runtimeAssignmentExpressionResolution(
@@ -8800,29 +8973,7 @@ function runtimeBindingForExpression(
     scopes,
   );
   if (literalObjectBinding) return literalObjectBinding;
-  if (
-    value.type !== "MemberExpression" &&
-    value.type !== "OptionalMemberExpression"
-  ) return undefined;
-  const property = memberProperty(value);
-  const objectBinding = runtimeBindingForExpression(
-    value.object,
-    imports,
-    scopes,
-  );
-  if (!objectBinding) return undefined;
-  if (property) return runtimePropertyBinding(objectBinding, property);
-  const unknownProperty = runtimeUnknownPropertyResolution(objectBinding)
-    .binding;
-  const unknownArrayMutation = flattenRuntimeBindings(objectBinding).some(
-      (binding) =>
-        binding.kind === "namespace-object" && binding.shape === "array",
-    )
-    ? mutationMethodBinding("Array", "*")
-    : undefined;
-  return unionRuntimeBindings(
-    [unknownProperty, unknownArrayMutation].flatMap((binding) => binding ?? []),
-  );
+  return memberExpressionBinding(value);
 }
 
 function arrayLiteralRuntimeBinding(
@@ -9453,6 +9604,36 @@ function identifierRuntimeBinding(
   imports: ImportBindings,
   scopes: readonly Scope[],
 ): RuntimeBinding | undefined {
+  function importedEffectBinding(name: string): RuntimeBinding | undefined {
+    const filesystemOpenSource = imports.filesystemOpen.get(name);
+    if (filesystemOpenSource) {
+      return { kind: "filesystem-open", source: filesystemOpenSource };
+    }
+    if (imports.filesystemRead.has(name)) {
+      return { kind: "effect", effect: "filesystem-read" };
+    }
+    if (imports.filesystemWatch.has(name)) {
+      return { kind: "effect", effect: "filesystem-watch" };
+    }
+    if (imports.filesystemWrite.has(name)) {
+      return { kind: "effect", effect: "filesystem-write" };
+    }
+    if (imports.sharedCwd.has(name)) {
+      return { kind: "effect", effect: "shared-cwd" };
+    }
+    if (imports.process.has(name)) return { kind: "effect", effect: "process" };
+    if (imports.server.has(name)) return { kind: "effect", effect: "server" };
+    if (imports.network.has(name)) return { kind: "effect", effect: "network" };
+    if (name === "fetch" && !imports.importedNames.has("fetch")) {
+      return { kind: "effect", effect: "network" };
+    }
+    if (imports.playwright.has(name)) {
+      return { kind: "effect", effect: "browser" };
+    }
+
+    return undefined;
+  }
+
   if (init.type !== "Identifier") return undefined;
   const name = init.name as string;
   const classAlias = classStaticAliasResolution(name, scopes);
@@ -9469,31 +9650,8 @@ function identifierRuntimeBinding(
   }
   if (resolved.binding) return resolved.binding;
   if (resolved.declared) return undefined;
-  const filesystemOpenSource = imports.filesystemOpen.get(name);
-  if (filesystemOpenSource) {
-    return { kind: "filesystem-open", source: filesystemOpenSource };
-  }
-  if (imports.filesystemRead.has(name)) {
-    return { kind: "effect", effect: "filesystem-read" };
-  }
-  if (imports.filesystemWatch.has(name)) {
-    return { kind: "effect", effect: "filesystem-watch" };
-  }
-  if (imports.filesystemWrite.has(name)) {
-    return { kind: "effect", effect: "filesystem-write" };
-  }
-  if (imports.sharedCwd.has(name)) {
-    return { kind: "effect", effect: "shared-cwd" };
-  }
-  if (imports.process.has(name)) return { kind: "effect", effect: "process" };
-  if (imports.server.has(name)) return { kind: "effect", effect: "server" };
-  if (imports.network.has(name)) return { kind: "effect", effect: "network" };
-  if (name === "fetch" && !imports.importedNames.has("fetch")) {
-    return { kind: "effect", effect: "network" };
-  }
-  if (imports.playwright.has(name)) {
-    return { kind: "effect", effect: "browser" };
-  }
+  const effect = importedEffectBinding(name);
+  if (effect) return effect;
   const runtimeNamespace = imports.runtimeNamespaces.get(name);
   if (runtimeNamespace) return { kind: "module", source: runtimeNamespace };
   const runtimeConstructor = imports.runtimeConstructors.get(name);
@@ -10715,39 +10873,7 @@ function bindPatternToRuntime(
   merge = false,
   clear = false,
 ): void {
-  if (pattern.type === "AssignmentPattern" && isNode(pattern.left)) {
-    bindPatternToRuntime(
-      pattern.left,
-      binding,
-      imports,
-      scopes,
-      scope,
-      merge,
-      clear,
-    );
-    return;
-  }
-  if (pattern.type === "RestElement" && isNode(pattern.argument)) {
-    bindPatternToRuntime(
-      pattern.argument,
-      binding,
-      imports,
-      scopes,
-      scope,
-      merge,
-      clear,
-    );
-    return;
-  }
-  if (pattern.type === "Identifier") {
-    const name = pattern.name as string;
-    scope.runtimeBindings.set(
-      name,
-      mergeRuntimeBinding(scope.runtimeBindings.get(name), binding, merge),
-    );
-    return;
-  }
-  if (pattern.type === "ArrayPattern") {
+  function bindArrayEntries(): void {
     for (const entry of runtimeArrayPatternEntries(pattern, binding)) {
       const propertyBinding = entry.resolution.binding;
       if (propertyBinding) {
@@ -10781,6 +10907,105 @@ function bindPatternToRuntime(
         );
       }
     }
+  }
+
+  function bindObjectProperties(): void {
+    for (
+      const property of Array.isArray(pattern.properties)
+        ? pattern.properties
+        : []
+    ) {
+      if (
+        isNode(property) && property.type === "RestElement" &&
+        isNode(property.argument)
+      ) {
+        bindPatternToRuntime(
+          property.argument,
+          binding,
+          imports,
+          scopes,
+          scope,
+          merge,
+          clear,
+        );
+        continue;
+      }
+      if (
+        !isNode(property) || property.type !== "ObjectProperty" ||
+        !isNode(property.key) || !isNode(property.value)
+      ) continue;
+      const propertyResolution = runtimePatternPropertyResolution(
+        binding,
+        property,
+      );
+      const propertyBinding = propertyResolution.binding;
+      if (propertyBinding) {
+        bindPatternToRuntime(
+          property.value,
+          propertyBinding,
+          imports,
+          scopes,
+          scope,
+          merge,
+          clear,
+        );
+      } else if (clear) {
+        clearCurrentScopeRuntimeAssignmentPattern(property.value, [scope]);
+      }
+      if (propertyResolution.defaultMayRun) {
+        bindRuntimePatternDefaults(
+          property.value,
+          imports,
+          scopes,
+          (pattern, defaultBinding) =>
+            bindPatternToRuntime(
+              pattern,
+              defaultBinding,
+              imports,
+              scopes,
+              scope,
+              merge || propertyBinding !== undefined,
+              clear,
+            ),
+        );
+      }
+    }
+  }
+
+  if (pattern.type === "AssignmentPattern" && isNode(pattern.left)) {
+    bindPatternToRuntime(
+      pattern.left,
+      binding,
+      imports,
+      scopes,
+      scope,
+      merge,
+      clear,
+    );
+    return;
+  }
+  if (pattern.type === "RestElement" && isNode(pattern.argument)) {
+    bindPatternToRuntime(
+      pattern.argument,
+      binding,
+      imports,
+      scopes,
+      scope,
+      merge,
+      clear,
+    );
+    return;
+  }
+  if (pattern.type === "Identifier") {
+    const name = pattern.name as string;
+    scope.runtimeBindings.set(
+      name,
+      mergeRuntimeBinding(scope.runtimeBindings.get(name), binding, merge),
+    );
+    return;
+  }
+  if (pattern.type === "ArrayPattern") {
+    bindArrayEntries();
     return;
   }
   if (
@@ -10794,66 +11019,7 @@ function bindPatternToRuntime(
   ) {
     return;
   }
-  for (
-    const property of Array.isArray(pattern.properties)
-      ? pattern.properties
-      : []
-  ) {
-    if (
-      isNode(property) && property.type === "RestElement" &&
-      isNode(property.argument)
-    ) {
-      bindPatternToRuntime(
-        property.argument,
-        binding,
-        imports,
-        scopes,
-        scope,
-        merge,
-        clear,
-      );
-      continue;
-    }
-    if (
-      !isNode(property) || property.type !== "ObjectProperty" ||
-      !isNode(property.key) || !isNode(property.value)
-    ) continue;
-    const propertyResolution = runtimePatternPropertyResolution(
-      binding,
-      property,
-    );
-    const propertyBinding = propertyResolution.binding;
-    if (propertyBinding) {
-      bindPatternToRuntime(
-        property.value,
-        propertyBinding,
-        imports,
-        scopes,
-        scope,
-        merge,
-        clear,
-      );
-    } else if (clear) {
-      clearCurrentScopeRuntimeAssignmentPattern(property.value, [scope]);
-    }
-    if (propertyResolution.defaultMayRun) {
-      bindRuntimePatternDefaults(
-        property.value,
-        imports,
-        scopes,
-        (pattern, defaultBinding) =>
-          bindPatternToRuntime(
-            pattern,
-            defaultBinding,
-            imports,
-            scopes,
-            scope,
-            merge || propertyBinding !== undefined,
-            clear,
-          ),
-      );
-    }
-  }
+  bindObjectProperties();
 }
 
 function createRequireResultBinding(
