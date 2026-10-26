@@ -594,13 +594,15 @@ export function createNodeRequestListener(
           if ("flushHeaders" in _res) _res.flushHeaders();
           else _res.writeHead(response.status);
         }
+        // Both protocols accept byte chunks despite incompatible overloaded signatures.
+        const writer: { write(chunk: Uint8Array): boolean } = _res;
         while (true) {
           const { done, value } = await responseReader.read();
           if (done) break;
           if (requestAbort.signal.aborted || _res.destroyed) {
             throw requestAbort.signal.reason ?? clientDisconnectedError();
           }
-          const writable = "stream" in _res ? _res.write(value) : _res.write(value);
+          const writable = writer.write(value);
           if (!writable) {
             await waitForResponseDrain(_res, requestAbort.signal);
           }
