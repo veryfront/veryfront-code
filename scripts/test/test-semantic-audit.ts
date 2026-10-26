@@ -3065,7 +3065,6 @@ function objectAssignAccessorMarkers(
     return true;
   }
 
-  objectAssignSources:
   for (const source of args.slice(1)) {
     const sourceBinding = runtimeBindingForExpression(source, imports, scopes);
     const sourceSymbol = invocationSymbol(
@@ -3094,7 +3093,7 @@ function objectAssignAccessorMarkers(
     }
 
     if (!appendSourceEntries(entries, sourceBinding, sourceSymbol)) {
-      break objectAssignSources;
+      break;
     }
   }
   return markers;
