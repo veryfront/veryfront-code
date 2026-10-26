@@ -62,7 +62,8 @@ import {
   terminalToolCallIdHeaderValue,
 } from "../runtime/terminal-run-control.ts";
 import { type RemoteMCPToolSourceConfig } from "#veryfront/tool/remote-mcp.ts";
-import type { RemoteToolSource } from "#veryfront/tool/types.ts";
+import type { RemoteToolSource, ToolExecutionContext } from "#veryfront/tool/types.ts";
+import { copyNativeHeaders } from "#veryfront/platform/compat/http/native-request-init.ts";
 import type { AgentServiceMcpServerConfig } from "../service/mcp-server-config.ts";
 import { createProjectScopedMcpUrl } from "../service/project-scoped-mcp-url.ts";
 
@@ -86,6 +87,7 @@ const evidenceRegExpExec = RegExp.prototype.exec;
 const hostFetch = globalThis.fetch;
 const NativeHeaders = Headers;
 const headersSet = Headers.prototype.set;
+const headersDelete = Headers.prototype.delete;
 const apply = Reflect.apply;
 type HostedTerminalDescriptor =
   | Pick<ConversationRunProjection, "runId">
@@ -236,6 +238,8 @@ export function hostedTerminalToolSourceFactory(
         ? await config.headers(context)
         : config.headers;
       const headers = new NativeHeaders(original);
+      // Run event authority comes only from the private run credential, never configured headers.
+      apply(headersDelete, headers, [INGRESS_RUN_EVENT_TOKEN_HEADER]);
       if (getAuthToken) {
         const token = getAuthToken();
         if (!token) throw new Error("Hosted MCP credential authority is unavailable");
@@ -244,12 +248,17 @@ export function hostedTerminalToolSourceFactory(
       return headers;
     };
     const ordinary = fallback({ ...config, headers: liveHeaders });
+    // Project mutations by the verified current run need its exact-run event authority.
+    const isCurrentRunProjectCall = (name: string, context: ToolExecutionContext | undefined) =>
+      !!authority.eventToken && context?.projectId === authority.projectId &&
+      context.runId === authority.runId && hasCurrentTerminalRunCredentialAuthority(context) &&
+      name !== "create_run" && name !== "veryfront__create_run";
     const mutation = authority.eventToken
       ? fallback({
         ...config,
         endpoint: expectedEndpoint,
         headers: async (context) => {
-          const headers = new NativeHeaders(await liveHeaders(context));
+          const headers = copyNativeHeaders(await liveHeaders(context));
           if (context?.projectId === authority.projectId && context.runId === authority.runId) {
             apply(headersSet, headers, [INGRESS_RUN_EVENT_TOKEN_HEADER, authority.eventToken!]);
           }
@@ -318,7 +327,7 @@ export function hostedTerminalToolSourceFactory(
             },
           }, context);
         }
-        return isCanonicalFileMutationTool(name)
+        return isCanonicalFileMutationTool(name) || isCurrentRunProjectCall(name, context)
           ? mutation.executeTool(name, args, context)
           : ordinary.executeTool(name, args, context);
       },
