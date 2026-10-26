@@ -260,6 +260,13 @@ export function closeSchemaForOutputConfig(schema: unknown): unknown {
  * remote `$ref` names nothing this walk can open.
  */
 function collectAllOfRefTargets(schema: unknown, out: Set<string>): void {
+  function collectBranchRef(branch: unknown): void {
+    if (typeof branch !== "object" || branch === null) return;
+    const ref = (branch as SchemaRecord).$ref;
+    if (typeof ref === "string" && ref[0] === "#" && ref[1] === "/") {
+      addSetValue(out, ref);
+    }
+  }
   if (ArrayIsArray(schema)) {
     for (let index = 0; index < schema.length; index += 1) {
       collectAllOfRefTargets(schema[index], out);
@@ -276,10 +283,7 @@ function collectAllOfRefTargets(schema: unknown, out: Set<string>): void {
     if (hasSetValue(COMPOSITION_LIST_KEYWORDS, key)) {
       const branches = ArrayIsArray(value) ? value : [value];
       for (let branchIndex = 0; branchIndex < branches.length; branchIndex += 1) {
-        const branch = branches[branchIndex];
-        if (typeof branch !== "object" || branch === null) continue;
-        const ref = (branch as SchemaRecord).$ref;
-        if (typeof ref === "string" && ref[0] === "#" && ref[1] === "/") addSetValue(out, ref);
+        collectBranchRef(branches[branchIndex]);
       }
     }
     collectAllOfRefTargets(value, out);

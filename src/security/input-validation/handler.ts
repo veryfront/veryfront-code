@@ -74,7 +74,17 @@ function snapshotSchema<T>(value: unknown, label: string): Schema<T> {
   let current: object | null = receiver;
   let safeParse: Schema<T>["safeParse"] | undefined;
 
-  for (let depth = 0; current !== null; depth++) {
+  function readSafeParseValue(descriptor: PropertyDescriptor): Schema<T>["safeParse"] {
+    if (!("value" in descriptor)) {
+      throw new TypeError(`${label}.safeParse must be a data property`);
+    }
+    if (typeof descriptor.value !== "function") {
+      throw new TypeError(`${label}.safeParse must be a function`);
+    }
+    return descriptor.value as Schema<T>["safeParse"];
+  }
+  let depth = 0;
+  while (current !== null) {
     if (depth >= MAX_SCHEMA_PROTOTYPE_DEPTH || seen.has(current)) {
       throw new TypeError(`${label} has an invalid prototype chain`);
     }
@@ -87,13 +97,7 @@ function snapshotSchema<T>(value: unknown, label: string): Schema<T> {
       throw new TypeError(`${label}.safeParse could not be inspected safely`);
     }
     if (descriptor) {
-      if (!("value" in descriptor)) {
-        throw new TypeError(`${label}.safeParse must be a data property`);
-      }
-      if (typeof descriptor.value !== "function") {
-        throw new TypeError(`${label}.safeParse must be a function`);
-      }
-      safeParse = descriptor.value as Schema<T>["safeParse"];
+      safeParse = readSafeParseValue(descriptor);
       break;
     }
 
@@ -102,6 +106,7 @@ function snapshotSchema<T>(value: unknown, label: string): Schema<T> {
     } catch {
       throw new TypeError(`${label} prototype could not be inspected safely`);
     }
+    depth++;
   }
 
   if (!safeParse) {
