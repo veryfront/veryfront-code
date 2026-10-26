@@ -350,6 +350,53 @@ describe("Guide: workflows.mdx", () => {
 
 // === Guide: runs.mdx ===
 describe("Guide: runs.mdx", () => {
+  it("executes the standalone task-run input script without shared client setup", async () => {
+    const guide = await Deno.readTextFile(
+      new URL("../../docs/guides/runs.md", import.meta.url),
+    );
+    const snippet = /```ts title="scripts\/create-task-run\.ts"\n([\s\S]*?)\n```/.exec(guide)?.[1];
+    assertExists(snippet);
+    const source = snippet.replace(
+      '"veryfront/runs"',
+      JSON.stringify(new URL("../../src/runs/index.ts", import.meta.url).href),
+    );
+    const previousToken = Deno.env.get("VERYFRONT_API_TOKEN");
+    Deno.env.set("VERYFRONT_API_TOKEN", "test-token");
+    try {
+      await withMockedFetch([
+        jsonResponse({
+          id: "11111111-1111-4111-8111-111111111111",
+          project_id: "22222222-2222-4222-8222-222222222222",
+          target: { type: "task", id: "classify-ticket" },
+          status: "pending",
+          input: ["INV-7731", "Harbor Office"],
+          config: { urgent: true },
+          output: null,
+          created_at: "2026-03-20T12:00:00.000Z",
+          updated_at: "2026-03-20T12:00:00.000Z",
+        }, 202),
+      ], async (calls) => {
+        await import(`data:application/typescript,${encodeURIComponent(source)}`);
+        assertEquals(calls.length, 1);
+        const call = calls[0];
+        assertExists(call);
+        assert(call.url.endsWith("/runs"));
+        assertEquals(call.init?.method, "POST");
+        assertEquals(new Headers(call.init?.headers).get("Authorization"), "Bearer test-token");
+        assertEquals(JSON.parse(String(call.init?.body)), {
+          project_id: "22222222-2222-4222-8222-222222222222",
+          target: { type: "task", id: "classify-ticket" },
+          input: ["INV-7731", "Harbor Office"],
+          config: { urgent: true },
+          execution: {},
+        });
+      });
+    } finally {
+      if (previousToken === undefined) Deno.env.delete("VERYFRONT_API_TOKEN");
+      else Deno.env.set("VERYFRONT_API_TOKEN", previousToken);
+    }
+  });
+
   it("should create a task run and read canonical events", async () => {
     const responses = [
       jsonResponse({

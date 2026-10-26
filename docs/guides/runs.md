@@ -72,6 +72,13 @@ task that needs a nullable input should wrap it, for example
 `{ "value": null }`.
 
 ```ts title="scripts/create-task-run.ts"
+import { createRunsClient } from "veryfront/runs";
+
+const runs = createRunsClient({
+  authToken: process.env.VERYFRONT_API_TOKEN,
+  projectReference: "dreamy-haven",
+});
+
 await runs.createTaskRun({
   projectId: "22222222-2222-4222-8222-222222222222",
   target: "task:classify-ticket",
