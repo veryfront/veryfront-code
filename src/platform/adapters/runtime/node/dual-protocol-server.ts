@@ -1,9 +1,5 @@
-import { Server as TcpServer, type Socket } from "node:net";
-import {
-  createServer as createHttpServer,
-  type IncomingMessage,
-  type ServerResponse,
-} from "node:http";
+import { Socket } from "node:net";
+import { type IncomingMessage, Server as HttpServer, type ServerResponse } from "node:http";
 import {
   createServer as createHttp2Server,
   type Http2ServerRequest,
@@ -12,17 +8,21 @@ import {
 } from "node:http2";
 
 const apply = Reflect.apply;
+const emitHttpServerEvent = HttpServer.prototype.emit;
 const setAdd = Set.prototype.add;
 const setDelete = Set.prototype.delete;
 const setForEach = Set.prototype.forEach;
 
 const HTTP2_PREFACE = new TextEncoder().encode("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n");
 
-/** Public Node transports sharing Deno's existing cleartext HTTP/1 + h2c port. */
-export class DualProtocolServer extends TcpServer {
+/**
+ * Public Node transports sharing Deno's existing cleartext HTTP/1 + h2c port.
+ * HTTP1 owns the real listener: Deno closes persistent responses from unbound
+ * HTTP servers, even when another TCP server handed their parser a socket.
+ */
+export class DualProtocolServer extends HttpServer {
   private readonly sockets = new Set<Socket>();
   private readonly sessions = new Set<ServerHttp2Session>();
-  private readonly http1;
   private readonly http2;
 
   constructor(
@@ -32,21 +32,23 @@ export class DualProtocolServer extends TcpServer {
     ) => void,
     private readonly prefaceTimeoutMs = 10_000,
   ) {
-    super();
-    this.http1 = createHttpServer(listener);
+    super(listener);
     this.http2 = createHttp2Server(listener);
-    this.http1.on(
-      "upgrade",
-      (request, socket, head) => this.emit("upgrade", request, socket, head),
-    );
-    this.http1.on("error", (error) => this.emit("error", error));
     this.http2.on("error", (error) => this.emit("error", error));
     this.http2.on("session", (session) => {
       apply(setAdd, this.sessions, [session]);
       session.on("error", () => session.destroy());
       session.once("close", () => apply(setDelete, this.sessions, [session]));
     });
-    this.on("connection", (socket) => this.route(socket));
+  }
+
+  // Delay only connection dispatch until its public protocol parser is known.
+  override emit(event: string | symbol, ...args: unknown[]): boolean {
+    if (event === "connection" && args[0] instanceof Socket) {
+      this.route(args[0]);
+      return true;
+    }
+    return apply(emitHttpServerEvent, this, [event, ...args]);
   }
 
   private route(socket: Socket): void {
@@ -83,7 +85,8 @@ export class DualProtocolServer extends TcpServer {
       }
       cleanup();
       socket.unshift(bytes);
-      (matches ? this.http2 : this.http1).emit("connection", socket);
+      if (matches) this.http2.emit("connection", socket);
+      else apply(emitHttpServerEvent, this, ["connection", socket]);
       socket.resume();
     };
     socket.on("data", data);
@@ -92,9 +95,9 @@ export class DualProtocolServer extends TcpServer {
     socket.once("error", cleanup);
   }
 
-  closeAllConnections(): void {
+  override closeAllConnections(): void {
     apply(setForEach, this.sessions, [(session: ServerHttp2Session) => session.destroy()]);
-    this.http1.closeAllConnections();
+    super.closeAllConnections();
     apply(setForEach, this.sockets, [(socket: Socket) => socket.destroy()]);
   }
 }

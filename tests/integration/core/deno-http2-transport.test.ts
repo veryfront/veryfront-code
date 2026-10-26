@@ -1,5 +1,7 @@
 import { it } from "#veryfront/testing/bdd.ts";
 import { connect, constants } from "node:http2";
+import { connect as connectTcp } from "node:net";
+import type { EventEmitter } from "node:events";
 import { DenoAdapter } from "#veryfront/platform/adapters/runtime/deno/adapter.ts";
 import { DualProtocolServer } from "#veryfront/platform/adapters/runtime/node/dual-protocol-server.ts";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
@@ -327,3 +329,60 @@ for (const transport of ["native", "selected"] as const) {
     }
   }
 }
+
+it("Deno HTTP1 preserves keep-alive across bodyless POST and the next request", async () => {
+  const methods: string[] = [];
+  const server = await new DenoAdapter().serve((request) => {
+    methods.push(request.method);
+    return new Response(null, { status: 204 });
+  }, { hostname: "127.0.0.1", port: 0, nodeWebSocketServerProvider: null });
+  const socket = connectTcp(server.addr.port, "127.0.0.1");
+  const completed = Promise.withResolvers<void>();
+  let responses = 0;
+  let buffer = "";
+  socket.on("error", completed.reject);
+  socket.on("close", () => {
+    if (responses < 2) completed.reject(new Error("Keep-alive closed before the second response"));
+  });
+  socket.on("connect", () =>
+    socket.write(
+      "POST /admitted HTTP/1.1\r\nHost: localhost\r\nContent-Length: 0\r\nConnection: keep-alive\r\n\r\n",
+    ));
+  socket.on("data", (chunk) => {
+    buffer += chunk.toString();
+    while (buffer.includes("\r\n\r\n")) {
+      const end = buffer.indexOf("\r\n\r\n");
+      const headers = buffer.slice(0, end);
+      buffer = buffer.slice(end + 4);
+      if (!headers.startsWith("HTTP/1.1 204") || !/connection: keep-alive/i.test(headers)) {
+        completed.reject(new Error("Expected a persistent bodyless response"));
+        return;
+      }
+      if (++responses === 1) {
+        socket.write("GET /continue HTTP/1.1\r\nHost: localhost\r\nConnection: keep-alive\r\n\r\n");
+      } else completed.resolve();
+    }
+  });
+  try {
+    await bounded(completed.promise);
+    assertEquals(methods, ["POST", "GET"]);
+    assertEquals(responses, 2);
+  } finally {
+    socket.destroy();
+    await bounded(server.stop());
+  }
+});
+
+it("dual protocol listening owner forwards secondary public events exactly once", async () => {
+  const server = new DualProtocolServer((_request, response) => response.end());
+  const event = Symbol("synthetic event");
+  const received: unknown[] = [];
+  server.on("synthetic", (value) => received.push(value));
+  const events: EventEmitter = server;
+  events.on(event, (value: unknown) => received.push(value));
+  assertEquals(server.emit("synthetic", "string"), true);
+  assertEquals(server.emit(event, "symbol"), true);
+  assertEquals(server.emit("unobserved"), false);
+  assertEquals(received, ["string", "symbol"]);
+  server.closeAllConnections();
+});
