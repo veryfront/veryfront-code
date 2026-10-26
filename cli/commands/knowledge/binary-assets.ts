@@ -10,7 +10,7 @@ function isCanonicalKnowledgePath(path: string): boolean {
     new TextEncoder().encode(path).length <= 1024 && path.split("/").length <= 64 &&
     path === path.normalize("NFC") && !/[\\<>:"|?*]/.test(path) &&
     ![...path].some((character) =>
-      character.codePointAt(0)! < 32 || character.codePointAt(0)! === 127
+      character.codePointAt(0)! < 32 || character.codePointAt(0) === 127
     ) &&
     path.split("/").every((part) =>
       part.length > 0 && part !== "." && part !== ".." && !/[. ]$/.test(part) &&
