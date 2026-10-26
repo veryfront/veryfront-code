@@ -1,3 +1,5 @@
+import { upgradeDenoNodeWebSocket } from "./node-websocket.ts";
+import { hasNodeWebSocketUpgradeRequest } from "../shared/http-upgrade-provenance.ts";
 import type { ServerAdapter, WebSocketUpgrade, WebSocketUpgradeOptions } from "../../base.ts";
 import { getNativeDeno } from "../../../compat/http/native-response.ts";
 import { resolveDenoWebSocketUpgradeOptions } from "../../../compat/http/websocket.ts";
@@ -9,7 +11,10 @@ export class DenoServerAdapter implements ServerAdapter {
   upgradeWebSocket(
     request: Request,
     options?: WebSocketUpgradeOptions,
-  ): WebSocketUpgrade {
+  ): WebSocketUpgrade & { socket: WebSocket } {
+    if (hasNodeWebSocketUpgradeRequest(request)) {
+      return upgradeDenoNodeWebSocket(request, options);
+    }
     const nativeDeno = getNativeDeno();
     if (typeof nativeDeno?.upgradeWebSocket !== "function") {
       throw NOT_SUPPORTED.create({

@@ -28,11 +28,11 @@ function reportUnhandledError(error: unknown): void {
   });
 }
 
-function createCloseEvent(code = 1006, reason = ""): CloseEvent {
+function createCloseEvent(code = 1006, reason = "", wasClean = code !== 1006): CloseEvent {
   return Object.assign(new Event("close"), {
     code,
     reason,
-    wasClean: code !== 1006,
+    wasClean,
   }) as CloseEvent;
 }
 
@@ -104,8 +104,8 @@ export class DeferredWebSocket implements WebSocketConnection {
     this.dispatch("message", new MessageEvent("message", { data }));
   }
 
-  protected emitClose(code = 1006, reason = ""): void {
-    this.finishClose(createCloseEvent(code, reason));
+  protected emitClose(code = 1006, reason = "", wasClean = code !== 1006): void {
+    this.finishClose(createCloseEvent(code, reason, wasClean));
   }
 
   protected emitTransportError(error: unknown): void {

@@ -53,7 +53,7 @@ export type StartNodeVeryfrontServerOptions = {
   signals?: readonly NodeJS.Signals[];
   hardShutdownTimeoutMs?: number;
   /** Extension-provided Node WebSocket implementation; upgrades fail closed when omitted. */
-  nodeWebSocketServerProvider?: Readonly<NodeWebSocketServerProvider>;
+  nodeWebSocketServerProvider?: Readonly<NodeWebSocketServerProvider> | null;
 };
 
 /** Options accepted by start veryfront server. */
@@ -65,7 +65,7 @@ export type StartVeryfrontServerOptions = {
   signals?: readonly NodeJS.Signals[];
   hardShutdownTimeoutMs?: number;
   /** Used only when the selected runtime is Node.js. */
-  nodeWebSocketServerProvider?: Readonly<NodeWebSocketServerProvider>;
+  nodeWebSocketServerProvider?: Readonly<NodeWebSocketServerProvider> | null;
 };
 
 /** Public API contract for veryfront service server runtime kind. */

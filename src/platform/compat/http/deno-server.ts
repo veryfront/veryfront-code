@@ -1,3 +1,10 @@
+import { createDenoNodeServerWithStartupOwner } from "../../adapters/runtime/node/http-server.ts";
+import { NodeHttpServer } from "./node-server.ts";
+import {
+  needsDenoNodeHttpTransport,
+  resolveDenoNodeHttpOptions,
+  scopeDenoNodeHttpHandler,
+} from "../../adapters/runtime/deno/http-transport.ts";
 import type { Handler, HttpServer, ServeOptions } from "./types.ts";
 import { recordDenoServeRequestPeer } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
 import { LOCALHOST } from "../constants.ts";
@@ -47,13 +54,62 @@ function readBoundAddress(
 
 export class DenoHttpServer implements HttpServer {
   private active?: ActiveDenoServer;
+  private fallback?: {
+    server: NodeHttpServer;
+    controller: AbortController;
+    finished: ReturnType<typeof Promise.withResolvers<void>>;
+    stopFailed: boolean;
+  };
 
   async serve(handler: Handler, options: ServeOptions = {}): Promise<void> {
-    if (this.active) {
+    if (this.active || this.fallback) {
       throw INVALID_ARGUMENT.create({
         detail: "DenoHttpServer.serve() cannot run more than once concurrently",
         context: { platform: "deno", operation: "serve" },
       });
+    }
+
+    if (options.signal?.aborted) throw abortError(options.signal);
+
+    if (needsDenoNodeHttpTransport()) {
+      const server = new NodeHttpServer(createDenoNodeServerWithStartupOwner);
+      const controller = new AbortController();
+      const finished = Promise.withResolvers<void>();
+      const state = { server, controller, finished, stopFailed: false };
+      // Teardown may fail before asynchronous provider resolution finishes.
+      void finished.promise.catch(() => undefined);
+      this.fallback = state;
+      const abort = () => {
+        controller.abort(options.signal?.reason);
+        void this.stopFallback(state).catch(() => undefined);
+      };
+      options.signal?.addEventListener("abort", abort, { once: true });
+      if (options.signal?.aborted) abort();
+      try {
+        const resolved = await resolveDenoNodeHttpOptions({
+          ...options,
+          hostname: options.hostname ?? LOCALHOST.IPV4,
+          port: options.port ?? DEFAULT_COMPAT_HTTP_PORT,
+          signal: controller.signal,
+        });
+        await server.serve(scopeDenoNodeHttpHandler(handler), resolved);
+        await finished.promise;
+      } catch (error) {
+        if (state.stopFailed) throw error;
+        try {
+          await this.stopFallback(state);
+        } catch (cleanupError) {
+          throw new AggregateError(
+            [error, cleanupError],
+            "Deno HTTP fallback cleanup remains incomplete",
+          );
+        }
+        throw error;
+      } finally {
+        options.signal?.removeEventListener("abort", abort);
+        if (this.fallback === state && !state.stopFailed) this.fallback = undefined;
+      }
+      return;
     }
 
     const {
@@ -136,11 +192,29 @@ export class DenoHttpServer implements HttpServer {
   }
 
   close(): Promise<void> {
+    const fallback = this.fallback;
+    if (fallback) {
+      fallback.controller.abort(new DOMException("Deno HTTP server stopped", "AbortError"));
+      return this.stopFallback(fallback);
+    }
     const state = this.active;
     if (!state) return Promise.resolve();
     return this.stop(state).then(() => {
       if (this.active === state) this.active = undefined;
     });
+  }
+
+  private async stopFallback(state: NonNullable<DenoHttpServer["fallback"]>): Promise<void> {
+    try {
+      await state.server.close();
+      state.stopFailed = false;
+      state.finished.resolve();
+      if (this.fallback === state) this.fallback = undefined;
+    } catch (error) {
+      state.stopFailed = true;
+      state.finished.reject(error);
+      throw error;
+    }
   }
 
   private stop(state: ActiveDenoServer): Promise<void> {

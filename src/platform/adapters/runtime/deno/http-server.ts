@@ -1,4 +1,10 @@
-import type { ServeOptions, Server } from "../../base.ts";
+import { createDenoNodeServerWithStartupOwner } from "../node/http-server.ts";
+import {
+  needsDenoNodeHttpTransport,
+  resolveDenoNodeHttpOptions,
+  scopeDenoNodeHttpHandler,
+} from "./http-transport.ts";
+import type { HttpHandlerResponse, ServeOptions, Server } from "../../base.ts";
 import { DEFAULT_PORT } from "../../../compat/constants.ts";
 import {
   getNativeDeno,
@@ -14,7 +20,7 @@ import { scopeRequestAsyncContext } from "../../../compat/http/request-async-sco
 
 type DenoRequestHandler = (
   request: Request,
-) => Promise<Response> | Response;
+) => Promise<HttpHandlerResponse> | HttpHandlerResponse;
 
 /**
  * Whether `error` is a failure to bind the requested address.
@@ -374,7 +380,7 @@ export async function createDenoServerWithRuntime(
   return server;
 }
 
-export function createDenoServer(
+export async function createDenoServer(
   handler: DenoRequestHandler,
   options: ServeOptions = {},
 ): Promise<Server> {
@@ -384,6 +390,12 @@ export function createDenoServer(
       detail: "createDenoServer() can only be used in the Deno runtime",
       context: { platform: "deno", operation: "serve" },
     });
+  }
+  if (needsDenoNodeHttpTransport()) {
+    return await createDenoNodeServerWithStartupOwner(
+      scopeDenoNodeHttpHandler(handler),
+      await resolveDenoNodeHttpOptions(options),
+    );
   }
   return createDenoServerWithRuntime(
     runtime as DenoServeRuntime,

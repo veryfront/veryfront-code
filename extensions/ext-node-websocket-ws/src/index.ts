@@ -7,10 +7,17 @@ import {
   NodeWebSocketServerProviderName,
 } from "veryfront/extensions/websocket";
 // @ts-types="@types/ws"
-import { WebSocketServer } from "ws";
+import { WebSocket, WebSocketServer } from "ws";
 
 export const WsNodeWebSocketServerProvider = createNodeWebSocketServerProvider(
   (options) => captureNodeWebSocketServer(new WebSocketServer(options)),
+  {
+    supportsIdleTimeout: true,
+    getBufferedAmount(connection) {
+      if (!(connection instanceof WebSocket)) throw new TypeError("Unknown ws connection");
+      return connection.bufferedAmount;
+    },
+  },
 );
 
 /** Create the standard Node.js `ws` transport extension. */
