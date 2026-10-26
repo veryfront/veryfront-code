@@ -1,4 +1,3 @@
-import type { ServeOptions } from "../../base.ts";
 import { getNativeDeno } from "../../../compat/http/native-response.ts";
 import { scopeRequestAsyncContext } from "../../../compat/http/request-async-scope.ts";
 import { getEnvOverlayStorage } from "../../../compat/process.ts";
@@ -28,20 +27,12 @@ export function scopeDenoNodeHttpHandler<T>(
   });
 }
 
-/**
- * Direct Deno listeners retain their implicit WebSocket support. A host that
- * resolved extension policy passes null to explicitly disable the provider;
- * that decision must never trigger a default import.
- */
-export async function resolveDenoNodeHttpOptions(options: ServeOptions): Promise<ServeOptions> {
-  if (options.nodeWebSocketServerProvider !== undefined) return options;
+/** Load the implicit provider only when an authorized WebSocket upgrade needs it. */
+export async function resolveDefaultDenoNodeWebSocketProvider(): Promise<
+  Readonly<NodeWebSocketServerProvider>
+> {
   const extension = await importFirstPartyExtensionModule<{
     WsNodeWebSocketServerProvider: Readonly<NodeWebSocketServerProvider>;
   }>("ext-node-websocket-ws", "@veryfront/ext-node-websocket-ws");
-  return {
-    ...options,
-    nodeWebSocketServerProvider: snapshotNodeWebSocketServerProvider(
-      extension.WsNodeWebSocketServerProvider,
-    ),
-  };
+  return snapshotNodeWebSocketServerProvider(extension.WsNodeWebSocketServerProvider);
 }

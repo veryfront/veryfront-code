@@ -186,7 +186,7 @@ it("settles serving on a failed fallback close and retains teardown for retry", 
   }
 });
 
-it("close during async provider resolution prevents a listener from escaping", async () => {
+it("close during asynchronous startup prevents a listener from escaping", async () => {
   const compatibility = new DenoHttpServer();
   let listened = false;
   const serving = compatibility.serve(() => new Response("ok"), {
@@ -247,5 +247,60 @@ it("Deno fallback retains startup ownership until cleanup can be retried", async
   } finally {
     NodeHttpServer.prototype.serve = originalServe;
     NodeHttpServer.prototype.close = originalClose;
+  }
+});
+
+it("service listener observes disconnect after consuming the complete segmented body", async () => {
+  const { createVeryfrontServer, startVeryfrontServer } = await import(
+    "#veryfront/server/service-server.ts"
+  );
+  const started = Promise.withResolvers<void>();
+  const aborted = Promise.withResolvers<void>();
+  const released = Promise.withResolvers<void>();
+  const server = await startVeryfrontServer({
+    runtime: createVeryfrontServer({
+      modules: [{
+        name: "cancellation",
+        handle: async (request) => {
+          await request.text();
+          request.signal.addEventListener("abort", () => aborted.resolve(), { once: true });
+          started.resolve();
+          await released.promise;
+          return new Response("complete");
+        },
+      }],
+    }),
+    port: 0,
+    bindAddress: "127.0.0.1",
+    signals: [],
+    logger: {},
+  });
+  const connection = await Deno.connect({ hostname: "127.0.0.1", port: server.port });
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const body = "x".repeat(65536);
+    await writeAll(
+      connection,
+      `POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: ${body.length}\r\n\r\n${
+        body.slice(0, 1024)
+      }`,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    await writeAll(connection, body.slice(1024));
+    await started.promise;
+    connection.close();
+    assertEquals(
+      await Promise.race([
+        aborted.promise.then(() => true),
+        new Promise<boolean>((resolve) => {
+          timeout = setTimeout(() => resolve(false), 1000);
+        }),
+      ]),
+      true,
+    );
+  } finally {
+    if (timeout !== undefined) clearTimeout(timeout);
+    released.resolve();
+    await server.stop();
   }
 });

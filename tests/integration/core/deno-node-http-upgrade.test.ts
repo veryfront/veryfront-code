@@ -1,6 +1,9 @@
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { assertEquals, assertStringIncludes, assertThrows } from "#veryfront/testing/assert.ts";
-import { createNodeServer } from "#veryfront/platform/adapters/runtime/node/http-server.ts";
+import {
+  createDenoNodeServerWithStartupOwner,
+  createNodeServer,
+} from "#veryfront/platform/adapters/runtime/node/http-server.ts";
 import { NodeServerAdapter } from "#veryfront/platform/adapters/runtime/node/websocket-adapter.ts";
 import { WsNodeWebSocketServerProvider } from "../../../extensions/ext-node-websocket-ws/src/index.ts";
 
@@ -95,4 +98,151 @@ describe("Deno Node HTTP upgrade transport", () => {
       await server.stop();
     }
   });
+});
+
+it("Deno default WebSocket provider resolves once after concurrent authorized upgrades", async () => {
+  const adapter = new NodeServerAdapter(true);
+  const provider = Promise.withResolvers<typeof WsNodeWebSocketServerProvider>();
+  const bothRequests = Promise.withResolvers<void>();
+  let requests = 0;
+  let loads = 0;
+  const server = await createDenoNodeServerWithStartupOwner(
+    (request) => {
+      if (++requests === 2) bothRequests.resolve();
+      return adapter.upgradeWebSocket(request, { idleTimeout: 0 }).response;
+    },
+    { hostname: "127.0.0.1", port: 0 },
+    undefined,
+    () => {
+      loads++;
+      return provider.promise;
+    },
+  );
+  const clients = [
+    new WebSocket(`ws://127.0.0.1:${server.addr.port}`),
+    new WebSocket(`ws://127.0.0.1:${server.addr.port}`),
+  ];
+  const opened = clients.map((client) =>
+    new Promise<void>((resolve, reject) => {
+      client.onopen = () => resolve();
+      client.onerror = () => reject(new Error("lazy provider handshake failed"));
+    })
+  );
+  try {
+    await bothRequests.promise;
+    assertEquals(loads, 1);
+    provider.resolve(WsNodeWebSocketServerProvider);
+    await Promise.all(opened);
+    assertEquals(loads, 1);
+  } finally {
+    await Promise.all(clients.map((client) =>
+      new Promise<void>((resolve) => {
+        client.onclose = () => resolve();
+        client.close();
+      })
+    ));
+    await server.stop();
+  }
+});
+
+for (const policy of ["disabled", "custom", "reject"] as const) {
+  it(`Deno lazy WebSocket provider honors ${policy} policy`, async () => {
+    const adapter = new NodeServerAdapter(true);
+    let loads = 0;
+    const failure = Promise.withResolvers<void>();
+    const options: Parameters<typeof createDenoNodeServerWithStartupOwner>[1] = {
+      hostname: "127.0.0.1",
+      port: 0,
+      nodeWebSocketServerProvider: policy === "disabled"
+        ? null
+        : policy === "custom"
+        ? WsNodeWebSocketServerProvider
+        : undefined,
+    };
+    const server = await createDenoNodeServerWithStartupOwner(
+      (request) => {
+        const upgrade = adapter.upgradeWebSocket(request, { idleTimeout: 0 });
+        upgrade.socket.addEventListener("error", () => failure.resolve());
+        return upgrade.response;
+      },
+      options,
+      undefined,
+      () => {
+        loads++;
+        return Promise.reject(new Error("synthetic provider load failure"));
+      },
+    );
+    // Caller mutation after startup cannot broaden the captured policy.
+    options.nodeWebSocketServerProvider = policy === "disabled" ? undefined : null;
+    const client = new WebSocket(`ws://127.0.0.1:${server.addr.port}`);
+    let opened = false;
+    const ready = Promise.withResolvers<void>();
+    const closed = Promise.withResolvers<void>();
+    client.onopen = () => {
+      opened = true;
+      ready.resolve();
+    };
+    client.onerror = () => {};
+    client.onclose = () => {
+      closed.resolve();
+      ready.resolve();
+    };
+    try {
+      await ready.promise;
+      assertEquals(opened, policy === "custom");
+      assertEquals(loads, policy === "reject" ? 1 : 0);
+      if (!opened) await failure.promise;
+    } finally {
+      client.close();
+      await closed.promise;
+      await server.stop();
+    }
+  });
+}
+
+it("Deno lazy provider cannot create a server after listener shutdown", async () => {
+  const adapter = new NodeServerAdapter(true);
+  const loading = Promise.withResolvers<void>();
+  const provider = Promise.withResolvers<typeof WsNodeWebSocketServerProvider>();
+  const failed = Promise.withResolvers<void>();
+  let servers = 0;
+  const server = await createDenoNodeServerWithStartupOwner(
+    (request) => {
+      const upgrade = adapter.upgradeWebSocket(request, { idleTimeout: 0 });
+      upgrade.socket.addEventListener("error", () => failed.resolve());
+      return upgrade.response;
+    },
+    { hostname: "127.0.0.1", port: 0 },
+    undefined,
+    () => {
+      loading.resolve();
+      return provider.promise;
+    },
+  );
+  const client = new WebSocket(`ws://127.0.0.1:${server.addr.port}`);
+  const closed = Promise.withResolvers<void>();
+  let opened = false;
+  client.onopen = () => {
+    opened = true;
+  };
+  client.onerror = () => {};
+  client.onclose = () => closed.resolve();
+  try {
+    await loading.promise;
+    await server.stop();
+    provider.resolve({
+      ...WsNodeWebSocketServerProvider,
+      createServer(options) {
+        servers++;
+        return WsNodeWebSocketServerProvider.createServer(options);
+      },
+    });
+    await closed.promise;
+    await failed.promise;
+    assertEquals(opened, false);
+    assertEquals(servers, 0);
+  } finally {
+    client.close();
+    await server.stop();
+  }
 });

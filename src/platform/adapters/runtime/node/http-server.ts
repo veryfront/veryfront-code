@@ -12,6 +12,7 @@ import {
   captureNodeWebSocketServer,
   NODE_WEBSOCKET_SERVER_PROVIDER_MISSING_MESSAGE,
   type NodeWebSocketServerOptions,
+  type NodeWebSocketServerProvider,
   snapshotNodeWebSocketServerProvider,
 } from "#veryfront/extensions/websocket";
 import {
@@ -497,7 +498,16 @@ export function createNodeRequestListener(
       const http2 = _req.httpVersionMajor === 2;
       const authority = http2 ? _req.headers[":authority"] : _req.headers.host;
       const scheme = http2 && _req.headers[":scheme"] === "https" ? "https" : "http";
-      const url = new URL(_req.url ?? "/", `${scheme}://${authority ?? fallbackHostname}`);
+      let url: URL;
+      try {
+        url = new URL(_req.url ?? "/", `${scheme}://${authority ?? fallbackHostname}`);
+      } catch {
+        // Reject malformed transport authority without logging private input or
+        // turning a client parse failure into an application handler error.
+        _res.statusCode = 400;
+        _res.end("Bad Request");
+        return;
+      }
       const method = _req.method ?? "GET";
       const body = method === "GET" || method === "HEAD" ? null : _req;
       const headers = new Headers();
@@ -654,8 +664,9 @@ export function createDenoNodeServerWithStartupOwner(
   handler: NodeRequestHandler,
   options: ServeOptions,
   owner?: (server: NodeServer) => void,
+  resolveDefaultProvider?: () => Promise<Readonly<NodeWebSocketServerProvider>>,
 ): Promise<NodeServer> {
-  return createNodeServerInternal(handler, options, owner, true);
+  return createNodeServerInternal(handler, options, owner, true, resolveDefaultProvider);
 }
 
 async function createNodeServerInternal(
@@ -663,6 +674,7 @@ async function createNodeServerInternal(
   options: ServeOptions,
   ownStartupServer?: (server: NodeServer) => void,
   dualProtocol = false,
+  resolveDefaultProvider?: () => Promise<Readonly<NodeWebSocketServerProvider>>,
 ): Promise<NodeServer> {
   const {
     port = DEFAULT_PORT,
@@ -671,9 +683,11 @@ async function createNodeServerInternal(
     onRuntimeError,
     signal,
   } = options;
-  const nodeWebSocketServerProvider = options.nodeWebSocketServerProvider == null
+  let nodeWebSocketServerProvider = options.nodeWebSocketServerProvider == null
     ? undefined
     : snapshotNodeWebSocketServerProvider(options.nodeWebSocketServerProvider);
+  const allowDefaultProvider = options.nodeWebSocketServerProvider === undefined;
+  let defaultProvider: Promise<Readonly<NodeWebSocketServerProvider>> | undefined;
   if (onRuntimeError !== undefined && typeof onRuntimeError !== "function") {
     throw new TypeError("Node server runtime error callback must be a function");
   }
@@ -884,16 +898,28 @@ async function createNodeServerInternal(
           failUpgrade(new Error("Node server stopped before WebSocket upgrade completed"));
           return;
         }
+        if (
+          nodeWebSocketServerProvider === undefined &&
+          allowDefaultProvider && resolveDefaultProvider
+        ) {
+          defaultProvider ??= resolveDefaultProvider().then(snapshotNodeWebSocketServerProvider);
+          nodeWebSocketServerProvider = await defaultProvider;
+          if (upgradesDisposed || transportSettled || requestAbort.signal.aborted) {
+            failUpgrade(new Error("Node server stopped before WebSocket provider resolved"));
+            return;
+          }
+        }
         if (nodeWebSocketServerProvider === undefined) {
           failUpgrade(new Error(NODE_WEBSOCKET_SERVER_PROVIDER_MISSING_MESSAGE));
           return;
         }
+        const provider = nodeWebSocketServerProvider;
         const idleTimeout = getWebSocketUpgradeIdleTimeout(response) ?? 0;
-        if (idleTimeout > 0 && !nodeWebSocketServerProvider.supportsIdleTimeout) {
+        if (idleTimeout > 0 && !provider.supportsIdleTimeout) {
           failUpgrade(new Error("WebSocket provider does not support the requested idle timeout"));
           return;
         }
-        if (isDenoWebSocketResponse(response) && !nodeWebSocketServerProvider.getBufferedAmount) {
+        if (isDenoWebSocketResponse(response) && !provider.getBufferedAmount) {
           failUpgrade(
             new Error("Deno WebSocket provider must expose its transport buffered amount"),
           );
@@ -901,7 +927,7 @@ async function createNodeServerInternal(
         }
         if (!wsServer) {
           const candidate = captureNodeWebSocketServer(
-            nodeWebSocketServerProvider.createServer(
+            provider.createServer(
               handshakeController.serverOptions,
             ),
           );
@@ -931,7 +957,7 @@ async function createNodeServerInternal(
           }
           transportSettled = true;
           clearTransportState();
-          const getBufferedAmount = nodeWebSocketServerProvider.getBufferedAmount;
+          const getBufferedAmount = provider.getBufferedAmount;
           if (getBufferedAmount) {
             recordWebSocketBufferedAmount(ws, () => getBufferedAmount(ws));
           }

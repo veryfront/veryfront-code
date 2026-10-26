@@ -1,7 +1,7 @@
 import { createDenoNodeServerWithStartupOwner } from "../node/http-server.ts";
 import {
   needsDenoNodeHttpTransport,
-  resolveDenoNodeHttpOptions,
+  resolveDefaultDenoNodeWebSocketProvider,
   scopeDenoNodeHttpHandler,
 } from "./http-transport.ts";
 import type { HttpHandlerResponse, ServeOptions, Server } from "../../base.ts";
@@ -402,13 +402,24 @@ export async function createDenoServer(
     });
   }
   if (needsDenoNodeHttpTransport()) {
-    const resolved = await resolveDenoNodeHttpOptions(options);
+    let didListen = false;
     try {
       return await createDenoNodeServerWithStartupOwner(
         scopeDenoNodeHttpHandler(handler),
-        resolved,
+        {
+          ...options,
+          onListen(address) {
+            didListen = true;
+            options.onListen?.(address);
+          },
+        },
+        undefined,
+        resolveDefaultDenoNodeWebSocketProvider,
       );
     } catch (error) {
+      // Once bound, callback failures belong to the caller. Explicit abort
+      // reasons likewise must not be mistaken for errors from listen().
+      if (didListen || options.signal?.aborted) throw error;
       throwDenoBindError(error, options.hostname ?? "localhost", options.port ?? DEFAULT_PORT);
     }
   }

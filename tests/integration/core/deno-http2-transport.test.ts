@@ -247,7 +247,10 @@ for (const protocol of ["http1", "h2c"] as const) {
         let body = "";
         const sibling = client.request({ ":path": "/sibling" });
         sibling.on("error", finished.reject);
-        sibling.on("data", (chunk) => body += new TextDecoder().decode(chunk));
+        sibling.on(
+          "data",
+          (chunk) => body += typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk),
+        );
         sibling.on("end", () => finished.resolve(body));
         sibling.end();
         assertEquals(await bounded(finished.promise), "sibling");
@@ -386,3 +389,72 @@ it("dual protocol listening owner forwards secondary public events exactly once"
   assertEquals(received, ["string", "symbol"]);
   server.closeAllConnections();
 });
+
+it("Deno transport rejects malformed HTTP1 and h2 authorities before handlers", async () => {
+  const runtime = new DenoAdapter();
+  let calls = 0;
+  const server = await runtime.serve(() => {
+    calls++;
+    return new Response("unexpected");
+  }, { hostname: "127.0.0.1", port: 0, nodeWebSocketServerProvider: null });
+  try {
+    const socket = await Deno.connect({ hostname: "127.0.0.1", port: server.addr.port });
+    try {
+      await socket.write(
+        new TextEncoder().encode("GET / HTTP/1.1\r\nHost: [\r\nConnection: close\r\n\r\n"),
+      );
+      const bytes = new Uint8Array(1024);
+      const count = await bounded(socket.read(bytes));
+      assert(count !== null);
+      assert(new TextDecoder().decode(bytes.subarray(0, count)).startsWith("HTTP/1.1 400"));
+    } finally {
+      socket.close();
+    }
+    const client = connect(`http://127.0.0.1:${server.addr.port}`);
+    try {
+      const status = Promise.withResolvers<number>();
+      const request = client.request({ ":path": "/", ":authority": "[" });
+      request.on("response", (headers) => status.resolve(Number(headers[":status"])));
+      request.on("error", status.reject);
+      request.resume();
+      request.end();
+      assertEquals(await bounded(status.promise), 400);
+    } finally {
+      client.destroy();
+    }
+    assertEquals(calls, 0);
+  } finally {
+    await runtime.shutdown();
+  }
+});
+
+for (const code of ["EADDRINUSE", "ENOTFOUND"]) {
+  it(`Deno onListen preserves callback ${code} error and releases listener`, async () => {
+    const runtime = new DenoAdapter();
+    const failure = Object.assign(new Error("application callback failed"), {
+      code,
+      syscall: "getaddrinfo",
+    });
+    let port = 0;
+    let caught: unknown;
+    try {
+      await runtime.serve(() => new Response("ok"), {
+        hostname: "127.0.0.1",
+        port: 0,
+        nodeWebSocketServerProvider: null,
+        onListen(address) {
+          port = address.port;
+          throw failure;
+        },
+      });
+    } catch (error) {
+      caught = error;
+    } finally {
+      await runtime.shutdown();
+    }
+    assertEquals(caught === failure, true);
+    assert(port > 0);
+    const rebound = Deno.listen({ hostname: "127.0.0.1", port });
+    rebound.close();
+  });
+}

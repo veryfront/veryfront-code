@@ -37,6 +37,16 @@ for (const transport of ["native", "selected"] as const) {
         assertEquals(dom.bufferedAmount >= 0, true);
         dom.send(new Blob(["first"]));
         dom.send(new Uint8Array([2]));
+        const shared = new SharedArrayBuffer(2);
+        new Uint8Array(shared).set([8, 9]);
+        if (transport === "native") {
+          // Deno 2.9.7 rejects direct SAB despite its ArrayBufferLike declaration.
+          assertThrows(() => dom.send(shared), TypeError);
+          assertThrows(() => dom.send(new Uint8Array(shared)), TypeError);
+        } else {
+          dom.send(shared);
+          dom.send(new Uint8Array(shared));
+        }
         dom.send("third");
         Reflect.apply(dom.send, dom, [42]);
         Reflect.apply(dom.send, dom, [{ toString: () => "object-string" }]);
@@ -78,8 +88,8 @@ for (const transport of ["native", "selected"] as const) {
             Array.from(new Uint8Array(buffer))
           ),
       );
-      if (received.length === 5) client.send(new Uint8Array([7]));
-      if (received.length === 6) completed.resolve();
+      if (received.length === (transport === "native" ? 5 : 7)) client.send(new Uint8Array([7]));
+      if (received.length === (transport === "native" ? 6 : 8)) completed.resolve();
     };
     client.onerror = () => completed.reject(new Error("DOM control handshake failed"));
     try {
@@ -87,6 +97,7 @@ for (const transport of ["native", "selected"] as const) {
       assertEquals(await Promise.all(received), [
         [102, 105, 114, 115, 116],
         [2],
+        ...(transport === "native" ? [] : [[8, 9], [8, 9]]),
         "third",
         "42",
         "object-string",

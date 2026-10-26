@@ -1,6 +1,9 @@
+import { types as nodeUtilTypes } from "node:util";
 import { NodeServerAdapter, NodeWebSocket } from "../node/websocket-adapter.ts";
 import type { HttpHandlerResponse, WebSocketUpgradeOptions } from "../../base.ts";
 import { recordDenoWebSocketResponse } from "../shared/http-upgrade-provenance.ts";
+
+const isSharedArrayBuffer = nodeUtilTypes.isSharedArrayBuffer;
 
 /** DOM surface retained by Deno when its HTTP listener uses Node transport. */
 export class DenoNodeWebSocket extends EventTarget implements WebSocket {
@@ -119,7 +122,8 @@ export class DenoNodeWebSocket extends EventTarget implements WebSocket {
     if (typeof data === "string" || data instanceof Blob) normalized = data;
     else if (ArrayBuffer.isView(data)) {
       normalized = new Uint8Array(data.buffer, data.byteOffset, data.byteLength).slice().buffer;
-    } else if (data instanceof ArrayBuffer) normalized = data.slice(0);
+    } else if (isSharedArrayBuffer(data)) normalized = new Uint8Array(data).slice().buffer;
+    else if (data instanceof ArrayBuffer) normalized = data.slice(0);
     else normalized = String(data);
     if (!this.sending && !(normalized instanceof Blob)) {
       this.inner.send(normalized);

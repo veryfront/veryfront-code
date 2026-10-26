@@ -2,7 +2,7 @@ import { createDenoNodeServerWithStartupOwner } from "../../adapters/runtime/nod
 import { NodeHttpServer } from "./node-server.ts";
 import {
   needsDenoNodeHttpTransport,
-  resolveDenoNodeHttpOptions,
+  resolveDefaultDenoNodeWebSocketProvider,
   scopeDenoNodeHttpHandler,
 } from "../../adapters/runtime/deno/http-transport.ts";
 import type { Handler, HttpServer, ServeOptions } from "./types.ts";
@@ -72,11 +72,18 @@ export class DenoHttpServer implements HttpServer {
     if (options.signal?.aborted) throw abortError(options.signal);
 
     if (needsDenoNodeHttpTransport()) {
-      const server = new NodeHttpServer(createDenoNodeServerWithStartupOwner);
+      const server = new NodeHttpServer((handler, options, owner) =>
+        createDenoNodeServerWithStartupOwner(
+          handler,
+          options,
+          owner,
+          resolveDefaultDenoNodeWebSocketProvider,
+        )
+      );
       const controller = new AbortController();
       const finished = Promise.withResolvers<void>();
       const state = { server, controller, finished, stopFailed: false };
-      // Teardown may fail before asynchronous provider resolution finishes.
+      // Teardown may fail before asynchronous listener startup finishes.
       void finished.promise.catch(() => undefined);
       this.fallback = state;
       const abort = () => {
@@ -86,12 +93,12 @@ export class DenoHttpServer implements HttpServer {
       options.signal?.addEventListener("abort", abort, { once: true });
       if (options.signal?.aborted) abort();
       try {
-        const resolved = await resolveDenoNodeHttpOptions({
+        const resolved = {
           ...options,
           hostname: options.hostname ?? LOCALHOST.IPV4,
           port: options.port ?? DEFAULT_COMPAT_HTTP_PORT,
           signal: controller.signal,
-        });
+        };
         await server.serve(scopeDenoNodeHttpHandler(handler), resolved);
         await finished.promise;
       } catch (error) {
