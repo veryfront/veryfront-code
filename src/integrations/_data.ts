@@ -8908,12 +8908,15 @@ export const connectors: IntegrationConfig[] = [
         },
         "response": {
           "historicalSummary": {
-            "collectionKeys": ["items", "data"],
+            "collectionKeys": ["items", "data", "calendars"],
             "collectionName": "calendars",
             "itemFields": [{ "name": "id" }, { "name": "summary" }, { "name": "timeZone" }, {
               "name": "accessRole",
             }, { "name": "primary" }],
-            "outputFields": [{ "name": "nextPageToken" }, { "name": "nextSyncToken" }],
+            "outputFields": [{ "name": "nextPageToken" }, { "name": "nextSyncToken" }, {
+              "name": "pagination",
+              "kind": "object",
+            }],
             "omitted": "other provider fields",
           },
         },
@@ -8963,7 +8966,7 @@ export const connectors: IntegrationConfig[] = [
         },
         "response": {
           "historicalSummary": {
-            "collectionKeys": ["items", "data"],
+            "collectionKeys": ["items", "data", "events"],
             "collectionName": "events",
             "itemFields": [
               { "name": "id" },
@@ -8975,7 +8978,7 @@ export const connectors: IntegrationConfig[] = [
             ],
             "outputFields": [{ "name": "nextPageToken" }, { "name": "nextSyncToken" }, {
               "name": "timeZone",
-            }],
+            }, { "name": "pagination", "kind": "object" }],
             "omitted": "event descriptions and other provider fields",
           },
         },

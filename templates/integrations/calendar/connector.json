@@ -101,7 +101,8 @@
           "historicalSummary": {
             "collectionKeys": [
               "items",
-              "data"
+              "data",
+              "calendars"
             ],
             "collectionName": "calendars",
             "itemFields": [
@@ -127,6 +128,10 @@
               },
               {
                 "name": "nextSyncToken"
+              },
+              {
+                "name": "pagination",
+                "kind": "object"
               }
             ],
             "omitted": "other provider fields"
@@ -188,7 +193,8 @@
           "historicalSummary": {
             "collectionKeys": [
               "items",
-              "data"
+              "data",
+              "events"
             ],
             "collectionName": "events",
             "itemFields": [
@@ -222,6 +228,10 @@
               },
               {
                 "name": "timeZone"
+              },
+              {
+                "name": "pagination",
+                "kind": "object"
               }
             ],
             "omitted": "event descriptions and other provider fields"

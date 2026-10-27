@@ -42,14 +42,16 @@ verification evidence.
 
 ## Calendar result pages
 
-`calendar__list_events` and `calendar__list_calendars` return a provider page
-object with an `items` array. If `nextPageToken` is present, pass it as
+The endpoints for `calendar__list_events` and `calendar__list_calendars` return
+a provider page object with an `items` array. If `nextPageToken` is present, pass it as
 `pageToken` on the next call with the other query arguments unchanged. An empty
 page can still have a continuation token. Stop when the token is absent.
 
 Earlier versions returned only the item array. Read `items` on the page object
 instead. The number of items is the current page size, not a total count.
 Page-size defaults are unchanged, and free/busy results are unchanged.
+
+The hosted tool layer may compact Calendar pages to `events` or `calendars`, with the continuation token under `pagination.nextPageToken`. Both the native page and this compact result retain their cursor in chat history.
 
 ## Make your first call
 

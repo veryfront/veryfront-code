@@ -68,44 +68,58 @@ for (
         ["invalid nonempty collection", [null], TOKEN],
       ] as const
     ) {
-      it(`retains the paging evidence for historical ${label}`, () => {
-        const page = {
-          items: [...items],
-          ...(nextPageToken ? { nextPageToken } : {}),
-          debug: "provider metadata ".repeat(400),
-        };
-        const messages: ProviderModelMessage[] = [
-          { role: "user", content: "Read the first page" },
-          {
-            role: "assistant",
-            content: [{ type: "tool-call", toolCallId: "page", toolName: toolId, input: {} }],
-          },
-          {
-            role: "tool",
-            content: [{
-              type: "tool-result",
-              toolCallId: "page",
-              toolName: toolId,
-              output: { type: "json", value: page },
-            }],
-          },
-          { role: "user", content: "Continue from that result" },
-        ];
-        const masked = maskOldToolOutputs(messages)[2];
-        if (masked?.role !== "tool" || masked.content[0]?.output.type !== "text") {
-          throw new Error("Expected a compact historical tool result");
-        }
-        const output = masked.content[0].output.value;
-        if (label === "invalid nonempty collection") {
-          assertStringIncludes(output, "output omitted");
-          return;
-        }
-        const summary = JSON.parse(output);
-        assertEquals(summary.nextPageToken, nextPageToken);
-        assertEquals(summary[`${collection}Count`], items.length);
-        assertEquals(summary[collection], items);
-        assertEquals(summary.debug, undefined);
-      });
+      for (const shape of ["native", "api-summary"] as const) {
+        it(`retains the paging evidence for historical ${label} (${shape})`, () => {
+          const page = {
+            ...(shape === "native"
+              ? { items: [...items], ...(nextPageToken ? { nextPageToken } : {}) }
+              : {
+                [collection]: [...items],
+                pagination: nextPageToken ? { nextPageToken } : {},
+                summary: {
+                  originalItemCount: items.length,
+                  returnedItemCount: items.length,
+                  truncated: false,
+                },
+              }),
+            debug: "provider metadata ".repeat(400),
+          };
+          const messages: ProviderModelMessage[] = [
+            { role: "user", content: "Read the first page" },
+            {
+              role: "assistant",
+              content: [{ type: "tool-call", toolCallId: "page", toolName: toolId, input: {} }],
+            },
+            {
+              role: "tool",
+              content: [{
+                type: "tool-result",
+                toolCallId: "page",
+                toolName: toolId,
+                output: { type: "json", value: page },
+              }],
+            },
+            { role: "user", content: "Continue from that result" },
+          ];
+          const masked = maskOldToolOutputs(messages)[2];
+          if (masked?.role !== "tool" || masked.content[0]?.output.type !== "text") {
+            throw new Error("Expected a compact historical tool result");
+          }
+          const output = masked.content[0].output.value;
+          if (label === "invalid nonempty collection") {
+            assertStringIncludes(output, "output omitted");
+            return;
+          }
+          const summary = JSON.parse(output);
+          assertEquals(
+            shape === "native" ? summary.nextPageToken : summary.pagination?.nextPageToken,
+            nextPageToken,
+          );
+          assertEquals(summary[`${collection}Count`], items.length);
+          assertEquals(summary[collection], items);
+          assertEquals(summary.debug, undefined);
+        });
+      }
     }
   });
 }
