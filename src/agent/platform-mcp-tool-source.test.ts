@@ -362,7 +362,7 @@ it("a verified run-scoped live source binds discovery and dispatch without calle
   assertEquals(calls, [{ run_id: runId }, { run_id: runId }]);
 });
 
-Deno.test("agent management errors stay on items through platform tool aliases", async () => {
+it("agent management errors stay on items through platform tool aliases", async () => {
   const payload: import("./identity-contracts.ts").AgentManagementList = {
     data: [{
       id: "source_abc",
