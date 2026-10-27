@@ -936,7 +936,7 @@ function toGoogleTools(
       functionDeclarations.push({
         name: tool.name,
         ...(typeof tool.description === "string" ? { description: tool.description } : {}),
-        parameters: unwrapToolInputSchema(tool.inputSchema),
+        parametersJsonSchema: unwrapToolInputSchema(tool.inputSchema),
       });
       continue;
     }

@@ -344,6 +344,8 @@ export const getIntegrationEndpointBodyFieldSchema = defineSchema((v) =>
   v.object({
     type: v.enum(["string", "number", "boolean", "object", "array"]),
     description: v.string(),
+    // Preserve nested provider request contracts in generated connector metadata.
+    inputSchema: v.record(v.string(), v.unknown()).optional(),
     required: v.boolean().optional(),
     default: v.unknown().optional(),
     // Sends `default` on every call, ignores caller input and stays out of the

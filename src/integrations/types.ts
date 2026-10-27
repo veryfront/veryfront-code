@@ -24,6 +24,7 @@ export interface IntegrationEndpointParam {
 interface IntegrationEndpointBodyField {
   type: "string" | "number" | "boolean" | "object" | "array";
   description: string;
+  inputSchema?: Record<string, unknown>;
   required?: boolean;
 }
 

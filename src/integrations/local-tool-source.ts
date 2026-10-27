@@ -18,6 +18,7 @@ import {
   type LocalIntegrationEndpointTransport,
   resolveLocalIntegrationEndpointOrigin,
   snapshotLocalIntegrationEndpointInput,
+  validateLocalIntegrationEndpointInputSchemas,
 } from "#veryfront/integrations/local-endpoint-executor.ts";
 import {
   LOCAL_INTEGRATION_CREDENTIAL_UNAVAILABLE,
@@ -862,6 +863,7 @@ function inputPropertySchema(
     default?: unknown;
     exposeDefault?: boolean;
     pattern?: string;
+    inputSchema?: Record<string, unknown>;
   },
   credentialNames: readonly string[],
 ): JsonSchema {
@@ -871,10 +873,11 @@ function inputPropertySchema(
   ) {
     configurationError(`Local integration input uses unsupported type "${field.type}"`);
   }
-  const schema: Record<string, unknown> = {
-    type: field.type === "string[]" ? "array" : field.type,
-    description: removeCredentialNames(field.description, credentialNames),
-  };
+  const nestedSchema = getOwnPropertyDescriptor(field, "inputSchema")?.value;
+  const schema: Record<string, unknown> = nestedSchema
+    ? catalogSnapshot<Record<string, unknown>>(nestedSchema, "input schema")
+    : { type: field.type === "string[]" ? "array" : field.type };
+  schema.description = removeCredentialNames(field.description, credentialNames);
   if (field.type === "string[]") schema.items = { type: "string" };
   const patternDescriptor = getOwnPropertyDescriptor(field, "pattern");
   const pattern = patternDescriptor && "value" in patternDescriptor
@@ -1052,6 +1055,7 @@ function createLocalIntegrationToolSourceInternal(
         );
       }
       const validated = snapshotLocalIntegrationEndpointInput(tool.endpoint, args);
+      validateLocalIntegrationEndpointInputSchemas(tool.endpoint, validated.args);
       const resolvedHosts = new MapConstructor<string, unknown>();
       let endpoint = tool.endpoint;
       let allowedOrigin = tool.endpointOrigin;
