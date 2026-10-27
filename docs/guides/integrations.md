@@ -732,11 +732,6 @@ representative read has run against the real provider on a recorded release.
 Every other connector is package-declared and, where enabled, environment-enabled,
 but not operationally qualified.
 
-Use the generated integration metadata reference when you need exact exported
-names or icon metadata:
-
-- [`veryfront/integrations`](../api-reference/veryfront/integrations.md)
-
 ## Text exports
 
 Drive document exports return readable UTF-8 text with its content type. Use `text/plain` for Docs or `text/csv` for Sheets. The `drive__download_file` tool uses a separate byte-safe binary response contract and is not enabled in the Drive catalog agent.
@@ -754,9 +749,6 @@ Drive document exports return readable UTF-8 text with its content type. Use `te
 
 - [Recover integration connections](./integrations/recovery.md)
 - [Integration credentials and scopes](./integrations/credentials.md)
-- [Set up GitHub](./integrations/github.md)
-- [Set up Jira](./integrations/jira.md)
-- [Set up Salesforce](./integrations/salesforce.md)
 
 ## Related
 

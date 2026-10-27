@@ -1,7 +1,4 @@
-import {
-  assertEquals,
-  assertStringIncludes,
-} from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   type GraphqlSchemaSnapshot,
@@ -327,24 +324,19 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
   "getting-started/quickstart.md": {
     references: [
       "../guides/providers.md",
-      "../guides/multi-agent.md",
-      "./create-project.md",
-      "../api-reference/veryfront/agent.md",
-      "../api-reference/veryfront/tool.md",
-      "../api-reference/veryfront/chat.md",
+      "../guides/multi-agent.md#local-delegation",
+      "../guides/tools.md",
+      "../guides/evals.md",
     ],
     snippets: [
       "npm create veryfront@latest support-agent",
       "does not require a Veryfront account or Veryfront Cloud",
       'export OPENAI_API_KEY="<API_KEY>"',
       "npm run eval -- assistant",
-      "Self-host the app",
+      "Self-host",
       "calculator.ts",
       "What is 128 divided by 8?",
       "Inference OpenAI direct",
-      'delegates: ["researcher", "writer"]',
-      "agent_researcher",
-      "agent_writer",
     ],
   },
   "getting-started/cloud-quickstart.md": {
@@ -515,9 +507,9 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "Local quickstart",
       "Cloud quickstart",
       "Self-host",
-      "Build individual parts",
-      "Installation",
-      "Coding agents",
+      "Continue after the quickstart",
+      "Task guides",
+      "API reference",
     ],
   },
   "concepts/framework-overview.md": {
@@ -888,6 +880,9 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "agentAsTool",
       "getAgentsAsTools",
       "workflow",
+      "agent_researcher",
+      "agent_writer",
+      'delegates: ["researcher", "writer"]',
     ],
   },
   "guides/oauth.md": {
@@ -1230,13 +1225,10 @@ describe("integration credentials guide GraphQL reference", () => {
     );
     const row = guide.split("\n").find((line) => line.startsWith("| GraphQL "));
     const cell = row?.split("|").at(-2) ?? "";
-    const [field, property] = [...cell.matchAll(/`([^`]+)`/g)].map((match) =>
-      match[1]
-    );
+    const [field, property] = [...cell.matchAll(/`([^`]+)`/g)].map((match) => match[1]);
     assertEquals([field, property], ["integrationTools", "inputSchema"]);
 
-    const query =
-      `query Tools($projectReference: String, $integration: String) {
+    const query = `query Tools($projectReference: String, $integration: String) {
   ${field}(projectReference: $projectReference, integration: $integration) {
     tools { name description ${property} }
     total

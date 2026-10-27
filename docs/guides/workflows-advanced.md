@@ -4,10 +4,7 @@ description: "Find the guide for repeated steps, large artifacts, and workflow p
 order: 310
 ---
 
-Three patterns that reach past a single-pass DAG: looping until a condition is
-met, storing artifacts that are too large to thread through step inputs, and
-surfacing workflow progress in a React UI. Pick the section that matches what
-the base workflow can't do yet.
+Add loops, store large artifacts or show workflow progress in React.
 
 ## Prerequisites
 

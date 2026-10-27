@@ -1,24 +1,13 @@
-import {
-  assert,
-  assertEquals,
-  assertStringIncludes,
-} from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { basename } from "#veryfront/compat/path";
-import {
-  deleteEnv,
-  getHostEnv,
-  setEnv,
-} from "#veryfront/platform/compat/process.ts";
+import { deleteEnv, getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import {
   getCacheBaseDir,
   getHttpBundleCacheDir,
   getMdxEsmCacheDir,
 } from "#veryfront/utils/cache-dir.ts";
-import {
-  MINIMUM_DENO_VERSION,
-  MINIMUM_NODE_VERSION,
-} from "../../scripts/build/runtime-support.ts";
+import { MINIMUM_DENO_VERSION, MINIMUM_NODE_VERSION } from "../../scripts/build/runtime-support.ts";
 
 const repoRoot = new URL("../../", import.meta.url);
 
@@ -444,15 +433,16 @@ describe("guide content contracts", () => {
       new URL("docs/guides/multi-agent.md", repoRoot),
     );
 
-    assertStringIncludes(quickstart, "## Add local delegation");
-    assertStringIncludes(quickstart, "// agents/researcher.ts");
-    assertStringIncludes(quickstart, "// agents/writer.ts");
-    assertStringIncludes(quickstart, 'delegates: ["researcher", "writer"]');
-    assertStringIncludes(quickstart, "`agent_researcher`");
-    assertStringIncludes(quickstart, "`agent_writer`");
-    assertStringIncludes(quickstart, "runs in the same Veryfront process");
+    assertStringIncludes(quickstart, "../guides/multi-agent.md#local-delegation");
+    assertEquals(quickstart.includes("// agents/researcher.ts"), false);
+    assertStringIncludes(multiAgentGuide, "// agents/researcher.ts");
+    assertStringIncludes(multiAgentGuide, "// agents/writer.ts");
+    assertStringIncludes(multiAgentGuide, 'delegates: ["researcher", "writer"]');
+    assertStringIncludes(multiAgentGuide, "`agent_researcher`");
+    assertStringIncludes(multiAgentGuide, "`agent_writer`");
+    assertStringIncludes(multiAgentGuide, "runs in the same Veryfront process");
     assertStringIncludes(
-      quickstart,
+      multiAgentGuide,
       "If the development server is still running",
     );
     assertEquals(quickstart.includes("tools: { invoke_agent: true }"), false);
@@ -1624,9 +1614,7 @@ function productionCacheTriggerEnvKeys(source: string): string[] {
   }
 
   const body = source.slice(open, end);
-  const keys = [...body.matchAll(/getHostEnv\("([A-Z_]+)"\)/g)].map((m) =>
-    m[1]!
-  );
+  const keys = [...body.matchAll(/getHostEnv\("([A-Z_]+)"\)/g)].map((m) => m[1]!);
   assert(keys.length > 0, "getDefaultCacheBaseDir() must read the host env");
   return [...new Set(keys)];
 }

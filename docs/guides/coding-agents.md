@@ -202,7 +202,9 @@ curl -s -X POST http://localhost:3002/mcp \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' | head -c 500
 ```
 
-A working server returns a JSON-RPC response whose `result.tools` array lists `vf_get_errors`, `vf_scaffold`, and the other tools above. If you get a connection-refused error, the dev server is not running or is on a non-default port. The MCP port is always two above the port the dev server bound, so a dev server that bound 4000 serves MCP at `http://localhost:4002/mcp`. Take that port from the URL the dev server printed, not from the `--port` you passed: when the requested port is in use the dev server moves to the next free one and MCP moves with it.
+The JSON-RPC response's `result.tools` array includes `vf_get_errors` and
+`vf_scaffold`. If the connection is refused, ensure the dev server is running
+and use its actual port plus two for MCP.
 
 From inside a connected coding agent, ask it to "list routes" or "show recent dev errors". It calls the matching `vf_*` tool and streams the result back as text.
 

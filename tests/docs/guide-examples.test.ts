@@ -605,7 +605,46 @@ import {
   registerAgent,
 } from "../../src/agent/index.ts";
 
+import { type EvalDefinition, runEval } from "../../src/eval/index.ts";
+
 describe("Guide: multi-agent.mdx", () => {
+  it("runs the delegation continuation eval and rejects missing or failed specialists", async () => {
+    const guide = await Deno.readTextFile(
+      new URL("../../docs/guides/multi-agent.md", import.meta.url),
+    );
+    const snippet = /```ts\n(\/\/ evals\/assistant\.eval\.ts[\s\S]*?)\n```/.exec(guide)?.[1];
+    assertExists(snippet);
+    const source = snippet.replace(
+      '"veryfront/eval"',
+      JSON.stringify(new URL("../../src/eval/index.ts", import.meta.url).href),
+    );
+    const { default: definition }: { default: EvalDefinition } = await import(
+      `data:application/typescript,${encodeURIComponent(source)}`
+    );
+    const cases = [
+      { names: ["agent_researcher", "agent_writer"], status: "ok", failed: 0 },
+      { names: ["agent_researcher"], status: "ok", failed: 1 },
+      { names: ["agent_writer"], status: "ok", failed: 1 },
+      { names: ["agent_researcher", "agent_writer"], status: "error", failed: 1 },
+      { names: ["calculator"], status: "ok", failed: 1 },
+    ] as const;
+    for (const testCase of cases) {
+      const report = await runEval(definition, {
+        adapters: {
+          agent: () =>
+            Promise.resolve({
+              text: "Recommend an FAQ based on the research.",
+              trace: {
+                toolCalls: testCase.names.map((name) => ({ name, status: testCase.status })),
+              },
+            }),
+        },
+      });
+      assertEquals(report.summary.records, 1);
+      assertEquals(report.summary.failed, testCase.failed);
+    }
+  });
+
   it("should register and retrieve agent IDs", () => {
     const testAgent = agent({
       id: "test-guide-agent",

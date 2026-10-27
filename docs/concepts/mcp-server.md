@@ -4,12 +4,8 @@ description: "How MCP servers expose tools, prompts, and resources to assistants
 order: 31
 ---
 
-An MCP server owns an assistant-facing protocol surface. It exposes tools,
-prompts, and resources through MCP.
-
-MCP servers exist because assistants need a protocol surface that is not the same
-as a user-facing app route. MCP describes capabilities an assistant can inspect
-and call.
+An MCP server provides an assistant-facing protocol for discovering and using
+tools, prompts and resources.
 
 ## Characteristics
 

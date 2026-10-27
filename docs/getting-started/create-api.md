@@ -1,4 +1,5 @@
 ---
+sidebarSection: guides
 title: "Create API"
 description: "Expose a Veryfront agent through a streaming AG-UI route."
 order: 7

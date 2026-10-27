@@ -4,7 +4,8 @@ description: "Declarative metadata, Open Graph, and structured data."
 order: 100
 ---
 
-Set page metadata with the `Head` component: title, description, Open Graph and Twitter cards, favicons, fonts, and JSON-LD. Multiple `Head` components in the tree merge; for single-valued tags (title, description, canonical, `og:title`, robots, …) a page-level tag overrides the layout-level tag with the same key, while repeatable tags (`og:image`, `<link rel="preload">`, icons, …) accumulate.
+Use `Head` to set page titles, descriptions, social cards, icons, fonts and
+JSON-LD. Page metadata can override layout defaults.
 
 Examples below use the default app router. Set `router: "pages"` in `veryfront.config.ts` to switch to the pages router.
 

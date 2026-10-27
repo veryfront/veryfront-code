@@ -316,10 +316,6 @@ for its input shows `status: "failed"`, `output: null`, and
 ## Next
 
 - [Runs](./runs.md): create, observe, and cancel runs.
-- [Tasks](./tasks.md): task context, `ctx.input`, and `ctx.config`.
-- [Workflows](./workflows.md): steps, the workflow context, and output
-  selection.
-- [Agents](./agents.md): structured output with `outputSchema`.
 
 ## Related
 

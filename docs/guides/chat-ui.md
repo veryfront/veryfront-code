@@ -47,9 +47,7 @@ source until a renderer is installed, so a `<Chat>` without one shows
 `## Heading` rather than a heading. The chat starters scaffold the
 `app/markdown-renderer.tsx` this sample imports; the `minimal` and
 `agentic-workflow` templates do not. Create the file first if your project does
-not already have it. See
-[Render Markdown in chat](#render-markdown-in-chat). Wrap the other samples on
-this page the same way.
+not already have it. Wrap the other samples on this page the same way.
 
 ## Choose the level of control
 
@@ -445,11 +443,8 @@ export default function ChatPage() {
 }
 ```
 
-The provider covers assistant answers and reasoning. Chat applies its own prose
-styling around whatever the renderer returns, so lists, headings, and inline
-code match the rest of the chat surface. Pin the parser to an exact version:
-these packages reach the browser through the module pipeline, where a floating
-range resolves to whatever is latest at request time.
+The provider covers assistant answers and reasoning. Chat applies prose styles
+to the renderer's output so it matches the rest of the interface.
 
 Your renderer owns parsing, sanitization, and link policy. To add syntax
 highlighting, tables, or math, extend it with the remark and rehype plugins you
