@@ -41,7 +41,7 @@ async function submitWithFakeTime(context: ReturnType<typeof contextFor>["contex
     () => ({ error: undefined }),
     (error: unknown) => ({ error }),
   ).finally(() => settled = true);
-  while (!settled) await time.nextAsync();
+  while (!settled) await time.tickAsync(1_000);
   return await outcome;
 }
 
