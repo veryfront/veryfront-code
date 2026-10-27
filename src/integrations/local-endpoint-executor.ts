@@ -229,8 +229,19 @@ export async function validateLocalIntegrationEndpointInputSchemas(
     const validate = entry[2];
     const input = fieldValue(args, name, field);
     if (!input.present) continue;
-    const result = await withPristineIntrinsics(() => validate(input.value));
-    if (!result.success) {
+    const outcome = withPristineIntrinsics(() => {
+      const result = validate(input.value);
+      return typeof (result as { then?: unknown })?.then === "function"
+        ? { kind: "pending" as const, pending: result }
+        : { kind: "settled" as const, success: (result as { success: boolean }).success };
+    });
+    let success: boolean;
+    if (outcome.kind === "settled") success = outcome.success;
+    else {
+      const result = await outcome.pending;
+      success = withPristineIntrinsics(() => result.success);
+    }
+    if (!success) {
       requestInvalid(`Local integration argument "${name}" does not match its input schema`);
     }
   }
