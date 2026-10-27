@@ -729,10 +729,15 @@ adapter's owner in trusted service configuration; project owners reject requests
 for other projects before preparation or allocation. Their `prepare` callbacks
 receive private broker authority and bounded executor data separately. Resolve
 immutable sources and capabilities in the broker before returning the executor
-start input. For signed control-plane managed brokers, supply `trustedRuntime`
-in the start input when the run needs framework knowledge retrieval. The broker keeps its
-credential and API origin outside executor data. Without this trusted runtime
-configuration, managed framework knowledge is denied.
+start input. For runs that need `trustedRuntime`, construct the broker with
+`createTrustedManagedExecutorBroker` from `veryfront/agent/trusted-broker`.
+Its start contract requires `trustedRuntime`; the ordinary
+`createManagedExecutorBroker` rejects that configuration. The trusted broker
+process must not load project-authored modules or callbacks.
+
+For signed control-plane invocations, this configuration enables framework
+knowledge retrieval while keeping its credential and API origin outside executor
+data. Without it, managed framework knowledge is denied.
 
 These adapters share admission, duplicate handling, and retirement
 with the signed adapter.

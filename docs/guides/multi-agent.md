@@ -17,7 +17,7 @@ for runtime selection, or set an explicit `provider/model` override.
 
 ## Prerequisites
 
-- At least two agents in `agents/` (see [Agents](./agents.md)).
+- A working agent project, such as the [Local quickstart](../getting-started/quickstart.md).
 - A configured provider (see [Providers](./providers.md)).
 
 Direct local delegation does not require a Veryfront account. Set a direct
@@ -28,8 +28,8 @@ or control-plane capabilities.
 
 ## Local delegation
 
-Start with the project from the [Local quickstart](../getting-started/quickstart.md). Keep its provider key. Add a specialist that identifies
-the important facts:
+This section starts with the quickstart project and creates both specialists.
+Keep its provider key. Add an agent that identifies the important facts:
 
 ```ts
 // agents/researcher.ts
