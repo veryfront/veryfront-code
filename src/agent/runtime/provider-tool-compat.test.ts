@@ -676,176 +676,25 @@ describe("provider-tool-compat", () => {
     assertEquals(selected.at(-1)?.name, "tool_127");
   });
 
-  it("sanitizes Google tool schemas to avoid unsupported JSON Schema keywords", () => {
-    const sanitized = sanitizeProviderToolSchema(
-      {
-        $schema: "https://json-schema.org/draft/2020-12/schema",
-        $id: "tool-schema",
-        type: "object",
-        additionalProperties: false,
-        properties: {
-          kind: {
-            type: "string",
-            const: "file",
-            default: "file",
-          },
-          nested: {
-            anyOf: [
-              { type: "string", const: "a" },
-              { type: "string", const: "b" },
-            ],
-          },
-          chart: { type: "object", not: { required: ["position"] } },
-          refValue: {
-            $ref: "#/$defs/refValue",
-          },
-        },
-      } as never,
-      { model: "veryfront-cloud/google-ai-studio/gemini-2.5-flash" },
-    );
-
-    assertEquals(containsKey(sanitized, "not"), false);
-    assertEquals(containsKey(sanitized, "const"), false);
-    assertEquals(containsKey(sanitized, "default"), false);
-    assertEquals(containsKey(sanitized, "additionalProperties"), false);
-    assertEquals(containsKey(sanitized, "$schema"), false);
-    assertEquals(containsKey(sanitized, "$id"), false);
-    assertEquals(containsKey(sanitized, "$ref"), false);
-    assertEquals(containsKey(sanitized, "anyOf"), false);
-    assertEquals(sanitized.properties?.kind?.enum, ["file"]);
-    assertEquals(sanitized.properties?.nested?.enum, ["a", "b"]);
-  });
-
-  it("preserves Google object union branches with typed required fields", () => {
-    const sanitized = sanitizeProviderToolSchema({
+  it("preserves canonical JSON Schema for Google's native JSON Schema field", () => {
+    const schema: ToolDefinition["parameters"] = {
       type: "object",
+      additionalProperties: false,
       properties: {
-        range: {
-          type: "object",
-          properties: { sheetId: { type: "integer" } },
-          required: ["sheetId"],
-        },
-        allSheets: { type: "boolean", const: true },
+        enabled: { type: "boolean", const: true, enum: [true] },
+        count: { type: "integer", enum: [1, 2], exclusiveMinimum: 0 },
+        nested: { type: "object", properties: { value: { type: "string" } } },
       },
-      oneOf: [{ properties: { range: {} }, required: ["range"] }, {
-        properties: { allSheets: {} },
-        required: ["allSheets"],
+      oneOf: [{ properties: { enabled: {} }, required: ["enabled"] }, {
+        properties: { nested: {} },
+        required: ["nested"],
       }],
-    } as never, { model: "google-ai-studio/gemini-2.5-pro" });
-    assertEquals(sanitized.anyOf?.[0]?.required, ["range"]);
-    assertEquals(sanitized.anyOf?.[0]?.properties?.allSheets, undefined);
-    assertEquals(sanitized.anyOf?.[0]?.properties?.range?.type, "object");
-    assertEquals(sanitized.anyOf?.[1]?.properties?.allSheets?.type, "boolean");
-    assertEquals(sanitized.properties?.allSheets?.enum, ["true"]);
-    assertEquals(containsKey(sanitized, "oneOf"), false);
-  });
-
-  it("keeps nested Google union schema growth bounded", () => {
-    let schema: Record<string, unknown> = { type: "string" };
-    for (let depth = 0; depth < 11; depth++) {
-      schema = {
-        type: "object",
-        properties: { x: schema },
-        oneOf: [{ properties: { x: {} } }, { properties: { x: {} } }],
-      };
-    }
-    const result = sanitizeProviderToolSchema(schema as never, {
-      model: "google-ai-studio/gemini-2.5-pro",
-    });
-    assertEquals(JSON.stringify(result).length < JSON.stringify(schema).length * 4, true);
-  });
-
-  it("does not duplicate unsupported type hints from remote schemas", () => {
-    for (const type of [{ description: "x".repeat(1000) }, "x".repeat(1000)]) {
-      const schemas = [{ type, oneOf: Array.from({ length: 20 }, () => ({})) }, {
-        type: "object",
-        properties: { x: { type } },
-        oneOf: Array.from({ length: 20 }, () => ({ properties: { x: {} } })),
-      }];
-      for (const schema of schemas) {
-        const result = sanitizeProviderToolSchema(schema as never, {
-          model: "google-ai-studio/gemini-2.5-pro",
-        });
-        assertEquals(JSON.stringify(result).length < JSON.stringify(schema).length * 4, true);
-      }
-    }
-  });
-
-  it("serializes Google primitive enum values as strings without changing their types", () => {
-    const sanitized = sanitizeProviderToolSchema(
-      {
-        type: "object",
-        properties: {
-          allSheets: { type: "boolean", const: true },
-          count: { type: "integer", const: 10 },
-          choice: { type: "integer", enum: [10, 20] },
-        },
-      } as never,
-      { model: "google-ai-studio/gemini-2.5-pro" },
+      not: { properties: { forbidden: {} }, required: ["forbidden"] },
+    };
+    assertEquals(
+      sanitizeProviderToolSchema(schema as never, { model: "google/gemini-2.5-pro" }),
+      schema,
     );
-    assertEquals(sanitized.properties?.allSheets, { type: "boolean", enum: ["true"] });
-    assertEquals(sanitized.properties?.count, { type: "integer", enum: ["10"] });
-    assertEquals(sanitized.properties?.choice, { type: "integer", enum: ["10", "20"] });
-  });
-
-  it("does not assign a schema type when collapsed anyOf literals are mixed types", () => {
-    const sanitized = sanitizeProviderToolSchema(
-      {
-        anyOf: [
-          { const: "file" },
-          { const: 1 },
-        ],
-      } as never,
-      { model: "google-ai-studio/gemini-2.5-pro" },
-    );
-
-    assertEquals(sanitized.enum, ["file", "1"]);
-    assertEquals(sanitized.type, undefined);
-  });
-
-  it("normalizes Google schemas that use JSON Schema type arrays and numeric exclusive bounds", () => {
-    const sanitized = sanitizeProviderToolSchema(
-      {
-        type: "object",
-        properties: {
-          maybeText: {
-            type: ["string", "null"],
-          },
-          flexible: {
-            type: ["string", "number"],
-          },
-          count: {
-            type: "number",
-            exclusiveMinimum: 0,
-            exclusiveMaximum: 10,
-          },
-        },
-      } as never,
-      { model: "google-ai-studio/gemini-2.5-pro" },
-    );
-
-    assertEquals(sanitized.properties?.maybeText?.type, "string");
-    assertEquals(sanitized.properties?.flexible?.type, undefined);
-    assertEquals(containsKey(sanitized, "exclusiveMinimum"), false);
-    assertEquals(containsKey(sanitized, "exclusiveMaximum"), false);
-  });
-
-  it("keeps Google array schemas valid when upstream tools omit item schemas", () => {
-    const sanitized = sanitizeProviderToolSchema(
-      {
-        type: "object",
-        properties: {
-          labelIds: {
-            type: "array",
-            description: "Label IDs to apply.",
-          },
-        },
-      } as never,
-      { model: "google-ai-studio/gemini-2.5-pro" },
-    );
-
-    assertEquals(sanitized.properties?.labelIds?.type, "array");
-    assertEquals(sanitized.properties?.labelIds?.items, {});
   });
 
   for (const wireSurface of [undefined, "openai"] as const) {

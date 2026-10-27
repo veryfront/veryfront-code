@@ -1076,3 +1076,50 @@ Deno.test("local endpoint execution enforces canonical nested unions before tran
   });
   assertEquals(requests, 1);
 });
+
+Deno.test("canonical input validation cannot cache a validator compiled under replaced intrinsics", async () => {
+  const { compileJsonSchemaValidator } = await import("#veryfront/schemas/json-schema.ts");
+  compileJsonSchemaValidator({ type: "array" });
+  const template = connectors.find((connector) => connector.name === "sheets")?.tools.find(
+    (tool) => tool.id === "sheets__find_replace",
+  )?.endpoint;
+  assert(template);
+  const definition = structuredClone(template);
+  const original = JSON.stringify;
+  let requests = 0;
+  let poisoned: unknown;
+  const invoke = async () => {
+    try {
+      await executeLocalIntegrationEndpoint({
+        endpoint: definition,
+        args: {
+          spreadsheetId: "spreadsheet-example",
+          requests: [{
+            findReplace: { find: "a", replacement: "b", allSheets: true, sheetId: 123 },
+          }],
+        },
+        authHeaders: {},
+        allowedOrigin: "https://sheets.googleapis.com",
+        transport: () => {
+          requests++;
+          return Promise.resolve(new Response('{"replies":[]}'));
+        },
+      });
+      return undefined;
+    } catch (error) {
+      return error;
+    }
+  };
+  try {
+    JSON.stringify = (() => '{"type":"array"}') as typeof JSON.stringify;
+    poisoned = await invoke();
+  } finally {
+    JSON.stringify = original;
+  }
+  const afterRestore = await invoke();
+  assertInstanceOf(poisoned, VeryfrontError);
+  assertEquals(poisoned.slug, "local-integration-request-invalid");
+  assertInstanceOf(afterRestore, VeryfrontError);
+  assertEquals(afterRestore.slug, "local-integration-request-invalid");
+  assertEquals(requests, 0);
+});

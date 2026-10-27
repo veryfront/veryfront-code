@@ -3,6 +3,7 @@ import type {
   JsonSchemaValidationFunction,
 } from "#veryfront/extensions/schema/index.ts";
 import { compileJsonSchemaValidator } from "#veryfront/schemas/json-schema.ts";
+import { withPristineIntrinsics } from "#veryfront/schemas/pristine-intrinsics.ts";
 import { INITIALIZATION_ERROR } from "#veryfront/errors";
 import {
   snapshotBoundedJsonValue,
@@ -209,7 +210,7 @@ export async function validateLocalIntegrationEndpointInputSchemas(
       if (schema === undefined) continue;
       let validate: JsonSchemaValidationFunction;
       try {
-        validate = compileJsonSchemaValidator(schema as JsonSchema);
+        validate = withPristineIntrinsics(() => compileJsonSchemaValidator(schema as JsonSchema));
       } catch {
         localIntegrationConfigurationError("Local integration input schema could not be compiled");
       }
@@ -228,7 +229,7 @@ export async function validateLocalIntegrationEndpointInputSchemas(
     const validate = entry[2];
     const input = fieldValue(args, name, field);
     if (!input.present) continue;
-    const result = await validate(input.value);
+    const result = await withPristineIntrinsics(() => validate(input.value));
     if (!result.success) {
       requestInvalid(`Local integration argument "${name}" does not match its input schema`);
     }

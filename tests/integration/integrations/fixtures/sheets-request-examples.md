@@ -6,4 +6,4 @@ Connected verification is tracked separately. It found that the original agent s
 
 Typed contracts cover find/rename/basic-chart/validation tasks. Other existing Google chart kinds remain provider pass-throughs and are not claimed as verified.
 
-References: [Sheets requests](https://developers.google.com/workspace/sheets/api/reference/rest/v4/spreadsheets/request), [chart schemas](https://developers.google.com/workspace/sheets/api/reference/rest/v4/spreadsheets/charts), [Google Schema](https://cloud.google.com/vertex-ai/generative-ai/docs/reference/rest/v1/Schema).
+References: [Sheets requests](https://developers.google.com/workspace/sheets/api/reference/rest/v4/spreadsheets/request), [chart schemas](https://developers.google.com/workspace/sheets/api/reference/rest/v4/spreadsheets/charts), [Google function declaration](https://docs.cloud.google.com/gemini-enterprise-agent-platform/reference/rest/Shared.Types/FunctionDeclaration).
