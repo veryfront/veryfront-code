@@ -51048,6 +51048,7 @@ export const connectors: IntegrationConfig[] = [
                                         },
                                       },
                                     },
+                                    "maxItems": 1,
                                   },
                                   "series": {
                                     "type": "array",

@@ -243,6 +243,13 @@ Deno.test("Sheets typed requests reject invalid identifiers, chart placement, an
       { ...chart.spec.basicChart, legendPosition: "bottom" },
       {
         ...chart.spec.basicChart,
+        domains: [
+          chart.spec.basicChart.domains[0],
+          chart.spec.basicChart.domains[0],
+        ],
+      },
+      {
+        ...chart.spec.basicChart,
         series: [{ ...chart.spec.basicChart.series[0], targetAxis: "sideways" }],
       },
       {

@@ -845,7 +845,8 @@
                                           ]
                                         }
                                       }
-                                    }
+                                    },
+                                    "maxItems": 1
                                   },
                                   "series": {
                                     "type": "array",
