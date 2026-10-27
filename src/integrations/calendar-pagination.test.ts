@@ -70,12 +70,14 @@ for (
     ) {
       for (const shape of ["native", "api-summary"] as const) {
         it(`retains the paging evidence for historical ${label} (${shape})`, () => {
+          const pagination: Record<string, string> = {};
+          if (nextPageToken) pagination.nextPageToken = nextPageToken;
           const page = {
             ...(shape === "native"
               ? { items: [...items], ...(nextPageToken ? { nextPageToken } : {}) }
               : {
                 [collection]: [...items],
-                pagination: nextPageToken ? { nextPageToken } : {},
+                pagination,
                 summary: {
                   originalItemCount: items.length,
                   returnedItemCount: items.length,
