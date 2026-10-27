@@ -278,6 +278,53 @@ describe("internal-agents/run-stream", () => {
     assertEquals(clonedModel, "veryfront-cloud/mistral/mistral-small-2503");
   });
 
+  it("does not resolve a legacy selector without its canonical remote grant", () => {
+    const agent = {
+      id: "support",
+      config: {
+        tools: { get_file: true },
+        __vfAllowedRemoteTools: ["veryfront__search_knowledge"],
+      },
+    } as unknown as Agent;
+    assertEquals(
+      buildMergedTools(agent, {
+        runId: "run_1",
+        threadId: "thread",
+        messages: [],
+        context: [],
+        tools: [],
+      }, new AgentRunSessionManager()),
+      undefined,
+    );
+  });
+
+  it("preserves local tool precedence over a canonical remote alias", () => {
+    const local = { description: "Local file reader", execute: () => "local" } as unknown as Tool;
+    const agent = {
+      id: "support",
+      config: {
+        tools: { get_file: true },
+        __vfAllowedRemoteTools: ["veryfront__get_file"],
+      },
+    } as unknown as Agent;
+    assertEquals(
+      buildMergedTools(
+        agent,
+        {
+          runId: "run_1",
+          threadId: "thread",
+          messages: [],
+          context: [],
+          tools: [],
+        },
+        new AgentRunSessionManager(),
+        undefined,
+        { get_file: local },
+      ),
+      { get_file: local },
+    );
+  });
+
   it("dispatches canonical control-plane wrappers under an integration deny-all policy", async () => {
     const sessionManager = new AgentRunSessionManager();
     const runId = "canonical-form";
