@@ -9,3 +9,5 @@ Connected verification is tracked separately. It found that the original agent s
 Typed contracts cover find/rename/basic-chart/validation tasks. Other existing Google chart kinds remain provider pass-throughs and are not claimed as verified.
 
 References: [Sheets requests](https://developers.google.com/workspace/sheets/api/reference/rest/v4/spreadsheets/request), [chart schemas](https://developers.google.com/workspace/sheets/api/reference/rest/v4/spreadsheets/charts), [Google function declaration](https://docs.cloud.google.com/gemini-enterprise-agent-platform/reference/rest/Shared.Types/FunctionDeclaration).
+
+These contracts validate request structure, required fields, and exclusive alternatives. Google validates chart axis compatibility, source-range dimensions, and condition-specific range or formula syntax. Provider validation errors remain visible to the agent through the shared error response.

@@ -51027,6 +51027,8 @@ export const connectors: IntegrationConfig[] = [
                                                     },
                                                     "additionalProperties": false,
                                                   },
+                                                  "description":
+                                                    "Each source range must span one row or one column. Google validates range dimensions.",
                                                 },
                                               },
                                               "additionalProperties": false,
@@ -51096,6 +51098,8 @@ export const connectors: IntegrationConfig[] = [
                                                     },
                                                     "additionalProperties": false,
                                                   },
+                                                  "description":
+                                                    "Each source range must span one row or one column. Google validates range dimensions.",
                                                 },
                                               },
                                               "additionalProperties": false,
@@ -51118,6 +51122,8 @@ export const connectors: IntegrationConfig[] = [
                                         "targetAxis": {
                                           "type": "string",
                                           "enum": ["BOTTOM_AXIS", "LEFT_AXIS", "RIGHT_AXIS"],
+                                          "description":
+                                            "Use a minor axis for the chart type: BOTTOM_AXIS for BAR, LEFT_AXIS or RIGHT_AXIS for other basic charts.",
                                         },
                                         "type": {
                                           "type": "string",
@@ -51352,6 +51358,8 @@ export const connectors: IntegrationConfig[] = [
                                   "properties": { "userEnteredValue": { "type": "string" } },
                                   "additionalProperties": false,
                                 },
+                                "description":
+                                  "ONE_OF_RANGE uses an A1 range; CUSTOM_FORMULA starts with = or +; ONE_OF_LIST uses literal values. Google validates syntax.",
                               },
                             },
                             "additionalProperties": false,
@@ -51390,6 +51398,8 @@ export const connectors: IntegrationConfig[] = [
                                   },
                                   "minItems": 1,
                                   "maxItems": 1,
+                                  "description":
+                                    "ONE_OF_RANGE uses an A1 range; CUSTOM_FORMULA starts with = or +; ONE_OF_LIST uses literal values. Google validates syntax.",
                                 },
                               },
                             }, {
