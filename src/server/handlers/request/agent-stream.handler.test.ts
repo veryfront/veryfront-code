@@ -1558,7 +1558,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertEquals(injectedToolSchema, inputSchema);
   });
 
-  it("runs control-plane streams with request-scoped project agent config", async () => {
+  it("admits legacy knowledge selectors with canonical MCP tools and no injected tools", async () => {
     let capturedSystem: unknown;
     let capturedSkills: unknown;
     let capturedTools: unknown;
@@ -1585,12 +1585,12 @@ describe("server/handlers/request/agent-stream.handler", () => {
                 result: {
                   tools: [
                     {
-                      name: "search_knowledge",
+                      name: "veryfront__search_knowledge",
                       description: "Search project knowledge",
                       inputSchema: { type: "object", properties: {} },
                     },
                     {
-                      name: "get_file",
+                      name: "veryfront__get_file",
                       description: "Read a project file",
                       inputSchema: { type: "object", properties: {} },
                     },
@@ -1655,13 +1655,14 @@ describe("server/handlers/request/agent-stream.handler", () => {
 
       const body = createAgentStreamRequestBody({
         credentials: { authToken: "request-scoped-user-token" },
+        tools: [],
         agentConfig: {
           id: "assistant-1",
           name: "Project Assistant",
           description: "Uses project-scoped tools with skills disabled.",
           instructions: "Use project-scoped instructions.",
           skills: [],
-          tools: ["veryfront__search_knowledge", "veryfront__get_file"],
+          tools: ["search_knowledge", "get_file"],
         },
       });
       const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
