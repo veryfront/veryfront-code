@@ -638,6 +638,9 @@ export function buildMergedTools(
       ) {
         merged[toolName] = availableLocalTools?.[toolName] ?? serverResolvedProjectTool ??
           (visibleRegistryTool?.ownerAgentId ? visibleRegistryTool : true);
+      } else if (sourceAllowedRemoteToolNames.includes(`veryfront__${toolName}`)) {
+        // Platform discovery publishes canonical names for legacy boolean selectors.
+        merged[`veryfront__${toolName}`] = true;
       }
       continue;
     }
