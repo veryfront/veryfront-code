@@ -26,6 +26,10 @@ describe("tool output replay envelope", () => {
         type: "json",
         value: "user data",
       }],
+      ["business error-text object", {
+        type: "json",
+        value: { type: "error-text", value: "business data" },
+      }, { type: "error-text", value: "business data" }],
       ["error", { type: "error-text", value: "provider failed" }, { error: "provider failed" }],
     ] as const
   ) {
