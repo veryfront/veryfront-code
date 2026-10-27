@@ -103,21 +103,11 @@ function convertAgentRuntimePartToChildForkMessagePart(
 
   const toolResultPart = getAgentRuntimeToolResultPart(part);
   if (toolResultPart) {
-    // This adapter consumes one provider-owned output envelope. Its value may
-    // itself be an ordinary user object with a similarly shaped type/value.
-    let result = toolResultPart.output;
-    if (typeof result === "object" && result !== null && "type" in result && "value" in result) {
-      if (result.type === "json" || result.type === "text") {
-        result = result.value;
-      } else if (result.type === "error-text") {
-        result = { error: result.value };
-      }
-    }
     return {
       type: "tool-result",
       toolCallId: toolResultPart.toolCallId,
       toolName: toolResultPart.toolName,
-      result,
+      result: toolResultPart.output,
     };
   }
 
