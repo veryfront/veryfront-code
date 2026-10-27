@@ -82,6 +82,7 @@ const GOOGLE_UNSUPPORTED_SCHEMA_KEYS = new Set([
   "exclusiveMaximum",
   "exclusiveMinimum",
   "oneOf",
+  "not",
   "prefixItems",
 ]);
 
@@ -383,12 +384,26 @@ function sanitizeProviderSchemaPropertyKeys(value: unknown): unknown {
   return sanitized;
 }
 
+// Google Schema.enum uses strings even for numeric and boolean fields.
+function googleEnumValues(values: readonly unknown[]): string[] | undefined {
+  if (values.some((value) => !["string", "number", "boolean"].includes(typeof value))) {
+    return undefined;
+  }
+  return values.map((value) => String(value));
+}
+
 function sanitizeGoogleSchemaProperty(
   sanitized: Record<string, unknown>,
   key: string,
   child: unknown,
 ): void {
   if (key === "const" || key === "anyOf" || GOOGLE_UNSUPPORTED_SCHEMA_KEYS.has(key)) {
+    return;
+  }
+
+  if (key === "enum" && Array.isArray(child)) {
+    const values = googleEnumValues(child);
+    if (values) sanitized.enum = values;
     return;
   }
 
@@ -423,18 +438,51 @@ function applyGoogleLiteralConstraint(
   constValue: unknown,
 ): void {
   if (enumFromAnyOf) {
-    sanitized.enum = enumFromAnyOf;
+    const values = googleEnumValues(enumFromAnyOf);
+    if (values) sanitized.enum = values;
     if (!sanitized.type) {
       const sharedType = getSharedLiteralType(enumFromAnyOf);
       if (sharedType) sanitized.type = sharedType;
     }
   } else if ("const" in value) {
-    sanitized.enum = [constValue];
+    const values = googleEnumValues([constValue]);
+    if (values) sanitized.enum = values;
     if (!sanitized.type) {
       const literalType = getLiteralType(constValue);
       if (literalType) sanitized.type = literalType;
     }
   }
+}
+
+function googleSchemaTypeHint(value: unknown): string | undefined {
+  const type = getGoogleCompatibleSchemaType(value);
+  return typeof type === "string" &&
+      ["string", "number", "integer", "boolean", "object", "array"].includes(type)
+    ? type
+    : undefined;
+}
+
+function googleSchemaAlternative(parent: Record<string, unknown>, alternative: unknown): unknown {
+  if (!isPlainRecord(alternative)) return sanitizeGoogleSchemaValue(alternative);
+  const merged = { ...alternative };
+  const typeHint = googleSchemaTypeHint(parent.type);
+  if (merged.type === undefined && typeHint !== undefined) merged.type = typeHint;
+  if (isPlainRecord(parent.properties) && isPlainRecord(alternative.properties)) {
+    const parentProperties = parent.properties;
+    merged.properties = Object.fromEntries(
+      Object.entries(alternative.properties).map(([name, schema]) => {
+        const base = parentProperties[name];
+        const type = isPlainRecord(base) ? googleSchemaTypeHint(base.type) : undefined;
+        return [
+          name,
+          isPlainRecord(schema) && schema.type === undefined && typeof type === "string"
+            ? { ...schema, type }
+            : schema,
+        ];
+      }),
+    );
+  }
+  return sanitizeGoogleSchemaValue(merged);
 }
 
 function sanitizeGoogleSchemaValue(value: unknown): unknown {
@@ -452,6 +500,17 @@ function sanitizeGoogleSchemaValue(value: unknown): unknown {
 
   for (const [key, child] of Object.entries(value)) {
     sanitizeGoogleSchemaProperty(sanitized, key, child);
+  }
+
+  const alternatives = Array.isArray(value.oneOf)
+    ? value.oneOf
+    : !enumFromAnyOf && Array.isArray(value.anyOf)
+    ? value.anyOf
+    : undefined;
+  if (alternatives) {
+    sanitized.anyOf = alternatives.map((alternative) =>
+      googleSchemaAlternative(value, alternative)
+    );
   }
 
   applyGoogleLiteralConstraint(sanitized, value, enumFromAnyOf, constValue);

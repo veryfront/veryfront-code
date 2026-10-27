@@ -1,0 +1,189 @@
+{
+  "kind": "synthetic-regression-examples",
+  "cases": [
+    {
+      "tool": "sheets__create_chart",
+      "args": {
+        "spreadsheetId": "spreadsheet-example",
+        "requests": [
+          {
+            "addChart": {
+              "chart": {
+                "spec": {
+                  "title": "Example chart",
+                  "basicChart": {
+                    "chartType": "COLUMN",
+                    "legendPosition": "BOTTOM_LEGEND",
+                    "axis": [
+                      {
+                        "position": "BOTTOM_AXIS",
+                        "title": "Category"
+                      },
+                      {
+                        "position": "LEFT_AXIS",
+                        "title": "Amount"
+                      }
+                    ],
+                    "domains": [
+                      {
+                        "domain": {
+                          "sourceRange": {
+                            "sources": [
+                              {
+                                "sheetId": 123,
+                                "startRowIndex": 0,
+                                "endRowIndex": 4,
+                                "startColumnIndex": 0,
+                                "endColumnIndex": 1
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    ],
+                    "series": [
+                      {
+                        "series": {
+                          "sourceRange": {
+                            "sources": [
+                              {
+                                "sheetId": 123,
+                                "startRowIndex": 0,
+                                "endRowIndex": 4,
+                                "startColumnIndex": 1,
+                                "endColumnIndex": 2
+                              }
+                            ]
+                          }
+                        },
+                        "targetAxis": "LEFT_AXIS"
+                      }
+                    ],
+                    "headerCount": 1
+                  }
+                },
+                "position": {
+                  "overlayPosition": {
+                    "anchorCell": {
+                      "sheetId": 123,
+                      "rowIndex": 0,
+                      "columnIndex": 3
+                    }
+                  }
+                }
+              }
+            }
+          }
+        ]
+      },
+      "validArguments": true
+    },
+    {
+      "tool": "sheets__set_data_validation",
+      "args": {
+        "spreadsheetId": "spreadsheet-example",
+        "requests": [
+          {
+            "setDataValidation": {
+              "range": {
+                "sheetId": 123,
+                "startRowIndex": 1,
+                "endRowIndex": 4,
+                "startColumnIndex": 1,
+                "endColumnIndex": 2
+              },
+              "rule": {
+                "condition": {
+                  "type": "NUMBER_GREATER_THAN_EQ",
+                  "values": [
+                    {
+                      "userEnteredValue": "0"
+                    }
+                  ]
+                },
+                "strict": true
+              }
+            }
+          }
+        ]
+      },
+      "validArguments": true
+    },
+    {
+      "tool": "sheets__create_chart",
+      "args": {
+        "requests": [
+          {
+            "addChart": {
+              "chart": {
+                "spec": {
+                  "title": "Example chart",
+                  "basicChart": {
+                    "chartType": "COLUMN",
+                    "legendPosition": "BOTTOM_LEGEND",
+                    "axis": [
+                      {
+                        "position": "BOTTOM_AXIS",
+                        "title": "Category"
+                      },
+                      {
+                        "position": "LEFT_AXIS",
+                        "title": "Amount"
+                      }
+                    ],
+                    "domains": [
+                      {
+                        "domain": {
+                          "sourceRange": {
+                            "sources": [
+                              {
+                                "sheetId": 123,
+                                "startRowIndex": 0,
+                                "endRowIndex": 4,
+                                "startColumnIndex": 0,
+                                "endColumnIndex": 1
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    ],
+                    "series": [
+                      {
+                        "series": {
+                          "sourceRange": {
+                            "sources": [
+                              {
+                                "sheetId": 123,
+                                "startRowIndex": 0,
+                                "endRowIndex": 4,
+                                "startColumnIndex": 1,
+                                "endColumnIndex": 2
+                              }
+                            ]
+                          }
+                        },
+                        "targetAxis": "LEFT_AXIS"
+                      }
+                    ],
+                    "headerCount": 1
+                  }
+                },
+                "position": {
+                  "overlayPosition": {
+                    "anchorCell": {
+                      "sheetId": 123,
+                      "rowIndex": 0,
+                      "columnIndex": 3
+                    }
+                  }
+                }
+              }
+            }
+          }
+        ]
+      },
+      "validArguments": false
+    }
+  ]
+}

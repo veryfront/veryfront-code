@@ -695,6 +695,7 @@ describe("provider-tool-compat", () => {
               { type: "string", const: "b" },
             ],
           },
+          chart: { type: "object", not: { required: ["position"] } },
           refValue: {
             $ref: "#/$defs/refValue",
           },
@@ -703,6 +704,7 @@ describe("provider-tool-compat", () => {
       { model: "veryfront-cloud/google-ai-studio/gemini-2.5-flash" },
     );
 
+    assertEquals(containsKey(sanitized, "not"), false);
     assertEquals(containsKey(sanitized, "const"), false);
     assertEquals(containsKey(sanitized, "default"), false);
     assertEquals(containsKey(sanitized, "additionalProperties"), false);
@@ -712,6 +714,78 @@ describe("provider-tool-compat", () => {
     assertEquals(containsKey(sanitized, "anyOf"), false);
     assertEquals(sanitized.properties?.kind?.enum, ["file"]);
     assertEquals(sanitized.properties?.nested?.enum, ["a", "b"]);
+  });
+
+  it("preserves Google object union branches with typed required fields", () => {
+    const sanitized = sanitizeProviderToolSchema({
+      type: "object",
+      properties: {
+        range: {
+          type: "object",
+          properties: { sheetId: { type: "integer" } },
+          required: ["sheetId"],
+        },
+        allSheets: { type: "boolean", const: true },
+      },
+      oneOf: [{ properties: { range: {} }, required: ["range"] }, {
+        properties: { allSheets: {} },
+        required: ["allSheets"],
+      }],
+    } as never, { model: "google-ai-studio/gemini-2.5-pro" });
+    assertEquals(sanitized.anyOf?.[0]?.required, ["range"]);
+    assertEquals(sanitized.anyOf?.[0]?.properties?.allSheets, undefined);
+    assertEquals(sanitized.anyOf?.[0]?.properties?.range?.type, "object");
+    assertEquals(sanitized.anyOf?.[1]?.properties?.allSheets?.type, "boolean");
+    assertEquals(sanitized.properties?.allSheets?.enum, ["true"]);
+    assertEquals(containsKey(sanitized, "oneOf"), false);
+  });
+
+  it("keeps nested Google union schema growth bounded", () => {
+    let schema: Record<string, unknown> = { type: "string" };
+    for (let depth = 0; depth < 11; depth++) {
+      schema = {
+        type: "object",
+        properties: { x: schema },
+        oneOf: [{ properties: { x: {} } }, { properties: { x: {} } }],
+      };
+    }
+    const result = sanitizeProviderToolSchema(schema as never, {
+      model: "google-ai-studio/gemini-2.5-pro",
+    });
+    assertEquals(JSON.stringify(result).length < JSON.stringify(schema).length * 4, true);
+  });
+
+  it("does not duplicate unsupported type hints from remote schemas", () => {
+    for (const type of [{ description: "x".repeat(1000) }, "x".repeat(1000)]) {
+      const schemas = [{ type, oneOf: Array.from({ length: 20 }, () => ({})) }, {
+        type: "object",
+        properties: { x: { type } },
+        oneOf: Array.from({ length: 20 }, () => ({ properties: { x: {} } })),
+      }];
+      for (const schema of schemas) {
+        const result = sanitizeProviderToolSchema(schema as never, {
+          model: "google-ai-studio/gemini-2.5-pro",
+        });
+        assertEquals(JSON.stringify(result).length < JSON.stringify(schema).length * 4, true);
+      }
+    }
+  });
+
+  it("serializes Google primitive enum values as strings without changing their types", () => {
+    const sanitized = sanitizeProviderToolSchema(
+      {
+        type: "object",
+        properties: {
+          allSheets: { type: "boolean", const: true },
+          count: { type: "integer", const: 10 },
+          choice: { type: "integer", enum: [10, 20] },
+        },
+      } as never,
+      { model: "google-ai-studio/gemini-2.5-pro" },
+    );
+    assertEquals(sanitized.properties?.allSheets, { type: "boolean", enum: ["true"] });
+    assertEquals(sanitized.properties?.count, { type: "integer", enum: ["10"] });
+    assertEquals(sanitized.properties?.choice, { type: "integer", enum: ["10", "20"] });
   });
 
   it("does not assign a schema type when collapsed anyOf literals are mixed types", () => {
@@ -725,7 +799,7 @@ describe("provider-tool-compat", () => {
       { model: "google-ai-studio/gemini-2.5-pro" },
     );
 
-    assertEquals(sanitized.enum, ["file", 1]);
+    assertEquals(sanitized.enum, ["file", "1"]);
     assertEquals(sanitized.type, undefined);
   });
 
