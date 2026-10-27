@@ -810,6 +810,8 @@ export async function submitLiveEvalInputResponse(
   const headers = createLiveEvalJsonHeaders(context);
   // Retries reuse the key, so a response the API already accepted is not submitted twice.
   headers.set("Idempotency-Key", crypto.randomUUID());
+  // Serialized once: a reused key with a changed payload is a 409, not a retry.
+  const body = JSON.stringify({ values: input.values });
   for (const retryDelayMs of [...INPUT_RESPONSE_PENDING_RETRY_DELAYS_MS, undefined]) {
     const response = await createFetch(context)(
       createApiUrl(
@@ -819,7 +821,7 @@ export async function submitLiveEvalInputResponse(
       {
         method: "POST",
         headers,
-        body: JSON.stringify({ values: input.values }),
+        body,
         signal: createRequestSignal(input.requestTimeoutMs),
       },
     );
