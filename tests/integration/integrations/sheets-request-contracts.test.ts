@@ -449,4 +449,59 @@ describe("Sheets request and execution contracts", () => {
     }
     assertEquals(requests, 0);
   });
+  it("rejects asynchronous canonical validators before transport under then poisoning", async () => {
+    const { register } = await import("#veryfront/extensions/contracts.ts");
+    const { resolveSchemaValidator } = await import("#veryfront/schemas/define.ts");
+    const originalAdapter = resolveSchemaValidator();
+    const template = getConnector("sheets")?.tools.find((tool) =>
+      tool.id === "sheets__find_replace"
+    )?.endpoint;
+    assert(template);
+    let release!: () => void;
+    const barrier = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let requests = 0;
+    const originalThen = Object.getOwnPropertyDescriptor(Object.prototype, "then");
+    register("SchemaValidator", {
+      ...originalAdapter,
+      compileJsonSchema: () => async () => {
+        await barrier;
+        return { success: false as const, errors: [] };
+      },
+    });
+    let result: unknown;
+    try {
+      const pending = executeLocalIntegrationEndpoint({
+        connectorName: "sheets",
+        toolId: "sheets__find_replace",
+        endpoint: structuredClone(template),
+        args: { spreadsheetId: "spreadsheet-example", requests: [] },
+        authHeaders: {},
+        allowedOrigin: "https://sheets.googleapis.com",
+        transport: () => {
+          requests++;
+          return Promise.resolve(new Response("{}"));
+        },
+      }).then(
+        () => "accepted",
+        (error) => error instanceof VeryfrontError ? error.slug : "unexpected",
+      );
+      Object.defineProperty(Object.prototype, "then", {
+        configurable: true,
+        value(this: object, resolve: (value: unknown) => void) {
+          resolve(Object.assign(Object.create(null), this, { success: true }));
+        },
+      });
+      release();
+      result = await pending;
+    } finally {
+      release();
+      if (originalThen) Object.defineProperty(Object.prototype, "then", originalThen);
+      else Reflect.deleteProperty(Object.prototype, "then");
+      register("SchemaValidator", originalAdapter);
+    }
+    assertEquals(result, "local-integration-config-invalid");
+    assertEquals(requests, 0);
+  });
 });

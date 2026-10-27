@@ -1055,7 +1055,7 @@ function createLocalIntegrationToolSourceInternal(
         );
       }
       const validated = snapshotLocalIntegrationEndpointInput(tool.endpoint, args);
-      await validateLocalIntegrationEndpointInputSchemas(tool.endpoint, validated.args);
+      validateLocalIntegrationEndpointInputSchemas(tool.endpoint, validated.args);
       const resolvedHosts = new MapConstructor<string, unknown>();
       let endpoint = tool.endpoint;
       let allowedOrigin = tool.endpointOrigin;

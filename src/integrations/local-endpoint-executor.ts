@@ -189,11 +189,15 @@ const canonicalInputValidators = new WeakMap<
 const weakMapGet = WeakMap.prototype.get;
 const weakMapSet = WeakMap.prototype.set;
 
-/** Enforce canonical nested contracts independently of lossy model schemas. */
-export async function validateLocalIntegrationEndpointInputSchemas(
+/**
+ * Enforce canonical nested contracts before credentials or transport.
+ * Validators must be synchronous here: the intrinsic guard cannot protect
+ * deferred adapter work without changing globals across concurrent requests.
+ */
+export function validateLocalIntegrationEndpointInputSchemas(
   endpoint: IntegrationEndpoint,
   args: Record<string, unknown>,
-): Promise<void> {
+): void {
   let validators = apply(weakMapGet, canonicalInputValidators, [endpoint]) as
     | ReadonlyArray<readonly [string, IntegrationEndpointBodyField, JsonSchemaValidationFunction]>
     | undefined;
@@ -229,18 +233,18 @@ export async function validateLocalIntegrationEndpointInputSchemas(
     const validate = entry[2];
     const input = fieldValue(args, name, field);
     if (!input.present) continue;
-    const outcome = withPristineIntrinsics(() => {
+    const success = withPristineIntrinsics(() => {
       const result = validate(input.value);
-      return typeof (result as { then?: unknown })?.then === "function"
-        ? { kind: "pending" as const, pending: result }
-        : { kind: "settled" as const, success: (result as { success: boolean }).success };
+      if (typeof (result as { then?: unknown })?.then === "function") {
+        // Observe unsupported async work so its rejection cannot outlive the
+        // explicit configuration failure as an unhandled rejection.
+        void (result as PromiseLike<unknown>).then(() => undefined, () => undefined);
+        localIntegrationConfigurationError(
+          "Local integration input validation requires a synchronous JSON Schema validator",
+        );
+      }
+      return (result as { success: boolean }).success;
     });
-    let success: boolean;
-    if (outcome.kind === "settled") success = outcome.success;
-    else {
-      const result = await outcome.pending;
-      success = withPristineIntrinsics(() => result.success);
-    }
     if (!success) {
       requestInvalid(`Local integration argument "${name}" does not match its input schema`);
     }
@@ -1151,7 +1155,7 @@ export async function executeLocalIntegrationEndpoint(
 ): Promise<unknown> {
   throwIfCallerAborted(options.signal);
   const args = snapshotAndValidateArguments(options.endpoint, options.args);
-  await validateLocalIntegrationEndpointInputSchemas(options.endpoint, args);
+  validateLocalIntegrationEndpointInputSchemas(options.endpoint, args);
   // Assemble only when the caller did not already do it before resolving a
   // credential. Re-assembling here would run after that credential step, where
   // a poisoned `toJSON` can throw even though the threaded body is sound.
