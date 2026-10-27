@@ -515,9 +515,57 @@ describe("ext-llm-google/google-stream", () => {
     }]);
   });
 
-  it("coalesces replayed anonymous function calls by candidate position", async () => {
+  for (const cities of [["Paris", "London"], ["Paris", "Paris"]]) {
+    it(`retains separate anonymous calls across envelopes: ${cities.join(",")}`, async () => {
+      const parts = await collectParts(streamFromText([
+        ...cities.map((city) =>
+          data({
+            candidates: [{
+              content: {
+                role: "model",
+                parts: [{ functionCall: { name: "lookup", args: { city } } }],
+              },
+            }],
+          })
+        ),
+        data({ candidates: [{ finishReason: "STOP" }] }),
+      ].join("")));
+      assertEquals(
+        parts.filter((part) => (part as { type?: string }).type === "tool-call"),
+        cities.map((city, index) => ({
+          type: "tool-call",
+          toolCallId: `tool-${TEST_SCOPE}-${index}`,
+          toolName: "lookup",
+          input: JSON.stringify({ city }),
+        })),
+      );
+    });
+  }
+
+  it("rejects changed arguments for a repeated provider function call id", async () => {
+    await assertRejects(
+      () =>
+        collectParts(streamFromText([
+          ...["Paris", "London"].map((city) =>
+            data({
+              candidates: [{
+                content: {
+                  parts: [{ functionCall: { id: "call-1", name: "lookup", args: { city } } }],
+                },
+              }],
+            })
+          ),
+          data({ candidates: [{ finishReason: "STOP" }] }),
+        ].join(""))),
+      ProviderStreamProtocolError,
+      "candidate function call changed after emission",
+    );
+  });
+
+  it("coalesces replayed function calls with the same provider id", async () => {
     const functionCall = {
       functionCall: {
+        id: "call-paris",
         name: "lookup",
         args: { city: "Paris" },
       },
@@ -544,7 +592,7 @@ describe("ext-llm-google/google-stream", () => {
       ),
       [{
         type: "tool-call",
-        toolCallId: `tool-${TEST_SCOPE}-0`,
+        toolCallId: "call-paris",
         toolName: "lookup",
         input: '{"city":"Paris"}',
       }],

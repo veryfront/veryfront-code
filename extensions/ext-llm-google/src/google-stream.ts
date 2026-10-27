@@ -533,10 +533,9 @@ export async function* streamGoogleCompatibleParts(
         }
         const providerId = typeof functionCall.id === "string" ? functionCall.id : undefined;
         const rawPartIndex = rawAssistantParts.length;
-        // Gemini may replay an anonymous function call in later candidate
-        // envelopes. Its candidate-part position is stable across those
-        // cumulative snapshots; our growing retained-output index is not.
-        const deduplicationKey = providerId ?? `anonymous-${candidatePartIndex}`;
+        // Without a provider ID, each complete call is a distinct stream part.
+        // Candidate-part indices restart in every envelope and are not call IDs.
+        const deduplicationKey = providerId ?? `anonymous-${nextRawPartPosition}`;
         const callShape = `${functionCall.name}\u0000${serializedInput}`;
         const previousToolCall = seenToolCalls.get(deduplicationKey);
         if (previousToolCall !== undefined) {
