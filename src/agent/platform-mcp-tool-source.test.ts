@@ -373,6 +373,7 @@ it("agent management errors stay on items through platform tool aliases", async 
       source_type: "project",
       source_path: "agents/broken.ts",
       edit_mode: "source_only",
+      can_run: false,
       errors: [{ code: "parse_error", message: "Missing initializer", line: 3, column: 11 }],
     }],
   };

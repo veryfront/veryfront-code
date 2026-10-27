@@ -107,6 +107,7 @@ export interface AgentManagementItem {
   source_type: "project" | "catalog_install";
   source_path: string | null;
   edit_mode: "structured" | "source_only" | null;
+  can_run: boolean;
   errors: AgentManagementError[];
 }
 
