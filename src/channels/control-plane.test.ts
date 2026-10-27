@@ -99,6 +99,26 @@ describe("control-plane run route classification", () => {
 
 describe("channels/control-plane", () => {
   describe("listRuntimeAgents", () => {
+    it("qualifies boolean output only in the complete pair and omits unknown conversions", async () => {
+      for (const outputSchema of [true, false, { invalid: () => "secret" }]) {
+        const response = await listRuntimeAgents(createHandlerContext(), {
+          ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
+          getAgent: () => createAgent({ outputSchema }),
+          getAllAgentIds: () => ["assistant"],
+        });
+        const entry = response.agents[0]!;
+        assertEquals(entry.output_schema, undefined);
+        if (typeof outputSchema === "boolean") {
+          assertEquals(entry.schema_snapshot?.state, "captured");
+          assertEquals(entry.schema_snapshot?.input, null);
+          assertEquals(entry.schema_snapshot?.output?.schema, outputSchema);
+          assertEquals(entry.schema_snapshot?.output?.sha256.length, 64);
+        } else {
+          assertEquals(entry.schema_snapshot, undefined);
+        }
+      }
+    });
+
     it("returns canonical runtime agents sorted by name", async () => {
       let discoveryCalls = 0;
 
@@ -144,6 +164,7 @@ describe("channels/control-plane", () => {
               description: "Primary assistant",
               model: "anthropic/claude-sonnet-4-6",
               version: "2.0.0",
+              schema_snapshot: { version: 1, state: "captured", input: null, output: null },
               skills: [],
             },
             {
@@ -152,6 +173,7 @@ describe("channels/control-plane", () => {
               description: "Second assistant",
               model: "openai/gpt-5",
               version: "1.1.0",
+              schema_snapshot: { version: 1, state: "captured", input: null, output: null },
               skills: [],
             },
           ],
@@ -184,6 +206,7 @@ describe("channels/control-plane", () => {
             description: null,
             model: null,
             version: null,
+            schema_snapshot: { version: 1, state: "captured", input: null, output: null },
             skills: [],
           }],
         }),
@@ -215,6 +238,7 @@ describe("channels/control-plane", () => {
             description: null,
             model: null,
             version: null,
+            schema_snapshot: { version: 1, state: "captured", input: null, output: null },
             skills: [],
           }],
         }),
@@ -246,6 +270,7 @@ describe("channels/control-plane", () => {
             description: "Helps users",
             model: "openai/gpt-5.4",
             version: null,
+            schema_snapshot: { version: 1, state: "captured", input: null, output: null },
             skills: [],
           }],
         }),
@@ -279,6 +304,7 @@ describe("channels/control-plane", () => {
               description: "Helps with support questions",
               model: "anthropic/claude-sonnet-4-6",
               version: "2.0.0",
+              schema_snapshot: { version: 1, state: "captured", input: null, output: null },
               skills: [{
                 id: "writer-helper",
                 name: "Writer Helper",
@@ -331,6 +357,7 @@ describe("channels/control-plane", () => {
             description: "Helps with support questions",
             model: "anthropic/claude-sonnet-4-6",
             version: "2.0.0",
+            schema_snapshot: { version: 1, state: "captured", input: null, output: null },
             skills: [],
             suggestions: {
               welcomeMessage: "How can I help you?",
@@ -425,6 +452,7 @@ describe("channels/control-plane", () => {
             description: "Helps with support questions",
             model: "anthropic/claude-sonnet-4-6",
             version: "2.0.0",
+            schema_snapshot: { version: 1, state: "captured", input: null, output: null },
             skills: [],
           }],
         }),
@@ -515,6 +543,7 @@ describe("channels/control-plane", () => {
             description: "Helps with support questions",
             model: "anthropic/claude-sonnet-4-6",
             version: "2.0.0",
+            schema_snapshot: { version: 1, state: "captured", input: null, output: null },
             skills: [],
           }],
         }),
@@ -562,6 +591,7 @@ describe("channels/control-plane", () => {
             description: "Helps with support questions",
             model: "anthropic/claude-sonnet-4-6",
             version: "2.0.0",
+            schema_snapshot: { version: 1, state: "captured", input: null, output: null },
             skills: [],
           }],
         }),

@@ -364,6 +364,32 @@ function normalizeBlobTtl(value: unknown): number | undefined {
   return value;
 }
 
+function blobExpiration(createdAt: Date, ttl: number | undefined): Date | undefined {
+  return ttl ? new Date(createdAt.getTime() + ttl * 1000) : undefined;
+}
+
+function assertMetadataSidecarSize(metadataBytes: Uint8Array, limit: number): void {
+  if (metadataBytes.byteLength > limit) {
+    throw INVALID_ARGUMENT.create({
+      detail: `Blob metadata sidecar exceeds ${limit} bytes`,
+    });
+  }
+}
+
+function appendUploadBlobIds(
+  ids: string[],
+  items: { path?: string }[],
+  resolved: ResolvedConfig,
+): void {
+  for (const item of items) {
+    const path = item.path;
+    // Only data objects under this store's prefix contribute blob IDs.
+    if (!path || !path.startsWith(resolved.prefix) || !path.endsWith(DATA_SUFFIX)) continue;
+    const id = path.slice(resolved.prefix.length, path.length - DATA_SUFFIX.length);
+    if (isSafeBlobId(id)) ids.push(id);
+  }
+}
+
 async function readErrorBody(response: Response, signal: AbortSignal): Promise<string> {
   try {
     return (await readResponseTextPrefix(response, ERROR_RESPONSE_BYTES, signal, {
@@ -480,7 +506,7 @@ async function normalizeUploadBody(
 }
 
 export class VeryfrontCloudBlobStorage implements BlobStorage {
-  private config: VeryfrontCloudBlobStorageConfig;
+  private readonly config: VeryfrontCloudBlobStorageConfig;
 
   constructor(config: VeryfrontCloudBlobStorageConfig = {}) {
     this.config = config;
@@ -510,7 +536,7 @@ export class VeryfrontCloudBlobStorage implements BlobStorage {
       );
       const createdAt = resolved.now();
       const ttl = normalizeBlobTtl(optionSnapshot.ttl ?? resolved.defaultTtl);
-      const expiresAt = ttl ? new Date(createdAt.getTime() + ttl * 1000) : undefined;
+      const expiresAt = blobExpiration(createdAt, ttl);
 
       const blobRef: BlobRef = {
         __kind: "blob",
@@ -539,11 +565,7 @@ export class VeryfrontCloudBlobStorage implements BlobStorage {
         MAX_BLOB_METADATA_SIDECAR_BYTES,
         resolved.maxUploadBytes + MAX_BLOB_METADATA_ENVELOPE_BYTES,
       );
-      if (metadataBytes.byteLength > metadataSidecarLimit) {
-        throw INVALID_ARGUMENT.create({
-          detail: `Blob metadata sidecar exceeds ${metadataSidecarLimit} bytes`,
-        });
-      }
+      assertMetadataSidecarSize(metadataBytes, metadataSidecarLimit);
 
       // Reads return the data object, and stat() trusts the metadata sidecar. An overwrite writes the
       // sidecar first and the data last, so a put that fails at either step leaves the blob readable as
@@ -717,14 +739,7 @@ export class VeryfrontCloudBlobStorage implements BlobStorage {
       if (!raw) break;
 
       const parsed = UploadListResponseSchema.parse(raw);
-      for (const item of parsed.data ?? []) {
-        const path = item.path;
-        // Only the data objects under our prefix — skip `.meta.json` sidecars and
-        // anything another store namespaced elsewhere.
-        if (!path || !path.startsWith(resolved.prefix) || !path.endsWith(DATA_SUFFIX)) continue;
-        const id = path.slice(resolved.prefix.length, path.length - DATA_SUFFIX.length);
-        if (isSafeBlobId(id)) ids.push(id);
-      }
+      appendUploadBlobIds(ids, parsed.data ?? [], resolved);
       cursor = parsed.page_info?.next ?? null;
       if (cursor && seenCursors.has(cursor)) {
         throw API_ERROR.create({ detail: "Veryfront Cloud upload listing repeated a page cursor" });
@@ -753,11 +768,14 @@ export class VeryfrontCloudBlobStorage implements BlobStorage {
           "VeryfrontCloudBlobStorage apiBaseUrl requires an explicit apiToken. A caller-selected endpoint cannot use request- or host-owned credentials.",
       });
     }
-    const connection = this.config.apiBaseUrl && this.config.apiToken
-      ? { apiBaseUrl: this.config.apiBaseUrl, apiToken: this.config.apiToken }
-      : this.config.apiToken
-      ? { apiBaseUrl: hostBootstrap.apiBaseUrl, apiToken: this.config.apiToken }
-      : { apiBaseUrl: bootstrap.apiBaseUrl, apiToken: bootstrap.apiToken };
+    let connection: { apiBaseUrl: string; apiToken: string | undefined };
+    if (this.config.apiBaseUrl && this.config.apiToken) {
+      connection = { apiBaseUrl: this.config.apiBaseUrl, apiToken: this.config.apiToken };
+    } else if (this.config.apiToken) {
+      connection = { apiBaseUrl: hostBootstrap.apiBaseUrl, apiToken: this.config.apiToken };
+    } else {
+      connection = { apiBaseUrl: bootstrap.apiBaseUrl, apiToken: bootstrap.apiToken };
+    }
     const { apiBaseUrl, apiToken } = connection;
     const projectSlug = this.config.projectSlug ?? getVeryfrontCloudProjectSlug();
 
@@ -990,7 +1008,7 @@ export class VeryfrontCloudBlobStorage implements BlobStorage {
       expectEmptyBody?: boolean;
       signal?: AbortSignal;
     } = {},
-  ): Promise<unknown | null> {
+  ): Promise<unknown> {
     const headers = new NativeHeaders(options.headers);
     applyIntrinsic(headersSet, headers, ["Authorization", `Bearer ${resolved.apiToken}`]);
 

@@ -546,6 +546,14 @@ handle them with an application error boundary when recovery is required.
 Never derive plugin lists from untrusted input, and bound untrusted source size
 before rendering.
 
+## Tool results in follow-up requests
+
+Message preparation keeps collection results (`{ data: [...] }`) and objects with
+a root resource ID or a direct array of resource records, up to 4,096 output characters, from the preceding user
+turn. Request, tool-call, trace, span and correlation IDs alone do not qualify. This preserves resource IDs and continuation tokens for follow-up requests. Older or larger results
+still use the existing history compaction and overall token budget. Refetch a
+resource when the retained context no longer identifies it.
+
 ## Verify it worked
 
 Run `veryfront dev` and open the page that renders the chat UI:
@@ -581,11 +589,3 @@ agent errors and confirm the AG-UI route is mounted.
 - [veryfront/markdown](../api-reference/veryfront/markdown.md): Markdown props
   and renderer extension points
 - [veryfront/agent](../api-reference/veryfront/agent.md): Agent route helpers
-
-## Tool results in follow-up requests
-
-Message preparation keeps a collection result (`{ data: [...] }`) of up to
-4,096 serialized characters from the preceding user turn. This preserves resource
-IDs and continuation tokens for follow-up requests. Older or larger collections
-still use the existing history compaction and overall token budget. Refetch a
-resource when the retained context no longer identifies it.

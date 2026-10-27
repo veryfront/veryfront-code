@@ -12,6 +12,12 @@ import {
 import { docsGoogleConfig as exportedDocsGoogleConfig } from "./index.ts";
 
 describe("Google OAuth provider configs", () => {
+  it("requests one Gmail scope without permanent message deletion", () => {
+    assertEquals(gmailConfig.defaultScopes, [
+      "https://www.googleapis.com/auth/gmail.modify",
+    ]);
+  });
+
   it("exposes a dedicated Google Docs service contract", () => {
     assertEquals(exportedDocsGoogleConfig, docsGoogleConfig);
     assertEquals(googleServices["docs-google"], docsGoogleConfig);

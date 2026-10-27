@@ -22,8 +22,13 @@ import type {
   ParseHostedChatRequestOptions,
 } from "./chat-request-parser.ts";
 import {
+  createHostedRunEventWriterCapability,
+  getActiveHostedRunEventWriterCapability,
   type HostedAcceptedTaskInputReceipt,
   hostedAcceptedTaskInputReference,
+  type HostedRunEventWriterCapability,
+  refreshHostedRunEventWriterCapability,
+  waitForHostedParentToolStart,
 } from "./child-run-event-writer-token.ts";
 import {
   type HostedPlatformDependencyOwner,
@@ -35,13 +40,6 @@ import { isCanonicalFileMutationTool } from "#veryfront/tool/platform-tool-polic
 import { INGRESS_RUN_EVENT_TOKEN_HEADER } from "#veryfront/security/http/ingress-credentials.ts";
 import { createVeryfrontCloudInferenceModelResolver } from "./inference-credential.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
-import {
-  createHostedRunEventWriterCapability,
-  getActiveHostedRunEventWriterCapability,
-  type HostedRunEventWriterCapability,
-  refreshHostedRunEventWriterCapability,
-  waitForHostedParentToolStart,
-} from "./child-run-event-writer-token.ts";
 import type {
   BoundConversationAgentRunFinalizer,
   ConversationRunProjection,
@@ -170,7 +168,7 @@ export function bindHostedToolRunAuthorization(
 ): void {
   const authority = credentials.get(request);
   if (
-    !authority || !authority.projectId || authority.projectId !== target.projectId ||
+    !authority?.projectId || authority.projectId !== target.projectId ||
     authority.runId !== target.runId || !hostedTerminalCanonicalRunId(request)
   ) return;
   registerHostedToolRunAuthorization(target, {
@@ -588,6 +586,40 @@ function assertInheritedChildResourceBinding(
   ) throw new Error("Inherited child resource binding mismatch");
 }
 
+function recordInheritedTerminalReceipt(
+  run: Pick<ConversationRunProjection, "runId">,
+  row: {
+    status: string;
+    output?: unknown;
+    error?: { code?: unknown; message?: unknown };
+  },
+  outputFormat: "text-data-v1" | undefined,
+): void {
+  if (row.status === "completed" || row.status === "failed" || row.status === "cancelled") {
+    terminalReceipts.set(run, {
+      status: row.status,
+      output: row.output ?? null,
+      ...(outputFormat ? { outputFormat } : {}),
+      ...(typeof row.error?.code === "string" && typeof row.error?.message === "string"
+        ? { error: { code: row.error.code, message: row.error.message } }
+        : {}),
+    });
+  }
+}
+
+function assertInheritedLeaseReceipt(
+  receipt: { run_id?: unknown },
+  canonicalId: string,
+  leaseExpiresAt: number,
+): void {
+  if (
+    receipt.run_id !== canonicalId || !Number.isFinite(leaseExpiresAt) ||
+    leaseExpiresAt <= Date.now()
+  ) {
+    throw new Error("Inherited child lease response binding mismatch");
+  }
+}
+
 /** Bind an inherited admission response to private exact-child authority for trusted runtime adapters. */
 export async function acceptInheritedRunAdmission(
   response: Response,
@@ -645,16 +677,7 @@ export async function acceptInheritedRunAdmission(
     streamProtocolVersion: 2 as const,
   };
   const outputFormat = inheritedOutputFormats.get(response);
-  if (row.status === "completed" || row.status === "failed" || row.status === "cancelled") {
-    terminalReceipts.set(run, {
-      status: row.status,
-      output: row.output ?? null,
-      ...(outputFormat ? { outputFormat } : {}),
-      ...(typeof row.error?.code === "string" && typeof row.error?.message === "string"
-        ? { error: { code: row.error.code, message: row.error.message } }
-        : {}),
-    });
-  }
+  recordInheritedTerminalReceipt(run, row, outputFormat);
   credentials.set(run, {
     token,
     agentId: binding.agentId,
@@ -911,12 +934,7 @@ export async function withHostedInheritedLease<T>(
       }
       const receipt = await response.json();
       leaseExpiresAt = Date.parse(receipt.expires_at);
-      if (
-        receipt.run_id !== canonicalId || !Number.isFinite(leaseExpiresAt) ||
-        leaseExpiresAt <= Date.now()
-      ) {
-        throw new Error("Inherited child lease response binding mismatch");
-      }
+      assertInheritedLeaseReceipt(receipt, canonicalId, leaseExpiresAt);
       if (acknowledgesInheritedAuthorityRotation(response)) {
         rotateInheritedChildAuthority(descriptor, response);
       }
@@ -984,7 +1002,8 @@ export function hostedInheritedEventWriter(descriptor: HostedTerminalDescriptor)
       fetch: authority.fetch,
     }),
   });
-  appendPrivateArray(authority.eventWriters ??= [], [writer]);
+  authority.eventWriters ??= [];
+  appendPrivateArray(authority.eventWriters, [writer]);
   return writer;
 }
 

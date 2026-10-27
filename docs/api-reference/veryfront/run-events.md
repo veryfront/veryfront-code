@@ -1,8 +1,51 @@
 ---
 title: "veryfront/run-events"
-description: "The typed run event contract the Veryfront API publishes. Every run event surface returns rows that carry a span envelope and a payload, keyed `payload` and named by a catalogued type. This module owns the reader's half of that contract: the type vocabulary, display names, groups, categories and kinds, the AG-UI wire names, the envelope and row schemas, and one payload schema per type. Import it instead of writing the names or shapes out again. The typed contract is the only one: `format=typed` is accepted and ignored (deprecated), and `format=raw` is refused, so do not send `format`. `RUN_EVENT_CATALOG` lists each event's `type`, display `name`, reference `group`, filter `category` and semantic `kind`. `RUN_EVENT_GROUPS`, `RUN_EVENT_CATEGORIES` and `RUN_EVENT_KINDS` supply the ordered IDs and names; `RUN_EVENT_CATEGORY_HEADINGS` places the categories under the filter's Interactions and System headings. These are display metadata, not fields added to event payloads, and need no schema validator. The catalog includes the legacy `UNKNOWN` fallback alongside current types. `getRunEventCategory` and `getRunEventKind` accept any stored type: a legacy alias resolves to its current type (`RUN_EVENT_TYPE_ALIASES`) and an unrecognized type falls back to `system` and `runtime`. Every schema here is lazy and materializes through the registered `SchemaValidator` contract, so a consumer outside a Veryfront app must register one before the first `get*Schema()` call or `parseTypedRunEventRow`. `register` replaces whatever is registered, so gate it on `tryResolve` to leave an existing validator in place: ```ts import { register, tryResolve } from \"veryfront/extensions/contracts\"; import { createZodAdapter } from \"@veryfront/ext-schema-zod\"; if (!tryResolve(\"SchemaValidator\")) { register(\"SchemaValidator\", createZodAdapter()); } ``` Inside a Veryfront app, bootstrap registers the app's validator before handlers run, and the gate keeps it; never call `register` unconditionally there, since that would replace a lifecycle-owned validator. This module ships no fallback validator: calling a getter with nothing registered throws an error naming the contract and this registration call."
+description: "The typed run event contract the Veryfront API publishes."
 order: 32
 ---
+
+Every run event surface returns rows that carry a span envelope and a
+payload, keyed `payload` and named by a catalogued type. This module owns
+the reader's half of that contract: the type vocabulary, display names, groups, categories and kinds, the AG-UI wire
+names, the envelope and row schemas, and one payload schema per type.
+Import it instead of writing the names or shapes out again.
+
+The typed contract is the only one: `format=typed` is accepted and ignored
+(deprecated), and `format=raw` is refused, so do not send `format`.
+
+`RUN_EVENT_CATALOG` lists each event's `type`, display `name`, reference
+`group`, filter `category` and semantic `kind`. `RUN_EVENT_GROUPS`,
+`RUN_EVENT_CATEGORIES` and `RUN_EVENT_KINDS` supply the ordered IDs and names;
+`RUN_EVENT_CATEGORY_HEADINGS` places the categories under the filter's
+Interactions and System headings. These are display metadata, not fields
+added to event payloads, and need no schema validator.
+
+The catalog includes the legacy `UNKNOWN` fallback alongside current types.
+`getRunEventCategory`
+and `getRunEventKind` accept any stored type: a legacy alias resolves to its
+current type (`RUN_EVENT_TYPE_ALIASES`) and an unrecognized type falls back to
+`system` and `runtime`.
+
+Every schema here is lazy and materializes through the registered
+`SchemaValidator` contract, so a consumer outside a Veryfront app must
+register one before the first `get*Schema()` call or
+`parseTypedRunEventRow`. `register` replaces whatever is registered, so gate
+it on `tryResolve` to leave an existing validator in place:
+
+```ts title="run-event-validator.ts"
+import { register, tryResolve } from "veryfront/extensions/contracts";
+import { createZodAdapter } from "@veryfront/ext-schema-zod";
+
+if (!tryResolve("SchemaValidator")) {
+  register("SchemaValidator", createZodAdapter());
+}
+```
+
+Inside a Veryfront app, bootstrap registers the app's validator before
+handlers run, and the gate keeps it; never call `register` unconditionally
+there, since that would replace a lifecycle-owned validator. This module
+ships no fallback validator: calling a getter with nothing registered throws
+an error naming the contract and this registration call.
 
 ## Import
 
@@ -19,7 +62,7 @@ import {
 
 ## Examples
 
-```ts
+```ts title="run-event-catalog.ts"
 import { RUN_EVENT_CATALOG, RUN_EVENT_GROUPS } from "veryfront/run-events";
 
 for (const group of RUN_EVENT_GROUPS) {
@@ -28,7 +71,7 @@ for (const group of RUN_EVENT_GROUPS) {
 }
 ```
 
-```ts
+```ts title="read-run-events.ts"
 import { register, tryResolve } from "veryfront/extensions/contracts";
 import { createZodAdapter } from "@veryfront/ext-schema-zod";
 import {
@@ -125,7 +168,7 @@ for (const raw of body.data) {
 | ------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
 | `getActivityDeltaPayloadSchema`                        | Payload carrying an activity delta. Reserved: no producer emits it yet.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/run-events/payload.ts)  |
 | `getActivitySnapshotPayloadSchema`                     | Payload carrying an activity snapshot. Reserved: no producer emits it yet.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/run-events/payload.ts)  |
-| `getAgentRunDetachedAcceptedPayloadSchema`             | Payload of a detached run the runtime accepted: the lease owner and the dispatch attempt it accepted. Viewers receive this type as `{ type }` only, so a viewer row does not match; fall back to the raw payload.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/run-events/payload.ts)  |
+| `getAgentRunDetachedAcceptedPayloadSchema`             | Payload of a detached run accepted by the runtime. Viewer events expose only the `type` discriminator.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/run-events/payload.ts)  |
 | `getAgentRunIntegrationConnectionRefusedPayloadSchema` | Payload of a tool call refused because its integration has no usable connection. Viewers receive the same three fields.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/run-events/payload.ts)  |
 | `getChildRunStatusChangedPayloadSchema`                | Payload of a `veryfront__invoke_agent` child run's lifecycle transition.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/run-events/payload.ts)  |
 | `getConversationTypedRunEventRowSchema`                | The same row as the conversation-scoped surfaces serve it: GraphQL `listRunEvents`, the agent platform `veryfront__list_run_events` tool, and `GET /conversations/{conversation_id}/runs/{run_id}/events`. Since the cutover every one of them keys the payload as `payload`, the same spelling as the run-scoped route and the SSE frames, so this schema reads `payload` as canonical and accepts the pre-cutover `event` key as a transitional alias that Phase F removes. At least one of the two must be present: a row with both parses as `payload` and never looks at the alias, so a stale or malformed alias beside a canonical payload does not reject the row; a row with neither is rejected with an issue naming both keys. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/run-events/envelope.ts) |

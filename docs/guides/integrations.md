@@ -32,6 +32,14 @@ project has multiple accessible accounts. Framework tool calls inside an agent
 run use the connection selected by the hosted runtime, and a `connection_id`
 passed inside tool arguments is provider input rather than an account selector.
 
+## Google permissions
+
+Gmail requests `gmail.modify` for reading, drafts, sending, labels, and reversible
+Trash. Permanent message and thread deletion is not exposed. Existing broader
+grants remain active until the user revokes access and reconnects. Update the
+Google Cloud consent configuration to match the runtime scopes before recording
+verification evidence.
+
 ## Make your first call
 
 This walkthrough reads one Gmail message summary with `gmail__list_emails` and
@@ -723,6 +731,10 @@ representative read has run against the real provider on a recorded release.
 
 Every other connector is package-declared and, where enabled, environment-enabled,
 but not operationally qualified.
+
+## Text exports
+
+Drive document exports return readable UTF-8 text with its content type. Use `text/plain` for Docs or `text/csv` for Sheets. The `drive__download_file` tool uses a separate byte-safe binary response contract and is not enabled in the Drive catalog agent.
 
 ## Verify it worked
 

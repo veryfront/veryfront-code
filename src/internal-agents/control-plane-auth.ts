@@ -412,6 +412,17 @@ export async function prepareControlPlaneExecuteIngress(
     expectedSurface: "studio",
   });
   const body = readControlPlaneBody(rawBody);
+  if (body) {
+    const protocol = readOwnDataProperty(
+      body,
+      "schema_snapshot_protocol",
+      "Schema snapshot protocol",
+      false,
+    );
+    if (protocol !== undefined && protocol !== 1) {
+      throw new ControlPlaneRequestError(400, "Unsupported schema snapshot protocol");
+    }
+  }
   if (
     !body || readOwnDataProperty(body, "projectId", "Project", false) !== ctx.projectId ||
     readOwnDataProperty(body, "runId", "Run", false) !== runId
