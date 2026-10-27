@@ -1,3 +1,8 @@
+import type {
+  JsonSchema,
+  JsonSchemaValidationFunction,
+} from "#veryfront/extensions/schema/index.ts";
+import { compileJsonSchemaValidator } from "#veryfront/schemas/json-schema.ts";
 import { INITIALIZATION_ERROR } from "#veryfront/errors";
 import {
   snapshotBoundedJsonValue,
@@ -7,6 +12,7 @@ import { guardedEgressFetch } from "#veryfront/security/sandbox/worker-egress-gu
 import { readResponseBytesPrefix, readResponseTextPrefix } from "#veryfront/utils/response-body.ts";
 import {
   LOCAL_INTEGRATION_REQUEST_INVALID,
+  localIntegrationConfigurationError,
   type LocalIntegrationDiagnosticIdentity,
   localIntegrationRequestFailed,
   localIntegrationResponseInvalid,
@@ -172,6 +178,61 @@ export interface LocalIntegrationJsonResult {
 interface RequestSignalLease {
   readonly signal: AbortSignal;
   release(): void;
+}
+
+const objectEntries = Object.entries;
+const canonicalInputValidators = new WeakMap<
+  IntegrationEndpoint,
+  ReadonlyArray<readonly [string, IntegrationEndpointBodyField, JsonSchemaValidationFunction]>
+>();
+const weakMapGet = WeakMap.prototype.get;
+const weakMapSet = WeakMap.prototype.set;
+
+/** Enforce canonical nested contracts independently of lossy model schemas. */
+export async function validateLocalIntegrationEndpointInputSchemas(
+  endpoint: IntegrationEndpoint,
+  args: Record<string, unknown>,
+): Promise<void> {
+  let validators = apply(weakMapGet, canonicalInputValidators, [endpoint]) as
+    | ReadonlyArray<readonly [string, IntegrationEndpointBodyField, JsonSchemaValidationFunction]>
+    | undefined;
+  if (!validators) {
+    const compiled: Array<
+      readonly [string, IntegrationEndpointBodyField, JsonSchemaValidationFunction]
+    > = [];
+    const fields = objectEntries(endpoint.body ?? {});
+    for (let index = 0; index < fields.length; index++) {
+      const entry = fields[index]!;
+      const name = entry[0];
+      const field = entry[1];
+      const schema = getOwnPropertyDescriptor(field, "inputSchema")?.value;
+      if (schema === undefined) continue;
+      let validate: JsonSchemaValidationFunction;
+      try {
+        validate = compileJsonSchemaValidator(schema as JsonSchema);
+      } catch {
+        localIntegrationConfigurationError("Local integration input schema could not be compiled");
+      }
+      objectDefineProperty(compiled, compiled.length, {
+        enumerable: true,
+        value: freeze([name, field, validate] as const),
+      });
+    }
+    validators = freeze(compiled);
+    apply(weakMapSet, canonicalInputValidators, [endpoint, validators]);
+  }
+  for (let index = 0; index < validators.length; index++) {
+    const entry = validators[index]!;
+    const name = entry[0];
+    const field = entry[1];
+    const validate = entry[2];
+    const input = fieldValue(args, name, field);
+    if (!input.present) continue;
+    const result = await validate(input.value);
+    if (!result.success) {
+      requestInvalid(`Local integration argument "${name}" does not match its input schema`);
+    }
+  }
 }
 
 function requestInvalid(detail: string): never {
@@ -1078,6 +1139,7 @@ export async function executeLocalIntegrationEndpoint(
 ): Promise<unknown> {
   throwIfCallerAborted(options.signal);
   const args = snapshotAndValidateArguments(options.endpoint, options.args);
+  await validateLocalIntegrationEndpointInputSchemas(options.endpoint, args);
   // Assemble only when the caller did not already do it before resolving a
   // credential. Re-assembling here would run after that credential step, where
   // a poisoned `toJSON` can throw even though the threaded body is sound.

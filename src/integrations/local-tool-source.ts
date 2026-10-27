@@ -18,6 +18,7 @@ import {
   type LocalIntegrationEndpointTransport,
   resolveLocalIntegrationEndpointOrigin,
   snapshotLocalIntegrationEndpointInput,
+  validateLocalIntegrationEndpointInputSchemas,
 } from "#veryfront/integrations/local-endpoint-executor.ts";
 import {
   LOCAL_INTEGRATION_CREDENTIAL_UNAVAILABLE,
@@ -1054,6 +1055,7 @@ function createLocalIntegrationToolSourceInternal(
         );
       }
       const validated = snapshotLocalIntegrationEndpointInput(tool.endpoint, args);
+      await validateLocalIntegrationEndpointInputSchemas(tool.endpoint, validated.args);
       const resolvedHosts = new MapConstructor<string, unknown>();
       let endpoint = tool.endpoint;
       let allowedOrigin = tool.endpointOrigin;

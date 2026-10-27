@@ -1018,3 +1018,61 @@ describe("Outlook attachment payloads", () => {
     assertEquals(calls, 0);
   });
 });
+
+Deno.test("local endpoint execution enforces canonical nested unions before transport", async () => {
+  let requests = 0;
+  for (const id of ["sheets__find_replace", "sheets__create_chart"]) {
+    const tool = connectors.find((connector) => connector.name === "sheets")?.tools.find((tool) =>
+      tool.id === id
+    );
+    const definition = tool?.endpoint;
+    assert(definition);
+    const conflicting = id === "sheets__find_replace"
+      ? [{ findReplace: { find: "a", replacement: "b", allSheets: true, sheetId: 123 } }]
+      : [{
+        addChart: {
+          chart: {
+            spec: { pieChart: {} },
+            position: {
+              overlayPosition: { anchorCell: { sheetId: 123 } },
+              newSheet: true,
+            },
+          },
+        },
+      }];
+    const error = await assertRejects(() =>
+      executeLocalIntegrationEndpoint({
+        endpoint: definition,
+        args: { spreadsheetId: "spreadsheet-example", requests: conflicting },
+        authHeaders: {},
+        allowedOrigin: "https://sheets.googleapis.com",
+        transport: () => {
+          requests++;
+          return Promise.resolve(Response.json({ replies: [] }));
+        },
+      }), VeryfrontError);
+    assertInstanceOf(error, VeryfrontError);
+    assertEquals(error.slug, "local-integration-request-invalid");
+  }
+  assertEquals(requests, 0);
+  const definition = connectors.find((connector) => connector.name === "sheets")?.tools.find(
+    (tool) => tool.id === "sheets__find_replace",
+  )?.endpoint;
+  assert(definition);
+  await executeLocalIntegrationEndpoint({
+    endpoint: definition,
+    args: {
+      spreadsheetId: "spreadsheet-example",
+      requests: [{
+        findReplace: { find: "a", replacement: "b", allSheets: true },
+      }],
+    },
+    authHeaders: {},
+    allowedOrigin: "https://sheets.googleapis.com",
+    transport: () => {
+      requests++;
+      return Promise.resolve(Response.json({ replies: [] }));
+    },
+  });
+  assertEquals(requests, 1);
+});
