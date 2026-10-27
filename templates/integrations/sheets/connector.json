@@ -463,7 +463,8 @@
                         "additionalProperties": false,
                         "properties": {
                           "sheetId": {
-                            "type": "integer"
+                            "type": "integer",
+                            "minimum": 0
                           },
                           "title": {
                             "type": "string"
@@ -557,7 +558,8 @@
                         "const": true
                       },
                       "sheetId": {
-                        "type": "integer"
+                        "type": "integer",
+                        "minimum": 0
                       },
                       "matchCase": {
                         "type": "boolean"
@@ -747,7 +749,14 @@
                                     "minimum": 0
                                   },
                                   "legendPosition": {
-                                    "type": "string"
+                                    "type": "string",
+                                    "enum": [
+                                      "BOTTOM_LEGEND",
+                                      "LEFT_LEGEND",
+                                      "RIGHT_LEGEND",
+                                      "TOP_LEGEND",
+                                      "NO_LEGEND"
+                                    ]
                                   },
                                   "domains": {
                                     "type": "array",
@@ -926,10 +935,20 @@
                                           ]
                                         },
                                         "targetAxis": {
-                                          "type": "string"
+                                          "type": "string",
+                                          "enum": [
+                                            "BOTTOM_AXIS",
+                                            "LEFT_AXIS",
+                                            "RIGHT_AXIS"
+                                          ]
                                         },
                                         "type": {
-                                          "type": "string"
+                                          "type": "string",
+                                          "enum": [
+                                            "LINE",
+                                            "AREA",
+                                            "COLUMN"
+                                          ]
                                         }
                                       }
                                     }
@@ -962,11 +981,111 @@
                               }
                             },
                             "not": {
-                              "properties": {
-                                "position": {}
-                              },
-                              "required": [
-                                "position"
+                              "anyOf": [
+                                {
+                                  "required": [
+                                    "position"
+                                  ],
+                                  "properties": {
+                                    "position": {}
+                                  }
+                                },
+                                {
+                                  "required": [
+                                    "chartType"
+                                  ],
+                                  "properties": {
+                                    "chartType": {}
+                                  }
+                                },
+                                {
+                                  "required": [
+                                    "legendPosition"
+                                  ],
+                                  "properties": {
+                                    "legendPosition": {}
+                                  }
+                                },
+                                {
+                                  "required": [
+                                    "axis"
+                                  ],
+                                  "properties": {
+                                    "axis": {}
+                                  }
+                                },
+                                {
+                                  "required": [
+                                    "domains"
+                                  ],
+                                  "properties": {
+                                    "domains": {}
+                                  }
+                                },
+                                {
+                                  "required": [
+                                    "series"
+                                  ],
+                                  "properties": {
+                                    "series": {}
+                                  }
+                                },
+                                {
+                                  "required": [
+                                    "headerCount"
+                                  ],
+                                  "properties": {
+                                    "headerCount": {}
+                                  }
+                                },
+                                {
+                                  "required": [
+                                    "threeDimensional"
+                                  ],
+                                  "properties": {
+                                    "threeDimensional": {}
+                                  }
+                                },
+                                {
+                                  "required": [
+                                    "interpolateNulls"
+                                  ],
+                                  "properties": {
+                                    "interpolateNulls": {}
+                                  }
+                                },
+                                {
+                                  "required": [
+                                    "stackedType"
+                                  ],
+                                  "properties": {
+                                    "stackedType": {}
+                                  }
+                                },
+                                {
+                                  "required": [
+                                    "lineSmoothing"
+                                  ],
+                                  "properties": {
+                                    "lineSmoothing": {}
+                                  }
+                                },
+                                {
+                                  "required": [
+                                    "compareMode"
+                                  ],
+                                  "properties": {
+                                    "compareMode": {}
+                                  }
+                                },
+                                {
+                                  "required": [
+                                    "totalDataLabel"
+                                  ],
+                                  "properties": {
+                                    "totalDataLabel": {}
+                                  }
+                                }
                               ]
                             },
                             "oneOf": [

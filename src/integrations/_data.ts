@@ -50771,7 +50771,7 @@ export const connectors: IntegrationConfig[] = [
                         "required": ["sheetId", "title"],
                         "additionalProperties": false,
                         "properties": {
-                          "sheetId": { "type": "integer" },
+                          "sheetId": { "type": "integer", "minimum": 0 },
                           "title": { "type": "string" },
                         },
                       },
@@ -50844,7 +50844,7 @@ export const connectors: IntegrationConfig[] = [
                       "find": { "type": "string" },
                       "replacement": { "type": "string" },
                       "allSheets": { "type": "boolean", "const": true },
-                      "sheetId": { "type": "integer" },
+                      "sheetId": { "type": "integer", "minimum": 0 },
                       "matchCase": { "type": "boolean" },
                       "matchEntireCell": { "type": "boolean" },
                       "searchByRegex": { "type": "boolean" },
@@ -50972,7 +50972,16 @@ export const connectors: IntegrationConfig[] = [
                                     ],
                                   },
                                   "headerCount": { "type": "integer", "minimum": 0 },
-                                  "legendPosition": { "type": "string" },
+                                  "legendPosition": {
+                                    "type": "string",
+                                    "enum": [
+                                      "BOTTOM_LEGEND",
+                                      "LEFT_LEGEND",
+                                      "RIGHT_LEGEND",
+                                      "TOP_LEGEND",
+                                      "NO_LEGEND",
+                                    ],
+                                  },
                                   "domains": {
                                     "type": "array",
                                     "items": {
@@ -51105,8 +51114,14 @@ export const connectors: IntegrationConfig[] = [
                                             "required": ["columnReference"],
                                           }],
                                         },
-                                        "targetAxis": { "type": "string" },
-                                        "type": { "type": "string" },
+                                        "targetAxis": {
+                                          "type": "string",
+                                          "enum": ["BOTTOM_AXIS", "LEFT_AXIS", "RIGHT_AXIS"],
+                                        },
+                                        "type": {
+                                          "type": "string",
+                                          "enum": ["LINE", "AREA", "COLUMN"],
+                                        },
                                       },
                                     },
                                   },
@@ -51121,7 +51136,47 @@ export const connectors: IntegrationConfig[] = [
                               "treemapChart": { "type": "object" },
                               "scorecardChart": { "type": "object" },
                             },
-                            "not": { "properties": { "position": {} }, "required": ["position"] },
+                            "not": {
+                              "anyOf": [
+                                { "required": ["position"], "properties": { "position": {} } },
+                                { "required": ["chartType"], "properties": { "chartType": {} } },
+                                {
+                                  "required": ["legendPosition"],
+                                  "properties": { "legendPosition": {} },
+                                },
+                                { "required": ["axis"], "properties": { "axis": {} } },
+                                { "required": ["domains"], "properties": { "domains": {} } },
+                                { "required": ["series"], "properties": { "series": {} } },
+                                {
+                                  "required": ["headerCount"],
+                                  "properties": { "headerCount": {} },
+                                },
+                                {
+                                  "required": ["threeDimensional"],
+                                  "properties": { "threeDimensional": {} },
+                                },
+                                {
+                                  "required": ["interpolateNulls"],
+                                  "properties": { "interpolateNulls": {} },
+                                },
+                                {
+                                  "required": ["stackedType"],
+                                  "properties": { "stackedType": {} },
+                                },
+                                {
+                                  "required": ["lineSmoothing"],
+                                  "properties": { "lineSmoothing": {} },
+                                },
+                                {
+                                  "required": ["compareMode"],
+                                  "properties": { "compareMode": {} },
+                                },
+                                {
+                                  "required": ["totalDataLabel"],
+                                  "properties": { "totalDataLabel": {} },
+                                },
+                              ],
+                            },
                             "oneOf": [
                               { "properties": { "basicChart": {} }, "required": ["basicChart"] },
                               { "properties": { "pieChart": {} }, "required": ["pieChart"] },

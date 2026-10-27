@@ -223,3 +223,41 @@ Deno.test("published Sheets contracts validate synthetic request examples", asyn
     assertEquals((await validate(sample.args)).success, sample.validArguments);
   }
 });
+
+Deno.test("Sheets typed requests reject invalid identifiers, chart placement, and enum values", async () => {
+  const examples = JSON.parse(
+    await Deno.readTextFile(new URL("./fixtures/sheets-request-examples.json", import.meta.url)),
+  );
+  const chart = examples.cases[0].args.requests[0].addChart.chart;
+  const invalidRequests = [
+    ["sheets__rename_sheet", [{
+      updateSheetProperties: { properties: { sheetId: -1, title: "Example" }, fields: "title" },
+    }]],
+    ["sheets__find_replace", [{ findReplace: { find: "a", replacement: "b", sheetId: -1 } }]],
+    ["sheets__create_chart", [{
+      addChart: {
+        chart: { ...chart, spec: { ...chart.spec, domains: chart.spec.basicChart.domains } },
+      },
+    }]],
+    ...[
+      { ...chart.spec.basicChart, legendPosition: "bottom" },
+      {
+        ...chart.spec.basicChart,
+        series: [{ ...chart.spec.basicChart.series[0], targetAxis: "sideways" }],
+      },
+      {
+        ...chart.spec.basicChart,
+        series: [{ ...chart.spec.basicChart.series[0], type: "bogus" }],
+      },
+    ].map((basicChart) => ["sheets__create_chart", [{
+      addChart: { chart: { ...chart, spec: { ...chart.spec, basicChart } } },
+    }]]),
+  ];
+  for (const [id, requests] of invalidRequests) {
+    const schema = connector.tools.find((tool) => tool.id === id)?.endpoint?.body?.requests
+      ?.inputSchema;
+    assertExists(schema);
+    const validate = createZodAdapter().compileJsonSchema!(schema);
+    assertEquals((await validate(requests)).success, false);
+  }
+});
