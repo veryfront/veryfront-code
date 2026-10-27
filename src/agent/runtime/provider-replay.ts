@@ -1214,12 +1214,21 @@ function transcriptVisibleToolResult(
   }
   const hasResult = "result" in part || "output" in part;
   const rawResult = "result" in part ? part.result : part.output;
-  const isPreparedError = isRecord(rawResult) && rawResult.type === "error-text";
+  // The provider-to-agent adapter projects an owned error-text envelope to { error }.
+  // Only this provider's canonical error record may become checkpoint evidence.
+  const errorText = isRecord(rawResult) ? rawResult.error : undefined;
+  const parsedError = typeof errorText === "string" ? safeJsonParse(errorText) : undefined;
+  const providerError =
+    parsedError?.ok && isNormalizedAnthropicProviderErrorResult(parsedError.value)
+      ? parsedError.value
+      : undefined;
+  const isPreparedError = (isRecord(rawResult) && rawResult.type === "error-text") ||
+    providerError !== undefined;
   return {
     type: "tool-result",
     toolCallId: part.toolCallId,
     ...(providerExecutedToolCallIds.has(part.toolCallId) ? { providerExecuted: true } : {}),
-    ...(hasResult ? { result: unwrapPreparedProviderResult(rawResult) } : {}),
+    ...(hasResult ? { result: providerError ?? unwrapPreparedProviderResult(rawResult) } : {}),
     ...(part.isError === true || isPreparedError ? { isError: true } : {}),
   };
 }
