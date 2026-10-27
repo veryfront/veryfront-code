@@ -2853,6 +2853,65 @@ describe("internal-agents/run-stream", () => {
     assertEquals(capturedAllowedRemoteTools, ["search_knowledge"]);
   });
 
+  for (
+    const { name, declared, granted, expected } of [
+      {
+        name: "admitted legacy selector",
+        declared: true,
+        granted: true,
+        expected: ["veryfront__get_file"],
+      },
+      { name: "missing remote grant", declared: true, granted: false, expected: [] },
+      { name: "missing declaration", declared: undefined, granted: true, expected: [] },
+      { name: "explicit denial", declared: false, granted: true, expected: [] },
+    ]
+  ) {
+    it(`keeps restrictive platform aliases bounded by source authority: ${name}`, async () => {
+      let mergedNames: string[] = [];
+      let remoteNames: string[] = [];
+      const agent = {
+        id: "support",
+        config: {
+          id: "support",
+          model: "anthropic/claude-opus-4-6",
+          system: "test",
+          tools: declared === undefined ? {} : { get_file: declared },
+          __vfAllowedRemoteTools: granted ? ["veryfront__get_file"] : [],
+        },
+      } as unknown as Agent;
+      await createRuntimeAgentStreamResponse(
+        {
+          runId: "run_1",
+          threadId: crypto.randomUUID(),
+          messages: [],
+          tools: [],
+          context: [],
+          forwardedProps: { runtimeOverrides: { toolAllowlist: ["get_file"] } },
+        },
+        agent,
+        {
+          sessionManager: new AgentRunSessionManager(),
+          createRuntime: (runtimeAgent, mergedTools) => {
+            mergedNames = Object.keys(mergedTools ?? {});
+            remoteNames =
+              (runtimeAgent.config as Agent["config"] & { __vfAllowedRemoteTools?: string[] })
+                .__vfAllowedRemoteTools ?? [];
+            return {
+              stream: async () =>
+                new ReadableStream<Uint8Array>({
+                  start(controller) {
+                    controller.close();
+                  },
+                }),
+            };
+          },
+        },
+      );
+      assertEquals(mergedNames, expected);
+      assertEquals(remoteNames, expected);
+    });
+  }
+
   it("fails closed when toolAllowlist is present but malformed", async () => {
     const sessionManager = new AgentRunSessionManager();
     let capturedToolNames: string[] = [];

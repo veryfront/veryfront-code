@@ -1547,7 +1547,21 @@ export async function createRuntimeAgentStreamResponse(
         sourceAllowedRemoteToolNames,
         forwardedAllowedRemoteToolNames,
       );
-    const runtimeToolAllowlist = getRuntimeToolAllowlist(input.forwardedProps);
+    const requestedToolAllowlist = getRuntimeToolAllowlist(input.forwardedProps);
+    const runtimeToolAllowlist = requestedToolAllowlist === null
+      ? null
+      : new Set(requestedToolAllowlist);
+    if (runtimeToolAllowlist && agent.config.tools && agent.config.tools !== true) {
+      for (const [name, entry] of Object.entries(agent.config.tools)) {
+        const canonical = `veryfront__${name}`;
+        if (
+          entry === true && runtimeToolAllowlist.has(name) &&
+          sourceAllowedRemoteToolNames.includes(canonical)
+        ) {
+          runtimeToolAllowlist.add(canonical);
+        }
+      }
+    }
     if (runtimeToolAllowlist === null && forwardedAllowedRemoteToolNames !== undefined) {
       logger.debug(
         "runtimeOverrides.allowedTools is additive on internal runs; use runtimeOverrides.toolAllowlist to restrict the run tool surface",
