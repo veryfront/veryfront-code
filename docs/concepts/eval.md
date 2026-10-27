@@ -107,8 +107,8 @@ Local agent evals can use `mockTools` to replace the agent's tool set for one
 run while keeping the real agent answer and trace. Static mock tools are reused;
 resolver mock tools are created once per example repetition. This is strict and
 local-only: hosted AG-UI evals reject `mockTools` before calling the endpoint,
-and skills agents retain only the read-only `load_skill` and
-`load_skill_reference` tools unless the eval explicitly supplies more tools.
+and skills agents retain only the read-only `veryfront__load_skill` and
+`veryfront__load_skill_reference` tools unless the eval explicitly supplies more tools.
 
 Mocked evals use `agent.generate({ tools })`; there is no streaming equivalent.
 Loaded-skill allowed-tool policies and delegation overrides are disabled while
@@ -176,3 +176,30 @@ discovered eval into the form-editable source document used by Studio panels.
 
 For implementation steps, see [Evals](../guides/evals.md). For exact APIs, see
 [veryfront/eval](../api-reference/veryfront/eval.md).
+
+## Expected error outcomes
+
+Set `expectedOutcome: "error"` on a dataset example to evaluate a negative path. The default is
+`"success"`, which requires a completed target without an error. An expected error passes only when
+an adapter confirms a terminal target error and all gate and budget assertions pass. Use checks to
+verify the specific error and trace. An unexpected success fails.
+
+The local agent adapter recognizes an agent's error status. The agent-service adapter recognizes an
+AG-UI `RUN_ERROR` event on a successful HTTP response. Transport failures, incomplete streams,
+timeouts, model-access denials, and grading errors do not satisfy the expected error outcome.
+
+Custom agent and tool adapters must return `outcome: "error"` only for a confirmed terminal target
+error. An `error` string alone does not confirm that outcome. Reports preserve `completed`, `error`,
+and trace data for inspection. A completion assertion still fails for an errored target.
+
+```ts
+import { evalAgent } from "veryfront/eval";
+
+export default evalAgent({
+  target: "classification",
+  dataset: [{ id: "missing-text", input: {}, expectedOutcome: "error" }],
+  check({ record }) {
+    if (record.error !== "Text is required") throw new Error("Unexpected error");
+  },
+});
+```

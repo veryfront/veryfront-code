@@ -1,12 +1,28 @@
 {
-  "contract": "0.8.8",
-  "release": "https://github.com/veryfront/veryfront-issue-inbox/releases/tag/runs-target-0.8.8-90f47885b805",
-  "archiveSha256": "90f47885b805403750044a072acf94196f4597664dd3c773247b9ebcebe52d9e",
+  "contract": "0.8.9",
+  "release": "https://github.com/veryfront/veryfront-issue-inbox/releases/tag/runs-target-0.8.9-1c6b884892bc",
+  "archiveSha256": "1c6b884892bc1ccc93f50323ba00863f94f386c1e5a96296a41302559604e865",
   "generatedBy": "veryfront-api: pnpm contracts:runs:generate -- --out <dir> (the kit's runs-api.types.ts)",
   "files": {
-    "runs-api.generated.ts": "2e9e8d200e6891154377db3f98a9292eba71036caa725b5a0acbe5aadf9925a9",
-    "openapi.target.json": "ad79cbd6ce425873fc93ebefa264cee5e1f5f371936b25de8d28da9fd6334d1f",
-    "runs-fixtures.generated.ts": "843636a82bfd56dcc879ac8455568ebc284e39e14ffe7351bd324071025d2cee"
+    "runs-api.generated.ts": "7714cef6a72249b96b780b14d976307d8a4ecef4d10b36230d730c3ff1eab9a6",
+    "openapi.target.json": "6cfa62c7fc5a6b9497c4ea700b1dba68dc994d98cba038b5020d3869f29b26c1",
+    "runs-fixtures.generated.ts": "367013897103f0a9c0321c386cbed81d61f1ec4bed36e42129f662fd51245676"
   },
-  "fixturesGeneratedBy": "deno task contracts:runs:fixtures"
+  "fixturesGeneratedBy": "deno task contracts:runs:fixtures",
+  "taskInputEvents": {
+    "repository": "veryfront/veryfront-api",
+    "commit": "2ccdde48747ccd67915273e798666df9dee93c4e",
+    "path": "src/api/contracts/execution/pinned/openapi.target.json",
+    "sourceSha256": "35248683671ee1864d2fa5abe76135e0e552bca4fb24b31e6c7a54646c669a5c",
+    "generatedBy": "scripts/generate-runs-task-input-contract.ts, then veryfront-api renderRunsTargetArtifacts (openapi-typescript 7.13.0)"
+  },
+  "agentFinalization": {
+    "repository": "veryfront/veryfront-api",
+    "pullRequest": 6952,
+    "commit": "37baf78b21ac71904e9193715db2572c16948fea",
+    "path": "src/api/contracts/execution/pinned/openapi.target.json",
+    "sourceSha256": "811a250bbae5e9ec609c6e519e569ff0887967ac2a8696b73394d133220a88eb",
+    "change": "Completed agent runtime finalization accepts optional output and authoritative final_text, including empty text; failed finalization remains strict.",
+    "generatedBy": "veryfront-api renderRunsTargetArtifacts against this maintained 0.8.9 OpenAPI document"
+  }
 }

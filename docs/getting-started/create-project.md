@@ -1,4 +1,5 @@
 ---
+sidebarSection: guides
 title: "Create project"
 description: "Scaffold a new Veryfront project from a template and run it locally."
 order: 4
@@ -34,8 +35,7 @@ scripts), `veryfront init` skips every prompt and uses `ai-agent` on Node.js
 without initializing Git. Passing `--template` also skips the whole wizard,
 including the runtime and Git questions.
 
-Choose a starting point directly when you already know what you want to build,
-or when running the command from a non-interactive script:
+To choose a template without the wizard, pass its name:
 
 ```bash
 # Blank full-stack app with pages and routing
@@ -110,8 +110,8 @@ veryfront dev
 The CLI prints the URL it is serving on:
 
 ```
-✓ Ready in 1.3s
-http://localhost:3000
+✓ App ready       http://localhost:3000
+  Execution       This machine
 ```
 
 Open [http://localhost:3000](http://localhost:3000). `localhost` resolves to
@@ -126,8 +126,8 @@ the reserved `.localhost` tree as loopback on Windows.
 
 Native Node, Deno, and command-line resolvers can depend on operating-system
 resolver behavior for wildcard names. Veryfront's Windows Server 2022 CI
-currently records `ENOTFOUND` from Node 24 for project and preview hosts, while
-Deno 2.7.7 resolves both to IPv4 and IPv6 loopback. Use literal loopback
+records `ENOTFOUND` from Node 24 for project and preview hosts. Runtime versions
+can differ in their IPv4 and IPv6 loopback resolution. Use literal loopback
 transport and keep the canonical virtual host when a native request does not
 resolve the browser URL:
 
@@ -153,8 +153,8 @@ scans forward for the first free port, reports the switch, and serves there:
 ```
   ! Port 3000 is in use, using 3001 instead
 
-  ✓ Ready in 925ms
-  http://localhost:3001
+  ✓ App ready       http://localhost:3001
+  Execution       This machine
 ```
 
 Open the URL the CLI prints, not the one in the examples above. The development
@@ -222,9 +222,7 @@ veryfront generate tool search-docs
 veryfront generate skill research
 ```
 
-These names are examples. Use the generated files as starting points, then edit
-the agent instructions, tool implementation, and skill content for the workflow
-you are building.
+Edit the generated instructions, tools and skills for your app.
 
 Every starter includes `AGENTS.md`. Coding agents should read that file first,
 then use `veryfront schema --json` or the Veryfront MCP tools for current CLI
@@ -233,6 +231,22 @@ Claude Code, Cursor, Codex, or another MCP-aware agent.
 
 ## Verify it worked
 
-`veryfront dev` prints a `Ready in <duration>` line followed by
-`http://localhost:3000`. Open that URL and save a source file. The browser
-should hot-reload.
+`veryfront dev` prints `App ready` with the local URL and identifies execution
+as `This machine`. Linked projects also show the connected Veryfront service,
+project, shared environment, signed-in account, and Studio run list URL.
+A local API is labeled `Local Veryfront`; hosted APIs use `Veryfront Cloud`.
+Press `?` for shortcuts; use verbose logs for cache and runtime diagnostics.
+
+Open the app URL and save a source file. The browser should hot-reload.
+
+## Name your local worker
+
+Studio identifies local runs by the machine hostname by default. To use a
+recognizable label, set it before starting the app:
+
+```bash
+VERYFRONT_WORKER_NAME="Kentaro laptop" npm run dev
+```
+
+Names are limited to 128 characters. The label does not change the project,
+environment, or unique runtime identity.

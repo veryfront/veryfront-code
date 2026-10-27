@@ -66,7 +66,7 @@ export function collectCompoundParts(
 ): Map<string, Set<string>> {
   const compounds = new Map<string, Set<string>>();
   const declRe =
-    /(?:export\s+)?const\s+(\w+)(?:\s*:\s*[^=\n]+)?\s*=\s*Object\.assign\(/g;
+    /(?:export\s+)?const\s+(\w+)(?:\s*:\s*[^\s=\n][^=\n]*(?<!\s))?\s*=\s*Object\.assign\(/g;
 
   for (const f of files) {
     let m: RegExpExecArray | null;
@@ -118,7 +118,7 @@ export function findCompositionLies(
   compounds: Map<string, Set<string>>,
 ): CompositionLie[] {
   const lies: CompositionLie[] = [];
-  const treeRe = /compositionTree\s*=\s*(?:\n\s*)?`([\s\S]*?)`/g;
+  const treeRe = /compositionTree\s*=\s*`([\s\S]*?)`/g;
   const tokenRe = /\b([A-Z][A-Za-z0-9]*)\.([A-Z][A-Za-z0-9]*)\b/g;
 
   for (const f of storyFiles) {
@@ -144,9 +144,14 @@ async function readDir(
   exts: string[],
 ): Promise<Array<{ path: string; content: string }>> {
   const files: Array<{ path: string; content: string }> = [];
-  for await (const entry of walk(dir, { exts, skip: [/\bnode_modules\b/, /\bdist\b/] })) {
+  for await (
+    const entry of walk(dir, { exts, skip: [/\bnode_modules\b/, /\bdist\b/] })
+  ) {
     if (!entry.isFile) continue;
-    files.push({ path: entry.path, content: await Deno.readTextFile(entry.path) });
+    files.push({
+      path: entry.path,
+      content: await Deno.readTextFile(entry.path),
+    });
   }
   return files;
 }
@@ -166,7 +171,9 @@ if (import.meta.main) {
 
   console.error(`${lies.length} aspirational composition-tree token(s):`);
   for (const lie of lies) {
-    console.error(`  ${lie.path}: "${lie.token}" is not a real exported sub-part`);
+    console.error(
+      `  ${lie.path}: "${lie.token}" is not a real exported sub-part`,
+    );
   }
   Deno.exit(1);
 }

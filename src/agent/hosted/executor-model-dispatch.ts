@@ -1,19 +1,20 @@
 import { getPrivateAsyncIterator } from "#veryfront/security/private-iterator.ts";
+import { forEachPrivateArray, mapPrivateArray } from "#veryfront/security/private-array.ts";
+import { testPrivateRegExp } from "#veryfront/security/private-regexp.ts";
 import type { JsonValue } from "#veryfront/schemas/index.ts";
 import type { ModelRuntimeCallOptions } from "#veryfront/provider/types.ts";
 import {
   buildModelCallContextRequest,
   resolveModelCallProvider,
+  snapshotModelCallAssistantProviderMetadata,
+  snapshotModelCallProviderOptions,
 } from "#veryfront/runtime/model-call-context-request.ts";
 import type {
   AgentRunEventSink,
   AgentRunModelCallContextEvent,
   ModelCallMessage,
 } from "#veryfront/runtime/model-call-context.ts";
-import {
-  type AgentRunModelCallCaptureReceipt,
-  getModelCallCaptureReceiptSchema,
-} from "#veryfront/runtime/model-call-capture-receipt.ts";
+import type { AgentRunModelCallCaptureReceipt } from "#veryfront/runtime/model-call-capture-receipt.ts";
 import { runWithVeryfrontCloudModelCallCapture } from "#veryfront/provider/veryfront-cloud/context.ts";
 import {
   DurableRunEventPersistenceError,
@@ -27,6 +28,101 @@ import { executorModelJson, parseExecutorModelData } from "./executor-model-sche
 import { assertPersistedModelOptions } from "./executor-model-dispatch-options.ts";
 import { createExecutorModelAdmission, type ExecutorModelGrant } from "./executor-model-grant.ts";
 import { executorModelFailure } from "./executor-model-errors.ts";
+import { getManagedToolResultFence } from "./managed-tool-result-fence.ts";
+import type { ExecutorSkillObservation } from "./executor-skill-observation.ts";
+
+const cloneStructuredValue = globalThis.structuredClone;
+const ArrayIsArray = Array.isArray;
+const ObjectDefineProperty = Object.defineProperty;
+const ObjectEntries = Object.entries;
+const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const ObjectHasOwn = Object.hasOwn;
+const ObjectKeys = Object.keys;
+const ObjectFreeze = Object.freeze;
+const ReflectApply = Reflect.apply;
+const SymbolIterator = Symbol.iterator;
+const CaptureReceiptUuidPattern =
+  /^(?:00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff|[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/i;
+const CaptureReceiptFields = ["eventId", "projectId", "runId", "modelCallId"] as const;
+
+const EmptyStructuredCloneTransferList: Transferable[] = [];
+ReflectApply(ObjectDefineProperty, Object, [EmptyStructuredCloneTransferList, SymbolIterator, {
+  configurable: false,
+  enumerable: false,
+  value() {
+    return {
+      next() {
+        return { done: true, value: undefined };
+      },
+    };
+  },
+  writable: false,
+}]);
+const EmptyStructuredCloneOptions: StructuredSerializeOptions = {
+  transfer: EmptyStructuredCloneTransferList,
+};
+
+function cloneStructured<T>(value: T): T {
+  return ReflectApply(cloneStructuredValue, globalThis, [
+    value,
+    EmptyStructuredCloneOptions,
+  ]) as T;
+}
+
+function objectEntries(value: Record<string, unknown>): Array<[string, unknown]> {
+  return ReflectApply(ObjectEntries, Object, [value]) as Array<[string, unknown]>;
+}
+
+function objectKeys(value: Record<string, unknown>): string[] {
+  return ReflectApply(ObjectKeys, Object, [value]) as string[];
+}
+
+function defineOwnDataProperty(target: Record<string, unknown>, key: string, value: unknown): void {
+  ReflectApply(ObjectDefineProperty, Object, [target, key, {
+    value,
+    writable: true,
+    enumerable: true,
+    configurable: true,
+  }]);
+}
+
+function readOwnEnumerableDataString(
+  value: Record<PropertyKey, unknown>,
+  key: string,
+): string | undefined {
+  const descriptor = ReflectApply(ObjectGetOwnPropertyDescriptor, Object, [value, key]) as
+    | PropertyDescriptor
+    | undefined;
+  return descriptor?.enumerable === true && ObjectHasOwn(descriptor, "value") &&
+      typeof descriptor.value === "string"
+    ? descriptor.value
+    : undefined;
+}
+
+function readModelCallCaptureReceipt(
+  value: unknown,
+): AgentRunModelCallCaptureReceipt | undefined {
+  if (!isRecord(value)) return undefined;
+  const keys = ReflectApply(ObjectKeys, Object, [value]) as string[];
+  if (keys.length !== CaptureReceiptFields.length) return undefined;
+  for (let index = 0; index < CaptureReceiptFields.length; index++) {
+    const field = CaptureReceiptFields[index];
+    if (field === undefined || !ObjectHasOwn(value, field)) return undefined;
+  }
+  const eventId = readOwnEnumerableDataString(value, "eventId");
+  const projectId = readOwnEnumerableDataString(value, "projectId");
+  const runId = readOwnEnumerableDataString(value, "runId");
+  const modelCallId = readOwnEnumerableDataString(value, "modelCallId");
+  if (
+    !eventId || !projectId || !runId || !modelCallId ||
+    !testPrivateRegExp(CaptureReceiptUuidPattern, projectId) ||
+    !testPrivateRegExp(CaptureReceiptUuidPattern, runId) ||
+    !testPrivateRegExp(CaptureReceiptUuidPattern, modelCallId)
+  ) {
+    return undefined;
+  }
+  return { eventId, projectId, runId, modelCallId };
+}
 
 /** Ingress-owned invocation authority. The sink already owns its exact run identity. */
 export interface HostedExecutorModelScope {
@@ -41,6 +137,8 @@ interface HostedModelBrokerInput {
   allowedModelIds: ReadonlySet<string>;
   scope: HostedExecutorModelScope;
   grant: ExecutorModelGrant;
+  /** Host-owned record updated with each prompt dispatched to the provider. */
+  skillObservation?: ExecutorSkillObservation;
 }
 
 /**
@@ -73,7 +171,16 @@ export function createHostedExecutorModelBroker(
     throw new TypeError("Hosted model capture receipts require a project scope");
   }
   const captureEnabled = input.modelCallCaptureReceipts === true;
+  const resultFence = getManagedToolResultFence(sink);
   return createScopedHostedModelBroker(input, async (request, context) => {
+    // The output stream is drained independently of model RPCs. Wait before
+    // entering its shared persistence queue, or the result would deadlock
+    // behind this context append.
+    await resultFence?.waitBeforeContext(
+      request.privateToolResultSequence,
+      context.signal,
+      context.deadline,
+    );
     const acknowledgement = await acknowledgePersistence(
       () => sink(createContextEvent(request, captureEnabled)),
       context.signal,
@@ -88,17 +195,17 @@ export function createHostedExecutorModelBroker(
       }
       return undefined;
     }
-    const receipt = getModelCallCaptureReceiptSchema().safeParse(acknowledgement);
+    const receipt = readModelCallCaptureReceipt(acknowledgement);
     if (
-      !receipt.success ||
-      receipt.data.modelCallId.toLowerCase() !== request.identity.modelCallId.toLowerCase() ||
-      receipt.data.projectId.toLowerCase() !== projectId.toLowerCase()
+      receipt === undefined ||
+      receipt.modelCallId.toLowerCase() !== request.identity.modelCallId.toLowerCase() ||
+      receipt.projectId.toLowerCase() !== projectId.toLowerCase()
     ) {
       throw new DurableRunEventPersistenceError(
         "Hosted model capture receipt is missing or invalid",
       );
     }
-    return Object.freeze(receipt.data);
+    return ReflectApply(ObjectFreeze, Object, [receipt]) as AgentRunModelCallCaptureReceipt;
   });
 }
 
@@ -152,7 +259,11 @@ function createScopedHostedModelBroker(
     allowedModelIds: input.allowedModelIds,
     normalizeModelCall(request, context) {
       assertScope(context);
-      return admission.normalize(request);
+      const snapshot = {
+        ...request,
+        options: snapshotModelCallProviderOptions(request.model, request.options),
+      };
+      return admission.normalize(snapshot);
     },
     async beforeModelDispatch(request, context) {
       assertScope(context);
@@ -167,6 +278,9 @@ function createScopedHostedModelBroker(
         run<T>(operation: () => T): T {
           return runWithVeryfrontCloudModelCallCapture({ receipt, assertActive }, operation);
         },
+        dispatchSucceeded() {
+          input.skillObservation?.observePrompt(request.options.prompt);
+        },
       };
     },
   });
@@ -174,48 +288,50 @@ function createScopedHostedModelBroker(
     assertScope(context);
     return { ...context, signal: AbortSignal.any([lifetime, context.signal]) };
   };
-  return new Map([...operations].map(([name, operation]): [string, ExecutorOperation] => [
-    name,
-    operation.mode === "unary"
-      ? {
-        mode: "unary",
-        async handle(value, context) {
-          const boundContext = bindContext(context);
-          let admission: ReturnType<typeof admit> | undefined;
-          try {
-            admission = name === "model.generate" ? admit(value) : undefined;
-            return await operation.handle(admission?.input ?? value, boundContext);
-          } catch (error) {
-            boundContext.signal.throwIfAborted();
-            const failure = executorModelFailure(error);
-            if (failure?.code === "RESOURCE_LIMIT_EXCEEDED") return failure;
-            throw error;
-          } finally {
-            admission?.release();
-          }
+  return new Map(
+    mapPrivateArray([...operations], ([name, operation]): [string, ExecutorOperation] => [
+      name,
+      operation.mode === "unary"
+        ? {
+          mode: "unary",
+          async handle(value, context) {
+            const boundContext = bindContext(context);
+            let admission: ReturnType<typeof admit> | undefined;
+            try {
+              admission = name === "model.generate" ? admit(value) : undefined;
+              return await operation.handle(admission?.input ?? value, boundContext);
+            } catch (error) {
+              boundContext.signal.throwIfAborted();
+              const failure = executorModelFailure(error);
+              if (failure?.code === "RESOURCE_LIMIT_EXCEEDED") return failure;
+              throw error;
+            } finally {
+              admission?.release();
+            }
+          },
+        }
+        : {
+          mode: "stream",
+          async *handle(value, context) {
+            const boundContext = bindContext(context);
+            let admission: ReturnType<typeof admit> | undefined;
+            try {
+              admission = name === "model.stream" ? admit(value) : undefined;
+              yield* getPrivateAsyncIterator(
+                operation.handle(admission?.input ?? value, boundContext),
+              );
+            } catch (error) {
+              boundContext.signal.throwIfAborted();
+              const failure = executorModelFailure(error);
+              if (failure?.code !== "RESOURCE_LIMIT_EXCEEDED") throw error;
+              yield failure;
+            } finally {
+              admission?.release();
+            }
+          },
         },
-      }
-      : {
-        mode: "stream",
-        async *handle(value, context) {
-          const boundContext = bindContext(context);
-          let admission: ReturnType<typeof admit> | undefined;
-          try {
-            admission = name === "model.stream" ? admit(value) : undefined;
-            yield* getPrivateAsyncIterator(
-              operation.handle(admission?.input ?? value, boundContext),
-            );
-          } catch (error) {
-            boundContext.signal.throwIfAborted();
-            const failure = executorModelFailure(error);
-            if (failure?.code !== "RESOURCE_LIMIT_EXCEEDED") throw error;
-            yield failure;
-          } finally {
-            admission?.release();
-          }
-        },
-      },
-  ]));
+    ]),
+  );
 }
 
 async function acknowledgePersistence<T>(
@@ -242,12 +358,12 @@ async function acknowledgePersistence<T>(
 
 /**
  * Match the existing durable projection: neutral messages/tools/controls and
- * validated system cache metadata. Provider options and assistant replay
- * metadata remain excluded. The request uses the existing ModelCallRequest
- * subset; toolChoice, responseFormat, and userId are not durable event fields.
- * Reasoning and provider-result assistant content
- * cannot be represented by that contract and refuse hosted dispatch.
- * The broker's local call sequence is not a new durable event field.
+ * validated system cache metadata. Exact capture retains assistant replay
+ * metadata; legacy observations and other provider options remain excluded. The request uses the existing ModelCallRequest
+ * subset; toolChoice and userId are not durable event fields.
+ * Provider-result assistant content cannot be represented by that contract and
+ * refuses hosted dispatch. The broker's local call sequence is not a new
+ * durable event field.
  */
 function createContextEvent(
   call: ExecutorModelDispatch,
@@ -264,11 +380,11 @@ function createContextEvent(
         model: { id: call.model.modelId, ...(modelProvider ? { modelProvider } : {}) },
       }
       : {}),
-    messages: options.prompt.map(projectMessage),
-    ...(options.tools ? { tools: [...options.tools] } : {}),
+    messages: mapPrivateArray(options.prompt, (message) => projectMessage(message, captureEnabled)),
+    ...(options.tools ? { tools: mapPrivateArray(options.tools, (tool) => tool) } : {}),
     ...(request ? { request } : {}),
   };
-  const snapshot = structuredClone(event);
+  const snapshot = cloneStructured(event);
   if (!isPrivateConversationRunEvent(executorModelJson(snapshot))) {
     throw new DurableRunEventPersistenceError("Hosted model context cannot be persisted");
   }
@@ -276,7 +392,7 @@ function createContextEvent(
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
+  return value !== null && typeof value === "object" && !ArrayIsArray(value);
 }
 
 function projectSystemOptions(
@@ -284,19 +400,19 @@ function projectSystemOptions(
 ): Record<string, JsonValue> | undefined {
   if (!options) return undefined;
   const projected: Record<string, JsonValue> = {};
-  for (const [name, bucket] of Object.entries(options)) {
-    if (!name || !isRecord(bucket) || !isRecord(bucket.cacheControl)) continue;
+  forEachPrivateArray(objectEntries(options), ([name, bucket]) => {
+    if (!name || !isRecord(bucket) || !isRecord(bucket.cacheControl)) return;
     const { type, ttl } = bucket.cacheControl;
-    if (type !== "ephemeral" || (ttl !== undefined && ttl !== "5m" && ttl !== "1h")) continue;
-    Object.defineProperty(projected, name, {
-      value: { cacheControl: { type, ...(ttl ? { ttl } : {}) } },
-      enumerable: true,
-    });
-  }
-  return Object.keys(projected).length ? projected : undefined;
+    if (type !== "ephemeral" || (ttl !== undefined && ttl !== "5m" && ttl !== "1h")) return;
+    defineOwnDataProperty(projected, name, { cacheControl: { type, ...(ttl ? { ttl } : {}) } });
+  });
+  return objectKeys(projected).length ? projected : undefined;
 }
 
-function projectMessage(message: ModelRuntimeCallOptions["prompt"][number]): ModelCallMessage {
+function projectMessage(
+  message: ModelRuntimeCallOptions["prompt"][number],
+  captureEnabled: boolean,
+): ModelCallMessage {
   switch (message.role) {
     case "system": {
       const providerOptions = projectSystemOptions(message.providerOptions);
@@ -307,13 +423,18 @@ function projectMessage(message: ModelRuntimeCallOptions["prompt"][number]): Mod
       };
     }
     case "user":
-      return { role: "user", content: message.content.map((part) => ({ ...part })) };
+      return { role: "user", content: mapPrivateArray(message.content, (part) => ({ ...part })) };
     case "tool":
-      return { role: "tool", content: message.content.map((part) => ({ ...part })) };
+      return { role: "tool", content: mapPrivateArray(message.content, (part) => ({ ...part })) };
     case "assistant":
       return {
         role: "assistant",
-        content: message.content.map((part) => {
+        ...(captureEnabled && message.providerMetadata !== undefined
+          ? {
+            providerMetadata: snapshotModelCallAssistantProviderMetadata(message.providerMetadata),
+          }
+          : {}),
+        content: mapPrivateArray(message.content, (part) => {
           if (part.type === "text") return { type: "text", text: part.text };
           if (part.type === "tool-call") {
             return {

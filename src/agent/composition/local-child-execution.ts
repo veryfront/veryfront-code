@@ -1,14 +1,26 @@
-import { AsyncLocalStorage } from "node:async_hooks";
+import { primordialArrayValues } from "#veryfront/platform/compat/primordials/array.ts";
+import { createPrivateAsyncLocalStorage } from "#veryfront/security/private-async-context.ts";
 import type { AgentRuntime } from "#veryfront/agent/runtime/index.ts";
 import type { ToolExecutionContext } from "#veryfront/tool/types.ts";
 import type { Message } from "../types.ts";
 import type { RuntimeGenerateTextResult } from "../runtime/runtime-tool-types.ts";
 import type { AgUiRuntimeStreamEvent } from "../ag-ui/encoder.ts";
+import { parseDataStreamSseEvents } from "../streaming/data-stream.ts";
+import {
+  closePrivateStream,
+  createPrivateReadableStream,
+  enqueuePrivateStream,
+  errorPrivateStream,
+  getPrivateStreamReader,
+} from "#veryfront/security/private-stream.ts";
+import { createPrivateTextDecoder } from "#veryfront/security/private-text.ts";
 
 export interface LocalChildResult {
   text: string;
+  data?: unknown;
   object?: unknown;
-  toolCalls: number;
+  /** Absent when a canonical replay receipt does not include historical metadata. */
+  toolCalls?: number;
   status: string;
 }
 
@@ -20,7 +32,9 @@ export interface LocalChildInvocation {
   context?: ToolExecutionContext;
   execute: (control?: {
     signal?: AbortSignal;
+    runId?: string;
     onEvent?: (event: AgUiRuntimeStreamEvent) => Promise<void>;
+    resolveModelRuntime?: import("../runtime/model-transport.ts").AgentModelRuntimeResolver;
   }) => Promise<LocalChildResult>;
 }
 
@@ -29,12 +43,15 @@ type Scope = {
   runtime?: AgentRuntime;
   execute: (input: LocalChildInvocation) => Promise<LocalChildResult>;
   observe?: (event: AgUiRuntimeStreamEvent) => Promise<void>;
+  createObserver?: () => NonNullable<Scope["observe"]>;
+  automaticStreamObservation?: boolean;
   admitTool?: (id: string, name: string, input: unknown) => Promise<void>;
 };
-const scopes = new AsyncLocalStorage<Scope>();
-const run = AsyncLocalStorage.prototype.run;
-const getStore = AsyncLocalStorage.prototype.getStore;
+const scopes = createPrivateAsyncLocalStorage<Scope>();
+const run = scopes.run;
+const getStore = scopes.getStore;
 const apply = Reflect.apply;
+const objectHasOwn = Object.hasOwn;
 
 /** Private host boundary for the existing local delegation operation. */
 export async function withLocalChildExecution<T>(
@@ -42,33 +59,138 @@ export async function withLocalChildExecution<T>(
   operation: () => Promise<T>,
   observe?: Scope["observe"],
   admitTool?: Scope["admitTool"],
+  createObserver?: Scope["createObserver"],
+  lifetime?: AbortSignal,
 ): Promise<T> {
-  const scope: Scope = { active: true, execute, observe, admitTool };
+  const scope: Scope = {
+    active: true,
+    execute,
+    observe,
+    admitTool,
+    createObserver,
+    automaticStreamObservation: true,
+  };
+  const close = () => {
+    scope.active = false;
+  };
+  if (lifetime?.aborted) close();
+  else lifetime?.addEventListener("abort", close, { once: true });
   try {
     return await (apply(run, scopes, [scope, operation]) as Promise<T>);
+  } catch (error) {
+    close();
+    lifetime?.removeEventListener("abort", close);
+    throw error;
   } finally {
-    scope.active = false;
+    if (!lifetime) close();
   }
 }
 
-/** Only the first owning runtime may use a host scope; unrelated nested agents keep local semantics. */
+/**
+ * Only the active owning runtime may use a host scope while its turn is on the
+ * stack; unrelated nested agents keep local semantics. Once that top-level turn
+ * returns, the same task execution may observe another top-level agent runtime.
+ */
 export function withLocalChildRuntime<T>(runtime: AgentRuntime, operation: () => T): T {
   const scope: Scope | undefined = apply(getStore, scopes, []);
   if (!scope?.active) return operation();
-  if (scope.runtime === undefined) scope.runtime = runtime;
+  if (scope.runtime !== undefined && scope.runtime !== runtime) {
+    return apply(run, scopes, [undefined, operation]) as T;
+  }
   if (scope.runtime === runtime) return operation();
-  return apply(run, scopes, [undefined, operation]) as T;
+  const ownedScope: Scope = {
+    ...scope,
+    get active() {
+      return scope.active;
+    },
+    runtime,
+    observe: scope.createObserver?.() ?? scope.observe,
+  };
+  return apply(run, scopes, [ownedScope, operation]) as T;
 }
 
 export function executeLocalChild(input: LocalChildInvocation): Promise<LocalChildResult> {
   const scope: Scope | undefined = apply(getStore, scopes, []);
-  return scope?.active ? scope.execute(input) : input.execute();
+  if (!scope) return input.execute();
+  if (!scope.active) return Promise.reject(new Error("Local child execution authority has ended."));
+  return scope.execute(input);
+}
+
+export function withoutAutomaticRuntimeStreamObservation<T>(operation: () => T): T {
+  const scope: Scope | undefined = apply(getStore, scopes, []);
+  if (!scope?.active || scope.automaticStreamObservation === false) return operation();
+  const disabledScope: Scope = {
+    ...scope,
+    get active() {
+      return scope.active;
+    },
+    automaticStreamObservation: false,
+  };
+  return apply(run, scopes, [disabledScope, operation]) as T;
+}
+
+export function observeRuntimeStream(
+  stream: ReadableStream<Uint8Array>,
+): ReadableStream<Uint8Array> {
+  const scope: Scope | undefined = apply(getStore, scopes, []);
+  if (!scope?.active || scope.automaticStreamObservation === false || !scope.observe) return stream;
+  const observe = scope.observe;
+
+  const reader = getPrivateStreamReader(stream);
+  const decoder = createPrivateTextDecoder();
+  let remainder = "";
+  let released = false;
+  const releaseReader = () => {
+    if (released) return;
+    released = true;
+    reader.releaseLock();
+  };
+  const observeChunk = async (chunk: Uint8Array | undefined): Promise<void> => {
+    remainder += decoder.decode(chunk, { stream: chunk !== undefined });
+    const parsed = parseDataStreamSseEvents(chunk === undefined ? `${remainder}\n\n` : remainder);
+    remainder = parsed.remainder;
+    for (const event of primordialArrayValues(parsed.events)) await observe(event);
+  };
+
+  return createPrivateReadableStream<Uint8Array>(
+    {
+      async pull(controller) {
+        try {
+          const next = await reader.read();
+          if (next.done) {
+            await observeChunk(undefined);
+            releaseReader();
+            closePrivateStream(controller);
+            return;
+          }
+          await observeChunk(next.value);
+          enqueuePrivateStream(controller, next.value);
+        } catch (error) {
+          try {
+            await reader.cancel(error);
+          } catch {
+            // The observer failure remains the useful error for callers.
+          }
+          releaseReader();
+          errorPrivateStream(controller, error);
+        }
+      },
+      async cancel(reason) {
+        try {
+          await reader.cancel(reason);
+        } finally {
+          releaseReader();
+        }
+      },
+    },
+    { highWaterMark: 0 },
+  );
 }
 
 /** Observe accepted nonstreaming provider turns through the same private host mirror. */
 export async function observeGeneratedAgentTurn(
   messageId: string,
-  turn: RuntimeGenerateTextResult,
+  turn: RuntimeGenerateTextResult & { object?: unknown; objectEncoding?: "snapshot" },
 ): Promise<void> {
   const scope: Scope | undefined = apply(getStore, scopes, []);
   if (!scope?.active || !scope.observe) return;
@@ -86,7 +208,7 @@ export async function observeGeneratedAgentTurn(
     await observe({ type: "text-delta", id, messageId, delta: turn.text });
     await observe({ type: "text-end", id, messageId });
   }
-  for (const call of turn.toolCalls ?? []) {
+  for (const call of primordialArrayValues(turn.toolCalls ?? [])) {
     await scope.admitTool?.(call.toolCallId, call.toolName, call.input);
     await observe({
       type: "tool-input-start",
@@ -100,13 +222,43 @@ export async function observeGeneratedAgentTurn(
       input: call.input,
     });
   }
+  await observeGeneratedAgentTurnFinish(turn);
+}
+
+/** Observe only the generated turn finish for a message whose content was admitted earlier. */
+export async function observeGeneratedAgentTurnFinish(
+  turn: Pick<RuntimeGenerateTextResult, "finishReason" | "usage"> & {
+    object?: unknown;
+    objectEncoding?: "snapshot";
+  },
+): Promise<void> {
+  const scope: Scope | undefined = apply(getStore, scopes, []);
+  if (!scope?.active || !scope.observe) return;
+  if (
+    turn.finishReason === undefined && turn.usage === undefined && !objectHasOwn(turn, "object")
+  ) {
+    return;
+  }
+  await scope.observe({
+    type: "message-finish",
+    ...(turn.finishReason !== undefined ? { finishReason: turn.finishReason } : {}),
+    ...(turn.usage !== undefined ? { totalUsage: turn.usage } : {}),
+    ...(objectHasOwn(turn, "object")
+      ? {
+        object: turn.object,
+        ...(objectHasOwn(turn, "objectEncoding") && turn.objectEncoding === "snapshot"
+          ? { objectEncoding: "snapshot" as const }
+          : {}),
+      }
+      : {}),
+  });
 }
 
 /** Observe only committed tool outcomes, never credentials or provider metadata. */
 export async function observeGeneratedAgentMessage(message: Message): Promise<void> {
   const scope: Scope | undefined = apply(getStore, scopes, []);
   if (!scope?.active || !scope.observe || message.role !== "tool") return;
-  for (const part of message.parts) {
+  for (const part of primordialArrayValues(message.parts)) {
     if (part.type === "tool-result" && "result" in part) {
       await scope.observe({
         type: "tool-output-available",
@@ -121,7 +273,7 @@ export async function observeGeneratedAgentMessage(message: Message): Promise<vo
 export async function observeAdmittedAgentToolCalls(message: Message): Promise<void> {
   const scope: Scope | undefined = apply(getStore, scopes, []);
   if (!scope?.active || !scope.observe || message.role !== "assistant") return;
-  for (const part of message.parts) {
+  for (const part of primordialArrayValues(message.parts)) {
     if ("toolCallId" in part && "toolName" in part && "args" in part) {
       await scope.admitTool?.(part.toolCallId, part.toolName, part.args);
     }

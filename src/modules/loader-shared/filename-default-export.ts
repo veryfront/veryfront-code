@@ -11,28 +11,37 @@ function escapeRegex(value: string): string {
 }
 
 function getModuleIdentifier(normalizedPath: string): string | null {
-  const fileName = normalizedPath.replace(/\?.*$/, "").split("/").pop();
+  const fileName = normalizedPath.replace(/\?.*$/s, "").split("/").pop();
   const identifier = fileName?.replace(/\.(?:[cm]?[jt]sx?|mdx)$/i, "");
   if (!identifier || !IDENTIFIER_PATTERN.test(identifier)) return null;
   return identifier;
 }
 
-function findExportMatch(moduleCode: string, exportName: string): ExportMatch | null {
+function findExportMatch(
+  moduleCode: string,
+  exportName: string,
+): ExportMatch | null {
   const declarationPattern = new RegExp(
     `\\bexport\\s+(?:const|let|var|function|class)\\s+${escapeRegex(exportName)}\\b`,
   );
-  if (declarationPattern.test(moduleCode)) return { localName: exportName, sourceClause: "" };
+  if (declarationPattern.test(moduleCode)) {
+    return { localName: exportName, sourceClause: "" };
+  }
 
-  const exportListPattern = /\bexport\s*\{([^}]*)\}\s*(from\s*["'][^"']+["'])?\s*(?:;|$)/gm;
+  const exportListPattern = /\bexport\s*\{([^{}]*)\}(?:\s*(from\s*["'][^"']+["']))?\s*(?:;|$)/gm;
   let match: RegExpExecArray | null;
   while ((match = exportListPattern.exec(moduleCode)) !== null) {
     const specifiers = match[1]?.split(",") ?? [];
     const sourceClause = match[2] ? ` ${match[2]}` : "";
     for (const rawSpecifier of specifiers) {
       const specifier = rawSpecifier.trim();
-      if (specifier === exportName) return { localName: exportName, sourceClause };
+      if (specifier === exportName) {
+        return { localName: exportName, sourceClause };
+      }
 
-      const alias = specifier.match(/^([A-Za-z_$][\w$]*)\s+as\s+([A-Za-z_$][\w$]*)$/);
+      const alias = specifier.match(
+        /^([A-Za-z_$][\w$]*)\s+as\s+([A-Za-z_$][\w$]*)$/,
+      );
       if (alias?.[2] === exportName && alias[1]) {
         return { localName: alias[1], sourceClause };
       }
@@ -42,7 +51,10 @@ function findExportMatch(moduleCode: string, exportName: string): ExportMatch | 
   return null;
 }
 
-function appendExportBeforeSourceMap(moduleCode: string, exportStatement: string): string {
+function appendExportBeforeSourceMap(
+  moduleCode: string,
+  exportStatement: string,
+): string {
   const sourceMapMarker = "//# sourceMappingURL=";
   let sourceMapIndex = moduleCode.lastIndexOf(`\n${sourceMapMarker}`);
   if (sourceMapIndex < 0 && moduleCode.startsWith(sourceMapMarker)) {
@@ -70,7 +82,10 @@ export function inferFilenameDefaultExportName(
   return exportName && findExportMatch(moduleCode, exportName) ? exportName : null;
 }
 
-export function ensureFilenameDefaultExport(normalizedPath: string, moduleCode: string): string {
+export function ensureFilenameDefaultExport(
+  normalizedPath: string,
+  moduleCode: string,
+): string {
   const exportName = inferFilenameDefaultExportName(normalizedPath, moduleCode);
   if (!exportName) return moduleCode;
 

@@ -1,3 +1,4 @@
+import { isJsonMode } from "./json-output.ts";
 import { isNotFoundError, lstat, realPath } from "veryfront/fs";
 import { join, relative } from "veryfront/platform/path";
 
@@ -11,6 +12,8 @@ export interface ProjectLink {
   controlPlane: string;
   projectId: string;
   projectSlug: string;
+  /** Previously selected slugs of this same canonical project, retained across renames. */
+  previousProjectSlugs?: string[];
 }
 
 function projectLinkPath(projectDir: string): string {
@@ -71,7 +74,7 @@ function normalizeControlPlane(controlPlane: string): string {
   if (url.protocol !== "http:" && url.protocol !== "https:") {
     throw new TypeError("Veryfront control-plane URLs must use HTTP or HTTPS.");
   }
-  const pathname = url.pathname.replace(/\/+$/, "");
+  const pathname = url.pathname.replace(/(?<!\/)\/+$/, "");
   return `${url.origin}${pathname}`;
 }
 
@@ -90,7 +93,10 @@ function isProjectLink(value: unknown): value is ProjectLink {
     isNonEmptyTrimmedString(link.controlPlane) &&
     isControlPlaneUrl(link.controlPlane) &&
     isNonEmptyTrimmedString(link.projectId) &&
-    isNonEmptyTrimmedString(link.projectSlug);
+    isNonEmptyTrimmedString(link.projectSlug) &&
+    (link.previousProjectSlugs === undefined ||
+      (Array.isArray(link.previousProjectSlugs) &&
+        link.previousProjectSlugs.every(isNonEmptyTrimmedString)));
 }
 
 function isNonEmptyTrimmedString(value: unknown): value is string {
@@ -169,4 +175,70 @@ export async function writeProjectLink(
 export async function clearProjectLink(projectDir: string): Promise<void> {
   const inspected = await inspectProjectLinkPath(projectDir);
   if (inspected.linkExists) await Deno.remove(projectLinkPath(projectDir));
+}
+
+/** Track project identity and API origin so collaborators can reuse the association after clone. */
+export async function saveSharedProjectAssociation(
+  projectDir: string,
+  projectSlug: string,
+  apiUrl?: string,
+  options?: { createNew: boolean },
+): Promise<void> {
+  const path = join(projectDir, "veryfront.json");
+  let existing: Record<string, unknown> = {};
+  let existingMode: number | undefined;
+  try {
+    const info = await Deno.lstat(path);
+    existingMode = info.mode === null ? undefined : info.mode & 0o777;
+    if (info.isSymlink || !info.isFile) {
+      throw new Error("veryfront.json must be a regular file to save the project association.");
+    }
+    existing = JSON.parse(await Deno.readTextFile(path));
+    if (!existing || typeof existing !== "object" || Array.isArray(existing)) {
+      throw new Error("veryfront.json must contain a JSON object.");
+    }
+  } catch (error) {
+    if (!(error instanceof Deno.errors.NotFound)) throw error;
+  }
+  if (options?.createNew) {
+    await Deno.writeTextFile(
+      path,
+      `${JSON.stringify({ projectSlug, ...(apiUrl ? { apiUrl } : {}) }, null, 2)}\n`,
+      { createNew: true },
+    );
+    return;
+  }
+  if (!isJsonMode() && typeof existing.apiToken === "string" && existing.apiToken.length > 0) {
+    console.warn(
+      "veryfront.json contains a legacy apiToken. Run veryfront login, then remove apiToken before committing this shared project association.",
+    );
+  }
+  if (
+    existing.projectSlug === projectSlug && (apiUrl === undefined || existing.apiUrl === apiUrl)
+  ) {
+    return;
+  }
+  const temporary = join(projectDir, `.veryfront-association-${crypto.randomUUID()}.tmp`);
+  try {
+    await Deno.writeTextFile(
+      temporary,
+      `${JSON.stringify({ ...existing, projectSlug, ...(apiUrl ? { apiUrl } : {}) }, null, 2)}\n`,
+      { createNew: true, mode: existingMode ?? 0o600 },
+    );
+    if (existingMode !== undefined) await Deno.chmod(temporary, existingMode);
+    await Deno.rename(temporary, path);
+  } catch (error) {
+    try {
+      await Deno.remove(temporary);
+    } catch (cleanupError) {
+      if (!isNotFoundError(cleanupError)) {
+        throw new AggregateError(
+          [error, cleanupError],
+          "Could not save the project association or remove its temporary file.",
+          { cause: error },
+        );
+      }
+    }
+    throw error;
+  }
 }

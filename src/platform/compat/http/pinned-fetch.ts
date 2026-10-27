@@ -34,6 +34,7 @@ const NULL_BODY_STATUSES = new Set([204, 205, 304]);
 // The outgoing headers carry the caller's credentials, so they are only ever
 // touched through methods captured before project code could replace them.
 const IntrinsicReflectApply = Reflect.apply;
+const SetHas = Set.prototype.has;
 const NativeRequest = Request;
 const NativeResponse = Response;
 const HeadersHas = Headers.prototype.has;
@@ -393,6 +394,61 @@ function changedNodeRequestMemberError(member: string): TypeError {
   );
 }
 
+function snapshotMemberPosition(
+  snapshot: MemberSnapshot,
+  keys: PropertyKey[],
+  key: number,
+): number {
+  for (let known = 0; known < snapshot.keys.length; known++) {
+    if (snapshot.keys[known] === keys[key]) return known;
+  }
+  return -1;
+}
+
+function findChangedCurrentSnapshotMember(
+  snapshot: MemberSnapshot,
+  allowChangedMember: ((changed: ChangedNodeRequestMember) => boolean) | undefined,
+): ChangedNodeRequestMember | undefined {
+  const keys = ReflectOwnKeys(snapshot.target);
+  for (let key = 0; key < keys.length; key++) {
+    // Keep captured native traversal rather than mutable Array methods.
+    const position = snapshotMemberPosition(snapshot, keys, key);
+    const original = position === -1 ? undefined : snapshot.descriptors[position];
+    const current = ObjectGetOwnPropertyDescriptor(snapshot.target, keys[key]!);
+    if (
+      position === -1 ? isFunctionOrAccessor(current) : !isSameMember(current, original)
+    ) {
+      const changed = {
+        target: snapshot.target,
+        key: keys[key]!,
+        member: String(keys[key]),
+      };
+      if (!allowChangedMember?.(changed)) return changed;
+    }
+  }
+  return undefined;
+}
+
+function findRemovedSnapshotMember(
+  snapshot: MemberSnapshot,
+  allowChangedMember: ((changed: ChangedNodeRequestMember) => boolean) | undefined,
+): ChangedNodeRequestMember | undefined {
+  for (let key = 0; key < snapshot.keys.length; key++) {
+    if (
+      isFunctionOrAccessor(snapshot.descriptors[key]) &&
+      ObjectGetOwnPropertyDescriptor(snapshot.target, snapshot.keys[key]!) === undefined
+    ) {
+      const changed = {
+        target: snapshot.target,
+        key: snapshot.keys[key]!,
+        member: String(snapshot.keys[key]),
+      };
+      if (!allowChangedMember?.(changed)) return changed;
+    }
+  }
+  return undefined;
+}
+
 function findChangedNodeRequestMember(
   intrinsics: NodeTransportIntrinsics,
   allowChangedMember?: (changed: ChangedNodeRequestMember) => boolean,
@@ -403,42 +459,10 @@ function findChangedNodeRequestMember(
       const changed = { target: snapshot.target, key: undefined, member: "its prototype" };
       if (!allowChangedMember?.(changed)) return changed;
     }
-    const keys = ReflectOwnKeys(snapshot.target);
-    for (let key = 0; key < keys.length; key++) {
-      // A loop, not indexOf: Array.prototype methods are project-replaceable.
-      let position = -1;
-      for (let known = 0; known < snapshot.keys.length; known++) {
-        if (snapshot.keys[known] === keys[key]) {
-          position = known;
-          break;
-        }
-      }
-      const original = position === -1 ? undefined : snapshot.descriptors[position];
-      const current = ObjectGetOwnPropertyDescriptor(snapshot.target, keys[key]!);
-      if (
-        position === -1 ? isFunctionOrAccessor(current) : !isSameMember(current, original)
-      ) {
-        const changed = {
-          target: snapshot.target,
-          key: keys[key]!,
-          member: String(keys[key]),
-        };
-        if (!allowChangedMember?.(changed)) return changed;
-      }
-    }
-    for (let key = 0; key < snapshot.keys.length; key++) {
-      if (
-        isFunctionOrAccessor(snapshot.descriptors[key]) &&
-        ObjectGetOwnPropertyDescriptor(snapshot.target, snapshot.keys[key]!) === undefined
-      ) {
-        const changed = {
-          target: snapshot.target,
-          key: snapshot.keys[key]!,
-          member: String(snapshot.keys[key]),
-        };
-        if (!allowChangedMember?.(changed)) return changed;
-      }
-    }
+    const changed = findChangedCurrentSnapshotMember(snapshot, allowChangedMember);
+    if (changed !== undefined) return changed;
+    const removed = findRemovedSnapshotMember(snapshot, allowChangedMember);
+    if (removed !== undefined) return removed;
   }
   return undefined;
 }
@@ -466,6 +490,46 @@ function isCredentialRequestLockKey(key: PropertyKey): boolean {
   return key === "off" || key === "removeListener" || key === "emit";
 }
 
+function findNodeMemberSnapshot(
+  intrinsics: NodeTransportIntrinsics,
+  target: MemberSnapshot["target"],
+): MemberSnapshot | undefined {
+  for (let index = 0; index < intrinsics.nodeRequestMembers.length; index++) {
+    if (intrinsics.nodeRequestMembers[index]!.target === target) {
+      return intrinsics.nodeRequestMembers[index];
+    }
+  }
+  return undefined;
+}
+
+function lockCredentialSnapshotMembers(
+  instance: ClientRequest | Socket,
+  snapshot: MemberSnapshot,
+  isLockKey: (key: PropertyKey) => boolean,
+): void {
+  for (let index = 0; index < snapshot.keys.length; index++) {
+    const key = snapshot.keys[index]!;
+    if (!isLockKey(key)) continue;
+    const descriptor = snapshot.descriptors[index];
+    if (!isFunctionOrAccessor(descriptor)) continue;
+    if (IntrinsicReflectApply(ObjectHasOwn, undefined, [instance, key])) continue;
+    const locked = hasOwnField(descriptor!, "value")
+      ? {
+        configurable: false,
+        enumerable: descriptor!.enumerable,
+        writable: true,
+        value: descriptorField(descriptor!, "value"),
+      }
+      : {
+        configurable: false,
+        enumerable: descriptor!.enumerable,
+        get: descriptorField(descriptor!, "get"),
+        set: descriptorField(descriptor!, "set"),
+      };
+    IntrinsicReflectApply(ObjectDefineProperty, Object, [instance, key, locked]);
+  }
+}
+
 function lockCredentialRequestInstance(
   intrinsics: NodeTransportIntrinsics,
   request: ClientRequest,
@@ -475,35 +539,9 @@ function lockCredentialRequestInstance(
     target !== null && target !== Object.prototype;
     target = ReflectGetPrototypeOf(target)
   ) {
-    let snapshot: MemberSnapshot | undefined;
-    for (let index = 0; index < intrinsics.nodeRequestMembers.length; index++) {
-      if (intrinsics.nodeRequestMembers[index]!.target === target) {
-        snapshot = intrinsics.nodeRequestMembers[index];
-        break;
-      }
-    }
+    const snapshot = findNodeMemberSnapshot(intrinsics, target);
     if (snapshot === undefined) continue;
-    for (let index = 0; index < snapshot.keys.length; index++) {
-      const key = snapshot.keys[index]!;
-      if (!isCredentialRequestLockKey(key)) continue;
-      const descriptor = snapshot.descriptors[index];
-      if (!isFunctionOrAccessor(descriptor)) continue;
-      if (IntrinsicReflectApply(ObjectHasOwn, undefined, [request, key])) continue;
-      const locked = hasOwnField(descriptor!, "value")
-        ? {
-          configurable: false,
-          enumerable: descriptor!.enumerable,
-          writable: true,
-          value: descriptorField(descriptor!, "value"),
-        }
-        : {
-          configurable: false,
-          enumerable: descriptor!.enumerable,
-          get: descriptorField(descriptor!, "get"),
-          set: descriptorField(descriptor!, "set"),
-        };
-      IntrinsicReflectApply(ObjectDefineProperty, Object, [request, key, locked]);
-    }
+    lockCredentialSnapshotMembers(request, snapshot, isCredentialRequestLockKey);
   }
 }
 
@@ -523,35 +561,9 @@ function lockCredentialSocketInstance(
     target !== null && target !== Object.prototype;
     target = ReflectGetPrototypeOf(target)
   ) {
-    let snapshot: MemberSnapshot | undefined;
-    for (let index = 0; index < intrinsics.nodeRequestMembers.length; index++) {
-      if (intrinsics.nodeRequestMembers[index]!.target === target) {
-        snapshot = intrinsics.nodeRequestMembers[index];
-        break;
-      }
-    }
+    const snapshot = findNodeMemberSnapshot(intrinsics, target);
     if (snapshot === undefined) continue;
-    for (let index = 0; index < snapshot.keys.length; index++) {
-      const key = snapshot.keys[index]!;
-      if (!isCredentialSocketLockKey(key)) continue;
-      const descriptor = snapshot.descriptors[index];
-      if (!isFunctionOrAccessor(descriptor)) continue;
-      if (IntrinsicReflectApply(ObjectHasOwn, undefined, [socket, key])) continue;
-      const locked = hasOwnField(descriptor!, "value")
-        ? {
-          configurable: false,
-          enumerable: descriptor!.enumerable,
-          writable: true,
-          value: descriptorField(descriptor!, "value"),
-        }
-        : {
-          configurable: false,
-          enumerable: descriptor!.enumerable,
-          get: descriptorField(descriptor!, "get"),
-          set: descriptorField(descriptor!, "set"),
-        };
-      IntrinsicReflectApply(ObjectDefineProperty, Object, [socket, key, locked]);
-    }
+    lockCredentialSnapshotMembers(socket, snapshot, isCredentialSocketLockKey);
   }
 }
 
@@ -770,7 +782,10 @@ export function planPinnedConnectAttempts(
 export function isRetriableConnectFailure(error: unknown): boolean {
   if (typeof error !== "object" || error === null) return false;
   const code = (error as { code?: unknown }).code;
-  if (typeof code !== "string" || !RETRIABLE_CONNECT_CODES.has(code)) return false;
+  if (
+    typeof code !== "string" ||
+    !IntrinsicReflectApply(SetHas, RETRIABLE_CONNECT_CODES, [code])
+  ) return false;
   // ETIMEDOUT is the one code here that is not exclusively a connect failure:
   // it also surfaces when a socket times out after the request was written, and
   // replaying then could deliver a non-idempotent request twice. Only the
@@ -1151,20 +1166,21 @@ export async function fetchWithPinnedAddresses(
     }
     : undefined;
 
-  for (let attemptIndex = 0; attemptIndex < attempts.length; attemptIndex++) {
-    // Null-prototype options and headers: whatever node:http reads from them
-    // directly never falls through to Object.prototype. It reads most options
-    // from its own ordinary copy, though, which assertObjectPrototypeUnchanged
-    // covers before the call.
+  function selectPinnedAttemptAgent(attemptIndex: number) {
+    if (url.protocol !== "https:") return intrinsics.privateHttpAgent;
+    if (isDeno) return createPinnedDenoHttpsAgent(intrinsics, attempts[attemptIndex]![0]!);
+    return intrinsics.privateHttpsAgent;
+  }
+
+  function createAttemptRequestOptions(
+    attemptIndex: number,
+  ): RequestOptions & { autoSelectFamily?: boolean; ca?: string[] } {
     const outgoingHeaders = ObjectAssign(ObjectCreate(null), requestHeaders, {
       // node:http sends each element of an array value as its own field.
       ...(setCookies === undefined ? {} : { "set-cookie": [...setCookies] }),
       host: url.host,
     }) as Record<string, string | string[]>;
-    const requestOptions: RequestOptions & {
-      autoSelectFamily?: boolean;
-      ca?: string[];
-    } = ObjectAssign(ObjectCreate(null), {
+    return ObjectAssign(ObjectCreate(null), {
       protocol: url.protocol,
       // Node/Bun connect straight to the validated address: Bun's node:https
       // ignores a custom lookup and fails against a reachable address. Deno's
@@ -1175,11 +1191,7 @@ export async function fetchWithPinnedAddresses(
       path: `${url.pathname}${url.search}`,
       method,
       headers: outgoingHeaders,
-      agent: url.protocol === "https:"
-        ? isDeno
-          ? createPinnedDenoHttpsAgent(intrinsics, attempts[attemptIndex]![0]!)
-          : intrinsics.privateHttpsAgent
-        : intrinsics.privateHttpAgent,
+      agent: selectPinnedAttemptAgent(attemptIndex),
       ...(isDeno && url.protocol === "https:" ? {} : {
         createConnection: url.protocol === "https:"
           ? (options: ConnectionOptions, callback?: () => void) =>
@@ -1195,6 +1207,14 @@ export async function fetchWithPinnedAddresses(
         }
         : {}),
     });
+  }
+
+  for (let attemptIndex = 0; attemptIndex < attempts.length; attemptIndex++) {
+    // Null-prototype options and headers: whatever node:http reads from them
+    // directly never falls through to Object.prototype. It reads most options
+    // from its own ordinary copy, though, which assertObjectPrototypeUnchanged
+    // covers before the call.
+    const requestOptions = createAttemptRequestOptions(attemptIndex);
 
     // Prepared before the request exists: it can run project code.
     const payload = await prepareRequestPayload(body);

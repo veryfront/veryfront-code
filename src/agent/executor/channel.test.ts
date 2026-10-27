@@ -323,7 +323,7 @@ describe("executor channel", () => {
     const cleanup = Promise.withResolvers<void>();
     const cleaning = Promise.withResolvers<void>();
     const { caller, receiver } = pair(
-      new Map([
+      new Map<string, ExecutorOperation>([
         ["items", {
           mode: "stream",
           handle: async function* () {

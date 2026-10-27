@@ -28,7 +28,6 @@ import {
   unbrand,
 } from "./http-cache-types.ts";
 import {
-  asBundleHash,
   assertLocal,
   assertPortable,
   CACHE_DIR_TOKEN,
@@ -60,11 +59,9 @@ let testDistributedCacheAccessor: (() => Promise<CacheBackend | null>) | null = 
 let testDistributedCacheFallbackAccessor: (() => Promise<CacheBackend | null>) | null = null;
 
 function resolveDistributedCache(): Promise<CacheBackend | null> {
-  return testDistributedCacheAccessor
-    ? testDistributedCacheAccessor()
-    : testDistributedCacheFallbackAccessor
-    ? testDistributedCacheFallbackAccessor()
-    : getDistributedCache();
+  if (testDistributedCacheAccessor) return testDistributedCacheAccessor();
+  if (testDistributedCacheFallbackAccessor) return testDistributedCacheFallbackAccessor();
+  return getDistributedCache();
 }
 
 function parseStringRecord(value: unknown): Record<string, string> | undefined {
@@ -102,6 +99,7 @@ interface HttpCacheIdentityReference {
   url: string;
   reactVersion?: string;
   serverExternalPackages?: readonly string[];
+  localReact?: boolean;
   importMapFingerprint: string;
 }
 
@@ -120,6 +118,34 @@ function parseServerExternalPackages(value: unknown): readonly string[] | null |
   return canonicalizeServerExternalPackages(packages as string[]);
 }
 
+function parseIdentityImportMap(
+  parsed: Record<string, unknown>,
+  serverExternalPackages: readonly string[] | undefined,
+): HttpCacheIdentityMetadata | HttpCacheIdentityReference | null {
+  // Backward compatibility for v2 records written before import maps were shared.
+  if (parsed.importMap !== undefined) {
+    const importMap = parseImportMap(parsed.importMap);
+    return importMap
+      ? {
+        url: parsed.url as string,
+        reactVersion: parsed.reactVersion as string | undefined,
+        ...(parsed.localReact === true ? { localReact: true } : {}),
+        ...(serverExternalPackages ? { serverExternalPackages } : {}),
+        importMap,
+      }
+      : null;
+  }
+
+  if (typeof parsed.importMapFingerprint !== "string") return null;
+  return {
+    url: parsed.url as string,
+    reactVersion: parsed.reactVersion as string | undefined,
+    ...(parsed.localReact === true ? { localReact: true } : {}),
+    ...(serverExternalPackages ? { serverExternalPackages } : {}),
+    importMapFingerprint: parsed.importMapFingerprint,
+  };
+}
+
 function parseIdentityMetadata(
   value: string,
 ): HttpCacheIdentityMetadata | HttpCacheIdentityReference | null {
@@ -127,29 +153,11 @@ function parseIdentityMetadata(
     const parsed = JSON.parse(value) as Record<string, unknown>;
     if (!parsed || typeof parsed !== "object" || typeof parsed.url !== "string") return null;
     if (parsed.reactVersion !== undefined && typeof parsed.reactVersion !== "string") return null;
+    if (parsed.localReact !== undefined && typeof parsed.localReact !== "boolean") return null;
     const serverExternalPackages = parseServerExternalPackages(parsed.serverExternalPackages);
     if (serverExternalPackages === null) return null;
 
-    // Backward compatibility for v2 records written before import maps were shared.
-    if (parsed.importMap !== undefined) {
-      const importMap = parseImportMap(parsed.importMap);
-      return importMap
-        ? {
-          url: parsed.url,
-          reactVersion: parsed.reactVersion as string | undefined,
-          ...(serverExternalPackages ? { serverExternalPackages } : {}),
-          importMap,
-        }
-        : null;
-    }
-
-    if (typeof parsed.importMapFingerprint !== "string") return null;
-    return {
-      url: parsed.url,
-      reactVersion: parsed.reactVersion as string | undefined,
-      ...(serverExternalPackages ? { serverExternalPackages } : {}),
-      importMapFingerprint: parsed.importMapFingerprint,
-    };
+    return parseIdentityImportMap(parsed, serverExternalPackages);
   } catch {
     return null;
   }
@@ -337,15 +345,17 @@ function detokenize(code: PortableModuleCode | string): LocalModuleCode {
   return brand<LocalModuleCode>(result);
 }
 
+function compressedCachePayload(content: string): string | null {
+  if (content.startsWith("gz:")) return content.slice(3);
+  if (content.startsWith("gzip:")) return content.slice(5);
+  return null;
+}
+
 /**
  * Decode potentially gzip-compressed cache content.
  */
 function decodeGzip(content: string): DecodeResult {
-  const base64Data = content.startsWith("gz:")
-    ? content.slice(3)
-    : content.startsWith("gzip:")
-    ? content.slice(5)
-    : null;
+  const base64Data = compressedCachePayload(content);
 
   if (!base64Data) {
     return { code: content, wasGzipped: false, decodeFailed: false };
@@ -355,7 +365,7 @@ function decodeGzip(content: string): DecodeResult {
     const binaryString = atob(base64Data);
     const bytes = new Uint8Array(binaryString.length);
     for (let i = 0; i < binaryString.length; i++) {
-      bytes[i] = binaryString.charCodeAt(i);
+      bytes[i] = binaryString.codePointAt(i)!;
     }
 
     const decompressed = gunzipSync(bytes);
@@ -380,6 +390,33 @@ interface GetCodeResult {
   wasGzipped: boolean;
   /** Reason for null result, if applicable */
   failReason?: "not_found" | "gzip_decode_failed" | "html_content" | "error";
+}
+
+function appendRecoveredBatchCodes(
+  chunkResults: ReadonlyMap<string, string | null>,
+  keyToHash: Map<string | undefined, string>,
+  results: Map<string, LocalModuleCode>,
+): void {
+  for (const [key, rawCode] of chunkResults) {
+    if (!rawCode) continue;
+
+    const hash = keyToHash.get(key);
+    if (!hash) continue;
+
+    const decoded = decodeGzip(rawCode);
+    if (decoded.decodeFailed || looksLikeHtml(decoded.code)) continue;
+
+    // CRITICAL: Always detokenize before returning
+    const localCode = detokenize(decoded.code);
+
+    try {
+      assertLocal(localCode);
+      results.set(hash, localCode);
+    } catch {
+      /* expected: detokenization may be incomplete for some items */
+      logger.warn("Batch item failed assertion", { hash });
+    }
+  }
 }
 
 /**
@@ -544,6 +581,7 @@ class HttpBundleCache {
               url: identityMetadata.url,
               reactVersion: identityMetadata.reactVersion,
               serverExternalPackages: identityMetadata.serverExternalPackages,
+              localReact: identityMetadata.localReact,
               importMapFingerprint,
             }),
             ttl,
@@ -588,26 +626,7 @@ class HttpBundleCache {
           await Promise.all(chunk.map(async (key) => [key, await distributed.get(key)] as const)),
         );
 
-        for (const [key, rawCode] of chunkResults) {
-          if (!rawCode) continue;
-
-          const hash = keyToHash.get(key);
-          if (!hash) continue;
-
-          const decoded = decodeGzip(rawCode);
-          if (decoded.decodeFailed || looksLikeHtml(decoded.code)) continue;
-
-          // CRITICAL: Always detokenize before returning
-          const localCode = detokenize(decoded.code);
-
-          try {
-            assertLocal(localCode);
-            results.set(hash, localCode);
-          } catch (_) {
-            /* expected: detokenization may be incomplete for some items */
-            logger.warn("Batch item failed assertion", { hash });
-          }
-        }
+        appendRecoveredBatchCodes(chunkResults, keyToHash, results);
       }
     } catch (error) {
       logger.debug("Batch get failed", { error });
@@ -752,4 +771,5 @@ export const httpBundleCache = new HttpBundleCache();
  * Re-export transformation functions for use in migration.
  * These should eventually be removed once all code uses the wrapper.
  */
-export { asBundleHash, detokenize, tokenize };
+export { asBundleHash } from "./http-cache-invariants.ts";
+export { detokenize, tokenize };

@@ -9,6 +9,7 @@ import {
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import type { JsonSchema, Schema } from "#veryfront/extensions/schema/index.ts";
 import { dynamicTool, tool } from "./factory.ts";
+import { toolToProviderDefinition } from "./registry.ts";
 
 describe("tool factory", () => {
   describe("tool()", () => {
@@ -762,4 +763,70 @@ describe("tool factory", () => {
       );
     });
   });
+
+  describe("discovery metadata", () => {
+    const discovery = {
+      version: 1 as const,
+      type: "integration" as const,
+      domain: "crm",
+      resource: "contact",
+    };
+
+    it("carries normalized discovery from tool() into the provider definition", () => {
+      const t = tool({
+        id: "find_contact",
+        description: "Find a contact",
+        discovery: { ...discovery, ignored: true } as typeof discovery,
+        inputSchema: defineSchema((v) => v.object({ query: v.string() }))(),
+        execute: () => "ok",
+      });
+      assertEquals<unknown>({ ...t.discovery }, discovery);
+      assertEquals<unknown>({ ...toolToProviderDefinition(t).discovery }, discovery);
+    });
+
+    it("carries discovery from dynamicTool() and drops invalid metadata", () => {
+      const t = dynamicTool({
+        id: "list_contacts",
+        description: "List contacts",
+        discovery,
+        inputSchema: { type: "object", properties: {} },
+        execute: () => [],
+      });
+      assertEquals<unknown>({ ...t.discovery }, discovery);
+      const invalid = dynamicTool({
+        id: "bad",
+        description: "Bad",
+        discovery: { version: 2 } as never,
+        inputSchema: { type: "object", properties: {} },
+        execute: () => [],
+      });
+      assertEquals("discovery" in invalid, false);
+    });
+  });
+});
+
+Deno.test("tool factory retains an independent platform dependency request snapshot", () => {
+  const dependencies = ["outlook__upload_attachment"];
+  const value = tool({
+    id: "fixture_intake",
+    description: "Code-owned intake",
+    ...{ delegatedPlatformTools: dependencies },
+    inputSchema: { type: "object", properties: {} },
+    execute: async () => "done",
+  });
+  dependencies.push("veryfront__delete_file");
+  assertEquals(Reflect.get(value, "delegatedPlatformTools"), ["outlook__upload_attachment"]);
+});
+
+Deno.test("dynamic wrapper retains its independent platform dependency request", () => {
+  const dependencies = ["veryfront__create_file"];
+  const value = dynamicTool({
+    id: "fixture_snapshot",
+    description: "Code-owned writer",
+    ...{ delegatedPlatformTools: dependencies },
+    inputSchema: { type: "object", properties: {} },
+    execute: async () => "done",
+  });
+  dependencies.push("veryfront__delete_file");
+  assertEquals(Reflect.get(value, "delegatedPlatformTools"), ["veryfront__create_file"]);
 });

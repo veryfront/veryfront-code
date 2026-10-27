@@ -64,6 +64,47 @@ describe("agent/conversation/private-run-event", () => {
     );
   });
 
+  it("accepts strict assistant replay metadata only on assistant messages", () => {
+    const event = (role: string, providerMetadata: unknown) => ({
+      type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
+      messages: [{ role, content: [{ type: "text", text: "Continue" }], providerMetadata }],
+    });
+    assertEquals(
+      isPrivateConversationRunEvent(
+        event("assistant", {
+          anthropic: {
+            rawAssistantMessages: [[{
+              type: "tool_use",
+              id: "child",
+              name: "invoke_agent",
+              input: { value: null, enabled: false, count: 0 },
+            }]],
+          },
+        }),
+      ),
+      true,
+    );
+    for (
+      const metadata of [null, [], "invalid", 1, { value: NaN }, { value: () => 1 }, { value: 1n }]
+    ) {
+      assertEquals(isPrivateConversationRunEvent(event("assistant", metadata)), false);
+    }
+    for (const role of ["user", "tool", "system"]) {
+      assertEquals(isPrivateConversationRunEvent(event(role, {})), false);
+    }
+    let reads = 0;
+    const withGetter = event("assistant", {});
+    Object.defineProperty(withGetter.messages[0], "providerMetadata", {
+      enumerable: true,
+      get() {
+        reads += 1;
+        return {};
+      },
+    });
+    assertEquals(isPrivateConversationRunEvent(withGetter), false);
+    assertEquals(reads, 0);
+  });
+
   it("recognizes only well-shaped private model-call context events", () => {
     assertEquals(
       isPrivateConversationRunEvent({
@@ -84,7 +125,16 @@ describe("agent/conversation/private-run-event", () => {
       isPrivateConversationRunEvent({
         type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
         model: { id: "veryfront-cloud/anthropic/claude-sonnet-4-6", modelProvider: "anthropic" },
-        request: { maxOutputTokens: 4096, reasoning: { enabled: true, budgetTokens: 2048 } },
+        request: {
+          maxOutputTokens: 4096,
+          reasoning: { enabled: true, budgetTokens: 2048 },
+          responseFormat: {
+            type: "json_schema",
+            name: "result",
+            schema: { type: "object", properties: { answer: { type: "string" } } },
+            strict: true,
+          },
+        },
         messages: [],
         tools: [],
         elapsedMs: 42,
@@ -132,6 +182,11 @@ describe("agent/conversation/private-run-event", () => {
           type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
           messages: [],
           request: { reasoning: { arbitrary: true } },
+        },
+        {
+          type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
+          messages: [],
+          request: { responseFormat: { type: "json_schema", name: "result" } },
         },
         {
           type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
@@ -245,4 +300,27 @@ describe("agent/conversation/private-run-event", () => {
     assertEquals(error.category, "AGENT");
     assertEquals(error.detail, "mirror unavailable");
   });
+});
+
+it("private model request validates parallel tool control strictly", () => {
+  const event = { type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED", messages: [] };
+  for (const value of [false, true]) {
+    assertEquals(
+      isPrivateConversationRunEvent({ ...event, request: { parallelToolCalls: value } }),
+      true,
+    );
+  }
+  for (const value of ["false", 0, null, {}, []]) {
+    assertEquals(
+      isPrivateConversationRunEvent({ ...event, request: { parallelToolCalls: value } }),
+      false,
+    );
+  }
+  assertEquals(
+    isPrivateConversationRunEvent({
+      ...event,
+      request: { parallelToolCalls: false, unknown: true },
+    }),
+    false,
+  );
 });

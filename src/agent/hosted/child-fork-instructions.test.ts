@@ -16,20 +16,11 @@ Deno.test("buildHostedChildForkInstructions includes project context when projec
   assert(result.includes('project_reference: "proj-123"'));
 });
 
-Deno.test("buildHostedChildForkInstructions scopes project_reference guidance", () => {
+Deno.test("buildHostedChildForkInstructions states project context without tool argument recipes", () => {
   const result = buildHostedChildForkInstructions({ projectId: "proj-123" });
 
-  assert(
-    result.includes(
-      "Use project_reference when a tool schema requires it or the operation selects a billing project",
-    ),
-  );
-  assert(
-    result.includes("Sandbox command and file tools use the sandbox_id returned by create_sandbox"),
-  );
-  assert(!result.includes("Almost ALL MCP tools require project_reference"));
-  assert(!result.includes("create_sandbox_session"));
-  assert(result.includes("Do not add project_reference or branch_id to those sandbox operations"));
+  assert(result.includes("Project source edits belong to the branch above."));
+  assertEquals(result.includes("create_sandbox"), false);
 });
 
 Deno.test("buildHostedChildForkInstructions includes provided branch_id", () => {
@@ -63,15 +54,15 @@ Deno.test("buildHostedChildForkInstructions includes sorted available skills", (
   assert(result.includes("a-skill, m-skill, z-skill"));
 });
 
-Deno.test("buildHostedChildForkInstructions uses the resolved canonical skill loader", () => {
+Deno.test("buildHostedChildForkInstructions lists available skills without prescribing the resolved loader", () => {
   const result = buildHostedChildForkInstructions({
     projectId: "proj-123",
     availableSkillIds: ["design"],
     skillLoaderToolName: "veryfront__load_skill",
   });
 
-  assert(result.includes("Use `veryfront__load_skill` to load skill instructions"));
-  assert(result.includes("Use veryfront__load_skill to load instructions. Available: design"));
+  assertEquals(result.includes("load_skill"), false);
+  assert(result.includes("Available: design"));
   assertEquals(result.includes("Use `load_skill`"), false);
   assertEquals(result.includes("Use load_skill to load instructions"), false);
 });
@@ -82,12 +73,68 @@ Deno.test("buildHostedChildForkInstructions omits empty available skills", () =>
   assertEquals(result.includes("## Available Skills"), false);
 });
 
-Deno.test("child fork guidance names the canonical-only skill loader", () => {
+Deno.test("child fork guidance leaves invocation to the tool contract", () => {
   const result = buildHostedChildForkInstructions({
     skillLoaderToolName: "veryfront__load_skill",
     availableSkillIds: ["plan"],
   });
-  assert(result.includes("Use `veryfront__load_skill`"));
-  assert(result.includes("Use veryfront__load_skill to load instructions"));
+  assertEquals(result.includes("load_skill"), false);
+  assert(result.includes("Available: plan"));
   assert(!result.includes("Use `load_skill`"));
+});
+
+Deno.test("root and child artifact guidance matches the canonical platform catalog without tool recipes", async () => {
+  const { canonicalPlatformHostTools, withPlatformHostToolAliases } = await import(
+    "../platform-host-tools.ts"
+  );
+  const { buildDefaultResearchArtifactPathReminder } = await import(
+    "../artifacts/default-research-artifact-policy.ts"
+  );
+  const names = [
+    "create_file",
+    "update_file",
+    "delete_file",
+    "load_skill",
+    "form_input",
+    "create_sandbox",
+    "generate_image",
+    "web_fetch",
+  ];
+  const catalog = canonicalPlatformHostTools(
+    withPlatformHostToolAliases(Object.fromEntries(names.map((id) => [id, {
+      id,
+      description: id,
+      inputSchemaJson: { type: "object" },
+      execute: () => ({ ok: true }),
+    }]))),
+  );
+  assertEquals(Object.keys(catalog).sort(), names.map((name) => `veryfront__${name}`).sort());
+  const root = buildDefaultResearchArtifactPathReminder({
+    description: "Research",
+    prompt: "Research the topic and save the report to the project",
+    runId: "run_prompt",
+  });
+  assert(root);
+  const child = buildHostedChildForkInstructions({
+    projectId: "project",
+    availableSkillIds: ["design"],
+  });
+  const policy = await import("../conversation/delegation-policy.ts");
+  for (
+    const prompt of [
+      root,
+      child,
+      policy.buildStarterIntentRootOwnershipReminder(),
+      policy.buildStarterIntentRootOwnershipBlockMessage(),
+      policy.LOAD_SKILL_CONTINUATION_REMINDER,
+    ]
+  ) {
+    for (const name of names) {
+      assertEquals(
+        new RegExp(`(?<![a-zA-Z0-9_])${name}\\b`).test(prompt),
+        false,
+        `prompt must not prescribe unavailable ${name}`,
+      );
+    }
+  }
 });

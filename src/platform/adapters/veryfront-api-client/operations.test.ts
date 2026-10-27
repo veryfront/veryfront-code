@@ -244,7 +244,7 @@ describe("VeryfrontAPIOperations", () => {
             id: "file-id",
             version_id: "version-id",
             path: "agents/assistant.ts",
-            size: 18,
+            size_bytes: 18,
             type: "file",
             updated_at: "2026-10-02T00:00:00.000Z",
             checksum: "abc123",
@@ -260,11 +260,83 @@ describe("VeryfrontAPIOperations", () => {
       const parsed = new URL(requestedUrl);
       assertEquals(
         parsed.searchParams.get("fields"),
-        "(id,version_id,path,size,type,updated_at,checksum)",
+        "(id,version_id,path,size_bytes,size,type,updated_at,checksum)",
       );
       assertEquals(parsed.searchParams.get("include_server_functions"), "true");
       assertEquals(result.files[0]?.checksum, "abc123");
       assertEquals(result.files[0]?.content, undefined);
+      assertEquals(result.files[0]?.size, 18);
+    });
+
+    it("addresses a branch with the ref selector on file lists and reads", async () => {
+      const requestedUrls: string[] = [];
+      stubJsonFetch((url) => {
+        requestedUrls.push(url);
+        return url.includes("/files/")
+          ? {
+            path: "pages/index.tsx",
+            content: "export {}",
+            type: "page",
+            size_bytes: 9,
+            size: 9,
+            updated_at: "2026-10-02T00:00:00.000Z",
+          }
+          : { data: [], page_info: { self: null, first: null, next: null, prev: null } };
+      });
+
+      const ops = createOps();
+      await ops.listBranchFiles("project-slug", "feature/x");
+      const file = await ops.getBranchFile("project-slug", "feature/x", "pages/index.tsx");
+      await ops.listBranchFiles("project-slug", "");
+
+      const [list, detail, emptyRef] = requestedUrls.map((url) => new URL(url).searchParams);
+      assertEquals(list?.get("ref"), "branch:feature/x");
+      assertEquals(list?.has("branch"), false);
+      assertEquals(detail?.get("ref"), "branch:feature/x");
+      assertEquals(detail?.has("branch"), false);
+      assertEquals(emptyRef?.get("ref"), "main");
+      assertEquals(file.size, 9);
+    });
+
+    it("reads size_bytes before size and still accepts a file that carries only size", async () => {
+      stubJsonFetch(() => ({
+        data: [
+          {
+            path: "a.ts",
+            content: "a",
+            type: "file",
+            size_bytes: 7,
+            size: 1,
+            updated_at: "2026-10-02T00:00:00.000Z",
+          },
+          {
+            path: "b.ts",
+            content: "b",
+            type: "file",
+            size: 3,
+            updated_at: "2026-10-02T00:00:00.000Z",
+          },
+        ],
+        page_info: { self: null, first: null, next: null, prev: null },
+      }));
+
+      const result = await createOps().listBranchFiles("project-slug", "main");
+
+      assertEquals(result.files.map((file) => file.size), [7, 3]);
+    });
+
+    it("rejects a branch file that carries neither size_bytes nor size", async () => {
+      stubJsonFetch(() => ({
+        data: [{
+          path: "a.ts",
+          content: "a",
+          type: "file",
+          updated_at: "2026-10-02T00:00:00.000Z",
+        }],
+        page_info: { self: null, first: null, next: null, prev: null },
+      }));
+
+      await assertRejects(() => createOps().listBranchFiles("project-slug", "main"));
     });
 
     it("lists branch metadata in 1000-file pages and contents in 100-file pages", async () => {
@@ -1058,7 +1130,7 @@ describe("VeryfrontAPIOperations", () => {
 
       assertEquals([...bytes], [0xc3, 0xa9]);
       assertStringIncludes(requestedUrl, "/projects/project-slug/files/styles%2Fmanifest.json?");
-      assertStringIncludes(requestedUrl, "branch=main");
+      assertEquals(new URL(requestedUrl).searchParams.get("ref"), "branch:main");
       assertStringIncludes(requestedUrl, "include_server_functions=true");
     });
 
@@ -1483,7 +1555,7 @@ describe("VeryfrontAPIOperations", () => {
         return { id: "b1", manifest_version: 1, state: "building" };
       });
 
-      const res = await createOps().beginReleaseAssetManifestBuild("project-slug", "rel-1");
+      const res = await createOps().startReleaseAssetManifestBuild("project-slug", "rel-1");
 
       assertEquals(method, "POST");
       assertStringIncludes(requestedUrl, "/releases/rel-1/asset-manifest/builds");
@@ -1510,7 +1582,7 @@ describe("VeryfrontAPIOperations", () => {
       );
 
       const bytes = new TextEncoder().encode("export const x = 1;");
-      const res = await createOps().uploadReleaseAsset(
+      const res = await createOps().writeReleaseAsset(
         "project-slug",
         "rel-1",
         "a".repeat(64),
@@ -1533,7 +1605,7 @@ describe("VeryfrontAPIOperations", () => {
         return { state: "ready", manifest_version: 1 };
       });
 
-      const res = await createOps().putReleaseAssetManifest("project-slug", "rel-1", {
+      const res = await createOps().writeReleaseAssetManifest("project-slug", "rel-1", {
         schemaVersion: 1,
       });
 
@@ -1549,7 +1621,7 @@ describe("VeryfrontAPIOperations", () => {
         return { state: "failed" };
       });
 
-      await createOps().reportReleaseAssetManifestState(
+      await createOps().updateReleaseAssetManifestState(
         "project-slug",
         "rel-1",
         "failed",
@@ -1558,6 +1630,70 @@ describe("VeryfrontAPIOperations", () => {
 
       assertEquals((body as { state: string }).state, "failed");
       assertEquals((body as { error: string }).error, "boom");
+    });
+
+    it("keeps the previous release asset method names as aliases with identical requests", async () => {
+      const requests: Array<{ method: string; url: string; headers: unknown; body: unknown }> = [];
+      installMockFetch(
+        ((input: RequestInfo | URL, init?: RequestInit) => {
+          const headers = new Headers(init?.headers);
+          requests.push({
+            method: init?.method ?? "GET",
+            url: String(input),
+            headers: {
+              contentType: headers.get("Content-Type"),
+              contentHash: headers.get("x-vf-content-hash"),
+            },
+            body: init?.body instanceof Uint8Array ? Array.from(init.body) : init?.body,
+          });
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                id: "b1",
+                manifest_version: 1,
+                state: "building",
+                stored: true,
+                existed: false,
+              }),
+              { status: 200, headers: { "Content-Type": "application/json" } },
+            ),
+          );
+        }) as typeof fetch,
+      );
+      const ops = createOps();
+      const bytes = new TextEncoder().encode("export const x = 1;");
+      const hash = "a".repeat(64);
+      const pairs: Array<[string, () => Promise<unknown>, () => Promise<unknown>]> = [
+        [
+          "start",
+          () => ops.startReleaseAssetManifestBuild("project-slug", "rel-1"),
+          () => ops.beginReleaseAssetManifestBuild("project-slug", "rel-1"),
+        ],
+        [
+          "write asset",
+          () => ops.writeReleaseAsset("project-slug", "rel-1", hash, "text/javascript", bytes),
+          () => ops.uploadReleaseAsset("project-slug", "rel-1", hash, "text/javascript", bytes),
+        ],
+        [
+          "write manifest",
+          () => ops.writeReleaseAssetManifest("project-slug", "rel-1", { schemaVersion: 1 }),
+          () => ops.putReleaseAssetManifest("project-slug", "rel-1", { schemaVersion: 1 }),
+        ],
+        [
+          "update state",
+          () => ops.updateReleaseAssetManifestState("project-slug", "rel-1", "failed", "boom"),
+          () => ops.reportReleaseAssetManifestState("project-slug", "rel-1", "failed", "boom"),
+        ],
+      ];
+
+      for (const [label, canonical, legacy] of pairs) {
+        requests.length = 0;
+        const canonicalResult = await canonical();
+        const legacyResult = await legacy();
+        assertEquals(requests.length, 2, label);
+        assertEquals(requests[1], requests[0], label);
+        assertEquals(legacyResult, canonicalResult, label);
+      }
     });
 
     it("fetches the manifest via GET", async () => {
@@ -1599,7 +1735,7 @@ describe("VeryfrontAPIOperations", () => {
         [...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, "0")).join("")
       );
 
-      const result = await createOps().uploadDependencyArtifactAsset(
+      const result = await createOps().writeDependencyArtifactAsset(
         "11111111-1111-4111-8111-111111111111",
         2,
         contentHash,
@@ -1628,7 +1764,7 @@ describe("VeryfrontAPIOperations", () => {
 
       await assertRejects(
         () =>
-          createOps().uploadDependencyArtifactAsset(
+          createOps().writeDependencyArtifactAsset(
             "11111111-1111-4111-8111-111111111111",
             2,
             "a".repeat(64),
@@ -1653,7 +1789,7 @@ describe("VeryfrontAPIOperations", () => {
       });
       const hash = "b".repeat(64);
 
-      const result = await createOps().reportDependencyArtifactBuildResult(
+      const result = await createOps().createDependencyArtifactBuildResult(
         "11111111-1111-4111-8111-111111111111",
         2,
         {
@@ -1678,5 +1814,165 @@ describe("VeryfrontAPIOperations", () => {
       assertEquals((body as { outcome: string }).outcome, "ready");
       assertEquals(result, { accepted: true, state: "ready" });
     });
+  });
+
+  describe("style artifact operations", () => {
+    type Sent = { url: string; method: string; body: unknown };
+
+    function recordRequests(): Sent[] {
+      const sent: Sent[] = [];
+      stubJsonFetch((url, init) => {
+        sent.push({
+          url,
+          method: init?.method ?? "GET",
+          body: init?.body === undefined ? undefined : JSON.parse(String(init.body)),
+        });
+        return { status: "building", build_run_id: "run-1" };
+      });
+      return sent;
+    }
+
+    it("sends get, update and start-build requests under the canonical names", async () => {
+      const sent = recordRequests();
+      const ops = createOps();
+      const input = { branch: "main", styleProfileHash: "profile-1" };
+
+      const got = await ops.getStyleArtifact("my project", input);
+      await ops.updateStyleArtifact("my project", { ...input, status: "failed" });
+      await ops.startStyleArtifactBuild("my project", { ...input, force: true });
+
+      assertEquals(got.status, "building");
+      assertEquals(got.buildRunId, "run-1");
+      assertEquals(sent.map((request) => request.method), ["GET", "PUT", "POST"]);
+      assertEquals(
+        sent[0]?.url,
+        "https://api.example.com/projects/my%20project/style-artifacts/current?style_profile_hash=profile-1&branch=main",
+      );
+      assertEquals(
+        sent[1]?.url,
+        "https://api.example.com/projects/my%20project/style-artifacts/current",
+      );
+      assertEquals(
+        sent[2]?.url,
+        "https://api.example.com/projects/my%20project/style-artifacts/current/builds",
+      );
+    });
+
+    it("keeps the deprecated names as aliases that send the same requests", async () => {
+      const input = { environmentName: "production", styleProfileHash: "profile-1" };
+      const update = { ...input, status: "ready" as const, artifactHash: "hash-1" };
+      const build = { ...input, force: true };
+
+      const canonical = recordRequests();
+      const canonicalOps = createOps();
+      const canonicalResults = [
+        await canonicalOps.getStyleArtifact("project-slug", input),
+        await canonicalOps.updateStyleArtifact("project-slug", update),
+        await canonicalOps.startStyleArtifactBuild("project-slug", build),
+      ];
+      restoreMockFetch();
+
+      const deprecated = recordRequests();
+      const deprecatedOps = createOps();
+      const deprecatedResults = [
+        await deprecatedOps.resolveStyleArtifact("project-slug", input),
+        await deprecatedOps.upsertStyleArtifact("project-slug", update),
+        await deprecatedOps.ensureStyleArtifactBuild("project-slug", build),
+      ];
+
+      assertEquals(deprecated.length, 3);
+      assertEquals(deprecated, canonical);
+      assertEquals(deprecatedResults, canonicalResults);
+    });
+
+    it("passes the abort signal of the deprecated update alias to the request", async () => {
+      recordRequests();
+      const controller = new AbortController();
+      controller.abort();
+
+      await assertRejects(() =>
+        createOps().upsertStyleArtifact(
+          "project-slug",
+          { branch: "main", styleProfileHash: "profile-1" },
+          controller.signal,
+        )
+      );
+    });
+  });
+
+  describe("resolveDependencies", () => {
+    it("posts specifiers, branch and expected declarations and keeps raw pin keys", async () => {
+      let requestedUrl = "";
+      let method = "";
+      let body: unknown;
+      installMockFetch(
+        ((input: RequestInfo | URL, init?: RequestInit) => {
+          requestedUrl = String(input);
+          method = init?.method ?? "GET";
+          body = JSON.parse(String(init?.body));
+          return Promise.resolve(
+            new Response(
+              '{"pins":{"__proto__":"1.0.0","zod":"3.25.76"},"persisted":true,"skipped":{"clsx":"declaration_changed"}}',
+              { status: 200, headers: { "Content-Type": "application/json" } },
+            ),
+          );
+        }) as typeof fetch,
+      );
+
+      const result = await createOps().resolveDependencies("project/slug", {
+        specifiers: ["zod@^3", "clsx"],
+        branch: "feature-a",
+        expectedDeclarations: { zod: "^3", clsx: null },
+      });
+
+      assertEquals(method, "POST");
+      assertStringIncludes(requestedUrl, "/projects/project%2Fslug/dependencies/resolve");
+      assertEquals(body, {
+        specifiers: ["zod@^3", "clsx"],
+        branch: "feature-a",
+        expected_declarations: { zod: "^3", clsx: null },
+      });
+      assert(Object.hasOwn(result.pins, "__proto__"));
+      assertEquals(result.pins.zod, "3.25.76");
+      assertEquals(result.persisted, true);
+      assertEquals(result.skipped.clsx, "declaration_changed");
+    });
+
+    it("sends no branch or expected declarations for main", async () => {
+      let body: unknown;
+      stubJsonFetch((_url, init) => {
+        body = JSON.parse(String(init?.body));
+        return { pins: {}, persisted: false, skipped: {} };
+      });
+
+      const result = await createOps().resolveDependencies("project-slug", {
+        specifiers: ["react"],
+        branch: "main",
+      });
+
+      assertEquals(body, { specifiers: ["react"] });
+      assertEquals(result.persisted, false);
+    });
+
+    for (
+      const [label, response] of [
+        ["a non-object body", [1]],
+        ["a missing persisted flag", { pins: {}, skipped: {} }],
+        ["a non-boolean persisted flag", { pins: {}, persisted: "yes", skipped: {} }],
+        ["an array of pins", { pins: [], persisted: true, skipped: {} }],
+        ["a non-string pin", { pins: { zod: 3 }, persisted: true, skipped: {} }],
+        ["an unknown skip reason", { pins: {}, persisted: true, skipped: { zod: "gone" } }],
+      ] as const
+    ) {
+      it(`rejects a response with ${label}`, async () => {
+        stubJsonFetch(() => response);
+
+        await assertRejects(
+          () => createOps().resolveDependencies("project-slug", { specifiers: ["zod"] }),
+          Error,
+          "dependency",
+        );
+      });
+    }
   });
 });

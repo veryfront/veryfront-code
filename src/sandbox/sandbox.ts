@@ -24,7 +24,8 @@ import {
   buildSandboxCommandOptions,
   buildSandboxCreateInput,
 } from "./create-input.ts";
-import { INITIALIZATION_ERROR, REQUEST_ERROR, TIMEOUT_ERROR } from "#veryfront/errors";
+import { INITIALIZATION_ERROR, TIMEOUT_ERROR } from "#veryfront/errors";
+import { createSandboxHttpError } from "./http-error.ts";
 import { LazySandbox, type LazySandboxOptions } from "./lazy-sandbox.ts";
 import { fetchSandboxUrl, resolveSandboxApiUrl, resolveSandboxAuthToken } from "./config.ts";
 import {
@@ -35,6 +36,13 @@ import {
   withSandboxRequestDeadline,
 } from "./proxy-routes.ts";
 import { readCommandStreamEvents } from "./exec-stream.ts";
+import {
+  addAbortSignalListenerOnce,
+  getAbortSignalReason,
+  isAbortSignalAborted,
+  removeAbortSignalListener,
+  throwIfAbortSignalAborted,
+} from "#veryfront/platform/compat/abort-signal.ts";
 import type {
   BackgroundCommand,
   BackgroundCommandOutput,
@@ -43,6 +51,7 @@ import type {
   CommandStreamEvent,
   SandboxAttachment,
   SandboxCapabilities,
+  SandboxCapabilitiesOptions,
   SandboxClientOptions,
   SandboxDetails,
   SandboxEnvironment,
@@ -53,7 +62,9 @@ import type {
   SandboxListResult,
   SandboxOptions,
   SandboxRuntimeCheck,
+  SandboxWriteFilesOptions,
 } from "./types.ts";
+const anyAbortSignal = AbortSignal.any.bind(AbortSignal);
 export { resolveSandboxApiUrl, resolveSandboxAuthToken } from "./config.ts";
 export type {
   BackgroundCommand,
@@ -66,6 +77,7 @@ export type {
   SandboxAccessScope,
   SandboxAttachment,
   SandboxCapabilities,
+  SandboxCapabilitiesOptions,
   SandboxClientOptions,
   SandboxDetails,
   SandboxEnvironment,
@@ -80,12 +92,14 @@ export type {
   SandboxRuntimeCheck,
   SandboxStatus,
   SandboxWorkspaceStorage,
+  SandboxWriteFilesOptions,
 } from "./types.ts";
 
 interface SandboxPrivateState {
   endpoint: string;
   sessionId: string;
   authToken: string;
+  getAuthToken?: () => string;
   apiUrl: string;
   deleteOnClose: boolean;
   createdByClient: boolean;
@@ -106,7 +120,10 @@ function getSandboxPrivateState(sandbox: Sandbox): SandboxPrivateState {
 }
 
 function getSandboxAuthToken(sandbox: Sandbox): string {
-  return getSandboxPrivateState(sandbox).authToken;
+  const state = getSandboxPrivateState(sandbox);
+  return state.getAuthToken
+    ? applyIntrinsic(state.getAuthToken, undefined, []) as string
+    : state.authToken;
 }
 
 /** Client for isolated coding workspaces with command execution and file I/O. */
@@ -118,11 +135,13 @@ export class Sandbox {
     apiUrl: string,
     deleteOnClose = true,
     createdByClient = false,
+    getAuthToken?: () => string,
   ) {
     applyIntrinsic(weakMapSet, sandboxPrivateStates, [this, {
       endpoint,
       sessionId,
       authToken,
+      getAuthToken,
       apiUrl,
       deleteOnClose,
       createdByClient,
@@ -142,19 +161,38 @@ export class Sandbox {
         "Content-Type": "application/json",
       },
       body: JSON.stringify(buildSandboxCreateInput(options)),
+      signal: options.signal,
     });
 
     if (!res.ok) {
-      throw REQUEST_ERROR.create({
-        detail: `Failed to create sandbox: ${res.status} ${await res.text()}`,
-      });
+      throw await createSandboxHttpError(res, "Failed to create sandbox");
     }
 
     const created = await res.json();
     const { id, endpoint } = created;
-    const session = created.status === "running"
-      ? created
-      : await Sandbox.#waitForReady(apiUrl, id, authToken);
+    let session: Record<string, unknown>;
+    try {
+      session = created.status === "running" ? created : await Sandbox.#waitForReady(
+        apiUrl,
+        id,
+        authToken,
+        options.getAuthToken,
+        options.signal,
+      );
+    } catch (error) {
+      try {
+        await withSandboxRequestDeadline(1000, async (signal) => {
+          await fetchSandboxUrl(`${apiUrl}/sandboxes/${encodeURIComponent(id)}`, {
+            method: "DELETE",
+            signal,
+            headers: {
+              Authorization: `Bearer ${options.getAuthToken?.() ?? authToken}`,
+            },
+          });
+        });
+      } catch { /* Preserve the provisioning or cancellation failure. */ }
+      throw error;
+    }
 
     return new Sandbox(
       typeof session.endpoint === "string" ? session.endpoint : endpoint,
@@ -163,6 +201,7 @@ export class Sandbox {
       apiUrl,
       options.ttlMode !== "always_on" && hasTemporarySandboxPolicy(session),
       true,
+      options.getAuthToken,
     );
   }
 
@@ -176,9 +215,7 @@ export class Sandbox {
     });
 
     if (!res.ok) {
-      throw REQUEST_ERROR.create({
-        detail: `Failed to get sandbox: ${res.status} ${await res.text()}`,
-      });
+      throw await createSandboxHttpError(res, "Failed to get sandbox");
     }
 
     const { endpoint } = await res.json();
@@ -192,13 +229,21 @@ export class Sandbox {
     return new Sandbox(attachment.endpoint, attachment.id, authToken, apiUrl, false);
   }
 
-  /** Get sandbox capabilities, limits and defaults for the current caller. */
-  static async capabilities(options: SandboxClientOptions = {}): Promise<SandboxCapabilities> {
+  /** Get platform features or selected-project creation eligibility. Creation rechecks capacity. */
+  static async capabilities(
+    options: SandboxCapabilitiesOptions = {},
+  ): Promise<SandboxCapabilities> {
+    assertSandboxSelector(options.projectReference, "projectReference");
+    const query = new URLSearchParams();
+    if (options.projectReference !== undefined) {
+      query.set("project_reference", options.projectReference);
+    }
+    const path = `/sandboxes/capabilities${query.size ? `?${query}` : ""}`;
     return parseSandboxCapabilities(
       await requestSandboxControlPlane(
         resolveSandboxApiUrl(options),
         resolveSandboxAuthToken(options),
-        "/sandboxes/capabilities",
+        path,
       ),
     );
   }
@@ -286,9 +331,7 @@ export class Sandbox {
     });
 
     if (!res.ok) {
-      throw REQUEST_ERROR.create({
-        detail: `Failed to list sandboxes: ${res.status} ${await res.text()}`,
-      });
+      throw await createSandboxHttpError(res, "Failed to list sandboxes");
     }
 
     const json = await res.json();
@@ -308,10 +351,20 @@ export class Sandbox {
     apiUrl: string,
     id: string,
     authToken: string,
+    getAuthToken?: () => string,
+    signal?: AbortSignal,
     maxWaitMs = 60_000,
     pollIntervalMs = 2_000,
   ): Promise<Record<string, unknown>> {
-    return await waitForSandboxReadyRecord({ apiUrl, id, authToken, maxWaitMs, pollIntervalMs });
+    return await waitForSandboxReadyRecord({
+      apiUrl,
+      id,
+      authToken,
+      getAuthToken,
+      signal,
+      maxWaitMs,
+      pollIntervalMs,
+    });
   }
 
   /** Create a client that provisions its sandbox when first used. */
@@ -327,7 +380,9 @@ export class Sandbox {
         parseSandboxCommandResult(
           await this.#requestControlPlane("/commands/run", {
             method: "POST",
-            signal,
+            signal: options?.signal && signal
+              ? anyAbortSignal([options.signal, signal])
+              : options?.signal ?? signal,
             body: JSON.stringify({ command, ...buildSandboxCommandOptions(options) }),
           }),
         ),
@@ -347,6 +402,7 @@ export class Sandbox {
       ),
       {
         method: "POST",
+        signal: options?.signal,
         headers: {
           Authorization: `Bearer ${getSandboxAuthToken(this)}`,
           "Content-Type": "application/json",
@@ -356,13 +412,13 @@ export class Sandbox {
     );
 
     if (!res.ok) {
-      throw REQUEST_ERROR.create({ detail: `Exec failed: ${res.status} ${await res.text()}` });
+      throw await createSandboxHttpError(res, "Exec failed");
     }
 
     if (!res.body) {
       throw new Error("Exec response has no body");
     }
-    yield* readCommandStreamEvents(res.body);
+    yield* readCommandStreamEvents(res.body, options?.signal);
   }
 
   /** Read a file from the sandbox workspace. */
@@ -379,7 +435,7 @@ export class Sandbox {
     );
 
     if (!res.ok) {
-      throw REQUEST_ERROR.create({ detail: `Read file failed: ${res.status} ${await res.text()}` });
+      throw await createSandboxHttpError(res, "Read file failed");
     }
 
     return await readSandboxFileContent(res);
@@ -388,12 +444,14 @@ export class Sandbox {
   /** Write files to the sandbox workspace. */
   async writeFiles(
     files: Array<{ path: string; content: string }>,
+    options?: SandboxWriteFilesOptions,
   ): Promise<void> {
     const state = getSandboxPrivateState(this);
     const res = await fetchSandboxUrl(
       sandboxSessionRoute(state.apiUrl, state.sessionId, "/files"),
       {
         method: "POST",
+        signal: options?.signal,
         headers: {
           Authorization: `Bearer ${getSandboxAuthToken(this)}`,
           "Content-Type": "application/json",
@@ -403,9 +461,7 @@ export class Sandbox {
     );
 
     if (!res.ok) {
-      throw REQUEST_ERROR.create({
-        detail: `Write files failed: ${res.status} ${await res.text()}`,
-      });
+      throw await createSandboxHttpError(res, "Write files failed");
     }
     assertSandboxFilesWritten(await res.json(), files.map((file) => file.path));
   }
@@ -423,6 +479,7 @@ export class Sandbox {
       ),
       {
         method: "POST",
+        signal: options?.signal,
         headers: {
           Authorization: `Bearer ${getSandboxAuthToken(this)}`,
           "Content-Type": "application/json",
@@ -432,9 +489,7 @@ export class Sandbox {
     );
 
     if (!res.ok) {
-      throw REQUEST_ERROR.create({
-        detail: `Start background command failed: ${res.status} ${await res.text()}`,
-      });
+      throw await createSandboxHttpError(res, "Start background command failed");
     }
 
     return Sandbox.mapBackgroundCommand(await res.json());
@@ -454,9 +509,7 @@ export class Sandbox {
     );
 
     if (!res.ok) {
-      throw REQUEST_ERROR.create({
-        detail: `Get background command failed: ${res.status} ${await res.text()}`,
-      });
+      throw await createSandboxHttpError(res, "Get background command failed");
     }
 
     return Sandbox.mapBackgroundCommand(await res.json());
@@ -476,9 +529,7 @@ export class Sandbox {
     );
 
     if (!res.ok) {
-      throw REQUEST_ERROR.create({
-        detail: `Get background command output failed: ${res.status} ${await res.text()}`,
-      });
+      throw await createSandboxHttpError(res, "Get background command output failed");
     }
 
     const json = await res.json();
@@ -495,9 +546,7 @@ export class Sandbox {
         { headers: { Authorization: `Bearer ${getSandboxAuthToken(this)}` } },
       );
       if (!response.ok) {
-        throw REQUEST_ERROR.create({
-          detail: `List background commands failed: ${response.status}`,
-        });
+        throw await createSandboxHttpError(response, "List background commands failed");
       }
       return response.json();
     });
@@ -523,9 +572,7 @@ export class Sandbox {
     );
 
     if (!res.ok) {
-      throw REQUEST_ERROR.create({
-        detail: `Cancel background command failed: ${res.status} ${await res.text()}`,
-      });
+      throw await createSandboxHttpError(res, "Cancel background command failed", options.signal);
     }
 
     return Sandbox.mapBackgroundCommand(await res.json());
@@ -548,9 +595,7 @@ export class Sandbox {
     );
 
     if (!res.ok) {
-      throw REQUEST_ERROR.create({
-        detail: `Sandbox heartbeat failed: ${res.status} ${await res.text()}`,
-      });
+      throw await createSandboxHttpError(res, "Sandbox heartbeat failed");
     }
   }
 
@@ -599,9 +644,7 @@ export class Sandbox {
     );
 
     if (!res.ok && !(allowUnavailable && res.status === 404)) {
-      throw REQUEST_ERROR.create({
-        detail: `Delete sandbox failed: ${res.status} ${await res.text()}`,
-      });
+      throw await createSandboxHttpError(res, "Delete sandbox failed", options.signal);
     }
     const state = getSandboxPrivateState(this);
     state.deleteOnClose = false;
@@ -625,24 +668,45 @@ export async function waitForSandboxReady(input: {
   authToken: string;
   maxWaitMs?: number;
   pollIntervalMs?: number;
+  signal?: AbortSignal;
 }): Promise<void> {
   await waitForSandboxReadyRecord(input);
 }
 
 async function waitForSandboxReadyRecord(
-  input: Parameters<typeof waitForSandboxReady>[0],
+  input: Parameters<typeof waitForSandboxReady>[0] & { getAuthToken?: () => string },
 ): Promise<Record<string, unknown>> {
   const maxWaitMs = input.maxWaitMs ?? 60_000;
   const pollIntervalMs = input.pollIntervalMs ?? 2_000;
   const start = Date.now();
 
   while (Date.now() - start < maxWaitMs) {
-    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+    if (input.signal) throwIfAbortSignalAborted(input.signal);
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(done, pollIntervalMs);
+      function done() {
+        clearTimeout(timer);
+        if (input.signal) removeAbortSignalListener(input.signal, aborted);
+        resolve();
+      }
+      function aborted() {
+        clearTimeout(timer);
+        if (input.signal) removeAbortSignalListener(input.signal, aborted);
+        reject(input.signal ? getAbortSignalReason(input.signal) : undefined);
+      }
+      if (input.signal) {
+        addAbortSignalListenerOnce(input.signal, aborted);
+        if (isAbortSignalAborted(input.signal)) aborted();
+      }
+    });
 
     const res = await fetchSandboxUrl(
       `${input.apiUrl}/sandboxes/${encodeURIComponent(input.id)}`,
       {
-        headers: { Authorization: `Bearer ${input.authToken}` },
+        signal: input.signal,
+        headers: {
+          Authorization: `Bearer ${input.getAuthToken ? input.getAuthToken() : input.authToken}`,
+        },
       },
     );
 
@@ -676,7 +740,7 @@ async function requestSandboxControlPlane(
     },
   });
   if (!response.ok) {
-    throw REQUEST_ERROR.create({ detail: `Sandbox request failed: ${response.status}` });
+    throw await createSandboxHttpError(response, "Sandbox request failed", init?.signal);
   }
   return response.json();
 }

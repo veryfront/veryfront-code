@@ -1,9 +1,21 @@
+import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
 import { finalizeConversationAgentRun } from "../conversation/durable.ts";
 import { terminalRoute } from "../conversation/terminal-route.ts";
+
 import type { Schema, SchemaValidator } from "#veryfront/extensions/schema/index.ts";
 import { defineSchema } from "../../schemas/define.ts";
 import { lazySchema } from "../../schemas/lazy.ts";
 import { NETWORK_ERROR } from "#veryfront/errors";
+import {
+  type AgentWorkerRuntimeOwnershipProbe,
+  type AgentWorkerRuntimeOwnershipProbeCredentials,
+  type AgentWorkerRuntimeOwnershipProbeResult,
+  type AgentWorkerRuntimeOwnershipProbeRun,
+  createAgentWorkerRuntimeOwnershipProbeFromHostEnv,
+} from "./agent-worker-runtime-ownership-probe.ts";
+
+const DateParse = Date.parse;
+const NumberIsFinite = Number.isFinite;
 
 /** Public API contract for external agent worker. */
 export interface ExternalAgentWorker {
@@ -180,12 +192,47 @@ const RegisterExternalAgentWorkerResponseSchema = lazySchema(
   ),
 );
 
-type RunCredentials = { auth_token: string; run_event_token: string; run_terminal_token: string };
+type RunCredentials = {
+  auth_token: string;
+  run_event_token: string;
+  run_terminal_token: string;
+  inference_token?: string;
+};
+const privateWorkerCredentials = createPrivateWeakStore<
+  ExternalAgentWorkerClient,
+  (runId: string) => RunCredentials
+>();
+/** @internal Trusted local runtime access, excluded from public exports. */
+export function readExternalAgentWorkerRunAuthority(
+  client: ExternalAgentWorkerClient,
+  runId: string,
+) {
+  const read = privateWorkerCredentials.get(client);
+  if (!read) throw new Error("Trusted worker claim authority is unavailable.");
+  return read(runId);
+}
 const NativeMap = Map;
 const mapGet = Map.prototype.get;
 const mapSet = Map.prototype.set;
 const mapDelete = Map.prototype.delete;
 const apply = Reflect.apply;
+const responseJson = Response.prototype.json;
+const responseText = Response.prototype.text;
+const responseOk = Object.getOwnPropertyDescriptor(Response.prototype, "ok")!.get!;
+const responseStatus = Object.getOwnPropertyDescriptor(Response.prototype, "status")!.get!;
+const stringIncludes = String.prototype.includes;
+function errorMessageIncludes(error: unknown, expected: string): boolean {
+  if (error === null || typeof error !== "object") return false;
+  const message = (error as { message?: unknown }).message;
+  return typeof message === "string" && (apply(stringIncludes, message, [expected]) as boolean);
+}
+
+function isOwnershipProbeCursorFailure(error: unknown): boolean {
+  return errorMessageIncludes(error, "ownership probe append cursor is unavailable") ||
+    errorMessageIncludes(error, "ownership probe append outcome is ambiguous") ||
+    errorMessageIncludes(error, "ownership probe stale generation outcome is ambiguous");
+}
+
 const WorkerClaimSchema = lazySchema(
   defineSchema<{ run: ExternalAgentWorkerRun | null; credentials?: RunCredentials }>((v) =>
     v.object({
@@ -194,6 +241,7 @@ const WorkerClaimSchema = lazySchema(
         auth_token: v.string().min(1),
         run_event_token: v.string().min(1),
         run_terminal_token: v.string().min(1),
+        inference_token: v.string().min(1).optional(),
       }).optional(),
     })
   ),
@@ -204,6 +252,7 @@ export interface ExternalAgentWorkerClientOptions {
   apiUrl: string;
   authToken: string;
   fetch?: typeof fetch;
+  ownershipProbe?: AgentWorkerRuntimeOwnershipProbe;
 }
 
 /** Input payload for register external agent worker. */
@@ -219,6 +268,8 @@ export interface RegisterExternalAgentWorkerInput {
 /** Input payload for claim external agent worker run. */
 export interface ClaimExternalAgentWorkerRunInput {
   workerId: string;
+  /** Claim only this canonical run, or preserve FIFO when omitted. */
+  canonicalRunId?: string;
   leaseDurationSeconds: number;
 }
 
@@ -250,12 +301,36 @@ export interface AppendExternalAgentWorkerRunEventsInput {
 
 /** Public API contract for external agent worker client. */
 export interface ExternalAgentWorkerClient {
+  /**
+   * Register a worker for a project. Calls the Veryfront API operation
+   * `createAgentWorker` (`POST /agent-workers/projects/{project_reference}/workers`).
+   */
   registerWorker(input: RegisterExternalAgentWorkerInput): Promise<ExternalAgentWorker>;
+  /**
+   * Report that a worker is alive. Calls the Veryfront API operation
+   * `heartbeatAgentWorker` (`POST /agent-workers/workers/{worker_id}/heartbeat`).
+   */
   heartbeatWorker(workerId: string): Promise<ExternalAgentWorker>;
+  /**
+   * Claim the next queued run for a worker. Calls the Veryfront API operation
+   * `claimAgentWorkerRun` (`POST /agent-workers/workers/{worker_id}/claim`).
+   * Returns `null` when no run is queued.
+   */
   claimRun(input: ClaimExternalAgentWorkerRunInput): Promise<ExternalAgentWorkerRun | null>;
+  /**
+   * Extend the lease on a claimed run. Calls the Veryfront API operation
+   * `renewAgentWorkerRunLease`
+   * (`POST /agent-workers/workers/{worker_id}/runs/{run_id}/lease`).
+   * Returns `null` when the lease cannot be renewed.
+   */
   renewLease(input: ClaimExternalAgentWorkerRunInput & { runId: string }): Promise<
     ExternalAgentWorkerRun | null
   >;
+  /**
+   * Record the worker session for a claimed run. Calls the Veryfront API operation
+   * `updateAgentWorkerRunSession`
+   * (`PUT /agent-workers/workers/{worker_id}/runs/{run_id}/session`).
+   */
   recordSession(input: RecordExternalAgentWorkerSessionInput): Promise<
     ExternalAgentWorkerSession
   >;
@@ -268,12 +343,17 @@ class DefaultExternalAgentWorkerClient implements ExternalAgentWorkerClient {
   readonly #authToken: string;
   readonly #fetch: typeof fetch;
   readonly #runCredentials = new NativeMap<string, RunCredentials>();
-  readonly #workerTokensByWorkerId = new Map<string, string>();
+  readonly #runClaims = new NativeMap<string, { workerId: string; run: ExternalAgentWorkerRun }>();
+  readonly #workerTokensByWorkerId = new NativeMap<string, string>();
+  readonly #ownershipProbe?: AgentWorkerRuntimeOwnershipProbe;
 
   constructor(options: ExternalAgentWorkerClientOptions) {
+    privateWorkerCredentials.set(this, (runId) => this.#credentialsFor(runId));
     this.#apiUrl = options.apiUrl.replace(/\/$/, "");
     this.#authToken = options.authToken;
     this.#fetch = options.fetch ?? fetch;
+    this.#ownershipProbe = options.ownershipProbe ??
+      createAgentWorkerRuntimeOwnershipProbeFromHostEnv();
   }
 
   async #request<T>(
@@ -283,7 +363,8 @@ class DefaultExternalAgentWorkerClient implements ExternalAgentWorkerClient {
     options: { workerId?: string } = {},
   ): Promise<T> {
     const token = options.workerId
-      ? this.#workerTokensByWorkerId.get(options.workerId) ?? this.#authToken
+      ? (apply(mapGet, this.#workerTokensByWorkerId, [options.workerId]) as string | undefined) ??
+        this.#authToken
       : this.#authToken;
     const response = await this.#fetch(`${this.#apiUrl}${path}`, {
       ...init,
@@ -294,14 +375,14 @@ class DefaultExternalAgentWorkerClient implements ExternalAgentWorkerClient {
       },
     });
 
-    if (!response.ok) {
-      const body = await response.text().catch(() => "");
+    if (!apply(responseOk, response, [])) {
+      const body = await (apply(responseText, response, []) as Promise<string>).catch(() => "");
       throw NETWORK_ERROR.create({
-        detail: body || `Veryfront API returned HTTP ${response.status}`,
+        detail: body || `Veryfront API returned HTTP ${apply(responseStatus, response, [])}`,
       });
     }
 
-    return schema.parse(await response.json());
+    return schema.parse(await apply(responseJson, response, []));
   }
 
   async registerWorker(
@@ -322,7 +403,7 @@ class DefaultExternalAgentWorkerClient implements ExternalAgentWorkerClient {
       },
     );
 
-    this.#workerTokensByWorkerId.set(response.worker.id, response.token);
+    apply(mapSet, this.#workerTokensByWorkerId, [response.worker.id, response.token]);
     return response.worker;
   }
 
@@ -340,31 +421,89 @@ class DefaultExternalAgentWorkerClient implements ExternalAgentWorkerClient {
     return response.worker;
   }
 
-  async claimRun(
-    input: ClaimExternalAgentWorkerRunInput,
-  ): Promise<ExternalAgentWorkerRun | null> {
-    const response = await this.#request(
-      `/agent-workers/workers/${encodeURIComponent(input.workerId)}/claim`,
-      WorkerClaimSchema,
-      {
-        method: "POST",
-        body: JSON.stringify({ lease_duration_seconds: input.leaseDurationSeconds }),
+  #probeCredentials(
+    runId: string,
+    credentials: RunCredentials,
+  ): AgentWorkerRuntimeOwnershipProbeCredentials {
+    return {
+      authToken: credentials.auth_token,
+      inferenceToken: credentials.inference_token,
+      assertInferenceCredentialActive: () => {
+        if (apply(mapGet, this.#runCredentials, [runId]) !== credentials) {
+          throw new Error("Current worker inference authority is required");
+        }
       },
-      { workerId: input.workerId },
-    );
-    if (response.run && response.credentials) {
-      terminalRoute(response.credentials.run_terminal_token, response.run.run_id);
-      apply(mapSet, this.#runCredentials, [response.run.run_id, response.credentials]);
-    }
-    if (response.run && !response.credentials) {
-      apply(mapDelete, this.#runCredentials, [response.run.run_id]);
-    }
-    return response.run;
+      runEventToken: credentials.run_event_token,
+      runTerminalToken: credentials.run_terminal_token,
+    };
   }
 
-  async renewLease(
-    input: ClaimExternalAgentWorkerRunInput & { runId: string },
-  ): Promise<ExternalAgentWorkerRun | null> {
+  #validatedTerminalRoute(
+    run: ExternalAgentWorkerRun,
+    credentials: RunCredentials,
+  ): ReturnType<typeof terminalRoute> {
+    return terminalRoute(credentials.run_terminal_token, run.run_id);
+  }
+
+  #probeRun(
+    run: ExternalAgentWorkerRun,
+    credentials: RunCredentials,
+  ): AgentWorkerRuntimeOwnershipProbeRun {
+    const route = this.#validatedTerminalRoute(run, credentials);
+    const leaseExpiresAtMs = run.lease_expires_at === null
+      ? undefined
+      : DateParse(run.lease_expires_at);
+    return {
+      runId: run.run_id,
+      canonicalRunId: route.id,
+      projectId: run.project_id,
+      agentId: run.agent_id,
+      latestExternalEventSequence: run.latest_external_event_sequence,
+      leaseExpiresAtMs: leaseExpiresAtMs !== undefined && NumberIsFinite(leaseExpiresAtMs)
+        ? leaseExpiresAtMs
+        : undefined,
+    };
+  }
+
+  #withProbeCursor(
+    run: ExternalAgentWorkerRun,
+    latestExternalEventSequence: number | undefined,
+  ): ExternalAgentWorkerRun {
+    if (latestExternalEventSequence === undefined) return run;
+    if (latestExternalEventSequence === run.latest_external_event_sequence) return run;
+    return { ...run, latest_external_event_sequence: latestExternalEventSequence };
+  }
+
+  async #observeOwnershipProbe<T>(
+    operation: () => Promise<T> | T,
+  ): Promise<T | undefined> {
+    try {
+      return await operation();
+    } catch {
+      return undefined;
+    }
+  }
+
+  async #observeOwnershipProbeCursor(
+    operation: () =>
+      | Promise<AgentWorkerRuntimeOwnershipProbeResult | void>
+      | AgentWorkerRuntimeOwnershipProbeResult
+      | void,
+  ): Promise<number | undefined> {
+    try {
+      const result = await operation();
+      return result?.latestExternalEventSequence;
+    } catch (error) {
+      if (isOwnershipProbeCursorFailure(error)) throw error;
+      return undefined;
+    }
+  }
+
+  async #recoverRunAfterProbeCursorFailure(input: {
+    workerId: string;
+    runId: string;
+    leaseDurationSeconds: number;
+  }): Promise<ExternalAgentWorkerRun | null> {
     const response = await this.#request(
       `/agent-workers/workers/${encodeURIComponent(input.workerId)}/runs/${
         encodeURIComponent(input.runId)
@@ -377,11 +516,151 @@ class DefaultExternalAgentWorkerClient implements ExternalAgentWorkerClient {
       { workerId: input.workerId },
     );
     if (response.run && response.credentials) {
-      terminalRoute(response.credentials.run_terminal_token, response.run.run_id);
+      // The lease route names one run. A response for any other run proves nothing about
+      // the requested one and must not install credentials under either id.
+      if (response.run.run_id !== input.runId) {
+        throw new Error("Recovered worker run does not match the requested run");
+      }
+      this.#validatedTerminalRoute(response.run, response.credentials);
       apply(mapSet, this.#runCredentials, [response.run.run_id, response.credentials]);
+      apply(mapSet, this.#runClaims, [response.run.run_id, {
+        workerId: input.workerId,
+        run: response.run,
+      }]);
+      return response.run;
+    }
+    apply(mapDelete, this.#runCredentials, [input.runId]);
+    apply(mapDelete, this.#runClaims, [input.runId]);
+    return null;
+  }
+
+  async claimRun(
+    input: ClaimExternalAgentWorkerRunInput,
+  ): Promise<ExternalAgentWorkerRun | null> {
+    const response = await this.#request(
+      `/agent-workers/workers/${encodeURIComponent(input.workerId)}/claim`,
+      WorkerClaimSchema,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          lease_duration_seconds: input.leaseDurationSeconds,
+          ...(input.canonicalRunId ? { canonical_run_id: input.canonicalRunId } : {}),
+        }),
+      },
+      { workerId: input.workerId },
+    );
+    if (response.run && response.credentials) {
+      const responseCredentials = response.credentials;
+      const probeRun = this.#probeRun(response.run, responseCredentials);
+      apply(mapSet, this.#runCredentials, [response.run.run_id, responseCredentials]);
+      let probeCursor: number | undefined;
+      try {
+        probeCursor = await this.#observeOwnershipProbeCursor(
+          () =>
+            this.#ownershipProbe?.afterClaim({
+              apiUrl: this.#apiUrl,
+              fetch: this.#fetch,
+              workerId: input.workerId,
+              run: probeRun,
+              credentials: this.#probeCredentials(probeRun.runId, responseCredentials),
+            }),
+        );
+      } catch (error) {
+        const runId = response.run.run_id;
+        const recovered = await this.#recoverRunAfterProbeCursorFailure({
+          workerId: input.workerId,
+          runId,
+          leaseDurationSeconds: input.leaseDurationSeconds,
+        }).catch(() => null);
+        if (recovered) return recovered;
+        apply(mapDelete, this.#runCredentials, [runId]);
+        apply(mapDelete, this.#runClaims, [runId]);
+        throw error;
+      }
+      response.run = this.#withProbeCursor(response.run, probeCursor);
+      apply(mapSet, this.#runClaims, [response.run.run_id, {
+        workerId: input.workerId,
+        run: response.run,
+      }]);
+    }
+    if (response.run && !response.credentials) {
+      apply(mapDelete, this.#runCredentials, [response.run.run_id]);
+      apply(mapDelete, this.#runClaims, [response.run.run_id]);
+    }
+    return response.run;
+  }
+
+  async renewLease(
+    input: ClaimExternalAgentWorkerRunInput & { runId: string },
+  ): Promise<ExternalAgentWorkerRun | null> {
+    const previousCredentials = apply(mapGet, this.#runCredentials, [input.runId]) as
+      | RunCredentials
+      | undefined;
+    const response = await this.#request(
+      `/agent-workers/workers/${encodeURIComponent(input.workerId)}/runs/${
+        encodeURIComponent(input.runId)
+      }/lease`,
+      WorkerClaimSchema,
+      {
+        method: "POST",
+        body: JSON.stringify({ lease_duration_seconds: input.leaseDurationSeconds }),
+      },
+      { workerId: input.workerId },
+    );
+    if (response.run && response.credentials) {
+      const responseCredentials = response.credentials;
+      const probeRun = this.#probeRun(response.run, responseCredentials);
+      apply(mapSet, this.#runCredentials, [response.run.run_id, responseCredentials]);
+      let probeCursor: number | undefined;
+      try {
+        probeCursor = await this.#observeOwnershipProbeCursor(
+          () =>
+            this.#ownershipProbe?.afterRenew({
+              apiUrl: this.#apiUrl,
+              fetch: this.#fetch,
+              workerId: input.workerId,
+              run: probeRun,
+              credentials: this.#probeCredentials(probeRun.runId, responseCredentials),
+              previousCredentials: previousCredentials
+                ? this.#probeCredentials(input.runId, previousCredentials)
+                : undefined,
+            }),
+        );
+      } catch (error) {
+        const runId = response.run.run_id;
+        const recovered = await this.#recoverRunAfterProbeCursorFailure({
+          workerId: input.workerId,
+          runId,
+          leaseDurationSeconds: input.leaseDurationSeconds,
+        }).catch(() => null);
+        if (recovered) return recovered;
+        apply(mapDelete, this.#runCredentials, [runId]);
+        apply(mapDelete, this.#runClaims, [runId]);
+        throw error;
+      }
+      response.run = this.#withProbeCursor(response.run, probeCursor);
+      apply(mapSet, this.#runClaims, [response.run.run_id, {
+        workerId: input.workerId,
+        run: response.run,
+      }]);
     }
     if (!response.run || !response.credentials) {
+      const previousClaim = apply(mapGet, this.#runClaims, [input.runId]) as
+        | { workerId: string; run: ExternalAgentWorkerRun }
+        | undefined;
       apply(mapDelete, this.#runCredentials, [input.runId]);
+      apply(mapDelete, this.#runClaims, [input.runId]);
+      if (previousCredentials && previousClaim) {
+        await this.#observeOwnershipProbe(() =>
+          this.#ownershipProbe?.afterLeaseLost({
+            apiUrl: this.#apiUrl,
+            fetch: this.#fetch,
+            workerId: previousClaim.workerId,
+            run: this.#probeRun(previousClaim.run, previousCredentials),
+            credentials: this.#probeCredentials(input.runId, previousCredentials),
+          })
+        );
+      }
     }
     return response.run;
   }
@@ -446,8 +725,26 @@ class DefaultExternalAgentWorkerClient implements ExternalAgentWorkerClient {
       model: "",
       fetch: this.#fetch,
     });
+    const claim = apply(mapGet, this.#runClaims, [input.runId]) as
+      | { workerId: string; run: ExternalAgentWorkerRun }
+      | undefined;
+    if (claim) {
+      const probeInput = {
+        apiUrl: this.#apiUrl,
+        fetch: this.#fetch,
+        workerId: claim.workerId,
+        run: this.#probeRun(claim.run, credentials),
+        credentials: this.#probeCredentials(input.runId, credentials),
+      };
+      if (input.status === "cancelled") {
+        await this.#observeOwnershipProbe(() => this.#ownershipProbe?.afterCancelled(probeInput));
+      } else {
+        await this.#observeOwnershipProbe(() => this.#ownershipProbe?.afterTerminal?.(probeInput));
+      }
+    }
     if (apply(mapGet, this.#runCredentials, [input.runId]) === credentials) {
       apply(mapDelete, this.#runCredentials, [input.runId]);
+      apply(mapDelete, this.#runClaims, [input.runId]);
     }
   }
 }

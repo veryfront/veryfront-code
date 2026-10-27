@@ -1,7 +1,7 @@
 ---
 title: "veryfront/eval"
 description: "First-class eval primitives for agent, tool, and stored dataset quality checks."
-order: 8
+order: 9
 ---
 
 ## Import

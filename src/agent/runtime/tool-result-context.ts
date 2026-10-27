@@ -1,4 +1,5 @@
-import { privateJsonStringify } from "#veryfront/security/private-json.ts";
+import { pushPrivateArray } from "#veryfront/security/private-array.ts";
+import { privateJsonParse, privateJsonStringify } from "#veryfront/security/private-json.ts";
 import { createPrivateMap } from "#veryfront/security/private-map.ts";
 import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
 import {
@@ -7,6 +8,7 @@ import {
   privateTextSlice,
 } from "#veryfront/security/private-text.ts";
 
+const hasOwn = Object.hasOwn;
 const DEFAULT_MAX_INLINE_BYTES = 16_384;
 const DEFAULT_PREVIEW_BYTES = 4_096;
 const DEFAULT_MAX_SECTION_BYTES = 16_384;
@@ -18,7 +20,16 @@ const MAX_TOTAL_STORED_BYTES = 64 * 1_024 * 1_024;
 const MIN_SECTION_BYTES = 4;
 const TOOL_RESULT_REFERENCE_TYPE = "tool_result_reference";
 const TOOL_RESULT_SECTION_TYPE = "tool_result_section";
-const GET_TOOL_RESULT_TOOL_NAME = "get_tool_result";
+const GET_TOOL_RESULT_TOOL_NAME = "veryfront__get_tool_result";
+const MAX_POINTER_BYTES = 4_096;
+const MAX_POINTER_DEPTH = 32;
+const SLASH = 47;
+const TILDE = 126;
+const ZERO = 48;
+const ONE = 49;
+const ArrayIsArray = Array.isArray;
+const ObjectKeys = Object.keys;
+const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 
 export interface ToolResultContextLimits {
   readonly maxInlineBytes?: number;
@@ -35,6 +46,8 @@ export interface ToolResultDisclosureInput {
   readonly toolCallId: string;
   readonly toolName: string;
   readonly result: unknown;
+  /** Provider-only representation; identity and original access remain bound to result. */
+  readonly modelResult?: unknown;
   readonly isError?: boolean;
 }
 
@@ -99,8 +112,14 @@ export interface ToolResultReferencePayload {
   };
 }
 
+/** `value` reads retained text; `structure` lists one level of JSON child pointer tokens. */
+export type ToolResultView = "value" | "structure";
+
 export interface ToolResultSectionRequest {
   readonly ref: string;
+  readonly view?: ToolResultView;
+  /** RFC 6901 pointer into the retained JSON snapshot. Cursors page the selected value. */
+  readonly pointer?: string;
   readonly cursor?: string;
   readonly maxBytes?: number;
 }
@@ -110,6 +129,9 @@ export interface ToolResultSection {
   readonly ref: string;
   readonly toolCallId: string;
   readonly toolName: string;
+  readonly view?: "structure";
+  readonly pointer?: string;
+  /** UTF-8 size of the selected text that cursors page through. */
   readonly totalBytes: number;
   readonly cursor: string;
   readonly nextCursor?: string;
@@ -127,6 +149,8 @@ interface StoredToolResult {
   readonly originalResult: unknown;
   readonly isError?: boolean;
   readonly serialized: string;
+  /** True when `serialized` is a JSON encoding of a non-string result. */
+  readonly json: boolean;
   readonly byteLength: number;
 }
 
@@ -166,7 +190,9 @@ function atMost(name: string, value: number, maximum: number): number {
   return value;
 }
 
-function resolveLimits(limits: ToolResultContextLimits | undefined): ResolvedLimits {
+export function resolveToolResultContextLimits(
+  limits: ToolResultContextLimits | undefined,
+): ResolvedLimits {
   return {
     maxInlineBytes: atMost(
       "maxInlineBytes",
@@ -212,8 +238,124 @@ function safeSerializedResult(result: unknown): string {
     return result;
   }
 
-  const serialized = privateJsonStringify(result, null, 2);
+  const serialized = privateJsonStringify(result);
   return serialized === undefined ? "undefined" : serialized;
+}
+
+function pointerNotFound(): ReferenceError {
+  return new ReferenceError("JSON pointer was not found in the retained result");
+}
+
+function selectRetainedProperty(value: unknown, token: string): unknown {
+  if (value === null || typeof value !== "object") throw pointerNotFound();
+  if (
+    ArrayIsArray(value) &&
+    (token === "" || token === "length" ||
+      (token.length > 1 && privateTextCharCodeAt(token, 0) === ZERO))
+  ) throw pointerNotFound();
+  const descriptor = ObjectGetOwnPropertyDescriptor(value, token);
+  if (!descriptor) throw pointerNotFound();
+  return descriptor.value;
+}
+
+function assertPointerDepth(depth: number): void {
+  if (depth > MAX_POINTER_DEPTH) {
+    throw new TypeError("Retained result JSON pointer exceeds the maximum depth");
+  }
+}
+
+function decodePointerEscape(pointer: string, index: number): string {
+  const escape = privateTextCharCodeAt(pointer, index);
+  if (escape !== ZERO && escape !== ONE) {
+    throw new TypeError("Invalid retained result JSON pointer escape");
+  }
+  return escape === ZERO ? "~" : "/";
+}
+
+/** Resolve an RFC 6901 pointer against own properties of the retained JSON snapshot. */
+function selectRetainedJsonValue(serialized: string, pointer: string): unknown {
+  if (
+    byteLength(pointer) > MAX_POINTER_BYTES ||
+    (pointer !== "" && privateTextCharCodeAt(pointer, 0) !== SLASH)
+  ) {
+    throw new TypeError("Invalid retained result JSON pointer");
+  }
+  let value: unknown = privateJsonParse(serialized);
+  if (pointer === "") return value;
+  let token = "";
+  let depth = 0;
+  for (let index = 1; index <= pointer.length; index++) {
+    const code = index === pointer.length ? SLASH : privateTextCharCodeAt(pointer, index);
+    if (code === SLASH) {
+      assertPointerDepth(++depth);
+      value = selectRetainedProperty(value, token);
+      token = "";
+    } else if (code === TILDE) {
+      token += decodePointerEscape(pointer, ++index);
+    } else {
+      token += privateTextSlice(pointer, index, index + 1);
+    }
+  }
+  return value;
+}
+
+function jsonValueType(value: unknown): string {
+  if (value === null) return "null";
+  return ArrayIsArray(value) ? "array" : typeof value;
+}
+
+function escapedPointerCharacter(key: string, index: number): string {
+  const code = privateTextCharCodeAt(key, index);
+  if (code === TILDE) return "~0";
+  if (code === SLASH) return "~1";
+  return privateTextSlice(key, index, index + 1);
+}
+
+function escapePointerToken(key: string): string {
+  let token = "/";
+  for (let index = 0; index < key.length; index++) {
+    token += escapedPointerCharacter(key, index);
+  }
+  return token;
+}
+
+/** One level of child pointer tokens and JSON types, without field values. */
+function describeRetainedStructure(value: unknown): string {
+  const fields: { pointerToken: string; type: string }[] = [];
+  if (value !== null && typeof value === "object") {
+    const keys = ObjectKeys(value);
+    for (let index = 0; index < keys.length; index++) {
+      const key = keys[index]!;
+      const descriptor = ObjectGetOwnPropertyDescriptor(value, key);
+      if (!descriptor) continue;
+      pushPrivateArray(fields, {
+        pointerToken: escapePointerToken(key),
+        type: jsonValueType(descriptor.value),
+      });
+    }
+  }
+  // Each retained child contributes one field object and two scalar values.
+  // Include the root, its type, the field array and its length as well.
+  return privateJsonStringify(
+    { type: jsonValueType(value), fields },
+    null,
+    undefined,
+    3 * fields.length + 4,
+  )!;
+}
+
+function selectRetainedText(record: StoredToolResult, request: ToolResultSectionRequest): string {
+  const view = request.view ?? "value";
+  if (view !== "value" && view !== "structure") {
+    throw new TypeError("Invalid retained result view");
+  }
+  if (
+    view === "value" && (request.pointer === undefined || (request.pointer === "" && record.json))
+  ) return record.serialized;
+  if (!record.json) throw new TypeError("Selected tool result is not JSON");
+  const value = selectRetainedJsonValue(record.serialized, request.pointer ?? "");
+  if (view === "structure") return describeRetainedStructure(value);
+  return privateJsonStringify(value, null, undefined, record.serialized.length + 1)!;
 }
 
 function toolResultIdentityKey(
@@ -355,20 +497,22 @@ function createPreviewOnlyPayload(input: {
   };
 }
 
+class ToolResultContextCapacityError extends RangeError {
+  constructor(
+    message: string,
+    readonly detail: string,
+  ) {
+    super(message);
+  }
+}
+
 function capacityDetail(error: unknown): string | undefined {
-  if (!(error instanceof RangeError)) {
-    return undefined;
-  }
-  if (error.message.includes("per-result storage limit")) {
-    return "per-result storage limit exceeded";
-  }
-  if (error.message.includes("stored result limit exceeded")) {
-    return "stored result limit exceeded";
-  }
-  if (error.message.includes("total storage limit exceeded")) {
-    return "total storage limit exceeded";
-  }
-  return undefined;
+  return error instanceof ToolResultContextCapacityError ? error.detail : undefined;
+}
+
+/** @internal Distinguish expected retention capacity failures from other errors. */
+export function isToolResultContextCapacityError(error: unknown): boolean {
+  return capacityDetail(error) !== undefined;
 }
 
 export class ToolResultContext {
@@ -378,18 +522,51 @@ export class ToolResultContext {
   #primitiveRefs = createPrivateMap<unknown, IdentityIndex>();
   #totalStoredBytes = 0;
   #nextId = 1;
+  // Retain only the most recent selection; continuation pages reuse its encoding.
+  #selection?: {
+    record: StoredToolResult;
+    pointer: string | undefined;
+    view: ToolResultView;
+    text: string;
+    byteLength: number;
+  };
 
   constructor(options: ToolResultContextOptions = {}) {
-    this.#limits = resolveLimits(options.limits);
+    this.#limits = resolveToolResultContextLimits(options.limits);
   }
 
   disclose(input: ToolResultDisclosureInput): ToolResultDisclosure {
-    const serialized = safeSerializedResult(input.result);
+    return this.#disclose(input, false);
+  }
+
+  /** Retain an exact historical result for a model-only reference. Capacity errors propagate. */
+  discloseReference(
+    input: ToolResultDisclosureInput,
+    options: { readonly previewBytes?: number } = {},
+  ): ReferencedToolResultDisclosure {
+    const disclosure = this.#disclose(input, true, options.previewBytes);
+    if (disclosure.kind !== "reference") {
+      throw new Error("Forced tool result disclosure did not create a reference");
+    }
+    return disclosure;
+  }
+
+  #disclose(
+    input: ToolResultDisclosureInput,
+    forceReference: boolean,
+    requestedPreviewBytes?: number,
+  ): ToolResultDisclosure {
+    const previewBytes = requestedPreviewBytes === undefined ? this.#limits.previewBytes : Math.min(
+      positiveInteger("previewBytes", requestedPreviewBytes, this.#limits.previewBytes),
+      this.#limits.previewBytes,
+    );
+    const modelResult = hasOwn(input, "modelResult") ? input.modelResult : input.result;
+    const serialized = safeSerializedResult(modelResult);
     const length = byteLength(serialized);
-    if (length <= this.#limits.maxInlineBytes) {
+    if (!forceReference && length <= this.#limits.maxInlineBytes) {
       return {
         kind: "inline",
-        modelResult: input.result,
+        modelResult,
         originalResult: input.result,
         byteLength: length,
       };
@@ -399,7 +576,7 @@ export class ToolResultContext {
     if (existing) {
       return {
         kind: "reference",
-        modelResult: createReferencePayload(existing, this.#limits.previewBytes),
+        modelResult: createReferencePayload(existing, previewBytes),
         originalResult: input.result,
         byteLength: existing.byteLength,
       };
@@ -411,11 +588,12 @@ export class ToolResultContext {
       originalResult: input.result,
       ...(input.isError === true ? { isError: true } : {}),
       serialized,
+      json: typeof modelResult !== "string" && serialized !== "undefined",
       byteLength: length,
     });
     return {
       kind: "reference",
-      modelResult: createReferencePayload(record, this.#limits.previewBytes),
+      modelResult: createReferencePayload(record, previewBytes),
       originalResult: input.result,
       byteLength: length,
     };
@@ -429,7 +607,8 @@ export class ToolResultContext {
       if (detail === undefined) {
         throw error;
       }
-      const serialized = safeSerializedResult(input.result);
+      const modelResult = hasOwn(input, "modelResult") ? input.modelResult : input.result;
+      const serialized = safeSerializedResult(modelResult);
       const length = byteLength(serialized);
       return {
         kind: "preview",
@@ -460,14 +639,33 @@ export class ToolResultContext {
       MIN_SECTION_BYTES,
     );
     const boundedBytes = Math.min(maxBytes, this.#limits.maxSectionBytes);
-    const section = sliceUnderUtf8Budget(record.serialized, cursor, boundedBytes);
-    const nextCursor = section.end < record.serialized.length ? String(section.end) : undefined;
+    const view = request.view ?? "value";
+    const cached = this.#selection;
+    const reused = cached?.record === record && cached.pointer === request.pointer &&
+      cached.view === view;
+    const selected = reused ? cached.text : selectRetainedText(record, request);
+    let selectedBytes: number;
+    if (reused) selectedBytes = cached.byteLength;
+    else if (view === "value" && (request.pointer === undefined || request.pointer === "")) {
+      selectedBytes = record.byteLength;
+    } else selectedBytes = byteLength(selected);
+    this.#selection = {
+      record,
+      pointer: request.pointer,
+      view,
+      text: selected,
+      byteLength: selectedBytes,
+    };
+    const section = sliceUnderUtf8Budget(selected, cursor, boundedBytes);
+    const nextCursor = section.end < selected.length ? String(section.end) : undefined;
     return {
       type: TOOL_RESULT_SECTION_TYPE,
       ref: record.ref,
       toolCallId: record.toolCallId,
       toolName: record.toolName,
-      totalBytes: record.byteLength,
+      ...(request.view === "structure" ? { view: "structure" as const } : {}),
+      ...(request.pointer !== undefined ? { pointer: request.pointer } : {}),
+      totalBytes: selectedBytes,
       cursor: String(section.start),
       ...(nextCursor ? { nextCursor } : {}),
       done: nextCursor === undefined,
@@ -490,12 +688,14 @@ export class ToolResultContext {
       return false;
     }
     this.#records.delete(ref);
+    if (this.#selection?.record === record) this.#selection = undefined;
     this.#totalStoredBytes -= record.byteLength;
     this.#forgetIdentity(record);
     return true;
   }
 
   clear(): void {
+    this.#selection = undefined;
     this.#records.clear();
     this.#objectRefs = createPrivateWeakStore();
     this.#primitiveRefs = createPrivateMap();
@@ -534,6 +734,7 @@ export class ToolResultContext {
       originalResult: input.originalResult,
       ...(input.isError === true ? { isError: true } : {}),
       serialized: input.serialized,
+      json: input.json,
       byteLength: input.byteLength,
     };
     this.#records.set(ref, record);
@@ -587,17 +788,37 @@ export class ToolResultContext {
 
   #ensureCapacity(byteLength: number): void {
     if (byteLength > MAX_STORED_RESULT_BYTES) {
-      throw new RangeError("Tool result exceeds the per-result storage limit");
+      throw new ToolResultContextCapacityError(
+        "Tool result exceeds the per-result storage limit",
+        "per-result storage limit exceeded",
+      );
     }
     if (this.#records.size >= this.#limits.maxStoredResults) {
-      throw new RangeError("Tool result context stored result limit exceeded");
+      throw new ToolResultContextCapacityError(
+        "Tool result context stored result limit exceeded",
+        "stored result limit exceeded",
+      );
     }
     if (this.#totalStoredBytes + byteLength > MAX_TOTAL_STORED_BYTES) {
-      throw new RangeError("Tool result context total storage limit exceeded");
+      throw new ToolResultContextCapacityError(
+        "Tool result context total storage limit exceeded",
+        "total storage limit exceeded",
+      );
     }
   }
 }
 
 export function createToolResultContext(options: ToolResultContextOptions = {}): ToolResultContext {
   return new ToolResultContext(options);
+}
+
+/**
+ * Tool-limit slots to keep for the framework `veryfront__get_tool_result` reader, which
+ * the runtime appends after tool selection whenever tool-result context is on.
+ */
+export function getToolResultReaderReservedToolSlots(toolResultContext: unknown): number {
+  return toolResultContext === true ||
+      (typeof toolResultContext === "object" && toolResultContext !== null)
+    ? 1
+    : 0;
 }

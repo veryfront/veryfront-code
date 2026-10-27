@@ -174,15 +174,12 @@ describe("conversation delegation policy", () => {
 
   it("builds starter-intent reminder and block text from shared policy wording", () => {
     const reminder = buildStarterIntentRootOwnershipReminder();
-    assertStringIncludes(reminder, "first-turn /plan and /research starter requests");
-    assertStringIncludes(reminder, "keep the root assistant visibly owning the work");
-    assertStringIncludes(reminder, "continue in the same turn after load_skill");
-    assertStringIncludes(reminder, "different tool/model budget materially helps");
-
+    assertEquals(reminder, "The root assistant owns the first /plan or /research turn.");
     const blockMessage = buildStarterIntentRootOwnershipBlockMessage();
-    assertStringIncludes(blockMessage, "Keep the first /plan or /research turn root-owned");
-    assertStringIncludes(blockMessage, "explain the approach first");
-    assertStringIncludes(blockMessage, "different tool/model budget materially helps");
+    assertEquals(
+      blockMessage,
+      "The first /plan or /research turn remains owned by the root assistant.",
+    );
   });
 });
 

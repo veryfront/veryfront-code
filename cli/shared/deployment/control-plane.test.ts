@@ -49,7 +49,7 @@ describe("createHttpDeployControlPlane", () => {
           return Promise.resolve({
             access_token: "eyJhbGciOiJSUzI1NiJ9.eyJ1c2VySWQiOiJ1XzEifQ.sig",
             token_type: "Bearer",
-            expires_in: 300,
+            expires_in_seconds: 300,
           });
         },
       }),
@@ -66,11 +66,8 @@ describe("createHttpDeployControlPlane", () => {
       },
     );
     assertEquals(calls, [{
-      path: "/auth/environment-token",
-      body: {
-        project_reference: "11111111-1111-4111-8111-111111111111",
-        environment_name: "production",
-      },
+      path: "/projects/11111111-1111-4111-8111-111111111111/environments/production/access-tokens",
+      body: undefined,
     }]);
   });
 
@@ -82,7 +79,7 @@ describe("createHttpDeployControlPlane", () => {
           post: () =>
             Promise.resolve({
               access_token: "eyJhbGciOiJSUzI1NiJ9.eyJ1c2VySWQiOiJ1XzEifQ.sig",
-              expires_in: expiresIn,
+              expires_in_seconds: expiresIn,
             }),
         }),
       );
@@ -195,7 +192,7 @@ describe("createHttpDeployControlPlane", () => {
               id: "environment-2",
               name: "production",
               protected: true,
-              project: { id: "project-1" },
+              project_id: "project-1",
             }],
             page_info: {},
           });
@@ -216,6 +213,31 @@ describe("createHttpDeployControlPlane", () => {
         params: { limit: "100", cursor: "cursor-2" },
       },
     ]);
+  });
+
+  it("reads the environment's project only from project_id", async () => {
+    const controlPlane = createHttpDeployControlPlane(
+      config,
+      mockClientReturning({
+        get: () =>
+          Promise.resolve({
+            data: [{
+              id: "environment-1",
+              name: "production",
+              protected: true,
+              projectId: "legacy-camel-case",
+              project: { id: "legacy-reference" },
+            }],
+            page_info: {},
+          }),
+      }),
+    );
+
+    assertEquals(await controlPlane.getEnvironment("project-1", "production"), {
+      id: "environment-1",
+      name: "production",
+      protected: true,
+    });
   });
 
   it("streams release files from every page with legacy version data decoded", async () => {
@@ -257,11 +279,11 @@ describe("createHttpDeployControlPlane", () => {
     );
     assertEquals(requests, [
       {
-        path: "/projects/project-1/releases/release-1/versions",
+        path: "/projects/project-1/releases/release-1/files",
         params: { limit: "100" },
       },
       {
-        path: "/projects/project-1/releases/release-1/versions",
+        path: "/projects/project-1/releases/release-1/files",
         params: { limit: "100", cursor: "cursor-2" },
       },
     ]);

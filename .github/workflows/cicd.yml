@@ -120,7 +120,7 @@ jobs:
           echo "${RELEASE_NUMBER}" > dist/release-number/release-number.txt
       - name: Upload release number
         if: (github.ref == 'refs/heads/main' && inputs.maintenance_release_number == '') || (github.event_name == 'workflow_dispatch' && inputs.maintenance_release_number != '' && startsWith(github.ref, 'refs/heads/maintenance/rc.'))
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-number-${{ steps.maintenance.outputs.release_number || steps.decide.outputs.release_number }}
           path: dist/release-number
@@ -155,7 +155,7 @@ jobs:
           echo "$tree" > dist/tested-tree/tree.txt
       - name: Upload the tested PR tree
         if: github.event_name == 'pull_request'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: tested-tree-${{ steps.pr-tree.outputs.tree }}
           path: dist/tested-tree
@@ -232,7 +232,7 @@ jobs:
         timeout-minutes: 5
       # docs:snippets:check runs the integrations guide's TypeScript first call
       # under Node, which needs Node 22.18+ to run .ts files without flags.
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         if: ${{ matrix.check == 'lint' }}
         with:
           node-version: "24"
@@ -291,7 +291,7 @@ jobs:
         with:
           warm-cache: "true"
           warm-redis-cache: ${{ matrix.shard == 1 }}
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "24"
           package-manager-cache: false
@@ -340,7 +340,7 @@ jobs:
                 const status = await new Deno.Command("deno", {
                   args: buildDenoSuiteCommandArgs(suite, files, {
                     parallel: shouldRunDenoBatchInParallel(profile.parallel, files),
-                    passthroughArgs: ["--no-lock"],
+                    passthroughArgs: ["--frozen"],
                   }),
                   clearEnv: true,
                   env: buildTestProcessEnv(Deno.env.toObject(), profile.env),
@@ -427,7 +427,7 @@ jobs:
         timeout-minutes: 5
         with:
           warm-cache: "true"
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "24"
           package-manager-cache: false
@@ -443,19 +443,26 @@ jobs:
             deno run -A scripts/ci/prepare-rc-build.ts
           fi
           deno task build:npm
+          deno run --allow-read --allow-run=npm scripts/build/report-artifact-sizes.ts --npm-package npm \
+            | tee -a "$GITHUB_STEP_SUMMARY"
           deno run --config=scripts/test.deno.json --frozen --allow-read --allow-write --allow-run=npm,tar \
             scripts/ci/npm-compatibility-artifact.ts pack npm dist/npm-compatibility "${GITHUB_SHA}"
+      - name: Install runtime resolver fixture
+        run: |
+          npm ci --ignore-scripts --prefix tests/node/resolver-dependencies
+          mkdir -p npm/node_modules
+          cp -R tests/node/resolver-dependencies/node_modules/. npm/node_modules/
       - name: Archive npm runtime workspace
         run: tar -cf - npm | gzip -1 > dist/npm-runtime-workspace.tar.gz
       - name: Upload tested npm compatibility artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: npm-compatibility-${{ github.sha }}
           path: dist/npm-compatibility
           retention-days: 30
           overwrite: true
       - name: Upload npm runtime workspace
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: npm-runtime-workspace-${{ github.sha }}
           path: dist/npm-runtime-workspace.tar.gz
@@ -491,7 +498,7 @@ jobs:
         timeout-minutes: 5
         with:
           warm-cache: "true"
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "24"
           package-manager-cache: false
@@ -512,7 +519,7 @@ jobs:
           ) | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
       - name: Install Chromium
         timeout-minutes: 10
-        run: deno run -A npm:playwright@1.60.0 install chromium
+        run: deno run -A npm:playwright@1.61.1 install chromium
       - name: Exercise local virtual-host routing
         run: deno run -A scripts/ci/run-windows-localhost-e2e.ts
 
@@ -569,7 +576,7 @@ jobs:
       - uses: ./.github/actions/setup-deno
         timeout-minutes: 5
       - name: Download unit coverage lcov files
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           path: coverage-profiles
           pattern: coverage-shard-*
@@ -601,7 +608,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Download unit coverage lcov files
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           path: coverage-profiles
           pattern: coverage-shard-*
@@ -656,21 +663,21 @@ jobs:
           persist-credentials: false
       # A main run that reuses the merge-queue run merges the queue's coverage.
       - name: Download unit coverage lcov files
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           path: coverage-profiles
           pattern: coverage-shard-*
           run-id: ${{ needs.tested-run.outputs.run_id || github.run_id }}
           github-token: ${{ github.token }}
       - name: Download native executor coverage lcov
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: coverage-native-executor
           path: coverage-profiles/coverage-native-executor
           run-id: ${{ needs.tested-run.outputs.run_id || github.run_id }}
           github-token: ${{ github.token }}
       - name: Download integration client coverage lcov
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: coverage-integration-client
           path: coverage-profiles/coverage-integration-client
@@ -678,17 +685,73 @@ jobs:
           github-token: ${{ github.token }}
       - uses: ./.github/actions/setup-deno
         timeout-minutes: 5
+      # The public pool runs its trusted main definition, so PR-only collector
+      # additions must execute here against the checked-out source.
+      - name: Collect context ownership coverage from checked-out source
+        env:
+          DENO_COVERAGE_DIR: coverage-profiles/coverage-context-ownership
+        run: |
+          deno task test:file --coverage=coverage-profiles/coverage-context-ownership \
+            tests/integration/semantic-unit-boundary/cli/commands/pull/binary-preflight.test.ts \
+            tests/integration/semantic-unit-boundary/server/handlers/request/project-run-runtime-ownership-probe.test.ts \
+            tests/integration/semantic-unit-boundary/src/agent/service/agent-worker-runtime-ownership-probe.test.ts \
+            tests/integration/semantic-unit-boundary/src/channels/control-plane-signatures.test.ts \
+            tests/integration/semantic-unit-boundary/src/agent/service/runtime-attribution-intrinsics.test.ts \
+            tests/integration/semantic-unit-boundary/src/utils/header-identity-intrinsics.test.ts \
+            tests/integration/semantic-unit-boundary/server/handlers/request/response-cleanup-intrinsics.test.ts \
+            tests/integration/semantic-unit-boundary/src/agent/service/runtime-identity-startup.test.ts \
+            tests/integration/semantic-unit-boundary/src/agent/service/runtime-identity-process-target-startup.test.ts \
+            tests/integration/semantic-unit-boundary/src/agent/service/runtime-identity-env-file-startup.test.ts \
+            tests/integration/semantic-unit-boundary/server/handlers/request/project-run-runtime-ownership-index-probe.test.ts \
+            tests/integration/semantic-unit-boundary/server/handlers/request/project-run-runtime-ownership-okf-inspector.test.ts \
+            tests/integration/semantic-unit-boundary/cli/commands/knowledge/indexing.test.ts \
+            tests/integration/semantic-unit-boundary/cli/commands/knowledge/binary-assets.test.ts \
+            tests/integration/semantic-unit-boundary/agent/service/auth.test.ts \
+            tests/integration/internal-agents/control-plane-platform-dependencies.test.ts \
+            tests/integration/internal-agents/run-stream-platform-dependencies.test.ts \
+            tests/integration/server/agent-stream.programmatic-platform.test.ts \
+            tests/integration/server/agent-stream.project-event-persistence.test.ts \
+            tests/integration/agent/managed-recovery
+          deno run --config=scripts/test.deno.json --no-npm --allow-read --allow-write --allow-run --allow-env \
+            scripts/test/coverage-ci.ts report coverage-profiles/coverage-context-ownership
+      - name: Collect connected local CLI coverage from checked-out source
+        env:
+          DENO_COVERAGE_DIR: coverage-profiles/coverage-connected-local
+        run: |
+          deno task test:file --coverage=coverage-profiles/coverage-connected-local --coverage-raw-data-only \
+            tests/integration/docs/docs-command.test.ts \
+            tests/integration/docs/copy-public-docs.test.ts \
+            tests/integration/docs/package-public-docs.test.ts \
+            tests/integration/docs/release-inputs.test.ts \
+            tests/integration/cli/mcp-startup-output.test.ts \
+            tests/integration/cli/mcp/notification-transport.test.ts \
+            tests/integration/cli/dev/proxy-mode.test.ts \
+            tests/integration/cli/dev/display-options.test.ts \
+            tests/integration/cli/pull/project-bootstrap.test.ts \
+            tests/integration/cli/shared/cloud-project.test.ts \
+            tests/integration/semantic-unit-boundary/cli/commands/dev/connected-dev.test.ts \
+            tests/integration/semantic-unit-boundary/src/agent/ag-ui/connected-local-runtime-security.test.ts \
+            tests/integration/semantic-unit-boundary/src/agent/service/external-worker-client.test.ts \
+            tests/integration/agent/connected-local-inference.test.ts \
+            tests/integration/agent/connected-local-tools.test.ts \
+            tests/integration/agent/connected-local-platform-boundary.test.ts \
+            tests/integration/agent/inherited-local-platform-scope.test.ts \
+            tests/integration/agent/run-stream-project-observation.test.ts \
+            tests/integration/agent/connected-writer-verifier.test.ts \
+            tests/integration/agent/connected-local-setup-cleanup.test.ts \
+            tests/integration/agent/connected-platform-cleanup.test.ts
+          deno run --config=scripts/test.deno.json --no-npm --allow-read --allow-write --allow-run --allow-env \
+            scripts/test/coverage-ci.ts report coverage-profiles/coverage-connected-local
       - name: Merge coverage reports for SonarQube
         run: |
           deno task coverage:ci:merge -- --threshold=0 \
             coverage-profiles/coverage-shard-* \
             coverage-profiles/coverage-native-executor \
-            coverage-profiles/coverage-integration-client
-      - name: Normalize lcov paths
-        run: |
-          sed -i "s|^SF:${GITHUB_WORKSPACE}/|SF:|" coverage/lcov.info
+            coverage-profiles/coverage-integration-client \
+            coverage-profiles/coverage-context-ownership \
+            coverage-profiles/coverage-connected-local
       - name: Upload merged Sonar coverage
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: coverage-sonar
           path: coverage/lcov.info
@@ -733,12 +796,12 @@ jobs:
           # Sonar reads git history for new-code and blame.
           fetch-depth: 0
       - name: Download merged Sonar coverage
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: coverage-sonar
           path: coverage
       - name: Set up Node for the pinned Sonar action
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "24"
       - name: Fetch the pinned official Sonar action outside the scan workspace
@@ -1495,7 +1558,7 @@ jobs:
           PROXY_MEMORY_ATTEMPTS: "3"
         run: bash scripts/build/smoke-proxy-memory.sh ./veryfront-proxy-linux-x64
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ${{ matrix.name }}
           path: ${{ matrix.name }}
@@ -1592,7 +1655,7 @@ jobs:
       - uses: ./.github/actions/setup-deno
         timeout-minutes: 5
 
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "24"
           registry-url: "https://registry.npmjs.org"
@@ -1614,7 +1677,7 @@ jobs:
           echo "Publishing RC: ${RC_VERSION}"
 
       - name: Download tested npm compatibility artifact
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: npm-compatibility-${{ github.sha }}
           path: dist/npm-compatibility
@@ -1657,7 +1720,7 @@ jobs:
       - uses: ./.github/actions/setup-deno
         timeout-minutes: 5
 
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           path: binaries
 
@@ -1685,7 +1748,7 @@ jobs:
           cp scripts/install.sh dist/public-release/
 
       - name: Upload public release assets
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: public-release-${{ github.sha }}
           path: dist/public-release/
@@ -1815,7 +1878,7 @@ jobs:
       - uses: ./.github/actions/setup-deno
         timeout-minutes: 5
 
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "24"
           registry-url: "https://registry.npmjs.org"
@@ -1827,7 +1890,7 @@ jobs:
         run: npm install --global "npm@${NPM_CLI_VERSION}"
 
       - name: Download tested npm compatibility artifact
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: npm-compatibility-${{ github.sha }}
           path: dist/npm-compatibility
@@ -1845,7 +1908,7 @@ jobs:
             | tee -a "$GITHUB_STEP_SUMMARY"
           scripts/ci/publish-npm-packages.sh release-publish
 
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           path: binaries
 
@@ -1881,7 +1944,7 @@ jobs:
           (cd dist/public-release && sha256sum veryfront-* install.sh install.ps1 > SHA256SUMS)
 
       - name: Upload public release assets
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: public-release-${{ github.sha }}
           path: dist/public-release/
@@ -1914,14 +1977,14 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Download public release assets
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: public-release-${{ github.sha }}
           path: public-release-assets
 
       - name: Create release GitHub App token
         id: release-app-token
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
           client-id: ${{ vars.VERYFRONT_RELEASE_APP_CLIENT_ID }}
           private-key: ${{ secrets.VERYFRONT_RELEASE_APP_PRIVATE_KEY }}
@@ -2076,6 +2139,7 @@ jobs:
               gh release delete "$tag" --repo "$repo" --yes --cleanup-tag >/dev/null 2>&1 || true
             }
 
+            existing_public_release_verified=false
             create_draft_release() {
               local existing_is_draft
               if existing_is_draft="$(
@@ -2086,8 +2150,49 @@ jobs:
                   return 0
                 fi
 
-                echo "::error::GitHub release ${tag} already exists and is not a draft." >&2
-                return "$retry_fatal_status"
+                # A rerun may only adopt the identical qualified publication; never mutate it.
+                local verification_dir asset existing_prerelease expected_asset_names remote_asset_names
+                expected_asset_names="$(printf '%s\n' "${assets[@]##*/}" | LC_ALL=C sort)"
+                if ! remote_asset_names="$(
+                  gh release view "$tag" --repo "$repo" --json assets --jq '.assets[].name'
+                )"; then
+                  return "$retry_fatal_status"
+                fi
+                remote_asset_names="$(printf '%s\n' "$remote_asset_names" | LC_ALL=C sort)"
+                if [[ "$remote_asset_names" != "$expected_asset_names" ]]; then
+                  echo "::error::Existing public release asset-name set differs for ${tag}." >&2
+                  return "$retry_fatal_status"
+                fi
+                verification_dir="$(mktemp -d)" || return "$retry_fatal_status"
+                for asset in "${assets[@]}"; do
+                  if ! gh release download "$tag" --repo "$repo" \
+                    --pattern "${asset##*/}" --output "$verification_dir/asset" || \
+                    ! cmp -s "$asset" "$verification_dir/asset"; then
+                    rm -rf "$verification_dir"
+                    echo "::error::Existing public release asset is missing or differs: ${asset##*/}." >&2
+                    return "$retry_fatal_status"
+                  fi
+                  rm -f "$verification_dir/asset"
+                done
+                rm -rf "$verification_dir"
+                if ! existing_prerelease="$(
+                  gh release view "$tag" --repo "$repo" --json isPrerelease --jq '.isPrerelease'
+                )" || [[ "$existing_prerelease" != "$prerelease" ]]; then
+                  echo "::error::Existing public release mode differs for ${tag}." >&2
+                  return "$retry_fatal_status"
+                fi
+                # Installers resolve the version through releases/latest, so adopt only the current one.
+                local latest_tag
+                if [[ "$latest" == true ]] && {
+                  ! latest_tag="$(gh api "repos/${repo}/releases/latest" --jq '.tag_name')" ||
+                    [[ "$latest_tag" != "$tag" ]]
+                }; then
+                  echo "::error::Existing public release ${tag} is not the latest release." >&2
+                  return "$retry_fatal_status"
+                fi
+                existing_public_release_verified=true
+                echo "Verified identical existing public release ${tag}." >&2
+                return 0
               fi
 
               local create_args=(
@@ -2120,6 +2225,10 @@ jobs:
               "GitHub release draft creation" \
               --fatal-status "$retry_fatal_status" \
               create_draft_release
+            if [[ "$existing_public_release_verified" == true ]]; then
+              trap - EXIT
+              exit 0
+            fi
             incomplete_draft_created=true
 
             # Start long transfers first so metadata cannot delay their worker allocation.
@@ -2182,6 +2291,27 @@ jobs:
           publish_github_release --repo veryfront/veryfront \
             --tag "v${VERSION}" --title "v${VERSION}" --notes "$notes" \
             "$mode" -- "${assets[@]}"
+
+      - name: Verify canonical public Linux assets
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          probe_dir="$(mktemp -d)"
+          trap 'rm -rf "$probe_dir"' EXIT
+          for asset in veryfront-linux-x64 veryfront-linux-arm64 veryfront-proxy-linux-x64 veryfront-proxy-linux-arm64; do
+            test -s "public-release-assets/$asset"
+            curl --fail --silent --show-error --location --max-time 1800 --retry 0 \
+              --proto '=https' --proto-redir '=https' \
+              --output "$probe_dir/$asset" \
+              "https://github.com/veryfront/veryfront/releases/download/v${VERSION}/$asset"
+            expected="$(sha256sum "public-release-assets/$asset" | cut -d ' ' -f 1)"
+            actual="$(sha256sum "$probe_dir/$asset" | cut -d ' ' -f 1)"
+            if [ "$actual" != "$expected" ]; then
+              echo "::error::Canonical public release bytes differ for $asset"
+              exit 1
+            fi
+          done
 
       - name: Create source repo release
         if: ${{ needs.version-check.outputs.is_stable == 'true' }}
@@ -2278,9 +2408,9 @@ jobs:
             && apt-get install -y --no-install-recommends ca-certificates curl jq unzip \
             && rm -rf /var/lib/apt/lists/*
           RUN curl --fail --location --silent --show-error \
-                https://github.com/denoland/deno/releases/download/v2.7.7/deno-x86_64-unknown-linux-gnu.zip \
+                https://github.com/denoland/deno/releases/download/v2.9.7/deno-x86_64-unknown-linux-gnu.zip \
                 --output /tmp/deno.zip \
-            && echo '0cd918870657ccc3d96ac682290e894dda374e2a742424aae9118b258a6cf7a3  /tmp/deno.zip' \
+            && echo 'c6527f24f4b16031d3ae4fa9f658d5f11534c8d84ce7dc8502420280919c3490  /tmp/deno.zip' \
                 | sha256sum --check --strict \
             && unzip -q /tmp/deno.zip -d /usr/local/bin \
             && chmod 0755 /usr/local/bin/deno \
@@ -2324,6 +2454,8 @@ jobs:
             --env DENO_DIR=/registry/deno-cache \
             --env TMPDIR=/registry/tmp \
             --env npm_config_cache=/registry/npm-cache \
+            --env GITHUB_ACTIONS \
+            --env RUNNER_OS \
             --env CI=true \
             "$REGISTRY_IMAGE" \
             bash -euo pipefail -c 'mkdir -p /registry/home /registry/deno-cache /registry/tmp /registry/npm-cache /registry/workspace
@@ -2414,9 +2546,9 @@ jobs:
             && apt-get install -y --no-install-recommends ca-certificates curl jq unzip \
             && rm -rf /var/lib/apt/lists/*
           RUN curl --fail --location --silent --show-error \
-                https://github.com/denoland/deno/releases/download/v2.7.7/deno-x86_64-unknown-linux-gnu.zip \
+                https://github.com/denoland/deno/releases/download/v2.9.7/deno-x86_64-unknown-linux-gnu.zip \
                 --output /tmp/deno.zip \
-            && echo '0cd918870657ccc3d96ac682290e894dda374e2a742424aae9118b258a6cf7a3  /tmp/deno.zip' \
+            && echo 'c6527f24f4b16031d3ae4fa9f658d5f11534c8d84ce7dc8502420280919c3490  /tmp/deno.zip' \
                 | sha256sum --check --strict \
             && unzip -q /tmp/deno.zip -d /usr/local/bin \
             && chmod 0755 /usr/local/bin/deno \
@@ -2460,6 +2592,8 @@ jobs:
             --env DENO_DIR=/registry/deno-cache \
             --env TMPDIR=/registry/tmp \
             --env npm_config_cache=/registry/npm-cache \
+            --env GITHUB_ACTIONS \
+            --env RUNNER_OS \
             --env CI=true \
             "$REGISTRY_IMAGE" \
             bash -euo pipefail -c 'mkdir -p /registry/home /registry/deno-cache /registry/tmp /registry/npm-cache /registry/workspace
@@ -2554,7 +2688,7 @@ jobs:
         if: ${{ success() && needs.publish-public-release.result == 'success' && ((needs.version-check.outputs.is_stable == 'true' && needs.release.result == 'success') || (needs.version-check.outputs.is_stable == 'false' && needs.prerelease.result == 'success' && needs.github-prerelease.result == 'success' && needs.registry-validation-rc.result == 'success')) && steps.current.outputs.dispatch == 'true' && !(github.event_name == 'workflow_dispatch' && inputs.maintenance_release_number != '') }}
         timeout-minutes: 5
         id: release-app-token
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
           client-id: ${{ vars.VERYFRONT_RELEASE_APP_CLIENT_ID }}
           private-key: ${{ secrets.VERYFRONT_RELEASE_APP_PRIVATE_KEY }}
@@ -2599,6 +2733,66 @@ jobs:
   # CD: Update Homebrew (stable releases only)
   # ============================================
 
+  component-contracts:
+    if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+    name: Component publication contracts
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || 'ubuntu-latest' }}
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Test read-only release witness
+        run: python3 -m unittest discover -s scripts/ci -p 'test_publish_component.py'
+
+  publish-platform-component:
+    name: Publish platform component
+    needs: [component-contracts, quality-gate-release, sonar-quality-gate, quality-gate-registry, version-check, prerelease, release]
+    if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && github.ref == 'refs/heads/main' &&
+          (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
+          inputs.maintenance_release_number == '' &&
+          needs.component-contracts.result == 'success' &&
+          needs.quality-gate-release.result == 'success' && needs.sonar-quality-gate.result == 'success' &&
+          needs.version-check.result == 'success' &&
+          ((needs.version-check.outputs.is_stable == 'true' &&
+            needs.version-check.outputs.stable_release_requested == 'false') ||
+           needs.quality-gate-registry.result == 'success') }}
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || 'ubuntu-latest' }}
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Resolve already-published version
+        id: version
+        env:
+          IS_STABLE: ${{ needs.version-check.outputs.is_stable }}
+          STABLE_VERSION: ${{ needs.version-check.outputs.version }}
+          RC_VERSION: ${{ needs.prerelease.outputs.version }}
+        run: |
+          case "$IS_STABLE" in
+            true) version="$STABLE_VERSION" ;;
+            false) version="$RC_VERSION" ;;
+            *) exit 1 ;;
+          esac
+          test -n "$version"
+          printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
+      - name: Witness immutable npm and compiled release materials
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: python3 -I scripts/ci/publish-component.py "$VERSION"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: platform-component-${{ github.run_id }}-${{ github.run_attempt }}
+          path: platform-component.json
+          if-no-files-found: error
+          retention-days: 7
+
   update-homebrew:
     if: ${{ !cancelled() && needs.release.result == 'success' && needs.publish-public-release.result == 'success' && needs.version-check.result == 'success' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
     needs: [release, publish-public-release, version-check]
@@ -2611,7 +2805,7 @@ jobs:
 
       - name: Create Homebrew tap GitHub App token
         id: homebrew-app-token
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
           client-id: ${{ vars.HOMEBREW_TAP_APP_CLIENT_ID }}
           private-key: ${{ secrets.HOMEBREW_TAP_APP_PRIVATE_KEY }}

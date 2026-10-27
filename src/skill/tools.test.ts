@@ -1,3 +1,4 @@
+import { FakeTime } from "#std/testing/time";
 import { skillRegistryInternal } from "#veryfront/skill/registry.ts";
 import "./_test-setup.ts";
 import "#veryfront/schemas/_test-setup.ts";
@@ -487,7 +488,7 @@ Do work.`,
           },
         }),
       Error,
-      "load_skill_reference requires an active loaded skill.",
+      "veryfront__load_skill_reference requires an active loaded skill.",
     );
     assertEquals(readCount, 0);
 
@@ -498,7 +499,7 @@ Do work.`,
           reference: "references/guide.md",
         }, { activeSkillId: "my-skill" }),
       Error,
-      "load_skill_reference requires an active loaded skill.",
+      "veryfront__load_skill_reference requires an active loaded skill.",
     );
     assertEquals(readCount, 0);
   });
@@ -727,6 +728,200 @@ Do work.`,
     assertEquals(result.exitCode, 0);
     assertEquals(result.stderr, "");
     assertEquals(result.stdout.trim(), "adapter-sibling");
+  });
+
+  it("execute_skill_script forwards only the trusted context project binding", async () => {
+    const fsAdapter = createSkillTestAdapter({
+      "/project/skills/my-skill/scripts/run.sh": "echo bound",
+    });
+    registerSkill("my-skill", createTestSkill(fsAdapter));
+    const received: Array<{ projectId?: string; branch?: string | null }> = [];
+    const scriptTool = createExecuteSkillScriptTool({
+      executor: {
+        execute(input) {
+          received.push(input);
+          return Promise.resolve({ stdout: "bound", stderr: "", exitCode: 0 });
+        },
+      },
+    });
+    for (const projectId of ["trusted-project", undefined]) {
+      await scriptTool.execute({
+        skillId: "my-skill",
+        script: "scripts/run.sh",
+        projectId: "untrusted-project",
+        branch: "untrusted-branch",
+        env: {
+          VERYFRONT_PROJECT_ID: "untrusted-project",
+          VERYFRONT_BRANCH_REF: "untrusted-branch",
+        },
+      }, {
+        projectId,
+        branch: projectId ? "trusted-branch" : undefined,
+        activeSkillId: "my-skill",
+        activeSkillToolAvailability: {
+          hasActiveSkill: true,
+          references: [],
+          scripts: ["scripts/run.sh"],
+        },
+      });
+    }
+    assertEquals(received.map((input) => input.projectId), [
+      "trusted-project",
+      undefined,
+    ]);
+    assertEquals(received.map((input) => input.branch), ["trusted-branch", undefined]);
+  });
+
+  it("execute_skill_script waits for executor cleanup after cancellation", async () => {
+    const fsAdapter = createSkillTestAdapter({
+      "/project/skills/my-skill/scripts/run.sh": "sleep 30",
+    });
+    registerSkill("my-skill", createTestSkill(fsAdapter));
+    const controller = new AbortController();
+    const abortError = new Error("run canceled");
+    let reportStarted!: () => void;
+    const started = new Promise<void>((resolve) => reportStarted = resolve);
+    let reportCleanupStarted!: () => void;
+    const cleanupStarted = new Promise<void>((resolve) => reportCleanupStarted = resolve);
+    let releaseCleanup!: () => void;
+    const cleanup = new Promise<void>((resolve) => releaseCleanup = resolve);
+    const scriptTool = createExecuteSkillScriptTool({
+      executor: {
+        execute(input) {
+          reportStarted();
+          return new Promise((_resolve, reject) => {
+            input.abortSignal?.addEventListener("abort", () => {
+              reportCleanupStarted();
+              void cleanup.then(() => reject(input.abortSignal?.reason));
+            }, { once: true });
+          });
+        },
+      },
+    });
+
+    let settled = false;
+    const execution = scriptTool.execute({
+      skillId: "my-skill",
+      script: "scripts/run.sh",
+    }, {
+      abortSignal: controller.signal,
+      activeSkillId: "my-skill",
+      activeSkillToolAvailability: {
+        hasActiveSkill: true,
+        references: [],
+        scripts: ["scripts/run.sh"],
+      },
+    }).finally(() => settled = true);
+    await started;
+    controller.abort(abortError);
+    await cleanupStarted;
+    await Promise.resolve();
+    assertEquals(settled, false);
+    releaseCleanup();
+    let rejection: unknown;
+    try {
+      await execution;
+    } catch (error) {
+      rejection = error;
+    }
+    assertEquals(rejection, abortError);
+    assertEquals(settled, true);
+  });
+
+  it("execute_skill_script waits for admitted executor cleanup after its deadline", async () => {
+    using time = new FakeTime();
+    const fsAdapter = createSkillTestAdapter({
+      "/project/skills/my-skill/scripts/run.sh": "sleep 30",
+    });
+    registerSkill("my-skill", createTestSkill(fsAdapter));
+    let reportStarted!: () => void;
+    const started = new Promise<void>((resolve) => reportStarted = resolve);
+    let reportCleanupStarted!: () => void;
+    const cleanupStarted = new Promise<void>((resolve) => reportCleanupStarted = resolve);
+    let releaseCleanup!: () => void;
+    const cleanup = new Promise<void>((resolve) => releaseCleanup = resolve);
+    let cleanupComplete = false;
+    const scriptTool = createExecuteSkillScriptTool({
+      executor: {
+        execute(input) {
+          assert(input.timeoutMs !== undefined && input.timeoutMs > 0);
+          reportStarted();
+          return new Promise((_resolve, reject) => {
+            input.abortSignal?.addEventListener("abort", () => {
+              reportCleanupStarted();
+              void cleanup.then(() => {
+                cleanupComplete = true;
+                reject(input.abortSignal?.reason);
+              });
+            }, { once: true });
+          });
+        },
+      },
+    });
+    let settled = false;
+    const execution = scriptTool.execute({
+      skillId: "my-skill",
+      script: "scripts/run.sh",
+      timeoutMs: 60_000,
+    }, {
+      activeSkillId: "my-skill",
+      activeSkillToolAvailability: {
+        hasActiveSkill: true,
+        references: [],
+        scripts: ["scripts/run.sh"],
+      },
+    }).finally(() => settled = true);
+    const rejection = assertRejects(() => execution, Error, "timed out");
+    await started;
+    time.tick(60_000);
+    await cleanupStarted;
+    await time.runMicrotasks();
+    assertEquals(settled, false);
+    assertEquals(cleanupComplete, false);
+    releaseCleanup();
+    await rejection;
+    assertEquals(cleanupComplete, true);
+    assertEquals(settled, true);
+  });
+
+  it("execute_skill_script denies executor admission when setup exhausts the deadline", async () => {
+    const fsAdapter = createSkillTestAdapter({
+      "/project/skills/my-skill/scripts/run.sh": "sleep 30",
+    });
+    let boundedReads = 0;
+    fsAdapter.readFileBytesWithinLimit = () => {
+      boundedReads++;
+      return new Promise<Uint8Array>(() => {});
+    };
+    registerSkill("my-skill", createTestSkill(fsAdapter));
+    let executorCalls = 0;
+    const scriptTool = createExecuteSkillScriptTool({
+      executor: {
+        execute() {
+          executorCalls++;
+          throw new Error("timed-out setup must not reach the executor");
+        },
+      },
+    });
+    await assertRejects(
+      () =>
+        scriptTool.execute({
+          skillId: "my-skill",
+          script: "scripts/run.sh",
+          timeoutMs: 1000,
+        }, {
+          activeSkillId: "my-skill",
+          activeSkillToolAvailability: {
+            hasActiveSkill: true,
+            references: [],
+            scripts: ["scripts/run.sh"],
+          },
+        }),
+      Error,
+      "timed out",
+    );
+    assertEquals(boundedReads, 1);
+    assertEquals(executorCalls, 0);
   });
 
   it("execute_skill_script reuses its authoritative script listing", async () => {
@@ -959,7 +1154,7 @@ describe("load_skill orchestration contract", () => {
     //
     // So the clause must be conditional: a no-op when invoke_agent is absent,
     // accurate when it is present. veryfront/veryfront-issue-inbox#411.
-    assertStringIncludes(LOAD_SKILL_OVERRIDE_FORWARDING, "If invoke_agent is available");
+    assertStringIncludes(LOAD_SKILL_OVERRIDE_FORWARDING, "If veryfront__invoke_agent is available");
     assertEquals(
       LOAD_SKILL_OVERRIDE_FORWARDING.includes("the available delegation tool"),
       false,

@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStringIncludes, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   createRuntimeAgentSystemMessages,
@@ -268,6 +268,44 @@ describe("createRuntimeAgentSystemMessages", () => {
     );
     assertEquals(result[1]?.providerOptions, undefined);
   });
+
+  it("reports bounded skill inventory without embedding loader recipes", () => {
+    const largeCatalog = Array.from(
+      { length: 1_000 },
+      (_, index) => ({
+        id: `skill-${index}-${"x".repeat(240)}`,
+        name: `skill-${index}`,
+        description: `Description ${index}`,
+        instructions: `Instructions ${index}`,
+      }),
+    );
+    const render = (availableToolNames: readonly string[]) =>
+      createRuntimeAgentSystemMessages({
+        agent: {
+          id: "support",
+          name: "Support",
+          description: "Helps users",
+          instructions: "Base instructions",
+        },
+        skills: largeCatalog,
+        availableToolNames,
+      }).map((message) => message.content).join("\n\n");
+
+    const both = render(["load_skill", "veryfront__load_skill"]);
+    assertStringIncludes(both, "additional authorized skill IDs");
+    assertStringIncludes(both, "available through the skill inventory");
+    assertEquals(both.includes("Call veryfront__load_skill("), false);
+    assertEquals(both.includes("Call load_skill("), false);
+
+    const unavailable = render(["web_search"]);
+    assertEquals(unavailable.includes("load_skill"), false);
+    assertEquals(unavailable.includes("skill-0"), false);
+
+    const legacy = render(["load_skill"]);
+    assertStringIncludes(legacy, "available through the skill inventory");
+    assertEquals(legacy.includes("Call load_skill("), false);
+    assertEquals(legacy.includes("Call veryfront__load_skill("), false);
+  });
 });
 
 it("parseRuntimeAgentMarkdownDefinition parses delegates frontmatter", () => {
@@ -416,6 +454,9 @@ it("runtime definitions retain structured discovery and access settings", () => 
     skills: { "support-*": true, "support-internal": false },
     knowledge: { "support/**": true, "support/private/**": false },
     toolLoading: "deferred" as const,
+    bootstrapTools: ["get_run"],
+    optionalBootstrapTools: ["create_file"],
+    bootstrapSkill: "support",
     toolResultContext: { maxInlineBytes: 8192, previewBytes: 2048 },
   };
   const result = getRuntimeAgentMarkdownDefinitionSchema().parse({
@@ -441,6 +482,11 @@ knowledge:
   support/**: true
   support/private/**: false
 tool-loading: deferred
+bootstrap-tools:
+  - get_run
+optional-bootstrap-tools:
+  - create_file
+bootstrap-skill: support
 tool-result-context:
   maxInlineBytes: 8192
 ---
@@ -449,6 +495,9 @@ Help users.`,
   assertEquals(result.skills, { "support-*": true, "support-internal": false });
   assertEquals(result.knowledge, { "support/**": true, "support/private/**": false });
   assertEquals(result.toolLoading, "deferred");
+  assertEquals(result.bootstrapTools, ["get_run"]);
+  assertEquals(result.optionalBootstrapTools, ["create_file"]);
+  assertEquals(result.bootstrapSkill, "support");
   assertEquals(result.toolResultContext, { maxInlineBytes: 8192 });
 });
 
@@ -496,4 +545,13 @@ Use available project tools.
 `,
       }),
   );
+});
+
+it("runtime definitions reject excessive or malformed startup schema selections", () => {
+  const base = { id: "startup", name: "Startup", description: "Startup", instructions: "Help." };
+  for (const bootstrapTools of [Array(17).fill("get_run"), [""], ["x".repeat(513)], "get_run"]) {
+    assertThrows(() =>
+      getRuntimeAgentMarkdownDefinitionSchema().parse({ ...base, bootstrapTools })
+    );
+  }
 });

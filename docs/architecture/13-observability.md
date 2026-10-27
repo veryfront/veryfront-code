@@ -26,6 +26,10 @@ Primary source areas:
 4. Log subscribers and buffers expose recent runtime output.
 5. Request profiling records route-level timing and resource use.
 
+Request logs expose `environment` and `domain` as structured fields for target
+filtering. Forwarded hosts are used in logs and request spans only after the
+runtime verifies proxy trust.
+
 ## OpenTelemetry Runtime Modes
 
 OpenTelemetry exporter routing is process-level runtime configuration. In shared

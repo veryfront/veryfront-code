@@ -1616,7 +1616,9 @@ export function createProxyContextHeaders(
   if (ctx.projectId) headers.set("x-project-id", ctx.projectId);
   if (ctx.releaseId) headers.set("x-release-id", ctx.releaseId);
   if (ctx.environmentId) headers.set("x-environment-id", ctx.environmentId);
-  if (ctx.environmentName) headers.set("x-environment-name", ctx.environmentName);
+  if (ctx.environmentName) {
+    headers.set("x-environment-name", encodeIdentityHeaderValue(ctx.environmentName));
+  }
 
   if (ctx.branchId) headers.set("x-branch-id", ctx.branchId);
   if (ctx.branchName) headers.set("x-branch-name", encodeIdentityHeaderValue(ctx.branchName));

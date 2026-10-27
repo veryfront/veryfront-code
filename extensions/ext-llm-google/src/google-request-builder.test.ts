@@ -1,3 +1,4 @@
+import { buildModelCallContextRequest } from "#veryfront/runtime/model-call-context-request.ts";
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { RuntimeAssistantContentPart, RuntimePromptMessage } from "veryfront/provider/shared";
@@ -100,6 +101,201 @@ async function runNoBrandEval(script: string): Promise<unknown> {
 }
 
 describe("ext-llm-google/google-request-builder", () => {
+  it("sends canonical and zero-argument JSON schemas through parametersJsonSchema", () => {
+    const schema = {
+      type: "object",
+      properties: { enabled: { type: "boolean", const: true } },
+      oneOf: [{ properties: { enabled: {} }, required: ["enabled"] }],
+      not: { properties: { forbidden: {} }, required: ["forbidden"] },
+    };
+    const empty = { type: "object", properties: {}, additionalProperties: false };
+    const body = buildGoogleGenerateContentRequest("google", {
+      prompt: [{ role: "user", content: [{ type: "text", text: "Use the tool." }] }],
+      tools: [schema, empty].map((inputSchema, index) => ({
+        type: "function" as const,
+        name: `example_${index}`,
+        inputSchema: { jsonSchema: inputSchema },
+      })),
+    }, createWarningCollector());
+    assertEquals(body.tools, [{
+      functionDeclarations: [
+        { name: "example_0", parametersJsonSchema: schema },
+        { name: "example_1", parametersJsonSchema: empty },
+      ],
+    }]);
+  });
+
+  it("preserves inline PDF bytes", () => {
+    const body = buildGoogleGenerateContentRequest("google", {
+      prompt: [{
+        role: "user",
+        content: [{
+          type: "file",
+          url: "data:application/pdf;base64,JVBERi0=",
+          mediaType: "application/pdf",
+        }],
+      }],
+    }, createWarningCollector());
+    assertEquals(body.contents, [{
+      role: "user",
+      parts: [{ inlineData: { mimeType: "application/pdf", data: "JVBERi0=" } }],
+    }]);
+  });
+
+  for (const mediaType of ["application/zip", "application/octet-stream"]) {
+    it(`rejects inline ${mediaType} data before inference`, () => {
+      assertThrows(
+        () =>
+          buildGoogleGenerateContentRequest("google", {
+            prompt: [{
+              role: "user",
+              content: [{
+                type: "file",
+                url: `data:${mediaType};base64,AAAA`,
+                mediaType,
+                filename: "archive.bin",
+              }],
+            }],
+          }, createWarningCollector()),
+        TypeError,
+        `Google does not support file input "archive.bin" (${mediaType})`,
+      );
+    });
+  }
+
+  for (
+    const mediaType of [
+      "text/plain",
+      "Text/Markdown",
+      "application/json",
+      "application/ld+json",
+      "audio/mpeg",
+      "video/mp4",
+      "image/webp",
+    ]
+  ) {
+    it(`sends inline ${mediaType} data`, () => {
+      const body = buildGoogleGenerateContentRequest("google", {
+        prompt: [{
+          role: "user",
+          content: [{ type: "file", url: `data:${mediaType};base64,AAAA`, mediaType }],
+        }],
+      }, createWarningCollector());
+      assertEquals(body.contents, [{
+        role: "user",
+        parts: [{ inlineData: { mimeType: mediaType.toLowerCase(), data: "AAAA" } }],
+      }]);
+    });
+  }
+
+  it("matches inline data MIME types case-insensitively", () => {
+    const body = buildGoogleGenerateContentRequest("google", {
+      prompt: [{
+        role: "user",
+        content: [{
+          type: "file",
+          url: "data:Application/PDF;base64,JVBERi0=",
+          mediaType: "application/pdf",
+        }],
+      }],
+    }, createWarningCollector());
+    assertEquals(body.contents, [{
+      role: "user",
+      parts: [{ inlineData: { mimeType: "application/pdf", data: "JVBERi0=" } }],
+    }]);
+  });
+
+  it("lowercases file MIME types for inline and remote image parts", () => {
+    const body = buildGoogleGenerateContentRequest("google", {
+      prompt: [{
+        role: "user",
+        content: [
+          {
+            type: "file",
+            url: "data:application/pdf;base64,JVBERi0=",
+            mediaType: "Application/PDF",
+          },
+          { type: "file", url: "https://example.test/photo.png", mediaType: "IMAGE/PNG" },
+        ],
+      }],
+    }, createWarningCollector());
+    assertEquals(body.contents, [{
+      role: "user",
+      parts: [
+        { inlineData: { mimeType: "application/pdf", data: "JVBERi0=" } },
+        { fileData: { mimeType: "image/png", fileUri: "https://example.test/photo.png" } },
+      ],
+    }]);
+  });
+
+  for (const mediaType of ["application/pdf", "image/png"]) {
+    it(`sends Gemini Files API URIs as fileData: ${mediaType}`, () => {
+      const fileUri = "https://generativelanguage.googleapis.com/v1beta/files/synthetic-file";
+      const body = buildGoogleGenerateContentRequest("google", {
+        prompt: [{
+          role: "user",
+          content: [{ type: "file", url: fileUri, mediaType }],
+        }],
+      }, createWarningCollector());
+      assertEquals(body.contents, [{
+        role: "user",
+        parts: [{ fileData: { mimeType: mediaType, fileUri } }],
+      }]);
+    });
+  }
+
+  for (
+    const url of [
+      "/path/to/photo.png",
+      "file:///path/to/photo.png",
+      "ftp://example.test/photo.png",
+    ]
+  ) {
+    it(`rejects an image URL that is not remote or inline: ${url}`, () => {
+      assertThrows(
+        () =>
+          buildGoogleGenerateContentRequest("google", {
+            prompt: [{ role: "user", content: [{ type: "image", url, mediaType: "image/png" }] }],
+          }, createWarningCollector()),
+        TypeError,
+        "Google does not support file input (image/png). Send an https URL or inline data",
+      );
+    });
+  }
+
+  it("sends a remote image URL as fileData", () => {
+    const fileUri = "https://example.test/photo.png";
+    const body = buildGoogleGenerateContentRequest("google", {
+      prompt: [{
+        role: "user",
+        content: [{ type: "image", url: fileUri, mediaType: "image/png" }],
+      }],
+    }, createWarningCollector());
+    assertEquals(body.contents, [{
+      role: "user",
+      parts: [{ fileData: { mimeType: "image/png", fileUri } }],
+    }]);
+  });
+
+  it("rejects remote non-image file URLs instead of sending them as fileData", () => {
+    assertThrows(
+      () =>
+        buildGoogleGenerateContentRequest("google", {
+          prompt: [{
+            role: "user",
+            content: [{
+              type: "file",
+              url: "https://example.test/report.pdf",
+              mediaType: "application/pdf",
+              filename: "report.pdf",
+            }],
+          }],
+        }, createWarningCollector()),
+      TypeError,
+      'Google does not support file input "report.pdf" (application/pdf)',
+    );
+  });
+
   it("preserves generateContent request shaping, provider option merge order, and warnings", () => {
     const prompt: RuntimePromptMessage[] = [
       { role: "system", content: "You are concise." },
@@ -229,7 +425,7 @@ describe("ext-llm-google/google-request-builder", () => {
           functionDeclarations: [{
             name: "lookup",
             description: "Look up a value",
-            parameters: { type: "object", properties: { id: { type: "string" } } },
+            parametersJsonSchema: { type: "object", properties: { id: { type: "string" } } },
           }],
         },
         { codeExecution: {} },
@@ -2130,3 +2326,62 @@ describe("ext-llm-google/google-request-builder", () => {
     }
   });
 });
+
+for (const providerName of ["google", "google-vertex"]) {
+  it(`keeps ${providerName} native controls when managed code omits string-array iteration`, () => {
+    const options = {
+      prompt: [],
+      providerOptions: {
+        google: { generationConfig: { maxOutputTokens: 32, responseMimeType: "application/json" } },
+        [providerName]: {
+          generationConfig: { maxOutputTokens: 48, responseMimeType: "application/json" },
+        },
+      },
+    };
+    const expected = buildGoogleGenerateContentRequest(
+      providerName,
+      options,
+      createWarningCollector(),
+    );
+    const captured = buildModelCallContextRequest(
+      { provider: "google", modelId: "gemini-test" },
+      options,
+    );
+    const original = Object.getOwnPropertyDescriptor(Array.prototype, Symbol.iterator);
+    if (!original) throw new Error("Array iterator descriptor unavailable");
+    const iterator = Array.prototype[Symbol.iterator];
+    const apply = Reflect.apply;
+    let omitted = 0;
+    let actual: ReturnType<typeof buildGoogleGenerateContentRequest> | undefined;
+    Object.defineProperty(Array.prototype, Symbol.iterator, {
+      ...original,
+      value: function (this: unknown[]) {
+        let stringsOnly = this.length > 0;
+        for (let index = 0; index < this.length; index++) {
+          if (typeof this[index] !== "string") stringsOnly = false;
+        }
+        if (stringsOnly) {
+          omitted++;
+          return {
+            next() {
+              return { done: true, value: undefined };
+            },
+          };
+        }
+        return apply(iterator, this, []);
+      },
+    });
+    try {
+      actual = buildGoogleGenerateContentRequest(providerName, options, createWarningCollector());
+    } finally {
+      Object.defineProperty(Array.prototype, Symbol.iterator, original);
+    }
+    assertEquals(actual, expected);
+    assertEquals(omitted, 0);
+    assertEquals(actual?.generationConfig?.maxOutputTokens, 48);
+    if (providerName === "google") {
+      assertEquals(captured?.maxOutputTokens, actual?.generationConfig?.maxOutputTokens);
+      assertEquals(captured?.responseFormat, { type: "json" });
+    }
+  });
+}

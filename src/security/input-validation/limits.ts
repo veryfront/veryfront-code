@@ -168,9 +168,8 @@ function snapshotOwnOptions(
   const snapshot = Object.create(null) as Record<string, unknown>;
   for (const key of keys) {
     if (typeof key !== "string" || !allowedKeys.has(key)) {
-      throw new TypeError(
-        `${label} contains an unsupported ${typeof key === "string" ? `option: ${key}` : "symbol"}`,
-      );
+      const unsupported = typeof key === "string" ? `option: ${key}` : "symbol";
+      throw new TypeError(`${label} contains an unsupported ${unsupported}`);
     }
     let descriptor: PropertyDescriptor | undefined;
     try {
@@ -383,32 +382,13 @@ async function readBodyBytesRecord(
     "Request body read options",
     READ_BODY_OPTION_KEYS,
   );
-  if (optionSnapshot.signal !== undefined && !(optionSnapshot.signal instanceof AbortSignal)) {
-    throw new TypeError("Request body read options.signal must be an AbortSignal");
-  }
-  requireByteLimit("Request body size limit", maxSize);
-  if (getNativeRequestBodyUsed(request)) {
-    throw createValidationError("Request body has already been consumed");
-  }
+  validateReadOptions();
 
   const requestHeaders = getNativeRequestHeaders(request);
   const requestBody = getNativeRequestBody(request);
   const requestSignal = getNativeRequestSignal(request);
   const contentLength = getNativeHeader(requestHeaders, "content-length");
-  if (contentLength !== null) {
-    let declaredSize: number;
-    try {
-      declaredSize = parseContentLength(contentLength);
-    } catch (error) {
-      cancelBody(requestBody, error);
-      throw error;
-    }
-    if (declaredSize > maxSize) {
-      const error = createBodyTooLargeError(maxSize, declaredSize, "content-length");
-      cancelBody(requestBody, error);
-      throw error;
-    }
-  }
+  validateDeclaredSize();
 
   const reader = requestBody ? getNativeReader(requestBody) : null;
   if (!reader) throw createValidationError("No request body");
@@ -432,12 +412,128 @@ async function readBodyBytesRecord(
     cancelReader(reader, abortReason);
   };
 
+  function validateReadOptions(): void {
+    if (optionSnapshot.signal !== undefined && !(optionSnapshot.signal instanceof AbortSignal)) {
+      throw new TypeError("Request body read options.signal must be an AbortSignal");
+    }
+    requireByteLimit("Request body size limit", maxSize);
+    if (getNativeRequestBodyUsed(request)) {
+      throw createValidationError("Request body has already been consumed");
+    }
+  }
+  function throwIfReadAborted(): void {
+    if (abortReason !== undefined) throw abortReason;
+  }
+  function validateDeclaredSize(): void {
+    if (contentLength !== null) {
+      let declaredSize: number;
+      try {
+        declaredSize = parseContentLength(contentLength);
+      } catch (error) {
+        cancelBody(requestBody, error);
+        throw error;
+      }
+      if (declaredSize > maxSize) {
+        const error = createBodyTooLargeError(maxSize, declaredSize, "content-length");
+        cancelBody(requestBody, error);
+        throw error;
+      }
+    }
+  }
+  function validateChunk(
+    value: Uint8Array,
+    reader: ReadableStreamDefaultReader<Uint8Array>,
+  ): number {
+    if (!IntrinsicReflectApply(FunctionHasInstance, NativeUint8Array, [value])) {
+      const error = createValidationError(
+        "Request body stream produced a non-byte chunk",
+      );
+      cancelReader(reader, error);
+      throw error;
+    }
+    const valueByteLength = byteLengthOf(value);
+
+    if (valueByteLength > maxSize - totalSize) {
+      const actualSize = totalSize + valueByteLength;
+      const error = createBodyTooLargeError(maxSize, actualSize, "stream");
+      cancelReader(reader, error);
+      throw error;
+    }
+
+    chunksSinceYield++;
+    if (valueByteLength === 0) {
+      consecutiveEmptyChunks++;
+      if (consecutiveEmptyChunks > MAX_CONSECUTIVE_EMPTY_BODY_CHUNKS) {
+        const error = createValidationError(
+          "Request body stream made no progress",
+          { consecutiveEmptyChunks },
+        );
+        cancelReader(reader, error);
+        throw error;
+      }
+    } else {
+      consecutiveEmptyChunks = 0;
+    }
+
+    return valueByteLength;
+  }
+  function appendChunk(value: Uint8Array, valueByteLength: number): void {
+    totalSize += valueByteLength;
+    let valueOffset = 0;
+    while (valueOffset < valueByteLength) {
+      if (currentBlock === null) {
+        const nextCapacity = Math.min(
+          BODY_COALESCE_BLOCK_BYTES,
+          maxSize - allocatedCapacity,
+        );
+        currentBlock = new NativeUint8Array(nextCapacity);
+        allocatedCapacity += nextCapacity;
+      }
+
+      const copyLength = Math.min(
+        byteLengthOf(currentBlock) - currentBlockLength,
+        valueByteLength - valueOffset,
+      );
+      IntrinsicReflectApply(TypedArraySet, currentBlock, [
+        byteView(value, valueOffset, copyLength),
+        currentBlockLength,
+      ]);
+      currentBlockLength += copyLength;
+      valueOffset += copyLength;
+
+      if (currentBlockLength === byteLengthOf(currentBlock)) {
+        blocks[blockCount++] = currentBlock;
+        currentBlock = null;
+        currentBlockLength = 0;
+      }
+    }
+  }
+  function combineBlocks(): BodyBytesRecord {
+    const combined = new NativeUint8Array(totalSize);
+    let offset = 0;
+
+    for (let index = 0; index < blockCount; index++) {
+      const block = blocks[index]!;
+      IntrinsicReflectApply(TypedArraySet, combined, [block, offset]);
+      offset += byteLengthOf(block);
+    }
+    if (currentBlock !== null && currentBlockLength > 0) {
+      IntrinsicReflectApply(TypedArraySet, combined, [
+        byteView(currentBlock, 0, currentBlockLength),
+        offset,
+      ]);
+    }
+
+    const record = ObjectCreate(null) as { bytes: Uint8Array };
+    record.bytes = combined;
+    return record;
+  }
   if (signal?.aborted) abort();
   else signal?.addEventListener("abort", abort, { once: true });
 
   try {
     while (true) {
-      if (abortReason !== undefined) throw abortReason;
+      throwIfReadAborted();
       const pendingRead = IntrinsicReflectApply(ReaderRead, reader, []) as Promise<
         ReadableStreamReadResult<Uint8Array>
       >;
@@ -450,100 +546,26 @@ async function readBodyBytesRecord(
         throw error;
       }
       const { done, value } = await pendingRead;
-      if (abortReason !== undefined) throw abortReason;
+      throwIfReadAborted();
       if (done) break;
-      if (!IntrinsicReflectApply(FunctionHasInstance, NativeUint8Array, [value])) {
-        const error = createValidationError(
-          "Request body stream produced a non-byte chunk",
-        );
-        cancelReader(reader, error);
-        throw error;
-      }
-      const valueByteLength = byteLengthOf(value);
-
-      if (valueByteLength > maxSize - totalSize) {
-        const actualSize = totalSize + valueByteLength;
-        const error = createBodyTooLargeError(maxSize, actualSize, "stream");
-        cancelReader(reader, error);
-        throw error;
-      }
-
-      chunksSinceYield++;
-      if (valueByteLength === 0) {
-        consecutiveEmptyChunks++;
-        if (consecutiveEmptyChunks > MAX_CONSECUTIVE_EMPTY_BODY_CHUNKS) {
-          const error = createValidationError(
-            "Request body stream made no progress",
-            { consecutiveEmptyChunks },
-          );
-          cancelReader(reader, error);
-          throw error;
-        }
-      } else {
-        consecutiveEmptyChunks = 0;
-      }
+      const valueByteLength = validateChunk(value, reader);
 
       // A synchronously produced stream can otherwise monopolize the
       // microtask queue and prevent its own abort/deadline timer from firing.
       if (chunksSinceYield >= BODY_READ_YIELD_CHUNKS) {
         chunksSinceYield = 0;
         await yieldToTaskQueue();
-        if (abortReason !== undefined) throw abortReason;
+        throwIfReadAborted();
       }
 
       if (valueByteLength === 0) continue;
 
-      totalSize += valueByteLength;
-      let valueOffset = 0;
-      while (valueOffset < valueByteLength) {
-        if (currentBlock === null) {
-          const nextCapacity = Math.min(
-            BODY_COALESCE_BLOCK_BYTES,
-            maxSize - allocatedCapacity,
-          );
-          currentBlock = new NativeUint8Array(nextCapacity);
-          allocatedCapacity += nextCapacity;
-        }
-
-        const copyLength = Math.min(
-          byteLengthOf(currentBlock) - currentBlockLength,
-          valueByteLength - valueOffset,
-        );
-        IntrinsicReflectApply(TypedArraySet, currentBlock, [
-          byteView(value, valueOffset, copyLength),
-          currentBlockLength,
-        ]);
-        currentBlockLength += copyLength;
-        valueOffset += copyLength;
-
-        if (currentBlockLength === byteLengthOf(currentBlock)) {
-          blocks[blockCount++] = currentBlock;
-          currentBlock = null;
-          currentBlockLength = 0;
-        }
-      }
+      appendChunk(value, valueByteLength);
     }
   } finally {
     signal?.removeEventListener("abort", abort);
     IntrinsicReflectApply(ReaderReleaseLock, reader, []);
   }
 
-  const combined = new NativeUint8Array(totalSize);
-  let offset = 0;
-
-  for (let index = 0; index < blockCount; index++) {
-    const block = blocks[index]!;
-    IntrinsicReflectApply(TypedArraySet, combined, [block, offset]);
-    offset += byteLengthOf(block);
-  }
-  if (currentBlock !== null && currentBlockLength > 0) {
-    IntrinsicReflectApply(TypedArraySet, combined, [
-      byteView(currentBlock, 0, currentBlockLength),
-      offset,
-    ]);
-  }
-
-  const record = ObjectCreate(null) as { bytes: Uint8Array };
-  record.bytes = combined;
-  return record;
+  return combineBlocks();
 }

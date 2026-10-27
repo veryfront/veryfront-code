@@ -4,6 +4,7 @@ import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
 import { getExecutorModelFailureSchema } from "./executor-model-errors.ts";
 import { createPrivateSet } from "#veryfront/security/private-set.ts";
 import { defineOwnDataProperty } from "#veryfront/security/own-data-property.ts";
+import { getToolResultSequenceSchema } from "#veryfront/runtime/tool-result-sequence.ts";
 
 const isArray = Array.isArray;
 const getPrototypeOf = Object.getPrototypeOf;
@@ -157,11 +158,14 @@ export const getExecutorModelOptionsSchema = defineSchema((v) => {
       v.object({
         type: v.literal("provider"),
         name: v.string(),
-        id: v.string().regex(/^.+\..+$/).transform((id) => id as `${string}.${string}`),
+        id: v.string().refine((id) =>
+          !/[\r\n\u2028\u2029]/.test(id) && id.slice(1, -1).includes(".")
+        ).transform((id) => id as `${string}.${string}`),
         args: v.record(v.string(), json),
       }).strict(),
     ])).max(MAX_ITEMS).optional(),
     toolChoice: json.optional(),
+    parallelToolCalls: v.boolean().optional(),
     seed: v.number().int().optional(),
     presencePenalty: v.number().optional(),
     frequencyPenalty: v.number().optional(),
@@ -209,7 +213,11 @@ export const getExecutorModelReconciliationResultSchema = defineSchema((v) =>
 );
 
 export const getExecutorModelCallSchema = defineSchema((v) =>
-  v.object({ modelId: getModelIdSchema(), options: getExecutorModelOptionsSchema() }).strict()
+  v.object({
+    modelId: getModelIdSchema(),
+    options: getExecutorModelOptionsSchema(),
+    privateToolResultSequence: getToolResultSequenceSchema().optional(),
+  }).strict()
 );
 
 export const getExecutorModelMetadataSchema = defineSchema((v) =>
@@ -224,6 +232,7 @@ export const getExecutorModelMetadataSchema = defineSchema((v) =>
       runtimeCapabilities: v.object({
         toolCalling: v.boolean().optional(),
         toolCallStreamRequiresFinish: v.boolean().optional(),
+        streamRequiresFinish: v.boolean().optional(),
         structuredOutput: v.union([
           v.boolean(),
           v.array(v.enum(["json", "json_schema"] as const)).max(2),
@@ -261,6 +270,10 @@ export const getExecutorModelCatalogSchema = defineSchema((v) => {
         transport: name().optional(),
         reasoningBudgetTokens: v.number().int().positive().max(Number.MAX_SAFE_INTEGER)
           .optional(),
+        limit: v.object({
+          context: v.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
+          output: v.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
+        }).strict().optional(),
         chatCompletionsReasoningWithFunctionTools: v.boolean().optional(),
         chatCompletionsConsecutiveSystemMessages: v.boolean().optional(),
       }).strict(),
@@ -314,6 +327,31 @@ export function executorModelIds(ids: ReadonlySet<string>): Set<string> {
 export function executorModelJson(value: unknown): JsonValue {
   let nodes = 0;
   const ancestors = createPrivateSet<object>();
+  function copyProperties(
+    input: unknown,
+    output: Record<string, unknown> | unknown[],
+    keys: readonly (string | symbol)[],
+    array: boolean,
+    guardedArray: boolean,
+    depth: number,
+  ): void {
+    for (let index = 0; index < keys.length; index++) {
+      const key = keys[index]!;
+      if (array && key === "length") continue;
+      if (guardedArray && key === "toJSON") continue;
+      const descriptor = getOwnPropertyDescriptor(input, key);
+      if (
+        typeof key !== "string" || !descriptor || !hasOwn(descriptor, "value") ||
+        !descriptor.enumerable
+      ) throw new TypeError("Invalid managed model data");
+      if (!array && descriptor.value === undefined) continue;
+      defineOwnDataProperty(output, key, copy(descriptor.value, depth + 1), {
+        enumerable: true,
+        writable: true,
+        configurable: true,
+      });
+    }
+  }
   function copy(input: unknown, depth: number): unknown {
     if (++nodes > 100_000 || depth > 128) throw new TypeError("Invalid managed model data");
     if (input === null || typeof input !== "object") return input;
@@ -338,22 +376,7 @@ export function executorModelJson(value: unknown): JsonValue {
     ) {
       throw new TypeError("Invalid managed model data");
     }
-    for (let index = 0; index < keys.length; index++) {
-      const key = keys[index]!;
-      if (array && key === "length") continue;
-      if (guardedArray && key === "toJSON") continue;
-      const descriptor = getOwnPropertyDescriptor(input, key);
-      if (
-        typeof key !== "string" || !descriptor || !hasOwn(descriptor, "value") ||
-        !descriptor.enumerable
-      ) throw new TypeError("Invalid managed model data");
-      if (!array && descriptor.value === undefined) continue;
-      defineOwnDataProperty(output, key, copy(descriptor.value, depth + 1), {
-        enumerable: true,
-        writable: true,
-        configurable: true,
-      });
-    }
+    copyProperties(input, output, keys, array, guardedArray, depth);
     ancestors.delete(input);
     return output;
   }

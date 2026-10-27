@@ -1,7 +1,25 @@
-import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import {
+  assert,
+  assertEquals,
+  assertRejects,
+  assertStrictEquals,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { parse } from "#std/yaml/parse";
 import { inlinePublicPoolJobs } from "../../../scripts/ci/public-pool-jobs.ts";
+import {
+  type InstalledCredentialProbe,
+  installedCredentialProbeProfile,
+  runInstalledCredentialProbes,
+  withInstalledProbeCleanup,
+} from "../../../scripts/test/installed-credential-probes.ts";
+import {
+  type CredentialProbeRuntime,
+  installedCredentialProcessFailure,
+  installedRuntimeCredentialProbeProfile,
+  runInstalledRuntimeCredentialProbes,
+} from "../../../scripts/test/installed-runtime-credential-probes.ts";
 
 type YamlRecord = Record<string, unknown>;
 
@@ -111,7 +129,28 @@ describe("canonical npm artifact workflow", () => {
       30,
       "The tested npm artifact must remain available through production approval",
     );
+    const runtimeDependencies = namedStep(
+      producer,
+      "Install runtime resolver fixture",
+    );
+    assertStringIncludes(
+      String(runtimeDependencies.run),
+      "npm ci --ignore-scripts --prefix tests/node/resolver-dependencies",
+    );
+    assertStringIncludes(
+      String(runtimeDependencies.run),
+      "cp -R tests/node/resolver-dependencies/node_modules/. npm/node_modules/",
+    );
+    assert(
+      steps.indexOf(runtimeDependencies) >
+        steps.indexOf(namedStep(producer, "Build and pack tested npm output")),
+      "test fixtures must not affect the published package manifest",
+    );
     const archive = namedStep(producer, "Archive npm runtime workspace");
+    assert(
+      steps.indexOf(runtimeDependencies) < steps.indexOf(archive),
+      "runtime dependencies must be archived for all consumers",
+    );
     assertStringIncludes(
       String(archive.run),
       "tar -cf - npm | gzip -1 > dist/npm-runtime-workspace.tar.gz",
@@ -121,7 +160,10 @@ describe("canonical npm artifact workflow", () => {
       asRecord(step.with, "runtime artifact upload inputs").name ===
         "npm-runtime-workspace-${{ github.sha }}"
     );
-    assert(runtimeUpload, "The producer must upload the built runtime workspace");
+    assert(
+      runtimeUpload,
+      "The producer must upload the built runtime workspace",
+    );
     assertEquals(
       asRecord(runtimeUpload.with, "runtime artifact upload inputs"),
       {
@@ -328,7 +370,10 @@ describe("canonical npm artifact workflow", () => {
     assertEquals(node["continue-on-error"], undefined);
     assertEquals(node.needs, ["npm-compatibility-artifact"]);
     assertEquals(node.name, "tests (node shard ${{ matrix.shard }}/4)");
-    assertEquals(strategy["fail-fast"], "${{ github.event_name == 'merge_group' }}");
+    assertEquals(
+      strategy["fail-fast"],
+      "${{ github.event_name == 'merge_group' }}",
+    );
     assertEquals(matrix.shard, [1, 2, 3, 4]);
     assert(
       jobSteps(node, "Node sharding job").some((step) => step.uses === RESTORE_ACTION),
@@ -402,7 +447,10 @@ describe("canonical npm artifact workflow", () => {
 
   it("prepares the numbered RC version before prerelease SBOM generation", async () => {
     const jobs = await readJobs();
-    const prerelease = asRecord(jobs["github-prerelease"], "GitHub prerelease job");
+    const prerelease = asRecord(
+      jobs["github-prerelease"],
+      "GitHub prerelease job",
+    );
     const prereleaseSteps = jobSteps(prerelease, "prerelease job");
     const prepareSbom = namedStep(prerelease, "Prepare RC checkout for SBOM");
     const generateSbom = namedStep(prerelease, "Generate SBOM");
@@ -455,16 +503,517 @@ describe("canonical npm artifact workflow", () => {
       NPM_SMOKE_RESULT: "skipped",
       RUNTIME_CRITICAL_FLOW_RESULT: "skipped",
     };
-    const reused = await runArtifactGate({ ...skipped, REUSED_RUN_ID: "36825693208" });
+    const reused = await runArtifactGate({
+      ...skipped,
+      REUSED_RUN_ID: "36825693208",
+    });
     assertEquals(reused.code, 0);
     assertStringIncludes(
       new TextDecoder().decode(reused.stdout),
       "NPM_SMOKE_RESULT passed in merge-queue run 36825693208",
     );
     assertEquals(
-      (await runArtifactGate({ NPM_SMOKE_RESULT: "failure", REUSED_RUN_ID: "36825693208" })).code,
+      (await runArtifactGate({
+        NPM_SMOKE_RESULT: "failure",
+        REUSED_RUN_ID: "36825693208",
+      })).code,
       1,
     );
     assertEquals((await runArtifactGate(skipped)).code, 1);
+  });
+});
+
+function credentialProbeOutput(rejected = 3, changes: Record<string, unknown> = {}) {
+  return {
+    code: 0,
+    stderr: "",
+    stdout: JSON.stringify({
+      node: "24.14.0",
+      undici: "7.21.0",
+      observations: 0,
+      fetches: 0,
+      rejected,
+      cleanRequests: 1,
+      ...changes,
+    }),
+  };
+}
+
+describe("installed credential probe orchestration", () => {
+  it("retires the process directory before returning a successful result", async () => {
+    const order: string[] = [];
+    const value = {};
+    const observed = await withInstalledProbeCleanup(
+      () => {
+        order.push("execute");
+        return Promise.resolve(value);
+      },
+      () => {
+        order.push("cleanup");
+        return Promise.resolve();
+      },
+    );
+    assertStrictEquals(observed, value);
+    assertEquals(order, ["execute", "cleanup"]);
+  });
+
+  it("retains single and concurrent process/cleanup failures without a success fallback", async () => {
+    const primary = new Error("synthetic process failure");
+    const cleanup = new Error("synthetic cleanup failure");
+    for (const processFailed of [false, true]) {
+      for (const cleanupFailed of [false, true]) {
+        if (!processFailed && !cleanupFailed) continue;
+        let cleanupCalls = 0;
+        let caught: unknown;
+        try {
+          await withInstalledProbeCleanup(
+            () => processFailed ? Promise.reject(primary) : Promise.resolve({}),
+            () => {
+              cleanupCalls++;
+              return cleanupFailed ? Promise.reject(cleanup) : Promise.resolve();
+            },
+          );
+        } catch (error) {
+          caught = error;
+        }
+        assertEquals(cleanupCalls, 1);
+        if (processFailed && cleanupFailed) {
+          assert(caught instanceof AggregateError);
+          assertStrictEquals(caught.errors[0], primary);
+          assertStrictEquals(caught.errors[1], cleanup);
+        } else {
+          assertStrictEquals(caught, processFailed ? primary : cleanup);
+        }
+      }
+    }
+  });
+  it("requires the canonical remote install job and preserves local smoke behavior", () => {
+    assertEquals(
+      installedCredentialProbeProfile({
+        args: [],
+        githubActions: "true",
+        githubJob: "tests-npm-install-smoke",
+      }),
+      true,
+    );
+    for (const githubJob of [undefined, "tests", "registry-release"]) {
+      assertEquals(
+        installedCredentialProbeProfile({
+          args: [],
+          githubActions: "true",
+          githubJob,
+        }),
+        false,
+      );
+    }
+    assertEquals(
+      installedCredentialProbeProfile({
+        args: [],
+        githubActions: undefined,
+        githubJob: "tests-npm-install-smoke",
+      }),
+      false,
+    );
+    assertEquals(
+      installedCredentialProbeProfile({
+        args: ["--credential-boundary-probes"],
+        githubActions: undefined,
+        githubJob: undefined,
+      }),
+      true,
+    ); // Execution still refuses outside Linux Actions.
+  });
+  it("runs both retained fixtures in order without claiming deployment acceptance", async () => {
+    const calls: InstalledCredentialProbe[] = [];
+    const report = await runInstalledCredentialProbes({
+      githubActions: "true",
+      runnerOs: "Linux",
+      execute: (fixture) => {
+        calls.push(fixture);
+        return Promise.resolve(credentialProbeOutput(fixture.includes("header") ? 3 : 2));
+      },
+    });
+    assertEquals(calls, [
+      "native-header-package-probe.mjs",
+      "native-body-package-probe.mjs",
+    ]);
+    assertEquals(report.probes.length, 2);
+    assertEquals(report.probes[0].observed.observations, 0);
+    assertEquals(report.probes[1].observed.rejected, 2);
+    assertEquals(report.deployedBoundaryAccepted, false);
+  });
+
+  it("refuses a local or non-Linux profile before invoking a process callback", async () => {
+    for (
+      const [githubActions, runnerOs] of [
+        [undefined, "Linux"],
+        ["false", "Linux"],
+        ["true", "Darwin"],
+        ["true", "Windows"],
+      ]
+    ) {
+      let calls = 0;
+      await assertRejects(
+        () =>
+          runInstalledCredentialProbes({
+            githubActions,
+            runnerOs,
+            execute: () => {
+              calls++;
+              return Promise.resolve(credentialProbeOutput());
+            },
+          }),
+        Error,
+        "require Linux Actions",
+      );
+      assertEquals(calls, 0);
+    }
+  });
+
+  it("rejects a leaking, fetching, skipped or miscounted probe without retry", async () => {
+    for (
+      const changes of [
+        { observations: 1 },
+        { fetches: 1 },
+        { cleanRequests: 0 },
+        { rejected: 0 },
+        { rejected: "3" },
+        { extra: "unexpected" },
+        { node: "unknown" },
+      ]
+    ) {
+      let calls = 0;
+      await assertRejects(
+        () =>
+          runInstalledCredentialProbes({
+            githubActions: "true",
+            runnerOs: "Linux",
+            execute: () => {
+              calls++;
+              return Promise.resolve(credentialProbeOutput(3, changes));
+            },
+          }),
+        Error,
+        "assertions are unconfirmed",
+      );
+      assertEquals(calls, 1);
+    }
+  });
+
+  it("does not accept successful exit with malformed or noisy output", async () => {
+    for (
+      const result of [
+        { ...credentialProbeOutput(), code: 1 },
+        { ...credentialProbeOutput(), stderr: "unexpected warning" },
+        { ...credentialProbeOutput(), stdout: "x".repeat(4097) },
+        { ...credentialProbeOutput(), stdout: "not json" },
+        { ...credentialProbeOutput(), stdout: "null" },
+        { ...credentialProbeOutput(), stdout: "[]" },
+      ]
+    ) {
+      await assertRejects(() =>
+        runInstalledCredentialProbes({
+          githubActions: "true",
+          runnerOs: "Linux",
+          execute: () => Promise.resolve(result),
+        })
+      );
+    }
+  });
+
+  it("requires the body fixture after a successful header fixture", async () => {
+    let calls = 0;
+    await assertRejects(
+      () =>
+        runInstalledCredentialProbes({
+          githubActions: "true",
+          runnerOs: "Linux",
+          execute: () => {
+            calls++;
+            return Promise.resolve(credentialProbeOutput()); // Header rejection count is invalid for the body fixture.
+          },
+        }),
+      Error,
+      "assertions are unconfirmed",
+    );
+    assertEquals(calls, 2);
+  });
+
+  it("preserves the process error instead of swallowing it or starting another probe", async () => {
+    const failure = new Error("synthetic execution failure");
+    let caught: unknown;
+    let calls = 0;
+    try {
+      await runInstalledCredentialProbes({
+        githubActions: "true",
+        runnerOs: "Linux",
+        execute: () => {
+          calls++;
+          return Promise.reject(failure);
+        },
+      });
+    } catch (error) {
+      caught = error;
+    }
+    assertEquals(caught, failure);
+    assertEquals(calls, 1);
+  });
+});
+
+function runtimeCredentialOutput(
+  runtime: CredentialProbeRuntime,
+  rejected: number,
+  version?: string,
+) {
+  const identity = {
+    profile: "installed-runtime-credential-boundary-v2",
+    runtime,
+    version: version ?? (runtime === "node" ? "24.14.0" : runtime === "bun" ? "1.3.6" : "2.7.7"),
+  };
+  const output = credentialProbeOutput(
+    runtime === "node" ? rejected : rejected === 3 ? 0 : 1,
+    runtime === "node" ? {} : { safeRequests: rejected === 3 ? 3 : 1 },
+  );
+  return { ...output, stdout: JSON.stringify(identity) + "\n" + output.stdout + "\n" };
+}
+
+describe("installed runtime credential evidence", () => {
+  it("retains bounded process hints and fixture locations without raw child output", () => {
+    const output = runtimeCredentialOutput("deno", 3);
+    const failure = installedCredentialProcessFailure("deno", "native-header-package-probe.mjs", {
+      ...output,
+      code: 1,
+      stderr:
+        "AssertionError ERR_MODULE_NOT_FOUND private-secret /private/customer/path\n at file:///private/customer/native-header-package-probe.mjs:27:4",
+    });
+    assertStringIncludes(failure.message, '"runtimeVersion":"2.7.7"');
+    assertStringIncludes(failure.message, '"fixtureLine":27');
+    assertStringIncludes(failure.message, "module-resolution");
+    assert(!failure.message.includes("private-secret"));
+    assert(!failure.message.includes("/private/customer"));
+    const unknown = installedCredentialProcessFailure("node", "native-body-package-probe.mjs", {
+      code: 125,
+      stdout: "x".repeat(8193),
+      stderr: "at other-file.mjs:9:2",
+      outputTruncated: true,
+    });
+    assertStringIncludes(unknown.message, '"fixtureLine":null');
+    assertStringIncludes(unknown.message, "output-limit");
+    assert(!unknown.message.includes("other-file"));
+    const config = installedCredentialProcessFailure("bun", "native-header-package-probe.mjs", {
+      code: 1,
+      stdout: "",
+      stderr: "Expected preload to be an array /private/config-secret\nInvalid Bunfig",
+    });
+    assertStringIncludes(config.message, "runtime-config");
+    assert(!config.message.includes("config-secret"));
+  });
+
+  it("does not reflect unknown process scope or coerce malformed output", () => {
+    const scope = installedCredentialProcessFailure(
+      "private-secret" as CredentialProbeRuntime,
+      "native-header-package-probe.mjs",
+      { code: 1 },
+    );
+    assert(!scope.message.includes("private-secret"));
+    let hooks = 0;
+    const malformed = {
+      toString: () => {
+        hooks++;
+        return "private-secret";
+      },
+    };
+    const failure = installedCredentialProcessFailure("bun", "native-body-package-probe.mjs", {
+      code: 124,
+      stderr: malformed as unknown as string,
+    });
+    assertEquals(hooks, 0);
+    assertStringIncludes(failure.message, "deadline");
+    assert(!failure.message.includes("private-secret"));
+  });
+  it("selects only the existing Linux Actions runtime critical-flow lane", () => {
+    assert(
+      installedRuntimeCredentialProbeProfile({
+        githubActions: "true",
+        githubJob: "tests-runtime-critical-flow",
+      }),
+    );
+    for (const githubActions of [undefined, "false"]) {
+      assert(
+        !installedRuntimeCredentialProbeProfile({
+          githubActions,
+          githubJob: "tests-runtime-critical-flow",
+        }),
+      );
+    }
+    for (const githubJob of [undefined, "tests-npm-install-smoke", "tests"]) {
+      assert(!installedRuntimeCredentialProbeProfile({ githubActions: "true", githubJob }));
+    }
+  });
+
+  it("retains actual engine versions separately from Node compatibility versions", async () => {
+    for (const runtime of ["node", "deno", "bun"] as const) {
+      const calls: InstalledCredentialProbe[] = [];
+      const report = await runInstalledRuntimeCredentialProbes({
+        runtime,
+        githubActions: "true",
+        runnerOs: "Linux",
+        execute: (fixture) => {
+          calls.push(fixture);
+          return Promise.resolve(
+            runtimeCredentialOutput(runtime, fixture.includes("header") ? 3 : 2),
+          );
+        },
+      });
+      assertEquals(calls, ["native-header-package-probe.mjs", "native-body-package-probe.mjs"]);
+      assertEquals(report.runtime, runtime);
+      assertEquals(
+        report.version,
+        runtime === "node" ? "24.14.0" : runtime === "bun" ? "1.3.6" : "2.7.7",
+      );
+      assertEquals(report.probes[0].observed.nodeCompatibilityVersion, "24.14.0");
+      assertEquals(report.probes[1].observed.observations, 0);
+      assertEquals(report.probes[1].observed.fetches, 0);
+      assertEquals(report.probes[0].observed.rejected, runtime === "node" ? 3 : 0);
+      assertEquals(report.probes[0].observed.safeRequests, runtime === "node" ? 0 : 3);
+      assertEquals(report.probes[1].observed.rejected, runtime === "node" ? 2 : 1);
+      assertEquals(report.probes[1].observed.safeRequests, runtime === "node" ? 0 : 1);
+      assertEquals(report.deployedBoundaryAccepted, false);
+    }
+  });
+
+  it("refuses local, non-Linux and unsupported runtimes before any process callback", async () => {
+    for (
+      const [githubActions, runnerOs, runtime] of [
+        [undefined, "Linux", "node"],
+        ["true", "Darwin", "deno"],
+        ["true", "Linux", "python"],
+      ]
+    ) {
+      let calls = 0;
+      await assertRejects(() =>
+        runInstalledRuntimeCredentialProbes({
+          runtime: runtime as CredentialProbeRuntime,
+          githubActions,
+          runnerOs,
+          execute: () => {
+            calls++;
+            return Promise.resolve(runtimeCredentialOutput("node", 3));
+          },
+        })
+      );
+      assertEquals(calls, 0);
+    }
+  });
+
+  it("refuses wrong engines, version drift, malformed framing and legacy Node-only output", async () => {
+    const valid = runtimeCredentialOutput("bun", 3);
+    const variants = [
+      valid.stdout.replace('"runtime":"bun"', '"runtime":"node"'),
+      valid.stdout.replace('"version":"1.3.6"', '"version":"unknown-secret"'),
+      valid.stdout.replace('"runtime":"bun"', '"runtime":"bun","runtime":"bun"'),
+      "extra\n" + valid.stdout,
+      credentialProbeOutput().stdout,
+      valid.stdout.replace('"observations":0', '"observations":1'),
+      valid.stdout.replace('"fetches":0', '"fetches":1'),
+      valid.stdout.replace('"cleanRequests":1', '"cleanRequests":0'),
+      valid.stdout.replace('"rejected":0', '"rejected":3'),
+      valid.stdout.replace('"safeRequests":3', '"safeRequests":2'),
+      valid.stdout.replace('"observations":0', '"observations":1,"observations":0'),
+    ];
+    for (const stdout of variants) {
+      let calls = 0;
+      await assertRejects(() =>
+        runInstalledRuntimeCredentialProbes({
+          runtime: "bun",
+          githubActions: "true",
+          runnerOs: "Linux",
+          execute: () => {
+            calls++;
+            return Promise.resolve({ ...valid, stdout });
+          },
+        })
+      );
+      assertEquals(calls, 1);
+    }
+    let calls = 0;
+    await assertRejects(
+      () =>
+        runInstalledRuntimeCredentialProbes({
+          runtime: "bun",
+          githubActions: "true",
+          runnerOs: "Linux",
+          execute: (fixture) =>
+            Promise.resolve(
+              runtimeCredentialOutput(
+                "bun",
+                fixture.includes("header") ? 3 : 2,
+                ++calls === 1 ? "1.3.6" : "1.3.7",
+              ),
+            ),
+        }),
+      Error,
+      "changed between probes",
+    );
+    assertEquals(calls, 2);
+  });
+
+  it("refuses Node compatibility-version substitution and bounded process failures", async () => {
+    const valid = runtimeCredentialOutput("node", 3);
+    for (
+      const output of [
+        { ...valid, stdout: valid.stdout.replace('"node":"24.14.0"', '"node":"22.3.0"') },
+        { ...valid, code: 1 },
+        { ...valid, stderr: "synthetic-sensitive-error" },
+        { ...valid, stdout: "x".repeat(8193) },
+      ]
+    ) {
+      let calls = 0;
+      await assertRejects(() =>
+        runInstalledRuntimeCredentialProbes({
+          runtime: "node",
+          githubActions: "true",
+          runnerOs: "Linux",
+          execute: () => {
+            calls++;
+            return Promise.resolve(output);
+          },
+        })
+      );
+      assertEquals(calls, 1);
+    }
+  });
+
+  it("wires canonical-artifact checks to the existing lane with cleared bounded processes", async () => {
+    const source = await Deno.readTextFile(
+      new URL("../../../scripts/test/runtime-inference-critical-flow.ts", import.meta.url),
+    );
+    assertStringIncludes(source, "credentialProbes && !packedDirectory");
+    assertStringIncludes(
+      source,
+      "await checkInstalledRuntimeCredentialBoundary(projectDir, runtime)",
+    );
+    for (
+      const expected of [
+        "clearEnv: true",
+        "maxOutputBytes: 8192",
+        "timeoutMs: 45_000",
+        "terminateProcessTreeOnExit: true",
+        "--deny-net",
+        "--no-env-file",
+        "--no-install",
+        "env = false",
+        "withInstalledProbeCleanup",
+      ]
+    ) {
+      assertStringIncludes(source, expected);
+    }
+    assert(!source.includes('"preload = []'));
+    const wrapper = await Deno.readTextFile(
+      new URL("../agent/fixtures/native-credential-runtime-probe.mjs", import.meta.url),
+    );
+    assertStringIncludes(wrapper, "Bun.version");
+    assertStringIncludes(wrapper, "Deno.version.deno");
+    assertStringIncludes(wrapper, 'import process from "node:process"');
   });
 });

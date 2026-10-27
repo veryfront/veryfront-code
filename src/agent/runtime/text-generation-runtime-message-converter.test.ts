@@ -1,5 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertStringIncludes, assertThrows } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertStringIncludes,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   convertToTextGenerationRuntimeMessage,
@@ -13,10 +18,132 @@ import type {
   TextGenerationRuntimeToolMessage,
   TextGenerationRuntimeUserMessage,
 } from "./text-generation-runtime-message-types.ts";
+import { buildChildRunSuccessResult } from "../child-run/execution-snapshot.ts";
+import { buildChildRunResultSummary } from "../child-run/result-summary.ts";
+import { withRootOwnedChildResultHint } from "../conversation/delegation-policy.ts";
 import type { Message } from "../types.ts";
 import { attachProviderMetadata, markProviderReplayDelivered } from "./provider-metadata.ts";
 
+import { markTrustedPlatformPolicyToolResultPart } from "./skill-policy-enforcement.ts";
+import { readToolResultOwnDataProperty } from "#veryfront/tool/result.ts";
+import type { ToolResultPart } from "../types.ts";
+
+/** These existing projection fixtures represent admitted framework child calls. */
+function convertWithTrustedChildFixtures(
+  ...args: Parameters<typeof convertToTextGenerationRuntimeMessages>
+) {
+  const messages = args[0];
+  for (let index = 0; index < messages.length; index++) {
+    const parts = readToolResultOwnDataProperty(messages[index], "parts");
+    if (!Array.isArray(parts)) continue;
+    for (let partIndex = 0; partIndex < parts.length; partIndex++) {
+      const part = parts[partIndex];
+      const name = readToolResultOwnDataProperty(part, "toolName");
+      if (name === "invoke_agent" || name === "veryfront__invoke_agent") {
+        markTrustedPlatformPolicyToolResultPart(part as ToolResultPart);
+      }
+    }
+  }
+  return convertToTextGenerationRuntimeMessages(...args);
+}
+
 describe("text-generation-runtime-message-converter", () => {
+  it("projects the accepted structured child value without conflicting trace prose on replay", () => {
+    const receipt = {
+      outcome: "completed",
+      message_id: "message-17",
+      email_directory: "confirmed-directory",
+    };
+    const child = {
+      ok: true,
+      status: "completed",
+      childRunId: "child",
+      summary: { text: "Ten other directories" },
+      output: receipt,
+    };
+    for (
+      const result of [child, { type: "json", value: child }, {
+        type: "json",
+        value: JSON.stringify(child),
+      }]
+    ) {
+      const before = JSON.stringify(result);
+      const converted = convertWithTrustedChildFixtures([{
+        id: "child-result",
+        role: "tool",
+        parts: [{
+          type: "tool-result",
+          toolCallId: "child-call",
+          toolName: "invoke_agent",
+          result,
+        }],
+      } as Message]);
+      assertEquals((converted[0] as TextGenerationRuntimeToolMessage).content[0]?.output, {
+        type: "json",
+        value: { ok: true, status: "completed", childRunId: "child", summary: {}, output: receipt },
+      });
+      assertEquals(JSON.stringify(result), before);
+    }
+  });
+
+  it("deduplicates child handoffs on the active provider path without changing durable history", () => {
+    const text = "Synthetic child output ".repeat(1000);
+    const child = {
+      ok: true,
+      childRunId: "child",
+      text,
+      output: text,
+      summary: { text, truncated: false },
+    };
+    for (
+      const result of [child, { type: "json", value: child }, {
+        type: "json",
+        value: JSON.stringify(child),
+      }]
+    ) {
+      const before = JSON.stringify(result);
+      const converted = convertWithTrustedChildFixtures([{
+        id: "child-result",
+        role: "tool",
+        parts: [{
+          type: "tool-result",
+          toolCallId: "child-call",
+          toolName: "invoke_agent",
+          result,
+        }],
+      } as Message]);
+      assertEquals((converted[0] as TextGenerationRuntimeToolMessage).content[0]?.output, {
+        type: "json",
+        value: { ok: true, childRunId: "child", text, summary: { truncated: false } },
+      });
+      assertEquals(JSON.stringify(result), before);
+    }
+  });
+
+  it("preserves distinct child summaries and raw outputs on the active provider path", () => {
+    const child = {
+      ok: true,
+      childRunId: "child",
+      text: "annotated",
+      output: "distinct raw",
+      summary: { text: "distinct summary" },
+    };
+    const converted = convertWithTrustedChildFixtures([{
+      id: "child-result",
+      role: "tool",
+      parts: [{
+        type: "tool-result",
+        toolCallId: "child-call",
+        toolName: "invoke_agent",
+        result: child,
+      }],
+    } as Message]);
+    assertEquals((converted[0] as TextGenerationRuntimeToolMessage).content[0]?.output, {
+      type: "json",
+      value: child,
+    });
+  });
+
   it("reads provider execution only from own data without invoking optional flag getters", () => {
     for (const own of [false, true]) {
       let observations = 0;
@@ -1394,4 +1521,186 @@ describe("text-generation-runtime-message-converter", () => {
       });
     }
   });
+});
+
+describe("canonical child replay with root response hints", () => {
+  it("projects the canonical alias on direct and persisted converter requests", () => {
+    const child = {
+      ok: true,
+      status: "completed",
+      childRunId: "child",
+      summary: { text: "conflicting trace" },
+      output: { directory: "accepted" },
+    };
+    for (const result of [child, { type: "json", value: JSON.stringify(child) }]) {
+      const before = JSON.stringify(result);
+      const converted = convertWithTrustedChildFixtures([
+        {
+          id: "result",
+          role: "tool",
+          parts: [{
+            type: "tool-result",
+            toolCallId: "call",
+            toolName: "veryfront__invoke_agent",
+            result,
+          }],
+        } as Message,
+      ]);
+      assertEquals((converted[0] as TextGenerationRuntimeToolMessage).content[0]?.output, {
+        type: "json",
+        value: {
+          ok: true,
+          status: "completed",
+          childRunId: "child",
+          summary: {},
+          output: { directory: "accepted" },
+        },
+      });
+      assertEquals(JSON.stringify(result), before);
+    }
+  });
+  it("retains accepted output or response once without root hint prose", () => {
+    for (const toolName of ["invoke_agent", "veryfront__invoke_agent"]) {
+      for (const output of [{ directory: "accepted" }, "child response"]) {
+        const child = withRootOwnedChildResultHint({
+          ok: true,
+          status: "completed",
+          childRunId: "child",
+          text: "child response",
+          summary: { text: "child response" },
+          output,
+        });
+        const childHint = child.rootResponseHint;
+        assertExists(childHint);
+        const before = JSON.stringify(child);
+        for (const result of [child, { type: "json", value: JSON.stringify(child) }]) {
+          const converted = convertWithTrustedChildFixtures([
+            {
+              id: "result",
+              role: "tool",
+              parts: [{ type: "tool-result", toolCallId: "call", toolName, result }],
+            } as Message,
+          ]);
+          assertEquals((converted[0] as TextGenerationRuntimeToolMessage).content[0]?.output, {
+            type: "json",
+            value: {
+              ok: true,
+              status: "completed",
+              childRunId: "child",
+              summary: {},
+              rootResponseHint: { instruction: childHint.instruction },
+              output,
+            },
+          });
+        }
+        assertEquals(JSON.stringify(child), before);
+      }
+    }
+  });
+});
+
+Deno.test("provider requests omit rewritten completed-child hints while preserving distinct summaries", () => {
+  const text = "Let me inspect the receipt. Child result confirmed.";
+  const child = withRootOwnedChildResultHint({
+    ok: true,
+    status: "completed",
+    childRunId: "child",
+    text,
+    summary: { text: "distinct summary" },
+  });
+  const hint = child.rootResponseHint;
+  assertExists(hint);
+  assertEquals(hint.suggestedText, "Child result confirmed.");
+  for (const toolName of ["invoke_agent", "veryfront__invoke_agent"]) {
+    for (const result of [child, { type: "json", value: JSON.stringify(child) }]) {
+      const converted = convertWithTrustedChildFixtures([
+        {
+          id: "result",
+          role: "tool",
+          parts: [{ type: "tool-result", toolCallId: "call", toolName, result }],
+        } as Message,
+      ]);
+      assertEquals((converted[0] as TextGenerationRuntimeToolMessage).content[0]?.output, {
+        type: "json",
+        value: {
+          ok: true,
+          status: "completed",
+          childRunId: "child",
+          text,
+          summary: child.summary,
+          rootResponseHint: { instruction: hint.instruction },
+        },
+      });
+    }
+  }
+  assertEquals(child.rootResponseHint?.suggestedText, hint.suggestedText);
+});
+
+Deno.test("unowned child-shaped runtime values keep their original representation", () => {
+  for (const toolName of ["veryfront__invoke_agent"]) {
+    let reads = 0;
+    const child = { ok: true, status: "completed", childRunId: "child", text: "diagnostic prose" };
+    Object.defineProperty(child, "output", {
+      enumerable: true,
+      get() {
+        reads++;
+        return { directory: "getter-owned" };
+      },
+    });
+    const cyclic: Record<string, unknown> = { directory: "accepted" };
+    cyclic.self = cyclic;
+    for (
+      const result of [child, {
+        ok: true,
+        status: "completed",
+        childRunId: "child",
+        output: cyclic,
+      }]
+    ) {
+      const converted = convertWithTrustedChildFixtures([
+        {
+          id: "result",
+          role: "tool",
+          parts: [{ type: "tool-result", toolCallId: "call", toolName, result }],
+        } as Message,
+      ]);
+      const projected = (converted[0] as TextGenerationRuntimeToolMessage).content[0]?.output;
+      assertEquals(projected?.type, "json");
+      assertEquals(projected?.value === result, true);
+      assertEquals(reads, 0);
+    }
+  }
+});
+
+Deno.test("successful local child summary replays once with root guidance retained", () => {
+  const summary = buildChildRunResultSummary("Let me inspect the receipt. Local result confirmed.");
+  const child = withRootOwnedChildResultHint(
+    buildChildRunSuccessResult({
+      description: "synthetic child",
+      steps: 1,
+      toolCalls: [],
+      toolResults: [],
+      durationMs: 1,
+    }, summary),
+  );
+  const hint = child.rootResponseHint;
+  assertExists(hint);
+  const before = JSON.stringify(child);
+  for (const toolName of ["invoke_agent", "veryfront__invoke_agent"]) {
+    for (const output of [child, { type: "json", value: JSON.stringify(child) }]) {
+      const converted = convertWithTrustedChildFixtures([
+        {
+          id: "result",
+          role: "tool",
+          parts: [{ type: "tool-result", toolCallId: "call", toolName, result: output }],
+        } as Message,
+      ]);
+      const projected = (converted[0] as TextGenerationRuntimeToolMessage).content[0]?.output;
+      assertEquals(projected, {
+        type: "json",
+        value: { ...child, rootResponseHint: { instruction: hint.instruction } },
+      });
+    }
+  }
+  assertEquals(JSON.stringify(child), before);
 });

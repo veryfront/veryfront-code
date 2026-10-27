@@ -1,3 +1,4 @@
+import { replacePrivateRegExp } from "#veryfront/security/private-regexp.ts";
 import { buildNonceAttribute } from "#veryfront/html/html-escape.ts";
 import { buildTrustedHtmlValidatorScript } from "#veryfront/security/client/html-sanitizer.ts";
 import type { ClientModuleStrategy } from "#veryfront/rendering/rsc/client-module-strategy.ts";
@@ -5,6 +6,14 @@ import {
   HYDRATION_DATA_ID,
   RSC_DEPENDENCY_PINNING_HEADER,
 } from "#veryfront/rendering/rsc/constants.ts";
+
+const SCRIPT_ESCAPES = {
+  lessThan: String.raw`\u003c`,
+  greaterThan: String.raw`\u003e`,
+  ampersand: String.raw`\u0026`,
+  lineSeparator: String.raw`\u2028`,
+  paragraphSeparator: String.raw`\u2029`,
+};
 
 /**
  * Serialize a value as a JSON string literal that is safe to embed inside an
@@ -19,12 +28,11 @@ import {
  * See VULN-INJ-1 in the security audit.
  */
 function jsonForScript(value: unknown): string {
-  return JSON.stringify(value)
-    .replace(/</g, "\\u003c")
-    .replace(/>/g, "\\u003e")
-    .replace(/&/g, "\\u0026")
-    .replace(/\u2028/g, "\\u2028")
-    .replace(/\u2029/g, "\\u2029");
+  let escaped = replacePrivateRegExp(/</g, JSON.stringify(value), SCRIPT_ESCAPES.lessThan);
+  escaped = replacePrivateRegExp(/>/g, escaped, SCRIPT_ESCAPES.greaterThan);
+  escaped = replacePrivateRegExp(/&/g, escaped, SCRIPT_ESCAPES.ampersand);
+  escaped = replacePrivateRegExp(/\u2028/g, escaped, SCRIPT_ESCAPES.lineSeparator);
+  return replacePrivateRegExp(/\u2029/g, escaped, SCRIPT_ESCAPES.paragraphSeparator);
 }
 
 export class PageHandler {
@@ -51,7 +59,8 @@ export class PageHandler {
 
   private buildHtml(pathname: string, searchParams: URLSearchParams, nonce?: string): string {
     const queryString = searchParams.toString();
-    const renderUrl = `/_veryfront/rsc/render${pathname}${queryString ? `?${queryString}` : ""}`;
+    const querySuffix = queryString ? "?" + queryString : "";
+    const renderUrl = `/_veryfront/rsc/render${pathname}${querySuffix}`;
     const nonceAttr = buildNonceAttribute(nonce);
     const renderUrlJs = jsonForScript(renderUrl);
     const transportHeadersJs = jsonForScript(

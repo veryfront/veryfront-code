@@ -1,12 +1,32 @@
-import { AsyncLocalStorage } from "node:async_hooks";
+import type { AsyncLocalStorage } from "node:async_hooks";
+import { createPrivateAsyncLocalStorage } from "#veryfront/security/private-async-context.ts";
 import type { AgentRunEventSink } from "./model-call-context.ts";
 
-const runEventSinkStorage = new AsyncLocalStorage<AgentRunEventSink>();
-const mandatoryRunEventSinkStorage = new AsyncLocalStorage<AgentRunEventSink>();
+const runEventSinkStorage = createPrivateAsyncLocalStorage<AgentRunEventSink | undefined>();
+const mandatoryRunEventSinkStorage = createPrivateAsyncLocalStorage<
+  AgentRunEventSink | undefined
+>();
+const storageRun = runEventSinkStorage.run;
+const storageGetStore = runEventSinkStorage.getStore;
+const apply = Reflect.apply;
+
+function getStoredSink(
+  storage: AsyncLocalStorage<AgentRunEventSink | undefined>,
+): AgentRunEventSink | undefined {
+  return apply(storageGetStore, storage, []) as AgentRunEventSink | undefined;
+}
+
+function runInSinkStorage<T>(
+  storage: AsyncLocalStorage<AgentRunEventSink | undefined>,
+  sink: AgentRunEventSink | undefined,
+  operation: () => T,
+): T {
+  return apply(storageRun, storage, [sink, operation]) as T;
+}
 
 /** Return the run event sink scoped to the current execution, if configured. */
 export function getActiveRunEventSink(): AgentRunEventSink | undefined {
-  return runEventSinkStorage.getStore() ?? mandatoryRunEventSinkStorage.getStore();
+  return getStoredSink(runEventSinkStorage) ?? getStoredSink(mandatoryRunEventSinkStorage);
 }
 
 /** Return the independently scoped mandatory and public sink lanes. */
@@ -15,14 +35,23 @@ export function getActiveRunEventSinks(): {
   public: AgentRunEventSink | undefined;
 } {
   return {
-    mandatory: mandatoryRunEventSinkStorage.getStore(),
-    public: runEventSinkStorage.getStore(),
+    mandatory: getStoredSink(mandatoryRunEventSinkStorage),
+    public: getStoredSink(runEventSinkStorage),
   };
+}
+
+/** Start an independent host invocation without observers from its bootstrap task. */
+export function runWithoutRunEventSinks<T>(operation: () => T): T {
+  return runInSinkStorage(
+    mandatoryRunEventSinkStorage,
+    undefined,
+    () => runInSinkStorage(runEventSinkStorage, undefined, operation),
+  );
 }
 
 /** Scope an operation to a run event sink. */
 export function runWithRunEventSink<T>(sink: AgentRunEventSink, operation: () => T): T {
-  return runEventSinkStorage.run(sink, operation);
+  return runInSinkStorage(runEventSinkStorage, sink, operation);
 }
 
 /** Scope an operation to a mandatory run event sink without displacing public observers. */
@@ -30,15 +59,16 @@ export function runWithMandatoryRunEventSink<T>(
   sink: AgentRunEventSink,
   operation: () => T,
 ): T {
-  return mandatoryRunEventSinkStorage.run(sink, operation);
+  return runInSinkStorage(mandatoryRunEventSinkStorage, sink, operation);
 }
 
 function scopeAsyncIterableWithSinkStorage<T>(
-  storage: AsyncLocalStorage<AgentRunEventSink>,
+  storage: AsyncLocalStorage<AgentRunEventSink | undefined>,
   sink: AgentRunEventSink,
   source: AsyncIterable<T>,
 ): AsyncIterable<T> {
-  const run = <TResult>(operation: () => TResult): TResult => storage.run(sink, operation);
+  const run = <TResult>(operation: () => TResult): TResult =>
+    runInSinkStorage(storage, sink, operation);
   return {
     [Symbol.asyncIterator]() {
       const iterator = run(() => source[Symbol.asyncIterator]());

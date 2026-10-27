@@ -87,7 +87,7 @@
     {
       "id": "sentry__list_organizations",
       "name": "List Organizations",
-      "description": "List Sentry organizations available to the authenticated user so agents can discover organization slugs before project or issue calls",
+      "description": "List organizations",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -114,7 +114,7 @@
     {
       "id": "sentry__list_projects",
       "name": "List Projects",
-      "description": "List Sentry projects for an organization",
+      "description": "List projects",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -137,7 +137,7 @@
     {
       "id": "sentry__list_issues",
       "name": "List Issues",
-      "description": "List Sentry issues for a project",
+      "description": "List issues",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -181,7 +181,7 @@
     {
       "id": "sentry__get_issue",
       "name": "Get Issue",
-      "description": "Get details for a Sentry issue",
+      "description": "Get issue",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -210,7 +210,7 @@
     {
       "id": "sentry__resolve_issue",
       "name": "Resolve Issue",
-      "description": "Resolve a Sentry issue",
+      "description": "Resolve issue",
       "requiresWrite": true,
       "endpoint": {
         "method": "PUT",
@@ -245,7 +245,7 @@
     {
       "id": "sentry__get_latest_event",
       "name": "Get Latest Event",
-      "description": "Get the latest event for a Sentry issue, including the stack trace and tags needed for root-cause analysis",
+      "description": "Get latest event",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",

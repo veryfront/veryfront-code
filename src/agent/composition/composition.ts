@@ -1,3 +1,4 @@
+import { readStructuredAgentOutput } from "../output-schema.ts";
 /**
  * Agent Composition and Registry
  *
@@ -7,7 +8,11 @@
  * @module
  */
 
-import { executeLocalChild, type LocalChildInvocation } from "./local-child-execution.ts";
+import {
+  executeLocalChild,
+  type LocalChildInvocation,
+  withoutAutomaticRuntimeStreamObservation,
+} from "./local-child-execution.ts";
 import type { Agent, AgentResponse } from "../types.ts";
 import { getAgentExecutionConfig } from "../runtime/execution-config.ts";
 import {
@@ -74,12 +79,13 @@ async function runAgentAsStreamingTool(
   const execute = async (): Promise<AgentResponse> => {
     let finalResponse: AgentResponse | undefined;
     const signal = control?.signal ?? context?.abortSignal;
-    const useApplicationRuntime = shouldUseApplicationInferenceRuntime(
-      getAgentExecutionConfig(agent.config).model,
-    );
+    const useApplicationRuntime = !control?.resolveModelRuntime &&
+      shouldUseApplicationInferenceRuntime(
+        getAgentExecutionConfig(agent.config).model,
+      );
     // The factory also imports the registry. Defer loading it until invocation
     // so composition does not create an eager module-initialization cycle.
-    const createAdmittedAgent = useApplicationRuntime
+    const createAdmittedAgent = useApplicationRuntime || control?.resolveModelRuntime
       ? (await import("../factory.ts")).createEphemeralAgentWithRuntimeOptions
       : undefined;
     const privateRuntime = useApplicationRuntime
@@ -93,7 +99,19 @@ async function runAgentAsStreamingTool(
       throw new Error("Application inference admission was cancelled");
     }
     try {
-      const streamAgent = privateRuntime && createAdmittedAgent
+      const streamAgent = control?.resolveModelRuntime && createAdmittedAgent
+        ? createAdmittedAgent(
+          {
+            ...getAgentExecutionConfig(agent.config),
+            id: agent.id,
+            ...(agent.config.tools === true ? {} : { delegates: undefined }),
+          },
+          {
+            resolveModelRuntime: control.resolveModelRuntime,
+            preserveToolCatalog: agent.config.tools !== true,
+          },
+        )
+        : privateRuntime && createAdmittedAgent
         ? await privateRuntime.prepareAgent(() => {
           const admittedAgent = createAdmittedAgent(
             { ...getAgentExecutionConfig(agent.config), id: agent.id },
@@ -103,8 +121,9 @@ async function runAgentAsStreamingTool(
           return admittedAgent;
         })
         : agent;
-      const streamContext = privateRuntime
-        ? buildAdmittedChildStreamContext(context, privateRuntime.runId)
+      const childRunId = control?.runId ?? privateRuntime?.runId;
+      const streamContext = childRunId
+        ? buildAdmittedChildStreamContext(context, childRunId)
         : undefined;
       const streamInput = {
         input,
@@ -114,12 +133,16 @@ async function runAgentAsStreamingTool(
           finalResponse = response;
         },
       };
+      const streamChild = () =>
+        control?.onEvent
+          ? withoutAutomaticRuntimeStreamObservation(() => streamAgent.stream(streamInput))
+          : streamAgent.stream(streamInput);
       const stream = await (privateRuntime
         ? runWithRetainedApplicationInferenceAdmission(
           privateRuntime,
-          () => streamAgent.stream(streamInput),
+          streamChild,
         )
-        : streamAgent.stream(streamInput));
+        : streamChild());
       let streamError: string | undefined;
       const response = stream.toDataStreamResponse();
       if (response.body) {
@@ -163,8 +186,6 @@ async function runAgentAsStreamingTool(
     : execute();
 }
 
-const objectHasOwn = Object.hasOwn;
-
 export function agentAsTool(
   agent: Agent,
   description: string,
@@ -201,12 +222,12 @@ export function agentAsTool(
               });
 
               // The child's accepted value: its parsed object when it declares an
-              // outputSchema and parsing succeeded, next to the text. Any own `object`
+              // outputSchema and parsing succeeded, next to the text. Own `data` or `object`
               // (including null or a transform's undefined) is passed through; an
-              // inherited `object` is never forwarded.
+              // inherited aliases are never forwarded. Conflicting aliases are rejected.
               return {
                 text: response.text,
-                ...(objectHasOwn(response, "object") ? { object: response.object } : {}),
+                ...readStructuredAgentOutput(response),
                 toolCalls: response.toolCalls.length,
                 status: response.status,
               };

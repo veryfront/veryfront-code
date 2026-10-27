@@ -40,6 +40,12 @@ export interface MirroredToolChunkState {
   outputErrorToolCallIds: Set<string>;
   outputDeniedToolCallIds: Set<string>;
   toolCallNames: Map<string, string>;
+  /** Actual durable reasoning content IDs, reserved during final-step recovery. */
+  reasoningContentIds?: Set<string>;
+  /** Reasoning spans that started but have not ended, with their exact mirrored text. */
+  openReasoningParts?: Map<string, string>;
+  /** Ownership corrections already appended by trusted finalization. */
+  ownershipCorrectedToolCallIds?: Set<string>;
 }
 
 /** State for create mirrored tool chunk. */
@@ -51,6 +57,9 @@ export function createMirroredToolChunkState(): MirroredToolChunkState {
     outputErrorToolCallIds: new Set<string>(),
     outputDeniedToolCallIds: new Set<string>(),
     toolCallNames: new Map<string, string>(),
+    reasoningContentIds: new Set<string>(),
+    openReasoningParts: new Map<string, string>(),
+    ownershipCorrectedToolCallIds: new Set<string>(),
   };
 }
 
@@ -65,7 +74,27 @@ export function cloneMirroredToolChunkState(
     outputErrorToolCallIds: new Set(state.outputErrorToolCallIds),
     outputDeniedToolCallIds: new Set(state.outputDeniedToolCallIds),
     toolCallNames: new Map(state.toolCallNames),
+    reasoningContentIds: new Set(state.reasoningContentIds),
+    openReasoningParts: new Map(state.openReasoningParts),
+    ownershipCorrectedToolCallIds: new Set(state.ownershipCorrectedToolCallIds),
   };
+}
+
+function recordMirroredReasoningChunk(
+  state: MirroredToolChunkState,
+  chunk: Extract<
+    ChatUiMessageChunk<ChatMessageMetadata>,
+    { type: "reasoning-start" | "reasoning-delta" | "reasoning-end" }
+  >,
+): void {
+  const reasoningContentIds = state.reasoningContentIds ??= new Set<string>();
+  reasoningContentIds.add(chunk.id);
+  const open = state.openReasoningParts ??= new Map<string, string>();
+  if (chunk.type === "reasoning-start" && !open.has(chunk.id)) open.set(chunk.id, "");
+  if (chunk.type === "reasoning-delta" && open.has(chunk.id)) {
+    open.set(chunk.id, open.get(chunk.id)! + chunk.delta);
+  }
+  if (chunk.type === "reasoning-end") open.delete(chunk.id);
 }
 
 /** State for record mirrored tool chunk. */
@@ -74,6 +103,13 @@ export function recordMirroredToolChunkState(
   chunk: ChatUiMessageChunk<ChatMessageMetadata>,
 ): void {
   switch (chunk.type) {
+    case "reasoning-start":
+    case "reasoning-delta":
+    case "reasoning-end": {
+      recordMirroredReasoningChunk(state, chunk);
+      break;
+    }
+
     case "tool-input-start":
       state.startedToolCallIds.add(chunk.toolCallId);
       if (chunk.toolName.length > 0) {
@@ -254,6 +290,60 @@ export async function closeHostedMirroredOpenToolCalls(
   }
 }
 
+function retainMirroredStepIdentity(
+  chunk: ChatUiMessageChunk<ChatMessageMetadata>,
+): ChatUiMessageChunk<ChatMessageMetadata> {
+  const observation = getRuntimeObservation(chunk);
+  let emittedChunk = chunk;
+  if (chunk.type === "start-step") {
+    emittedChunk = createMirroredStepChunk(
+      chunk,
+      observation?.kind === "step_started" ? observation.stepId : undefined,
+    );
+  }
+  if (emittedChunk !== chunk) retainRuntimeObservation(chunk, emittedChunk);
+  return emittedChunk;
+}
+
+type KnowledgeSourceChunk = NonNullable<ReturnType<typeof deriveKnowledgeSourceDocumentChunk>>;
+
+function sourceDocumentMirrorMode(
+  source: ChatUiMessageChunk<ChatMessageMetadata>,
+  emittedKnowledgeSourceIds: Set<string>,
+  emittedDerivedKnowledgeSourceIds: Set<string>,
+): "mirror" | "once" | "other" | null {
+  if (source.type !== "source-document") return "other";
+  if (emittedKnowledgeSourceIds.has(source.sourceId)) {
+    return emittedDerivedKnowledgeSourceIds.delete(source.sourceId) ? "mirror" : null;
+  }
+  emittedKnowledgeSourceIds.add(source.sourceId);
+  return "once";
+}
+
+function matchesPendingKnowledgeSource(
+  pending: KnowledgeSourceChunk | null,
+  chunk: ChatUiMessageChunk<ChatMessageMetadata>,
+): boolean {
+  return !!pending && chunk.type === "source-document" && chunk.sourceId === pending.sourceId;
+}
+
+function derivePendingKnowledgeSource(
+  chunk: ChatUiMessageChunk<ChatMessageMetadata>,
+  input: CreateHostedMirroredUiStreamInput,
+  emittedKnowledgeSourceIds: Set<string>,
+  pending: KnowledgeSourceChunk | null,
+): KnowledgeSourceChunk | null {
+  const derivedSource = chunk.type === "tool-output-available"
+    ? deriveKnowledgeSourceDocumentChunk({
+      toolName: input.mirroredToolChunkState.toolCallNames.get(chunk.toolCallId),
+      output: chunk.output,
+    })
+    : null;
+  return derivedSource && !emittedKnowledgeSourceIds.has(derivedSource.sourceId)
+    ? derivedSource
+    : pending;
+}
+
 /** Create hosted mirrored UI stream. */
 export async function* createHostedMirroredUiStream(
   input: CreateHostedMirroredUiStreamInput,
@@ -309,21 +399,27 @@ export async function* createHostedMirroredUiStream(
     await mirrorSourceOnce(pendingDerivedSource);
   });
 
+  const consumePendingKnowledgeSource = (
+    chunk: ChatUiMessageChunk<ChatMessageMetadata>,
+  ): "emit" | "skip" | "other" => {
+    if (!matchesPendingKnowledgeSource(pendingDerivedSource, chunk)) return "other";
+    pendingDerivedSource = null;
+    const source = chunk as KnowledgeSourceChunk;
+    if (emittedKnowledgeSourceIds.has(source.sourceId)) return "skip";
+    emittedKnowledgeSourceIds.add(source.sourceId);
+    mirroredKnowledgeSourceIds.add(source.sourceId);
+    return "emit";
+  };
+
   try {
     for await (const sourceChunk of input.sourceStream) {
-      if (
-        pendingDerivedSource &&
-        sourceChunk.type === "source-document" &&
-        sourceChunk.sourceId === pendingDerivedSource.sourceId
-      ) {
-        pendingDerivedSource = null;
-        if (!emittedKnowledgeSourceIds.has(sourceChunk.sourceId)) {
-          emittedKnowledgeSourceIds.add(sourceChunk.sourceId);
-          mirroredKnowledgeSourceIds.add(sourceChunk.sourceId);
+      switch (consumePendingKnowledgeSource(sourceChunk)) {
+        case "emit":
           await mirrorChunk(sourceChunk);
           yield sourceChunk;
-        }
-        continue;
+          continue;
+        case "skip":
+          continue;
       }
 
       const pendingSource = takePendingDerivedSource();
@@ -333,38 +429,33 @@ export async function* createHostedMirroredUiStream(
         yield pendingSource;
       }
 
-      if (sourceChunk.type === "source-document") {
-        if (emittedKnowledgeSourceIds.has(sourceChunk.sourceId)) {
-          if (emittedDerivedKnowledgeSourceIds.delete(sourceChunk.sourceId)) {
-            await mirrorChunk(sourceChunk);
-            yield sourceChunk;
-          }
-          continue;
-        }
-        emittedKnowledgeSourceIds.add(sourceChunk.sourceId);
-        await mirrorSourceOnce(sourceChunk);
-        yield sourceChunk;
-        continue;
-      }
-
-      const derivedSource = sourceChunk.type === "tool-output-available"
-        ? deriveKnowledgeSourceDocumentChunk({
-          toolName: input.mirroredToolChunkState.toolCallNames.get(sourceChunk.toolCallId),
-          output: sourceChunk.output,
-        })
-        : null;
-      if (derivedSource && !emittedKnowledgeSourceIds.has(derivedSource.sourceId)) {
-        pendingDerivedSource = derivedSource;
-      }
-
-      const observation = getRuntimeObservation(sourceChunk);
-      const emittedChunk = sourceChunk.type === "start-step"
-        ? createMirroredStepChunk(
+      switch (
+        sourceDocumentMirrorMode(
           sourceChunk,
-          observation?.kind === "step_started" ? observation.stepId : undefined,
+          emittedKnowledgeSourceIds,
+          emittedDerivedKnowledgeSourceIds,
         )
-        : sourceChunk;
-      if (emittedChunk !== sourceChunk) retainRuntimeObservation(sourceChunk, emittedChunk);
+      ) {
+        case "mirror":
+          await mirrorChunk(sourceChunk);
+          yield sourceChunk;
+          continue;
+        case "once":
+          await mirrorSourceOnce(sourceChunk as KnowledgeSourceChunk);
+          yield sourceChunk;
+          continue;
+        case null:
+          continue;
+      }
+
+      pendingDerivedSource = derivePendingKnowledgeSource(
+        sourceChunk,
+        input,
+        emittedKnowledgeSourceIds,
+        pendingDerivedSource,
+      );
+
+      const emittedChunk = retainMirroredStepIdentity(sourceChunk);
       await mirrorChunk(emittedChunk);
       yield emittedChunk;
     }

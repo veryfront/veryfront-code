@@ -1,3 +1,4 @@
+import { useServedCatalogForTests } from "#veryfront/provider/veryfront-cloud/catalog-client.test-helpers.ts";
 import { createEphemeralAgent } from "#veryfront/agent/factory.ts";
 import { hasTrustedHostToolProvenance } from "#veryfront/tool/host-tool-provenance.ts";
 import "#veryfront/schemas/_test-setup.ts";
@@ -42,6 +43,7 @@ function createRequest(): ParsedHostedChatRequest {
 }
 
 Deno.test("production cloud preparation requires historical ownership for legacy skill replay", async () => {
+  using _catalog = useServedCatalogForTests();
   for (
     const mode of [
       "verified",
@@ -56,7 +58,10 @@ Deno.test("production cloud preparation requires historical ownership for legacy
   ) {
     if (mode === "trusted registry") {
       createEphemeralAgent({ id: "platform-registry-bootstrap", system: "Base", skills: true });
-      assertEquals(hasTrustedHostToolProvenance(toolRegistryInternal.get("load_skill")), true);
+      assertEquals(
+        hasTrustedHostToolProvenance(toolRegistryInternal.get("veryfront__load_skill")),
+        true,
+      );
     }
     const id = mode === "direct collision" ? "load_skill" : "agent-1--load_skill";
     const previous = toolRegistryInternal.getOwn(id);
@@ -185,6 +190,7 @@ function createVerifiedFormReplayRequest(
 }
 
 Deno.test("production cloud preparation restores legacy form replay only from trusted sidecar metadata", async () => {
+  using _catalog = useServedCatalogForTests();
   for (
     const mode of [
       "exact sidecar",
@@ -237,6 +243,7 @@ Deno.test("production cloud preparation restores legacy form replay only from tr
 });
 
 Deno.test("production cloud preparation rejects duplicate legacy form sidecar tool call ids", async () => {
+  using _catalog = useServedCatalogForTests();
   const request = createVerifiedFormReplayRequest({
     metadata: { __veryfrontTrustedPlatformPolicyToolResultIds: ["form-call"] },
     parts: [
@@ -263,6 +270,7 @@ Deno.test("production cloud preparation rejects duplicate legacy form sidecar to
 });
 
 Deno.test("production cloud preparation rejects conflicting form sidecars across history messages", async () => {
+  using _catalog = useServedCatalogForTests();
   const request = createVerifiedFormReplayRequest({
     metadata: { __veryfrontTrustedPlatformPolicyToolResultIds: ["form-call"] },
   });

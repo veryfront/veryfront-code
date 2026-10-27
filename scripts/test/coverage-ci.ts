@@ -27,6 +27,8 @@ interface LcovLineRecord {
 }
 
 const UNIT_COVERAGE_ENV = UNIT_DENO_TEST_ENV;
+const GENERATED_VERYFRONT_CACHE_SOURCE =
+  /^(?:\/|[A-Za-z]:\/)(?:[^/]+\/)*\.cache\/veryfront\/(.+)$/;
 
 export function parseShardSpec(value: string): ShardSpec {
   const match = /^(\d+)\/(\d+)$/.exec(value);
@@ -72,8 +74,10 @@ export function buildCoverageCommandArgs(
   profileDirs: string[],
   repositoryRoot = fromFileUrl(new URL("../../", import.meta.url)),
 ): string[] {
-  const sourceRoot = toFileUrl(repositoryRoot.replace(/[\\/]+$/, "") + "/").href
-    .replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const sourceRoot = toFileUrl(
+    repositoryRoot.replace(/(?<![\\/])[\\/]+$/, "") + "/",
+  ).href
+    .replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
   return [
     "coverage",
     ...profileDirs,
@@ -109,6 +113,10 @@ export interface LcovArtifactReport {
   content: string;
 }
 
+type NormalizedLcovSource =
+  | { kind: "source"; path: string }
+  | { kind: "drop-generated-cache" };
+
 function validateProducerWorkspace(value: unknown): string {
   if (
     typeof value !== "string" || !/^(?:\/|[A-Za-z]:[\\/])/.test(value) ||
@@ -119,7 +127,7 @@ function validateProducerWorkspace(value: unknown): string {
   ) {
     throw new Error("Invalid LCOV producer workspace provenance.");
   }
-  const root = value.replaceAll("\\", "/").replace(/\/+$/, "");
+  const root = value.replaceAll("\\", "/").replace(/(?<!\/)\/+$/, "");
   if (!root || /^[A-Za-z]:$/.test(root)) {
     throw new Error("Invalid LCOV producer workspace provenance.");
   }
@@ -141,6 +149,17 @@ export function normalizeLcovArtifacts(
   sourceExists: (relativePath: string) => boolean,
 ): string[] {
   const roots = new Map<string, string>();
+  function recordProducerRoot(directory: string, root: string): void {
+    for (const [scope, existing] of roots) {
+      const related = directory === scope ||
+        directory.startsWith(`${scope}/`) ||
+        scope.startsWith(`${directory}/`);
+      if (related && existing !== root) {
+        throw new Error("Conflicting LCOV producer workspace provenance.");
+      }
+    }
+    roots.set(directory, root);
+  }
   for (const report of reports) {
     const directory = dirname(resolve(report.path)).replaceAll("\\", "/");
     for (const line of report.content.split(/\r?\n/)) {
@@ -152,15 +171,7 @@ export function normalizeLcovArtifacts(
         throw new Error("Invalid LCOV producer workspace provenance.");
       }
       const root = validateProducerWorkspace(value);
-      for (const [scope, existing] of roots) {
-        const related = directory === scope ||
-          directory.startsWith(`${scope}/`) ||
-          scope.startsWith(`${directory}/`);
-        if (related && existing !== root) {
-          throw new Error("Conflicting LCOV producer workspace provenance.");
-        }
-      }
-      roots.set(directory, root);
+      recordProducerRoot(directory, root);
     }
   }
   return reports.map((report) => {
@@ -170,12 +181,17 @@ export function normalizeLcovArtifacts(
     )?.[1];
     return normalizeLcovSourcePaths(report.content, [
       workspace,
+      ...githubWorkspaceRoots(workspace),
       ...(producer ? [producer] : []),
+      ...(producer ? githubWorkspaceRoots(producer) : []),
     ], sourceExists);
   });
 }
 
-/** Rewrite only exact checkout prefixes whose relative source exists in this checkout. */
+/**
+ * Rewrite verified checkout prefixes, drop generated MDX cache records, and
+ * fail closed when a path that should be a checkout source is missing.
+ */
 export function normalizeLcovSourcePaths(
   report: string,
   producerRoots: readonly string[],
@@ -184,31 +200,140 @@ export function normalizeLcovSourcePaths(
   const prefixes = producerRoots.map((root) =>
     validateProducerWorkspace(root) + "/"
   );
-  const knownProducerRoot =
-    /^(?:\/home\/runner\/(?:work|_work)|[A-Za-z]:\/a)\/veryfront-code\/veryfront-code\//;
-  return report.replace(/^SF:([^\r\n]+)/gm, (_record, source: string) => {
-    const portable = source.replaceAll("\\", "/");
-    const prefix = prefixes.find((candidate) => portable.startsWith(candidate));
-    const relative = prefix
-      ? portable.slice(prefix.length)
-      : portable.replace(knownProducerRoot, "");
+  const newline = report.includes("\r\n") ? "\r\n" : "\n";
+  const output: string[] = [];
+  let keepRecord = true;
+
+  for (const line of report.split(/\r?\n/)) {
+    if (line.startsWith("SF:")) {
+      const source = normalizeLcovSource(line.slice(3), prefixes, sourceExists);
+      if (source.kind === "drop-generated-cache") {
+        keepRecord = false;
+        continue;
+      }
+      keepRecord = true;
+      output.push(`SF:${source.path}`);
+      continue;
+    }
+    if (!keepRecord) {
+      if (line === "end_of_record") keepRecord = true;
+      continue;
+    }
+    output.push(line);
+  }
+
+  return output.join(newline);
+}
+
+function findMostSpecificCheckoutPrefix(
+  source: string,
+  prefixes: readonly string[],
+): string | undefined {
+  let prefix: string | undefined;
+  for (const candidate of prefixes) {
     if (
-      /^(?:\/|[A-Za-z]:)/.test(relative) ||
-      relative.split("/").some((part) =>
-        part === ".." || part === "." || part === ""
-      )
-    ) {
-      throw new Error(
-        `LCOV source is outside a recognized repository checkout: ${source}`,
-      );
+      source.startsWith(candidate) &&
+      (!prefix || candidate.length > prefix.length)
+    ) prefix = candidate;
+  }
+  return prefix;
+}
+
+function verifyCheckoutSource(
+  relativePath: string,
+  sourceExists: (relativePath: string) => boolean,
+): NormalizedLcovSource {
+  if (!sourceExists(relativePath)) {
+    throw new Error(
+      `LCOV source path does not exist in the project: ${relativePath}`,
+    );
+  }
+  return { kind: "source", path: relativePath };
+}
+
+function normalizeLcovSource(
+  source: string,
+  prefixes: readonly string[],
+  sourceExists: (relativePath: string) => boolean,
+): NormalizedLcovSource {
+  const portable = source.replaceAll("\\", "/");
+  // Match the cache shape only below a verified checkout root, so a checkout
+  // that itself lives under a `.cache/veryfront/` directory keeps its sources.
+  const producerPrefix = findMostSpecificCheckoutPrefix(portable, prefixes);
+  const producerRelative = producerPrefix
+    ? normalizeRelativeLcovPath(portable.slice(producerPrefix.length))
+    : undefined;
+  const cacheCandidate = producerRelative !== undefined
+    ? `/${producerRelative}`
+    : portable;
+  if (isGeneratedVeryfrontCacheSource(cacheCandidate)) {
+    return { kind: "drop-generated-cache" };
+  }
+
+  if (!portable.startsWith("/") && !/^[A-Za-z]:\//.test(portable)) {
+    const relative = normalizeRelativeLcovPath(portable);
+    return verifyCheckoutSource(relative, sourceExists);
+  }
+
+  if (producerRelative !== undefined) {
+    const relative = producerRelative;
+    return verifyCheckoutSource(relative, sourceExists);
+  }
+
+  const githubCheckout = /^\/home\/runner\/_?work\/([^/]+)\/\1\/(.+)$/.exec(
+    portable,
+  );
+  if (githubCheckout?.[2]) {
+    const relative = normalizeRelativeLcovPath(githubCheckout[2]);
+    return verifyCheckoutSource(relative, sourceExists);
+  }
+
+  const windowsGithubCheckout = /^[A-Za-z]:\/a\/([^/]+)\/\1\/(.+)$/.exec(
+    portable,
+  );
+  if (windowsGithubCheckout?.[2]) {
+    const relative = normalizeRelativeLcovPath(windowsGithubCheckout[2]);
+    return verifyCheckoutSource(relative, sourceExists);
+  }
+
+  throw new Error(
+    `LCOV source is outside a recognized repository checkout: ${source}`,
+  );
+}
+
+function isGeneratedVeryfrontCacheSource(source: string): boolean {
+  // Dot segments must reach checkout validation rather than hide a record.
+  if (/(?:^|\/)\.\.?(?:\/|$)/.test(source)) return false;
+  const cachePath = GENERATED_VERYFRONT_CACHE_SOURCE.exec(source)?.[1];
+  return cachePath !== undefined &&
+    (cachePath.startsWith("veryfront-mdx-esm/") || cachePath.endsWith(".mjs"));
+}
+
+function normalizeRelativeLcovPath(path: string): string {
+  const parts: string[] = [];
+  for (const part of path.replaceAll("\\", "/").split("/")) {
+    if (part === "" || part === ".") continue;
+    if (part === "..") {
+      if (parts.length === 0) {
+        throw new Error(`LCOV source path escapes the project: ${path}`);
+      }
+      parts.pop();
+      continue;
     }
-    if (!sourceExists(relative)) {
-      throw new Error(
-        `LCOV source does not exist in the repository: ${relative}`,
-      );
-    }
-    return `SF:${relative}`;
-  });
+    parts.push(part);
+  }
+  if (parts.length === 0) {
+    throw new Error(`LCOV source path is empty after normalization: ${path}`);
+  }
+  return parts.join("/");
+}
+
+function githubWorkspaceRoots(root: string): string[] {
+  const portable = root.replaceAll("\\", "/").replace(/(?<!\/)\/+$/, "");
+  const match = /^\/home\/runner\/(_?work)\/([^/]+)\/\2$/.exec(portable);
+  if (!match?.[1] || !match[2]) return [];
+  const alternate = match[1] === "_work" ? "work" : "_work";
+  return [`/home/runner/${alternate}/${match[2]}/${match[2]}`];
 }
 
 export function mergeLcovReports(reports: string[]): string {
@@ -219,27 +344,60 @@ export function mergeLcovReports(reports: string[]): string {
     branches: Map<string, { key: [number, number, number]; hits: number }>;
   }>();
 
-  for (let reportIndex = 0; reportIndex < reports.length; reportIndex++) {
-    const report = reports[reportIndex];
-    if (report === undefined) continue;
+  function collectReport(report: string, reportIndex: number): void {
     let currentFile: string | undefined;
 
-    for (const line of report.split(/\r?\n/)) {
+    function mergeBranchRecord(
+      file: NonNullable<ReturnType<typeof files.get>>,
+      line: string,
+      sourceFile: string,
+    ): void {
+      // Deno emits numeric BRDA:<line>,<block>,<branch>,<hits|-> only. Other
+      // forms (for example lcov 2.x `e`-prefixed exception blocks) are
+      // intentionally dropped. Deno derives block ids from V8 function
+      // indexes, which can differ between otherwise equivalent reports. If
+      // every report has the same block shape on a line but the ids differ,
+      // use each block's source-order ordinal so Sonar sees one stable
+      // condition set. If a report omits a block or the branch shapes
+      // differ, ordinals would not line up, so the emitted ids are kept.
+      const match = /^BRDA:(\d+),(\d+),(\d+),(\d+|-)\s*$/.exec(line);
+      if (!match) return;
+      const lineNumber = Number(match[1]);
+      const emittedBlock = Number(match[2]);
+      const layout = blockLayouts[reportIndex]?.get(sourceFile)?.get(
+        lineNumber,
+      );
+      const blockOrdinal = layout?.ids.indexOf(emittedBlock) ?? -1;
+      const block = shiftedBlockLines.get(sourceFile)?.has(lineNumber) &&
+          blockOrdinal >= 0
+        ? blockOrdinal
+        : emittedBlock;
+      const key: [number, number, number] = [
+        lineNumber,
+        block,
+        Number(match[3]),
+      ];
+      const hits = match[4] === "-" ? 0 : Number(match[4]);
+      const id = key.join(",");
+      const existing = file.branches.get(id);
+      file.branches.set(id, { key, hits: (existing?.hits ?? 0) + hits });
+    }
+    function mergeRecord(line: string): void {
       if (line.startsWith("SF:")) {
         currentFile = line.slice(3).trim();
         if (!files.has(currentFile)) {
           files.set(currentFile, { lines: new Map(), branches: new Map() });
         }
-        continue;
+        return;
       }
 
       if (line === "end_of_record") {
         currentFile = undefined;
-        continue;
+        return;
       }
-      if (!currentFile) continue;
+      if (!currentFile) return;
       const file = files.get(currentFile);
-      if (!file) continue;
+      if (!file) return;
 
       if (line.startsWith("DA:")) {
         const record = parseLcovLine(line);
@@ -250,37 +408,14 @@ export function mergeLcovReports(reports: string[]): string {
           );
         }
       } else if (line.startsWith("BRDA:")) {
-        // Deno emits numeric BRDA:<line>,<block>,<branch>,<hits|-> only. Other
-        // forms (for example lcov 2.x `e`-prefixed exception blocks) are
-        // intentionally dropped. Deno derives block ids from V8 function
-        // indexes, which can differ between otherwise equivalent reports. If
-        // every report has the same block shape on a line but the ids differ,
-        // use each block's source-order ordinal so Sonar sees one stable
-        // condition set. If a report omits a block or the branch shapes
-        // differ, ordinals would not line up, so the emitted ids are kept.
-        const match = /^BRDA:(\d+),(\d+),(\d+),(\d+|-)\s*$/.exec(line);
-        if (!match) continue;
-        const lineNumber = Number(match[1]);
-        const emittedBlock = Number(match[2]);
-        const layout = blockLayouts[reportIndex]?.get(currentFile)?.get(
-          lineNumber,
-        );
-        const blockOrdinal = layout?.ids.indexOf(emittedBlock) ?? -1;
-        const block = shiftedBlockLines.get(currentFile)?.has(lineNumber) &&
-            blockOrdinal >= 0
-          ? blockOrdinal
-          : emittedBlock;
-        const key: [number, number, number] = [
-          lineNumber,
-          block,
-          Number(match[3]),
-        ];
-        const hits = match[4] === "-" ? 0 : Number(match[4]);
-        const id = key.join(",");
-        const existing = file.branches.get(id);
-        file.branches.set(id, { key, hits: (existing?.hits ?? 0) + hits });
+        mergeBranchRecord(file, line, currentFile);
       }
     }
+    for (const line of report.split(/\r?\n/)) mergeRecord(line);
+  }
+  for (let reportIndex = 0; reportIndex < reports.length; reportIndex++) {
+    const report = reports[reportIndex];
+    if (report !== undefined) collectReport(report, reportIndex);
   }
 
   return [...files.entries()]
@@ -385,19 +520,26 @@ function findShiftedBranchBlockLines(
   const differing = new Map<string, { file: string; line: number }>();
   const mismatched = new Set<string>();
 
+  function observeLine(
+    file: string,
+    line: number,
+    blocks: BranchBlockLayout,
+  ): void {
+    const id = `${file}\0${line}`;
+    const ids = blocks.ids.join(",");
+    const shape = blocks.branchCounts.join(",");
+    const first = seen.get(id);
+    if (first === undefined) {
+      seen.set(id, { ids, shape });
+      return;
+    }
+    if (first.shape !== shape) mismatched.add(id);
+    if (first.ids !== ids) differing.set(id, { file, line });
+  }
   for (const layout of layouts) {
     for (const [file, lines] of layout) {
       for (const [line, blocks] of lines) {
-        const id = `${file}\0${line}`;
-        const ids = blocks.ids.join(",");
-        const shape = blocks.branchCounts.join(",");
-        const first = seen.get(id);
-        if (first === undefined) {
-          seen.set(id, { ids, shape });
-          continue;
-        }
-        if (first.shape !== shape) mismatched.add(id);
-        if (first.ids !== ids) differing.set(id, { file, line });
+        observeLine(file, line, blocks);
       }
     }
   }

@@ -282,7 +282,7 @@ describe("buildFilesListUrl", () => {
     const source: PullSource = { type: "branch", name: "feature-x" };
     assertEquals(
       buildFilesListUrl("my-project", source),
-      "/projects/my-project/files?branch=feature-x",
+      "/projects/my-project/files?ref=branch%3Afeature-x",
     );
   });
 
@@ -290,7 +290,7 @@ describe("buildFilesListUrl", () => {
     const source: PullSource = { type: "branch", name: "feature/new stuff" };
     assertEquals(
       buildFilesListUrl("my-project", source),
-      "/projects/my-project/files?branch=feature%2Fnew%20stuff",
+      "/projects/my-project/files?ref=branch%3Afeature%2Fnew%20stuff",
     );
   });
 
@@ -340,7 +340,7 @@ describe("buildFileContentUrl", () => {
     const source: PullSource = { type: "branch", name: "feature-x" };
     assertEquals(
       buildFileContentUrl("my-project", "pages/index.tsx", source),
-      "/projects/my-project/files/pages%2Findex.tsx?branch=feature-x",
+      "/projects/my-project/files/pages%2Findex.tsx?ref=branch%3Afeature-x",
     );
   });
 
@@ -396,7 +396,7 @@ describe("listAllFiles", () => {
   it("should fetch files from branch", async () => {
     await testListAllFiles(
       { type: "branch", name: "feature-x" },
-      "/projects/my-project/files?branch=feature-x",
+      "/projects/my-project/files?ref=branch%3Afeature-x",
     );
   });
 
@@ -435,6 +435,34 @@ describe("listAllFiles", () => {
 });
 
 describe("getFileContent", () => {
+  it("rejects REST binary text slots before files get can write an empty output", async () => {
+    for (const size of [0, 7]) {
+      await assertRejects(
+        () =>
+          getFileContent(
+            createMockClient({
+              get: () =>
+                Promise.resolve({
+                  path: "knowledge/a.bin",
+                  content: "",
+                  size,
+                  binary: {
+                    content_type: "application/octet-stream",
+                    byte_size: size,
+                    content_hash: "a".repeat(64),
+                  },
+                }),
+            }),
+            "project",
+            "knowledge/a.bin",
+            { type: "main" },
+          ),
+        Error,
+        'Cannot read binary file "knowledge/a.bin" as text.',
+      );
+    }
+  });
+
   async function testGetFileContent(
     source: PullSource,
     expectedUrl: string,
@@ -463,7 +491,7 @@ describe("getFileContent", () => {
   it("should fetch file content from branch", async () => {
     await testGetFileContent(
       { type: "branch", name: "feature-x" },
-      "/projects/my-project/files/pages%2Findex.tsx?branch=feature-x",
+      "/projects/my-project/files/pages%2Findex.tsx?ref=branch%3Afeature-x",
     );
   });
 
@@ -655,6 +683,14 @@ describe("pullCommand", () => {
         quiet: true,
       });
 
+      assertEquals(JSON.parse(await Deno.readTextFile(join(tempDir, "veryfront.json"))), {
+        projectSlug: "alpha-canonical",
+        apiUrl: "https://api.veryfront.com",
+      });
+      const gitignore = await Deno.readTextFile(join(tempDir, ".gitignore"));
+      for (const entry of ["node_modules/", ".veryfront/", ".env", ".cache/"]) {
+        assertEquals(gitignore.split("\n").includes(entry), true);
+      }
       assertEquals(await readProjectLink(tempDir), {
         version: 1,
         controlPlane: "https://api.veryfront.com",
@@ -706,6 +742,7 @@ describe("pullCommand", () => {
     const remoteTsconfig = `{"compilerOptions":{"strict":false},"include":["remote.ts"]}\n`;
 
     try {
+      await Deno.writeTextFile(join(tempDir, ".gitignore"), "custom-only/\n");
       await Deno.writeTextFile(join(tempDir, "package.json"), localPackage);
       Deno.env.set("VERYFRONT_API_TOKEN", "token");
       _resetEnvironmentConfig();
@@ -743,6 +780,7 @@ describe("pullCommand", () => {
         quiet: true,
       });
 
+      assertEquals(await Deno.readTextFile(join(tempDir, ".gitignore")), "custom-only/\n");
       assertEquals(await Deno.readTextFile(join(tempDir, "package.json")), localPackage);
       assertEquals(await Deno.readTextFile(join(tempDir, "tsconfig.json")), remoteTsconfig);
       assertEquals((await readProjectLink(tempDir))?.projectId, "proj_alpha");
@@ -927,6 +965,8 @@ describe("pullCommand", () => {
       );
       assertEquals(await exists(join(tempDir, "package.json")), false);
       assertEquals(await exists(join(tempDir, "tsconfig.json")), false);
+      assertEquals(await exists(join(tempDir, ".gitignore")), false);
+      assertEquals(await exists(join(tempDir, "veryfront.json")), false);
     } finally {
       Deno.writeTextFile = originalWriteTextFile;
       globalThis.fetch = originalFetch;
@@ -1097,6 +1137,8 @@ describe("pullCommand", () => {
       assertEquals(await readProjectLink(tempDir), null);
       assertEquals(await exists(join(tempDir, "package.json")), false);
       assertEquals(await exists(join(tempDir, "tsconfig.json")), false);
+      assertEquals(await exists(join(tempDir, ".gitignore")), false);
+      assertEquals(await exists(join(tempDir, "veryfront.json")), false);
     } finally {
       globalThis.fetch = originalFetch;
       restoreEnv("VERYFRONT_API_TOKEN", originalApiToken);
@@ -1150,6 +1192,8 @@ describe("pullCommand", () => {
       assertEquals(await readProjectLink(tempDir), null);
       assertEquals(await exists(join(tempDir, "package.json")), false);
       assertEquals(await exists(join(tempDir, "tsconfig.json")), false);
+      assertEquals(await exists(join(tempDir, ".gitignore")), false);
+      assertEquals(await exists(join(tempDir, "veryfront.json")), false);
       assertEquals(await exists(join(tempDir, "app", "page.tsx")), false);
     } finally {
       globalThis.fetch = originalFetch;
@@ -1209,9 +1253,12 @@ describe("pullCommand", () => {
       );
       assertEquals(output.includes("  Would create: package.json"), true);
       assertEquals(output.includes("  Would create: tsconfig.json"), true);
+      assertEquals(output.includes("  Would create: .gitignore"), true);
       assertEquals(await readProjectLink(tempDir), null);
       assertEquals(await exists(join(tempDir, "package.json")), false);
       assertEquals(await exists(join(tempDir, "tsconfig.json")), false);
+      assertEquals(await exists(join(tempDir, ".gitignore")), false);
+      assertEquals(await exists(join(tempDir, "veryfront.json")), false);
     } finally {
       cliLogger.info = originalInfo;
       globalThis.fetch = originalFetch;
@@ -1262,6 +1309,7 @@ describe("pullCommand", () => {
       assertEquals(output.includes("  Would create: .veryfront/project.json"), true);
       assertEquals(output.includes("  Would create: package.json"), true);
       assertEquals(output.includes("  Would create: tsconfig.json"), true);
+      assertEquals(output.includes("  Would create: .gitignore"), true);
     } finally {
       console.log = originalConsoleLog;
       cliLogger.info = originalInfo;
@@ -1547,7 +1595,7 @@ describe("pullCommand", () => {
         }
         if (
           url.pathname === "/projects/alpha/files" &&
-          url.searchParams.get("branch") === "studio-change"
+          url.searchParams.get("ref") === "branch:studio-change"
         ) {
           return Promise.resolve(
             new Response(
@@ -1628,7 +1676,7 @@ describe("pullCommand", () => {
           }
           if (
             url.pathname === "/projects/alpha/files" &&
-            url.searchParams.get("branch") === "studio-change"
+            url.searchParams.get("ref") === "branch:studio-change"
           ) {
             return Promise.resolve(Response.json({
               data: [
@@ -1699,7 +1747,7 @@ describe("pullCommand", () => {
         }
         if (
           url.pathname === "/projects/alpha/files" &&
-          url.searchParams.get("branch") === "studio-change"
+          url.searchParams.get("ref") === "branch:studio-change"
         ) {
           return Promise.resolve(
             Response.json({
@@ -1754,7 +1802,7 @@ describe("pullCommand", () => {
         }
         if (
           url.pathname === "/projects/alpha/files" &&
-          url.searchParams.get("branch") === "studio-change"
+          url.searchParams.get("ref") === "branch:studio-change"
         ) {
           return Promise.resolve(
             Response.json({
@@ -2063,7 +2111,7 @@ describe("pullCommand", () => {
         }
         if (
           url.pathname === "/projects/alpha/files" &&
-          url.searchParams.get("branch") === "studio-change"
+          url.searchParams.get("ref") === "branch:studio-change"
         ) {
           return Promise.resolve(
             new Response(

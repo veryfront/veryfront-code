@@ -76,6 +76,7 @@ export {
   getRemoteIntegrationToolDefinitions,
   getRemoteIntegrationToolDiscovery,
   isRemoteIntegrationTool,
+  runRemoteIntegrationTool,
 } from "./remote-tools.ts";
 export type { RemoteIntegrationToolDiscoveryResult } from "./remote-tools.ts";
 export { createLocalIntegrationToolSource } from "./local-tool-source.ts";
@@ -91,8 +92,24 @@ export {
 } from "./salesforce-service-account.ts";
 export type { SalesforceServiceAccountToolSourceOptions } from "./salesforce-service-account.ts";
 
+export {
+  createOutlookServiceAccountToolSource,
+  OUTLOOK_SERVICE_ACCOUNT_ENV_VARS,
+} from "./outlook-service-account.ts";
+export type {
+  OutlookAttachmentContent,
+  OutlookAttachmentContentArgs,
+  OutlookServiceAccountToolSource,
+  OutlookServiceAccountToolSourceOptions,
+} from "./outlook-service-account.ts";
+
 export { createIntegrationClient, IntegrationApiError } from "./client.ts";
 export type {
+  ConnectionDeletion,
+  ConnectionRequestOptions,
+  ConnectionStatus,
+  ConnectSession,
+  CreateConnectSessionOptions,
   IntegrationCallOptions,
   IntegrationCallOutcome,
   IntegrationCatalogEntry,

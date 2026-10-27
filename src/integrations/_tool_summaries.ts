@@ -469,6 +469,34 @@ export const historicalToolSummaries: Record<string, IntegrationEndpointHistoric
     }, { "name": "web_url" }],
     "omitted": "pipeline step definitions and provider webhook settings",
   },
+  "calendar__list_calendars": {
+    "collectionKeys": ["items", "data", "calendars"],
+    "collectionName": "calendars",
+    "itemFields": [{ "name": "id" }, { "name": "summary" }, { "name": "timeZone" }, {
+      "name": "accessRole",
+    }, { "name": "primary" }],
+    "outputFields": [{ "name": "nextPageToken" }, { "name": "nextSyncToken" }, {
+      "name": "pagination",
+      "kind": "object",
+    }],
+    "omitted": "other provider fields",
+  },
+  "calendar__list_events": {
+    "collectionKeys": ["items", "data", "events"],
+    "collectionName": "events",
+    "itemFields": [
+      { "name": "id" },
+      { "name": "summary" },
+      { "name": "start", "kind": "object" },
+      { "name": "end", "kind": "object" },
+      { "name": "status" },
+      { "name": "htmlLink" },
+    ],
+    "outputFields": [{ "name": "nextPageToken" }, { "name": "nextSyncToken" }, {
+      "name": "timeZone",
+    }, { "name": "pagination", "kind": "object" }],
+    "omitted": "event descriptions and other provider fields",
+  },
   "calendly__list_event_invitees": {
     "collectionKeys": ["collection", "invitees"],
     "collectionName": "invitees",
@@ -2601,6 +2629,34 @@ export const historicalToolSummaries: Record<string, IntegrationEndpointHistoric
     "outputFields": [{ "name": "@odata.nextLink" }, { "name": "@odata.count" }],
     "omitted": "folder provider-specific payload fields",
   },
+  "outlook__list_shared_mailbox_attachments": {
+    "collectionKeys": ["value", "attachments", "data"],
+    "collectionName": "attachments",
+    "itemFields": [
+      { "name": "id" },
+      { "name": "name" },
+      { "name": "contentType" },
+      { "name": "size" },
+      { "name": "isInline" },
+      { "name": "lastModifiedDateTime" },
+    ],
+    "outputFields": [{ "name": "@odata.nextLink" }, { "name": "@odata.count" }],
+    "omitted": "attachment binary content and provider-specific payload fields",
+  },
+  "outlook__list_shared_mailbox_child_folders": {
+    "collectionKeys": ["value", "folders", "data"],
+    "collectionName": "folders",
+    "itemFields": [
+      { "name": "id" },
+      { "name": "displayName" },
+      { "name": "parentFolderId" },
+      { "name": "childFolderCount" },
+      { "name": "unreadItemCount" },
+      { "name": "totalItemCount" },
+    ],
+    "outputFields": [{ "name": "@odata.nextLink" }, { "name": "@odata.count" }],
+    "omitted": "folder provider-specific payload fields",
+  },
   "outlook__list_shared_mailbox_emails": {
     "collectionKeys": ["value", "data", "messages"],
     "collectionName": "messages",
@@ -2625,6 +2681,20 @@ export const historicalToolSummaries: Record<string, IntegrationEndpointHistoric
     ],
     "outputFields": [{ "name": "@odata.nextLink" }, { "name": "@odata.count" }],
     "omitted": "large email bodies and provider-specific message fields",
+  },
+  "outlook__list_shared_mailbox_folders": {
+    "collectionKeys": ["value", "folders", "data"],
+    "collectionName": "folders",
+    "itemFields": [
+      { "name": "id" },
+      { "name": "displayName" },
+      { "name": "parentFolderId" },
+      { "name": "childFolderCount" },
+      { "name": "unreadItemCount" },
+      { "name": "totalItemCount" },
+    ],
+    "outputFields": [{ "name": "@odata.nextLink" }, { "name": "@odata.count" }],
+    "omitted": "folder provider-specific payload fields",
   },
   "outlook__list_threads": {
     "collectionKeys": ["value", "data", "messages"],

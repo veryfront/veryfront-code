@@ -489,7 +489,7 @@ describe("createProject", () => {
 
     try {
       await Deno.mkdir(projectDir, { recursive: true });
-      await Deno.writeTextFile(join(projectDir, "package.json"), "{");
+      await Deno.writeTextFile(join(projectDir, "package.json"), "{\n");
 
       const result = await createProject({
         ...baseRequest(parentDir),
@@ -1020,4 +1020,36 @@ describe("createProject when a path cannot be written through", () => {
       await remove(parentDir, { recursive: true }).catch(() => {});
     }
   });
+});
+
+Deno.test("cloud association is included in the first commit", async () => {
+  const parentDir = await makeTempDir();
+  try {
+    await withGitIdentity(async () => {
+      const result = await createProject({ ...baseRequest(parentDir), initializeGit: true }, {
+        beforeGitInitialization: async (dir) => {
+          await Deno.writeTextFile(
+            join(dir, "veryfront.json"),
+            JSON.stringify({ projectSlug: "cloud-project" }),
+          );
+        },
+      });
+      const committed = await new Deno.Command("git", {
+        args: ["show", "HEAD:veryfront.json"],
+        cwd: result.projectDir,
+      }).output();
+      assertEquals(committed.code, 0);
+      assertEquals(
+        JSON.parse(new TextDecoder().decode(committed.stdout)).projectSlug,
+        "cloud-project",
+      );
+      const status = await new Deno.Command("git", {
+        args: ["status", "--porcelain"],
+        cwd: result.projectDir,
+      }).output();
+      assertEquals(new TextDecoder().decode(status.stdout), "");
+    });
+  } finally {
+    await remove(parentDir, { recursive: true });
+  }
 });

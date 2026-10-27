@@ -225,11 +225,10 @@ export async function fetchProjectEnvVars(
   // The value is normalized with captured intrinsics, and it is part of the
   // host API snapshot, so project code cannot steer it after startup.
   const origin = getHostApiOriginExcludingEnvFile("VERYFRONT_API_INTERNAL_URL") ?? apiBaseUrl;
-  const managementUrl = `${origin}/projects/${
-    encodeURIComponent(projectSlug)
-  }/environment-variables?environment_id=${
+  const projectPath = `${origin}/projects/${encodeURIComponent(projectSlug)}`;
+  const managementUrl = `${projectPath}/environments/${
     encodeURIComponent(environmentId)
-  }&limit=${ENV_VARS_FETCH_LIMIT}`;
+  }/variables?limit=${ENV_VARS_FETCH_LIMIT}`;
   const internalUrl = `${origin}/internal/project-environment-variables?environment_id=${
     encodeURIComponent(environmentId)
   }&project_slug=${encodeURIComponent(projectSlug)}`;

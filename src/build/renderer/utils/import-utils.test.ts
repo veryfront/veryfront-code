@@ -303,6 +303,63 @@ describe("build/renderer/utils/import-utils", () => {
       }
     });
 
+    it("ignores class words inside extends strings, comments and regexes", async () => {
+      for (
+        const expression of [
+          'registry["class"]',
+          String.raw`registry["\"class"]`,
+          String.raw`registry['\'class']`,
+          "registry[`class`]",
+          "registry.class",
+          'registry[/* class */ "Base"]',
+          "/class/.constructor",
+        ]
+      ) {
+        const source =
+          `export class Foo extends ${expression} {} /"/.test("x"); const child = import("./child.mdx");`;
+        assertEquals(extractImports(source), ["./child.mdx"]);
+        assertEquals(
+          await processImports(
+            source,
+            "/project/page.ts",
+            "/project",
+            () => Promise.resolve("./resolved.mdx"),
+          ),
+          source.replace("./child.mdx", "./resolved.mdx"),
+        );
+      }
+    });
+
+    it("retains imports after regexes following control flow and class declarations", async () => {
+      for (const prefix of ['if (x) /"/.test(x);', 'if (x) {} /"/.test(x);']) {
+        const source = `${prefix} class Foo {} /"/.test(x); const child = import("./child.mdx");`;
+        assertEquals(extractImports(source), ["./child.mdx"]);
+        assertEquals(
+          await processImports(
+            source,
+            "/project/page.ts",
+            "/project",
+            () => Promise.resolve("./resolved.mdx"),
+          ),
+          source.replace("./child.mdx", "./resolved.mdx"),
+        );
+      }
+    });
+
+    it("extracts and rewrites dependencies after many object literals on one line", async () => {
+      const source = "const values = [" + "{},".repeat(6_400) + ']; import("./child.mdx")';
+      assertEquals(extractImports(source), ["./child.mdx"]);
+      assertEquals(
+        await processImports(
+          source,
+          "/project/page.ts",
+          "/project",
+          () => Promise.resolve("./resolved.mdx"),
+        ),
+        source.replace("./child.mdx", "./resolved.mdx"),
+      );
+    });
+
     it("recognizes regex literals after class extends", () => {
       for (
         const code of [

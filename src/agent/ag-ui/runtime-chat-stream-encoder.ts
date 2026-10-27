@@ -532,8 +532,29 @@ export function createAgUiRuntimeChatStreamEncoder(
             type: "tool-output-available",
             toolCallId,
             output: event.output,
+            ...(event.preliminary === true ? { preliminary: true } : {}),
             ...(providerExecuted !== undefined ? { providerExecuted } : {}),
           });
+          return events;
+        }
+        case "tool-input-error": {
+          ensureStepStarted(events);
+          const toolCallId = getStringField(event, "toolCallId");
+          if (!toolCallId) return events;
+          const toolPart = toolParts.get(toolCallId);
+          events.push({
+            type: "tool-input-error",
+            toolCallId,
+            toolName: getStringField(event, "toolName") ?? toolPart?.toolName ?? "unknown",
+            input: event.input !== undefined ? getToolInput(event) : toolPart?.input ?? {},
+            errorText: getStringField(event, "errorText") ?? "Tool input failed",
+          });
+          return events;
+        }
+        case "tool-output-denied": {
+          ensureStepStarted(events);
+          const toolCallId = getStringField(event, "toolCallId");
+          if (toolCallId) events.push({ type: "tool-output-denied", toolCallId });
           return events;
         }
         case "tool-output-error": {

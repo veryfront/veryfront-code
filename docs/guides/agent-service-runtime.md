@@ -1,7 +1,7 @@
 ---
 title: "Agent service runtime"
 description: "Run Veryfront agents as separately deployed services."
-order: 19
+order: 550
 ---
 
 An agent service runs your agent as its own process, independent of the app server. Use it when you need a separate process boundary, direct control-plane registration, remote MCP tools, or deployment-owned service telemetry. Use a normal in-app route for everything else.
@@ -15,33 +15,48 @@ server do not require a `service.ts` entrypoint. Add one only when you
 intentionally run the standalone Agent Service process described in this guide.
 
 Managed runtimes can execute a connected agent from another project's immutable
-release. The control plane authorizes the connection before dispatch: `run.project`
-identifies the project that owns conversations, runs, tools, and billing, while
-`sourceProject` identifies the project and environment supplying agent definitions.
-The signed request audience remains the source runtime's project. Registration
-alone does not authorize another project or relax the runtime's signature checks.
+release. The consuming project owns conversations, runs, tools and billing. The
+source project supplies agent definitions. Registration alone does not authorize
+cross-project access.
 
-Source reads use a separate, read-only `credentials.sourceAuthToken`. The source
-project's environment variables and runtime token are not passed to the connected
-execution. Platform tool calls and inference use the consuming run's credentials.
-Child runs must inherit the authorized source connection through the control plane.
+Source selection and execution placement are independent.
+`sourceTargetEnvironmentId` and `sourceTargetBranchId` select source separately
+from the `runtimeTarget*` execution selectors. Keep the immutable release ID
+when selecting an execution target for a release. A branch source executing on
+an environment must set `sourceTargetBranchId` to its branch ID or `null` for
+the root branch; omission is rejected on that path. Release sources need neither
+source-target ID. Legacy invocations retain their matching environment or preview
+selection. Upgrade the runtime before enabling independent selectors.
 
-Connected execution evaluates project modules in an invocation-specific registry
-namespace, including discovery under the consuming project's credential context.
-This prevents reuse of closures containing the source project's secrets or a
-previous invocation's credentials. Framework registries and evaluated-module cache
-entries are retired when the response completes, fails, or is cancelled. Deno's
-ESM module map itself lasts for the process lifetime. The managed shared renderer
-pool bounds this retention with memory-triggered, graceful pod recycling. Dedicated
-runtime deployments need their own equivalent recycling policy before enabling
-repeated connected runs; the shared pool's policy does not cover those deployments.
+Connected execution uses the consuming run's credentials for tools and inference.
+Source reads use the separate read-only `credentials.sourceAuthToken`. The source project's environment
+variables and runtime token are not passed to the run. Child agents inherit the
+authorized connection.
 
-Connected agents and their child agent runs are supported. Starting, resuming, or
-retrying a source-defined durable workflow from connected execution is rejected
-before accessing the workflow backend. Durable workflow recovery needs a separate
-persisted source authorization and credential-renewal contract; ordinary same-project
-workflows and explicit calls to the consuming project's existing APIs keep their
-existing behavior.
+For repeated connected runs on a dedicated runtime, configure graceful process
+recycling to bound retained modules. The managed shared runtime provides this
+policy; dedicated deployments must provide their own.
+
+Connected agents and their child agent runs are supported. Starting, resuming or
+retrying a source-defined durable workflow from connected execution is rejected.
+Same-project workflows and calls to the consuming project's APIs remain supported.
+
+## Runtime identity
+
+Accepted authenticated service invocations report the receiving process through
+`x-veryfront-runtime-id`, `x-veryfront-runtime-name`, and
+`x-veryfront-runtime-mode: service` response headers. The ID remains the same for
+the process lifetime. Each replica and restarted process has a different ID, even
+when several replicas share one service URL.
+
+Set `VERYFRONT_RUNTIME_NAME` in the trusted service environment to override the
+hostname used as the display name. The trimmed name must contain at most 128
+UTF-16 code units, valid Unicode, and no control characters. The name header uses
+`encodeURIComponent` encoding. These headers identify the accepting process;
+they do not grant access. Existing runtime-owner URL headers remain unchanged.
+
+Signed managed agent streams report the same host-owned process identity on
+HTTP 200 SSE responses. Error responses omit it.
 
 ## Prerequisites
 
@@ -81,34 +96,6 @@ trace hooks, or application-error reporters. The framework-owned
 `veryfront serve` runtime owns this setup on shared and managed dedicated
 servers.
 
-The standalone service shares a process with the Agent code it loads. Use it
-for trusted code. Captured request accessors protect specific ingress operations;
-they do not provide process isolation for request bodies or credentials.
-
-Custom host route handlers receive the original request and remain responsible
-for authentication and credential handling.
-Dispatch visits the host route table and matched path segments by index so a
-replaced array iterator cannot inject a handler before host authentication.
-CORS allowlist membership, response header writes, and route path parsing also
-use captured operations.
-
-Sparse route, origin, method, and header arrays ignore inherited
-entries. Route handlers retain ordinary-object params; decoded keys bypass
-inherited setters.
-
-Framework responses supply explicit status, status text, and empty-header defaults
-to native constructors. These defaults override writable inherited data properties,
-including CORS headers for a denied origin, and apply only to omitted values.
-If `Object.prototype` defines an accessor for `headers`, `status`, or `statusText`,
-response construction throws a `TypeError` before native option conversion can
-invoke it.
-
-On Node, non-writable inherited data properties for these fields also
-cause native construction to throw a `TypeError`. The runtime does not remove
-these properties, return an empty response, or
-retry with weaker CORS rules. Invalid response values still fail native
-validation, and host handler errors propagate unchanged.
-
 The service discovers the same project primitives as the app runtime:
 
 - `agents/`
@@ -122,11 +109,6 @@ The service discovers the same project primitives as the app runtime:
 When exactly one code or markdown agent is discovered, that agent becomes the
 default for direct `/api/runs` requests. Pass `agentId` when the service exposes
 multiple agents and direct requests need a predictable default.
-
-Hosted tool execution preserves the selected agent ID and durable run ID. Remote
-tool calls carry these identities so they match the run authorization claims.
-If you customize `createTaskContext`, return the resolved `agentId` in that context.
-Hosted execution uses that identity, including any normalization your hook applies.
 
 ## Keep agent behavior in project files
 
@@ -416,7 +398,7 @@ Managed brokers can use `createManagedBrokerProjectState()` from
 `veryfront/agent/managed-broker` for project instructions and skill catalogs.
 The executor sends its effective tool selection on each steering refresh. The
 broker validates that selection against the installed grant before constructing
-instructions, and includes skills only when `load_skill` remains available.
+instructions, and includes skills only when `veryfront__load_skill` remains available.
 Refreshes without a tool selection omit the skill catalog.
 
 Managed broker ingress checks application strings and property names for known
@@ -428,6 +410,40 @@ including encoded URLs and metadata.
 Closing the managed broker handler or aborting its service signal returns 503
 `BROKER_UNAVAILABLE` for pending admission. Request-only cancellation returns 499
 `BROKER_INGRESS_ABORTED`.
+
+## Bound model stream progress
+
+Set `VERYFRONT_MODEL_STREAM_FIRST_PROGRESS_TIMEOUT_MS` and
+`VERYFRONT_MODEL_STREAM_SEMANTIC_IDLE_TIMEOUT_MS` in the service environment to
+bound how long each streamed agent model call waits for semantic output. The first
+budget covers the wait for the first text, reasoning, or tool output, with a
+default of `60000`. The second covers the gap between outputs once progress
+begins, with a default of `15000`.
+
+```bash
+VERYFRONT_CHAT_STREAM_IDLE_TIMEOUT_MS=120000
+VERYFRONT_MODEL_STREAM_FIRST_PROGRESS_TIMEOUT_MS=30000
+VERYFRONT_MODEL_STREAM_SEMANTIC_IDLE_TIMEOUT_MS=10000
+```
+
+Both budgets must stay below `VERYFRONT_CHAT_STREAM_IDLE_TIMEOUT_MS` (default
+`150000`), because the watchdog would otherwise fire first and report a generic
+stall instead of the fixed `FIRST_PROGRESS_TIMEOUT` code. The effective
+first-progress budget counts twice, because a stream that times out before any
+output can be replayed once. In the example, `30000` uses a `60000` window. The
+service rejects an explicitly set budget at or above that watchdog when it
+creates the chat runtime, and the error names both variables and their
+effective values. When a variable is unset and its default does not fit, for
+example with the watchdog pinned to the previous `120000` default, the service
+uses the largest budget that fits while leaving at least 1 second or 10% of
+the watchdog for the retry (`54000` for first progress) and logs a one-time
+warning instead of rejecting requests.
+
+Delegated child agents inherit a budget only when its window is shorter than
+the child stream watchdog (`45000`). A longer budget leaves that child on the
+framework default. See
+[Configuration](./configuration.md#model-stream-progress-budgets) for every
+related variable.
 
 ## Keep inference authority separate
 
@@ -667,72 +683,31 @@ retirement, even when the caller's cancellation signal remains live.
 
 ### Broker composition
 
-The hosted service's `DELETE /api/runs/:runId` route requires verified cancellation
-authority for that exact run before changing execution state or remembering a
-delayed-start cancellation. The default runtime verifies the API's existing signed
-cancellation bearer with its configured public key. Two claim shapes are accepted,
-one for each shape the API mints: a project- and run-scoped `veryfront-server`
-service-account bearer carrying `tokenUse: project_scoped_service_account`, and,
-for a run with no project, the requester's own session bearer, which carries no
-`tokenUse` at all.
+The hosted service's `DELETE /api/runs/:runId` route requires verified
+cancellation authority for that run. The default runtime verifies the signed
+bearer with its configured public key. A user token without a matching run claim
+or a development callback that only decodes a token is insufficient. Custom route sets must
+supply `verifyRunCancellationToken`; omission returns HTTP 403. Request-owned
+AG-UI streams also support cancellation through their request signal.
 
-Both shapes are pinned by a contract fixture holding payloads
-captured from the API's minting code, so a claim change on either side fails a
-test instead of rejecting every cancellation in production. A general user token
-without a matching run claim is insufficient, and development decode-only
-authentication does not grant cancellation. Custom route sets must supply
-`verifyRunCancellationToken`; omission returns HTTP 403.
+`createAgUiCancelHandler` and `createAgUiResumeHandler` require an
+`authorizeRunControl` decision. Authority applies only to the approved run and
+operation; do not use project middleware as a substitute.
 
-The API retains actor and
-collaborator authorization before minting the runtime credential. Request-owned
-AG-UI streams still support cancellation through their request signal.
+Resume is served at `POST /api/control-plane/runs/:runId/resume` and
+`POST /api/runs/:runId/resume`. Both require a valid run-bound bearer before
+changing the waiting run. Projectless resume is unsupported. Custom route sets
+must supply `verifyRunResumeToken`; omission returns HTTP 403.
 
-The requirement sits at the effect, not only at that route. `createAgUiCancelHandler`
-and `createAgUiResumeHandler` both require an `authorizeRunControl` decision, and the
-session manager takes verified authority rather than a run id for the cancel-and-tombstone
-and resume paths. The run the effect reaches is read out of that authority, so a
-surface that mounts either handler cannot reach the registry without a decision, and
-authority granted for one run or operation cannot be redirected to another. Run
-control the runtime itself performs, such as a session or waiting timeout, still
-cancels by run id and cannot create a delayed-start cancellation.
+Resume and cancel handlers enforce a 1 MiB body limit before authentication,
+run-ID resolution or authorization. Oversized declared or chunked bodies return
+HTTP 413 and cancel the remaining stream. Authentication receives a separate
+request with the bounded original body, so reading JSON does not consume the
+handler's input. Cancellation without a body remains supported.
 
-Resume carries the same contract. The default runtime verifies the bearer the API
-signs for `POST /api/control-plane/runs/:runId/resume` against the same public key.
-The default route set also serves `POST /api/runs/:runId/resume` with the same
-verification and signal handler.
-
-Both routes refuse an invalid bearer before
-changing the waiting run. Resume has no separate mint: the API signs it with the run-bound service credential it already
-uses for the stream, so two claim shapes are accepted, both bound to one run and one
-project. A run whose record names an actor service account and an agent access grant
-carries `tokenUse: run_scoped_service_account` with that grant recorded in the token;
-every other project-bound run carries the `veryfront-server` service-account bearer
-with `tokenUse: project_scoped_service_account`.
-
-The API refuses to resume a run with
-no project before it mints anything, so no projectless resume shape exists. Both
-shapes are pinned by a contract fixture holding payloads captured from the API's
-signing path, including the scope ordering, which differs between the two mints. The
-grant relation is recorded rather than re-derived, so the API's collaborator policy
-stays the API's decision.
-
-Custom route sets that serve resume must supply
-`verifyRunResumeToken`; omission returns HTTP 403. Both resume routes enforce the
-1 MiB request-body limit on the incoming stream before calling custom authentication.
-Authentication receives a separate request with the bounded original body, so it may
-read JSON without consuming the signal handler's input.
-
-Oversized declared or chunked
-bodies return HTTP 413 before authentication and cancel the remaining stream.
-Standalone resume and cancel handlers apply the same bound before run-id resolvers
-and authorizers receive a body. Cancellation without a body remains supported.
-
-Cancellation claims and request bindings must be own data properties. The route
-also rejects inherited `then` properties before authentication and rechecks after
-asynchronous verification. This prevents known thenable pollution from replacing
-JWT verification results. These checks do not isolate arbitrary project code
-running in the service process; use a separate trusted broker process for that
-boundary.
+Cancellation claims and request bindings must be own data properties. These
+checks do not isolate arbitrary project code in the service process. Use a
+separate trusted broker process for that boundary.
 
 The broker owns HTTP authentication, credentials, model and tool authorization,
 and durable persistence. Executor facades call these capabilities through the
@@ -754,13 +729,15 @@ adapter's owner in trusted service configuration; project owners reject requests
 for other projects before preparation or allocation. Their `prepare` callbacks
 receive private broker authority and bounded executor data separately. Resolve
 immutable sources and capabilities in the broker before returning the executor
-start input. For signed control-plane managed brokers, when the returned start
-input includes `trustedRuntime`, the handler binds the broker-admitted
-`privateAuthority.apiAuthToken` as `trustedRuntime.hostedKnowledgeAuthToken` and
-the host-owned API base URL as `trustedRuntime.hostedKnowledgeApiUrl`, so
-framework knowledge retrieval stays broker-owned, targets the runtime's API
-origin, and remains outside executor wire data. Without that trusted-runtime
-credential, managed framework knowledge is denied.
+start input. For runs that need `trustedRuntime`, construct the broker with
+`createTrustedManagedExecutorBroker` from `veryfront/agent/trusted-broker`.
+Its start contract requires `trustedRuntime`; the ordinary
+`createManagedExecutorBroker` rejects that configuration. The trusted broker
+process must not load project-authored modules or callbacks.
+
+For signed control-plane invocations, this configuration enables framework
+knowledge retrieval while keeping its credential and API origin outside executor
+data. Without it, managed framework knowledge is denied.
 
 These adapters share admission, duplicate handling, and retirement
 with the signed adapter.
@@ -847,29 +824,3 @@ A working service streams AG-UI events back. If Veryfront Cloud registration
 is enabled, the service should also appear in the cloud dashboard's agent
 service list after the first heartbeat
 (`VERYFRONT_AGENT_SERVICE_HEARTBEAT_INTERVAL_MS`).
-
-Broker model output limits and provider-tool descriptors must stay within the installed model grant.
-Each broker tool capability must also stay within the installed tool allowlist. Startup rejects broader
-broker authority before allocating an executor.
-
-Preparation uses the narrower broker model output
-limits and provider-tool list, so its default model requests fit the broker policy. Anthropic thinking
-with an additive token budget reserves that budget from the total allowance before preparation chooses
-the completion limit. Adaptive thinking uses the total allowance without an additive reservation.
-
-Preparation rejects an explicit completion limit that exceeds the remainder. Source IDs must
-belong to the installed host-facade or remote-source grants. Owner-scoped tool selectors use the same
-canonical names for capability checks and steering refreshes.
-
-Trusted ingress must provide `tools.catalog` with the complete tool inventory and ownership metadata,
-including project-local tools that have no broker capability. The broker resolves short selectors to
-owned tools first, then validates source capabilities against those exact IDs. Preparation and steering
-refreshes receive the same resolved grant.
-
-A shadowed global tool does not gain authority from an owned
-tool's short selector. The catalog must come from trusted source metadata before executor discovery.
-For selected host tools, the broker includes the catalog's owner and short-name mapping in the
-validated installation.
-
-Rebuilt executor facades retain that mapping, so an agent's short selector
-continues to select the same canonical tool. Remote source listings do not supply ownership authority.

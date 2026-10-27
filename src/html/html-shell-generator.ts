@@ -95,7 +95,7 @@ function getRelativePagePath(
   const normalized = fullPath.replace(/\\/g, "/");
   if (!projectDir) return normalized.replace(/^\//, "");
 
-  const projectRoot = resolve(projectDir).replace(/\\/g, "/").replace(/\/+$/, "") || "/";
+  const projectRoot = resolve(projectDir).replace(/\\/g, "/").replace(/(?<!\/)\/+$/, "") || "/";
   const candidate = resolve(isAbsolute(normalized) ? normalized : `${projectRoot}/${normalized}`)
     .replace(/\\/g, "/");
   const projectPrefix = projectRoot.endsWith("/") ? projectRoot : `${projectRoot}/`;
@@ -291,11 +291,14 @@ async function generateHTMLShellPartsImpl(
       getReadyManifestForRenderAsync(options.releaseId));
 
   const importMapPromise = buildImportMap({
+    adapter: options.adapter,
+    reactPeers: options.reactPeers,
     projectDir: options.projectDir,
     config: options.config,
     moduleServerOrigin: options.moduleServerOrigin,
     dependencyPinningCacheKey: options.dependencyPinningCacheKey,
     dependencyPinningDependencies: options.dependencyPinningDependencies,
+    dependencyPinningConfiguredVersions: options.dependencyPinningConfiguredVersions,
     customImports: options.importMap,
     pretty: useDevScripts,
     releaseAssetManifest: releaseManifest,

@@ -4,18 +4,19 @@ const RESEARCH_TASK_CUE_PATTERN = /\b(research|report|findings|sources|authorita
 const RESEARCH_PROJECT_SAVE_CUE_PATTERN =
   /\b(?:save|write|persist|store|compile)\b[^\n]{0,120}\b(?:to|into)\b[^\n]{0,40}\b(?:the\s+)?project\b/i;
 
-const PROJECT_ARTIFACT_PATH_PATTERN = /(?:\/|\.{1,2}\/)?(?:[\w.-]+\/)+[\w.-]+\.[\w.-]+/g;
+const PROJECT_ARTIFACT_PATH_PATTERN =
+  /(?<![\w./-])(?:\/|\.{1,2}\/)?(?:[\w.-]+\/)+[\w.-]+\.[\w.-]+/g;
 
 function slugifyArtifactSegment(value: string): string {
   const lower = text.toLowerCase(value);
   const unquoted = text.replace(lower, /['"]/g, "");
   const separated = text.replace(unquoted, /[^a-z0-9]+/g, "-");
-  return text.replace(separated, /^-+|-+$/g, "");
+  return text.replace(separated, /^-+|(?<!-)-+$/g, "");
 }
 
 function slugifyRunArtifactSegment(value: string): string {
   const separated = text.replace(text.toLowerCase(value), /[^a-z0-9_-]+/g, "-");
-  return text.replace(separated, /^-+|-+$/g, "");
+  return text.replace(separated, /^-+|(?<!-)-+$/g, "");
 }
 
 function hasAnyArtifactPath(prompt: string): boolean {
@@ -34,15 +35,15 @@ function extractResearchTopic(input: { description: string; prompt: string }): s
   if (quoted && text.trim(quoted) && !isGenericResearchTopic(quoted)) return text.trim(quoted);
 
   let cleaned = text.replace(input.description, /^research\s+/i, "");
-  cleaned = text.replace(cleaned, /\.\s+.*$/s, "");
-  cleaned = text.replace(cleaned, /\s+and\s+(?:save|write|persist|store|compile)\b.*$/i, "");
-  cleaned = text.trim(text.replace(cleaned, /\s+across\b.*$/i, ""));
+  cleaned = text.replace(cleaned, /\.\s+\S.*$|\.\s+$/s, "");
+  cleaned = text.replace(cleaned, /(?<!\s)\s+and\s+(?:save|write|persist|store|compile)\b.*$/i, "");
+  cleaned = text.trim(text.replace(cleaned, /(?<!\s)\s+across\b.*$/i, ""));
   if (cleaned.length > 0) return cleaned;
 
   let topic = text.match(input.prompt, /\bresearch(?:\s+on|\s+about)?\s+([^\n.,:]+)/i)?.[1];
   if (topic === undefined) return null;
-  topic = text.replace(topic, /\s+and\s+save\b.*$/i, "");
-  topic = text.trim(text.replace(topic, /\s+and\s+write\b.*$/i, ""));
+  topic = text.replace(topic, /(?<!\s)\s+and\s+save\b.*$/i, "");
+  topic = text.trim(text.replace(topic, /(?<!\s)\s+and\s+write\b.*$/i, ""));
   return !topic || isGenericResearchTopic(topic) ? null : topic;
 }
 
@@ -93,7 +94,6 @@ export function buildDefaultResearchArtifactPathReminder(input: {
     `- Then create or update the current topic report at exactly ${artifactPaths.currentReportPath}.`,
     `- Supporting artifacts can live at ${artifactPaths.findingsPath} and ${artifactPaths.sourcesPath} when useful.`,
     `CRITICAL: The task is incomplete until ${artifactPaths.runReportPath} and ${artifactPaths.currentReportPath} both exist with the final report content.`,
-    "Use create_file or update_file yourself before finishing.",
   ], "\n");
 }
 

@@ -19,6 +19,8 @@ import {
 import { VERSION } from "#cli/utils";
 
 const NOISY_DEFAULT_FRAGMENTS = [
+  "Initializing caches...",
+  "Initialization complete",
   "Dev server running at",
   "Listening on http://",
   "Shutting down dev server",
@@ -60,6 +62,8 @@ const DEBUG_API_BUILD_DIAGNOSTICS = [
 ] as const;
 
 const ANSI_ESCAPE_PATTERN = new RegExp(`${String.fromCharCode(27)}\\[[0-?]*[ -/]*[@-~]`, "g");
+const DEV_CLI_READY_TIMEOUT_MS = TEST_TIMEOUTS.INTEGRATION;
+const DEV_CLI_BOOTSTRAP_OUTPUT_LIMIT = 4_000;
 
 interface CliRun {
   output: () => string;
@@ -158,6 +162,102 @@ function makeChildEnv(
   }
 
   return env;
+}
+
+let devCliBootstrapCachePromise: Promise<void> | undefined;
+
+async function ensureVeryfrontDevCliBootstrapCached(projectDir: string): Promise<void> {
+  devCliBootstrapCachePromise ??= cacheVeryfrontDevCliBootstrap(projectDir);
+  await devCliBootstrapCachePromise;
+}
+
+async function cacheVeryfrontDevCliBootstrap(projectDir: string): Promise<void> {
+  const command = new Deno.Command(Deno.execPath(), {
+    args: [
+      "cache",
+      "--unstable-worker-options",
+      "--unstable-net",
+      "cli/main.ts",
+    ],
+    cwd: Deno.cwd(),
+    clearEnv: true,
+    env: makeChildEnv(projectDir),
+    stdin: "null",
+    stdout: "piped",
+    stderr: "piped",
+  });
+
+  const child = command.spawn();
+  const status = child.status;
+  const capturedOutput = captureProcessOutput(child);
+
+  let commandStatus: Deno.CommandStatus;
+  try {
+    commandStatus = await waitForPromiseWithTimeout(
+      status,
+      TEST_TIMEOUTS.INTEGRATION,
+      "veryfront dev CLI cache did not finish before readiness assertions",
+    );
+  } catch (error) {
+    try {
+      child.kill("SIGTERM");
+    } catch {
+      // Process may already have exited.
+    }
+    try {
+      await waitForPromiseWithTimeout(status, 2_000, "dev CLI cache did not stop after SIGTERM");
+    } catch {
+      try {
+        child.kill("SIGKILL");
+      } catch {
+        // Process may already have exited.
+      }
+      await status.catch(() => undefined);
+    }
+    await capturedOutput.done;
+    const output = capturedOutput.read();
+    throw new Error(
+      `${error instanceof Error ? error.message : String(error)}.\n` +
+        `childOutput=\n${output}`,
+    );
+  }
+
+  await capturedOutput.done;
+  if (commandStatus.success) return;
+
+  throw new Error(
+    `Failed to cache the veryfront dev CLI before readiness assertions ` +
+      `(exit code=${commandStatus.code}, signal=${commandStatus.signal ?? "none"}).\n` +
+      capturedOutput.read(),
+  );
+}
+
+function captureProcessOutput(child: Deno.ChildProcess): { read(): string; done: Promise<void> } {
+  const decoder = new TextDecoder();
+  let captured = "";
+  const append = (chunk: string): void => {
+    if (captured.length >= DEV_CLI_BOOTSTRAP_OUTPUT_LIMIT) return;
+    captured += chunk.slice(0, DEV_CLI_BOOTSTRAP_OUTPUT_LIMIT - captured.length);
+  };
+  const drain = async (stream: ReadableStream<Uint8Array> | null): Promise<void> => {
+    if (!stream) return;
+    const reader = stream.getReader();
+    try {
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        append(decoder.decode(value, { stream: true }));
+      }
+      append(decoder.decode());
+    } finally {
+      reader.releaseLock();
+    }
+  };
+
+  return {
+    read: () => stripAnsi(captured),
+    done: Promise.all([drain(child.stdout), drain(child.stderr)]).then(() => undefined),
+  };
 }
 
 function startVeryfrontDev(
@@ -260,8 +360,13 @@ async function waitForPageContent(
   timeoutMs: number = TEST_TIMEOUTS.SERVER_STARTUP,
   requestPage: PageRequest = fetchWithTimeout,
   requestTimeoutMs = 1_000,
+  diagnostics: () => string = () => "",
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
+  let attempts = 0;
+  let lastStatus: number | undefined;
+  let lastContent = "";
+  let lastError = "";
   while (Date.now() < deadline) {
     try {
       const remainingMs = deadline - Date.now();
@@ -269,14 +374,29 @@ async function waitForPageContent(
         `http://127.0.0.1:${port}/`,
         Math.max(1, Math.min(requestTimeoutMs, remainingMs)),
       );
+      attempts++;
+      lastStatus = response.status;
       const content = await readResponseTextAndRelease(response);
+      lastContent = content.slice(0, 500);
       if (response.status === 200 && content.includes(expected)) return;
-    } catch {
-      // The server may be between reloads.
+    } catch (error) {
+      attempts++;
+      lastError = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
     }
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
-  throw new Error(`Timed out waiting for page content "${expected}"`);
+  throw new Error(
+    `Timed out waiting for page content "${expected}" after ${attempts} attempts` +
+      `
+lastStatus=${lastStatus ?? "none"}` +
+      `
+lastError=${lastError}` +
+      `
+lastContent=${lastContent}` +
+      `
+childOutput=
+${diagnostics()}`,
+  );
 }
 
 async function readResponseTextAndRelease(response: PageResponse): Promise<string> {
@@ -301,13 +421,15 @@ async function readResponseTextAndRelease(response: PageResponse): Promise<strin
 async function requestPageAndApi(
   port: number,
   request: typeof fetchWithTimeout,
+  diagnostics: () => string = () => "",
 ): Promise<void> {
   await waitForPageContent(
     port,
     "quiet dev logs page",
-    TEST_TIMEOUTS.SERVER_STARTUP,
+    DEV_CLI_READY_TIMEOUT_MS,
     request,
     3_000,
+    diagnostics,
   );
 
   const apiResponse = await request(`http://127.0.0.1:${port}/api/ping`);
@@ -428,20 +550,21 @@ describe(
 
     it(
       "keeps default dev output focused on readiness and hides routine diagnostics",
-      { timeout: TEST_TIMEOUTS.INTEGRATION },
+      { timeout: TEST_TIMEOUTS.E2E },
       async () => {
         await withTestContext("quiet-dev-output-default", async (context) => {
           await scaffoldMinimalProject(context.projectDir);
+          await ensureVeryfrontDevCliBootstrapCached(context.projectDir);
           const port = await context.allocatePort();
           const run = startVeryfrontDev(context.projectDir, port);
           context.addCleanup(run.stop);
 
-          await requestPageAndApi(port, run.request);
+          await requestPageAndApi(port, run.request, run.output);
           await run.stop();
 
           const output = run.output();
           assertStringIncludes(output, `Veryfront (v${VERSION})`);
-          assertStringIncludes(output, "Ready in");
+          assertStringIncludes(output, "App ready");
           assert(!output.includes("Logged in as"));
           assert(!output.includes("Press s to"));
 
@@ -457,19 +580,20 @@ describe(
 
     it(
       "keeps representative diagnostics visible with --debug",
-      { timeout: TEST_TIMEOUTS.INTEGRATION },
+      { timeout: TEST_TIMEOUTS.E2E },
       async () => {
         await withTestContext("quiet-dev-output-debug", async (context) => {
           await scaffoldMinimalProject(context.projectDir);
+          await ensureVeryfrontDevCliBootstrapCached(context.projectDir);
           const port = await context.allocatePort();
           const run = startVeryfrontDev(context.projectDir, port, ["--debug"]);
           context.addCleanup(run.stop);
 
-          await requestPageAndApi(port, run.request);
+          await requestPageAndApi(port, run.request, run.output);
           await run.stop();
 
           const output = run.output();
-          assertStringIncludes(output, "Ready in");
+          assertStringIncludes(output, "App ready");
           assertIncludesAny(
             output,
             DEBUG_EXTENSION_DIAGNOSTICS,
@@ -491,10 +615,11 @@ describe(
 
     it(
       "reloads changed files without printing routine HMR internals",
-      { timeout: TEST_TIMEOUTS.INTEGRATION },
+      { timeout: TEST_TIMEOUTS.E2E },
       async () => {
         await withTestContext("quiet-dev-output-hmr", async (context) => {
           await scaffoldMinimalProject(context.projectDir);
+          await ensureVeryfrontDevCliBootstrapCached(context.projectDir);
           const port = await context.allocatePort();
           const run = startVeryfrontDev(context.projectDir, port, [], {}, true);
           context.addCleanup(run.stop);
@@ -502,9 +627,10 @@ describe(
           await waitForPageContent(
             port,
             "quiet dev logs page",
-            TEST_TIMEOUTS.SERVER_STARTUP,
+            DEV_CLI_READY_TIMEOUT_MS,
             run.request,
             3_000,
+            run.output,
           );
 
           await writeTextFile(
@@ -526,7 +652,7 @@ describe(
           await run.stop();
 
           const output = run.output();
-          assertStringIncludes(output, "Ready in");
+          assertStringIncludes(output, "App ready");
           for (const fragment of NOISY_DEFAULT_FRAGMENTS) {
             assert(
               !output.includes(fragment),

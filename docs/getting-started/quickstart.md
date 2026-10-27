@@ -22,6 +22,10 @@ cd support-agent
 The starter contains an assistant agent, `calculator.ts` tool, chat page,
 AG-UI route, and smoke eval.
 
+Answer **No** to **Use Veryfront Cloud?** to follow this direct-provider
+tutorial. To use Veryfront inference and inspect local runs in Studio without
+a provider API key, follow the [Cloud quickstart](./cloud-quickstart.md).
+
 ## Configure inference
 
 Set the API key in the terminal where you run Veryfront:
@@ -42,8 +46,8 @@ npm run dev
 The CLI confirms the server and available inference path:
 
 ```text
-✓ Ready in 1.3s
-http://localhost:3000
+✓ App ready       http://localhost:3000
+  Execution       This machine
 Inference OpenAI direct
 ```
 
@@ -70,82 +74,12 @@ the expected answer.
 
 ## Add local delegation
 
-Keep using the same provider key and project. Add a specialist that identifies
-the important facts:
-
-```ts
-// agents/researcher.ts
-import { agent } from "veryfront/agent";
-
-export default agent({
-  id: "researcher",
-  system:
-    "Identify the three most important facts in the user's request. Return concise bullet points.",
-  maxSteps: 3,
-});
-```
-
-Add a second specialist that turns notes into a clear answer:
-
-```ts
-// agents/writer.ts
-import { agent } from "veryfront/agent";
-
-export default agent({
-  id: "writer",
-  system: "Turn the supplied notes into a concise, practical answer.",
-  maxSteps: 3,
-});
-```
-
-Replace `agents/assistant.ts` with an orchestrator that can call both
-specialists:
-
-```ts
-// agents/assistant.ts
-import { agent } from "veryfront/agent";
-
-export default agent({
-  id: "assistant",
-  name: "Assistant",
-  description: "Research a request and turn it into a practical answer.",
-  system:
-    "Use the researcher first. Pass the researcher's notes to the writer, then return the writer's answer.",
-  delegates: ["researcher", "writer"],
-  maxSteps: 10,
-});
-```
-
-Each delegate runs in the same Veryfront process as the assistant. The
-`delegates` list exposes the specialists as `agent_researcher` and
-`agent_writer` tools. It does not create hosted child runs or require a
-Veryfront account.
-
-If the development server is still running, keep using it. If you stopped the
-server for the eval, start it again:
-
-```bash
-npm run dev
-```
-
-Open [http://localhost:3000](http://localhost:3000) and ask:
-
-```text
-Compare two ways a small team could reduce support response time. Recommend one.
-```
-
-Confirm the run calls `agent_researcher` and `agent_writer`, then returns one
-combined recommendation. For delegation controls and workflow-based
-coordination, see [Multi-agent](../guides/multi-agent.md).
+Continue with [Local delegation](../guides/multi-agent.md#local-delegation) when you need more than one agent.
 
 ## Next steps
 
-- [Use another inference provider](../guides/providers.md), including Anthropic,
-  Google, Ollama, LM Studio, or a built-in local model.
-- [Self-host the app](../guides/self-hosting.md) in your own environment.
-- [Use the Veryfront Cloud AI Gateway](./cloud-quickstart.md) and deploy with
-  Veryfront Cloud.
-- Continue with [Create project](./create-project.md), or consult the
-  [Agent](../api-reference/veryfront/agent.md),
-  [Tool](../api-reference/veryfront/tool.md), and
-  [Chat](../api-reference/veryfront/chat.md) references.
+- [Add tools](../guides/tools.md) to give the agent another capability.
+- [Write evaluations](../guides/evals.md) to ensure changes preserve expected behavior.
+- [Deploy with Cloud](./cloud-quickstart.md) or [Self-host the app](../guides/self-hosting.md).
+
+[Use another inference provider](../guides/providers.md) when you need a different model or local inference.

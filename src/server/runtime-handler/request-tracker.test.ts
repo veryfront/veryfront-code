@@ -54,6 +54,55 @@ describe("server/runtime-handler/request-tracker", () => {
       assertEquals(requestTracker.getInFlightCount(), 0);
     });
 
+    it("keeps overlapping requests that reuse a request id distinct", () => {
+      const first = requestTracker.start("dup", "p", "/first", "GET");
+      const second = requestTracker.start("dup", "p", "/second", "GET");
+      assertEquals(first === second, false);
+      requestTracker.complete(first, 200);
+      assertEquals(requestTracker.getInFlightRequests().map((r) => r.path), ["/second"]);
+      requestTracker.complete(second, 200);
+      assertEquals(requestTracker.getInFlightCount(), 0);
+    });
+
+    it("never reuses a generated key that a client id already occupies", () => {
+      const keys = [
+        requestTracker.start("foo#1", "p", "/a", "GET"),
+        requestTracker.start("foo", "p", "/b", "GET"),
+        requestTracker.start("foo", "p", "/c", "GET"),
+        requestTracker.start("foo", "p", "/d", "GET"),
+      ];
+      assertEquals(new Set(keys).size, 4);
+      assertEquals(requestTracker.getInFlightCount(), 4);
+      requestTracker.complete(keys[0]!, 200);
+      assertEquals(requestTracker.getInFlightRequests().map((r) => r.path).sort(), [
+        "/b",
+        "/c",
+        "/d",
+      ]);
+      for (const key of keys.slice(1)) requestTracker.complete(key, 200);
+    });
+
+    it("keeps a slow completion for stall attribution despite fast traffic", () => {
+      const realNow = performance.now;
+      let clock = 1_000_000;
+      performance.now = () => clock;
+      try {
+        const slow = requestTracker.start("slow", "p", "/blocking", "GET");
+        clock += 30_000;
+        requestTracker.complete(slow, 200);
+        const since = clock - 1;
+        for (let i = 0; i < 200; i++) {
+          requestTracker.complete(requestTracker.start(`fast-${i}`, "p", "/fast", "GET"), 200);
+        }
+        assertEquals(
+          requestTracker.getRecentlyCompletedRequests(since).map((r) => r.requestId),
+          ["slow"],
+        );
+      } finally {
+        performance.now = realNow;
+      }
+    });
+
     it("should handle completing an unknown request gracefully", () => {
       requestTracker.complete("nonexistent", 200);
       assertEquals(requestTracker.getInFlightCount(), 0);

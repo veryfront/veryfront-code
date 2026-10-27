@@ -19,15 +19,22 @@ import {
   type SourceIntegrationPolicyManifest,
 } from "#veryfront/integrations/source-policy.ts";
 import { snapshotOwnDataRecords } from "#veryfront/security/own-data-record.ts";
+import {
+  createExecutorSkillObservation,
+  type ExecutorSkillObservation,
+} from "#veryfront/agent/hosted/executor-skill-observation.ts";
 import { reserveExecutorToolMetadata } from "#veryfront/agent/hosted/executor-tool-schema.ts";
 import type {
   TrustedManagedRuntime,
   TrustedManagedRuntimeFactory,
 } from "#veryfront/agent/hosted/trusted-managed-runtime-contract.ts";
-import { EXECUTOR_PROJECT_TOOL_SOURCE_ID } from "#veryfront/agent/hosted/executor-runtime-install-schema.ts";
 import {
+  EXECUTOR_PROJECT_TOOL_SOURCE_ID,
   type ExecutorProjectToolInstall,
+  type ExecutorRuntimeInstall,
   getExecutorProjectToolInstallSchema,
+  getExecutorRuntimeInstallSchema,
+  parseExecutorInstallation,
 } from "#veryfront/agent/hosted/executor-runtime-install-schema.ts";
 import type { AgentRunEventSink } from "#veryfront/runtime/model-call-context.ts";
 import { getRuntimeObservationWriterScope } from "#veryfront/runtime/runtime-observation-carrier.ts";
@@ -52,18 +59,15 @@ import {
 } from "#veryfront/agent/hosted/executor-session.ts";
 import {
   getHostedExecutorAllocationRequestSchema,
+  type HostedExecutorAllocationRequest,
   parseHostedExecutorData,
   sameHostedExecutorOwner,
 } from "#veryfront/agent/hosted/executor-session-schema.ts";
 import { verifyHostedRuntimeSourceBinding } from "#veryfront/agent/hosted/runtime-source-binding.ts";
 import {
-  type ExecutorRuntimeInstall,
-  getExecutorRuntimeInstallSchema,
-  parseExecutorInstallation,
-} from "#veryfront/agent/hosted/executor-runtime-install-schema.ts";
-import {
   ExecutorRuntimePreparationError,
   type ExecutorRuntimePrepareRequest,
+  type ExecutorRuntimePrepareResult,
   getExecutorRuntimePrepareRequestSchema,
   getExecutorRuntimePrepareResultSchema,
   isExecutorRuntimePreparationFailureCode,
@@ -76,6 +80,7 @@ import {
 } from "#veryfront/agent/hosted/executor-discovery-schema.ts";
 import { ExecutorAgentError } from "#veryfront/agent/hosted/executor-agent-schema.ts";
 import { createExecutorHostedChatRuntimeAgent } from "#veryfront/agent/hosted/executor-agent-bridge.ts";
+import { getManagedToolResultFence } from "./managed-tool-result-fence.ts";
 import {
   createEphemeralHostedExecutorModelBroker,
   createHostedExecutorModelBroker,
@@ -210,12 +215,7 @@ export function createManagedExecutorBroker(
       input.prepare,
     );
     const selectedModelId = prepare.modelId ?? installation.grant.defaultModelId;
-    if (
-      !sameHostedExecutorOwner(installation.owner, request.owner) ||
-      verifyHostedRuntimeSourceBinding(request.source, installation.source) !==
-        undefined ||
-      prepare.agentId !== installation.grant.agentId
-    ) throw new TypeError("Managed executor installation does not match its session");
+    assertManagedExecutorSessionInstallation(installation, request, prepare);
     const allowedModelIds = new Set(installation.grant.models.map((model) => model.id));
     const operationInput = snapshotOperationInput(input);
     constrainInstalledOperationGrants(operationInput, installation);
@@ -227,48 +227,10 @@ export function createManagedExecutorBroker(
     const runtimeObservationWriter = getRuntimeObservationWriterScope(
       operationInput.model.runEventSink,
     );
-    if (runtimeObservationWriter) {
-      const execution = installation.grant.execution;
-      if (
-        execution.kind !== "canonical" ||
-        runtimeObservationWriter.runId !== execution.runId ||
-        runtimeObservationWriter.projectId !== execution.projectId?.toLowerCase()
-      ) {
-        throw new TypeError("Runtime observation writer does not match its execution grant");
-      }
-    }
-    if (
-      operationInput.tools.admitToolCall &&
-      (installation.grant.execution.kind !== "canonical" ||
-        installation.grant.execution.projectId === null || trusted)
-    ) {
-      throw new TypeError("Tool-call admissions require a project-bound remote canonical runtime");
-    }
-    if (operationInput.tools.admitToolCall) {
-      const owner = getToolCallAdmissionOwner(operationInput.tools.admitToolCall);
-      const execution = installation.grant.execution;
-      if (
-        !owner || execution.kind !== "canonical" || owner.runId !== execution.runId ||
-        owner.projectId.toLowerCase() !== execution.projectId?.toLowerCase()
-      ) {
-        throw new TypeError("Tool-call admission writer does not match its execution grant");
-      }
-    }
-    if (
-      installation.grant.execution.kind === "ephemeral" &&
-      operationInput.model.runEventSink !== undefined
-    ) {
-      throw new TypeError("Ephemeral executor model dispatch cannot receive a run event sink");
-    }
-    if (
-      installation.grant.execution.kind === "canonical" &&
-      typeof bindSessionOwnedWork !== "function"
-    ) {
-      throw new TypeError("Canonical executor persistence requires session-owned work binding");
-    }
-    if (bindSessionOwnedWork !== undefined && typeof bindSessionOwnedWork !== "function") {
-      throw new TypeError("Invalid executor session-owned work binder");
-    }
+    assertExecutorObservationWriter(installation, runtimeObservationWriter);
+    assertExecutorToolAdmission(installation, operationInput, trusted !== undefined);
+    assertExecutorSessionWorkBinder(installation, operationInput, bindSessionOwnedWork);
+    const skillObservation = createExecutorSkillObservation();
     // Validate every trusted capability before reserving pool admission.
     buildBrokerOperations(
       validationBinding,
@@ -277,6 +239,7 @@ export function createManagedExecutorBroker(
       installation,
       allowedModelIds,
       selectedModelId,
+      skillObservation,
     );
 
     let gate: ExecutorOperationGate | undefined;
@@ -303,6 +266,7 @@ export function createManagedExecutorBroker(
           installation,
           allowedModelIds,
           selectedModelId,
+          skillObservation,
         );
         gate = createExecutorOperationGate({
           binding: channelBinding,
@@ -336,10 +300,7 @@ export function createManagedExecutorBroker(
           }
           : installRequest,
       );
-      if (
-        !installed || typeof installed !== "object" || Array.isArray(installed) ||
-        Object.keys(installed).length !== 1 || installed.installed !== true
-      ) throw new Error("Managed executor installation acknowledgement is invalid");
+      assertExecutorInstallationAcknowledgement(installed);
       const description = parseDiscoveryData(
         getExecutorAgentDescribeResultSchema(),
         await channel.request("agent.describe", { agentId: prepare.agentId }),
@@ -390,6 +351,7 @@ export function createManagedExecutorBroker(
               installation,
               allowedModelIds,
               selectedModelId,
+              skillObservation,
             );
             return createExecutorOperationGate({
               binding: channelBinding,
@@ -416,12 +378,7 @@ export function createManagedExecutorBroker(
         getExecutorRuntimePrepareResultSchema(),
         await executionChannel.request("runtime.prepare", prepare),
       );
-      if (!prepared.ok) {
-        if (isExecutorRuntimePreparationFailureCode(prepared.code)) {
-          throw new ExecutorRuntimePreparationError(prepared.code);
-        }
-        throw new ExecutorAgentError(prepared.code);
-      }
+      if (!prepared.ok) throwExecutorPreparationFailure(prepared);
       if (
         !allowedModelIds.has(prepared.value.modelId) || prepared.value.modelId !== selectedModelId
       ) {
@@ -433,12 +390,20 @@ export function createManagedExecutorBroker(
         preparedRuntimeHandle: prepared.value.preparedRuntimeHandle,
         ...(operationInput.tools.admitToolCall ? { toolCallAdmissions: true } : {}),
         ...(runtimeObservationWriter ? { runtimeObservations: true } : {}),
+        ...(operationInput.model.runEventSink &&
+            getManagedToolResultFence(operationInput.model.runEventSink)
+          ? {
+            resultFence: getManagedToolResultFence(operationInput.model.runEventSink),
+          }
+          : {}),
       });
       const agent: HostedChatRuntimeAgent = {
         async stream(streamInput) {
           if (!session.accepted || gate!.state !== "prepared") {
             throw new Error("Managed executor runtime is not accepted");
           }
+          streamInput.abortSignal.throwIfAborted();
+          skillObservation.recordTrustedHistory(streamInput.messages);
           gate!.beginExecution();
           return await remoteAgent.stream(streamInput);
         },
@@ -488,6 +453,124 @@ export function createManagedExecutorBroker(
   };
 }
 
+function snapshotHostedKnowledgeContext(
+  input: NonNullable<ManagedExecutorStartInput["trustedRuntime"]>,
+  installation: ExecutorRuntimeInstall,
+  execution: Extract<ExecutorRuntimeInstall["grant"]["execution"], { kind: "canonical" }>,
+): HostedKnowledgeExecutionContext | undefined {
+  const hostedKnowledgeContext = typeof input.hostedKnowledgeAuthToken === "string" &&
+      input.hostedKnowledgeAuthToken
+    ? {
+      authToken: input.hostedKnowledgeAuthToken,
+      ...(typeof input.hostedKnowledgeApiUrl === "string" && input.hostedKnowledgeApiUrl
+        ? { apiUrl: input.hostedKnowledgeApiUrl }
+        : {}),
+      ...(execution.projectId === null ? {} : { projectId: execution.projectId }),
+      ...(execution.projectSlug === undefined ? {} : { projectSlug: execution.projectSlug }),
+      ...(execution.branchId === undefined ? {} : { branch: execution.branchId }),
+      ...(installation.source.type === "release"
+        ? { productionMode: true, releaseId: installation.source.releaseId }
+        : {
+          productionMode: true,
+          releaseId: installation.source.releaseId,
+          environmentName: installation.source.environmentName,
+        }),
+    }
+    : undefined;
+  return hostedKnowledgeContext;
+}
+
+function assertExecutorInstallationAcknowledgement(value: unknown): void {
+  if (
+    !value || typeof value !== "object" || Array.isArray(value) ||
+    Object.keys(value).length !== 1 || (value as Record<string, unknown>).installed !== true
+  ) throw new Error("Managed executor installation acknowledgement is invalid");
+}
+
+function throwExecutorPreparationFailure(
+  prepared: Extract<ExecutorRuntimePrepareResult, { ok: false }>,
+): never {
+  if (isExecutorRuntimePreparationFailureCode(prepared.code)) {
+    throw new ExecutorRuntimePreparationError(prepared.code);
+  }
+  throw new ExecutorAgentError(prepared.code);
+}
+
+function assertManagedExecutorSessionInstallation(
+  installation: ExecutorRuntimeInstall,
+  request: HostedExecutorAllocationRequest,
+  prepare: ExecutorRuntimePrepareRequest,
+): void {
+  if (
+    !sameHostedExecutorOwner(installation.owner, request.owner) ||
+    verifyHostedRuntimeSourceBinding(request.source, installation.source) !==
+      undefined ||
+    prepare.agentId !== installation.grant.agentId
+  ) throw new TypeError("Managed executor installation does not match its session");
+}
+
+function assertExecutorObservationWriter(
+  installation: ExecutorRuntimeInstall,
+  runtimeObservationWriter: ReturnType<typeof getRuntimeObservationWriterScope>,
+): void {
+  if (runtimeObservationWriter) {
+    const execution = installation.grant.execution;
+    if (
+      execution.kind !== "canonical" ||
+      runtimeObservationWriter.runId !== execution.runId ||
+      runtimeObservationWriter.projectId !== execution.projectId?.toLowerCase()
+    ) {
+      throw new TypeError("Runtime observation writer does not match its execution grant");
+    }
+  }
+}
+
+function assertExecutorToolAdmission(
+  installation: ExecutorRuntimeInstall,
+  operationInput: ManagedExecutorOperationInput,
+  trusted: boolean,
+): void {
+  if (
+    operationInput.tools.admitToolCall &&
+    (installation.grant.execution.kind !== "canonical" ||
+      installation.grant.execution.projectId === null || trusted)
+  ) {
+    throw new TypeError("Tool-call admissions require a project-bound remote canonical runtime");
+  }
+  if (operationInput.tools.admitToolCall) {
+    const owner = getToolCallAdmissionOwner(operationInput.tools.admitToolCall);
+    const execution = installation.grant.execution;
+    if (
+      !owner || execution.kind !== "canonical" || owner.runId !== execution.runId ||
+      owner.projectId.toLowerCase() !== execution.projectId?.toLowerCase()
+    ) {
+      throw new TypeError("Tool-call admission writer does not match its execution grant");
+    }
+  }
+}
+
+function assertExecutorSessionWorkBinder(
+  installation: ExecutorRuntimeInstall,
+  operationInput: ManagedExecutorOperationInput,
+  bindSessionOwnedWork: ManagedExecutorStartInput["bindSessionOwnedWork"],
+): void {
+  if (
+    installation.grant.execution.kind === "ephemeral" &&
+    operationInput.model.runEventSink !== undefined
+  ) {
+    throw new TypeError("Ephemeral executor model dispatch cannot receive a run event sink");
+  }
+  if (
+    installation.grant.execution.kind === "canonical" &&
+    typeof bindSessionOwnedWork !== "function"
+  ) {
+    throw new TypeError("Canonical executor persistence requires session-owned work binding");
+  }
+  if (bindSessionOwnedWork !== undefined && typeof bindSessionOwnedWork !== "function") {
+    throw new TypeError("Invalid executor session-owned work binder");
+  }
+}
+
 function snapshotTrustedRuntime(
   input: NonNullable<ManagedExecutorStartInput["trustedRuntime"]>,
   installation: ExecutorRuntimeInstall,
@@ -518,6 +601,7 @@ function snapshotTrustedRuntime(
     context: {
       agentId: installation.grant.agentId,
       projectId: execution.projectId,
+      ...(execution.branchId === undefined ? {} : { branch: execution.branchId }),
       runId: execution.runId,
       ...(execution.userId === undefined ? {} : { userId: execution.userId }),
       ...(execution.projectSlug === undefined ? {} : { projectSlug: execution.projectSlug }),
@@ -546,25 +630,7 @@ function snapshotTrustedRuntime(
   ) {
     throw new TypeError("Project tool authority exceeds the normalized invocation grant");
   }
-  const hostedKnowledgeContext = typeof input.hostedKnowledgeAuthToken === "string" &&
-      input.hostedKnowledgeAuthToken
-    ? {
-      authToken: input.hostedKnowledgeAuthToken,
-      ...(typeof input.hostedKnowledgeApiUrl === "string" && input.hostedKnowledgeApiUrl
-        ? { apiUrl: input.hostedKnowledgeApiUrl }
-        : {}),
-      ...(execution.projectId === null ? {} : { projectId: execution.projectId }),
-      ...(execution.projectSlug === undefined ? {} : { projectSlug: execution.projectSlug }),
-      ...(execution.branchId === undefined ? {} : { branch: execution.branchId }),
-      ...(installation.source.type === "release"
-        ? { productionMode: true, releaseId: installation.source.releaseId }
-        : {
-          productionMode: true,
-          releaseId: installation.source.releaseId,
-          environmentName: installation.source.environmentName,
-        }),
-    }
-    : undefined;
+  const hostedKnowledgeContext = snapshotHostedKnowledgeContext(input, installation, execution);
   return {
     projectInstallation,
     sourceIntegrationPolicy: parseSourceIntegrationPolicyManifest(
@@ -574,7 +640,7 @@ function snapshotTrustedRuntime(
   };
 }
 
-function constrainInstalledOperationGrants(
+function constrainInstalledModelGrants(
   input: ManagedExecutorOperationInput,
   installation: ExecutorRuntimeInstall,
 ): void {
@@ -593,6 +659,36 @@ function constrainInstalledOperationGrants(
     installed.maxOutputTokens = policy.maxOutputTokens;
     installed.providerToolNames = policy.providerTools.map((tool) => tool.name);
   }
+}
+
+function collectInstalledHostToolAliases(
+  input: ManagedExecutorOperationInput,
+  installation: ExecutorRuntimeInstall,
+): NonNullable<ExecutorRuntimeInstall["hostToolAliases"]> {
+  const hostToolAliases: NonNullable<ExecutorRuntimeInstall["hostToolAliases"]> = [];
+  for (const sourceId of installation.grant.hostToolFacadeIds) {
+    for (const toolName of input.tools.sources.get(sourceId)?.allowedToolNames ?? []) {
+      const metadata = input.tools.catalog.get(toolName);
+      if (
+        metadata?.ownerAgentId === installation.grant.agentId && metadata.shortName !== undefined
+      ) {
+        hostToolAliases.push({
+          sourceId,
+          toolName,
+          ownerAgentId: metadata.ownerAgentId,
+          shortName: metadata.shortName,
+        });
+      }
+    }
+  }
+  return hostToolAliases;
+}
+
+function constrainInstalledOperationGrants(
+  input: ManagedExecutorOperationInput,
+  installation: ExecutorRuntimeInstall,
+): void {
+  constrainInstalledModelGrants(input, installation);
   const allowedTools = installedToolNames(installation, input.tools.catalog);
   const allowedSources = new Set([
     ...installation.grant.hostToolFacadeIds,
@@ -622,22 +718,7 @@ function constrainInstalledOperationGrants(
     ).map((toolName) => ({ sourceId, toolName }));
   });
   // Source listings describe callable tools; only trusted ingress supplies ownership.
-  const hostToolAliases: NonNullable<ExecutorRuntimeInstall["hostToolAliases"]> = [];
-  for (const sourceId of installation.grant.hostToolFacadeIds) {
-    for (const toolName of input.tools.sources.get(sourceId)?.allowedToolNames ?? []) {
-      const metadata = input.tools.catalog.get(toolName);
-      if (
-        metadata?.ownerAgentId === installation.grant.agentId && metadata.shortName !== undefined
-      ) {
-        hostToolAliases.push({
-          sourceId,
-          toolName,
-          ownerAgentId: metadata.ownerAgentId,
-          shortName: metadata.shortName,
-        });
-      }
-    }
-  }
+  const hostToolAliases = collectInstalledHostToolAliases(input, installation);
   if (hostToolAliases.length) installation.hostToolAliases = hostToolAliases;
   else delete installation.hostToolAliases;
 }
@@ -673,10 +754,12 @@ function buildBrokerOperations(
   installation: ExecutorRuntimeInstall,
   allowedModelIds: ReadonlySet<string>,
   selectedModelId: string,
+  skillObservation: ExecutorSkillObservation,
 ): ReadonlyMap<string, ExecutorOperation> {
   const scope = { binding, signal, assertActive: () => signal.throwIfAborted() };
   const model = installation.grant.execution.kind === "canonical"
     ? createHostedExecutorModelBroker({
+      skillObservation,
       projectId: installation.grant.execution.projectId,
       resolveModelRuntime: input.model.resolver,
       allowedModelIds,
@@ -686,13 +769,14 @@ function buildBrokerOperations(
       ...(input.model.modelCallCaptureReceipts ? { modelCallCaptureReceipts: true } : {}),
     })
     : createEphemeralHostedExecutorModelBroker({
+      skillObservation,
       resolveModelRuntime: input.model.resolver,
       allowedModelIds,
       scope,
       grant: input.model.grant,
       prepared: { conversationId: null, canonicalRootRun: null },
     });
-  const tools = createExecutorToolBroker({ scope, ...input.tools });
+  const tools = createExecutorToolBroker({ scope, ...input.tools, skillObservation });
   const persistence = createExecutorPersistenceBroker({
     expectedBinding: binding,
     capabilityIds: installation.capabilities.persistence,
@@ -724,6 +808,52 @@ function buildBrokerOperations(
     }
   }
   return combined;
+}
+
+function snapshotOperationPersistence(
+  input: ManagedExecutorStartInput,
+): ManagedExecutorOperationInput["persistence"] {
+  return {
+    ...(input.persistence.initialToolExposureCheckpoint
+      ? {
+        initialToolExposureCheckpoint: structuredClone(
+          input.persistence.initialToolExposureCheckpoint,
+        ),
+      }
+      : {}),
+    ...(input.persistence.initialProviderReplayCheckpoints
+      ? {
+        initialProviderReplayCheckpoints: structuredClone(
+          input.persistence.initialProviderReplayCheckpoints,
+        ),
+      }
+      : {}),
+    ...(input.persistence.publishParentRunEvents
+      ? { publishParentRunEvents: input.persistence.publishParentRunEvents }
+      : {}),
+    ...(input.persistence.persistToolExposureCheckpoint
+      ? { persistToolExposureCheckpoint: input.persistence.persistToolExposureCheckpoint }
+      : {}),
+    ...(input.persistence.persistProviderReplayCheckpoint
+      ? { persistProviderReplayCheckpoint: input.persistence.persistProviderReplayCheckpoint }
+      : {}),
+  };
+}
+
+function snapshotOperationState(
+  input: ManagedExecutorStartInput,
+): ManagedExecutorOperationInput["state"] {
+  return {
+    ...(input.state.prepareProjectSteering
+      ? { prepareProjectSteering: input.state.prepareProjectSteering }
+      : {}),
+    ...(input.state.refreshProjectSteering
+      ? { refreshProjectSteering: input.state.refreshProjectSteering }
+      : {}),
+    ...(input.state.latestConversationUserText
+      ? { latestConversationUserText: input.state.latestConversationUserText }
+      : {}),
+  };
 }
 
 function snapshotOperationInput(input: ManagedExecutorStartInput): ManagedExecutorOperationInput {
@@ -789,42 +919,8 @@ function snapshotOperationInput(input: ManagedExecutorStartInput): ManagedExecut
       limits: executorToolLimits(input.tools.limits),
       ...(input.tools.admitToolCall ? { admitToolCall: input.tools.admitToolCall } : {}),
     },
-    persistence: {
-      ...(input.persistence.initialToolExposureCheckpoint
-        ? {
-          initialToolExposureCheckpoint: structuredClone(
-            input.persistence.initialToolExposureCheckpoint,
-          ),
-        }
-        : {}),
-      ...(input.persistence.initialProviderReplayCheckpoints
-        ? {
-          initialProviderReplayCheckpoints: structuredClone(
-            input.persistence.initialProviderReplayCheckpoints,
-          ),
-        }
-        : {}),
-      ...(input.persistence.publishParentRunEvents
-        ? { publishParentRunEvents: input.persistence.publishParentRunEvents }
-        : {}),
-      ...(input.persistence.persistToolExposureCheckpoint
-        ? { persistToolExposureCheckpoint: input.persistence.persistToolExposureCheckpoint }
-        : {}),
-      ...(input.persistence.persistProviderReplayCheckpoint
-        ? { persistProviderReplayCheckpoint: input.persistence.persistProviderReplayCheckpoint }
-        : {}),
-    },
-    state: {
-      ...(input.state.prepareProjectSteering
-        ? { prepareProjectSteering: input.state.prepareProjectSteering }
-        : {}),
-      ...(input.state.refreshProjectSteering
-        ? { refreshProjectSteering: input.state.refreshProjectSteering }
-        : {}),
-      ...(input.state.latestConversationUserText
-        ? { latestConversationUserText: input.state.latestConversationUserText }
-        : {}),
-    },
+    persistence: snapshotOperationPersistence(input),
+    state: snapshotOperationState(input),
   };
 }
 

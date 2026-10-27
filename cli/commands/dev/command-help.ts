@@ -3,7 +3,7 @@ import type { CommandHelp } from "../../help/types.ts";
 export const devHelp: CommandHelp = {
   name: "dev",
   category: "development",
-  description: "Start development server with hot module replacement",
+  description: "Start local development with HMR; sync source when connected to Cloud",
   usage: "veryfront dev [options]",
   options: [
     {
@@ -14,6 +14,10 @@ export const devHelp: CommandHelp = {
     {
       flag: "--project <directory>",
       description: "Run a local project directory (defaults to the current directory)",
+    },
+    {
+      flag: "--env <name>",
+      description: "Shared Cloud environment for local execution (default: preview)",
     },
     {
       flag: "--no-hmr",
@@ -30,6 +34,7 @@ export const devHelp: CommandHelp = {
     "veryfront dev --project ./my-app",
     "PORT=3001 veryfront dev",
     "veryfront dev --open",
+    "veryfront dev --env preview",
     "veryfront dev --no-hmr",
   ],
   notes: [

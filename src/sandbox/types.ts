@@ -6,6 +6,14 @@ export interface CommandOptions {
   timeoutSeconds?: number;
   /** Additional environment variables for the command. */
   env?: Record<string, string>;
+  /** Cancel the request before the sandbox command starts. */
+  signal?: AbortSignal;
+}
+
+/** Options for writing files into a sandbox workspace. */
+export interface SandboxWriteFilesOptions {
+  /** Cancel the request before the file batch is written. */
+  signal?: AbortSignal;
 }
 
 /** Sandbox access, storage and lifetime policies. */
@@ -20,8 +28,18 @@ export interface SandboxClientOptions {
   authToken?: string;
 }
 
+/** Options for discovering caller creation capabilities in a billing project. */
+export interface SandboxCapabilitiesOptions extends SandboxClientOptions {
+  /** Project UUID or slug for caller creation eligibility. Omit for legacy platform feature discovery. */
+  projectReference?: string;
+}
+
 /** Options for creating a sandbox. */
 export interface SandboxOptions extends SandboxClientOptions {
+  /** Read the current credential before each request when the host renews it. */
+  getAuthToken?: () => string;
+  /** Cancel sandbox provisioning and readiness polling. */
+  signal?: AbortSignal;
   /** Project UUID or slug used for billing. */
   projectReference?: string;
   /** Project access or creator-only access. Defaults to project. */
@@ -175,7 +193,7 @@ export interface SandboxEnvironment {
   env: Record<string, string>;
 }
 
-/** Sandbox creation capabilities, limits and defaults for the current caller. */
+/** Sandbox creation options, limits and defaults. A project selector opts into caller eligibility. */
 export interface SandboxCapabilities {
   /** Private sandboxes are enabled. */
   privateCreation: boolean;

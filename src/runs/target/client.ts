@@ -1,3 +1,4 @@
+import { type CanonicalEventsV1Facade, createCanonicalEventsV1Facade } from "./canonical-v1.ts";
 /**
  * Typed SDK for the Runs target contract (veryfront-issue-inbox#2522). One method per
  * contract operation; request and response types come from the pinned contract.
@@ -10,6 +11,8 @@ import { API_CLIENT_ERROR } from "#veryfront/errors/error-registry.ts";
 import { VeryfrontError } from "#veryfront/errors/types.ts";
 import {
   readVeryfrontApiResponse,
+  requireSuccessResponseByteLimit,
+  successfulResponseProtocolError,
   type TransportRequestInit,
   type VeryfrontApiTransport,
 } from "#veryfront/platform/adapters/veryfront-api-transport.ts";
@@ -20,6 +23,7 @@ import {
   normalizeNewlines,
   splitSseFrames,
 } from "#veryfront/utils/sse-frames.ts";
+import { copyResponseBodyChunk, InvalidResponseBodyError } from "#veryfront/utils/response-body.ts";
 import { RUNS_OPERATIONS } from "./operations.ts";
 
 /** Contract operation ID. */
@@ -106,9 +110,25 @@ type SuccessResponse<K extends RunsOperationId> = Operation<K>["responses"][
   >
 ];
 
-/** Success body of one operation; `undefined` for 204 responses. */
-export type RunsOutput<K extends RunsOperationId> = SuccessResponse<K> extends
-  { content: { "application/json": infer B } } ? B : undefined;
+type SuccessBody<R> = R extends { content: { "application/json": infer B } } ? B : undefined;
+
+/** Acknowledgement body of a DELETE answered with 200 instead of an empty 204. */
+export interface RunsDeleteAcknowledgement {
+  ok: true;
+}
+
+// Older API versions answer DELETE with an empty 204 instead of the pinned 200 body.
+type LegacyDeleteResponse<K extends RunsOperationId> = (typeof RUNS_OPERATIONS)[K]["method"] extends
+  "DELETE" ? undefined : never;
+
+/**
+ * Success body of one operation: the JSON body of each success response, `undefined` for a
+ * 204 response. A DELETE may answer 200 with {@link RunsDeleteAcknowledgement} or an empty 204.
+ * Distributes over a union of operations, so each member keeps its own success body.
+ */
+export type RunsOutput<K extends RunsOperationId> = K extends RunsOperationId
+  ? SuccessBody<SuccessResponse<K>> | LegacyDeleteResponse<K>
+  : never;
 
 /** What an SDK method returns: the parsed body, or the frames of an event stream. */
 export type RunsResult<K extends RunsOperationId> = SuccessResponse<K> extends
@@ -130,10 +150,21 @@ export type RunsPaginatedOperationId = {
     : never;
 }[RunsOperationId];
 
+/** Input of `readRunArtifact`: the canonical run UUID and an `artifact_id` from `run.artifacts`. */
+export interface RunsArtifactInput {
+  path: { run_id: string; artifact_id: string };
+}
+
 /** Typed client for every Runs target operation. */
 export type RunsSdk =
   & { readonly [K in RunsOperationId]: (...args: RunsArgs<K>) => RunsResult<K> }
   & {
+    readonly canonicalEventsV1: CanonicalEventsV1Facade;
+    /**
+     * Downloads a file a run produced (`GET /runs/{run_id}/artifacts/{artifact_id}`) as a
+     * `Blob`, bounded by `maxResponseBytes`. An error response rejects like every other method.
+     */
+    readRunArtifact(input: RunsArtifactInput, options?: RunsCallOptions): Promise<Blob>;
     /** Yields every item of a paginated list, following `page_info.next`. */
     paginate<K extends RunsPaginatedOperationId>(
       operationId: K,
@@ -160,16 +191,51 @@ const replacePath = String.prototype.replace;
 const applyPath = Reflect.apply;
 const FALLBACK_PROBLEM_CODE = "UNEXPECTED_RESPONSE";
 
+/** Operation IDs the SDK serves, including binary operations outside the pinned contract. */
+type SdkOperationId = RunsOperationId | "readRunArtifact";
+
+interface SdkRoute {
+  method: string;
+  path: string;
+  stream?: true;
+  binary?: true;
+}
+
+// The artifact download postdates the immutable 0.8.9 pin; move it into RUNS_OPERATIONS when
+// the pin includes it.
+const READ_RUN_ARTIFACT_ROUTE: SdkRoute = Object.freeze({
+  method: "GET",
+  path: "/runs/{run_id}/artifacts/{artifact_id}",
+  binary: true,
+});
+
+function routeOf(operationId: SdkOperationId): SdkRoute {
+  return operationId === "readRunArtifact" ? READ_RUN_ARTIFACT_ROUTE : RUNS_OPERATIONS[operationId];
+}
+
 /** Create a typed Runs SDK over the given transport. */
 export function createRunsSdk(config: RunsSdkConfig): RunsSdk {
-  const send = async (operationId: RunsOperationId, input: WireInput, options: RunsCallOptions) => {
+  const send = async (operationId: SdkOperationId, input: WireInput, options: RunsCallOptions) => {
     const { path, init } = buildRequest(operationId, input, options);
     let headers: Headers | undefined;
     const result = await config.transport.request(path, {
       ...init,
       onResponse: async (response, responseInit, url, signal) => {
         if (response.ok) headers = response.headers;
-        if (response.ok && "stream" in RUNS_OPERATIONS[operationId]) return response;
+        const route = routeOf(operationId);
+        if (response.ok && route.stream) return response;
+        // Read the artifact here, under the attempt's timeout, abort signal and retry policy.
+        if (response.ok && route.binary) {
+          // Validate the limit here too: a custom transport may pass it through unnormalized.
+          return await readBlob(
+            response,
+            requireSuccessResponseByteLimit(
+              responseInit.maxResponseBytes ?? options.maxResponseBytes,
+            ),
+            url,
+            signal,
+          );
+        }
         try {
           return await readVeryfrontApiResponse(response, responseInit, url, signal);
         } catch (error) {
@@ -244,7 +310,14 @@ export function createRunsSdk(config: RunsSdkConfig): RunsSdk {
     }
   }
 
-  const methods: Record<string, unknown> = { paginate };
+  const readRunArtifact = async (input: RunsArtifactInput, options: RunsCallOptions = {}) =>
+    await send("readRunArtifact", input, options) as Blob;
+
+  const methods: Record<string, unknown> = {
+    paginate,
+    readRunArtifact,
+    canonicalEventsV1: createCanonicalEventsV1Facade(config.transport),
+  };
   for (const [operationId, route] of Object.entries(RUNS_OPERATIONS)) {
     methods[operationId] = "stream" in route
       ? (input?: WireInput, options?: RunsCallOptions) =>
@@ -263,11 +336,11 @@ export function runsProblemOf(error: unknown): RunsProblem | undefined {
 }
 
 function buildRequest(
-  operationId: RunsOperationId,
+  operationId: SdkOperationId,
   input: WireInput,
   options: RunsCallOptions,
 ): { path: string; init: TransportRequestInit } {
-  const route = RUNS_OPERATIONS[operationId];
+  const route = routeOf(operationId);
   const path = applyPath(replacePath, route.path, [
     PATH_PARAMETER,
     (_match: string, name: string) => {
@@ -289,7 +362,10 @@ function buildRequest(
   for (const [name, value] of Object.entries(input.headers ?? {})) {
     if (value !== undefined) headers.set(name, value);
   }
-  headers.set("Accept", "stream" in route ? "text/event-stream" : "application/json");
+  headers.set(
+    "Accept",
+    route.stream ? "text/event-stream" : route.binary ? "*/*" : "application/json",
+  );
   if (input.body !== undefined) headers.set("Content-Type", "application/json");
 
   return {
@@ -302,6 +378,66 @@ function buildRequest(
       maxResponseBytes: options.maxResponseBytes,
     },
   };
+}
+
+/**
+ * Read a binary success body into a `Blob`, failing closed once it exceeds `limit` bytes.
+ * An abort of `signal` (attempt timeout or caller) cancels a pending read and rejects.
+ */
+async function readBlob(
+  response: Response,
+  limit: number,
+  url: string,
+  signal?: AbortSignal,
+): Promise<Blob> {
+  const tooLarge = () =>
+    successfulResponseProtocolError(
+      `readRunArtifact returned an artifact over ${limit} bytes`,
+      url,
+    );
+  const declared = response.headers.get("content-length");
+  if (declared !== null && /^\d+$/.test(declared) && Number(declared) > limit) {
+    void response.body?.cancel().catch(() => {});
+    throw tooLarge();
+  }
+  const type = response.headers.get("content-type") ?? "";
+  if (!response.body) return new Blob([], { type });
+  signal?.throwIfAborted();
+  const reader = response.body.getReader();
+  // Cancelling the reader settles a pending read, which then rethrows the abort reason.
+  const cancelOnAbort = () => void reader.cancel(signal?.reason).catch(() => {});
+  signal?.addEventListener("abort", cancelOnAbort, { once: true });
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      signal?.throwIfAborted();
+      if (done) break;
+      // A host stream may yield non-byte chunks or chunks with a replaced `byteLength`;
+      // count it through captured intrinsics so neither bypasses the limit, and reject a
+      // chunk over the remaining budget before copying it.
+      let chunk: { bytes: Uint8Array; byteLength: number } | null;
+      try {
+        chunk = copyResponseBodyChunk(value, limit - size);
+      } catch (cause) {
+        if (!(cause instanceof InvalidResponseBodyError)) throw cause;
+        throw successfulResponseProtocolError(
+          "readRunArtifact received a non-byte body chunk",
+          url,
+        );
+      }
+      if (chunk === null) throw tooLarge();
+      size += chunk.byteLength;
+      chunks.push(chunk.bytes);
+    }
+  } catch (error) {
+    void reader.cancel().catch(() => {});
+    throw error;
+  } finally {
+    signal?.removeEventListener("abort", cancelOnAbort);
+  }
+  return new Blob(chunks as BlobPart[], { type });
 }
 
 async function* readFrames(
@@ -396,7 +532,7 @@ function parseJson(operationId: RunsOperationId, text: string): unknown {
   }
 }
 
-function problemError(operationId: RunsOperationId, response: Response, text: string) {
+function problemError(operationId: SdkOperationId, response: Response, text: string) {
   const problem = readProblem(response, text);
   return API_CLIENT_ERROR.create({
     detail: problem.detail ?? problem.title,

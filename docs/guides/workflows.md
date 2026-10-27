@@ -1,23 +1,12 @@
 ---
 title: "Workflows"
-description: "DAG-based multi-step workflows with branching and parallelism."
-order: 26
+description: "Define, execute, and verify a sequence of agent and tool steps."
+order: 300
 ---
 
-A workflow is a file in `workflows/` that declares ordered steps. Each step runs an agent or a tool. The workflow runtime passes outputs between steps.
+Define and run an ordered sequence of agents and tools. Start with a sequential workflow, then add branches, parallel steps, or approvals where the task requires them.
 
-Use workflows for multi-step work that needs ordering, branching, parallelism, retries, timeouts, or approvals.
-
-Workflow files are definitions. Starting a workflow creates a workflow run. On
-the Veryfront platform, that workflow run is backed by a runtime adapter so it can be
-queued, retried, canceled, logged, and observed in the Runs panel.
-
-| Concept         | Meaning                                                                                                  |
-| --------------- | -------------------------------------------------------------------------------------------------------- |
-| Workflow        | The definition stored in `workflows/`.                                                                   |
-| Workflow run    | The canonical public execution record for a started workflow.                                            |
-| Runtime adapter | The implementation detail that dispatches the workflow run to a runtime target or infrastructure worker. |
-| Schedule        | A trigger definition that creates workflow runs over time when its target starts with `workflow:`.       |
+For the distinction between a workflow definition and its executions, see [Workflow](../concepts/workflow.md).
 
 ## Prerequisites
 
@@ -244,17 +233,26 @@ Each scheduled trigger creates a workflow run backed by the selected runtime ada
 
 A step runs an agent or a tool:
 
-```ts
+```ts title="workflows/steps.ts"
+import { step } from "veryfront/workflow";
+
 // Run an agent
-step("research", { agent: "researcher" });
+export const research = step("research", { agent: "researcher" });
 
 // Run a tool
-step("fetch-data", { tool: "webScraper" });
+export const fetchData = step("fetch-data", { tool: "webScraper" });
 
 // With custom input
-step("summarize", {
+export const summarize = step("summarize", {
   agent: "writer",
-  input: (ctx) => `Summarize this: ${ctx.results.research}`,
+  input: (ctx) => {
+    const research = ctx.research;
+    const text = typeof research === "object" && research !== null &&
+        "text" in research && typeof research.text === "string"
+      ? research.text
+      : "";
+    return `Summarize this: ${text}`;
+  },
 });
 ```
 
@@ -303,7 +301,10 @@ parallel("all-required", steps, { strategy: "all" }); // Default: all must succe
 
 ## Branching
 
-Use `branch` for conditional paths:
+Use `branch` for conditional paths. An agent step stores an output envelope
+under its node ID: read generated text from `text` and schema-bound output
+from `data` (also available as `object`). This example assumes the classifier
+has an output schema containing a `category` string:
 
 ```ts
 import { branch, step, workflow } from "veryfront/workflow";
@@ -313,7 +314,14 @@ export default workflow({
   steps: [
     step("classify", { agent: "classifier" }),
     branch("route", {
-      condition: (ctx) => ctx.results.classify.category === "billing",
+      condition: (ctx) => {
+        const result = ctx.classify;
+        const data = typeof result === "object" && result !== null && "data" in result
+          ? result.data
+          : undefined;
+        return typeof data === "object" && data !== null &&
+          "category" in data && data.category === "billing";
+      },
       then: [step("billing", { agent: "billing-agent" })],
       else: [step("technical", { agent: "tech-agent" })],
     }),
@@ -322,16 +330,30 @@ export default workflow({
 });
 ```
 
-Shorthand helpers:
+Shorthand helpers use the same flat node-output context. In this example, the
+`classify` agent's output schema contains a `sensitive` boolean, read from
+its output envelope's `data`. The `cache` tool step returns the raw boolean
+`true` when the requested value is cached.
 
-```ts
-import { unless, when } from "veryfront/workflow";
+```ts title="workflows/conditions.ts"
+import { step, unless, when } from "veryfront/workflow";
 
-when("needs-approval", (ctx) => ctx.results.classify.sensitive, [
-  step("review", { agent: "reviewer" }),
-]);
+export const needsApproval = when(
+  "needs-approval",
+  (ctx) => {
+    const result = ctx.classify;
+    const data = typeof result === "object" && result !== null && "data" in result
+      ? result.data
+      : undefined;
+    return typeof data === "object" && data !== null &&
+      "sensitive" in data && data.sensitive === true;
+  },
+  [
+    step("review", { agent: "reviewer" }),
+  ],
+);
 
-unless("is-cached", (ctx) => ctx.cache.has(key), [
+export const fetchUnlessCached = unless("is-cached", (ctx) => ctx.cache === true, [
   step("fetch", { tool: "fetcher" }),
 ]);
 ```
@@ -402,9 +424,7 @@ await workflows.approve(runId, pending.id, "editor@example.com", "Ship it", {
 The submitted `data` is validated against the wait node's `responseSchema`
 before it is persisted. A non-conformant answer is refused with an error and
 the approval stays pending. Validation only covers wait nodes declared in a
-static step list.
-
-When a workflow's `steps`, or the `steps` of a nested loop,
+static step list. When a workflow's `steps`, or the `steps` of a nested loop,
 is a function, the node list depends on runtime state, so no schema can be
 resolved for the decision and the answer is accepted unvalidated. After
 approval, the decision lands in the workflow context under the wait node's id,
@@ -508,17 +528,31 @@ Use `waitForRuns` when a workflow starts or receives the IDs of independently du
 must continue only after every one of them reaches a terminal status:
 
 Every listed run must be a direct child of the waiting workflow run. When the child runs are
-created, set their `parentRunId` to that workflow run's ID:
+created, set their `parentRunId` to that workflow run's ID and `nodeId` to
+the parent node that starts them. The request requires that parent's scoped
+execution credential; a project API token cannot assert parent authority.
 
-```ts
+Run the following script only within the trusted parent execution. Its runtime
+must supply the current parent credential as `PARENT_WORKFLOW_EXECUTION_TOKEN`
+and replace the project and workflow-run placeholders. This application-defined
+environment variable is not a credential the SDK creates or discovers:
+
+```ts title="scripts/start-release-check.ts"
+import { createRunsClient } from "veryfront/runs";
+
+const parentToken = process.env.PARENT_WORKFLOW_EXECUTION_TOKEN;
+if (!parentToken) throw new Error("Set the current parent execution credential");
+const runs = createRunsClient({ authToken: parentToken });
+const workflowRunId = "<WORKFLOW_RUN_ID>"; // ID of the waiting parent workflow run
 const child = await runs.createTaskRun({
   projectId: "<PROJECT_ID>",
   parentRunId: workflowRunId,
+  nodeId: "start-children", // Must match the executing parent node
   target: "task:release-check",
 });
 ```
 
-```ts
+```ts title="workflows/batch-release.ts"
 import { dependsOn, step, waitForRuns, workflow } from "veryfront/workflow";
 
 export default workflow({
@@ -549,7 +583,7 @@ child-wait boundary updates before it can resume `waitForRuns` nodes.
 
 ## Workflow configuration
 
-```ts
+```ts title="workflows/pipeline.ts"
 import { defineSchema } from "veryfront/schemas";
 import { step, workflow } from "veryfront/workflow";
 
@@ -591,9 +625,11 @@ By default, a completed run's output is its context without `input`: every
 step's output keyed by step id, plus `env` when the project injects environment
 values. Declare `output` to choose the value callers receive instead. It takes
 the context and returns the output synchronously, like the `output` mapper of a
-nested workflow. Treat the context as read-only: it is also stored on the run.
+nested workflow.
 
-```ts
+Treat the context as read-only: it is also stored on the run.
+
+```ts title="workflows/expense-approval.ts"
 import { defineSchema } from "veryfront/schemas";
 import { step, workflow } from "veryfront/workflow";
 
@@ -615,7 +651,9 @@ export default workflow({
 
 `outputSchema` checks the selected value, or the default output when no
 `output` selector is declared, before the run completes. A selected output
-stores the parsed value. A valid default output keeps its original shape and
+stores the parsed value.
+
+A valid default output keeps its original shape and
 values. A mismatch fails with
 `error.code: "OUTPUT_VALIDATION_FAILED"` and `{ path, message }` entries in
 `error.detail.errors`, so invalid output is never stored as completed.
@@ -627,15 +665,21 @@ When a nested workflow resumes after a wait, downstream steps and its output
 selector receive completed child outputs without rerunning those steps.
 Completed wait values retain approval decision and event delivery metadata.
 Later child updates stay intact when the workflow resumes again or retries its
-output selector. Saved child contexts follow the same persistence policy as
+output selector.
+
+Saved child contexts follow the same persistence policy as
 the durable workflow context.
 
 A started run's steps receive the parsed input: `inputSchema` transforms and
 defaults apply before the first step runs. The run keeps the input as it was
-submitted. A workflow nested with `subWorkflow` or `map` also parses the input its
+submitted.
+
+A workflow nested with `subWorkflow` or `map` also parses the input its
 parent passes through its own `inputSchema` before building or running child steps.
 Invalid input fails the parent run with `INPUT_VALIDATION_FAILED` and validation
-errors containing JSON Pointer paths. A paused nested workflow reuses its parsed
+errors containing JSON Pointer paths.
+
+A paused nested workflow reuses its parsed
 input when it resumes.
 
 Nested workflow retries and resumes use the retained child-context snapshot without
@@ -730,87 +774,13 @@ in-memory client is not readable from any other.
 
 ## Remove old terminal workflow runs
 
-Use `reapTerminalRuns` from a periodic maintenance process to delete old
-completed, failed, and cancelled workflow runs. Waiting and active runs are
-never eligible. The cutoff is exclusive, and each call deletes at most `limit`
-runs. The sweep does not modify workflow definitions, schedules, tasks,
-webhooks, or prompts.
+For retention settings, startup precautions, and the maintenance script, see [Remove old workflow runs](./workflow-retention.md).
 
-Run the scheduler as one long-lived maintenance process. Before its first
-start, stop every workflow worker. Restart the workers only after the initial
-repair finishes, and keep this process running so every scheduled sweep reuses
-the same backend.
+## Next
 
-```ts
-import { reapTerminalRuns, RedisBackend } from "veryfront/workflow";
+- [Extend a workflow](./workflows-advanced.md): Loops, artifacts, and progress interfaces.
+- [Show workflow progress](./workflow-ui.md): Mount authenticated routes and connect a React dashboard.
 
-const redisUrl = Deno.env.get("REDIS_URL");
-if (!redisUrl) throw new Error("Set REDIS_URL before running workflow retention");
+## Related
 
-const backend = new RedisBackend({ url: redisUrl });
-const retentionAgeMs = 30 * 24 * 60 * 60 * 1000;
-const sweepIntervalMs = 24 * 60 * 60 * 1000;
-
-async function runSweep(): Promise<void> {
-  const completedBefore = new Date(Date.now() - retentionAgeMs);
-  while (true) {
-    const result = await reapTerminalRuns(backend, {
-      completedBefore,
-      limit: 100,
-    });
-    if (!result.supported) {
-      throw new Error("The configured workflow backend does not support terminal-run retention");
-    }
-    if (!result.hasMore) break;
-  }
-}
-
-async function runScheduler(): Promise<never> {
-  while (true) {
-    await runSweep();
-    await new Promise<void>((resolve) => setTimeout(resolve, sweepIntervalMs));
-  }
-}
-
-try {
-  await runScheduler();
-} finally {
-  await backend.destroy();
-}
-```
-
-The backend verifies the run identity, terminal status, completion time, and
-mutation revision in the same operation that deletes its state. A failed run
-that starts retrying, or receives another state patch after the sweep reads it,
-is retained. A failed run with accepted retry work still queued or pending is
-not selected.
-
-In that case, or when Redis must resume bounded queue cleanup,
-`hasMore` is `false` so the loop does not immediately reselect the refreshed
-run. The next scheduled maintenance invocation can retry it. After deletion,
-reads return the existing not-found result; this retention API does not create
-tombstones.
-
-Redis stores a completion-time index and reads at most `limit + 1` candidate
-records per sweep without hydrating run input, output, or context. Completion
-times use numeric Redis scores, so ordering stays chronological for every valid
-JavaScript `Date`. One deletion script cleans at most 100 indexed stream
-messages for a run, then defers final deletion if more remain.
-
-Each call
-requests one run-key `SCAN` page with `COUNT 100` and reads at most 100 queue
-entries during repair. Redis completes both repair cycles before
-returning candidates. Once both finish, that backend instance queries the
-completed index directly and does not restart repair between deletion batches.
-
-A new backend instance performs its own bounded repair. The queue cycle uses a
-fixed stream high-water mark, so current queue traffic does not keep the
-one-time repair open forever.
-
-Before a new Redis maintenance backend starts its first retention sweep,
-stop every workflow worker. Run the repair until `hasMore` becomes `false`, then
-restart workers on the version that provides retention and keep the maintenance
-backend long-lived. Repeat this drain if you replace the maintenance backend.
-The repair requeues Redis pending deliveries that the maintenance process does
-not own, so running it beside active workers can duplicate their work. During
-repair, `hasMore` can be `true` even when one sweep examines no eligible runs.
+- [Workflow API](../api-reference/veryfront/workflow.md): Types and configuration.

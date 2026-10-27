@@ -38,8 +38,8 @@ export interface StartupProgress {
 /** The terminal and the clock, injected so tests can supply their own. */
 export interface StartupProgressDeps {
   write: (text: string) => void;
-  setInterval: (fn: () => void, ms: number) => number;
-  clearInterval: (handle: number) => void;
+  setInterval: (fn: () => void, ms: number) => number | ReturnType<typeof setInterval>;
+  clearInterval: (handle: number | ReturnType<typeof setInterval>) => void;
 }
 
 function platformDeps(): StartupProgressDeps {

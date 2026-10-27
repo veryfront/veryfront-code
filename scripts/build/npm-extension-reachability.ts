@@ -38,11 +38,8 @@ function children(node: AstNode): AstNode[] {
     if (key === "loc" || key.endsWith("Comments") || key === "comments") {
       return [];
     }
-    return Array.isArray(value)
-      ? value.filter(isNode)
-      : isNode(value)
-      ? [value]
-      : [];
+    if (Array.isArray(value)) return value.filter(isNode);
+    return isNode(value) ? [value] : [];
   });
 }
 
@@ -88,17 +85,47 @@ function isModuleMeta(
     literal(selector.arguments[0]) === "import-meta-ponyfill-esmodule";
 }
 
+function isUrlConstruction(
+  node: AstNode,
+): node is AstNode & { arguments: unknown[] } {
+  return node.type === "NewExpression" && isNode(node.callee) &&
+    node.callee.type === "Identifier" && node.callee.name === "URL" &&
+    Array.isArray(node.arguments);
+}
+
 type Selector =
   | { kind: "strings"; values: string[] }
   | { kind: "module-url" }
   | { kind: "external-url" };
+
+function declarationReferencePaths(comments: unknown): string[] | undefined {
+  const references: string[] = [];
+  if (!Array.isArray(comments)) return references;
+  for (const comment of comments) {
+    if (
+      !isNode(comment) || comment.type !== "CommentLine" ||
+      typeof comment.value !== "string"
+    ) {
+      continue;
+    }
+    const path = /^\s*\/\s*<reference\s+path\s*=\s*["']([^"']+)["']/.exec(
+      comment.value,
+    )?.[1];
+    if (path === undefined) continue;
+    if (path.startsWith("/") || /^[a-z][a-z\d+.-]*:/i.test(path)) {
+      return undefined;
+    }
+    references.push(path.startsWith(".") ? path : `./${path}`);
+  }
+  return references;
+}
 
 async function localReferences(
   source: string,
   modulePath: string,
 ): Promise<string[] | undefined> {
   let program: AstNode;
-  const declarationReferences: string[] = [];
+  let declarationReferences: string[];
   try {
     const ast = await new BabelParseOnlyParser().parse({
       code: source,
@@ -106,23 +133,9 @@ async function localReferences(
     });
     if (!isNode(ast.program)) return undefined;
     program = ast.program;
-    if (Array.isArray(ast.comments)) {
-      for (const comment of ast.comments) {
-        if (
-          !isNode(comment) || comment.type !== "CommentLine" ||
-          typeof comment.value !== "string"
-        ) continue;
-        const path = comment.value.match(
-          /^\s*\/\s*<reference\s+path\s*=\s*["']([^"']+)["']/,
-        )?.[1];
-        if (path !== undefined) {
-          if (path.startsWith("/") || /^[a-z][a-z\d+.-]*:/i.test(path)) {
-            return undefined;
-          }
-          declarationReferences.push(path.startsWith(".") ? path : `./${path}`);
-        }
-      }
-    }
+    const references = declarationReferencePaths(ast.comments);
+    if (references === undefined) return undefined;
+    declarationReferences = references;
   } catch {
     return undefined;
   }
@@ -141,18 +154,24 @@ async function localReferences(
       for (const child of children(node)) binding(child);
     }
   };
-  const collect = (node: AstNode): void => {
+  const collectVariableBindings = (
+    declarations: unknown[],
+    kind: unknown,
+  ): void => {
+    for (const declaration of declarations) {
+      if (isNode(declaration)) {
+        binding(
+          declaration.id,
+          kind === "const" ? declaration.init : undefined,
+        );
+      }
+    }
+  };
+  const collectBindings = (node: AstNode): void => {
     if (
       node.type === "VariableDeclaration" && Array.isArray(node.declarations)
     ) {
-      for (const declaration of node.declarations) {
-        if (isNode(declaration)) {
-          binding(
-            declaration.id,
-            node.kind === "const" ? declaration.init : undefined,
-          );
-        }
-      }
+      collectVariableBindings(node.declarations, node.kind);
     } else if (node.type.includes("Function")) {
       binding(node.id);
     } else if (node.type.startsWith("Class")) {
@@ -168,12 +187,103 @@ async function localReferences(
     ) {
       binding(node.left ?? node.argument);
     }
+  };
+  const collect = (node: AstNode): void => {
+    collectBindings(node);
     if (Array.isArray(node.params)) {
       node.params.forEach((param) => binding(param));
     }
     for (const child of children(node)) collect(child);
   };
   collect(program);
+
+  const resolveConditional = (
+    node: AstNode,
+    resolving: Set<string>,
+  ): Selector | undefined => {
+    const test = node.test;
+    if (
+      isNode(test) && test.type === "CallExpression" &&
+      memberName(test.callee) === "endsWith" && isNode(test.callee) &&
+      Array.isArray(test.arguments) && test.arguments.length === 1
+    ) {
+      const suffix = literal(test.arguments[0]);
+      const receiver = resolveSelector(test.callee.object, resolving);
+      if (suffix !== undefined && receiver?.kind === "module-url") {
+        return resolveSelector(
+          modulePath.endsWith(suffix) ? node.consequent : node.alternate,
+          resolving,
+        );
+      }
+    }
+    const consequent = resolveSelector(node.consequent, resolving);
+    const alternate = resolveSelector(node.alternate, resolving);
+    if (consequent?.kind === "strings" && alternate?.kind === "strings") {
+      return {
+        kind: "strings",
+        values: [...consequent.values, ...alternate.values],
+      };
+    }
+    return consequent?.kind === "external-url" &&
+        alternate?.kind === "external-url"
+      ? consequent
+      : undefined;
+  };
+
+  const resolveModuleSpecifier = (argument: unknown): Selector | undefined => {
+    const specifier = literal(argument);
+    if (specifier === undefined) return undefined;
+    if (specifier.startsWith("/") || /^file:/i.test(specifier)) {
+      return undefined;
+    }
+    return specifier.startsWith("./") || specifier.startsWith("../")
+      ? { kind: "strings", values: [specifier] }
+      : { kind: "external-url" };
+  };
+
+  const resolveUrlSelector = (
+    args: unknown[],
+    resolving: Set<string>,
+  ): Selector | undefined => {
+    if (constants.has("URL")) return undefined;
+    const selector = resolveSelector(args[0], resolving);
+    const base = resolveSelector(args[1], resolving);
+    if (selector?.kind !== "strings") return undefined;
+    if (base?.kind === "external-url") return base;
+    if (
+      selector.values.some((item) =>
+        item.startsWith("/") || /^file:/i.test(item)
+      )
+    ) return undefined;
+    if (base?.kind === "module-url") {
+      return {
+        kind: "strings",
+        values: selector.values.map((item) =>
+          /^[a-z][a-z\d+.-]*:/i.test(item) || item.startsWith("./") ||
+            item.startsWith("../")
+            ? item
+            : `./${item}`
+        ),
+      };
+    }
+    if (selector.values.every((item) => /^[a-z][a-z\d+.-]*:/i.test(item))) {
+      return { kind: "external-url" };
+    }
+    return undefined;
+  };
+
+  const resolveMemberSelector = (
+    node: AstNode,
+    resolving: Set<string>,
+  ): Selector | undefined => {
+    if (memberName(node) === "url" && isModuleMeta(node.object, constants)) {
+      return { kind: "module-url" };
+    }
+    if (memberName(node) === "href") {
+      return resolveSelector(node.object, resolving);
+    }
+    return undefined;
+  };
 
   const resolveSelector = (
     node: unknown,
@@ -190,85 +300,21 @@ async function localReferences(
       );
     }
     if (node.type === "ConditionalExpression") {
-      const test = node.test;
-      if (
-        isNode(test) && test.type === "CallExpression" &&
-        memberName(test.callee) === "endsWith" && isNode(test.callee) &&
-        Array.isArray(test.arguments) && test.arguments.length === 1
-      ) {
-        const suffix = literal(test.arguments[0]);
-        const receiver = resolveSelector(test.callee.object, resolving);
-        if (suffix !== undefined && receiver?.kind === "module-url") {
-          return resolveSelector(
-            modulePath.endsWith(suffix) ? node.consequent : node.alternate,
-            resolving,
-          );
-        }
-      }
-      const consequent = resolveSelector(node.consequent, resolving);
-      const alternate = resolveSelector(node.alternate, resolving);
-      if (consequent?.kind === "strings" && alternate?.kind === "strings") {
-        return {
-          kind: "strings",
-          values: [...consequent.values, ...alternate.values],
-        };
-      }
-      return consequent?.kind === "external-url" &&
-          alternate?.kind === "external-url"
-        ? consequent
-        : undefined;
+      return resolveConditional(node, resolving);
     }
     if (node.type === "MemberExpression") {
-      if (memberName(node) === "url" && isModuleMeta(node.object, constants)) {
-        return { kind: "module-url" };
-      }
-      if (memberName(node) === "href") {
-        return resolveSelector(node.object, resolving);
-      }
+      return resolveMemberSelector(node, resolving);
     }
     if (
       node.type === "CallExpression" && memberName(node.callee) === "resolve" &&
       isNode(node.callee) && isModuleMeta(node.callee.object, constants) &&
       Array.isArray(node.arguments) && node.arguments.length === 1
     ) {
-      const specifier = literal(node.arguments[0]);
-      if (specifier === undefined) return undefined;
-      if (specifier.startsWith("/") || /^file:/i.test(specifier)) {
-        return undefined;
-      }
-      return specifier.startsWith("./") || specifier.startsWith("../")
-        ? { kind: "strings", values: [specifier] }
-        : { kind: "external-url" };
+      return resolveModuleSpecifier(node.arguments[0]);
     }
-    if (
-      node.type === "NewExpression" && isNode(node.callee) &&
-      node.callee.type === "Identifier" && node.callee.name === "URL" &&
-      Array.isArray(node.arguments)
-    ) {
-      if (constants.has("URL")) return undefined;
-      const selector = resolveSelector(node.arguments[0], resolving);
-      const base = resolveSelector(node.arguments[1], resolving);
-      if (selector?.kind !== "strings") return undefined;
-      if (base?.kind === "external-url") return base;
-      if (
-        selector.values.some((item) =>
-          item.startsWith("/") || /^file:/i.test(item)
-        )
-      ) return undefined;
-      if (base?.kind === "module-url") {
-        return {
-          kind: "strings",
-          values: selector.values.map((item) =>
-            /^[a-z][a-z\d+.-]*:/i.test(item) || item.startsWith("./") ||
-              item.startsWith("../")
-              ? item
-              : `./${item}`
-          ),
-        };
-      }
-      if (selector.values.every((item) => /^[a-z][a-z\d+.-]*:/i.test(item))) {
-        return { kind: "external-url" };
-      }
+
+    if (isUrlConstruction(node)) {
+      return resolveUrlSelector(node.arguments, resolving);
     }
     return undefined;
   };
@@ -287,29 +333,43 @@ async function localReferences(
       );
     }
   };
+  const isImportCall = (node: AstNode): boolean =>
+    (node.type === "CallExpression" ||
+      node.type === "OptionalCallExpression") &&
+    isNode(node.callee) &&
+    (node.callee.type === "Import" ||
+      (node.callee.type === "Identifier" && node.callee.name === "require"));
+
+  const addResolverReference = (node: AstNode): void => {
+    const specifier = literal((node.arguments as unknown[])[0]);
+    if (specifier?.startsWith("./") || specifier?.startsWith("../")) {
+      // Other resolver functions can load local assets too.
+      add(node);
+    }
+  };
+
+  const addExportSource = (node: AstNode): void => {
+    if (node.source !== null && node.source !== undefined) add(node.source);
+  };
+  const addImportCall = (node: AstNode): void => {
+    add(Array.isArray(node.arguments) ? node.arguments[0] : undefined);
+  };
+
   const visit = (node: AstNode): void => {
     if (
       node.type === "ImportDeclaration" ||
       node.type === "ExportAllDeclaration" ||
       node.type === "ExportNamedDeclaration"
     ) {
-      if (node.source !== null && node.source !== undefined) add(node.source);
+      addExportSource(node);
     } else if (node.type === "TSImportType") {
       add(node.argument);
     } else if (node.type === "ImportExpression") {
       add(node.source);
+    } else if (isImportCall(node)) {
+      addImportCall(node);
     } else if (
-      (node.type === "CallExpression" ||
-        node.type === "OptionalCallExpression") &&
-      isNode(node.callee) &&
-      (node.callee.type === "Import" ||
-        (node.callee.type === "Identifier" && node.callee.name === "require"))
-    ) {
-      add(Array.isArray(node.arguments) ? node.arguments[0] : undefined);
-    } else if (
-      node.type === "NewExpression" && isNode(node.callee) &&
-      node.callee.type === "Identifier" && node.callee.name === "URL" &&
-      Array.isArray(node.arguments) && node.arguments.length > 1
+      isUrlConstruction(node) && node.arguments.length > 1
     ) {
       add(node);
     } else if (
@@ -318,12 +378,7 @@ async function localReferences(
       memberName(node.callee) === "resolve" &&
       Array.isArray(node.arguments)
     ) {
-      const specifier = literal(node.arguments[0]);
-      if (specifier?.startsWith("./") || specifier?.startsWith("../")) {
-        // require.resolve and other resolver functions can load local assets.
-        // Keep output unless the receiver is the exact module resolver.
-        add(node);
-      }
+      addResolverReference(node);
     } else if (
       memberName(node) === "resolve" && isNode(node.object) &&
       node.object.type === "Identifier" && node.object.name === "require"
@@ -357,6 +412,56 @@ async function isFile(path: string): Promise<boolean> {
   }
 }
 
+async function resolveReferenceTarget(
+  path: string,
+  specifier: string,
+  esmRoot: string,
+): Promise<string | undefined> {
+  let target = resolve(dirname(path), specifier.replace(/[?#].*$/s, ""));
+  if (!within(esmRoot, target)) return undefined;
+  if (path.endsWith(".d.ts") && target.endsWith(".js")) {
+    const declaration = target.slice(0, -3) + ".d.ts";
+    if (await isFile(declaration)) target = declaration;
+  }
+  if (!await isFile(target)) return undefined;
+  return target;
+}
+
+async function reachableEntryPoints(
+  outDir: string,
+  entryPointPaths: readonly string[],
+  esmRoot: string,
+): Promise<string[] | undefined> {
+  const pending: string[] = [];
+  for (const entryPoint of entryPointPaths) {
+    const path = resolve(outDir, entryPoint);
+    if (!within(esmRoot, path) || !await isFile(path)) {
+      return undefined;
+    }
+    pending.push(path);
+  }
+  if (pending.length === 0) return undefined;
+
+  return pending;
+}
+
+async function removeUnreachableDirectories(
+  extensionRoot: string,
+  reachableDirectories: ReadonlySet<string>,
+): Promise<void> {
+  try {
+    for await (const entry of Deno.readDir(extensionRoot)) {
+      if (entry.isDirectory && !reachableDirectories.has(entry.name)) {
+        await Deno.remove(resolve(extensionRoot, entry.name), {
+          recursive: true,
+        });
+      }
+    }
+  } catch (error) {
+    if (!(error instanceof Deno.errors.NotFound)) throw error;
+  }
+}
+
 /**
  * Remove generated peer-extension directories outside the declared module graph.
  * Keep whole reachable directories, including their runtime assets. Uncertain
@@ -372,29 +477,29 @@ export async function pruneUnreachableExtensionDirectories(input: {
 > {
   const esmRoot = resolve(input.outDir, "esm");
   const extensionRoot = resolve(esmRoot, "extensions");
-  const pending: string[] = [];
-  for (const entryPoint of input.entryPointPaths) {
-    const path = resolve(input.outDir, entryPoint);
-    if (!within(esmRoot, path) || !await isFile(path)) {
-      return { kind: "uncertain" };
-    }
-    pending.push(path);
-  }
-  if (pending.length === 0) return { kind: "uncertain" };
+  const pending = await reachableEntryPoints(
+    input.outDir,
+    input.entryPointPaths,
+    esmRoot,
+  );
+  if (pending === undefined) return { kind: "uncertain" };
 
   const visited = new Set<string>();
   const referencedTopLevelEntries = new Set<string>();
   const reachableDirectories = new Set<string>();
-  while (pending.length > 0) {
-    const path = pending.pop();
-    if (path === undefined || visited.has(path)) continue;
-    visited.add(path);
+  const recordReachablePath = (path: string): void => {
     const topLevelEntry = relative(esmRoot, path).split(SEPARATOR)[0];
     if (topLevelEntry) referencedTopLevelEntries.add(topLevelEntry);
     if (within(extensionRoot, path)) {
       const directory = relative(extensionRoot, path).split(SEPARATOR)[0];
       if (directory) reachableDirectories.add(directory);
     }
+  };
+  while (pending.length > 0) {
+    const path = pending.pop();
+    if (path === undefined || visited.has(path)) continue;
+    visited.add(path);
+    recordReachablePath(path);
     if (!/\.(?:[cm]?js|d\.[cm]?ts)$/.test(path)) continue;
     const references = await localReferences(
       await Deno.readTextFile(path),
@@ -402,26 +507,11 @@ export async function pruneUnreachableExtensionDirectories(input: {
     );
     if (references === undefined) return { kind: "uncertain" };
     for (const specifier of references) {
-      let target = resolve(dirname(path), specifier.replace(/[?#].*$/, ""));
-      if (!within(esmRoot, target)) return { kind: "uncertain" };
-      if (path.endsWith(".d.ts") && target.endsWith(".js")) {
-        const declaration = target.slice(0, -3) + ".d.ts";
-        if (await isFile(declaration)) target = declaration;
-      }
-      if (!await isFile(target)) return { kind: "uncertain" };
+      const target = await resolveReferenceTarget(path, specifier, esmRoot);
+      if (target === undefined) return { kind: "uncertain" };
       pending.push(target);
     }
   }
-  try {
-    for await (const entry of Deno.readDir(extensionRoot)) {
-      if (entry.isDirectory && !reachableDirectories.has(entry.name)) {
-        await Deno.remove(resolve(extensionRoot, entry.name), {
-          recursive: true,
-        });
-      }
-    }
-  } catch (error) {
-    if (!(error instanceof Deno.errors.NotFound)) throw error;
-  }
+  await removeUnreachableDirectories(extensionRoot, reachableDirectories);
   return { kind: "complete", referencedTopLevelEntries };
 }

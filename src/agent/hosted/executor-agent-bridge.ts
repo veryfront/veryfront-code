@@ -7,10 +7,13 @@ import {
 } from "#veryfront/security/private-stream.ts";
 import { privateJsonStringify } from "#veryfront/security/private-json.ts";
 import { runWithToolCallOccurrences } from "#veryfront/runtime/tool-call-occurrence.ts";
+import { runWithToolResultSequence } from "#veryfront/runtime/tool-result-sequence.ts";
+import type { ManagedToolResultFence } from "./managed-tool-result-fence.ts";
 import type { ExecutorChannel, ExecutorOperation } from "../executor/channel.ts";
 import type { JsonValue } from "#veryfront/schemas/index.ts";
 import type { ChatUiMessageChunk } from "#veryfront/chat/types.ts";
 import { createChatUiMessageStreamFromDataStream } from "../streaming/chat-ui-message-stream.ts";
+import { structuredAgentOutputForWire } from "#veryfront/agent/output-schema.ts";
 import { readExecutorDataEvents } from "../streaming/executor-data-stream.ts";
 import {
   getExecutorAgentStreamFrameSchema,
@@ -32,6 +35,36 @@ import {
 const MapConstructor = Map;
 const mapSet = Map.prototype.set;
 const apply = Reflect.apply;
+
+function executorOperationFailureCode(
+  error: unknown,
+  phase: "setup" | "stream",
+  signal: AbortSignal,
+): ConstructorParameters<typeof ExecutorAgentError>[0] {
+  if (signal.aborted) return "ABORTED";
+  return executorAgentFailureCode(
+    error,
+    phase === "setup" ? "EXECUTOR_AGENT_SETUP_FAILED" : "EXECUTOR_AGENT_STREAM_FAILED",
+  );
+}
+
+function normalizeExecutorStreamError(
+  error: unknown,
+  input: Pick<HostedChatRuntimeStreamInput, "abortSignal">,
+  fallback: "EXECUTOR_AGENT_SETUP_FAILED" | "EXECUTOR_AGENT_STREAM_FAILED",
+): ExecutorAgentError {
+  if (error instanceof ExecutorAgentError) return error;
+  return new ExecutorAgentError(input.abortSignal.aborted ? "ABORTED" : fallback);
+}
+
+/** @internal Encode a validated broker event for the downstream SSE boundary. */
+export function encodeExecutorBrokerEvent(
+  event: Parameters<typeof structuredAgentOutputForWire>[0],
+): Uint8Array {
+  return encodePrivateText(
+    `data: ${privateJsonStringify(structuredAgentOutputForWire(event))}\n\n`,
+  );
+}
 
 async function startExecutorRuntimeStream(
   start: () => Promise<ReadableStream<Uint8Array>>,
@@ -86,7 +119,11 @@ export function createExecutorAgentOperations(options: {
                 abortSignal: context.signal,
                 ...(request.runtimeObservations ? { runtimeObservations: true } : {}),
               });
-            return request.toolCallAdmissions ? runWithToolCallOccurrences(start) : start();
+            const withAdmissions = () =>
+              request.toolCallAdmissions ? runWithToolCallOccurrences(start) : start();
+            return request.privateToolResultSessionId
+              ? runWithToolResultSequence(request.privateToolResultSessionId, withAdmissions)
+              : withAdmissions();
           },
           context.signal,
         );
@@ -95,16 +132,16 @@ export function createExecutorAgentOperations(options: {
         for await (
           const event of getPrivateAsyncIterator(readExecutorDataEvents(stream, context.signal))
         ) {
-          yield executorAgentJson({ type: "event", event }, "EXECUTOR_AGENT_INVALID_STREAM");
+          yield executorAgentJson(
+            { type: "event", event: structuredAgentOutputForWire(event) },
+            "EXECUTOR_AGENT_INVALID_STREAM",
+          );
         }
       } catch (error) {
         failure = {
           type: "failure",
           phase,
-          code: context.signal.aborted ? "ABORTED" : executorAgentFailureCode(
-            error,
-            phase === "setup" ? "EXECUTOR_AGENT_SETUP_FAILED" : "EXECUTOR_AGENT_STREAM_FAILED",
-          ),
+          code: executorOperationFailureCode(error, phase, context.signal),
         };
       } finally {
         // A return while suspended at ready can precede acquisition of the
@@ -144,7 +181,12 @@ export function createExecutorHostedChatRuntimeAgent(options: {
   toolCallAdmissions?: true;
   /** Trusted broker opt-in, enabled only with an acknowledging private writer. */
   runtimeObservations?: true;
+  /** Broker-owned session; absent for legacy or direct noncanonical use. */
+  resultFence?: ManagedToolResultFence;
 }): HostedChatRuntimeAgent {
+  if (options.resultFence && !options.runtimeObservations) {
+    throw new TypeError("Managed result fencing requires runtime observations");
+  }
   const handle = parseExecutorAgentData(
     getExecutorPreparedRuntimeHandleSchema(),
     options.preparedRuntimeHandle,
@@ -155,11 +197,13 @@ export function createExecutorHostedChatRuntimeAgent(options: {
       let opening: AsyncIterableIterator<JsonValue> | undefined;
       try {
         if (started) throw new ExecutorAgentError("EXECUTOR_AGENT_ALREADY_STARTED");
+        const resultSessionId = options.resultFence?.beginSession();
         const request = parseExecutorAgentData(getExecutorAgentStreamInputSchema(), {
           preparedRuntimeHandle: handle,
           messages: input.messages,
           ...(options.toolCallAdmissions ? { toolCallAdmissions: true } : {}),
           ...(options.runtimeObservations ? { runtimeObservations: true } : {}),
+          ...(resultSessionId ? { privateToolResultSessionId: resultSessionId } : {}),
         });
         const payload = executorAgentJson(request, "EXECUTOR_AGENT_INPUT_TOO_LARGE");
         input.abortSignal.throwIfAborted();
@@ -182,9 +226,7 @@ export function createExecutorHostedChatRuntimeAgent(options: {
         } else {
           await release?.catch(() => {});
         }
-        throw error instanceof ExecutorAgentError ? error : new ExecutorAgentError(
-          input.abortSignal.aborted ? "ABORTED" : "EXECUTOR_AGENT_SETUP_FAILED",
-        );
+        throw normalizeExecutorStreamError(error, input, "EXECUTOR_AGENT_SETUP_FAILED");
       }
       const iterator = opening;
       let consumed = false;
@@ -207,7 +249,7 @@ export function createExecutorHostedChatRuntimeAgent(options: {
                   ended ||= event.type === "message-finish" || event.type === "error" ||
                     event.type === "data-veryfront.manual_pause";
                   controller.enqueue(
-                    encodePrivateText(`data: ${privateJsonStringify(event)}\n\n`),
+                    encodeExecutorBrokerEvent(event),
                   );
                 } else if (frame.type === "complete") {
                   if (!ended || !(await iterator.next()).done) {
@@ -220,9 +262,7 @@ export function createExecutorHostedChatRuntimeAgent(options: {
               } catch (error) {
                 await iterator.return?.().catch(() => {});
                 controller.error(
-                  error instanceof ExecutorAgentError ? error : new ExecutorAgentError(
-                    input.abortSignal.aborted ? "ABORTED" : "EXECUTOR_AGENT_STREAM_FAILED",
-                  ),
+                  normalizeExecutorStreamError(error, input, "EXECUTOR_AGENT_STREAM_FAILED"),
                 );
               }
             },
@@ -235,6 +275,7 @@ export function createExecutorHostedChatRuntimeAgent(options: {
               ...streamOptions,
               privateToolCallAdmissions: options.toolCallAdmissions === true,
               privateRuntimeObservations: options.runtimeObservations === true,
+              privateToolResultSequences: options.resultFence !== undefined,
             })
               [Symbol.asyncIterator]();
             const uiIterator: AsyncIterableIterator<ChatUiMessageChunk> = {

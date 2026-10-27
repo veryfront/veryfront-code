@@ -14,6 +14,10 @@ and evaluation, then deploy the same source to Veryfront Cloud.
 
 You do not need a model-provider API key for this tutorial.
 
+Your **local project** contains the files and code on your machine. A **cloud
+project** provides Veryfront services and stores runs and events. Linking them
+keeps code execution local while using the cloud project's services.
+
 ## Create the app
 
 ```bash
@@ -21,15 +25,27 @@ npm create veryfront@latest support-agent -- --template ai-agent
 cd support-agent
 ```
 
-## Sign in and link the project
+## Select a cloud project
+
+During scaffolding, answer **Yes** to **Use Veryfront Cloud?** Then choose a
+new or existing cloud project by selecting **Create a new cloud project** or
+**Use an existing cloud project**. Follow the browser sign-in prompt when needed.
+Answer **No** to continue with the local project. You can link a cloud project
+when you run `npm run dev`.
+
+The cloud project link is saved in `veryfront.json`; linking adds no credentials
+and preserves existing configuration. Never commit credentials: before committing
+that file, remove any existing `apiToken` or other secrets. The CLI warns if a saved
+association still contains a legacy `apiToken`; it preserves existing configuration. Use `veryfront login`
+(the private login store) or environment variables for authentication instead.
+Commit the credential-free file so teammates can reuse the cloud project after
+cloning. Each teammate signs in with their own account.
+
+A local project pulled from Studio is already linked to its cloud project:
 
 ```bash
-npx veryfront@latest login
-npx veryfront@latest push
+npx veryfront@latest pull <PROJECT_SLUG>
 ```
-
-Sign-in stores the CLI credential. Push creates or links the Cloud project and
-prints its protected preview URL.
 
 ## Run through the AI Gateway
 
@@ -37,17 +53,29 @@ prints its protected preview URL.
 npm run dev
 ```
 
-The CLI confirms the gateway is available:
+Connected dev syncs your source before starting the local runtime. No manual
+`veryfront push` is required. Sync uses the existing push ignore rules and conflict
+checks. It does not deploy, prune remote files, or change local dependency pins.
+If sync fails, resolve the reported error and restart dev. Restart dev after
+changing source declarations to sync them again.
 
-```text
-✓ Ready in 1.3s
-http://localhost:3000
-Inference Veryfront Cloud AI Gateway
+Projects without a Cloud connection still run locally without Cloud login or sync.
+
+The CLI prints the selected cloud project, shared cloud environment, local runtime and
+service URLs. The default environment is `preview`. To select another existing
+environment, run:
+
+```bash
+npm run dev -- --env production
 ```
+
+Application code executes on your machine. Inference and run records use the
+selected Veryfront services. Local edits take effect without pushing source.
+The environment's application data and quotas are shared with other members.
 
 ## Verify the agent locally
 
-Open the local URL printed by the CLI and ask:
+Open the local URL printed by the CLI, `http://localhost:3000` by default, and ask:
 
 ```text
 What is 128 divided by 8?
@@ -55,6 +83,17 @@ What is 128 divided by 8?
 
 The assistant calls the calculator tool and returns `16` through the Veryfront
 Cloud AI Gateway.
+
+## Inspect a run
+
+Open the Studio link printed beside the run ID in your terminal. Studio shows
+the run status, output and events. The terminal and Studio use the same run ID.
+Application logs remain visible in the development terminal.
+
+When stopping a connected dev server with `Ctrl+C`, the CLI allows up to one
+minute and fifteen seconds to save pending events and cancel active runs. A failed or timed-out
+cleanup prints a warning and exits unsuccessfully. Pressing `Ctrl+C` again
+stops immediately and can leave cancellation unsaved.
 
 ## Run the eval
 
@@ -69,7 +108,10 @@ the expected answer through the gateway.
 
 ## Deploy to production
 
+Publish your local source before deploying:
+
 ```bash
+npx veryfront@latest push
 npx veryfront@latest deploy --env production
 ```
 

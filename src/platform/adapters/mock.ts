@@ -26,7 +26,7 @@ function pathNotFoundError(path: string): Error {
 }
 
 function normalizeMockPath(path: string): string {
-  const withoutTrailingSeparators = path.replace(/\/+$/, "");
+  const withoutTrailingSeparators = path.replace(/(?<!\/)\/+$/, "");
   if (withoutTrailingSeparators === ".") return "";
   if (withoutTrailingSeparators === "") return path.startsWith("/") ? "/" : "";
   return withoutTrailingSeparators;

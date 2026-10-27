@@ -419,7 +419,7 @@ export class ApiHandlerWrapper extends BaseHandler {
     ctx: HandlerContext,
     signal?: AbortSignal,
   ): Promise<boolean> {
-    const slug = pathname === "/" ? "" : pathname.replace(/^\/+|\/+$/g, "");
+    const slug = pathname === "/" ? "" : pathname.replace(/^\/+|(?<!\/)\/+$/g, "");
     const pageResolver = new PageResolver({
       projectDir: ctx.projectDir,
       projectId: ctx.projectId,

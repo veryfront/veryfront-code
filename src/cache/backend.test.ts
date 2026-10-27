@@ -1,3 +1,4 @@
+import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import { it } from "#veryfront/testing/bdd.ts";
 import { deleteEnv, getEnv, setEnv } from "#veryfront/testing/deno-compat.ts";
 import "#veryfront/schemas/_test-setup.ts";
@@ -1004,12 +1005,12 @@ it("ApiCacheBackend del-pattern timeouts do not open the read breaker", async ()
       const url = String(input instanceof Request ? input.url : input);
       if (url.includes("/projects/project-456/")) {
         otherProjectDeletes.push(url);
-        return Promise.resolve(Response.json({ status: "deleted", deleted_count: 1 }));
+        return Promise.resolve(Response.json({ ok: true }));
       }
       if (url.includes("/cache/entries?pattern=")) {
         attemptedDeletes++;
         if (url.includes("/projects/bounded-")) {
-          return Promise.resolve(Response.json({ status: "deleted", deleted_count: 0 }));
+          return Promise.resolve(Response.json({ ok: true }));
         }
         // A slow invalidation backend: never answers before the client timeout.
         return new Promise<Response>((_resolve, reject) => {
@@ -1046,7 +1047,7 @@ it("ApiCacheBackend del-pattern timeouts do not open the read breaker", async ()
     // The open invalidation breaker belongs to the churning project only.
     assertEquals(
       await inProject("project-456", () => cache.delByPattern("file:branch:*:note.md")),
-      1,
+      0,
     );
     assertEquals(otherProjectDeletes.length, 1);
 
@@ -1117,7 +1118,7 @@ it("ApiCacheBackend coalesces concurrent identical del-pattern calls per project
   await withStreamDeletes(
     async (_pattern, _authorization, sent) => {
       if (sent === 1) await firstGate;
-      return Response.json({ status: "deleted", deleted_count: 1 });
+      return Response.json({ ok: true });
     },
     async ({ deleteFromStream, requests, sent }) => {
       const streams = 8;
@@ -1137,13 +1138,13 @@ it("ApiCacheBackend coalesces concurrent identical del-pattern calls per project
       ]);
 
       releaseFirst();
-      assertEquals(await Promise.all([first, ...joined]), Array(streams).fill(1));
-      assertEquals(await otherPattern, 1);
+      assertEquals(await Promise.all([first, ...joined]), Array(streams).fill(0));
+      assertEquals(await otherPattern, 0);
       // Callers that arrived while a delete was in flight share one queued
       // delete, so none of them relies on a scan that started before its call.
       assertEquals(requests.filter((request) => request.pattern === written).length, 2);
 
-      assertEquals(await deleteFromStream("stream-token-1", written), 1);
+      assertEquals(await deleteFromStream("stream-token-1", written), 0);
       assertEquals(requests.filter((request) => request.pattern === written).length, 3);
     },
   );
@@ -1160,7 +1161,7 @@ it("ApiCacheBackend retries a coalesced del-pattern under a caller's own credent
       if (authorization === "Bearer revoked-token") {
         return new Response("credential revoked", { status: 401 });
       }
-      return Response.json({ status: "deleted", deleted_count: 1 });
+      return Response.json({ ok: true });
     },
     async ({ deleteFromStream, requests, sent }) => {
       const first = deleteFromStream("stream-token-0", written);
@@ -1170,10 +1171,10 @@ it("ApiCacheBackend retries a coalesced del-pattern under a caller's own credent
       const sameAsRevoked = deleteFromStream("revoked-token", written);
       releaseFirst();
 
-      assertEquals(await first, 1);
+      assertEquals(await first, 0);
       await assertRejects(() => revoked);
       await assertRejects(() => sameAsRevoked);
-      assertEquals(await valid, 1);
+      assertEquals(await valid, 0);
       assertEquals(requests.map((request) => request.authorization), [
         "Bearer stream-token-0",
         "Bearer revoked-token",
@@ -1184,7 +1185,7 @@ it("ApiCacheBackend retries a coalesced del-pattern under a caller's own credent
       for (let attempt = 0; attempt < 12; attempt++) {
         await assertRejects(() => deleteFromStream("revoked-token", `dir:branch:*:${attempt}`));
       }
-      assertEquals(await deleteFromStream("stream-token-2", written), 1);
+      assertEquals(await deleteFromStream("stream-token-2", written), 0);
     },
   );
 });
@@ -1208,7 +1209,7 @@ it("ApiCacheBackend prefers the request runtime token over the host fallback", a
   installMockFetch(
     ((_input: RequestInfo | URL, init?: RequestInit) => {
       authorization = new Headers(init?.headers).get("authorization") ?? "";
-      return Promise.resolve(Response.json({ status: "deleted", deleted_count: 1 }));
+      return Promise.resolve(Response.json({ ok: true }));
     }) as typeof fetch,
   );
 
@@ -1216,7 +1217,7 @@ it("ApiCacheBackend prefers the request runtime token over the host fallback", a
     const cache = new ApiCacheBackend({
       circuitBreakerName: "api-cache-request-runtime-token-test",
     });
-    assertEquals(await cache.delByPattern("agent:*"), 1);
+    assertEquals(await cache.delByPattern("agent:*"), 0);
     assertEquals(authorization, "Bearer project-runtime-token");
   } finally {
     if (originalAdapter === undefined) delete globals.__vf_multi_project_adapter;
@@ -1246,7 +1247,7 @@ it("ApiCacheBackend refuses host fallback for an uncredentialed tenant context",
   };
   installMockFetch(() => {
     fetchCalls += 1;
-    return Promise.resolve(Response.json({ status: "deleted", deleted_count: 1 }));
+    return Promise.resolve(Response.json({ ok: true }));
   });
 
   try {
@@ -1406,7 +1407,7 @@ it("ApiCacheBackend writes, reads and deletes entries on the cache entry routes"
       }
       if (method === "DELETE" && url.includes("?pattern=")) {
         return Promise.resolve(
-          Response.json({ pattern: "dir/*", status: "deleted", deleted_count: 4 }),
+          Response.json({ ok: true }),
         );
       }
       if (method === "DELETE") {
@@ -1434,7 +1435,7 @@ it("ApiCacheBackend writes, reads and deletes entries on the cache entry routes"
       { key: "one", value: "last", ttl: 30 },
     ]);
     await cache.del("dir/a:b.c");
-    assertEquals(await cache.delByPattern("dir/*"), 4);
+    assertEquals(await cache.delByPattern("dir/*"), 0);
 
     assertEquals(requests, [
       { method: "GET", url: `${base}/entries/dir%2Fa%3Ab.c`, body: null },
@@ -2098,7 +2099,7 @@ it("ApiCacheBackend uses the credential paired with an explicit endpoint", async
       capturedUrls.push(String(input));
       capturedAuthorizations.push(new Headers(init?.headers).get("authorization") ?? "");
       return Promise.resolve(
-        new Response(JSON.stringify({ pattern: "agent:*", status: "deleted", deleted_count: 3 }), {
+        new Response(JSON.stringify({ ok: true }), {
           status: 200,
           headers: { "content-type": "application/json" },
         }),
@@ -2122,7 +2123,7 @@ it("ApiCacheBackend uses the credential paired with an explicit endpoint", async
       () => cache.delByPattern("agent:*"),
     );
 
-    assertEquals(requestScopedDeleted, 3);
+    assertEquals(requestScopedDeleted, 0);
     assertEquals(
       capturedUrls[0],
       "https://93.184.216.34/projects/project-123/cache/entries?pattern=agent%3A*",
@@ -2130,7 +2131,7 @@ it("ApiCacheBackend uses the credential paired with an explicit endpoint", async
 
     const forgedTrustDeleted = await cache.delByPattern("agent:*");
 
-    assertEquals(forgedTrustDeleted, 3);
+    assertEquals(forgedTrustDeleted, 0);
 
     globals.__vf_multi_project_adapter = {
       getCurrentRequestContext: () => ({
@@ -2141,12 +2142,12 @@ it("ApiCacheBackend uses the credential paired with an explicit endpoint", async
     };
     const unverifiedRequestDeleted = await cache.delByPattern("agent:*");
 
-    assertEquals(unverifiedRequestDeleted, 3);
+    assertEquals(unverifiedRequestDeleted, 0);
 
     deleteEnv("VERYFRONT_API_TOKEN");
     const requestFallbackDeleted = await cache.delByPattern("agent:*");
 
-    assertEquals(requestFallbackDeleted, 3);
+    assertEquals(requestFallbackDeleted, 0);
 
     setEnv("VERYFRONT_API_TOKEN", "host-framework-token");
 
@@ -2158,7 +2159,7 @@ it("ApiCacheBackend uses the credential paired with an explicit endpoint", async
     };
     const hostFallbackDeleted = await cache.delByPattern("agent:*");
 
-    assertEquals(hostFallbackDeleted, 3);
+    assertEquals(hostFallbackDeleted, 0);
     assertEquals(capturedAuthorizations, [
       "Bearer test-explicit-token",
       "Bearer test-explicit-token",
@@ -2727,7 +2728,7 @@ it(
       ((input: RequestInfo | URL) => {
         capturedUrls.push(String(input));
         return Promise.resolve(
-          Response.json({ status: "deleted", deleted_count: 1 }),
+          Response.json({ ok: true }),
         );
       }) as typeof fetch,
     );
@@ -2768,7 +2769,7 @@ it({ name: "ApiCacheBackend selects the endpoint paired with credential provenan
   installMockFetch(
     ((input: RequestInfo | URL) => {
       capturedUrls.push(String(input));
-      return Promise.resolve(Response.json({ status: "deleted", deleted_count: 1 }));
+      return Promise.resolve(Response.json({ ok: true }));
     }) as typeof fetch,
   );
 
@@ -2781,7 +2782,7 @@ it({ name: "ApiCacheBackend selects the endpoint paired with credential provenan
       projectRef: "project-123",
       tokenSource: "host-env",
     });
-    assertEquals(await cache.delByPattern("agent:*"), 1);
+    assertEquals(await cache.delByPattern("agent:*"), 0);
     assertEquals(capturedUrls, [
       "https://93.184.216.35/projects/project-123/cache/entries?pattern=agent%3A*",
     ]);
@@ -2791,7 +2792,7 @@ it({ name: "ApiCacheBackend selects the endpoint paired with credential provenan
       projectRef: "project-123",
       tokenSource: "env-file",
     });
-    assertEquals(await cache.delByPattern("agent:*"), 1);
+    assertEquals(await cache.delByPattern("agent:*"), 0);
     assertEquals(
       capturedUrls[1],
       "https://93.184.216.35/projects/project-123/cache/entries?pattern=agent%3A*",
@@ -2802,7 +2803,7 @@ it({ name: "ApiCacheBackend selects the endpoint paired with credential provenan
       projectRef: "project-123",
       tokenSource: "request",
     });
-    assertEquals(await cache.delByPattern("agent:*"), 1);
+    assertEquals(await cache.delByPattern("agent:*"), 0);
     assertEquals(
       capturedUrls[2],
       "https://93.184.216.35/projects/project-123/cache/entries?pattern=agent%3A*",
@@ -2813,7 +2814,7 @@ it({ name: "ApiCacheBackend selects the endpoint paired with credential provenan
       projectRef: "project-123",
       tokenSource: "verified-control-plane",
     });
-    assertEquals(await cache.delByPattern("agent:*"), 1);
+    assertEquals(await cache.delByPattern("agent:*"), 0);
     assertEquals(
       capturedUrls[3],
       "https://93.184.216.36/api/projects/project-123/cache/entries?pattern=agent%3A*",
@@ -2838,7 +2839,7 @@ it({ name: "ApiCacheBackend honors API_URL for ambient credentials" }, async () 
   installMockFetch(
     ((input: RequestInfo | URL) => {
       capturedUrls.push(String(input));
-      return Promise.resolve(Response.json({ status: "deleted", deleted_count: 1 }));
+      return Promise.resolve(Response.json({ ok: true }));
     }) as typeof fetch,
   );
 
@@ -2852,7 +2853,7 @@ it({ name: "ApiCacheBackend honors API_URL for ambient credentials" }, async () 
       tokenSource: "request",
     });
 
-    assertEquals(await cache.delByPattern("agent:*"), 1);
+    assertEquals(await cache.delByPattern("agent:*"), 0);
     assertEquals(capturedUrls, [
       "https://93.184.216.36/api/projects/project-123/cache/entries?pattern=agent%3A*",
     ]);
@@ -2922,18 +2923,20 @@ it(
   },
 );
 
-it("ApiCacheBackend requires HTTPS only for host-private credential requests", async () => {
+it("ApiCacheBackend uses the host endpoint and permits an explicit HTTPS endpoint", async () => {
   const { ApiCacheBackend } = await importBackend();
   const originalUrl = getEnv("VERYFRONT_API_URL");
   const originalEgress = getEnv("VERYFRONT_HOST_ALLOW_INTERNAL_EGRESS");
+  // Deno tests provide a boot-env overlay; Node and Bun retain their real boot configuration.
+  const hostOrigin = isDeno ? "http://127.0.0.1:4000" : "https://api.example.test";
   try {
-    setEnv("VERYFRONT_API_URL", "http://93.184.216.36/api");
-    setEnv("VERYFRONT_HOST_ALLOW_INTERNAL_EGRESS", "1");
+    setEnv("VERYFRONT_API_URL", `${hostOrigin}/api`);
+    setEnv("VERYFRONT_HOST_ALLOW_INTERNAL_EGRESS", "");
     for (const explicit of [false, true]) {
       const urls: string[] = [];
       installMockFetch((input) => {
         urls.push(String(input));
-        return Promise.resolve(Response.json({ status: "deleted", deleted_count: 1 }));
+        return Promise.resolve(Response.json({ ok: true }));
       });
       const cache = new ApiCacheBackend({
         ...(explicit ? { apiBaseUrl: "https://93.184.216.35/api", apiToken: "test-token" } : {}),
@@ -2944,9 +2947,12 @@ it("ApiCacheBackend requires HTTPS only for host-private credential requests", a
         projectRef: "test-project",
         tokenSource: explicit ? "explicit-endpoint" : "host-private",
       });
-      if (explicit) assertEquals(await cache.delByPattern("agent:*"), 1);
-      else await assertRejects(() => cache.delByPattern("agent:*"), TypeError, "HTTPS");
-      assertEquals(urls.length, explicit ? 1 : 0);
+      assertEquals(await cache.delByPattern("agent:*"), 0);
+      assertEquals(urls, [
+        `${
+          explicit ? "https://93.184.216.35" : hostOrigin
+        }/api/projects/test-project/cache/entries?pattern=agent%3A*`,
+      ]);
       restoreMockFetch();
     }
   } finally {
@@ -2969,7 +2975,7 @@ it(
     installMockFetch(
       ((input: RequestInfo | URL) => {
         capturedUrls.push(String(input));
-        return Promise.resolve(Response.json({ status: "deleted", deleted_count: 1 }));
+        return Promise.resolve(Response.json({ ok: true }));
       }) as typeof fetch,
     );
 
@@ -2983,7 +2989,7 @@ it(
         tokenSource: "host-private",
       });
 
-      assertEquals(await cache.delByPattern("agent:*"), 1);
+      assertEquals(await cache.delByPattern("agent:*"), 0);
       assertEquals(capturedUrls, [
         "https://93.184.216.36/api/projects/project-123/cache/entries?pattern=agent%3A*",
       ]);

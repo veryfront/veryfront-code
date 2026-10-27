@@ -27,6 +27,7 @@ export interface PersistResolvedModuleInput {
   serverExternalPackages?: readonly string[];
   /** Compile mode of `moduleCode`, kept in the local path-cache identity. */
   dev?: boolean;
+  runtimeScope?: string;
   distributedCacheWrite?: {
     distributedCache: DistributedCache;
     transformCacheKey: string;
@@ -75,6 +76,7 @@ export async function persistResolvedModule(
     input.moduleServerOrigin,
     input.serverExternalPackages,
     input.dev,
+    ...(input.runtimeScope === undefined ? [] : [input.runtimeScope]),
   );
   input.log.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] cacheModule DONE`, {
     projectSlug: input.projectSlug,

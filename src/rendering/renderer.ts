@@ -1,3 +1,7 @@
+import { captureLocalReactPeers } from "#veryfront/platform/compat/react-paths.ts";
+import { isBun, isNode } from "#veryfront/platform/compat/runtime.ts";
+import { getRuntimeModuleLoader } from "#veryfront/platform/adapters/module-loader.ts";
+import { getSSRReactRuntimeCacheScope } from "#veryfront/transforms/esm/http-cache-helpers.ts";
 /**
  * Renderer
  *
@@ -261,7 +265,7 @@ function getBoundedEnvNumber(
 function normalizeComparableSlug(slug: string): string {
   const trimmed = slug.trim();
   if (!trimmed || trimmed === "index" || trimmed === "/index") return "/";
-  const withoutTrailingSlash = trimmed.replace(/\/+$/, "");
+  const withoutTrailingSlash = trimmed.replace(/(?<!\/)\/+$/, "");
   const normalized = withoutTrailingSlash.startsWith("/")
     ? withoutTrailingSlash
     : `/${withoutTrailingSlash}`;
@@ -410,6 +414,12 @@ export class Renderer {
           environment: ctx.environment,
         });
 
+        const reactPeers = (!isNode && !isBun) || getRuntimeModuleLoader(ctx.adapter)
+          ? undefined
+          : options?.reactPeers ?? captureLocalReactPeers();
+        const reactRuntimeCacheScope = reactPeers
+          ? await getSSRReactRuntimeCacheScope(reactPeers)
+          : undefined;
         const releaseManifest = await this.resolveReleaseAssetManifest(ctx, options);
         const effectiveCtx = this.withManifestCachePrefix(ctx, releaseManifest);
         const dependencyPinningSource = options?.dependencyPinningSource ??
@@ -435,12 +445,16 @@ export class Renderer {
           dependencyPinningSource,
           options?.dependencyPinningCacheKey,
           options?.dependencyPinningDependencies,
+          options?.dependencyPinningConfiguredVersions,
         );
         const effectiveOptions = {
           ...options,
+          reactPeers,
+          reactRuntimeCacheScope,
           releaseAssetManifest: releaseManifest,
           dependencyPinningCacheKey: dependencyPinningSnapshot.cacheKey,
           dependencyPinningDependencies: dependencyPinningSnapshot.dependencies,
+          dependencyPinningConfiguredVersions: dependencyPinningSnapshot.configuredVersions,
           dependencyPinningSource,
         };
         const cacheKey = this.buildCacheKey(slug, effectiveCtx, effectiveOptions);
@@ -451,6 +465,7 @@ export class Renderer {
             effectiveOptions?.colorScheme,
             cacheKey,
             effectiveOptions?.nonce,
+            effectiveOptions.cacheKey ? "alias" : "route",
           )
           : { hit: false, cacheKey: "", status: "miss" as const, lookupDurationMs: 0 };
         if (cacheResult.hit && cacheResult.cachedResult) {
@@ -556,6 +571,7 @@ export class Renderer {
           cachePrefix: ctx.cachePrefix,
           addPagePrefix: true,
           colorScheme: options.colorScheme,
+          reactRuntimeScope: options.reactRuntimeCacheScope,
         },
       );
     }
@@ -582,6 +598,7 @@ export class Renderer {
         cachePrefix: ctx.cachePrefix,
         addPagePrefix: true,
         colorScheme: options?.colorScheme,
+        reactRuntimeScope: options?.reactRuntimeCacheScope,
       },
     );
   }
@@ -665,6 +682,8 @@ export class Renderer {
     return this.withDependencyPinningCacheKey(
       `${ctx.cachePrefix}:canonical`,
       options?.dependencyPinningCacheKey,
+      undefined,
+      { reactRuntimeScope: options?.reactRuntimeCacheScope },
     );
   }
 
@@ -692,8 +711,11 @@ export class Renderer {
       contentSourceId: ctx.contentSourceId,
       releaseId: ctx.releaseId,
       releaseAssetManifest: options?.releaseAssetManifest ?? null,
+      reactPeers: options?.reactPeers,
+      reactRuntimeCacheScope: options?.reactRuntimeCacheScope,
       dependencyPinningCacheKey: options?.dependencyPinningCacheKey,
       dependencyPinningDependencies: options?.dependencyPinningDependencies,
+      dependencyPinningConfiguredVersions: options?.dependencyPinningConfiguredVersions,
       noHmr: options?.noHmr,
       forceProductionScripts: options?.forceProductionScripts,
       // Background HTML still needs nonce slots so a later request can bind
@@ -1099,7 +1121,11 @@ export class Renderer {
         });
       }
 
-      const services = this.createServicesForContext(ctx, options?.colorScheme);
+      const services = this.createServicesForContext(
+        ctx,
+        options?.colorScheme,
+        options?.cacheKey ? "alias" : "route",
+      );
       const renderAbortController = new AbortController();
       const request = cacheKey !== null && options?.request
         ? new Request(options.request, { signal: renderAbortController.signal })
@@ -1166,6 +1192,7 @@ export class Renderer {
           options?.colorScheme,
           cacheKey,
           options?.nonce,
+          options?.cacheKey ? "alias" : "route",
         );
       }
 
@@ -1235,6 +1262,7 @@ export class Renderer {
         dependencyPinningSource,
         options?.dependencyPinningCacheKey,
         options?.dependencyPinningDependencies,
+        options?.dependencyPinningConfiguredVersions,
       );
       const services = this.createServicesForContext(effectiveCtx);
 
@@ -1248,6 +1276,7 @@ export class Renderer {
         releaseAssetManifest: releaseManifest,
         dependencyPinningCacheKey: dependencyPinningSnapshot.cacheKey,
         dependencyPinningDependencies: dependencyPinningSnapshot.dependencies,
+        dependencyPinningConfiguredVersions: dependencyPinningSnapshot.configuredVersions,
         dependencyPinningSource,
       });
     }, {
@@ -1384,6 +1413,7 @@ export class Renderer {
   private createServicesForContext(
     ctx: RenderContext,
     colorScheme?: "light" | "dark",
+    cacheKeyKind: "route" | "alias" = "route",
   ): { pipeline: RenderPipeline } {
     const shared = getSharedServices();
 
@@ -1446,7 +1476,14 @@ export class Renderer {
 
     const pipelineCacheCoordinator = {
       checkCache: async (slug: string, cacheKey?: string, nonce?: string) => {
-        const result = await this.cache.checkCache(slug, ctx, colorScheme, cacheKey, nonce);
+        const result = await this.cache.checkCache(
+          slug,
+          ctx,
+          colorScheme,
+          cacheKey,
+          nonce,
+          cacheKeyKind,
+        );
         return {
           cachedResult: result.cachedResult,
           depAwareSlug: slug,
@@ -1462,7 +1499,15 @@ export class Renderer {
         cacheKey?: string,
         nonce?: string,
       ) => {
-        await this.cache.persistResult(result, slug, ctx, colorScheme, cacheKey, nonce);
+        await this.cache.persistResult(
+          result,
+          slug,
+          ctx,
+          colorScheme,
+          cacheKey,
+          nonce,
+          cacheKeyKind,
+        );
       },
       clearAll: () => this.cache.clearAll(),
       clearSlug: (slug: string) => this.cache.clearSlug(slug, ctx),

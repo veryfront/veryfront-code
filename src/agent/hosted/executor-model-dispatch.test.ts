@@ -3,6 +3,7 @@ import { assert, assertEquals, assertRejects, assertThrows } from "#veryfront/te
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { ModelRuntime, ModelRuntimeCallOptions } from "#veryfront/provider/types.ts";
 import type {
+  AgentRunEvent,
   AgentRunEventSink,
   AgentRunModelCallContextEvent,
 } from "#veryfront/runtime/model-call-context.ts";
@@ -22,6 +23,20 @@ import {
   type ExecutorModelDispatch,
 } from "./executor-model-bridge.ts";
 import { createHostedExecutorModelBroker as createHostedBroker } from "./executor-model-dispatch.ts";
+import {
+  bindManagedToolResultFence,
+  createManagedToolResultFence,
+} from "./managed-tool-result-fence.ts";
+import {
+  bindToolResultSequence,
+  runWithToolResultSequence,
+} from "#veryfront/runtime/tool-result-sequence.ts";
+
+function assertModelCallContextEvent(
+  event: AgentRunEvent | undefined,
+): asserts event is AgentRunModelCallContextEvent {
+  assert(event?.type === "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED");
+}
 
 function receiptFor(modelCallId: string | undefined) {
   if (!modelCallId) throw new TypeError("Expected broker-owned logical call identity");
@@ -46,6 +61,7 @@ function createHostedExecutorModelBroker(
     modelCallCaptureReceipts: true,
     projectId: "11111111-1111-4111-8111-111111111111",
     runEventSink: async (event) => {
+      assertModelCallContextEvent(event);
       const receipt = receiptFor(event.modelCallId);
       const acknowledgement = await sink(event);
       return acknowledgement ?? receipt;
@@ -127,6 +143,138 @@ function scope(signal = new AbortController().signal, scopeBinding = binding) {
   };
 }
 
+describe("managed model result ordering", () => {
+  it("lets the trusted remote model facade carry the host session without provider-option leakage", async () => {
+    const seen: string[] = [];
+    const sink: AgentRunEventSink = async (event) => {
+      seen.push(event.type);
+    };
+    const fence = createManagedToolResultFence();
+    bindManagedToolResultFence(sink, fence);
+    const sessionId = fence.beginSession();
+    const channels = pair(createHostedBroker({
+      projectId: "11111111-1111-4111-8111-111111111111",
+      resolveModelRuntime: () =>
+        model((options) => {
+          assertEquals("privateToolResultSequence" in options, false);
+          seen.push("provider");
+        }),
+      allowedModelIds,
+      scope: scope(),
+      grant: grant(),
+      runEventSink: sink,
+    }));
+    try {
+      const remote = await proxy(channels);
+      await runWithToolResultSequence(
+        sessionId,
+        () =>
+          remote.doGenerate({
+            prompt: [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
+          }),
+      );
+      assertEquals(seen, ["AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED", "provider"]);
+    } finally {
+      await channels.close();
+    }
+  });
+
+  it("rejects missing and foreign positions before model context or provider dispatch", async () => {
+    const seen: string[] = [];
+    const sink: AgentRunEventSink = async (event) => {
+      seen.push(event.type);
+    };
+    const fence = createManagedToolResultFence();
+    bindManagedToolResultFence(sink, fence);
+    const sessionId = fence.beginSession();
+    const channels = pair(createHostedBroker({
+      projectId: "11111111-1111-4111-8111-111111111111",
+      resolveModelRuntime: () => model(() => seen.push("provider")),
+      allowedModelIds,
+      scope: scope(),
+      grant: grant(),
+      runEventSink: sink,
+    }));
+    try {
+      const input = {
+        modelId,
+        options: {
+          prompt: [{ role: "user", content: [{ type: "text", text: "Synthetic prompt" }] }],
+        },
+      };
+      await assertRejects(() => channels.caller.request("model.generate", input));
+      await assertRejects(() =>
+        channels.caller.request("model.generate", {
+          ...input,
+          privateToolResultSequence: { sessionId: crypto.randomUUID(), ordinal: 0 },
+        })
+      );
+      assertEquals(seen, []);
+      await channels.caller.request("model.generate", {
+        ...input,
+        privateToolResultSequence: { sessionId, ordinal: 0 },
+      });
+      assertEquals(seen, ["AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED", "provider"]);
+    } finally {
+      await channels.close();
+    }
+  });
+
+  it("holds the next provider call until the prior streamed result is durably acknowledged", async () => {
+    const seen: string[] = [];
+    const sink: AgentRunEventSink = async (event) => {
+      seen.push(event.type);
+    };
+    const fence = createManagedToolResultFence();
+    bindManagedToolResultFence(sink, fence);
+    const sessionId = fence.beginSession();
+    const channels = pair(createHostedBroker({
+      projectId: "11111111-1111-4111-8111-111111111111",
+      resolveModelRuntime: () => model(() => seen.push("provider")),
+      allowedModelIds,
+      scope: scope(),
+      grant: grant(),
+      runEventSink: sink,
+    }));
+    try {
+      const input = {
+        modelId,
+        options: {
+          prompt: [{ role: "user", content: [{ type: "text", text: "Synthetic prompt" }] }],
+        },
+      };
+      await channels.caller.request("model.generate", {
+        ...input,
+        privateToolResultSequence: { sessionId, ordinal: 0 },
+      });
+      const next = channels.caller.request("model.generate", {
+        ...input,
+        privateToolResultSequence: { sessionId, ordinal: 1 },
+      });
+      await Promise.resolve();
+      assertEquals(seen.filter((event) => event === "provider").length, 1);
+      const result = {
+        type: "tool-output-available" as const,
+        toolCallId: "call-1",
+        output: { ok: true },
+      };
+      bindToolResultSequence(result, { sessionId, ordinal: 1 });
+      seen.push("durable-result");
+      fence.resultPersisted(result);
+      await next;
+      assertEquals(seen, [
+        "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
+        "provider",
+        "durable-result",
+        "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
+        "provider",
+      ]);
+    } finally {
+      await channels.close();
+    }
+  });
+});
+
 async function proxy(channels: ReturnType<typeof pair>) {
   const resolver = await createExecutorModelRuntimeResolver({
     channel: channels.caller,
@@ -138,6 +286,349 @@ async function proxy(channels: ReturnType<typeof pair>) {
 const tick = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 
 describe("hosted executor model dispatch", () => {
+  it("preserves assistant replay metadata in exact hosted capture and omits it before activation", async () => {
+    const providerMetadata = {
+      anthropic: {
+        rawAssistantMessages: [[
+          {
+            type: "tool_use",
+            id: "child-call",
+            name: "invoke_agent",
+            input: { enabled: false, count: 0, value: null },
+          },
+        ]],
+      },
+    };
+    const continuation: ModelRuntimeCallOptions["prompt"] = [
+      {
+        role: "assistant",
+        content: [{
+          type: "tool-call",
+          toolCallId: "child-call",
+          toolName: "invoke_agent",
+          input: { enabled: false, count: 0, value: null },
+        }],
+        providerMetadata,
+      },
+      {
+        role: "tool",
+        content: [{
+          type: "tool-result",
+          toolCallId: "child-call",
+          toolName: "invoke_agent",
+          output: { type: "json", value: { ok: true, enabled: false, count: 0, value: null } },
+        }],
+      },
+    ];
+    for (const exact of [true, false]) {
+      for (const mode of ["generate", "stream"] as const) {
+        let captured: AgentRunModelCallContextEvent | undefined;
+        let dispatched: ModelRuntimeCallOptions["prompt"] | undefined;
+        const order: string[] = [];
+        const channels = pair(createHostedBroker({
+          grant: grant(),
+          allowedModelIds,
+          scope: scope(),
+          projectId: "11111111-1111-4111-8111-111111111111",
+          ...(exact ? { modelCallCaptureReceipts: true as const } : {}),
+          resolveModelRuntime: () =>
+            model((options) => {
+              order.push("dispatch");
+              dispatched = options.prompt;
+            }),
+          runEventSink: (event) => {
+            assertModelCallContextEvent(event);
+            captured = event;
+            order.push("persist");
+            return exact ? receiptFor(event.modelCallId) : undefined;
+          },
+        }));
+        try {
+          const runtime = await proxy(channels);
+          if (mode === "generate") await runtime.doGenerate({ prompt: continuation });
+          else {
+            const reader = (await runtime.doStream({ prompt: continuation })).stream.getReader();
+            while (!(await reader.read()).done) { /* Drain bounded stream. */ }
+          }
+          assertEquals(order, ["persist", "dispatch"]);
+          assertModelCallContextEvent(captured);
+          assertEquals(dispatched, continuation);
+          assertEquals<unknown>(captured.messages[0], {
+            role: "assistant",
+            content: continuation[0]!.content,
+            ...(exact ? { providerMetadata } : {}),
+          });
+          assertEquals<unknown>(captured.messages[1], continuation[1]);
+          assertEquals(isPrivateConversationRunEvent(captured), true);
+        } finally {
+          await channels.close();
+        }
+      }
+    }
+  });
+
+  it("rejects invalid assistant metadata before hosted capture or dispatch", async () => {
+    for (
+      const metadata of [null, [], "invalid", 0, { value: NaN }, { value: 1n }, {
+        value: () => "unsafe",
+      }]
+    ) {
+      let captures = 0;
+      let dispatches = 0;
+      const channels = pair(createHostedExecutorModelBroker({
+        grant: grant(),
+        allowedModelIds,
+        scope: scope(),
+        resolveModelRuntime: () =>
+          model(() => {
+            dispatches += 1;
+          }),
+        runEventSink: () => {
+          captures += 1;
+        },
+      }));
+      try {
+        const runtime = await proxy(channels);
+        await assertRejects(async () =>
+          await runtime.doGenerate({
+            prompt: [
+              {
+                role: "assistant",
+                content: [{ type: "text", text: "Prior" }],
+                providerMetadata: metadata as unknown as Record<string, unknown>,
+              },
+              ...prompt,
+            ],
+          })
+        );
+        assertEquals(captures, 0);
+        assertEquals(dispatches, 0);
+      } finally {
+        await channels.close();
+      }
+    }
+  });
+
+  it("records each successfully dispatched prompt in the host skill observation", async () => {
+    const observed: unknown[] = [];
+    const channels = pair(createHostedExecutorModelBroker({
+      grant: grant(),
+      allowedModelIds,
+      scope: scope(),
+      resolveModelRuntime: () => model(() => {}),
+      runEventSink: async () => {},
+      skillObservation: {
+        recordToolResult() {},
+        recordTrustedHistory() {},
+        observePrompt(prompt) {
+          observed.push(structuredClone(prompt));
+        },
+        observedSkillBodies: () => [],
+      },
+    }));
+    try {
+      const runtime = await proxy(channels);
+      await runtime.doGenerate({ prompt });
+      const reader = (await runtime.doStream({ prompt })).stream.getReader();
+      while (!(await reader.read()).done) { /* Consume the bounded stream. */ }
+      assertEquals(observed, [prompt, prompt]);
+    } finally {
+      await channels.close();
+    }
+  });
+
+  it("does not observe prompts when dispatch setup fails", async () => {
+    for (const mode of ["generate", "stream"] as const) {
+      const observed: unknown[] = [];
+      const channels = pair(createHostedExecutorModelBroker({
+        grant: grant(),
+        allowedModelIds,
+        scope: scope(),
+        resolveModelRuntime: () => model(() => {}),
+        runEventSink: () => {
+          throw new Error("Synthetic setup failure");
+        },
+        skillObservation: {
+          recordToolResult() {},
+          recordTrustedHistory() {},
+          observePrompt(prompt) {
+            observed.push(structuredClone(prompt));
+          },
+          observedSkillBodies: () => [],
+        },
+      }));
+      try {
+        const runtime = await proxy(channels);
+        if (mode === "generate") {
+          await assertRejects(async () => await runtime.doGenerate({ prompt }));
+        } else {
+          await assertRejects(async () => await runtime.doStream({ prompt }));
+        }
+        assertEquals(observed, []);
+      } finally {
+        await channels.close();
+      }
+    }
+  });
+
+  it("does not observe prompts when generate provider dispatch fails", async () => {
+    for (
+      const resolveModelRuntime of [
+        () => ({
+          ...model(() => {}),
+          doGenerate() {
+            throw new Error("Synthetic generate failure");
+          },
+        }),
+        () => ({
+          ...model(() => {}),
+          doGenerate() {
+            return Promise.reject(new Error("Synthetic generate rejection"));
+          },
+        }),
+      ] satisfies Array<() => ModelRuntime<ModelRuntimeCallOptions>>
+    ) {
+      const observed: unknown[] = [];
+      const channels = pair(createHostedExecutorModelBroker({
+        grant: grant(),
+        allowedModelIds,
+        scope: scope(),
+        resolveModelRuntime,
+        runEventSink: async () => {},
+        skillObservation: {
+          recordToolResult() {},
+          recordTrustedHistory() {},
+          observePrompt(prompt) {
+            observed.push(structuredClone(prompt));
+          },
+          observedSkillBodies: () => [],
+        },
+      }));
+      try {
+        const runtime = await proxy(channels);
+        await assertRejects(async () => await runtime.doGenerate({ prompt }));
+        assertEquals(observed, []);
+      } finally {
+        await channels.close();
+      }
+    }
+  });
+
+  it("does not observe prompts when stream provider dispatch fails", async () => {
+    for (
+      const resolveModelRuntime of [
+        () => ({
+          ...model(() => {}),
+          doStream() {
+            throw new Error("Synthetic stream failure");
+          },
+        }),
+        () => ({
+          ...model(() => {}),
+          doStream() {
+            return Promise.reject(new Error("Synthetic stream rejection"));
+          },
+        }),
+      ] satisfies Array<() => ModelRuntime<ModelRuntimeCallOptions>>
+    ) {
+      const observed: unknown[] = [];
+      const channels = pair(createHostedExecutorModelBroker({
+        grant: grant(),
+        allowedModelIds,
+        scope: scope(),
+        resolveModelRuntime,
+        runEventSink: async () => {},
+        skillObservation: {
+          recordToolResult() {},
+          recordTrustedHistory() {},
+          observePrompt(prompt) {
+            observed.push(structuredClone(prompt));
+          },
+          observedSkillBodies: () => [],
+        },
+      }));
+      try {
+        const runtime = await proxy(channels);
+        await assertRejects(async () => await runtime.doStream({ prompt }));
+        assertEquals(observed, []);
+      } finally {
+        await channels.close();
+      }
+    }
+  });
+
+  it("observes a successful stream after the provider returns the stream body", async () => {
+    const observed: unknown[] = [];
+    const channels = pair(createHostedExecutorModelBroker({
+      grant: grant(),
+      allowedModelIds,
+      scope: scope(),
+      resolveModelRuntime: () => ({
+        ...model(() => {}),
+        doStream() {
+          return Promise.resolve({
+            stream: new ReadableStream({
+              start(controller) {
+                controller.error(new Error("Synthetic body failure"));
+              },
+            }),
+          });
+        },
+      }),
+      runEventSink: async () => {},
+      skillObservation: {
+        recordToolResult() {},
+        recordTrustedHistory() {},
+        observePrompt(prompt) {
+          observed.push(structuredClone(prompt));
+        },
+        observedSkillBodies: () => [],
+      },
+    }));
+    try {
+      const runtime = await proxy(channels);
+      const reader = (await runtime.doStream({ prompt })).stream.getReader();
+      await assertRejects(async () => await reader.read());
+      assertEquals(observed, [prompt]);
+    } finally {
+      await channels.close();
+    }
+  });
+
+  it("does not record a prompt the provider rejected before accepting it", async () => {
+    const observed: unknown[] = [];
+    let attempts = 0;
+    const channels = pair(createHostedExecutorModelBroker({
+      grant: grant(),
+      allowedModelIds,
+      scope: scope(),
+      resolveModelRuntime: () => ({
+        ...model(() => {}),
+        doGenerate() {
+          attempts++;
+          return Promise.reject(new Error("synthetic provider setup failure"));
+        },
+      }),
+      runEventSink: async () => {},
+      skillObservation: {
+        recordToolResult() {},
+        recordTrustedHistory() {},
+        observePrompt(prompt) {
+          observed.push(structuredClone(prompt));
+        },
+        observedSkillBodies: () => [],
+      },
+    }));
+    try {
+      const runtime = await proxy(channels);
+      await assertRejects(async () => await runtime.doGenerate({ prompt }));
+      assertEquals(attempts, 1);
+      assertEquals(observed, []);
+    } finally {
+      await channels.close();
+    }
+  });
+
   it("dispatches project calls against the current cursor-only API before capture activation", async () => {
     let dispatches = 0;
     let appends = 0;
@@ -169,6 +660,7 @@ describe("hosted executor model dispatch", () => {
             return Promise.resolve(Response.json(response));
           },
         });
+        assertModelCallContextEvent(event);
         assertEquals(event.modelCallId, undefined);
       },
     }));
@@ -207,18 +699,27 @@ describe("hosted executor model dispatch", () => {
     for (
       const sink of [
         () => undefined,
-        (event: AgentRunModelCallContextEvent) => ({
-          ...receiptFor(event.modelCallId),
-          modelCallId: "44444444-4444-4444-8444-444444444444",
-        }),
-        (event: AgentRunModelCallContextEvent) => ({
-          ...receiptFor(event.modelCallId),
-          eventId: "",
-        }),
-        (event: AgentRunModelCallContextEvent) => ({
-          ...receiptFor(event.modelCallId),
-          projectId: "55555555-5555-4555-8555-555555555555",
-        }),
+        (event: AgentRunEvent) => {
+          assertModelCallContextEvent(event);
+          return {
+            ...receiptFor(event.modelCallId),
+            modelCallId: "44444444-4444-4444-8444-444444444444",
+          };
+        },
+        (event: AgentRunEvent) => {
+          assertModelCallContextEvent(event);
+          return {
+            ...receiptFor(event.modelCallId),
+            eventId: "",
+          };
+        },
+        (event: AgentRunEvent) => {
+          assertModelCallContextEvent(event);
+          return {
+            ...receiptFor(event.modelCallId),
+            projectId: "55555555-5555-4555-8555-555555555555",
+          };
+        },
       ]
     ) {
       let dispatches = 0;
@@ -257,6 +758,7 @@ describe("hosted executor model dispatch", () => {
         }),
       runEventSink: (event) => {
         captures++;
+        assertModelCallContextEvent(event);
         assertEquals(event.modelCallId, undefined);
       },
     }));
@@ -288,6 +790,7 @@ describe("hosted executor model dispatch", () => {
       allowedModelIds,
       scope: scope(),
       runEventSink(event) {
+        assertModelCallContextEvent(event);
         const receipt = receiptFor(event.modelCallId);
         capturedIds.push(receipt.modelCallId);
         return {
@@ -359,6 +862,7 @@ describe("hosted executor model dispatch", () => {
           dispatched = actual;
         }),
       runEventSink: async (event) => {
+        assertModelCallContextEvent(event);
         order.push("persist");
         events.push(structuredClone(event));
         entered.resolve();
@@ -395,6 +899,7 @@ describe("hosted executor model dispatch", () => {
           presencePenalty: 0.3,
           frequencyPenalty: 0.1,
           reasoning: { enabled: false },
+          responseFormat: options.responseFormat,
         },
       });
       persisted.resolve();
@@ -415,7 +920,7 @@ describe("hosted executor model dispatch", () => {
         reasoning: { enabled: false },
         providerOptions: { anthropic: { thinking: { type: "enabled", budget_tokens: 2048 } } },
         expected: { enabled: true, budgetTokens: 2048 },
-        expectedMaxOutputTokens: 2048,
+        expectedMaxOutputTokens: 4096,
       },
       {
         reasoning: { enabled: false },
@@ -429,7 +934,7 @@ describe("hosted executor model dispatch", () => {
         reasoning: { enabled: true, budgetTokens: 1024 },
         providerOptions: { anthropic: { thinking: { type: "enabled", budget_tokens: 2048 } } },
         expected: { enabled: true, budgetTokens: 1024 },
-        expectedMaxOutputTokens: 3072,
+        expectedMaxOutputTokens: 4096,
       },
     ] as const;
     for (const mode of ["generate", "stream"] as const) {
@@ -445,6 +950,7 @@ describe("hosted executor model dispatch", () => {
           allowedModelIds,
           scope: scope(),
           runEventSink: (value) => {
+            assertModelCallContextEvent(value);
             event = value;
           },
           resolveModelRuntime: () => ({
@@ -529,6 +1035,7 @@ describe("hosted executor model dispatch", () => {
         allowedModelIds,
         scope: scope(),
         runEventSink: (value) => {
+          assertModelCallContextEvent(value);
           event = value;
         },
         resolveModelRuntime: () => ({
@@ -617,7 +1124,15 @@ describe("hosted executor model dispatch", () => {
   });
 
   it("permits schema properties but rejects generationConfig changes to captured controls", async () => {
-    const responseSchema = {
+    const responseJsonSchema = {
+      type: "object",
+      properties: {
+        messages: { type: "string" },
+        auth: { type: "string" },
+        temperature: { type: "number" },
+      },
+    };
+    const legacyResponseSchema = {
       type: "OBJECT",
       properties: {
         messages: { type: "STRING" },
@@ -625,15 +1140,16 @@ describe("hosted executor model dispatch", () => {
         temperature: { type: "NUMBER" },
       },
     };
-    let events = 0;
+    const events: AgentRunModelCallContextEvent[] = [];
     let dispatches = 0;
     const channels = pair(
       createHostedExecutorModelBroker({
         grant: grant(),
         allowedModelIds,
         scope: scope(),
-        runEventSink: () => {
-          events++;
+        runEventSink: (event) => {
+          assertModelCallContextEvent(event);
+          events.push(event);
         },
         resolveModelRuntime: () => ({ ...model(() => dispatches++), modelProvider: "google" }),
       }),
@@ -644,7 +1160,9 @@ describe("hosted executor model dispatch", () => {
         await runtime.doGenerate({
           prompt,
           providerOptions: {
-            [bucket]: { generationConfig: { maxOutputTokens: 4096, responseSchema } },
+            [bucket]: {
+              generationConfig: { maxOutputTokens: 4096, responseJsonSchema },
+            },
           },
         });
         await runtime.doGenerate({
@@ -653,12 +1171,18 @@ describe("hosted executor model dispatch", () => {
           temperature: 0.4,
           providerOptions: {
             [bucket]: {
-              generationConfig: { maxOutputTokens: 12, temperature: 0.4, responseSchema },
+              generationConfig: { maxOutputTokens: 12, temperature: 0.4, responseJsonSchema },
             },
           },
         });
         for (
-          const generationConfig of [{ responseSchema }, { maxOutputTokens: 13 }, {
+          const generationConfig of [{ responseJsonSchema }, {
+            maxOutputTokens: 12,
+            temperature: 0.4,
+            responseSchema: legacyResponseSchema,
+          }, {
+            maxOutputTokens: 13,
+          }, {
             maxOutputTokens: 12,
             temperature: 1,
           }, { maxOutputTokens: 12, thinkingConfig: { thinkingBudget: 4096 } }]
@@ -676,7 +1200,14 @@ describe("hosted executor model dispatch", () => {
           );
         }
       }
-      assertEquals(events, 4);
+      assertEquals(events.length, 4);
+      for (const event of events) {
+        assertEquals(event.request?.responseFormat, {
+          type: "json_schema",
+          name: "response",
+          schema: responseJsonSchema,
+        });
+      }
       assertEquals(dispatches, 4);
     } finally {
       await channels.close();
@@ -1050,6 +1581,7 @@ describe("hosted executor model dispatch", () => {
     const channels = ["one", "two"].map((name) => {
       const invocation = { ...binding, invocationId: name };
       const sink: AgentRunEventSink = async (event) => {
+        assertModelCallContextEvent(event);
         await tick();
         seen.push(`${name}:${event.messages[0]?.content}`);
       };

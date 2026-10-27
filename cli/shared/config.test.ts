@@ -23,7 +23,7 @@ import {
 import type { ResolvedConfig } from "./config.ts";
 import type { EnvironmentConfig } from "#veryfront/config/environment-config.ts";
 import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
-import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import { observeFetchRequestInit, withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { join } from "veryfront/platform/path";
 import { withTempDir } from "#veryfront/testing/deno-compat";
 import {
@@ -1498,6 +1498,28 @@ describe("createApiClient", () => {
       }
     });
 
+    it("forwards cancellation and disables unsafe retries for an atomic index POST", async () => {
+      const controller = new AbortController();
+      let calls = 0;
+      await withMockFetch(async (_input, init) => {
+        calls++;
+        assertEquals(observeFetchRequestInit(init).signal, controller.signal);
+        controller.abort(new Error("cancel index commit"));
+        throw new Error("connection refused");
+      }, async () => {
+        await assertRejects(
+          () =>
+            createApiClient(makeConfig()).post("/index", {}, {
+              signal: controller.signal,
+              retryPolicy: "none",
+            }),
+          Error,
+          "connection refused",
+        );
+      });
+      assertEquals(calls, 1);
+    });
+
     it("sends x-veryfront-client-version on POST requests", async () => {
       let capturedHeaders: Headers | undefined;
 
@@ -2029,5 +2051,24 @@ describe("authenticated binary API downloads", () => {
         );
       },
     );
+  });
+});
+
+Deno.test("API management client keeps credentials on the supplied host transport", async () => {
+  let requests = 0;
+  await withMockFetch(() => {
+    throw new Error("project fetch must not receive credentials");
+  }, async () => {
+    const transport = ((_input: unknown, init?: RequestInit) => {
+      assertEquals(new Headers(init?.headers).get("Authorization"), "Bearer private-token");
+      requests++;
+      return Promise.resolve(Response.json({ data: [] }));
+    }) as typeof fetch;
+    await createApiClient({
+      apiUrl: "https://api.veryfront.com",
+      apiToken: "private-token",
+      projectSlug: "demo",
+    }, transport).get("/projects");
+    assertEquals(requests, 1);
   });
 });

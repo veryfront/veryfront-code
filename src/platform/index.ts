@@ -10,6 +10,47 @@
  *
  * console.log(`${getOsType()} ${getRuntimeVersion()}`);
  * ```
+ *
+ * @example Pin project dependencies
+ * ```ts
+ * import { VeryfrontApiClient } from "veryfront/platform";
+ *
+ * const client = new VeryfrontApiClient({
+ *   apiBaseUrl: "https://api.veryfront.com",
+ *   apiToken: "<API_KEY>",
+ *   projectSlug: "<PROJECT_SLUG>",
+ * });
+ *
+ * const { pins, persisted, skipped } = await client.dependencies.resolve({
+ *   specifiers: ["react@^19", "zod"],
+ *   branch: "main",
+ * });
+ * console.log(pins, persisted, skipped);
+ *
+ * await client.initialize();
+ * const history = await client.dependencies.getHistory({ branch: "main" });
+ * console.log(history.entries.length);
+ * ```
+ *
+ * @example Read the files an environment serves
+ * ```ts
+ * import { VeryfrontApiClient } from "veryfront/platform";
+ *
+ * const client = new VeryfrontApiClient({
+ *   apiBaseUrl: "https://api.veryfront.com",
+ *   apiToken: "<API_KEY>",
+ *   projectSlug: "<PROJECT_SLUG>",
+ * });
+ *
+ * const files = await client.listAllEnvironmentFiles("production");
+ * console.log(files.map((file) => file.path));
+ *
+ * const page = await client.getEnvironmentFile("production", "app/page.tsx");
+ * console.log(page.release_version);
+ *
+ * const lookup = await client.lookupProjectByDomain("www.example.com");
+ * console.log(lookup?.project_slug, lookup?.environment?.name);
+ * ```
  */
 
 // Adapters
@@ -92,4 +133,19 @@ export { createFSAdapter, VeryfrontFSAdapter } from "./adapters/fs/index.ts";
 export { enhanceAdapterWithFS, isExtendedFSAdapter } from "./adapters/fs/index.ts";
 
 // Adapters: API client
-export { VeryfrontApiClient } from "./adapters/veryfront-api-client/index.ts";
+export {
+  type DependencyMetadataHistory,
+  type DependencyMetadataHistoryEntry,
+  type DependencyResolution,
+  type DependencySkipReason,
+  type GetDependencyHistoryInput,
+  type GetStyleArtifactInput,
+  type ResolveDependenciesInput,
+  type StartStyleArtifactBuildInput,
+  type StyleArtifact,
+  type StyleArtifactSelector,
+  type UpdateStyleArtifactInput,
+  VeryfrontApiClient,
+  type VeryfrontApiDependencies,
+  type VeryfrontApiStyleArtifacts,
+} from "./adapters/veryfront-api-client/index.ts";

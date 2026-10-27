@@ -11,7 +11,7 @@ import { clearProjectAgentRuntimeRegistries } from "../../../src/agent/project/a
 import { _resetEnvironmentConfig } from "#veryfront/config/environment-config.ts";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
 import { VeryfrontError } from "veryfront/errors";
-import type { CreateScheduleRunFromSourceResult, Run, VeryfrontRunsClient } from "veryfront/runs";
+import type { CreateScheduleRunFromSourceResult, VeryfrontRunsClient } from "veryfront/runs";
 import type { ScheduleDefinition } from "veryfront/schedule";
 import { setJsonMode } from "../../shared/json-output.ts";
 import type { ParsedArgs } from "../../shared/types.ts";
@@ -20,6 +20,7 @@ import {
   formatRemoteScheduleRunOutput,
   handleScheduleCommand,
   normalizeLocalScheduleInput,
+  type RemoteScheduleRun,
   resolveRemoteScheduleTarget,
   toScheduleAgentOptions,
   waitForRemoteScheduleRun,
@@ -55,47 +56,50 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
-function makeRun(overrides: Partial<Run> = {}): Run {
+function makeRun(overrides: Partial<RemoteScheduleRun> = {}): RemoteScheduleRun {
   return {
-    run_id: runId,
-    kind: "agent",
+    id: runId,
+    project_id: projectId,
+    target: { type: "agent", id: "job-submission-orchestrator" },
     status: "completed",
-    owner: { kind: "project", id: projectId },
-    parent_run_id: null,
     root_run_id: runId,
-    waiting_reason: null,
-    metadata: null,
-    target: "agent:job-submission-orchestrator",
-    workflow_id: null,
-    schedule_id: scheduleId,
-    batch_id: null,
-    runtime_target_kind: "main_branch",
-    runtime_target_environment_id: null,
-    runtime_target_branch_id: null,
+    trigger: { type: "schedule", id: scheduleId },
+    execution: {
+      runtime: { type: "main_branch" },
+      timeout_seconds: 1800,
+      retry_limit: 1,
+      exit_code: 0,
+      duration_ms: 12_345,
+    },
     input: null,
-    config: null,
     output: {
       scanned: 1,
       succeeded: 1,
       failed: 0,
     },
-    error: null,
-    logs: null,
     artifacts: [],
-    duration_ms: 12_345,
-    exit_code: 0,
-    start_mode: null,
-    timeout_seconds: 1800,
-    backoff_limit: 1,
-    trigger_kind: "schedule",
-    trigger_id: scheduleId,
-    created_by: null,
     updated_at: "2026-07-26T12:00:12.345Z",
     created_at: "2026-07-26T12:00:00.000Z",
     started_at: "2026-07-26T12:00:00.100Z",
-    completed_at: "2026-07-26T12:00:12.345Z",
+    finished_at: "2026-07-26T12:00:12.345Z",
     ...overrides,
   };
+}
+
+/** The recorded run timeout lives in the execution group; omit it with `undefined`. */
+function withTimeout(timeoutSeconds: number | undefined): Partial<RemoteScheduleRun> {
+  const { timeout_seconds: _recorded, ...execution } = makeRun().execution ?? {};
+  return {
+    execution: timeoutSeconds === undefined
+      ? execution
+      : { ...execution, timeout_seconds: timeoutSeconds },
+  };
+}
+
+/** A run in `status` with no `output` key at all. */
+function withoutOutput(status: RemoteScheduleRun["status"]): unknown {
+  const { output: _output, ...run } = makeRun({ status });
+  return run;
 }
 
 function makeAcceptedScheduleRun(timeoutSeconds = 5): CreateScheduleRunFromSourceResult {
@@ -154,7 +158,7 @@ describe("schedule command", () => {
     const requests: Array<{ url: string; init?: RequestInit }> = [];
     const responses = [
       jsonResponse({
-        schedules: [{
+        data: [{
           id: scheduleId,
           name: "Process job submissions",
           status: "active",
@@ -378,23 +382,35 @@ describe("schedule command", () => {
 describe("remote schedule polling", () => {
   it("falls back to the pushed schedule target when the run target is unavailable", () => {
     const fallback = { kind: "agent" as const, id: "pushed-orchestrator" };
-    assertEquals(resolveRemoteScheduleTarget(makeRun({ target: null }), fallback), fallback);
     assertEquals(
-      resolveRemoteScheduleTarget(makeRun({ target: "eval:unsupported" }), fallback),
+      resolveRemoteScheduleTarget(makeRun({ target: { type: "agent", id: null } }), fallback),
       fallback,
     );
     assertEquals(
-      resolveRemoteScheduleTarget(makeRun({ target: "task:Invalid Target" }), fallback),
+      resolveRemoteScheduleTarget(
+        makeRun({ target: { type: "eval", id: "unsupported" } }),
+        fallback,
+      ),
       fallback,
     );
     assertEquals(
-      resolveRemoteScheduleTarget(makeRun({ target: `task:${"x".repeat(257)}` }), fallback),
+      resolveRemoteScheduleTarget(
+        makeRun({ target: { type: "task", id: "Invalid Target" } }),
+        fallback,
+      ),
+      fallback,
+    );
+    assertEquals(
+      resolveRemoteScheduleTarget(
+        makeRun({ target: { type: "task", id: "x".repeat(257) } }),
+        fallback,
+      ),
       fallback,
     );
     assertThrows(
       () =>
         resolveRemoteScheduleTarget(
-          makeRun({ target: "eval:unsupported" }),
+          makeRun({ target: { type: "eval", id: "unsupported" } }),
           { kind: "task", id: "Invalid Target" } as never,
         ),
       Error,
@@ -411,13 +427,16 @@ describe("remote schedule polling", () => {
 
     assertEquals(
       resolveRemoteScheduleTarget(
-        makeRun({ target: "agent:job-submission-orchestrator" }),
+        makeRun({ target: { type: "agent", id: "job-submission-orchestrator" } }),
         fallback,
       ),
       fallback,
     );
     assertEquals(
-      resolveRemoteScheduleTarget(makeRun({ target: "agent:different-orchestrator" }), fallback),
+      resolveRemoteScheduleTarget(
+        makeRun({ target: { type: "agent", id: "different-orchestrator" } }),
+        fallback,
+      ),
       { kind: "agent", id: "different-orchestrator" },
     );
   });
@@ -427,15 +446,15 @@ describe("remote schedule polling", () => {
       formatRemoteScheduleRunOutput(
         makeRun({
           status: "waiting",
-          waiting_reason: "awaiting_human",
+          control: { waiting: { reason: "manual_pause" } },
           output: null,
-          completed_at: null,
+          finished_at: undefined,
         }),
       ),
       {
         runId,
         status: "waiting",
-        waitingReason: "awaiting_human",
+        waitingReason: "manual_pause",
         result: null,
       },
     );
@@ -446,25 +465,25 @@ describe("remote schedule polling", () => {
       makeRun({
         status: "pending",
         output: null,
-        completed_at: null,
-        timeout_seconds: null,
+        finished_at: undefined,
+        ...withTimeout(undefined),
       }),
       makeRun({
         status: "running",
         output: null,
-        completed_at: null,
-        timeout_seconds: null,
+        finished_at: undefined,
+        ...withTimeout(undefined),
       }),
-      makeRun({ timeout_seconds: null }),
+      makeRun(withTimeout(undefined)),
     ];
     const client = {
-      get: (requestedRunId: string) => {
+      getRun: (requestedRunId: string) => {
         assertEquals(requestedRunId, runId);
         const run = runs.shift();
         if (!run) throw new Error("Unexpected poll");
         return Promise.resolve(run);
       },
-    } satisfies Pick<VeryfrontRunsClient, "get">;
+    } satisfies Pick<VeryfrontRunsClient, "getRun">;
     let now = 0;
 
     const run = await waitForRemoteScheduleRun(
@@ -485,11 +504,11 @@ describe("remote schedule polling", () => {
   it("rejects invalid cloud timeout metadata before polling", async () => {
     let polls = 0;
     const client = {
-      get: () => {
+      getRun: () => {
         polls++;
         return Promise.resolve(makeRun());
       },
-    } satisfies Pick<VeryfrontRunsClient, "get">;
+    } satisfies Pick<VeryfrontRunsClient, "getRun">;
 
     for (const timeoutSeconds of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
       await assertRejects(
@@ -507,27 +526,27 @@ describe("remote schedule polling", () => {
 
   it("does not spend the execution timeout while the remote run is queued", async () => {
     const runs = [
-      makeRun({ status: "pending", output: null, completed_at: null, started_at: null }),
-      makeRun({ status: "pending", output: null, completed_at: null, started_at: null }),
+      makeRun({ status: "pending", output: null, finished_at: undefined, started_at: undefined }),
+      makeRun({ status: "pending", output: null, finished_at: undefined, started_at: undefined }),
       makeRun({
         status: "running",
         output: null,
-        completed_at: null,
+        finished_at: undefined,
         started_at: "1970-01-01T00:02:00.000Z",
       }),
       makeRun({
         started_at: "1970-01-01T00:02:00.000Z",
-        completed_at: "1970-01-01T00:02:00.500Z",
+        finished_at: "1970-01-01T00:02:00.500Z",
       }),
     ];
     const client = {
-      get: (requestedRunId: string) => {
+      getRun: (requestedRunId: string) => {
         assertEquals(requestedRunId, runId);
         const run = runs.shift();
         if (!run) throw new Error("Unexpected poll");
         return Promise.resolve(run);
       },
-    } satisfies Pick<VeryfrontRunsClient, "get">;
+    } satisfies Pick<VeryfrontRunsClient, "getRun">;
     let now = 0;
 
     const run = await waitForRemoteScheduleRun(client, makeAcceptedScheduleRun(1), {
@@ -543,17 +562,17 @@ describe("remote schedule polling", () => {
 
   it("polls pending and running states until the run completes", async () => {
     const runs = [
-      makeRun({ status: "pending", output: null, completed_at: null }),
-      makeRun({ status: "running", output: null, completed_at: null }),
+      makeRun({ status: "pending", output: null, finished_at: undefined }),
+      makeRun({ status: "running", output: null, finished_at: undefined }),
       makeRun(),
     ];
     const client = {
-      get: () => {
+      getRun: () => {
         const run = runs.shift();
         if (!run) throw new Error("Unexpected poll");
         return Promise.resolve(run);
       },
-    } satisfies Pick<VeryfrontRunsClient, "get">;
+    } satisfies Pick<VeryfrontRunsClient, "getRun">;
     let now = 0;
 
     const run = await waitForRemoteScheduleRun(client, makeAcceptedScheduleRun(), {
@@ -574,32 +593,32 @@ describe("remote schedule polling", () => {
 
   it("returns waiting runs for caller-visible human action", async () => {
     const client = {
-      get: () =>
+      getRun: () =>
         Promise.resolve(
           makeRun({
             status: "waiting",
-            waiting_reason: "awaiting_human",
-            completed_at: null,
+            control: { waiting: { reason: "manual_pause" } },
+            finished_at: undefined,
           }),
         ),
-    } satisfies Pick<VeryfrontRunsClient, "get">;
+    } satisfies Pick<VeryfrontRunsClient, "getRun">;
 
     const run = await waitForRemoteScheduleRun(client, makeAcceptedScheduleRun());
 
     assertEquals(run.status, "waiting");
-    assertEquals(run.waiting_reason, "awaiting_human");
+    assertEquals(run.control?.waiting?.reason, "manual_pause");
   });
 
   it("surfaces the recorded error from failed runs", async () => {
     const client = {
-      get: () =>
+      getRun: () =>
         Promise.resolve(
           makeRun({
             status: "failed",
-            error: { message: "Hosted agent execution failed" },
+            error: { code: "AGENT_FAILED", message: "Hosted agent execution failed" },
           }),
         ),
-    } satisfies Pick<VeryfrontRunsClient, "get">;
+    } satisfies Pick<VeryfrontRunsClient, "getRun">;
 
     await assertRejects(
       () => waitForRemoteScheduleRun(client, makeAcceptedScheduleRun()),
@@ -608,10 +627,56 @@ describe("remote schedule polling", () => {
     );
   });
 
+  it("rejects a malformed run body on the first poll instead of polling it", async () => {
+    const malformed: unknown[] = [
+      null,
+      { ...makeRun(), id: undefined },
+      { ...makeRun(), id: 42 },
+      { ...makeRun(), id: "33333333-3333-4333-8333-333333333333" },
+      { ...makeRun(), status: undefined },
+      { ...makeRun(), status: "finished" },
+      { ...makeRun(), started_at: 42 },
+      { ...makeRun(), execution: { timeout_seconds: "60" } },
+      { ...makeRun(), execution: { ...makeRun().execution, duration_ms: -1 } },
+      { ...makeRun(), execution: { ...makeRun().execution, duration_ms: 1.5 } },
+      { ...makeRun(), execution: { ...makeRun().execution, duration_ms: "12" } },
+      { ...makeRun(), control: "waiting" },
+      { ...makeRun(), control: { waiting: { reason: 7 } } },
+      withoutOutput("completed"),
+      withoutOutput("waiting"),
+      { ...makeRun(), status: "failed", error: "boom" },
+      { ...makeRun(), status: "failed", error: { code: "AGENT_FAILED", message: 42 } },
+    ];
+    for (const body of malformed) {
+      let polls = 0;
+      let sleeps = 0;
+      const client = {
+        getRun: () => {
+          polls += 1;
+          return Promise.resolve(body as RemoteScheduleRun);
+        },
+      } satisfies Pick<VeryfrontRunsClient, "getRun">;
+
+      await assertRejects(
+        () =>
+          waitForRemoteScheduleRun(client, makeAcceptedScheduleRun(), {
+            sleep: () => {
+              sleeps += 1;
+              return Promise.resolve();
+            },
+          }),
+        Error,
+        "Remote schedule returned an invalid run",
+      );
+      assertEquals(polls, 1);
+      assertEquals(sleeps, 0);
+    }
+  });
+
   it("reports cancelled runs as failures", async () => {
     const client = {
-      get: () => Promise.resolve(makeRun({ status: "cancelled" })),
-    } satisfies Pick<VeryfrontRunsClient, "get">;
+      getRun: () => Promise.resolve(makeRun({ status: "cancelled" })),
+    } satisfies Pick<VeryfrontRunsClient, "getRun">;
 
     await assertRejects(
       () => waitForRemoteScheduleRun(client, makeAcceptedScheduleRun()),
@@ -622,16 +687,16 @@ describe("remote schedule polling", () => {
 
   it("stops polling at the remote schedule deadline", async () => {
     const client = {
-      get: () =>
+      getRun: () =>
         Promise.resolve(
           makeRun({
             status: "running",
-            completed_at: null,
-            timeout_seconds: null,
+            finished_at: undefined,
+            ...withTimeout(undefined),
             started_at: "1970-01-01T00:00:00.000Z",
           }),
         ),
-    } satisfies Pick<VeryfrontRunsClient, "get">;
+    } satisfies Pick<VeryfrontRunsClient, "getRun">;
     let now = 0;
 
     await assertRejects(
@@ -650,16 +715,16 @@ describe("remote schedule polling", () => {
 
   it("uses the timeout recorded on the cloud run once execution starts", async () => {
     const client = {
-      get: () =>
+      getRun: () =>
         Promise.resolve(
           makeRun({
             status: "running",
-            completed_at: null,
-            timeout_seconds: 1,
+            finished_at: undefined,
+            ...withTimeout(1),
             started_at: "1970-01-01T00:00:00.000Z",
           }),
         ),
-    } satisfies Pick<VeryfrontRunsClient, "get">;
+    } satisfies Pick<VeryfrontRunsClient, "getRun">;
     let now = 0;
 
     await assertRejects(
@@ -678,16 +743,16 @@ describe("remote schedule polling", () => {
 
   it("falls back when the cloud run records an unsafe timeout", async () => {
     const client = {
-      get: () =>
+      getRun: () =>
         Promise.resolve(
           makeRun({
             status: "running",
-            completed_at: null,
-            timeout_seconds: Number.MAX_SAFE_INTEGER + 1,
+            finished_at: undefined,
+            ...withTimeout(Number.MAX_SAFE_INTEGER + 1),
             started_at: "1970-01-01T00:00:00.000Z",
           }),
         ),
-    } satisfies Pick<VeryfrontRunsClient, "get">;
+    } satisfies Pick<VeryfrontRunsClient, "getRun">;
     let now = 0;
 
     await assertRejects(
@@ -706,11 +771,16 @@ describe("remote schedule polling", () => {
 
   it("stops polling when a remote run never leaves the queue", async () => {
     const client = {
-      get: () =>
+      getRun: () =>
         Promise.resolve(
-          makeRun({ status: "pending", output: null, completed_at: null, started_at: null }),
+          makeRun({
+            status: "pending",
+            output: null,
+            finished_at: undefined,
+            started_at: undefined,
+          }),
         ),
-    } satisfies Pick<VeryfrontRunsClient, "get">;
+    } satisfies Pick<VeryfrontRunsClient, "getRun">;
     let now = 0;
 
     await assertRejects(

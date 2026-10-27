@@ -248,7 +248,7 @@ it("a rejected MCP action is recoverable, but an uncertain committed result stop
 });
 
 it("terminal response preserves canonical output and recorded execution state", async () => {
-  for (const output of ["done", { count: 3 }, null]) {
+  for (const output of ["done", { count: 3 }, null, false, 0, [1, 2]]) {
     const control = createAdmittedControl({ runId: "run-current" });
     const error = await assertRejects(() =>
       executeTerminalRunTool(
@@ -277,6 +277,7 @@ it("terminal response preserves canonical output and recorded execution state", 
     };
     const response = terminalCompletionResponse(error, true)!;
     assertEquals(response.object, output);
+    assertEquals(response.data, output);
     assertEquals(response.text, JSON.stringify(output));
     assertEquals(response.usage, error.executionState.usage);
     assertEquals(response.messages, error.executionState.messages);
@@ -493,6 +494,73 @@ for (const name of ["succeed_run", "veryfront__succeed_run", "fail_run", "veryfr
       let dispatched = false;
       await assertRejects(() =>
         executeTerminalRunTool(name, input, control.context, async () => {
+          dispatched = true;
+        })
+      );
+      assertEquals(dispatched, false);
+      assertEquals(control.signal.aborted, false);
+    }
+  });
+}
+
+const terminalCalls = [
+  {
+    name: "finalize",
+    request: { status: "completed", output: { count: 2 } },
+    status: "completed",
+  },
+  {
+    name: "veryfront__finalize",
+    request: { status: "failed", error: { code: "TASK_FAILED", message: "Unable to finish" } },
+    status: "failed",
+  },
+  { name: "succeed_run", request: { output: { count: 2 } }, status: "completed" },
+  {
+    name: "veryfront__fail_run",
+    request: { error: { code: "TASK_FAILED", message: "Unable to finish" } },
+    status: "failed",
+  },
+] as const;
+
+for (const { name, request, status } of terminalCalls) {
+  for (const shape of ["contract", "flat"] as const) {
+    it(`${name} accepts the ${shape} arguments and sends the contract input`, async () => {
+      const control = createAdmittedControl({ runId: "run-current" });
+      const key = name.includes("finalize") && shape === "flat"
+        ? {}
+        : { idempotency_key: "outcome-key" };
+      const args = shape === "contract"
+        ? { input: { ...request }, ...key }
+        : { ...request, ...key };
+      const sent: unknown[] = [];
+      const error = await assertRejects(() =>
+        executeTerminalRunTool(name, args, control.context, async (wire) => {
+          sent.push(wire);
+          return { run: { run_id: "run-current", status, ...request } };
+        })
+      );
+      assert(isTerminalRunControlError(error));
+      assertEquals(error.status, status);
+      assertEquals(sent, [{ ...key, input: request }]);
+    });
+  }
+
+  it(`${name} rejects mixed, run-scoped and malformed contract arguments before dispatch`, async () => {
+    for (
+      const args of [
+        { input: { ...request }, ...request },
+        { input: { ...request }, run_id: "other" },
+        { input: { ...request, run_id: "other" } },
+        { input: { ...request, idempotency_key: "outcome-key" } },
+        { input: { ...request }, idempotency_key: "" },
+        { input: null },
+        { input: [request] },
+      ]
+    ) {
+      const control = createAdmittedControl({ runId: "run-current" });
+      let dispatched = false;
+      await assertRejects(() =>
+        executeTerminalRunTool(name, args, control.context, async () => {
           dispatched = true;
         })
       );

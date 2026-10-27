@@ -10,6 +10,11 @@ import {
 } from "#veryfront/security/private-promise.ts";
 import type { RemoteToolSource, ToolExecutionContext } from "#veryfront/tool/types.ts";
 import {
+  type ProviderObservedSkillBody,
+  setProviderObservedSkillBodies,
+} from "#veryfront/tool/provider-observed-skill-bodies.ts";
+import type { ExecutorSkillObservation } from "#veryfront/agent/hosted/executor-skill-observation.ts";
+import {
   type AdmitExecutorToolCall,
   runWithToolCallAdmissionReceipt,
 } from "#veryfront/runtime/tool-call-admission-dispatch.ts";
@@ -77,8 +82,11 @@ export function createExecutorToolBroker(options: {
   limits?: Partial<ExecutorToolLimits>;
   /** Trusted private writer hook; absent preserves the released tool path. */
   admitToolCall?: AdmitExecutorToolCall;
+  /** Host-owned record of skill bodies the brokered model requests delivered. */
+  skillObservation?: ExecutorSkillObservation;
 }): ReadonlyMap<string, ExecutorOperation> {
   const limits = executorToolLimits(options.limits);
+  const skillObservation = options.skillObservation;
   const admitToolCall = options.admitToolCall;
   if (admitToolCall !== undefined && typeof admitToolCall !== "function") {
     throw new TypeError("Invalid tool-call admission hook");
@@ -174,6 +182,18 @@ export function createExecutorToolBroker(options: {
   ): AsyncGenerator<JsonValue> {
     let admitted = false;
     let remoteRetirement: Promise<void> | undefined;
+    const releaseAdmission = () => {
+      if (admitted) {
+        if (remoteRetirement !== undefined) {
+          // A canceled or failed channel response does not prove remote work stopped.
+          // Do not join retirement here: session cleanup also joins this handler.
+          const release = () => {
+            active--;
+          };
+          void chainPrivatePromise(remoteRetirement, release, release);
+        } else active--;
+      }
+    };
     try {
       assertScope(operation);
       if (calls >= maxCalls || active >= maxConcurrent) {
@@ -194,25 +214,36 @@ export function createExecutorToolBroker(options: {
         yield { type: "complete" };
         return;
       }
-      const call = mode === "execute"
-        ? parseExecutorToolData(getExecutorToolCallSchema(), value)
-        : undefined;
-      const request = call ?? parseExecutorToolData(getExecutorToolListSchema(), value);
-      const capability = sources.get(request.sourceId);
-      if (!capability) throw new TypeError("Executor tool source is not allowed");
-      if (call?.projectContext !== undefined && capability.projectContext !== "skill") {
-        throw new TypeError("Executor project context is not granted");
-      }
+      const parseRequest = () => {
+        const call = mode === "execute"
+          ? parseExecutorToolData(getExecutorToolCallSchema(), value)
+          : undefined;
+        const request = call ?? parseExecutorToolData(getExecutorToolListSchema(), value);
+        return { call, request };
+      };
+      const { call, request } = parseRequest();
+      const resolveCapability = () => {
+        const capability = sources.get(request.sourceId);
+        if (!capability) throw new TypeError("Executor tool source is not allowed");
+        if (call?.projectContext !== undefined && capability.projectContext !== "skill") {
+          throw new TypeError("Executor project context is not granted");
+        }
+        return capability;
+      };
+      const capability = resolveCapability();
       const assertCall = () => {
         assertScope(operation);
         capability.context.abortSignal?.throwIfAborted();
       };
-      if (call) {
-        if (!capability.allowed.has(call.toolName)) {
-          throw new TypeError("Executor tool is not allowed");
+      const assertAllowedCall = () => {
+        if (call) {
+          if (!capability.allowed.has(call.toolName)) {
+            throw new TypeError("Executor tool is not allowed");
+          }
+          executorToolJson(call.args, limits.maxArgumentBytes);
         }
-        executorToolJson(call.args, limits.maxArgumentBytes);
-      }
+      };
+      assertAllowedCall();
       const result = yield* callWithProgress({
         async invoke(context) {
           remoteRetirement = capability.retired;
@@ -263,6 +294,7 @@ export function createExecutorToolBroker(options: {
             ...call?.projectContext,
           }
           : capability.context,
+        observedSkillBodies: skillObservation?.observedSkillBodies() ?? [],
         publisher: capability.publisher,
         publisherReceiver: capability.publisherReceiver,
         correlation: request,
@@ -276,31 +308,40 @@ export function createExecutorToolBroker(options: {
       });
       assertCall();
       if (mode === "execute") {
-        yield executorToolJson({
-          type: "result",
-          result: executorToolJson(result === undefined ? null : result, limits.maxResultBytes),
-        });
+        const delivered = executorToolJson(
+          result === undefined ? null : result,
+          limits.maxResultBytes,
+        );
+        yield executorToolJson({ type: "result", result: delivered });
+        // Resuming after yield means the channel drained the validated result frame.
+        if (call) skillObservation?.recordToolResult(call.toolName, call.toolCallId, delivered);
       } else {
-        if (
-          !isArray(result) || result.length > limits.maxToolsPerSource ||
-          metadataTools + result.length > limits.maxTotalTools
-        ) {
-          throw createExecutorModelFailure("RESOURCE_LIMIT_EXCEEDED");
-        }
-        metadataTools += result.length;
-        const names = createPrivateSet<string>();
-        const frames: JsonValue[] = [];
-        // Snapshot the bounded catalog before the first yield. A stateful
-        // source may reuse or mutate its array while the consumer is paused.
-        for (let index = 0; index < result.length; index++) {
-          const raw = result[index];
-          const definition = executorToolDefinition(raw, limits);
-          if (names.has(definition.name)) throw new TypeError("Duplicate executor tool definition");
-          names.add(definition.name);
-          const frame = executorToolJson({ type: "tool", definition });
-          accountMetadata(frame);
-          if (capability.allowed.has(definition.name)) pushPrivateArray(frames, frame);
-        }
+        const snapshotCatalogFrames = (): JsonValue[] => {
+          if (
+            !isArray(result) || result.length > limits.maxToolsPerSource ||
+            metadataTools + result.length > limits.maxTotalTools
+          ) {
+            throw createExecutorModelFailure("RESOURCE_LIMIT_EXCEEDED");
+          }
+          metadataTools += result.length;
+          const names = createPrivateSet<string>();
+          const frames: JsonValue[] = [];
+          // Snapshot the bounded catalog before the first yield. A stateful
+          // source may reuse or mutate its array while the consumer is paused.
+          for (let index = 0; index < result.length; index++) {
+            const raw = result[index];
+            const definition = executorToolDefinition(raw, limits);
+            if (names.has(definition.name)) {
+              throw new TypeError("Duplicate executor tool definition");
+            }
+            names.add(definition.name);
+            const frame = executorToolJson({ type: "tool", definition });
+            accountMetadata(frame);
+            if (capability.allowed.has(definition.name)) pushPrivateArray(frames, frame);
+          }
+          return frames;
+        };
+        const frames = snapshotCatalogFrames();
         for (let index = 0; index < frames.length; index++) {
           const frame = frames[index]!;
           assertCall();
@@ -314,16 +355,7 @@ export function createExecutorToolBroker(options: {
       assertScope(operation);
       yield executorToolJson(executorToolFailure(error));
     } finally {
-      if (admitted) {
-        if (remoteRetirement) {
-          // A canceled or failed channel response does not prove remote work stopped.
-          // Do not join retirement here: session cleanup also joins this handler.
-          const release = () => {
-            active--;
-          };
-          void chainPrivatePromise(remoteRetirement, release, release);
-        } else active--;
-      }
+      releaseAdmission();
     }
   }
 
@@ -347,6 +379,7 @@ export function createExecutorToolBroker(options: {
 async function* callWithProgress(options: {
   invoke(context: ToolExecutionContext): Promise<unknown>;
   context: ToolExecutionContext;
+  observedSkillBodies: readonly ProviderObservedSkillBody[];
   publisher: ToolExecutionContext["publishDataEvent"];
   publisherReceiver: ToolExecutionContext;
   correlation: Pick<ExecutorToolCall, "toolCallId" | "progressToken">;
@@ -400,6 +433,9 @@ async function* callWithProgress(options: {
     wake?.();
   };
   signal.addEventListener("abort", notifyAbort, { once: true });
+  const assertPublicationHealthy = () => {
+    if (failed) throw failure;
+  };
   const context: ToolExecutionContext = {
     ...options.context,
     toolCallId: options.correlation.toolCallId,
@@ -466,6 +502,8 @@ async function* callWithProgress(options: {
       }
     },
   };
+  // Only host-verified observations count; executor-side state never crosses the channel.
+  setProviderObservedSkillBodies(context, options.observedSkillBodies);
   const started = chainPrivatePromise(resolvePrivatePromise(), () => {
     check();
     return options.invoke(context);
@@ -484,13 +522,13 @@ async function* callWithProgress(options: {
   });
   try {
     while (true) {
-      if (failed) throw failure;
+      assertPublicationHealthy();
       check();
       const next = hasOwn(queue, queueHead) ? queue[queueHead] : undefined;
       if (next) {
         delete queue[queueHead++];
         await next.work;
-        if (failed) throw failure;
+        assertPublicationHealthy();
         check();
         yield next.frame;
         check();

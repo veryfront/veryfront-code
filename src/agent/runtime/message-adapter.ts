@@ -1,3 +1,4 @@
+import { PLATFORM_TOOL_RESULT_MAX_SERIALIZED_BYTES } from "../platform-tool-result-limits.ts";
 import { inheritToolResultSource } from "#veryfront/chat/tool-result-source.ts";
 import {
   appendPrivateArray,
@@ -7,15 +8,24 @@ import {
   pushPrivateArray,
   somePrivateArray,
 } from "#veryfront/security/private-array.ts";
+import type { ToolResultPart } from "../types.ts";
+import { hasTrustedPlatformPolicyToolResultPart } from "./skill-policy-enforcement.ts";
+import { readToolResultOwnDataProperty } from "#veryfront/tool/result.ts";
+import { toChatJsonValue } from "#veryfront/chat/json-value.ts";
+import {
+  JSON_VALUE_MAX_STRING_BYTES,
+  snapshotBoundedJsonValue,
+  snapshotBoundedParsedJsonValue,
+} from "#veryfront/schemas/json-value.ts";
 import { createPrivateMap } from "#veryfront/security/private-map.ts";
 import { createPrivateSet } from "#veryfront/security/private-set.ts";
-import { defineOwnDataProperty } from "#veryfront/security/own-data-property.ts";
 import {
+  privateTextEndsWith,
   privateTextIncludes,
   privateTextStartsWith,
   privateTextTrim,
 } from "#veryfront/security/private-text.ts";
-import { privateJsonStringify } from "#veryfront/security/private-json.ts";
+import { privateJsonParse } from "#veryfront/security/private-json.ts";
 import { getProviderModelMessageSourceId, isRecord } from "#veryfront/chat/conversation.ts";
 import {
   buildDataFileAnnotation,
@@ -30,8 +40,6 @@ import {
 import { toChildRunToolInputRecord } from "../child-run/execution-support.ts";
 
 const hasOwn = Object.hasOwn;
-const isArray = Array.isArray;
-const objectEntries = Object.entries;
 
 type StructuredProviderPart = Exclude<ProviderModelMessage["content"], string>[number];
 
@@ -236,15 +244,19 @@ function convertStructuredPart(part: StructuredProviderPart): AgentRuntimeMessag
         args: "input" in part ? toChildRunToolInputRecord(part.input) : {},
       };
 
-    case "tool-result":
+    case "tool-result": {
+      // This boundary owns one provider output envelope; its value is raw agent data.
+      const output = part.output;
+      const result = output.type === "error-text" ? { error: output.value } : output.value;
       return inheritToolResultSource<
         Extract<AgentRuntimeMessage["parts"][number], { type: "tool-result" }>
       >(part, {
         type: "tool-result",
         toolCallId: part.toolCallId,
         toolName: part.toolName,
-        result: "output" in part ? part.output : null,
+        result,
       });
+    }
 
     case "image":
     case "file":
@@ -329,7 +341,6 @@ function convertContentToAgentRuntimeParts(
       if (attachmentReference) {
         pushPrivateArray(attachmentReferences, attachmentReference);
       }
-      continue;
     }
   }
 
@@ -343,40 +354,11 @@ function convertContentToAgentRuntimeParts(
   return parts;
 }
 
-function toJsonValue(value: unknown): JsonValue {
-  if (value == null) {
-    return null;
-  }
-
-  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
-    return value;
-  }
-
-  if (isArray(value)) {
-    return mapPrivateArray(value, (item) => toJsonValue(item));
-  }
-
-  if (isRecord(value)) {
-    const result: Record<string, JsonValue> = {};
-    const entries = objectEntries(value);
-    for (let index = 0; index < entries.length; index++) {
-      const entry = entries[index]!;
-      defineOwnDataProperty(result, entry[0], toJsonValue(entry[1]), {
-        enumerable: true,
-        configurable: true,
-        writable: true,
-      });
-    }
-    return result;
-  }
-
-  return privateJsonStringify(value);
-}
-
 function toToolResultOutput(value: unknown): { type: "json"; value: JsonValue } {
+  const admitted = snapshotBoundedJsonValue(value);
   return {
     type: "json",
-    value: toJsonValue(value),
+    value: admitted.success ? admitted.value : toChatJsonValue(value),
   };
 }
 
@@ -457,11 +439,10 @@ export function getAgentRuntimeToolResultPart(
     return null;
   }
 
-  return {
-    toolCallId,
-    toolName,
-    output: hasOwn(part, "result") ? part.result : hasOwn(part, "output") ? part.output : null,
-  };
+  let output: unknown = null;
+  if (hasOwn(part, "result")) output = part.result;
+  else if (hasOwn(part, "output")) output = part.output;
+  return { toolCallId, toolName, output };
 }
 
 function getAgentRuntimeToolResultCallId(part: unknown): string | undefined {
@@ -473,17 +454,153 @@ function getAgentRuntimeToolResultCallId(part: unknown): string | undefined {
     getOptionalStringField(part, "tool_call_id");
 }
 
+function hasCompletedChildResult(value: unknown): boolean {
+  return isRecord(value) && hasOwn(value, "ok") && value.ok === true &&
+    hasOwn(value, "status") && value.status === "completed" &&
+    hasOwn(value, "childRunId") && typeof value.childRunId === "string";
+}
+
+function hasCompletedStructuredChildOutput(value: unknown): value is Record<string, unknown> {
+  return isRecord(value) && hasCompletedChildResult(value) && hasOwn(value, "output");
+}
+
+function hasAcceptedChildResultText(value: unknown): value is Record<string, unknown> {
+  return isRecord(value) &&
+    (hasCompletedChildResult(value) ||
+      (hasOwn(value, "success") && value.success === true &&
+        !hasOwn(value, "ok") && !hasOwn(value, "status"))) &&
+    ((hasCompletedChildResult(value) && hasOwn(value, "text") &&
+      typeof value.text === "string" && value.text.length > 0) ||
+      (hasOwn(value, "summary") && isRecord(value.summary) &&
+        hasOwn(value.summary, "text") && typeof value.summary.text === "string" &&
+        value.summary.text.length > 0));
+}
+
+/** @internal Recognize platform child results without claiming project-owned aliases. */
+export function isProviderChildToolResult(
+  part: { toolCallId: string; toolName: string; output: unknown },
+  sourcePart?: unknown,
+): boolean {
+  return (part.toolName === "invoke_agent" || part.toolName === "veryfront__invoke_agent") &&
+    isRecord(sourcePart) &&
+    hasTrustedPlatformPolicyToolResultPart(sourcePart as ToolResultPart) &&
+    readToolResultOwnDataProperty(sourcePart, "toolCallId") === part.toolCallId &&
+    readToolResultOwnDataProperty(sourcePart, "toolName") === part.toolName &&
+    readToolResultOwnDataProperty(sourcePart, "result") === part.output;
+}
+
+function snapshotProviderChildValue(value: unknown) {
+  const maxJsonBytes = PLATFORM_TOOL_RESULT_MAX_SERIALIZED_BYTES;
+  const encoded = typeof value === "string";
+  return snapshotBoundedJsonValue(
+    value,
+    encoded ? maxJsonBytes : JSON_VALUE_MAX_STRING_BYTES,
+    encoded ? 2 * maxJsonBytes + 2 : maxJsonBytes,
+  );
+}
+
+function hasRepeatedChildText(
+  value: unknown,
+): value is Record<string, unknown> & { text: string; summary: Record<string, unknown> } {
+  return isRecord(value) && hasOwn(value, "childRunId") &&
+    typeof value.childRunId === "string" && hasOwn(value, "text") &&
+    typeof value.text === "string" && hasOwn(value, "summary") &&
+    isRecord(value.summary) && hasOwn(value.summary, "text") &&
+    value.summary.text === value.text;
+}
+
+function projectProviderChildValue(
+  value: JsonValue,
+  childSnapshot: ReturnType<typeof snapshotProviderChildValue> | undefined,
+): JsonValue {
+  let candidate: unknown = value;
+  let parsedBoundedSource = false;
+  if (
+    isRecord(candidate) && hasOwn(candidate, "type") &&
+    (candidate.type === "json" || candidate.type === "text") &&
+    hasOwn(candidate, "value")
+  ) {
+    candidate = candidate.value;
+  }
+  if (typeof candidate === "string") {
+    try {
+      candidate = privateJsonParse(candidate);
+      parsedBoundedSource = childSnapshot?.success === true;
+    } catch {
+      // Preserve malformed or non-JSON tool text for error recovery.
+    }
+  }
+  if (
+    hasCompletedStructuredChildOutput(candidate) ||
+    (hasAcceptedChildResultText(candidate) && hasOwn(candidate, "rootResponseHint") &&
+      isRecord(candidate.rootResponseHint)) ||
+    hasRepeatedChildText(candidate)
+  ) {
+    const projectedSnapshot = parsedBoundedSource
+      ? snapshotBoundedParsedJsonValue(candidate, PLATFORM_TOOL_RESULT_MAX_SERIALIZED_BYTES)
+      : snapshotProviderChildValue(candidate);
+    if (projectedSnapshot.success) {
+      return projectedSnapshot.value;
+    }
+  }
+  return value;
+}
+
+/** @internal Normalize provider-visible results while preserving durable tool history. */
+export function createProviderToolResultOutput(part: {
+  toolCallId: string;
+  toolName: string;
+  output: unknown;
+}, sourcePart?: unknown): { type: "json"; value: JsonValue } {
+  const isChildResult = isProviderChildToolResult(part, sourcePart);
+  const childSnapshot = isChildResult ? snapshotProviderChildValue(part.output) : undefined;
+  const output = childSnapshot?.success
+    ? { type: "json" as const, value: childSnapshot.value }
+    : toToolResultOutput(part.output);
+  if (!isChildResult) return output;
+  const value = projectProviderChildValue(output.value, childSnapshot);
+  output.value = value;
+
+  // Root response suggestions derive from the child prose. Keep the guidance,
+  // but do not replay its additional copy beside the accepted child result.
+  if (
+    (hasCompletedStructuredChildOutput(value) || hasAcceptedChildResultText(value)) &&
+    hasOwn(value, "rootResponseHint") && isRecord(value.rootResponseHint)
+  ) {
+    delete value.rootResponseHint.suggestedText;
+  }
+  // Structured output is the accepted child value. Trace prose can describe
+  // other intermediate results, so keep it in durable history, not the handoff.
+  if (hasCompletedStructuredChildOutput(value)) {
+    delete value.text;
+    if (hasOwn(value, "summary") && isRecord(value.summary)) delete value.summary.text;
+    return output;
+  }
+  // The durable child envelope keeps both fields for compatibility. Providers
+  // need the text once, alongside the remaining summary metadata.
+  if (hasRepeatedChildText(value)) {
+    delete value.summary.text;
+    if (
+      hasOwn(value, "output") && typeof value.output === "string" && value.output.length > 0 &&
+      privateTextEndsWith(value.text, value.output)
+    ) {
+      delete value.output;
+    }
+  }
+  return output;
+}
+
 /** Create a chat tool-result part. */
 export function createToolResultPart(part: {
   toolCallId: string;
   toolName: string;
   output: unknown;
-}): ChatToolResultPart {
+}, sourcePart?: unknown): ChatToolResultPart {
   return {
     type: "tool-result",
     toolCallId: part.toolCallId,
     toolName: part.toolName,
-    output: toToolResultOutput(part.output),
+    output: createProviderToolResultOutput(part, sourcePart),
   };
 }
 
@@ -501,30 +618,28 @@ function collectAgentRuntimeProviderContentParts(
   const fileParts: ChatModelFilePart[] = [];
   const toolNamesById = createPrivateMap<string, string>();
 
-  for (let index = 0; index < parts.length; index++) {
-    if (!hasOwn(parts, index)) continue;
-    const part = parts[index]!;
+  function collectPart(part: AgentRuntimeMessageLikePart): void {
     if (part.type === "source-url" || part.type === "source-document") {
-      continue;
+      return;
     }
 
     const textPart = getAgentRuntimeTextPart(part);
     if (textPart) {
       pushPrivateArray(textParts, textPart);
-      continue;
+      return;
     }
 
     const reasoningPart = getAgentRuntimeReasoningPart(part);
     if (reasoningPart) {
       pushPrivateArray(reasoningParts, reasoningPart);
-      continue;
+      return;
     }
 
     if (part.type === "image" || part.type === "file") {
       const nativePart = toNativeFilePart(part.type, part);
       if (nativePart) {
         pushPrivateArray(fileParts, nativePart);
-        continue;
+        return;
       }
     }
 
@@ -534,8 +649,8 @@ function collectAgentRuntimeProviderContentParts(
       toolResultCallId ? toolNamesById.get(toolResultCallId) : undefined,
     );
     if (toolResultPart) {
-      pushPrivateArray(toolResultParts, createToolResultPart(toolResultPart));
-      continue;
+      pushPrivateArray(toolResultParts, createToolResultPart(toolResultPart, part));
+      return;
     }
 
     const toolCallPart = getAgentRuntimeToolCallPart(part);
@@ -549,25 +664,31 @@ function collectAgentRuntimeProviderContentParts(
       });
     }
   }
+  for (let index = 0; index < parts.length; index++) {
+    if (!hasOwn(parts, index)) continue;
+    collectPart(parts[index]!);
+  }
 
   return { textParts, reasoningParts, toolCallParts, toolResultParts, fileParts };
 }
 
+type AssistantProviderContentPart =
+  | ProviderReasoningPart
+  | ProviderTextPart
+  | ProviderToolCallPart;
+
 function convertAssistantAgentRuntimePartsToProviderMessages(
   parts: ReadonlyArray<AgentRuntimeMessageLikePart>,
 ): ProviderModelMessage[] {
-  const assistantContent: Array<ProviderReasoningPart | ProviderTextPart | ProviderToolCallPart> =
-    [];
-  const deferredAssistantContent: Array<
-    ProviderReasoningPart | ProviderTextPart | ProviderToolCallPart
-  > = [];
+  const assistantContent: Array<AssistantProviderContentPart> = [];
+  const deferredAssistantContent: Array<AssistantProviderContentPart> = [];
   const toolResults: ChatToolResultPart[] = [];
   const pendingToolCallIds = createPrivateSet<string>();
   const toolNamesById = createPrivateMap<string, string>();
   const providerMessages: ProviderModelMessage[] = [];
 
   const flushAssistantMessage = (
-    content: Array<ProviderReasoningPart | ProviderTextPart | ProviderToolCallPart>,
+    content: Array<AssistantProviderContentPart>,
   ) => {
     if (content.length === 0) {
       return;
@@ -593,7 +714,7 @@ function convertAssistantAgentRuntimePartsToProviderMessages(
   };
 
   const pushAssistantPart = (
-    part: ProviderReasoningPart | ProviderTextPart | ProviderToolCallPart,
+    part: AssistantProviderContentPart,
   ) => {
     if (part.type === "tool-call") {
       if (deferredAssistantContent.length > 0) {
@@ -652,7 +773,7 @@ function convertAssistantAgentRuntimePartsToProviderMessages(
       toolResultCallId ? toolNamesById.get(toolResultCallId) : undefined,
     );
     if (toolResultPart) {
-      pushToolResult(createToolResultPart(toolResultPart));
+      pushToolResult(createToolResultPart(toolResultPart, part));
       continue;
     }
 

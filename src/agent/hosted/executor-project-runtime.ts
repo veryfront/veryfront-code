@@ -52,6 +52,7 @@ export async function createExecutorProjectToolRuntime(options: {
       ...(input.context.projectSlug === undefined
         ? {}
         : { projectSlug: input.context.projectSlug }),
+      ...(input.context.branch === undefined ? {} : { branch: input.context.branch }),
       execution: { kind: "canonical", runId: input.context.runId },
     };
     const allowedToolNames = createPrivateSet(input.allowedToolNames);

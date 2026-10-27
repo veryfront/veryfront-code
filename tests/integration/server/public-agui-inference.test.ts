@@ -25,7 +25,19 @@ import { __resetVeryfrontCloudCatalogForTests } from "#veryfront/provider/veryfr
 import { clearModelProviders } from "#veryfront/provider/index.ts";
 import { runWithProjectEnv } from "#veryfront/server/project-env/storage.ts";
 import { encryptApplicationInferenceToken } from "#veryfront/server/handlers/request/api/application-inference-crypto.ts";
+import { createExecutorChannel, type ExecutorChannel } from "#veryfront/agent/executor/channel.ts";
+import {
+  createExecutorHttpClient,
+  createExecutorHttpOperation,
+} from "#veryfront/server/isolated-http/executor-http.ts";
 import type { HandlerContext } from "#veryfront/types";
+import type { AgentRunEventSink } from "#veryfront/runtime/model-call-context.ts";
+import { runWithMandatoryRunEventSink } from "#veryfront/runtime/run-event-sink-context.ts";
+import {
+  bindRuntimeObservationWriterCapability,
+  createRuntimeObservationWriterCapability,
+  revokeRuntimeObservationWriterCapability,
+} from "#veryfront/runtime/runtime-observation-carrier.ts";
 
 const SOURCE_CREDENTIAL = "synthetic-filesystem-service-token";
 const INFERENCE_CREDENTIAL = "synthetic-private-inference-token";
@@ -165,6 +177,36 @@ function request(
   });
 }
 
+function connectPublicHttp(handle: (request: Request) => Promise<Response>) {
+  const binding = {
+    allocationId: "public-http-allocation",
+    generation: 1,
+    invocationId: "public-http-generation",
+  };
+  const forward = new TransformStream<Uint8Array>();
+  const backward = new TransformStream<Uint8Array>();
+  const client = createExecutorHttpClient({ binding, channel: () => host });
+  const operation = createExecutorHttpOperation({ binding, channel: () => child, handle });
+  const host: ExecutorChannel = createExecutorChannel({
+    binding,
+    transport: { readable: backward.readable, writable: forward.writable },
+    operations: client.operations,
+  });
+  const child: ExecutorChannel = createExecutorChannel({
+    binding,
+    transport: { readable: forward.readable, writable: backward.writable },
+    operations: new Map([["http.request", operation]]),
+  });
+  return {
+    client,
+    async close() {
+      await client.close();
+      child.close();
+      await Promise.all([host.settled, child.settled]);
+    },
+  };
+}
+
 async function exercise(
   mode:
     | "completed"
@@ -183,6 +225,7 @@ async function exercise(
   injectedDescription = "First synthetic client tool description",
   delegated = false,
   interceptObjectFreeze = false,
+  captureObservations?: "bootstrap" | "request",
 ) {
   const { ctx, wrapper } = fixture();
   const pendingTool = mode === "pending-tool-cancelled" || mode === "pending-tool-ingress";
@@ -205,6 +248,34 @@ async function exercise(
   };
   const runId = crypto.randomUUID();
   const childRunId = crypto.randomUUID();
+  let capturedCalls = 0;
+  const observationSink: AgentRunEventSink = (event) => {
+    if (event.type !== "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED") return;
+    assert(event.modelCallId);
+    capturedCalls += 1;
+    return {
+      eventId: String(capturedCalls),
+      projectId: PROJECT_ID,
+      runId,
+      modelCallId: event.modelCallId,
+    };
+  };
+  const observationWriter = captureObservations
+    ? createRuntimeObservationWriterCapability({
+      scope: { runId, canonicalRunId: runId, projectId: PROJECT_ID },
+    })
+    : undefined;
+  if (observationWriter) bindRuntimeObservationWriterCapability(observationSink, observationWriter);
+  const requestObservationSink: AgentRunEventSink = (event) => observationSink(event);
+  const requestObservationWriter = captureObservations === "request"
+    ? createRuntimeObservationWriterCapability({
+      scope: { runId, canonicalRunId: runId, projectId: PROJECT_ID },
+    })
+    : undefined;
+  if (requestObservationWriter) {
+    bindRuntimeObservationWriterCapability(requestObservationSink, requestObservationWriter);
+  }
+  let warmHttp: ReturnType<typeof connectPublicHttp> | undefined;
   const childCredential = `${INFERENCE_CREDENTIAL}-child`;
   const admissionRequestIds: string[] = [];
   const returned = deferred();
@@ -451,7 +522,7 @@ async function exercise(
           ),
         });
       }
-      if (path === "/integrations/tools/list") {
+      if (path === "/integration-tools") {
         assertEquals(outgoing.headers.get("authorization"), `Bearer ${SOURCE_CREDENTIAL}`);
         return Response.json({ tools: [] });
       }
@@ -516,17 +587,34 @@ async function exercise(
       throw new Error(`Unexpected synthetic transport path ${path}`);
     }, async () => {
       const controller = new AbortController();
-      const handled = await wrapper.handle(
-        request(
-          controller.signal,
-          mode === "blocked",
-          injected,
-          model === "auto",
-          omitClientRunId,
-          injectedDescription,
-        ),
-        ctx,
+      const ingress = request(
+        controller.signal,
+        mode === "blocked",
+        injected,
+        model === "auto",
+        omitClientRunId,
+        injectedDescription,
       );
+      if (captureObservations) {
+        warmHttp = runWithMandatoryRunEventSink(
+          observationSink,
+          () =>
+            connectPublicHttp(async (request) => {
+              const handle = () => wrapper.handle(request, ctx);
+              const handled = await (requestObservationWriter
+                ? runWithMandatoryRunEventSink(requestObservationSink, handle)
+                : handle());
+              assert(handled.response);
+              return handled.response;
+            }),
+        );
+        // The bootstrap invocation has finished. Its writer must not become authority
+        // for later anonymous HTTP requests handled by the warm generation.
+        revokeRuntimeObservationWriterCapability(observationWriter);
+      }
+      const handled = warmHttp
+        ? { response: await warmHttp.client.fetch(ingress) }
+        : await wrapper.handle(ingress, ctx);
       assert(handled.response);
       assertEquals(
         handled.response.status,
@@ -538,20 +626,26 @@ async function exercise(
         const reader = handled.response.body!.getReader();
         await reader.read();
         await bounded(enteredToolWait.promise, 500);
-        if (mode === "pending-tool-cancelled") await reader.cancel();
-        else controller.abort();
+        if (mode === "pending-tool-cancelled") {
+          await reader.cancel();
+        } else {
+          controller.abort();
+        }
         await bounded(settledToolWait.promise, 500);
         assertEquals(toolWaitRejected, true);
         await bounded(finalized.promise, 500);
         assertEquals(modelCredentials.length, 1);
-        if (mode === "pending-tool-ingress") await reader.cancel();
+        if (mode === "pending-tool-ingress") {
+          await reader.cancel();
+        }
       } else if (mode === "cancelled" || mode === "ingress-cancelled") {
         const reader = handled.response.body!.getReader();
         await reader.read();
         await bounded(enteredProvider.promise);
         controller.abort();
-        if (mode === "cancelled") await reader.cancel();
-        else {
+        if (mode === "cancelled") {
+          await reader.cancel();
+        } else {
           await bounded(finalized.promise);
           await reader.cancel();
         }
@@ -580,6 +674,12 @@ async function exercise(
         if (mode === "completed") {
           assertEquals(toolCount, 1);
           assertEquals(modelCredentials.length, delegated ? 3 : 2);
+          if (captureObservations) {
+            assertEquals(
+              capturedCalls,
+              captureObservations === "request" ? modelCredentials.length : 0,
+            );
+          }
         }
       }
       await bounded(finalized.promise);
@@ -634,15 +734,48 @@ async function exercise(
     returned.resolve();
     if (pendingTool) sessionManager.cancelRun(runId);
     __injectDepsForTests(null);
+    await warmHttp?.close();
     await resetApiHandler();
     clearModelProviders();
     __resetVeryfrontCloudCatalogForTests();
+    revokeRuntimeObservationWriterCapability(observationWriter);
+    revokeRuntimeObservationWriterCapability(requestObservationWriter);
     resetHostApiOriginSnapshot();
     for (const [key, value] of original) value === undefined ? deleteEnv(key) : setEnv(key, value);
   }
 }
 
 describe("public authored AG-UI inference", () => {
+  it("does not inherit a completed bootstrap writer into warm anonymous HTTP", async () => {
+    await exercise(
+      "completed",
+      false,
+      "pinned",
+      false,
+      false,
+      undefined,
+      false,
+      undefined,
+      false,
+      false,
+      "bootstrap",
+    );
+  });
+  it("keeps a fresh request capture writer active through warm HTTP streaming", async () => {
+    await exercise(
+      "completed",
+      false,
+      "pinned",
+      false,
+      false,
+      undefined,
+      false,
+      undefined,
+      false,
+      false,
+      "request",
+    );
+  });
   it("admits delegated agents with separate private inference credentials", () =>
     exercise("completed", false, "pinned", false, false, undefined, false, undefined, true));
   it("rejects a pending injected tool wait when the response reader cancels", () =>

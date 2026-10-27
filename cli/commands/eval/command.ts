@@ -4,6 +4,7 @@
 
 import { dirname, isAbsolute, relative, resolve } from "veryfront/platform/path";
 import { INVALID_ARGUMENT } from "veryfront/errors";
+import { runWithEvalMockToolScope } from "../../../src/agent/runtime/eval-mock-tool-scope.ts";
 import { MAX_TIMER_DELAY_MS, normalizeTimerDurationMs } from "../../../src/utils/timer.ts";
 import type { Agent, AgentResponse } from "veryfront/agent";
 import type { VeryfrontConfig } from "veryfront/config";
@@ -19,6 +20,7 @@ import type {
   EvalDefinition,
   EvalGateFailureSummary,
   EvalMockTools,
+  EvalMockToolsResolverContext,
   EvalModelComparisonMetricName,
   EvalModelComparisonOptions,
   EvalReport,
@@ -28,6 +30,7 @@ import type {
   EvalToolAdapterContext,
   EvalToolCall,
 } from "veryfront/eval";
+import { runWithLocalEvalIdentity } from "../../../src/runtime/local-eval-context.ts";
 import { RECORD_INCOMPLETE_EXPLANATION } from "../../../src/eval/report.ts";
 import { orchestrateExtensions } from "veryfront/extensions";
 import {
@@ -238,7 +241,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function joinApiUrl(baseUrl: string, path: string): string {
-  return `${baseUrl.replace(/\/+$/, "")}/${path.replace(/^\/+/, "")}`;
+  return `${baseUrl.replace(/(?<!\/)\/+$/, "")}/${path.replace(/^\/+/, "")}`;
 }
 
 function parseGatewayBillingGroupFinalization(
@@ -834,7 +837,7 @@ function createEvalToolCallId(toolId: string, context: EvalToolAdapterContext): 
 
 async function resolveEvalMockTools(
   mockTools: EvalMockTools | undefined,
-  context: EvalAgentAdapterContext,
+  context: EvalMockToolsResolverContext,
 ): Promise<ToolSet | undefined> {
   if (mockTools === undefined) {
     return undefined;
@@ -862,48 +865,57 @@ export function resolveEvalRecordTimeoutMs(options: Pick<EvalOptions, "recordTim
 }
 
 export function createAgentAdapter(agent: Agent, options: EvalOptions) {
-  return async ({ definition, example, repetition, signal }: EvalAgentAdapterContext) => {
-    const started = Date.now();
-    const mockTools = await resolveEvalMockTools(definition.mockTools, {
-      definition,
-      example,
-      repetition,
-      // A resolver that awaits network work cancels with the case.
-      ...(signal ? { signal } : {}),
-    });
-    // A resolver that ignored the signal can return after the deadline. The
-    // record is already reported as timed out, so start no model request.
-    if (signal?.aborted) throw signal.reason;
-    const response = await agent.generate({
-      input: normalizeEvalInputForAgent(example.input),
-      context: {
-        eval: {
-          definitionId: definition.id,
-          exampleId: example.id,
-          repetition,
-          metadata: example.metadata ?? {},
+  return ({ definition, example, repetition, signal }: EvalAgentAdapterContext) =>
+    runWithLocalEvalIdentity(async (runId) => {
+      const started = Date.now();
+      const mockTools = await resolveEvalMockTools(definition.mockTools, {
+        definition,
+        example,
+        repetition,
+        runId,
+        // A resolver that awaits network work cancels with the case.
+        ...(signal ? { signal } : {}),
+      });
+      // A resolver that ignored the signal can return after the deadline. The
+      // record is already reported as timed out, so start no model request.
+      if (signal?.aborted) throw signal.reason;
+      const generate = () =>
+        agent.generate({
+          input: normalizeEvalInputForAgent(example.input),
+          context: {
+            runId,
+            runIdBindsToolAuthorization: false,
+            eval: {
+              definitionId: definition.id,
+              exampleId: example.id,
+              repetition,
+              metadata: example.metadata ?? {},
+            },
+          },
+          ...(options.model ? { model: options.model } : {}),
+          ...(options.maxOutputTokens ? { maxOutputTokens: options.maxOutputTokens } : {}),
+          ...(definition.mockTools !== undefined
+            ? { tools: mockTools ?? {}, retainSkillLoaderTools: true }
+            : {}),
+          // The runner aborts this when the case passes --record-timeout.
+          ...(signal ? { abortSignal: signal } : {}),
+        });
+      const response = definition.mockTools !== undefined
+        ? await runWithEvalMockToolScope(mockTools ?? {}, generate)
+        : await generate();
+      return {
+        text: response.text,
+        trace: {
+          events: response.messages,
+          toolCalls: normalizeToolCalls(response),
         },
-      },
-      ...(options.model ? { model: options.model } : {}),
-      ...(options.maxOutputTokens ? { maxOutputTokens: options.maxOutputTokens } : {}),
-      ...(definition.mockTools !== undefined
-        ? { tools: mockTools ?? {}, retainSkillLoaderTools: true }
-        : {}),
-      // The runner aborts this when the case passes --record-timeout.
-      ...(signal ? { abortSignal: signal } : {}),
+        usage: normalizeUsage(response),
+        durationMs: Date.now() - started,
+        completed: response.status === "completed",
+        ...(response.status === "error" ? { outcome: "error" as const } : {}),
+        ...(response.status === "error" ? { error: response.text } : {}),
+      };
     });
-    return {
-      text: response.text,
-      trace: {
-        events: response.messages,
-        toolCalls: normalizeToolCalls(response),
-      },
-      usage: normalizeUsage(response),
-      durationMs: Date.now() - started,
-      completed: response.status === "completed",
-      ...(response.status === "error" ? { error: response.text } : {}),
-    };
-  };
 }
 
 export function createToolAdapter(tool: Tool, baseContext: ToolExecutionContext = {}) {
@@ -923,6 +935,7 @@ export function createToolAdapter(tool: Tool, baseContext: ToolExecutionContext 
       toolCallId,
       durationMs: Date.now() - started,
       completed: !error,
+      ...(error ? { outcome: "error" as const } : {}),
       ...(error ? { error } : {}),
     };
   };

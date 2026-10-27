@@ -15,6 +15,8 @@ import {
   withVeryfrontCloudCatalogScope,
 } from "./catalog-client.ts";
 
+const numberIsSafeInteger = Number.isSafeInteger;
+
 /**
  * Veryfront Cloud provider IDs offered for autocompletion.
  *
@@ -90,7 +92,7 @@ export type VeryfrontCloudModelThinkingConfig = {
 };
 
 function isPositiveSafeInteger(value: unknown): value is number {
-  return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
+  return typeof value === "number" && numberIsSafeInteger(value) && value > 0;
 }
 
 function requireThinkingBudgetTokens(value: unknown): number | undefined {
@@ -176,10 +178,7 @@ function buildServedIndex(catalog: VeryfrontCloudCatalog): ServedCatalogIndex {
   const byShortId = new Map<string, VeryfrontCloudCatalogModel>();
   const byModelId = new Map<string, VeryfrontCloudCatalogModel>();
 
-  for (const model of catalog.models) {
-    const slashIndex = model.modelId.indexOf("/");
-    if (slashIndex <= 0) continue;
-    const segment = model.modelId.slice(0, slashIndex);
+  function indexProviderFacts(model: VeryfrontCloudCatalogModel, segment: string): void {
     if (!providerAliases.has(segment)) providerAliases.set(segment, model.provider);
     if (!providerAliases.has(model.provider)) providerAliases.set(model.provider, model.provider);
     if (model.surface !== undefined && !surfaces.has(model.provider)) {
@@ -189,6 +188,9 @@ function buildServedIndex(catalog: VeryfrontCloudCatalog): ServedCatalogIndex {
       operationsKnown.add(model.provider);
       if (model.operations.includes("responses")) servesResponses.add(model.provider);
     }
+  }
+
+  function indexModelIdentifiers(model: VeryfrontCloudCatalogModel): void {
     const key = `${model.provider}/${modelSegment(model.modelId)}`;
     if (!byKey.has(key)) byKey.set(key, model);
     if (!byModelId.has(model.modelId)) byModelId.set(model.modelId, model);
@@ -197,16 +199,25 @@ function buildServedIndex(catalog: VeryfrontCloudCatalog): ServedCatalogIndex {
     }
   }
 
+  for (const model of catalog.models) {
+    const slashIndex = model.modelId.indexOf("/");
+    if (slashIndex <= 0) continue;
+    const segment = model.modelId.slice(0, slashIndex);
+    indexProviderFacts(model, segment);
+    indexModelIdentifiers(model);
+  }
+
   const routing = new Map<string, Readonly<VeryfrontCloudProviderRouting>>();
   for (const [provider, surface] of surfaces) {
     // A provider is native to the OpenAI surface when the platform serves the
     // Responses operation for one of its models. An API that serves no
     // operations yet leaves the protocol-named rule in place.
-    const native = surface !== "openai"
-      ? true
-      : operationsKnown.has(provider)
-      ? servesResponses.has(provider)
-      : PROTOCOL_NAMED_PROVIDERS.has(provider);
+    let native = true;
+    if (surface === "openai") {
+      native = operationsKnown.has(provider)
+        ? servesResponses.has(provider)
+        : PROTOCOL_NAMED_PROVIDERS.has(provider);
+    }
     routing.set(provider, Object.freeze({ surface, native }));
   }
 
@@ -292,6 +303,16 @@ export function isListedInServedVeryfrontCloudCatalog(modelId: string): boolean 
  */
 export function isVeryfrontCloudCatalogLoaded(): boolean {
   return loadedCatalog() !== undefined;
+}
+
+/**
+ * @internal Whether a served catalog has loaded for a model's own catalog
+ * scope, whatever scope the ambient request carries.
+ */
+export function isVeryfrontCloudCatalogLoadedForScope(
+  scopeKey: VeryfrontCloudCatalogScopeKey,
+): boolean {
+  return withVeryfrontCloudCatalogScope(scopeKey, () => loadedCatalog() !== undefined);
 }
 
 /**
@@ -500,12 +521,25 @@ export function resolveVeryfrontCloudOpenAITransport(
   return getVeryfrontCloudModelTransportCapabilities(modelId)?.openAITransport;
 }
 
-/** Resolves whether a model's Chat transport can combine reasoning with function tools. */
+const NativeOpenAIChatModelPattern = /^openai\/(gpt-|o[134](-|$)|chatgpt-)/;
+
+/**
+ * Resolves whether a model's Chat transport can combine reasoning with function tools.
+ *
+ * OpenAI's own Chat Completions endpoint rejects `reasoning_effort` alongside
+ * function tools for current models. When the catalog has no answer for an
+ * OpenAI model (not loaded yet, or the row omits the capability), this fails
+ * closed so the request does not send a combination OpenAI rejects.
+ */
 export function resolveVeryfrontCloudOpenAIChatFunctionToolReasoning(
   modelId: string,
 ): boolean | undefined {
-  return getVeryfrontCloudModelTransportCapabilities(modelId)
+  const declared = getVeryfrontCloudModelTransportCapabilities(modelId)
     ?.openAIChatReasoningWithFunctionTools;
+  if (declared !== undefined) return declared;
+  return NativeOpenAIChatModelPattern.test(canonicalVeryfrontCloudModelKey(modelId))
+    ? false
+    : undefined;
 }
 
 /** Resolves whether a verified Chat transport preserves system message boundaries. */
@@ -599,6 +633,17 @@ export interface VeryfrontCloudModelFacts {
   readonly openAITransport?: "chat-completions" | "responses";
   readonly openAIChatReasoningWithFunctionTools?: boolean;
   readonly openAIChatPreserveSystemMessages?: boolean;
+  /**
+   * Provider name the OpenAI Chat builder reads option buckets under, when it
+   * differs from the default Cloud name: the registry-backed compatible path.
+   */
+  readonly openAIChatProviderName?: "openai-compatible";
+  /**
+   * Token limits the served catalog declared for this model when it was last
+   * read, kept so a request budget still applies after the bounded catalog
+   * cache evicts this model's scope.
+   */
+  readonly servedLimit?: { readonly context?: number; readonly output?: number };
 }
 
 const builtModelFacts = createPrivateWeakStore<ModelRuntime, () => VeryfrontCloudModelFacts>();
@@ -635,18 +680,18 @@ export function readVeryfrontCloudModelFacts(
   return builtModelFacts.get(model as ModelRuntime)?.();
 }
 
-/** Transport one call uses, given whether that call carries a hosted tool. */
+/** Transport one call uses, given whether it needs Responses (a hosted tool or a document). */
 export function resolveVeryfrontCloudOpenAICallTransport(
   provider: string,
   upstreamModelId: string,
-  usesHostedTool: boolean,
+  requiresResponses: boolean,
 ): "chat-completions" | "responses" {
   const plan = resolveVeryfrontCloudOpenAITransportPlan(
     provider,
     upstreamModelId,
   );
   if (plan.pinned) return plan.transport;
-  return usesHostedTool ? "responses" : "chat-completions";
+  return requiresResponses ? "responses" : "chat-completions";
 }
 
 /**

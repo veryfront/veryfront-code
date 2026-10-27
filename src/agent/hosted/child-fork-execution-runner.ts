@@ -1,4 +1,8 @@
-import { inheritHostedChildInferenceAuthority } from "./inference-credential.ts";
+import {
+  type HostedInferenceAuthorityOwner,
+  inheritHostedChildInferenceAuthority,
+  restrictHostedChildModelStreamTimeouts,
+} from "./inference-credential.ts";
 import type { HostToolTraceAttributes } from "#veryfront/tool";
 import type { AgentSystem } from "#veryfront/agent/types.ts";
 import type { ChatSystemMessage } from "#veryfront/chat/types.ts";
@@ -31,6 +35,7 @@ import {
 import {
   type AgentRuntimeForkStepRunner,
   runAgentRuntimeForkStep,
+  type RunAgentRuntimeForkStepInput,
 } from "../streaming/fork-runtime-stream.ts";
 import {
   getActiveHostedRunEventWriterCapability,
@@ -76,6 +81,21 @@ import {
 
 /** Default value for hosted child fork stream idle timeout ms. */
 export const DEFAULT_HOSTED_CHILD_FORK_STREAM_IDLE_TIMEOUT_MS = 45_000;
+/**
+ * @internal Run one default hosted child step with inherited inference authority.
+ * Inherited model stream budgets apply only when they expire before the child
+ * stream watchdog, so the child reports the model timeout rather than a stall.
+ */
+export function runHostedChildForkRuntimeStep(
+  stepInput: RunAgentRuntimeForkStepInput,
+  forkContext: HostedInferenceAuthorityOwner | undefined,
+  watchdogIdleTimeoutMs: number,
+): ReturnType<typeof runAgentRuntimeForkStep> {
+  if (forkContext) inheritHostedChildInferenceAuthority(stepInput, forkContext);
+  restrictHostedChildModelStreamTimeouts(stepInput, watchdogIdleTimeoutMs);
+  return runAgentRuntimeForkStep(stepInput);
+}
+
 /** Default value for hosted child fork stream active tool timeout ms. */
 export const DEFAULT_HOSTED_CHILD_FORK_STREAM_ACTIVE_TOOL_TIMEOUT_MS = 5 * 60_000;
 /** Default value for hosted child fork stream post tool idle timeout ms. */
@@ -137,6 +157,9 @@ export type ExecuteHostedChildForkWithPreparedToolsInput<
   /** Whether the fork model runs through Veryfront Cloud. */
   hostedModel?: boolean;
   temperature?: number;
+  parallelToolCalls?: boolean;
+  /** Canonical startup skill selected by the target configuration. */
+  bootstrapSkill?: string;
   maxSteps: number;
   effectivePrompt: string;
   forkContext?: HostedChildForkInstructionsContext;
@@ -438,6 +461,10 @@ async function executeHostedChildForkWithoutWriterAuthority<
         forkModel: input.forkModel,
         hostedModel: input.hostedModel,
         temperature: input.temperature,
+        ...(input.bootstrapSkill === undefined ? {} : { bootstrapSkill: input.bootstrapSkill }),
+        ...(input.parallelToolCalls === undefined
+          ? {}
+          : { parallelToolCalls: input.parallelToolCalls }),
         maxSteps: input.maxSteps,
         prompt: input.effectivePrompt,
         maxContinuationSteps: input.maxContinuationSteps ?? 0,
@@ -458,13 +485,17 @@ async function executeHostedChildForkWithoutWriterAuthority<
             messages,
             buildInstructions: prepareBuildInstructions,
             forkToolNames,
+            ...(input.bootstrapSkill === undefined ? {} : { bootstrapSkill: input.bootstrapSkill }),
             providerOptionKey: input.provider,
             resolveSystem: input.resolveSystem ?? defaultResolveSystem,
           }),
-        runStep: input.runStep ?? ((stepInput) => {
-          if (input.forkContext) inheritHostedChildInferenceAuthority(stepInput, input.forkContext);
-          return runAgentRuntimeForkStep(stepInput);
-        }),
+        runStep: input.runStep ??
+          ((stepInput) =>
+            runHostedChildForkRuntimeStep(
+              stepInput,
+              input.forkContext,
+              input.idleTimeoutMs ?? DEFAULT_HOSTED_CHILD_FORK_STREAM_IDLE_TIMEOUT_MS,
+            )),
         traceTools,
       });
     const started = await (startupRunEventSink

@@ -317,7 +317,11 @@ describe("private tool-call admission", () => {
         );
         assertEquals(
           storedStarts[0]?.providerExecuted,
-          scenario === "configured-provider" ? true : undefined,
+          scenario === "configured-provider"
+            ? true
+            : scenario === "explicit-false"
+            ? false
+            : undefined,
         );
         assert(
           !JSON.stringify({ chunks, finished }).includes("privateObservedToolResult"),
@@ -686,8 +690,8 @@ describe("private tool-call admission", () => {
       const body = JSON.parse(String(init?.body));
       if (String(url) === "https://api.example.test/mcp") {
         mcpCalls++;
-        assertEquals(init?.redirect, "error");
-        const headers = new Headers(init?.headers);
+        assertEquals(init && "redirect" in init ? init.redirect : undefined, "error");
+        const headers = new Headers(init && "headers" in init ? init.headers : undefined);
         assertEquals(headers.get("Authorization"), "Bearer synthetic-application-token");
         assertEquals(headers.get("X-Veryfront-Run-Event-Writer-Token"), "synthetic-append-token");
         assertEquals(body.params._meta, {

@@ -59,6 +59,27 @@ function withJsonLogFormat<T>(fn: () => T): T {
 }
 
 describe("logger", () => {
+  it("emits the request environment as a structured filter field", () => {
+    const entries: LogEntry[] = [];
+    const unsubscribe = __subscribeLogRecordEmitter((entry) => entries.push(entry));
+    const capture = captureConsoleLog();
+    const originalError = console.error;
+    console.error = console.log;
+    try {
+      withJsonLogFormat(() => {
+        getBaseLogger("TEST").child({ environment: "preview", domain: "demo.preview.example.com" })
+          .error("controlled failure");
+      });
+      assertEquals(JSON.parse(capture.getOutput()).environment, "preview");
+      assertEquals(entries[0]?.environment, "preview");
+      assertEquals(entries[0]?.context?.environment, undefined);
+    } finally {
+      unsubscribe();
+      console.error = originalError;
+      capture.restore();
+    }
+  });
+
   it("fans out structured records, isolates subscriber failures, and unregisters subscribers", () => {
     const originalError = console.error;
     const records: string[] = [];

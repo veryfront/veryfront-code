@@ -1,19 +1,19 @@
 ---
 title: "veryfront/task"
 description: "Source-defined tasks for Veryfront projects."
-order: 40
+order: 41
 ---
 
 ## Import
 
 ```ts
 import {
-  deriveTaskId,
   discoverProjectTaskRuntime,
-  discoverTasks,
   findProjectRuntimeTask,
-  findTaskById,
   formatProjectRuntimeDiscoveryErrors,
+  isTaskDefinition,
+  listProjectRuntimeTasks,
+  runTask,
 } from "veryfront/task";
 ```
 

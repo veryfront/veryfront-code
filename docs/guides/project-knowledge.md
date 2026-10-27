@@ -1,7 +1,7 @@
 ---
 title: "Project knowledge"
 description: "Search source-controlled knowledge by manifest metadata or semantic similarity."
-order: 25
+order: 210
 ---
 
 Use `veryfront/knowledge` when an agent, tool, or route needs files from the
@@ -18,7 +18,7 @@ For turning PDFs, Office documents, and uploads into Markdown first, see
 ## Give an agent controlled access
 
 Select knowledge in the TypeScript agent definition. The framework supplies
-`search_knowledge`; no separate `tools` binding is required.
+`veryfront__search_knowledge`; no separate `tools` binding is required.
 
 ```ts
 import { agent } from "veryfront/agent";
@@ -43,15 +43,18 @@ Broad filesystem tools remain separate capabilities.
 The initial prompt does not include document bodies or the full file catalog.
 Search returns compact metadata pages, and an exact lookup retrieves content.
 Collection selectors are not supported yet. Manifest lookup filters the selected
-scope before pagination. Scoped semantic retrieval currently uses bounded
-overscan and filters matches afterward; exact ranking within a scope requires
-store support for filtering before ranking.
+scope before pagination. Hosted semantic retrieval sends the configured document
+scope to Veryfront Cloud, which filters candidates before ranking. The SDK rejects
+scoped responses without the server's scope acknowledgement. The API enforces
+persisted runtime authorization; the SDK selector only narrows the request.
+Custom vector stores still use bounded overscan and post-filtering unless they
+support filtering before ranking.
 
 ## Add knowledge files
 
 Create Markdown files under `knowledge/`.
 
-Knowledge documents target [Open Knowledge Format v0.2](https://github.com/GoogleCloudPlatform/open-knowledge-format/blob/ad30107c31c06aec8a7d5636e0d1058118604e6f/SPEC.md),
+Knowledge files target [Open Knowledge Format v0.2](https://github.com/GoogleCloudPlatform/open-knowledge-format/blob/ad30107c31c06aec8a7d5636e0d1058118604e6f/SPEC.md),
 pinned to revision `ad30107c31c06aec8a7d5636e0d1058118604e6f`.
 Agent configuration stays in TypeScript; OKF document metadata uses the standard's
 frontmatter format. Concept documents require a non-empty `type`; `index.md` and
@@ -179,7 +182,7 @@ path returns an empty `data` array.
 
 ## Expose the lookup as a tool
 
-Create the hosted-compatible `search_knowledge` tool when an agent should
+Create a project-authored `search_knowledge` tool when an agent should
 choose queries and cursors:
 
 ```ts
@@ -193,7 +196,7 @@ export default createSearchKnowledgeTool({
 
 The tool validates its input, accepts the same query, cursor, limit, and shard
 options as `lookup()`, and returns the same compact response shape as
-Veryfront Cloud's hosted `search_knowledge` tool.
+Veryfront Cloud's hosted `veryfront__search_knowledge` tool.
 
 ## Use hosted project content
 

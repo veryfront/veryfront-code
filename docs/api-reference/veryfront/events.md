@@ -1,7 +1,7 @@
 ---
 title: "veryfront/events"
 description: "Agent Events Protocol decoder and public types. This module validates target Agent Events Protocol CloudEvents with the committed target catalog, envelope schema and payload schemas. It is additive to the released `veryfront/run-events` surface."
-order: 9
+order: 10
 ---
 
 ## Import
@@ -229,3 +229,45 @@ import { acceptAgUiEvent, createAgUiParser, parseAgUiEvent } from "veryfront/eve
 | `ProjectAgUiEventInput`              |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/events/ag-ui/types.ts)           |
 | `ProjectAgUiNativeProfileInput`      |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/events/ag-ui/native-profile.ts)  |
 | `ProjectNativeProfileInput`          |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/events/ag-ui/native-profile.ts)  |
+
+### `veryfront/events/canonical-v1`
+
+Explicit canonical-v1 read contracts. Existing pilot event parsers are unchanged.
+
+```ts
+import {
+  decodeDescendantCursorV1,
+  parseDescendantRunReadPageV1,
+  parseEventDiscoveryV1,
+} from "veryfront/events/canonical-v1";
+```
+
+#### Functions
+
+| Name                           | Description                                                                       | Source                                                                                           |
+| ------------------------------ | --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `decodeDescendantCursorV1`     | Validate a bounded descendant token without replacing server scope authorization. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/events/canonical-v1/index.ts) |
+| `parseDescendantRunReadPageV1` | Validate an explicit cross-store descendant history page.                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/events/canonical-v1/index.ts) |
+| `parseEventDiscoveryV1`        | Validate the canonical event discovery contract.                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/events/canonical-v1/index.ts) |
+| `parseEventErrorV1`            | Validate a content-free canonical protocol error.                                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/events/canonical-v1/index.ts) |
+| `parseRunReadMemberV1`         | Validate one canonical or authorized legacy history member.                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/events/canonical-v1/index.ts) |
+| `parseRunReadPageV1`           | Validate a canonical history page without dropping legacy members.                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/events/canonical-v1/index.ts) |
+| `parseStreamMemberV1`          | Validate a durable or transient canonical stream member.                          | [source](https://github.com/veryfront/veryfront-code/blob/main/src/events/canonical-v1/index.ts) |
+
+#### Types
+
+| Name                      | Description                                                                         | Source                                                                                           |
+| ------------------------- | ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `CanonicalEventV1`        |                                                                                     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/events/canonical-v1/types.ts) |
+| `CanonicalMemberV1`       |                                                                                     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/events/canonical-v1/types.ts) |
+| `DescendantCursorV1`      |                                                                                     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/events/canonical-v1/types.ts) |
+| `DescendantRunReadPageV1` | Additive cross-store descendant history profile; single-run pages remain unchanged. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/events/canonical-v1/types.ts) |
+| `EventDiscoveryV1`        |                                                                                     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/events/canonical-v1/types.ts) |
+| `EventViewV1`             | Caller-authorized canonical-v1 read values. Legacy payloads remain opaque JSON.     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/events/canonical-v1/types.ts) |
+| `LegacyMemberV1`          |                                                                                     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/events/canonical-v1/types.ts) |
+| `LegacyReasonV1`          |                                                                                     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/events/canonical-v1/types.ts) |
+| `RunReadMemberV1`         |                                                                                     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/events/canonical-v1/types.ts) |
+| `RunReadMetadataV1`       |                                                                                     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/events/canonical-v1/types.ts) |
+| `RunReadPageV1`           |                                                                                     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/events/canonical-v1/types.ts) |
+| `StreamMemberV1`          |                                                                                     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/events/canonical-v1/types.ts) |
+| `TransientMemberV1`       |                                                                                     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/events/canonical-v1/types.ts) |

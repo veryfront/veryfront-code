@@ -1577,6 +1577,21 @@ describe("agent/runtime/provider-replay", () => {
         totalPartCount: 2,
       };
 
+      for (
+        const error of [
+          "not JSON",
+          JSON.stringify({ arbitrary: "business data" }),
+          JSON.stringify({ ...canonicalError, toolCallId: "other-call" }),
+        ]
+      ) {
+        const invalid = structuredClone(runtimeMessages);
+        const result = invalid.flatMap((message) => message.parts).find((part) =>
+          part.type === "tool-result"
+        );
+        if (!result || !("result" in result)) throw new Error("Expected prepared result");
+        result.result = { error };
+        assertThrows(() => applyProviderReplayCheckpointsToMessages(invalid, [checkpoint]));
+      }
       applyProviderReplayCheckpointsToMessages(runtimeMessages, [checkpoint]);
 
       assertEquals(readAttachedProviderMetadata(runtimeMessages[0]!), {

@@ -1,7 +1,7 @@
 ---
 title: "Error reference"
 description: "Every error the Veryfront CLI, server, and logs can report, with what it means and what to do next."
-order: 48
+order: 1000
 ---
 
 Veryfront reports errors with a stable slug, such as `port-in-use`. The CLI, the
@@ -813,6 +813,13 @@ Assistant completed without producing a response.
 - **HTTP status:** 500
 - **What to do:** Retry the request or choose a different model
 
+### agent-context-window-exceeded
+
+Agent request exceeds a served model limit.
+
+- **HTTP status:** 413
+- **What to do:** Reduce the request or compact eligible conversation history before retrying
+
 ### orchestration-error
 
 Multi-agent orchestration error.
@@ -902,7 +909,7 @@ No access to the linked project for eval run.
 Eval model request refused by inference policy.
 
 - **HTTP status:** 403
-- **What to do:** The project allows EU-only inference. Choose a model with an EU inference route, then run the eval again
+- **What to do:** Review the account and project model policies and the API key model limits. Choose a model allowed by those policies, then run the eval again
 
 ### eval-inference-policy-denied
 

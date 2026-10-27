@@ -45,10 +45,16 @@ type VeryfrontApiToolAccessRule = {
 type FilterMode = "open" | "closed";
 
 const TOOL_ACCESS_PROFILE_TOOL_NAME = "get_tool_access_profile";
+const CANONICAL_TOOL_ACCESS_PROFILE_TOOL_NAME = `veryfront__${TOOL_ACCESS_PROFILE_TOOL_NAME}`;
 
 const toolAccessRules = new Map<string, VeryfrontApiToolAccessRule>([
-  ["create_invite", { family: "collaboration", action: "create_invite" }],
   ["create_project_invitation", { family: "collaboration", action: "create_invite" }],
+  // The API still lists the deprecated create_invite tool. Gate it like its replacement so a
+  // hidden create_invite action cannot leak through the alias. Inert once the API drops it.
+  ["create_invite", { family: "collaboration", action: "create_invite" }],
+  ["delete_project_member", { family: "collaboration", action: "delete_member" }],
+  // The API keeps the deprecated delete_member tool as an alias. Gate it like its replacement so a
+  // hidden delete_member action cannot leak through either name.
   ["delete_member", { family: "collaboration", action: "delete_member" }],
   ["create_server", { family: "runtime", action: "create_server" }],
   ["delete_server", { family: "runtime", action: "delete_server" }],
@@ -247,13 +253,29 @@ export function filterVeryfrontApiToolDefinitionsByAccessProfile(input: {
   );
 }
 
+/** Resolve the access-profile operation's raw transport spelling from its catalog. */
+export function resolveVeryfrontApiToolAccessProfileToolName(
+  toolDefinitions: readonly ToolDefinition[],
+): string {
+  if (toolDefinitions.some(({ name }) => name === CANONICAL_TOOL_ACCESS_PROFILE_TOOL_NAME)) {
+    return CANONICAL_TOOL_ACCESS_PROFILE_TOOL_NAME;
+  }
+  if (toolDefinitions.some(({ name }) => name === TOOL_ACCESS_PROFILE_TOOL_NAME)) {
+    return TOOL_ACCESS_PROFILE_TOOL_NAME;
+  }
+  return toolDefinitions.some(({ name }) => name.startsWith("veryfront__"))
+    ? CANONICAL_TOOL_ACCESS_PROFILE_TOOL_NAME
+    : TOOL_ACCESS_PROFILE_TOOL_NAME;
+}
+
 export async function fetchVeryfrontApiToolAccessProfile(input: {
   source: RemoteToolSource;
   projectId: string;
   context?: ToolExecutionContext;
+  toolName?: string;
 }): Promise<VeryfrontApiToolAccessProfile | null> {
   const rawProfile = await input.source.executeTool(
-    TOOL_ACCESS_PROFILE_TOOL_NAME,
+    input.toolName ?? CANONICAL_TOOL_ACCESS_PROFILE_TOOL_NAME,
     { project_reference: input.projectId },
     input.context,
   );
@@ -266,6 +288,7 @@ export async function filterVeryfrontApiToolDefinitionsWithAccessProfile(input: 
   projectId: string | null;
   context?: ToolExecutionContext;
   nowMs?: number;
+  profileToolName?: string;
 }): Promise<ToolDefinition[]> {
   if (!input.projectId) {
     return [...input.toolDefinitions];
@@ -276,6 +299,7 @@ export async function filterVeryfrontApiToolDefinitionsWithAccessProfile(input: 
       source: input.source,
       projectId: input.projectId,
       context: input.context,
+      toolName: input.profileToolName,
     });
     if (profile && isVeryfrontApiToolAccessProfileFresh(profile, input.nowMs)) {
       return filterVeryfrontApiToolDefinitionsByAccessProfile({

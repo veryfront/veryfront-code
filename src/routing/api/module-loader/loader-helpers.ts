@@ -23,7 +23,8 @@ export function validateModulePath(modulePath: string, projectDir: string): void
     throw toError(
       createError({
         type: "api",
-        message: `[API] module path escapes project directory: ${modulePath}`,
+        // The file name only: an outside path would expose the host's layout.
+        message: `[API] module path escapes project directory: ${pathHelper.basename(modulePath)}`,
       }),
     );
   }
@@ -46,7 +47,7 @@ export function resolveExportEntry(entry: unknown): string | undefined {
 }
 
 export function toCjsDestructureBindings(bindings: string): string {
-  const inner = bindings.trim().replace(/^\{\s*/, "").replace(/\s*\}$/, "");
+  const inner = bindings.trim().replace(/^\{\s*/, "").trimEnd().replace(/\}$/, "");
   if (!inner) return "{}";
 
   const converted = inner

@@ -1,3 +1,4 @@
+import { bindReasoningPartIdentity } from "#veryfront/chat/reasoning-part-identity.ts";
 import { privateJsonParse } from "#veryfront/security/private-json.ts";
 import {
   bindObservedToolResultStart,
@@ -21,6 +22,7 @@ import {
   stripLeadingEmptyObjectPlaceholder,
 } from "./data-stream.ts";
 import {
+  createChatUiMessageChunkDeduper,
   normalizeChatMessageMetadata,
   normalizeChatUiMessageStream,
 } from "../../chat/chat-ui-message-helpers.ts";
@@ -30,6 +32,11 @@ import {
   getPrivateRuntimeObservationSchema,
   type PrivateRuntimeObservation,
 } from "#veryfront/runtime/runtime-observation-carrier.ts";
+import {
+  bindSyntheticToolResultRecovery,
+  bindToolResultSequence,
+  getToolResultSequenceSchema,
+} from "#veryfront/runtime/tool-result-sequence.ts";
 
 /** Public API contract for chat UI message stream finish part. */
 export type ChatUiMessageStreamFinishPart = {
@@ -83,6 +90,8 @@ export type ChatUiMessageStreamOptions<TMessageMetadata = MessageMetadata> = {
   privateToolCallAdmissions?: boolean;
   /** @internal Consume private runtime-observation sidecars for trusted durable mirrors only. */
   privateRuntimeObservations?: boolean;
+  /** @internal Consume executor-only result positions; never expose them in UI chunks. */
+  privateToolResultSequences?: boolean;
   generateMessageId?: () => string;
   sendReasoning?: boolean;
   onError?: (error: unknown, context?: { code?: string }) => string;
@@ -94,9 +103,15 @@ export type ChatUiMessageStreamOptions<TMessageMetadata = MessageMetadata> = {
 };
 
 type OrderedTextBlock = {
+  isComplete?: boolean;
   id: string;
   order: number;
   text: string;
+};
+
+type OrderedReasoningBlock = OrderedTextBlock & {
+  signature?: string;
+  redactedData?: string;
 };
 
 type ToolPart = {
@@ -105,7 +120,7 @@ type ToolPart = {
   order: number;
   inputText: string;
   input: Record<string, unknown>;
-  state: "input-available" | "output-available" | "output-error";
+  state: "input-available" | "output-available" | "output-error" | "output-denied";
   providerExecuted?: boolean;
   output?: unknown;
   errorText?: string;
@@ -138,7 +153,7 @@ type PendingToolDelta = {
 
 type FrameworkUiMessageState = {
   textBlocks: Map<string, OrderedTextBlock>;
-  reasoningBlocks: Map<string, OrderedTextBlock>;
+  reasoningBlocks: Map<string, OrderedReasoningBlock>;
   toolParts: Map<string, ToolPart>;
   sourceDocumentParts: Map<string, OrderedSourceDocumentPart>;
   sourceUrlParts: Map<string, OrderedSourceUrlPart>;
@@ -278,6 +293,14 @@ function observeChatStreamEvent(input: {
       state.nextOrder += 1;
       return;
     }
+    case "reasoning-end": {
+      const block = state.reasoningBlocks.get(event.id);
+      if (!block) return;
+      block.isComplete = true;
+      if (event.signature !== undefined) block.signature = event.signature;
+      if (event.redactedData !== undefined) block.redactedData = event.redactedData;
+      return;
+    }
     case "tool-input-start": {
       if (!state.toolParts.has(event.toolCallId)) {
         state.toolParts.set(event.toolCallId, {
@@ -355,6 +378,7 @@ function observeChatStreamEvent(input: {
       return;
     }
     case "tool-output-available": {
+      if (event.preliminary === true) return;
       const toolPart = state.toolParts.get(event.toolCallId);
       if (!toolPart) {
         return;
@@ -364,6 +388,11 @@ function observeChatStreamEvent(input: {
       if (event.providerExecuted !== undefined) {
         toolPart.providerExecuted = event.providerExecuted;
       }
+      return;
+    }
+    case "tool-output-denied": {
+      const toolPart = state.toolParts.get(event.toolCallId);
+      if (toolPart) toolPart.state = "output-denied";
       return;
     }
     case "tool-output-error":
@@ -494,16 +523,23 @@ function buildResponseMessageParts(state: FrameworkUiMessageState): ChatUiMessag
   }
 
   for (const reasoningBlock of state.reasoningBlocks.values()) {
-    if (reasoningBlock.text.length === 0) {
+    const { signature, redactedData } = reasoningBlock;
+    if (reasoningBlock.text.length === 0 && !signature && !redactedData) {
       continue;
     }
 
     orderedParts.push({
       order: reasoningBlock.order,
-      part: {
-        type: "reasoning",
-        text: reasoningBlock.text,
-      },
+      part: bindReasoningPartIdentity(
+        {
+          type: "reasoning",
+          text: reasoningBlock.text,
+          ...(signature === undefined ? {} : { signature }),
+          ...(redactedData === undefined ? {} : { redactedData }),
+        },
+        reasoningBlock.id,
+        !reasoningBlock.isComplete,
+      ),
     });
   }
 
@@ -527,6 +563,8 @@ function buildResponseMessageParts(state: FrameworkUiMessageState): ChatUiMessag
         state: "output-available",
         output: toolPart.output,
       }
+      : toolPart.state === "output-denied"
+      ? { ...basePart, state: "output-denied" }
       : toolPart.state === "output-error"
       ? {
         ...basePart,
@@ -681,6 +719,39 @@ function parseTrustedRuntimeObservation(
   return parsedRuntimeObservation.data;
 }
 
+/**
+ * The reasoning events the response message records for one stream event. Reasoning passes
+ * through the replay step, so the recorded spans and ids are the ones the emitted chunks
+ * carry; private end metadata stays on the end event. Other events pass through.
+ */
+function* observedReasoningSpans(
+  event: ChatStreamEvent,
+  dedupe: (
+    chunk: ChatUiMessageChunk<MessageMetadata>,
+  ) => Iterable<ChatUiMessageChunk<MessageMetadata>>,
+): Iterable<ChatStreamEvent> {
+  if (
+    event.type !== "reasoning-start" && event.type !== "reasoning-delta" &&
+    event.type !== "reasoning-end"
+  ) {
+    yield event;
+    return;
+  }
+  const chunk: ChatUiMessageChunk<MessageMetadata> = event.type === "reasoning-delta"
+    ? { type: "reasoning-delta", id: event.id, delta: event.delta }
+    : { type: event.type, id: event.id };
+  for (const span of dedupe(chunk)) {
+    if (span.type === "reasoning-start") yield { type: "reasoning-start", id: span.id };
+    else if (span.type === "reasoning-delta") {
+      yield { type: "reasoning-delta", id: span.id, delta: span.delta };
+    } else if (span.type === "reasoning-end") {
+      yield event.type === "reasoning-end"
+        ? { ...event, id: span.id }
+        : { type: "reasoning-end", id: span.id };
+    }
+  }
+}
+
 /** Create chat UI message stream from data stream. */
 export function createChatUiMessageStreamFromDataStream<TMessageMetadata = MessageMetadata>(
   input: { stream: ReadableStream<Uint8Array> },
@@ -697,6 +768,7 @@ export function createChatUiMessageStreamFromDataStream<TMessageMetadata = Messa
   const derivedSourceDocumentIds = new Set<string>();
   let finishReason: ChatFinishReason = "stop";
   let manuallyPaused = false;
+  const dedupeReasoning = createChatUiMessageChunkDeduper<MessageMetadata>();
 
   return normalizeChatUiMessageStream(
     (async function* () {
@@ -716,8 +788,21 @@ export function createChatUiMessageStreamFromDataStream<TMessageMetadata = Messa
           privateToolCallOccurrenceId,
           privateObservedToolResult,
           privateRuntimeObservation,
+          privateToolResultSequence,
           ...event
         } = rawEvent;
+        const trustedToolResultSequence = options.privateToolResultSequences &&
+            privateToolResultSequence !== undefined
+          ? getToolResultSequenceSchema().parse(privateToolResultSequence)
+          : undefined;
+        if (
+          trustedToolResultSequence &&
+          !((event.type === "tool-output-available" && event.preliminary !== true) ||
+            event.type === "tool-output-error" || event.type === "tool-output-denied" ||
+            event.type === "tool-input-error")
+        ) {
+          throw new TypeError("Private tool result sequence is attached to an incompatible event");
+        }
         const trustedRuntimeObservation = options.privateRuntimeObservations &&
             privateRuntimeObservation !== undefined
           ? parseTrustedRuntimeObservation(privateRuntimeObservation)
@@ -741,13 +826,35 @@ export function createChatUiMessageStreamFromDataStream<TMessageMetadata = Messa
             !replacesDerivedSourceDocument;
           const isDuplicateSourceUrl = chatEvent.type === "source-url" &&
             state.sourceUrlParts.has(chatEvent.sourceId);
-          observeChatStreamEvent({
-            event: chatEvent,
-            responseMessageId,
-            state,
-            replaceExistingSourceDocument: replacesDerivedSourceDocument,
-          });
+          // The wire encoding omits private end metadata; keep it for the response message only.
+          const observedEvent = chatEvent.type === "reasoning-end" && event.type === "reasoning-end"
+            ? {
+              ...chatEvent,
+              ...(typeof event.signature === "string" ? { signature: event.signature } : {}),
+              ...(typeof event.redactedData === "string"
+                ? { redactedData: event.redactedData }
+                : {}),
+            }
+            : chatEvent;
+          // The response message follows the reasoning spans the client stream emits: a
+          // restarted id replays its content, and diverging content continues under the
+          // same replacement id the emitted chunks carry.
+          for (const observedPart of observedReasoningSpans(observedEvent, dedupeReasoning)) {
+            observeChatStreamEvent({
+              event: observedPart,
+              responseMessageId,
+              state,
+              replaceExistingSourceDocument: replacesDerivedSourceDocument,
+            });
+          }
           const chunk = toUiChunk(chatEvent);
+          if (
+            trustedToolResultSequence && chunk &&
+            chunk.type === event.type && "toolCallId" in chunk &&
+            chunk.toolCallId === event.toolCallId
+          ) {
+            bindToolResultSequence(chunk, trustedToolResultSequence);
+          }
           if (
             options.privateToolCallAdmissions && event.type === "tool-input-start" &&
             chunk?.type === "tool-input-start" && typeof privateToolCallOccurrenceId === "string"
@@ -828,13 +935,17 @@ export function createChatUiMessageStreamFromDataStream<TMessageMetadata = Messa
         });
         state.nextOrder += 1;
 
-        yield {
+        const recovery = {
           type: "tool-input-error",
           toolCallId,
           toolName: "unknown",
           input: toolInput,
           errorText,
-        };
+        } as const;
+        // This diagnostic is synthesized only after the producer stream ends.
+        // It cannot be an input to a later model call in that stream.
+        bindSyntheticToolResultRecovery(recovery);
+        yield recovery;
       }
       state.pendingToolDeltas.clear();
 

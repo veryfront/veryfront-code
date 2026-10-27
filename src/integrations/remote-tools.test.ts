@@ -19,11 +19,11 @@ import {
   setLogLevel,
 } from "#veryfront/utils/logger/logger.ts";
 import {
-  executeRemoteIntegrationTool,
   getRemoteIntegrationToolDefinitions,
   getRemoteIntegrationToolDiscovery,
   isRemoteIntegrationTool,
   type RemoteIntegrationToolDiscoveryResult,
+  runRemoteIntegrationTool,
   runWithRemoteIntegrationToolDiscoveryScope,
 } from "./remote-tools.ts";
 
@@ -161,7 +161,7 @@ describe("integrations/remote-tools", () => {
 
     assertEquals(
       requestedUrl,
-      "https://api.veryfront.com/integrations/tools/list",
+      "https://api.veryfront.com/integration-tools",
     );
   });
 
@@ -195,13 +195,14 @@ describe("integrations/remote-tools", () => {
       deleteHostSecret("VERYFRONT_API_TOKEN");
     }
 
-    assertEquals(requestedUrl, "https://api.test/integrations/tools/list");
+    assertEquals(requestedUrl, "https://api.test/integration-tools");
   });
 
   it("binds a request-context host token to the host integration API", async () => {
     setRemoteToolEnv({ VERYFRONT_API_BASE_URL: "https://api.test" });
     setHostSecret("VERYFRONT_API_TOKEN", "stored-login-token");
     let requestedUrl = "";
+    let requestedMethod: string | undefined;
     try {
       await runWithRequestContext(
         { projectSlug: "project", token: "stored-login-token" },
@@ -210,14 +211,17 @@ describe("integrations/remote-tools", () => {
             { VERYFRONT_API_BASE_URL: "https://attacker.example" },
             () => {
               refreshEnvironmentConfig();
-              return withMockFetch(async (input) => {
+              return withMockFetch(async (input, init) => {
                 requestedUrl = String(input);
+                requestedMethod = init?.method;
                 return Response.json({ tools: [] });
               }, () => getRemoteIntegrationToolDiscovery());
             },
           ),
       );
-      assertEquals(requestedUrl, "https://api.test/integrations/tools/list");
+      // One GET without query parameters returns the complete list.
+      assertEquals(requestedUrl, "https://api.test/integration-tools");
+      assertEquals(requestedMethod, "GET");
     } finally {
       deleteHostSecret("VERYFRONT_API_TOKEN");
     }
@@ -328,15 +332,10 @@ describe("integrations/remote-tools", () => {
     }
   });
 
-  it("blocks an internal API base unless the host enables internal egress", async () => {
-    // Routing the credentialed integration API through `guardedOutboundFetch`
-    // puts it under the host egress ceiling, which denies private and loopback
-    // destinations by default. Pinning both halves here: a developer or
-    // self-hosted deployment that points `VERYFRONT_API_BASE_URL` at an
-    // internal host must set `VERYFRONT_HOST_ALLOW_INTERNAL_EGRESS`, and once
-    // it is set the request goes through unchanged.
+  it("blocks a private HTTPS API unless the host enables internal egress", async () => {
+    // The boot-configured HTTP exception does not authorize private HTTPS APIs.
     setRemoteToolEnv({
-      VERYFRONT_API_BASE_URL: "http://127.0.0.1:8787",
+      VERYFRONT_API_BASE_URL: "https://127.0.0.1:8787",
       VERYFRONT_API_TOKEN: "token",
     });
 
@@ -387,6 +386,38 @@ describe("integrations/remote-tools", () => {
       { status: "ok", tools: [] },
       { status: "ok", tools: [] },
     ]);
+  });
+
+  it("keeps normalized discovery metadata on fetched integration tools", async () => {
+    setRemoteToolEnv({
+      VERYFRONT_API_BASE_URL: "https://api.test",
+      VERYFRONT_API_TOKEN: "env-token",
+    });
+    const discovery = { version: 1, type: "integration", domain: "github", resource: "issues" };
+    const result = await withMockFetch(
+      () =>
+        Promise.resolve(Response.json({
+          tools: [
+            {
+              name: "github__list_issues",
+              description: "List issues",
+              inputSchema: { type: "object", properties: {} },
+              discovery: { ...discovery, extra: "dropped" },
+            },
+            {
+              name: "github__get_issue",
+              description: "Get issue",
+              inputSchema: { type: "object", properties: {} },
+              discovery: { version: 2 },
+            },
+          ],
+        })),
+      () => getRemoteIntegrationToolDiscovery(),
+    );
+    assertEquals(result.status, "ok");
+    const tools = result.status === "ok" ? result.tools : [];
+    assertEquals<unknown>({ ...tools[0]?.discovery }, discovery);
+    assertEquals(tools[1] !== undefined && "discovery" in tools[1], false);
   });
 
   it("shares one retry sequence across concurrent discovery callers", async () => {
@@ -828,7 +859,7 @@ describe("integrations/remote-tools", () => {
           },
           async () => ({
             definitions: await getRemoteIntegrationToolDefinitions(hostedContext),
-            execution: await executeRemoteIntegrationTool(
+            execution: await runRemoteIntegrationTool(
               "github__list_repos",
               {},
               hostedContext,
@@ -934,7 +965,7 @@ describe("integrations/remote-tools", () => {
                 dispatchCalls++;
                 return Response.json({ structuredContent: { deleted: true } });
               },
-              () => executeRemoteIntegrationTool("github__delete_repo", {}),
+              () => runRemoteIntegrationTool("github__delete_repo", {}),
             ),
         ),
       Error,
@@ -957,7 +988,7 @@ describe("integrations/remote-tools", () => {
             dispatchCalls++;
             return Response.json({ structuredContent: {} });
           },
-          () => executeRemoteIntegrationTool("github:list-repos", {}),
+          () => runRemoteIntegrationTool("github:list-repos", {}),
         ),
       Error,
       'Remote integration tool "github:list-repos" must use the canonical integration__tool_id name',
@@ -979,7 +1010,7 @@ describe("integrations/remote-tools", () => {
             dispatchCalls++;
             return Response.json({ structuredContent: {} });
           },
-          () => executeRemoteIntegrationTool(`github__${"a".repeat(121)}`, {}),
+          () => runRemoteIntegrationTool(`github__${"a".repeat(121)}`, {}),
         ),
       Error,
       "Remote integration tool name must not exceed 128 characters",
@@ -1128,7 +1159,7 @@ describe("integrations/remote-tools", () => {
             return Response.json({ tools: [] });
           }, async () => ({
             definitions: await getRemoteIntegrationToolDefinitions(),
-            execution: await executeRemoteIntegrationTool("github__list_repos", {}),
+            execution: await runRemoteIntegrationTool("github__list_repos", {}),
           })),
       );
 
@@ -1200,7 +1231,7 @@ describe("integrations/remote-tools", () => {
         });
       },
       async () =>
-        await executeRemoteIntegrationTool(
+        await runRemoteIntegrationTool(
           "github__list_repos",
           { visibility: "private" },
         ),
@@ -1229,7 +1260,7 @@ describe("integrations/remote-tools", () => {
         }),
       () =>
         assertRejects(
-          () => executeRemoteIntegrationTool("github__list_repos", {}),
+          () => runRemoteIntegrationTool("github__list_repos", {}),
           TypeError,
           "malformed MCP error marker",
           "a non-boolean isError must not be coerced into a successful tool result",
@@ -1245,7 +1276,7 @@ describe("integrations/remote-tools", () => {
             text: JSON.stringify({ error: "authentication_required" }),
           }],
         }),
-      () => executeRemoteIntegrationTool("github__list_repos", {}),
+      () => runRemoteIntegrationTool("github__list_repos", {}),
     );
 
     assertEquals(
@@ -1272,7 +1303,7 @@ describe("integrations/remote-tools", () => {
         isError: true,
         content: [{ text: "Remote failure" }],
         _meta: { condition },
-      }), async () => await executeRemoteIntegrationTool("github__list_repos", {}));
+      }), async () => await runRemoteIntegrationTool("github__list_repos", {}));
     assertEquals(textFallback, {
       error: "provider-failed",
       status: 503,
@@ -1286,7 +1317,7 @@ describe("integrations/remote-tools", () => {
         content: [],
         structuredContent: { message: "Remote search failed" },
         _meta: { condition },
-      }), async () => await executeRemoteIntegrationTool("github__list_repos", {}));
+      }), async () => await runRemoteIntegrationTool("github__list_repos", {}));
     assertEquals(structuredMessage, {
       message: "Remote search failed",
       error: "provider-failed",
@@ -1305,7 +1336,7 @@ describe("integrations/remote-tools", () => {
           message: "Connect GitHub",
         },
         _meta: { condition },
-      }), async () => await executeRemoteIntegrationTool("github__list_repos", {}));
+      }), async () => await runRemoteIntegrationTool("github__list_repos", {}));
     assertEquals(authenticationAction, {
       error: "authentication_required",
       integration: "github",
@@ -1327,7 +1358,7 @@ describe("integrations/remote-tools", () => {
         }],
         structuredContent: {},
         _meta: { condition },
-      }), async () => await executeRemoteIntegrationTool("github__list_repos", {}));
+      }), async () => await runRemoteIntegrationTool("github__list_repos", {}));
     assertEquals(emptyStructuredContent, {
       error: "authentication_required",
       integration: "github",
@@ -1341,7 +1372,7 @@ describe("integrations/remote-tools", () => {
         isError: true,
         content: [{ text: JSON.stringify({ error: "raw-error" }) }],
         _meta: { condition: { slug: "bad slug", status: 400, retryable: false } },
-      }), async () => await executeRemoteIntegrationTool("github__list_repos", {}));
+      }), async () => await runRemoteIntegrationTool("github__list_repos", {}));
     assertEquals(malformedCondition, { error: "raw-error" });
   });
 
@@ -1363,7 +1394,7 @@ describe("integrations/remote-tools", () => {
         return Response.json({ structuredContent: { ok: true } });
       },
       () =>
-        executeRemoteIntegrationTool(
+        runRemoteIntegrationTool(
           "google-analytics__run_report",
           { property: "properties/123" },
           { runId: "run-123", agentId: "agent-123" },
@@ -1372,7 +1403,7 @@ describe("integrations/remote-tools", () => {
 
     assertEquals(
       requestUrl,
-      "https://api.test/integrations/google-analytics/tools/run_report/call",
+      "https://api.test/integration-tools/google-analytics__run_report/run",
     );
     assertEquals(requestMethod, "POST");
     assertEquals(requestBody, {
@@ -1397,7 +1428,7 @@ describe("integrations/remote-tools", () => {
         },
         () =>
           assertRejects(
-            () => executeRemoteIntegrationTool("github__list_repos", {}, context),
+            () => runRemoteIntegrationTool("github__list_repos", {}, context),
             TypeError,
             "must be a canonical identifier",
             "a noncanonical run or agent identity must be rejected",
@@ -1434,7 +1465,7 @@ describe("integrations/remote-tools", () => {
             projectSlugHeader = request.headers.get("x-veryfront-project-slug");
             return Response.json({ content: [], structuredContent: { ok: true } });
           },
-          async () => await executeRemoteIntegrationTool("github__list_repos", {}),
+          async () => await runRemoteIntegrationTool("github__list_repos", {}),
         ),
     );
 
@@ -1463,7 +1494,7 @@ describe("integrations/remote-tools", () => {
         return Response.json({ structuredContent: { ok: true } });
       },
       async () =>
-        await executeRemoteIntegrationTool(
+        await runRemoteIntegrationTool(
           "gmail__list_emails",
           { maxResults: 10 },
           {
@@ -1500,7 +1531,7 @@ describe("integrations/remote-tools", () => {
           return Response.json({ structuredContent: { ok: true } });
         },
         async () =>
-          await executeRemoteIntegrationTool("gmail__list_emails", {}, {
+          await runRemoteIntegrationTool("gmail__list_emails", {}, {
             runId: "run-platform-123",
             runIdBindsToolAuthorization: marker as boolean | undefined,
           }),
@@ -1527,7 +1558,7 @@ describe("integrations/remote-tools", () => {
         return Response.json({ structuredContent: { ok: true } });
       },
       async () =>
-        await executeRemoteIntegrationTool(
+        await runRemoteIntegrationTool(
           "gmail__list_emails",
           { maxResults: 10 },
           {
@@ -1560,7 +1591,7 @@ describe("integrations/remote-tools", () => {
           connectUrl: "/oauth/connect/linear?projectId=project-1",
           message: "Authentication required for Linear.",
         },
-      }), async () => await executeRemoteIntegrationTool("linear__search_issues", { query: "*" }));
+      }), async () => await runRemoteIntegrationTool("linear__search_issues", { query: "*" }));
 
     assertEquals(result, {
       error: "authentication_required",
@@ -1583,7 +1614,7 @@ describe("integrations/remote-tools", () => {
           error: "authentication_required",
           connectUrl: "//auth.example.com/oauth/connect/github?projectId=project-1",
         },
-      }), async () => await executeRemoteIntegrationTool("github__list_repos", {}));
+      }), async () => await runRemoteIntegrationTool("github__list_repos", {}));
 
     assertEquals(result, {
       error: "authentication_required",
@@ -1601,7 +1632,7 @@ describe("integrations/remote-tools", () => {
       Response.json({
         content: [{ text: '{"ignored":true}' }],
         structuredContent: { repos: ["veryfront"] },
-      }), async () => await executeRemoteIntegrationTool("github__list_repos", {}));
+      }), async () => await runRemoteIntegrationTool("github__list_repos", {}));
 
     assertEquals(result, { repos: ["veryfront"] });
     assertStrictEquals(isRemoteIntegrationTool("github__list_repos"), true);
@@ -1622,7 +1653,7 @@ describe("integrations/remote-tools", () => {
     const result = await withMockFetch(async () =>
       Response.json({
         content: [{ text: undefined }, { text: "plain result" }],
-      }), async () => await executeRemoteIntegrationTool("github__list_repos", {}));
+      }), async () => await runRemoteIntegrationTool("github__list_repos", {}));
 
     assertEquals(result, "plain result");
   });

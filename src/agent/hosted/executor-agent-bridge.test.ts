@@ -12,8 +12,11 @@ import {
 import {
   createExecutorAgentOperations,
   createExecutorHostedChatRuntimeAgent,
+  encodeExecutorBrokerEvent,
 } from "./executor-agent-bridge.ts";
 import { ExecutorAgentError } from "./executor-agent-schema.ts";
+import { EXECUTOR_AGENT_MAX_PAYLOAD_BYTES } from "./executor-agent-schema.ts";
+import { sendSSE } from "../runtime/sse-utils.ts";
 import { ProviderRequestError } from "#veryfront/provider/runtime-loader/provider-http.ts";
 import { getRuntimeObservation } from "#veryfront/runtime/runtime-observation-carrier.ts";
 import { createRuntimeProviderStreamFailure } from "#veryfront/runtime/provider-stream-error-provenance.ts";
@@ -165,6 +168,68 @@ describe("executor hosted agent bridge", () => {
       assertEquals(remoteReceived?.maxOutputTokens, 100);
       assertEquals(cleaned, 1);
       assertEquals(channels.broker.signal.aborted, false);
+    } finally {
+      await channels.close();
+    }
+  });
+
+  it("completes snapshot-marked output through the executor bridge", async () => {
+    const channels = pair(createExecutorAgentOperations({
+      preparedRuntimeHandle: handle,
+      startStream: () =>
+        Promise.resolve(sse([
+          { type: "text-delta", id: "text-1", delta: "{}" },
+          {
+            type: "message-finish",
+            objectEncoding: "snapshot",
+            object: {
+              captureStatus: "unsupported",
+              reasons: ["unsupported_bigint"],
+              value: "[unsupported bigint]",
+            },
+          },
+        ])),
+    }));
+    try {
+      const runtime = await createExecutorHostedChatRuntimeAgent({
+        channel: channels.broker,
+        preparedRuntimeHandle: handle,
+      }).stream({ messages, abortSignal: new AbortController().signal });
+      const chunks = await collect(runtime.toUIMessageStream());
+      assertEquals(chunks.at(-1)?.type, "finish");
+      assertEquals(chunks.some((chunk) => chunk.type === "error"), false);
+      assertEquals(channels.broker.signal.aborted, false);
+    } finally {
+      await channels.close();
+    }
+  });
+
+  it("sends one structured result copy across each executor wire boundary", async () => {
+    const payload = { value: "x".repeat(Math.floor(EXECUTOR_AGENT_MAX_PAYLOAD_BYTES * 0.55)) };
+    const channels = pair(createExecutorAgentOperations({
+      preparedRuntimeHandle: handle,
+      startStream: () =>
+        Promise.resolve(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              sendSSE(controller, encoder, {
+                type: "message-finish",
+                data: payload,
+                object: payload,
+              });
+              controller.close();
+            },
+          }),
+        ),
+    }));
+    try {
+      const runtime = await createExecutorHostedChatRuntimeAgent({
+        channel: channels.broker,
+        preparedRuntimeHandle: handle,
+      }).stream({ messages, abortSignal: new AbortController().signal });
+      const chunks = await collect(runtime.toUIMessageStream());
+      assertEquals(chunks.at(-1)?.type, "finish");
+      assertEquals(chunks.some((chunk) => chunk.type === "error"), false);
     } finally {
       await channels.close();
     }
@@ -1053,4 +1118,14 @@ describe("executor hosted agent bridge", () => {
       await channels.close();
     }
   });
+});
+
+it("serializes reconstructed structured output once at the broker SSE boundary", () => {
+  const payload = { category: "synthetic" };
+  const wire = new TextDecoder().decode(encodeExecutorBrokerEvent({
+    type: "message-finish",
+    data: payload,
+    object: payload,
+  }));
+  assertEquals(JSON.parse(wire.slice(6).trim()), { type: "message-finish", data: payload });
 });

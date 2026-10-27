@@ -410,7 +410,7 @@ describe("rendering/orchestrator/layout", () => {
       projectSlug: "apply-project",
       contentSourceId: "release-1",
       adapter: createLayoutSourceAdapter("/project/app/layout.tsx"),
-      config: validateVeryfrontConfig({ react: { version: "19.1.1" } }),
+      config: validateVeryfrontConfig({ react: { version: React.version } }),
       mode: "production",
       environment: "production",
       layoutCollector: {} as LayoutCollector,

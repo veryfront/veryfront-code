@@ -7,6 +7,7 @@
  * @module agent/runtime/model-tool-converter
  */
 import type { ToolDefinition } from "#veryfront/tool";
+import type { VeryfrontCloudSurfaceId } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
 import {
   getProviderNativeToolNames,
   resolveProviderNativeToolProvider,
@@ -24,6 +25,7 @@ import {
 } from "./provider-native-tools.ts";
 import {
   createMoonshotSchemaExpansionBudget,
+  createRootSchemaExpansionBudget,
   normalizeProviderToolInputSchema,
   sanitizeProviderToolSchema,
   selectProviderCompatibleTools,
@@ -31,6 +33,9 @@ import {
 
 export interface ConvertToolsToRuntimeToolsOptions {
   model?: string;
+  wireSurface?: VeryfrontCloudSurfaceId;
+  /** Model ID whose tool schema rules apply, when it differs from `model`. */
+  toolSchemaModel?: string;
   providerTools?: string[];
   requiredToolNames?: readonly string[];
 }
@@ -121,13 +126,15 @@ export function convertToolsToRuntimeTools(
     intrinsicReflectApply(intrinsicObjectKeys, Object, [providerNativeTools ?? {}]) as string[],
   );
   const compatibleTools = selectProviderCompatibleTools(tools, {
-    model: options?.model,
+    model: options?.toolSchemaModel ?? options?.model,
+    wireSurface: options?.wireSurface,
     requiredToolNames: options?.requiredToolNames,
   });
   // One budget for the whole tool set: a per-schema cap bounds each tool in isolation,
   // but a source advertising hundreds of admissible schemas would otherwise multiply
   // the worst-case `$ref` expansion by the tool count.
   const moonshotExpansionBudget = createMoonshotSchemaExpansionBudget();
+  const rootExpansionBudget = createRootSchemaExpansionBudget();
 
   for (let index = 0; index < compatibleTools.length; index++) {
     const def = compatibleTools[index];
@@ -142,8 +149,10 @@ export function convertToolsToRuntimeTools(
         description: def.description,
         inputSchema: createRuntimeJsonSchema(
           sanitizeProviderToolSchema(normalizeProviderToolInputSchema(def.parameters), {
-            model: options?.model,
+            model: options?.toolSchemaModel ?? options?.model,
+            wireSurface: options?.wireSurface,
             moonshotExpansionBudget,
+            rootExpansionBudget,
           }),
         ),
       }),

@@ -5,6 +5,7 @@
  * with the appropriate context.
  */
 
+import type { RunSchemaPairSnapshot } from "#veryfront/schemas/schema-identity.ts";
 import { getErrorMessage } from "#veryfront/errors";
 import { type HostRuntime, liveHostRuntime } from "#veryfront/platform/compat/process.ts";
 import { buildTaskContextEnv } from "#veryfront/runs/runtime-env.ts";
@@ -27,6 +28,155 @@ import type { TaskDefinition } from "./types.ts";
 
 const logger = baseLogger.component("task-runner");
 const INJECTED_TASK_ENV_JSON = "VERYFRONT_TASK_ENV_JSON";
+
+/** A task wrote outside `ctx.dataDir` on a runtime whose project filesystem is read-only. */
+export const TASK_FILESYSTEM_READ_ONLY_CODE = "TASK_FILESYSTEM_READ_ONLY";
+/** A task threw an error that no more specific code describes. */
+export const TASK_EXECUTION_FAILED_CODE = "TASK_EXECUTION_FAILED";
+
+const READ_ONLY_FS_HINT =
+  "The project filesystem is read-only in hosted runtimes; write scratch files under ctx.dataDir instead.";
+
+const TASK_DATA_DIR_PLACEHOLDER = "<task data dir>";
+// Task code shares this process and may replace built-ins before it fails.
+const reflectApply = Reflect.apply;
+const ownPropertyDescriptor = Object.getOwnPropertyDescriptor;
+// `test` and `replaceAll` dispatch through `exec` and `Symbol.replace`; these do not.
+const regExpExec = RegExp.prototype.exec;
+const stringIndexOf = String.prototype.indexOf;
+const stringSlice = String.prototype.slice;
+const stringLastIndexOf = String.prototype.lastIndexOf;
+const TASK_DATA_DIR_PREFIX = "veryfront-task-";
+const READ_ONLY_FS_PATTERN = /\(os error 30\)|\bEROFS\b|read-only file system/i;
+
+/** An own data property of a thrown value; an accessor or a hostile object yields nothing. */
+function ownErrorField(error: unknown, key: "code" | "message"): unknown {
+  try {
+    if (error === null || typeof error !== "object") return undefined;
+    const descriptor = reflectApply(ownPropertyDescriptor, Object, [error, key]) as
+      | PropertyDescriptor
+      | undefined;
+    return descriptor?.value;
+  } catch {
+    return undefined;
+  }
+}
+
+function isTaskDataDirPath(path: unknown): path is string {
+  if (typeof path !== "string") return false;
+  const slash = reflectApply(stringLastIndexOf, path, ["/"]) as number;
+  const backslash = reflectApply(stringLastIndexOf, path, ["\\"]) as number;
+  const name = reflectApply(stringSlice, path, [
+    (slash > backslash ? slash : backslash) + 1,
+  ]) as string;
+  return reflectApply(stringIndexOf, name, [TASK_DATA_DIR_PREFIX]) === 0 &&
+    name.length > TASK_DATA_DIR_PREFIX.length;
+}
+
+function isReadOnlyFilesystemError(error: unknown): boolean {
+  if (ownErrorField(error, "code") === "EROFS") return true;
+  const message = ownErrorField(error, "message");
+  return typeof message === "string" &&
+    reflectApply(regExpExec, READ_ONLY_FS_PATTERN, [message]) !== null;
+}
+
+function replaceAllLiteral(text: string, search: string, replacement: string): string {
+  let result = "";
+  let from = 0;
+  for (;;) {
+    const at = reflectApply(stringIndexOf, text, [search, from]) as number;
+    if (at === -1) break;
+    result += (reflectApply(stringSlice, text, [from, at]) as string) + replacement;
+    from = at + search.length;
+  }
+  return result + (reflectApply(stringSlice, text, [from]) as string);
+}
+
+/** The failure text for a result or a log line, without the run's scratch directory path. */
+function describeTaskFailure(error: unknown, dataDir: string | undefined): string {
+  const message = getErrorMessage(error);
+  if (dataDir === undefined || dataDir === "") return message;
+  // The temp root can be reached through a symlinked prefix, as on macOS. Two direct calls
+  // rather than a loop, since array iteration dispatches through a replaceable hook.
+  const unprefixed = replaceAllLiteral(message, `/private${dataDir}`, TASK_DATA_DIR_PLACEHOLDER);
+  return replaceAllLiteral(unprefixed, dataDir, TASK_DATA_DIR_PLACEHOLDER);
+}
+
+/** Creates and removes the per-run `ctx.dataDir`. */
+export interface TaskScratchFs {
+  makeTempDir(options: { prefix: string }): Promise<string>;
+  remove(path: string, options: { recursive: boolean }): Promise<void>;
+}
+
+/**
+ * Native scratch operations for Node and Bun, taken from `node:fs/promises` and `node:os`.
+ * The compat filesystem imports those lazily, after task modules have loaded and could have
+ * replaced them, so the runner captures them itself when it loads.
+ */
+export async function captureNodeScratchFs(): Promise<TaskScratchFs> {
+  const fsPromises = await import("node:fs/promises");
+  const os = await import("node:os");
+  const path = await import("node:path");
+  const mkdtemp = fsPromises.mkdtemp;
+  const rm = fsPromises.rm;
+  const tempRoot = os.tmpdir();
+  const separator = path.sep;
+  const tempRootPrefix = tempRoot.endsWith(separator) ? tempRoot : `${tempRoot}${separator}`;
+  return {
+    makeTempDir: ({ prefix }) =>
+      reflectApply(mkdtemp, fsPromises, [`${tempRootPrefix}${prefix}`]) as Promise<string>,
+    remove: (target, { recursive }) =>
+      reflectApply(rm, fsPromises, [target, { recursive, force: false }]),
+  };
+}
+
+// Task modules load after this module and may replace `Deno.makeTempDir`, `Deno.remove` or the
+// `node:fs` functions, which the compat wrappers look up per call. Capture the native ones now.
+const nativeDeno = (globalThis as { Deno?: typeof Deno }).Deno;
+const nativeMakeTempDir = nativeDeno?.makeTempDir;
+const nativeRemove = nativeDeno?.remove;
+
+function liveScratchFsForRuntime(): TaskScratchFs {
+  if (nativeMakeTempDir && nativeRemove) {
+    return {
+      makeTempDir: (options) => reflectApply(nativeMakeTempDir, nativeDeno, [options]),
+      remove: (target, options) => reflectApply(nativeRemove, nativeDeno, [target, options]),
+    };
+  }
+  const captured = captureNodeScratchFs();
+  // A failed capture surfaces when a run creates its directory, which leaves ctx.dataDir unset.
+  captured.catch(() => undefined);
+  return {
+    makeTempDir: async (options) => (await captured).makeTempDir(options),
+    remove: async (target, options) => (await captured).remove(target, options),
+  };
+}
+
+const liveScratchFs = liveScratchFsForRuntime();
+
+/**
+ * A process without temp-write access still runs tasks that need no scratch space, so a
+ * creation failure leaves `ctx.dataDir` unset. Only the error code is logged: native mkdtemp
+ * messages name the host temp root.
+ */
+async function createTaskDataDir(scratchFs: TaskScratchFs): Promise<string | undefined> {
+  let created: unknown;
+  try {
+    created = await scratchFs.makeTempDir({ prefix: TASK_DATA_DIR_PREFIX });
+  } catch (error) {
+    logger.warn("Task data directory could not be created; ctx.dataDir is unset", {
+      code: ownErrorField(error, "code"),
+    });
+    return undefined;
+  }
+  // Task modules load before this runs and can replace the platform's mkdtemp. The directory is
+  // removed recursively afterwards, so accept only a path whose last segment carries our prefix.
+  if (!isTaskDataDirPath(created)) {
+    logger.warn("Task data directory creation returned an unexpected path; ctx.dataDir is unset");
+    return undefined;
+  }
+  return created;
+}
 
 export interface RunnableTask {
   /** Stable task id used by CLI, triggers, and cloud runs. */
@@ -67,6 +217,9 @@ export interface RunTaskOptions {
   /** Cooperative cancellation propagated to the task context */
   signal?: AbortSignal;
 
+  /** @internal Called immediately before the admitted task code starts. */
+  onExecutionStarted?: () => void;
+
   /** 1-based attempt number exposed as `ctx.attempt`. Defaults to 1. */
   attempt?: number;
 
@@ -97,7 +250,10 @@ export interface TaskRunResult {
   retryable?: true;
 
   /** Machine-readable failure code, such as `INPUT_VALIDATION_FAILED`. */
-  errorCode?: typeof INPUT_VALIDATION_FAILED_CODE;
+  errorCode?:
+    | typeof INPUT_VALIDATION_FAILED_CODE
+    | typeof TASK_FILESYSTEM_READ_ONLY_CODE
+    | typeof TASK_EXECUTION_FAILED_CODE;
 
   /** Validation errors for an `INPUT_VALIDATION_FAILED` failure. */
   errorDetail?: { errors: SchemaValidationError[] };
@@ -173,6 +329,8 @@ async function resolveTaskInput(
 export async function runTask(
   options: RunTaskOptions,
   host: HostRuntime = liveHostRuntime(),
+  scratchFs: TaskScratchFs = liveScratchFs,
+  preparedSchemas?: Extract<RunSchemaPairSnapshot, { state: "captured" }>,
 ): Promise<TaskRunResult> {
   const {
     task,
@@ -183,15 +341,16 @@ export async function runTask(
     projectId,
     environmentId,
     signal,
+    onExecutionStarted,
     attempt = 1,
     envAllowlist,
     debug = false,
   } = options;
   const start = performance.now();
-  const { inputSchema, outputSchema } = task.definition;
   let schemaViolation: SchemaViolation | null = null;
   let inputSchemaSha256: string | null = null;
   let outputSchemaSha256: string | null = null;
+  let dataDir: string | undefined;
 
   const recordViolation = (violation: SchemaViolation): void => {
     // One record per run: the first mismatch detected wins.
@@ -206,14 +365,20 @@ export async function runTask(
   };
 
   try {
+    const definition = task.definition;
+    const { inputSchema, outputSchema, run } = definition;
     signal?.throwIfAborted();
 
     if (debug) {
       logger.info(`Running task "${task.id}" (${task.name})`);
     }
 
-    inputSchemaSha256 = await schemaIdentitySha256(inputSchema);
-    outputSchemaSha256 = await schemaIdentitySha256(outputSchema);
+    inputSchemaSha256 = preparedSchemas
+      ? preparedSchemas.input?.sha256 ?? null
+      : await schemaIdentitySha256(inputSchema);
+    outputSchemaSha256 = preparedSchemas
+      ? preparedSchemas.output?.sha256 ?? null
+      : await schemaIdentitySha256(outputSchema);
     const identities = { inputSchemaSha256, outputSchemaSha256 };
 
     const inputCheck = await resolveTaskInput(inputSchema, input, config);
@@ -243,6 +408,7 @@ export async function runTask(
     const allEnv = host.env.toObject();
     assertInjectedTaskEnvIsValid(allEnv);
     const env = buildTaskContextEnv(allEnv, envAllowlist);
+    dataDir = await createTaskDataDir(scratchFs);
     const ctx: TaskContext = {
       ...(runChild === undefined ? {} : { runChild }),
       env,
@@ -253,11 +419,13 @@ export async function runTask(
       environmentId,
       ...(signal === undefined ? {} : { signal }),
       attempt,
+      ...(dataDir === undefined ? {} : { dataDir }),
     };
 
     // Schema identity and input validation await; a cancel in that window must not start the task.
     signal?.throwIfAborted();
-    let result = await task.definition.run(ctx);
+    onExecutionStarted?.();
+    let result = await reflectApply(run, definition, [ctx]);
     if (outputSchema !== undefined) {
       let check: Awaited<ReturnType<typeof checkDeclaredSchema>>;
       try {
@@ -283,18 +451,34 @@ export async function runTask(
     return { success: true, result, durationMs, ...identities, schemaViolation };
   } catch (error) {
     const durationMs = elapsedMilliseconds(start);
-    const errorMsg = getErrorMessage(error);
+    const readOnly = isReadOnlyFilesystemError(error);
+    const failure = describeTaskFailure(error, dataDir);
+    const errorMsg = readOnly ? `${failure}. ${READ_ONLY_FS_HINT}` : failure;
 
     logger.error(`Task "${task.id}" failed: ${errorMsg}`);
 
     return {
       success: false,
       error: errorMsg,
+      errorCode: readOnly ? TASK_FILESYSTEM_READ_ONLY_CODE : TASK_EXECUTION_FAILED_CODE,
       durationMs,
       ...(isRetryableError(error) ? { retryable: true as const } : {}),
       inputSchemaSha256,
       outputSchemaSha256,
       schemaViolation,
     };
+  } finally {
+    if (dataDir !== undefined) {
+      // Awaited in a try block rather than through the promise's own methods, which task
+      // code may have replaced.
+      try {
+        await scratchFs.remove(dataDir, { recursive: true });
+      } catch (error) {
+        logger.warn("Task data directory cleanup failed", {
+          target: `task:${task.id}`,
+          error: describeTaskFailure(error, dataDir),
+        });
+      }
+    }
   }
 }

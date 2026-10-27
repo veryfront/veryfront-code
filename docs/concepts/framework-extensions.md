@@ -64,7 +64,4 @@ boundary: v1 supports HTTP(S) artifact roots and HTTP(S) MLflow artifact proxy
 endpoints, not direct uploads to local filesystem roots or backend-specific
 schemes such as `dbfs://`, `gs://`, or `wasbs://`.
 
-Future vendor integrations should be sibling packages behind the same contract.
-For example, Braintrust should be added as a separate
-`@veryfront/ext-eval-report-*` exporter rather than as project-specific logic in
-the MLflow exporter.
+Keep each vendor exporter in a separate package behind the shared contract.

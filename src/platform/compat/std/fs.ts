@@ -223,7 +223,7 @@ function normalizePath(path: string): string {
 function canonicalPathKey(path: string): string {
   let normalized = path.replaceAll("\\", "/");
   if (normalized.length > 1 && !/^[A-Za-z]:\/$/.test(normalized)) {
-    normalized = normalized.replace(/\/+$/, "");
+    normalized = normalized.replace(/(?<!\/)\/+$/, "");
   }
   return windowsHost ? normalized.toLowerCase() : normalized;
 }

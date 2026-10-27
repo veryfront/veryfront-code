@@ -1,5 +1,9 @@
+import {
+  hostedAcceptedChildEvidenceFromCapability,
+  hostedRunCanResolveAcceptedChildInput,
+} from "#veryfront/agent/hosted/child-run-event-writer-token.ts";
 import "#veryfront/schemas/_test-setup.ts";
-import { assert, assertEquals } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   parseManagedAgUiAgentIngress,
@@ -386,4 +390,63 @@ describe("managed agent ingress", () => {
       "must-stay-broker-private",
     );
   });
+});
+
+it("installs parent-scoped accepted input evidence on managed writer capabilities", async () => {
+  const canonicalRunId = "11111111-1111-4111-8111-111111111111";
+  const writerToken = `header.${
+    btoa(JSON.stringify({
+      projectId,
+      runId: "run_root_1",
+      workerGeneration: { projectId, runId: "run_root_1", canonicalRunId },
+    }))
+  }.signature`;
+  const terminalToken = `header.${
+    btoa(JSON.stringify({
+      tokenUse: "run_event_writer",
+      writerPurpose: "current_run_terminal",
+      runId: "run_root_1",
+      canonicalRunId,
+      dispatchNonce: "synthetic-dispatch",
+    }))
+  }.signature`;
+  const result = await parseManagedDurableAgentIngress(
+    new Request("https://agent.example.test/api/runs", {
+      method: "POST",
+      headers: {
+        "X-Veryfront-Run-Event-Token": writerToken,
+        "X-Veryfront-Run-Terminal-Token": terminalToken,
+      },
+      body: JSON.stringify({
+        messages: [],
+        context: { conversationId, projectId, branchId: "branch-1" },
+        durableRootRun: { runId: "run_root_1", messageId },
+      }),
+    }),
+    { authenticate, verifyProjectAccess, verifyRunEventAppendToken: () => Promise.resolve(true) },
+  );
+  if (result instanceof Response) {
+    throw new Error(`Expected managed ingress: ${await result.text()}`);
+  }
+  const calls: Request[] = [];
+  const capability = result.broker.createRunEventWriterCapability({
+    apiUrl: "https://api.example.test/v1",
+    fetch: (url, init) => {
+      calls.push(new Request(url, init));
+      return Promise.resolve(Response.json({ data: [], page_info: { next: null } }));
+    },
+  });
+  assertEquals(hostedRunCanResolveAcceptedChildInput(capability, "run_root_1", projectId), true);
+  const evidence = hostedAcceptedChildEvidenceFromCapability(capability, "run_root_1", projectId);
+  assertThrows(() =>
+    hostedAcceptedChildEvidenceFromCapability(capability, "run_root_1", "foreign-project")
+  );
+  assertEquals(await evidence.readParentToolResults(), []);
+  assertEquals(calls.length, 1);
+  assert(calls[0]);
+  assertEquals(
+    calls[0].url.startsWith(`https://api.example.test/v1/runs/${canonicalRunId}/events?`),
+    true,
+  );
+  assertEquals(calls[0].headers.get("Authorization"), "Bearer broker-auth-secret");
 });

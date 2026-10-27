@@ -1,3 +1,4 @@
+import { createVeryfrontCloudInferenceModelResolver } from "#veryfront/agent/hosted/inference-credential.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { installMockFetch, restoreMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
@@ -309,6 +310,56 @@ describe("provider/veryfront-cloud", () => {
     assertEquals(capturedAuthorization, "Bearer run-scoped-inference-token");
     assertEquals(projectVisibleToken, "vf_test_provider");
     assertEquals(extensionVisibleCredential, undefined);
+  });
+
+  it("reads renewed inference authority for each request from a retained child model", async () => {
+    setCloudBootstrap();
+    let credential = "child-inference-1";
+    const observed: string[] = [];
+    installMockFetch((input, init) => {
+      const request = new Request(input, init);
+      observed.push(request.headers.get("Authorization") ?? "");
+      return Promise.resolve(
+        new Response(
+          readableStreamFrom([
+            new TextEncoder().encode('data: {"choices":[{"finish_reason":"stop"}]}\n\n'),
+            new TextEncoder().encode("data: [DONE]\n\n"),
+          ]),
+          { headers: { "content-type": "text/event-stream" } },
+        ),
+      );
+    });
+    const resolver = createVeryfrontCloudInferenceModelResolver(() => credential);
+    const model = resolver("veryfront-cloud/openai/gpt-test")!;
+    await drainStream((await model.doStream({ prompt: [] })).stream);
+    assertEquals(observed.every((token) => token === "Bearer child-inference-1"), true);
+    observed.length = 0;
+    credential = "child-inference-2";
+    await drainStream((await model.doStream({ prompt: [] })).stream);
+    assertEquals(observed.length > 0, true);
+    assertEquals(observed.every((token) => token === "Bearer child-inference-2"), true);
+  });
+
+  it("rejects a retained child model before HTTP when its credential reader is unavailable", async () => {
+    setCloudBootstrap();
+    let active = true;
+    let requests = 0;
+    installMockFetch(() => {
+      requests++;
+      throw new Error("unexpected HTTP request");
+    });
+    const resolver = createVeryfrontCloudInferenceModelResolver(() => {
+      if (!active) throw new Error("child authority unavailable");
+      return "child-inference";
+    });
+    const model = resolver("veryfront-cloud/openai/gpt-test")!;
+    active = false;
+    await assertRejects(
+      async () => await model.doStream({ prompt: [] }),
+      Error,
+      "child authority unavailable",
+    );
+    assertEquals(requests, 0);
   });
 
   it("does not expose explicit inference authority to mutable runtime config hooks", async () => {
@@ -645,7 +696,7 @@ describe("provider/veryfront-cloud", () => {
       assertEquals(runtime.calls(), ["prepare", "generate", "stream"]);
       assertEquals(model.modelId, "private-field-runtime");
       assertEquals(model.provider, "private-provider");
-      assertEquals(model.runtimeCapabilities, { toolCalling: true });
+      assertEquals(model.runtimeCapabilities, { toolCalling: true, streamRequiresFinish: true });
       assertEquals(model._generateViaStream, true);
       assertEquals(model.modelProvider, "openai");
     } finally {
@@ -2114,6 +2165,75 @@ describe("provider/veryfront-cloud served catalog loading", () => {
     );
   });
 
+  it("drops reasoning beside function tools when the catalog serves OpenAI only on chat completions", async () => {
+    setCloudBootstrap();
+    // Every OpenAI row is chat-completions only, so the provider is not native
+    // to the OpenAI surface and builds through the chat-only path. The row's
+    // function-tool reasoning capability must still reach that request builder.
+    const catalog = () =>
+      Response.json({
+        models: [{
+          id: "gpt-5.5",
+          modelId: "openai/gpt-5.5",
+          provider: "openai",
+          surface: "openai",
+          operations: ["chat-completions"],
+          aliases: [],
+          capabilities: {
+            thinking: true,
+            reasoning: true,
+            transport: "chat-completions",
+            chat_completions_reasoning_with_function_tools: false,
+          },
+        }],
+      });
+    const bodies: Array<Record<string, unknown>> = [];
+    const encoder = new TextEncoder();
+    installMockFetch(
+      (async (input: URL | Request | string, init?: RequestInit) => {
+        const request = new Request(input, init);
+        if (request.url.endsWith("/ai/models")) return catalog();
+        bodies.push(JSON.parse(await request.text()) as Record<string, unknown>);
+        return new Response(
+          readableStreamFrom([
+            encoder.encode('data: {"choices":[{"delta":{"content":"Hi"}}]}\n\n'),
+            encoder.encode('data: {"choices":[{"finish_reason":"stop"}]}\n\n'),
+            encoder.encode("data: [DONE]\n\n"),
+          ]),
+          { status: 200, headers: { "content-type": "text/event-stream" } },
+        );
+      }) as typeof fetch,
+    );
+
+    const model = resolveModel("veryfront-cloud/openai/gpt-5.5") as ModelRuntime;
+    await model.prepare?.();
+    assertEquals(readVeryfrontCloudModelFacts(model)?.native, false);
+    // The registry-backed compatible builder reads the "openai-compatible" bucket.
+    assertEquals(readVeryfrontCloudModelFacts(model)?.openAIChatProviderName, "openai-compatible");
+
+    for (const withTools of [true, false]) {
+      const result = await model.doStream({
+        prompt: [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
+        reasoning: { enabled: true, effort: "high" },
+        ...(withTools
+          ? {
+            tools: [{
+              type: "function",
+              name: "tool_search",
+              inputSchema: { type: "object", properties: { query: { type: "string" } } },
+            }],
+          }
+          : {}),
+      } as never);
+      await drainStream(result.stream);
+    }
+
+    assertEquals(bodies.length, 2);
+    assertEquals((bodies[0]?.tools as unknown[] | undefined)?.length, 1);
+    assertEquals(bodies[0]?.reasoning_effort, undefined);
+    assertEquals(bodies[1]?.reasoning_effort, "high");
+  });
+
   it("does not settle a model on a caller that stopped waiting", async () => {
     setCloudBootstrap();
     let release: (() => void) | undefined;
@@ -2186,6 +2306,39 @@ describe("provider/veryfront-cloud served catalog loading", () => {
     await streamOnce(model);
 
     assertEquals(calls(requests), ["GET /ai/models", "POST /ai/v1/chat/completions"]);
+  });
+
+  it("keeps the served limit in a built model's facts after its catalog scope is evicted", async () => {
+    setCloudBootstrap();
+    __setVeryfrontCloudCatalogForScopeForTests({
+      apiBaseUrl: "https://api.veryfront.com",
+      apiToken: "vf_test_provider",
+      projectSlug: "provider-test-project",
+    }, {
+      models: [{
+        id: "mistral-small-2503",
+        modelId: "mistral/mistral-small-2503",
+        provider: "mistral",
+        surface: "openai",
+        operations: ["chat-completions"],
+        capabilities: { limit: { context: 32_000, output: 4_000 } },
+      }],
+    });
+    const model = resolveModel("veryfront-cloud/mistral/mistral-small-2503") as ModelRuntime;
+    await model.prepare?.();
+    assertEquals(readVeryfrontCloudModelFacts(model)?.servedLimit, {
+      context: 32_000,
+      output: 4_000,
+    });
+    // The bounded catalog cache can drop this scope; the limit stays recorded.
+    __resetVeryfrontCloudCatalogForTests();
+    setCloudBootstrap();
+    installGateway(() => new Response("unavailable", { status: 503 }));
+    await Promise.resolve(model.prepare?.()).catch(() => {});
+    assertEquals(readVeryfrontCloudModelFacts(model)?.servedLimit, {
+      context: 32_000,
+      output: 4_000,
+    });
   });
 
   it("still refuses a model a fresh catalog does not list", () => {
@@ -2266,7 +2419,7 @@ describe("provider/veryfront-cloud served catalog loading", () => {
 
     // A model constructed now, with the catalog loaded, is the reference.
     const warm = resolveModel("veryfront-cloud/acme/acme-claude") as ModelRuntime;
-    assertEquals(coldCapabilities, { structuredOutput: true });
+    assertEquals(coldCapabilities, { structuredOutput: true, streamRequiresFinish: true });
     assertEquals(
       JSON.stringify(warm.runtimeCapabilities) === JSON.stringify(coldCapabilities),
       false,
@@ -2274,6 +2427,66 @@ describe("provider/veryfront-cloud served catalog loading", () => {
     assertEquals(model.runtimeCapabilities, warm.runtimeCapabilities);
     assertEquals(model.modelProvider, "acme");
     assertEquals(readVeryfrontCloudModelFacts(model)?.surface, "anthropic");
+  });
+
+  it("records served catalog metadata when Array iteration tries to hide forwarded modelProvider", async () => {
+    setCloudBootstrap();
+    const requests = installGateway(() =>
+      Response.json({
+        models: [{
+          id: "acme-claude",
+          modelId: "acme/acme-claude",
+          provider: "acme",
+          surface: "anthropic",
+          operations: ["messages"],
+          aliases: [],
+          capabilities: {},
+        }],
+      })
+    );
+    const recorded: AgentRunEvent[] = [];
+    const originalArrayIterator = Array.prototype[Symbol.iterator];
+    Object.defineProperty(Array.prototype, Symbol.iterator, {
+      configurable: true,
+      value: function* (this: unknown[]) {
+        for (let index = 0; index < this.length; index++) {
+          const value = this[index];
+          if (value === "modelProvider") continue;
+          yield value;
+        }
+      },
+    });
+    try {
+      const model = resolveModel("veryfront-cloud/acme/acme-claude") as ModelRuntime;
+      await runWithMandatoryRunEventSink(
+        (event) => {
+          recorded.push(event);
+        },
+        async () => {
+          try {
+            await generateText({ model, messages: [{ role: "user", content: "Hi" }] });
+          } catch {
+            // The chat fixture is enough to prove dispatch; this assertion targets the
+            // pre-dispatch capture and forwarded model metadata.
+          }
+        },
+      );
+      assertEquals(model.modelProvider, "acme");
+    } finally {
+      Object.defineProperty(Array.prototype, Symbol.iterator, {
+        configurable: true,
+        writable: true,
+        value: originalArrayIterator,
+      });
+    }
+
+    const context = recorded.find((event) =>
+      event.type === "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED"
+    ) as
+      | { model?: { modelProvider?: string } }
+      | undefined;
+    assertEquals(calls(requests), ["GET /ai/models", "POST /ai/v1/messages"]);
+    assertEquals(context?.model?.modelProvider, "acme");
   });
 
   it("records the transport the request is sent with, from a cold start", async () => {

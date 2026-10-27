@@ -13,12 +13,17 @@ import {
   assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { type RemoteToolSource, tool, toolRegistry } from "#veryfront/tool";
+import {
+  loadRemoteToolsFromSource,
+  type RemoteToolSource,
+  tool,
+  toolRegistry,
+} from "#veryfront/tool";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { VeryfrontError } from "#veryfront/errors";
 import { getEffectiveAgentSystem } from "./runtime/effective-agent-system.ts";
 import { markRuntimeLocalTool } from "./runtime/local-tool.ts";
-import { getAvailableTools } from "./runtime/tool-helpers.ts";
+import { executeConfiguredTool, getAvailableTools, isDynamicTool } from "./runtime/tool-helpers.ts";
 import { agentRegistry } from "./composition/index.ts";
 import { agent, createEphemeralAgent, createEphemeralAgentWithRuntimeOptions } from "./factory.ts";
 import { resolveSkillToolDisposition } from "./skill-tool-disposition.ts";
@@ -34,9 +39,6 @@ import { DEFAULT_MAX_BODY_SIZE_BYTES } from "#veryfront/utils/constants/index.ts
 import { createAgentKnowledgeTool } from "#veryfront/agent/runtime/knowledge-tools.ts";
 
 const EXPECTED_SKILL_TOOL_NAMES = [
-  "execute_skill_script",
-  "load_skill",
-  "load_skill_reference",
   "veryfront__execute_skill_script",
   "veryfront__load_skill",
   "veryfront__load_skill_reference",
@@ -72,7 +74,10 @@ function expectAgentToolMap(
   return tools;
 }
 
-function createLoadSkillModel(skillId: string): ModelRuntime {
+function createLoadSkillModel(
+  skillId: string,
+  toolName = "veryfront__load_skill",
+): ModelRuntime {
   let callCount = 0;
   return {
     provider: "hosted",
@@ -84,7 +89,7 @@ function createLoadSkillModel(skillId: string): ModelRuntime {
           content: [{
             type: "tool-call",
             toolCallId: `load-${skillId}`,
-            toolName: "load_skill",
+            toolName,
             input: JSON.stringify({ skillId }),
           }],
           finishReason: "tool-calls",
@@ -135,7 +140,7 @@ describe("agent factory", () => {
     toolRegistryInternal.clearAll();
   });
 
-  it("ignores another agent's owned search_knowledge tool for tools true knowledge agents", () => {
+  it("ignores another agent's owned veryfront__search_knowledge tool for tools true knowledge agents", () => {
     toolRegistryInternal.register("search_knowledge", {
       ...tool({
         id: "search_knowledge",
@@ -157,7 +162,7 @@ describe("agent factory", () => {
     assertEquals(assistant.id, "knowledge-owner");
   });
 
-  it("rejects visible registered search_knowledge tools for tools true knowledge agents", () => {
+  it("keeps visible bare search_knowledge tools beside scoped framework knowledge", async () => {
     for (
       const [registeredOwner, expectedAgentId] of [
         [undefined, "global-collision-agent"],
@@ -175,17 +180,30 @@ describe("agent factory", () => {
         ...(registeredOwner === undefined ? {} : { ownerAgentId: registeredOwner }),
       });
 
-      assertThrows(
-        () =>
-          agent({
-            id: expectedAgentId,
-            system: "Use scoped knowledge.",
-            tools: true,
-            knowledge: true,
-            skills: [],
-          }),
-        Error,
-        "registered search_knowledge tool conflicts with the agent knowledge scope",
+      const model = scriptedModel([{ text: "done" }], {
+        modelId: `hosted/${expectedAgentId}`,
+        only: "generate",
+      });
+      const assistant = agent({
+        id: expectedAgentId,
+        model: `hosted/${expectedAgentId}`,
+        system: "Use scoped knowledge.",
+        tools: true,
+        toolLoading: "eager",
+        knowledge: true,
+        skills: [],
+        resolveModelTransport: async () => ({ model }),
+      });
+
+      await assistant.generate({ input: "List the available knowledge tools" });
+
+      assertEquals(
+        model.toolNames(0).filter((name) => name === "search_knowledge").length,
+        1,
+      );
+      assertEquals(
+        model.toolNames(0).filter((name) => name === "veryfront__search_knowledge").length,
+        1,
       );
     }
   });
@@ -209,7 +227,7 @@ describe("agent factory", () => {
     await assistant.generate({ input: "List available knowledge tools" });
 
     const names = model.toolNames(0);
-    assertEquals(names.filter((name) => name === "search_knowledge").length, 1);
+    assertEquals(names.filter((name) => name === "veryfront__search_knowledge").length, 1);
   });
 
   it("loads one deferred framework knowledge schema for tools true agents", async () => {
@@ -217,8 +235,8 @@ describe("agent factory", () => {
       {
         toolCalls: [{
           id: "load-knowledge",
-          name: "tool_search",
-          input: { query: "search_knowledge" },
+          name: "veryfront__tool_search",
+          input: { query: "veryfront__search_knowledge" },
         }],
       },
       { text: "done" },
@@ -240,11 +258,17 @@ describe("agent factory", () => {
 
     await assistant.generate({ input: "Load the knowledge tool" });
 
-    assertEquals(model.toolNames(0).filter((name) => name === "search_knowledge").length, 0);
-    assertEquals(model.toolNames(1).filter((name) => name === "search_knowledge").length, 1);
+    assertEquals(
+      model.toolNames(0).filter((name) => name === "veryfront__search_knowledge").length,
+      0,
+    );
+    assertEquals(
+      model.toolNames(1).filter((name) => name === "veryfront__search_knowledge").length,
+      1,
+    );
   });
 
-  it("keeps tools true knowledge scoped when search_knowledge registers later", async () => {
+  it("keeps tools true knowledge scoped when veryfront__search_knowledge registers later", async () => {
     let modelCalls = 0;
     let unscopedCalls = 0;
     const assistant = agent({
@@ -265,7 +289,7 @@ describe("agent factory", () => {
                 content: [{
                   type: "tool-call",
                   toolCallId: "search-late-knowledge",
-                  toolName: "search_knowledge",
+                  toolName: "veryfront__search_knowledge",
                   input: JSON.stringify({ query: "support", limit: 1 }),
                 }],
                 finishReason: "tool-calls",
@@ -304,7 +328,7 @@ describe("agent factory", () => {
     assertEquals(JSON.stringify(response.toolCalls).includes("unscoped"), false);
   });
 
-  it("rejects late sibling remote search_knowledge collisions before dispatch", async () => {
+  it("rejects late sibling remote veryfront__search_knowledge collisions before dispatch", async () => {
     let siblingListCalls = 0;
     let siblingExecuted = false;
     const siblingSource: RemoteToolSource = {
@@ -314,7 +338,7 @@ describe("agent factory", () => {
         return Promise.resolve(
           siblingListCalls >= 3
             ? [{
-              name: "search_knowledge",
+              name: "veryfront__search_knowledge",
               description: "Late sibling knowledge search",
               parameters: { type: "object", properties: {} },
             }]
@@ -330,7 +354,7 @@ describe("agent factory", () => {
       {
         toolCalls: [{
           id: "late-sibling-search",
-          name: "search_knowledge",
+          name: "veryfront__search_knowledge",
           input: { query: "support", limit: 1 },
         }],
       },
@@ -358,12 +382,12 @@ describe("agent factory", () => {
     assertEquals(response.toolCalls[0]?.status, "error");
     assertStringIncludes(
       response.toolCalls[0]?.error ?? "",
-      'Remote tool "search_knowledge" conflicts with the agent knowledge scope',
+      'Remote tool "veryfront__search_knowledge" conflicts with the agent knowledge scope',
     );
     assertEquals(siblingExecuted, false);
   });
 
-  it("keeps streamed tools true knowledge scoped when search_knowledge registers later", async () => {
+  it("keeps streamed tools true knowledge scoped when veryfront__search_knowledge registers later", async () => {
     let modelCalls = 0;
     let unscopedCalls = 0;
     const assistant = agent({
@@ -389,7 +413,7 @@ describe("agent factory", () => {
                     controller.enqueue({
                       type: "tool-call",
                       toolCallId: "search-late-stream-knowledge",
-                      toolName: "search_knowledge",
+                      toolName: "veryfront__search_knowledge",
                       input: { query: "support", limit: 1 },
                     });
                     controller.enqueue({
@@ -450,7 +474,7 @@ describe("agent factory", () => {
     const assistant = agent({
       id: "map-scoped-knowledge",
       system: "Use scoped knowledge.",
-      tools: { search_knowledge: true },
+      tools: { veryfront__search_knowledge: true },
       knowledge: {
         "knowledge/public/**": true,
         "knowledge/private/**": false,
@@ -462,13 +486,13 @@ describe("agent factory", () => {
       throw new Error("Expected a concrete scoped knowledge tool map");
     }
 
-    const scopedKnowledgeTool = assistant.config.tools.search_knowledge;
+    const scopedKnowledgeTool = assistant.config.tools.veryfront__search_knowledge;
     if (!scopedKnowledgeTool || typeof scopedKnowledgeTool !== "object") {
-      throw new Error("Expected scoped search_knowledge tool");
+      throw new Error("Expected scoped veryfront__search_knowledge tool");
     }
-    assertEquals(scopedKnowledgeTool === toolRegistry.get("search_knowledge"), false);
+    assertEquals(scopedKnowledgeTool === toolRegistry.get("veryfront__search_knowledge"), false);
     const definitions = await getAvailableTools(assistant.config.tools);
-    assertEquals(definitions.map((definition) => definition.name), ["search_knowledge"]);
+    assertEquals(definitions.map((definition) => definition.name), ["veryfront__search_knowledge"]);
     const result = await scopedKnowledgeTool.execute({ query: "policy", limit: 1 });
     assertEquals(unscopedCalls, 0);
     assertEquals(JSON.stringify(result).includes("unscoped"), false);
@@ -487,22 +511,22 @@ describe("agent factory", () => {
 
     const assistant = createEphemeralAgentWithRuntimeOptions({
       ...config,
-      tools: { search_knowledge: knowledgeTool },
+      tools: { veryfront__search_knowledge: knowledgeTool },
     }, { preserveToolCatalog: true });
 
-    assertEquals(assistant.config.tools, { search_knowledge: knowledgeTool });
+    assertEquals(assistant.config.tools, { veryfront__search_knowledge: knowledgeTool });
   });
 
   it("allows hosted boolean remote knowledge selections when preserving a prevalidated catalog", () => {
     const assistant = createEphemeralAgentWithRuntimeOptions({
       id: "prevalidated-remote-knowledge",
       system: "Use hosted knowledge.",
-      tools: { search_knowledge: true },
+      tools: { veryfront__search_knowledge: true },
       knowledge: true,
       skills: [],
     }, { preserveToolCatalog: true });
 
-    assertEquals(assistant.config.tools, { search_knowledge: true });
+    assertEquals(assistant.config.tools, { veryfront__search_knowledge: true });
   });
 
   it("rejects custom knowledge collisions when preserving a prevalidated catalog", () => {
@@ -518,24 +542,24 @@ describe("agent factory", () => {
         createEphemeralAgentWithRuntimeOptions({
           id: "prevalidated-custom-knowledge",
           system: "Use scoped knowledge.",
-          tools: { search_knowledge: customKnowledgeTool },
+          tools: { veryfront__search_knowledge: customKnowledgeTool },
           knowledge: true,
           skills: [],
         }, { preserveToolCatalog: true }),
       Error,
-      "custom search_knowledge tool conflicts with the agent knowledge scope",
+      "reserved integration tool namespace",
     );
   });
 
-  it("preserves knowledge denials and rejects concrete search_knowledge collisions", () => {
+  it("preserves knowledge denials and rejects concrete veryfront__search_knowledge collisions", () => {
     const denied = agent({
       id: "denied-scoped-knowledge",
       system: "Do not search knowledge.",
-      tools: { search_knowledge: false },
+      tools: { veryfront__search_knowledge: false },
       knowledge: true,
       skills: [],
     });
-    assertEquals(denied.config.tools, { search_knowledge: false });
+    assertEquals(denied.config.tools, { veryfront__search_knowledge: false });
 
     const customKnowledgeTool = tool({
       id: "search_knowledge",
@@ -549,12 +573,12 @@ describe("agent factory", () => {
         agent({
           id: "custom-knowledge-collision",
           system: "Use scoped knowledge.",
-          tools: { search_knowledge: customKnowledgeTool },
+          tools: { veryfront__search_knowledge: customKnowledgeTool },
           knowledge: true,
           skills: [],
         }),
       Error,
-      "custom search_knowledge tool conflicts with the agent knowledge scope",
+      "reserved integration tool namespace",
     );
   });
 
@@ -619,7 +643,7 @@ describe("agent factory", () => {
     });
     assertEquals(
       withSkills.filter((t) => isSkillInfrastructureToolId(t.name)).map((t) => t.name).sort(),
-      ["execute_skill_script", "load_skill", "load_skill_reference"],
+      EXPECTED_SKILL_TOOL_NAMES,
     );
   });
 
@@ -650,7 +674,8 @@ describe("agent factory", () => {
     });
 
     assertEquals(Object.keys(assistant.config.tools ?? {}).sort(), EXPECTED_SKILL_TOOL_NAMES);
-    assertEquals(toolRegistry.has("load_skill"), true);
+    assertEquals(toolRegistry.has("load_skill"), false);
+    assertEquals(toolRegistry.has("veryfront__load_skill"), true);
     const effectiveSystem = getEffectiveAgentSystem(assistant);
     const prompt = await resolveSystemText(effectiveSystem);
     assertStringIncludes(
@@ -737,7 +762,8 @@ describe("agent factory", () => {
     if (!allowlisted.config.tools || allowlisted.config.tools === true) {
       throw new Error("Expected a concrete skill tool map");
     }
-    assertEquals(typeof allowlisted.config.tools.load_skill, "object");
+    assertEquals(allowlisted.config.tools.load_skill, undefined);
+    assertEquals(typeof allowlisted.config.tools.veryfront__load_skill, "object");
     assertThrows(
       () =>
         agent({
@@ -810,6 +836,42 @@ description: Excluded skill
     assertEquals(excludedReads, 0);
   });
 
+  it("rejects the legacy loader spelling at the provider dispatch boundary", async () => {
+    let selectedReads = 0;
+    const adapter = createSkillTestAdapter({
+      "/test/skills/selected/SKILL.md": `---
+name: selected
+description: Selected skill
+---
+# Selected`,
+    });
+    registerSkill("selected", {
+      ...createSkill("selected", "Selected skill"),
+      fsAdapter: {
+        ...adapter,
+        async readFileBytesWithinLimit(path, byteLimit) {
+          selectedReads++;
+          return await adapter.readFileBytesWithinLimit!(path, byteLimit);
+        },
+      },
+    });
+    const assistant = agent({
+      id: "legacy-loader-dispatch",
+      model: "hosted/legacy-load-skill",
+      system: "Load a skill.",
+      skills: ["selected"],
+      resolveModelTransport: async () => ({
+        model: createLoadSkillModel("selected", "load_skill"),
+      }),
+    });
+
+    const response = await assistant.generate({ input: "Load selected" });
+
+    assertEquals(response.toolCalls[0]?.status, "error");
+    assertStringIncludes(response.toolCalls[0]?.error ?? "", "not available");
+    assertEquals(selectedReads, 0);
+  });
+
   it("does not let runtime state spoof tools true skill authorization", async () => {
     let excludedReads = 0;
     const selectedAdapter = createSkillTestAdapter({
@@ -870,7 +932,8 @@ description: Excluded skill
     });
 
     assertEquals(Object.keys(assistant.config.tools ?? {}).sort(), EXPECTED_SKILL_TOOL_NAMES);
-    assertEquals(toolRegistry.has("load_skill"), true);
+    assertEquals(toolRegistry.has("load_skill"), false);
+    assertEquals(toolRegistry.has("veryfront__load_skill"), true);
     assertEquals(toolRegistry.has("load-skill"), false);
   });
 
@@ -890,8 +953,10 @@ description: Excluded skill
 
     const tools = expectAgentToolMap(assistant.config.tools);
     assertStrictEquals(tools.load_skill, runtimeLoadSkill);
-    assertEquals(typeof tools.load_skill_reference, "object");
-    assertEquals(typeof tools.execute_skill_script, "object");
+    assertEquals(tools.load_skill_reference, undefined);
+    assertEquals(tools.execute_skill_script, undefined);
+    assertEquals(typeof tools.veryfront__load_skill_reference, "object");
+    assertEquals(typeof tools.veryfront__execute_skill_script, "object");
     assertEquals(
       typeof tools.veryfront__load_skill === "object" &&
         tools.veryfront__load_skill.id,
@@ -920,8 +985,9 @@ description: Excluded skill
 
     const prompt = await resolveSystemText(getEffectiveAgentSystem(assistant));
 
-    assertStringIncludes(prompt, "Call veryfront__load_skill({ inventory:");
-    assertEquals(prompt.includes("Call load_skill({ inventory:"), false);
+    assertStringIncludes(prompt, "available through the skill inventory");
+    assertEquals(prompt.includes("Call veryfront__load_skill("), false);
+    assertEquals(prompt.includes("Call load_skill("), false);
   });
 
   it("advertises only platform-owned loader bindings when canonical project tools collide", async () => {
@@ -959,7 +1025,10 @@ description: Excluded skill
         );
       }
       if (mode === "unrestricted trusted") {
-        assertEquals(hasTrustedHostToolProvenance(toolRegistry.get("load_skill")), true);
+        assertEquals(
+          hasTrustedHostToolProvenance(toolRegistry.get("veryfront__load_skill")),
+          true,
+        );
       }
       const assistant = agent({
         id: `canonical-owner-${mode}`,
@@ -970,14 +1039,28 @@ description: Excluded skill
         },
       });
       const prompt = await resolveSystemText(getEffectiveAgentSystem(assistant));
+      if (mode.startsWith("unrestricted")) {
+        assertEquals(toolRegistry.has("load_skill"), mode === "unrestricted project");
+        assertEquals(
+          hasTrustedHostToolProvenance(toolRegistry.get("veryfront__load_skill")),
+          true,
+        );
+      } else {
+        const configuredTools = expectAgentToolMap(assistant.config.tools);
+        assertEquals(configuredTools.load_skill, mode === "legacy fallback" ? undefined : false);
+        assertEquals(
+          configuredTools.veryfront__load_skill === undefined
+            ? undefined
+            : hasTrustedHostToolProvenance(configuredTools.veryfront__load_skill),
+          mode === "legacy denied" ? undefined : true,
+        );
+      }
       assertEquals(
-        prompt.includes("Call veryfront__load_skill({ inventory:"),
-        mode === "trusted canonical",
+        prompt.includes("available through the skill inventory"),
+        mode !== "legacy denied",
       );
-      assertEquals(
-        prompt.includes("Call load_skill({ inventory:"),
-        mode === "legacy fallback" || mode === "unrestricted trusted",
-      );
+      assertEquals(prompt.includes("Call veryfront__load_skill("), false);
+      assertEquals(prompt.includes("Call load_skill("), false);
       if (mode === "unrestricted project") toolRegistry.delete("load_skill");
     }
   });
@@ -1043,10 +1126,11 @@ description: Excluded skill
       retainSkillLoaderTools: false,
     });
 
-    assertStringIncludes(observedPrompts[0] ?? "", "Call veryfront__load_skill({ inventory:");
+    assertStringIncludes(
+      observedPrompts[0] ?? "",
+      "available through the skill inventory",
+    );
     assertEquals(observedToolNames[0], [
-      "load_skill",
-      "load_skill_reference",
       "lookup",
       "veryfront__load_skill",
       "veryfront__load_skill_reference",
@@ -1093,9 +1177,9 @@ description: Excluded skill
     });
 
     const tools = expectAgentToolMap(assistant.config.tools);
-    assertEquals(typeof tools.load_skill, "object");
-    assertEquals(typeof tools.load_skill_reference, "object");
-    assertEquals(typeof tools.execute_skill_script, "object");
+    assertEquals(tools.load_skill, undefined);
+    assertEquals(tools.load_skill_reference, undefined);
+    assertEquals(tools.execute_skill_script, undefined);
     assertEquals(tools.veryfront__load_skill, false);
     assertEquals(tools.veryfront__load_skill_reference, false);
     assertEquals(tools.veryfront__execute_skill_script, false);
@@ -1354,20 +1438,60 @@ description: Excluded skill
     assertEquals(observedToolNames, ["web_fetch"]);
   });
 
-  it("materializes explicitly requested invoke_agent for direct runtimes", async () => {
+  for (const selector of ["invoke_agent", "veryfront__invoke_agent"]) {
+    it(`materializes ${selector} under its canonical model name`, async () => {
+      const assistant = agent({
+        id: "generic-orchestrator",
+        system: "Invoke registered specialist agents.",
+        skills: [],
+        tools: { [selector]: true },
+      });
+      const definitions = await getAvailableTools(assistant.config.tools, {
+        callerAgentId: assistant.id,
+        includeIntegrationTools: false,
+      });
+      assertEquals(definitions.map((definition) => definition.name), ["veryfront__invoke_agent"]);
+    });
+  }
+
+  it("honors either generic delegation deny when the sibling selector is enabled", async () => {
+    for (
+      const tools of [
+        { invoke_agent: false, veryfront__invoke_agent: true },
+        { invoke_agent: true, veryfront__invoke_agent: false },
+      ]
+    ) {
+      const assistant = agent({
+        id: "denied-generic",
+        system: "Use authorized tools.",
+        skills: [],
+        tools,
+      });
+      const definitions = await getAvailableTools(assistant.config.tools, {
+        callerAgentId: assistant.id,
+        includeIntegrationTools: false,
+      });
+      assertEquals(definitions, []);
+    }
+  });
+
+  it("preserves concrete project delegation tool identities", () => {
+    const projectTool = tool({
+      id: "invoke_agent",
+      description: "Project operation",
+      inputSchema: defineSchema((v) => v.object({}))(),
+      execute: () => "project result",
+    });
     const assistant = agent({
-      id: "generic-orchestrator",
-      system: "Invoke registered specialist agents.",
+      id: "project-delegation-name",
+      system: "Use project and platform tools.",
       skills: [],
-      tools: { invoke_agent: true },
+      tools: { invoke_agent: projectTool, veryfront__invoke_agent: true },
     });
-
-    const definitions = await getAvailableTools(assistant.config.tools, {
-      callerAgentId: assistant.id,
-      includeIntegrationTools: false,
-    });
-
-    assertEquals(definitions.map((definition) => definition.name), ["invoke_agent"]);
+    const tools = expectAgentToolMap(assistant.config.tools);
+    assertStrictEquals(tools.invoke_agent, projectTool);
+    assertEquals(hasTrustedHostToolProvenance(projectTool), false);
+    assertEquals(typeof tools.veryfront__invoke_agent, "object");
   });
 
   it("suppresses generic invoke_agent when delegates are explicitly scoped", async () => {
@@ -1382,7 +1506,7 @@ description: Excluded skill
         system: "Delegate only within the explicit scope.",
         skills: [],
         delegates: [...delegates],
-        tools: { invoke_agent: true },
+        tools: { invoke_agent: true, veryfront__invoke_agent: true },
       });
 
       const definitions = await getAvailableTools(assistant.config.tools, {
@@ -1474,6 +1598,95 @@ description: Excluded skill
           model: "auto",
           system: "Test.",
           tools: { gmail__list_emails: localIntegrationShadow },
+        }),
+      VeryfrontError,
+      "reserved integration tool namespace",
+    );
+  });
+
+  it("accepts integration-named tools materialized from a remote tool source", async () => {
+    const calls: string[] = [];
+    const source: RemoteToolSource = {
+      id: "local-outlook",
+      listTools: () =>
+        Promise.resolve([
+          { name: "outlook__list_emails", description: "List emails", parameters: {} },
+          { name: "search_docs", description: "Search docs", parameters: {} },
+        ]),
+      executeTool: (name) => {
+        calls.push(name);
+        return Promise.resolve({ emails: [] });
+      },
+    };
+    const remoteTools = await loadRemoteToolsFromSource(source);
+
+    const assistant = agent({
+      id: "remote-source-integration-agent",
+      model: "auto",
+      system: "Test.",
+      tools: remoteTools,
+    });
+
+    const definitions = await getAvailableTools(assistant.config.tools);
+    assertEquals(definitions.map((definition) => definition.name), [
+      "outlook__list_emails",
+      "search_docs",
+    ]);
+    assertEquals(
+      await executeConfiguredTool("outlook__list_emails", {}, assistant.config.tools),
+      { emails: [] },
+    );
+    assertEquals(calls, ["outlook__list_emails"]);
+    assertEquals(toolRegistry.get("outlook__list_emails"), undefined);
+    // Remote tools outside the reserved namespace still register, so streams
+    // keep classifying them as dynamic.
+    assertEquals(isDynamicTool("search_docs"), true);
+  });
+
+  it("still rejects unmarked or re-keyed look-alikes of remote integration tools", async () => {
+    const remoteTools = await loadRemoteToolsFromSource({
+      id: "local-outlook",
+      listTools: () =>
+        Promise.resolve([{ name: "outlook__send_email", description: "Send", parameters: {} }]),
+      executeTool: () => Promise.resolve({}),
+    });
+    const lookAlike = { ...remoteTools.outlook__send_email! };
+    for (const symbol of Object.getOwnPropertySymbols(lookAlike)) {
+      delete (lookAlike as unknown as Record<symbol, unknown>)[symbol];
+    }
+
+    assertThrows(
+      () =>
+        agent({
+          id: "remote-look-alike-agent",
+          model: "auto",
+          system: "Test.",
+          tools: { outlook__send_email: lookAlike },
+        }),
+      VeryfrontError,
+      "reserved integration tool namespace",
+    );
+    assertThrows(
+      () =>
+        agent({
+          id: "remote-rekeyed-agent",
+          model: "auto",
+          system: "Test.",
+          tools: { send_email: remoteTools.outlook__send_email! },
+        }),
+      VeryfrontError,
+      "reserved integration tool namespace",
+    );
+    // A spread keeps the enumerable provenance marker, so only the id check stops this.
+    assertThrows(
+      () =>
+        agent({
+          id: "remote-reidentified-agent",
+          model: "auto",
+          system: "Test.",
+          tools: {
+            outlook__send_email: { ...remoteTools.outlook__send_email!, id: "gmail__send_email" },
+          },
         }),
       VeryfrontError,
       "reserved integration tool namespace",

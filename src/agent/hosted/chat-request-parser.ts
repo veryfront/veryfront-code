@@ -1,3 +1,10 @@
+import { authorizeHostedTaskInput } from "./task-input.ts";
+import {
+  encodeHostedTaskInput,
+  type HostedTaskInput,
+  resolveHostedTaskInput,
+} from "./task-input.ts";
+import { registerHostedPlatformDependencyRequest } from "./platform-dependency-credential.ts";
 import {
   registerHostedTerminalCredential,
   RUN_TERMINAL_TOKEN_HEADER,
@@ -63,6 +70,7 @@ import {
 } from "../service/auth.ts";
 
 const IntrinsicReflectApply = Reflect.apply;
+const RegExpExec = RegExp.prototype.exec;
 const ObjectCreate = Object.create;
 const JsonParse = JSON.parse;
 const NumberIsFinite = Number.isFinite;
@@ -83,7 +91,7 @@ function readRequestHeaderRaw(request: Request, name: string): string | undefine
   if (!RequestHeadersGetter) return undefined;
   const headers = IntrinsicReflectApply(RequestHeadersGetter, request, []) as Headers;
   const value = IntrinsicReflectApply(HeadersGet, headers, [name]) as string | null;
-  return value === null ? undefined : value;
+  return value ?? undefined;
 }
 
 function readRequestHeader(request: Request, name: string): string | undefined {
@@ -155,6 +163,9 @@ export type ParsedHostedChatRequest = {
   authToken: string;
   /** True only after a server envelope credential is verified and bound to this run. */
   serverEnvelopeVerified?: true;
+  /** Accepted input checked against signed host scope before application I/O. */
+  serverResolvedTaskInput?: HostedTaskInput;
+  serverResolvedRootRunId?: string;
   /**
    * Provider-native replay state resolved by the server outside forwardedProps
    * so large opaque provider blocks do not consume the public forwardedProps budget.
@@ -163,12 +174,16 @@ export type ParsedHostedChatRequest = {
   serverResolvedProviderReplayCheckpoints?: unknown;
   /** Grant only after replay contents match immutable run/input-response evidence or a pre-edit host-authored digest. Editable row IDs or parts alone do not prove origin; edited replacements lose the grant. */
   serverResolvedTrustedHostedHistoryMessageIds?: readonly string[];
-  /** Exact pending invocation bound to a verified envelope or signed replay digest. */
+  /**
+   * Exact pending invocation bound to a verified envelope or signed replay digest.
+   * @internal
+   */
   serverResolvedResumeToolCall?: RuntimeAgentRunInvocation["resumeToolCall"];
   /**
    * Tool exposure checkpoint from forwardedProps whose exact value matches the
    * digest carried by the verified run-event token. Set only on paths whose
    * request body is otherwise untrusted.
+   * @internal
    */
   serverResolvedToolExposureCheckpoint?: ToolExposureCheckpoint;
   /**
@@ -199,6 +214,10 @@ export type ParsedHostedChatRequest = {
 
 /** Options accepted by parse hosted chat request. */
 export type ParseHostedChatRequestOptions = {
+  /** Verify the exact project and run before reading terminal identity claims. */
+  verifyRunTerminalToken?: (
+    input: { token: string; projectId: string; runId: string },
+  ) => Promise<boolean>;
   authenticate: (request: Request) => Promise<HostedChatRequestPrincipal | Response>;
   verifyProjectAccess?: (input: {
     projectId: string;
@@ -208,6 +227,7 @@ export type ParseHostedChatRequestOptions = {
     token: string;
     projectId: string;
     runId: string;
+    agentId?: string;
   }) => Promise<RunEventAppendTokenVerification>;
 };
 
@@ -290,6 +310,125 @@ function createValidationErrorResponse(input: {
   );
 }
 
+async function verifyUntrustedResumeToolCall(
+  resumeToolCall: ParsedHostedChatRequest["serverResolvedResumeToolCall"],
+  verification: ReturnType<typeof toRunEventAppendTokenResult>,
+): Promise<ParsedHostedChatRequest["serverResolvedResumeToolCall"] | Response> {
+  let signedResumeToolCallSha256: unknown;
+  try {
+    signedResumeToolCallSha256 = readOwnDataProperty(
+      verification,
+      "resumeToolCallSha256",
+      "Writer verification",
+      false,
+    );
+  } catch {
+    return Response.json({ errorCode: "INVALID_RESUME_TOOL_CALL" }, { status: 403 });
+  }
+  if (resumeToolCall || signedResumeToolCallSha256 !== undefined) {
+    const digest = resumeToolCall
+      ? await computeHash(privateJsonStringify({
+        id: resumeToolCall.id,
+        name: resumeToolCall.name,
+        input: resumeToolCall.input,
+      }))
+      : undefined;
+    if (
+      !digest || typeof signedResumeToolCallSha256 !== "string" ||
+      digest !== signedResumeToolCallSha256
+    ) {
+      return Response.json({ errorCode: "INVALID_RESUME_TOOL_CALL" }, { status: 403 });
+    }
+    return resumeToolCall;
+  }
+  return undefined;
+}
+
+async function verifyUntrustedToolExposureCheckpoint(
+  parsedRequest: ParsedHostedChatRequest,
+  verification: ReturnType<typeof toRunEventAppendTokenResult>,
+): Promise<ToolExposureCheckpoint | undefined | Response> {
+  let signedToolExposureCheckpointSha256: unknown;
+  try {
+    signedToolExposureCheckpointSha256 = readOwnDataProperty(
+      verification,
+      "toolExposureCheckpointSha256",
+      "Writer verification",
+      false,
+    );
+  } catch {
+    return Response.json({ errorCode: "INVALID_TOOL_EXPOSURE_CHECKPOINT" }, { status: 403 });
+  }
+  if (signedToolExposureCheckpointSha256 !== undefined) {
+    const checkpoint = getServerResolvedToolExposureCheckpoint(
+      parsedRequest.forwardedProps,
+      true,
+    );
+    const digest = checkpoint ? await computeToolExposureCheckpointSha256(checkpoint) : undefined;
+    if (
+      !digest || typeof signedToolExposureCheckpointSha256 !== "string" ||
+      digest !== signedToolExposureCheckpointSha256
+    ) {
+      return Response.json({ errorCode: "INVALID_TOOL_EXPOSURE_CHECKPOINT" }, { status: 403 });
+    }
+    return checkpoint;
+  }
+  return undefined;
+}
+
+function withoutVerifiedWriterToken(
+  parsedRequest: ParsedHostedChatRequest,
+  trustServerEnvelope: boolean,
+): ParsedHostedChatRequest | Response {
+  const hasLegacyReplayState = isRecord(parsedRequest.forwardedProps) &&
+    Object.hasOwn(
+      parsedRequest.forwardedProps,
+      "serverResolvedProviderReplayCheckpoints",
+    );
+  if (
+    trustServerEnvelope &&
+    (Object.hasOwn(parsedRequest, "serverResolvedProviderReplayCheckpoints") ||
+      Object.hasOwn(parsedRequest, "serverResolvedTrustedHostedHistoryMessageIds") ||
+      hasLegacyReplayState)
+  ) {
+    return Response.json(
+      { errorCode: "INVALID_RUN_EVENT_APPEND_TOKEN" },
+      { status: 403 },
+    );
+  }
+  return {
+    ...stripUnverifiedServerResolvedRequestState(parsedRequest),
+    forwardedProps: stripUnverifiedServerResolvedForwardedProps(
+      parsedRequest.forwardedProps,
+    ),
+  };
+}
+
+async function verifyPresentedWriterToken(
+  token: string,
+  parsedRequest: ParsedHostedChatRequest,
+  projectId: string | null,
+  runId: string | undefined,
+  verifyRunEventAppendToken: ParseHostedChatRequestOptions["verifyRunEventAppendToken"],
+) {
+  return projectId && runId && verifyRunEventAppendToken
+    ? toRunEventAppendTokenResult(
+      await verifyRunEventAppendToken({
+        token,
+        projectId,
+        runId,
+        ...(parsedRequest.agentId ? { agentId: parsedRequest.agentId } : {}),
+      }),
+    )
+    : { verified: false };
+}
+
+function isValidVerifiedRootRunId(rootRunId: unknown): rootRunId is string | undefined {
+  return rootRunId === undefined ||
+    (typeof rootRunId === "string" &&
+      IntrinsicReflectApply(RegExpExec, /^[a-zA-Z0-9_-]{1,128}$/, [rootRunId]) !== null);
+}
+
 async function withVerifiedRunEventAppendToken(
   request: Request,
   parsedRequest: ParsedHostedChatRequest,
@@ -300,45 +439,37 @@ async function withVerifiedRunEventAppendToken(
     "runtimeTargetKind" | "runtimeTargetEnvironmentId"
   >,
   bindInferenceTokenHeader = false,
+  verifyRunTerminalToken?: ParseHostedChatRequestOptions["verifyRunTerminalToken"],
 ): Promise<ParsedHostedChatRequest | Response> {
   const token = readRequestHeader(request, RUN_EVENT_APPEND_TOKEN_HEADER);
-  if (!token) {
-    const hasLegacyReplayState = isRecord(parsedRequest.forwardedProps) &&
-      Object.hasOwn(
-        parsedRequest.forwardedProps,
-        "serverResolvedProviderReplayCheckpoints",
-      );
-    if (
-      trustServerEnvelope &&
-      (Object.hasOwn(parsedRequest, "serverResolvedProviderReplayCheckpoints") ||
-        Object.hasOwn(parsedRequest, "serverResolvedTrustedHostedHistoryMessageIds") ||
-        hasLegacyReplayState)
-    ) {
-      return Response.json(
-        { errorCode: "INVALID_RUN_EVENT_APPEND_TOKEN" },
-        { status: 403 },
-      );
-    }
-    return {
-      ...stripUnverifiedServerResolvedRequestState(parsedRequest),
-      forwardedProps: stripUnverifiedServerResolvedForwardedProps(
-        parsedRequest.forwardedProps,
-      ),
-    };
-  }
+  if (!token) return withoutVerifiedWriterToken(parsedRequest, trustServerEnvelope);
 
   const projectId = parsedRequest.projectId;
   const runId = parsedRequest.durableRootRun?.runId;
-  const verification = projectId && runId && verifyRunEventAppendToken
-    ? toRunEventAppendTokenResult(
-      await verifyRunEventAppendToken({ token, projectId, runId }),
-    )
-    : { verified: false };
+  const verification = await verifyPresentedWriterToken(
+    token,
+    parsedRequest,
+    projectId,
+    runId,
+    verifyRunEventAppendToken,
+  );
   if (!projectId || !runId || !verification.verified) {
     return Response.json(
       { errorCode: "INVALID_RUN_EVENT_APPEND_TOKEN" },
       { status: 403 },
     );
+  }
+
+  if (
+    !trustServerEnvelope &&
+    (verification.taskInputSha256 !== undefined || verification.taskInputRootRunId !== undefined)
+  ) {
+    return Response.json({ errorCode: "INVALID_HOSTED_TASK_INPUT" }, { status: 403 });
+  }
+
+  const rootRunId = verification.rootRunId;
+  if (!isValidVerifiedRootRunId(rootRunId)) {
+    return Response.json({ errorCode: "INVALID_TASK_INPUT" }, { status: 403 });
   }
 
   const inferenceAuthToken = bindInferenceTokenHeader
@@ -355,92 +486,54 @@ async function withVerifiedRunEventAppendToken(
   );
 
   const resumeToolCall = parsedRequest.serverResolvedResumeToolCall;
-  let verifiedResumeToolCall = trustServerEnvelope ? resumeToolCall : undefined;
-  if (!trustServerEnvelope) {
-    let signedResumeToolCallSha256: unknown;
-    try {
-      signedResumeToolCallSha256 = readOwnDataProperty(
-        verification,
-        "resumeToolCallSha256",
-        "Writer verification",
-        false,
-      );
-    } catch {
-      return Response.json({ errorCode: "INVALID_RESUME_TOOL_CALL" }, { status: 403 });
-    }
-    if (resumeToolCall || signedResumeToolCallSha256 !== undefined) {
-      const digest = resumeToolCall
-        ? await computeHash(privateJsonStringify({
-          id: resumeToolCall.id,
-          name: resumeToolCall.name,
-          input: resumeToolCall.input,
-        }))
-        : undefined;
-      if (
-        !digest || typeof signedResumeToolCallSha256 !== "string" ||
-        digest !== signedResumeToolCallSha256
-      ) {
-        return Response.json({ errorCode: "INVALID_RESUME_TOOL_CALL" }, { status: 403 });
-      }
-      verifiedResumeToolCall = resumeToolCall;
-    }
-  }
+  const verifiedResumeToolCall = trustServerEnvelope
+    ? resumeToolCall
+    : await verifyUntrustedResumeToolCall(resumeToolCall, verification);
+  if (verifiedResumeToolCall instanceof Response) return verifiedResumeToolCall;
+  const verifiedToolExposureCheckpoint = trustServerEnvelope
+    ? undefined
+    : await verifyUntrustedToolExposureCheckpoint(parsedRequest, verification);
+  if (verifiedToolExposureCheckpoint instanceof Response) return verifiedToolExposureCheckpoint;
 
-  let verifiedToolExposureCheckpoint: ToolExposureCheckpoint | undefined;
-  if (!trustServerEnvelope) {
-    let signedToolExposureCheckpointSha256: unknown;
-    try {
-      signedToolExposureCheckpointSha256 = readOwnDataProperty(
-        verification,
-        "toolExposureCheckpointSha256",
-        "Writer verification",
-        false,
-      );
-    } catch {
-      return Response.json({ errorCode: "INVALID_TOOL_EXPOSURE_CHECKPOINT" }, { status: 403 });
+  const buildVerifiedRequest = (): ParsedHostedChatRequest => (
+    {
+      ...(trustServerEnvelope
+        ? parsedRequest
+        : stripUnverifiedServerResolvedRequestState(parsedRequest)),
+      ...(trustServerEnvelope ? { serverEnvelopeVerified: true as const } : {}),
+      ...(rootRunId !== undefined ? { serverResolvedRootRunId: rootRunId } : {}),
+      ...(verifiedContext
+        ? { validatedContext: { ...parsedRequest.validatedContext, ...verifiedContext } }
+        : {}),
+      ...(grantedIntegrationToolNames.length > 0
+        ? { serverResolvedIntegrationToolNames: grantedIntegrationToolNames }
+        : {}),
+      ...(trustServerEnvelope &&
+          Object.hasOwn(parsedRequest, "serverResolvedTrustedHostedHistoryMessageIds")
+        ? {
+          serverResolvedTrustedHostedHistoryMessageIds:
+            parsedRequest.serverResolvedTrustedHostedHistoryMessageIds,
+        }
+        : {}),
+      ...(verifiedResumeToolCall ? { serverResolvedResumeToolCall: verifiedResumeToolCall } : {}),
+      ...(verifiedToolExposureCheckpoint
+        ? { serverResolvedToolExposureCheckpoint: verifiedToolExposureCheckpoint }
+        : {}),
+      forwardedProps: trustServerEnvelope
+        ? parsedRequest.forwardedProps
+        : stripUnverifiedServerResolvedForwardedProps(parsedRequest.forwardedProps),
     }
-    if (signedToolExposureCheckpointSha256 !== undefined) {
-      const checkpoint = getServerResolvedToolExposureCheckpoint(
-        parsedRequest.forwardedProps,
-        true,
-      );
-      const digest = checkpoint ? await computeToolExposureCheckpointSha256(checkpoint) : undefined;
-      if (
-        !digest || typeof signedToolExposureCheckpointSha256 !== "string" ||
-        digest !== signedToolExposureCheckpointSha256
-      ) {
-        return Response.json({ errorCode: "INVALID_TOOL_EXPOSURE_CHECKPOINT" }, { status: 403 });
-      }
-      verifiedToolExposureCheckpoint = checkpoint;
-    }
+  );
+  const verifiedRequest = buildVerifiedRequest();
+  if (verifyRunEventAppendToken) {
+    registerHostedPlatformDependencyRequest(
+      verifiedRequest,
+      verification,
+      { projectId, runId, ...(parsedRequest.agentId ? { agentId: parsedRequest.agentId } : {}) },
+      verifyRunEventAppendToken,
+      parsedRequest.authToken,
+    );
   }
-
-  const verifiedRequest: ParsedHostedChatRequest = {
-    ...(trustServerEnvelope
-      ? parsedRequest
-      : stripUnverifiedServerResolvedRequestState(parsedRequest)),
-    ...(trustServerEnvelope ? { serverEnvelopeVerified: true as const } : {}),
-    ...(verifiedContext
-      ? { validatedContext: { ...parsedRequest.validatedContext, ...verifiedContext } }
-      : {}),
-    ...(grantedIntegrationToolNames.length > 0
-      ? { serverResolvedIntegrationToolNames: grantedIntegrationToolNames }
-      : {}),
-    ...(trustServerEnvelope &&
-        Object.hasOwn(parsedRequest, "serverResolvedTrustedHostedHistoryMessageIds")
-      ? {
-        serverResolvedTrustedHostedHistoryMessageIds:
-          parsedRequest.serverResolvedTrustedHostedHistoryMessageIds,
-      }
-      : {}),
-    ...(verifiedResumeToolCall ? { serverResolvedResumeToolCall: verifiedResumeToolCall } : {}),
-    ...(verifiedToolExposureCheckpoint
-      ? { serverResolvedToolExposureCheckpoint: verifiedToolExposureCheckpoint }
-      : {}),
-    forwardedProps: trustServerEnvelope
-      ? parsedRequest.forwardedProps
-      : stripUnverifiedServerResolvedForwardedProps(parsedRequest.forwardedProps),
-  };
   registerHostedRunEventWriterToken(
     verifiedRequest,
     {
@@ -453,6 +546,9 @@ async function withVerifiedRunEventAppendToken(
   registerHostedTerminalCredential(
     verifiedRequest,
     readRequestHeader(request, RUN_TERMINAL_TOKEN_HEADER),
+    token,
+    verifyRunEventAppendToken,
+    verifyRunTerminalToken,
   );
   registerHostedAgentPauseCredential(
     verifiedRequest,
@@ -465,6 +561,8 @@ function stripUnverifiedServerResolvedRequestState(
   parsedRequest: ParsedHostedChatRequest,
 ): ParsedHostedChatRequest {
   const {
+    serverResolvedTaskInput: _serverResolvedTaskInput,
+    serverResolvedRootRunId: _serverResolvedRootRunId,
     serverResolvedProviderReplayCheckpoints: _serverResolvedProviderReplayCheckpoints,
     serverResolvedTrustedHostedHistoryMessageIds: _serverResolvedTrustedHostedHistoryMessageIds,
     serverResolvedResumeToolCall: _serverResolvedResumeToolCall,
@@ -572,102 +670,141 @@ function mapRawToolCallState(state: string): ChatToolPartState {
   }
 }
 
+function appendRawHostedToolCall(
+  part: Record<string, unknown>,
+  parts: ChatUiMessagePart[],
+  partIndexByToolCallId: Map<string, number>,
+  knownToolNames: Map<string, string>,
+  knownToolInputs: Map<string, Record<string, unknown>>,
+): void {
+  const rawPart: Record<string, unknown> = part;
+  const rawId = rawPart["id"];
+  const rawName = rawPart["name"];
+  const toolCallId = typeof rawId === "string" ? rawId : "";
+  const toolName = typeof rawName === "string" ? rawName : "";
+  const state = typeof part.state === "string" ? part.state : "completed";
+  if (!toolCallId || !toolName) return;
+
+  const input = isRecord(part.input) ? part.input : {};
+  knownToolNames.set(toolCallId, toolName);
+  knownToolInputs.set(toolCallId, input);
+  partIndexByToolCallId.set(toolCallId, parts.length);
+  parts.push({
+    type: "tool_call",
+    toolCallId,
+    toolName,
+    input,
+    state: mapRawToolCallState(state),
+    ...(part.providerExecuted === true ? { providerExecuted: true } : {}),
+  });
+}
+
+function appendRawHostedToolResult(
+  part: Record<string, unknown>,
+  parts: ChatUiMessagePart[],
+  partIndexByToolCallId: Map<string, number>,
+  knownToolNames: Map<string, string>,
+  knownToolInputs: Map<string, Record<string, unknown>>,
+): void {
+  const toolCallId = typeof part.tool_call_id === "string" ? part.tool_call_id : "";
+  const explicitToolName = typeof part.tool_name === "string" ? part.tool_name : "";
+  const toolName = explicitToolName || knownToolNames.get(toolCallId);
+  if (!toolCallId || !toolName) return;
+
+  const resultPart: ChatUiMessagePart = {
+    type: "tool_call",
+    toolCallId,
+    toolName,
+    input: knownToolInputs.get(toolCallId) ?? {},
+    state: part.is_error === true ? "output-error" : "output-available",
+    output: part.output,
+    ...(part.is_error === true ? { errorText: stringifyUnknown(part.output ?? "Tool error") } : {}),
+    ...(part.providerExecuted === true ? { providerExecuted: true } : {}),
+  };
+
+  const existingIndex = partIndexByToolCallId.get(toolCallId);
+  if (existingIndex !== undefined) {
+    const existingPart = parts[existingIndex];
+    if (existingPart && isRecord(existingPart)) {
+      parts[existingIndex] = {
+        ...existingPart,
+        state: resultPart.state,
+        output: resultPart.output,
+        ...(resultPart.errorText ? { errorText: resultPart.errorText } : {}),
+      } as ChatUiMessagePart;
+    }
+  } else {
+    parts.push(resultPart);
+  }
+}
+
+function normalizeHostedChatMessage(
+  message: HostedChatRequest["messages"][number],
+  knownToolNames: Map<string, string>,
+  knownToolInputs: Map<string, Record<string, unknown>>,
+): ChatUiMessage {
+  const parts: ChatUiMessagePart[] = [];
+  const partIndexByToolCallId = new Map<string, number>();
+
+  for (const part of message.parts) {
+    const uiToolIdentity = getHostedChatUiToolIdentity(part);
+    if (uiToolIdentity) {
+      knownToolNames.set(uiToolIdentity.toolCallId, uiToolIdentity.toolName);
+      const input = isRecord(part as unknown)
+        ? (part as Record<string, unknown>)["input"]
+        : undefined;
+      if (isRecord(input)) {
+        knownToolInputs.set(uiToolIdentity.toolCallId, input);
+      }
+      partIndexByToolCallId.set(uiToolIdentity.toolCallId, parts.length);
+    }
+
+    if (isRecord(part) && part.type === "tool_call" && "id" in part && "name" in part) {
+      appendRawHostedToolCall(part, parts, partIndexByToolCallId, knownToolNames, knownToolInputs);
+      continue;
+    }
+
+    if (isRecord(part) && part.type === "tool_result") {
+      appendRawHostedToolResult(
+        part,
+        parts,
+        partIndexByToolCallId,
+        knownToolNames,
+        knownToolInputs,
+      );
+      continue;
+    }
+
+    parts.push(part as ChatUiMessagePart);
+  }
+
+  return {
+    ...message,
+    role: message.role as ChatUiMessageRole,
+    parts,
+  };
+}
+
 function normalizeHostedChatRequestMessages(
   messages: HostedChatRequest["messages"],
 ): ChatUiMessage[] {
   const knownToolNames = new Map<string, string>();
   const knownToolInputs = new Map<string, Record<string, unknown>>();
 
-  return messages.map((message) => {
-    const parts: ChatUiMessagePart[] = [];
-    const partIndexByToolCallId = new Map<string, number>();
-
-    for (const part of message.parts) {
-      const uiToolIdentity = getHostedChatUiToolIdentity(part);
-      if (uiToolIdentity) {
-        knownToolNames.set(uiToolIdentity.toolCallId, uiToolIdentity.toolName);
-        const input = isRecord(part as unknown)
-          ? (part as Record<string, unknown>)["input"]
-          : undefined;
-        if (isRecord(input)) {
-          knownToolInputs.set(uiToolIdentity.toolCallId, input);
-        }
-        partIndexByToolCallId.set(uiToolIdentity.toolCallId, parts.length);
-      }
-
-      if (isRecord(part) && part.type === "tool_call" && "id" in part && "name" in part) {
-        const rawPart: Record<string, unknown> = part;
-        const rawId = rawPart["id"];
-        const rawName = rawPart["name"];
-        const toolCallId = typeof rawId === "string" ? rawId : "";
-        const toolName = typeof rawName === "string" ? rawName : "";
-        const state = typeof part.state === "string" ? part.state : "completed";
-        if (!toolCallId || !toolName) continue;
-
-        const input = isRecord(part.input) ? part.input : {};
-        knownToolNames.set(toolCallId, toolName);
-        knownToolInputs.set(toolCallId, input);
-        partIndexByToolCallId.set(toolCallId, parts.length);
-        parts.push({
-          type: "tool_call",
-          toolCallId,
-          toolName,
-          input,
-          state: mapRawToolCallState(state),
-          ...(part.providerExecuted === true ? { providerExecuted: true } : {}),
-        });
-        continue;
-      }
-
-      if (isRecord(part) && part.type === "tool_result") {
-        const toolCallId = typeof part.tool_call_id === "string" ? part.tool_call_id : "";
-        const explicitToolName = typeof part.tool_name === "string" ? part.tool_name : "";
-        const toolName = explicitToolName || knownToolNames.get(toolCallId);
-        if (!toolCallId || !toolName) continue;
-
-        const resultPart: ChatUiMessagePart = {
-          type: "tool_call",
-          toolCallId,
-          toolName,
-          input: knownToolInputs.get(toolCallId) ?? {},
-          state: part.is_error === true ? "output-error" : "output-available",
-          output: part.output,
-          ...(part.is_error === true
-            ? { errorText: stringifyUnknown(part.output ?? "Tool error") }
-            : {}),
-          ...(part.providerExecuted === true ? { providerExecuted: true } : {}),
-        };
-
-        const existingIndex = partIndexByToolCallId.get(toolCallId);
-        if (existingIndex !== undefined) {
-          const existingPart = parts[existingIndex];
-          if (existingPart && isRecord(existingPart)) {
-            parts[existingIndex] = {
-              ...existingPart,
-              state: resultPart.state,
-              output: resultPart.output,
-              ...(resultPart.errorText ? { errorText: resultPart.errorText } : {}),
-            } as ChatUiMessagePart;
-          }
-        } else {
-          parts.push(resultPart);
-        }
-        continue;
-      }
-
-      parts.push(part as ChatUiMessagePart);
-    }
-
-    return {
-      ...message,
-      role: message.role as ChatUiMessageRole,
-      parts,
-    };
-  });
+  return messages.map((message) =>
+    normalizeHostedChatMessage(message, knownToolNames, knownToolInputs)
+  );
 }
 
 function isBlankProjectSlug(projectSlug: string | undefined): boolean {
   return projectSlug !== undefined && !normalizeProjectSlug(projectSlug);
+}
+
+function projectAccessFailureStatus(
+  access: { error: { statusCode: number; errorCode: string } },
+): number {
+  if (access.error.statusCode === 503 && access.error.errorCode === "SERVER_ERROR") return 503;
+  return access.error.statusCode === 404 ? 404 : 403;
 }
 
 async function verifyHostedChatProjectAccess(input: {
@@ -706,11 +843,7 @@ async function verifyHostedChatProjectAccess(input: {
   return Response.json(
     { errorCode: access.error.errorCode, message: access.error.message },
     {
-      status: access.error.statusCode === 503 && access.error.errorCode === "SERVER_ERROR"
-        ? 503
-        : access.error.statusCode === 404
-        ? 404
-        : 403,
+      status: projectAccessFailureStatus(access),
     },
   );
 }
@@ -860,7 +993,92 @@ export async function parseHostedChatRequestFromRequest(
     false,
     undefined,
     true,
+    options.verifyRunTerminalToken,
   );
+}
+
+function readInvocationTaskInputProof(
+  invocation: RuntimeAgentRunInvocation,
+  writerVerification: ReturnType<typeof toRunEventAppendTokenResult> | undefined,
+) {
+  const signedTaskInputSha256 = writerVerification &&
+    readOwnDataProperty(writerVerification, "taskInputSha256", "Writer verification", false);
+  const signedTaskInputRootRunId = writerVerification &&
+    readOwnDataProperty(writerVerification, "taskInputRootRunId", "Writer verification", false);
+  if (
+    invocation.taskInput === undefined && signedTaskInputSha256 === undefined &&
+    signedTaskInputRootRunId === undefined
+  ) return undefined;
+  if (
+    !writerVerification?.verified || typeof signedTaskInputSha256 !== "string" ||
+    typeof signedTaskInputRootRunId !== "string"
+  ) throw new Error("Missing typed input proof");
+  const taskInput = resolveHostedTaskInput(invocation.taskInput, {
+    projectId: invocation.run.project.projectId,
+    rootRunId: signedTaskInputRootRunId,
+    runId: invocation.run.runId,
+  });
+  if (!taskInput) throw new Error("Invalid typed input proof");
+  return { taskInput, sha256: signedTaskInputSha256 };
+}
+
+function finishVerifiedRuntimeInvocation(
+  verifiedRequest: ParsedHostedChatRequest,
+  invocation: RuntimeAgentRunInvocation,
+  verifiedTaskInput: HostedTaskInput | undefined,
+): ParsedHostedChatRequest | Response {
+  if (verifiedTaskInput) {
+    verifiedRequest.serverResolvedTaskInput = authorizeHostedTaskInput(verifiedTaskInput);
+  }
+  if (
+    verifiedTaskInput && verifiedRequest.serverResolvedRootRunId !== undefined &&
+    verifiedTaskInput.rootRunId !== verifiedRequest.serverResolvedRootRunId
+  ) return Response.json({ errorCode: "INVALID_TASK_INPUT" }, { status: 403 });
+
+  // Request-scoped agent definitions may only come from the trusted control plane.
+  if (verifiedRequest.agentConfig && verifiedRequest.serverEnvelopeVerified !== true) {
+    return Response.json(
+      { errorCode: "CONTROL_PLANE_AUTH_REQUIRED" },
+      { status: 403 },
+    );
+  }
+  if (verifiedRequest.serverEnvelopeVerified === true && invocation.taskId) {
+    verifiedRequest.taskId = invocation.taskId;
+  }
+  if (verifiedRequest.serverEnvelopeVerified === true && invocation.resumeToolCall) {
+    verifiedRequest.serverResolvedResumeToolCall = invocation.resumeToolCall;
+  }
+  registerHostedInferenceCredential(
+    verifiedRequest,
+    verifiedRequest.serverEnvelopeVerified === true
+      ? invocation.credentials?.inferenceAuthToken
+      : undefined,
+  );
+  return verifiedRequest;
+}
+
+function invocationWriterVerifier(
+  invocation: RuntimeAgentRunInvocation,
+  options: ParseRuntimeAgentRunInvocationHostedChatRequestOptions,
+  writerToken: string | undefined,
+  writerVerification: ReturnType<typeof toRunEventAppendTokenResult> | undefined,
+): ParseHostedChatRequestOptions["verifyRunEventAppendToken"] {
+  return writerVerification
+    ? (
+      input: Parameters<NonNullable<ParseHostedChatRequestOptions["verifyRunEventAppendToken"]>>[0],
+    ) =>
+      input.token === writerToken && input.projectId === invocation.run.project.projectId &&
+        input.runId === invocation.run.runId
+        ? Promise.resolve(writerVerification)
+        : options.verifyRunEventAppendToken?.(input) ?? Promise.resolve({ verified: false })
+    : options.verifyRunEventAppendToken;
+}
+
+function hasInvalidInvocationWriterToken(
+  writerToken: string | undefined,
+  verification: ReturnType<typeof toRunEventAppendTokenResult> | undefined,
+): boolean {
+  return !!writerToken && !verification?.verified;
 }
 
 /** Request payload for parse runtime agent run invocation hosted chat request from. */
@@ -885,6 +1103,35 @@ export async function parseRuntimeAgentRunInvocationHostedChatRequestFromRequest
       messagePrefix: "Invalid runtime agent invocation",
       validationMessage: getValidationErrorMessage(invocation.error),
     });
+  }
+
+  // Verify any typed binding before project/source discovery. Body fields never
+  // supply authority: the root and digest must come from the signed verifier.
+  const writerToken = readRequestHeader(request, RUN_EVENT_APPEND_TOKEN_HEADER);
+  const writerVerification = writerToken && options.verifyRunEventAppendToken
+    ? toRunEventAppendTokenResult(
+      await options.verifyRunEventAppendToken({
+        token: writerToken,
+        projectId: invocation.data.run.project.projectId,
+        runId: invocation.data.run.runId,
+        agentId: invocation.data.run.agentId,
+      }),
+    )
+    : undefined;
+  let verifiedTaskInput: HostedTaskInput | undefined;
+  try {
+    const proof = readInvocationTaskInputProof(invocation.data, writerVerification);
+    if (proof !== undefined) {
+      verifiedTaskInput = proof.taskInput;
+      if (await computeHash(encodeHostedTaskInput(verifiedTaskInput)) !== proof.sha256) {
+        throw new Error("Invalid typed input proof");
+      }
+    }
+  } catch {
+    return Response.json({ errorCode: "INVALID_TASK_INPUT" }, { status: 403 });
+  }
+  if (hasInvalidInvocationWriterToken(writerToken, writerVerification)) {
+    return Response.json({ errorCode: "INVALID_RUN_EVENT_APPEND_TOKEN" }, { status: 403 });
   }
 
   const chatRequest = hostedChatRequestSchema.safeParse(
@@ -922,35 +1169,18 @@ export async function parseRuntimeAgentRunInvocationHostedChatRequestFromRequest
   const verifiedRequest = await withVerifiedRunEventAppendToken(
     request,
     parsedRequest,
-    options.verifyRunEventAppendToken,
+    invocationWriterVerifier(invocation.data, options, writerToken, writerVerification),
     true,
     {
       runtimeTargetKind: chatRequest.data.context.runtimeTargetKind,
       runtimeTargetEnvironmentId: chatRequest.data.context.runtimeTargetEnvironmentId,
     },
+    false,
+    options.verifyRunTerminalToken,
   );
   if (verifiedRequest instanceof Response) {
     return verifiedRequest;
   }
 
-  // Request-scoped agent definitions may only come from the trusted control plane.
-  if (verifiedRequest.agentConfig && verifiedRequest.serverEnvelopeVerified !== true) {
-    return Response.json(
-      { errorCode: "CONTROL_PLANE_AUTH_REQUIRED" },
-      { status: 403 },
-    );
-  }
-  if (verifiedRequest.serverEnvelopeVerified === true && invocation.data.taskId) {
-    verifiedRequest.taskId = invocation.data.taskId;
-  }
-  if (verifiedRequest.serverEnvelopeVerified === true && invocation.data.resumeToolCall) {
-    verifiedRequest.serverResolvedResumeToolCall = invocation.data.resumeToolCall;
-  }
-  registerHostedInferenceCredential(
-    verifiedRequest,
-    verifiedRequest.serverEnvelopeVerified === true
-      ? invocation.data.credentials?.inferenceAuthToken
-      : undefined,
-  );
-  return verifiedRequest;
+  return finishVerifiedRuntimeInvocation(verifiedRequest, invocation.data, verifiedTaskInput);
 }

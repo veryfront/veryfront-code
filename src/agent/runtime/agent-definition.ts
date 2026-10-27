@@ -5,6 +5,8 @@ import type { ChatSystemMessage } from "#veryfront/chat/types.ts";
 import { buildAgentCallContext } from "./call-context.ts";
 import { resolveModelProviderOptionKey } from "./model-resolution.ts";
 import type { RuntimeSkillDefinition } from "./skill-metadata.ts";
+import type { RuntimeSkillLoaderToolName } from "./skill-prompt.ts";
+import { CANONICAL_LOAD_SKILL_TOOL_ID, LOAD_SKILL_TOOL_ID } from "../platform-tool-names.ts";
 import { normalizeAgentDelegateIds } from "./agent-delegation-names.ts";
 import { CONFIG_INVALID } from "#veryfront/errors";
 
@@ -80,6 +82,7 @@ export const getRuntimeAgentMarkdownDefinitionSchema = defineSchema((v) =>
     thinking: getRuntimeAgentThinkingConfigSchema().optional(),
     model: v.string().min(1).optional(),
     temperature: v.number().min(0).max(2).optional(),
+    parallelToolCalls: v.boolean().optional(),
     maxSteps: v.number().optional(),
     providerTools: v.array(v.string().min(1)).optional(),
     skills: v.union([
@@ -90,6 +93,9 @@ export const getRuntimeAgentMarkdownDefinitionSchema = defineSchema((v) =>
     ]).optional(),
     tools: v.union([v.literal(true), v.array(v.string().min(1))]).optional(),
     toolLoading: v.union([v.literal("eager"), v.literal("deferred")]).optional(),
+    bootstrapTools: v.array(v.string().min(1).max(512)).max(16).optional(),
+    optionalBootstrapTools: v.array(v.string().min(1).max(512)).max(16).optional(),
+    bootstrapSkill: v.string().min(1).max(256).optional(),
     toolResultContext: v.union([
       v.boolean(),
       v.object({
@@ -260,6 +266,7 @@ export function parseRuntimeAgentMarkdownDefinition(
   const model = typeof attrs.model === "string" && attrs.model.trim() ? attrs.model : undefined;
   const thinking = parseThinking(attrs.thinking);
   const temperature = typeof attrs.temperature === "number" ? attrs.temperature : undefined;
+  const parallelToolCalls = readOptionalAlias(attrs, "parallel-tool-calls", "parallelToolCalls");
   const maxSteps = typeof attrs["max-steps"] === "number" ? attrs["max-steps"] : undefined;
   const providerTools = Object.hasOwn(attrs, "provider-tools")
     ? parseStringArray(attrs["provider-tools"], "provider-tools")
@@ -269,6 +276,13 @@ export function parseRuntimeAgentMarkdownDefinition(
     : undefined;
   const knowledge = Object.hasOwn(attrs, "knowledge") ? attrs.knowledge : undefined;
   const toolLoading = readOptionalAlias(attrs, "tool-loading", "toolLoading");
+  const bootstrapTools = readOptionalAlias(attrs, "bootstrap-tools", "bootstrapTools");
+  const optionalBootstrapTools = readOptionalAlias(
+    attrs,
+    "optional-bootstrap-tools",
+    "optionalBootstrapTools",
+  );
+  const bootstrapSkill = readOptionalAlias(attrs, "bootstrap-skill", "bootstrapSkill");
   const toolResultContext = readOptionalAlias(attrs, "tool-result-context", "toolResultContext");
   const toolSelection = Object.hasOwn(attrs, "tools") ? parseToolSelector(attrs.tools) : undefined;
   const tools = toolSelection?.tools;
@@ -316,11 +330,15 @@ export function parseRuntimeAgentMarkdownDefinition(
     ...(model ? { model } : {}),
     ...(thinking ? { thinking } : {}),
     ...(temperature === undefined ? {} : { temperature }),
+    ...(parallelToolCalls === undefined ? {} : { parallelToolCalls }),
     ...(maxSteps === undefined ? {} : { maxSteps }),
     ...(providerTools ? { providerTools } : {}),
     ...(skills === undefined ? {} : { skills }),
     ...(knowledge === undefined ? {} : { knowledge }),
     ...(toolLoading === undefined ? {} : { toolLoading }),
+    ...(bootstrapTools === undefined ? {} : { bootstrapTools }),
+    ...(optionalBootstrapTools === undefined ? {} : { optionalBootstrapTools }),
+    ...(bootstrapSkill === undefined ? {} : { bootstrapSkill }),
     ...(toolResultContext === undefined ? {} : { toolResultContext }),
     ...(tools === undefined ? {} : { tools }),
     ...(deniedTools === undefined ? {} : { deniedTools }),
@@ -329,6 +347,23 @@ export function parseRuntimeAgentMarkdownDefinition(
   };
   objectSetPrototypeOf(definition, null);
   return getRuntimeAgentMarkdownDefinitionSchema().parse(definition);
+}
+
+const reflectApply = Reflect.apply;
+const arrayIncludes = Array.prototype.includes;
+
+/** Name the loader that tool exposure bootstraps: canonical when authorized, else local. */
+function resolveSkillLoaderToolName(
+  availableToolNames: readonly string[] | undefined,
+): RuntimeSkillLoaderToolName | undefined {
+  if (availableToolNames === undefined) return undefined;
+  if (reflectApply(arrayIncludes, availableToolNames, [CANONICAL_LOAD_SKILL_TOOL_ID]) === true) {
+    return CANONICAL_LOAD_SKILL_TOOL_ID;
+  }
+  if (reflectApply(arrayIncludes, availableToolNames, [LOAD_SKILL_TOOL_ID]) === true) {
+    return LOAD_SKILL_TOOL_ID;
+  }
+  return undefined;
 }
 
 /**
@@ -345,6 +380,7 @@ export function createRuntimeAgentSystemMessages(
   const instructions = Array.isArray(input.agent.system) && input.agent.system.length === 0
     ? input.agent.instructions
     : input.agent.system ?? input.agent.instructions;
+  const skillLoaderToolName = resolveSkillLoaderToolName(input.availableToolNames);
   return buildAgentCallContext({
     instructions,
     ...(anthropicProviderAlias ? { anthropicProviderAlias } : {}),
@@ -352,10 +388,11 @@ export function createRuntimeAgentSystemMessages(
       ? {}
       : { runtimeContextMarker: input.runtimeContextMarker }),
     ...(input.runtimeBlocks === undefined ? {} : { extraBlocks: input.runtimeBlocks }),
-    ...(input.skills === undefined ? {} : { skills: input.skills }),
-    ...(input.availableToolNames === undefined
+    ...(input.skills === undefined ||
+        (input.availableToolNames !== undefined && skillLoaderToolName === undefined)
       ? {}
-      : { availableToolNames: input.availableToolNames }),
+      : { skills: input.skills }),
+    ...(skillLoaderToolName === undefined ? {} : { skillLoaderToolName }),
     ...(input.environmentContext === undefined
       ? {}
       : { environmentContext: input.environmentContext }),

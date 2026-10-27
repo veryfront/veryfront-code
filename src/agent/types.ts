@@ -219,15 +219,31 @@ export interface AgentConfig<TOutput = any> {
    * Project tools available to this agent.
    *
    * Omit to expose no project tools. `true` authorizes the current scoped
-   * catalog behind `tool_search`; an explicit map exposes only those selected
+   * catalog behind `veryfront__tool_search`; an explicit map exposes only those selected
    * schemas immediately.
    */
   tools?: true | Record<string, Tool | boolean>;
-  /** Load selected tool schemas immediately or discover them through tool_search. */
+  /** Load selected tool schemas immediately or discover them through veryfront__tool_search. */
   toolLoading?: "eager" | "deferred";
   /**
+   * Expose up to 16 exact authorized tool schemas immediately in deferred mode.
+   * Other tools stay discoverable through `veryfront__tool_search`. In eager mode these
+   * tools are kept when a provider's schema limit caps the catalog. This does
+   * not grant tool access or replace the trusted skill loader. Applies to root
+   * runs; hosted `invoke_agent` child runs do not apply it. Omit to keep the
+   * runtime bootstrap defaults.
+   */
+  bootstrapTools?: string[];
+  /**
+   * Best-effort initial schemas for up to 16 exact tool names. Only tools in the
+   * final authorized, provider-visible catalog are exposed; missing or denied
+   * tools are ignored. Does not grant access or displace required bootstrap
+   * schemas when the model's tool limit is reached. Root runs only.
+   */
+  optionalBootstrapTools?: string[];
+  /**
    * Return references for oversized model-facing tool results, with bounded
-   * get_tool_result reads. Raw results remain available to events and callbacks.
+   * veryfront__get_tool_result reads. Raw results remain available to events and callbacks.
    * Omit or false to preserve inline result behavior.
    */
   toolResultContext?: boolean | ToolResultContextLimits;
@@ -267,7 +283,7 @@ export interface AgentConfig<TOutput = any> {
    * (or any `SchemaValidator`-backed builder), or a raw JSON Schema object.
    *
    * The schema is mapped to the selected provider's native structured-output
-   * field, and the model's text is parsed back into `response.object`. A model
+   * field, and the model's text is parsed back into `response.data` (also available as `response.object`). A model
    * runtime that does not support structured output rejects the request rather
    * than dropping the schema. Raw JSON Schema is validated locally only when
    * the registered validator extension can compile JSON Schema.
@@ -275,6 +291,8 @@ export interface AgentConfig<TOutput = any> {
   outputSchema?: Schema<TOutput> | JsonSchema;
   /** Sampling temperature for model generation. Defaults to 0. */
   temperature?: number;
+  /** Allow parallel provider tool calls. Omit to retain the provider default. */
+  parallelToolCalls?: boolean;
   /** Provider-neutral reasoning / thinking configuration for hosted runtimes. */
   thinking?: RuntimeAgentThinkingConfig;
   streaming?: boolean;
@@ -313,16 +331,24 @@ export interface AgentConfig<TOutput = any> {
   onToolResult?: ToolExecutionResultHandler;
   /**
    * Select visible skill IDs or this agent's own skill short names advertised
-   * in this agent's system prompt and authorized for `load_skill`.
+   * in this agent's system prompt and authorized for `veryfront__load_skill`.
    * - omitted or true: include every discovered skill visible to this agent
    * - string or string[]: select visible IDs, own short names, or glob patterns
    * - boolean map: positive grants minus exclusions; exclusions win
    * - empty selections, exclusion-only maps, or false: advertise no skills and do not authorize project or
-   *   configured skills for `load_skill`
+   *   configured skills for `veryfront__load_skill`
    *
    * Discovery happens at startup via discoverAll().
    */
   skills?: SkillSelector;
+  /**
+   * Load one authorized skill root through the framework skill loader before
+   * the first model call. Use an exact skill ID or the agent's own short name.
+   * Skill references remain deferred. Hosted children
+   * load only their own configured skill, never the parent's startup skill.
+   * Omit to start without a preloaded skill.
+   */
+  bootstrapSkill?: string;
   /**
    * Prompt starters shown on an empty chat.
    *
@@ -353,6 +379,14 @@ export type RuntimeReasoningOption = {
   effort?: "low" | "medium" | "high" | "max";
   budgetTokens?: number;
 };
+
+/** Optional per-model deadlines for one streaming model call. */
+export interface ModelStreamTimeouts {
+  /** Time allowed for the first output from each model call. */
+  firstProgressTimeoutMs?: number;
+  /** Time allowed between outputs after progress begins. */
+  semanticIdleTimeoutMs?: number;
+}
 
 /** Public API contract for resolved model transport. */
 export interface ResolvedModelTransport {
@@ -503,8 +537,9 @@ export interface AgentStreamInput {
   onToolCall?: (toolCall: ToolCall) => void;
   onChunk?: (chunk: string) => void;
   /**
-   * Receives the completed response, including the parsed `object` when an
-   * `outputSchema` applies. The payload is the erased response type; use
+   * Receives the completed response, including parsed `data` when an
+   * `outputSchema` applies (`object` is its compatibility alias). The payload is
+   * the erased response type; use
    * `generate()` when the parsed value needs to arrive typed.
    */
   onFinish?: (response: AgentResponse) => void;

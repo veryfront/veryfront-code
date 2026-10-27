@@ -14,7 +14,7 @@ export async function resolveComponentPath(
   appDir: string = "app",
 ): Promise<string | null> {
   const cleanPath = cleanPathname(pathname);
-  const normalizedAppDir = appDir.replace(/^\/+|\/+$/g, "") || "app";
+  const normalizedAppDir = appDir.replace(/^\/+|(?<!\/)\/+$/g, "") || "app";
   const rootPatterns = PAGE_EXTENSIONS.map((extension) => `${normalizedAppDir}/page.${extension}`);
 
   if (cleanPath === "index") {

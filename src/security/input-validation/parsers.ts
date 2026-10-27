@@ -14,10 +14,6 @@ import {
   type ParseQueryOptions,
   type RequestLimits,
 } from "./types.ts";
-import * as nodeBuffer from "node:buffer";
-
-const FileCtor = globalThis.File ??
-  (nodeBuffer as typeof nodeBuffer & { File: typeof File }).File;
 const PARSE_JSON_OPTION_KEYS = new Set(["limits", "sanitize"]);
 const PARSE_FORM_OPTION_KEYS = new Set(["limits"]);
 const PARSE_QUERY_OPTION_KEYS = new Set(["limits"]);
@@ -46,9 +42,8 @@ function snapshotParserOptions(
   const snapshot = Object.create(null) as Record<string, unknown>;
   for (const key of keys) {
     if (typeof key !== "string" || !allowedKeys.has(key)) {
-      throw new TypeError(
-        `${label} contains an unsupported ${typeof key === "string" ? `option: ${key}` : "symbol"}`,
-      );
+      const unsupported = typeof key === "string" ? `option: ${key}` : "symbol";
+      throw new TypeError(`${label} contains an unsupported ${unsupported}`);
     }
     let descriptor: PropertyDescriptor | undefined;
     try {
@@ -173,7 +168,9 @@ export async function parseFormData<T>(
   const data: Record<string, unknown> = Object.create(null);
 
   for (const [key, value] of formData.entries()) {
-    if (value instanceof FileCtor && value.size > limits.maxFileSize) {
+    // Native FormData entries are strings or files. Avoid a Node constructor
+    // import, and enforce the size limit even for files from another realm.
+    if (typeof value !== "string" && value.size > limits.maxFileSize) {
       throw createValidationError(`File ${key} too large`, {
         maxSize: limits.maxFileSize,
         actualSize: value.size,

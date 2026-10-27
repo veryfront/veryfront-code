@@ -15,9 +15,9 @@ function isParameterNamePart(code: number): boolean {
 }
 
 function findSchemeDelimiter(pattern: string): number {
-  if (!isAsciiLetter(pattern.charCodeAt(0))) return -1;
+  if (!isAsciiLetter(pattern.codePointAt(0) ?? -1)) return -1;
   for (let index = 1; index < pattern.length; index++) {
-    const code = pattern.charCodeAt(index);
+    const code = pattern.codePointAt(index) ?? -1;
     if (code === 58) return index;
     if (
       !isAsciiLetter(code) && !isAsciiDigit(code) && code !== 43 &&
@@ -40,9 +40,9 @@ function findFirstSchemeComponentEnd(pattern: string, schemeDelimiter: number): 
 
 function isUrnScheme(pattern: string, schemeDelimiter: number): boolean {
   if (schemeDelimiter !== 3) return false;
-  const first = pattern.charCodeAt(0) | 32;
-  const second = pattern.charCodeAt(1) | 32;
-  const third = pattern.charCodeAt(2) | 32;
+  const first = (pattern.codePointAt(0) ?? -1) | 32;
+  const second = (pattern.codePointAt(1) ?? -1) | 32;
+  const third = (pattern.codePointAt(2) ?? -1) | 32;
   return first === 117 && second === 114 && third === 110;
 }
 
@@ -60,9 +60,9 @@ function hasRootlessTemplateBoundary(
     const character = pattern[index];
     if (character === "?" || character === "#") return false;
     if (character !== ":") continue;
-    if (!isParameterNameStart(pattern.charCodeAt(index + 1))) continue;
+    if (!isParameterNameStart(pattern.codePointAt(index + 1) ?? -1)) continue;
     if (index < firstSchemeComponentEnd) {
-      const previousCode = pattern.charCodeAt(index - 1);
+      const previousCode = pattern.codePointAt(index - 1) ?? -1;
       if (!isAsciiLetter(previousCode) && !isAsciiDigit(previousCode)) return true;
     } else if (pattern[index - 1] === "/") {
       return true;
@@ -87,6 +87,33 @@ interface ParsedResourcePattern {
   readonly adjacentParameters?: readonly [string, string];
 }
 
+function parameterNameEnd(pattern: string, start: number): number {
+  let end = start;
+  while (end < pattern.length && isParameterNamePart(pattern.codePointAt(end) ?? -1)) end++;
+  return end;
+}
+
+function findAdjacentParameter(
+  pattern: string,
+  name: string,
+  end: number,
+): readonly [string, string] | undefined {
+  if (pattern[end] !== ":" || !isParameterNameStart(pattern.codePointAt(end + 1) ?? -1)) {
+    return undefined;
+  }
+  const adjacentEnd = parameterNameEnd(pattern, end + 2);
+  return [name, pattern.slice(end + 1, adjacentEnd)];
+}
+
+function resourceComponentAfter(
+  character: string | undefined,
+  component: ResourceComponent,
+): ResourceComponent {
+  if (character === "?" && component === "path") return "query";
+  if (character === "#") return "fragment";
+  return component;
+}
+
 function parseResourcePattern(pattern: string): ParsedResourcePattern {
   const tokens: ResourcePatternToken[] = [];
   const parameterNames: string[] = [];
@@ -101,44 +128,31 @@ function parseResourcePattern(pattern: string): ParsedResourcePattern {
     hasRootlessTemplateBoundary(pattern, schemeDelimiter, firstSchemeComponentEnd);
   let component: ResourceComponent = "path";
 
-  for (let index = 0; index < pattern.length; index++) {
-    const character = pattern[index];
-    if (character === "?" && component === "path") component = "query";
-    else if (character === "#") component = "fragment";
-    if (character !== ":") continue;
-    if (index === schemeDelimiter) continue;
-    const firstNameCode = pattern.charCodeAt(index + 1);
-    if (!isParameterNameStart(firstNameCode)) continue;
-
-    const previousCode = index === 0 ? -1 : pattern.charCodeAt(index - 1);
+  const canStartParameter = (index: number, component: ResourceComponent) => {
+    const firstNameCode = pattern.codePointAt(index + 1) ?? -1;
+    if (!isParameterNameStart(firstNameCode)) return false;
+    const previousCode = index === 0 ? -1 : (pattern.codePointAt(index - 1) ?? -1);
     const legacyParameterContext = index === 0 ||
       (!isAsciiLetter(previousCode) && !isAsciiDigit(previousCode));
-    const parameterContext = urnScheme && component === "path"
-      ? false
-      : schemeDelimiter < 0 || component !== "path" || hierarchicalScheme
-      ? legacyParameterContext
-      : rootlessTemplatePath && legacyParameterContext;
-    if (!parameterContext) continue;
+    if (urnScheme && component === "path") return false;
+    if (schemeDelimiter < 0 || component !== "path" || hierarchicalScheme) {
+      return legacyParameterContext;
+    }
+    return rootlessTemplatePath && legacyParameterContext;
+  };
 
-    let end = index + 2;
-    while (end < pattern.length && isParameterNamePart(pattern.charCodeAt(end))) end++;
+  for (let index = 0; index < pattern.length; index++) {
+    const character = pattern[index];
+    component = resourceComponentAfter(character, component);
+    if (character !== ":" || index === schemeDelimiter) continue;
+    if (!canStartParameter(index, component)) continue;
+
+    const end = parameterNameEnd(pattern, index + 2);
     if (index > literalStart) {
       tokens.push({ kind: "literal", value: pattern.slice(literalStart, index) });
     }
     const name = pattern.slice(index + 1, end);
-    if (
-      adjacentParameters === undefined && pattern[end] === ":" &&
-      isParameterNameStart(pattern.charCodeAt(end + 1))
-    ) {
-      let adjacentEnd = end + 2;
-      while (
-        adjacentEnd < pattern.length &&
-        isParameterNamePart(pattern.charCodeAt(adjacentEnd))
-      ) {
-        adjacentEnd++;
-      }
-      adjacentParameters = [name, pattern.slice(end + 1, adjacentEnd)];
-    }
+    adjacentParameters ??= findAdjacentParameter(pattern, name, end);
     tokens.push({ kind: "parameter", name, component });
     parameterNames.push(name);
     literalStart = end;
@@ -183,6 +197,27 @@ export function validateResourcePatternParameters(pattern: string): readonly str
   return parsed.parameterNames;
 }
 
+function captureResourceParameter(
+  uri: string,
+  offset: number,
+  token: Extract<ResourcePatternToken, { kind: "parameter" }>,
+  next: ResourcePatternToken | undefined,
+  params: Record<string, string>,
+): number | undefined {
+  const end = next?.kind === "literal"
+    ? uri.indexOf(next.value, offset)
+    : findCaptureEnd(uri, offset, token.component);
+  if (end < offset) return undefined;
+  const rawValue = uri.slice(offset, end);
+  if (!captureAllows(token.component, rawValue)) return undefined;
+  try {
+    params[token.name] = decodeURIComponent(rawValue);
+  } catch {
+    return undefined;
+  }
+  return end;
+}
+
 /**
  * Match one resource URI deterministically and decode captures exactly once.
  * Malformed percent escapes and raw component delimiters do not match.
@@ -204,18 +239,8 @@ export function matchResourcePattern(
       continue;
     }
 
-    const next = tokens[index + 1];
-    const end = next?.kind === "literal"
-      ? uri.indexOf(next.value, offset)
-      : findCaptureEnd(uri, offset, token.component);
-    if (end < offset) return undefined;
-    const rawValue = uri.slice(offset, end);
-    if (!captureAllows(token.component, rawValue)) return undefined;
-    try {
-      params[token.name] = decodeURIComponent(rawValue);
-    } catch {
-      return undefined;
-    }
+    const end = captureResourceParameter(uri, offset, token, tokens[index + 1], params);
+    if (end === undefined) return undefined;
     offset = end;
   }
   return offset === uri.length ? params : undefined;

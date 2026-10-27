@@ -38,7 +38,7 @@ interface PathParam {
  */
 export function toOpenAPIPath(pattern: string): string {
   return pattern.replace(
-    /\[\[\.\.\.([^\]]+)\]\]|\[\.\.\.([^\]]+)\]|\[([^\]]+)\]/g,
+    /\[\[\.\.\.([^\[\]]+)\]\]|\[\.\.\.([^\[\]]+)\]|\[([^\[\]]+)\]/g,
     (
       _match,
       optionalCatchAll: string | undefined,
@@ -80,11 +80,11 @@ export function extractPathParams(pattern: string): PathParam[] {
     params.push({ name, required, catchAll });
   }
 
-  for (const match of pattern.matchAll(/\[\[\.\.\.([^\]]+)\]\]/g)) {
+  for (const match of pattern.matchAll(/\[\[\.\.\.([^\[\]]+)\]\]/g)) {
     addParam(match[1], false, true);
   }
 
-  for (const match of pattern.matchAll(/\[\.\.\.([^\]]+)\]/g)) {
+  for (const match of pattern.matchAll(/\[\.\.\.([^\[\]]+)\]/g)) {
     addParam(match[1], true, true);
   }
 
@@ -116,7 +116,7 @@ export function extractPathParams(pattern: string): PathParam[] {
 export function generateOperationId(method: string, path: string): string {
   const cleanPath = path
     .replace(/^\/api/, "")
-    .replace(/\{([^}]+)\}/g, (_, param: string) => `By${capitalize(param)}`);
+    .replace(/\{([^{}]+)\}/g, (_, param: string) => `By${capitalize(param)}`);
 
   const segments = cleanPath
     .split("/")

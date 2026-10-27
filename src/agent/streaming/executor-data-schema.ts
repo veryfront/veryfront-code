@@ -1,3 +1,4 @@
+import { readStructuredAgentOutput } from "#veryfront/agent/output-schema.ts";
 import {
   AGENT_PROVIDER_AUTH_ERROR,
   OUTPUT_SCHEMA_INVALID_ERROR,
@@ -10,6 +11,7 @@ import {
   executorAgentJson,
   getExecutorAgentFailureCodeSchema,
 } from "../hosted/executor-agent-schema.ts";
+import { getToolResultSequenceSchema } from "#veryfront/runtime/tool-result-sequence.ts";
 
 const getUsageSchema = defineSchema((v) => {
   const count = v.number().nonnegative().optional();
@@ -63,7 +65,9 @@ export const getExecutorDataEventSchema = defineSchema((v) => {
       finishReason: v.string().optional(),
       usage: getUsageSchema().optional(),
       totalUsage: getUsageSchema().optional(),
+      data: json.optional(),
       object: json.optional(),
+      objectEncoding: v.literal("snapshot").optional(),
     }).strict(),
     v.object({
       type: v.literal("step-start"),
@@ -149,6 +153,7 @@ export const getExecutorDataEventSchema = defineSchema((v) => {
       type: v.literal("tool-output-available"),
       toolCallId: id,
       output: json.optional(),
+      privateToolResultSequence: getToolResultSequenceSchema().optional(),
       ...flags,
     })
       .strict(),
@@ -158,13 +163,19 @@ export const getExecutorDataEventSchema = defineSchema((v) => {
       toolName: id.optional(),
       input: json.optional(),
       errorText: v.string(),
+      privateToolResultSequence: getToolResultSequenceSchema().optional(),
       ...flags,
     }).strict(),
-    v.object({ type: v.literal("tool-output-denied"), toolCallId: id }).strict(),
+    v.object({
+      type: v.literal("tool-output-denied"),
+      toolCallId: id,
+      privateToolResultSequence: getToolResultSequenceSchema().optional(),
+    }).strict(),
     v.object({
       type: v.literal("tool-output-error"),
       toolCallId: id,
       errorText: v.string(),
+      privateToolResultSequence: getToolResultSequenceSchema().optional(),
       ...flags,
     }).strict(),
     v.object({ type: v.literal("error"), error: v.string(), code: v.string().optional() }).strict(),
@@ -242,6 +253,25 @@ export function parseExecutorDataEvent(input: unknown): JsonValue & { type: stri
     typeof value.type !== "string"
   ) {
     throw new ExecutorAgentError("EXECUTOR_AGENT_INVALID_STREAM");
+  }
+  if (
+    (value.type === "message-finish" || value.type === "finish") &&
+    (Object.hasOwn(value, "data") || Object.hasOwn(value, "object"))
+  ) {
+    try {
+      const structured = readStructuredAgentOutput(value);
+      if (!structured) {
+        throw new ExecutorAgentError("EXECUTOR_AGENT_INVALID_STREAM");
+      }
+      return {
+        ...value,
+        data: structured.data,
+        object: structured.data,
+        type: value.type,
+      } as JsonValue & { type: string };
+    } catch {
+      throw new ExecutorAgentError("EXECUTOR_AGENT_INVALID_STREAM");
+    }
   }
   return { ...value, type: value.type };
 }

@@ -23,10 +23,13 @@ import {
   telemetryErrorType,
 } from "./telemetry-error.ts";
 import { createRuntimeProviderStreamFailure } from "#veryfront/runtime/provider-stream-error-provenance.ts";
+import { createClassifiedProviderStreamProtocolError } from "#veryfront/provider/runtime-loader/stream-protocol-classification-factories.ts";
 import { isNativeErrorWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
 import {
+  buildProviderError,
   ProviderRateLimitError,
   ProviderRequestError,
+  ProviderStreamProtocolError,
 } from "#veryfront/provider/runtime-loader/provider-http.ts";
 import { withRuntimeProviderStreamErrorProvenance } from "#veryfront/agent/runtime/chat-stream-handler.ts";
 import type { ModelRuntime } from "#veryfront/provider/types.ts";
@@ -407,7 +410,7 @@ describe("observability/telemetry-error", () => {
       if (previous) {
         Object.defineProperty(ErrorWithStackFormatter, "prepareStackTrace", previous);
       } else {
-        delete ErrorWithStackFormatter.prepareStackTrace;
+        Reflect.deleteProperty(ErrorWithStackFormatter, "prepareStackTrace");
       }
     }
 
@@ -603,7 +606,7 @@ describe("observability/telemetry-error", () => {
       if (previousFormatter) {
         Object.defineProperty(ErrorWithStackFormatter, "prepareStackTrace", previousFormatter);
       } else {
-        delete ErrorWithStackFormatter.prepareStackTrace;
+        Reflect.deleteProperty(ErrorWithStackFormatter, "prepareStackTrace");
       }
       if (previousIsError) {
         Object.defineProperty(ErrorWithStackFormatter, "isError", previousIsError);
@@ -1049,6 +1052,185 @@ describe("observability/telemetry-error", () => {
       }
     });
 
+    it("records distinct fixed Anthropic stream parser issues in safe telemetry", () => {
+      const jsonFailure = createClassifiedProviderStreamProtocolError({
+        provider: "anthropic",
+        status: 200,
+        retryable: false,
+        message:
+          "anthropic request failed: invalid successful stream (tool call arguments were not valid JSON object text)",
+      }, "tool call arguments were not valid JSON object text");
+      const sequenceFailure = createClassifiedProviderStreamProtocolError({
+        provider: "anthropic",
+        status: 200,
+        retryable: false,
+        message:
+          "anthropic request failed: invalid successful stream (message_delta was out of sequence)",
+      }, "message_delta was out of sequence");
+      const a = summarizeErrorCausesForLog(
+        createRuntimeProviderStreamFailure(jsonFailure),
+      );
+      const b = summarizeErrorCausesForLog(
+        createRuntimeProviderStreamFailure(sequenceFailure),
+      );
+      assertEquals(a, [{
+        name: "ProviderStreamProtocolError",
+        provider: "anthropic",
+        status: 200,
+        retryable: false,
+        streamIssue: "tool call arguments were not valid JSON object text",
+        messageRedacted: true,
+      }]);
+      assertEquals(b, [{
+        name: "ProviderStreamProtocolError",
+        provider: "anthropic",
+        status: 200,
+        retryable: false,
+        streamIssue: "message_delta was out of sequence",
+        messageRedacted: true,
+      }]);
+    });
+
+    it("records fixed Anthropic lifecycle and limit issues while retaining redaction", () => {
+      for (
+        const issue of [
+          "stream ended before a terminal marker",
+          "stream ended with unfinished content blocks",
+          "content block index was reused",
+          "Anthropic retained content exceeded 16777216 UTF-8 bytes (content block)",
+        ]
+      ) {
+        const failure = createClassifiedProviderStreamProtocolError({
+          provider: "anthropic",
+          status: 200,
+          retryable: false,
+          message: `anthropic request failed: invalid successful stream (${issue})`,
+        }, issue);
+        assertEquals(
+          summarizeErrorCausesForLog(createRuntimeProviderStreamFailure(failure)),
+          [{
+            name: "ProviderStreamProtocolError",
+            provider: "anthropic",
+            status: 200,
+            retryable: false,
+            streamIssue: issue,
+            messageRedacted: true,
+          }],
+        );
+      }
+    });
+
+    it("records Anthropic stream issues with veryfront-cloud provider label", () => {
+      const failure = createClassifiedProviderStreamProtocolError({
+        provider: "anthropic",
+        status: 200,
+        retryable: false,
+        message:
+          "veryfront-cloud request failed: invalid successful stream (message_start was out of sequence)",
+      }, "message_start was out of sequence");
+      assertEquals(
+        summarizeErrorCausesForLog(createRuntimeProviderStreamFailure(failure)),
+        [{
+          name: "ProviderStreamProtocolError",
+          provider: "anthropic",
+          status: 200,
+          retryable: false,
+          streamIssue: "message_start was out of sequence",
+          messageRedacted: true,
+        }],
+      );
+    });
+
+    it("withholds Anthropic stream issues not in trusted provenance", () => {
+      for (
+        const message of [
+          "anthropic request failed: invalid successful stream (synthetic-secret)",
+          "anthropic request failed: invalid successful stream (message_delta was out of sequence synthetic-secret)",
+          "synthetic-secret request failed: invalid successful stream (message_delta was out of sequence)",
+        ]
+      ) {
+        const failure = new ProviderStreamProtocolError({
+          provider: "anthropic",
+          status: 200,
+          retryable: false,
+          message,
+        });
+        // No recordStreamProtocolClassification call: simulates untrusted error.
+        assertEquals(
+          summarizeErrorCausesForLog(createRuntimeProviderStreamFailure(failure)),
+          [{
+            name: "ProviderStreamProtocolError",
+            provider: "anthropic",
+            status: 200,
+            retryable: false,
+            messageRedacted: true,
+          }],
+        );
+      }
+    });
+
+    it("rejects forged plain Error lookalikes with allowlisted Anthropic messages", () => {
+      const forged = Object.assign(
+        new Error(
+          "anthropic request failed: invalid successful stream (message_delta was out of sequence)",
+        ),
+        {
+          name: "ProviderStreamProtocolError",
+          provider: "anthropic",
+          status: 200,
+          retryable: false,
+        },
+      );
+      // No trusted provenance: forged error must not produce streamIssue.
+      const causes = summarizeErrorCausesForLog(
+        createRuntimeProviderStreamFailure(forged),
+      );
+      assertEquals(causes?.[0]?.streamIssue, undefined);
+    });
+
+    it("rejects Anthropic errors with message accessors", () => {
+      const hostile = new ProviderStreamProtocolError({
+        provider: "anthropic",
+        status: 200,
+        retryable: false,
+        message: "stub",
+      });
+      Object.defineProperty(hostile, "message", {
+        configurable: true,
+        get() {
+          return "anthropic request failed: invalid successful stream (message_delta was out of sequence)";
+        },
+      });
+      // No trusted provenance recorded.
+      const causes = summarizeErrorCausesForLog(
+        createRuntimeProviderStreamFailure(hostile),
+      );
+      assertEquals(causes?.[0]?.streamIssue, undefined);
+    });
+
+    it("rejects Anthropic error proxies", () => {
+      let trapCalls = 0;
+      const real = new ProviderStreamProtocolError({
+        provider: "anthropic",
+        status: 200,
+        retryable: false,
+        message:
+          "anthropic request failed: invalid successful stream (message_delta was out of sequence)",
+      });
+      const proxy = new Proxy(real, {
+        get(target, prop, receiver) {
+          trapCalls++;
+          return Reflect.get(target, prop, receiver);
+        },
+      });
+      // Proxy wraps a real error but the WeakMap key is the proxy, not the target.
+      const causes = summarizeErrorCausesForLog(
+        createRuntimeProviderStreamFailure(proxy),
+      );
+      assertEquals(causes?.[0]?.streamIssue, undefined);
+      assertEquals(trapCalls, 0, "proxy traps must not be invoked");
+    });
+
     it("logs only allowlisted error names and transient codes", () => {
       const customName = Object.assign(new Error("x"), { name: "CustomerAcme123Error" });
       const customCode = Object.assign(new Error("x"), { code: "account-123456" });
@@ -1087,6 +1269,190 @@ describe("observability/telemetry-error", () => {
         retryable: false,
         messageRedacted: true,
       }]);
+    });
+
+    it("keeps bounded gateway provenance while redacting provider failure content", () => {
+      const failure = Object.assign(
+        new ProviderRequestError({
+          provider: "openai",
+          status: 503,
+          message: "secret upstream body",
+          retryable: true,
+        }),
+        {
+          viaVeryfrontGateway: true,
+          requestUrl: "https://user:secret@api.openai.com/v1/chat?token=secret",
+          nativeCode: "secret",
+        },
+      );
+      assertEquals(summarizeErrorCausesForLog(createRuntimeProviderStreamFailure(failure)), [{
+        name: "ProviderRequestError",
+        provider: "openai",
+        status: 503,
+        retryable: true,
+        viaVeryfrontGateway: true,
+        requestOrigin: "openai",
+        messageRedacted: true,
+      }]);
+    });
+
+    it("classifies only exact public endpoints without inferring gateway provenance", () => {
+      for (
+        const [requestUrl, requestOrigin] of [
+          ["https://api.openai.com/v1/responses", "openai"],
+          ["https://api.anthropic.com/v1/messages", "anthropic"],
+          ["https://generativelanguage.googleapis.com/private?key=secret", "google"],
+        ] as const
+      ) {
+        const error = Object.assign(new Error("secret"), { requestUrl });
+        assertEquals(summarizeErrorCausesForLog(createRuntimeProviderStreamFailure(error)), [{
+          name: "Error",
+          requestOrigin,
+          messageRedacted: true,
+        }]);
+      }
+      for (
+        const requestUrl of [
+          "not a URL",
+          "https://api.openai.com.customer.example/private",
+          "https://api.openai.com/" + "x".repeat(8192),
+        ]
+      ) {
+        const error = Object.assign(new Error("secret"), { requestUrl });
+        assertEquals(summarizeErrorCausesForLog(createRuntimeProviderStreamFailure(error)), [{
+          name: "Error",
+          messageRedacted: true,
+        }]);
+      }
+    });
+
+    it("omits unknown request origins and never invokes provenance accessors", () => {
+      let calls = 0;
+      const failure = new Error("secret");
+      Object.defineProperty(failure, "viaVeryfrontGateway", {
+        get() {
+          calls++;
+          return true;
+        },
+      });
+      Object.defineProperty(failure, "requestUrl", {
+        get() {
+          calls++;
+          return "https://api.openai.com";
+        },
+      });
+      assertEquals(summarizeErrorCausesForLog(createRuntimeProviderStreamFailure(failure)), [{
+        name: "Error",
+        messageRedacted: true,
+      }]);
+      assertEquals(calls, 0);
+      const custom = Object.assign(new Error("secret"), {
+        requestUrl: "https://secret.customer.example/private?token=secret",
+        viaVeryfrontGateway: "true",
+      });
+      assertEquals(summarizeErrorCausesForLog(createRuntimeProviderStreamFailure(custom)), [{
+        name: "Error",
+        messageRedacted: true,
+      }]);
+    });
+
+    it("logs only safe structured fields from a rejected provider request", async () => {
+      const body = JSON.stringify({
+        error: {
+          type: "invalid_request_error",
+          code: "invalid_tool_schema",
+          param: "tools[0].function.parameters",
+          message: "Private prompt and key sk-private were rejected",
+          request: "private request body",
+        },
+      });
+      const providerError = await buildProviderError("openai", new Response(body, { status: 400 }));
+      const result = summarizeErrorCausesForLog(
+        createRuntimeProviderStreamFailure(providerError),
+      );
+
+      assertEquals(result, [{
+        name: "ProviderRequestError",
+        provider: "openai",
+        status: 400,
+        retryable: false,
+        providerErrorType: "invalid_request_error",
+        providerErrorCode: "invalid_tool_schema",
+        providerErrorParam: "tools[0].function.parameters",
+        messageRedacted: true,
+      }]);
+      assertEquals(JSON.stringify(result).includes("sk-private"), false);
+      assertEquals(JSON.stringify(providerError).includes("private request body"), false);
+    });
+
+    it("falls back to the Google status when the envelope code is numeric", async () => {
+      const body = JSON.stringify({
+        error: { code: 400, status: "INVALID_ARGUMENT", message: "private" },
+      });
+      const providerError = await buildProviderError("google", new Response(body, { status: 400 }));
+      const summary = summarizeErrorCausesForLog(
+        createRuntimeProviderStreamFailure(providerError),
+      );
+      assertEquals(summary?.[0]?.providerErrorCode, "INVALID_ARGUMENT");
+    });
+
+    it("keeps malformed or unsafe provider details at status-only diagnostics", async () => {
+      const bodies = [
+        "not-json",
+        JSON.stringify({
+          error: {
+            type: "sk-private",
+            code: "sk-private",
+            param: "tools[0].function.parameters.secret-key",
+            message: "private",
+          },
+        }),
+      ];
+      for (const body of bodies) {
+        const providerError = await buildProviderError(
+          "openai",
+          new Response(body, { status: 400 }),
+        );
+        assertEquals(
+          summarizeErrorCausesForLog(
+            createRuntimeProviderStreamFailure(providerError),
+          ),
+          [{
+            name: "ProviderRequestError",
+            provider: "openai",
+            status: 400,
+            retryable: false,
+            messageRedacted: true,
+          }],
+        );
+      }
+    });
+
+    it("ignores lookalike diagnostic fields on an uncaptured provider error", () => {
+      const providerError = new ProviderRequestError({
+        provider: "openai",
+        status: 400,
+        message: "Private request failed",
+        retryable: false,
+      });
+      Object.defineProperty(providerError, "providerErrorCode", {
+        get() {
+          throw new Error("Untrusted diagnostic getter must not run");
+        },
+      });
+
+      assertEquals(
+        summarizeErrorCausesForLog(
+          createRuntimeProviderStreamFailure(providerError),
+        ),
+        [{
+          name: "ProviderRequestError",
+          provider: "openai",
+          status: 400,
+          retryable: false,
+          messageRedacted: true,
+        }],
+      );
     });
 
     it("logs rate-limit retryability and normalizes statusCode to status", () => {

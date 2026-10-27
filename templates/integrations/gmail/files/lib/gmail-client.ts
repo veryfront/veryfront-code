@@ -180,15 +180,12 @@ export interface GmailClient {
   modifyMessageLabels(messageId: string, labels: ModifyLabelsOptions): Promise<GmailMessage>;
   trashMessage(messageId: string): Promise<GmailMessage>;
   untrashMessage(messageId: string): Promise<GmailMessage>;
-  deleteMessage(messageId: string): Promise<void>;
   batchModifyMessages(messageIds: string[], labels: ModifyLabelsOptions): Promise<void>;
-  batchDeleteMessages(messageIds: string[]): Promise<void>;
   listThreads(options?: ListMessagesOptions): Promise<GmailThreadList>;
   getThread(threadId: string, format?: GmailThreadFormat): Promise<GmailThread>;
   modifyThreadLabels(threadId: string, labels: ModifyLabelsOptions): Promise<GmailThread>;
   trashThread(threadId: string): Promise<GmailThread>;
   untrashThread(threadId: string): Promise<GmailThread>;
-  deleteThread(threadId: string): Promise<void>;
   createDraft(options: DraftEmailOptions): Promise<GmailDraft>;
   listDrafts(options?: ListMessagesOptions): Promise<GmailDraftList>;
   getDraft(draftId: string, format?: GmailMessageFormat): Promise<GmailDraft>;
@@ -229,7 +226,7 @@ function encodeEmail(options: SendEmailOptions): string {
   if (options.replyTo) headers.push(`Reply-To: ${options.replyTo}`);
 
   const email = `${headers.join("\r\n")}\r\n\r\n${options.body}`;
-  return btoa(email).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  return btoa(email).replace(/\+/g, "-").replace(/\//g, "_").replace(/(?<!=)=+$/, "");
 }
 
 function addListParams(params: URLSearchParams, options: ListMessagesOptions = {}): void {
@@ -377,9 +374,6 @@ export function createGmailClient(userId: string): GmailClient {
       });
     },
 
-    async deleteMessage(messageId: string): Promise<void> {
-      await apiRequest<void>(`/users/me/messages/${messageId}`, { method: "DELETE" });
-    },
 
     async batchModifyMessages(messageIds: string[], labels: ModifyLabelsOptions): Promise<void> {
       await apiRequest<void>("/users/me/messages/batchModify", {
@@ -388,12 +382,6 @@ export function createGmailClient(userId: string): GmailClient {
       });
     },
 
-    async batchDeleteMessages(messageIds: string[]): Promise<void> {
-      await apiRequest<void>("/users/me/messages/batchDelete", {
-        method: "POST",
-        body: JSON.stringify({ ids: messageIds }),
-      });
-    },
 
     listThreads(options: ListMessagesOptions = {}): Promise<GmailThreadList> {
       const params = new URLSearchParams();
@@ -420,9 +408,6 @@ export function createGmailClient(userId: string): GmailClient {
       return apiRequest<GmailThread>(`/users/me/threads/${threadId}/untrash`, { method: "POST" });
     },
 
-    async deleteThread(threadId: string): Promise<void> {
-      await apiRequest<void>(`/users/me/threads/${threadId}`, { method: "DELETE" });
-    },
 
     createDraft(options: DraftEmailOptions): Promise<GmailDraft> {
       return apiRequest<GmailDraft>("/users/me/drafts", {

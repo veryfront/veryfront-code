@@ -5,8 +5,10 @@ import {
   DENO_TEST_ENV,
   hasDenoPermissionFlag,
   LEAF_TEST_SUITES,
+  partitionDenoSuiteFiles,
   PROVIDER_ENV_KEYS,
   resolveLeafSuiteOwners,
+  shouldRunDenoBatchInParallel,
   validateLeafSuiteRegistry,
 } from "./suites.ts";
 
@@ -191,5 +193,23 @@ describe("leaf test suite registry", () => {
     assertEquals(resolveLeafSuiteOwners("react/react.test.ts"), [
       { level: "unit", suite: "unit", runner: "deno" },
     ]);
+  });
+});
+
+describe("process isolation", () => {
+  it("isolates Studio cwd changes from subprocess-based integration tests", () => {
+    const studio = "tests/integration/cli/studio-config.integration.test.ts";
+    const files = [
+      "tests/integration/cli/project/runs-output.test.ts",
+      studio,
+      "tests/integration/docs/provider-client-examples.test.ts",
+    ];
+    for (const limit of [50, null]) {
+      const batches = partitionDenoSuiteFiles(files, limit);
+      assertEquals(batches, files.map((file) => [file]));
+      assertEquals(batches.flat(), files);
+      assertEquals(shouldRunDenoBatchInParallel(true, [studio]), false);
+      assertEquals(shouldRunDenoBatchInParallel(true, [files[2]!]), true);
+    }
   });
 });

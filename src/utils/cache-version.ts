@@ -6,7 +6,7 @@ export function formatCacheVersionSegment(version: string | number): string {
   const normalized = String(version)
     .replace(/^v(?=\d)/, "")
     .replace(/[^A-Za-z0-9_-]+/g, "-")
-    .replace(/^-+|-+$/g, "");
+    .replace(/^-+|(?<!-)-+$/g, "");
 
   return `v${normalized || "unknown"}`;
 }

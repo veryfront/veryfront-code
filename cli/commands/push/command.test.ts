@@ -32,6 +32,7 @@ import {
   uploadFiles,
   type UploadOp,
 } from "./command.ts";
+import { planPushChanges } from "./plan.ts";
 import { type ApiClient, type ApiReadOptions, resolveConfig } from "#cli/shared/config";
 import {
   createDefaultIgnoreChecker,
@@ -793,6 +794,41 @@ describe("ensureBranch", () => {
     ]);
   });
 
+  it("URL-encodes the project slug in the lookup after a create conflict", async () => {
+    const getRequests: Array<{ url: string; params?: Record<string, string> }> = [];
+    const conflict = Object.assign(new Error("conflict"), { status: 409 });
+    const mockClient = createMockClient({
+      post: () => Promise.reject(conflict),
+      get: (url: string, params?: Record<string, string>) => {
+        getRequests.push({ url, params });
+        if (getRequests.length === 1) {
+          return Promise.resolve({
+            data: [{ id: "other-branch", name: "feature-x-old", project_id: "proj-456" }],
+            page_info: { next: "cursor-2" },
+          });
+        }
+        return Promise.resolve({
+          data: [{ id: "branch-existing", name: "feature-x", project_id: "proj-456" }],
+        });
+      },
+    });
+
+    const result = await ensureBranch(mockClient, "my project/x", "feature-x");
+
+    assertEquals(result.id, "branch-existing");
+    assertEquals(result.created, false);
+    assertEquals(getRequests, [
+      {
+        url: "/projects/my%20project%2Fx/branches",
+        params: { search: "feature-x", limit: "100" },
+      },
+      {
+        url: "/projects/my%20project%2Fx/branches",
+        params: { search: "feature-x", limit: "100", cursor: "cursor-2" },
+      },
+    ]);
+  });
+
   it("rethrows a create conflict when the existing branch cannot be found", async () => {
     const conflict = Object.assign(new Error("conflict"), { status: 409 });
     const mockClient = createMockClient({
@@ -916,7 +952,7 @@ describe("resolvePushRemoteFiles", () => {
         params: { search: "feature-x", limit: "100" },
       },
       {
-        url: "/projects/my-project/files?branch=feature-x",
+        url: "/projects/my-project/files?ref=branch%3Afeature-x",
         params: { limit: "100", sort_by: "updated_at", sort_order: "desc" },
       },
     ]);
@@ -1319,9 +1355,9 @@ describe("push receipt source snapshot", () => {
         assertEquals(link?.projectSlug, reservedSlug);
         assertEquals((await resolveConfig(projectDir)).projectId, "project-123");
         assertEquals((await resolveConfig(projectDir)).projectSlug, reservedSlug);
-        await assertRejects(
-          () => Deno.stat(`${projectDir}/veryfront.json`),
-          Deno.errors.NotFound,
+        assertEquals(
+          JSON.parse(await Deno.readTextFile(`${projectDir}/veryfront.json`)).projectSlug,
+          reservedSlug,
         );
 
         const projectCreateRequestsAfterFirstPush = projectCreateRequests;
@@ -1332,7 +1368,7 @@ describe("push receipt source snapshot", () => {
           requests.filter((request) => request === "GET /projects/project-123/files").length > 0,
           true,
         );
-        assertEquals([...uploaded.keys()].sort(), ["app.ts", "package.json"]);
+        assertEquals([...uploaded.keys()].sort(), ["app.ts", "package.json", "veryfront.json"]);
         assertEquals((await readPushReceipt(projectDir))?.projectSlug, reservedSlug);
       } finally {
         globalThis.fetch = originalFetch;
@@ -1413,9 +1449,9 @@ describe("push receipt source snapshot", () => {
         const link = await readProjectLink(projectDir);
         assertEquals(link?.projectId, "project-123");
         assertEquals(link?.projectSlug, reservedSlug);
-        await assertRejects(
-          () => Deno.stat(`${projectDir}/veryfront.json`),
-          Deno.errors.NotFound,
+        assertEquals(
+          JSON.parse(await Deno.readTextFile(`${projectDir}/veryfront.json`)).projectSlug,
+          reservedSlug,
         );
       } finally {
         globalThis.fetch = originalFetch;
@@ -1472,9 +1508,9 @@ describe("push receipt source snapshot", () => {
             const link = await readProjectLink(projectDir);
             assertEquals(link?.projectId, "project-123");
             assertEquals(link?.projectSlug, "my-project");
-            await assertRejects(
-              () => Deno.stat(`${projectDir}/veryfront.json`),
-              Deno.errors.NotFound,
+            assertEquals(
+              JSON.parse(await Deno.readTextFile(`${projectDir}/veryfront.json`)).projectSlug,
+              "my-project",
             );
             return Response.json({ error: "upload failed" }, { status: 500 });
           }
@@ -1491,9 +1527,9 @@ describe("push receipt source snapshot", () => {
         const link = await readProjectLink(projectDir);
         assertEquals(link?.projectId, "project-123");
         assertEquals(link?.projectSlug, "my-project");
-        await assertRejects(
-          () => Deno.stat(`${projectDir}/veryfront.json`),
-          Deno.errors.NotFound,
+        assertEquals(
+          JSON.parse(await Deno.readTextFile(`${projectDir}/veryfront.json`)).projectSlug,
+          "my-project",
         );
       } finally {
         globalThis.fetch = originalFetch;
@@ -1584,6 +1620,52 @@ describe("push receipt source snapshot", () => {
     } finally {
       globalThis.fetch = originalFetch;
       envKeys.forEach((key, index) => restoreEnv(key, savedEnv[index]));
+      _resetEnvironmentConfig();
+    }
+  });
+
+  it("keeps a resolved dev project ID when its shared-association slug disappears", async () => {
+    const envKeys = [
+      "VERYFRONT_API_TOKEN",
+      "VERYFRONT_API_URL",
+      "VERYFRONT_PROJECT_SLUG",
+      "TENANT_PROJECT_SLUG",
+      "VERYFRONT_PROJECT_ID",
+      "TENANT_PROJECT_ID",
+    ];
+    const saved = envKeys.map((key) => Deno.env.get(key));
+    const requests: string[] = [];
+    try {
+      Deno.env.set("VERYFRONT_API_TOKEN", "<TOKEN>");
+      Deno.env.set("VERYFRONT_API_URL", "https://control.example.test");
+      for (const key of envKeys.slice(2)) Deno.env.delete(key);
+      _resetEnvironmentConfig();
+      await withGitProject(async ({ projectDir }) => {
+        await Deno.writeTextFile(
+          `${projectDir}/veryfront.json`,
+          JSON.stringify({ projectSlug: "stale-slug" }),
+        );
+        await withMockFetch((input, init) => {
+          const request = input instanceof Request ? input : new Request(input, init);
+          requests.push(`${request.method} ${new URL(request.url).pathname}`);
+          return Promise.resolve(Response.json({ error: "not found" }, { status: 404 }));
+        }, async () => {
+          await assertRejects(
+            () =>
+              pushCommand({
+                projectDir,
+                projectSlug: "stale-slug",
+                projectId: "resolved-project-id",
+                quiet: true,
+              }),
+            Error,
+            'Project "resolved-project-id" was not found',
+          );
+        });
+      });
+      assertEquals(requests, ["GET /projects/resolved-project-id"]);
+    } finally {
+      envKeys.forEach((key, index) => restoreEnv(key, saved[index]));
       _resetEnvironmentConfig();
     }
   });
@@ -1843,6 +1925,53 @@ describe("push dry-run project bootstrap", () => {
 });
 
 describe("uploadFiles", () => {
+  it("keeps an annotated forced create conditional and preserves a concurrent file", async () => {
+    const path = "knowledge/acme/doc.md";
+    const metadata = { _veryfront: { okf: { bundle_root_path: "knowledge/acme" } } };
+    const plan = await planPushChanges({
+      localFiles: [{ path, content: "local\r\n", metadata }],
+      remoteFiles: [],
+      baselineFiles: {},
+      deletePaths: [],
+      force: true,
+    });
+    assertEquals(plan.uploads, [{ path, content: "local\r\n", metadata, expectedAbsent: true }]);
+    const concurrent = { content: "concurrent", metadata: { _veryfront: { unknown: false } } };
+    const before = structuredClone(concurrent);
+    const client = createMockClient({
+      put: (_url: string, body?: unknown, options?: unknown) => {
+        assertEquals(options, { retryPolicy: "none" });
+        if (body && typeof body === "object" && "expected_absent" in body && body.expected_absent) {
+          return Promise.reject(Object.assign(new Error("File was created"), { status: 409 }));
+        }
+        throw new Error("Annotated create must not overwrite the concurrent file");
+      },
+    });
+    const result = await uploadFiles(client, "my-project", "branch-123", plan.uploads, false);
+    assertEquals(result, { uploaded: 0, failed: 0, conflicts: [path], applied: [] });
+    assertEquals(concurrent, before);
+  });
+
+  it("omits derived metadata on updates even when passed a scanned annotated file", async () => {
+    const bodies: unknown[] = [];
+    const client = createMockClient({
+      put: (_url: string, body?: unknown) => {
+        bodies.push(body);
+        return Promise.resolve({});
+      },
+    });
+    await uploadFiles(client, "my-project", null, [{
+      path: "knowledge/acme/doc.md",
+      content: "unchanged bytes\r\n",
+      metadata: { _veryfront: { okf: { bundle_root_path: "knowledge/acme" } } },
+      expectedVersionId: "observed-version",
+    }], false);
+    assertEquals(bodies, [{
+      content: "unchanged bytes\r\n",
+      expected_version_id: "observed-version",
+    }]);
+  });
+
   it("sends update and create preconditions", async () => {
     const capturedBodies: unknown[] = [];
     const capturedOptions: unknown[] = [];
@@ -2249,7 +2378,7 @@ describe("push divergence guard", () => {
             });
           }
           if (request.method === "GET" && url.pathname === "/projects/my-project/files") {
-            const isBranch = url.searchParams.get("branch") === "feature-x";
+            const isBranch = url.searchParams.get("ref") === "branch:feature-x";
             return Response.json({
               data: [{
                 path: "app.ts",
@@ -2329,7 +2458,7 @@ describe("push divergence guard", () => {
             });
           }
           if (request.method === "GET" && url.pathname === "/projects/my-project/files") {
-            const isBranch = url.searchParams.get("branch") === "feature-x";
+            const isBranch = url.searchParams.get("ref") === "branch:feature-x";
             return Response.json({
               data: [{
                 path: "app.ts",
@@ -2455,7 +2584,7 @@ describe("push divergence guard", () => {
             return Response.json({ error: "already exists" }, { status: 409 });
           }
           if (request.method === "GET" && url.pathname === "/projects/my-project/files") {
-            const branchContent = url.searchParams.get("branch") === "feature-x";
+            const branchContent = url.searchParams.get("ref") === "branch:feature-x";
             return Response.json({
               data: [{
                 path: "app.ts",
@@ -2524,7 +2653,7 @@ describe("push divergence guard", () => {
             });
           }
           if (request.method === "GET" && url.pathname === "/projects/my-project/files") {
-            const branchContent = url.searchParams.get("branch") === "feature-x";
+            const branchContent = url.searchParams.get("ref") === "branch:feature-x";
             return Response.json({
               data: [{
                 path: "app.ts",
@@ -7834,6 +7963,23 @@ describe("push dependency pin reconciliation", () => {
         assertStringIncludes(error.message, '"package.json"');
         assertEquals(puts, []);
         assertEquals(await Deno.readTextFile(`${projectDir}/package.json`), BASELINE_PACKAGE_JSON);
+      },
+    );
+  });
+
+  it("warns without --verbose when the dependency history cannot be read", async () => {
+    await runPinPush(
+      {
+        history: { version: 1, project_id: OTHER_PROJECT_ID, branch: null, entries: [] },
+      },
+      async ({ error, output, historyCalls }) => {
+        if (!(error instanceof Error)) throw new Error("Expected push to reject with an Error");
+        assertEquals((error as Error & { slug?: string }).slug, "push-conflict");
+        assertEquals(historyCalls, 1);
+        assertStringIncludes(
+          output.map(stripAnsi).join("\n"),
+          "Dependency pin history unavailable",
+        );
       },
     );
   });

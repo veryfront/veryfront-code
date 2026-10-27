@@ -1,8 +1,12 @@
 import {
+  fileInputBaseName,
+  isImageFileInput,
   jsonValuesEqual,
-  readProviderOptions,
+  readInlineFileData,
+  readRemoteFileUrl,
   stringifyToolArguments,
   stringifyToolResultValue,
+  unsupportedFileInputError,
   unwrapToolInputSchema,
 } from "veryfront/provider/shared";
 import type {
@@ -15,7 +19,10 @@ import {
   resolveOpenAIReasoningConfig,
   shouldRequestOpenAIReasoningSummary,
 } from "./openai-reasoning-models.ts";
-import { defineOpenAIProviderOptions } from "./openai-provider-options.ts";
+import {
+  defineOpenAIProviderOptions,
+  readOpenAIProviderOptions,
+} from "./openai-provider-options.ts";
 import {
   isBoundedOpenAIStreamString,
   MAX_OPENAI_STREAM_TOOL_NAME_BYTES,
@@ -28,6 +35,8 @@ import {
   resolveOpenAIWebSearchDescriptor,
 } from "./openai-web-search.ts";
 import type { OpenAIWebSearchDescriptor } from "./openai-web-search.ts";
+
+const ObjectHasOwn = Object.hasOwn;
 
 export type OpenAIResponsesInputItem = Record<string, unknown>;
 
@@ -398,6 +407,113 @@ function toOpenAIResponsesInput(
   };
 }
 
+const INLINE_FILE_EXTENSIONS: Readonly<Record<string, string>> = {
+  "application/json": "json",
+  "application/pdf": "pdf",
+  "text/csv": "csv",
+  "text/html": "html",
+  "text/markdown": "md",
+  "text/plain": "txt",
+};
+
+/**
+ * Inline document types Responses reads, besides `text/*` and `+json`/`+xml`
+ * types. From OpenAI's file input table, plus common aliases. Other types,
+ * such as archives, fail before inference.
+ */
+const RESPONSES_DOCUMENT_TYPES: ReadonlySet<string> = new Set([
+  "application/pdf",
+  "application/msword",
+  "application/rtf",
+  "application/vnd.ms-excel",
+  "application/vnd.ms-powerpoint",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  "application/vnd.oasis.opendocument.text",
+  "application/vnd.apple.pages",
+  "application/vnd.apple.keynote",
+  "application/vnd.apple.iwork",
+  "application/vnd.google-apps.document",
+  "application/vnd.google-apps.spreadsheet",
+  "application/vnd.google-apps.presentation",
+  "application/csv",
+  "application/x-iif",
+  "application/json",
+  "application/json5",
+  "application/x-json5",
+  "application/x-ndjson",
+  "application/xml",
+  "application/yaml",
+  "application/x-yaml",
+  "application/toml",
+  "application/x-toml",
+  "application/graphql",
+  "application/x-graphql",
+  "application/javascript",
+  "application/x-javascript",
+  "application/typescript",
+  "application/x-python",
+  "application/x-sh",
+  "application/x-bash",
+  "application/x-awk",
+  "application/x-sql",
+  "application/x-scala",
+  "application/x-rust",
+  "application/x-powershell",
+  "application/x-patch",
+  "application/x-php",
+  "application/x-httpd-php",
+  "application/x-httpd-php-source",
+  "application/x-protobuf",
+  "application/x-terraform",
+  "application/x-subrip",
+  "message/rfc822",
+]);
+
+function isResponsesDocumentType(mediaType: string): boolean {
+  return mediaType.startsWith("text/") || /\+(json|xml)$/.test(mediaType) ||
+    RESPONSES_DOCUMENT_TYPES.has(mediaType);
+}
+
+type RuntimeUserFilePart = Exclude<
+  Extract<ModelRuntimePromptMessage, { readonly role: "user" }>["content"][number],
+  { readonly type: "text" }
+>;
+
+/**
+ * Build an inline `input_file`. OpenAI infers the file type from the filename
+ * extension, so a filename without one needs a MIME type we can name.
+ */
+function toOpenAIResponsesInlineFile(
+  part: RuntimeUserFilePart,
+  data: string,
+): Record<string, unknown> {
+  const mediaType = part.mediaType.toLowerCase();
+  if (!isResponsesDocumentType(mediaType)) {
+    throw unsupportedFileInputError(
+      "OpenAI Responses",
+      part,
+      "Send a document such as PDF, text, code, a spreadsheet, or an office document.",
+    );
+  }
+  const extension = INLINE_FILE_EXTENSIONS[mediaType];
+  const name = fileInputBaseName(part.filename) ?? "file";
+  const hasExtension = /.\.[^.]+$/.test(name);
+  if (!hasExtension && !extension) {
+    throw unsupportedFileInputError(
+      "OpenAI Responses",
+      part,
+      "Set a filename with an extension, for example with fileFromBytes.",
+    );
+  }
+  return {
+    type: "input_file",
+    file_data: `data:${mediaType};base64,${data}`,
+    filename: hasExtension ? name : `${name}.${extension}`,
+  };
+}
+
 function toOpenAIResponsesUserContent(
   parts: Extract<ModelRuntimePromptMessage, { readonly role: "user" }>["content"],
 ): Array<Record<string, unknown>> {
@@ -411,16 +527,32 @@ function toOpenAIResponsesUserContent(
       continue;
     }
 
-    if (part.type === "image" || part.mediaType.startsWith("image/")) {
-      content.push({ type: "input_image", image_url: part.url, detail: "auto" });
+    if (isImageFileInput(part)) {
+      // Inline data is validated; any other image URL must be remote.
+      const imageUrl = readInlineFileData(part) === undefined
+        ? readRemoteFileUrl("OpenAI Responses", part)
+        : part.url;
+      content.push({ type: "input_image", image_url: imageUrl, detail: "auto" });
       continue;
     }
 
-    content.push({
-      type: "input_file",
-      file_url: part.url,
-      ...(part.filename ? { filename: part.filename } : {}),
-    });
+    // Responses file inputs are documents; audio and video use other input shapes.
+    if (/^(audio|video)\//i.test(part.mediaType)) {
+      throw unsupportedFileInputError(
+        "OpenAI Responses",
+        part,
+        "Send a document such as PDF, text, or a spreadsheet.",
+      );
+    }
+    const data = readInlineFileData(part);
+    content.push(
+      data === undefined
+        ? {
+          type: "input_file",
+          file_url: readRemoteFileUrl("OpenAI Responses", part),
+        }
+        : toOpenAIResponsesInlineFile(part, data),
+    );
   }
 
   return content;
@@ -557,14 +689,12 @@ export function buildOpenAIResponsesRequest(
 
   // Env-BYOK users historically registered options under "openai-compatible";
   // keep merging that bucket at the lowest precedence.
+  const bucketNames = providerName === "openai"
+    ? ["openai-compatible", "openai", providerName]
+    : ["openai", providerName];
   defineOpenAIProviderOptions(
     body as Record<string, unknown>,
-    readProviderOptions(
-      options.providerOptions,
-      ...(providerName === "openai" ? ["openai-compatible"] : []),
-      "openai",
-      providerName,
-    ),
+    readOpenAIProviderOptions(options.providerOptions, bucketNames),
   );
   // Keep provider-native tuning extensible without allowing raw options to
   // replace the runtime-owned transport, prompt, model, or privacy contract.
@@ -596,7 +726,7 @@ export function buildOpenAIResponsesRequest(
       ]),
     ];
   }
-  if (Object.hasOwn(body, "background")) {
+  if (ObjectHasOwn(body, "background")) {
     delete body.background;
     warnings.push({
       type: "unsupported-setting",

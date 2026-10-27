@@ -56,13 +56,55 @@ const environmentMetaFields = (v: SchemaValidator) => ({
   ...releaseMetaFields(v),
 });
 
-const branchFileFields = (v: SchemaValidator) => ({
-  id: v.string().optional(),
-  version_id: v.string().optional(),
-  content: v.string(),
-  checksum: v.string().nullable().optional(),
-  ...baseFileFields(v),
+/**
+ * Project file routes (`GET /projects/{ref}/files` and `/files/{path}`) answer
+ * `size_bytes`. `size` is the earlier spelling of the same value, which those
+ * routes still serve beside it and which an API without `size_bytes` serves
+ * alone. A file must carry one of them.
+ */
+const branchFileSizeFields = (v: SchemaValidator) => ({
+  size_bytes: v.number().optional(),
+  size: v.number().optional(),
 });
+
+const BRANCH_FILE_SIZE_REQUIRED = "size_bytes is required";
+
+function hasBranchFileSize(file: { size_bytes?: number; size?: number }): boolean {
+  return file.size_bytes !== undefined || file.size !== undefined;
+}
+
+/** Expose one `size` for a parsed branch file, read from `size_bytes` first. */
+function withBranchFileSize<T extends { size_bytes?: number; size?: number }>(
+  file: T,
+): Omit<T, "size"> & { size: number } {
+  return { ...file, size: (file.size_bytes ?? file.size) as number };
+}
+
+const branchFileMetadataFields = (v: SchemaValidator) => {
+  const { size: _size, ...fields } = baseFileFields(v);
+  return {
+    id: v.string().optional(),
+    version_id: v.string().optional(),
+    checksum: v.string().nullable().optional(),
+    ...fields,
+    ...branchFileSizeFields(v),
+  };
+};
+
+const branchFileFields = (v: SchemaValidator) => ({
+  content: v.string(),
+  ...branchFileMetadataFields(v),
+});
+
+const branchFileSchema = (v: SchemaValidator) =>
+  v.object(branchFileFields(v))
+    .refine(hasBranchFileSize, BRANCH_FILE_SIZE_REQUIRED)
+    .transform(withBranchFileSize);
+
+const branchFileMetadataSchema = (v: SchemaValidator) =>
+  v.object(branchFileMetadataFields(v))
+    .refine(hasBranchFileSize, BRANCH_FILE_SIZE_REQUIRED)
+    .transform(withBranchFileSize);
 
 const versionedFileWithContentFields = (v: SchemaValidator) => ({
   ...versionedFileFields(v),
@@ -124,7 +166,7 @@ export const getEnvironmentSchema = defineSchema((v) =>
   })
 );
 
-export const getBranchFileListItemSchema = defineSchema((v) => v.object(branchFileFields(v)));
+export const getBranchFileListItemSchema = defineSchema((v) => branchFileSchema(v));
 
 export const getListBranchFilesResponseSchema = defineSchema((v) =>
   v.object({
@@ -137,20 +179,13 @@ export const getListBranchFilesResponseSchema = defineSchema((v) =>
 /** A branch listing that selected response fields without `content`. */
 export const getListBranchFileMetadataResponseSchema = defineSchema((v) =>
   v.object({
-    data: v.array(
-      v.object({
-        id: v.string().optional(),
-        version_id: v.string().optional(),
-        checksum: v.string().nullable().optional(),
-        ...baseFileFields(v),
-      }),
-    ),
+    data: v.array(branchFileMetadataSchema(v)),
     page_info: getPageInfoSchema(),
     _links: linksSchema(v).optional(),
   })
 );
 
-export const getBranchFileDetailSchema = defineSchema((v) => v.object(branchFileFields(v)));
+export const getBranchFileDetailSchema = defineSchema((v) => branchFileSchema(v));
 
 export const getEnvironmentFileListItemSchema = defineSchema((v) =>
   v.object(versionedFileWithContentFields(v))
@@ -367,41 +402,63 @@ export type ReleaseAssetManifestApiResponse = InferSchema<
   ReturnType<typeof getReleaseAssetManifestResponseSchema>
 >;
 
+const DEPENDENCY_HISTORY_ENDPOINT = {
+  method: "GET" as const,
+  path: "/projects/{projectRef}/dependencies/history?branch={branch}",
+  description: "Read up to 16 recent dependency snapshots for a project branch",
+} as const;
+
+const STYLE_ARTIFACT_ENDPOINT = {
+  method: "GET" as const,
+  path: "/projects/{projectRef}/style-artifacts/current",
+  description: "Get the current style artifact for a branch, environment, or release selector",
+} as const;
+
+const STYLE_ARTIFACT_BUILD_ENDPOINT = {
+  method: "POST" as const,
+  path: "/projects/{projectRef}/style-artifacts/current/builds",
+  description:
+    "Start a background style artifact build for a branch, environment, or release selector, unless one is ready or building",
+} as const;
+
 export const API_ENDPOINTS = {
   listProjects: {
     method: "GET" as const,
     path: "/projects",
-    description: "List all accessible projects",
+    description: "List the first page of accessible projects (listProjects)",
   },
   getProject: {
     method: "GET" as const,
     path: "/projects/{projectRef}",
-    description: "Get project by UUID or slug",
+    description: "Get a project by UUID or slug (getProject)",
   },
-  readDependencyMetadataHistory: {
-    method: "GET" as const,
-    path: "/projects/{projectRef}/dependencies/history?branch={branch}",
-    description: "Read bounded prior dependency metadata for a project branch",
+  getDependencyHistory: DEPENDENCY_HISTORY_ENDPOINT,
+  /** @deprecated Use `getDependencyHistory`. */
+  readDependencyMetadataHistory: DEPENDENCY_HISTORY_ENDPOINT,
+  resolveDependencies: {
+    method: "POST" as const,
+    path: "/projects/{projectRef}/dependencies/resolve",
+    description: "Pin npm specifiers to exact versions in a project branch's package.json",
   },
   listBranchFiles: {
     method: "GET" as const,
-    path: "/projects/{projectRef}/files?branch={branchRef}",
-    description: "List files for a branch ref or name (omit branch for main branch)",
+    path: "/projects/{projectRef}/files?ref=branch:{branchRef}",
+    description: "List files for a branch ID or name (ref=main for the main branch)",
   },
   getBranchFile: {
     method: "GET" as const,
-    path: "/projects/{projectRef}/files/{pathOrId}?branch={branchRef}",
-    description: "Get file from a branch ref or name by path or UUID",
+    path: "/projects/{projectRef}/files/{pathOrId}?ref=branch:{branchRef}",
+    description: "Get file from a branch ID or name by path or UUID",
   },
   listEnvironmentFiles: {
     method: "GET" as const,
-    path: "/projects/{projectRef}/environments/{environmentName}/files",
+    path: "/projects/{project_reference}/environments/{environment_name}/files",
     description: "List files from an environment (deployed release)",
   },
   getEnvironmentFile: {
     method: "GET" as const,
-    path: "/projects/{projectRef}/environments/{environmentName}/files/{pathOrId}",
-    description: "Get file from an environment by path or UUID",
+    path: "/projects/{project_reference}/environments/{environment_name}/files/{file_path}",
+    description: "Get file from an environment by path (URL-encoded) or UUID",
   },
   listReleaseFiles: {
     method: "GET" as const,
@@ -415,19 +472,19 @@ export const API_ENDPOINTS = {
   },
   lookupDomain: {
     method: "GET" as const,
-    path: "/projects/{domain}",
-    description: "Look up project by custom domain (resolved via project_reference)",
+    path: "/projects/{project_reference}",
+    description: "Look up project by custom domain, passed as project_reference",
   },
-  resolveStyleArtifact: {
-    method: "GET" as const,
+  getStyleArtifact: STYLE_ARTIFACT_ENDPOINT,
+  updateStyleArtifact: {
+    method: "PUT" as const,
     path: "/projects/{projectRef}/style-artifacts/current",
     description:
-      "Resolve metadata for the latest ready style artifact for a branch, environment, or release selector",
+      "Record the state of the current style artifact for a branch, environment, or release selector",
   },
-  ensureStyleArtifactBuild: {
-    method: "POST" as const,
-    path: "/projects/{projectRef}/style-artifacts/current/builds",
-    description:
-      "Ensure a background style artifact build exists for a branch, environment, or release selector",
-  },
+  startStyleArtifactBuild: STYLE_ARTIFACT_BUILD_ENDPOINT,
+  /** @deprecated Use `getStyleArtifact`. */
+  resolveStyleArtifact: STYLE_ARTIFACT_ENDPOINT,
+  /** @deprecated Use `startStyleArtifactBuild`. */
+  ensureStyleArtifactBuild: STYLE_ARTIFACT_BUILD_ENDPOINT,
 } as const;

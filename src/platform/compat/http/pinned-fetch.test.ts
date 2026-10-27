@@ -572,6 +572,50 @@ describe("fetchWithPinnedAddresses", () => {
     });
   }
 
+  it("does not create a credential request when the aborted getter invokes the listener and returns false", async () => {
+    if (!isNode) return;
+
+    const { channel } = await import("node:diagnostics_channel");
+    const requests = channel("http.client.request.created");
+    let createdRequests = 0;
+    const observeRequest = () => {
+      createdRequests++;
+    };
+    const controller = new AbortController();
+    const reason = new DOMException("getter stopped request", "AbortError");
+    const registerListener = controller.signal.addEventListener.bind(controller.signal);
+    let registered = false;
+    controller.signal.addEventListener = (
+      ...args: Parameters<AbortSignal["addEventListener"]>
+    ) => {
+      registerListener(...args);
+      registered = true;
+    };
+    Object.defineProperty(controller.signal, "aborted", {
+      get() {
+        if (registered) controller.abort(reason);
+        return false;
+      },
+    });
+    requests.subscribe(observeRequest);
+    try {
+      const error = await assertRejects(
+        () =>
+          fetchWithPinnedAddresses(
+            new URL("http://pinned-abort.test:1/resource"),
+            ["127.0.0.1"],
+            { headers: { authorization: BEARER }, signal: controller.signal },
+          ),
+        DOMException,
+        reason.message,
+      );
+      assertEquals(error, reason);
+      assertEquals(createdRequests, 0, "The getter's abort must stop request construction");
+    } finally {
+      requests.unsubscribe(observeRequest);
+    }
+  });
+
   for (const method of ["GET", "POST"] as const) {
     it(`closes the HTTP provider socket when an in-flight ${method} request is aborted`, async () => {
       if (!isNode) return;
@@ -1041,7 +1085,18 @@ describe("fetchWithPinnedAddresses", () => {
     const bodyPullStarted = new Promise<void>((resolve) => {
       releaseBodyPull = resolve;
     });
+    let finishBodyPull!: () => void;
+    const bodyPullFinished = new Promise<void>((resolve) => {
+      finishBodyPull = resolve;
+    });
     let cancelStarted = false;
+    let cancelSettled = false;
+    let finishCancel!: () => void;
+    const cancelFinished = new Promise<void>((resolve) => {
+      finishCancel = resolve;
+    }).then(() => {
+      cancelSettled = true;
+    });
     const body = new ReadableStream<Uint8Array>({
       start(controller) {
         bodyController = controller;
@@ -1049,11 +1104,11 @@ describe("fetchWithPinnedAddresses", () => {
       },
       pull() {
         releaseBodyPull();
-        return new Promise(() => {});
+        return bodyPullFinished;
       },
       cancel() {
         cancelStarted = true;
-        return new Promise(() => {});
+        return cancelFinished;
       },
     }) as unknown as BodyInit;
 
@@ -1092,8 +1147,13 @@ describe("fetchWithPinnedAddresses", () => {
       if (timeout !== undefined) clearTimeout(timeout);
       assertEquals(result.includes(mutationMember), true);
       assertEquals(cancelStarted, true);
+      assertEquals(cancelSettled, false);
     } finally {
       Object.defineProperty(ClientRequest.prototype, mutationMember, originalMember);
+      finishCancel();
+      finishBodyPull();
+      if (cancelStarted) await cancelFinished;
+      await bodyPullFinished;
       await closeNodeTestServer(server);
     }
   });

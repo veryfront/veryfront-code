@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { JsonSchema } from "#veryfront/extensions/schema/index.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
@@ -11,10 +11,58 @@ import {
   markTrustedHostToolProvenance,
 } from "./host-tool-provenance.ts";
 import type { RemoteToolSource, ToolExecutionContext, ToolSet } from "./types.ts";
+import {
+  hasProviderObservedSkillBody,
+  hasProviderObservedSkillReferences,
+  setProviderObservedSkillBodies,
+} from "./provider-observed-skill-bodies.ts";
 
 const emptyJsonSchema = { type: "object" as const, properties: {} };
 
 describe("tool/host-tools", () => {
+  it("retains source wrapper dependencies and the callback context through hosted materialization", async () => {
+    const context: ToolExecutionContext = { toolCallId: "wrapper-call" };
+    const callback = () => Promise.resolve({ persisted: true });
+    Object.defineProperty(context, "executePlatformTool", { value: callback });
+    const tools = createToolsFromHostDefinitions({
+      intake: {
+        description: "Persist a selected attachment",
+        inputSchemaJson: emptyJsonSchema,
+        delegatedPlatformTools: ["veryfront__create_file"],
+        execute: async (_input: unknown, received?: ToolExecutionContext) => {
+          assertStrictEquals(received, context);
+          return await received?.executePlatformTool?.("veryfront__create_file", {});
+        },
+      },
+    });
+    assertEquals(tools.intake?.delegatedPlatformTools, ["veryfront__create_file"]);
+    assertEquals(await tools.intake?.execute({}, context), { persisted: true });
+  });
+
+  it("keeps only normalized discovery metadata on materialized host tools", () => {
+    const tools = createToolsFromHostDefinitions({
+      listed: {
+        description: "Listed tool",
+        inputSchemaJson: emptyJsonSchema,
+        discovery: { version: 1, type: "platform", domain: "agents", resource: "Agents" },
+        execute: () => Promise.resolve(null),
+      },
+      invalid: {
+        description: "Invalid metadata",
+        inputSchemaJson: emptyJsonSchema,
+        discovery: { version: 1, type: "other" } as unknown as HostToolSet[string]["discovery"],
+        execute: () => Promise.resolve(null),
+      },
+    });
+    assertEquals(tools.listed?.discovery, {
+      version: 1,
+      type: "platform",
+      domain: "agents",
+      resource: "Agents",
+    });
+    assertEquals(tools.invalid?.discovery, undefined);
+  });
+
   it("materializes class-defined execution methods with their original receiver", async () => {
     class Definition {
       description = "Synthetic class tool";
@@ -117,6 +165,52 @@ describe("tool/host-tools", () => {
     );
     assertEquals(await tools.search?.execute({ query: "Veryfront" }), { query: "Veryfront" });
     assertEquals(receivedContextToolCallId, "search-generated");
+  });
+
+  it("preserves private provider-observed skill body markers through host materialization", async () => {
+    const observedByCall: Array<boolean | undefined> = [];
+    const tools = createToolsFromHostDefinitions({
+      load_skill: {
+        description: "Load skill",
+        inputSchema: defineSchema((v) => v.object({}))(),
+        execute: (_input: unknown, context?: ToolExecutionContext) => {
+          observedByCall.push(hasProviderObservedSkillBody(context, "review"));
+          return { ok: true };
+        },
+      },
+    });
+
+    const observedContext: ToolExecutionContext = {};
+    setProviderObservedSkillBodies(observedContext, [{ skillId: "review", references: [] }]);
+    await tools.load_skill?.execute({}, observedContext);
+    await tools.load_skill?.execute({}, {});
+
+    assertEquals(observedByCall, [true, undefined]);
+  });
+
+  it("ignores provider-observed body iterator hooks and canonicalizes reference order", () => {
+    const context: ToolExecutionContext = {};
+    const bodies = [{
+      skillId: "review",
+      references: ["references/one.md", "references/two.md"],
+    }];
+    Object.defineProperty(bodies, Symbol.iterator, {
+      value: function* () {
+        yield { skillId: "forged", references: [] };
+      },
+    });
+
+    setProviderObservedSkillBodies(context, bodies);
+
+    assertEquals(hasProviderObservedSkillBody(context, "review"), true);
+    assertEquals(hasProviderObservedSkillBody(context, "forged"), false);
+    assertEquals(
+      hasProviderObservedSkillReferences(context, "review", [
+        "references/two.md",
+        "references/one.md",
+      ]),
+      true,
+    );
   });
 
   it("preserves caller-provided execution context", async () => {

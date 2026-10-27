@@ -108,12 +108,17 @@ describe("project-discovery", () => {
     });
 
     it("returns a discovery error for an invalid explicit API URL", async () => {
-      const result = await fetchRemoteProjects(
-        "vf_test_explicit",
-        createTestEnvironmentConfig({ apiUrl: "invalid" }),
-      );
-      assertExists(result.error);
-      assertEquals(result.projects, []);
+      for (const token of ["vf_test_explicit", "explicit-user-token"]) {
+        const result = await fetchRemoteProjects(
+          token,
+          createTestEnvironmentConfig({ apiUrl: "invalid" }),
+        );
+        assertExists(result.error);
+        assertEquals(result.error.startsWith("Network error:"), true);
+        assertEquals(result.user, null);
+        assertEquals(result.projects, []);
+        assertEquals(result.credentialType, token.startsWith("vf_") ? "apiKey" : "user");
+      }
     });
 
     it("discovers projects on an explicitly authenticated loopback API", async () => {

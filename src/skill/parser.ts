@@ -36,7 +36,6 @@ const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const numberIsSafeInteger = Number.isSafeInteger;
 const objectHasOwnProperty = Object.prototype.hasOwnProperty;
 const ownKeys = Reflect.ownKeys;
-const NativeRegExp = RegExp;
 const NativeString = String;
 const regExpExec = RegExp.prototype.exec;
 const stringCharCodeAt = String.prototype.charCodeAt;
@@ -45,11 +44,9 @@ const stringTrim = String.prototype.trim;
 
 // Keep authorization regexes private: the exported compatibility regexes are
 // intentionally mutable inspection values and must not control strict parsing.
-const STRICT_SKILL_NAME_REGEX = new NativeRegExp(
-  "^(?=.{1,64}$)[a-z0-9]+(?:-[a-z0-9]+)*$",
-);
-const LEGACY_SKILL_NAME_REGEX = new NativeRegExp("^[a-z0-9][a-z0-9-]{0,63}$");
-const PROVIDER_SAFE_SKILL_ID_REGEX = new NativeRegExp("^[A-Za-z0-9_-]{1,64}$");
+const STRICT_SKILL_NAME_REGEX = /^(?=.{1,64}$)[a-z0-9]+(?:-[a-z0-9]+)*$/;
+const LEGACY_SKILL_NAME_REGEX = /^[a-z0-9][a-z0-9-]{0,63}$/;
+const PROVIDER_SAFE_SKILL_ID_REGEX = /^[A-Za-z0-9_-]{1,64}$/;
 const SKILL_CANONICAL_NAME_MAX_LENGTH = 64;
 const SKILL_ALLOWED_TOOL_DECLARATION_MAX_LENGTH = SKILL_ALLOWED_TOOL_MAX_PATTERNS *
   (SKILL_ALLOWED_TOOL_PATTERN_MAX_LENGTH + 1);
@@ -185,17 +182,9 @@ function captureProviderSafeNameOption(
   return field.value;
 }
 
-/**
- * Validate and normalize parsed frontmatter into SkillMetadata.
- *
- * @param frontmatter - Parsed frontmatter object
- * @param directoryName - Canonical directory/runtime identity for the skill
- */
-export function validateSkillMetadata(
-  frontmatter: Record<string, unknown>,
-  directoryName: string,
-  options: { providerSafeName?: boolean } = {},
-): SkillMetadata {
+function assertFrontmatterRecord(
+  frontmatter: unknown,
+): asserts frontmatter is Record<string, unknown> {
   if (
     frontmatter === null ||
     (typeof frontmatter !== "object" && typeof frontmatter !== "function")
@@ -208,6 +197,49 @@ export function validateSkillMetadata(
   if (typeof frontmatter !== "object" || arrayIsArray(frontmatter)) {
     throw new TypeError("Skill frontmatter must be an object");
   }
+}
+
+function readLegacyDescription(
+  frontmatter: Record<string, unknown>,
+  directoryName: string,
+): string {
+  const rawDescription = ownDataValue(frontmatter, "description");
+  if (typeof rawDescription !== "string" || trim(rawDescription).length === 0) {
+    throw toError(
+      createError({
+        type: "agent",
+        message: `Skill "${directoryName}" is missing a required "description" field`,
+      }),
+    );
+  }
+  if (
+    !isWellFormedUtf16(rawDescription) ||
+    hasUnsafeDescriptionControlCharacters(rawDescription)
+  ) {
+    throw new TypeError(
+      "Skill description must contain well-formed UTF-16 and no control characters other than line feeds",
+    );
+  }
+  const description = apply(stringSlice, trim(rawDescription), [
+    0,
+    SKILL_DESCRIPTION_MAX_LENGTH,
+  ]) as string;
+
+  return description;
+}
+
+/**
+ * Validate and normalize parsed frontmatter into SkillMetadata.
+ *
+ * @param frontmatter - Parsed frontmatter object
+ * @param directoryName - Canonical directory/runtime identity for the skill
+ */
+export function validateSkillMetadata(
+  frontmatter: Record<string, unknown>,
+  directoryName: string,
+  options: { providerSafeName?: boolean } = {},
+): SkillMetadata {
+  assertFrontmatterRecord(frontmatter);
   if (typeof directoryName !== "string") {
     throw new TypeError("Skill canonical name must be a string");
   }
@@ -237,27 +269,7 @@ export function validateSkillMetadata(
     );
   }
 
-  const rawDescription = ownDataValue(frontmatter, "description");
-  if (typeof rawDescription !== "string" || trim(rawDescription).length === 0) {
-    throw toError(
-      createError({
-        type: "agent",
-        message: `Skill "${directoryName}" is missing a required "description" field`,
-      }),
-    );
-  }
-  if (
-    !isWellFormedUtf16(rawDescription) ||
-    hasUnsafeDescriptionControlCharacters(rawDescription)
-  ) {
-    throw new TypeError(
-      "Skill description must contain well-formed UTF-16 and no control characters other than line feeds",
-    );
-  }
-  const description = apply(stringSlice, trim(rawDescription), [
-    0,
-    SKILL_DESCRIPTION_MAX_LENGTH,
-  ]) as string;
+  const description = readLegacyDescription(frontmatter, directoryName);
 
   const allowedToolPatterns = ownDataValue(frontmatter, "allowed-tools") ??
     ownDataValue(frontmatter, "allowed_tools");
@@ -304,52 +316,10 @@ function validateLegacyDisplayName(displayName: string | undefined): string | un
   return displayName;
 }
 
-/** Validate bounded, untrusted skill metadata at filesystem boundaries. */
-function validateStrictSkillMetadata(
+function readStrictAuthoredName(
   frontmatter: Record<string, unknown>,
   canonicalName: string,
-  options: { providerSafeName?: boolean },
-): SkillMetadata {
-  if (
-    frontmatter === null ||
-    (typeof frontmatter !== "object" && typeof frontmatter !== "function")
-  ) {
-    throw new TypeError("Skill frontmatter must be an object");
-  }
-  if (isProxyWithoutHooks(frontmatter)) {
-    throw new TypeError("Skill frontmatter must not be a proxy");
-  }
-  if (typeof frontmatter !== "object" || arrayIsArray(frontmatter)) {
-    throw new TypeError("Skill frontmatter must be an object");
-  }
-  if (typeof canonicalName !== "string") {
-    throw new TypeError("Skill canonical name must be a string");
-  }
-  if (canonicalName.length > SKILL_CANONICAL_NAME_MAX_LENGTH) {
-    throw toError(
-      createError({
-        type: "agent",
-        message: `Invalid skill name: exceeds ${SKILL_CANONICAL_NAME_MAX_LENGTH} characters`,
-      }),
-    );
-  }
-
-  const providerSafeName = captureProviderSafeNameOption(options);
-  const nameRegex = providerSafeName ? PROVIDER_SAFE_SKILL_ID_REGEX : STRICT_SKILL_NAME_REGEX;
-  const nameExpectation = providerSafeName
-    ? "must be provider-safe letters, numbers, underscores, or hyphens, 1-64 characters"
-    : "must be 1-64 lowercase alphanumeric characters or single hyphens, without leading or trailing hyphens";
-  if (!regexMatches(nameRegex, canonicalName)) {
-    throw toError(
-      createError({
-        type: "agent",
-        message: `Invalid skill name: ${nameExpectation}`,
-      }),
-    );
-  }
-
-  // The caller-supplied directory/runtime id is the only lookup identity.
-  // A differing authored name is retained as presentation metadata.
+): string {
   const declaredName = ownDataValue(frontmatter, "name");
   if (typeof declaredName !== "string") {
     throw new TypeError(
@@ -373,7 +343,13 @@ function validateStrictSkillMetadata(
     );
   }
 
-  // Description: required
+  return authoredName;
+}
+
+function readStrictDescription(
+  frontmatter: Record<string, unknown>,
+  canonicalName: string,
+): string {
   const rawDescription = ownDataValue(frontmatter, "description");
   if (typeof rawDescription !== "string") {
     throw toError(
@@ -406,6 +382,49 @@ function validateStrictSkillMetadata(
       }),
     );
   }
+  return description;
+}
+
+/** Validate bounded, untrusted skill metadata at filesystem boundaries. */
+function validateStrictSkillMetadata(
+  frontmatter: Record<string, unknown>,
+  canonicalName: string,
+  options: { providerSafeName?: boolean },
+): SkillMetadata {
+  assertFrontmatterRecord(frontmatter);
+  if (typeof canonicalName !== "string") {
+    throw new TypeError("Skill canonical name must be a string");
+  }
+  if (canonicalName.length > SKILL_CANONICAL_NAME_MAX_LENGTH) {
+    throw toError(
+      createError({
+        type: "agent",
+        message: `Invalid skill name: exceeds ${SKILL_CANONICAL_NAME_MAX_LENGTH} characters`,
+      }),
+    );
+  }
+
+  const providerSafeName = captureProviderSafeNameOption(options);
+  const nameRegex = providerSafeName ? PROVIDER_SAFE_SKILL_ID_REGEX : STRICT_SKILL_NAME_REGEX;
+  const nameExpectation = providerSafeName
+    ? "must be provider-safe letters, numbers, underscores, or hyphens, 1-64 characters"
+    : "must be 1-64 lowercase alphanumeric characters or single hyphens, without leading or trailing hyphens";
+  if (!regexMatches(nameRegex, canonicalName)) {
+    throw toError(
+      createError({
+        type: "agent",
+        message: `Invalid skill name: ${nameExpectation}`,
+      }),
+    );
+  }
+
+  // The caller-supplied directory/runtime id is the only lookup identity.
+  // A differing authored name is retained as presentation metadata.
+  const authoredName = readStrictAuthoredName(frontmatter, canonicalName);
+
+  // Description: required
+  const description = readStrictDescription(frontmatter, canonicalName);
+
   // Allowed-tools: parse from space-delimited string or array
   const canonicalAllowedTools = ownDataField(frontmatter, "allowed-tools");
   const compatibilityAllowedTools = ownDataField(frontmatter, "allowed_tools");
@@ -466,7 +485,7 @@ function getMetadataDisplayName(metadata: Record<string, string> | undefined): s
   if (!metadata) return undefined;
   const rawDisplayName = ownDataValue(metadata, "display_name");
   const displayName = typeof rawDisplayName === "string" ? trim(rawDisplayName) : undefined;
-  return displayName ? displayName : undefined;
+  return displayName || undefined;
 }
 
 function validateStrictDisplayName(displayName: string | undefined): string | undefined {
@@ -482,6 +501,87 @@ function validateStrictDisplayName(displayName: string | undefined): string | un
   return displayName;
 }
 
+function captureAllowedToolsArray(
+  value: unknown,
+  skillName: string,
+  strict: boolean,
+): { values: unknown[]; length: number } {
+  if (
+    (typeof value === "object" || typeof value === "function") &&
+    isProxyWithoutHooks(value)
+  ) {
+    throw new TypeError(`Skill "${skillName}" allowed-tools must not be a proxy`);
+  }
+  if (!arrayIsArray(value)) {
+    throw toError(
+      createError({
+        type: "agent",
+        message:
+          `Skill "${skillName}" has invalid allowed-tools value: expected a string or array of strings, got ${typeof value}`,
+      }),
+    );
+  }
+
+  const lengthDescriptor = getOwnPropertyDescriptor(value, "length");
+  const length = lengthDescriptor && hasOwn(lengthDescriptor, "value")
+    ? lengthDescriptor.value
+    : undefined;
+  if (typeof length !== "number" || !numberIsSafeInteger(length) || length < 0) {
+    throw new TypeError(`Skill "${skillName}" allowed-tools length must be a data property`);
+  }
+  if (strict && length > SKILL_ALLOWED_TOOL_MAX_PATTERNS) {
+    throw new RangeError(
+      `Allowed-tools accepts at most ${SKILL_ALLOWED_TOOL_MAX_PATTERNS} patterns`,
+    );
+  }
+
+  return { values: value, length };
+}
+
+function readAllowedToolString(value: unknown[], index: number, skillName: string): string {
+  const descriptor = getOwnPropertyDescriptor(value, index);
+  if (!descriptor || !hasOwn(descriptor, "value")) {
+    throw new TypeError(
+      `Skill "${skillName}" allowed-tools entry ${index} must be a data property`,
+    );
+  }
+  const rawPattern = descriptor.value;
+  if (typeof rawPattern !== "string") {
+    throw toError(
+      createError({
+        type: "agent",
+        message:
+          `Skill "${skillName}" has invalid allowed-tools value: expected all entries to be strings`,
+      }),
+    );
+  }
+  return rawPattern;
+}
+
+function readAllowedToolPattern(
+  value: unknown[],
+  index: number,
+  skillName: string,
+  strict: boolean,
+): string {
+  const rawPattern = readAllowedToolString(value, index, skillName);
+  if (strict && rawPattern.length > SKILL_ALLOWED_TOOL_PATTERN_MAX_LENGTH) {
+    throw new RangeError(
+      `Allowed-tools patterns must be at most ${SKILL_ALLOWED_TOOL_PATTERN_MAX_LENGTH} characters`,
+    );
+  }
+  const pattern = trim(rawPattern);
+  if (!pattern) {
+    throw toError(
+      createError({
+        type: "agent",
+        message: `Skill "${skillName}" has invalid allowed-tools pattern: empty value`,
+      }),
+    );
+  }
+  return pattern;
+}
+
 /** Preserve the historical public allowed-tools shape outside file boundaries. */
 function parseLegacyAllowedTools(
   value: unknown,
@@ -493,57 +593,11 @@ function parseLegacyAllowedTools(
   if (typeof value === "string") {
     patterns = parseLegacyAllowedToolString(value);
   } else {
-    if (
-      (typeof value === "object" || typeof value === "function") &&
-      isProxyWithoutHooks(value)
-    ) {
-      throw new TypeError(`Skill "${skillName}" allowed-tools must not be a proxy`);
-    }
-    if (!arrayIsArray(value)) {
-      throw toError(
-        createError({
-          type: "agent",
-          message:
-            `Skill "${skillName}" has invalid allowed-tools value: expected a string or array of strings, got ${typeof value}`,
-        }),
-      );
-    }
-
-    const lengthDescriptor = getOwnPropertyDescriptor(value, "length");
-    const length = lengthDescriptor && hasOwn(lengthDescriptor, "value")
-      ? lengthDescriptor.value
-      : undefined;
-    if (typeof length !== "number" || !numberIsSafeInteger(length) || length < 0) {
-      throw new TypeError(`Skill "${skillName}" allowed-tools length must be a data property`);
-    }
+    const { values, length } = captureAllowedToolsArray(value, skillName, false);
 
     patterns = [];
     for (let index = 0; index < length; index += 1) {
-      const descriptor = getOwnPropertyDescriptor(value, index);
-      if (!descriptor || !hasOwn(descriptor, "value")) {
-        throw new TypeError(
-          `Skill "${skillName}" allowed-tools entry ${index} must be a data property`,
-        );
-      }
-      const rawPattern = descriptor.value;
-      if (typeof rawPattern !== "string") {
-        throw toError(
-          createError({
-            type: "agent",
-            message:
-              `Skill "${skillName}" has invalid allowed-tools value: expected all entries to be strings`,
-          }),
-        );
-      }
-      const pattern = trim(rawPattern);
-      if (!pattern) {
-        throw toError(
-          createError({
-            type: "agent",
-            message: `Skill "${skillName}" has invalid allowed-tools pattern: empty value`,
-          }),
-        );
-      }
+      const pattern = readAllowedToolPattern(values, index, skillName, false);
       push(patterns, pattern);
     }
   }
@@ -569,6 +623,32 @@ function parseLegacyAllowedToolString(value: string): string[] {
   return patterns;
 }
 
+function readLegacyMetadataValue(
+  value: Record<PropertyKey, unknown>,
+  key: string,
+): string | undefined {
+  const descriptor = getOwnPropertyDescriptor(value, key);
+  if (!descriptor?.enumerable) return undefined;
+  if (!hasOwn(descriptor, "value")) {
+    throw new TypeError("Skill metadata values must be own data properties");
+  }
+  if (!isWellFormedUtf16(key) || hasControlCharacters(key)) {
+    throw new TypeError("Skill metadata keys must not contain control characters");
+  }
+  const rawValue = descriptor.value;
+  if (
+    rawValue !== null &&
+    (typeof rawValue === "object" || typeof rawValue === "function")
+  ) {
+    throw new TypeError("Skill metadata compatibility values must be primitive");
+  }
+  const metadataValue = NativeString(rawValue);
+  if (!isWellFormedUtf16(metadataValue) || hasControlCharacters(metadataValue)) {
+    throw new TypeError("Skill metadata values must not contain control characters");
+  }
+  return metadataValue;
+}
+
 /** Safely coerce primitive metadata values through the historical public API. */
 function parseLegacyMetadata(
   value: unknown,
@@ -586,25 +666,8 @@ function parseLegacyMetadata(
   for (let index = 0; index < keys.length; index += 1) {
     const key = keys[index];
     if (typeof key !== "string") continue;
-    const descriptor = getOwnPropertyDescriptor(value, key);
-    if (!descriptor || !descriptor.enumerable) continue;
-    if (!hasOwn(descriptor, "value")) {
-      throw new TypeError("Skill metadata values must be own data properties");
-    }
-    if (!isWellFormedUtf16(key) || hasControlCharacters(key)) {
-      throw new TypeError("Skill metadata keys must not contain control characters");
-    }
-    const rawValue = descriptor.value;
-    if (
-      rawValue !== null &&
-      (typeof rawValue === "object" || typeof rawValue === "function")
-    ) {
-      throw new TypeError("Skill metadata compatibility values must be primitive");
-    }
-    const metadataValue = NativeString(rawValue);
-    if (!isWellFormedUtf16(metadataValue) || hasControlCharacters(metadataValue)) {
-      throw new TypeError("Skill metadata values must not contain control characters");
-    }
+    const metadataValue = readLegacyMetadataValue(value as Record<PropertyKey, unknown>, key);
+    if (metadataValue === undefined) continue;
     hasEnumerableEntries = true;
     defineProperty(result, key, {
       configurable: true,
@@ -630,67 +693,11 @@ function parseStrictAllowedTools(
   if (typeof value === "string") {
     patterns = parseStrictAllowedToolString(value);
   } else {
-    if (
-      (typeof value === "object" || typeof value === "function") &&
-      isProxyWithoutHooks(value)
-    ) {
-      throw new TypeError(`Skill "${skillName}" allowed-tools must not be a proxy`);
-    }
-    if (!arrayIsArray(value)) {
-      throw toError(
-        createError({
-          type: "agent",
-          message:
-            `Skill "${skillName}" has invalid allowed-tools value: expected a string or array of strings, got ${typeof value}`,
-        }),
-      );
-    }
-
-    const lengthDescriptor = getOwnPropertyDescriptor(value, "length");
-    const length = lengthDescriptor && hasOwn(lengthDescriptor, "value")
-      ? lengthDescriptor.value
-      : undefined;
-    if (typeof length !== "number" || !numberIsSafeInteger(length) || length < 0) {
-      throw new TypeError(`Skill "${skillName}" allowed-tools length must be a data property`);
-    }
-    if (length > SKILL_ALLOWED_TOOL_MAX_PATTERNS) {
-      throw new RangeError(
-        `Allowed-tools accepts at most ${SKILL_ALLOWED_TOOL_MAX_PATTERNS} patterns`,
-      );
-    }
+    const { values, length } = captureAllowedToolsArray(value, skillName, true);
 
     patterns = [];
     for (let index = 0; index < length; index += 1) {
-      const descriptor = getOwnPropertyDescriptor(value, index);
-      if (!descriptor || !hasOwn(descriptor, "value")) {
-        throw new TypeError(
-          `Skill "${skillName}" allowed-tools entry ${index} must be a data property`,
-        );
-      }
-      const rawPattern = descriptor.value;
-      if (typeof rawPattern !== "string") {
-        throw toError(
-          createError({
-            type: "agent",
-            message:
-              `Skill "${skillName}" has invalid allowed-tools value: expected all entries to be strings`,
-          }),
-        );
-      }
-      if (rawPattern.length > SKILL_ALLOWED_TOOL_PATTERN_MAX_LENGTH) {
-        throw new RangeError(
-          `Allowed-tools patterns must be at most ${SKILL_ALLOWED_TOOL_PATTERN_MAX_LENGTH} characters`,
-        );
-      }
-      const pattern = trim(rawPattern);
-      if (!pattern) {
-        throw toError(
-          createError({
-            type: "agent",
-            message: `Skill "${skillName}" has invalid allowed-tools pattern: empty value`,
-          }),
-        );
-      }
+      const pattern = readAllowedToolPattern(values, index, skillName, true);
       push(patterns, pattern);
     }
   }
@@ -747,6 +754,49 @@ function isWhitespaceAt(value: string, index: number): boolean {
   );
 }
 
+function validateStrictMetadataKey(k: string): void {
+  if (k.length === 0 || k.length > SKILL_METADATA_KEY_MAX_LENGTH) {
+    throw new RangeError(
+      `Skill metadata keys must be 1-${SKILL_METADATA_KEY_MAX_LENGTH} characters`,
+    );
+  }
+  if (!isWellFormedUtf16(k) || hasControlCharacters(k)) {
+    throw new TypeError(
+      `Skill metadata keys must be 1-${SKILL_METADATA_KEY_MAX_LENGTH} printable characters`,
+    );
+  }
+}
+
+function readStrictMetadataValue(
+  value: Record<PropertyKey, unknown>,
+  k: string,
+): string | undefined {
+  const descriptor = getOwnPropertyDescriptor(value, k);
+  if (!descriptor) {
+    throw new TypeError("Skill metadata entries must be own data properties");
+  }
+  if (!descriptor.enumerable) return undefined;
+  validateStrictMetadataKey(k);
+  if (!hasOwn(descriptor, "value")) {
+    throw new TypeError("Skill metadata values must be own data properties");
+  }
+  if (typeof descriptor.value !== "string") {
+    throw new TypeError("Skill metadata values must be strings");
+  }
+  const metadataValue = descriptor.value;
+  if (metadataValue.length > SKILL_METADATA_VALUE_MAX_LENGTH) {
+    throw new RangeError(
+      `Skill metadata values must be at most ${SKILL_METADATA_VALUE_MAX_LENGTH} characters`,
+    );
+  }
+  if (!isWellFormedUtf16(metadataValue) || hasControlCharacters(metadataValue)) {
+    throw new TypeError(
+      `Skill metadata values must be at most ${SKILL_METADATA_VALUE_MAX_LENGTH} printable characters`,
+    );
+  }
+  return metadataValue;
+}
+
 /** Validate optional string-to-string metadata without coercing caller values. */
 function parseStrictMetadata(
   value: unknown,
@@ -775,39 +825,9 @@ function parseStrictMetadata(
     if (typeof k !== "string") {
       throw new TypeError("Skill metadata keys must be strings");
     }
-    const descriptor = getOwnPropertyDescriptor(value, k);
-    if (!descriptor) {
-      throw new TypeError("Skill metadata entries must be own data properties");
-    }
-    if (!descriptor.enumerable) continue;
+    const metadataValue = readStrictMetadataValue(value as Record<PropertyKey, unknown>, k);
+    if (metadataValue === undefined) continue;
     hasEnumerableEntries = true;
-    if (k.length === 0 || k.length > SKILL_METADATA_KEY_MAX_LENGTH) {
-      throw new RangeError(
-        `Skill metadata keys must be 1-${SKILL_METADATA_KEY_MAX_LENGTH} characters`,
-      );
-    }
-    if (!isWellFormedUtf16(k) || hasControlCharacters(k)) {
-      throw new TypeError(
-        `Skill metadata keys must be 1-${SKILL_METADATA_KEY_MAX_LENGTH} printable characters`,
-      );
-    }
-    if (!hasOwn(descriptor, "value")) {
-      throw new TypeError("Skill metadata values must be own data properties");
-    }
-    if (typeof descriptor.value !== "string") {
-      throw new TypeError("Skill metadata values must be strings");
-    }
-    const metadataValue = descriptor.value;
-    if (metadataValue.length > SKILL_METADATA_VALUE_MAX_LENGTH) {
-      throw new RangeError(
-        `Skill metadata values must be at most ${SKILL_METADATA_VALUE_MAX_LENGTH} characters`,
-      );
-    }
-    if (!isWellFormedUtf16(metadataValue) || hasControlCharacters(metadataValue)) {
-      throw new TypeError(
-        `Skill metadata values must be at most ${SKILL_METADATA_VALUE_MAX_LENGTH} printable characters`,
-      );
-    }
     // Assignment treats `__proto__` specially on ordinary objects and would
     // silently drop an otherwise valid metadata key. Define an own data
     // property so every admitted string key round-trips exactly.

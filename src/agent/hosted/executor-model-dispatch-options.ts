@@ -20,6 +20,7 @@ const PERSISTED_REQUEST_FIELDS = new Set([
   "functions",
   "toolconfig",
   "toolchoice",
+  "paralleltoolcalls",
   "functioncall",
   "mcpservers",
   "maxtokens",
@@ -64,29 +65,48 @@ function refuseOverride(): never {
   );
 }
 
+function assertPersistedProviderField(
+  call: ExecutorModelDispatch,
+  provider: ReturnType<typeof resolveModelCallProvider>,
+  name: string,
+  field: string,
+  value: unknown,
+): void {
+  const normalized = field.replace(/[-_]/g, "").toLowerCase();
+  if (PERSISTED_REQUEST_FIELDS.has(normalized)) refuseOverride();
+  if (normalized === "generationconfig") {
+    if (provider !== "google") refuseOverride();
+    assertGoogleGenerationConfig(value, call.options);
+  }
+  if (normalized === "thinking" || normalized === "outputconfig") {
+    // The shared durable projector represents the canonical Anthropic
+    // bucket. Gateway aliases must not replace those represented values.
+    if (provider !== "anthropic" || name !== "anthropic") refuseOverride();
+    if (normalized === "outputconfig" && isRecord(value) && value.effort !== undefined) {
+      const projected = buildModelCallContextRequest(call.model, call.options);
+      if (value.effort !== projected?.reasoning?.effort) refuseOverride();
+    }
+  }
+}
+
 /** Check request configuration paths, never names inside schema/tool/replay data. */
 export function assertPersistedModelOptions(call: ExecutorModelDispatch): void {
   const provider = resolveModelCallProvider(call.model);
   for (const [name, bucket] of Object.entries(call.options.providerOptions ?? {})) {
     if (!isRecord(bucket)) continue;
     for (const [field, value] of Object.entries(bucket)) {
-      const normalized = field.replace(/[-_]/g, "").toLowerCase();
-      if (PERSISTED_REQUEST_FIELDS.has(normalized)) refuseOverride();
-      if (normalized === "generationconfig") {
-        if (provider !== "google") refuseOverride();
-        assertGoogleGenerationConfig(value, call.options);
-      }
-      if (normalized === "thinking" || normalized === "outputconfig") {
-        // The shared durable projector represents the canonical Anthropic
-        // bucket. Gateway aliases must not replace those represented values.
-        if (provider !== "anthropic" || name !== "anthropic") refuseOverride();
-        if (normalized === "outputconfig" && isRecord(value) && value.effort !== undefined) {
-          const projected = buildModelCallContextRequest(call.model, call.options);
-          if (value.effort !== projected?.reasoning?.effort) refuseOverride();
-        }
-      }
+      assertPersistedProviderField(call, provider, name, field, value);
     }
   }
+}
+
+function expectedGoogleThinkingBudget(
+  reasoning: NonNullable<ModelRuntimeCallOptions["reasoning"]>,
+): number {
+  if (reasoning.effort === "low") return 512;
+  if (reasoning.effort === "high") return 8192;
+  if (reasoning.effort === "max") return -1;
+  return 2048;
 }
 
 function expectedGoogleThinking(reasoning: ModelRuntimeCallOptions["reasoning"]): unknown {
@@ -94,13 +114,7 @@ function expectedGoogleThinking(reasoning: ModelRuntimeCallOptions["reasoning"])
   // Match the first-party Google builder's neutral reasoning mapping. The
   // offline provider-contract test checks this alongside the actual builder.
   const thinkingBudget = reasoning.budgetTokens ??
-    (reasoning.effort === "low"
-      ? 512
-      : reasoning.effort === "high"
-      ? 8192
-      : reasoning.effort === "max"
-      ? -1
-      : 2048);
+    expectedGoogleThinkingBudget(reasoning);
   return { includeThoughts: true, thinkingBudget };
 }
 

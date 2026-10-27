@@ -430,7 +430,8 @@ describe("runtime finalize terminal control", () => {
               }], { runId: "run-current" }),
             ).text();
             assert(body.includes('"type":"message-finish"'), body);
-            assert(body.includes('"object":"done"'), body);
+            assert(body.includes('"data":"done"'), body);
+            assert(!body.includes('"object":"done"'), body);
           } else {
             assertEquals((await runtime.generate("run", { runId: "run-current" })).object, "done");
           }
@@ -664,7 +665,7 @@ describe("runtime finalize terminal control", () => {
             assertEquals(model.callCount, 2);
           },
           (_name, _count, input) => {
-            assertEquals(input, { status: "failed", error: recovered });
+            assertEquals(input, { input: { status: "failed", error: recovered } });
             return {
               content: [],
               structuredContent: {
@@ -701,7 +702,8 @@ describe("runtime finalize terminal control", () => {
             ).text();
             assertEquals(body.match(/"type":"message-finish"/g)?.length, 1);
             assert(!body.includes('"type":"error"'), body);
-            assert(body.includes('"object":{"city":"TEST CITY"}'), body);
+            assert(body.includes('"data":{"city":"TEST CITY"}'), body);
+            assert(!body.includes('"object":{"city":"TEST CITY"}'), body);
           } else {
             assertEquals(
               (await runtime.generate("run", {
@@ -715,12 +717,12 @@ describe("runtime finalize terminal control", () => {
           assertEquals(model.callCount, 1);
         },
         (_name, _count, input) => {
-          assertEquals(input, { status: "completed", output: canonical });
+          assertEquals(input, { input: { status: "completed", output: canonical } });
           return {
             content: [],
             structuredContent: {
               completed: true,
-              run: { run_id: "run-current", status: "completed", output: input.output },
+              run: { run_id: "run-current", status: "completed", output: canonical },
             },
           };
         },
@@ -783,7 +785,8 @@ describe("runtime finalize terminal control", () => {
         }], { runId: "run-current" });
         const text = await new Response(stream).text();
         assert(text.includes('"type":"message-finish"'), text);
-        assert(text.includes('"object":{"ingested":3}'), text);
+        assert(text.includes('"data":{"ingested":3}'), text);
+        assert(!text.includes('"object":{"ingested":3}'), text);
         assert(!text.includes('"type":"error"'), text);
         assert(text.includes('"type":"tool-output-available","toolCallId":"fail-1"'), text);
         assert(text.includes('"type":"tool-output-error","toolCallId":"marker-1"'), text);
@@ -1059,7 +1062,7 @@ describe("runtime finalize terminal control", () => {
     );
   });
 
-  it("validates a resumed non-terminal tool only before its provider request", async () => {
+  it("validates a resumed tool before its effect and provider continuation", async () => {
     let validations = 0;
     await fixture(
       [{ text: "resumed" }],
@@ -1072,9 +1075,12 @@ describe("runtime finalize terminal control", () => {
         assert(text.includes('"type":"message-finish"'), text);
         assertEquals(dispatched, [markerCall.name]);
         assertEquals(model.callCount, 1);
-        assertEquals(validations, 1);
+        assertEquals(validations, 2);
       },
-      () => ({ content: [{ type: "text", text: "marked" }] }),
+      () => {
+        assertEquals(validations, 1, "admission must complete before the resumed effect");
+        return { content: [{ type: "text", text: "marked" }] };
+      },
       undefined,
       [async (context, next) => {
         registerTurnProviderRequestValidator(context, async () => {

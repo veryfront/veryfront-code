@@ -205,6 +205,39 @@ describe("cicd coverage workflow", () => {
     );
   });
 
+  it("retains service attribution intrinsic regressions in coverage collectors", async () => {
+    const fixture =
+      "tests/integration/semantic-unit-boundary/src/agent/service/runtime-attribution-intrinsics.test.ts";
+    assertStringIncludes(jobBlock(await readWorkflow(), "sonar-coverage"), fixture);
+    assertStringIncludes(jobBlock(await readPoolWorkflow(), "coverage-shards"), fixture);
+    const headerFixture =
+      "tests/integration/semantic-unit-boundary/src/utils/header-identity-intrinsics.test.ts";
+    assertStringIncludes(jobBlock(await readWorkflow(), "sonar-coverage"), headerFixture);
+    assertStringIncludes(jobBlock(await readPoolWorkflow(), "coverage-shards"), headerFixture);
+    const cleanupFixture =
+      "tests/integration/semantic-unit-boundary/server/handlers/request/response-cleanup-intrinsics.test.ts";
+    assertStringIncludes(jobBlock(await readWorkflow(), "sonar-coverage"), cleanupFixture);
+    assertStringIncludes(jobBlock(await readPoolWorkflow(), "coverage-shards"), cleanupFixture);
+    const startupFixture =
+      "tests/integration/semantic-unit-boundary/src/agent/service/runtime-identity-startup.test.ts";
+    assertStringIncludes(jobBlock(await readWorkflow(), "sonar-coverage"), startupFixture);
+    assertStringIncludes(jobBlock(await readPoolWorkflow(), "coverage-shards"), startupFixture);
+    const processTargetStartupFixture =
+      "tests/integration/semantic-unit-boundary/src/agent/service/runtime-identity-process-target-startup.test.ts";
+    assertStringIncludes(
+      jobBlock(await readWorkflow(), "sonar-coverage"),
+      processTargetStartupFixture,
+    );
+    assertStringIncludes(
+      jobBlock(await readPoolWorkflow(), "coverage-shards"),
+      processTargetStartupFixture,
+    );
+    const envFileFixture =
+      "tests/integration/semantic-unit-boundary/src/agent/service/runtime-identity-env-file-startup.test.ts";
+    assertStringIncludes(jobBlock(await readWorkflow(), "sonar-coverage"), envFileFixture);
+    assertStringIncludes(jobBlock(await readPoolWorkflow(), "coverage-shards"), envFileFixture);
+  });
+
   it("keeps every Deno unit coverage path loopback-only", async () => {
     const providerDenyNet =
       "--deny-net=api.openai.com,api.anthropic.com,generativelanguage.googleapis.com,api.mistral.ai,api.groq.com,api.deepseek.com,openrouter.ai,mcp.context7.com";

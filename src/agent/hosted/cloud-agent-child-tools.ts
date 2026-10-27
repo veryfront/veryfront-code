@@ -1,3 +1,4 @@
+import { CONFIG_INVALID } from "#veryfront/errors";
 import { hasExplicitHostedToolName } from "#veryfront/agent/hosted/runtime-request-config.ts";
 import { inheritHostedChildInferenceAuthority } from "./inference-credential.ts";
 /**
@@ -50,6 +51,10 @@ import {
   resolveHostedRuntimeSkillLoaderToolName,
 } from "./cloud-runtime-system-messages.ts";
 import { createDefaultHostedInvokeAgentTool } from "./default-invoke-agent-tool.ts";
+import {
+  fetchHostedProjectAgentDefinition,
+  type HostedProjectAgentDefinition,
+} from "./project-agent-definition-resolver.ts";
 import type { RuntimeClientProfile } from "../runtime/client-profile.ts";
 import type {
   DefaultHostedChildAgentExecutionConfig,
@@ -131,6 +136,13 @@ export type ChildRunContext =
   >
   & {
     clientProfile?: RuntimeClientProfile | null;
+    /**
+     * The project this deployment's locally discovered agents belong to. It is
+     * captured before any `project_reference` switch mutates `projectId`, and
+     * child contexts inherit it, so a same-ID agent in another project never
+     * resolves to this deployment's local definition, tools, or credentials.
+     */
+    deploymentProjectId?: string | null;
   };
 
 /**
@@ -360,7 +372,13 @@ export function buildHostedChildGlobalTools(
   }
 
   return {
-    ...(input.childConfig ? getDiscoveredHostTools({ agentId: input.childAgentId }) : {}),
+    // Local tools run this deployment's project code and credentials; only a
+    // child agent this deployment discovered itself receives them. An agent
+    // read from the API (another project, or a saved agent this deployment
+    // does not ship) never does.
+    ...(input.childConfig?.localHostTools === true
+      ? getDiscoveredHostTools({ agentId: input.childAgentId })
+      : {}),
     // An undefined selector (`tools: true`) authorizes the loader unless it is
     // explicitly denied; a concrete selector must retain the advertised loader
     // spelling itself.
@@ -422,29 +440,88 @@ export function fetchProjectSteering(
   });
 }
 
+/** Settle with `promise`, or reject with the abort reason as soon as `signal` aborts. */
+function raceHostedChildAbort<T>(promise: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
+  if (!signal) return promise;
+  signal.throwIfAborted();
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(signal.reason);
+    signal.addEventListener("abort", onAbort, { once: true });
+    promise.then(resolve, reject).finally(() => signal.removeEventListener("abort", onAbort));
+  });
+}
+
+function providerOnlyToolNamesField(
+  agentConfig: RuntimeAgentMarkdownDefinition,
+): { providerOnlyToolNames?: string[] } {
+  if (agentConfig.tools === true || !agentConfig.providerTools?.length) return {};
+  const callable = new Set(agentConfig.tools ?? []);
+  const providerOnly = agentConfig.providerTools.filter((name) => !callable.has(name));
+  return providerOnly.length > 0 ? { providerOnlyToolNames: providerOnly } : {};
+}
+
 /** Resolves the execution config for a hosted child agent invocation. */
 export async function resolveHostedChildAgentExecutionConfig(
   context: NodeVeryfrontCloudAgentServiceContext,
   taskContext: ChildRunContext,
   childAgentId: string,
   projectId: string,
+  abortSignal?: AbortSignal,
 ): Promise<DefaultHostedChildAgentExecutionConfig | undefined> {
-  if (!getProjectAgentRuntime(context).agents.has(childAgentId)) {
-    return undefined;
-  }
-
-  const agentConfig = await resolveAgentConfig(context, childAgentId);
   const branchId = projectId === taskContext.projectId ? taskContext.branchId : null;
-  const steering = await fetchProjectSteering(context, {
-    projectId: projectId || null,
-    authToken: taskContext.authToken,
-    branchId,
-  }, childAgentId);
+  // A locally discovered agent ships with this deployment, so its tools are
+  // this deployment's tools. Any other agent is read from the API and never
+  // receives them (see `localHostTools`).
+  // The ID alone is not enough: another project may save an agent with the
+  // same ID, and that agent must be read from the API for the target project.
+  const deploymentProjectId = taskContext.deploymentProjectId === undefined
+    ? taskContext.projectId
+    : taskContext.deploymentProjectId;
+  const isLocallyDiscovered = Boolean(projectId) && projectId === deploymentProjectId &&
+    getProjectAgentRuntime(context).agents.has(childAgentId);
+  let agentConfig: HostedProjectAgentDefinition;
+  if (isLocallyDiscovered) {
+    agentConfig = await resolveAgentConfig(context, childAgentId);
+  } else {
+    // A saved project agent is not part of this service's discovered runtime.
+    // Read its definition through the API so the child runs with the target
+    // agent's own instructions and tool selection, never the parent's toolset.
+    // An unknown agent ID fails with CHILD_AGENT_NOT_FOUND instead of running
+    // an unconfigured fork of the parent.
+    if (!projectId) return undefined;
+    agentConfig = await fetchHostedProjectAgentDefinition({
+      apiUrl: context.infrastructure.getConfig().VERYFRONT_API_URL,
+      authToken: taskContext.authToken,
+      projectId,
+      agentId: childAgentId,
+      branchId,
+      runtimeTargetKind: projectId === taskContext.projectId ? taskContext.runtimeTargetKind : null,
+      abortSignal,
+    });
+  }
+  const steering = await raceHostedChildAbort(
+    fetchProjectSteering(context, {
+      projectId: projectId || null,
+      authToken: taskContext.authToken,
+      branchId,
+    }, childAgentId),
+    abortSignal,
+  );
   const skillSelectorSnapshot = resolveRuntimeSkillSelectorForAgent({
     skills: steering.skills,
     agentId: childAgentId,
     selector: agentConfig.skills === false ? [] : agentConfig.skills,
   });
+  // Resolve startup inside the target's existing authorization, never the parent's catalog.
+  const bootstrapSkill = agentConfig.bootstrapSkill === undefined
+    ? undefined
+    : (skillSelectorSnapshot.definitions.find((skill) =>
+      skill.ownerAgentId === childAgentId && skill.shortName === agentConfig.bootstrapSkill
+    ) ?? skillSelectorSnapshot.definitions.find((skill) => skill.id === agentConfig.bootstrapSkill))
+      ?.id;
+  if (agentConfig.bootstrapSkill !== undefined && bootstrapSkill === undefined) {
+    throw CONFIG_INVALID.create({ detail: "Configured startup skill is not authorized" });
+  }
   const toolNames = resolveHostedChildToolNames(agentConfig, skillSelectorSnapshot);
   // The skill catalog and the load_skill fork guidance both advertise the
   // loader, so they must track its effective availability: an undefined
@@ -465,8 +542,12 @@ export async function resolveHostedChildAgentExecutionConfig(
       availableToolNames: toolNames,
       skillLoaderToolName: resolveHostedRuntimeSkillLoaderToolName(toolNames),
     }),
+    ...(bootstrapSkill === undefined ? {} : { bootstrapSkill }),
     ...(agentConfig.model ? { model: agentConfig.model } : {}),
     ...(agentConfig.temperature === undefined ? {} : { temperature: agentConfig.temperature }),
+    ...(agentConfig.parallelToolCalls === undefined
+      ? {}
+      : { parallelToolCalls: agentConfig.parallelToolCalls }),
     ...(agentConfig.maxSteps === undefined ? {} : { maxSteps: agentConfig.maxSteps }),
     ...(thinking === undefined ? {} : { thinking }),
     ...(toolNames === undefined ? {} : { toolNames }),
@@ -478,7 +559,24 @@ export async function resolveHostedChildAgentExecutionConfig(
       ? { skillSourcePaths: skillSelectorSnapshot.skillSourcePaths }
       : {}),
     ...(agentConfig.delegates === undefined ? {} : { delegateIds: agentConfig.delegates }),
+    ...(isLocallyDiscovered ? { localHostTools: true } : {}),
+    ...providerOnlyToolNamesField(agentConfig),
+    ...(agentConfig.allowedModels?.length ? { allowedModels: [...agentConfig.allowedModels] } : {}),
   };
+}
+
+/**
+ * Pins the deployment project identity on a root run context before any
+ * `project_reference` switch can rewrite `projectId`. Child contexts spread
+ * their parent context, so they inherit the pinned value unchanged.
+ */
+function bindHostedDeploymentProjectId(
+  context: NodeVeryfrontCloudAgentServiceContext,
+  runContext: ChildRunContext,
+): void {
+  if (runContext.deploymentProjectId !== undefined) return;
+  runContext.deploymentProjectId = context.infrastructure.getConfig().VERYFRONT_PROJECT_ID ??
+    (runContext.projectId || null);
 }
 
 /** Creates the invoke_agent tool for the given child context. */
@@ -487,6 +585,7 @@ export function createInvokeAgentTool(
   childContext: ChildRunContext,
   options?: { requireDurable?: boolean },
 ) {
+  bindHostedDeploymentProjectId(context, childContext);
   return createDefaultHostedInvokeAgentTool({
     context: childContext,
     getConfig: () => getInvokeAgentConfig(context),
@@ -515,8 +614,14 @@ export function createInvokeAgentTool(
         childToolContext,
       });
     },
-    resolveChildAgentExecutionConfig: (childAgentId, projectId) =>
-      resolveHostedChildAgentExecutionConfig(context, childContext, childAgentId, projectId),
+    resolveChildAgentExecutionConfig: (childAgentId, projectId, lookup) =>
+      resolveHostedChildAgentExecutionConfig(
+        context,
+        childContext,
+        childAgentId,
+        projectId,
+        lookup?.abortSignal,
+      ),
     refreshProjectSkillIds: (projectSkillContext) =>
       refreshProjectSkillIds(context, projectSkillContext),
     createAgentServiceSandboxTools,

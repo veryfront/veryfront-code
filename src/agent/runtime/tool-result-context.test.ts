@@ -6,8 +6,14 @@ import {
   assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { createToolResultContext } from "./tool-result-context.ts";
-import { readToolResultContext } from "./tool-result-context-tools.ts";
+import {
+  createToolResultContext,
+  isToolResultContextCapacityError,
+} from "./tool-result-context.ts";
+import {
+  createToolResultReadDefinition,
+  readToolResultContext,
+} from "./tool-result-context-tools.ts";
 
 describe("agent runtime tool result context", () => {
   it("passes small results through without storing a model reference", () => {
@@ -47,7 +53,7 @@ describe("agent runtime tool result context", () => {
     assertEquals(disclosure.modelResult.toolCallId, "call-large");
     assertEquals(disclosure.modelResult.toolName, "list_rows");
     assertEquals(disclosure.modelResult.complete, false);
-    assertEquals(disclosure.modelResult.retrieval.tool, "get_tool_result");
+    assertEquals(disclosure.modelResult.retrieval.tool, "veryfront__get_tool_result");
     assertEquals(disclosure.modelResult.retrieval.input.ref, disclosure.modelResult.ref);
     assertLessOrEqual(disclosure.modelResult.previewBytes, 16);
     assertEquals(context.size, 1);
@@ -92,6 +98,52 @@ describe("agent runtime tool result context", () => {
     }
     assertEquals(first.modelResult.ref, second.modelResult.ref);
     assertEquals(context.size, 1);
+  });
+
+  it("uses a smaller historical preview without changing the retained result", () => {
+    const context = createToolResultContext();
+    const original = { content: "full reference ".repeat(500) };
+    const first = context.discloseReference({
+      toolCallId: "reference-call",
+      toolName: "load_skill",
+      result: original,
+    });
+    const compact = context.discloseReference({
+      toolCallId: "reference-call",
+      toolName: "load_skill",
+      result: original,
+    }, { previewBytes: 256 });
+    assertEquals(compact.modelResult.ref, first.modelResult.ref);
+    assertLessOrEqual(compact.modelResult.previewBytes, 256);
+    assertStrictEquals(context.getOriginalResult(compact.modelResult.ref), original);
+    assertEquals(
+      context.read({ ref: compact.modelResult.ref }).text.includes("full reference"),
+      true,
+    );
+  });
+
+  it("forces a reference for a small result and reports capacity errors by type", () => {
+    const context = createToolResultContext({ limits: { maxStoredResults: 1 } });
+    const small = context.discloseReference({
+      toolCallId: "small-call",
+      toolName: "read_data",
+      result: "small",
+    });
+    assertEquals(small.kind, "reference");
+    assertEquals(context.size, 1);
+    let capacityError: unknown;
+    try {
+      context.discloseReference({ toolCallId: "other", toolName: "read_data", result: "x" });
+    } catch (error) {
+      capacityError = error;
+    }
+    assertEquals(isToolResultContextCapacityError(capacityError), true);
+    assertEquals(
+      isToolResultContextCapacityError(
+        new RangeError("Tool result context stored result limit exceeded"),
+      ),
+      false,
+    );
   });
 
   it("does not silently evict live references when storage is full", () => {
@@ -559,5 +611,249 @@ describe("agent runtime tool result context", () => {
       RangeError,
       "maxBytes must be at least 4",
     );
+  });
+});
+
+describe("agent runtime tool result paging", () => {
+  it("selects structured model projections while retaining an original text result", () => {
+    const context = createToolResultContext();
+    const modelResult = { status: "completed", output: { detail: "child output" } };
+    const originalResult = JSON.stringify(modelResult);
+    const disclosure = context.discloseReference({
+      toolCallId: "child-call",
+      toolName: "invoke_agent",
+      result: originalResult,
+      modelResult,
+    });
+    assertEquals(disclosure.originalResult, originalResult);
+    assertEquals(
+      context.read({ ref: disclosure.modelResult.ref, pointer: "/output" }).text,
+      JSON.stringify(modelResult.output),
+    );
+  });
+
+  async function compileReadSchema() {
+    const { createZodAdapter } = await import("../../../extensions/ext-schema-zod/src/adapter.ts");
+    const compile = createZodAdapter().compileJsonSchema;
+    if (!compile) throw new Error("JSON Schema compiler is required");
+    return compile(createToolResultReadDefinition().parameters);
+  }
+
+  it("advertises decimal cursors and valid JSON pointers", async () => {
+    const validate = await compileReadSchema();
+    assertEquals(
+      (await validate({ ref: "tool_result_1", cursor: "opaque-api-cursor" })).success,
+      false,
+    );
+    assertEquals((await validate({ ref: "tool_result_1", cursor: "2048" })).success, true);
+    assertEquals((await validate({ ref: "" })).success, false);
+    for (const pointer of ["", "/usage", "/a~1b/~0key/0"]) {
+      assertEquals((await validate({ ref: "tool_result_1", pointer })).success, true);
+    }
+    for (const pointer of [null, "usage", "/a~2b", "/a".repeat(33)]) {
+      assertEquals((await validate({ ref: "tool_result_1", pointer })).success, false);
+    }
+    assertEquals((await validate({ ref: "tool_result_1", view: "structure" })).success, true);
+    assertEquals((await validate({ ref: "tool_result_1", view: "keys" })).success, false);
+  });
+
+  it("reads a selected value from the snapshot taken at disclosure", () => {
+    const context = createToolResultContext({
+      limits: { maxInlineBytes: 20, maxSectionBytes: 256 },
+    });
+    const usage = { input: 22358, output: 1180 };
+    const original = { output: "x".repeat(12000), usage };
+    const disclosed = context.disclose({
+      toolCallId: "usage",
+      toolName: "inspect",
+      result: original,
+    });
+    if (disclosed.kind !== "reference") throw new Error("Expected retained result");
+    original.usage = { input: 0, output: 0 };
+    const selected = readToolResultContext(context, {
+      ref: disclosed.modelResult.ref,
+      pointer: "/usage",
+    });
+    assertEquals(JSON.parse(selected.text), usage);
+    assertEquals(selected.pointer, "/usage");
+    assertEquals(selected.done, true);
+  });
+
+  it("selects escaped keys and rejects missing or inherited targets", () => {
+    const context = createToolResultContext({ limits: { maxInlineBytes: 4 } });
+    const result = { "a/b": { "~key": ["first", "second"] }, padding: "x".repeat(100) };
+    const disclosed = context.disclose({ toolCallId: "paths", toolName: "read", result });
+    if (disclosed.kind !== "reference") throw new Error("Expected retained result");
+    const ref = disclosed.modelResult.ref;
+    assertEquals(
+      JSON.parse(readToolResultContext(context, { ref, pointer: "/a~1b/~0key/1" }).text),
+      "second",
+    );
+    for (const pointer of ["/constructor", "/a~1b/~0key/length", "/a~1b/~0key/01", "/missing"]) {
+      assertThrows(() => readToolResultContext(context, { ref, pointer }), ReferenceError);
+    }
+    for (const pointer of ["/a~2b", "usage"]) {
+      assertThrows(() => readToolResultContext(context, { ref, pointer }), TypeError);
+    }
+  });
+
+  it("pages a selected value by its own UTF-8 size with the same pointer", () => {
+    const result = {
+      output: "\u{1F9ED}".repeat(200),
+      "a/b~": { status: "\u2713", items: ["\u00E9", "\u{1F9ED}", { count: 3 }] },
+    };
+    const encoder = new TextEncoder();
+    const context = createToolResultContext({ limits: { maxInlineBytes: 4, maxSectionBytes: 17 } });
+    const disclosed = context.disclose({ toolCallId: "pages", toolName: "inspect", result });
+    if (disclosed.kind !== "reference") throw new Error("Expected retained result");
+    const expectedRoot = JSON.stringify(result);
+    const expectedSelected = JSON.stringify(result["a/b~"]);
+    assertEquals(disclosed.modelResult.totalBytes, encoder.encode(expectedRoot).byteLength);
+
+    for (const pointer of [undefined, "/a~1b~0"]) {
+      let text = "";
+      let cursor: string | undefined;
+      let totalBytes = 0;
+      do {
+        const page = readToolResultContext(context, {
+          ref: disclosed.modelResult.ref,
+          pointer,
+          cursor,
+        });
+        assertLessOrEqual(page.byteLength, 17);
+        assertEquals(page.pointer, pointer);
+        totalBytes = page.totalBytes;
+        text += page.text;
+        cursor = page.nextCursor;
+      } while (cursor !== undefined);
+      const expected = pointer === undefined ? expectedRoot : expectedSelected;
+      assertEquals(text, expected);
+      assertEquals(totalBytes, encoder.encode(expected).byteLength);
+    }
+  });
+
+  it("pages structure for a wide retained array within the section byte limit", () => {
+    const context = createToolResultContext({
+      limits: { maxInlineBytes: 4, maxSectionBytes: 4096 },
+    });
+    const disclosed = context.disclose({
+      toolCallId: "wide",
+      toolName: "read",
+      result: Array.from({ length: 40_000 }, (_, index) => index),
+    });
+    if (disclosed.kind !== "reference") throw new Error("Expected retained result");
+    const section = readToolResultContext(context, {
+      ref: disclosed.modelResult.ref,
+      view: "structure",
+      maxBytes: 4096,
+    });
+    assertEquals(section.done, false);
+    assertLessOrEqual(section.byteLength, 4096);
+    assertEquals(
+      section.text.startsWith('{"type":"array","fields":[{"pointerToken":"/0","type":"number"}'),
+      true,
+    );
+    assertEquals(section.totalBytes > 1_000_000, true);
+    assertEquals(section.nextCursor !== undefined, true);
+  });
+  it("reads normalized sparse arrays at the root and nested pointers", () => {
+    const context = createToolResultContext({ limits: { maxInlineBytes: 4 } });
+    for (const result of [new Array(99_999), { items: new Array(99_999) }]) {
+      const disclosed = context.disclose({ toolCallId: "sparse", toolName: "read", result });
+      if (disclosed.kind !== "reference") throw new Error("Expected retained result");
+      const pointer = Array.isArray(result) ? "" : "/items";
+      const section = readToolResultContext(context, {
+        ref: disclosed.modelResult.ref,
+        pointer,
+        maxBytes: 128,
+      });
+      assertEquals(section.text.startsWith("[null,null"), true);
+      assertEquals(section.done, false);
+    }
+  });
+  it("lists child pointer tokens and types without values", () => {
+    const context = createToolResultContext({
+      limits: { maxInlineBytes: 4, maxSectionBytes: 128 },
+    });
+    const disclosed = context.disclose({
+      toolCallId: "structure",
+      toolName: "get_run",
+      result: {
+        output: "private transcript ".repeat(2000),
+        "a/b": { "~key": [null, false] },
+        count: 2,
+      },
+    });
+    if (disclosed.kind !== "reference") throw new Error("Expected retained result");
+    const ref = disclosed.modelResult.ref;
+    let cursor: string | undefined;
+    let index = "";
+    do {
+      const page = readToolResultContext(context, { ref, view: "structure", cursor });
+      assertEquals(page.view, "structure");
+      assertLessOrEqual(page.byteLength, 128);
+      index += page.text;
+      cursor = page.nextCursor;
+    } while (cursor !== undefined);
+    assertEquals(JSON.parse(index), {
+      type: "object",
+      fields: [
+        { pointerToken: "/output", type: "string" },
+        { pointerToken: "/a~1b", type: "object" },
+        { pointerToken: "/count", type: "number" },
+      ],
+    });
+    assertEquals(index.includes("private transcript"), false);
+    assertEquals(
+      JSON.parse(
+        readToolResultContext(context, { ref, view: "structure", pointer: "/a~1b/~0key" }).text,
+      ),
+      {
+        type: "array",
+        fields: [{ pointerToken: "/0", type: "null" }, { pointerToken: "/1", type: "boolean" }],
+      },
+    );
+    assertThrows(() => readToolResultContext(context, { ref, view: "keys" }), TypeError);
+    assertThrows(
+      () => readToolResultContext(createToolResultContext(), { ref, view: "structure" }),
+      ReferenceError,
+    );
+  });
+
+  it("keeps string results as raw text without JSON selection", () => {
+    const context = createToolResultContext({ limits: { maxInlineBytes: 4 } });
+    const rawText = JSON.stringify({ usage: { count: 2 }, padding: "x".repeat(100) });
+    const disclosed = context.disclose({ toolCallId: "text", toolName: "read", result: rawText });
+    if (disclosed.kind !== "reference") throw new Error("Expected retained result");
+    const ref = disclosed.modelResult.ref;
+    assertEquals(readToolResultContext(context, { ref }).text, rawText);
+    assertEquals(readToolResultContext(context, { ref, view: "value" }).text, rawText);
+    for (
+      const request of [{ ref, view: "structure" }, { ref, pointer: "" }, {
+        ref,
+        pointer: "/usage",
+      }]
+    ) {
+      assertThrows(() => readToolResultContext(context, request), TypeError, "not JSON");
+    }
+  });
+
+  it("keeps compact JSON inline when only pretty formatting would exceed the limit", () => {
+    const result = {
+      records: Array.from({ length: 300 }, (_, index) => ({ id: index, label: "x" })),
+      status: "ok",
+    };
+    const encoder = new TextEncoder();
+    const compactBytes = encoder.encode(JSON.stringify(result)).byteLength;
+    assertLessOrEqual(compactBytes, 8_192);
+    assertEquals(encoder.encode(JSON.stringify(result, null, 2)).byteLength > 8_192, true);
+    const disclosed = createToolResultContext({ limits: { maxInlineBytes: 8_192 } }).disclose({
+      toolCallId: "compact",
+      toolName: "inspect",
+      result,
+    });
+    assertEquals(disclosed.kind, "inline");
+    assertEquals(disclosed.byteLength, compactBytes);
+    assertStrictEquals(disclosed.modelResult, result);
   });
 });

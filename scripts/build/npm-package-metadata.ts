@@ -1,3 +1,5 @@
+import { BROWSER_MODULE_REPLACEMENTS } from "./browser-safe-exports.mjs";
+
 type PackageJson = {
 	name?: string;
 	version?: string;
@@ -9,7 +11,10 @@ type PackageJson = {
 	peerDependenciesMeta?: Record<string, { optional?: boolean }>;
 	devDependencies?: Record<string, string>;
 	overrides?: Record<string, string>;
+	browser?: Record<string, string | false>;
 };
+
+import { normalizeReactPeerDependencies } from "./npm-react-peers.ts";
 
 import { OPAQUE_DEPENDENCY_VERSIONS } from "../../src/platform/compat/opaque-dependency-versions.ts";
 
@@ -22,7 +27,9 @@ export const ROOT_OPTIONAL_RUNTIME_PEERS = [
 // fallback the optional-peer move silently skips them and the published
 // package.json omits the dependency entirely.
 const ROOT_OPTIONAL_RUNTIME_PEER_FALLBACK_RANGES: Record<string, string> = {
-	"@huggingface/transformers": `^${OPAQUE_DEPENDENCY_VERSIONS["@huggingface/transformers"]}`,
+	"@huggingface/transformers": `^${
+		OPAQUE_DEPENDENCY_VERSIONS["@huggingface/transformers"]
+	}`,
 };
 
 /**
@@ -121,6 +128,8 @@ export const EXTENSION_OWNED_DEPENDENCIES = [
 	"micromark-util-combine-extensions",
 	"micromark-util-types",
 	"parse5",
+	"postcss",
+	"postcss-selector-parser",
 	"protobufjs",
 	"purgecss",
 	"rehype-highlight",
@@ -136,6 +145,7 @@ export const EXTENSION_OWNED_DEPENDENCIES = [
 	"sharp",
 	"tailwind-scrollbar-hide",
 	"tailwindcss",
+	"tw-animate-css",
 	"tailwindcss-animate",
 	"unified",
 	"unist-util-visit",
@@ -155,11 +165,24 @@ const REQUIRED_NPM_OVERRIDES = {
 } as const;
 
 export function normalizeNpmPackageMetadata(pkg: PackageJson): PackageJson {
-	if (pkg.files) {
-		pkg.files = pkg.files.filter((entry) => entry !== "src" && entry !== "/src");
+	pkg.browser ??= {};
+	for (const [source, replacement] of Object.entries(BROWSER_MODULE_REPLACEMENTS)) {
+		pkg.browser[`./esm/${source.replace(/\.tsx?$/, ".js")}`] =
+			`./esm/${replacement.replace(/\.tsx?$/, ".js")}`;
 	}
 
-	for (const name of [...ROOT_OPTIONAL_RUNTIME_PEERS, ...ROOT_OPTIONAL_EXTENSION_PEERS]) {
+	if (pkg.files) {
+		pkg.files = pkg.files.filter((entry) =>
+			entry !== "src" && entry !== "/src"
+		);
+	}
+
+	for (
+		const name of [
+			...ROOT_OPTIONAL_RUNTIME_PEERS,
+			...ROOT_OPTIONAL_EXTENSION_PEERS,
+		]
+	) {
 		movePackageToOptionalPeer(pkg, name);
 	}
 
@@ -180,13 +203,20 @@ export function normalizeNpmPackageMetadata(pkg: PackageJson): PackageJson {
 		pkg.overrides[name] = version;
 	}
 
+	normalizeReactPeerDependencies(pkg);
 	pinAutomaticDependencyRanges(pkg);
 
 	return pkg;
 }
 
 function pinAutomaticDependencyRanges(pkg: PackageJson): void {
-	for (const key of ["dependencies", "optionalDependencies", "devDependencies"] as const) {
+	for (
+		const key of [
+			"dependencies",
+			"optionalDependencies",
+			"devDependencies",
+		] as const
+	) {
 		const dependencies = pkg[key];
 		if (!dependencies) continue;
 

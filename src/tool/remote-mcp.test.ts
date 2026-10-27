@@ -23,6 +23,16 @@ import {
 } from "./remote-mcp.ts";
 import { getToolResultError } from "./result.ts";
 
+function ownHeaderValue(headers: HeadersInit | undefined, name: string): string | undefined {
+  if (
+    headers === undefined || typeof headers !== "object" || Array.isArray(headers) ||
+    headers instanceof Headers || !Object.hasOwn(headers, name)
+  ) {
+    return undefined;
+  }
+  return headers[name];
+}
+
 describe("tool/remote-mcp", () => {
   it("preserves discovery metadata on every page without adding it to calls", async () => {
     const config = {
@@ -225,17 +235,10 @@ describe("tool/remote-mcp", () => {
       trustedEndpoints: ["http://veryfront-api/mcp"],
       // Stands in for the native send: it reads the null-prototype record.
       requestFetch: (_input, init) => {
-        const headers = observeFetchRequestInit(init).headers;
-        const headerRecord = headers && !(headers instanceof Headers) && !Array.isArray(headers)
-          ? headers
-          : undefined;
-        authorizations.push(
-          headerRecord && Object.hasOwn(headerRecord, "authorization")
-            ? headerRecord.authorization
-            : undefined,
-        );
-        writerTokens.push(headerRecord?.["x-veryfront-run-event-writer-token"]);
-        const body = JSON.parse(String(observeFetchRequestInit(init).body)) as { id: string };
+        const observed = observeFetchRequestInit(init);
+        authorizations.push(ownHeaderValue(observed.headers, "authorization"));
+        writerTokens.push(ownHeaderValue(observed.headers, "x-veryfront-run-event-writer-token"));
+        const body = JSON.parse(String(observed.body)) as { id: string };
         return Promise.resolve(
           Response.json({ jsonrpc: "2.0", id: body.id, result: { tools: [] } }),
         );
@@ -419,6 +422,15 @@ describe("tool/remote-mcp", () => {
               inputSchema: {},
               title: "Search docs",
               annotations: { readOnlyHint: true },
+              _meta: {
+                "veryfront/tool-discovery": {
+                  version: 1,
+                  type: "integration",
+                  domain: "docs",
+                  operation: "search",
+                  ignored: true,
+                },
+              },
             }],
           },
         });
@@ -439,10 +451,67 @@ describe("tool/remote-mcp", () => {
       name: "search_docs",
       description: "Search documentation",
       parameters: { type: "object", properties: {} },
+      discovery: { version: 1, type: "integration", domain: "docs", operation: "search" },
       title: "Search docs",
       annotations: { readOnlyHint: true },
     }]);
   });
+
+  it("sends one argument string over 1 MiB within the request bound", async () => {
+    const source = createRemoteMCPToolSource({
+      id: "docs",
+      endpoint: "https://93.184.216.34",
+      headers: { Authorization: "Bearer remote-token" },
+    });
+    const content = "A".repeat(2 * 1024 * 1024);
+    let sent: unknown;
+
+    await withMockFetch(async (input: string | URL | Request, init?: RequestInit) => {
+      const request = input instanceof Request ? input : new Request(input, init);
+      sent = await request.json();
+      return Response.json({
+        jsonrpc: "2.0",
+        id: "docs:tools:call:upload",
+        result: { content: [{ type: "text", text: "ok" }] },
+      });
+    }, async () => await source.executeTool("upload", { content }));
+
+    assertEquals(
+      (sent as { params: { arguments: { content: string } } }).params.arguments.content,
+      content,
+    );
+  });
+
+  for (
+    const [shape, result] of [
+      ["structured", (content: string) => ({ content: [], structuredContent: { content } })],
+      [
+        "text",
+        (content: string) => ({ content: [{ type: "text", text: JSON.stringify({ content }) }] }),
+      ],
+    ] as const
+  ) {
+    it(`returns one ${shape} result string over 1 MiB within the response bound`, async () => {
+      const source = createRemoteMCPToolSource({
+        id: "docs",
+        endpoint: "https://93.184.216.34",
+        headers: { Authorization: "Bearer remote-token" },
+      });
+      const content = "A".repeat(2 * 1024 * 1024);
+
+      const output = await withMockFetch(
+        async () =>
+          Response.json({
+            jsonrpc: "2.0",
+            id: "docs:tools:call:download",
+            result: result(content),
+          }),
+        async () => await source.executeTool("download", {}),
+      );
+
+      assertEquals(output, { content });
+    });
+  }
 
   it("returns structured MCP tool errors instead of throwing for callTool isError results", async () => {
     const source = createRemoteMCPToolSource({
@@ -902,7 +971,126 @@ describe("tool/remote-mcp", () => {
       error: "reconnect_required",
       code: "OAUTH_TOKEN_EXPIRED",
       integration: "calendar",
-      connectUrl: "https://93.184.216.34/oauth/connect/calendar?projectId=project-1",
+      connectUrl:
+        "https://93.184.216.34/oauth/connect/calendar?project_reference=project-1&scope=user",
+      message: "Calendar needs to be reconnected before this tool can run.",
+    });
+  });
+
+  it("keeps tool error details with one string over 1 MiB", async () => {
+    const source = createRemoteMCPToolSource({
+      id: "veryfront-mcp",
+      endpoint: "https://93.184.216.34/mcp",
+    });
+    const detail = "A".repeat(2 * 1024 * 1024);
+
+    const result = await withMockFetch(
+      async () =>
+        Response.json({
+          jsonrpc: "2.0",
+          id: "veryfront-mcp:tools:call:outlook__get_attachment",
+          result: {
+            isError: true,
+            content: [{ text: JSON.stringify({ error: "attachment_failed", detail }) }],
+          },
+        }),
+      async () => await source.executeTool("outlook__get_attachment", {}),
+    ) as Record<string, unknown>;
+
+    assertEquals([result.error, result.detail === detail], ["attachment_failed", true]);
+  });
+
+  it("normalizes invalid_grant structured errors with one string over 1 MiB", async () => {
+    const source = createRemoteMCPToolSource({
+      id: "veryfront-mcp",
+      endpoint: "https://93.184.216.34/mcp",
+    });
+
+    const result = await withMockFetch(
+      async () =>
+        Response.json({
+          jsonrpc: "2.0",
+          id: "veryfront-mcp:tools:call:calendar__list_events",
+          result: {
+            isError: true,
+            content: [],
+            structuredContent: { error: "invalid_grant", detail: "A".repeat(2 * 1024 * 1024) },
+          },
+        }),
+      async () => await source.executeTool("calendar__list_events", {}),
+    ) as Record<string, unknown>;
+
+    assertEquals(result.error, "reconnect_required");
+  });
+
+  it("normalizes invalid_grant JSON-RPC error data with one string over 1 MiB", async () => {
+    const source = createRemoteMCPToolSource({
+      id: "veryfront-mcp",
+      endpoint: "https://93.184.216.34/mcp",
+    });
+
+    const result = await withMockFetch(
+      async () =>
+        Response.json({
+          jsonrpc: "2.0",
+          id: "veryfront-mcp:tools:call:calendar__list_events",
+          error: {
+            code: -32000,
+            message: "Tool failed",
+            data: { code: "invalid_grant", detail: "A".repeat(2 * 1024 * 1024) },
+          },
+        }),
+      async () => await source.executeTool("calendar__list_events", {}),
+    ) as Record<string, unknown>;
+
+    assertEquals(result.error, "reconnect_required");
+  });
+
+  it("detects invalid_grant in error text that fills the response bound", async () => {
+    const source = createRemoteMCPToolSource({
+      id: "veryfront-mcp",
+      endpoint: "https://93.184.216.34/mcp",
+    });
+    const text = "invalid_grant " + "A".repeat(MAX_REMOTE_MCP_CALL_RESPONSE_BYTES - 256);
+
+    const result = await withMockFetch(
+      async () =>
+        Response.json({
+          jsonrpc: "2.0",
+          id: "veryfront-mcp:tools:call:calendar__list_events",
+          result: { isError: true, content: [{ text }] },
+        }),
+      async () =>
+        await source.executeTool("calendar__list_events", {}, { toolCallId: "c".repeat(256) }),
+    ) as Record<string, unknown>;
+
+    assertEquals(result.error, "reconnect_required");
+  });
+
+  it("keeps the scope on reconnect links built without a project", async () => {
+    const source = createRemoteMCPToolSource({
+      id: "veryfront-mcp",
+      endpoint: "https://93.184.216.34/mcp",
+    });
+
+    const result = await withMockFetch(
+      async () =>
+        Response.json({
+          jsonrpc: "2.0",
+          id: "veryfront-mcp:tools:call:calendar__list_events",
+          error: {
+            code: -32603,
+            message: 'Token refresh failed (400): { "error": "invalid_grant" }',
+          },
+        }),
+      async () => await source.executeTool("calendar__list_events", {}),
+    );
+
+    assertEquals(result, {
+      error: "reconnect_required",
+      code: "OAUTH_TOKEN_EXPIRED",
+      integration: "calendar",
+      connectUrl: "https://93.184.216.34/oauth/connect/calendar?scope=user",
       message: "Calendar needs to be reconnected before this tool can run.",
     });
   });
@@ -930,7 +1118,8 @@ describe("tool/remote-mcp", () => {
       error: "reconnect_required",
       code: "OAUTH_TOKEN_EXPIRED",
       integration: "calendar",
-      connectUrl: "https://93.184.216.34/oauth/connect/calendar?projectId=project-1",
+      connectUrl:
+        "https://93.184.216.34/oauth/connect/calendar?project_reference=project-1&scope=user",
       message: "Calendar needs to be reconnected before this tool can run.",
     });
   });
@@ -1016,7 +1205,8 @@ describe("tool/remote-mcp", () => {
       error: "reconnect_required",
       code: "OAUTH_TOKEN_EXPIRED",
       integration: "calendar",
-      connectUrl: "https://93.184.216.34/oauth/connect/calendar?projectId=project-1",
+      connectUrl:
+        "https://93.184.216.34/oauth/connect/calendar?project_reference=project-1&scope=user",
       message: "Calendar needs to be reconnected before this tool can run.",
     });
   });
@@ -1065,7 +1255,8 @@ describe("tool/remote-mcp", () => {
         error: "reconnect_required",
         code: "OAUTH_TOKEN_EXPIRED",
         integration: "calendar",
-        connectUrl: "https://93.184.216.34/oauth/connect/calendar?projectId=project-1",
+        connectUrl:
+          "https://93.184.216.34/oauth/connect/calendar?project_reference=project-1&scope=user",
         message: "Calendar needs to be reconnected before this tool can run.",
       });
     } finally {

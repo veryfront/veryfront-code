@@ -1,9 +1,11 @@
+import { replacePrivateRegExp } from "#veryfront/security/private-regexp.ts";
+
 /** Largest SSE frame a decoder buffers before it gives up on the stream. */
 export const MAX_SSE_FRAME_CHARS = 8 * 1024 * 1024;
 
 /** Normalize CRLF and lone CR line ends to LF. */
 export function normalizeNewlines(value: string): string {
-  return value.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  return replacePrivateRegExp(/\r/g, replacePrivateRegExp(/\r\n/g, value, "\n"), "\n");
 }
 
 /** Split LF-normalized SSE text into complete frames and the unterminated remainder. */

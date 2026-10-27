@@ -372,7 +372,7 @@ describe("createNodeStdinReader", () => {
     const pendingRead = reader.read();
     reader.releaseLock();
 
-    let timeoutId: number | undefined;
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
     const result = await Promise.race([
       pendingRead,
       new Promise<"timeout">((resolve) => {

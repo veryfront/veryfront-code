@@ -1,10 +1,14 @@
+import { copyToolDiscoveryMetadata } from "./discovery-metadata.ts";
 import { hasTrustedPlatformSource } from "./platform-source-provenance.ts";
 import { markTrustedHostToolProvenance } from "./host-tool-provenance.ts";
 import { dynamicTool } from "./factory.ts";
 import { markRemoteToolProvenance } from "./remote-tool-provenance.ts";
 import type { RemoteToolSource, Tool, ToolDefinition, ToolExecutionContext } from "./types.ts";
 import { INVALID_ARGUMENT } from "#veryfront/errors";
-import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
+import {
+  JSON_VALUE_MAX_SERIALIZED_BYTES,
+  snapshotBoundedJsonValue,
+} from "#veryfront/schemas/json-value.ts";
 
 /** Options accepted by remote tool materialization. */
 export interface RemoteToolMaterializationOptions {
@@ -13,7 +17,9 @@ export interface RemoteToolMaterializationOptions {
 }
 
 function toToolInputRecord(input: unknown): Record<string, unknown> {
-  const snapshot = snapshotBoundedJsonValue(input);
+  // One string, such as base64 attachment content, may use the whole input
+  // bound; each source still applies its own request limits.
+  const snapshot = snapshotBoundedJsonValue(input, JSON_VALUE_MAX_SERIALIZED_BYTES);
   if (
     !snapshot.success ||
     typeof snapshot.value !== "object" ||
@@ -70,6 +76,7 @@ export function createToolsFromRemoteDefinitions(
       }),
       definition.name,
     );
+    copyToolDiscoveryMetadata(definition, remoteTool);
     entries.push([
       toolName,
       hasTrustedPlatformSource(source) ? markTrustedHostToolProvenance(remoteTool) : remoteTool,

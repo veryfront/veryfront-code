@@ -7,9 +7,7 @@ order: 20
 An app owns the user-facing surface of a Veryfront project. It contains pages,
 API routes, data loading, static content, and runtime configuration.
 
-The app is the entry point for browsers and HTTP clients. It decides which route
-handles a request, which data is loaded, which UI is rendered, and which runtime
-capability is invoked.
+The app routes browser and HTTP requests to the page or handler that serves them.
 
 ## Characteristics
 
@@ -23,9 +21,6 @@ capability is invoked.
 An app route can call an agent, tool, workflow, task, run, integration, or
 sandbox. The app still owns the request and response boundary. The primitive it
 calls owns the work behind that boundary.
-
-This separation keeps routes readable. The route explains how the user or HTTP
-client enters the system. The primitive explains what capability runs.
 
 ## Wrong fit
 

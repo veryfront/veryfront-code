@@ -274,6 +274,7 @@ export function createAgentServiceRuntime<
     authenticateRequest: auth.authenticateRequest,
     verifyProjectAccess: (projectId, authToken) => auth.verifyProjectAccess(projectId, authToken),
     verifyRunEventAppendToken: auth.verifyRunEventAppendToken,
+    verifyRunTerminalToken: auth.verifyRunTerminalToken,
     verifyRunCancellationToken: auth.verifyRunCancellationToken,
     verifyRunResumeToken: auth.verifyRunResumeToken,
     tracker,
@@ -301,6 +302,9 @@ export function createAgentServiceRuntime<
       system: agentConfig.system ?? agentConfig.instructions,
       model: agentConfig.model,
       temperature: agentConfig.temperature,
+      ...(agentConfig.parallelToolCalls === undefined
+        ? {}
+        : { parallelToolCalls: agentConfig.parallelToolCalls }),
       maxSteps: agentConfig.maxSteps,
       providerTools: normalizeAgentServiceProviderTools(
         agentConfig.providerTools,
@@ -309,6 +313,9 @@ export function createAgentServiceRuntime<
       skills: failClosedUnrestrictedSelector ? false : agentConfig.skills,
       tools: normalizeAgentServiceTools(agentConfig.tools, agentConfig.deniedTools),
       toolLoading: agentConfig.toolLoading,
+      bootstrapTools: agentConfig.bootstrapTools,
+      optionalBootstrapTools: agentConfig.optionalBootstrapTools,
+      bootstrapSkill: agentConfig.bootstrapSkill,
       toolResultContext: agentConfig.toolResultContext,
       knowledge: agentConfig.knowledge,
     }),

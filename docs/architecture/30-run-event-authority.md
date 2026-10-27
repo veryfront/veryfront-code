@@ -16,11 +16,17 @@ The trusted API runtime configuration enables `modelCallCaptureReceipts` only af
 
 After activation, the hosted model broker persists one logical `modelCallId` for each generation or streaming operation before provider dispatch. It requires an exact capture receipt matching the authenticated project grant. Provider retries keep the same logical call identity. Missing receipts cannot downgrade an activated run to legacy dispatch.
 
+Exact capture retains assistant `providerMetadata` as a bounded, strict JSON object. This includes native tool-use blocks and signed thinking data required for a provider continuation. The captured messages retain the same metadata sent to the provider. Invalid or non-JSON metadata refuses dispatch; it is never silently removed. Distinct public observation sinks and legacy observations continue to omit assistant provider metadata.
+
+Deploy the additive API assistant-metadata ingestion contract before publishing framework packages that emit this field. Qualify the package with an actual parent run that invokes a child and completes its next model step.
+
 The append response uses the additive `model_call_captures` array. Each receipt contains `event_id`, `model_call_id`, `run_id`, and `project_id`. Only complete captures submitted in that append, including an acknowledged replay, can receive receipts. Preserve `event_id` as the exact server-issued string. A batch cursor or an append count cannot identify a capture occurrence.
 
 Cloud transport removes caller correlation headers and sends `x-veryfront-model-call-id` and `x-veryfront-model-call-capture-event-id` from the acknowledged dispatch scope. The gateway must verify the stored capture and authenticated project/run authority before accepting correlation. These headers and receipts grant no input-read permission.
 
 A missing, malformed, or ambiguous receipt refuses dispatch. An oversized input can leave a truncated legacy audit record, but it has no usable complete-input receipt and sends no provider request. Legacy records and acknowledgements remain readable; they cannot supply missing capture evidence.
+
+Google structured-output capture supports `generationConfig.responseJsonSchema` and the neutral `responseFormat: json_schema` override. Native `generationConfig.responseSchema` uses Google's schema dialect and is unsupported by this capture profile. When capture is required, that setting refuses dispatch. Supporting the native dialect requires a separate schema contract and qualification.
 
 Activation requires matching API support; merging this SDK change does not activate it or establish that the API is deployed. Remove the migration gate only after the API supports receipts, the SDK is released and consumers are pinned, and integrated acceptance tests pass. Projectless canonical runs retain legacy dispatch without new project correlation; target projectless provenance remains unsupported. The gateway owns actual HTTP-attempt IDs and must retain failed attempts independently of billing. Publish usage only when the provider reports the required counters.
 
@@ -50,6 +56,44 @@ Runtime observations travel through private carriers and are removed from public
 
 Enable this path only with matching API and writer-generation support. Legacy history without these proofs remains readable through the existing run-event surface, but cannot supply missing target execution, step, or message provenance.
 
+## Runtime ownership diagnostic probes
+
+Runtime ownership probes are diagnostic checks for staging qualification. They
+verify that the project runtime and external worker paths use the expected
+canonical run authority. They do not enable product behavior, grant user
+authority, or replace API-side validation.
+
+Use the probes only in staging or an equivalent isolated diagnostic
+environment. Enable them for a bounded run, capture the receipts, then remove
+the variables. Each probe family requires an expiry value. The value can be an RFC timestamp
+or Unix epoch milliseconds. The probe is inactive when the expiry is invalid, in
+the past, or more than 6 hours in the future. Operation timeouts default to
+5000 ms and are capped at 30000 ms. Probe failures must not change claim,
+lease, terminal, or cancellation outcomes.
+
+### Project runtime probe variables
+
+| Variable                                                 | Purpose                                            |
+| -------------------------------------------------------- | -------------------------------------------------- |
+| `VERYFRONT_RUNTIME_OWNERSHIP_PROBE_STAGE`                | Set to `1` to enable the project runtime probe.    |
+| `VERYFRONT_RUNTIME_OWNERSHIP_PROBE_ID`                   | Optional diagnostic id for receipt grouping.       |
+| `VERYFRONT_RUNTIME_OWNERSHIP_PROBE_PROJECT_ID`           | Project id expected by the probe.                  |
+| `VERYFRONT_RUNTIME_OWNERSHIP_PROBE_ENVIRONMENT_ID`       | Environment id expected by the probe.              |
+| `VERYFRONT_RUNTIME_OWNERSHIP_PROBE_EXPIRES_AT`           | Required RFC timestamp or Unix epoch milliseconds. |
+| `VERYFRONT_RUNTIME_OWNERSHIP_PROBE_OPERATION_TIMEOUT_MS` | Optional per-operation timeout in milliseconds.    |
+
+### Agent worker probe variables
+
+| Variable                                                              | Purpose                                                    |
+| --------------------------------------------------------------------- | ---------------------------------------------------------- |
+| `VERYFRONT_AGENT_WORKER_RUNTIME_OWNERSHIP_PROBE_STAGE`                | Set to `1` to enable the external worker probe.            |
+| `VERYFRONT_AGENT_WORKER_RUNTIME_OWNERSHIP_PROBE_ID`                   | Optional diagnostic id for receipt grouping.               |
+| `VERYFRONT_AGENT_WORKER_RUNTIME_OWNERSHIP_PROBE_PROJECT_ID`           | Project id expected by the probe.                          |
+| `VERYFRONT_AGENT_WORKER_RUNTIME_OWNERSHIP_PROBE_WORKER_ID`            | Optional worker id restriction.                            |
+| `VERYFRONT_AGENT_WORKER_RUNTIME_OWNERSHIP_PROBE_CHILD_TOOL_CALL_ID`   | Optional child tool call id used by the stale child check. |
+| `VERYFRONT_AGENT_WORKER_RUNTIME_OWNERSHIP_PROBE_EXPIRES_AT`           | Required RFC timestamp or Unix epoch milliseconds.         |
+| `VERYFRONT_AGENT_WORKER_RUNTIME_OWNERSHIP_PROBE_OPERATION_TIMEOUT_MS` | Optional per-operation timeout in milliseconds.            |
+
 ## Event schema contributor verification
 
 The following commands run from the SDK source repository after changing parser behavior, schema artifacts, or generated payload types. They are not installed-project verification commands.
@@ -60,3 +104,9 @@ deno task generate
 deno run -A src/events/generate-payload-types.mjs
 git diff --exit-code -- src/events/payload-types.generated.ts
 ```
+
+## Descendant history continuation
+
+Canonical single-run pages retain the immutable decimal cursor contract. Reads with `include_descendants: true` explicitly select `cursor_profile=run-events-descendants-v1` and require that additive page profile and preserve the opaque `vfd1.` continuation token exactly. Equal physical event IDs from different producing runs remain distinct history entries. The SDK validates the bounded canonical token encoding, page discriminator, continuation identity, nonregressing physical IDs, and duplicate producing-run/event-ID pairs. It cannot infer physical storage from a member. The API owns total tuple ordering and authorizes the cursor's root, filters, order, store, and view before querying history; client token validation grants no access.
+
+Canonical payload decoding also enforces the selected source schema’s UTF-16 string limits, trimmed parse output, and JSON context-item UTF-8 byte limit. These supplementary checks reject invalid history without changing its values or the frozen schema resources. They follow declared schema fields and applicable union branches; arbitrary JSON inside context data, tool schemas, or forwarded properties stays opaque. Physical-store source segments must retain their canonical encoded spelling.

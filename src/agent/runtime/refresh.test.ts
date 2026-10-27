@@ -36,6 +36,7 @@ import {
 import { markRuntimeLocalTool } from "./local-tool.ts";
 import { isRuntimeGeneratedUserMessage } from "./runtime-message-origin.ts";
 import { normalizeInput } from "./input-utils.ts";
+import { isToolResultPart } from "./tool-result-continuation.ts";
 import { cloneRuntimeStateMutableData } from "./index.ts";
 
 function eagerAgent(config: Parameters<typeof agent>[0]): ReturnType<typeof agent> {
@@ -826,9 +827,9 @@ describe("agent runtime refresh hooks", () => {
     assertEquals(model.toolNames(0).includes("create_agent"), true);
     assertEquals(model.toolNames(0).includes("web_search"), true);
     assertEquals(model.toolNames(0).includes("web_fetch"), true);
-    assertEquals(model.toolNames(1), ["load_skill", "veryfront__load_skill"]);
+    assertEquals(model.toolNames(1), ["veryfront__load_skill"]);
     assertEquals(model.systemPrompts()[1]?.includes("- create_agent"), false);
-    assertEquals(model.systemPrompts()[1]?.includes("- load_skill"), true);
+    assertEquals(model.systemPrompts()[1]?.includes("- veryfront__load_skill"), true);
     assertEquals(executionCount, 1);
     assertEquals(response.toolCalls[1]?.status, "error");
     assertEquals(
@@ -967,7 +968,7 @@ describe("agent runtime refresh hooks", () => {
     assertEquals(toolNamesByStep[0]?.includes("create_agent"), true);
     assertEquals(toolNamesByStep[0]?.includes("web_search"), true);
     assertEquals(toolNamesByStep[0]?.includes("web_fetch"), true);
-    assertEquals(toolNamesByStep[1], ["load_skill", "veryfront__load_skill"]);
+    assertEquals(toolNamesByStep[1], ["veryfront__load_skill"]);
     assertEquals(executionCount, 1);
   });
 
@@ -1123,7 +1124,7 @@ describe("agent runtime refresh hooks", () => {
       assertEquals(toolNamesByStep[0]?.includes("create_schedule"), true);
       assertEquals(toolNamesByStep[0]?.includes("web_search"), true);
       assertEquals(toolNamesByStep[0]?.includes("web_fetch"), true);
-      assertEquals(toolNamesByStep[1], ["create_schedule", "load_skill", "veryfront__load_skill"]);
+      assertEquals(toolNamesByStep[1], ["create_schedule", "veryfront__load_skill"]);
       assertEquals(toolNamesByStep.length, 3);
       assertEquals(executedTools, [agentWriteToolName, "create_schedule"]);
     });
@@ -1581,7 +1582,7 @@ describe("agent runtime refresh hooks", () => {
     assertEquals(toolNamesByStep[0]?.includes("update_agent"), true);
     assertEquals(toolNamesByStep[0]?.includes("web_search"), true);
     assertEquals(toolNamesByStep[0]?.includes("web_fetch"), true);
-    assertEquals(toolNamesByStep[1], ["load_skill", "veryfront__load_skill"]);
+    assertEquals(toolNamesByStep[1], ["veryfront__load_skill"]);
   });
 
   it("notifies configured hooks after stream() executes a tool", async () => {
@@ -1802,6 +1803,7 @@ describe("agent runtime refresh hooks", () => {
     for (const hasFinalResult of [false, true]) {
       const executedMutations: string[] = [];
       let callCount = 0;
+      let finishedResponse: AgentResponse | undefined;
       const model: ModelRuntime = {
         provider: "hosted",
         modelId: `hosted/interrupted-exposed-batch-${hasFinalResult}`,
@@ -1883,6 +1885,9 @@ describe("agent runtime refresh hooks", () => {
 
       const response = (await assistant.stream({
         input: "Update the taxonomy and agent",
+        onFinish: (result) => {
+          finishedResponse = result;
+        },
       })).toDataStreamResponse();
       const body = await response.text();
 
@@ -1896,8 +1901,8 @@ describe("agent runtime refresh hooks", () => {
       // #3737. Failing closed is about not re-running the batch, not about
       // hiding the truncation. The exposed sibling rendered, but the
       // interrupted call is terminalized into history here, so it also has to
-      // reach the wire — one announce and one failure for it, and none for the
-      // exposed sibling, which is complete and so never enters that branch.
+      // reach the wire. The exposed sibling also needs a terminal error when
+      // it has no final result; an existing result must remain unchanged.
       assertEquals(
         body.match(
           /"type":"tool-input-start","toolCallId":"truncated-agent-after-exposure"/g,
@@ -1910,7 +1915,24 @@ describe("agent runtime refresh hooks", () => {
         )?.length ?? 0,
         1,
       );
-      assertEquals(body.match(/"type":"tool-output-error"/g)?.length ?? 0, 1);
+      assertEquals(
+        body.match(/"type":"tool-output-error","toolCallId":"exposed-file"/g)?.length ?? 0,
+        hasFinalResult ? 0 : 1,
+      );
+      assertEquals(body.match(/"type":"tool-output-error"/g)?.length ?? 0, hasFinalResult ? 1 : 2);
+      assertExists(finishedResponse);
+      const exposedResults = finishedResponse.messages.flatMap((message) => message.parts)
+        .filter(isToolResultPart).filter((part) => part.toolCallId === "exposed-file");
+      assertEquals(exposedResults.length, 1);
+      const exposedResult = exposedResults[0];
+      assertExists(exposedResult);
+      assertEquals(
+        exposedResult.result,
+        hasFinalResult ? { revision: "already-applied" } : {
+          error:
+            "Tool execution skipped because the model turn ended before local execution could continue.",
+        },
+      );
       assertEquals(body.match(/"type":"tool-input-error"/g)?.length ?? 0, 0);
       assertEquals(body.includes("Unexpected recovery."), false);
     }
@@ -4830,14 +4852,12 @@ describe("agent runtime refresh hooks", () => {
     const expectedToolNames = [
       [
         "load_skill",
-        "load_skill_reference",
         "read_secret",
         "veryfront__load_skill",
         "veryfront__load_skill_reference",
       ],
       [
         "load_skill",
-        "load_skill_reference",
         "read_secret",
         "veryfront__load_skill",
         "veryfront__load_skill_reference",
@@ -4942,19 +4962,19 @@ describe("agent runtime refresh hooks", () => {
 
     // Runtime tool discovery fires whenever the run context carries a token, and
     // `apiBaseUrl` falls back to the production API when VERYFRONT_API_BASE_URL is
-    // unset. Unmocked, generate() and stream() each POST /integrations/tools/list
+    // unset. Unmocked, generate() and stream() each GET /integration-tools
     // to api.veryfront.com and the test is at the mercy of a 30s fetch timeout.
     // This test is about project skills, so answer discovery with no tools.
     const { generated, streamed } = await withMockFetch(
       (input) => {
         const url = input instanceof Request ? input.url : String(input);
         // Match the whole pathname, not a substring: a loose test also accepts
-        // a neighbouring route like `/integrations/tools/listing`, so a call to
+        // a neighbouring route like `/integration-toolset`, so a call to
         // the wrong endpoint would be answered with an empty catalogue and the
         // test would still pass. Anchored at the end rather than compared whole
         // because VERYFRONT_API_BASE_URL may carry a path prefix, and the client
         // concatenates base and path (`${baseUrl}${path}`).
-        if (!new URL(url).pathname.endsWith("/integrations/tools/list")) {
+        if (!new URL(url).pathname.endsWith("/integration-tools")) {
           throw new Error(`Unexpected network call from a unit test: ${url}`);
         }
         return Promise.resolve(Response.json({ tools: [] }));

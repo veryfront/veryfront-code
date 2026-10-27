@@ -26,14 +26,15 @@ import {
 } from "#veryfront/platform/core-platform.ts";
 import { registerTool } from "#veryfront/mcp";
 import { assertLocalToolId, toolRegistry, toolRegistryInternal } from "#veryfront/tool/registry.ts";
+import { getRemoteToolProvenance } from "#veryfront/tool/remote-tool-provenance.ts";
 import {
   hasTrustedHostToolProvenance,
   markTrustedHostToolProvenance,
 } from "#veryfront/tool/host-tool-provenance.ts";
-import { isToolVisibleTo } from "#veryfront/tool/executor.ts";
 import { skillRegistryInternal } from "#veryfront/skill/registry.ts";
 import {
   resolveSkillToolDisposition,
+  resolveTrustedSkillLoaderToolName,
   type SkillToolDisposition,
 } from "./skill-tool-disposition.ts";
 import type { Skill } from "#veryfront/skill/types.ts";
@@ -68,6 +69,7 @@ import { DEFAULT_MAX_BODY_SIZE_BYTES } from "#veryfront/utils/constants/index.ts
 import { ensureBuiltinSchemaValidator } from "#veryfront/extensions/builtin-schema-validator.ts";
 import {
   buildAgentDelegateTools,
+  CANONICAL_INVOKE_AGENT_TOOL_ID,
   createInvokeAgentTool,
   INVOKE_AGENT_TOOL_ID,
 } from "./runtime/agent-delegation.ts";
@@ -85,7 +87,6 @@ import {
 } from "#veryfront/agent/runtime/knowledge-tools.ts";
 
 const IntrinsicReflectApply = Reflect.apply;
-const IntrinsicToolRegistryGet = toolRegistry.get;
 const IntrinsicStringTrim = String.prototype.trim;
 const IntrinsicArrayFilter = Array.prototype.filter;
 const IntrinsicObjectEntries = Object.entries;
@@ -138,7 +139,7 @@ const SKILL_TOOL_REGISTRATIONS = [
 /**
  * Projects a registered skill onto the runtime skill shape the shared skills
  * renderer consumes. Instructions stay empty: the call context advertises
- * skills, and `load_skill` delivers their bodies.
+ * skills, and `veryfront__load_skill` delivers their bodies.
  */
 function toRuntimeSkillDefinition(skill: Skill): RuntimeSkillDefinition {
   return {
@@ -364,10 +365,14 @@ function resolveToolsConfiguration(input: {
   ensureBuiltinSchemaValidator();
   for (let index = 0; index < SKILL_TOOL_REGISTRATIONS.length; index++) {
     const registration = SKILL_TOOL_REGISTRATIONS[index]!;
-    if (!toolRegistry.has(registration.id)) {
-      toolRegistryInternal.registerShared(
-        registration.id,
-        markTrustedHostToolProvenance(registration.create()),
+    const canonicalId = `veryfront__${registration.id}` as const;
+    if (!toolRegistry.has(canonicalId)) {
+      toolRegistryInternal.registerPlatformShared(
+        canonicalId,
+        markRuntimeLocalTool(markTrustedHostToolProvenance({
+          ...registration.create(),
+          id: canonicalId,
+        })),
       );
     }
   }
@@ -376,12 +381,23 @@ function resolveToolsConfiguration(input: {
     const configuredTools = { ...(config.tools ?? {}) };
     if (delegates !== undefined) {
       delete configuredTools[INVOKE_AGENT_TOOL_ID];
-    } else if (configuredTools[INVOKE_AGENT_TOOL_ID] === true) {
-      configuredTools[INVOKE_AGENT_TOOL_ID] = createInvokeAgentTool({ selfId: id });
+      delete configuredTools[CANONICAL_INVOKE_AGENT_TOOL_ID];
+    } else {
+      const legacyTool = configuredTools[INVOKE_AGENT_TOOL_ID];
+      const canonicalTool = configuredTools[CANONICAL_INVOKE_AGENT_TOOL_ID];
+      if (legacyTool === true) delete configuredTools[INVOKE_AGENT_TOOL_ID];
+      if (canonicalTool === true) delete configuredTools[CANONICAL_INVOKE_AGENT_TOOL_ID];
+      if (
+        (legacyTool === true || canonicalTool === true) &&
+        legacyTool !== false && canonicalTool !== false &&
+        (canonicalTool === undefined || canonicalTool === true)
+      ) {
+        configuredTools[CANONICAL_INVOKE_AGENT_TOOL_ID] = createInvokeAgentTool({ selfId: id });
+      }
     }
     for (let index = 0; index < SKILL_TOOL_REGISTRATIONS.length; index++) {
       const registration = SKILL_TOOL_REGISTRATIONS[index]!;
-      const canonicalId = `veryfront__${registration.id}`;
+      const canonicalId = `veryfront__${registration.id}` as const;
       if (skillTools === "disable" || skillTools === "omit") {
         if (configuredTools[registration.id] !== false) {
           delete configuredTools[registration.id];
@@ -394,26 +410,27 @@ function resolveToolsConfiguration(input: {
 
       const configuredTool = configuredTools[registration.id];
       const configuredCanonicalTool = configuredTools[canonicalId];
-      if (configuredTool === false && configuredCanonicalTool !== true) {
+      const hasTrustedCanonicalTool = hasTrustedHostToolProvenance(configuredCanonicalTool);
+      if (
+        configuredTool === false && configuredCanonicalTool !== true &&
+        !hasTrustedCanonicalTool
+      ) {
+        if (configuredCanonicalTool !== false) delete configuredTools[canonicalId];
         continue;
       }
 
-      const platformTool = markTrustedHostToolProvenance(registration.create({
-        resolveAllowedSkillIds: () => resolveSkillSnapshot().allowedSkillIds,
+      if (configuredTool === true) delete configuredTools[registration.id];
+      const platformTool = markRuntimeLocalTool(markTrustedHostToolProvenance({
+        ...registration.create({
+          resolveAllowedSkillIds: () => resolveSkillSnapshot().allowedSkillIds,
+        }),
+        id: canonicalId,
       }));
       if (
-        configuredTool !== false && (typeof configuredTool !== "object" || configuredTool === null)
-      ) {
-        configuredTools[registration.id] = platformTool;
-      }
-      if (
         configuredCanonicalTool !== false &&
-        (typeof configuredCanonicalTool !== "object" || configuredCanonicalTool === null)
+        !hasTrustedCanonicalTool
       ) {
-        configuredTools[canonicalId] = markRuntimeLocalTool(markTrustedHostToolProvenance({
-          ...platformTool,
-          id: canonicalId,
-        }));
+        configuredTools[canonicalId] = platformTool;
       }
     }
     const hasConfiguredTools = IntrinsicObjectKeys(configuredTools).length > 0;
@@ -442,27 +459,6 @@ function resolveToolsConfiguration(input: {
   }
 
   return merged;
-}
-
-/** Resolve the exposed loader spelling so catalogs advertise a usable call. */
-function getSkillLoaderToolName(
-  tools: AgentConfig["tools"],
-): BuildAgentCallContextInput["skillLoaderToolName"] {
-  if (tools === true) {
-    return hasTrustedHostToolProvenance(
-        IntrinsicReflectApply(IntrinsicToolRegistryGet, toolRegistry, ["load_skill"]),
-      )
-      ? "load_skill"
-      : undefined;
-  }
-  if (!tools) return undefined;
-  const names = ["veryfront__load_skill", "load_skill"] as const;
-  for (let index = 0; index < names.length; index++) {
-    const name = names[index]!;
-    const loader = tools[name];
-    if (hasTrustedHostToolProvenance(loader)) return name;
-  }
-  return undefined;
 }
 
 /**
@@ -530,7 +526,7 @@ function createAugmentedSystem(input: {
 /**
  * Agent helper.
  *
- * `TOutput` is inferred from `config.outputSchema`, so `response.object` is
+ * `TOutput` is inferred from `config.outputSchema`, so `response.data` (also available as `response.object`) is
  * typed without an annotation. Agents without one keep no `object`.
  */
 export function agent<TOutputSchema extends AgentOutputSchema>(
@@ -633,47 +629,39 @@ function createAgent<TOutput = never>(
   // ceiling. Feature configuration must not re-add a filtered capability.
   const knowledgeEnabled = isKnowledgeEnabled(config.knowledge);
   if (preserveToolCatalog && knowledgeEnabled && mergedToolsConfig !== true) {
-    const configuredKnowledgeTool = mergedToolsConfig?.search_knowledge;
+    const configuredKnowledgeTool = mergedToolsConfig?.veryfront__search_knowledge;
     if (
       typeof configuredKnowledgeTool === "object" && configuredKnowledgeTool !== null &&
       !isAgentKnowledgeTool(configuredKnowledgeTool)
     ) {
       throw INVALID_ARGUMENT.create({
-        detail: "A custom search_knowledge tool conflicts with the agent knowledge scope. " +
+        detail:
+          "A custom veryfront__search_knowledge tool conflicts with the agent knowledge scope. " +
           "Rename the custom tool or remove the knowledge selector.",
       });
     }
   }
   const knowledgeTool = preserveToolCatalog ? undefined : createAgentKnowledgeTool(config);
-  const registeredKnowledgeTool = toolRegistry.get("search_knowledge");
-  if (
-    knowledgeTool && mergedToolsConfig === true && registeredKnowledgeTool &&
-    isToolVisibleTo(registeredKnowledgeTool, { agentId: id })
-  ) {
-    throw INVALID_ARGUMENT.create({
-      detail: "A registered search_knowledge tool conflicts with the agent knowledge scope. " +
-        "Use an explicit tool selection or rename the custom tool.",
-    });
-  }
   if (knowledgeTool && mergedToolsConfig !== true) {
-    const configuredKnowledgeTool = mergedToolsConfig?.search_knowledge;
+    const configuredKnowledgeTool = mergedToolsConfig?.veryfront__search_knowledge;
     if (
       configuredKnowledgeTool && configuredKnowledgeTool !== true &&
       !isAgentKnowledgeTool(configuredKnowledgeTool)
     ) {
       throw INVALID_ARGUMENT.create({
-        detail: "A custom search_knowledge tool conflicts with the agent knowledge scope. " +
+        detail:
+          "A custom veryfront__search_knowledge tool conflicts with the agent knowledge scope. " +
           "Rename the custom tool or remove the knowledge selector.",
       });
     }
-    if (configuredKnowledgeTool !== false) {
-      mergedToolsConfig = { ...mergedToolsConfig, search_knowledge: knowledgeTool };
+    if (configuredKnowledgeTool !== false && mergedToolsConfig?.search_knowledge !== false) {
+      mergedToolsConfig = { ...mergedToolsConfig, veryfront__search_knowledge: knowledgeTool };
     }
   }
 
   const augmentedSystem = createAugmentedSystem({
     config,
-    skillLoaderToolName: getSkillLoaderToolName(mergedToolsConfig),
+    skillLoaderToolName: resolveTrustedSkillLoaderToolName(mergedToolsConfig),
     resolveSkillSnapshot,
   });
 
@@ -754,8 +742,8 @@ let agentIdCounter = 0;
  * Names advertised to the model in the system-prompt tool inventory.
  *
  * `tools: true` authorizes the whole catalog but sends only the tools that make
- * the deferred catalog reachable: `tool_search` finds schemas, `load_skill`
- * loads instructions, and `form_input` asks the user. Project tools are
+ * the deferred catalog reachable: `veryfront__tool_search` finds schemas, `veryfront__load_skill`
+ * loads instructions, and `veryfront__form_input` asks the user. Project tools are
  * deferred and are named by the runtime inventory instead.
  *
  * An explicit map advertises exactly what it authorizes, minus entries switched
@@ -813,7 +801,12 @@ function registerConfiguredLocalTools(config: AgentConfig): void {
     const name = pair[0];
     const entry = pair[1];
     if (!entry || typeof entry !== "object") continue;
-    if (isRuntimeLocalTool(entry)) continue;
+    if (isRuntimeLocalTool(entry) || isAgentKnowledgeTool(entry)) continue;
+    // A remote-source tool under its own canonical integration name resolves
+    // from the agent config, because the project registry reserves "__".
+    if (
+      name.includes("__") && entry.id === name && getRemoteToolProvenance(entry) === name
+    ) continue;
     assertLocalToolId(name);
     assertLocalToolId(entry.id);
 

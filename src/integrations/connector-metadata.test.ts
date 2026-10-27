@@ -112,7 +112,7 @@ describe("connector setup and side-effect metadata", () => {
     assertStringIncludes(text, "https://api.veryfront.com/oauth/callback/gmail");
     assertStringIncludes(text, "/api/auth/gmail/callback");
     assertStringIncludes(text, "Testing");
-    assertStringIncludes(text, "https://mail.google.com/");
+    assertStringIncludes(text, "gmail.modify");
     assertEquals(guide.steps.at(-1)?.title, "Verify access");
     assertStringIncludes(guide.steps.at(-1)?.description ?? "", "List Emails");
   });

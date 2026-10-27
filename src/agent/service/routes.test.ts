@@ -782,6 +782,82 @@ function createDefaultChatStartRequest(): Request {
 // A run's session lives in the memory of the replica that accepted its start,
 // and starts arrive through a load-balanced address. The accepted start names
 // this replica so later run control for the run can reach it.
+it("accepted service invocations report one process identity across both launch paths", async () => {
+  const first = createRouteSet({ verifyRunEventAppendToken: () => Promise.resolve(true) });
+  const second = createRouteSet({
+    verifyRunEventAppendToken: () => Promise.resolve(true),
+    resolveRuntimeOwnerInvokeUrl: () => Promise.resolve("http://10.0.0.8:3001/api/runs"),
+  });
+  const legacy = await first.routeSet.handleDurableChatRunExecuteRequest({
+    request: createDefaultChatStartRequest(),
+  });
+  const native = await second.routeSet.handleRuntimeAgentRunInvocationExecuteRequest({
+    request: createAuthenticatedRequest(
+      "/api/control-plane/runs/run-1/stream",
+      createRuntimeAgentInvocationBody(),
+      "POST",
+      { "X-Veryfront-Run-Event-Token": "run-event-service-token" },
+    ),
+    runId: "run-1",
+  });
+  assertEquals(legacy.status, 202);
+  assertEquals(native.status, 202);
+  assertEquals(
+    native.headers.get("x-veryfront-runtime-owner-invoke-url"),
+    "http://10.0.0.8:3001/api/runs",
+  );
+  const id = legacy.headers.get("x-veryfront-runtime-id");
+  assertEquals(typeof id, "string");
+  assertEquals(
+    /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id!),
+    true,
+  );
+  assertEquals(native.headers.get("x-veryfront-runtime-id"), id);
+  assertEquals(
+    native.headers.get("x-veryfront-runtime-name"),
+    legacy.headers.get("x-veryfront-runtime-name"),
+  );
+  assertEquals(
+    decodeURIComponent(legacy.headers.get("x-veryfront-runtime-name")!).length > 0,
+    true,
+  );
+  assertEquals(legacy.headers.get("x-veryfront-runtime-mode"), "service");
+  assertEquals(native.headers.get("x-veryfront-runtime-mode"), "service");
+});
+
+it("native invocations rejected by authentication do not report runtime identity", async () => {
+  const { routeSet } = createRouteSet({
+    authenticateRequest: () =>
+      Promise.resolve(Response.json({ errorCode: "UNAUTHENTICATED" }, { status: 401 })),
+  });
+  const response = await routeSet.handleRuntimeAgentRunInvocationExecuteRequest({
+    request: createAuthenticatedRequest(
+      "/api/control-plane/runs/run-1/stream",
+      createRuntimeAgentInvocationBody(),
+      "POST",
+      { "X-Veryfront-Run-Event-Token": "run-event-service-token" },
+    ),
+    runId: "run-1",
+  });
+  assertEquals(response.status, 401);
+  assertEquals(response.headers.get("x-veryfront-runtime-id"), null);
+  assertEquals(response.headers.get("x-veryfront-runtime-name"), null);
+  assertEquals(response.headers.get("x-veryfront-runtime-mode"), null);
+});
+
+it("service identity ignores forged incoming runtime metadata", async () => {
+  const { routeSet } = createRouteSet({ verifyRunEventAppendToken: () => Promise.resolve(true) });
+  const request = createDefaultChatStartRequest();
+  request.headers.set("x-veryfront-runtime-id", "forged-runtime");
+  request.headers.set("x-veryfront-runtime-name", "forged-name");
+  request.headers.set("x-veryfront-runtime-mode", "worker");
+  const response = await routeSet.handleDurableChatRunExecuteRequest({ request });
+  assertEquals(response.status, 202);
+  assertEquals(response.headers.get("x-veryfront-runtime-id") === "forged-runtime", false);
+  assertEquals(response.headers.get("x-veryfront-runtime-name") === "forged-name", false);
+  assertEquals(response.headers.get("x-veryfront-runtime-mode"), "service");
+});
+
 it("agent service routes advertise the replica that accepted a default-chat start", async () => {
   const { routeSet } = createRouteSet({
     verifyRunEventAppendToken: () => Promise.resolve(true),
@@ -812,6 +888,9 @@ it("agent service routes do not advertise a replica for a start they did not acc
 
   assertEquals(response.status, 401);
   assertEquals(response.headers.get("x-veryfront-runtime-owner-invoke-url"), null);
+  assertEquals(response.headers.get("x-veryfront-runtime-id"), null);
+  assertEquals(response.headers.get("x-veryfront-runtime-name"), null);
+  assertEquals(response.headers.get("x-veryfront-runtime-mode"), null);
 });
 
 it("agent service routes accept a default-chat start when the replica address cannot be resolved", async () => {
@@ -826,10 +905,14 @@ it("agent service routes accept a default-chat start when the replica address ca
 
   assertEquals(response.status, 202);
   assertEquals(response.headers.get("x-veryfront-runtime-owner-invoke-url"), null);
+  assertEquals(response.headers.get("x-veryfront-runtime-mode"), "service");
+  assertEquals(typeof response.headers.get("x-veryfront-runtime-id"), "string");
 });
 
 it("agent service routes bind verified run-event tokens on both production launch paths", async () => {
-  const verifications: Array<{ token: string; projectId: string; runId: string }> = [];
+  const verifications: Array<
+    { token: string; projectId: string; runId: string; agentId?: string }
+  > = [];
   const { routeSet, preparedRequests } = createRouteSet({
     verifyRunEventAppendToken: (input) => {
       verifications.push(input);
@@ -902,6 +985,7 @@ it("agent service routes bind verified run-event tokens on both production launc
       token: "run-event-service-token",
       projectId: "00000000-0000-4000-8000-000000000005",
       runId: "run-1",
+      agentId: "builder",
     },
   ]);
 });
@@ -1265,10 +1349,16 @@ it("durable-chat resume after a form restores tools discovered before the form",
     __vfToolLoadingMode: "deferred",
   } satisfies RuntimeToolFilterConfig;
 
-  // First dispatch: tool_search loads create_file and the runtime persists the checkpoint.
+  // First dispatch: veryfront__tool_search loads create_file and the runtime persists the checkpoint.
   let persisted: ToolExposureCheckpoint | undefined;
   const discoveryModel = scriptedModel([
-    { toolCalls: [{ id: "search-1", name: "tool_search", input: { query: "create_file" } }] },
+    {
+      toolCalls: [{
+        id: "search-1",
+        name: "veryfront__tool_search",
+        input: { query: "create_file" },
+      }],
+    },
     { text: "Opening the form." },
   ], { only: "stream" });
   await (await createEphemeralAgentWithRuntimeOptions({

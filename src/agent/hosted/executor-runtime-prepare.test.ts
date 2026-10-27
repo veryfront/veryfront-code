@@ -27,6 +27,7 @@ import type {
   ToolDefinition,
 } from "#veryfront/tool";
 import { markTrustedHostToolSet } from "#veryfront/tool/host-tool-provenance.ts";
+import { markTrustedPlatformSource } from "#veryfront/tool/platform-source-provenance.ts";
 import { registerModelRuntimeResolverRevoker } from "#veryfront/agent/runtime/model-transport.ts";
 import { createExecutorModelAdmission } from "#veryfront/agent/hosted/executor-model-grant.ts";
 import { assertPersistedModelOptions } from "./executor-model-dispatch-options.ts";
@@ -587,6 +588,111 @@ describe("executor runtime preparation", () => {
     });
   }
 
+  for (const kind of ["canonical", "ephemeral"] as const) {
+    it(`binds authored local tool authorization only for ${kind} execution`, async () => {
+      const contexts: Array<Record<string, unknown> | undefined> = [];
+      let modelCalls = 0;
+      const definition = {
+        id: "coder",
+        name: "Coder",
+        description: "Codes",
+        instructions: "Inspect the synthetic execution context.",
+        model: modelId,
+        tools: ["inspect_context"],
+        toolLoading: "eager",
+      } satisfies RuntimeAgentMarkdownDefinition;
+      const inspectContext = tool({
+        id: "inspect_context",
+        description: "Inspect execution context",
+        inputSchema: defineSchema((v) => v.object({}))(),
+        execute: (_input, context) => {
+          contexts.push(context);
+          return "inspected";
+        },
+      });
+      const owner = createRuntimePreparationCore({
+        binding,
+        source,
+        grant: {
+          ...grant,
+          allowedToolNames: ["inspect_context"],
+          execution: kind === "canonical"
+            ? {
+              kind,
+              projectId: "project-1",
+              conversationId: "conversation-1",
+              runId: "run-1",
+              messageId: "message-1",
+              providerReplay: "disabled",
+            }
+            : { kind, projectId: "project-1", branchId: "branch-1" },
+        },
+        facades: {
+          resolveModelRuntime: () => ({
+            ...model,
+            doStream() {
+              return ++modelCalls === 1
+                ? finishStream("inspect_context")
+                : finishStream(undefined, {}, "Synthetic answer");
+            },
+          }),
+          hostTools: new Map(),
+          remoteToolSources: new Map(),
+          projectSteering: {
+            prepare: ({ definition }) => Promise.resolve({ agent: definition }),
+            refresh: () => "Synthetic instructions",
+          },
+          publishParentRunEvents: () => Promise.resolve(),
+          toolExposureCheckpoint: { persist: () => Promise.resolve() },
+          cleanup: () => Promise.resolve(),
+        },
+        project: {
+          signal: new AbortController().signal,
+          prepare: () =>
+            Promise.resolve({
+              description: discoverySuccess({ source, definition }),
+              localTools: { inspect_context: inspectContext },
+              sourceIntegrationPolicy: { schemaVersion: 1, mode: "unrestricted" },
+            }),
+          instantiate: createPreparedHostedRuntimeAgent,
+          retainTask: () => {},
+          close: () => Promise.resolve(),
+        },
+      });
+      try {
+        const prepared = await prepare(owner);
+        assert(prepared && typeof prepared === "object" && !Array.isArray(prepared));
+        assertEquals(prepared.ok, true, JSON.stringify(prepared));
+        const value = prepared.value;
+        assert(value && typeof value === "object" && !Array.isArray(value));
+        const handle = value.preparedRuntimeHandle;
+        assert(typeof handle === "string");
+        const operation = owner.operations.get("agent.stream");
+        assert(operation?.mode === "stream");
+        const events = await Array.fromAsync(operation.handle({
+          preparedRuntimeHandle: handle,
+          messages: [{
+            id: "synthetic-message",
+            role: "user",
+            parts: [{ type: "text", text: "Inspect context" }],
+            timestamp: 1,
+          }],
+        }, {
+          binding,
+          signal: new AbortController().signal,
+          deadline: Date.now() + 30_000,
+        }));
+        assertCleanCompletion(events);
+        assertEquals(contexts.length, 1);
+        assertEquals(contexts[0]?.projectId, "project-1");
+        assertEquals(contexts[0]?.runId, kind === "canonical" ? "run-1" : undefined);
+        assertEquals(contexts[0]?.runIdBindsToolAuthorization, kind === "canonical");
+      } finally {
+        await owner.close();
+      }
+    });
+  }
+
   it("passes authored knowledge, tool loading, and result context through managed executor preparation", async () => {
     const visibleTools: string[][] = [];
     const providerInputs: ModelRuntimeCallOptions[] = [];
@@ -612,7 +718,7 @@ describe("executor runtime preparation", () => {
       mcpServers: [{
         kind: "veryfront-studio",
         required: false,
-        toolPolicy: { allow: ["search_knowledge"] },
+        toolPolicy: { allow: ["veryfront__search_knowledge"] },
       }],
     } satisfies RuntimeAgentMarkdownDefinition;
     const largeResultTool = tool({
@@ -627,7 +733,7 @@ describe("executor runtime preparation", () => {
       source,
       grant: {
         ...grant,
-        allowedToolNames: ["large_result", "search_knowledge"],
+        allowedToolNames: ["large_result", "veryfront__search_knowledge"],
         execution: { kind: "ephemeral", projectId: "project-1", branchId: "branch-1" },
       },
       facades: {
@@ -708,7 +814,7 @@ describe("executor runtime preparation", () => {
 
       assertCleanCompletion(events);
       assertEquals(visibleTools[0]?.includes("large_result"), true);
-      assertEquals(visibleTools[0]?.includes("search_knowledge"), true);
+      assertEquals(visibleTools[0]?.includes("veryfront__search_knowledge"), true);
       assert(providerInputs[1] !== undefined);
       assertEquals(JSON.stringify(providerInputs[1]).includes("tool_result_reference"), true);
     } finally {
@@ -769,6 +875,80 @@ describe("executor runtime preparation", () => {
       await f.owner.close();
     }
   });
+
+  for (
+    const selection of [
+      { allowed: "load_skill" },
+      { allowed: "veryfront__load_skill" },
+    ]
+  ) {
+    it(`publishes the canonical loader identity from the granted facade (${selection.allowed})`, async () => {
+      const visible: string[][] = [];
+      const executed: string[] = [];
+      const result = { skillId: "example", instructions: "Granted facade instructions" };
+      const tools = markTrustedHostToolSet({
+        [selection.allowed]: {
+          id: selection.allowed,
+          description: "Granted loader",
+          inputSchema: defineSchema((v) => v.object({ skillId: v.string() }))(),
+          execute: () => {
+            executed.push(selection.allowed);
+            return Promise.resolve(result);
+          },
+        },
+      });
+      const f = fixture({
+        grant: {
+          ...grant,
+          allowedToolNames: [selection.allowed],
+          hostToolFacadeIds: ["skills"],
+        },
+        facades: {
+          hostTools: new Map([["skills", tools]]),
+          projectSteering: {
+            prepare: ({ definition }) =>
+              Promise.resolve({
+                agent: definition,
+                initialSkills: [{
+                  id: "example",
+                  name: "example",
+                  description: "Synthetic",
+                  instructions: "Synthetic",
+                  allowedTools: [],
+                }],
+              }),
+            refresh: () => "Synthetic instructions",
+          },
+          resolveModelRuntime: () =>
+            scriptedModel([
+              (options) => {
+                visible.push(options.tools?.map((tool) => tool.name) ?? []);
+                return {
+                  toolCalls: [{
+                    id: "canonical-loader-call",
+                    name: "veryfront__load_skill",
+                    input: { skillId: "example" },
+                  }],
+                };
+              },
+              (options) => {
+                visible.push(options.tools?.map((tool) => tool.name) ?? []);
+                assertEquals(JSON.stringify(options.prompt).includes(result.instructions), true);
+                return { text: "Synthetic answer" };
+              },
+            ], { only: "stream", provider: "openai", modelId: "gpt-5.4" }),
+        },
+      });
+      try {
+        const events = await Array.fromAsync(await preparedStream(f));
+        assertCleanCompletion(events);
+        assertEquals(executed, [selection.allowed]);
+        assertEquals(visible, [["veryfront__load_skill"], ["veryfront__load_skill"]]);
+      } finally {
+        await f.owner.close();
+      }
+    });
+  }
 
   it("requires a locally installed grant even after discovery", async () => {
     const f = fixture({ grant: null });
@@ -1110,6 +1290,67 @@ describe("executor runtime preparation", () => {
       const events = await Array.fromAsync(await preparedStream(f));
       assertCleanCompletion(events);
       assertEquals(exposedTool, true);
+      assertEquals(executions, ["studio_suggestions"]);
+    } finally {
+      await f.owner.close();
+    }
+  });
+
+  it("publishes and executes trusted Studio broker tools only under canonical names", async () => {
+    const visible: string[][] = [];
+    const executions: string[] = [];
+    let modelCalls = 0;
+    const studioSource = markTrustedPlatformSource<RemoteToolSource>({
+      id: "studio",
+      listTools: () => Promise.resolve([syntheticRemoteTool("studio_suggestions")]),
+      executeTool: (name) => {
+        executions.push(name);
+        return Promise.resolve({ ok: true });
+      },
+    });
+    const f = fixture({
+      config: {
+        tools: { veryfront__studio_suggestions: true },
+        toolLoading: "eager",
+        mcpServers: [{
+          id: "studio",
+          kind: "veryfront-studio",
+          toolPolicy: { allow: ["studio_suggestions"] },
+        }],
+      },
+      grant: {
+        ...grant,
+        allowedToolNames: ["veryfront__studio_suggestions"],
+        remoteToolSourceIds: ["studio"],
+      },
+      facades: {
+        remoteToolSources: new Map([["studio", studioSource]]),
+        resolveModelRuntime: () => ({
+          ...model,
+          doStream(options) {
+            visible.push(
+              (options as ModelRuntimeCallOptions).tools?.map((tool) => tool.name) ?? [],
+            );
+            const toolName = modelCalls === 0
+              ? "veryfront__studio_suggestions"
+              : modelCalls === 1
+              ? "studio_suggestions"
+              : undefined;
+            modelCalls++;
+            return finishStream(toolName);
+          },
+        }),
+      },
+    });
+    try {
+      const events = await Array.fromAsync(await preparedStream(f));
+      assertCleanCompletion(events);
+      assertEquals(
+        visible,
+        Array.from({ length: 3 }, () => [
+          "veryfront__studio_suggestions",
+        ]),
+      );
       assertEquals(executions, ["studio_suggestions"]);
     } finally {
       await f.owner.close();
@@ -1799,19 +2040,19 @@ describe("executor runtime preparation review regressions", () => {
       {
         name: "omitted tools",
         tools: "",
-        expected: ["invoke_agent", "load_skill"],
+        expected: ["veryfront__invoke_agent", "veryfront__load_skill"],
       },
       {
         name: "configured tools",
         tools: "tools: [read_file]",
-        expected: ["invoke_agent", "load_skill", "read_file"],
+        expected: ["veryfront__invoke_agent", "veryfront__load_skill", "veryfront__read_file"],
       },
       { name: "empty caller selector", tools: "", requested: [], expected: [] },
       {
         name: "caller narrows configured tools",
         tools: "tools: [read_file]",
         requested: ["read_file"],
-        expected: ["read_file"],
+        expected: ["veryfront__read_file"],
       },
       { name: "missing grants", tools: "", granted: [], expected: [] },
       {
@@ -1884,7 +2125,9 @@ describe("executor runtime preparation review regressions", () => {
             doStream(options) {
               visible = (options as ModelRuntimeCallOptions).tools?.map((tool) => tool.name) ?? [];
               return finishStream(
-                calls++ === 0 && visible.includes("invoke_agent") ? "invoke_agent" : undefined,
+                calls++ === 0 && visible.includes("veryfront__invoke_agent")
+                  ? "veryfront__invoke_agent"
+                  : undefined,
               );
             },
           }),
@@ -1900,7 +2143,9 @@ describe("executor runtime preparation review regressions", () => {
         assertEquals([...visible].sort(), [...selection.expected].sort());
         assertEquals(
           executions,
-          selection.expected.some((name) => name === "invoke_agent") ? ["invoke_agent"] : [],
+          selection.expected.some((name) => name === "veryfront__invoke_agent")
+            ? ["invoke_agent"]
+            : [],
         );
       } finally {
         await f.owner.close();

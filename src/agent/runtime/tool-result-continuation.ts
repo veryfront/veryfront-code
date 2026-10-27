@@ -1,3 +1,4 @@
+import { isToolCallOccurrenceScopeEnabled } from "#veryfront/runtime/tool-call-occurrence.ts";
 import { privateTextSlice, privateTextTrim } from "#veryfront/security/private-text.ts";
 import { createPrivateMap } from "#veryfront/security/private-map.ts";
 import { pushPrivateArray, somePrivateArray } from "#veryfront/security/private-array.ts";
@@ -13,6 +14,7 @@ import { parseToolArgs } from "./tool-helpers.ts";
 import type { RuntimeGenerateToolResult, RuntimeToolSet } from "./runtime-tool-types.ts";
 
 const hasOwn = Object.hasOwn;
+const randomUUID = crypto.randomUUID.bind(crypto);
 
 export { getToolResultError } from "#veryfront/tool/result.ts";
 export { isToolResultPart } from "./tool-result-part.ts";
@@ -24,7 +26,7 @@ export function createToolResultMessage(
   providerExecuted = false,
 ): Message {
   return {
-    id: `tool_${toolCallId}`,
+    id: isToolCallOccurrenceScopeEnabled() ? `tool_${randomUUID()}` : `tool_${toolCallId}`,
     role: "tool",
     parts: [
       {
@@ -45,7 +47,9 @@ export function createToolErrorMessage(
   error: string,
 ): Message {
   return {
-    id: `tool_error_${toolCallId}`,
+    id: isToolCallOccurrenceScopeEnabled()
+      ? `tool_error_${randomUUID()}`
+      : `tool_error_${toolCallId}`,
     role: "tool",
     parts: [
       {
@@ -192,6 +196,17 @@ export function shouldContinueAfterStreamStep(
     !hasFinalizedClientToolCall &&
     !hasProviderExecutedToolCall;
 
+  // Do not execute local side effects while a provider-owned sibling is unresolved.
+  // Preliminary results do not complete that sibling's work.
+  if (
+    somePrivateArray(
+      streamedToolCalls,
+      (call) => call.providerExecuted === true && !finalToolResults.has(call.id),
+    )
+  ) {
+    return false;
+  }
+
   if (state.finishReason === "tool-calls") {
     if (hasIncompleteToolCall) {
       return canRecoverInterruptedClientToolCall;
@@ -208,6 +223,19 @@ export function shouldContinueAfterStreamStep(
 
   if (hasIncompleteToolCall) {
     return canRecoverInterruptedClientToolCall;
+  }
+
+  // A committed local call still needs execution even when the provider
+  // ends with stop after a text preamble. Do not replay calls with results.
+  if (
+    somePrivateArray(
+      streamedToolCalls,
+      (toolCall) =>
+        toolCall.providerExecuted !== true &&
+        !finalToolResults.has(toolCall.id),
+    )
+  ) {
+    return true;
   }
 
   if (hasAssistantText) {

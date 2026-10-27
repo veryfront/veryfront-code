@@ -8,7 +8,7 @@
  * 4. React package fallbacks from ./npm/node_modules for Node tests
  */
 
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, resolve as pathResolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -305,10 +305,12 @@ function resolveAliasSpecifier(specifier, scope) {
   // React is vendored under ./npm/node_modules for Node tests. Match on the
   // package the target points at, not on the specifier, so the aliases the
   // react workspace member declares (`@veryfront/react-dom-server-upstream` ->
-  // esm.sh/react-dom/server) land on the same vendored files.
+  // esm.sh/react-dom/server) land on the same vendored files. Before an npm
+  // build, delegate these aliases to the already installed Node dependencies.
   const remoteBare = bareSpecifierFromRemoteTarget(target);
   if (remoteBare && reactImportMap[remoteBare]) {
-    return findActualFile(reactImportMap[remoteBare].replace(/^\.\//, ""));
+    return findActualFile(reactImportMap[remoteBare].replace(/^\.\//, "")) ??
+      { nodeSpecifier: remoteBare };
   }
 
   if (target.startsWith("npm:")) {
@@ -399,7 +401,7 @@ export function resolve(specifier, context, nextResolve) {
     if (typeof resolvedAlias === "string") {
       return {
         shortCircuit: true,
-        url: pathToFileURL(resolvedAlias).href + querySuffix,
+        url: pathToFileURL(realpathSync(resolvedAlias)).href + querySuffix,
       };
     }
   }
@@ -410,7 +412,7 @@ export function resolve(specifier, context, nextResolve) {
     if (actualPath) {
       return {
         shortCircuit: true,
-        url: pathToFileURL(actualPath).href + querySuffix,
+        url: pathToFileURL(realpathSync(actualPath)).href + querySuffix,
       };
     }
   }

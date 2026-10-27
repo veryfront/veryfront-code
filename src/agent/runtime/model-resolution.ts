@@ -12,7 +12,9 @@ import {
   isServedVeryfrontCloudProvider,
   isSupportedMistralModelId,
   resolveServedVeryfrontCloudAlias,
+  resolveVeryfrontCloudModelSurface,
   resolveVeryfrontCloudProviderId,
+  type VeryfrontCloudSurfaceId,
 } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
 import { DEFAULT_MODEL_CREDENTIAL_MISMATCH, NOT_SUPPORTED } from "#veryfront/errors";
 import {
@@ -259,6 +261,26 @@ function resolveAutoRuntimeModel(): string {
   return resolveDirectAutoRuntimeModel() ?? normalizeVeryfrontCloudRuntimeModel(cloudModel);
 }
 
+function assertDefaultModelCredentials(
+  model: string | undefined,
+  provider: string,
+  configuredModel: string,
+): void {
+  if (
+    model === undefined && !isVeryfrontCloudEnabled() &&
+    !hasDirectProviderCredentials(provider)
+  ) {
+    const available = listAvailableDirectProviders();
+    if (available.length > 0) {
+      throw DEFAULT_MODEL_CREDENTIAL_MISMATCH.create({
+        detail: `Default model "${configuredModel}" needs a ${provider} credential. ` +
+          `Found ${available.join(", ")} instead. ` +
+          `Set model: "${available[0]}/<model>" or model: "auto".`,
+      });
+    }
+  }
+}
+
 /**
  * Resolve the effective runtime model string for agent execution.
  *
@@ -319,19 +341,7 @@ export function resolveRuntimeModel(model?: string): string {
     // that other provider. Say so instead of failing later against the wrong
     // vendor. Resolution stays deterministic — never substitute silently, or
     // the same project resolves differently per machine.
-    if (
-      model === undefined && !isVeryfrontCloudEnabled() &&
-      !hasDirectProviderCredentials(provider)
-    ) {
-      const available = listAvailableDirectProviders();
-      if (available.length > 0) {
-        throw DEFAULT_MODEL_CREDENTIAL_MISMATCH.create({
-          detail: `Default model "${configuredModel}" needs a ${provider} credential. ` +
-            `Found ${available.join(", ")} instead. ` +
-            `Set model: "${available[0]}/<model>" or model: "auto".`,
-        });
-      }
-    }
+    assertDefaultModelCredentials(model, provider, configuredModel);
     return toDirectRuntimeModel(provider, modelId);
   }
 
@@ -353,4 +363,56 @@ export function isVeryfrontCloudRuntimeModel(model?: string): boolean {
   } catch {
     return true;
   }
+}
+
+/**
+ * Whether `model` routes to a direct provider whatever the served catalog
+ * says: an explicit `<provider>/<model>` (or a built-in alias for one) whose
+ * provider has a direct key or an application runtime. Its route never
+ * depends on the catalog, so loading it is no reason to send a login the run
+ * does not use.
+ */
+export function routesDirectWithoutCatalog(model?: string): boolean {
+  if (model === undefined) return false;
+  const normalized = normalizeAgentModelConfig(model);
+  const configured = normalized.includes("/") ? normalized : LEGACY_MODEL_ALIASES.get(normalized);
+  const slashIndex = configured?.indexOf("/") ?? -1;
+  if (!configured || slashIndex <= 0 || slashIndex === configured.length - 1) return false;
+  const provider = configured.slice(0, slashIndex);
+  // Mirrors the checks `resolveRuntimeModel` makes before its key branch; keep
+  // the two in step. An application may register a `veryfront-cloud` provider.
+  if (provider === "veryfront-cloud") return false;
+  return findApplicationRuntimeProvider(provider) !== undefined ||
+    hasDirectProviderCredentials(provider);
+}
+
+/** The model ID and gateway wire surface the runtime converts tool schemas for. */
+export interface ProviderToolSchemaTarget {
+  model?: string;
+  wireSurface?: VeryfrontCloudSurfaceId;
+}
+
+/**
+ * Resolve the runtime model ID for `model` and, for a Veryfront Cloud route,
+ * the wire surface its served routing names. Call it in the run's catalog
+ * scope: that is the scope a model built for the run reads its facts from, so
+ * tool preselection applies the same provider limits as tool conversion.
+ */
+export function resolveProviderToolSchemaTarget(
+  model?: string,
+  options: { catalogSettled?: boolean } = {},
+): ProviderToolSchemaTarget {
+  let runtimeModel: string;
+  try {
+    runtimeModel = resolveRuntimeModel(model);
+  } catch {
+    return model === undefined ? {} : { model };
+  }
+  if (!runtimeModel.startsWith("veryfront-cloud/")) return { model: runtimeModel };
+  // Before the run's catalog loads, the surface is a protocol default the
+  // model may still leave: assume the OpenAI wire, whose tool limit is the
+  // strictest any surface applies.
+  if (options.catalogSettled === false) return { model: runtimeModel, wireSurface: "openai" };
+  const wireSurface = resolveVeryfrontCloudModelSurface(runtimeModel);
+  return wireSurface === undefined ? { model: runtimeModel } : { model: runtimeModel, wireSurface };
 }

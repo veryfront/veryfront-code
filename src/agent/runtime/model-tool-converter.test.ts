@@ -438,7 +438,7 @@ describe("model-tool-converter", () => {
     assertEquals("tool_128" in result!, false);
   });
 
-  it("sanitizes Google-compatible runtime tool schemas", () => {
+  it("preserves canonical Google JSON Schema runtime tool contracts", () => {
     const result = convertToolsToRuntimeTools([
       {
         name: "choose_kind",
@@ -457,15 +457,166 @@ describe("model-tool-converter", () => {
 
     const schema = getRuntimeToolSchema(result?.choose_kind);
 
-    assertEquals(containsKey(schema, "const"), false);
-    assertEquals(containsKey(schema, "default"), false);
-    assertEquals(containsKey(schema, "additionalProperties"), false);
-    assertEquals(
-      (schema as { properties?: { kind?: { enum?: unknown[] } } }).properties?.kind?.enum,
-      [
-        "file",
-      ],
+    assertEquals(schema, {
+      type: "object",
+      additionalProperties: false,
+      properties: { kind: { type: "string", const: "file", default: "file" } },
+    });
+  });
+
+  it("preserves complete tool schemas for a Google-published model on an OpenAI gateway wire surface", () => {
+    const parameters = {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        query: { oneOf: [{ type: "string" }, { type: "null" }] },
+      },
+      required: ["query"],
+    };
+    const result = convertToolsToRuntimeTools(
+      [{ name: "veryfront__tool_search", description: "Find a tool", parameters }] as never,
+      {
+        model: "veryfront-cloud/google/local-model",
+        wireSurface: "openai",
+      },
     );
+    assertEquals(getRuntimeToolSchema(result?.veryfront__tool_search), parameters);
+  });
+
+  it("preserves exclusive root tool variants on the Veryfront Cloud Mistral backend", () => {
+    const parameters = {
+      "type": "object",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "disposition": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string",
+                },
+                "version_id": {
+                  "type": "string",
+                },
+                "sha256": {
+                  "type": "string",
+                },
+                "size_bytes": {
+                  "type": "integer",
+                  "minimum": 0,
+                },
+              },
+              "required": [
+                "path",
+                "version_id",
+                "sha256",
+                "size_bytes",
+              ],
+              "additionalProperties": false,
+            },
+          },
+          "required": [
+            "disposition",
+          ],
+          "additionalProperties": false,
+        },
+        {
+          "type": "object",
+          "properties": {
+            "processed": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string",
+                },
+                "version_id": {
+                  "type": "string",
+                },
+                "sha256": {
+                  "type": "string",
+                },
+                "size_bytes": {
+                  "type": "integer",
+                  "minimum": 0,
+                },
+              },
+              "required": [
+                "path",
+                "version_id",
+                "sha256",
+                "size_bytes",
+              ],
+              "additionalProperties": false,
+            },
+          },
+          "required": [
+            "processed",
+          ],
+          "additionalProperties": false,
+        },
+      ],
+    };
+    const result = convertToolsToRuntimeTools(
+      [{ name: "record_result", description: "Record a result", parameters }] as never,
+      {
+        model: "veryfront-cloud/mistral/mistral-small-2503",
+        wireSurface: "openai",
+      },
+    );
+    assertEquals(getRuntimeToolSchema(result?.record_result), parameters);
+  });
+
+  it("keeps root restrictions for native OpenAI and other OpenAI-compatible backends", () => {
+    const parameters = {
+      type: "object",
+      oneOf: [
+        { type: "object", properties: { first: { type: "string" } }, required: ["first"] },
+        { type: "object", properties: { second: { type: "string" } }, required: ["second"] },
+      ],
+    };
+    for (
+      const options of [
+        { model: "openai/gpt-4.1" },
+        { model: "veryfront-cloud/openai/gpt-4.1", wireSurface: "openai" as const },
+        { model: "veryfront-cloud/google/local-model", wireSurface: "openai" as const },
+        {
+          model: "veryfront-cloud/mistral/mistral-small-2503",
+          toolSchemaModel: "openai/gpt-4.1",
+          wireSurface: "openai" as const,
+        },
+      ]
+    ) {
+      const result = convertToolsToRuntimeTools(
+        [{ name: "choose", description: "Choose a variant", parameters }] as never,
+        options,
+      );
+      assertEquals(getRuntimeToolSchema(result?.choose), {
+        type: "object",
+        properties: { first: {}, second: {} },
+      });
+    }
+  });
+
+  it("uses the Mistral schema model capability without lifting the wire tool limit", () => {
+    const parameters = {
+      type: "object",
+      oneOf: [{ type: "object", properties: { value: { type: "string" } }, required: ["value"] }],
+    };
+    const result = convertToolsToRuntimeTools(
+      Array.from({ length: 129 }, (_, index) => ({
+        name: `tool_${index}`,
+        description: "Choose a variant",
+        parameters,
+      })) as never,
+      {
+        model: "veryfront-cloud/alias/default",
+        toolSchemaModel: "veryfront-cloud/mistral/mistral-small-2503",
+        wireSurface: "openai",
+      },
+    );
+    assertEquals(Object.keys(result!).length, 128);
+    assertEquals(getRuntimeToolSchema(result?.tool_0), parameters);
   });
 
   it("normalizes Moonshot-compatible runtime tool schemas", () => {
@@ -490,6 +641,7 @@ describe("model-tool-converter", () => {
       },
     ] as never, {
       model: "veryfront-cloud/moonshotai/kimi-k2.6",
+      wireSurface: "openai",
     });
 
     const schema = getRuntimeToolSchema(result?.form_input) as Record<string, unknown>;

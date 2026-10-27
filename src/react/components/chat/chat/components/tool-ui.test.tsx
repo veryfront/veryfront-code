@@ -337,6 +337,24 @@ describe("ToolCall", () => {
     assertStringIncludes(stoppedHtml, "Stopped loading skill: case-normalise-redact");
   });
 
+  it("keeps an explicitly stopped child Stopped after a later turn errors", () => {
+    const tool = {
+      ...invokeAgentTool,
+      state: "output-error" as const,
+      errorText: "Stopped by user",
+    };
+    const html = renderToString(
+      <Message.Root
+        message={{ id: "stopped", role: "assistant", parts: [tool] }}
+        isStreaming={false}
+      >
+        <ToolCall tool={tool} defaultExpanded />
+      </Message.Root>,
+    );
+    assertStringIncludes(html, "Stopped");
+    assertEquals(html.includes("Failed"), false);
+  });
+
   it("keeps a running child card Running while the chat is still streaming", () => {
     // The message itself stopped streaming because the turn moved on to another
     // message. The chat is still live, so nothing was stopped.

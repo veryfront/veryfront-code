@@ -45,7 +45,7 @@ const OUTPUT_DIR = CHECK_MODE
   ? await Deno.makeTempDir({ prefix: "veryfront-api-reference-check-" })
   : COMMITTED_DIR;
 const VERYFRONT_DIR = `${OUTPUT_DIR}/veryfront`;
-const SOURCE_BASE_URL = String(args["source-base-url"]).replace(/\/+$/, "");
+const SOURCE_BASE_URL = String(args["source-base-url"]).replace(/(?<!\/)\/+$/, "");
 
 // ---------------------------------------------------------------------------
 // Types
@@ -141,7 +141,7 @@ interface InterfaceProperty {
   name: string;
   optional: boolean;
   tsType?: TsType;
-  jsDoc?: { doc?: string };
+  jsDoc?: { doc?: string; tags?: Array<{ kind: string }> };
   params?: unknown[];
   typeParams?: unknown[];
   location?: DenoDocLocation;
@@ -196,7 +196,7 @@ interface ClassDef {
 interface DocNode {
   name: string;
   kind: string;
-  jsDoc?: { doc?: string };
+  jsDoc?: { doc?: string; tags?: Array<{ kind: string }> };
   functionDef?: FunctionDef;
   interfaceDef?: InterfaceDef;
   typeAliasDef?: { tsType?: TsType };
@@ -221,6 +221,7 @@ interface DenoDocLocation {
 
 interface ExportSummary {
   name: string;
+  deprecated?: boolean;
   description: string;
   sourceHref: string;
 }
@@ -745,6 +746,8 @@ const DESCRIPTIONS: Record<string, Record<string, string>> = {
       "List integration tools with a typed available or unavailable status",
     getRemoteIntegrationToolDefinitions:
       "List integration tool definitions, returning an empty list when discovery is unavailable",
+    runRemoteIntegrationTool: "Run a remote integration tool through the API",
+    executeRemoteIntegrationTool: "Deprecated. Use `runRemoteIntegrationTool`",
     listConnectors: "Return readonly array of all connectors",
     registerIntegrationMCP:
       "Register integration tools into the MCP tool registry",
@@ -791,12 +794,22 @@ const DESCRIPTIONS: Record<string, Record<string, string>> = {
  */
 const SYNTHETIC_PARENTS: Record<string, { description: string }> = {};
 
+// These package entrypoints belong to first-party executor bootstraps and hosts.
+// Keep their runtime exports without documenting them as application APIs.
+const EXECUTOR_ONLY_EXPORTS = new Set([
+  "./agent/executor-runtime",
+  "./server/http-broker",
+  "./server/http-runtime",
+]);
+
 const API_REFERENCE_INDEX_DESCRIPTIONS: Record<string, string> = {
   "veryfront": "Core app config and routing.",
   "veryfront/agent": "Agents, AG-UI handlers, and memory.",
   "veryfront/chat": "Chat components and hooks.",
   "veryfront/cli": "CLI runtime helpers.",
   "veryfront/context": "Page context.",
+  "veryfront/conversations":
+    "Conversations, messages, branches, participants, and read state.",
   "veryfront/embedding": "Embedding and retrieval helpers.",
   "veryfront/extensions": "Extension contracts and loader helpers.",
   "veryfront/fonts": "Font components.",
@@ -888,6 +901,7 @@ function getModuleGroups(): ModuleGroup[] {
 
   // Second pass: deep imports attach to (or create synthetic) parents.
   for (const [exportPath, filePath] of Object.entries(exports)) {
+    if (EXECUTOR_ONLY_EXPORTS.has(exportPath)) continue;
     if (isTopLevelExportPath(exportPath)) continue;
     const parentSlug = topLevelSlug(exportPath);
     let group = groups.get(parentSlug);
@@ -1127,7 +1141,11 @@ function normalizeFunctionDef(def: Record<string, unknown>): FunctionDef {
 function normalizeInterfaceDef(def: Record<string, unknown>): InterfaceDef {
   return {
     ...def,
-    extends: Array.isArray(def.extends) ? def.extends : [],
+    extends: Array.isArray(def.extends)
+      ? def.extends.map(normalizeTsType).filter((parent) =>
+        parent !== undefined
+      )
+      : [],
     constructors: Array.isArray(def.constructors) ? def.constructors : [],
     methods: normalizeMethods(def.methods),
     properties: normalizeProperties(def.properties),
@@ -1205,7 +1223,7 @@ function normalizeTsType(type: unknown): TsType | undefined {
   if (kind === "keyword" && typeof value === "string") {
     normalized.keyword = value;
   } else if (kind === "typeRef") {
-    const typeRef = asRecord(value) ?? {};
+    const typeRef = asRecord(value) ?? asRecord(record.typeRef) ?? {};
     normalized.typeRef = {
       ...typeRef,
       typeParams: Array.isArray(typeRef.typeParams)
@@ -1271,7 +1289,6 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
 
 function categorizeNodes(
   nodes: DocNode[],
-  importPath: string,
 ): CategorizedExports {
   const result: CategorizedExports = {
     functions: [],
@@ -1317,7 +1334,16 @@ function categorizeNodes(
     }
   }
 
+  const deprecatedNames = new Set(
+    nodes.filter((node) =>
+      node.jsDoc?.tags?.some((tag) => tag.kind === "deprecated")
+    )
+      .map((node) => node.name),
+  );
   for (const cat of Object.values(result) as ExportSummary[][]) {
+    for (const summary of cat) {
+      summary.deprecated = deprecatedNames.has(summary.name);
+    }
     cat.sort((a, b) => a.name.localeCompare(b.name));
   }
 
@@ -1622,6 +1648,15 @@ const API_DOCS: Record<string, APIDocs> = {
     functions: { resource: { configType: "ResourceConfig" } },
     expandTypes: ["ResourceConfig"],
   },
+  "veryfront/conversations": {
+    methods: { Conversation: "Conversation client" },
+    expandTypes: [
+      "ConversationClientOptions",
+      "CreateConversationInput",
+      "ConversationDetails",
+      "ConversationMessage",
+    ],
+  },
   "veryfront/sandbox": {
     methods: { Sandbox: "Sandbox session client" },
     expandTypes: ["SandboxOptions", "CommandResult", "CommandStreamEvent"],
@@ -1643,9 +1678,9 @@ const METHOD_DESCRIPTIONS: Record<
   Agent: {
     generate: {
       desc:
-        "Run the agent and return a complete response. Accepts a string or message array as input.",
+        "Run the agent and return a complete response. Pass an object whose `input` is a string or message array, such as `agent.generate({ input: \"Hello\" })`.",
       params: {
-        input: "Prompt string or message history",
+        input: "Request object whose `input` is a prompt string or message history",
         context: "Additional context passed to the agent",
       },
     },
@@ -1679,8 +1714,7 @@ const METHOD_DESCRIPTIONS: Record<
   },
   Sandbox: {
     create: {
-      desc:
-        "Create an isolated sandbox workspace.",
+      desc: "Create an isolated sandbox workspace.",
       params: {
         options: "Sandbox creation options (auth token + optional API URL).",
       },
@@ -1714,7 +1748,8 @@ const METHOD_DESCRIPTIONS: Record<
       desc: "Record activity for idle cleanup. Fixed expiry does not change.",
     },
     close: {
-      desc: "Close the client. Existing and persistent sandboxes remain; temporary sandboxes created by this client are deleted.",
+      desc:
+        "Close the client. Existing and persistent sandboxes remain; temporary sandboxes created by this client are deleted.",
     },
   },
   MiddlewarePipeline: {
@@ -1769,7 +1804,7 @@ const PROPERTY_DESCRIPTIONS: Record<string, Record<string, string>> = {
     allowedModels:
       'Restrict runtime model overrides to these "provider/model" strings',
     skills:
-      "Select visible skill IDs or this agent's own short names for prompts and `load_skill`",
+      "Select visible skill IDs or this agent's own short names for prompts and `veryfront__load_skill`",
   },
   SandboxOptions: {
     apiUrl:
@@ -2026,6 +2061,7 @@ function renderPropertyTable(
   lines.push("| Property | Type | Description | Source |");
   lines.push("|----------|------|-------------|--------|");
   for (const prop of properties) {
+    if (prop.jsDoc?.tags?.some((tag) => tag.kind === "internal")) continue;
     const name = prop.optional ? `${prop.name}?` : prop.name;
     const rawType = renderType(prop.tsType);
     const desc = getPropertyDescription(typeName, prop.name, prop);
@@ -2217,18 +2253,37 @@ function generateAPISection(nodes: DocNode[], importPath: string): string[] {
 // 5d. Generate Type Reference section
 // ---------------------------------------------------------------------------
 
-function interfaceReferenceProperties(node: DocNode, nodes: DocNode[], visited = new Set<string>()): InterfaceProperty[] {
+function interfaceReferenceProperties(
+  node: DocNode,
+  nodes: DocNode[],
+  visited = new Set<string>(),
+): InterfaceProperty[] {
   if (!node.interfaceDef || visited.has(node.name)) return [];
   visited.add(node.name);
   const inherited: InterfaceProperty[] = [];
   for (const parent of node.interfaceDef.extends) {
-    if (!parent || typeof parent !== "object" || !("typeRef" in parent)) continue;
+    if (!parent || typeof parent !== "object" || !("typeRef" in parent)) {
+      continue;
+    }
     const reference = parent.typeRef;
-    if (!reference || typeof reference !== "object" || !("typeName" in reference) || typeof reference.typeName !== "string") continue;
+    if (
+      !reference || typeof reference !== "object" ||
+      !("typeName" in reference) || typeof reference.typeName !== "string"
+    ) continue;
     const parentNode = findNode(nodes, reference.typeName);
-    if (parentNode) inherited.push(...interfaceReferenceProperties(parentNode, nodes, visited));
+    if (parentNode) {
+      inherited.push(
+        ...interfaceReferenceProperties(parentNode, nodes, visited),
+      );
+    }
   }
-  return [...new Map([...inherited, ...node.interfaceDef.properties].map(property => [property.name, property])).values()];
+  return [
+    ...new Map(
+      [...inherited, ...node.interfaceDef.properties].map(
+        (property) => [property.name, property],
+      ),
+    ).values(),
+  ];
 }
 
 function generateTypeReference(nodes: DocNode[], importPath: string): string[] {
@@ -2306,6 +2361,12 @@ const CATEGORY_LABELS: Record<CommandCategory, string> = {
   auth: "Auth",
 };
 
+// Hand-written notes rendered below a category's command table.
+const CATEGORY_NOTES: Partial<Record<CommandCategory, string>> = {
+  auth:
+    "`veryfront whoami` validates an API key by listing projects (`GET /projects`), because the current user endpoint (`GET /me`) accepts only sign-in sessions. For an API key, `whoami` reports the credential type, not a user.",
+};
+
 const CATEGORY_ORDER: CommandCategory[] = [
   "development",
   "deploy",
@@ -2346,6 +2407,11 @@ function generateCLICommandCatalog(): string[] {
       lines.push(`| \`veryfront ${cmd.name}\` | ${desc} |`);
     }
     lines.push("");
+    const note = CATEGORY_NOTES[category];
+    if (note) {
+      lines.push(note);
+      lines.push("");
+    }
   }
 
   return lines;
@@ -2402,12 +2468,14 @@ function generateMD(
 
   // Import snippet: use curated priority list
   const priorityNames = IMPORT_PRIORITY[entry.importPath];
-  const allExportNames = new Set([
-    ...exports.functions.map((e) => e.name),
-    ...exports.components.map((e) => e.name),
-    ...exports.classes.map((e) => e.name),
-    ...exports.constants.map((e) => e.name),
-  ]);
+  const allExportNames = new Set(
+    [
+      ...exports.functions,
+      ...exports.components,
+      ...exports.classes,
+      ...exports.constants,
+    ].filter((entry) => !entry.deprecated).map((entry) => entry.name),
+  );
 
   // Explicit empty array = skip import section (e.g. CLI executable)
   const importNames: string[] = [];
@@ -2573,12 +2641,14 @@ function pickDeepImportSample(
     ...exports.components,
     ...exports.classes,
     ...exports.constants,
-  ].map((e) => e.name);
+  ].filter((entry) => !entry.deprecated).map((e) => e.name);
   if (runtime.length > 0) {
     return { names: runtime.slice(0, 3), typeOnly: false };
   }
   return {
-    names: exports.types.map((entry) => entry.name).slice(0, 3),
+    names: exports.types.filter((entry) => !entry.deprecated).map((entry) =>
+      entry.name
+    ).slice(0, 3),
     typeOnly: true,
   };
 }
@@ -2711,7 +2781,7 @@ async function main() {
       }
       nodes = await getDenoDoc(entry.filePath);
       addSourceDocStats(sourceDocStats, summarizeSourceDocs(nodes));
-      exports = categorizeNodes(nodes, entry.importPath);
+      exports = categorizeNodes(nodes);
     }
 
     indexData.push({ entry, jsdoc });
@@ -2733,7 +2803,7 @@ async function main() {
       }
       const deepNodes = await getDenoDoc(deep.filePath);
       addSourceDocStats(sourceDocStats, summarizeSourceDocs(deepNodes));
-      const deepExports = categorizeNodes(deepNodes, deep.importPath);
+      const deepExports = categorizeNodes(deepNodes);
       deepRenders.push({ deep, jsdoc: deepJsdoc, exports: deepExports });
     }
 

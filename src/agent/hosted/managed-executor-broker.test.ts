@@ -29,7 +29,7 @@ import {
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createExecutorChannel, type ExecutorOperation } from "../executor/channel.ts";
-import type { ModelRuntime } from "#veryfront/provider/types.ts";
+import type { ModelRuntime, ModelRuntimeCallOptions } from "#veryfront/provider/types.ts";
 import type { JsonValue } from "#veryfront/schemas/index.ts";
 import type { HostedExecutorSessionOptions } from "#veryfront/agent/hosted/executor-session.ts";
 import type { HostedExecutorAllocation } from "#veryfront/agent/hosted/executor-session-schema.ts";
@@ -57,11 +57,21 @@ import { createTrustedManagedRuntime } from "#veryfront/agent/hosted/trusted-man
 import type { ExecutorBinding } from "#veryfront/agent/executor/protocol.ts";
 import { ExecutorAgentError } from "#veryfront/agent/hosted/executor-agent-schema.ts";
 import { __runWithOutboundFetchTransportForTests } from "#veryfront/security/http/outbound-fetch.ts";
+import { createRuntimeLoadSkillTool } from "#veryfront/agent/runtime/load-skill-tool.ts";
+import { prepareHostedChatRuntimeMessages } from "#veryfront/agent/hosted/chat-preparation.ts";
+import { isToolResultPart } from "#veryfront/agent/runtime/tool-result-part.ts";
+import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
+import type { ChatUiMessage } from "#veryfront/chat/types.ts";
+import type { AgentRuntimeMessage } from "#veryfront/agent/runtime/message-adapter.ts";
+import { bindToolResultSequence } from "#veryfront/runtime/tool-result-sequence.ts";
+import { getManagedToolResultFence } from "./managed-tool-result-fence.ts";
 
 const modelId = "veryfront-cloud/openai/synthetic";
 const owner = { scopeKind: "project" as const, projectId: "11111111-1111-4111-8111-111111111111" };
 const source = { type: "release" as const, releaseId: "release-test" };
 const image = `registry.example.test/executor@sha256:${"a".repeat(64)}`;
+const realSetTimeout = globalThis.setTimeout;
+const realDelay = (ms: number) => new Promise<void>((resolve) => realSetTimeout(resolve, ms));
 const tick = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 
 function runWithKnowledgeApiTransport<T>(
@@ -109,6 +119,11 @@ function fixture(
     initialCheckpoint?: boolean;
     allocationLifetimeMs?: number;
     hardDeadlineMs?: number;
+    onStream?: (input: {
+      peer: ReturnType<typeof createExecutorChannel>;
+      value: JsonValue;
+      installed: ExecutorRuntimeInstall;
+    }) => Promise<void>;
   } = {},
 ) {
   const now = Date.now();
@@ -262,6 +277,9 @@ function fixture(
           async *handle(value): AsyncGenerator<JsonValue> {
             calls.push("stream");
             streamInputs.push(value);
+            await options.onStream?.({ peer: peer!, value, installed: installed! });
+            const sequenced = value && typeof value === "object" && !Array.isArray(value) &&
+              value.runtimeObservations === true;
             if (!options.skipModelRequest) {
               await peer!.request("model.generate", {
                 modelId,
@@ -269,6 +287,14 @@ function fixture(
                   prompt: [],
                   maxOutputTokens: installed!.grant.models[0]!.maxOutputTokens,
                 },
+                ...(sequenced && typeof value.privateToolResultSessionId === "string"
+                  ? {
+                    privateToolResultSequence: {
+                      sessionId: value.privateToolResultSessionId,
+                      ordinal: 0,
+                    },
+                  }
+                  : {}),
               });
             }
             executionAllowed = true;
@@ -412,6 +438,173 @@ function configureCanonical(
   if (bindSessionOwnedWork) input.bindSessionOwnedWork = bindSessionOwnedWork;
 }
 
+const historySkillBody = {
+  skillId: "review",
+  instructions: "# Review\nUse the checklist before answering.",
+  references: ["references/checklist.md"],
+  scripts: [],
+};
+
+function persistedLoadSkillHistory(): ChatUiMessage[] {
+  const messages: ChatUiMessage[] = [{
+    id: "stored-load-skill",
+    role: "assistant",
+    parts: [{
+      type: "dynamic-tool",
+      toolName: "veryfront__load_skill",
+      toolCallId: "stored-load-call",
+      state: "output-available",
+      input: { load: { skillId: "review" } },
+      output: historySkillBody,
+    }],
+  }];
+  return JSON.parse(JSON.stringify(messages));
+}
+
+async function preparePersistedLoadSkillHistory(trusted: boolean): Promise<AgentRuntimeMessage[]> {
+  return await prepareHostedChatRuntimeMessages(
+    persistedLoadSkillHistory(),
+    trusted ? { trustedHostedHistoryMessageIds: ["stored-load-skill"] } : {},
+  );
+}
+
+function stripHostedHistoryTransportMetadata(
+  messages: readonly (AgentRuntimeMessage & { metadata?: unknown })[],
+): AgentRuntimeMessage[] {
+  return messages.map(({ metadata: _metadata, ...message }) => message);
+}
+
+function promptFromPreparedLoadSkillHistory(messages: readonly AgentRuntimeMessage[]): JsonValue {
+  for (const message of messages) {
+    if (message.role !== "tool") continue;
+    for (const part of message.parts) {
+      if (!isToolResultPart(part) || part.toolCallId !== "stored-load-call") continue;
+      const snapshot = snapshotBoundedJsonValue(part.result);
+      if (!snapshot.success) return [];
+      return [{
+        role: "tool",
+        content: [{
+          type: "tool-result",
+          toolCallId: part.toolCallId,
+          toolName: part.toolName,
+          output: { type: "json", value: snapshot.value },
+        }],
+      }];
+    }
+  }
+  return [];
+}
+
+function configureLoadSkillHostFacade(f: ReturnType<typeof fixture>): void {
+  const loadSkill = createRuntimeLoadSkillTool({
+    context: { projectId: null, authToken: "test-token", branchId: null },
+    skillsDir: "/skills",
+    projectSkillLoader: {
+      listProjectSkillReferences: () => Promise.resolve(["references/checklist.md"]),
+      loadProjectSkill: (_context, skillId) =>
+        Promise.resolve(skillId === "review" ? historySkillBody : null),
+      loadProjectSkillReference: () => Promise.resolve("Detailed checklist content"),
+    },
+    builtinStore: {
+      readSkill: () => Promise.resolve(null),
+      readReferenceFile: () => Promise.resolve(null),
+      listReferences: () => Promise.resolve([]),
+    },
+  });
+  f.input.installation.grant.allowedToolNames = ["load_skill"];
+  f.input.installation.grant.hostToolFacadeIds = ["skills"];
+  f.input.tools.catalog = new Map([["load_skill", {}]]);
+  f.input.tools.sources = new Map([["skills", {
+    source: {
+      id: "skills",
+      listTools: () =>
+        Promise.resolve([{ name: "load_skill", description: "Load a skill", parameters: {} }]),
+      executeTool: (_name, args, context) => loadSkill.execute!(args, context),
+    },
+    allowedToolNames: new Set(["load_skill"]),
+    context: {},
+  }]]);
+}
+
+async function readManagedLoadSkillReference(input: {
+  trustedHistory: boolean;
+  file?: string;
+}): Promise<{ result: { error?: string; content?: string }; prompts: JsonValue[] }> {
+  const messages = await preparePersistedLoadSkillHistory(input.trustedHistory);
+  const prompts: JsonValue[] = [];
+  const f = fixture({
+    owner: { scopeKind: "global", serviceName: "global-test-service" },
+    completeStream: true,
+    skipModelRequest: true,
+    async onStream({ peer, installed }) {
+      const facades = await createExecutorRuntimeFacades({
+        input: installed,
+        channel: peer,
+        signal: peer.signal,
+      });
+      try {
+        const loadSkill = facades.hostTools.get("skills")?.load_skill;
+        if (!loadSkill?.execute) throw new Error("Missing managed load_skill host facade");
+        const prompt = promptFromPreparedLoadSkillHistory(messages);
+        await peer.request("model.generate", {
+          modelId,
+          options: {
+            prompt,
+            maxOutputTokens: installed.grant.models[0]!.maxOutputTokens,
+          },
+        });
+        const result = await loadSkill.execute(
+          { reference: { skillId: "review", file: input.file ?? "references/checklist.md" } },
+          { toolCallId: "reference-call" },
+        );
+        referenceResult = result;
+      } finally {
+        await facades.cleanup();
+      }
+    },
+  });
+  let referenceResult: unknown;
+  configureLoadSkillHostFacade(f);
+  f.input.model.resolver = () => {
+    const observedModel: ModelRuntime<ModelRuntimeCallOptions> = {
+      ...runtimeModel(),
+      doGenerate(options) {
+        const snapshot = snapshotBoundedJsonValue(options.prompt);
+        if (snapshot.success) prompts.push(snapshot.value);
+        return Promise.resolve({ content: [], finishReason: "stop", usage: {} });
+      },
+    };
+    return observedModel;
+  };
+  const broker = createManagedExecutorBroker({ maxActive: 1 });
+  let runtime: Awaited<ReturnType<typeof broker.start>> | undefined;
+  try {
+    runtime = await broker.start(f.input);
+    runtime.accept({ kind: "execution" });
+    const stream = await runtime.agent.stream({
+      messages: stripHostedHistoryTransportMetadata(messages),
+      abortSignal: new AbortController().signal,
+    });
+    await Array.fromAsync(stream.toUIMessageStream());
+  } finally {
+    await runtime?.close("completed");
+    await broker.shutdown();
+    await broker.settled;
+  }
+  return { result: readReferenceResult(referenceResult), prompts };
+}
+
+function readReferenceResult(value: unknown): { error?: string; content?: string } {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("Missing managed load_skill reference result");
+  }
+  const error = "error" in value && typeof value.error === "string" ? value.error : undefined;
+  const content = "content" in value && typeof value.content === "string"
+    ? value.content
+    : undefined;
+  return { ...(error ? { error } : {}), ...(content ? { content } : {}) };
+}
+
 function observationPersistence(projectId = owner.projectId) {
   const bodies: Record<string, unknown>[] = [];
   let cursor = 0;
@@ -460,6 +653,152 @@ function observationPersistence(projectId = owner.projectId) {
 }
 
 describe("managed executor broker", () => {
+  it("continues managed remote skill references only after trusted server history reaches a provider prompt", async () => {
+    const trusted = await readManagedLoadSkillReference({ trustedHistory: true });
+    assertEquals(trusted.result.content, "Detailed checklist content");
+    assertStringIncludes(JSON.stringify(trusted.prompts), "# Review");
+    assertStringIncludes(JSON.stringify(trusted.prompts), "references/checklist.md");
+
+    const wrongFile = await readManagedLoadSkillReference({
+      trustedHistory: true,
+      file: "references/other.md",
+    });
+    assertEquals(wrongFile.result.content, undefined);
+    assertStringIncludes(
+      wrongFile.result.error ?? "",
+      'Reference file not advertised by loaded skill "review"',
+    );
+
+    const untrusted = await readManagedLoadSkillReference({ trustedHistory: false });
+    assertEquals(untrusted.result.content, undefined);
+    assertStringIncludes(
+      untrusted.result.error ?? "",
+      'Reference files for skill "review" are unavailable until its instructions have been read.',
+    );
+  });
+  it("accepts historical tool results in the first model context without waiting for a new output chunk", async () => {
+    const { persistence, bodies } = observationPersistence();
+    persistence.bindSessionOwnedWork((operation) => operation());
+    try {
+      await persistence.modelRunEventSink({
+        type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
+        modelCallId: "11111111-1111-4111-8111-111111111112",
+        messages: [{
+          role: "tool",
+          content: [{
+            type: "tool-result",
+            toolCallId: "historical-call",
+            toolName: "reader",
+            output: { type: "json", value: { old: true } },
+          }],
+        }],
+      });
+      assertEquals(bodies.length, 1);
+      assertEquals(
+        Array.isArray(bodies[0]?.events) &&
+          bodies[0].events.some((event) =>
+            typeof event === "object" && event !== null && "type" in event &&
+            event.type === "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED"
+          ),
+        true,
+      );
+    } finally {
+      await persistence.cleanup();
+    }
+  });
+
+  it("queues a tool result before the next model call that contains it when the model RPC overtakes streamed output", async () => {
+    const { persistence, bodies } = observationPersistence();
+    persistence.bindSessionOwnedWork((operation) => operation());
+    const toolCallId = "previous-tool-result";
+    const fence = getManagedToolResultFence(persistence.modelRunEventSink);
+    assert(fence);
+    const sequence = { sessionId: fence.beginSession(), ordinal: 1 };
+    try {
+      await fence.waitBeforeContext(
+        { sessionId: sequence.sessionId, ordinal: 0 },
+        new AbortController().signal,
+        Date.now() + 1_000,
+      );
+      await persistence.modelRunEventSink({
+        type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
+        modelCallId: "11111111-1111-4111-8111-111111111112",
+        messages: [{ role: "user", content: [{ type: "text", text: "Read the local note" }] }],
+      });
+      await persistence.output.write({ type: "tool-input-start", toolCallId, toolName: "reader" });
+      await persistence.output.write({
+        type: "tool-input-available",
+        toolCallId,
+        toolName: "reader",
+        input: { note: "local" },
+      });
+      // The executor can request the next model call while its preceding UI
+      // result is still waiting in the streamed output channel.
+      const capture = fence.waitBeforeContext(
+        sequence,
+        new AbortController().signal,
+        Date.now() + 1_000,
+      ).then(() =>
+        persistence.modelRunEventSink({
+          type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
+          modelCallId: "22222222-2222-4222-8222-222222222222",
+          messages: [
+            {
+              role: "assistant",
+              content: [{
+                type: "tool-call",
+                toolCallId,
+                toolName: "reader",
+                input: { note: "local" },
+              }],
+            },
+            {
+              role: "tool",
+              content: [{
+                type: "tool-result",
+                toolCallId,
+                toolName: "reader",
+                output: { type: "json", value: { ok: true } },
+              }],
+            },
+          ],
+        })
+      );
+      const result = {
+        type: "tool-output-available",
+        toolCallId,
+        output: { ok: true },
+      } as const;
+      bindToolResultSequence(result, sequence);
+      const write = persistence.output.write(result);
+      await Promise.all([capture, write]);
+
+      const eventTypes = bodies.flatMap((body) =>
+        Array.isArray(body.events)
+          ? body.events.flatMap((event) =>
+            typeof event === "object" && event !== null && "type" in event &&
+              typeof event.type === "string"
+              ? [event.type]
+              : []
+          )
+          : []
+      );
+      assertEquals(eventTypes.includes("TOOL_CALL_RESULT"), true);
+      assertEquals(
+        eventTypes.filter((type) => type === "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED").length,
+        2,
+      );
+      assertEquals(
+        eventTypes.indexOf("TOOL_CALL_RESULT") <
+          eventTypes.lastIndexOf("AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED"),
+        true,
+        "the prior tool result must precede the model context in the durable event stream",
+      );
+    } finally {
+      await persistence.cleanup();
+    }
+  });
+
   it("enables the producer from an exact runtime-observation persistence sink", async () => {
     const stepId = "22222222-2222-4222-8222-222222222222";
     const f = fixture({ completeStream: true, runtimeObservationStepId: stepId });
@@ -583,10 +922,10 @@ describe("managed executor broker", () => {
     });
   }
 
-  it("executes an owned host tool selected by its short alias through installed runtime facades", async () => {
+  it("executes an owned host tool under its canonical identity after short selection", async () => {
     const f = fixture();
     const model = scriptedModel([
-      { toolCalls: [{ id: "call", name: "owned-paper", input: {} }] },
+      { toolCalls: [{ id: "call", name: "veryfront__owned-paper", input: {} }] },
       { text: "Complete" },
     ], { only: "stream", modelId: "synthetic", provider: "openai" });
     const executions: string[] = [];
@@ -703,7 +1042,7 @@ describe("managed executor broker", () => {
         abortSignal: new AbortController().signal,
       });
       const events = await Array.fromAsync(stream.toUIMessageStream());
-      assertEquals(model.toolNames(), ["owned-paper"]);
+      assertEquals(model.toolNames(), ["veryfront__owned-paper"]);
       assertEquals(executions, ["owned-paper"]);
       assertEquals(model.callCount, 2);
       assert(events.some((event) => event.type === "finish"));
@@ -1258,6 +1597,7 @@ describe("managed executor broker", () => {
       modelId,
       resolveProvider: () => "provider",
       fetch,
+      eventPersistenceTimeoutMs: 100,
     });
     configureCanonical(
       f.input,
@@ -1284,9 +1624,10 @@ describe("managed executor broker", () => {
       abortSignal: new AbortController().signal,
     });
     await appendEntered.promise;
+    const openingResultPromise = Promise.allSettled([opening]);
 
-    await time.tickAsync(30_000);
-    const openingResult = await Promise.allSettled([opening]);
+    await realDelay(150);
+    const openingResult = await openingResultPromise;
     const streamError = openingResult[0]?.status === "rejected"
       ? openingResult[0].reason
       : undefined;
@@ -1386,6 +1727,7 @@ function trustedFixture(
   if (scope.projectId !== null) f.input.model.modelCallCaptureReceipts = true;
   let captureEventId = 0;
   f.input.model.runEventSink = async (event) => {
+    assert(event.type === "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED");
     if (scope.projectId === null) {
       assertEquals(event.modelCallId, undefined);
       return;
@@ -1759,10 +2101,12 @@ describe("broker-local trusted runtime", () => {
     });
     f.input.installation.grant.execution.userId = "synthetic-user";
     f.input.installation.grant.execution.projectSlug = "synthetic-slug";
+    f.input.installation.grant.execution.branchId = "synthetic-branch";
     await drainTrustedFixture(f);
     assertEquals(observed.length, 1);
     assertEquals(observed[0]!.userId, "synthetic-user");
     assertEquals(observed[0]!.projectSlug, "synthetic-slug");
+    assertEquals(observed[0]!.branch, "synthetic-branch");
     assertEquals(observed[0]!.activeSkillToolAvailability, {
       hasActiveSkill: false,
       references: [],
@@ -1781,15 +2125,15 @@ describe("broker-local trusted runtime", () => {
     assert(f.input.trustedRuntime);
     f.input.trustedRuntime.projectToolNames = [];
     f.input.trustedRuntime.hostedKnowledgeAuthToken = "broker-knowledge-token";
-    f.input.installation.grant.allowedToolNames = ["search_knowledge"];
+    f.input.installation.grant.allowedToolNames = ["veryfront__search_knowledge"];
     f.input.installation.grant.execution.branchId = "feature-x";
-    f.input.tools.catalog = new Map([["search_knowledge", {}]]);
+    f.input.tools.catalog = new Map([["veryfront__search_knowledge", {}]]);
     f.input.model.resolver = () =>
       scriptedModel([
         {
           toolCalls: [{
             id: "knowledge-call",
-            name: "search_knowledge",
+            name: "veryfront__search_knowledge",
             input: { query: "managed needle" },
           }],
         },
@@ -1838,14 +2182,14 @@ describe("broker-local trusted runtime", () => {
     });
     assert(f.input.trustedRuntime);
     f.input.trustedRuntime.projectToolNames = [];
-    f.input.installation.grant.allowedToolNames = ["search_knowledge"];
-    f.input.tools.catalog = new Map([["search_knowledge", {}]]);
+    f.input.installation.grant.allowedToolNames = ["veryfront__search_knowledge"];
+    f.input.tools.catalog = new Map([["veryfront__search_knowledge", {}]]);
     f.input.model.resolver = () =>
       scriptedModel([
         {
           toolCalls: [{
             id: "knowledge-call",
-            name: "search_knowledge",
+            name: "veryfront__search_knowledge",
             input: { query: "managed needle" },
           }],
         },

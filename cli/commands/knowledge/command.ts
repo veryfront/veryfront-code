@@ -1,3 +1,4 @@
+import { runWithVeryfrontCloudContextAsync } from "veryfront/provider/veryfront-cloud/cli-context";
 import { defineSchema, lazySchema } from "veryfront/schemas";
 import type { InferSchema } from "veryfront/extensions/schema";
 type SafeParseResult<T> = { success: true; data: T } | {
@@ -14,14 +15,25 @@ import type { ParsedArgs } from "#cli/shared/types";
 import { printJson } from "../../shared/json-output.ts";
 import { getBooleanArg, getStringArg } from "../../shared/parsed-args.ts";
 import { downloadUploadToFile, listAllUploads, type UploadItem } from "../uploads/command.ts";
-import { putRemoteFileFromLocal } from "../files/command.ts";
+import { putBinaryKnowledgeAsset } from "./binary-assets.ts";
+import { type PublishedFileReceipt, putRemoteFileFromLocal } from "../files/command.ts";
 import * as commandHelpers from "./command-helpers.ts";
 import { createRunUserLogger, type Logger, serverLogger } from "veryfront/utils";
 import type { DocumentExtractionProgressEvent } from "veryfront/extensions/compat";
 import { writeRunResultIfConfigured } from "../../utils/write-run-result.ts";
 import { inspectOkfDocument } from "veryfront/knowledge";
+import {
+  type CanonicalKnowledgeIndexReceipt,
+  indexKnowledgeDocument,
+  type IndexKnowledgeDocumentInput,
+} from "./indexing.ts";
 import { classifyKnowledgeDirectoryPath, classifyKnowledgeSourcePath } from "./source-policy.ts";
-import { type KnowledgeParserResult, runKnowledgeParser } from "./parser.ts";
+import {
+  isOkfTextCompanion,
+  type KnowledgeParserResult,
+  runKnowledgeParser,
+  validateOkfTextCompanionBytes,
+} from "./parser.ts";
 import {
   buildKnowledgeIngestRunResult,
   type KnowledgeIngestFailedFileResult,
@@ -136,6 +148,34 @@ function buildKnowledgeSourceName(source: KnowledgeSource): string {
   return basename(source.kind === "upload" ? source.uploadPath : source.localPath);
 }
 
+function classifyKnowledgeSourceType(sourceName: string): string {
+  const extension = extname(sourceName).toLowerCase();
+  switch (extension) {
+    case ".pdf":
+      return "pdf";
+    case ".ppt":
+    case ".pptx":
+      return "pptx";
+    case ".doc":
+    case ".docx":
+      return "docx";
+    case ".md":
+    case ".mdx":
+      return "markdown";
+    case ".json":
+      return "json";
+    case ".txt":
+      return "text";
+    case ".html":
+    case ".htm":
+      return "html";
+    case ".csv":
+      return "csv";
+    default:
+      return "unknown";
+  }
+}
+
 function buildExtractionProgressPhase(event: DocumentExtractionProgressEvent): string {
   if (event.unit === "page") return "pdf_page_completed";
   if (event.unit === "slide") return "ppt_slide_completed";
@@ -145,6 +185,8 @@ function buildExtractionProgressPhase(event: DocumentExtractionProgressEvent): s
 function buildExtractionProgressMetadata(
   sourceName: string,
   event: DocumentExtractionProgressEvent,
+  sourceOrdinal: number,
+  sourceCount: number,
 ): Record<string, unknown> {
   const total = event.total ?? event.current;
   const metadata: Record<string, unknown> = {
@@ -152,6 +194,9 @@ function buildExtractionProgressMetadata(
     progress_unit: event.unit,
     progress_current: event.current,
     progress_total: total,
+    source_ordinal: sourceOrdinal,
+    source_count: sourceCount,
+    source_type: classifyKnowledgeSourceType(sourceName),
     source_name: sourceName,
   };
 
@@ -313,7 +358,7 @@ const OKF_COMPANION_REFERENCE_KEYS = new Set([
 ]);
 const OKF_COMPANION_PATH_KEYS = new Set(["path", "resource"]);
 function okfBundleSkipMessage(): string {
-  return "OKF bundle mode preserves Markdown documents and referenced UTF-8 companion assets; unreferenced generated artifacts are skipped.";
+  return "OKF bundle mode preserves Markdown documents and referenced text and binary companions; unreferenced generated artifacts are skipped.";
 }
 
 function isMarkdownPath(path: string): boolean {
@@ -333,7 +378,7 @@ function resolveOkfCompanionReferenceCandidates(documentPath: string, reference:
   const path = withoutQuery?.trim();
   if (!path) return [];
 
-  const documentDir = dirname(documentPath).replace(/\\/g, "/");
+  const documentDir = dirname(documentPath).replaceAll("\\", "/");
   // Prefer OKF document-relative references, then fall back to bundle-root paths
   // for legacy fixtures that used root paths without a leading slash.
   const rawPaths = path.startsWith("/")
@@ -343,7 +388,7 @@ function resolveOkfCompanionReferenceCandidates(documentPath: string, reference:
     : [join(documentDir, path), path];
   const candidates: string[] = [];
   for (const rawPath of rawPaths) {
-    const normalized = normalize(rawPath).replace(/\\/g, "/").replace(/^\/+/, "");
+    const normalized = normalize(rawPath).replaceAll("\\", "/").replace(/^\/+/, "");
     if (
       !normalized || normalized === "." || normalized === ".." || normalized.startsWith("../") ||
       normalized.split("/").includes("..")
@@ -419,10 +464,11 @@ async function collectReferencedOkfCompanionPaths(
     let markdown: string;
     try {
       markdown = await Deno.readTextFile(source.localPath);
-    } catch {
-      continue;
+    } catch (error) {
+      if (error instanceof Deno.errors.NotFound) continue;
+      throw error;
     }
-    const inspected = inspectOkfDocument(relativePath, markdown);
+    const inspected = inspectOkfDocument(relativePath, markdown.replace(/^\uFEFF/, ""));
     collectCompanionReferencesFromValue({
       documentPath: relativePath,
       value: inspected.metadata,
@@ -432,27 +478,6 @@ async function collectReferencedOkfCompanionPaths(
     });
   }
   return referencedPaths;
-}
-
-function filterOkfBundleUploadTargets(
-  uploadTargets: string[],
-  skipped: KnowledgeIngestSkippedFileResult[],
-  okfBundle: boolean | undefined,
-): string[] {
-  if (!okfBundle) return uploadTargets;
-  const markdownTargets: string[] = [];
-  for (const uploadPath of uploadTargets) {
-    if (isMarkdownPath(uploadPath)) {
-      markdownTargets.push(uploadPath);
-      continue;
-    }
-    skipped.push(commandHelpers.createSkippedKnowledgeSource({
-      source: formatKnowledgeUploadSource(uploadPath),
-      reason: "unsupported_file_type",
-      message: okfBundleSkipMessage(),
-    }));
-  }
-  return markdownTargets;
 }
 
 async function downloadOkfBundleUploads(input: {
@@ -569,7 +594,17 @@ function deriveOkfBundleRemotePath(relativePath: string, knowledgePath: string):
     relativePath,
     "OKF bundle relative path",
   );
-  return `${prefix}/${normalizedRelative}`.replace(/\\/g, "/");
+  return `${prefix}/${normalizedRelative}`.replaceAll("\\", "/");
+}
+
+function buildOkfBundleUploadMetadata(knowledgePath: string): Record<string, unknown> {
+  return {
+    _veryfront: {
+      okf: {
+        bundle_root_path: normalizeKnowledgeInputPath(knowledgePath),
+      },
+    },
+  };
 }
 
 function buildOkfBundleRelativePaths(
@@ -728,9 +763,6 @@ export async function collectKnowledgeSources(
   let uploads = await listUploadsForPrefix(initialPrefix);
   deps.signal?.throwIfAborted();
   let { skipped, uploadTargets } = classifyListedUploadsForKnowledge(uploads, options.okfBundle);
-  if (!options.okfBundle) {
-    uploadTargets = filterOkfBundleUploadTargets(uploadTargets, skipped, options.okfBundle);
-  }
 
   if (
     !uploadTargets.length && skipped.length === 0 && uploadPrefix && !uploadPrefix.endsWith("/")
@@ -738,9 +770,6 @@ export async function collectKnowledgeSources(
     uploads = await listUploadsForPrefix(`${uploadPrefix}/`);
     deps.signal?.throwIfAborted();
     ({ skipped, uploadTargets } = classifyListedUploadsForKnowledge(uploads, options.okfBundle));
-    if (!options.okfBundle) {
-      uploadTargets = filterOkfBundleUploadTargets(uploadTargets, skipped, options.okfBundle);
-    }
   }
 
   if (!uploadTargets.length && skipped.length === 0) {
@@ -781,7 +810,16 @@ export async function ingestResolvedSources(
     projectSlug: string;
     outputDir: string;
     runParser: typeof runKnowledgeParser;
-    uploadKnowledgeFile: (remotePath: string, localPath: string) => Promise<{ path: string }>;
+    uploadKnowledgeFile: (
+      remotePath: string,
+      localPath: string,
+      metadata?: Record<string, unknown>,
+      storageKind?: "binary",
+    ) => Promise<PublishedFileReceipt>;
+    destinationBranch?: string;
+    indexKnowledgeDocument?: (
+      input: IndexKnowledgeDocumentInput,
+    ) => Promise<CanonicalKnowledgeIndexReceipt>;
     eventLogger?: Logger | null;
     signal?: AbortSignal;
   },
@@ -798,7 +836,39 @@ export async function ingestResolvedSources(
   const okfCompanionPaths = options.okfBundle && options.path
     ? await collectReferencedOkfCompanionPaths(sources, options.path)
     : new Set<string>();
+  let hasBinaryCompanion = false;
+  for (const source of sources) {
+    const relativePath = okfRelativePaths.get(source);
+    if (relativePath && okfCompanionPaths.has(relativePath)) {
+      deps.signal?.throwIfAborted();
+      const bytes = await Deno.readFile(source.localPath);
+      if (isOkfTextCompanion(relativePath, bytes)) {
+        validateOkfTextCompanionBytes(relativePath, bytes);
+      } else hasBinaryCompanion = true;
+    }
+  }
   const slugs = options.slug ? [options.slug] : ensureUniqueSlugs(sources);
+  const preflightParsers = new Map<KnowledgeSource, KnowledgeParserResult>();
+  if (options.okfBundle && hasBinaryCompanion) {
+    // Validate the complete bundle before committing any immutable absent-only asset.
+    for (const [index, source] of sources.entries()) {
+      deps.signal?.throwIfAborted();
+      preflightParsers.set(
+        source,
+        await deps.runParser({
+          filePath: source.localPath,
+          outputDir: deps.outputDir,
+          description: options.description,
+          slug: slugs[index],
+          sourceReference: buildSourceReference(source),
+          okfRelativePath: okfRelativePaths.get(source),
+          ...(okfCompanionPaths.has(okfRelativePaths.get(source) ?? "")
+            ? { okfRole: "companion" as const }
+            : {}),
+        }, { signal: deps.signal }),
+      );
+    }
+  }
   const ingested: KnowledgeIngestFileResult[] = [];
   const failed: KnowledgeIngestFailedFileResult[] = [];
   const recordSourceFailure = (
@@ -807,37 +877,58 @@ export async function ingestResolvedSources(
     index: number,
     message: string,
     reason: KnowledgeIngestFailureReason,
+    published?: PublishedFileReceipt,
   ) => {
     deps.eventLogger?.error("Knowledge source failed", {
       phase: "file_failed",
       progress_current: index + 1,
       progress_total: sources.length,
+      source_ordinal: index + 1,
+      source_count: sources.length,
+      source_type: classifyKnowledgeSourceType(buildKnowledgeSourceName(source)),
       source_name: buildKnowledgeSourceName(source),
       error: message,
     });
 
-    failed.push(createFailedKnowledgeSource({
-      source: sourceReference,
-      localSourcePath: source.localPath,
-      message,
-      reason,
-    }));
+    failed.push({
+      ...createFailedKnowledgeSource({
+        source: sourceReference,
+        localSourcePath: source.localPath,
+        message,
+        reason,
+      }),
+      ...(published ? { published } : {}),
+    });
   };
 
   for (const [index, source] of sources.entries()) {
     deps.signal?.throwIfAborted();
     const sourceReference = buildSourceReference(source);
 
+    const sourceName = buildKnowledgeSourceName(source);
+    const sourceType = classifyKnowledgeSourceType(sourceName);
     deps.eventLogger?.info("Processing knowledge source", {
       phase: "file_processing",
       progress_current: index + 1,
       progress_total: sources.length,
-      source_name: buildKnowledgeSourceName(source),
+      source_ordinal: index + 1,
+      source_count: sources.length,
+      source_type: sourceType,
+      source_name: sourceName,
     });
 
     let parser: KnowledgeParserResult;
     try {
-      const sourceName = buildKnowledgeSourceName(source);
+      deps.eventLogger?.info("Starting knowledge source parser", {
+        phase: "parser_started_pre_call",
+        progress_unit: "file",
+        progress_current: index + 1,
+        progress_total: sources.length,
+        source_ordinal: index + 1,
+        source_count: sources.length,
+        source_type: sourceType,
+        source_name: sourceName,
+      });
       const eventLogger = deps.eventLogger;
       const parserDeps = {
         signal: deps.signal,
@@ -847,13 +938,13 @@ export async function ingestResolvedSources(
               deps.signal?.throwIfAborted();
               eventLogger.info(
                 "Knowledge source extraction progress",
-                buildExtractionProgressMetadata(sourceName, event),
+                buildExtractionProgressMetadata(sourceName, event, index + 1, sources.length),
               );
             },
           }
           : {}),
       };
-      parser = await deps.runParser({
+      parser = preflightParsers.get(source) ?? await deps.runParser({
         filePath: source.localPath,
         outputDir: deps.outputDir,
         description: options.description,
@@ -872,6 +963,8 @@ export async function ingestResolvedSources(
       continue;
     }
 
+    let published: PublishedFileReceipt | undefined;
+    let failureReason: KnowledgeIngestFailureReason = "upload_error";
     try {
       const okfRelativePath = okfRelativePaths.get(source);
       const remotePath = okfRelativePath === undefined
@@ -881,14 +974,49 @@ export async function ingestResolvedSources(
           options.knowledgePath,
         )
         : deriveOkfBundleRemotePath(okfRelativePath, options.knowledgePath);
-      const uploaded = await deps.uploadKnowledgeFile(remotePath, parser.sandbox_output_path);
+      const uploadMetadata = options.okfBundle
+        ? buildOkfBundleUploadMetadata(options.knowledgePath)
+        : undefined;
+      const uploaded = await deps.uploadKnowledgeFile(
+        remotePath,
+        parser.sandbox_output_path,
+        uploadMetadata,
+        parser.storage_kind,
+      );
+      published = uploaded;
       deps.signal?.throwIfAborted();
+
+      let canonicalIndex: CanonicalKnowledgeIndexReceipt | undefined;
+      // The canonical endpoint accepts knowledge Markdown; other destinations keep generic publication.
+      if (
+        remotePath.startsWith("knowledge/") && /\.md$/i.test(remotePath) &&
+        (!options.okfBundle || parser.document_kind === "generated" ||
+          parser.document_kind === "okf_concept")
+      ) {
+        failureReason = "index_error";
+        deps.eventLogger?.info("Indexing knowledge source", {
+          phase: "file_indexing",
+          remote_path: uploaded.path,
+        });
+        canonicalIndex = await (deps.indexKnowledgeDocument ?? indexKnowledgeDocument)({
+          client: deps.client,
+          projectSlug: deps.projectSlug,
+          branch: deps.destinationBranch ?? options.branch ?? "main",
+          published: uploaded,
+          localPath: parser.sandbox_output_path,
+          signal: deps.signal,
+        });
+        deps.signal?.throwIfAborted();
+      }
 
       deps.eventLogger?.info("Knowledge source ingested", {
         phase: "file_completed",
         progress_current: index + 1,
         progress_total: sources.length,
-        source_name: buildKnowledgeSourceName(source),
+        source_ordinal: index + 1,
+        source_count: sources.length,
+        source_type: sourceType,
+        source_name: sourceName,
         remote_path: uploaded.path,
         warning_count: parser.warnings.length,
       });
@@ -904,18 +1032,21 @@ export async function ingestResolvedSources(
       }
 
       ingested.push(
-        createKnowledgeIngestResult({
-          source: sourceReference,
-          localSourcePath: source.localPath,
-          outputPath: parser.sandbox_output_path,
-          remotePath: uploaded.path,
-          parser,
-        }),
+        {
+          ...createKnowledgeIngestResult({
+            source: sourceReference,
+            localSourcePath: source.localPath,
+            outputPath: parser.sandbox_output_path,
+            remotePath: uploaded.path,
+            parser,
+          }),
+          ...(canonicalIndex ? { canonicalIndex } : {}),
+        },
       );
     } catch (error) {
       deps.signal?.throwIfAborted();
       const message = error instanceof Error ? error.message : String(error);
-      recordSourceFailure(source, sourceReference, index, message, "upload_error");
+      recordSourceFailure(source, sourceReference, index, message, failureReason, published);
     }
   }
 
@@ -988,10 +1119,34 @@ export async function knowledgeCommand(args: ParsedArgs): Promise<void> {
             outputDir,
             runParser: runKnowledgeParser,
             eventLogger,
-            uploadKnowledgeFile: (remotePath, localPath) =>
-              putRemoteFileFromLocal(client, config.projectSlug, remotePath, localPath, undefined, {
-                branch: options.branch,
-              }),
+            indexKnowledgeDocument: (indexInput) =>
+              runWithVeryfrontCloudContextAsync({
+                apiBaseUrl: config.apiUrl,
+                apiToken: config.apiToken,
+                projectSlug: config.projectSlug,
+                serviceLayer: "cloud",
+              }, () => indexKnowledgeDocument(indexInput)),
+            uploadKnowledgeFile: (remotePath, localPath, metadata, storageKind) =>
+              storageKind === "binary"
+                ? putBinaryKnowledgeAsset({
+                  client,
+                  project: config.projectSlug,
+                  path: remotePath,
+                  localPath,
+                  branch: options.branch ?? "main",
+                  expected: { kind: "absent" },
+                })
+                : putRemoteFileFromLocal(
+                  client,
+                  config.projectSlug,
+                  remotePath,
+                  localPath,
+                  undefined,
+                  {
+                    branch: options.branch,
+                  },
+                  metadata,
+                ),
           });
           const runResult = buildKnowledgeIngestRunResult({
             requestedCount,

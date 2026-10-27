@@ -13,7 +13,8 @@ it("knowledge configuration exposes a framework search capability without a tool
     resolveModelTransport: () => ({ model }),
   });
   await assistant.generate({ input: "What can you search?" });
-  assertEquals(model.toolNames(0).includes("search_knowledge"), true);
+  assertEquals(model.toolNames(0).includes("veryfront__search_knowledge"), true);
+  assertEquals(model.toolNames(0).includes("search_knowledge"), false);
 });
 
 it("disabled knowledge does not expose a framework search capability", async () => {
@@ -25,10 +26,10 @@ it("disabled knowledge does not expose a framework search capability", async () 
     resolveModelTransport: () => ({ model }),
   });
   await assistant.generate({ input: "What can you search?" });
-  assertEquals(model.toolNames(0).includes("search_knowledge"), false);
+  assertEquals(model.toolNames(0).includes("veryfront__search_knowledge"), false);
 });
 
-it("invalid knowledge configuration fails before exposing search_knowledge", () => {
+it("invalid knowledge configuration fails before exposing veryfront__search_knowledge", () => {
   assertThrows(
     () =>
       agent({
@@ -64,5 +65,19 @@ it("prevalidated hosted catalogs never implicitly re-enable knowledge", async ()
     resolveModelTransport: () => ({ model }),
   }, { preserveToolCatalog: true });
   await assistant.generate({ input: "What can you search?" });
+  assertEquals(model.toolNames(0).includes("veryfront__search_knowledge"), false);
+});
+
+it("historical explicit knowledge denial does not re-enable the canonical tool", async () => {
+  const model = scriptedModel([{ text: "ready" }], { modelId: "hosted/denied-knowledge" });
+  const assistant = agent({
+    id: "denied-knowledge-test",
+    system: "Use authorized tools.",
+    knowledge: true,
+    tools: { search_knowledge: false },
+    resolveModelTransport: () => ({ model }),
+  });
+  await assistant.generate({ input: "What can you search?" });
+  assertEquals(model.toolNames(0).includes("veryfront__search_knowledge"), false);
   assertEquals(model.toolNames(0).includes("search_knowledge"), false);
 });

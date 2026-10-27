@@ -201,6 +201,7 @@ describe("npm package publishing", () => {
           "set -euo pipefail",
           'source "$SCRIPT_PATH"',
           "verify_npm_compatibility_artifact() { :; }",
+          'deno() { for dir in $(package_dirs); do run_rc_publish_package "$dir"; done; }',
           'package_dirs() { echo "$PACKAGE_DIR"; }',
           'canonical_tarball_for_package_dir() { echo "candidate-$VERSION.tgz"; }',
           'curl() { printf \'%s\\n\' "$(jq -n --arg version "$VERSION" --arg head "$GITHUB_SHA" \'{name:"veryfront",version:$version,gitHead:$head}\')" 200; }',
@@ -295,6 +296,7 @@ describe("npm package publishing", () => {
           "set -euo pipefail",
           'source "$SCRIPT_PATH"',
           "verify_npm_compatibility_artifact() { :; }",
+          'deno() { for dir in $(package_dirs); do run_rc_publish_package "$dir"; done; }',
           "package_dirs() { printf '%s\\n' \"$PACKAGE_DIR\"; }",
           "update_package_version() { return 97; }",
           "rc_tag_for_package() { echo rc; }",
@@ -503,6 +505,7 @@ describe("npm package publishing", () => {
             "set -euo pipefail",
             'source "$SCRIPT_PATH"',
             "verify_npm_compatibility_artifact() { :; }",
+            'deno() { for dir in $(package_dirs); do run_rc_publish_package "$dir"; done; }',
             "package_dirs() { printf '%s\\n' \"$PACKAGE_DIR\"; }",
             'npm() { printf "%s\\n" "$*" >> "$NPM_LOG"; }',
             publishFunction,
@@ -1441,6 +1444,97 @@ describe("npm package publishing", () => {
     } finally {
       await Deno.remove(stateDir, { recursive: true });
     }
+  });
+
+  for (
+    const [reason, lookupError] of [
+      ["registry outage", "npm error code E503"],
+      ["permission refusal", "npm error code E403"],
+      ["DNS failure", "npm error code EAI_AGAIN"],
+      ["unknown failure", ""],
+      [
+        "incidental not-found text",
+        "npm error code E503\nnpm error detail upstream E404",
+      ],
+      ["conflicting npm codes", "npm error code E404\nnpm error code E503"],
+    ]
+  ) {
+    it(`fails the release version preflight closed on ${reason}`, async () => {
+      await withTempDir(async (stateDir) => {
+        const npmLog = `${stateDir}/npm.log`;
+        await Deno.writeTextFile(npmLog, "");
+        const output = await runBash(
+          [
+            "set -euo pipefail",
+            'source "$SCRIPT_PATH"',
+            'package_names_from_workspace() { printf "%s\\n" "@veryfront/ext-existing"; }',
+            "npm() {",
+            LOG_NPM_CALL,
+            '  if [ "$3" = "name" ]; then printf "%s\\n" "@veryfront/ext-existing"; return 0; fi',
+            '  printf "%s\\n" "$LOOKUP_ERROR" >&2',
+            '  printf "%s\\n" "npm error auth Bearer fixture-preflight-token" >&2',
+            '  printf "%s\\n" "npm error cache=/tmp/private-preflight/cache.log" >&2',
+            "  return 42",
+            "}",
+            "run_preflight",
+            'printf "%s\\n" "preflight accepted"',
+          ].join("\n"),
+          { VERSION: "0.1.1285", NPM_LOG: npmLog, LOOKUP_ERROR: lookupError },
+        );
+        assertEquals(output.code, 1, decoder.decode(output.stderr));
+        const stderr = decoder.decode(output.stderr);
+        assertStringIncludes(
+          stderr,
+          "npm registry version lookup failed for @veryfront/ext-existing@0.1.1285 (status 42)",
+        );
+        assertStringIncludes(stderr, "Bearer <REDACTED>");
+        assertStringIncludes(stderr, "cache=<path>");
+        assertEquals(stderr.includes("fixture-preflight-token"), false);
+        assertEquals(stderr.includes("/tmp/private-preflight"), false);
+        assertEquals(
+          decoder.decode(output.stdout).includes("preflight accepted"),
+          false,
+        );
+        assertEquals(await loggedNpmCalls(npmLog), [
+          "view @veryfront/ext-existing@* name",
+          "view @veryfront/ext-existing@0.1.1285 version",
+        ]);
+      });
+    });
+  }
+
+  it("accepts only confirmed missing target versions for every registered package", async () => {
+    await withTempDir(async (stateDir) => {
+      const npmLog = `${stateDir}/npm.log`;
+      await Deno.writeTextFile(npmLog, "");
+      const output = await runBash(
+        [
+          "set -euo pipefail",
+          'source "$SCRIPT_PATH"',
+          'package_names_from_workspace() { printf "%s\\n" "@veryfront/ext-first" "veryfront"; }',
+          "npm() {",
+          LOG_NPM_CALL,
+          '  if [ "$3" = "name" ]; then printf "%s\\n" "registered"; return 0; fi',
+          '  if [ "$2" = "@veryfront/ext-first@0.1.1285" ]; then',
+          '    printf "%s\\n" "npm ERR! 404 Not Found" >&2',
+          "  else",
+          '    printf "%s\\n" "npm error code E404" >&2',
+          "  fi",
+          "  return 1",
+          "}",
+          "run_preflight",
+        ].join("\n"),
+        { VERSION: "0.1.1285", NPM_LOG: npmLog },
+      );
+      assertEquals(output.code, 0, decoder.decode(output.stderr));
+      assertEquals(await loggedNpmCalls(npmLog), [
+        "view @veryfront/ext-first@* name",
+        "view veryfront@* name",
+        "view @veryfront/ext-first@0.1.1285 version",
+        "view veryfront@0.1.1285 version",
+      ]);
+      assertEquals(decoder.decode(output.stderr), "");
+    });
   });
 
   it("fails the release preflight when a version already exists, even for this commit", async () => {
@@ -2589,6 +2683,7 @@ describe("RC publication deadline", () => {
         "set -euo pipefail",
         'source "$SCRIPT_PATH"',
         "verify_npm_compatibility_artifact() { :; }",
+        'deno() { for dir in $(package_dirs); do run_rc_publish_package "$dir"; done; }',
         "package_dirs() { echo npm; }",
         "canonical_tarball_for_package_dir() { echo package.tgz; }",
         "jq() { echo veryfront; }",
@@ -2725,6 +2820,7 @@ describe("RC metadata verification order", () => {
         "set -euo pipefail",
         'source "$SCRIPT_PATH"',
         "verify_npm_compatibility_artifact() { :; }",
+        'deno() { for dir in $(package_dirs); do run_rc_publish_package "$dir"; done; }',
         "package_dirs() { printf '%s\\n' extension history npm; }",
         "canonical_tarball_for_package_dir() { echo package.tgz; }",
         'jq() { echo "$PACKAGE_DIR"; }',
@@ -2752,6 +2848,7 @@ describe("RC metadata verification order", () => {
         "set -euo pipefail",
         'source "$SCRIPT_PATH"',
         "verify_npm_compatibility_artifact() { :; }",
+        'deno() { for dir in $(package_dirs); do run_rc_publish_package "$dir"; done; }',
         "package_dirs() { printf '%s\\n' extension npm; }",
         "canonical_tarball_for_package_dir() { echo package.tgz; }",
         'jq() { echo "$PACKAGE_DIR"; }',
@@ -2780,6 +2877,7 @@ describe("RC metadata verification order", () => {
         "set -euo pipefail",
         'source "$SCRIPT_PATH"',
         "verify_npm_compatibility_artifact() { :; }",
+        'deno() { for dir in $(package_dirs); do run_rc_publish_package "$dir"; done; }',
         "package_dirs() { printf '%s\\n' extension npm; }",
         "canonical_tarball_for_package_dir() { echo package.tgz; }",
         'jq() { echo "$PACKAGE_DIR"; }',
@@ -2812,6 +2910,7 @@ describe("RC metadata verification order", () => {
         "set -euo pipefail",
         'source "$SCRIPT_PATH"',
         "verify_npm_compatibility_artifact() { :; }",
+        'deno() { for dir in $(package_dirs); do run_rc_publish_package "$dir"; done; }',
         "package_dirs() { printf '%s\n' extension npm; }",
         "canonical_tarball_for_package_dir() { echo package.tgz; }",
         'jq() { echo "$PACKAGE_DIR"; }',
@@ -2905,6 +3004,39 @@ describe("RC metadata verification order", () => {
     assertStringIncludes(
       githubRelease?.run ?? "",
       'install_target="veryfront@rc"',
+    );
+  });
+});
+
+describe("RC dependency scheduling", () => {
+  it("delegates the verified package batch to the bounded dependency scheduler", async () => {
+    const output = await runBash(
+      [
+        "set -euo pipefail",
+        'source "$SCRIPT_PATH"',
+        "verify_npm_compatibility_artifact() { :; }",
+        "package_dirs() { printf '%s\\n' npm/extensions/ext-a npm/extensions/ext-b npm; }",
+        "jq() { echo veryfront; }",
+        "canonical_tarball_for_package_dir() { echo package.tgz; }",
+        "rc_tag_for_package() { echo rc; }",
+        "rc_publish_package_dir() { echo serial-publish; }",
+        'deno() { printf "%s\\n" "$*"; }',
+        "run_rc_publish",
+      ].join("\n"),
+      {
+        VERSION: "0.1.0-rc.1",
+        GITHUB_SHA: "expected-head",
+        NPM_PACK_DIR: "artifact",
+      },
+    );
+    assertEquals(output.code, 0, decoder.decode(output.stderr));
+    assertStringIncludes(
+      decoder.decode(output.stdout),
+      "scripts/ci/publish-rc-packages.ts npm/extensions/ext-a npm/extensions/ext-b npm",
+    );
+    assertEquals(
+      decoder.decode(output.stdout).includes("serial-publish"),
+      false,
     );
   });
 });

@@ -1,4 +1,4 @@
-import { assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStrictEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
   __resetVeryfrontCloudCatalogForTests,
@@ -7,6 +7,7 @@ import {
 import type { ToolDefinition } from "#veryfront/tool";
 import {
   createMoonshotSchemaExpansionBudget,
+  createRootSchemaExpansionBudget,
   getProviderToolProfile,
   normalizeProviderToolInputSchema,
   sanitizeProviderToolSchema,
@@ -64,6 +65,28 @@ function containsKey(value: unknown, key: string): boolean {
 }
 
 describe("provider-tool-compat", () => {
+  it("keeps required names declared before properties", () => {
+    const schema = {
+      type: "object",
+      required: ["search", "bad key"],
+      properties: {
+        search: {
+          type: "object",
+          required: ["query", "bad key"],
+          properties: { query: { type: "string" }, "bad key": { type: "string" } },
+        },
+        "bad key": { type: "string" },
+      },
+    } as never;
+    const sanitized = sanitizeProviderToolSchema(schema, { model: "anthropic/claude-haiku-4-5" });
+    assertEquals(sanitized.required, ["search"]);
+    assertEquals(Object.keys(sanitized.properties as Record<string, unknown>), ["search"]);
+    assertEquals(
+      (sanitized.properties as Record<string, { required?: string[] }>).search?.required,
+      ["query"],
+    );
+  });
+
   it("leaves non-sanitizing provider schemas untouched", () => {
     const schema = {
       type: "object",
@@ -97,6 +120,507 @@ describe("provider-tool-compat", () => {
       sanitized.required,
       ["ok"],
       "sanitizing providers must drop the required entry of a dropped property",
+    );
+  });
+
+  it("bounds fan-out references while folding Anthropic roots", () => {
+    const defs: Record<string, unknown> = {
+      level14: { type: "object", properties: { value: { type: "string" } } },
+    };
+    for (let index = 13; index >= 0; index--) {
+      defs[`level${index}`] = {
+        allOf: [{ $ref: `#/$defs/level${index + 1}` }, { $ref: `#/$defs/level${index + 1}` }],
+      };
+    }
+    assertThrows(
+      () =>
+        sanitizeProviderToolSchema(
+          { type: "object", $defs: defs, allOf: [{ $ref: "#/$defs/level0" }] } as never,
+          { model: "anthropic/claude-opus-4-6" },
+        ),
+      TypeError,
+      "root normalization budget",
+    );
+  });
+  it("bounds reference depth while folding Anthropic roots", () => {
+    const defs: Record<string, unknown> = {
+      level80: { type: "object", properties: { value: { type: "string" } } },
+    };
+    for (let index = 79; index >= 0; index--) {
+      defs[`level${index}`] = { $ref: `#/$defs/level${index + 1}` };
+    }
+    assertThrows(
+      () =>
+        sanitizeProviderToolSchema(
+          { type: "object", $defs: defs, allOf: [{ $ref: "#/$defs/level0" }] } as never,
+          { model: "anthropic/claude-opus-4-6" },
+        ),
+      TypeError,
+      "root normalization budget",
+    );
+  });
+  it("bounds encoded bytes introduced by references while folding Anthropic roots", () => {
+    assertThrows(
+      () =>
+        sanitizeProviderToolSchema(
+          {
+            type: "object",
+            $defs: { large: { type: "object", description: "\u0000".repeat(90_000) } },
+            allOf: [{ $ref: "#/$defs/large" }],
+          } as never,
+          { model: "anthropic/claude-opus-4-6" },
+        ),
+      TypeError,
+      "root normalization budget",
+    );
+  });
+  it("accepts large unchanged input while folding OpenAI roots", () => {
+    const description = "\u0000".repeat(90_000);
+    const result = sanitizeProviderToolSchema(
+      { type: "object", description, allOf: [{ type: "object" }] } as never,
+      { model: "openai/gpt-5.4" },
+    );
+    assertEquals(result.description, description);
+    assertEquals(Object.hasOwn(result, "allOf"), false);
+  });
+  it("shares the root expansion allowance across a tool collection", () => {
+    const budget = createRootSchemaExpansionBudget();
+    budget.remainingNodes = 100;
+    const schema = {
+      type: "object",
+      $defs: { input: { properties: { value: { type: "string" } } } },
+      allOf: [{ $ref: "#/$defs/input" }],
+    } as never;
+    const options = { model: "anthropic/claude-opus-4-6", rootExpansionBudget: budget };
+    assertEquals(sanitizeProviderToolSchema(schema, options).type, "object");
+    assertThrows(
+      () => {
+        for (let index = 0; index < 100; index++) sanitizeProviderToolSchema(schema, options);
+      },
+      TypeError,
+      "root normalization budget",
+    );
+  });
+  it("keeps a root reference as authored while folding", () => {
+    const schema = {
+      type: "object",
+      $ref: "#/$defs/input",
+      allOf: [],
+      $defs: { input: { type: "object", properties: { mode: { type: "string" } } } },
+    } as never;
+    const result = sanitizeProviderToolSchema(schema, { model: "openai/gpt-5.4" });
+    assertEquals(result.$ref, "#/$defs/input");
+    assertEquals(Object.hasOwn(result, "allOf"), false);
+  });
+  it("accepts large unchanged Anthropic schemas without spending expansion allowance", () => {
+    for (const length of [260_000, 1024 * 1024]) {
+      const budget = createRootSchemaExpansionBudget();
+      const schema = {
+        type: "object",
+        description: "d".repeat(length),
+        properties: { value: { type: "string" } },
+      };
+      const normalized = sanitizeProviderToolSchema(schema as never, {
+        model: "anthropic/claude-opus-4-6",
+        rootExpansionBudget: budget,
+      });
+      assertEquals(normalized.description, schema.description);
+      assertEquals(budget.remainingNodes, 200_000);
+      assertEquals(budget.remainingBytes, 8 * 1024 * 1024);
+    }
+  });
+  it("charges a large root composition branch at most once", () => {
+    const budget = createRootSchemaExpansionBudget();
+    const description = "d".repeat(180 * 1024);
+    const normalized = sanitizeProviderToolSchema(
+      {
+        type: "object",
+        anyOf: [{ properties: { value: { type: "string", description } } }, {
+          properties: { value: { type: "number" }, other: { type: "number" } },
+        }],
+      } as never,
+      { model: "anthropic/claude-opus-4-6", rootExpansionBudget: budget },
+    );
+    const value = normalized.properties?.value as { anyOf: { description?: string }[] };
+    assertEquals(value.anyOf[0]?.description, description);
+    assertEquals(budget.remainingNodes, 200_000);
+    assertEquals(budget.remainingBytes, 8 * 1024 * 1024);
+  });
+  it("keeps the shared expansion allowance for a large reference-free Anthropic catalog", () => {
+    const budget = createRootSchemaExpansionBudget();
+    const schema = {
+      type: "object",
+      properties: Object.fromEntries(
+        Array.from({ length: 252 }, (_, index) => [`field${index}`, { type: "string" }]),
+      ),
+    } as never;
+    for (let index = 0; index < 198; index++) {
+      const normalized = sanitizeProviderToolSchema(schema, {
+        model: "anthropic/claude-opus-4-6",
+        rootExpansionBudget: budget,
+      });
+      assertEquals(Object.keys(normalized.properties ?? {}).length, 252);
+    }
+    assertEquals(budget.remainingNodes, 200_000);
+    assertEquals(budget.remainingBytes, 8 * 1024 * 1024);
+  });
+  it("falls back to a permissive root for references into removed compositions", () => {
+    const result = sanitizeProviderToolSchema(
+      {
+        type: "object",
+        allOf: [{ properties: { value: { type: "string" } } }],
+        properties: { alias: { $ref: "#/allOf/0/properties/value" } },
+        required: ["alias"],
+      } as never,
+      { model: "openai/gpt-5.4" },
+    );
+    assertEquals(result, {
+      type: "object",
+      properties: { alias: {}, value: {} },
+      required: ["alias"],
+    } as never);
+  });
+  it("folds sibling root compositions beside a root reference", () => {
+    const result = sanitizeProviderToolSchema(
+      {
+        type: "object",
+        $ref: "#/$defs/input",
+        $defs: {
+          input: { allOf: [{ properties: { value: { type: "string" } }, required: ["value"] }] },
+        },
+        allOf: [{ properties: { extra: { type: "number" } }, required: ["extra"] }],
+      } as never,
+      { model: "openai/gpt-5.4" },
+    );
+    assertEquals(result.$ref, "#/$defs/input");
+    assertEquals(result.properties, { extra: { type: "number" } });
+    assertEquals(result.required, ["extra"]);
+  });
+  it("keeps bare root references pointing at the widened root", () => {
+    const result = sanitizeProviderToolSchema(
+      {
+        type: "object",
+        properties: { child: { $ref: "#" } },
+        anyOf: [
+          { properties: { kind: { const: "a" } }, required: ["kind"] },
+          { properties: { kind: { const: "b" } }, required: ["kind"] },
+        ],
+      } as never,
+      { model: "openai/gpt-5.4" },
+    );
+    assertEquals(result.properties?.child, { $ref: "#" });
+    assertEquals(result.properties?.kind, { anyOf: [{ const: "a" }, { const: "b" }] });
+    assertEquals(Object.hasOwn(result, "$defs"), false);
+  });
+  it("keeps root definitions bound when a folded branch reuses their names", () => {
+    for (const model of ["openai/gpt-5.4", "anthropic/claude-opus-4-6"]) {
+      const result = sanitizeProviderToolSchema(
+        {
+          type: "object",
+          $defs: { item: { type: "string" } },
+          properties: { value: { $ref: "#/$defs/item" } },
+          allOf: [{
+            $defs: { item: { type: "number" } },
+            properties: { flag: { type: "boolean" } },
+          }],
+        } as never,
+        { model },
+      );
+      assertEquals((result.$defs as Record<string, unknown>).item, { type: "string" }, model);
+    }
+  });
+  it("leaves literal values that look like references unchanged", () => {
+    const payload = {
+      const: { $ref: "#/anyOf/0" },
+      default: { $ref: "#/anyOf/0" },
+      examples: [{ $ref: "#/anyOf/0" }],
+      enum: [{ $ref: "#/anyOf/0" }],
+    };
+    const result = sanitizeProviderToolSchema(
+      {
+        type: "object",
+        properties: { payload },
+        anyOf: [{ properties: { value: { type: "string" } } }],
+      } as never,
+      { model: "openai/gpt-5.4" },
+    );
+    assertEquals(result.properties, { payload, value: { type: "string" } });
+  });
+  it("never narrows an allOf intersection with a closed branch", () => {
+    const result = sanitizeProviderToolSchema(
+      {
+        type: "object",
+        allOf: [
+          { properties: { a: { type: "string" } }, additionalProperties: false },
+          { properties: { b: { type: "number" } } },
+        ],
+      } as never,
+      { model: "openai/gpt-5.4" },
+    );
+    assertEquals(result, {
+      type: "object",
+      properties: { a: { type: "string" }, b: { type: "number" } },
+    } as never);
+  });
+  it("falls back to a permissive root for branches with pattern properties", () => {
+    // Folding never evaluates authored patterns, so a backtracking-prone
+    // pattern cannot stall conversion.
+    for (
+      const branch of [
+        { patternProperties: { "^(a+)+$": { type: "number" } }, additionalProperties: false },
+        {
+          properties: { value: { type: "string" } },
+          patternProperties: { "^value$": { maxLength: 1 } },
+        },
+      ]
+    ) {
+      const result = sanitizeProviderToolSchema(
+        {
+          type: "object",
+          anyOf: [{ properties: { value: { type: "string" } } }, branch],
+        } as never,
+        { model: "openai/gpt-5.4" },
+      );
+      assertEquals(result, { type: "object", properties: { value: {} } } as never);
+    }
+  });
+  it("falls back to a permissive root for branch resources and object constraints", () => {
+    const branchResource = sanitizeProviderToolSchema(
+      {
+        type: "object",
+        $defs: { item: { type: "string" } },
+        properties: { root: { $ref: "#/$defs/item" } },
+        allOf: [{
+          $id: "https://example.com/branch",
+          $defs: { item: { type: "number" } },
+          properties: { value: { $ref: "#/$defs/item" } },
+        }],
+      } as never,
+      { model: "openai/gpt-5.4" },
+    );
+    assertEquals(branchResource, {
+      type: "object",
+      $defs: { item: { type: "string" } },
+      properties: { root: { $ref: "#/$defs/item" }, value: {} },
+    } as never);
+
+    const constrained = sanitizeProviderToolSchema(
+      { type: "object", allOf: [{ minProperties: 1 }] } as never,
+      { model: "openai/gpt-5.4" },
+    );
+    assertEquals(constrained, { type: "object" } as never);
+  });
+  it("falls back for references that are not plain local pointers", () => {
+    const anchored = sanitizeProviderToolSchema(
+      {
+        type: "object",
+        properties: { alias: { $ref: "#variant" } },
+        anyOf: [{ $anchor: "variant", properties: { value: { type: "string" } } }],
+      } as never,
+      { model: "openai/gpt-5.4" },
+    );
+    assertEquals(anchored, { type: "object", properties: { alias: {}, value: {} } } as never);
+
+    const absolute = sanitizeProviderToolSchema(
+      {
+        $id: "https://example.com/tool",
+        type: "object",
+        properties: { alias: { $ref: "https://example.com/tool#/anyOf/0" } },
+        anyOf: [{ properties: { value: { type: "string" } } }],
+      } as never,
+      { model: "openai/gpt-5.4" },
+    );
+    assertEquals(absolute, { type: "object", properties: { alias: {}, value: {} } } as never);
+
+    const nested = sanitizeProviderToolSchema(
+      {
+        type: "object",
+        properties: { nested: { $id: "https://example.com/nested", $ref: "#/$defs/item" } },
+        anyOf: [{ properties: { value: { type: "string" } } }],
+      } as never,
+      { model: "openai/gpt-5.4" },
+    );
+    assertEquals(nested.properties?.value, {});
+  });
+  it("decodes pointer fragments before classifying references", () => {
+    for (const ref of ["#/%61nyOf/0/properties/value", "#/any%4Ff/0", "#/%ZZ"]) {
+      const result = sanitizeProviderToolSchema(
+        {
+          type: "object",
+          properties: { alias: { $ref: ref } },
+          anyOf: [{ properties: { value: { type: "string" } } }],
+        } as never,
+        { model: "openai/gpt-5.4" },
+      );
+      assertEquals(result, { type: "object", properties: { alias: {}, value: {} } } as never, ref);
+    }
+  });
+  it("falls back for references to root keywords that folding replaces", () => {
+    const unevaluated = sanitizeProviderToolSchema(
+      {
+        type: "object",
+        unevaluatedProperties: { type: "string" },
+        properties: { alias: { $ref: "#/unevaluatedProperties" } },
+        anyOf: [{ properties: { value: { type: "string" } } }],
+      } as never,
+      { model: "openai/gpt-5.4" },
+    );
+    assertEquals(unevaluated, {
+      type: "object",
+      properties: { alias: {}, value: {} },
+    } as never);
+
+    const property = sanitizeProviderToolSchema(
+      {
+        type: "object",
+        properties: { value: { type: "string" }, alias: { $ref: "#/properties/value" } },
+        allOf: [{ properties: { value: { type: "string", maxLength: 1 } } }],
+      } as never,
+      { model: "openai/gpt-5.4" },
+    );
+    assertEquals(property, {
+      type: "object",
+      properties: { value: {}, alias: {} },
+    } as never);
+  });
+  it("keeps prototype-named definitions as own data properties", () => {
+    const schema = JSON.parse(
+      '{"type":"object","$defs":{"__proto__":{"type":"string"},"other":{"type":"number"}},' +
+        '"properties":{"value":{"$ref":"#/$defs/__proto__"}},"allOf":[{"required":["value"]}]}',
+    );
+    const result = sanitizeProviderToolSchema(schema, { model: "openai/gpt-5.4" });
+    const defs = result.$defs as Record<string, unknown>;
+    assertEquals(Object.getOwnPropertyDescriptor(defs, "__proto__")?.value, { type: "string" });
+    assertEquals(result.required, ["value"]);
+  });
+  it("keeps a __proto__ property declaration in the fallback root", () => {
+    const schema = JSON.parse(
+      '{"type":"object","additionalProperties":false,' +
+        '"properties":{"__proto__":{"type":"string"}},"anyOf":[{"minProperties":1}]}',
+    );
+    const result = sanitizeProviderToolSchema(schema, { model: "openai/gpt-5.4" });
+    const properties = result.properties as Record<string, unknown>;
+    assertEquals(Object.hasOwn(properties, "__proto__"), true);
+    assertEquals(Object.getOwnPropertyDescriptor(properties, "__proto__")?.value, {
+      type: "string",
+    });
+  });
+  it("snapshots the complete OpenAI schema before removing root keywords", () => {
+    let deep: Record<string, unknown> = {};
+    for (let index = 0; index < 200_000; index++) deep = { not: deep };
+    assertThrows(
+      () =>
+        sanitizeProviderToolSchema(
+          { type: "object", anyOf: [{ type: "object" }], not: deep } as never,
+          { model: "openai/gpt-5.4" },
+        ),
+      TypeError,
+      "bounded JSON data",
+    );
+  });
+  it("leaves a property unconstrained when an alternative omits it", () => {
+    const result = sanitizeProviderToolSchema(
+      {
+        type: "object",
+        anyOf: [{ properties: { value: { type: "string" } } }, {}],
+      } as never,
+      { model: "openai/gpt-5.4" },
+    );
+    assertEquals(result.properties?.value, {});
+
+    const closed = sanitizeProviderToolSchema(
+      {
+        type: "object",
+        oneOf: [
+          { properties: { value: { type: "string" } } },
+          { properties: { other: { type: "number" } }, additionalProperties: false },
+        ],
+      } as never,
+      { model: "openai/gpt-5.4" },
+    );
+    assertEquals(closed.properties, { value: { type: "string" }, other: {} });
+  });
+  it("folds many disjoint alternatives in linear space", () => {
+    const branches = Array.from({ length: 3_000 }, (_, index) => ({
+      properties: { [`field${index}`]: { type: "string" } },
+    }));
+    const result = sanitizeProviderToolSchema(
+      { type: "object", anyOf: branches } as never,
+      { model: "openai/gpt-5.4" },
+    );
+    const properties = Object.values(result.properties ?? {});
+    assertEquals(properties.length, 3_000);
+    assertEquals(properties.every((schema) => countNodes(schema) === 1), true);
+  });
+  it("folds root combinators out of OpenAI tool schemas", () => {
+    const nested = {
+      anyOf: [{ type: "string" }, { type: "object", properties: { text: { type: "string" } } }],
+    };
+    const createAgentSchema = {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        name: { type: "string" },
+        system: { type: "string" },
+        system_prompt: { type: "string" },
+        model: nested,
+      },
+      required: ["name"],
+      anyOf: [{ required: ["system"] }, { required: ["system_prompt"] }],
+    } as never;
+
+    for (
+      const model of ["openai/gpt-5.4", "veryfront-cloud/openai/gpt-5.5", "openai/o3"]
+    ) {
+      const sanitized = sanitizeProviderToolSchema(createAgentSchema, { model });
+      assertEquals(sanitized, {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          name: { type: "string" },
+          system: { type: "string" },
+          system_prompt: { type: "string" },
+          model: nested,
+        },
+        required: ["name"],
+      } as never, model);
+      for (const key of ["allOf", "anyOf", "oneOf", "not", "enum"]) {
+        assertEquals(Object.hasOwn(sanitized, key), false, `${model} root ${key}`);
+      }
+    }
+
+    const withRootNotAndEnum = {
+      type: "object",
+      properties: { mode: { type: "string", enum: ["a", "b"] } },
+      not: { required: ["legacy"] },
+      enum: [{ mode: "a" }],
+      oneOf: [
+        { properties: { a: { type: "string" } }, required: ["a"] },
+        { properties: { a: { type: "string" } }, required: ["a"] },
+      ],
+    } as never;
+    assertEquals(
+      sanitizeProviderToolSchema(withRootNotAndEnum, { model: "openai/gpt-5.4" }),
+      {
+        type: "object",
+        properties: { mode: { type: "string", enum: ["a", "b"] }, a: { type: "string" } },
+        required: ["a"],
+      } as never,
+    );
+  });
+
+  it("leaves root combinators alone for providers other than OpenAI", () => {
+    const schema = {
+      type: "object",
+      properties: { system: { type: "string" }, system_prompt: { type: "string" } },
+      anyOf: [{ required: ["system"] }, { required: ["system_prompt"] }],
+    } as never;
+
+    assertStrictEquals(sanitizeProviderToolSchema(schema, { model: "some-local-model" }), schema);
+    assertStrictEquals(sanitizeProviderToolSchema(schema, {}), schema);
+    assertStrictEquals(
+      sanitizeProviderToolSchema(schema, { model: "mistral/mistral-large" }),
+      schema,
     );
   });
 
@@ -152,136 +676,61 @@ describe("provider-tool-compat", () => {
     assertEquals(selected.at(-1)?.name, "tool_127");
   });
 
-  it("sanitizes Google tool schemas to avoid unsupported JSON Schema keywords", () => {
-    const sanitized = sanitizeProviderToolSchema(
-      {
-        $schema: "https://json-schema.org/draft/2020-12/schema",
-        $id: "tool-schema",
-        type: "object",
-        additionalProperties: false,
-        properties: {
-          kind: {
-            type: "string",
-            const: "file",
-            default: "file",
-          },
-          nested: {
-            anyOf: [
-              { type: "string", const: "a" },
-              { type: "string", const: "b" },
-            ],
-          },
-          refValue: {
-            $ref: "#/$defs/refValue",
-          },
-        },
-      } as never,
-      { model: "veryfront-cloud/google-ai-studio/gemini-2.5-flash" },
+  it("preserves canonical JSON Schema for Google's native JSON Schema field", () => {
+    const schema: ToolDefinition["parameters"] = {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        enabled: { type: "boolean", const: true, enum: [true] },
+        count: { type: "integer", enum: [1, 2], exclusiveMinimum: 0 },
+        nested: { type: "object", properties: { value: { type: "string" } } },
+      },
+      oneOf: [{ properties: { enabled: {} }, required: ["enabled"] }, {
+        properties: { nested: {} },
+        required: ["nested"],
+      }],
+      not: { properties: { forbidden: {} }, required: ["forbidden"] },
+    };
+    assertEquals(
+      sanitizeProviderToolSchema(schema as never, { model: "google/gemini-2.5-pro" }),
+      schema,
     );
-
-    assertEquals(containsKey(sanitized, "const"), false);
-    assertEquals(containsKey(sanitized, "default"), false);
-    assertEquals(containsKey(sanitized, "additionalProperties"), false);
-    assertEquals(containsKey(sanitized, "$schema"), false);
-    assertEquals(containsKey(sanitized, "$id"), false);
-    assertEquals(containsKey(sanitized, "$ref"), false);
-    assertEquals(containsKey(sanitized, "anyOf"), false);
-    assertEquals(sanitized.properties?.kind?.enum, ["file"]);
-    assertEquals(sanitized.properties?.nested?.enum, ["a", "b"]);
   });
 
-  it("does not assign a schema type when collapsed anyOf literals are mixed types", () => {
-    const sanitized = sanitizeProviderToolSchema(
-      {
-        anyOf: [
-          { const: "file" },
-          { const: 1 },
-        ],
-      } as never,
-      { model: "google-ai-studio/gemini-2.5-pro" },
-    );
-
-    assertEquals(sanitized.enum, ["file", 1]);
-    assertEquals(sanitized.type, undefined);
-  });
-
-  it("normalizes Google schemas that use JSON Schema type arrays and numeric exclusive bounds", () => {
-    const sanitized = sanitizeProviderToolSchema(
-      {
-        type: "object",
-        properties: {
-          maybeText: {
-            type: ["string", "null"],
-          },
-          flexible: {
-            type: ["string", "number"],
-          },
-          count: {
-            type: "number",
-            exclusiveMinimum: 0,
-            exclusiveMaximum: 10,
-          },
-        },
-      } as never,
-      { model: "google-ai-studio/gemini-2.5-pro" },
-    );
-
-    assertEquals(sanitized.properties?.maybeText?.type, "string");
-    assertEquals(sanitized.properties?.flexible?.type, undefined);
-    assertEquals(containsKey(sanitized, "exclusiveMinimum"), false);
-    assertEquals(containsKey(sanitized, "exclusiveMaximum"), false);
-  });
-
-  it("keeps Google array schemas valid when upstream tools omit item schemas", () => {
-    const sanitized = sanitizeProviderToolSchema(
-      {
-        type: "object",
-        properties: {
-          labelIds: {
-            type: "array",
-            description: "Label IDs to apply.",
-          },
-        },
-      } as never,
-      { model: "google-ai-studio/gemini-2.5-pro" },
-    );
-
-    assertEquals(sanitized.properties?.labelIds?.type, "array");
-    assertEquals(sanitized.properties?.labelIds?.items, {});
-  });
-
-  it("normalizes Moonshot tool schemas to use $defs references", () => {
-    const sanitized = sanitizeProviderToolSchema(
-      {
-        type: "object",
-        properties: {
-          acceptance_criteria: {
-            $ref: "#/definitions/acceptanceCriteria",
-          },
-        },
-        definitions: {
-          acceptanceCriteria: {
-            type: "array",
-            items: {
-              type: "object",
-              properties: {
-                label: { type: "string" },
-              },
-              required: ["label"],
+  for (const wireSurface of [undefined, "openai"] as const) {
+    it(`normalizes Moonshot tool schemas to use $defs references (${wireSurface})`, () => {
+      const sanitized = sanitizeProviderToolSchema(
+        {
+          type: "object",
+          properties: {
+            acceptance_criteria: {
+              $ref: "#/definitions/acceptanceCriteria",
             },
           },
-        },
-      } as never,
-      { model: "veryfront-cloud/moonshotai/kimi-k2.6" },
-    );
-    const sanitizedRecord = sanitized as Record<string, Record<string, unknown> | undefined>;
-    const properties = sanitizedRecord.properties as Record<string, Record<string, unknown>>;
-    const defs = sanitizedRecord.$defs as Record<string, Record<string, unknown>>;
+          definitions: {
+            acceptanceCriteria: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  label: { type: "string" },
+                },
+                required: ["label"],
+              },
+            },
+          },
+        } as never,
+        { model: "veryfront-cloud/moonshotai/kimi-k2.6", wireSurface },
+      );
+      const sanitizedRecord = sanitized as Record<string, Record<string, unknown> | undefined>;
+      const properties = sanitizedRecord.properties as Record<string, Record<string, unknown>>;
+      const defs = sanitizedRecord.$defs as Record<string, Record<string, unknown>>;
 
-    assertEquals(properties.acceptance_criteria?.$ref, "#/$defs/acceptanceCriteria");
-    assertEquals(sanitizedRecord.definitions, undefined);
-    assertEquals(defs.acceptanceCriteria?.type, "array");
-  });
+      assertEquals(properties.acceptance_criteria?.$ref, "#/$defs/acceptanceCriteria");
+      assertEquals(sanitizedRecord.definitions, undefined);
+      assertEquals(defs.acceptanceCriteria?.type, "array");
+    });
+  }
 
   it("normalizes short Kimi aliases as Moonshot tool schemas", () => {
     const profile = getProviderToolProfile("kimi-k2.6");
@@ -312,36 +761,38 @@ describe("provider-tool-compat", () => {
     assertEquals(defs.acceptanceCriteria?.type, "array");
   });
 
-  it("inlines Moonshot tool refs that point outside $defs", () => {
-    const sanitized = sanitizeProviderToolSchema(
-      {
-        type: "object",
-        properties: {
-          expectations: {
-            type: "array",
-            items: {
-              type: "object",
-              properties: {
-                id: { type: "string" },
-                description: { type: "string" },
+  for (const wireSurface of [undefined, "openai"] as const) {
+    it(`inlines Moonshot tool refs that point outside $defs (${wireSurface})`, () => {
+      const sanitized = sanitizeProviderToolSchema(
+        {
+          type: "object",
+          properties: {
+            expectations: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  id: { type: "string" },
+                  description: { type: "string" },
+                },
+                required: ["id", "description"],
               },
-              required: ["id", "description"],
+            },
+            acceptance_criteria: {
+              $ref: "#/properties/expectations",
             },
           },
-          acceptance_criteria: {
-            $ref: "#/properties/expectations",
-          },
-        },
-      } as never,
-      { model: "veryfront-cloud/moonshotai/kimi-k2.6" },
-    );
-    const sanitizedRecord = sanitized as Record<string, Record<string, unknown> | undefined>;
-    const properties = sanitizedRecord.properties as Record<string, Record<string, unknown>>;
+        } as never,
+        { model: "veryfront-cloud/moonshotai/kimi-k2.6", wireSurface },
+      );
+      const sanitizedRecord = sanitized as Record<string, Record<string, unknown> | undefined>;
+      const properties = sanitizedRecord.properties as Record<string, Record<string, unknown>>;
 
-    assertEquals(properties.acceptance_criteria?.$ref, undefined);
-    assertEquals(properties.acceptance_criteria?.type, "array");
-    assertEquals(JSON.stringify(sanitized).includes("#/properties/"), false);
-  });
+      assertEquals(properties.acceptance_criteria?.$ref, undefined);
+      assertEquals(properties.acceptance_criteria?.type, "array");
+      assertEquals(JSON.stringify(sanitized).includes("#/properties/"), false);
+    });
+  }
 
   it("bounds Moonshot ref inlining for fan-out ref chains", () => {
     // 15 levels, not a deeper hostile case: without the budget this already expands to
@@ -601,6 +1052,64 @@ describe("getProviderToolProfile for providers only the served catalog lists", (
     served("anthropic");
     assertEquals(getProviderToolProfile("veryfront-cloud/acme-labs/m1"), {
       provider: "anthropic",
+      sanitizeSchema: true,
+    });
+  });
+
+  it("keeps a Google publisher's tool schema on the served OpenAI wire surface", () => {
+    __setVeryfrontCloudCatalogForTests({
+      models: [{
+        id: "local-model",
+        modelId: "google/local-model",
+        provider: "google",
+        surface: "openai",
+        operations: ["chat-completions"],
+        aliases: [],
+        capabilities: {},
+      }],
+    });
+    assertEquals(getProviderToolProfile("veryfront-cloud/google/local-model", "openai"), {
+      provider: "openai",
+      maxTools: 128,
+      sanitizeSchema: false,
+    });
+    const schema = {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        target: { oneOf: [{ type: "string" }, { type: "null" }] },
+      },
+    } as never;
+    assertEquals(
+      sanitizeProviderToolSchema(schema, {
+        model: "veryfront-cloud/google/local-model",
+        wireSurface: "openai",
+      }),
+      schema,
+    );
+  });
+
+  it("keeps a direct provider ID on its own profile when a wire surface is supplied", () => {
+    assertEquals(getProviderToolProfile("google/gemini-2.5-pro", "openai"), {
+      provider: "google",
+      sanitizeSchema: true,
+    });
+  });
+
+  it("uses the authenticated wire surface over the served catalog surface", () => {
+    __setVeryfrontCloudCatalogForTests({
+      models: [{
+        id: "local-model",
+        modelId: "acme-labs/local-model",
+        provider: "acme-labs",
+        surface: "openai",
+        operations: ["chat-completions"],
+        aliases: [],
+        capabilities: {},
+      }],
+    });
+    assertEquals(getProviderToolProfile("veryfront-cloud/acme-labs/local-model", "google"), {
+      provider: "google",
       sanitizeSchema: true,
     });
   });

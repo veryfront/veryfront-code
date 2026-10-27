@@ -74,7 +74,7 @@ describe("veryfront integration get", () => {
       if (url.pathname === "/v1/projects/test-project") {
         return Promise.resolve(Response.json(project));
       }
-      if (url.pathname === "/v1/integrations/tools/list") {
+      if (url.pathname === "/v1/integration-tools") {
         // The client's read-only project binding probe.
         return Promise.resolve(
           Response.json({ tools: [] }, { headers: { "x-veryfront-project-id": project.id } }),

@@ -111,7 +111,9 @@ export function DrawerTitle({
       id={resolvedId}
       className={cn("text-lg font-medium text-[var(--foreground)]", className)}
       {...props}
-    />
+    >
+      {props.children}
+    </h2>
   );
 }
 

@@ -63,6 +63,16 @@ describe("platform/compat/esbuild-shared", () => {
       assertEquals(result, "/tmp/deno-compile-abc123");
     });
 
+    it("preserves a nested project root inside the compile VFS", () => {
+      assertEquals(
+        getVFSBasePath(
+          "/tmp/deno-compile-candidate/project/src/platform/compat/esbuild-init.ts",
+          "/tmp",
+        ),
+        "/tmp/deno-compile-candidate/project",
+      );
+    });
+
     it("should return parent of src when path contains src directory", () => {
       const result = getVFSBasePath(
         "/home/user/project/src/platform/compat/esbuild.ts",

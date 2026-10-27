@@ -713,15 +713,15 @@ it("authored knowledge supplies its loader independently and client overrides on
     configuredKnowledge: { "knowledge/support/**": true },
   };
   assertEquals(resolveHostedRuntimeAllowedTools({ ...input, requestedTools: undefined }), [
-    "search_knowledge",
+    "veryfront__search_knowledge",
   ]);
   assertEquals(resolveHostedRuntimeAllowedTools({ ...input, requestedTools: [] }), []);
   assertEquals(
     resolveHostedRuntimeAllowedTools({
       ...input,
-      requestedTools: ["search_knowledge", "get_file"],
+      requestedTools: ["veryfront__search_knowledge", "get_file"],
     }),
-    ["search_knowledge"],
+    ["veryfront__search_knowledge"],
   );
 });
 
@@ -744,4 +744,22 @@ it("explicit hosted grants require own data configuration and array entries", ()
   Object.setPrototypeOf(entries, { 0: name });
   assertEquals(hasExplicitHostedToolName({ tools: entries }, name), false);
   assertEquals(reads, 0);
+});
+
+it("authored parallel tool control does not alter allowed tool intersection", () => {
+  for (const value of [false, true, undefined]) {
+    const result = resolveHostedRuntimeRequestConfig({
+      request: { runtimeOverrides: { allowedTools: ["read_file"] } },
+      agentConfig: {
+        parallelToolCalls: value,
+        tools: ["read_file", "write_file"],
+        deniedTools: ["write_file"],
+        skills: false,
+      },
+      resolveModelId: (id) => id,
+    });
+    assertEquals(result.requestedParallelToolCalls, value);
+    assertEquals(Object.hasOwn(result, "requestedParallelToolCalls"), value !== undefined);
+    assertEquals(result.requestedAllowedTools, ["read_file"]);
+  }
 });

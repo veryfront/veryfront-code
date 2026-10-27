@@ -109,7 +109,9 @@ const webIdlBrandSymbol = (() => {
   if (typeof URL !== "function") return undefined;
   try {
     const sample = new URL("https://example.com");
-    for (const key of ownKeys(sample)) {
+    const keys = ownKeys(sample);
+    for (let index = 0; index < keys.length; index++) {
+      const key = keys[index];
       if (typeof key !== "symbol") continue;
       const descriptor = getOwnPropertyDescriptor(sample, key);
       if (descriptor?.value === key) return key;
@@ -124,6 +126,19 @@ const nativeSlotProbeName = "x-veryfront-brand-probe";
 const noArguments: unknown[] = [];
 const nativeSlotProbeArguments = [nativeSlotProbeToken];
 const nativeSlotProbeNameArguments = [nativeSlotProbeName];
+const structuredCloneTransferIteratorResult = freeze({ done: true, value: undefined });
+const structuredCloneEmptyTransferIterator = freeze({
+  next: () => structuredCloneTransferIteratorResult,
+});
+const structuredCloneEmptyTransferList = freeze(
+  defineProperty([], Symbol.iterator, {
+    configurable: false,
+    enumerable: false,
+    value: () => structuredCloneEmptyTransferIterator,
+    writable: false,
+  }),
+);
+const structuredCloneOptions = freeze({ transfer: structuredCloneEmptyTransferList });
 
 function hasNativeSlot(
   value: unknown,
@@ -151,7 +166,9 @@ function hasOnlyOwnDataProperties(value: unknown): boolean {
   } catch {
     return false;
   }
-  for (const key of keys) {
+  for (let index = 0; index < keys.length; index++) {
+    const key = keys[index];
+    if (key === undefined) return false;
     const descriptor = getOwnPropertyDescriptor(value, key);
     if (descriptor === undefined || !hasOwn(descriptor, "value")) return false;
   }
@@ -160,7 +177,10 @@ function hasOnlyOwnDataProperties(value: unknown): boolean {
 
 function hasOnlyShallowCloneSafeOwnData(value: unknown): boolean {
   if (!isReflectableValue(value)) return false;
-  for (const key of ownKeys(value)) {
+  const keys = ownKeys(value);
+  for (let index = 0; index < keys.length; index++) {
+    const key = keys[index];
+    if (key === undefined) return false;
     const descriptor = getOwnPropertyDescriptor(value, key);
     if (descriptor === undefined || !hasOwn(descriptor, "value")) return false;
     const fieldType = typeof descriptor.value;
@@ -178,7 +198,7 @@ function hasUnsupportedNativeClone(value: unknown): boolean {
     return false;
   }
   try {
-    structuredCloneValue(value);
+    apply(structuredCloneValue, globalThis, [value, structuredCloneOptions]);
     return false;
   } catch (error) {
     return error instanceof DOMExceptionConstructor && error.name === "DataCloneError";
@@ -222,18 +242,19 @@ function snapshotNativeBrandChecks(value: unknown): NativeBrandChecks | undefine
   }
 
   const snapshot = createObject(null) as NativeBrandChecks;
-  for (
-    const key of [
-      "isAsyncFunction",
-      "isBoxedPrimitive",
-      "isNativeError",
-      "isPromise",
-      "isProxy",
-      "isUint8Array",
-      "isWeakMap",
-      "isWeakSet",
-    ] as const
-  ) {
+  const requiredCheckNames = [
+    "isAsyncFunction",
+    "isBoxedPrimitive",
+    "isNativeError",
+    "isPromise",
+    "isProxy",
+    "isUint8Array",
+    "isWeakMap",
+    "isWeakSet",
+  ] as const;
+  for (let index = 0; index < requiredCheckNames.length; index++) {
+    const key = requiredCheckNames[index];
+    if (key === undefined) return undefined;
     const check = readOwnDataFunction(value, key);
     if (!check) return undefined;
     defineProperty(snapshot, key, {
@@ -247,7 +268,9 @@ function snapshotNativeBrandChecks(value: unknown): NativeBrandChecks | undefine
     (typeof nonPlainBuiltinCheckNames)[number],
     ((value: unknown) => boolean) | undefined
   >;
-  for (const key of nonPlainBuiltinCheckNames) {
+  for (let index = 0; index < nonPlainBuiltinCheckNames.length; index++) {
+    const key = nonPlainBuiltinCheckNames[index];
+    if (key === undefined) return undefined;
     const check = readOwnDataFunction(value, key);
     if (check) {
       defineProperty(nonPlainBuiltinChecks, key, {
@@ -273,7 +296,9 @@ function snapshotNativeBrandChecks(value: unknown): NativeBrandChecks | undefine
       // on proxies. Rejecting proxies belongs to the caller's dedicated proxy
       // path, so keep this aggregate check hook-free by stopping here.
       if (apply(proxyCheck, undefined, [candidate]) === true) return false;
-      for (const key of nonPlainBuiltinCheckNames) {
+      for (let index = 0; index < nonPlainBuiltinCheckNames.length; index++) {
+        const key = nonPlainBuiltinCheckNames[index];
+        if (key === undefined) return false;
         const check = nonPlainBuiltinChecks[key];
         if (check && apply(check, undefined, [candidate]) === true) return true;
       }
@@ -297,13 +322,26 @@ function snapshotNativeBrandChecks(value: unknown): NativeBrandChecks | undefine
   return freeze(snapshot);
 }
 
+/** @internal Capture only the trusted bootstrap host's own builtin loader. */
+export function captureHostBuiltinModuleLoader(hostProcess: HostProcess): unknown {
+  const descriptor = getOwnPropertyDescriptor(hostProcess, "getBuiltinModule");
+  // Deno lazy-loads this own property through a getter. Candidate and
+  // predicate reads still use own data functions, never this host boundary.
+  const loader = readOwnDataFunction(hostProcess, "getBuiltinModule");
+  if (loader !== undefined) return loader;
+  if (typeof descriptor?.get === "function") {
+    return apply(descriptor.get, hostProcess, []);
+  }
+  return undefined;
+}
+
 function loadNativeBrandCheckModule(): unknown {
   if (!isBun && !isDeno && !isNode) return undefined;
 
   const hostProcess = (globalThis as typeof globalThis & { process?: HostProcess }).process;
   if (hostProcess) {
-    const getBuiltinModule = readOwnDataFunction(hostProcess as object, "getBuiltinModule");
-    if (getBuiltinModule) {
+    const getBuiltinModule = captureHostBuiltinModuleLoader(hostProcess);
+    if (typeof getBuiltinModule === "function") {
       return apply(getBuiltinModule, hostProcess, ["node:util/types"]);
     }
   }

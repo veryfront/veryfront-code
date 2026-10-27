@@ -29,7 +29,7 @@ usage() {
 
 require_env() {
   for NAME in "$@"; do
-    if [ -z "${!NAME:-}" ]; then
+    if [[ -z "${!NAME:-}" ]]; then
       echo "::error::${NAME} must be set for this mode." >&2
       exit 1
     fi
@@ -40,7 +40,7 @@ require_env() {
 # pins auto-loaded extensions to the same version, so publish it last.
 package_dirs() {
   find npm/extensions -mindepth 1 -maxdepth 1 -type d | sort | while read -r PACKAGE_DIR; do
-    if [ "$(jq -r '.veryfront.npm.publish == false' "${PACKAGE_DIR}/package.json")" = "true" ]; then
+    if [[ "$(jq -r '.veryfront.npm.publish == false' "${PACKAGE_DIR}/package.json")" = "true" ]]; then
       PACKAGE_NAME="$(jq -r '.name' "${PACKAGE_DIR}/package.json")"
       echo "::notice::${PACKAGE_NAME} is marked veryfront.npm.publish=false; skipping npm publish" >&2
       continue
@@ -56,7 +56,7 @@ package_names_from_workspace() {
   printf '%s\n' veryfront
   jq -r '.workspace[] | select(startswith("./extensions/")) | .[2:] + "/deno.json"' deno.json \
     | while read -r MANIFEST_PATH; do
-      if [ "$(jq -r '.veryfront.npm.publish == false' "${MANIFEST_PATH}")" = "true" ]; then
+      if [[ "$(jq -r '.veryfront.npm.publish == false' "${MANIFEST_PATH}")" = "true" ]]; then
         continue
       fi
       jq -r '.name' "${MANIFEST_PATH}"
@@ -150,6 +150,25 @@ NPM_GIT_HEAD_WAIT_SPENT_SECONDS=0
 # retries) would let a single `npm view` run ~15 minutes, and every package
 # needs at least one confirming lookup.
 NPM_GIT_HEAD_LOOKUP_TIMEOUT_MS="${NPM_GIT_HEAD_LOOKUP_TIMEOUT_MS:-60000}"
+
+metadata_budget() {
+  deno run --config=scripts/test.deno.json --frozen --allow-read --allow-write \
+    scripts/ci/npm-metadata-budget.ts "$1" "$NPM_GIT_HEAD_SHARED_BUDGET_FILE" "${2:-0}" "${3:-0}"
+}
+
+refresh_metadata_budget() {
+  if [[ -n "${NPM_GIT_HEAD_SHARED_BUDGET_FILE:-}" ]]; then
+    NPM_GIT_HEAD_WAIT_SPENT_SECONDS="$(metadata_budget read)" || return 1
+  fi
+}
+
+charge_metadata_budget() {
+  if [[ -n "${NPM_GIT_HEAD_SHARED_BUDGET_FILE:-}" ]]; then
+    NPM_GIT_HEAD_WAIT_SPENT_SECONDS="$(metadata_budget charge "$1")" || return 1
+  else
+    NPM_GIT_HEAD_WAIT_SPENT_SECONDS=$((NPM_GIT_HEAD_WAIT_SPENT_SECONDS + $1))
+  fi
+}
 
 is_transient_publish_failure() {
   CONFLICT_OUTPUT_CANDIDATE="$1"
@@ -332,7 +351,7 @@ publish_npm_package_with_retry() {
 lookup_npm_rc_git_head() {
   local package_name="$1" registry path response status
   registry="$(npm config get registry 2>/dev/null)" || return 1
-  [ -n "${registry}" ] || return 1
+  [[ -n "${registry}" ]] || return 1
   path="$(jq -nr --arg name "${package_name}" --arg version "${VERSION}" \
     '($name | @uri) + "/" + ($version | @uri)')" || return 1
   # A package document may remain cached for five minutes after publication.
@@ -369,8 +388,8 @@ lookup_npm_git_head() {
     fi
   fi
   LOOKUP_SECONDS=$(( $(date +%s) - LOOKUP_STARTED_AT ))
-  if [ "${LOOKUP_SECONDS}" -gt 0 ]; then
-    NPM_GIT_HEAD_WAIT_SPENT_SECONDS=$(( NPM_GIT_HEAD_WAIT_SPENT_SECONDS + LOOKUP_SECONDS ))
+  if [[ "${LOOKUP_SECONDS}" -gt 0 ]]; then
+    charge_metadata_budget "$LOOKUP_SECONDS" || return 1
   fi
 }
 
@@ -384,23 +403,32 @@ wait_for_npm_git_head() {
   # mismatches as immediate failures.
   for attempt in $(seq 1 "${NPM_GIT_HEAD_WAIT_ATTEMPTS}"); do
     lookup_npm_git_head "${PACKAGE_NAME}" "${2:-}" || return 1
-    if [ "${PUBLISHED_GIT_HEAD}" = "${GITHUB_SHA}" ]; then
+    if [[ "${PUBLISHED_GIT_HEAD}" = "${GITHUB_SHA}" ]]; then
       return 0
     fi
-    if [ -n "${PUBLISHED_GIT_HEAD}" ]; then
+    if [[ -n "${PUBLISHED_GIT_HEAD}" ]]; then
       return 1
     fi
-    if [ "${NPM_GIT_HEAD_WAIT_SPENT_SECONDS}" -ge "${NPM_GIT_HEAD_WAIT_TOTAL_SECONDS}" ]; then
+    refresh_metadata_budget || return 1
+    if [[ "${NPM_GIT_HEAD_WAIT_SPENT_SECONDS}" -ge "${NPM_GIT_HEAD_WAIT_TOTAL_SECONDS}" ]]; then
       echo "Shared npm metadata wait of ${NPM_GIT_HEAD_WAIT_TOTAL_SECONDS}s is spent; checking ${PACKAGE_NAME}@${VERSION} once more." >&2
       break
     fi
     echo "Waiting for npm registry metadata for ${PACKAGE_NAME}@${VERSION} (attempt ${attempt}/${NPM_GIT_HEAD_WAIT_ATTEMPTS})."
-    sleep "${NPM_GIT_HEAD_WAIT_DELAY_SECONDS}"
-    NPM_GIT_HEAD_WAIT_SPENT_SECONDS=$(( NPM_GIT_HEAD_WAIT_SPENT_SECONDS + NPM_GIT_HEAD_WAIT_DELAY_SECONDS ))
+    if [[ -n "${NPM_GIT_HEAD_SHARED_BUDGET_FILE:-}" ]]; then
+      reserve_status=0
+      NPM_GIT_HEAD_WAIT_SPENT_SECONDS="$(metadata_budget reserve "$NPM_GIT_HEAD_WAIT_DELAY_SECONDS" "$NPM_GIT_HEAD_WAIT_TOTAL_SECONDS")" || reserve_status=$?
+      if [[ "$reserve_status" == 2 ]]; then break; fi
+      if [[ "$reserve_status" != 0 ]]; then return 1; fi
+      sleep "${NPM_GIT_HEAD_WAIT_DELAY_SECONDS}"
+    else
+      sleep "${NPM_GIT_HEAD_WAIT_DELAY_SECONDS}"
+      charge_metadata_budget "$NPM_GIT_HEAD_WAIT_DELAY_SECONDS" || return 1
+    fi
   done
 
   lookup_npm_git_head "${PACKAGE_NAME}" "${2:-}" || return 1
-  [ "${PUBLISHED_GIT_HEAD}" = "${GITHUB_SHA}" ]
+  [[ "${PUBLISHED_GIT_HEAD}" = "${GITHUB_SHA}" ]]
 }
 
 # Stable packages propagate independently. Poll unresolved packages in rounds,
@@ -522,7 +550,7 @@ release_publish_package_dir() {
     --provenance --access public \
     && PUBLISH_STATUS=0 || PUBLISH_STATUS=$?
 
-  if [ "${PUBLISH_STATUS}" -ne 0 ]; then
+  if [[ "${PUBLISH_STATUS}" -ne 0 ]]; then
     exit "${PUBLISH_STATUS}"
   fi
 
@@ -588,27 +616,42 @@ run_rc_publish() {
     done
   fi
 
-  for PACKAGE_DIR in $(package_dirs); do
-    PUBLISH_SPEC="$(canonical_tarball_for_package_dir "${PACKAGE_DIR}")" || PUBLISH_SPEC=""
-    if [[ -z "${PUBLISH_SPEC}" ]]; then
-      PACKAGE_NAME="$(jq -r '.name' "${PACKAGE_DIR}/package.json")"
-      echo "::error::Canonical npm publish spec for ${PACKAGE_NAME} is empty. Ensure manifest.json contains exactly one matching package entry." >&2
-      return 1
-    fi
-    PACKAGE_NAME="$(jq -r '.name' "${PACKAGE_DIR}/package.json")"
-    RC_PUBLISH_TAG="$(rc_tag_for_package "${PACKAGE_NAME}")"
-    if [[ "${NPM_MAINTENANCE_RELEASE:-false}" == "true" && "${RC_PUBLISH_TAG}" != "rc-history" ]]; then
-      echo "::error::Maintenance rc selector changed during publication." >&2
-      return 1
-    fi
-    rc_publish_package_dir "${PACKAGE_DIR}" "${PUBLISH_SPEC}" "${RC_PUBLISH_TAG}"
-  done
+  NPM_GIT_HEAD_WAIT_INITIAL_SPENT_SECONDS="$NPM_GIT_HEAD_WAIT_SPENT_SECONDS" \
+  deno run --config=scripts/test.deno.json --frozen --allow-read --allow-write --allow-run=bash --allow-env \
+    scripts/ci/publish-rc-packages.ts $(package_dirs)
   # The required read-only registry validator checks immutable identities and
   # RC tags after propagation, before the locked dispatch gate can deploy.
 }
 
+# Each child uses its own shell state and the parent's verified canonical artifact.
+run_rc_publish_package() {
+  require_env VERSION GITHUB_SHA NPM_PACK_DIR
+  PACKAGE_DIR="$1"
+  PUBLISH_SPEC="$(canonical_tarball_for_package_dir "${PACKAGE_DIR}")" || PUBLISH_SPEC=""
+  if [[ -z "${PUBLISH_SPEC}" ]]; then
+    PACKAGE_NAME="$(jq -r '.name' "${PACKAGE_DIR}/package.json")"
+    echo "::error::Canonical npm publish spec for ${PACKAGE_NAME} is empty. Ensure manifest.json contains exactly one matching package entry." >&2
+    return 1
+  fi
+  PACKAGE_NAME="$(jq -r '.name' "${PACKAGE_DIR}/package.json")"
+  RC_PUBLISH_TAG="$(rc_tag_for_package "${PACKAGE_NAME}")"
+  if [[ "${NPM_MAINTENANCE_RELEASE:-false}" == "true" && "${RC_PUBLISH_TAG}" != "rc-history" ]]; then
+    echo "::error::Maintenance rc selector changed during publication." >&2
+    return 1
+  fi
+  rc_publish_package_dir "${PACKAGE_DIR}" "${PUBLISH_SPEC}" "${RC_PUBLISH_TAG}"
+}
+
 is_npm_package_not_found() {
-  printf '%s\n' "$1" | grep -Eq '(^|[[:space:]])(E404|404 Not Found)([[:space:]]|$)'
+  local lookup_output="$1"
+  local error_codes
+  error_codes="$(printf '%s\n' "${lookup_output}" | sed -nE \
+    -e 's/^npm (error|ERR!)[[:space:]]+code[[:space:]]+([^[:space:]]+).*$/\2/p' \
+    -e 's/^npm (error|ERR!)[[:space:]]+([0-9]{3})([[:space:]].*)?$/E\2/p' \
+    | sort -u)"
+  # Only an unambiguous npm not-found code establishes absence. A diagnostic
+  # mentioning E404 must not override an outage, permission error or mixed codes.
+  [[ "${error_codes}" == "E404" ]]
 }
 
 sanitize_npm_lookup_output() {
@@ -640,7 +683,7 @@ ensure_package_names_registered() {
     NPM_LOOKUP_STATUS=$?
     set -e
 
-    if [ "${NPM_LOOKUP_STATUS}" -eq 0 ]; then
+    if [[ "${NPM_LOOKUP_STATUS}" -eq 0 ]]; then
       continue
     fi
 
@@ -652,18 +695,18 @@ ensure_package_names_registered() {
 
     echo "::error::npm registry lookup failed for ${PACKAGE_NAME} (status ${NPM_LOOKUP_STATUS})." >&2
     SANITIZED_NPM_LOOKUP_OUTPUT="$(sanitize_npm_lookup_output "${NPM_LOOKUP_OUTPUT}")"
-    if [ -n "${SANITIZED_NPM_LOOKUP_OUTPUT}" ]; then
+    if [[ -n "${SANITIZED_NPM_LOOKUP_OUTPUT}" ]]; then
       printf '%s\n' "${SANITIZED_NPM_LOOKUP_OUTPUT}" >&2
     fi
     PACKAGE_NAME_LOOKUP_FAILURES=1
   done
 
-  if [ "${PACKAGE_NAME_LOOKUP_FAILURES}" -ne 0 ]; then
+  if [[ "${PACKAGE_NAME_LOOKUP_FAILURES}" -ne 0 ]]; then
     echo "::error::Resolve the npm registry lookup failures above, then rerun the stable release preflight." >&2
     return 1
   fi
 
-  if [ "${MISSING_PACKAGE_NAMES}" -ne 0 ]; then
+  if [[ "${MISSING_PACKAGE_NAMES}" -ne 0 ]]; then
     echo "::error::The unregistered package names are listed above. Publish each package once with a prerelease version and a non-latest dist-tag, then configure trusted publishing. Do not publish ${VERSION} manually; keep that stable version available for this CI provenance release." >&2
     return 1
   fi
@@ -674,10 +717,24 @@ run_preflight() {
   ensure_package_names_registered
 
   for PACKAGE_NAME in $(package_names_from_workspace); do
-    if npm view "${PACKAGE_NAME}@${VERSION}" version 2>/dev/null; then
+    set +e
+    NPM_VERSION_LOOKUP_OUTPUT="$(npm view "${PACKAGE_NAME}@${VERSION}" version 2>&1)"
+    NPM_VERSION_LOOKUP_STATUS=$?
+    set -e
+    if [[ "${NPM_VERSION_LOOKUP_STATUS}" -eq 0 ]]; then
+      printf '%s\n' "${NPM_VERSION_LOOKUP_OUTPUT}"
       echo "::error::${PACKAGE_NAME}@${VERSION} already exists on npm. Bump deno.json before releasing."
       exit 1
     fi
+    if is_npm_package_not_found "${NPM_VERSION_LOOKUP_OUTPUT}"; then
+      continue
+    fi
+    echo "::error::npm registry version lookup failed for ${PACKAGE_NAME}@${VERSION} (status ${NPM_VERSION_LOOKUP_STATUS})." >&2
+    SANITIZED_NPM_LOOKUP_OUTPUT="$(sanitize_npm_lookup_output "${NPM_VERSION_LOOKUP_OUTPUT}")"
+    if [[ -n "${SANITIZED_NPM_LOOKUP_OUTPUT}" ]]; then
+      printf '%s\n' "${SANITIZED_NPM_LOOKUP_OUTPUT}" >&2
+    fi
+    return 1
   done
 }
 
@@ -699,7 +756,7 @@ run_release_publish() {
   wait_for_stable_npm_git_heads "${published_packages[@]}"
 }
 
-if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+if [[ "${BASH_SOURCE[0]}" = "$0" ]]; then
   MODE="${1:-}"
   case "${MODE}" in
     rc-publish) run_rc_publish ;;

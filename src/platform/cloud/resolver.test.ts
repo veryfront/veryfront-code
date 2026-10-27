@@ -35,6 +35,7 @@ import {
 const CLOUD_ENV_KEYS = [
   "VERYFRONT_API_BASE_URL",
   "VERYFRONT_API_TOKEN",
+  "VERYFRONT_API_TOKEN_FILE",
   "VERYFRONT_API_URL",
   "VERYFRONT_PUBLIC_API_BASE_URL",
   "VERYFRONT_PROJECT_SLUG",
@@ -107,6 +108,13 @@ describe("platform/cloud/resolver", () => {
       assertEquals(getVeryfrontCloudProjectSlug(), "host-project");
       assertEquals(getDefaultVeryfrontCloudModel(), "veryfront-cloud/openai/gpt-5.2");
     });
+  });
+
+  it("defaults managed embeddings to the gateway's EU-resident registry model", () => {
+    assertEquals(
+      getDefaultVeryfrontCloudEmbeddingModel(),
+      "veryfront-cloud/google/gemini-embedding-001",
+    );
   });
 
   it("normalizes default cloud model overrides without requiring the prefix", () => {

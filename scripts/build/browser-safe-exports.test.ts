@@ -3,7 +3,6 @@ import {
 	BROWSER_SAFE_CLIENT_MODULES,
 	BROWSER_SAFE_DNT_TIMER_MODULES,
 	BROWSER_SAFE_EXPORTS,
-	BROWSER_SAFE_TRANSITIVE_EXPORTS,
 	BROWSER_SAFE_TRANSITIVE_MODULES,
 } from "./browser-safe-exports.mjs";
 
@@ -140,18 +139,13 @@ Deno.test("built browser-safe exports do not reach unstripped dnt imports", asyn
 		return;
 	}
 
-	const plannedStrippedModules = new Set(BROWSER_SAFE_TRANSITIVE_MODULES as string[]);
-	for (const exportPath of BROWSER_SAFE_TRANSITIVE_EXPORTS as string[]) {
+	for (const exportPath of BROWSER_SAFE_EXPORTS as string[]) {
 		const entry = await browserSafeExportBuiltEntry(exportPath);
 		const importers = await collectBuiltDntImporters(entry);
-		const plannedDirectImporter = builtRelativePath(entry);
-		const unplannedImporters = importers.filter((importer) => {
-			return importer !== plannedDirectImporter && !plannedStrippedModules.has(importer);
-		});
 		assertEquals(
-			unplannedImporters,
+			importers,
 			[],
-			`${exportPath} reaches dnt shim/polyfill imports that postBuild does not strip`,
+			`${exportPath} still reaches dnt shim/polyfill imports after postBuild`,
 		);
 	}
 });

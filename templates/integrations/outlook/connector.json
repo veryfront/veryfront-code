@@ -14,6 +14,7 @@
       "Mail.Send",
       "Mail.ReadWrite",
       "Mail.Read.Shared",
+      "Mail.ReadWrite.Shared",
       "Calendars.Read",
       "Calendars.ReadWrite",
       "offline_access"
@@ -65,7 +66,7 @@
       {
         "step": 4,
         "title": "Add Microsoft Graph permissions",
-        "description": "Under API permissions, add these delegated Microsoft Graph permissions: Mail.Read, Mail.Send, Mail.ReadWrite, Mail.Read.Shared, Calendars.Read, Calendars.ReadWrite, offline_access. If your tenant does not let users consent to apps, an administrator must grant consent for the organization.",
+        "description": "Under API permissions, add these delegated Microsoft Graph permissions: Mail.Read, Mail.Send, Mail.ReadWrite, Mail.Read.Shared, Mail.ReadWrite.Shared, Calendars.Read, Calendars.ReadWrite, offline_access. If your tenant does not let users consent to apps, an administrator must grant consent for the organization.",
         "docsUrl": "https://learn.microsoft.com/en-us/graph/permissions-reference"
       },
       {
@@ -80,7 +81,8 @@
       }
     ],
     "notes": [
-      "The connection requests Mail.Read, Mail.Send, Mail.ReadWrite, Mail.Read.Shared, Calendars.Read, Calendars.ReadWrite and offline_access. offline_access lets the connection refresh its access token. Mail.Read.Shared lets the tools read mailboxes shared with the user.",
+      "The connection requests Mail.Read, Mail.Send, Mail.ReadWrite, Mail.Read.Shared, Mail.ReadWrite.Shared, Calendars.Read, Calendars.ReadWrite and offline_access. offline_access lets the connection refresh its access token. Mail.Read.Shared lets the tools read mailboxes shared with the user. Mail.ReadWrite.Shared lets Move Shared Mailbox Email move messages in those mailboxes.",
+      "The shared mailbox tools address the mailbox you name in the mailbox argument and never fall back to the signed-in user's mailbox. This connector signs in with delegated OAuth only, so the signed-in user must have access to that mailbox in Exchange. Application (app-only) permissions are not used by this connector.",
       "Tools that create, update, send or delete data are marked as writes and need write authority; the other tools are read-only."
     ],
     "documentation": "https://learn.microsoft.com/en-us/graph/auth-register-app-v2"
@@ -89,7 +91,7 @@
     {
       "id": "outlook__list_emails",
       "name": "List Emails",
-      "description": "List recent emails from inbox or a specific folder",
+      "description": "List emails",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -107,6 +109,11 @@
             "in": "query",
             "description": "Maximum messages to return",
             "default": 25
+          },
+          "$skip": {
+            "type": "number",
+            "in": "query",
+            "description": "Messages to skip; use the $skip value from the previous page's @odata.nextLink"
           },
           "$select": {
             "type": "string",
@@ -211,7 +218,7 @@
     {
       "id": "outlook__get_email",
       "name": "Get Email",
-      "description": "Get detailed information about a specific email",
+      "description": "Get email",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -235,7 +242,7 @@
     {
       "id": "outlook__send_email",
       "name": "Send Email",
-      "description": "Send a new email message",
+      "description": "Send email",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -257,7 +264,7 @@
     {
       "id": "outlook__search_emails",
       "name": "Search Emails",
-      "description": "Search emails by query, subject, sender, or date",
+      "description": "Search emails",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -276,6 +283,12 @@
             "in": "query",
             "description": "Maximum messages to return",
             "default": 25
+          },
+          "$skiptoken": {
+            "type": "string",
+            "in": "query",
+            "queryValueFormat": "microsoft-graph-skiptoken",
+            "description": "Search page token; copy the $skiptoken value from the previous page's @odata.nextLink as-is"
           },
           "$select": {
             "type": "string",
@@ -369,7 +382,7 @@
     {
       "id": "outlook__list_folders",
       "name": "List Folders",
-      "description": "List all mail folders in the mailbox",
+      "description": "List folders",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -386,6 +399,11 @@
             "in": "query",
             "description": "Maximum folders to return",
             "default": 100
+          },
+          "$skip": {
+            "type": "number",
+            "in": "query",
+            "description": "Folders to skip; use the $skip value from the previous page's @odata.nextLink"
           }
         },
         "response": {
@@ -433,7 +451,7 @@
     {
       "id": "outlook__get_folder",
       "name": "Get Folder",
-      "description": "Get metadata for a mail folder",
+      "description": "Get folder",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -451,7 +469,7 @@
     {
       "id": "outlook__create_folder",
       "name": "Create Folder",
-      "description": "Create a mail folder",
+      "description": "Create folder",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -468,7 +486,7 @@
     {
       "id": "outlook__update_folder",
       "name": "Update Folder",
-      "description": "Rename a mail folder",
+      "description": "Rename folder",
       "requiresWrite": true,
       "endpoint": {
         "method": "PATCH",
@@ -493,7 +511,7 @@
     {
       "id": "outlook__delete_folder",
       "name": "Delete Folder",
-      "description": "Delete a mail folder",
+      "description": "Delete folder",
       "requiresWrite": true,
       "endpoint": {
         "method": "DELETE",
@@ -511,7 +529,7 @@
     {
       "id": "outlook__mark_email_read",
       "name": "Mark Email Read",
-      "description": "Mark an email as read",
+      "description": "Mark email read",
       "requiresWrite": true,
       "endpoint": {
         "method": "PATCH",
@@ -536,7 +554,7 @@
     {
       "id": "outlook__mark_email_unread",
       "name": "Mark Email Unread",
-      "description": "Mark an email as unread",
+      "description": "Mark email unread",
       "requiresWrite": true,
       "endpoint": {
         "method": "PATCH",
@@ -561,7 +579,7 @@
     {
       "id": "outlook__delete_email",
       "name": "Delete Email",
-      "description": "Delete an email message",
+      "description": "Delete email",
       "requiresWrite": true,
       "endpoint": {
         "method": "DELETE",
@@ -579,7 +597,7 @@
     {
       "id": "outlook__move_email",
       "name": "Move Email",
-      "description": "Move an email to another folder",
+      "description": "Move email",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -604,7 +622,7 @@
     {
       "id": "outlook__archive_email",
       "name": "Archive Email",
-      "description": "Move an email to the archive folder",
+      "description": "Archive email",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -629,7 +647,7 @@
     {
       "id": "outlook__flag_email",
       "name": "Flag Email",
-      "description": "Set a follow-up flag on an email",
+      "description": "Flag email",
       "requiresWrite": true,
       "endpoint": {
         "method": "PATCH",
@@ -654,7 +672,7 @@
     {
       "id": "outlook__clear_email_flag",
       "name": "Clear Email Flag",
-      "description": "Clear the follow-up flag on an email",
+      "description": "Clear email flag",
       "requiresWrite": true,
       "endpoint": {
         "method": "PATCH",
@@ -681,7 +699,7 @@
     {
       "id": "outlook__categorize_email",
       "name": "Categorize Email",
-      "description": "Replace the categories on an email",
+      "description": "Replace email categories",
       "requiresWrite": true,
       "endpoint": {
         "method": "PATCH",
@@ -706,7 +724,7 @@
     {
       "id": "outlook__list_categories",
       "name": "List Categories",
-      "description": "List Outlook master categories",
+      "description": "List categories",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -747,7 +765,7 @@
     {
       "id": "outlook__create_category",
       "name": "Create Category",
-      "description": "Create an Outlook master category",
+      "description": "Create category",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -768,7 +786,7 @@
     {
       "id": "outlook__update_category",
       "name": "Update Category",
-      "description": "Update an Outlook master category color",
+      "description": "Update category",
       "requiresWrite": true,
       "endpoint": {
         "method": "PATCH",
@@ -793,7 +811,7 @@
     {
       "id": "outlook__delete_category",
       "name": "Delete Category",
-      "description": "Delete an Outlook master category",
+      "description": "Delete category",
       "requiresWrite": true,
       "endpoint": {
         "method": "DELETE",
@@ -811,7 +829,7 @@
     {
       "id": "outlook__create_draft",
       "name": "Create Draft",
-      "description": "Create a draft email message",
+      "description": "Create draft",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -858,7 +876,7 @@
     {
       "id": "outlook__list_drafts",
       "name": "List Drafts",
-      "description": "List draft email messages",
+      "description": "List drafts",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -869,6 +887,11 @@
             "in": "query",
             "description": "Maximum drafts to return",
             "default": 25
+          },
+          "$skip": {
+            "type": "number",
+            "in": "query",
+            "description": "Drafts to skip; use the $skip value from the previous page's @odata.nextLink"
           },
           "$select": {
             "type": "string",
@@ -968,7 +991,7 @@
     {
       "id": "outlook__get_draft",
       "name": "Get Draft",
-      "description": "Get a draft message",
+      "description": "Get draft",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -992,7 +1015,7 @@
     {
       "id": "outlook__update_draft",
       "name": "Update Draft",
-      "description": "Update a draft email message",
+      "description": "Update draft",
       "requiresWrite": true,
       "endpoint": {
         "method": "PATCH",
@@ -1044,7 +1067,7 @@
     {
       "id": "outlook__send_draft",
       "name": "Send Draft",
-      "description": "Send a draft email message",
+      "description": "Send draft",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -1062,7 +1085,7 @@
     {
       "id": "outlook__delete_draft",
       "name": "Delete Draft",
-      "description": "Delete a draft email message",
+      "description": "Delete draft",
       "requiresWrite": true,
       "endpoint": {
         "method": "DELETE",
@@ -1080,7 +1103,7 @@
     {
       "id": "outlook__reply_email",
       "name": "Reply Email",
-      "description": "Reply to an email",
+      "description": "Reply email",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -1105,7 +1128,7 @@
     {
       "id": "outlook__reply_all_email",
       "name": "Reply All Email",
-      "description": "Reply all to an email",
+      "description": "Reply all email",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -1130,7 +1153,7 @@
     {
       "id": "outlook__forward_email",
       "name": "Forward Email",
-      "description": "Forward an email",
+      "description": "Forward email",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -1159,7 +1182,7 @@
     {
       "id": "outlook__create_reply_draft",
       "name": "Create Reply Draft",
-      "description": "Create a reply draft for an email",
+      "description": "Create reply draft",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -1177,7 +1200,7 @@
     {
       "id": "outlook__create_reply_all_draft",
       "name": "Create Reply All Draft",
-      "description": "Create a reply-all draft for an email",
+      "description": "Create reply all draft",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -1195,7 +1218,7 @@
     {
       "id": "outlook__create_forward_draft",
       "name": "Create Forward Draft",
-      "description": "Create a forward draft for an email",
+      "description": "Create forward draft",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -1213,7 +1236,7 @@
     {
       "id": "outlook__list_attachments",
       "name": "List Attachments",
-      "description": "List attachments for an email message",
+      "description": "List attachments",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -1271,7 +1294,7 @@
     {
       "id": "outlook__get_attachment",
       "name": "Get Attachment",
-      "description": "Get metadata and content for an email attachment",
+      "description": "Get attachment",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -1295,7 +1318,7 @@
     {
       "id": "outlook__add_attachment_to_message",
       "name": "Add Attachment To Message",
-      "description": "Add a small attachment to a draft message",
+      "description": "Add attachment to message",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -1321,7 +1344,7 @@
           },
           "contentBytes": {
             "type": "string",
-            "description": "Base64-encoded attachment content",
+            "description": "Base64-encoded attachment content. The decoded attachment must be under 3 MB. Larger files require an upload session, which this connector does not expose.",
             "required": true
           },
           "contentType": {
@@ -1339,7 +1362,7 @@
     {
       "id": "outlook__list_conversation_messages",
       "name": "List Conversation Messages",
-      "description": "List messages in an Outlook conversation",
+      "description": "List conversation messages",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -1356,6 +1379,11 @@
             "in": "query",
             "description": "Maximum messages to return",
             "default": 25
+          },
+          "$skip": {
+            "type": "number",
+            "in": "query",
+            "description": "Messages to skip; use the $skip value from the previous page's @odata.nextLink"
           },
           "$select": {
             "type": "string",
@@ -1449,7 +1477,7 @@
     {
       "id": "outlook__list_threads",
       "name": "List Threads",
-      "description": "List recent Outlook conversation threads for request-desk triage. Returns one representative message per conversationId; pass that value as thread_id to get_thread.",
+      "description": "List threads",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -1467,6 +1495,11 @@
             "in": "query",
             "description": "Maximum recent messages to inspect as thread representatives",
             "default": 25
+          },
+          "$skip": {
+            "type": "number",
+            "in": "query",
+            "description": "Messages to skip; use the $skip value from the previous page's @odata.nextLink"
           },
           "$select": {
             "type": "string",
@@ -1571,7 +1604,7 @@
     {
       "id": "outlook__get_thread",
       "name": "Get Thread",
-      "description": "Get Outlook messages in a conversation by thread ID.",
+      "description": "Get thread",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -1606,7 +1639,7 @@
     {
       "id": "outlook__list_shared_mailbox_emails",
       "name": "List Shared Mailbox Emails",
-      "description": "List messages from a shared or delegated mailbox that the signed-in Microsoft account can access",
+      "description": "List shared mailbox emails",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -1631,6 +1664,11 @@
             "description": "Maximum messages to return",
             "default": 25
           },
+          "$skip": {
+            "type": "number",
+            "in": "query",
+            "description": "Messages to skip; use the $skip value from the previous page's @odata.nextLink"
+          },
           "$select": {
             "type": "string",
             "in": "query",
@@ -1647,6 +1685,13 @@
             "type": "string",
             "in": "query",
             "description": "OData filter expression"
+          },
+          "prefer": {
+            "type": "string",
+            "in": "header",
+            "headerName": "Prefer",
+            "pattern": "^IdType=\"ImmutableId\"$",
+            "description": "Set to IdType=\"ImmutableId\" to read and address messages by immutable ID. Immutable IDs do not change when a message moves to another folder."
           }
         },
         "response": {
@@ -1734,7 +1779,7 @@
     {
       "id": "outlook__search_shared_mailbox_emails",
       "name": "Search Shared Mailbox Emails",
-      "description": "Search messages in a shared or delegated mailbox that the signed-in Microsoft account can access",
+      "description": "Search shared mailbox emails",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -1760,11 +1805,24 @@
             "description": "Maximum messages to return",
             "default": 25
           },
+          "$skiptoken": {
+            "type": "string",
+            "in": "query",
+            "queryValueFormat": "microsoft-graph-skiptoken",
+            "description": "Search page token; copy the $skiptoken value from the previous page's @odata.nextLink as-is"
+          },
           "$select": {
             "type": "string",
             "in": "query",
             "description": "Comma-separated message fields to return",
             "default": "id,conversationId,internetMessageId,subject,from,sender,toRecipients,ccRecipients,receivedDateTime,sentDateTime,bodyPreview,categories,isRead,importance,hasAttachments,webLink,flag"
+          },
+          "prefer": {
+            "type": "string",
+            "in": "header",
+            "headerName": "Prefer",
+            "pattern": "^IdType=\"ImmutableId\"$",
+            "description": "Set to IdType=\"ImmutableId\" to read and address messages by immutable ID. Immutable IDs do not change when a message moves to another folder."
           }
         },
         "response": {
@@ -1850,9 +1908,394 @@
       }
     },
     {
+      "id": "outlook__get_shared_mailbox_email",
+      "name": "Get Shared Mailbox Email",
+      "description": "Get shared mailbox email",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://graph.microsoft.com/v1.0/users/{mailbox}/messages/{messageId}",
+        "params": {
+          "mailbox": {
+            "type": "string",
+            "in": "path",
+            "description": "Mailbox user principal name or Microsoft Graph user ID",
+            "required": true
+          },
+          "messageId": {
+            "type": "string",
+            "in": "path",
+            "description": "Microsoft Graph message ID",
+            "required": true
+          },
+          "$select": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated message fields to return",
+            "default": "id,conversationId,internetMessageId,subject,body,bodyPreview,from,sender,toRecipients,ccRecipients,bccRecipients,replyTo,receivedDateTime,sentDateTime,categories,isRead,importance,hasAttachments,webLink,flag"
+          },
+          "prefer": {
+            "type": "string",
+            "in": "header",
+            "headerName": "Prefer",
+            "pattern": "^IdType=\"ImmutableId\"$",
+            "description": "Set to IdType=\"ImmutableId\" to read and address messages by immutable ID. Immutable IDs do not change when a message moves to another folder."
+          }
+        }
+      }
+    },
+    {
+      "id": "outlook__list_shared_mailbox_folders",
+      "name": "List Shared Mailbox Folders",
+      "description": "List shared mailbox folders",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://graph.microsoft.com/v1.0/users/{mailbox}/mailFolders",
+        "params": {
+          "mailbox": {
+            "type": "string",
+            "in": "path",
+            "description": "Mailbox user principal name or Microsoft Graph user ID",
+            "required": true
+          },
+          "includeHiddenFolders": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Include hidden folders",
+            "default": false
+          },
+          "$top": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum folders to return",
+            "default": 100
+          },
+          "$skip": {
+            "type": "number",
+            "in": "query",
+            "description": "Folders to skip; use the $skip value from the previous page's @odata.nextLink"
+          }
+        },
+        "response": {
+          "transform": "value",
+          "historicalSummary": {
+            "collectionKeys": [
+              "value",
+              "folders",
+              "data"
+            ],
+            "collectionName": "folders",
+            "itemFields": [
+              {
+                "name": "id"
+              },
+              {
+                "name": "displayName"
+              },
+              {
+                "name": "parentFolderId"
+              },
+              {
+                "name": "childFolderCount"
+              },
+              {
+                "name": "unreadItemCount"
+              },
+              {
+                "name": "totalItemCount"
+              }
+            ],
+            "outputFields": [
+              {
+                "name": "@odata.nextLink"
+              },
+              {
+                "name": "@odata.count"
+              }
+            ],
+            "omitted": "folder provider-specific payload fields"
+          }
+        }
+      }
+    },
+    {
+      "id": "outlook__list_shared_mailbox_child_folders",
+      "name": "List Shared Mailbox Child Folders",
+      "description": "List shared mailbox child folders",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://graph.microsoft.com/v1.0/users/{mailbox}/mailFolders/{folderId}/childFolders",
+        "params": {
+          "mailbox": {
+            "type": "string",
+            "in": "path",
+            "description": "Mailbox user principal name or Microsoft Graph user ID",
+            "required": true
+          },
+          "folderId": {
+            "type": "string",
+            "in": "path",
+            "description": "Parent folder ID or well-known folder name such as inbox",
+            "required": true
+          },
+          "includeHiddenFolders": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Include hidden folders",
+            "default": false
+          },
+          "$top": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum folders to return",
+            "default": 100
+          },
+          "$skip": {
+            "type": "number",
+            "in": "query",
+            "description": "Folders to skip; use the $skip value from the previous page's @odata.nextLink"
+          }
+        },
+        "response": {
+          "transform": "value",
+          "historicalSummary": {
+            "collectionKeys": [
+              "value",
+              "folders",
+              "data"
+            ],
+            "collectionName": "folders",
+            "itemFields": [
+              {
+                "name": "id"
+              },
+              {
+                "name": "displayName"
+              },
+              {
+                "name": "parentFolderId"
+              },
+              {
+                "name": "childFolderCount"
+              },
+              {
+                "name": "unreadItemCount"
+              },
+              {
+                "name": "totalItemCount"
+              }
+            ],
+            "outputFields": [
+              {
+                "name": "@odata.nextLink"
+              },
+              {
+                "name": "@odata.count"
+              }
+            ],
+            "omitted": "folder provider-specific payload fields"
+          }
+        }
+      }
+    },
+    {
+      "id": "outlook__list_shared_mailbox_attachments",
+      "name": "List Shared Mailbox Attachments",
+      "description": "List shared mailbox attachments",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://graph.microsoft.com/v1.0/users/{mailbox}/messages/{messageId}/attachments",
+        "params": {
+          "mailbox": {
+            "type": "string",
+            "in": "path",
+            "description": "Mailbox user principal name or Microsoft Graph user ID",
+            "required": true
+          },
+          "messageId": {
+            "type": "string",
+            "in": "path",
+            "description": "Message ID",
+            "required": true
+          },
+          "$select": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated attachment fields to return. The default omits file contents; use Get Shared Mailbox Attachment to read them.",
+            "default": "id,name,contentType,size,isInline,lastModifiedDateTime"
+          },
+          "prefer": {
+            "type": "string",
+            "in": "header",
+            "headerName": "Prefer",
+            "pattern": "^IdType=\"ImmutableId\"$",
+            "description": "Set to IdType=\"ImmutableId\" to read and address messages by immutable ID. Immutable IDs do not change when a message moves to another folder."
+          }
+        },
+        "response": {
+          "transform": "value",
+          "historicalSummary": {
+            "collectionKeys": [
+              "value",
+              "attachments",
+              "data"
+            ],
+            "collectionName": "attachments",
+            "itemFields": [
+              {
+                "name": "id"
+              },
+              {
+                "name": "name"
+              },
+              {
+                "name": "contentType"
+              },
+              {
+                "name": "size"
+              },
+              {
+                "name": "isInline"
+              },
+              {
+                "name": "lastModifiedDateTime"
+              }
+            ],
+            "outputFields": [
+              {
+                "name": "@odata.nextLink"
+              },
+              {
+                "name": "@odata.count"
+              }
+            ],
+            "omitted": "attachment binary content and provider-specific payload fields"
+          }
+        }
+      }
+    },
+    {
+      "id": "outlook__get_shared_mailbox_attachment",
+      "name": "Get Shared Mailbox Attachment",
+      "description": "Get shared mailbox attachment",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://graph.microsoft.com/v1.0/users/{mailbox}/messages/{messageId}/attachments/{attachmentId}",
+        "params": {
+          "mailbox": {
+            "type": "string",
+            "in": "path",
+            "description": "Mailbox user principal name or Microsoft Graph user ID",
+            "required": true
+          },
+          "messageId": {
+            "type": "string",
+            "in": "path",
+            "description": "Message ID",
+            "required": true
+          },
+          "attachmentId": {
+            "type": "string",
+            "in": "path",
+            "description": "Attachment ID",
+            "required": true
+          },
+          "$expand": {
+            "type": "string",
+            "in": "query",
+            "pattern": "^microsoft\\.graph\\.itemattachment/item$",
+            "description": "Set to microsoft.graph.itemattachment/item to return the attached message, event or contact of an item attachment"
+          },
+          "prefer": {
+            "type": "string",
+            "in": "header",
+            "headerName": "Prefer",
+            "pattern": "^IdType=\"ImmutableId\"$",
+            "description": "Set to IdType=\"ImmutableId\" to read and address messages by immutable ID. Immutable IDs do not change when a message moves to another folder."
+          }
+        }
+      }
+    },
+    {
+      "id": "outlook__move_shared_mailbox_email",
+      "name": "Move Shared Mailbox Email",
+      "description": "Move shared mailbox email",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://graph.microsoft.com/v1.0/users/{mailbox}/messages/{messageId}/move",
+        "params": {
+          "mailbox": {
+            "type": "string",
+            "in": "path",
+            "description": "Mailbox user principal name or Microsoft Graph user ID",
+            "required": true
+          },
+          "messageId": {
+            "type": "string",
+            "in": "path",
+            "description": "Message ID",
+            "required": true
+          },
+          "prefer": {
+            "type": "string",
+            "in": "header",
+            "headerName": "Prefer",
+            "pattern": "^IdType=\"ImmutableId\"$",
+            "description": "Set to IdType=\"ImmutableId\" to read and address messages by immutable ID. Immutable IDs do not change when a message moves to another folder."
+          }
+        },
+        "body": {
+          "destinationId": {
+            "type": "string",
+            "description": "Destination folder ID or well-known folder name in the same mailbox. The folder must already exist.",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "outlook__get_shared_mailbox_email_mime",
+      "name": "Get Shared Mailbox Email MIME",
+      "description": "Get shared mailbox email MIME",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://graph.microsoft.com/v1.0/users/{mailbox}/messages/{messageId}/$value",
+        "params": {
+          "mailbox": {
+            "type": "string",
+            "in": "path",
+            "description": "Mailbox user principal name or Microsoft Graph user ID",
+            "required": true
+          },
+          "messageId": {
+            "type": "string",
+            "in": "path",
+            "description": "Microsoft Graph message ID",
+            "required": true
+          },
+          "prefer": {
+            "type": "string",
+            "in": "header",
+            "headerName": "Prefer",
+            "pattern": "^IdType=\"ImmutableId\"$",
+            "description": "Set to IdType=\"ImmutableId\" to read and address messages by immutable ID. Immutable IDs do not change when a message moves to another folder."
+          }
+        },
+        "response": {
+          "encoding": "base64"
+        }
+      }
+    },
+    {
       "id": "outlook__list_calendars",
       "name": "List Calendars",
-      "description": "List Outlook calendars",
+      "description": "List calendars",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -1863,6 +2306,11 @@
             "in": "query",
             "description": "Maximum calendars to return",
             "default": 100
+          },
+          "$skip": {
+            "type": "number",
+            "in": "query",
+            "description": "Calendars to skip; use the $skip value from the previous page's @odata.nextLink"
           }
         },
         "response": {
@@ -1914,7 +2362,7 @@
     {
       "id": "outlook__get_calendar",
       "name": "Get Calendar",
-      "description": "Get metadata for an Outlook calendar",
+      "description": "Get calendar",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -1932,7 +2380,7 @@
     {
       "id": "outlook__create_calendar",
       "name": "Create Calendar",
-      "description": "Create an Outlook calendar",
+      "description": "Create calendar",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -1949,7 +2397,7 @@
     {
       "id": "outlook__update_calendar",
       "name": "Update Calendar",
-      "description": "Update an Outlook calendar",
+      "description": "Update calendar",
       "requiresWrite": true,
       "endpoint": {
         "method": "PATCH",
@@ -1977,7 +2425,7 @@
     {
       "id": "outlook__delete_calendar",
       "name": "Delete Calendar",
-      "description": "Delete an Outlook calendar",
+      "description": "Delete calendar",
       "requiresWrite": true,
       "endpoint": {
         "method": "DELETE",
@@ -1995,7 +2443,7 @@
     {
       "id": "outlook__list_events",
       "name": "List Events",
-      "description": "List events from a specific Outlook calendar",
+      "description": "List events",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -2012,6 +2460,11 @@
             "in": "query",
             "description": "Maximum events to return",
             "default": 25
+          },
+          "$skip": {
+            "type": "number",
+            "in": "query",
+            "description": "Events to skip; use the $skip value from the previous page's @odata.nextLink"
           },
           "$select": {
             "type": "string",
@@ -2101,7 +2554,7 @@
     {
       "id": "outlook__list_calendar_view",
       "name": "List Calendar View",
-      "description": "List occurrences in a calendar time window",
+      "description": "List calendar view",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -2124,6 +2577,11 @@
             "in": "query",
             "description": "Maximum events to return",
             "default": 50
+          },
+          "$skip": {
+            "type": "number",
+            "in": "query",
+            "description": "Events to skip; use the $skip value from the previous page's @odata.nextLink"
           },
           "$select": {
             "type": "string",
@@ -2208,7 +2666,7 @@
     {
       "id": "outlook__get_event",
       "name": "Get Event",
-      "description": "Get details for an Outlook event",
+      "description": "Get event",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -2232,7 +2690,7 @@
     {
       "id": "outlook__create_event",
       "name": "Create Event",
-      "description": "Create an Outlook calendar event",
+      "description": "Create event",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -2299,7 +2757,7 @@
     {
       "id": "outlook__update_event",
       "name": "Update Event",
-      "description": "Update an Outlook calendar event",
+      "description": "Update event",
       "requiresWrite": true,
       "endpoint": {
         "method": "PATCH",
@@ -2371,7 +2829,7 @@
     {
       "id": "outlook__delete_event",
       "name": "Delete Event",
-      "description": "Delete an Outlook calendar event",
+      "description": "Delete event",
       "requiresWrite": true,
       "endpoint": {
         "method": "DELETE",
@@ -2389,7 +2847,7 @@
     {
       "id": "outlook__respond_to_event",
       "name": "Respond To Event",
-      "description": "Accept, tentatively accept, or decline an event invitation",
+      "description": "Respond to event",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -2424,7 +2882,7 @@
     {
       "id": "outlook__get_event_instances",
       "name": "Get Event Instances",
-      "description": "List instances of a recurring event in a time window",
+      "description": "Get event instances",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -2453,6 +2911,11 @@
             "in": "query",
             "description": "Maximum instances to return",
             "default": 50
+          },
+          "$skip": {
+            "type": "number",
+            "in": "query",
+            "description": "Occurrences to skip; use the $skip value from the previous page's @odata.nextLink"
           },
           "$select": {
             "type": "string",
@@ -2531,7 +2994,7 @@
     {
       "id": "outlook__list_event_attachments",
       "name": "List Event Attachments",
-      "description": "List attachments for an event",
+      "description": "List event attachments",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -2589,7 +3052,7 @@
     {
       "id": "outlook__get_event_attachment",
       "name": "Get Event Attachment",
-      "description": "Get metadata and content for an event attachment",
+      "description": "Get event attachment",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -2613,7 +3076,7 @@
     {
       "id": "outlook__add_event_attachment",
       "name": "Add Event Attachment",
-      "description": "Add a small attachment to an event",
+      "description": "Add event attachment",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -2639,7 +3102,7 @@
           },
           "contentBytes": {
             "type": "string",
-            "description": "Base64-encoded attachment content",
+            "description": "Base64-encoded attachment content. The decoded attachment must be under 3 MB. Larger files require an upload session, which this connector does not expose.",
             "required": true
           },
           "contentType": {
@@ -2657,7 +3120,7 @@
     {
       "id": "outlook__find_free_time",
       "name": "Find Free Time",
-      "description": "Return free/busy schedule information for users or resources",
+      "description": "Find free time",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -2721,7 +3184,7 @@
     {
       "id": "outlook__get_schedule",
       "name": "Get Schedule",
-      "description": "Get detailed free/busy schedule information",
+      "description": "Get schedule",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
@@ -2785,7 +3248,7 @@
     {
       "id": "outlook__find_meeting_times",
       "name": "Find Meeting Times",
-      "description": "Find meeting time suggestions from attendees and constraints",
+      "description": "Find meeting times",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",

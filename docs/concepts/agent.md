@@ -8,10 +8,8 @@ An agent owns model reasoning for an interaction. It receives messages, applies
 instructions, chooses whether to call tools, observes tool results, and emits
 output.
 
-Agents follow the same idea as the ReAct prompting pattern: reasoning and
-acting. The model reasons about the current state, acts by calling a tool or
-producing a response, observes the result, then repeats the loop until it can
-finish.
+The ReAct loop alternates reasoning and action: the model calls tools, observes
+results and continues until it can respond.
 
 ## Characteristics
 
@@ -35,10 +33,9 @@ The loop has four parts:
 | Action      | The agent calls a tool or emits output.                       |
 | Observation | Tool results or new messages are added back into context.     |
 
-Veryfront hides most loop plumbing behind the agent runtime. The boundary stays
-visible: the agent decides what to do next. Resources own readable context.
-Executable primitives own execution, including tools, tasks, workflows, runs,
-and app routes.
+The runtime manages the loop. The agent decides whether to call a tool or emit
+output. Tasks define background work; workflows coordinate steps. Runs record
+each execution, its status and result. Resources provide readable context.
 
 ## Boundary
 
@@ -57,3 +54,14 @@ single database write, or a multi-step process that needs durable state. Use an
 app route, task, tool, or workflow for those boundaries.
 
 For implementation steps, see [Agents](../guides/agents.md).
+
+## Text and structured results
+
+An agent response keeps readable output in `text`. When you configure
+`outputSchema`, the response also exposes the parsed value in `data`.
+`object` remains a compatibility alias for the same value. Without a schema,
+JSON-looking text remains text.
+
+The local trigger runner and agent-as-tool responses preserve both fields.
+Streaming exposes them when the final response completes. Schema validation
+failures use the existing agent error path rather than returning successful data.

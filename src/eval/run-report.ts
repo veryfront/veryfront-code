@@ -2,7 +2,11 @@ import { join, relative } from "#veryfront/compat/path";
 import { compareEvalReports } from "./baseline.ts";
 import type { DiscoveredEval } from "./discovery.ts";
 import { compareEvalModelReports, createEvalModelComparisonMarkdown } from "./model-comparison.ts";
-import { EVAL_REPORT_SCHEMA_VERSION, RECORD_INCOMPLETE_EXPLANATION } from "./report.ts";
+import {
+  EVAL_REPORT_SCHEMA_VERSION,
+  evalRecordOutcomeFailure,
+  evalRecordPassed,
+} from "./report.ts";
 import { isEvalModelAccessDeniedError } from "./model-access.ts";
 import { createEvalRunId } from "./run-id.ts";
 import { INVALID_ARGUMENT } from "#veryfront/errors";
@@ -264,7 +268,7 @@ function createEvalReportDirTimestamp(runId: string): string {
 function sanitizeEvalReportDirLabel(label: string): string {
   const normalized = label.startsWith("eval:") ? label.slice("eval:".length) : label;
   return normalized.trim().replace(/[^A-Za-z0-9._-]+/g, "-").replace(/-+/g, "-").replace(
-    /^[-._]+|[-._]+$/g,
+    /^[-._]+|(?<![-._])[-._]+$/g,
     "",
   );
 }
@@ -345,7 +349,7 @@ function createEvalSuiteChildDirectory(
 }
 
 function sanitizeModelIdForPath(model: string): string {
-  return model.trim().replace(/[^A-Za-z0-9._-]+/g, "__").replace(/^_+|_+$/g, "") || "model";
+  return model.trim().replace(/[^A-Za-z0-9._-]+/g, "__").replace(/^_+|(?<!_)_+$/g, "") || "model";
 }
 
 function uniqueTrimmedValues(values: string[]): string[] {
@@ -449,18 +453,6 @@ function usageRows(usage: EvalUsage | undefined): Array<[string, string]> {
   return rows.filter(([, value]) => value !== "-");
 }
 
-function isBlockingEvalResultFailure(result: EvalMetricResult): boolean {
-  return !result.skipped && result.pass === false &&
-    (result.severity === "gate" || result.severity === "budget");
-}
-
-function examplePassed(record: EvalRecord): boolean {
-  if (!record.completed || record.error) return false;
-  return [...(record.metrics ?? []), ...(record.checks ?? [])].every((result) =>
-    !isBlockingEvalResultFailure(result)
-  );
-}
-
 function createEvalMarkdownReport(
   report: EvalReport,
   baseline?: EvalReportComparison,
@@ -509,7 +501,7 @@ function createEvalMarkdownReport(
 
   for (const record of report.records) {
     lines.push(
-      `| \`${markdownCell(record.id)}\` | ${examplePassed(record) ? "PASS" : "FAIL"} | ${
+      `| \`${markdownCell(record.id)}\` | ${evalRecordPassed(record) ? "PASS" : "FAIL"} | ${
         durationCell(record.durationMs)
       } | ${numberCell(record.usage.totalTokens)} | ${decimalCell(record.usage.costCredits)} |`,
     );
@@ -584,9 +576,7 @@ function createJunitXml(report: EvalReport): string {
 
   for (const record of report.records) {
     const failures = blockingResults(record);
-    const recordFailure = !record.completed || record.error
-      ? record.error ?? RECORD_INCOMPLETE_EXPLANATION
-      : undefined;
+    const recordFailure = evalRecordOutcomeFailure(record);
     const attrs = `classname="${xmlEscape(report.definitionId)}" name="${
       xmlEscape(testcaseName(record))
     }" time="${(record.durationMs / 1000).toFixed(3)}"`;

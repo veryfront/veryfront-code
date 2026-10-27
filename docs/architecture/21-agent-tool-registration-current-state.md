@@ -10,7 +10,7 @@ naming, auth boundaries, and operational risks.
 Agent tool registration currently spans these concerns:
 
 - Local tool configuration through `agent({ tools })`.
-- Platform runtime tools such as `load_skill` for skills and other built-ins.
+- Platform runtime tools such as `veryfront__load_skill` for skills and other built-ins.
 - Remote MCP source configuration through hosted runtime `mcpServers`.
 - Runtime conversion of configured tools into provider-visible tool
   definitions.
@@ -100,20 +100,20 @@ allowlist, not an authorization policy. The same list also enables
 provider-native tools such as `web_search`, even though those tools are not MCP
 tools and are executed by the selected model provider.
 
-`load_skill` is exposed for every agent without the user manually adding it to
+`veryfront__load_skill` is exposed for every agent without the user manually adding it to
 `tools`. The `skills` field selects which visible skills appear in the system
 prompt, while an omitted selector advertises all visible skills.
 
 - The classic `agent()` factory registers shared skill tools and merges
-  the skill platform tools into the agent's internal tools config using the old
-  hyphenated runtime spelling.
-- The hosted runtime injects `load_skill` into its local host tool set and uses
-  `load_skill` in hosted steering, eval, and child-agent paths. Its optional
+  the skill platform tools into the agent's internal tools config. Trusted
+  framework tools publish only their `veryfront__` names to the model.
+- The hosted runtime injects `veryfront__load_skill` into its local host tool set and uses
+  `veryfront__load_skill` in hosted steering, eval, and child-agent paths. Its optional
   `file` input reads references with request-scoped project context. Hosted
   runs do not expose direct skill script execution.
 
 Public users can narrow the advertised catalog with `skills`; they do not add
-`load_skill` to `tools`. The factory currently implements the platform tools as
+`veryfront__load_skill` to `tools`. The factory currently implements the platform tools as
 an internal tools-config merge instead of a separate platform tool catalog
 entry.
 
@@ -124,7 +124,7 @@ The current code has four practical tool classes:
 | Class                      | Example                   | Config or source                         | Executor owner                         |
 | -------------------------- | ------------------------- | ---------------------------------------- | -------------------------------------- |
 | Local or project tool      | `read_file`               | `agent.tools` or tool registry           | Veryfront runtime                      |
-| Platform runtime tool      | `load_skill`              | `agent.skills` and hosted steering setup | Veryfront runtime                      |
+| Platform runtime tool      | `veryfront__load_skill`   | `agent.skills` and hosted steering setup | Veryfront runtime                      |
 | Provider-native tool       | `web_search`, `web_fetch` | `allowedRemoteTools`                     | Selected model provider                |
 | Veryfront integration tool | `github__list_repos`      | Per-request API integration discovery    | Veryfront API integration endpoint     |
 | MCP or remote tool         | `list_uploads`            | `remoteTools` or hosted `mcpServers`     | MCP server through Veryfront execution |
@@ -215,9 +215,9 @@ Provider-native tools are added later during model tool conversion. For
 example, `web_search` is selected from the allowed name list, converted into an
 Anthropic provider tool, and marked as provider-executed in stream handling.
 Runtime skill tools are local platform tools. Local and project runtimes always
-expose `load_skill`. They gate `load_skill_reference` and `execute_skill_script`
+expose `veryfront__load_skill`. They gate `veryfront__load_skill_reference` and `veryfront__execute_skill_script`
 by the references and scripts the loaded skill advertises, and execute them
-through Veryfront. Hosted chat exposes its request-scoped `load_skill` tool
+through Veryfront. Hosted chat exposes its request-scoped `veryfront__load_skill` tool
 instead.
 
 `executeConfiguredTool` resolves in this order:

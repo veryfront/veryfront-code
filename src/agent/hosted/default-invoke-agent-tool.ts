@@ -1,10 +1,22 @@
+import {
+  hostedInheritedInvocationCredentialReader,
+  hostedInheritedRootRunId,
+  hostedInheritedTaskInput,
+} from "./terminal-credential.ts";
+import type { HostedTaskInput } from "./task-input.ts";
 import { resolveHostedRuntimeSkillLoaderToolName } from "./cloud-runtime-system-messages.ts";
-import { scopeHostedChildInferenceAuthority } from "./inference-credential.ts";
+import {
+  inheritHostedChildInferenceAuthority,
+  scopeHostedChildInferenceAuthority,
+} from "./inference-credential.ts";
 import {
   hasTrustedHostToolProvenance,
   markTrustedHostToolProvenance,
 } from "#veryfront/tool/host-tool-provenance.ts";
-import { platformMcpLegacyName } from "../platform-mcp-tool-source.ts";
+import {
+  platformMcpLegacyName,
+  withPlatformMcpToolNameAliases,
+} from "../platform-mcp-tool-source.ts";
 import { withPlatformHostToolAliases } from "../platform-host-tools.ts";
 import type {
   AgentServiceSandboxToolsOptions,
@@ -42,6 +54,11 @@ import { prepareDefaultHostedChildForkSandboxToolSources } from "./child-fork-to
 import type { AgentServiceMcpServerConfig } from "../service/mcp-server-config.ts";
 import { executeHostedChildForkToolInput } from "./child-fork-execution-runner.ts";
 import { createHostedChildInvokeTool } from "./child-invoke-tool.ts";
+import {
+  HostedChildAgentResolutionError,
+  hostedChildAgentResolutionErrorCodes,
+  isHostedChildModelAllowed,
+} from "./project-agent-definition-resolver.ts";
 import {
   runHostedChildExecutionLifecycle,
   shouldSkipHostedChildTerminalPersistence,
@@ -100,7 +117,11 @@ export type DefaultHostedInvokeAgentContext = MutableAgentProjectContext & {
   clientProfile?: RuntimeClientProfile | null;
   model?: string;
   conversationId?: string;
+  runId?: string;
+  agentId?: string;
   parentRunId?: string;
+  rootRunId?: string;
+  taskInput?: HostedTaskInput;
   parentMessageId?: string;
   veryfrontInvocationContext?: HostedChildInvocationContext;
   publishParentRunEvents?: (events: ConversationRunEvent[]) => Promise<void> | void;
@@ -120,8 +141,11 @@ export type DefaultHostedInvokeAgentConfig = {
 /** Resolved project-agent settings applied to a fixed hosted child run. */
 export type DefaultHostedChildAgentExecutionConfig = {
   system: AgentSystem;
+  /** Canonical startup skill authored by the target agent, never inherited. */
+  bootstrapSkill?: string;
   model?: string;
   temperature?: number;
+  parallelToolCalls?: boolean;
   maxSteps?: number;
   thinking?: HostedChildForkToolInput["thinking"];
   toolNames?: string[];
@@ -139,6 +163,26 @@ export type DefaultHostedChildAgentExecutionConfig = {
   loadedSkillResponses?: RuntimeLoadSkillToolContext["loadedSkillResponses"];
   loadedSkillReferenceResponses?: RuntimeLoadSkillToolContext["loadedSkillReferenceResponses"];
   delegateIds?: string[];
+  /**
+   * Whether the child may receive this deployment's locally discovered host
+   * tools. Set only for an agent this deployment discovered itself. Absent
+   * means no local tools: an agent read from the API (another project, or one
+   * this deployment does not ship) never runs the calling project's code or
+   * credentials.
+   */
+  localHostTools?: boolean;
+  /**
+   * Models an `invoke_agent.model` override may select. An override outside a
+   * non-empty list fails the child with `CHILD_AGENT_MODEL_NOT_ALLOWED`.
+   */
+  allowedModels?: string[];
+  /**
+   * Provider-native tool bindings that are not also callable tool grants. They
+   * stay in `toolNames` so the provider can bind them, but a host, MCP or
+   * project tool with the same name is never selected for the child (for
+   * example when the child model does not support the provider tool).
+   */
+  providerOnlyToolNames?: string[];
 };
 
 /** Public API contract for default hosted invoke agent logger. */
@@ -211,6 +255,7 @@ export type DefaultHostedInvokeAgentToolOptions<TContext extends DefaultHostedIn
     resolveChildAgentExecutionConfig?: (
       childAgentId: string,
       projectId: string,
+      lookup?: { abortSignal?: AbortSignal },
     ) => Promise<DefaultHostedChildAgentExecutionConfig | undefined>;
     resolveProjectReference?: HostedProjectReferenceResolver;
     refreshProjectSkillIds?: DefaultHostedInvokeAgentProjectRefresh<TContext>;
@@ -235,7 +280,8 @@ export type DefaultHostedInvokeAgentToolOptions<TContext extends DefaultHostedIn
 const defaultHostedInvokeAgentSelectionFields = (v: SchemaValidator) => ({
   agent_id: v.string()
     .min(1, "agent_id is required")
-    .regex(/\S/, "agent_id must not be blank")
+    // Local providers cannot compile the nonblank regex into a sampling grammar.
+    .refine((value: string) => /\S/.test(value), "agent_id must not be blank")
     .describe("Built-in child agent type or user-defined agent id."),
 });
 
@@ -324,20 +370,44 @@ async function prepareForkToolSources<TContext extends DefaultHostedInvokeAgentC
 ): Promise<DefaultHostedChildForkToolAssemblySourceResult> {
   throwIfChildRunAborted(abortSignal);
 
+  // A fork receives only its own admitted binding; a parent's binding cannot
+  // leak through the otherwise shared project execution context.
+  const taskInput = durableChildRun && options.context.projectId
+    ? hostedInheritedTaskInput(durableChildRun, options.context.projectId)
+    : undefined;
+  const childContext = {
+    ...options.context,
+    runId: durableChildRun?.childRunId,
+    agentId: childAgentId,
+    taskInput,
+    rootRunId: durableChildRun && options.context.projectId
+      ? hostedInheritedRootRunId(durableChildRun, options.context.projectId) ?? taskInput?.rootRunId
+      : undefined,
+  };
+
+  inheritHostedChildInferenceAuthority(childContext, options.context);
+
   const globalTools = withPlatformHostToolAliases(
     {
       sleep: markTrustedHostToolProvenance(sleepTool),
     },
     options.buildGlobalTools?.(
-      options.context,
+      childContext,
       childAgentId,
       childConfig,
       durableChildRun,
     ) ?? {},
   );
 
+  const getAuthToken = durableChildRun
+    ? hostedInheritedInvocationCredentialReader(durableChildRun)
+    : undefined;
+  if (durableChildRun?.childCanonicalRunId && !getAuthToken) {
+    throw new Error("Inherited child invocation authority is required");
+  }
   return prepareDefaultHostedChildForkSandboxToolSources({
-    authToken: options.context.authToken,
+    authToken: getAuthToken ? getAuthToken() : options.context.authToken,
+    ...(getAuthToken ? { getAuthToken } : {}),
     apiUrl: config.apiUrl,
     apiMcpUrl: config.apiMcpUrl,
     studioMcpUrl: config.studioMcpUrl,
@@ -402,6 +472,33 @@ function withoutDeniedForkTools(
   };
 }
 
+/**
+ * Drops callable tools that merely share a name with a provider-only binding.
+ * A tool whose own (qualified) name the agent explicitly selected is kept: the
+ * collision is only with its short name, not with the selection.
+ */
+function withoutProviderOnlyForkTools(
+  toolSources: DefaultHostedChildForkToolAssemblySourceResult,
+  providerOnlyToolNames: readonly string[] | undefined,
+  selectedToolNames?: readonly string[],
+): DefaultHostedChildForkToolAssemblySourceResult {
+  if (!toolSources.ok || !providerOnlyToolNames?.length) return toolSources;
+  const providerOnly = new Set(providerOnlyToolNames);
+  const selected = new Set(selectedToolNames ?? []);
+  return {
+    ...toolSources,
+    forkTools: Object.fromEntries(
+      Object.entries(toolSources.forkTools).filter(([toolName, tool]) =>
+        !providerOnly.has(toolName) &&
+        !(hasTrustedHostToolProvenance(tool) &&
+          providerOnly.has(platformMcpLegacyName(toolName)) && !selected.has(toolName)) &&
+        (tool.shortName === undefined || !providerOnly.has(tool.shortName) ||
+          selected.has(toolName))
+      ),
+    ),
+  };
+}
+
 function getUnavailableOptionalStudioToolNames(
   config: DefaultHostedInvokeAgentConfig,
   clientProfile: RuntimeClientProfile | null | undefined,
@@ -414,7 +511,10 @@ function getUnavailableOptionalStudioToolNames(
   for (const server of config.mcpServers ?? []) {
     if (server.kind !== "veryfront-studio" || server.required !== false) continue;
     unavailableNames.add("studio_*");
-    for (const toolName of server.toolPolicy?.allow ?? []) unavailableNames.add(toolName);
+    unavailableNames.add("veryfront__studio_*");
+    for (const toolName of withPlatformMcpToolNameAliases(server.toolPolicy?.allow ?? [])) {
+      unavailableNames.add(toolName);
+    }
   }
 
   return unavailableNames.size === 0 ? undefined : unavailableNames;
@@ -425,7 +525,9 @@ function isUnavailableOptionalStudioTool(
   unavailableNames: ReadonlySet<string> | undefined,
 ): boolean {
   return unavailableNames?.has(toolName) === true ||
-    (unavailableNames?.has("studio_*") === true && toolName.startsWith("studio_"));
+    (unavailableNames?.has("studio_*") === true && toolName.startsWith("studio_")) ||
+    (unavailableNames?.has("veryfront__studio_*") === true &&
+      toolName.startsWith("veryfront__studio_"));
 }
 
 function withoutUnavailableOptionalStudioRequestedTools(input: {
@@ -478,16 +580,20 @@ async function prepareForkToolAssembly<TContext extends DefaultHostedInvokeAgent
     durableChildRun?: HostedChildRunIdentifiers;
   },
 ): Promise<DefaultHostedChildForkToolAssemblyResult> {
-  const toolSources = withoutDeniedForkTools(
-    await prepareForkToolSources(
-      options,
-      config,
-      input.childAgentId,
-      input.childConfig,
-      input.abortSignal,
-      input.durableChildRun,
+  const toolSources = withoutProviderOnlyForkTools(
+    withoutDeniedForkTools(
+      await prepareForkToolSources(
+        options,
+        config,
+        input.childAgentId,
+        input.childConfig,
+        input.abortSignal,
+        input.durableChildRun,
+      ),
+      input.childConfig?.deniedToolNames,
+      input.childConfig?.toolNames,
     ),
-    input.childConfig?.deniedToolNames,
+    input.childConfig?.providerOnlyToolNames,
     input.childConfig?.toolNames,
   );
   const requestedTools = withoutUnavailableOptionalStudioRequestedTools({
@@ -507,6 +613,7 @@ async function prepareForkToolAssembly<TContext extends DefaultHostedInvokeAgent
     hostedModel: input.hostedModel,
     effectivePrompt: input.effectivePrompt,
     requestedTools,
+    allowedTools: input.childConfig?.toolNames,
     ...(input.childConfig?.deniedToolNames?.length
       ? { excludedTools: new Set(input.childConfig.deniedToolNames) }
       : {}),
@@ -618,6 +725,12 @@ async function executeForkTask<TContext extends DefaultHostedInvokeAgentContext>
         : {}),
       projectId: scopedOptions.context.projectId || null,
       forkInput,
+      ...(runtimeOptions.childConfig?.bootstrapSkill === undefined
+        ? {}
+        : { bootstrapSkill: runtimeOptions.childConfig.bootstrapSkill }),
+      ...(runtimeOptions.childConfig?.parallelToolCalls === undefined
+        ? {}
+        : { parallelToolCalls: runtimeOptions.childConfig.parallelToolCalls }),
       toolCallId: execution.toolCallId,
       contextModel: scopedOptions.context.model,
       defaultModel: options.defaultModel ?? DEFAULT_USER_AGENT_MODEL,
@@ -730,9 +843,13 @@ function applyChildAgentExecutionConfig(
   const allowedToolNames = childConfig.toolNames === undefined
     ? undefined
     : new Set(childConfig.toolNames);
+  // Alias candidates survive until the assembled catalog can establish their
+  // provenance. Final selection intersects the resolved child and parent lists.
   const requestedTools = input.tools?.filter((toolName) =>
     deniedToolNames?.includes(toolName) !== true &&
-    (allowedToolNames === undefined || allowedToolNames.has(toolName))
+    (allowedToolNames === undefined || allowedToolNames.has(toolName) ||
+      allowedToolNames.has(platformMcpLegacyName(toolName)) ||
+      (!toolName.includes("__") && allowedToolNames.has(`veryfront__${toolName}`)))
   );
 
   return {
@@ -756,6 +873,7 @@ function applyChildAgentExecutionConfig(
 /** Test-only helpers for fixed-target hosted delegation behavior. */
 export const defaultHostedInvokeAgentToolInternals = {
   applyChildAgentExecutionConfig,
+  withoutProviderOnlyForkTools,
   withoutUnavailableOptionalStudioRequestedTools,
   withoutDeniedForkTools,
 };
@@ -814,13 +932,46 @@ async function executeDefaultHostedInvokeAgentToolWithCapability<
         project_reference: undefined,
       };
     }
-    const childConfig = await options.resolveChildAgentExecutionConfig?.(
-      childAgentId,
-      targetProjectId,
-    );
+    let childConfig: DefaultHostedChildAgentExecutionConfig | undefined;
+    let forkInput = resolvedInput;
+    // The saved agent definition is mutable: resolve it only when this call
+    // will actually run the child. A durable retry replays its terminal
+    // receipt first, so a since-deleted agent or narrowed model allowlist
+    // cannot turn a finished child into a new failure.
+    const resolveChildExecution = async (): Promise<
+      { terminalErrorCode: string; terminalErrorMessage: string } | null
+    > => {
+      try {
+        childConfig = await options.resolveChildAgentExecutionConfig?.(
+          childAgentId,
+          targetProjectId,
+          { abortSignal },
+        );
+      } catch (error) {
+        // A missing or unreadable target agent is reported to the parent as a
+        // terminal child failure; the child never runs without its definition.
+        if (!(error instanceof HostedChildAgentResolutionError)) throw error;
+        return { terminalErrorCode: error.code, terminalErrorMessage: error.message };
+      }
+      if (
+        resolvedInput.model !== undefined &&
+        !isHostedChildModelAllowed(
+          childConfig?.allowedModels,
+          resolvedInput.model,
+          options.resolveModelId,
+        )
+      ) {
+        return {
+          terminalErrorCode: hostedChildAgentResolutionErrorCodes.modelNotAllowed,
+          terminalErrorMessage:
+            `Agent "${childAgentId}" does not allow model "${resolvedInput.model}". ` +
+            `Allowed models: ${childConfig?.allowedModels?.join(", ")}. No child agent was run.`,
+        };
+      }
+      forkInput = applyChildAgentExecutionConfig(resolvedInput, childConfig);
+      return null;
+    };
     const sourceIntegrationPolicy = getRuntimeSourceIntegrationPolicyFromContext(executionContext);
-    const configuredInput = applyChildAgentExecutionConfig(resolvedInput, childConfig);
-    const forkInput = configuredInput;
     const durableInvokeRecorder = createHostedDurableChildInvokeTraceRecorder({
       traceBase: {
         conversationId: options.context.conversationId,
@@ -863,6 +1014,8 @@ async function executeDefaultHostedInvokeAgentToolWithCapability<
     durableInvokeRecorder.annotate();
 
     if (!config.enableDurableInvokeAgent && !options.requireDurableInvokeAgent) {
+      const resolutionFailure = await resolveChildExecution();
+      if (resolutionFailure) return buildHostedDurableChildInvokeFailureResult(resolutionFailure);
       return executeHostedLocalChildInvoke({
         forkInput,
         abortSignal,
@@ -892,6 +1045,7 @@ async function executeDefaultHostedInvokeAgentToolWithCapability<
         runProjectId: targetProjectId,
         parentConversationId: options.context.conversationId,
         parentRunId: options.context.parentRunId,
+        rootRunId: options.context.rootRunId,
         parentMessageId: options.context.parentMessageId,
         trustedInvocationContext: options.context.veryfrontInvocationContext,
         getProjectId: () => options.context.projectId,
@@ -909,6 +1063,7 @@ async function executeDefaultHostedInvokeAgentToolWithCapability<
           "invoke_agent requires durable conversation context when durable child runs are enabled.",
         setupFailedCode: DURABLE_INVOKE_SETUP_FAILED,
         executionFailedCode: "INVOKE_AGENT_FAILED",
+        prepareAdmittedExecution: async () => (await resolveChildExecution()) ?? { forkInput },
         executeLocal: executeLocalInvoke,
         getExecutionSnapshot: () => executionSnapshot,
         buildContextUnavailableResult: (message) => {

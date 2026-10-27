@@ -355,17 +355,14 @@ transport configured for the same origin. Redirects remain rejected, and all
 other internal destinations remain blocked. Project environment overlays
 cannot add origins to this host-owned list.
 
-The Veryfront Cloud gateway and billing transport has one more exception for
-local CLI commands. `veryfront eval` calls
-`trustOperatorConfiguredVeryfrontApiOrigins()` before it loads project config or
-agent modules. That call seals the origins of `VERYFRONT_API_URL` and
-`VERYFRONT_API_BASE_URL` read from the process environment, excluding values
-copied from a project `.env` file. Only
-`createVeryfrontApiOriginBoundOutboundFetch()` consults the sealed set, and only
-for an exact origin match. Redirects remain rejected, and every other transport
-keeps the private-address block. Hosted runtimes and `veryfront serve` never
-seal the set, because there `VERYFRONT_API_URL` names a cluster-internal
-service.
+The API transport permits exact operator-configured origins. CLI commands seal
+`VERYFRONT_API_URL` and `VERYFRONT_API_BASE_URL` before loading project config,
+excluding values copied from project `.env` files. Hosted runtimes and
+`veryfront serve` also permit the exact HTTP API origin captured at process boot.
+Only `createVeryfrontApiOriginBoundOutboundFetch()` uses these exceptions;
+project environment files and later writes cannot authorize HTTP origins.
+These origin-bound transports reject redirects; other transports keep their
+existing policies.
 
 `VERYFRONT_HOST_ALLOW_INTERNAL_EGRESS=1` is an operator-owned compatibility
 override. It disables the private-network destination check for these host
@@ -510,6 +507,64 @@ a detached application request. Public application credentials such as
 project/source identity, trusted-proxy metadata, and `x-veryfront-*` control
 headers are withheld. The original request remains available only to the
 host-owned admission and routing pipeline.
+
+## Execution surface inventory
+
+`tests/integration/security/execution-surface-inventory.test.ts` lists every source file that decides
+whether tenant project code may run on the host. A new guard, a removed guard,
+or a new literal grant fails the test until this section and the inventory are
+updated.
+
+### Host execution gates
+
+| Gate                                                   | Consumer                                             | Contract                                                                                                                               |
+| ------------------------------------------------------ | ---------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `VERYFRONT_HOST_ALLOW_PROJECT_EXECUTION`               | Operator-granted shared execution                    | See [Operator-granted shared execution](#operator-granted-shared-execution)                                                            |
+| `VERYFRONT_HOSTED_HTTP_ISOLATION`                      | `veryfront serve` production renderers in proxy mode | Off by default. Node.js 22 or newer only. Refuses to start while `VERYFRONT_HOST_ALLOW_PROJECT_EXECUTION` is set or on another runtime |
+| `security/sandbox/worker-pool.ts` host-realm admission | Worker pool when the operator grant is set           | Follows the operator grant                                                                                                             |
+
+### Surfaces refused under hosted HTTP isolation
+
+The hosted ingress refuses these surfaces with a non-cacheable
+`project-execution-unavailable` 503. They never fall back to host execution. A
+refused WebSocket upgrade never receives a 101 response. On Node.js, the only
+runtime that supports this feature, the upgrade transport does not send the 503:
+it closes the connection, so the client observes a dropped connection.
+
+| Surface                                             | Status                                                   |
+| --------------------------------------------------- | -------------------------------------------------------- |
+| Preview mode, including Markdown preview            | Unsupported when `VERYFRONT_HOSTED_HTTP_ISOLATION` is on |
+| Component snippets (`GET /@/`, `GET /@components/`) | Unsupported when `VERYFRONT_HOSTED_HTTP_ISOLATION` is on |
+| WebSocket upgrades, including preview HMR           | Unsupported when `VERYFRONT_HOSTED_HTTP_ISOLATION` is on |
+
+### Host execution grant register
+
+Each file below passes the literal `allowHostProjectCodeExecution: true` the listed
+number of times. The
+grant is valid only where its consumer is trusted local execution, an isolated
+executor, a single-project process, or code that a capability check has
+already admitted.
+
+| File                                                   | Consumer                                                                | Grant basis                         | Grants |
+| ------------------------------------------------------ | ----------------------------------------------------------------------- | ----------------------------------- | ------ |
+| `src/agent/hosted/cloud-agent-config.ts`               | Node Cloud agent service discovery for its own project                  | Single-project process              | 1      |
+| `src/agent/hosted/executor-discovery-node.ts`          | Discovery inside the isolated agent executor                            | Isolated executor                   | 1      |
+| `src/discovery/discovery-engine.ts`                    | `discoverAll`, after its explicit capability check                      | Propagates an already checked grant | 1      |
+| `src/routing/api/handler.ts`                           | Host-realm API route loading, selected only when execution is allowed   | Propagates an already checked grant | 1      |
+| `src/routing/api/module-loader/types.ts`               | Type contract that requires a literal grant for host loading            | Type-level requirement              | 1      |
+| `src/routing/api/openapi/spec-generator.ts`            | OpenAPI generation, reached only from the local-project OpenAPI handler | Trusted local execution             | 1      |
+| `src/server/dev-server/server.ts`                      | Local development server discovery                                      | Trusted local execution             | 1      |
+| `src/server/handlers/request/api/project-discovery.ts` | Project discovery, after `requiresIsolatedProjectRuntime`               | Propagates an already checked grant | 1      |
+| `src/server/handlers/request/openapi.handler.ts`       | OpenAPI handler, after its local-project check                          | Trusted local execution             | 1      |
+| `src/server/isolated-http/application-runtime.ts`      | Application handler inside the isolated HTTP executor                   | Isolated executor                   | 1      |
+| `src/trigger/local-runner.ts`                          | Local trigger runner for a developer's own project                      | Trusted local execution             | 1      |
+| `src/workflow/worker/dynamic-run-entrypoint.ts`        | Workflow run process for one tenant                                     | Single-project process              | 1      |
+| `cli/commands/eval/command.ts`                         | `veryfront eval` on a local project                                     | Trusted local execution             | 1      |
+| `cli/commands/schedule/handler.ts`                     | `veryfront schedule` on a local project                                 | Trusted local execution             | 2      |
+| `cli/commands/schedules/handler.ts`                    | `veryfront schedules` on a local project                                | Trusted local execution             | 1      |
+| `cli/commands/task/command.ts`                         | `veryfront task` on a local project                                     | Trusted local execution             | 1      |
+| `cli/commands/webhook/handler.ts`                      | `veryfront webhook` on a local project                                  | Trusted local execution             | 2      |
+| `cli/commands/webhooks/handler.ts`                     | `veryfront webhooks` on a local project                                 | Trusted local execution             | 1      |
 
 ## Internal-only files
 

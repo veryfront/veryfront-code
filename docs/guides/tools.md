@@ -1,7 +1,7 @@
 ---
 title: "Tools"
 description: "Define tools with schema-backed inputs that agents can call."
-order: 20
+order: 150
 ---
 
 A tool is a typed function an agent can call. It declares input, describes when to use it, and runs server-side code.
@@ -56,10 +56,9 @@ export default agent({
 });
 ```
 
-Existing noncolliding platform selectors such as `get_file` remain supported.
+Use canonical platform selectors such as `veryfront__get_file`.
 Integration tools retain names such as `github__list_repos`. Project tool IDs
-cannot use the reserved double-underscore namespace. Platform aliases retain
-the same project scope and policy restrictions as their legacy names.
+cannot use the reserved double-underscore namespace. Platform tools retain their project scope and policy restrictions.
 
 Connector allowlists do not remove trusted platform capabilities. That exception
 requires host-owned provenance; a remote source cannot claim it with a tool name
@@ -72,13 +71,55 @@ Reserved platform names resolve only through trusted sources, regardless of
 custom server ordering. Hosted discovery applies connector policy to the same
 catalog snapshot it lists, without fetching each catalog a second time.
 
-Parent, child, hosted-project, and standalone API sources derive canonical aliases
-from the authenticated legacy catalog. API MCP allow/deny entries apply to both
-spellings; a run's tool-name ceiling still grants only its exact selected names.
-Canonical calls use the legacy wire name after project and access checks.
+Parent, child, hosted-project, and standalone API sources publish only canonical
+`veryfront__` names from the authenticated catalog. Bare transport names are
+normalized internally and do not create duplicate tool definitions. Internal
+policy checks recognize both spellings; an explicit tool-name ceiling remains
+restrictive. Host-provided platform tools also publish one canonical identity.
 
 Runtime
 dispatch reuses the source selected during authorization for that call.
+
+## Code-owned platform dependencies
+
+A project tool can call a platform operation from its implementation without
+exposing that operation to the model. Declare the exact canonical operations in
+`delegatedPlatformTools`:
+
+```ts
+import { tool } from "veryfront/tool";
+
+export default tool({
+  id: "save-note",
+  description: "Save the prepared note",
+  inputSchema: { type: "object", properties: {}, additionalProperties: false },
+  delegatedPlatformTools: ["veryfront__create_file"],
+  execute: async (_input, context) => {
+    if (!context?.executePlatformTool) throw new Error("Hosted tool authority is required");
+    return await context.executePlatformTool("veryfront__create_file", {
+      project_reference: context.projectId,
+      path: "notes/prepared.txt",
+      content: "Prepared note",
+    });
+  },
+});
+```
+
+Veryfront resolves declarations from selected project tool source and seals the
+map for the admitted run. Explicit platform denials still apply. Each wrapper
+can call only its own declared operations while that invocation remains active.
+Tool identity and platform dependency declarations are immutable after construction
+or registration. Create a new tool definition to change them.
+A copied callback, another run, or a settled invocation cannot reuse authority.
+The API still verifies project access, integration bindings and operation policy.
+This contract applies to API-dispatched project agent runs and their
+control-plane-dispatched children, including default hosted forks admitted with
+their own authenticated child writer credential. Generic local `agentAsTool`
+execution does not establish this capability. Child runs receive their own
+source declarations; they do not inherit the parent's map. Hosted dependency
+authority requires the operator writer key and service identity captured at
+process startup; a custom authentication verifier cannot grant this authority.
+The declaration and callback never contain authentication tokens.
 
 ## Try a tool directly
 
@@ -107,9 +148,9 @@ Use this pattern to verify the tool contract before giving the tool to an agent.
 
 An explicit tool map authorizes only the selected tools and sends those schemas
 to the model immediately. Use `tools: true` for a broad authorized scope. The
-framework initially sends only the `load_skill` bootstrap schema when it is
-authorized, plus `tool_search`, then loads matching schemas for the next model
-step. `form_input` is authorized but deferred until it is needed. Omit `tools`
+framework initially sends only the `veryfront__load_skill` bootstrap schema when it is
+authorized, plus `veryfront__tool_search`, then loads matching schemas for the next model
+step. `veryfront__form_input` is authorized but deferred until it is needed. Omit `tools`
 to expose no project tools. Search results contain names and descriptions, not
 input or output schemas.
 
@@ -128,13 +169,31 @@ Use an explicit map such as `tools: { getWeather: true }` when the model needs a
 selected schema on its first step. Schema loading and tool authorization stay
 separate, and execution rechecks authorization.
 
-`tool_search` uses deterministic, case-insensitive matching. It treats
+`veryfront__tool_search` accepts exactly one of four mode fields. All arguments are
+top-level strings or integers:
+
+- `schema: "<exact name>"` returns one exact tool's input schema and loads it
+  for the next model step.
+- `search: "<phrase>"` finds tools by a short capability phrase without loading
+  schemas.
+- `inventory: "all" | "platform"` browses tool metadata pages. `platform` lists
+  only Veryfront platform tools. The inventory-only fields `domain` and
+  `resource` match a tool's `discovery` metadata exactly, and `cursor` and
+  `limit` page through results.
+- `query: "<name or phrase>"` searches and loads matching schemas for the next
+  model step.
+
+Search uses deterministic, case-insensitive matching. It treats
 underscores as spaces and ranks results in this order:
 
 1. Exact tool name.
 2. Tool name substring.
 3. Tool description substring.
 4. Input parameter description substring.
+
+An exact canonical integration query such as `gmail__list_emails` never loads a
+sibling action when that action is unavailable. It can return an authorized
+catalog reader with integration guidance, or report a miss.
 
 Equal-rank matches use ASCII tool-name order. Each search returns at most five
 matches. Results contain the tool name, description, and loading status, but no
@@ -175,7 +234,7 @@ Cloud inference automatically.
 
 When a user asks "What's the weather in Tokyo?", an agent with `tools: true`:
 
-1. Sends the question with `tool_search` to the model.
+1. Sends the question with `veryfront__tool_search` to the model.
 2. The model searches for a weather capability.
 3. The framework loads the matching authorized `getWeather` schema.
 4. The next model step calls `getWeather({ city: "Tokyo" })`.
@@ -197,7 +256,7 @@ Use `tools` for functions you define in the project. Do not add provider-native
 tools or skill loader tools to `tools`.
 
 Use `providerTools` for provider-executed capabilities. In deferred mode,
-`tool_search` can load a configured capability when the selected model supports
+`veryfront__tool_search` can load a configured capability when the selected model supports
 it:
 
 ```ts
@@ -215,6 +274,7 @@ For `veryfront-cloud/*` models, the served catalogue for your project and
 credential determines which provider tools are available. Configuring a tool
 cannot grant it when the selected deployment omits it. Before the catalogue
 loads, or when its tool declaration is missing, no provider tools are offered.
+
 The gateway remains responsible for enforcing policy before dispatch. Read its
 served web-tool data-flow facts for processing recipients and boundary coverage;
 inference residency alone does not approve web search or fetch.
@@ -236,7 +296,7 @@ duplicating transport configuration.
 export default agent({
   id: "project-reader",
   system: "Use project evidence when answering.",
-  tools: { get_file: true, list_files: true },
+  tools: { veryfront__get_file: true, veryfront__list_files: true },
 });
 ```
 

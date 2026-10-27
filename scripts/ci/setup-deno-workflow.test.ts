@@ -5,6 +5,7 @@ import {
   assertStringIncludes,
   assertThrows,
 } from "#std/assert";
+import { checkPrime, checkPrimeSync } from "node:crypto";
 import { describe, it } from "#std/testing/bdd";
 import { parse } from "#std/yaml/parse";
 import { planIntegrationShard, planSuiteFiles } from "../test/run-suite.ts";
@@ -266,8 +267,8 @@ for arg in "$@"; do
   prev="\${arg}"
 done
 mkdir -p "\${dest}"
-printf '#!/usr/bin/env bash\\necho "deno 2.7.7 (stub)"\\n' > "\${dest}/deno"
-printf '#!/usr/bin/env bash\\necho "deno 2.7.7 (stub)"\\n' > "\${dest}/deno.exe"
+printf '#!/usr/bin/env bash\\necho "deno 2.9.7 (stub)"\\n' > "\${dest}/deno"
+printf '#!/usr/bin/env bash\\necho "deno 2.9.7 (stub)"\\n' > "\${dest}/deno.exe"
 `;
 
 const STUB_ARCHIVE_BODY = "stub-deno-archive-payload";
@@ -366,7 +367,7 @@ describe("setup-deno installer resilience", () => {
       0,
       `installer must succeed with only the archive download\n${result.stderr}`,
     );
-    assertStringIncludes(result.stdout, "deno 2.7.7 (stub)");
+    assertStringIncludes(result.stdout, "deno 2.9.7 (stub)");
   });
 
   // The point of pinning in-repo: a tampered archive fails no matter what the
@@ -378,7 +379,7 @@ describe("setup-deno installer resilience", () => {
     assert(result.code !== 0, "a tampered archive must fail the job");
     assertStringIncludes(result.stderr, "Deno archive checksum mismatch");
     assertEquals(
-      result.stdout.includes("deno 2.7.7 (stub)"),
+      result.stdout.includes("deno 2.9.7 (stub)"),
       false,
       "no Deno may be installed from an unverified archive",
     );
@@ -398,7 +399,7 @@ describe("setup-deno installer resilience", () => {
       0,
       `a dead connection on the archive must be retried, not fatal\n${result.stderr}`,
     );
-    assertStringIncludes(result.stdout, "deno 2.7.7 (stub)");
+    assertStringIncludes(result.stdout, "deno 2.9.7 (stub)");
   });
 
   it(`retries the required archive download across a ${SURVIVABLE_OUTAGE_SECONDS}s upstream outage`, async () => {
@@ -411,7 +412,7 @@ describe("setup-deno installer resilience", () => {
       0,
       `the archive retry window must outlast a ${SURVIVABLE_OUTAGE_SECONDS}s outage\n${result.stderr}`,
     );
-    assertStringIncludes(result.stdout, "deno 2.7.7 (stub)");
+    assertStringIncludes(result.stdout, "deno 2.9.7 (stub)");
   });
 
   // The guard that keeps this from becoming "make CI never fail". The
@@ -432,7 +433,7 @@ describe("setup-deno installer resilience", () => {
         "Failed to download Deno archive for",
       );
       assertEquals(
-        result.stdout.includes("deno 2.7.7 (stub)"),
+        result.stdout.includes("deno 2.9.7 (stub)"),
         false,
         "no Deno may be installed when verification inputs are missing",
       );
@@ -583,7 +584,7 @@ describe("setup-deno CI contract", () => {
     const cacheKey = String(cacheInputs.key);
     assertStringIncludes(cacheKey, "${{ runner.os }}");
     assertStringIncludes(cacheKey, "${{ runner.arch }}");
-    assertStringIncludes(cacheKey, "2.7.7");
+    assertStringIncludes(cacheKey, "2.9.7");
     assertStringIncludes(cacheKey, "veryfront-deno-v2-");
     for (
       const dependencyInput of [
@@ -614,7 +615,7 @@ describe("setup-deno CI contract", () => {
     );
     assert(installStep, "setup-deno must install Deno explicitly");
     const install = String(installStep.run);
-    assertStringIncludes(install, 'version="2.7.7"');
+    assertStringIncludes(install, 'version="2.9.7"');
     assertStringIncludes(install, "--remove-on-error");
     assertStringIncludes(
       install,
@@ -1073,7 +1074,7 @@ jobs:
     );
     assertEquals(
       nodeSetup.uses,
-      "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020",
+      "actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1",
     );
     const nodeOptions = asRecord(nodeSetup.with, "coverage Node setup options");
     assertEquals(nodeOptions["node-version"], "24");
@@ -1379,5 +1380,37 @@ describe("parallel integration workflow contract", () => {
     const mergeGate = asRecord(jobs["quality-gate-merge"], "merge gate");
     assert(Array.isArray(mergeGate.needs));
     assert(mergeGate.needs.includes("ci") && mergeGate.needs.includes("tests"));
+  });
+});
+
+// GHSA-9xg4-qhm4-g43w: default/zero checks must still run Miller-Rabin rounds.
+// These synthetic composites exercise the compiler runtime without network or credentials.
+describe("compiler runtime security", () => {
+  const composite = 17881n * 17891n;
+  function checkPrimeAsync(checks?: number): Promise<boolean> {
+    return new Promise((resolve, reject) => {
+      const callback = (error: Error | null, result: boolean) => {
+        if (error) reject(error);
+        else resolve(result);
+      };
+      if (checks === undefined) checkPrime(composite, callback);
+      else checkPrime(composite, { checks }, callback);
+    });
+  }
+
+  it("rejects a composite with the synchronous default", () => {
+    assertEquals(checkPrimeSync(composite), false);
+  });
+  it("rejects a composite with synchronous zero checks", () => {
+    assertEquals(checkPrimeSync(composite, { checks: 0 }), false);
+  });
+  it("rejects a composite with the asynchronous default", async () => {
+    assertEquals(await checkPrimeAsync(), false);
+  });
+  it("rejects a composite with asynchronous zero checks", async () => {
+    assertEquals(await checkPrimeAsync(0), false);
+  });
+  it("still accepts a known prime", () => {
+    assertEquals(checkPrimeSync(17881n), true);
   });
 });

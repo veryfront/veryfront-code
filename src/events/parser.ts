@@ -1,3 +1,4 @@
+import { isCloudEventsString, isTraceState } from "./string-validation.ts";
 import type {
   JsonSchema,
   JsonSchemaValidationFunction,
@@ -78,19 +79,10 @@ function targetEnvelopeSchemaForRuntime(): JsonSchema {
   return schema as JsonSchema;
 }
 
-function patchStrictRequiredBranches(
-  value: unknown,
-  availableProperties: Record<string, unknown>,
+function patchRequiredProperties(
+  value: Record<string, unknown>,
+  localProperties: Record<string, unknown>,
 ): void {
-  if (Array.isArray(value)) {
-    for (const item of value) patchStrictRequiredBranches(item, availableProperties);
-    return;
-  }
-  if (!isPlainRecord(value)) return;
-
-  const localProperties = isPlainRecord(value.properties)
-    ? { ...availableProperties, ...value.properties }
-    : availableProperties;
   if (Array.isArray(value.required)) {
     const properties = isPlainRecord(value.properties) ? value.properties : {};
     let patchedProperties: Record<string, unknown> | undefined;
@@ -105,6 +97,22 @@ function patchStrictRequiredBranches(
     }
     if (patchedProperties) value.properties = patchedProperties;
   }
+}
+
+function patchStrictRequiredBranches(
+  value: unknown,
+  availableProperties: Record<string, unknown>,
+): void {
+  if (Array.isArray(value)) {
+    for (const item of value) patchStrictRequiredBranches(item, availableProperties);
+    return;
+  }
+  if (!isPlainRecord(value)) return;
+
+  const localProperties = isPlainRecord(value.properties)
+    ? { ...availableProperties, ...value.properties }
+    : availableProperties;
+  patchRequiredProperties(value, localProperties);
 
   for (const child of Object.values(value)) {
     patchStrictRequiredBranches(child, localProperties);
@@ -132,48 +140,6 @@ function getEventValidator(): JsonSchemaValidationFunction<EventRecord> {
   return compiledEventValidator;
 }
 
-function cloudEventsString(value: string): boolean {
-  for (const character of value) {
-    const codePoint = character.codePointAt(0);
-    if (codePoint === undefined) return false;
-    if (
-      codePoint <= 0x1f ||
-      (codePoint >= 0x7f && codePoint <= 0x9f) ||
-      (codePoint >= 0xd800 && codePoint <= 0xdfff) ||
-      (codePoint >= 0xfdd0 && codePoint <= 0xfdef) ||
-      (codePoint & 0xffff) >= 0xfffe
-    ) {
-      return false;
-    }
-  }
-  return true;
-}
-
-function traceState(value: string): boolean {
-  if (value.length > 512) return false;
-  const members = value.split(",").filter((member) => !/^[ \t]*$/.test(member));
-  if (members.length === 0 || members.length > 32) return false;
-  const keys = new Set<string>();
-  for (const member of members) {
-    const match = member.match(/^[ \t]*([^=]+)=(.*?)[ \t]*$/);
-    if (!match) return false;
-    const [, key, content] = match;
-    if (key === undefined || content === undefined) return false;
-    const simple = /^[a-z][a-z0-9_*/-]{0,255}$/;
-    const multi = /^[a-z0-9][a-z0-9_*/-]{0,240}@[a-z][a-z0-9_*/-]{0,13}$/;
-    if ((!simple.test(key) && !multi.test(key)) || keys.has(key)) return false;
-    if (
-      !content.length ||
-      content.length > 256 ||
-      !/^[\x20-\x2b\x2d-\x3c\x3e-\x7e]*[\x21-\x2b\x2d-\x3c\x3e-\x7e]$/.test(content)
-    ) {
-      return false;
-    }
-    keys.add(key);
-  }
-  return true;
-}
-
 function semanticIssue(message: string, instancePath: string): EventParseIssue {
   return {
     instancePath,
@@ -188,11 +154,48 @@ function jsonPointerSegment(value: string): string {
   return value.replaceAll("~", "~0").replaceAll("/", "~1");
 }
 
+function validateInputTokenSemantics(
+  tokens: Record<string, unknown>,
+  input: unknown,
+  issues: EventParseIssue[],
+): void {
+  if (typeof input === "number") {
+    for (const key of ["cacheRead", "cacheWrite"] as const) {
+      const value = tokens[key];
+      if (typeof value === "number" && value > input) {
+        issues.push(
+          semanticIssue(`${key} must not exceed input tokens`, `/data/tokens/${key}`),
+        );
+      }
+    }
+  }
+}
+
+function validateTokenSemantics(
+  event: Extract<EventRecord, { readonly type: "com.veryfront.model-call.usage.recorded" }>,
+  issues: EventParseIssue[],
+): void {
+  const tokens = event.data.tokens;
+  if (isPlainRecord(tokens)) {
+    const input = tokens.input;
+    const output = tokens.output;
+    validateInputTokenSemantics(tokens, input, issues);
+    if (typeof output === "number") {
+      const reasoning = tokens.reasoning;
+      if (typeof reasoning === "number" && reasoning > output) {
+        issues.push(
+          semanticIssue("reasoning must not exceed output tokens", "/data/tokens/reasoning"),
+        );
+      }
+    }
+  }
+}
+
 function validateEventSemantics(event: EventRecord): readonly EventParseIssue[] {
   const issues: EventParseIssue[] = [];
   for (const [key, value] of Object.entries(event)) {
     if (key === "tracestate") continue;
-    if (typeof value === "string" && !cloudEventsString(value)) {
+    if (typeof value === "string" && !isCloudEventsString(value)) {
       issues.push(
         semanticIssue(
           `${key} must be a CloudEvents string`,
@@ -201,33 +204,11 @@ function validateEventSemantics(event: EventRecord): readonly EventParseIssue[] 
       );
     }
   }
-  if (event.tracestate !== undefined && !traceState(event.tracestate)) {
+  if (event.tracestate !== undefined && !isTraceState(event.tracestate)) {
     issues.push(semanticIssue("tracestate must follow W3C trace context syntax", "/tracestate"));
   }
   if (event.type === "com.veryfront.model-call.usage.recorded") {
-    const tokens = event.data.tokens;
-    if (isPlainRecord(tokens)) {
-      const input = tokens.input;
-      const output = tokens.output;
-      if (typeof input === "number") {
-        for (const key of ["cacheRead", "cacheWrite"] as const) {
-          const value = tokens[key];
-          if (typeof value === "number" && value > input) {
-            issues.push(
-              semanticIssue(`${key} must not exceed input tokens`, `/data/tokens/${key}`),
-            );
-          }
-        }
-      }
-      if (typeof output === "number") {
-        const reasoning = tokens.reasoning;
-        if (typeof reasoning === "number" && reasoning > output) {
-          issues.push(
-            semanticIssue("reasoning must not exceed output tokens", "/data/tokens/reasoning"),
-          );
-        }
-      }
-    }
+    validateTokenSemantics(event, issues);
   }
   return issues;
 }

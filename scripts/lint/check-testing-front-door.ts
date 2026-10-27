@@ -62,31 +62,27 @@ export interface FrontDoorRule {
 export const FRONT_DOOR_RULES: readonly FrontDoorRule[] = [
   {
     group: "fetch-assignment",
-    pattern: /\bglobalThis\b(?:\s+as\s+[^)\n]*)?\)?\s*\.\s*fetch\s*=(?!=)/g,
+    pattern: /\bglobalThis\b(?:\s+as\s+[^\s)\n][^)\n]*(?<!\s))?(?:\s*\))?\s*\.\s*fetch\s*=(?!=)/g,
     // In a local declaration, `typeof globalThis.fetch` is a type query;
     // the following equals sign assigns the local binding, not the global.
     exemptMatch: (match, stripped) =>
       /\b(?:const|let|var)\s+[A-Za-z_$][\w$]*\s*:\s*typeof\s*$/.test(
         stripped.slice(0, match.index),
       ),
-    message:
-      "globalThis.fetch assigned directly; use withMockFetch or installMockFetch " +
+    message: "globalThis.fetch assigned directly; use withMockFetch or installMockFetch " +
       "so the outbound transport moves with the global",
   },
   {
     group: "temp-dir",
     pattern: /\bDeno\s*\.\s*makeTempDir(?:Sync)?\s*\(/g,
-    message:
-      "raw Deno.makeTempDir; use makeTempDir or withTempDir from src/testing/deno-compat.ts",
+    message: "raw Deno.makeTempDir; use makeTempDir or withTempDir from src/testing/deno-compat.ts",
   },
   {
     group: "local-helper",
     pattern:
       /\b(?:function\s+(withTempDir|waitFor|installDomGlobals|installDom)\s*[(<]|(?:const|let)\s+(withTempDir|waitFor|installDomGlobals|installDom)\s*=)/g,
     message: (match) =>
-      `local ${
-        match[1] ?? match[2]
-      } declaration shadows the shared helper of the same name`,
+      `local ${match[1] ?? match[2]} declaration shadows the shared helper of the same name`,
   },
   {
     group: "jsdom",
@@ -94,7 +90,7 @@ export const FRONT_DOOR_RULES: readonly FrontDoorRule[] = [
     // is assigned to, so the exemption can demand a harness call for that
     // specific DOM.
     pattern:
-      /(?:\b(?:const|let|var)\s+)?(?:([A-Za-z_$][\w$]*)\s*=\s*)?\bnew\s+JSDOM\s*\(/g,
+      /(?:\b(?:const|let|var)\s+)?(?:(?<![\w$])([A-Za-z_$][\w$]*)\s*=\s*)?\bnew\s+JSDOM\s*\(/g,
     // Constructing a JSDOM is the prescribed first half of the pattern; the
     // bypass is wiring its globals by hand. A construction is exempt only when
     // its DOM demonstrably reaches the shared harness: either the `new` sits
@@ -146,9 +142,7 @@ export function findFrontDoorBypasses(source: string, file: string): Finding[] {
       findings.push({
         file,
         line: lineAt(stripped, match.index),
-        message: typeof rule.message === "string"
-          ? rule.message
-          : rule.message(match),
+        message: typeof rule.message === "string" ? rule.message : rule.message(match),
         group: rule.group,
       });
     }
@@ -166,8 +160,7 @@ export const spec: RatchetSpec = {
     kind: "per-group-file",
     path: "scripts/lint/testing-front-door-baseline.json",
   },
-  advice:
-    "Use the shared home for the primitive instead. Fetch stubbing: withMockFetch or " +
+  advice: "Use the shared home for the primitive instead. Fetch stubbing: withMockFetch or " +
     "installMockFetch from src/testing/mock-fetch.ts (a bare globalThis.fetch assignment does " +
     "not control guardedOutboundFetch, so transport-routed code reaches the real network). " +
     "Temp dirs and polling: makeTempDir, withTempDir, and waitFor from " +

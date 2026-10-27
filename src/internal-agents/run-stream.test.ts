@@ -1,6 +1,10 @@
+import { createRunBoundAgentManualPause } from "#veryfront/agent/hosted/manual-pause-credential.ts";
 import { runWithVeryfrontCloudContext } from "#veryfront/provider/veryfront-cloud/context.ts";
 import { toolRegistryInternal } from "#veryfront/tool/registry.ts";
-import { markTrustedHostToolProvenance } from "#veryfront/tool/host-tool-provenance.ts";
+import {
+  markTrustedHostToolProvenance,
+  markTrustedHostToolSet,
+} from "#veryfront/tool/host-tool-provenance.ts";
 import { skillRegistryInternal } from "#veryfront/skill/registry.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
@@ -17,6 +21,7 @@ import { buildAgentDelegateTools } from "#veryfront/agent/runtime/agent-delegati
 import { flattenSystemInstructions } from "#veryfront/agent/runtime/tool-inventory.ts";
 import { resolveAgentSystem } from "#veryfront/agent/runtime/effective-agent-system.ts";
 import { createRuntimeAgentFromMarkdownDefinition } from "#veryfront/agent/runtime/agent-markdown-adapter.ts";
+import { createRuntimeLoadSkillTool } from "#veryfront/agent/runtime/load-skill-tool.ts";
 import {
   _resetShimForTests,
   type AttributeValue,
@@ -33,9 +38,10 @@ import type {
 } from "#veryfront/sandbox";
 import { registerSkill } from "#veryfront/skill/registry.ts";
 import { type ModelRuntime, registerModelProvider } from "#veryfront/provider";
-import { ProviderOutputTruncatedError } from "veryfront/provider/shared";
+import { ProviderOutputTruncatedError, ProviderRequestError } from "veryfront/provider/shared";
 import {
   createToolsFromHostDefinitions,
+  type HostToolSet,
   type RemoteToolSource,
   type Tool,
   tool,
@@ -54,6 +60,7 @@ import {
   MODEL_CALL_CONTEXT_SSE_EVENT_NAME,
   PROVIDER_REPLAY_PROTOCOL_HEADER,
   PROVIDER_REPLAY_TURN_COMPLETE_SSE_EVENT_NAME,
+  registerRuntimeManualPause,
 } from "./run-stream.ts";
 
 function parseSseFrames(body: string): Array<{ event: string; data: unknown }> {
@@ -271,6 +278,53 @@ describe("internal-agents/run-stream", () => {
     assertEquals(clonedModel, "veryfront-cloud/mistral/mistral-small-2503");
   });
 
+  it("does not resolve a legacy selector without its canonical remote grant", () => {
+    const agent = {
+      id: "support",
+      config: {
+        tools: { get_file: true },
+        __vfAllowedRemoteTools: ["veryfront__search_knowledge"],
+      },
+    } as unknown as Agent;
+    assertEquals(
+      buildMergedTools(agent, {
+        runId: "run_1",
+        threadId: "thread",
+        messages: [],
+        context: [],
+        tools: [],
+      }, new AgentRunSessionManager()),
+      undefined,
+    );
+  });
+
+  it("preserves local tool precedence over a canonical remote alias", () => {
+    const local = { description: "Local file reader", execute: () => "local" } as unknown as Tool;
+    const agent = {
+      id: "support",
+      config: {
+        tools: { get_file: true },
+        __vfAllowedRemoteTools: ["veryfront__get_file"],
+      },
+    } as unknown as Agent;
+    assertEquals(
+      buildMergedTools(
+        agent,
+        {
+          runId: "run_1",
+          threadId: "thread",
+          messages: [],
+          context: [],
+          tools: [],
+        },
+        new AgentRunSessionManager(),
+        undefined,
+        { get_file: local },
+      ),
+      { get_file: local },
+    );
+  });
+
   it("dispatches canonical control-plane wrappers under an integration deny-all policy", async () => {
     const sessionManager = new AgentRunSessionManager();
     const runId = "canonical-form";
@@ -362,9 +416,9 @@ describe("internal-agents/run-stream", () => {
       );
 
       assertEquals(Object.keys(mergedTools ?? {}).sort(), [
-        "execute_skill_script",
-        "load_skill",
-        "load_skill_reference",
+        "veryfront__execute_skill_script",
+        "veryfront__load_skill",
+        "veryfront__load_skill_reference",
       ]);
     } finally {
       toolRegistryInternal.clearAll();
@@ -1085,6 +1139,138 @@ describe("internal-agents/run-stream", () => {
     assertEquals(firstToolArgs.delta, '{"task":"first"}');
   });
 
+  it("requires the provider to observe a skill body before reading its reference", async () => {
+    const hostTools = markTrustedHostToolSet(
+      {
+        load_skill: createRuntimeLoadSkillTool({
+          context: {
+            projectId: "project-1",
+            authToken: "test-token",
+            branchId: "branch-1",
+          },
+          skillsDir: "/skills",
+          projectSkillLoader: {
+            listProjectSkillReferences: (_context, skillId) =>
+              Promise.resolve(skillId === "review" ? ["references/checklist.md"] : []),
+            loadProjectSkill: (_context, skillId) =>
+              Promise.resolve(
+                skillId === "review"
+                  ? {
+                    instructions: "# Review\nUse the checklist.",
+                    references: ["references/checklist.md"],
+                  }
+                  : null,
+              ),
+            loadProjectSkillReference: (_context, skillId, normalizedFile) =>
+              Promise.resolve(
+                skillId === "review" && normalizedFile === "references/checklist.md"
+                  ? "Detailed checklist content"
+                  : null,
+              ),
+          },
+          builtinStore: {
+            readSkill: () => Promise.resolve(null),
+            readReferenceFile: () => Promise.resolve(null),
+            listReferences: () => Promise.resolve([]),
+          },
+        }),
+      } satisfies HostToolSet,
+    );
+    const runtimeTools = createToolsFromHostDefinitions(hostTools);
+    assertEquals(typeof runtimeTools.load_skill?.execute, "function");
+
+    const model = scriptedModel([
+      {
+        toolCalls: [
+          { id: "load-body", name: "load_skill", input: { load: { skillId: "review" } } },
+          {
+            id: "same-batch-reference",
+            name: "load_skill",
+            input: { reference: { skillId: "review", file: "references/checklist.md" } },
+          },
+        ],
+      },
+      {
+        toolCalls: [{
+          id: "observed-reference",
+          name: "load_skill",
+          input: { reference: { skillId: "review", file: "references/checklist.md" } },
+        }],
+      },
+      { text: "done" },
+    ], {
+      modelId: "anthropic/observed-skill-reference",
+      provider: "anthropic",
+      only: "stream",
+    });
+    const agent = createAgent({
+      id: "observed-skill-reference-agent",
+      model: "anthropic/observed-skill-reference",
+      system: "Load the review skill and read the checklist.",
+      skills: false,
+      tools: {},
+      maxSteps: 4,
+      resolveModelTransport: () => ({ model }),
+    });
+    agent.config.tools = runtimeTools;
+
+    const response = await createRuntimeAgentStreamResponse(
+      {
+        threadId: crypto.randomUUID(),
+        runId: "run_observed_skill_reference",
+        messages: [{ id: "user-1", role: "user", content: "Read the checklist." }],
+        tools: [],
+        context: [],
+      },
+      agent,
+      { sessionManager: new AgentRunSessionManager() },
+    );
+    const frames = parseSseFrames(await response.text());
+    const isToolResultFor = (
+      frame: { event: string; data: unknown },
+      toolCallId: string,
+    ): frame is {
+      event: "ToolCallResult";
+      data: { toolCallId: string; isError: boolean; content?: unknown };
+    } =>
+      frame.event === "ToolCallResult" &&
+      typeof frame.data === "object" &&
+      frame.data !== null &&
+      "toolCallId" in frame.data &&
+      frame.data.toolCallId === toolCallId &&
+      "isError" in frame.data &&
+      typeof frame.data.isError === "boolean";
+    const toolResultFor = (toolCallId: string) =>
+      frames.find((frame) => isToolResultFor(frame, toolCallId))?.data;
+    const errorTextFrom = (content: unknown): string => {
+      if (
+        typeof content === "object" && content !== null && "error" in content &&
+        typeof content.error === "string"
+      ) {
+        return content.error;
+      }
+      return "";
+    };
+
+    const bodyResult = toolResultFor("load-body");
+    const sameBatchReferenceResult = toolResultFor("same-batch-reference");
+    const observedReferenceResult = toolResultFor("observed-reference");
+
+    assertEquals(bodyResult?.isError, false);
+    assertStringIncludes(JSON.stringify(bodyResult), '"skillId":"review"');
+    assertEquals(sameBatchReferenceResult?.isError, true);
+    assertStringIncludes(
+      errorTextFrom(sameBatchReferenceResult?.content),
+      'Reference files for skill "review" are unavailable until its instructions have been read.',
+    );
+    assertEquals(
+      JSON.stringify(sameBatchReferenceResult).includes("Detailed checklist content"),
+      false,
+    );
+    assertEquals(observedReferenceResult?.isError, false);
+    assertStringIncludes(JSON.stringify(observedReferenceResult), "Detailed checklist content");
+  });
+
   it("does not expose a hidden authorized invoke_agent call as dispatchable", async () => {
     const model = scriptedModel([{
       toolCalls: [
@@ -1243,6 +1429,73 @@ describe("internal-agents/run-stream", () => {
 
     assertStringIncludes(body, "event: RunError");
     assertEquals(body.includes("event: RunFinished"), false);
+  });
+
+  it("binds a deferred pause lifetime before reporting a provider rejection", async () => {
+    const unregister = registerModelProvider("provider-rejection-repro", () => ({
+      provider: "anthropic",
+      modelId: "provider-rejection-repro/test",
+      doGenerate: () => Promise.reject(new Error("generate must not be called")),
+      doStream: () =>
+        Promise.reject(
+          new ProviderRequestError({
+            provider: "anthropic",
+            status: 401,
+            message: "Anthropic request failed with status 401",
+            retryable: false,
+          }),
+        ),
+    }));
+    try {
+      const input = {
+        threadId: crypto.randomUUID(),
+        runId: "run_provider_rejection_repro",
+        messageId: crypto.randomUUID(),
+        messages: [{ id: "message-1", role: "user" as const, content: "Hello" }],
+        tools: [],
+        context: [],
+      };
+      registerRuntimeManualPause(
+        input,
+        createRunBoundAgentManualPause({
+          apiUrl: "https://api.example.com",
+          runId: input.runId,
+          token: "synthetic-pause-token",
+          signal: undefined,
+          fetch: () =>
+            Promise.resolve(
+              Response.json({ stop: false, pauseRequested: false, checkpoint: null }),
+            ),
+        }),
+      );
+      const response = await createRuntimeAgentStreamResponse(
+        input,
+        createAgent({
+          id: "provider-rejection-repro",
+          model: "provider-rejection-repro/test",
+          system: "Reply to the user.",
+          skills: false,
+          maxSteps: 1,
+        }),
+        {
+          sessionManager: new AgentRunSessionManager(),
+          providerReplayCheckpointEmissionEnabled: true,
+          persistProviderReplayCheckpoint: () => Promise.resolve(),
+        },
+      );
+      const frames = parseSseFrames(await response.text());
+      const terminal = frames.filter((frame) =>
+        frame.event === "RunError" || frame.event === "RunFinished"
+      );
+      assertEquals(terminal.length, 1);
+      assertEquals(terminal[0]?.event, "RunError");
+      assertEquals(
+        (terminal[0]?.data as Record<string, unknown>)?.code,
+        "agent-provider-auth-error",
+      );
+    } finally {
+      unregister();
+    }
   });
 
   for (const lifecycleMode of ["legacy", "active"] as const) {
@@ -2343,6 +2596,86 @@ describe("internal-agents/run-stream", () => {
     assertEquals(capturedToolNames, ["gmail__list_emails", "list_projects"]);
   });
 
+  it("carries normalized discovery metadata on forwarded integration tool definitions", async () => {
+    const sessionManager = new AgentRunSessionManager();
+    let capturedForwardedDefs: unknown;
+
+    const agent = {
+      id: "support-agent",
+      config: {
+        id: "support-agent",
+        model: "anthropic/claude-opus-4-6",
+        system: "test",
+        tools: { gmail__list_emails: true, slack__post: true },
+      },
+    } as unknown as Agent;
+
+    const input = {
+      agentId: "support-agent",
+      threadId: crypto.randomUUID(),
+      runId: "run_1",
+      messages: [],
+      tools: [],
+      context: [],
+      forwardedProps: {
+        runtimeOverrides: {
+          allowedTools: ["gmail__list_emails", "slack__post"],
+          integrationToolDefinitions: [
+            {
+              name: "gmail__list_emails",
+              description: "List emails",
+              parameters: { type: "object", properties: {} },
+              discovery: {
+                version: 1,
+                type: "integration",
+                domain: "gmail",
+                operation: "list",
+                extra: "dropped",
+              },
+            },
+            {
+              name: "slack__post",
+              description: "Post a message",
+              parameters: { type: "object", properties: {} },
+              discovery: { version: 2, type: "integration" },
+            },
+          ],
+        },
+      },
+    } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+
+    await createRuntimeAgentStreamResponse(input, agent, {
+      sessionManager,
+      createRuntime: (runtimeAgent) => {
+        capturedForwardedDefs = (
+          runtimeAgent.config as Agent["config"] & { __vfForwardedIntegrationToolDefs?: unknown }
+        ).__vfForwardedIntegrationToolDefs;
+        return {
+          stream: async () =>
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.close();
+              },
+            }),
+        };
+      },
+    });
+
+    assertEquals(capturedForwardedDefs, [
+      {
+        name: "gmail__list_emails",
+        description: "List emails",
+        parameters: { type: "object", properties: {} },
+        discovery: { version: 1, type: "integration", domain: "gmail", operation: "list" },
+      },
+      {
+        name: "slack__post",
+        description: "Post a message",
+        parameters: { type: "object", properties: {} },
+      },
+    ]);
+  });
+
   it("restricts the run tool surface to runtimeOverrides.toolAllowlist", async () => {
     const sessionManager = new AgentRunSessionManager();
     let capturedToolNames: string[] = [];
@@ -2519,6 +2852,65 @@ describe("internal-agents/run-stream", () => {
 
     assertEquals(capturedAllowedRemoteTools, ["search_knowledge"]);
   });
+
+  for (
+    const { name, declared, granted, expected } of [
+      {
+        name: "admitted legacy selector",
+        declared: true,
+        granted: true,
+        expected: ["veryfront__get_file"],
+      },
+      { name: "missing remote grant", declared: true, granted: false, expected: [] },
+      { name: "missing declaration", declared: undefined, granted: true, expected: [] },
+      { name: "explicit denial", declared: false, granted: true, expected: [] },
+    ]
+  ) {
+    it(`keeps restrictive platform aliases bounded by source authority: ${name}`, async () => {
+      let mergedNames: string[] = [];
+      let remoteNames: string[] = [];
+      const agent = {
+        id: "support",
+        config: {
+          id: "support",
+          model: "anthropic/claude-opus-4-6",
+          system: "test",
+          tools: declared === undefined ? {} : { get_file: declared },
+          __vfAllowedRemoteTools: granted ? ["veryfront__get_file"] : [],
+        },
+      } as unknown as Agent;
+      await createRuntimeAgentStreamResponse(
+        {
+          runId: "run_1",
+          threadId: crypto.randomUUID(),
+          messages: [],
+          tools: [],
+          context: [],
+          forwardedProps: { runtimeOverrides: { toolAllowlist: ["get_file"] } },
+        },
+        agent,
+        {
+          sessionManager: new AgentRunSessionManager(),
+          createRuntime: (runtimeAgent, mergedTools) => {
+            mergedNames = Object.keys(mergedTools ?? {});
+            remoteNames =
+              (runtimeAgent.config as Agent["config"] & { __vfAllowedRemoteTools?: string[] })
+                .__vfAllowedRemoteTools ?? [];
+            return {
+              stream: async () =>
+                new ReadableStream<Uint8Array>({
+                  start(controller) {
+                    controller.close();
+                  },
+                }),
+            };
+          },
+        },
+      );
+      assertEquals(mergedNames, expected);
+      assertEquals(remoteNames, expected);
+    });
+  }
 
   it("fails closed when toolAllowlist is present but malformed", async () => {
     const sessionManager = new AgentRunSessionManager();
@@ -5338,6 +5730,95 @@ describe("internal-agents/run-stream", () => {
     assertEquals(sessionManager.getRunStatus(input.runId), null);
   });
 
+  it("releases cancelled ordinary stream capacity after its producer settles", async () => {
+    const sessionManager = new AgentRunSessionManager({ maxConcurrentSessions: 1 });
+    const agent = createAgent({
+      id: "cancelled-capacity-agent",
+      model: "anthropic/claude-opus-4-6",
+      system: "test",
+    });
+    const input = {
+      agentId: agent.id,
+      threadId: crypto.randomUUID(),
+      runId: "cancelled-capacity-run",
+      messages: [],
+      tools: [],
+      context: [],
+    };
+    const completion = Promise.withResolvers<void>();
+    const response = await createRuntimeAgentStreamResponse(input, agent, {
+      sessionManager,
+      createRuntime: () => ({
+        stream: async (_messages, _context, callbacks) => {
+          callbacks?.onStreamCompletion?.(completion.promise);
+          return new ReadableStream<Uint8Array>();
+        },
+      }),
+    });
+    const reader = response.body?.getReader();
+    if (!reader) throw new Error("Expected runtime response body");
+    await reader.read();
+    await reader.cancel();
+    await assertRejects(async () => {
+      sessionManager.startRun({ runId: "before-producer-settlement", threadId: input.threadId });
+    });
+    completion.resolve();
+    await completion.promise;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const next = sessionManager.startRun({
+      runId: "after-producer-settlement",
+      threadId: input.threadId,
+    });
+    sessionManager.completeRun("after-producer-settlement", next);
+  });
+
+  it("releases cancelled override capacity only after its underlying cancellation settles", async () => {
+    const sessionManager = new AgentRunSessionManager({ maxConcurrentSessions: 1 });
+    const agent = createAgent({
+      id: "cancelled-capacity-agent",
+      model: "anthropic/claude-opus-4-6",
+      system: "test",
+    });
+    const input = {
+      agentId: agent.id,
+      threadId: crypto.randomUUID(),
+      runId: "cancelled-capacity-run",
+      messages: [],
+      tools: [],
+      context: [],
+    };
+    const completion = Promise.withResolvers<void>();
+    const cancellationStarted = Promise.withResolvers<void>();
+    const response = await createRuntimeAgentStreamResponse(input, agent, {
+      sessionManager,
+      createRuntime: () => ({
+        stream: async () =>
+          new ReadableStream<Uint8Array>({
+            cancel() {
+              cancellationStarted.resolve();
+              return completion.promise;
+            },
+          }),
+      }),
+    });
+    const reader = response.body?.getReader();
+    if (!reader) throw new Error("Expected runtime response body");
+    await reader.read();
+    await reader.cancel();
+    await cancellationStarted.promise;
+    await assertRejects(async () => {
+      sessionManager.startRun({ runId: "before-producer-settlement", threadId: input.threadId });
+    });
+    completion.resolve();
+    await completion.promise;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const next = sessionManager.startRun({
+      runId: "after-producer-settlement",
+      threadId: input.threadId,
+    });
+    sessionManager.completeRun("after-producer-settlement", next);
+  });
+
   it("debug logs runtime reader cancellation failures during cleanup", async () => {
     const logs = captureConsoleJsonLogs();
     try {
@@ -5609,8 +6090,10 @@ describe("internal-agents/run-stream", () => {
         loadedSkillHistoryInput({ trustedIds: ["trusted-load"] }),
       );
 
-      assertEquals(toolNames.includes("load_skill_reference"), true);
-      assertEquals(toolNames.includes("execute_skill_script"), true);
+      assertEquals(toolNames.includes("veryfront__load_skill_reference"), true);
+      assertEquals(toolNames.includes("veryfront__execute_skill_script"), true);
+      assertEquals(toolNames.includes("load_skill_reference"), false);
+      assertEquals(toolNames.includes("execute_skill_script"), false);
     });
 
     it("restores active skill tools from authenticated tool-role legacy load_skill sidecars", async () => {
@@ -5622,8 +6105,10 @@ describe("internal-agents/run-stream", () => {
         }),
       );
 
-      assertEquals(toolNames.includes("load_skill_reference"), true);
-      assertEquals(toolNames.includes("execute_skill_script"), true);
+      assertEquals(toolNames.includes("veryfront__load_skill_reference"), true);
+      assertEquals(toolNames.includes("veryfront__execute_skill_script"), true);
+      assertEquals(toolNames.includes("load_skill_reference"), false);
+      assertEquals(toolNames.includes("execute_skill_script"), false);
     });
 
     it("does not restore active skill tools from unauthenticated AG-UI history", async () => {

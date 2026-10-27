@@ -17,9 +17,16 @@ import { getEnvironmentType, lookupProjectByDomain } from "../utils/domain-looku
 import { parseProxyEnvironment, type ProxyEnvironment } from "./proxy-environment.ts";
 import { SpanNames, withSpan } from "./tracing.ts";
 import { isInternalHost } from "./request-utils.ts";
-import { getEffectiveRequestHost } from "../utils/request-host.ts";
+import { getClassificationRequestHost } from "../utils/request-host.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { decodeIdentityHeaderValue } from "#veryfront/utils/header-identity.ts";
+
+// Source labels remain host-owned after project modules run in this process.
+const apply = Reflect.apply;
+const StringTrim = String.prototype.trim;
+function normalizeIdentityLabel(value: string | null | undefined): string | undefined {
+  return value ? apply(StringTrim, value, []) || undefined : undefined;
+}
 
 const baseLogger = getBaseLogger("SERVER");
 
@@ -86,7 +93,7 @@ function getEffectiveHost(req: Request, url: URL, proxyTrusted?: boolean): strin
   // x-forwarded-host is client-controlled and only trustworthy behind a trusted
   // upstream proxy. Honour it only after the operator opt-in; otherwise fall
   // back to Host. Signed application requests are not general proxy authority.
-  return getEffectiveRequestHost(req, url, proxyTrusted ?? trustForwardedHeaders());
+  return getClassificationRequestHost(req, url, proxyTrusted ?? trustForwardedHeaders());
 }
 
 /**
@@ -105,7 +112,7 @@ export function extractRequestHeaders(
 ): RequestHeaders {
   const host = getEffectiveHost(req, url, proxyTrusted);
   const parsedDomain = parseProjectDomain(host);
-  const projectSlugHeader = req.headers.get("x-project-slug")?.trim() || undefined;
+  const projectSlugHeader = normalizeIdentityLabel(req.headers.get("x-project-slug"));
   // Routing identity supplied in a header or query is meaningful only behind
   // the operator-declared sanitising edge. WebSocket query parameters are
   // browser-controlled and must not independently unlock preview behavior.
@@ -126,17 +133,17 @@ export function extractRequestHeaders(
     releaseId: req.headers.get("x-release-id") ?? undefined,
     branchId: identityHeadersTrusted ? req.headers.get("x-branch-id") ?? undefined : undefined,
     branchName: identityHeadersTrusted
-      ? decodeIdentityHeaderValue(req.headers.get("x-branch-name"))?.trim() || undefined
+      ? normalizeIdentityLabel(decodeIdentityHeaderValue(req.headers.get("x-branch-name")))
       : undefined,
     defaultBranchName: identityHeadersTrusted
-      ? decodeIdentityHeaderValue(req.headers.get("x-default-branch-name"))?.trim() || undefined
+      ? normalizeIdentityLabel(decodeIdentityHeaderValue(req.headers.get("x-default-branch-name")))
       : undefined,
     environment,
     environmentId: identityHeadersTrusted
       ? req.headers.get("x-environment-id") ?? undefined
       : undefined,
     environmentName: identityHeadersTrusted
-      ? req.headers.get("x-environment-name")?.trim() || undefined
+      ? normalizeIdentityLabel(decodeIdentityHeaderValue(req.headers.get("x-environment-name")))
       : undefined,
     token: undefined, // Extracted separately from request context
     contentSourceId: req.headers.get("x-content-source-id") ?? undefined,

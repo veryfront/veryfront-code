@@ -12,6 +12,7 @@
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { LOAD_SKILL_POLICY_CLAUSES } from "./load-skill-policy.ts";
 import { tool } from "#veryfront/tool/factory.ts";
+import { markFrameworkSkillLoader } from "./loader-provenance.ts";
 import type { Tool, ToolExecutionContext } from "#veryfront/tool";
 import { createFileSystem, type FileSystem } from "#veryfront/platform/compat/fs.ts";
 import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
@@ -49,6 +50,12 @@ import {
   SKILL_TEXT_FILE_MAX_BYTES,
 } from "./limits.ts";
 import { getSkillScriptExecutor } from "./executor.ts";
+import {
+  addAbortSignalListenerOnce,
+  getAbortSignalReason,
+  isAbortSignalAborted,
+  removeAbortSignalListener,
+} from "#veryfront/platform/compat/abort-signal.ts";
 import type {
   Skill,
   SkillContent,
@@ -474,7 +481,8 @@ async function assertActiveSkillFileAvailable(
     throw toError(
       createError({
         type: "agent",
-        message: `${input.toolName} can only access ${input.kind} files advertised by load_skill.`,
+        message:
+          `${input.toolName} can only access ${input.kind} files advertised by the active skill.`,
       }),
     );
   }
@@ -501,7 +509,8 @@ async function assertActiveSkillFileAvailable(
     throw toError(
       createError({
         type: "agent",
-        message: `${input.toolName} can only access ${input.kind} files advertised by load_skill.`,
+        message:
+          `${input.toolName} can only access ${input.kind} files advertised by the active skill.`,
       }),
     );
   }
@@ -513,69 +522,72 @@ async function assertActiveSkillFileAvailable(
  * Loads a skill's full instructions, available references, and scripts.
  */
 export function createLoadSkillTool(options: SkillSelectorToolOptions = {}): Tool {
-  return tool({
-    id: "load_skill",
-    description: "Load a skill's full instructions. Returns the skill's markdown instructions " +
-      `and lists of available reference files and scripts. ${LOAD_SKILL_POLICY_CLAUSES}`,
-    inputSchema: getLoadSkillInputSchema(),
-    execute: async (input, context): Promise<SkillContent> => {
-      const budget = createFileBudget(context);
-      const skill = resolveVisibleSkillOrThrow(input.skillId, context, options);
+  return markFrameworkSkillLoader(
+    tool({
+      id: "load_skill",
+      description: "Load a skill's full instructions. Returns the skill's markdown instructions " +
+        `and lists of available reference files and scripts. ${LOAD_SKILL_POLICY_CLAUSES}`,
+      inputSchema: getLoadSkillInputSchema(),
+      execute: async (input, context): Promise<SkillContent> => {
+        const budget = createFileBudget(context);
+        const skill = resolveVisibleSkillOrThrow(input.skillId, context, options);
 
-      // Read SKILL.md
-      const validatedSkillMdPath = await validateStrictSkillPath(
-        skill.rootPath,
-        SKILL_MD_FILENAME,
-        [],
-        skill.fsAdapter,
-        { budget },
-      );
-      const content = await readSkillFile(
-        skill,
-        validatedSkillMdPath,
-        SKILL_TEXT_FILE_MAX_BYTES,
-        budget,
-      );
-      assertDocumentCharacterLimit(content);
+        // Read SKILL.md
+        const validatedSkillMdPath = await validateStrictSkillPath(
+          skill.rootPath,
+          SKILL_MD_FILENAME,
+          [],
+          skill.fsAdapter,
+          { budget },
+        );
+        const content = await readSkillFile(
+          skill,
+          validatedSkillMdPath,
+          SKILL_TEXT_FILE_MAX_BYTES,
+          budget,
+        );
+        assertDocumentCharacterLimit(content);
 
-      // Parse frontmatter to get instructions
-      const parsed = await parseSkillFrontmatter(content);
+        // Parse frontmatter to get instructions
+        const parsed = await parseSkillFrontmatter(content);
 
-      // List available files the agent can load through load_skill_reference.
-      const references = await listStrictSkillSubdir(
-        skill.rootPath,
-        SKILL_REFERENCES_DIR,
-        skill.fsAdapter,
-        { budget },
-      );
-      const resources = await listStrictSkillSubdir(
-        skill.rootPath,
-        SKILL_RESOURCES_DIR,
-        skill.fsAdapter,
-        { budget },
-      );
-      const assets = await listStrictSkillSubdir(
-        skill.rootPath,
-        SKILL_ASSETS_DIR,
-        skill.fsAdapter,
-        { budget },
-      );
-      const scripts = await listStrictSkillTree(
-        skill.rootPath,
-        SKILL_SCRIPTS_DIR,
-        skill.fsAdapter,
-        { budget },
-      );
-      const loadableReferences = [...references, ...resources, ...assets];
+        // List available files the agent can load through load_skill_reference.
+        const references = await listStrictSkillSubdir(
+          skill.rootPath,
+          SKILL_REFERENCES_DIR,
+          skill.fsAdapter,
+          { budget },
+        );
+        const resources = await listStrictSkillSubdir(
+          skill.rootPath,
+          SKILL_RESOURCES_DIR,
+          skill.fsAdapter,
+          { budget },
+        );
+        const assets = await listStrictSkillSubdir(
+          skill.rootPath,
+          SKILL_ASSETS_DIR,
+          skill.fsAdapter,
+          { budget },
+        );
+        const scripts = await listStrictSkillTree(
+          skill.rootPath,
+          SKILL_SCRIPTS_DIR,
+          skill.fsAdapter,
+          { budget },
+        );
+        const loadableReferences = [...references, ...resources, ...assets];
 
-      return {
-        skillId: skill.id,
-        instructions: parsed.body,
-        references: loadableReferences,
-        scripts,
-      };
-    },
-  });
+        return {
+          skillId: skill.id,
+          instructions: parsed.body,
+          references: loadableReferences,
+          scripts,
+        };
+      },
+    }),
+    "flat",
+  );
 }
 
 /**
@@ -593,7 +605,7 @@ export function createLoadSkillReferenceTool(options: SkillSelectorToolOptions =
       const skill = resolveVisibleSkillOrThrow(input.skillId, context, options);
       await assertActiveSkillFileAvailable(
         {
-          toolName: "load_skill_reference",
+          toolName: "veryfront__load_skill_reference",
           skillId: skill.id,
           requestedSkillId: input.skillId,
           path: input.reference,
@@ -642,7 +654,7 @@ export function createExecuteSkillScriptTool(
       const skill = resolveVisibleSkillOrThrow(input.skillId, context, options);
       const authoritativeScripts = await assertActiveSkillFileAvailable(
         {
-          toolName: "execute_skill_script",
+          toolName: "veryfront__execute_skill_script",
           skillId: skill.id,
           requestedSkillId: input.skillId,
           path: input.script,
@@ -676,18 +688,39 @@ export function createExecuteSkillScriptTool(
         authoritativeScripts,
       );
       const executor = options.executor ?? getSkillScriptExecutor();
-      const result = await budget.run(async (abortSignal) =>
-        await executor.execute({
+      budget.throwIfTerminated();
+      const executorController = new AbortController();
+      const forwardAbort = () =>
+        executorController.abort(
+          budget.abortSignal ? getAbortSignalReason(budget.abortSignal) : undefined,
+        );
+      const remainingMs = budget.remainingMs();
+      const timeout = remainingMs === undefined
+        ? undefined
+        : setTimeout(() => executorController.abort(budget.timeoutError), remainingMs);
+      if (budget.abortSignal) {
+        addAbortSignalListenerOnce(budget.abortSignal, forwardAbort);
+        if (isAbortSignalAborted(budget.abortSignal)) forwardAbort();
+      }
+      let result: SkillScriptResult;
+      try {
+        result = await executor.execute({
+          projectId: context?.projectId,
+          branch: context?.branch,
           scriptPath: validatedPath,
           scriptContent,
           scriptSnapshot,
           args: input.args,
           env: input.env,
           validatedSourceRoot: skill.fsAdapter === undefined ? skill.rootPath : undefined,
-          timeoutMs: budget.remainingMs(),
-          abortSignal,
-        })
-      );
+          timeoutMs: remainingMs,
+          abortSignal: executorController.signal,
+        });
+      } finally {
+        if (timeout !== undefined) clearTimeout(timeout);
+        if (budget.abortSignal) removeAbortSignalListener(budget.abortSignal, forwardAbort);
+      }
+      budget.throwIfTerminated();
       return snapshotScriptOutput(result);
     },
   });

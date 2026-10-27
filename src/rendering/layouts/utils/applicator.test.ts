@@ -1,3 +1,4 @@
+import { resolveInstalledReactRange } from "#veryfront/platform/compat/react-paths.ts";
 import * as React from "react";
 import * as ReactDOMServer from "react-dom/server";
 import "#veryfront/schemas/_test-setup.ts";
@@ -437,6 +438,7 @@ describe(
       });
 
       it("uses the requested project React version", async () => {
+        const selectedVersion = resolveInstalledReactRange() ?? "18.3.1";
         const loadedUrls: string[] = [];
         __setServerModuleLoaderForTests((url) => {
           loadedUrls.push(url);
@@ -459,10 +461,10 @@ describe(
           "project-slug",
           "content-source-id",
           PRODUCTION_MODES,
-          "18.3.1",
+          selectedVersion,
         );
 
-        assertEquals(loadedUrls.some((url) => url.includes("react@18.3.1")), true);
+        assertEquals(loadedUrls.some((url) => url.includes(`react@${selectedVersion}`)), true);
       });
 
       it("should preserve App Router document layouts for server rendering", async () => {

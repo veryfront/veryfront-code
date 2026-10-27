@@ -20,7 +20,7 @@ const schema: GraphqlSchemaSnapshot = {
   Mutation: {
     kind: "OBJECT",
     fields: {
-      executeIntegrationTool: {
+      runIntegrationTool: {
         type: "IntegrationToolResult!",
         args: { input: "ExecuteIntegrationToolInput!" },
       },
@@ -73,36 +73,36 @@ describe("guide snippet checks", () => {
 
   it("validates GraphQL fields, arguments and variable types", () => {
     const valid = `mutation Run($input: ExecuteIntegrationToolInput!) {
-  executeIntegrationTool(input: $input) { isError structuredContent }
+  runIntegrationTool(input: $input) { isError structuredContent }
 }`;
     assertEquals(validateGraphqlOperation(valid, schema), []);
 
     const invalid = `mutation Run($input: String!) {
-  executeIntegrationTool(input: $input, extra: 1) { isError missing }
+  runIntegrationTool(input: $input, extra: 1) { isError missing }
 }`;
     assertEquals(validateGraphqlOperation(invalid, schema), [
-      'mutation.executeIntegrationTool: $input is String! but "input" expects ExecuteIntegrationToolInput!',
-      'mutation.executeIntegrationTool: unknown argument "extra"',
-      'mutation.executeIntegrationTool: IntegrationToolResult has no field "missing"',
+      'mutation.runIntegrationTool: $input is String! but "input" expects ExecuteIntegrationToolInput!',
+      'mutation.runIntegrationTool: unknown argument "extra"',
+      'mutation.runIntegrationTool: IntegrationToolResult has no field "missing"',
     ]);
 
     assertEquals(
       validateGraphqlOperation(
-        "mutation { executeIntegrationTool(input: $x) }",
+        "mutation { runIntegrationTool(input: $x) }",
         schema,
       ),
       [
-        "mutation.executeIntegrationTool: undeclared variable $x",
-        "mutation.executeIntegrationTool: object field needs a selection",
+        "mutation.runIntegrationTool: undeclared variable $x",
+        "mutation.runIntegrationTool: object field needs a selection",
       ],
     );
 
     assertEquals(
       validateGraphqlOperation(
-        "mutation Run { executeIntegrationTool { isError } }",
+        "mutation Run { runIntegrationTool { isError } }",
         schema,
       ),
-      ['mutation.executeIntegrationTool: missing required argument "input"'],
+      ['mutation.runIntegrationTool: missing required argument "input"'],
     );
   });
 

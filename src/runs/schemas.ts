@@ -117,53 +117,54 @@ export const getScheduleRunCreateResponseSchema = defineSchema((v) =>
   })
 );
 
-export const getScheduleReferenceListSchema = defineSchema((v) =>
+const getScheduleReferenceSchema = defineSchema((v) =>
   v.object({
-    schedules: v.array(
-      v.object({
-        id: v.string(),
-        name: v.string(),
-        status: v.enum(["active", "paused", "deleting"] as const),
-        target: v.object({
-          kind: v.enum(["task", "workflow", "agent"] as const),
-          id: v.string(),
-          conversation_mode: v.enum(["create_new", "existing", "none"] as const).optional(),
-          conversation_id: v.string().nullable().optional(),
-        }).superRefine(({ kind, conversation_mode, conversation_id }, context) => {
-          if (
-            kind !== "agent" &&
-            (conversation_mode !== undefined || conversation_id !== undefined)
-          ) {
-            context.addIssue({
-              code: "custom",
-              message: "Schedule target conversation fields are valid only for agent targets.",
-            });
-          }
-          if (kind === "agent") {
-            const detail = agentConversationDiagnostic(
-              "Schedule target",
-              conversation_mode,
-              conversation_id,
-            );
-            if (detail !== null) {
-              context.addIssue({ code: "custom", message: detail });
-            }
-          }
-        }).transform(({ kind, id, conversation_mode, conversation_id }) => {
-          if (kind !== "agent") return { kind, id };
-          return {
-            kind,
-            id,
-            ...(conversation_mode === undefined ? {} : { conversationMode: conversation_mode }),
-            ...(conversation_id === undefined ? {} : { conversationId: conversation_id }),
-          };
-        }),
-        definition_source: v.enum(["manual", "source"] as const),
-        source_trigger_id: v.string().nullable(),
-        timeout_seconds: v.number().int().positive(),
-      }),
-    ),
+    id: v.string(),
+    name: v.string(),
+    status: v.enum(["active", "paused", "deleting"] as const),
+    target: v.object({
+      kind: v.enum(["task", "workflow", "agent"] as const),
+      id: v.string(),
+      conversation_mode: v.enum(["create_new", "existing", "none"] as const).optional(),
+      conversation_id: v.string().nullable().optional(),
+    }).superRefine(({ kind, conversation_mode, conversation_id }, context) => {
+      if (
+        kind !== "agent" &&
+        (conversation_mode !== undefined || conversation_id !== undefined)
+      ) {
+        context.addIssue({
+          code: "custom",
+          message: "Schedule target conversation fields are valid only for agent targets.",
+        });
+      }
+      if (kind === "agent") {
+        const detail = agentConversationDiagnostic(
+          "Schedule target",
+          conversation_mode,
+          conversation_id,
+        );
+        if (detail !== null) {
+          context.addIssue({ code: "custom", message: detail });
+        }
+      }
+    }).transform(({ kind, id, conversation_mode, conversation_id }) => {
+      if (kind !== "agent") return { kind, id };
+      return {
+        kind,
+        id,
+        ...(conversation_mode === undefined ? {} : { conversationMode: conversation_mode }),
+        ...(conversation_id === undefined ? {} : { conversationId: conversation_id }),
+      };
+    }),
+    definition_source: v.enum(["manual", "source"] as const),
+    source_trigger_id: v.string().nullable(),
+    timeout_seconds: v.number().int().positive(),
   })
+);
+
+/** Schedule list response, read from the canonical `data` list key. */
+export const getScheduleReferenceListSchema = defineSchema((v) =>
+  v.object({ data: v.array(getScheduleReferenceSchema()) })
 );
 
 export const getCancelRunResponseSchema = defineSchema((v) =>
@@ -246,7 +247,7 @@ export type Run = InferSchema<ReturnType<typeof getRunSchema>>;
 /**
  * An accepted run with either a full Run or a compact receipt containing only run_id and status.
  * Use run_id and status in either variant. Narrow with `"output" in response.run` before
- * reading full-run fields, or read the resource with `runs.get(response.run.run_id)`.
+ * reading full-run fields, or read the grouped resource with `runs.getRun(response.run.run_id)`.
  */
 export type CreateRunResponse = InferSchema<ReturnType<typeof getCreateRunResponseSchema>>;
 /** Response returned when a schedule-triggered run is accepted. */

@@ -652,7 +652,7 @@ function duplicateJsonFor(route: MockOidcRoute, issuer: string): string {
 }
 
 function slowResponse(delayMs: number): Response {
-  let timer: number | undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
   const body = new ReadableStream<Uint8Array>({
     start(controller) {
       timer = setTimeout(() => {

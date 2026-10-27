@@ -24,6 +24,12 @@ import { createVeryfrontApiOriginBoundOutboundFetch } from "#veryfront/security/
 import { logger } from "#veryfront/utils/logger/logger.ts";
 
 const ObjectCreate = Object.create;
+const apply = Reflect.apply;
+const responseJson = Response.prototype.json;
+const responseOk = Object.getOwnPropertyDescriptor(Response.prototype, "ok")!.get!;
+const responseStatus = Object.getOwnPropertyDescriptor(Response.prototype, "status")!.get!;
+const responseBody = Object.getOwnPropertyDescriptor(Response.prototype, "body")!.get!;
+const streamCancel = ReadableStream.prototype.cancel;
 
 /** How long a loaded catalog is used before it is refreshed. */
 export const VERYFRONT_CLOUD_CATALOG_TTL_MS = 5 * 60_000;
@@ -66,6 +72,8 @@ export interface VeryfrontCloudCatalogModel {
   readonly transport?: string;
   /** Thinking budget to send when the caller sets none. */
   readonly reasoningBudgetTokens?: number;
+  /** Served deployment token ceilings. Absent fields mean the catalog has no verified limit. */
+  readonly limit?: Readonly<{ context?: number; output?: number }>;
   /** Whether `chat-completions` accepts reasoning together with function tools. */
   readonly chatCompletionsReasoningWithFunctionTools?: boolean;
   /** Whether `chat-completions` accepts adjacent system messages separately. */
@@ -148,34 +156,52 @@ function optionalPositiveInteger(value: unknown): number | undefined {
   return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : undefined;
 }
 
+function servedLimit(value: unknown): VeryfrontCloudCatalogModel["limit"] {
+  if (!isRecord(value)) return undefined;
+  const context = optionalPositiveInteger(value.context);
+  const output = optionalPositiveInteger(value.output);
+  if (context === undefined && output === undefined) return undefined;
+  return Object.freeze({
+    ...(context === undefined ? {} : { context }),
+    ...(output === undefined ? {} : { output }),
+  });
+}
+
 function stringList(value: unknown): string[] | undefined {
   if (!Array.isArray(value)) return undefined;
   return value.filter((item): item is string => typeof item === "string" && item.length > 0);
 }
 
-function parseModel(value: unknown): VeryfrontCloudCatalogModel | undefined {
+function frozenStringList(value: unknown): readonly string[] | undefined {
+  const list = stringList(value);
+  return list && Object.freeze(list);
+}
+
+function record(value: unknown): Record<string, unknown> {
+  return isRecord(value) ? value : {};
+}
+
+/** Read one row of the deprecated `models` list. */
+function parseLegacyModel(value: unknown): VeryfrontCloudCatalogModel | undefined {
   if (!isRecord(value)) return undefined;
   const id = optionalString(value.id);
   const modelId = optionalString(value.modelId);
   const provider = optionalString(value.provider);
   if (!id || !modelId || !provider) return undefined;
-  const capabilities = isRecord(value.capabilities) ? value.capabilities : {};
+  const capabilities = record(value.capabilities);
   const model: VeryfrontCloudCatalogModel = {
     id,
     modelId,
     provider,
     aliases: Object.freeze(stringList(value.aliases) ?? []),
     surface: optionalString(value.surface),
-    operations: ((operations) => operations && Object.freeze(operations))(
-      stringList(value.operations),
-    ),
-    supportedProviderTools: ((tools) => tools && Object.freeze(tools))(
-      stringList(value.supportedProviderTools),
-    ),
+    operations: frozenStringList(value.operations),
+    supportedProviderTools: frozenStringList(value.supportedProviderTools),
     thinking: optionalBoolean(capabilities.thinking),
     reasoningMode: optionalString(capabilities.reasoning_mode),
     transport: optionalString(capabilities.transport),
     reasoningBudgetTokens: optionalPositiveInteger(capabilities.reasoning_budget_tokens),
+    limit: servedLimit(capabilities.limit),
     chatCompletionsReasoningWithFunctionTools: optionalBoolean(
       capabilities.chat_completions_reasoning_with_function_tools,
     ),
@@ -187,15 +213,141 @@ function parseModel(value: unknown): VeryfrontCloudCatalogModel | undefined {
 }
 
 /**
- * Read a served `/ai/models` payload. Rows without an id, model id or provider
- * are skipped, and a field an older API does not serve reads as absent.
- * Returns undefined when the payload carries no model list at all.
+ * Read one entry of `deployments`. Its model's first alias is the short ID.
+ * Token ceilings come from model.capabilities.limit. A matching legacy row
+ * supplies only dimensions an older deployment payload does not state.
+ */
+function parseDeployment(
+  value: Record<string, unknown>,
+  limit: VeryfrontCloudCatalogModel["limit"],
+): VeryfrontCloudCatalogModel | undefined {
+  const model = record(value.model);
+  const routing = record(value.routing);
+  const modelId = optionalString(model.id);
+  const aliases = stringList(model.aliases) ?? [];
+  const id = aliases[0];
+  const provider = optionalString(record(value.model_provider).id);
+  const surface = optionalString(routing.surface);
+  if (!modelId || !id || !provider || !surface) return undefined;
+  const capabilities = record(model.capabilities);
+  const reasoning = record(routing.reasoning);
+  const chatCompletions = record(routing.chat_completions);
+  const deployment: VeryfrontCloudCatalogModel = {
+    id,
+    modelId,
+    provider,
+    aliases: Object.freeze(aliases),
+    surface,
+    operations: frozenStringList(routing.operations),
+    supportedProviderTools: frozenStringList(routing.provider_tools),
+    thinking: optionalBoolean(capabilities.reasoning),
+    reasoningMode: optionalString(reasoning.mode),
+    transport: optionalString(routing.transport),
+    reasoningBudgetTokens: optionalPositiveInteger(reasoning.budget_tokens),
+    limit: servedLimit({ ...limit, ...servedLimit(capabilities.limit) }),
+    chatCompletionsReasoningWithFunctionTools: optionalBoolean(
+      chatCompletions.reasoning_with_function_tools,
+    ),
+    chatCompletionsConsecutiveSystemMessages: optionalBoolean(
+      chatCompletions.consecutive_system_messages,
+    ),
+  };
+  return Object.freeze(deployment);
+}
+
+/** Match the API's Gemini provider-ID migration without equating arbitrary model aliases. */
+function canonicalCatalogModelId(modelId: string): string {
+  return modelId.startsWith("google-ai-studio/")
+    ? `google/${modelId.slice("google-ai-studio/".length)}`
+    : modelId;
+}
+
+function indexLegacyModels(legacyModels: unknown): {
+  legacy: Map<string, VeryfrontCloudCatalogModel>;
+  canonicalLegacy: Map<string, VeryfrontCloudCatalogModel>;
+} {
+  const legacy = new Map<string, VeryfrontCloudCatalogModel>();
+  const canonicalLegacy = new Map<string, VeryfrontCloudCatalogModel>();
+  if (Array.isArray(legacyModels)) {
+    for (const row of legacyModels) {
+      const model = parseLegacyModel(row);
+      if (model) {
+        if (!legacy.has(model.modelId)) legacy.set(model.modelId, model);
+        const canonicalId = canonicalCatalogModelId(model.modelId);
+        if (!canonicalLegacy.has(canonicalId)) canonicalLegacy.set(canonicalId, model);
+      }
+    }
+  }
+  return { legacy, canonicalLegacy };
+}
+
+/**
+ * Read `deployments`, which lists every place a model runs in routing order.
+ * Each model takes its first enabled deployment, the one the gateway routes
+ * to. When that deployment cannot be read, the model's deprecated row is used
+ * while the API still serves one. A model with no enabled deployment, or with
+ * neither, is left out, and so is its `is_default`.
+ */
+function parseDeployments(
+  deployments: readonly unknown[],
+  legacyModels: unknown,
+): VeryfrontCloudCatalog {
+  const { legacy, canonicalLegacy } = indexLegacyModels(legacyModels);
+  const models: VeryfrontCloudCatalogModel[] = [];
+  const listed = new Set<string>();
+  const unreadable: string[] = [];
+  let defaultModelId: string | undefined;
+  for (const row of deployments) {
+    if (!isRecord(row) || row.enabled !== true) continue;
+    const modelId = optionalString(record(row.model).id);
+    if (!modelId || listed.has(modelId)) continue;
+    listed.add(modelId);
+    const legacyModel = legacy.get(modelId) ??
+      canonicalLegacy.get(canonicalCatalogModelId(modelId));
+    const model = parseDeployment(row, legacyModel?.limit) ?? legacyModel;
+    if (!model) {
+      unreadable.push(modelId);
+      continue;
+    }
+    models.push(model);
+    if (row.is_default === true) defaultModelId ??= modelId;
+  }
+  if (unreadable.length > 0) {
+    logger.warn("Veryfront Cloud model catalog left out models whose deployment it cannot read", {
+      modelIds: unreadable,
+    });
+  }
+  return Object.freeze({ models: Object.freeze(models), defaultModelId });
+}
+
+/**
+ * The payload's `deployments`, unless it also serves the deprecated `models`
+ * and no deployment carries `routing`: such an API predates the full contract,
+ * so `models` still says how to call a model.
+ */
+function routedDeployments(payload: Record<string, unknown>): readonly unknown[] | undefined {
+  const { deployments, models } = payload;
+  if (!Array.isArray(deployments)) return undefined;
+  const routed = !Array.isArray(models) ||
+    deployments.some((row) => isRecord(row) && isRecord(row.routing));
+  return routed ? deployments : undefined;
+}
+
+/**
+ * Read a served `/ai/models` payload: its `deployments`, or the deprecated
+ * `models` list from an API that serves no routed deployments. Rows without an
+ * id, model id or provider are skipped, and a field an older API does not
+ * serve reads as absent. Returns undefined when the payload carries no model
+ * list at all.
  */
 export function parseVeryfrontCloudCatalog(payload: unknown): VeryfrontCloudCatalog | undefined {
-  if (!isRecord(payload) || !Array.isArray(payload.models)) return undefined;
+  if (!isRecord(payload)) return undefined;
+  const deployments = routedDeployments(payload);
+  if (deployments) return parseDeployments(deployments, payload.models);
+  if (!Array.isArray(payload.models)) return undefined;
   const models: VeryfrontCloudCatalogModel[] = [];
   for (const row of payload.models) {
-    const model = parseModel(row);
+    const model = parseLegacyModel(row);
     if (model) models.push(model);
   }
   return Object.freeze({
@@ -292,7 +444,7 @@ function cacheKey(scope: VeryfrontCloudCatalogScope): string {
  */
 function catalogUrl(apiBaseUrl: string): string {
   const url = new URL(apiBaseUrl);
-  url.pathname = `${url.pathname.replace(/\/+$/, "")}/${VERYFRONT_CLOUD_CATALOG_PATH}`;
+  url.pathname = `${url.pathname.replace(/(?<!\/)\/+$/, "")}/${VERYFRONT_CLOUD_CATALOG_PATH}`;
   url.hash = "";
   return url.toString();
 }
@@ -334,13 +486,16 @@ async function fetchCatalog(
       catalogUrl(options.apiBaseUrl),
       createNativeRequestInit(undefined, { method: "GET", headers, signal }),
     );
-    if (!response.ok) {
-      await response.body?.cancel();
+    if (!apply(responseOk, response, [])) {
+      const body = apply(responseBody, response, []) as ReadableStream<Uint8Array> | null;
+      if (body) await apply(streamCancel, body, []);
       throw new Error(
-        `Veryfront Cloud model catalog request failed with status ${response.status}`,
+        `Veryfront Cloud model catalog request failed with status ${
+          apply(responseStatus, response, [])
+        }`,
       );
     }
-    const catalog = parseVeryfrontCloudCatalog(await response.json());
+    const catalog = parseVeryfrontCloudCatalog(await apply(responseJson, response, []));
     if (!catalog) throw new Error("Veryfront Cloud model catalog response has no model list");
     return catalog;
   } finally {
@@ -536,6 +691,7 @@ export function rememberReceivedVeryfrontCloudCatalog(
           ...(model.supportedProviderTools
             ? { supportedProviderTools: Object.freeze([...model.supportedProviderTools]) }
             : {}),
+          ...(model.limit ? { limit: Object.freeze({ ...model.limit }) } : {}),
         })
       )),
     }),

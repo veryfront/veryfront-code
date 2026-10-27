@@ -30,6 +30,300 @@ function createWarningCollector() {
 }
 
 describe("ext-llm-openai/openai-responses-request-builder", () => {
+  for (const provider of ["openai", "veryfront-cloud"] as const) {
+    for (const filename of ["request.pdf", undefined]) {
+      it(`sends inline PDF data through file_data for ${provider}, filename ${filename}`, () => {
+        const url = "data:application/pdf;base64,JVBERi0xLjQK";
+        const body = buildOpenAIResponsesRequest(
+          "gpt-5.5",
+          provider,
+          {
+            prompt: [{
+              role: "user",
+              content: [{ type: "file", url, mediaType: "application/pdf", filename }],
+            }],
+          },
+          true,
+          createWarningCollector(),
+        );
+
+        assertEquals(body.input, [{
+          role: "user",
+          content: [{ type: "input_file", file_data: url, filename: filename ?? "file.pdf" }],
+        }]);
+      });
+    }
+  }
+
+  function buildWithFile(file: { url: string; mediaType: string; filename?: string }) {
+    return buildOpenAIResponsesRequest(
+      "gpt-5.5",
+      "openai",
+      { prompt: [{ role: "user", content: [{ type: "file", ...file }] }] },
+      true,
+      createWarningCollector(),
+    );
+  }
+
+  it("validates inline file data before inference", () => {
+    assertThrows(
+      () =>
+        buildWithFile({
+          url: "data:text/plain;base64,aGk=",
+          mediaType: "application/pdf",
+          filename: "request.pdf",
+        }),
+      TypeError,
+      'Inline file input "request.pdf" (application/pdf) must be base64 data',
+    );
+  });
+
+  it("normalizes the inline MIME type in file_data", () => {
+    const body = buildWithFile({
+      url: "data:Application/PDF;base64,JVBERi0=",
+      mediaType: "application/pdf",
+    });
+    assertEquals(body.input, [{
+      role: "user",
+      content: [{
+        type: "input_file",
+        file_data: "data:application/pdf;base64,JVBERi0=",
+        filename: "file.pdf",
+      }],
+    }]);
+  });
+
+  for (const url of ["/home/user/report.pdf", "file:///home/user/report.pdf"]) {
+    it(`rejects a file URL that is not remote: ${url}`, () => {
+      assertThrows(
+        () => buildWithFile({ url, mediaType: "application/pdf" }),
+        TypeError,
+        "OpenAI Responses does not support file input (application/pdf). Send an https URL or inline data",
+      );
+    });
+  }
+
+  for (
+    const url of [
+      "/path/to/photo.png",
+      "file:///path/to/photo.png",
+      "ftp://example.test/photo.png",
+    ]
+  ) {
+    it(`rejects an image URL that is not remote or inline: ${url}`, () => {
+      assertThrows(
+        () => buildWithFile({ url, mediaType: "image/png" }),
+        TypeError,
+        "OpenAI Responses does not support file input (image/png). Send an https URL or inline data",
+      );
+    });
+  }
+
+  it("sends remote and inline image URLs as input_image", () => {
+    for (const url of ["https://example.test/photo.png", "data:image/png;base64,iVBORw=="]) {
+      assertEquals(buildWithFile({ url, mediaType: "image/png" }).input, [{
+        role: "user",
+        content: [{ type: "input_image", image_url: url, detail: "auto" }],
+      }]);
+    }
+  });
+
+  it("recognizes an upper-case data URL scheme as inline data, not a file URL", () => {
+    const body = buildWithFile({
+      url: "DATA:application/pdf;base64,JVBERi0=",
+      mediaType: "application/pdf",
+      filename: "request.pdf",
+    });
+    assertEquals(body.input, [{
+      role: "user",
+      content: [{
+        type: "input_file",
+        file_data: "data:application/pdf;base64,JVBERi0=",
+        filename: "request.pdf",
+      }],
+    }]);
+  });
+
+  for (
+    const filename of [
+      "/home/user/secret/report.pdf",
+      "C:\\Users\\user\\report.pdf",
+      "C:report.pdf",
+    ]
+  ) {
+    it(`sends only the base name of a path filename: ${filename}`, () => {
+      const inline = buildWithFile({
+        url: "data:application/pdf;base64,JVBERi0=",
+        mediaType: "application/pdf",
+        filename,
+      });
+      const remote = buildWithFile({
+        url: "https://example.com/report.pdf",
+        mediaType: "application/pdf",
+        filename,
+      });
+      assertEquals(inline.input, [{
+        role: "user",
+        content: [{
+          type: "input_file",
+          file_data: "data:application/pdf;base64,JVBERi0=",
+          filename: "report.pdf",
+        }],
+      }]);
+      assertEquals(remote.input, [{
+        role: "user",
+        content: [{
+          type: "input_file",
+          file_url: "https://example.com/report.pdf",
+        }],
+      }]);
+    });
+  }
+
+  it("treats a dot-segment filename as missing", () => {
+    const body = buildWithFile({
+      url: "data:application/pdf;base64,JVBERi0=",
+      mediaType: "application/pdf",
+      filename: "/tmp/..",
+    });
+    assertEquals(body.input, [{
+      role: "user",
+      content: [{
+        type: "input_file",
+        file_data: "data:application/pdf;base64,JVBERi0=",
+        filename: "file.pdf",
+      }],
+    }]);
+  });
+
+  for (
+    const [filename, mediaType] of [["a.mp3", "audio/mpeg"], ["a.mp4", "Video/MP4"]] as const
+  ) {
+    it(`rejects ${mediaType} before inference`, () => {
+      assertThrows(
+        () => buildWithFile({ url: `data:${mediaType};base64,AAAA`, mediaType, filename }),
+        TypeError,
+        `OpenAI Responses does not support file input "${filename}" (${mediaType})`,
+      );
+    });
+  }
+
+  for (
+    const [filename, mediaType] of [
+      ["a.zip", "application/zip"],
+      ["a.bin", "application/octet-stream"],
+    ] as const
+  ) {
+    it(`rejects inline ${mediaType} data before inference`, () => {
+      assertThrows(
+        () => buildWithFile({ url: `data:${mediaType};base64,AAAA`, mediaType, filename }),
+        TypeError,
+        `OpenAI Responses does not support file input "${filename}" (${mediaType})`,
+      );
+    });
+  }
+
+  for (
+    const [filename, mediaType] of [
+      ["a.csv", "text/csv"],
+      ["a.py", "Text/X-Python"],
+      ["a.json", "application/json"],
+      ["a.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"],
+      ["a.xls", "application/vnd.ms-excel"],
+      ["a.ts", "application/typescript"],
+      ["a.sql", "application/x-sql"],
+      ["a.eml", "message/rfc822"],
+      ["a.yaml", "application/yaml"],
+      ["a.jsonld", "application/ld+json"],
+    ] as const
+  ) {
+    it(`sends inline ${mediaType} data`, () => {
+      const body = buildWithFile({ url: `data:${mediaType};base64,AAAA`, mediaType, filename });
+      assertEquals(body.input, [{
+        role: "user",
+        content: [{
+          type: "input_file",
+          file_data: `data:${mediaType.toLowerCase()};base64,AAAA`,
+          filename,
+        }],
+      }]);
+    });
+  }
+
+  it("rejects inline image data whose MIME type does not match the part", () => {
+    assertThrows(
+      () => buildWithFile({ url: "data:image/png;base64,iVBO", mediaType: "image/jpeg" }),
+      TypeError,
+      "must be base64 data with a matching MIME type",
+    );
+  });
+
+  it("adds the MIME extension to an inline filename without one", () => {
+    const body = buildWithFile({
+      url: "data:application/pdf;base64,JVBERi0=",
+      mediaType: "application/pdf",
+      filename: "report",
+    });
+    assertEquals(body.input, [{
+      role: "user",
+      content: [{
+        type: "input_file",
+        file_data: "data:application/pdf;base64,JVBERi0=",
+        filename: "report.pdf",
+      }],
+    }]);
+    assertThrows(
+      () =>
+        buildWithFile({
+          url: "data:application/msword;base64,0M8=",
+          mediaType: "application/msword",
+          filename: "letter",
+        }),
+      TypeError,
+      'OpenAI Responses does not support file input "letter" (application/msword). Set a filename with an extension',
+    );
+  });
+
+  it("rejects an inline file without a filename when its type has no known extension", () => {
+    assertThrows(
+      () =>
+        buildWithFile({
+          url: "data:application/msword;base64,0M8=",
+          mediaType: "application/msword",
+        }),
+      TypeError,
+      "OpenAI Responses does not support file input (application/msword). Set a filename with an extension",
+    );
+  });
+
+  it("rejects accessor provider buckets before reading OpenAI Responses options", () => {
+    let getterCalls = 0;
+    const providerOptions = Object.defineProperty({}, "openai", {
+      enumerable: true,
+      get() {
+        getterCalls += 1;
+        return { max_output_tokens: 777 };
+      },
+    });
+
+    assertThrows(
+      () =>
+        buildOpenAIResponsesRequest(
+          "gpt-5.4-mini",
+          "openai",
+          {
+            prompt: [{ role: "user", content: [{ type: "text", text: "Hello" }] }],
+            providerOptions,
+          },
+          false,
+          createWarningCollector(),
+        ),
+      TypeError,
+      'Provider options for "openai" must be a data property',
+    );
+    assertEquals(getterCalls, 0);
+  });
+
   it("keeps agent object output schemas explicitly non-strict on the OpenAI Responses route", () => {
     const outputSchema = defineSchema((v) => v.object({ ingested: v.number() }))();
     const resolved = resolveAgentOutputSchema(outputSchema, "outcome-schema");
@@ -580,7 +874,6 @@ describe("ext-llm-openai/openai-responses-request-builder", () => {
             {
               type: "input_file",
               file_url: "https://example.test/file.pdf",
-              filename: "file.pdf",
             },
           ],
         },
@@ -1036,6 +1329,32 @@ describe("ext-llm-openai/openai-responses-request-builder", () => {
       "OpenAI raw response metadata did not match canonical provider tool history",
     );
   });
+
+  for (const provider of ["openai", "veryfront-cloud"] as const) {
+    it(`does not combine file_url and filename for a named remote file on ${provider}`, () => {
+      const body = buildOpenAIResponsesRequest(
+        "gpt-5.5",
+        provider,
+        {
+          prompt: [{
+            role: "user",
+            content: [{
+              type: "file",
+              url: "https://example.test/fixture.json",
+              mediaType: "text/plain",
+              filename: "fixture.json",
+            }],
+          }],
+        },
+        true,
+        createWarningCollector(),
+      );
+      assertEquals(body.input, [{
+        role: "user",
+        content: [{ type: "input_file", file_url: "https://example.test/fixture.json" }],
+      }]);
+    });
+  }
 
   it("requires raw metadata to replay provider-executed assistant results", () => {
     assertThrows(

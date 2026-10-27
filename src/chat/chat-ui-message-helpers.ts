@@ -105,6 +105,16 @@ function normalizeChildRunAudit(
   };
 }
 
+function readUsageCounter(
+  value: Record<string, unknown>,
+  key: string,
+  details: Record<string, unknown> | undefined,
+  detailKey: string,
+): number | undefined {
+  if (isNonNegativeInteger(value[key])) return value[key] as number;
+  return isNonNegativeInteger(details?.[detailKey]) ? details![detailKey] as number : undefined;
+}
+
 function normalizeUsageMetadata(value: unknown): ChatMessageMetadata["usage"] | undefined {
   if (!isRecord(value)) {
     return undefined;
@@ -114,28 +124,31 @@ function normalizeUsageMetadata(value: unknown): ChatMessageMetadata["usage"] | 
   const outputTokenDetails = isRecord(value.outputTokenDetails)
     ? value.outputTokenDetails
     : undefined;
-  const cacheCreationInputTokens = isNonNegativeInteger(value.cacheCreationInputTokens)
-    ? value.cacheCreationInputTokens
-    : isNonNegativeInteger(inputTokenDetails?.cacheWriteTokens)
-    ? inputTokenDetails.cacheWriteTokens
-    : undefined;
+  const cacheCreationInputTokens = readUsageCounter(
+    value,
+    "cacheCreationInputTokens",
+    inputTokenDetails,
+    "cacheWriteTokens",
+  );
   const cacheCreation1hInputTokens = readCacheWrite1hShare(
     cacheCreationInputTokens,
     value.cacheCreation1hInputTokens,
   );
-  const cacheReadInputTokens = isNonNegativeInteger(value.cacheReadInputTokens)
-    ? value.cacheReadInputTokens
-    : isNonNegativeInteger(inputTokenDetails?.cacheReadTokens)
-    ? inputTokenDetails.cacheReadTokens
-    : undefined;
+  const cacheReadInputTokens = readUsageCounter(
+    value,
+    "cacheReadInputTokens",
+    inputTokenDetails,
+    "cacheReadTokens",
+  );
   const cachedInputTokens = isNonNegativeInteger(value.cachedInputTokens)
     ? value.cachedInputTokens
     : cacheReadInputTokens;
-  const reasoningTokens = isNonNegativeInteger(value.reasoningTokens)
-    ? value.reasoningTokens
-    : isNonNegativeInteger(outputTokenDetails?.reasoningTokens)
-    ? outputTokenDetails.reasoningTokens
-    : undefined;
+  const reasoningTokens = readUsageCounter(
+    value,
+    "reasoningTokens",
+    outputTokenDetails,
+    "reasoningTokens",
+  );
 
   const usage = {
     ...(isNonNegativeInteger(value.inputTokens) ? { inputTokens: value.inputTokens } : {}),
@@ -392,14 +405,124 @@ export function normalizeChatUiMessageChunk(
   }
 }
 
-/** Dedupe chat UI message chunks. */
-export async function* dedupeChatUiMessageChunks<TMessageMetadata>(
-  stream: AsyncIterable<ChatUiMessageChunk<TMessageMetadata>>,
-): AsyncIterable<ChatUiMessageChunk<TMessageMetadata>> {
+type ReplayDeltaChunk<TMessageMetadata> = Extract<
+  ChatUiMessageChunk<TMessageMetadata>,
+  { type: "text-delta" | "reasoning-delta" }
+>;
+
+function* emitDivergedReplay<TMessageMetadata>(
+  state: ReplayState,
+  inputId: string,
+  chunk: ReplayDeltaChunk<TMessageMetadata>,
+): Iterable<ChatUiMessageChunk<TMessageMetadata>> {
+  if (state.outputOpen) {
+    const endChunk = {
+      type: chunk.type === "text-delta" ? "text-end" : "reasoning-end",
+      ...replayOutputIdentity(chunk, state.outputId),
+    } as ChatUiMessageChunk<TMessageMetadata>;
+    retainRuntimeObservation(chunk, endChunk);
+    yield endChunk;
+  }
+  state.replacementCount++;
+  state.outputId = `${inputId}:replacement:${state.replacementCount}`;
+  state.outputOpen = true;
+  state.content = state.replayContent;
+  state.replayContent = "";
+  state.replayOffset = null;
+  const startChunk = {
+    type: chunk.type === "text-delta" ? "text-start" : "reasoning-start",
+    ...replayOutputIdentity(chunk, state.outputId),
+  } as ChatUiMessageChunk<TMessageMetadata>;
+  retainRuntimeObservation(chunk, startChunk);
+  yield startChunk;
+  const deltaChunk = {
+    ...chunk,
+    ...replayOutputIdentity(chunk, state.outputId),
+    delta: state.content,
+  };
+  retainRuntimeObservation(chunk, deltaChunk);
+  yield deltaChunk;
+}
+
+function* emitClosedReplay<TMessageMetadata>(
+  state: ReplayState,
+  inputId: string,
+  chunk: ReplayDeltaChunk<TMessageMetadata>,
+  emit: string,
+): Iterable<ChatUiMessageChunk<TMessageMetadata>> {
+  const replacementContent = state.replayContent || emit;
+  state.replacementCount++;
+  state.outputId = `${inputId}:replacement:${state.replacementCount}`;
+  state.outputOpen = true;
+  state.content = replacementContent;
+  state.replayContent = "";
+  state.replayOffset = null;
+  const startChunk = {
+    type: chunk.type === "text-delta" ? "text-start" : "reasoning-start",
+    ...replayOutputIdentity(chunk, state.outputId),
+  } as ChatUiMessageChunk<TMessageMetadata>;
+  retainRuntimeObservation(chunk, startChunk);
+  yield startChunk;
+  const deltaChunk = {
+    ...chunk,
+    ...replayOutputIdentity(chunk, state.outputId),
+    delta: replacementContent,
+  };
+  retainRuntimeObservation(chunk, deltaChunk);
+  yield deltaChunk;
+}
+
+function* dedupeReplayDelta<TMessageMetadata>(
+  chunk: ReplayDeltaChunk<TMessageMetadata>,
+  stateMap: Map<string, ReplayState>,
+): Iterable<ChatUiMessageChunk<TMessageMetadata>> {
+  const inputId = replayChunkIdentity(chunk);
+  const state = getReplayState(stateMap, inputId);
+  if (state.replayOffset !== null) {
+    state.replayContent += chunk.delta;
+  }
+  const { diverged, emit, nextReplayOffset } = state.replayOffset === null
+    ? { diverged: false, emit: chunk.delta, nextReplayOffset: null as number | null }
+    : splitReplayDelta(state.content, state.replayOffset, chunk.delta);
+
+  if (diverged) {
+    yield* emitDivergedReplay(state, inputId, chunk);
+    return;
+  }
+
+  state.replayOffset = nextReplayOffset;
+  if (!emit) {
+    return;
+  }
+
+  if (!state.outputOpen) {
+    yield* emitClosedReplay(state, inputId, chunk, emit);
+    return;
+  }
+
+  state.replayContent = "";
+  state.content += emit;
+  const deltaChunk = {
+    ...chunk,
+    ...replayOutputIdentity(chunk, state.outputId),
+    delta: emit,
+  };
+  retainRuntimeObservation(chunk, deltaChunk);
+  yield deltaChunk;
+}
+
+/**
+ * @internal The replay state of one stream as a synchronous step: feed chunks in order
+ * and receive the de-duplicated ones. A restarted text or reasoning id replays its
+ * content; content that diverges continues under a `:replacement:N` id.
+ */
+export function createChatUiMessageChunkDeduper<TMessageMetadata>(): (
+  chunk: ChatUiMessageChunk<TMessageMetadata>,
+) => Iterable<ChatUiMessageChunk<TMessageMetadata>> {
   const textStates = new Map<string, ReplayState>();
   const reasoningStates = new Map<string, ReplayState>();
 
-  for await (const chunk of stream) {
+  return function* dedupe(chunk) {
     if (chunk.type === "text-start" || chunk.type === "reasoning-start") {
       const stateMap = chunk.type === "text-start" ? textStates : reasoningStates;
       const state = getReplayState(stateMap, replayChunkIdentity(chunk));
@@ -407,104 +530,27 @@ export async function* dedupeChatUiMessageChunks<TMessageMetadata>(
       if (state.started) {
         state.replayOffset = 0;
         state.replayContent = "";
-        continue;
+        return;
       }
 
       state.started = true;
       state.outputOpen = true;
       yield chunk;
-      continue;
+      return;
     }
 
     if (chunk.type === "text-delta" || chunk.type === "reasoning-delta") {
       const stateMap = chunk.type === "text-delta" ? textStates : reasoningStates;
-      const inputId = replayChunkIdentity(chunk);
-      const state = getReplayState(stateMap, inputId);
-      if (state.replayOffset !== null) {
-        state.replayContent += chunk.delta;
-      }
-      const { diverged, emit, nextReplayOffset } = state.replayOffset === null
-        ? { diverged: false, emit: chunk.delta, nextReplayOffset: null as number | null }
-        : splitReplayDelta(state.content, state.replayOffset, chunk.delta);
-
-      if (diverged) {
-        if (state.outputOpen) {
-          const endChunk = {
-            type: chunk.type === "text-delta" ? "text-end" : "reasoning-end",
-            ...replayOutputIdentity(chunk, state.outputId),
-          } as ChatUiMessageChunk<TMessageMetadata>;
-          retainRuntimeObservation(chunk, endChunk);
-          yield endChunk;
-        }
-        state.replacementCount++;
-        state.outputId = `${inputId}:replacement:${state.replacementCount}`;
-        state.outputOpen = true;
-        state.content = state.replayContent;
-        state.replayContent = "";
-        state.replayOffset = null;
-        const startChunk = {
-          type: chunk.type === "text-delta" ? "text-start" : "reasoning-start",
-          ...replayOutputIdentity(chunk, state.outputId),
-        } as ChatUiMessageChunk<TMessageMetadata>;
-        retainRuntimeObservation(chunk, startChunk);
-        yield startChunk;
-        const deltaChunk = {
-          ...chunk,
-          ...replayOutputIdentity(chunk, state.outputId),
-          delta: state.content,
-        };
-        retainRuntimeObservation(chunk, deltaChunk);
-        yield deltaChunk;
-        continue;
-      }
-
-      state.replayOffset = nextReplayOffset;
-      if (!emit) {
-        continue;
-      }
-
-      if (!state.outputOpen) {
-        const replacementContent = state.replayContent || emit;
-        state.replacementCount++;
-        state.outputId = `${inputId}:replacement:${state.replacementCount}`;
-        state.outputOpen = true;
-        state.content = replacementContent;
-        state.replayContent = "";
-        state.replayOffset = null;
-        const startChunk = {
-          type: chunk.type === "text-delta" ? "text-start" : "reasoning-start",
-          ...replayOutputIdentity(chunk, state.outputId),
-        } as ChatUiMessageChunk<TMessageMetadata>;
-        retainRuntimeObservation(chunk, startChunk);
-        yield startChunk;
-        const deltaChunk = {
-          ...chunk,
-          ...replayOutputIdentity(chunk, state.outputId),
-          delta: replacementContent,
-        };
-        retainRuntimeObservation(chunk, deltaChunk);
-        yield deltaChunk;
-        continue;
-      }
-
-      state.replayContent = "";
-      state.content += emit;
-      const deltaChunk = {
-        ...chunk,
-        ...replayOutputIdentity(chunk, state.outputId),
-        delta: emit,
-      };
-      retainRuntimeObservation(chunk, deltaChunk);
-      yield deltaChunk;
-      continue;
+      yield* dedupeReplayDelta(chunk, stateMap);
+      return;
     }
 
     if (chunk.type === "text-end" || chunk.type === "reasoning-end") {
       const stateMap = chunk.type === "text-end" ? textStates : reasoningStates;
       const state = stateMap.get(replayChunkIdentity(chunk));
 
-      if (!state || !state.outputOpen) {
-        continue;
+      if (!state?.outputOpen) {
+        return;
       }
 
       state.replayOffset = null;
@@ -513,11 +559,19 @@ export async function* dedupeChatUiMessageChunks<TMessageMetadata>(
       const endChunk = { ...chunk, ...replayOutputIdentity(chunk, state.outputId) };
       retainRuntimeObservation(chunk, endChunk);
       yield endChunk;
-      continue;
+      return;
     }
 
     yield chunk;
-  }
+  };
+}
+
+/** Dedupe chat UI message chunks. */
+export async function* dedupeChatUiMessageChunks<TMessageMetadata>(
+  stream: AsyncIterable<ChatUiMessageChunk<TMessageMetadata>>,
+): AsyncIterable<ChatUiMessageChunk<TMessageMetadata>> {
+  const dedupe = createChatUiMessageChunkDeduper<TMessageMetadata>();
+  for await (const chunk of stream) yield* dedupe(chunk);
 }
 
 /** Normalizes chat UI message stream. */

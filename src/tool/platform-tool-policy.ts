@@ -28,3 +28,26 @@ export function isToolAllowedBySourcePolicy(
   }
   return isIntegrationToolAllowedBySourcePolicy(name, policy);
 }
+
+/** Canonical project-file mutations require exact-run writer authority. */
+export function isCanonicalFileMutationTool(name: string): boolean {
+  switch (name) {
+    case "create_file":
+    case "update_file":
+    case "move_file":
+    case "delete_file":
+    case "update_project_file_draft":
+    case "delete_project_file_draft":
+    case "publish_project_files":
+    case "veryfront__create_file":
+    case "veryfront__update_file":
+    case "veryfront__move_file":
+    case "veryfront__delete_file":
+    case "veryfront__update_project_file_draft":
+    case "veryfront__delete_project_file_draft":
+    case "veryfront__publish_project_files":
+      return true;
+    default:
+      return false;
+  }
+}

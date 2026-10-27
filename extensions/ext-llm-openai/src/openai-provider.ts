@@ -27,6 +27,7 @@ import {
   mergeUsage,
   notifyProviderRequestRetry,
   parseRetryAfterMs,
+  promptHasDocumentInput,
   ProviderError,
   ProviderOverloadedError,
   ProviderQuotaError,
@@ -37,6 +38,7 @@ import {
   readRecord,
   requestJson,
   requestStream,
+  routesOpenAIDocumentInputToResponses,
   type RuntimeUsage,
   stringifyJsonValue,
   TOOL_INPUT_PENDING_THRESHOLD_MS,
@@ -1058,6 +1060,7 @@ export function createOpenAIModelRuntime(
     provider: providerLabel,
     modelProvider: providerName,
     modelId,
+    openAITransport: "chat-completions",
     specificationVersion: "v3",
     supportedUrls: {},
     runtimeCapabilities: { structuredOutput: true },
@@ -1152,6 +1155,7 @@ export function createOpenAIResponsesRuntime(
     provider: providerLabel,
     modelProvider: providerName,
     modelId,
+    openAITransport: "responses",
     specificationVersion: "v3",
     supportedUrls: {},
     runtimeCapabilities: { structuredOutput: true },
@@ -1312,6 +1316,19 @@ function requestUsesOpenAIHostedTool(optionsForRuntime: OpenAICompatibleLanguage
   ) !== undefined;
 }
 
+/**
+ * Non-image files need Responses; Chat Completions only carries images. Only
+ * providers that serve Responses documents move there; the rest keep Chat
+ * Completions, which rejects the file before inference.
+ */
+function requiresOpenAIResponses(
+  options: OpenAICompatibleLanguageOptions,
+  documentsOnResponses: boolean,
+): boolean {
+  return requestUsesOpenAIHostedTool(options) ||
+    (documentsOnResponses && promptHasDocumentInput(options.prompt));
+}
+
 function createOpenAIChatCompletionsOnlyRuntime(
   chatRuntime: ModelRuntime<OpenAICompatibleLanguageOptions, RuntimeAssistantContentPart>,
   hostedToolReason?: string,
@@ -1341,18 +1358,22 @@ function createOpenAIChatCompletionsOnlyRuntime(
 function createOpenAIAdaptiveModelRuntime(
   chatRuntime: ModelRuntime<OpenAICompatibleLanguageOptions, RuntimeAssistantContentPart>,
   responsesRuntime: ModelRuntime<OpenAICompatibleLanguageOptions, RuntimeAssistantContentPart>,
+  documentsOnResponses: boolean,
 ): ModelRuntime<OpenAICompatibleLanguageOptions, RuntimeAssistantContentPart> {
   return {
     ...chatRuntime,
-    doGenerate(optionsForRuntime: OpenAICompatibleLanguageOptions) {
-      return requestUsesOpenAIHostedTool(optionsForRuntime)
+    openAITransport: "auto",
+    openAIResponsesDocumentInput: documentsOnResponses,
+    // Async, so a request the selected runtime rejects up front still rejects.
+    async doGenerate(optionsForRuntime: OpenAICompatibleLanguageOptions) {
+      return await (requiresOpenAIResponses(optionsForRuntime, documentsOnResponses)
         ? responsesRuntime.doGenerate(optionsForRuntime)
-        : chatRuntime.doGenerate(optionsForRuntime);
+        : chatRuntime.doGenerate(optionsForRuntime));
     },
-    doStream(optionsForRuntime: OpenAICompatibleLanguageOptions) {
-      return requestUsesOpenAIHostedTool(optionsForRuntime)
+    async doStream(optionsForRuntime: OpenAICompatibleLanguageOptions) {
+      return await (requiresOpenAIResponses(optionsForRuntime, documentsOnResponses)
         ? responsesRuntime.doStream(optionsForRuntime)
-        : chatRuntime.doStream(optionsForRuntime);
+        : chatRuntime.doStream(optionsForRuntime));
     },
   };
 }
@@ -1450,6 +1471,7 @@ export class OpenAIProvider implements LLMProvider {
     return createOpenAIAdaptiveModelRuntime(
       chatRuntime,
       responsesRuntime,
+      routesOpenAIDocumentInputToResponses(providerName, config.baseURL),
     );
   }
 

@@ -172,7 +172,7 @@ export function parseYaml(yaml: string): Record<string, unknown> {
 
     // Allow hyphens in keys (valid YAML, e.g. "created-at"); only the first
     // colon splits key from value, so colons inside the value are preserved.
-    const kvMatch = line.match(/^([\w-]+):\s*(.*)$/);
+    const kvMatch = line.match(/^([\w-]+):\s*(\S.*|)$/);
     if (!kvMatch) continue;
 
     flushArray();

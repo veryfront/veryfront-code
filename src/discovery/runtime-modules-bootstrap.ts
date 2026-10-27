@@ -13,6 +13,7 @@ import * as schemasMod from "#veryfront/schemas";
 import * as integrationsMod from "#veryfront/integrations/index.ts";
 import * as middlewareMod from "#veryfront/middleware";
 import * as chatUploadsMod from "#veryfront/chat/uploads";
+import * as conversationsMod from "#veryfront/conversations/index.ts";
 import { registerDiscoveryRuntimeModules } from "./runtime-modules.ts";
 
 registerDiscoveryRuntimeModules({
@@ -31,4 +32,5 @@ registerDiscoveryRuntimeModules({
   "veryfront/integrations": integrationsMod,
   "veryfront/middleware": middlewareMod,
   "veryfront/chat/uploads": chatUploadsMod,
+  "veryfront/conversations": conversationsMod,
 });

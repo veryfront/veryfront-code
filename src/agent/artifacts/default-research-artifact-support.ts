@@ -1,3 +1,4 @@
+import { platformMcpLegacyName } from "../platform-mcp-tool-source.ts";
 import { privateArtifactText as privateText } from "./private-artifact-text.ts";
 import {
   filterPrivateArray,
@@ -143,6 +144,7 @@ export async function fetchLatestConversationUserText(input: {
   }
 
   try {
+    // listConversationMessages. The parts are read with the private array helpers below.
     const response = await fetch(
       `${input.apiUrl}/conversations/${input.conversationId}/messages?limit=20`,
       {
@@ -244,7 +246,11 @@ export function applyDefaultResearchArtifactPath(
   taskContext: DefaultResearchArtifactContext,
 ): Record<string, unknown> {
   const defaultArtifacts = taskContext.defaultResearchArtifacts;
-  if (!defaultArtifacts || (toolName !== "create_file" && toolName !== "update_file")) {
+  if (
+    !defaultArtifacts ||
+    (platformMcpLegacyName(toolName) !== "create_file" &&
+      platformMcpLegacyName(toolName) !== "update_file")
+  ) {
     return toolInput;
   }
 
@@ -292,7 +298,7 @@ export function shouldRetryCreateResearchArtifactAsUpdate(input: {
   taskContext: DefaultResearchArtifactContext;
   error: unknown;
 }): boolean {
-  if (input.toolName !== "create_file") {
+  if (platformMcpLegacyName(input.toolName) !== "create_file") {
     return false;
   }
 
@@ -335,7 +341,10 @@ export async function mirrorDefaultResearchRunArtifact(input: {
     context: Record<string, unknown> | undefined,
   ) => Promise<unknown>;
 }): Promise<void> {
-  if (input.toolName !== "create_file" && input.toolName !== "update_file") {
+  if (
+    platformMcpLegacyName(input.toolName) !== "create_file" &&
+    platformMcpLegacyName(input.toolName) !== "update_file"
+  ) {
     return;
   }
 
@@ -376,8 +385,15 @@ export async function mirrorDefaultResearchRunArtifact(input: {
   try {
     await input.executeTool(input.toolName, mirroredInput, input.executeContext);
   } catch (error) {
-    if (input.toolName === "create_file" && isHostedChildCreateFileAlreadyExistsResult(error)) {
-      await input.executeTool("update_file", mirroredInput, input.executeContext);
+    if (
+      platformMcpLegacyName(input.toolName) === "create_file" &&
+      isHostedChildCreateFileAlreadyExistsResult(error)
+    ) {
+      await input.executeTool(
+        input.toolName.startsWith("veryfront__") ? "veryfront__update_file" : "update_file",
+        mirroredInput,
+        input.executeContext,
+      );
       return;
     }
     throw error;

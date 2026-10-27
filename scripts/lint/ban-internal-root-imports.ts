@@ -1,4 +1,8 @@
 #!/usr/bin/env -S deno run --allow-read
+import {
+  IMPORT_FROM,
+  IMPORT_TRIVIA,
+} from "../../src/modules/loader-shared/import-syntax.mjs";
 /**
  * @veryfront/internal Import Guard
  *
@@ -12,8 +16,19 @@ import { relative } from "@std/path";
 const INTERNAL_PREFIX = "@veryfront/internal";
 const ROOTS_TO_SCAN = ["src", "packages", "scripts", "examples"];
 const VALID_EXTENSIONS = [".ts", ".tsx", ".mts", ".cts"];
-const SKIP_DIR_PATTERNS = [/\/dist\//, /\/coverage\//, /\/\.git\//, /\/node_modules\//];
-const KNOWN_SUBMODULES = ["config", "errors", "logger", "middleware", "security"];
+const SKIP_DIR_PATTERNS = [
+  /\/dist\//,
+  /\/coverage\//,
+  /\/\.git\//,
+  /\/node_modules\//,
+];
+const KNOWN_SUBMODULES = [
+  "config",
+  "errors",
+  "logger",
+  "middleware",
+  "security",
+];
 
 interface Violation {
   file: string;
@@ -61,9 +76,19 @@ function getLineNumber(source: string, index: number): number {
   return line;
 }
 
-function* findSpecifiers(source: string): Generator<{ specifier: string; index: number }> {
-  const staticRegex = /^\s*(import|export)\s+(?:[\s\S]*?)from\s+['"]([^'"]+)['"]/gm;
-  const bareImportRegex = /^\s*import\s+['"]([^'"]+)['"]/gm;
+function* findSpecifiers(
+  source: string,
+): Generator<{ specifier: string; index: number }> {
+  const staticRegex = new RegExp(
+    String
+      .raw`^[^\S\n]*(import|export)(?![\p{ID_Continue}$])${IMPORT_TRIVIA}${IMPORT_FROM}['"]([^'"]+)['"]`,
+    "gmu",
+  );
+  const bareImportRegex = new RegExp(
+    String
+      .raw`^[^\S\n]*import(?![\p{ID_Continue}$])${IMPORT_TRIVIA}['"]([^'"]+)['"]`,
+    "gmu",
+  );
   const dynamicRegex = /(?<![\w$"'`])import\s*\(\s*['"]([^'"]+)['"]\s*\)/g;
 
   for (const match of source.matchAll(staticRegex)) {
@@ -111,7 +136,9 @@ async function collectFiles(): Promise<string[]> {
 
 function formatSnippet(sourceLine: string, specifier: string): string {
   const trimmed = sourceLine.trim();
-  return trimmed.length > 120 ? `${trimmed.slice(0, 117)}...` : trimmed.replace(specifier, specifier);
+  return trimmed.length > 120
+    ? `${trimmed.slice(0, 117)}...`
+    : trimmed.replace(specifier, specifier);
 }
 
 const files = await collectFiles();
@@ -138,17 +165,23 @@ for (const file of files) {
 }
 
 if (violations.length > 0) {
-  console.error("🚫 Found imports that target the deprecated '@veryfront/internal' root entry point:\n");
+  console.error(
+    "🚫 Found imports that target the deprecated '@veryfront/internal' root entry point:\n",
+  );
   for (const violation of violations) {
     console.error(
-      `  - ${relative(Deno.cwd(), violation.file)}:${violation.line} → ${violation.specifier}`,
+      `  - ${
+        relative(Deno.cwd(), violation.file)
+      }:${violation.line} → ${violation.specifier}`,
     );
     if (violation.snippet) {
       console.error(`    ${violation.snippet}`);
     }
   }
   console.error(
-    `\nUse explicit submodules instead (${KNOWN_SUBMODULES.map(s => `'${INTERNAL_PREFIX}/${s}'`).join(", ")}).`,
+    `\nUse explicit submodules instead (${
+      KNOWN_SUBMODULES.map((s) => `'${INTERNAL_PREFIX}/${s}'`).join(", ")
+    }).`,
   );
   Deno.exit(1);
 }

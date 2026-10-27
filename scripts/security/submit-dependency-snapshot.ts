@@ -325,7 +325,7 @@ function requireEnv(name: string): string {
 }
 
 function normalizeWorkspaceMemberPath(path: string): string {
-  return path.replaceAll("\\", "/").replace(/^\.\//, "").replace(/\/+$/, "");
+  return path.replaceAll("\\", "/").replace(/^\.\//, "").replace(/(?<!\/)\/+$/, "");
 }
 
 function workspaceMembersFromDenoConfig(

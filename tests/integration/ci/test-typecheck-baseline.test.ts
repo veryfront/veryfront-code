@@ -5,7 +5,9 @@ import {
 } from "../../../scripts/lint/check-test-typecheck-baseline.ts";
 
 Deno.test("runDenoCheck still rejects a genuine new test type error", async () => {
-  const file = await Deno.makeTempFile({ dir: "src", suffix: ".test.ts" });
+  // Source-tree audits run concurrently; keep this short-lived fixture outside
+  // their input tree so cleanup cannot race a scanner.
+  const file = await Deno.makeTempFile({ suffix: ".test.ts" });
   try {
     await Deno.writeTextFile(file, "export const invalid: string = 42;\n");
     const outcome = await evaluateRatchet([file], new Set(), runDenoCheck);

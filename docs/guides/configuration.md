@@ -1,7 +1,7 @@
 ---
 title: "Configuration"
 description: "Override Veryfront conventions with config and environment variables."
-order: 9
+order: 20
 ---
 
 Veryfront follows convention over configuration. Start with the default
@@ -250,7 +250,7 @@ defineConfig({
   ai: {
     providers: {
       openai: {
-        defaultModel: "gpt-5-nano",
+        defaultModel: "gpt-5.4-nano",
       },
     },
     mcp: {
@@ -325,23 +325,22 @@ source:
 Naming the default `https://api.veryfront.com` needs no confirmation, in any
 equivalent spelling.
 
-Veryfront blocks requests to hosts that resolve to private network addresses.
-`veryfront eval` makes one exception: the API host you set in your shell with
-`VERYFRONT_API_URL` or `VERYFRONT_API_BASE_URL` can resolve to a private address,
-as a staging, VPN, or self-hosted API does. The exception covers only that exact
-origin (scheme, host, and port). A host set in a project `.env` file or
-`veryfront.json` does not qualify, and redirects stay rejected. For other
-commands, add the origin to `VERYFRONT_HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS`:
-
-```bash
-export VERYFRONT_API_URL="https://api.example.com"
-export VERYFRONT_HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS="https://api.example.com"
-```
+Veryfront blocks private network destinations by default. CLI API transports
+permit the exact API origin configured by the operator. Hosted runtimes and
+`veryfront serve` also permit an HTTP API origin set through `VERYFRONT_API_URL`
+or `VERYFRONT_API_BASE_URL` before startup. Project `.env` files and later writes
+cannot authorize HTTP origins. Canonical file mutation tools use the same
+host-configured origin policy and require the exact API `/mcp` endpoint.
+Origin-bound API transports reject redirects; other outbound requests keep their existing policies. Use HTTPS unless the API
+is on a private network you control.
 
 In CI, set the API URL variable used by the command next to
 `VERYFRONT_API_TOKEN` in the job environment whenever the project uses a
 self-hosted API host, so a non-interactive run has a confirmed host. See
 [Deploy from CI](./deploy-from-ci.md) for the surrounding workflow.
+
+Use an API key as the `VERYFRONT_API_TOKEN` value in CI. See
+[API keys](https://veryfront.com/docs/cloud/apis/identity-and-access#api-keys) to create one.
 
 ### Provider stream idle deadline
 
@@ -373,6 +372,45 @@ Set this one in the host environment, not in a project `.env` file. It is an
 operator safety bound, so a value that came from a project `.env` file is
 ignored and the host's own setting stands.
 
+### Model stream progress budgets
+
+Hosted agent services can bound how long each streamed agent model call waits
+for semantic progress. Semantic progress is text, reasoning, or tool output, so
+these budgets fire even when a provider keeps the connection busy with
+keepalive frames. Context compaction summaries use a separate whole-response
+request, so these budgets do not apply to them; the request abort signal and
+the provider transport deadlines bound that request.
+
+| Variable                                           | Default | What it bounds                                                     |
+| -------------------------------------------------- | ------- | ------------------------------------------------------------------ |
+| `VERYFRONT_MODEL_STREAM_FIRST_PROGRESS_TIMEOUT_MS` | `60000` | How long a model call waits for its first semantic output.         |
+| `VERYFRONT_MODEL_STREAM_SEMANTIC_IDLE_TIMEOUT_MS`  | `15000` | How long a model call waits between outputs after progress begins. |
+
+Each value must be a positive integer of at most `300000`. When the
+first-progress budget fires before any output, the run fails with the fixed
+`FIRST_PROGRESS_TIMEOUT` code.
+
+Both budgets must stay below the hosted chat stream idle watchdog
+(`VERYFRONT_CHAT_STREAM_IDLE_TIMEOUT_MS`, default `150000`). Otherwise the
+watchdog fires first and reports a generic stall, so the agent service rejects
+an explicitly set budget that does not fit when it creates the runtime. The
+first-progress budget counts twice because a stream that times out before any
+output can be replayed once: twice its value must stay below the watchdog.
+
+Upgrade note: the default watchdog moved from `120000` to `150000` so that two
+`60000` first-progress attempts fit. When a budget variable is unset and its
+default does not fit under a pinned watchdog (such as
+`VERYFRONT_CHAT_STREAM_IDLE_TIMEOUT_MS=120000`), the service derives the largest
+budget that fits while leaving at least 1 second or 10% of the watchdog spare
+(`54000`), and logs a one-time warning instead of rejecting requests. Raise the watchdog or set the budget explicitly to silence it.
+
+Delegated child agents inherit a budget only when its window (twice the value
+for first progress) is shorter than the child stream watchdog (`45000`). A
+longer budget leaves the child on the framework default.
+
+Set these in the host environment of the agent service. See
+[Agent service runtime](./agent-service-runtime.md#bound-model-stream-progress).
+
 ### Veryfront Cloud model routes
 
 `veryfront-cloud/*` models call the platform's vendor-neutral endpoints under
@@ -387,9 +425,12 @@ a `NOT_SUPPORTED` error, because that route names only the model and could not
 tell it apart from a Google model with the same id.
 
 The SDK no longer supports `VERYFRONT_CLOUD_GATEWAY_ROUTES=vendor`; the
-variable is ignored. The API announced the vendor-scoped routes with a
+variable is ignored.
+
+The API announced the vendor-scoped routes with a
 `Sunset: 2026-12-31` deprecation contract. An API deployment may still serve
 the routes during its deprecation window, but this SDK will not select them.
+
 An API deployment that has removed the vendor-scoped inference paths returns
 `410 Gone` and names the neutral replacement. The separate
 `/ai/gateway/billing/finalize` endpoint is not a vendor inference route and
@@ -490,9 +531,7 @@ The framework reads `veryfront.config.ts` automatically. Your config values are 
 
 ## Verify it worked
 
-After editing `veryfront.config.ts`, restart `veryfront dev`. The dev banner
-prints the resolved `title`, output directory, and router mode. Set a
-distinctive `title` and check that the document title in the browser matches.
+After editing `veryfront.config.ts`, restart `veryfront dev`. Verify the setting through the behavior it controls: request a route after changing router configuration, or inspect the output directory after a build. Resolve startup or configuration errors before checking application behavior.
 
 For environment variables, set a temporary non-secret value such as
 `VERYFRONT_CONFIG_CHECK=enabled` and read that value from a temporary API route.

@@ -1,10 +1,10 @@
 ---
 title: "Skills"
-description: "Define project-level agent capabilities as SKILL.md files with prompt augmentation, tool restrictions, and script execution."
-order: 29
+description: "Define project skills with reusable instructions, references, and scripts."
+order: 230
 ---
 
-A skill is a directory under `skills/` containing a `SKILL.md` file. It bundles structured agent instructions, an `allowed_tools` policy, optional resource and reference files, static assets, and executable scripts. The format follows the [agentskills.io](https://agentskills.io) specification.
+A skill is a directory under `skills/` containing a `SKILL.md` file. It bundles structured agent instructions, optional tool pre-approval metadata, optional resource and reference files, static assets, and executable scripts. The format follows the [agentskills.io](https://agentskills.io) specification.
 Use [veryfront/skill](../api-reference/veryfront/skill.md) for parser,
 registry, tool, and policy helpers in framework code.
 
@@ -37,7 +37,7 @@ The `SKILL.md` file uses YAML frontmatter for metadata and Markdown for instruct
 ---
 name: code-review
 description: Review code changes for style, correctness, and security issues.
-allowed_tools: load_skill load_skill_reference execute_skill_script
+allowed_tools: veryfront__load_skill veryfront__load_skill_reference veryfront__execute_skill_script
 ---
 
 # Code Review
@@ -70,14 +70,14 @@ skills/<skill-id>/
 
 ## Frontmatter fields
 
-| Field           | Required | Description                                                                  |
-| --------------- | -------- | ---------------------------------------------------------------------------- |
-| `name`          | Yes      | Skill identifier (lowercase alphanumeric + hyphens, 1-64 chars)              |
-| `description`   | Yes      | Human-readable description (max 1024 chars)                                  |
-| `allowed_tools` | No       | Space-delimited tool IDs or prefix patterns (e.g. `api:*`) the agent may use |
-| `license`       | No       | SPDX license identifier                                                      |
-| `compatibility` | No       | Compatibility constraints                                                    |
-| `metadata`      | No       | Arbitrary key-value pairs                                                    |
+| Field           | Required | Description                                                               |
+| --------------- | -------- | ------------------------------------------------------------------------- |
+| `name`          | Yes      | Skill identifier (lowercase alphanumeric + hyphens, 1-64 chars)           |
+| `description`   | Yes      | Human-readable description (max 1024 chars)                               |
+| `allowed_tools` | No       | Optional tool pre-approval metadata; not a runtime authorization boundary |
+| `license`       | No       | SPDX license identifier                                                   |
+| `compatibility` | No       | Compatibility constraints                                                 |
+| `metadata`      | No       | Arbitrary key-value pairs                                                 |
 
 ## Discovery
 
@@ -89,39 +89,73 @@ skills/
   data-analysis/SKILL.md   → skill ID: "data-analysis"
 ```
 
+<span id="skill-execution-flow"></span>
+<span id="skill-script-execution"></span>
+
 ## Agent tools
 
-Agents with enabled skill access get `load_skill`. Local and project runtimes
+Agents with enabled skill access get `veryfront__load_skill`. Local and project runtimes
 also expose the two supporting skill tools when skill access is enabled:
 
-| Tool                   | Availability               | Description                                                            |
-| ---------------------- | -------------------------- | ---------------------------------------------------------------------- |
-| `load_skill`           | Every runtime              | Load full instructions by ID. Hosted chat can also list authorized IDs |
-| `load_skill_reference` | Local and project runtimes | Read a file from `references/`, `resources/`, or `assets/`             |
-| `execute_skill_script` | Local and project runtimes | Execute a script from a skill (5-minute timeout)                       |
+| Tool                              | Availability               | Description                                                            |
+| --------------------------------- | -------------------------- | ---------------------------------------------------------------------- |
+| `veryfront__load_skill`           | Every runtime              | Load full instructions by ID. Hosted chat can also list authorized IDs |
+| `veryfront__load_skill_reference` | Local and project runtimes | Read a file from `references/`, `resources/`, or `assets/`             |
+| `veryfront__execute_skill_script` | Local and project runtimes | Execute a script from a skill (5-minute timeout)                       |
 
-Hosted chat providers use nested `load_skill` input. After loading a skill,
+Script execution uses the runtime's project identity for cloud sandbox billing.
+Scripts receive that identity as `VERYFRONT_PROJECT_ID` and the runtime's branch
+as `VERYFRONT_BRANCH_REF` (default `main`). Tool arguments and script environment
+input cannot override these bindings. Cloud execution requires a project binding;
+local execution can run without one.
+
+Authenticated renewable scripts receive `VERYFRONT_API_TOKEN_FILE`, not a fixed
+`VERYFRONT_API_TOKEN`. The runtime updates this private file when the exact run
+credential renews. The Veryfront SDK reads it for each request. Other API clients
+must read the file again before each request; do not cache its contents or copy
+it into a fixed environment token. Nonrenewable script environments keep their
+existing token behavior.
+
+Hosted chat providers use nested `veryfront__load_skill` input. After loading a skill,
 hosted chat can read only a reference listed by that skill through
-`load_skill({ load: { skillId, file } })`. It does not execute skill scripts
-directly.
+`veryfront__load_skill({ reference: { skillId, file } })`. The `load.file` form is no
+longer advertised, but it remains accepted for existing callers. After a form
+input is submitted, the tool instead offers only the flat `{ skillId, file }`
+form, limited to the active skill's references. Hosted chat does not execute
+skill scripts directly.
+
+Read the skill's load result before selecting a reference path. Hosted chat
+rejects a reference read in the same step as the skill's first body load. Retry
+the reference in the next step using a listed path. Direct SDK calls can load a
+body and then read a reference sequentially.
+
+Use the skill ID returned by `veryfront__load_skill` and an exact path from its `references`
+list. Read one reference at a time:
+
+```json
+{ "reference": { "skillId": "code-review", "file": "references/style-guide.md" } }
+```
+
+Keep the loaded skill ID when reading a reference. Reference paths belong in
+`file`; they are not separate skill IDs and are not tools to discover.
 
 When a hosted chat prompt provides a discovery cursor, call
-`load_skill({ inventory: { cursor: <CURSOR> } })`. Otherwise, call
-`load_skill({ inventory: {} })` when the prompt does not show the complete
+`veryfront__load_skill({ inventory: { cursor: <CURSOR> } })`. Otherwise, call
+`veryfront__load_skill({ inventory: {} })` when the prompt does not show the complete
 authorized skill inventory. The result contains a bounded `skillIds` page. If
 it also contains `nextCursor`, call
-`load_skill({ inventory: { cursor: nextCursor } })` until the response omits
-`nextCursor`. Then call `load_skill({ load: { skillId } })` with a listed ID.
+`veryfront__load_skill({ inventory: { cursor: nextCursor } })` until the response omits
+`nextCursor`. Then call `veryfront__load_skill({ load: { skillId } })` with a listed ID.
 
-Direct local tool consumers use flat load input. Call
-`load_skill({ skillId: "<SKILL_ID>" })` to load a skill. After loading it, call
-`load_skill_reference({ skillId: "<SKILL_ID>", reference: "<PATH>" })` to read
+Local agent runtimes use flat load input. Call
+`veryfront__load_skill({ skillId: "<SKILL_ID>" })` to load a skill. After loading it, call
+`veryfront__load_skill_reference({ skillId: "<SKILL_ID>", reference: "<PATH>" })` to read
 a listed reference, resource, or asset.
 
 Standalone project runtime consumers can page the authorized inventory with
-flat input. Call `load_skill({})` for the first page, then call
-`load_skill({ cursor: <CURSOR> })` when the response includes `nextCursor`.
-Load a listed skill with `load_skill({ skillId: "<SKILL_ID>" })`.
+flat input. Call `veryfront__load_skill({})` for the first page, then call
+`veryfront__load_skill({ cursor: <CURSOR> })` when the response includes `nextCursor`.
+Load a listed skill with `veryfront__load_skill({ skillId: "<SKILL_ID>" })`.
 
 Discovered skills visible to the agent are advertised by default:
 
@@ -145,7 +179,7 @@ and subtracts exclusions:
 skills: { "support-*": true, "support-internal": false }
 ```
 
-Exclusion-only maps grant nothing. The framework supplies `load_skill` for an
+Exclusion-only maps grant nothing. The framework supplies `veryfront__load_skill` for an
 enabled selection; you do not need to add it to `tools`. Loading a skill
 outside the selected scope is denied. Omitted `skills` preserves the existing
 behavior of allowing every visible skill.
@@ -160,40 +194,37 @@ curl -N http://localhost:3000/api/ag-ui \
   -d '{"messages":[{"id":"1","role":"user","parts":[{"type":"text","text":"Use the code-review skill and summarize what you would check first."}]}]}'
 ```
 
-The agent should call `load_skill` before applying the skill instructions.
+The agent should call `veryfront__load_skill` before applying the skill instructions.
 
 ## Tool restrictions
 
-The `allowed_tools` field restricts which tools an agent can use while a skill is active. Use exact IDs or prefix wildcards:
+The `allowed-tools` field (also accepted as `allowed_tools`) records tool pre-approval metadata. Veryfront preserves it but does not enforce it as a runtime authorization boundary. Configure the agent's `tools` to limit available tools. The following values are metadata, not enforced access rules:
 
 ```yaml
 # Exact tool IDs
-allowed_tools: load_skill load_skill_reference execute_skill_script
+allowed_tools: veryfront__load_skill veryfront__load_skill_reference veryfront__execute_skill_script
 
-# Prefix wildcards
-allowed_tools: api:* database:read
 
-# No restriction (agent can use all tools)
-# omit the field entirely
+# Omit this optional metadata when it is not needed
 ```
 
 ## CLI commands
 
 ```bash
 # Create a new skill
-veryfront skills create my-skill
+veryfront skills create code-review
 
 # Validate a skill
-veryfront skills validate skills/my-skill
+veryfront skills validate skills/code-review
 ```
 
 ## Verify it worked
 
-1. Run `veryfront skills validate skills/my-skill`. A passing skill prints
+1. Run `veryfront skills validate skills/code-review`. A passing skill prints
    no errors and exits with status `0`.
 2. Restart `veryfront dev`. The dev log should list each registered skill
    under its directory name.
 3. Send a message that should trigger the skill (for example, a code-review
    skill should engage when the message asks to "review this diff"). The
-   AG-UI response should reference the skill's instructions or call only
-   the tools listed in `allowed_tools`.
+   AG-UI response should apply the skill's instructions. Verify tool access
+   separately through the agent's `tools` configuration.

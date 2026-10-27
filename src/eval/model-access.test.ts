@@ -465,6 +465,8 @@ describe("eval/model-access", () => {
     for (
       const [slug, code] of [
         ["model-not-permitted", "MODEL_NOT_PERMITTED"],
+        ["account-model-denied", "ACCOUNT_MODEL_DENIED"],
+        ["key-model-denied", "KEY_MODEL_DENIED"],
         ["inference-policy-denied", "INFERENCE_POLICY_DENIED"],
       ] as const
     ) {

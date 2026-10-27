@@ -1,6 +1,7 @@
 // @veryfront-test runtime-guarded-deno
 import "#veryfront/schemas/_test-setup.ts";
 import {
+  assert,
   assertEquals,
   assertMatch,
   assertNotEquals,
@@ -10,6 +11,7 @@ import {
 import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import { join, toFileUrl } from "#veryfront/compat/path";
 import {
+  buildFailure,
   bundledModuleScopeDiscriminator,
   bundlerForcesTypeScript,
   canDirectImportSpecifier,
@@ -37,6 +39,12 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { env, getEnv, setEnv } from "#veryfront/compat/process.ts";
 import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
+import {
+  __resetLoggerConfigForTests,
+  __subscribeLogRecordEmitter,
+  LogLevel,
+  setLogLevel,
+} from "#veryfront/utils/logger/logger.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import type { LoadModuleOptions } from "./types.ts";
@@ -2782,6 +2790,289 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
       () => loadHandlerModule({ projectDir: tmpDir, modulePath, adapter, config: undefined }),
       Error,
       "dynamic code generation",
+    );
+  });
+
+  for (
+    const [label, routeLines] of [
+      ["a direct", []],
+      // `import.meta` sends the route through the bundler, as Node always does.
+      ["a bundled", [`export const url = import.meta.url;`]],
+    ] as const
+  ) {
+    it(`names ${label} route's rejected import by its project-relative path only`, async () => {
+      const tmpDir = await makeTempDir();
+      const modulePath = join(tmpDir, "app", "api", "route.ts");
+      await fs.mkdir(join(tmpDir, "app", "api"), { recursive: true });
+      await fs.mkdir(join(tmpDir, "lib"), { recursive: true });
+      await fs.writeTextFile(
+        join(tmpDir, "lib", "lookup.ts"),
+        `export const lookup = (c: Record<string, unknown>, k: string) => c[k];\n`,
+      );
+      await fs.writeTextFile(
+        modulePath,
+        [
+          `import { lookup } from "../../lib/lookup.ts";`,
+          ...routeLines,
+          `export const GET = () => new Response(String(lookup({}, "a")));`,
+        ].join("\n"),
+      );
+
+      // Neither the error nor any log line may carry the machine's absolute
+      // paths (veryfront-issue-inbox#3820).
+      const logged: string[] = [];
+      const unsubscribe = __subscribeLogRecordEmitter((entry) => {
+        logged.push(JSON.stringify(entry));
+      });
+      let error: Error;
+      try {
+        error = await assertRejects(
+          () => loadHandlerModule({ projectDir: tmpDir, modulePath, adapter, config: undefined }),
+          Error,
+        ) as Error;
+      } finally {
+        unsubscribe();
+      }
+      assertMatch(error.message, /(^|\s)lib\/lookup\.ts:1:66 reads `c\[k\]`/);
+      assertEquals(error.message.includes(tmpDir), false, error.message);
+      // Nor a stack, whose frames name the host checkout.
+      assertEquals(
+        logged.filter((line) => line.includes(tmpDir) || line.includes('"stack"')),
+        [],
+      );
+    });
+  }
+
+  describe("keeps host paths out of every loader log and error (veryfront-issue-inbox#3824)", () => {
+    const HOST_PATH = /[/\\](?:Users|home|var[/\\]folders|private|tmp)[/\\]/;
+
+    async function loadWithDebugLogs(projectDir: string, modulePath: string) {
+      const logged: string[] = [];
+      // The loader's own records; other components have their own sweeps.
+      const unsubscribe = __subscribeLogRecordEmitter((entry) => {
+        if (entry.component === "api") logged.push(JSON.stringify(entry));
+      });
+      setLogLevel(LogLevel.DEBUG);
+      try {
+        const outcome = await loadHandlerModule({
+          projectDir,
+          modulePath,
+          adapter,
+          config: undefined,
+        })
+          .then(() => null, (error: Error) => error);
+        return { error: outcome, logged };
+      } finally {
+        __resetLoggerConfigForTests();
+        unsubscribe();
+      }
+    }
+
+    async function project(files: Record<string, string>): Promise<string> {
+      const tmpDir = await makeTempDir();
+      for (const [path, contents] of Object.entries(files)) {
+        await fs.mkdir(join(tmpDir, path, ".."), { recursive: true });
+        await fs.writeTextFile(join(tmpDir, path), contents);
+      }
+      return tmpDir;
+    }
+
+    it("on a bundled route that loads", async () => {
+      const dir = await project({
+        "lib/ok.ts": `export const ok = "ok";\n`,
+        "app/api/route.ts": [
+          `import { ok } from "../../lib/ok.ts";`,
+          `export const url = import.meta.url;`,
+          `export const GET = () => new Response(ok);`,
+        ].join("\n"),
+      });
+      const { error, logged } = await loadWithDebugLogs(dir, join(dir, "app", "api", "route.ts"));
+      assertEquals(error, null);
+      assertEquals(logged.filter((line) => HOST_PATH.test(line)), []);
+    });
+
+    it("on a relative import that escapes the project", async () => {
+      const dir = await project({
+        "app/api/route.ts": [
+          `import { x } from "../../../outside.ts";`,
+          `export const url = import.meta.url;`,
+          `export const GET = () => new Response(String(x));`,
+        ].join("\n"),
+      });
+      const { error, logged } = await loadWithDebugLogs(dir, join(dir, "app", "api", "route.ts"));
+      assertMatch(error?.message ?? "", /escapes project/);
+      assertEquals(HOST_PATH.test(error?.message ?? ""), false, error?.message);
+      assertEquals(logged.filter((line) => HOST_PATH.test(line)), []);
+    });
+
+    it("on a module path outside the project", async () => {
+      const dir = await project({
+        "app/api/route.ts": `export const GET = () => new Response("");\n`,
+      });
+      const outside = await project({ "route.ts": `export const GET = () => new Response("");\n` });
+      const { error, logged } = await loadWithDebugLogs(dir, join(outside, "route.ts"));
+      assertMatch(error?.message ?? "", /escapes project directory/);
+      assertEquals(HOST_PATH.test(error?.message ?? ""), false, error?.message);
+      assertEquals(logged.filter((line) => HOST_PATH.test(line)), []);
+    });
+
+    it("on a bundled route that throws while it evaluates", async () => {
+      const dir = await project({
+        "app/api/route.ts": [
+          `export const url = import.meta.url;`,
+          `throw new Error("boom");`,
+        ].join("\n"),
+      });
+      const { error, logged } = await loadWithDebugLogs(dir, join(dir, "app", "api", "route.ts"));
+      assertMatch(error?.message ?? "", /boom/);
+      assertEquals(logged.filter((line) => HOST_PATH.test(line)), []);
+    });
+  });
+
+  it("names a bundled route's build error by its project-relative location", async () => {
+    const tmpDir = await makeTempDir();
+    const modulePath = join(tmpDir, "app", "api", "route.ts");
+    await fs.mkdir(join(tmpDir, "app", "api"), { recursive: true });
+    await fs.writeTextFile(
+      modulePath,
+      [
+        `export const url = import.meta.url;`,
+        `import { missing } from "./missing.ts";`,
+        `export const GET = () => new Response(String(missing));`,
+      ].join("\n"),
+    );
+
+    const error = await assertRejects(
+      () => loadHandlerModule({ projectDir: tmpDir, modulePath, adapter, config: undefined }),
+      Error,
+    ) as Error;
+    assertMatch(error.message, /handler build failed: app\/api\/route\.ts:2:\d+: /);
+    assertMatch(error.message, /File not found: missing\.ts/);
+    assertEquals(error.message.includes(tmpDir), false, error.message);
+  });
+
+  it("labels a build error's location without exposing absolute paths or URL secrets", () => {
+    const failure = (file: string) =>
+      buildFailure(
+        [{ text: "Expected identifier", location: { file, line: 2, column: 4 } }],
+        "/project",
+        "/srv/work",
+      ).message;
+    assertEquals(
+      failure("../../project/lib/a.ts"),
+      "[API] handler build failed: lib/a.ts:2:5: Expected identifier",
+    );
+    assertEquals(
+      failure("vf-project-alias:/project/lib/a.ts"),
+      "[API] handler build failed: lib/a.ts:2:5: Expected identifier",
+    );
+    assertEquals(
+      failure("http-url:https://user:secret@cdn.example/lib/mod.ts?token=<TOKEN>"),
+      "[API] handler build failed: https://cdn.example:2:5: Expected identifier",
+    );
+    assertEquals(
+      failure("http-url:HTTPS://cdn.example/lib/mod.ts?token=<TOKEN>"),
+      "[API] handler build failed: https://cdn.example:2:5: Expected identifier",
+    );
+    assertEquals(
+      failure("https://cdn.example/lib/mod.ts"),
+      "[API] handler build failed: https://cdn.example:2:5: Expected identifier",
+    );
+    assertEquals(
+      failure("/elsewhere/other.ts"),
+      "[API] handler build failed: other.ts:2:5: Expected identifier",
+    );
+    // Free text is scanned, not parsed: every absolute path or `file:` URL is
+    // cut to its file name and every web URL to its origin.
+    const free = (text: string) =>
+      buildFailure([{ text }], "/project", "/srv/work").message.replace(
+        "[API] handler build failed: ",
+        "",
+      );
+    const cases: Array<[string, string]> = [
+      [
+        "Import escapes the project directory: /elsewhere/secret.ts. File not found: " +
+        "/project/lib/b.ts, see https://cdn.example/x/y.ts",
+        "Import escapes the project directory: secret.ts. File not found: b.ts, see " +
+        "https://cdn.example",
+      ],
+      ["x /project/a.ts,/home/u/b.ts", "x b.ts"],
+      ["at file:///project/a.ts,file:///home/u/b.ts", "at b.ts"],
+      ["error:/home/u/a.ts", "error:a.ts"],
+      ["ENOENT:/home/u/a.ts", "ENOENT:a.ts"],
+      ["the end./home/u/a.ts", "the end.a.ts"],
+      [
+        "Thrown at file:///project/app/api/route.ts and file:///home/u/x.ts",
+        "Thrown at route.ts and x.ts",
+      ],
+      ["Missing \\\\server\\share\\secret.ts", "Missing secret.ts"],
+      ["At C:\\Users\\u\\secret.ts", "At secret.ts"],
+      ["At file://server/share/app/x.ts?token=<TOKEN>", "At x.ts"],
+      ["At file:/home/u/x.ts#<TOKEN>", "At x.ts"],
+      ["At file://private-host?token=<TOKEN>", "At "],
+      ["At file:///home/u/a%2Fb.ts", "At b.ts"],
+      ["See [/home/u/a.ts] and </home/u/b.ts>", "See [a.ts] and <b.ts>"],
+      ["At /home/alice[private]/secret.ts", "At secret.ts"],
+      ["At /home/u]private/secret.ts", "At secret.ts"],
+      ["At /tmp/foo{private}/a(b);c/secret.ts:1:2", "At secret.ts:1:2"],
+      ["Failed https://user:p@[::1]:8443/lib/mod.ts?token=<TOKEN>", "Failed https://[::1]:8443"],
+      ["Cannot find './x.ts' or '../lib/y.ts'", "Cannot find './x.ts' or '../lib/y.ts'"],
+      ["Unknown profile:dev in config", "Unknown profile:dev in config"],
+      ["Set configFile:./x.json", "Set configFile:./x.json"],
+    ];
+    for (const [text, expected] of cases) {
+      const output = free(text);
+      assertEquals(output, expected, text);
+      assertEquals(output.includes("/home"), false, text);
+    }
+    // One linear pass: a long crafted message neither throws nor stalls.
+    const crafted = "/x" + ")/y".repeat(20_000);
+    const started = performance.now();
+    assertEquals(free(crafted), "y");
+    assert(performance.now() - started < 1_000);
+    // Project code has run in this realm by the time a build fails, and may
+    // have replaced the string and RegExp methods redaction would call.
+    const originals = {
+      replace: String.prototype.replace,
+      split: String.prototype.split,
+      exec: RegExp.prototype.exec,
+      symbolReplace: RegExp.prototype[Symbol.replace],
+      pathname: Object.getOwnPropertyDescriptor(URL.prototype, "pathname")!,
+    };
+    let patched: string;
+    try {
+      String.prototype.replace = function (this: string) {
+        return String(this);
+      } as typeof String.prototype.replace;
+      String.prototype.split = () => [];
+      Object.defineProperty(URL.prototype, "pathname", {
+        configurable: true,
+        get() {
+          throw new Error("patched");
+        },
+      });
+      RegExp.prototype.exec = () => null;
+      RegExp.prototype[Symbol.replace] = function (_s: string) {
+        return String(_s);
+      } as typeof RegExp.prototype[typeof Symbol.replace];
+      patched = buildFailure(
+        [{
+          text: "File not found: /elsewhere/secret.ts at file:///elsewhere/x.ts",
+          location: { file: "/x/a.ts" },
+        }],
+        "/project",
+        "/srv/work",
+      ).message;
+    } finally {
+      String.prototype.replace = originals.replace;
+      String.prototype.split = originals.split;
+      RegExp.prototype.exec = originals.exec;
+      RegExp.prototype[Symbol.replace] = originals.symbolReplace;
+      Object.defineProperty(URL.prototype, "pathname", originals.pathname);
+    }
+    assertEquals(
+      patched,
+      "[API] handler build failed: a.ts:undefined:1: File not found: secret.ts at x.ts",
     );
   });
 

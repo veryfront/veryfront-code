@@ -425,6 +425,121 @@ describe("cli/mcp/remote-file-tools", () => {
       });
     };
 
+    for (const binaryAt of ["list", "detail"]) {
+      it(`rejects binary clone before creating a destination (${binaryAt})`, async () => {
+        resetEnv();
+        const writes: string[] = [];
+        const binary = {
+          content_type: "application/octet-stream",
+          byte_size: 7,
+          content_hash: "a".repeat(64),
+        };
+        const result = await withMockFetch((input, init) => {
+          const request = new Request(input, init);
+          const url = new URL(request.url);
+          if (request.method !== "GET") {
+            writes.push(request.method + " " + url.pathname);
+            return Promise.resolve(Response.json({ id: "destination", slug: "copy" }));
+          }
+          const isList = url.pathname.endsWith("/files");
+          const file = {
+            path: "knowledge/a.bin",
+            content: "",
+            size: 7,
+            type: "virtual_file",
+            ...(binaryAt === "detail" && isList ? {} : { binary }),
+          };
+          return Promise.resolve(Response.json(isList ? { data: [file] } : file));
+        }, () => vfRemoteCloneProject.execute({ source_project: "source", target_slug: "copy" }));
+        assertEquals(result.success, false);
+        assertEquals(
+          result.error,
+          'Cannot clone binary file "knowledge/a.bin" as text. No destination project was created.',
+        );
+        assertEquals(writes, []);
+      });
+    }
+
+    for (const failure of ["inaccessible", "missing", "nontext"]) {
+      it(`does not create a clone after a later source read is ${failure}`, async () => {
+        resetEnv();
+        const writes: string[] = [];
+        const result = await withMockFetch((input, init) => {
+          const request = new Request(input, init);
+          const path = new URL(request.url).pathname;
+          if (request.method !== "GET") {
+            writes.push(request.method + " " + path);
+            return Promise.resolve(Response.json({ id: "unexpected", slug: "copy" }));
+          }
+          if (path.endsWith("/files")) {
+            return Promise.resolve(Response.json({
+              data: [
+                { path: "app/first.tsx", content: "first" },
+                { path: "app/second.tsx", content: "" },
+              ],
+            }));
+          }
+          if (path.endsWith("first.tsx")) {
+            return Promise.resolve(Response.json({ path: "app/first.tsx", content: "first" }));
+          }
+          if (failure === "inaccessible") {
+            return Promise.resolve(Response.json({ message: "Access denied" }, { status: 403 }));
+          }
+          return Promise.resolve(Response.json(
+            failure === "missing" ? null : {
+              path: "app/second.tsx",
+              content: null,
+            },
+          ));
+        }, () => vfRemoteCloneProject.execute({ source_project: "source", target_slug: "copy" }));
+        assertEquals(result.success, false);
+        assertEquals(
+          result.error,
+          failure === "nontext"
+            ? "Invalid text content for app/second.tsx. No destination project was created."
+            : "Failed to read app/second.tsx. No destination project was created.",
+        );
+        assertEquals(writes, []);
+      });
+    }
+
+    it("clones selected text files after source preflight", async () => {
+      resetEnv();
+      const events: string[] = [];
+      const content = "export const kept = true;";
+      const result = await withMockFetch(
+        async (input, init) => {
+          const request = new Request(input, init);
+          const url = new URL(request.url);
+          events.push(request.method + " " + url.pathname);
+          if (request.method === "POST") return Response.json({ id: "destination", slug: "copy" });
+          if (request.method === "PUT") {
+            assertEquals(await request.json(), { content });
+            return Response.json({ id: "copied", path: "app/page.tsx" });
+          }
+          const file = { path: "app/page.tsx", content, type: "virtual_file" };
+          if (url.pathname.endsWith("/files")) {
+            assertEquals(url.searchParams.get("pattern"), "app/**");
+            return Response.json({ data: [file] });
+          }
+          return Response.json(file);
+        },
+        () =>
+          vfRemoteCloneProject.execute({
+            source_project: "source",
+            target_slug: "copy",
+            file_pattern: "app/**",
+          }),
+      );
+      assertEquals(result.success, true);
+      assertEquals(result.files_copied, 1);
+      assertEquals(events.slice(0, 2), [
+        "GET /api/source/files",
+        "GET /api/source/files/app/page.tsx",
+      ]);
+      assertEquals(events[2], "POST /api/projects");
+    });
+
     it("loads a file via API with encoded path and returns typed payload", async () => {
       resetEnv();
 
@@ -462,6 +577,211 @@ describe("cli/mcp/remote-file-tools", () => {
       assertEquals(result.success, true);
       assertEquals(result.file?.path, "pages/index.tsx");
       assertEquals(result.file?.size, 42);
+    });
+
+    for (const branch of [undefined, "feature"]) {
+      for (const byteSize of [0, 7]) {
+        it(`preserves binary descriptor and immutable identity in remote reads (${branch ?? "main"}, ${byteSize})`, async () => {
+          resetEnv();
+          const file = {
+            id: "11111111-1111-4111-8111-111111111111",
+            version_id: "22222222-2222-4222-8222-222222222222",
+            path: "knowledge/a.bin",
+            content: "",
+            type: "virtual_file",
+            size_bytes: byteSize,
+            size: byteSize,
+            binary: {
+              content_type: "application/octet-stream",
+              byte_size: byteSize,
+              content_hash: "a".repeat(64),
+            },
+          };
+          let fields = "";
+          const [detail, list] = await withMockFetch((input, init) => {
+            const url = new URL(new Request(input, init).url);
+            const isList = url.pathname.endsWith("/files");
+            if (isList) fields = url.searchParams.get("fields") ?? "";
+            return Promise.resolve(Response.json(isList ? { data: [file] } : file));
+          }, async () =>
+            [
+              await vfRemoteGetFile.execute({ project: "project", path: file.path, branch }),
+              await vfRemoteListFiles.execute({ project: "project", branch, limit: 50 }),
+            ] as const);
+          assertEquals(detail.file, {
+            path: file.path,
+            content: "",
+            type: file.type,
+            size: byteSize,
+            id: file.id,
+            version_id: file.version_id,
+            binary: file.binary,
+          });
+          assertEquals(list.files, [{
+            path: file.path,
+            type: file.type,
+            size: byteSize,
+            id: file.id,
+            version_id: file.version_id,
+            binary: file.binary,
+          }]);
+          assertEquals(fields.includes("binary"), true);
+          assertEquals(fields.includes("version_id"), true);
+        });
+      }
+    }
+
+    it("reads file sizes from size_bytes and selects it on file lists", async () => {
+      resetEnv();
+
+      let listUrl = "";
+      const file = {
+        id: "1",
+        path: "pages/index.tsx",
+        content: "export default function Page() {}",
+        // `size` deliberately differs so a tool that reads it is caught.
+        size_bytes: 42,
+        size: 1,
+        type: "file",
+        updated_at: "2024-01-01T00:00:00.000Z",
+      };
+
+      const [detail, list] = await withMockFetch(async (input, init) => {
+        const request = new Request(input, init);
+        const isList = new URL(request.url).pathname.endsWith("/files");
+        if (isList) listUrl = request.url;
+        return Response.json(isList ? { data: [file] } : file);
+      }, async () =>
+        [
+          await vfRemoteGetFile.execute({ project: "my-project", path: "pages/index.tsx" }),
+          await vfRemoteListFiles.execute({ project: "my-project", limit: 50 }),
+        ] as const);
+
+      assertEquals(detail.file?.size, 42);
+      assertEquals(list.files, [{ path: "pages/index.tsx", type: "file", size: 42, id: "1" }]);
+      assertEquals(
+        new URL(listUrl).searchParams.get("fields"),
+        "(id,path,type,size_bytes,size,version_id,binary)",
+      );
+    });
+
+    it("selects and reads size on the branch file route, which answers no size_bytes", async () => {
+      resetEnv();
+
+      let listUrl = "";
+      const result = await withMockFetch(
+        (input, init) => {
+          listUrl = new Request(input, init).url;
+          return Promise.resolve(Response.json({
+            data: [{ path: "pages/index.tsx", type: "file", size: 7 }],
+          }));
+        },
+        async () =>
+          await vfRemoteListFiles.execute({ project: "my-project", branch: "feature", limit: 50 }),
+      );
+
+      assertEquals(result.files, [{ path: "pages/index.tsx", type: "file", size: 7 }]);
+      assertEquals(new URL(listUrl).pathname.endsWith("/branches/feature/files"), true);
+      assertEquals(
+        new URL(listUrl).searchParams.get("fields"),
+        "(id,path,type,size,version_id,binary)",
+      );
+    });
+
+    it("searches project file text with limit and reads data and total_matches", async () => {
+      resetEnv();
+
+      let requestUrl = "";
+      let requestBody: unknown;
+      const matches = [{ path: "pages/index.tsx", matches: [{ line: 1, content: "Page" }] }];
+
+      const result = await withMockFetch(async (input, init) => {
+        const request = new Request(input, init);
+        requestUrl = request.url;
+        requestBody = await request.json();
+        return Response.json({
+          data: matches,
+          total_matches: 1,
+          // Earlier spellings the route still serves; the tool must not prefer them.
+          results: [],
+          total_files: 0,
+        });
+      }, async () => {
+        return await vfRemoteSearchFiles.execute({
+          project: "my-project",
+          query: "Page",
+          max_results: 25,
+        });
+      });
+
+      assertEquals(requestUrl, "https://api.remote-vf.test/api/my-project/files/search");
+      assertEquals(requestBody, { query: "Page", limit: 25 });
+      assertEquals(result.results, matches);
+      assertEquals(result.total_files, 1);
+    });
+
+    it("moves a file on the file path move route and reads the moved file path", async () => {
+      resetEnv();
+
+      let requestUrl = "";
+      let requestMethod = "";
+      let requestBody: unknown;
+      const result = await withMockFetch(async (input, init) => {
+        const request = new Request(input, init);
+        requestUrl = request.url;
+        requestMethod = request.method;
+        requestBody = await request.json();
+        return Response.json({ id: "file-1", path: "pages/moved page.tsx" });
+      }, async () => {
+        return await vfRemoteMoveFile.execute({
+          project: "my-project",
+          source_path: "pages/index page.tsx",
+          destination_path: "pages/moved page.tsx",
+          branch: "branch-1",
+        });
+      });
+
+      assertEquals(
+        requestUrl,
+        "https://api.remote-vf.test/api/my-project/files/pages%2Findex%20page.tsx/move?branch_id=branch-1",
+      );
+      assertEquals(requestMethod, "POST");
+      assertEquals(requestBody, { destination_path: "pages/moved page.tsx" });
+      assertEquals(result, {
+        success: true,
+        source_path: "pages/index page.tsx",
+        destination_path: "pages/moved page.tsx",
+      });
+    });
+
+    it("keeps max_results and results on the branch search route", async () => {
+      resetEnv();
+
+      let requestUrl = "";
+      let requestBody: unknown;
+      const matches = [{ path: "pages/index.tsx", matches: [{ line: 1, content: "Page" }] }];
+
+      const result = await withMockFetch(async (input, init) => {
+        const request = new Request(input, init);
+        requestUrl = request.url;
+        requestBody = await request.json();
+        return Response.json({ results: matches, total_files: 1 });
+      }, async () => {
+        return await vfRemoteSearchFiles.execute({
+          project: "my-project",
+          query: "Page",
+          max_results: 25,
+          branch: "feature",
+        });
+      });
+
+      assertEquals(
+        requestUrl,
+        "https://api.remote-vf.test/api/my-project/branches/feature/files/search",
+      );
+      assertEquals(requestBody, { query: "Page", max_results: 25 });
+      assertEquals(result.results, matches);
+      assertEquals(result.total_files, 1);
     });
 
     it("prefers the host-private credential over a blank exported token", async () => {

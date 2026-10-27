@@ -61,7 +61,7 @@ export async function buildClientManifest(
 ): Promise<Map<string, ClientComponentMeta>> {
   const manifest = new Map<string, ClientComponentMeta>();
   const projectRoot = resolve(projectDir);
-  const normalizedAppDir = appDir.replace(/^\/+|\/+$/g, "") || "app";
+  const normalizedAppDir = appDir.replace(/^\/+|(?<!\/)\/+$/g, "") || "app";
   const appPath = join(projectDir, normalizedAppDir);
   const absoluteAppPath = resolve(projectRoot, normalizedAppDir);
   if (!isWithinDirectory(projectRoot, absoluteAppPath)) return manifest;

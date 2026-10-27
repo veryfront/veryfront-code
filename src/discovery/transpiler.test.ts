@@ -237,6 +237,39 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
       assertEquals((globalThis as Record<string, unknown>)[marker], undefined);
     });
 
+    it("checks live ownership after source preparation before top-level module effects", async () => {
+      const marker = "__vf_fenced_discovery_marker__";
+      delete (globalThis as Record<string, unknown>)[marker];
+      let current = true;
+      let checks = 0;
+      const adapter = createMockAdapter({
+        "/project/tools/fenced.ts": `globalThis.${marker} = true; export default {};`,
+      });
+      const originalRead = adapter.readFile.bind(adapter);
+      adapter.readFile = async (path) => {
+        const source = await originalRead(path);
+        current = false;
+        return source;
+      };
+      await assertRejects(
+        () =>
+          importModuleRaw("file:///project/tools/fenced.ts", {
+            platform: "node",
+            fsAdapter: adapter,
+            baseDir: "/project",
+            allowHostProjectCodeExecution: true,
+            assertCurrent: async () => {
+              checks++;
+              if (!current) throw new Error("Synthetic superseded ownership");
+            },
+          }),
+        Error,
+        "Synthetic superseded ownership",
+      );
+      assertEquals(checks, 1);
+      assertEquals((globalThis as Record<string, unknown>)[marker], undefined);
+    });
+
     it("should transpile a simple module via fsAdapter", async () => {
       const files: Record<string, string> = {
         "/project/agents/assistant.ts": `export default { name: "test-agent" };`,
@@ -396,6 +429,43 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
       ) as { default: { value: string } };
 
       assertEquals(mod.default.value, "baseline");
+    });
+
+    for (const specifier of ["../lib/hosted-independent.ts", "@/lib/hosted-independent.ts"]) {
+      it(`resolves hosted ${specifier} imports without depending on the process cwd`, async () => {
+        const files = {
+          "tools/hosted-independent.ts":
+            `import { value } from "${specifier}"; export default { value };`,
+          "lib/hosted-independent.ts": 'export { value } from "./nested/value.ts";',
+          "lib/nested/value.ts": 'export const value = "source-root";',
+        };
+        const context: FileDiscoveryContext = {
+          platform: "node",
+          fsAdapter: createMockAdapter(files, { projectDir: "/isolated/project-root" }),
+          baseDir: "",
+        };
+        const mod = await importModule("file://tools/hosted-independent.ts", context) as {
+          default: { value: string };
+        };
+        assertEquals(mod.default.value, "source-root");
+      });
+    }
+
+    it("preserves absolute virtual entry paths with an empty project baseDir", async () => {
+      const files = {
+        "/virtual/tools/absolute.ts":
+          'import { value } from "../lib/value.ts"; export default { value };',
+        "/virtual/lib/value.ts": 'export const value = "absolute-root";',
+      };
+      const context: FileDiscoveryContext = {
+        platform: "node",
+        fsAdapter: createMockAdapter(files),
+        baseDir: "",
+      };
+      const mod = await importModule("file:///virtual/tools/absolute.ts", context) as {
+        default: { value: string };
+      };
+      assertEquals(mod.default.value, "absolute-root");
     });
 
     it("should not serve a stale cached module when content changes at the same path", async () => {
@@ -2272,7 +2342,7 @@ describe("discovery/transpiler", { sanitizeOps: false, sanitizeResources: false 
       // The refreshed graph records the exact framework Zod constraint.
       // It remains external so project bundles share the runtime instance.
       assertEquals(await bare(resolveArgs({ path: "zod" })), {
-        path: "npm:zod@4.3.6",
+        path: "npm:zod@4.6.7",
         external: true,
       });
       assertEquals(await bare(resolveArgs({ path: "veryfront/agents" })), undefined);

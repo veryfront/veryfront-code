@@ -24,7 +24,7 @@ import {
   resolveRestApiBaseUrl,
   trimTrailingSlashes,
 } from "./constants.ts";
-import { readProjectLinkForControlPlane } from "./project-link.ts";
+import { readProjectLink, readProjectLinkForControlPlane } from "./project-link.ts";
 import { isConnectionRefusedError, isRetryableConnectionError } from "../../src/proxy/retry.ts";
 
 // Delays for exponential backoff with jitter: attempt 1 = ~300ms, 2 = ~1s, 3 = ~3s
@@ -32,6 +32,17 @@ const API_RETRY_DELAYS_MS = [300, 1000, 3000] as const;
 const API_MAX_RETRIES = 3;
 const applyIntrinsic = Reflect.apply;
 const stringTrim = String.prototype.trim;
+const stringSplit = String.prototype.split;
+const stringToLowerCase = String.prototype.toLowerCase;
+const ResponseJson = Response.prototype.json;
+const ResponseOkGet = Object.getOwnPropertyDescriptor(Response.prototype, "ok")!.get!;
+const ResponseStatusGet = Object.getOwnPropertyDescriptor(Response.prototype, "status")!.get!;
+const ResponseStatusTextGet = Object.getOwnPropertyDescriptor(Response.prototype, "statusText")!
+  .get!;
+const ResponseBodyGet = Object.getOwnPropertyDescriptor(Response.prototype, "body")!.get!;
+const ResponseHeadersGet = Object.getOwnPropertyDescriptor(Response.prototype, "headers")!.get!;
+const HeadersGet = Headers.prototype.get;
+const StreamCancel = ReadableStream.prototype.cancel;
 
 /** Returns true for HTTP status codes that indicate a transient gateway failure. */
 function isTransientStatus(status: number): boolean {
@@ -105,7 +116,7 @@ interface ConfigFileResolution {
 }
 
 export type ProjectReferenceSource =
-  | { kind: "argument"; name: "--project" }
+  | { kind: "argument"; name: "--project" | "resolved project ID" }
   | { kind: "environment"; name: "environment configuration" }
   | { kind: "module-config"; name: string }
   | { kind: "json-config"; name: "veryfront.json" }
@@ -677,6 +688,7 @@ async function resolveConfigBase(
   interactive: boolean,
   allowModuleConfigExecution: boolean,
   allowAuthPrompt: boolean,
+  authOptions: { transport?: typeof fetch } = {},
 ): Promise<ResolvedConfigDetails> {
   const dir = projectDir ?? cwd();
   const configFileResolution = await readConfigFileResolution(dir, allowModuleConfigExecution);
@@ -699,7 +711,7 @@ async function resolveConfigBase(
   }
 
   if (!apiToken && interactive && allowAuthPrompt) {
-    const userInfo = await ensureAuthenticated(env, dir);
+    const userInfo = await ensureAuthenticated(env, dir, authOptions);
     if (!userInfo) throw new Error("Authentication required for this operation.");
     apiToken = (await readToken(env)) ?? null;
     apiTokenSource = apiToken ? "token-store" : undefined;
@@ -727,6 +739,10 @@ async function resolveConfigBase(
   } else if (configFileResolution.jsonProjectSlug !== undefined) {
     projectSlug = configFileResolution.jsonProjectSlug;
     projectReferenceSource = { kind: "json-config", name: "veryfront.json" };
+    const linked = await readProjectLink(dir);
+    if (linked?.projectSlug === projectSlug) {
+      projectId = (await readProjectLinkForControlPlane(dir, apiUrl))?.projectId;
+    }
   } else {
     const tenantReference = resolveEnvironmentProjectReference();
     if (tenantReference) {
@@ -782,13 +798,18 @@ function createConfigResolver(
   allowModuleConfigExecution = true,
   allowAuthPrompt = true,
 ) {
-  return async (projectDir?: string, env?: EnvironmentConfig): Promise<ResolvedConfig> =>
+  return async (
+    projectDir?: string,
+    env?: EnvironmentConfig,
+    authOptions: { transport?: typeof fetch } = {},
+  ): Promise<ResolvedConfig> =>
     (await resolveConfigByMode(
       projectDir,
       env,
       interactive,
       allowModuleConfigExecution,
       allowAuthPrompt,
+      authOptions,
     )).config;
 }
 
@@ -820,8 +841,9 @@ export const resolveManagementConfigNoModule = createConfigResolver(true, false,
 export function resolveConfigWithAuthDetails(
   projectDir?: string,
   env?: EnvironmentConfig,
+  authOptions: { transport?: typeof fetch } = {},
 ): Promise<ResolvedConfigDetails> {
-  return resolveConfigByMode(projectDir, env, true);
+  return resolveConfigByMode(projectDir, env, true, true, true, authOptions);
 }
 
 function resolveConfigByMode(
@@ -830,6 +852,7 @@ function resolveConfigByMode(
   interactive: boolean,
   allowModuleConfigExecution = true,
   allowAuthPrompt = true,
+  authOptions: { transport?: typeof fetch } = {},
 ): Promise<ResolvedConfigDetails> {
   return resolveConfigBase(
     projectDir,
@@ -837,6 +860,7 @@ function resolveConfigByMode(
     interactive,
     allowModuleConfigExecution,
     allowAuthPrompt,
+    authOptions,
   );
 }
 
@@ -848,6 +872,13 @@ export interface ApiReadOptions {
 }
 
 export interface ApiClient {
+  /** Authenticated raw-byte PUT. Never retries or follows redirects. */
+  putBytes?<T>(
+    path: string,
+    bytes: Uint8Array,
+    headers: Record<string, string>,
+    options?: ApiReadOptions,
+  ): Promise<T>;
   /** Authenticated binary GET. Redirects are rejected. */
   getStream?(path: string, options?: ApiReadOptions): Promise<ReadableStream<Uint8Array>>;
   get<T>(
@@ -855,7 +886,7 @@ export interface ApiClient {
     params?: Record<string, string>,
     options?: ApiReadOptions,
   ): Promise<T>;
-  post<T>(path: string, body?: unknown): Promise<T>;
+  post<T>(path: string, body?: unknown, options?: ApiReadOptions): Promise<T>;
   put<T>(path: string, body?: unknown, options?: ApiReadOptions): Promise<T>;
   patch<T>(path: string, body?: unknown): Promise<T>;
   delete<T>(path: string): Promise<T>;
@@ -877,10 +908,15 @@ export type ApiError = InferSchema<ReturnType<typeof getApiErrorSchema>>;
 
 export function formatApiError(data: ApiError, fallback: string): string {
   const message = data.message || data.detail || data.error || data.title || fallback;
-  return data.suggestion ? `${message.replace(/[.?!]+$/, "")}. ${data.suggestion}` : message;
+  return data.suggestion
+    ? `${message.replace(/(?<![.?!])[.?!]+$/, "")}. ${data.suggestion}`
+    : message;
 }
 
-export function createApiClient(config: ResolvedConfig): ApiClient {
+export function createApiClient(
+  config: ResolvedConfig,
+  transport: typeof fetch = fetch,
+): ApiClient {
   const { apiUrl, apiToken } = config;
 
   function addTokenSourceHint(message: string, status: number): string {
@@ -896,25 +932,30 @@ export function createApiClient(config: ResolvedConfig): ApiClient {
     body?: unknown,
     signal?: AbortSignal,
     binary = false,
+    raw?: { bytes: Uint8Array; headers: Record<string, string> },
   ): Promise<T> {
-    const response = await fetch(url, {
+    const response = await transport(url, {
       method,
-      ...(binary ? { redirect: "error" as const } : {}),
+      ...((binary || raw) ? { redirect: "error" as const } : {}),
       ...(signal ? { signal } : {}),
       headers: {
         Authorization: `Bearer ${apiToken}`,
         "Content-Type": "application/json",
         Accept: binary ? "application/octet-stream" : "application/json",
         "x-veryfront-client-version": VERSION,
+        ...(raw ? { ...raw.headers, "Content-Type": "application/octet-stream" } : {}),
       },
-      body: body ? JSON.stringify(body) : undefined,
+      body: raw ? new Uint8Array(raw.bytes) : body ? JSON.stringify(body) : undefined,
     });
 
-    if (!response.ok) {
-      let errorMessage = `API request failed: ${response.status} ${response.statusText}`;
+    const status = applyIntrinsic(ResponseStatusGet, response, []) as number;
+    if (!applyIntrinsic(ResponseOkGet, response, [])) {
+      let errorMessage = `API request failed: ${status} ${
+        applyIntrinsic(ResponseStatusTextGet, response, [])
+      }`;
 
       try {
-        const parsed = ApiErrorSchema.safeParse(await response.json());
+        const parsed = ApiErrorSchema.safeParse(await applyIntrinsic(ResponseJson, response, []));
         if (parsed.success) {
           errorMessage = formatApiError(parsed.data, errorMessage);
         }
@@ -922,26 +963,32 @@ export function createApiClient(config: ResolvedConfig): ApiClient {
         // Keep default error message if JSON parsing fails
       }
 
-      errorMessage = addTokenSourceHint(errorMessage, response.status);
+      errorMessage = addTokenSourceHint(errorMessage, status);
       const err = new Error(errorMessage) as Error & { status: number };
-      err.status = response.status;
+      err.status = status;
       throw err;
     }
 
-    if (response.status === 204 && !binary) return undefined as T;
+    if (status === 204 && !binary) return undefined as T;
 
     if (binary) {
-      if (
-        !response.body ||
-        response.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase() !==
-          "application/octet-stream"
-      ) {
-        await response.body?.cancel();
+      const body = applyIntrinsic(ResponseBodyGet, response, []) as
+        | ReadableStream<Uint8Array>
+        | null;
+      const headers = applyIntrinsic(ResponseHeadersGet, response, []) as Headers;
+      const contentType = applyIntrinsic(HeadersGet, headers, ["content-type"]) as string | null;
+      const mimeType = contentType === null ? null : applyIntrinsic(
+        stringToLowerCase,
+        applyIntrinsic(stringTrim, applyIntrinsic(stringSplit, contentType, [";"])[0], []),
+        [],
+      );
+      if (!body || mimeType !== "application/octet-stream") {
+        if (body) await applyIntrinsic(StreamCancel, body, []);
         throw new Error("API did not return upload content");
       }
-      return response.body as T;
+      return body as T;
     }
-    return response.json() as Promise<T>;
+    return applyIntrinsic(ResponseJson, response, []) as Promise<T>;
   }
 
   /** Returns true for request methods that are safe to retry on any transient failure. */
@@ -995,6 +1042,22 @@ export function createApiClient(config: ResolvedConfig): ApiClient {
   }
 
   return {
+    putBytes<T>(
+      path: string,
+      bytes: Uint8Array,
+      headers: Record<string, string>,
+      options?: ApiReadOptions,
+    ): Promise<T> {
+      const url = new URL(`${apiUrl}${path}`);
+      if (url.origin !== new URL(apiUrl).origin || !path.startsWith("/")) {
+        throw new Error("Binary asset requests must use the configured API origin");
+      }
+      options?.signal?.throwIfAborted();
+      return requestOnce<T>("PUT", url.toString(), undefined, options?.signal, false, {
+        bytes,
+        headers,
+      });
+    },
     getStream(path: string, options?: ApiReadOptions): Promise<ReadableStream<Uint8Array>> {
       return request<ReadableStream<Uint8Array>>("GET", path, undefined, undefined, options, true);
     },
@@ -1005,8 +1068,8 @@ export function createApiClient(config: ResolvedConfig): ApiClient {
     ): Promise<T> {
       return request<T>("GET", path, undefined, params, options);
     },
-    post<T>(path: string, body?: unknown): Promise<T> {
-      return request<T>("POST", path, body);
+    post<T>(path: string, body?: unknown, options?: ApiReadOptions): Promise<T> {
+      return request<T>("POST", path, body, undefined, options);
     },
     put<T>(path: string, body?: unknown, options?: ApiReadOptions): Promise<T> {
       return request<T>("PUT", path, body, undefined, options);

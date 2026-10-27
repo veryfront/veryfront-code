@@ -13,6 +13,13 @@ import { dirname, extname } from "#veryfront/compat/path";
 import { isProxyWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
 import { createFileSystem, readTextFile } from "#veryfront/platform/compat/fs.ts";
 import { captureSnapshotReadCapability } from "#veryfront/platform/adapters/file-system-capabilities.ts";
+import {
+  addAbortSignalListenerOnce,
+  getAbortSignalReason,
+  isAbortSignalAborted,
+  removeAbortSignalListener,
+  throwIfAbortSignalAborted,
+} from "#veryfront/platform/compat/abort-signal.ts";
 import { createError, REQUEST_ERROR, toError } from "#veryfront/errors";
 import { logger } from "#veryfront/utils";
 import type {
@@ -23,6 +30,11 @@ import type {
   SkillScriptSnapshotFile,
 } from "./types.ts";
 import { isCanonicalAdapterRelativeSkillRoot } from "./types.ts";
+import { isReservedTaskEnvKey, RESERVED_TASK_ENV_KEYS } from "#veryfront/runs/runtime-env.ts";
+import {
+  getVerifiedSkillScriptExecutionCredential,
+  type VerifiedSkillScriptExecutionCredential,
+} from "./execution-credential.ts";
 import {
   SKILL_PATH_SEGMENT_MAX_LENGTH,
   SKILL_RELATIVE_PATH_MAX_LENGTH,
@@ -39,8 +51,10 @@ const MAX_SANDBOX_COMMAND_TIMEOUT_SECONDS = 55;
 const TIMEOUT_EXIT_CODE = 124;
 // Matches the local subprocess output-limit termination code.
 const OUTPUT_LIMIT_EXIT_CODE = 125;
-const ENV_KEY_REGEX = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const ENV_KEY_REGEX = /^[A-Za-z_]\w*$/;
 const TIMEOUT_SENTINEL = Symbol("skill-script-timeout");
+const ABORT_SENTINEL = Symbol("skill-script-abort");
+const NativeDOMException = DOMException;
 const utf8Decoder = new TextDecoder("utf-8", { fatal: true });
 const utf8Encoder = new TextEncoder();
 const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
@@ -54,6 +68,8 @@ const setAdd = Set.prototype.add;
 const setHas = Set.prototype.has;
 const stringSplit = String.prototype.split;
 const stringStartsWith = String.prototype.startsWith;
+const objectEntries = Object.entries;
+const objectKeys = Object.keys;
 
 function appendOwnArrayElement<T>(values: T[], value: T): void {
   defineOwnProperty(values, values.length, {
@@ -94,15 +110,40 @@ function assertScriptSnapshotPath(path: string): void {
   }
 }
 
-function captureScriptSnapshot(input: SkillScriptExecutorInput): SkillScriptSnapshot | undefined {
-  if (isProxyWithoutHooks(input)) {
-    throw new TypeError("Skill script executor input must not be a proxy");
+function captureScriptSnapshotFile(rawFiles: unknown[], index: number): SkillScriptSnapshotFile {
+  const rawFile = readOwnDataProperty(
+    rawFiles,
+    index,
+    `Skill script snapshot file ${index}`,
+  );
+  if (
+    typeof rawFile !== "object" || rawFile === null ||
+    isProxyWithoutHooks(rawFile)
+  ) {
+    throw new TypeError(`Skill script snapshot file ${index} must be an object`);
   }
-  const descriptor = getOwnPropertyDescriptor(input, "scriptSnapshot");
-  if (descriptor === undefined) return undefined;
-  if (!(reflectApply(hasOwnProperty, descriptor, ["value"]) as boolean)) {
-    throw new TypeError("Skill script snapshot must be an own data property");
+  const path = readOwnDataProperty(
+    rawFile,
+    "path",
+    `Skill script snapshot file ${index} path`,
+  );
+  const content = readOwnDataProperty(
+    rawFile,
+    "content",
+    `Skill script snapshot file ${index} content`,
+  );
+  if (typeof path !== "string" || typeof content !== "string") {
+    throw new TypeError(`Skill script snapshot file ${index} must contain string data`);
   }
+  assertScriptSnapshotPath(path);
+  return { path, content };
+}
+
+function readScriptSnapshotManifest(descriptor: PropertyDescriptor): {
+  entryPath: string;
+  rawFiles: unknown[];
+  length: number;
+} {
   const rawSnapshot = descriptor.value;
   if (
     typeof rawSnapshot !== "object" || rawSnapshot === null ||
@@ -134,36 +175,38 @@ function captureScriptSnapshot(input: SkillScriptExecutorInput): SkillScriptSnap
     );
   }
 
+  return { entryPath, rawFiles, length: length as number };
+}
+
+function assertScriptSnapshotEntry(
+  input: SkillScriptExecutorInput,
+  entryContent: string | undefined,
+): void {
+  if (entryContent === undefined) {
+    throw new TypeError("Skill script snapshot does not contain its entryPath");
+  }
+  if (input.scriptContent !== undefined && input.scriptContent !== entryContent) {
+    throw new TypeError("Skill script snapshot entry does not match scriptContent");
+  }
+}
+
+function captureScriptSnapshot(input: SkillScriptExecutorInput): SkillScriptSnapshot | undefined {
+  if (isProxyWithoutHooks(input)) {
+    throw new TypeError("Skill script executor input must not be a proxy");
+  }
+  const descriptor = getOwnPropertyDescriptor(input, "scriptSnapshot");
+  if (descriptor === undefined) return undefined;
+  if (!(reflectApply(hasOwnProperty, descriptor, ["value"]) as boolean)) {
+    throw new TypeError("Skill script snapshot must be an own data property");
+  }
+  const { entryPath, rawFiles, length } = readScriptSnapshotManifest(descriptor);
+
   const files: SkillScriptSnapshotFile[] = [];
   const seen = new Set<string>();
   let entryContent: string | undefined;
   let totalBytes = 0;
-  for (let index = 0; index < (length as number); index += 1) {
-    const rawFile = readOwnDataProperty(
-      rawFiles,
-      index,
-      `Skill script snapshot file ${index}`,
-    );
-    if (
-      typeof rawFile !== "object" || rawFile === null ||
-      isProxyWithoutHooks(rawFile)
-    ) {
-      throw new TypeError(`Skill script snapshot file ${index} must be an object`);
-    }
-    const path = readOwnDataProperty(
-      rawFile,
-      "path",
-      `Skill script snapshot file ${index} path`,
-    );
-    const content = readOwnDataProperty(
-      rawFile,
-      "content",
-      `Skill script snapshot file ${index} content`,
-    );
-    if (typeof path !== "string" || typeof content !== "string") {
-      throw new TypeError(`Skill script snapshot file ${index} must contain string data`);
-    }
-    assertScriptSnapshotPath(path);
+  for (let index = 0; index < length; index += 1) {
+    const { path, content } = captureScriptSnapshotFile(rawFiles, index);
     if (reflectApply(setHas, seen, [path]) as boolean) {
       throw new TypeError(`Skill script snapshot contains duplicate path: ${path}`);
     }
@@ -184,12 +227,7 @@ function captureScriptSnapshot(input: SkillScriptExecutorInput): SkillScriptSnap
     appendOwnArrayElement(files, capturedFile);
     if (path === entryPath) entryContent = content;
   }
-  if (entryContent === undefined) {
-    throw new TypeError("Skill script snapshot does not contain its entryPath");
-  }
-  if (input.scriptContent !== undefined && input.scriptContent !== entryContent) {
-    throw new TypeError("Skill script snapshot entry does not match scriptContent");
-  }
+  assertScriptSnapshotEntry(input, entryContent);
   return freeze({ entryPath, files: freeze(files) });
 }
 
@@ -255,6 +293,34 @@ async function withTimeout<T>(
   }
 }
 
+async function withTimeoutOrAbort<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  signal?: AbortSignal,
+): Promise<T | typeof TIMEOUT_SENTINEL | typeof ABORT_SENTINEL> {
+  if (signal && isAbortSignalAborted(signal)) return ABORT_SENTINEL;
+  let abortListener: (() => void) | undefined;
+  const abortPromise = signal
+    ? new Promise<typeof ABORT_SENTINEL>((resolve) => {
+      abortListener = () => resolve(ABORT_SENTINEL);
+      addAbortSignalListenerOnce(signal, abortListener);
+    })
+    : undefined;
+  const pending: Promise<T | typeof ABORT_SENTINEL> = abortPromise
+    ? Promise.race([promise, abortPromise])
+    : promise;
+  try {
+    return await withTimeout(pending, timeoutMs);
+  } finally {
+    if (signal && abortListener) removeAbortSignalListener(signal, abortListener);
+  }
+}
+
+function skillScriptAbortReason(signal: AbortSignal): unknown {
+  return getAbortSignalReason(signal) ??
+    new NativeDOMException("The skill script execution was aborted", "AbortError");
+}
+
 const SANDBOX_CLEANUP_TIMEOUT_MS = 1000;
 
 async function boundedSandboxCleanup<T>(action: (signal: AbortSignal) => Promise<T>): Promise<T> {
@@ -286,9 +352,25 @@ function buildShellCommand(parts: string[]): string {
   return parts.map(shellEscapeArg).join(" ");
 }
 
-function formatEnvAssignments(env?: Record<string, string>): string[] {
-  if (!env) return [];
-  return Object.entries(env).map(([key, value]) => {
+function scriptEnvironment(input: SkillScriptExecutorInput): Record<string, string> {
+  return {
+    ...input.env,
+    VERYFRONT_PROJECT_ID: input.projectId ?? "",
+    VERYFRONT_BRANCH_REF: input.branch ?? "main",
+  };
+}
+
+function isVerifiedCredentialEnvironmentKey(key: string): boolean {
+  return key === "SANDBOX_AUTH_TOKEN" || isReservedTaskEnvKey(key);
+}
+
+function buildCommandEnvironment(
+  env?: Record<string, string>,
+  omitVerifiedCredentialKeys = false,
+): Record<string, string> {
+  const environment: Record<string, string> = {};
+  if (!env) return environment;
+  for (const [key, value] of objectEntries(env)) {
     if (!ENV_KEY_REGEX.test(key)) {
       throw toError(
         createError({
@@ -297,19 +379,92 @@ function formatEnvAssignments(env?: Record<string, string>): string[] {
         }),
       );
     }
-    return `${key}=${value}`;
+    if (!omitVerifiedCredentialKeys || !isVerifiedCredentialEnvironmentKey(key)) {
+      defineOwnProperty(environment, key, {
+        value,
+        writable: true,
+        enumerable: true,
+        configurable: true,
+      });
+    }
+  }
+  return environment;
+}
+
+function hasOwnEnvironmentValue(environment: Record<string, string>, key: string): boolean {
+  return reflectApply(hasOwnProperty, environment, [key]) as boolean;
+}
+
+function formatVerifiedCredentialEnvironmentUnsets(
+  env: Record<string, string> | undefined,
+  authoritativeEnvironment: Record<string, string>,
+): string[] {
+  const unsetArguments: string[] = ["-u", "SANDBOX_AUTH_TOKEN"];
+  for (let index = 0; index < RESERVED_TASK_ENV_KEYS.length; index += 1) {
+    const key = RESERVED_TASK_ENV_KEYS[index]!;
+    if (hasOwnEnvironmentValue(authoritativeEnvironment, key)) continue;
+    appendOwnArrayElement(unsetArguments, "-u");
+    appendOwnArrayElement(unsetArguments, key);
+  }
+  for (const key of objectKeys(env ?? {})) {
+    if (isReservedTaskEnvKey(key) && !hasOwnEnvironmentValue(authoritativeEnvironment, key)) {
+      appendOwnArrayElement(unsetArguments, "-u");
+      appendOwnArrayElement(unsetArguments, key);
+    }
+  }
+  return unsetArguments;
+}
+
+function setEnvironmentValue(
+  environment: Record<string, string>,
+  key: string,
+  value: string,
+): void {
+  defineOwnProperty(environment, key, {
+    value,
+    writable: true,
+    enumerable: true,
+    configurable: true,
   });
+}
+
+function setVerifiedCredentialEnvironment(
+  environment: Record<string, string>,
+  credential: VerifiedSkillScriptExecutionCredential,
+  tokenFile?: string,
+): void {
+  if (tokenFile) {
+    setEnvironmentValue(environment, "VERYFRONT_API_TOKEN_FILE", tokenFile);
+  } else {
+    setEnvironmentValue(environment, "VERYFRONT_API_TOKEN", credential.authToken);
+  }
+  setEnvironmentValue(environment, "VERYFRONT_API_URL", credential.apiUrl);
+  setEnvironmentValue(environment, "VERYFRONT_API_BASE_URL", credential.apiUrl);
+  setEnvironmentValue(environment, "VERYFRONT_PROJECT_API_URL", credential.apiUrl);
+  setEnvironmentValue(environment, "VERYFRONT_PUBLIC_API_BASE_URL", credential.apiUrl);
+  setEnvironmentValue(environment, "VERYFRONT_PROJECT_ID", credential.projectId);
+  if (credential.projectSlug) {
+    setEnvironmentValue(environment, "VERYFRONT_PROJECT_SLUG", credential.projectSlug);
+  }
+  if (credential.branch) {
+    setEnvironmentValue(environment, "VERYFRONT_BRANCH_REF", credential.branch);
+  }
 }
 
 function createSandboxScriptPath(scriptPath: string): string {
   const ext = extname(scriptPath) || ".sh";
   const suffix = crypto.randomUUID().slice(0, 8);
-  return `/tmp/veryfront-skill-script-${Date.now()}-${suffix}${ext}`;
+  return `/workspace/.veryfront-skill-script-${Date.now()}-${suffix}${ext}`;
 }
 
 function createSandboxScriptRoot(): string {
   const suffix = crypto.randomUUID().slice(0, 8);
-  return `/tmp/veryfront-skill-script-${Date.now()}-${suffix}`;
+  return `/workspace/.veryfront-skill-script-${Date.now()}-${suffix}`;
+}
+
+function createSandboxCredentialRoot(): string {
+  const suffix = crypto.randomUUID().slice(0, 8);
+  return `/workspace/.veryfront-run-credential-${suffix}`;
 }
 
 function getSandboxAuthOverride(): string | undefined {
@@ -317,7 +472,16 @@ function getSandboxAuthOverride(): string | undefined {
 }
 
 function hasCloudScriptExecutionAuth(): boolean {
-  return Boolean(getSandboxAuthOverride() || getVeryfrontCloudAuthToken());
+  return Boolean(
+    getVerifiedSkillScriptExecutionCredential() || getSandboxAuthOverride() ||
+      getVeryfrontCloudAuthToken(),
+  );
+}
+
+function requireVerifiedSkillScriptExecutionCredential(): VerifiedSkillScriptExecutionCredential {
+  const credential = getVerifiedSkillScriptExecutionCredential();
+  if (!credential) throw new TypeError("Verified skill script execution credential is unavailable");
+  return credential;
 }
 
 /**
@@ -344,6 +508,13 @@ export function detectRuntime(scriptPath: string): { command: string; args: stri
     default:
       return { command: scriptPath, args: [] };
   }
+}
+
+function detectSandboxRuntime(scriptPath: string): { command: string; args: string[] } {
+  if (extname(scriptPath).toLowerCase() === ".ts") {
+    return { command: "npx", args: ["tsx", scriptPath] };
+  }
+  return detectRuntime(scriptPath);
 }
 
 /**
@@ -388,7 +559,7 @@ export class LocalScriptExecutor implements SkillScriptExecutor {
       const result = await runCommand(command, {
         args: finalArgs,
         cwd: input.cwd ?? materializationRoot,
-        env: input.env,
+        env: scriptEnvironment(input),
         capture: true,
         timeoutMs,
         signal: input.abortSignal,
@@ -427,9 +598,25 @@ class CloudScriptExecutor implements SkillScriptExecutor {
 
     // Lazy import to avoid bundling sandbox in non-cloud environments
     const { Sandbox } = await import("#veryfront/sandbox");
-    const authToken = getSandboxAuthOverride();
-    const sandbox = await Sandbox.create(authToken ? { authToken } : undefined);
+    const credential = getVerifiedSkillScriptExecutionCredential();
+    const authToken = credential?.authToken ?? getSandboxAuthOverride();
+    const sandbox = await Sandbox.create(
+      credential
+        ? {
+          apiUrl: credential.apiUrl,
+          authToken: credential.authToken,
+          getAuthToken: () => requireVerifiedSkillScriptExecutionCredential().authToken,
+          projectReference: credential.projectId,
+          signal: input.abortSignal,
+        }
+        : {
+          projectReference: input.projectId,
+          signal: input.abortSignal,
+          ...(authToken ? { authToken } : {}),
+        },
+    );
     try {
+      if (input.abortSignal) throwIfAbortSignalAborted(input.abortSignal);
       const sandboxRoot = scriptSnapshot === undefined ? undefined : createSandboxScriptRoot();
       const sandboxScriptPath = scriptSnapshot === undefined
         ? createSandboxScriptPath(input.scriptPath)
@@ -447,16 +634,60 @@ class CloudScriptExecutor implements SkillScriptExecutor {
         }
       }
 
-      await sandbox.writeFiles(sandboxFiles);
-      await sandbox.runCommand(buildShellCommand(["chmod", "+x", sandboxScriptPath]));
+      await sandbox.writeFiles(sandboxFiles, { signal: input.abortSignal });
+      if (input.abortSignal) throwIfAbortSignalAborted(input.abortSignal);
+      await sandbox.runCommand(buildShellCommand(["chmod", "+x", sandboxScriptPath]), {
+        signal: input.abortSignal,
+      });
+      if (input.abortSignal) throwIfAbortSignalAborted(input.abortSignal);
 
-      const { command, args: runtimeArgs } = detectRuntime(sandboxScriptPath);
+      const { command, args: runtimeArgs } = detectSandboxRuntime(sandboxScriptPath);
       const allArgs = [...runtimeArgs, ...(input.args ?? [])];
       const finalArgs = command === sandboxScriptPath ? (input.args ?? []) : allArgs;
 
-      const envAssignments = formatEnvAssignments(input.env);
-      const commandParts = envAssignments.length > 0
-        ? ["env", ...envAssignments, command, ...finalArgs]
+      const currentCredential = credential
+        ? requireVerifiedSkillScriptExecutionCredential()
+        : undefined;
+      const credentialRoot = currentCredential ? createSandboxCredentialRoot() : undefined;
+      const credentialPath = credentialRoot ? `${credentialRoot}/token` : undefined;
+      let publishedCredential: string | undefined;
+      const publishCurrentCredential = async (): Promise<void> => {
+        if (!credentialRoot || !credentialPath) return;
+        const nextCredential = requireVerifiedSkillScriptExecutionCredential().authToken;
+        if (publishedCredential === nextCredential) return;
+        const stagedPath = `${credentialRoot}/token.next`;
+        await sandbox.writeFiles([{ path: stagedPath, content: `${nextCredential}\n` }], {
+          signal: input.abortSignal,
+        });
+        await sandbox.runCommand(
+          buildShellCommand([
+            "sh",
+            "-c",
+            `chmod 700 "$3" && chmod 600 "$1" && mv -f "$1" "$2"`,
+            "veryfront-credential-publish",
+            stagedPath,
+            credentialPath,
+            credentialRoot,
+          ]),
+          { signal: input.abortSignal },
+        );
+        publishedCredential = nextCredential;
+      };
+      await publishCurrentCredential();
+      const commandEnvironment = buildCommandEnvironment(
+        scriptEnvironment(input),
+        currentCredential !== undefined,
+      );
+      if (currentCredential) {
+        setVerifiedCredentialEnvironment(commandEnvironment, currentCredential, credentialPath);
+      }
+      const commandParts = currentCredential
+        ? [
+          "env",
+          ...formatVerifiedCredentialEnvironmentUnsets(input.env, commandEnvironment),
+          command,
+          ...finalArgs,
+        ]
         : [command, ...finalArgs];
 
       const invocation = buildShellCommand(commandParts);
@@ -468,12 +699,19 @@ class CloudScriptExecutor implements SkillScriptExecutor {
       let backgroundCommandId: string | undefined;
       let outputLimitCleanupRequired = false;
       const commandDeadline = performance.now() + timeoutMs;
-      const commandPromise = timeoutSeconds <= MAX_SANDBOX_COMMAND_TIMEOUT_SECONDS
-        ? sandbox.runCommand(cmdString, { timeoutSeconds })
+      const commandOptions = {
+        timeoutSeconds,
+        ...(input.abortSignal ? { signal: input.abortSignal } : {}),
+        ...(objectKeys(commandEnvironment).length > 0 ? { env: commandEnvironment } : {}),
+      };
+      const commandPromise = !currentCredential &&
+          timeoutSeconds <= MAX_SANDBOX_COMMAND_TIMEOUT_SECONDS
+        ? sandbox.runCommand(cmdString, commandOptions)
         : (async () => {
-          const command = await sandbox.startBackgroundCommand(cmdString, { timeoutSeconds });
+          const command = await sandbox.startBackgroundCommand(cmdString, commandOptions);
           backgroundCommandId = command.id;
           while (!polling.signal.aborted) {
+            await publishCurrentCredential();
             const output = await sandbox.getBackgroundCommandOutput(command.id);
             if (output.stdoutTruncated || output.stderrTruncated) {
               outputLimitCleanupRequired = output.status === "pending" ||
@@ -504,9 +742,13 @@ class CloudScriptExecutor implements SkillScriptExecutor {
           }
           return timeoutResult(timeoutMs);
         })();
-      const result = await withTimeout(commandPromise, timeoutMs).finally(() => polling.abort());
+      const result = await withTimeoutOrAbort(
+        commandPromise,
+        timeoutMs,
+        input.abortSignal,
+      ).finally(() => polling.abort());
 
-      if (result === TIMEOUT_SENTINEL) {
+      if (result === TIMEOUT_SENTINEL || result === ABORT_SENTINEL) {
         commandPromise.catch(() => {
           // The command may reject after the timeout path has already returned.
         });
@@ -523,6 +765,7 @@ class CloudScriptExecutor implements SkillScriptExecutor {
         } catch (error) {
           logger.warn("[skill/executor] Failed to cancel sandbox command after timeout", error);
         }
+        if (result === ABORT_SENTINEL) throw skillScriptAbortReason(input.abortSignal!);
         return timeoutResult(timeoutMs);
       }
 

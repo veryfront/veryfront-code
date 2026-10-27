@@ -25,13 +25,13 @@ const command = new Deno.Command(Deno.execPath(), {
     "--lock=deno.lock",
     "--minify",
     "--platform=browser",
-    "--conditions=production",
     "--config",
     configPath,
     "--import-map",
     browserImportMapPath,
     sourcePath,
   ],
+  env: { DENO_CONDITIONS: "production" },
   cwd: repositoryRoot,
   stdout: "piped",
   stderr: "piped",
@@ -55,7 +55,7 @@ if (bundleBytes.length > MAX_PRODUCTION_BUNDLE_BYTES) {
 if (/\besm\.sh\b/i.test(bundle)) {
   throw new Error("The offline Dev UI bundle contains an esm.sh dependency");
 }
-if (/(?:^|[;}])\s*import\s*(?:[({*]|[\w$])/m.test(bundle)) {
+if (/(?:^|[;}])[^\S\n]*import\s*(?:[({*]|[\w$])/m.test(bundle)) {
   throw new Error("The offline Dev UI bundle contains an unresolved import");
 }
 if (

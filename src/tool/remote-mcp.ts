@@ -1,7 +1,12 @@
+import { defineOwnDataProperty } from "#veryfront/security/own-data-property.ts";
 import { NETWORK_ERROR, TIMEOUT_ERROR } from "#veryfront/errors";
+import { readMcpToolDiscoveryMetadata } from "./discovery-metadata.ts";
 import { getApiBaseUrlEnv } from "#veryfront/config/env.ts";
 import type { ToolAnnotations } from "#veryfront/mcp/types.ts";
-import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
+import {
+  snapshotBoundedJsonValue,
+  snapshotBoundedParsedJsonValue,
+} from "#veryfront/schemas/json-value.ts";
 import type { JsonSchema } from "./schema/json-schema.ts";
 import { hasToolExecutionErrorMarker } from "./result.ts";
 import type { RemoteToolSource, ToolDefinition, ToolExecutionContext } from "./types.ts";
@@ -263,6 +268,16 @@ function normalizeToolDefinition(entry: unknown, index: number): ToolDefinition 
     parameters: normalizeParameters(entry.inputSchema, entry.name),
   };
 
+  // Navigation hints only. Invalid metadata is ignored rather than rejecting the tool.
+  const discovery = readMcpToolDiscoveryMetadata(entry);
+  if (discovery) {
+    defineOwnDataProperty(definition, "discovery", discovery, {
+      enumerable: true,
+      writable: true,
+      configurable: true,
+    });
+  }
+
   if (entry.title !== undefined) {
     if (
       typeof entry.title !== "string" ||
@@ -342,10 +357,13 @@ function parseJsonValue(text: string): unknown | undefined {
   }
 }
 
-function parseJsonText(text: string): unknown | undefined {
+/** A byte-bounded source may pass `maxSourceBytes` so one string can use all of it. */
+function parseJsonText(text: string, maxSourceBytes?: number): unknown | undefined {
   const value = parseJsonValue(text);
   if (value === undefined) return undefined;
-  const snapshot = snapshotBoundedJsonValue(value);
+  const snapshot = maxSourceBytes === undefined
+    ? snapshotBoundedJsonValue(value)
+    : snapshotBoundedParsedJsonValue(value, maxSourceBytes);
   return snapshot.success ? snapshot.value : undefined;
 }
 
@@ -357,7 +375,7 @@ function parseCallToolErrorText(
   context?: ToolExecutionContext,
   fallbackCode?: string,
 ): unknown {
-  const parsed = parseJsonText(text);
+  const parsed = parseJsonText(text, MAX_REMOTE_MCP_CALL_RESPONSE_BYTES);
   if (parsed !== undefined) return parsed;
 
   const code = fallbackCode && MCP_ERROR_CODE.test(fallbackCode)
@@ -376,7 +394,13 @@ function parseCallToolErrorText(
 }
 
 function isOauthExpiredMessage(value: unknown): boolean {
-  const snapshot = snapshotBoundedJsonValue(value);
+  // Error values come from a byte-bounded call response, so one string may use all of it.
+  // Detection only reads the value, so leave room for the error wrapper added around the text.
+  const snapshot = snapshotBoundedJsonValue(
+    value,
+    MAX_REMOTE_MCP_CALL_RESPONSE_BYTES,
+    2 * MAX_REMOTE_MCP_CALL_RESPONSE_BYTES,
+  );
   const safeValue = snapshot.success ? snapshot.value : undefined;
 
   // Check structured OAuth error field first (RFC 6749 / RFC 6750 error codes).
@@ -431,7 +455,11 @@ function buildOauthConnectUrl(
     ? context.projectId
     : null;
   const path = `/oauth/connect/${encodedIntegration}`;
-  const query = projectId ? `?projectId=${nativeEncodeURIComponent(projectId)}` : "";
+  // The start-connection route requires a scope without a session token. Reconnect links
+  // default to the personal connection, as the SDK connect flow does.
+  const query = projectId
+    ? `?project_reference=${nativeEncodeURIComponent(projectId)}&scope=user`
+    : "?scope=user";
 
   try {
     if (!urlOriginGetter) {
@@ -519,7 +547,7 @@ function extractJsonRpcErrorMessage(payload: Record<string, unknown>): string {
 
 function extractJsonRpcToolError(payload: Record<string, unknown>): Record<string, unknown> {
   const rawError = isRecord(payload.error) ? payload.error as JsonRpcErrorObject : {};
-  const dataSnapshot = snapshotBoundedJsonValue(rawError.data);
+  const dataSnapshot = snapshotBoundedJsonValue(rawError.data, MAX_REMOTE_MCP_CALL_RESPONSE_BYTES);
   const data = dataSnapshot.success ? dataSnapshot.value : undefined;
   const dataRecord = isRecord(data) ? data : undefined;
   const dataCode = typeof dataRecord?.code === "string" && MCP_ERROR_CODE.test(dataRecord.code)
@@ -760,7 +788,7 @@ function createRequestSignalScope(
 }
 
 function serializeJsonRpcRequest(body: Record<string, unknown>): string {
-  const snapshot = snapshotBoundedJsonValue(body);
+  const snapshot = snapshotBoundedJsonValue(body, MAX_REMOTE_MCP_REQUEST_BYTES);
   if (!snapshot.success || !isRecord(snapshot.value)) {
     throw new TypeError("Remote MCP JSON-RPC request must be a bounded JSON object");
   }
@@ -959,7 +987,7 @@ function normalizeCallToolResult(input: {
       return result.structuredContent;
     }
 
-    return parseJsonText(text) ?? text;
+    return parseJsonText(text, MAX_REMOTE_MCP_CALL_RESPONSE_BYTES) ?? text;
   }
 
   if (isError) {
@@ -988,7 +1016,7 @@ function endpointBindsToolAuthorization(endpoint: string): boolean {
   const apiBase = parseMcpRequestEndpoint(apiBaseUrl);
   if (!endpointUrl || !apiBase || endpointUrl.origin !== apiBase.origin) return false;
 
-  const basePath = apiBase.pathname.replace(/\/+$/, "");
+  const basePath = apiBase.pathname.replace(/(?<!\/)\/+$/, "");
   const controlPlanePath = `${basePath}/mcp`;
   if (endpointUrl.pathname === controlPlanePath) return true;
 
@@ -1137,7 +1165,11 @@ function createRemoteMCPToolSourceWithFetch(
             normalizeKnownToolError(result.result, toolName, endpoint, context),
           );
         }
-        const resultSnapshot = snapshotBoundedJsonValue(result);
+        // The response text is already bounded, so one string may use the whole response.
+        const resultSnapshot = snapshotBoundedParsedJsonValue(
+          result,
+          MAX_REMOTE_MCP_CALL_RESPONSE_BYTES,
+        );
         if (!resultSnapshot.success) {
           throw protocolError("Remote MCP tools/call returned an unbounded JSON result");
         }
@@ -1284,7 +1316,7 @@ function isTrustedDeploymentMcpEndpoint(
   for (const trustedUrl of trustedEndpointUrls) {
     if (endpointUrl.origin !== trustedUrl.origin) continue;
 
-    const trustedPath = trustedUrl.pathname.replace(/\/+$/, "");
+    const trustedPath = trustedUrl.pathname.replace(/(?<!\/)\/+$/, "");
     if (!trustedPath.endsWith("/mcp")) continue;
     const projectPathPrefix = `${trustedPath.slice(0, -4)}/projects/`;
     if (!endpointUrl.pathname.startsWith(projectPathPrefix)) continue;

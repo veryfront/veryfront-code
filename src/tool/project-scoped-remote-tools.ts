@@ -1,3 +1,4 @@
+import { copyToolDiscoveryMetadata } from "./discovery-metadata.ts";
 import { isToolAllowedBySourcePolicy } from "./platform-tool-policy.ts";
 import type { SourceIntegrationPolicyManifest } from "#veryfront/integrations/source-policy.ts";
 import { INPUT_VALIDATION_FAILED, PERMISSION_DENIED } from "#veryfront/errors";
@@ -168,7 +169,9 @@ export function isProjectNavigationRemoteTool(
     return false;
   }
 
-  return getProjectNavigationToolNames(options).has(toolName);
+  const names = getProjectNavigationToolNames(options);
+  return names.has(toolName) ||
+    [...names].some((name) => !name.includes("__") && toolName === `veryfront__${name}`);
 }
 
 /** Check whether a remote tool name is allowed. */
@@ -346,6 +349,7 @@ function normalizeToolDefinitions(
       description: definition.description,
       parameters: snapshotToolParameters(definition),
     };
+    copyToolDiscoveryMetadata(definition, normalized);
     if (definition.title !== undefined) {
       if (typeof definition.title !== "string" || definition.title.length === 0) {
         throw new TypeError(

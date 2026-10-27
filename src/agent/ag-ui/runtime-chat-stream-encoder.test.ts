@@ -161,6 +161,55 @@ describe("agent/ag-ui-runtime-chat-stream-encoder", () => {
     );
   });
 
+  it("forwards a terminal input failure and a denied result to the UI stream", () => {
+    const encoder = createAgUiRuntimeChatStreamEncoder({ responseMessageId: "msg-1" });
+    encoder.encode({ type: "tool-input-start", toolCallId: "bad-input", toolName: "search_docs" });
+    encoder.encode({
+      type: "tool-input-delta",
+      toolCallId: "bad-input",
+      inputTextDelta: '{"query":"example"}',
+    });
+    assertEquals(
+      encoder.encode({
+        type: "tool-input-error",
+        toolCallId: "bad-input",
+        errorText: "Invalid arguments",
+      }),
+      [{
+        type: "tool-input-error",
+        toolCallId: "bad-input",
+        toolName: "search_docs",
+        input: { query: "example" },
+        errorText: "Invalid arguments",
+      }],
+    );
+    assertEquals(
+      encoder.encode({ type: "tool-output-denied", toolCallId: "denied" }),
+      [{ type: "tool-output-denied", toolCallId: "denied" }],
+    );
+  });
+
+  it("keeps preliminary output provisional until the final result", () => {
+    const encoder = createAgUiRuntimeChatStreamEncoder({ responseMessageId: "msg-1" });
+    assertEquals(
+      encoder.encode({
+        type: "tool-output-available",
+        toolCallId: "call-1",
+        output: { progress: 1 },
+        preliminary: true,
+      }),
+      [
+        { type: "start-step" },
+        {
+          type: "tool-output-available",
+          toolCallId: "call-1",
+          output: { progress: 1 },
+          preliminary: true,
+        },
+      ],
+    );
+  });
+
   it("emits text events with the response message id and block content id", () => {
     const encoder = createAgUiRuntimeChatStreamEncoder({
       responseMessageId: "msg-1",

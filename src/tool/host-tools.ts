@@ -1,10 +1,19 @@
+import { inheritFrameworkSkillLoader } from "#veryfront/skill/loader-provenance.ts";
 import { dynamicTool, tool } from "./factory.ts";
 import { agentLogger } from "#veryfront/utils";
 import type { JsonSchema, Schema } from "#veryfront/extensions/schema/index.ts";
-import type { Tool, ToolConfig, ToolExecutionContext, ToolSet } from "./types.ts";
+import type {
+  Tool,
+  ToolConfig,
+  ToolDiscoveryMetadata,
+  ToolExecutionContext,
+  ToolSet,
+} from "./types.ts";
+import { copyToolDiscoveryMetadata } from "./discovery-metadata.ts";
 import { getRemoteToolProvenance, markRemoteToolProvenance } from "./remote-tool-provenance.ts";
 import { inheritTrustedHostToolProvenance } from "./host-tool-provenance.ts";
 import { defineOwnDataProperty } from "#veryfront/security/own-data-property.ts";
+import { inheritProviderObservedSkillBodies } from "./provider-observed-skill-bodies.ts";
 
 const apply = Reflect.apply;
 const arrayIsArray = Array.isArray;
@@ -29,10 +38,14 @@ export type HostToolDefinition = {
   ownerAgentId?: string;
   /** Short selector accepted by the owning agent's `tools:` configuration. */
   shortName?: string;
+  /** Source-owned canonical platform dependencies, separate from host authorization. */
+  delegatedPlatformTools?: ToolConfig["delegatedPlatformTools"];
   title?: string;
   description?: string;
   inputSchema?: unknown;
   inputSchemaJson?: JsonSchema;
+  /** Catalog navigation hints, without execution authority. */
+  discovery?: ToolDiscoveryMetadata;
   parameters?: unknown;
   providerOptions?: unknown;
   execute?: Tool["execute"] | HostToolExecute;
@@ -107,6 +120,7 @@ function snapshotHostToolDefinition(value: unknown): Record<string, unknown> | u
     "execute",
     "inputSchema",
     "inputSchemaJson",
+    "discovery",
     "mcp",
   ];
   for (let index = 0; index < prototypeFields.length; index++) {
@@ -132,14 +146,19 @@ function normalizeExecutionContext(
   context: ToolExecutionContext | undefined,
   options: HostToolMaterializationOptions,
 ): ToolExecutionContext {
+  // The runtime already stamps invocation identity. Preserve its private host
+  // associations and non-enumerable platform callback for source-owned tools.
+  if (typeof context?.toolCallId === "string" && context.toolCallId.length > 0) return context;
   const toolCallId = typeof context?.toolCallId === "string" && context.toolCallId.length > 0
     ? context.toolCallId
     : (options.generateToolCallId ?? defaultToolCallId)(toolName);
 
-  return {
+  const normalized = {
     ...(isRecord(context) ? context : {}),
     toolCallId,
   };
+  inheritProviderObservedSkillBodies(context, normalized);
+  return normalized;
 }
 
 /** Create tools from host definitions. */
@@ -185,6 +204,7 @@ export function createToolsFromHostDefinitions(
           inputSchemaJson: definition.inputSchemaJson,
           execute,
           mcp: definition.mcp,
+          delegatedPlatformTools: definition.delegatedPlatformTools,
         };
         materializedTool = dynamicTool(config);
       } else if (isSchemaLike(definition.inputSchema)) {
@@ -195,10 +215,12 @@ export function createToolsFromHostDefinitions(
           inputSchema: definition.inputSchema,
           execute,
           mcp: definition.mcp,
+          delegatedPlatformTools: definition.delegatedPlatformTools,
         };
         materializedTool = tool(config);
       }
       if (materializedTool) {
+        copyToolDiscoveryMetadata(definition, materializedTool);
         const canonicalRemoteToolName = getRemoteToolProvenance(originalDefinition);
         const toolWithRemoteProvenance = canonicalRemoteToolName
           ? markRemoteToolProvenance(materializedTool, canonicalRemoteToolName)
@@ -206,7 +228,10 @@ export function createToolsFromHostDefinitions(
         defineOwnDataProperty(
           tools,
           toolName,
-          inheritTrustedHostToolProvenance(originalDefinition, toolWithRemoteProvenance),
+          inheritTrustedHostToolProvenance(
+            originalDefinition,
+            inheritFrameworkSkillLoader(originalDefinition, toolWithRemoteProvenance),
+          ),
           { enumerable: true, configurable: true, writable: true },
         );
       }

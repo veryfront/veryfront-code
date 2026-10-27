@@ -25,6 +25,7 @@ function toolDefinition(input: {
   required?: string[];
   title?: string;
   annotations?: ToolAnnotations;
+  discovery?: ToolDefinition["discovery"];
 }): ToolDefinition {
   return {
     name: input.name,
@@ -36,6 +37,7 @@ function toolDefinition(input: {
     },
     ...(input.title !== undefined ? { title: input.title } : {}),
     ...(input.annotations !== undefined ? { annotations: input.annotations } : {}),
+    ...(input.discovery !== undefined ? { discovery: input.discovery } : {}),
   };
 }
 
@@ -278,6 +280,7 @@ it("createProjectScopedRemoteToolCatalog filters, revalidates, and hydrates proj
           required: ["project_reference"],
           title: "List files",
           annotations: { readOnlyHint: true },
+          discovery: { version: 1, type: "platform", domain: "files" },
         }),
         toolDefinition({ name: "delete_file", required: ["project_reference"] }),
       ];
@@ -303,6 +306,7 @@ it("createProjectScopedRemoteToolCatalog filters, revalidates, and hydrates proj
     { readOnlyHint: true },
     "remote MCP annotations survive normalization",
   );
+  assertEquals(listed[1]?.discovery, { version: 1, type: "platform", domain: "files" });
   assertEquals(listContexts, [{ projectId: "project-1" }]);
 
   const prepared = await catalog.prepareExecution({
@@ -705,6 +709,31 @@ it("reserved platform inventory requires provenance under every source policy", 
     }
   }
 });
+
+for (const name of ["check_integration_readiness", "veryfront__check_integration_readiness"]) {
+  it(`fills the active project for ${name}`, () => {
+    const definition = toolDefinition({ name });
+    definition.parameters = {
+      type: "object",
+      properties: {
+        project_reference: { type: "string" },
+        name: { type: "string" },
+        tool_name: { type: "string" },
+      },
+      required: ["project_reference", "name", "tool_name"],
+    };
+    for (const toolInput of [{}, { project_reference: "foreign" }]) {
+      assertEquals(
+        hydrateProjectScopedRemoteToolInput({
+          toolDefinition: definition,
+          activeProjectId: "project-1",
+          toolInput: { name: "gmail", tool_name: "gmail__list_emails", ...toolInput },
+        }),
+        { name: "gmail", tool_name: "gmail__list_emails", project_reference: "project-1" },
+      );
+    }
+  });
+}
 
 for (const name of ["get_integration", "veryfront__get_integration"]) {
   it(`keeps ${name} catalog discovery separate from private selected readiness`, () => {

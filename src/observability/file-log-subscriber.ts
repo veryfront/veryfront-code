@@ -66,7 +66,7 @@ export function parseMaxSize(value: number | string): number {
     throw new Error(`Invalid maxSize value: "${value}". Expected a number or string like "10mb".`);
   }
 
-  const num = parseFloat(match[1]);
+  const num = Number.parseFloat(match[1]);
   const unit = match[2] ?? "b";
   const bytes = Math.floor(num * (SIZE_UNITS[unit] ?? 1));
   if (!Number.isFinite(bytes) || bytes <= 0) {

@@ -269,6 +269,174 @@ function applyApplicationAuthResult(
   return { response: null, skipProjectMiddleware: false };
 }
 
+interface ProjectApplicationRequestInput {
+  request: Request;
+  url: URL;
+  ctx: _HandlerContext;
+  apiHandler: ApiHandlerWrapper;
+  handleApplicationAuthRequest: ReturnType<typeof createApplicationAuthRequestHandler>;
+  registry: RouteRegistry;
+  sourceIntegrationPolicy: SourceIntegrationPolicyManifest;
+  isProxyMode: boolean;
+  projectSlug: string | undefined;
+  runInFilesystemContext: <T>(operation: () => Promise<T>) => Promise<T>;
+  runInRequestProjectEnv: ProjectEnvironmentRunner;
+  onFrameworkOwnedPreflight: (value: boolean) => void;
+  onMiddlewareStart: () => void;
+  logDebug: (message: string, extra?: Record<string, unknown>) => void;
+}
+
+async function executeProjectApplicationRequest(
+  input: ProjectApplicationRequestInput,
+): Promise<Response> {
+  const {
+    request,
+    url,
+    ctx,
+    apiHandler,
+    handleApplicationAuthRequest,
+    registry,
+    sourceIntegrationPolicy,
+    isProxyMode,
+    projectSlug,
+    runInFilesystemContext,
+    runInRequestProjectEnv,
+    onFrameworkOwnedPreflight,
+    onMiddlewareStart,
+    logDebug,
+  } = input;
+  // This parser-only inspection intentionally precedes application
+  // auth: it never evaluates project code and keeps framework-owned
+  // automatic preflight public without widening authored-route access.
+  const isFrameworkOwnedPreflight = await apiHandler.prepareFrameworkOwnedPreflight(
+    request,
+    ctx,
+  );
+  onFrameworkOwnedPreflight(isFrameworkOwnedPreflight);
+  const isOptionsRequest = request.method.toUpperCase() === "OPTIONS";
+  const isBrowserPreflight = isOptionsRequest && isPreflightRequest(request);
+  let skipProjectMiddleware = false;
+  if (!skipsApplicationAuth(request, url.pathname, isFrameworkOwnedPreflight)) {
+    const authResult = await runInFilesystemContext(
+      () =>
+        runWithRetainedPreviewDocumentSourceSnapshot(
+          ctx,
+          async () => {
+            const result = await runInRequestProjectEnv(() =>
+              handleApplicationAuthRequest(request, ctx)
+            );
+            if (result?.response) {
+              const terminalResponse = result.response;
+              const response = await runInRequestProjectEnv(() =>
+                applyCORSHeaders({
+                  request,
+                  response: terminalResponse,
+                  config: ctx.securityConfig?.cors,
+                })
+              );
+              return response ?? terminalResponse;
+            }
+            return result;
+          },
+          {
+            retainAfterOperation: (result) => !(result instanceof Response),
+            runDeferredOperation: runInFilesystemContext,
+          },
+        ),
+    );
+    const authOutcome = applyApplicationAuthResult(
+      authResult,
+      ctx,
+      isOptionsRequest,
+      isBrowserPreflight,
+    );
+    if (authOutcome.response) return authOutcome.response;
+    skipProjectMiddleware = authOutcome.skipProjectMiddleware;
+  }
+
+  const optionsAdmission = isFrameworkOwnedPreflight
+    ? "not-applicable"
+    : await prepareOptionsBeforeProjectMiddleware({
+      request,
+      ctx,
+      sourceIntegrationPolicy,
+      runInFilesystemContext,
+      runInRequestProjectEnv,
+    });
+
+  const executeRegistry = async () =>
+    (await registry.execute(request, ctx, { propagateSourceSnapshotChanges: true })) ??
+      undefined;
+  const executeRegistryWithRetainedSnapshot = () =>
+    runInFilesystemContext(() =>
+      runWithRetainedPreviewDocumentSourceSnapshot(
+        ctx,
+        executeRegistry,
+        { runDeferredOperation: runInFilesystemContext },
+      )
+    );
+  const executeProjectRoute = () => {
+    if (optionsAdmission === "bypass-middleware") return executeRegistry();
+    if (optionsAdmission === "bypass-middleware-retained") {
+      return executeRegistryWithRetainedSnapshot();
+    }
+    return projectMiddlewareRuntime.execute({
+      request,
+      handlerContext: ctx,
+      isSharedProxy: isProxyMode,
+      isFrameworkOwnedPreflight,
+      skipProjectMiddleware,
+      next: executeRegistry,
+      onMiddlewareStart: onMiddlewareStart,
+    });
+  };
+  const executeRoute = () =>
+    runWithExactSourceIntegrationPolicy(
+      sourceIntegrationPolicy,
+      executeProjectRoute,
+    );
+  const response = await withSpan(
+    SpanNames.HANDLER_EXECUTE,
+    () =>
+      profilePhase("handler.execute", () => {
+        return runInRequestProjectEnv(executeRoute);
+      }),
+    {
+      "handler.project_slug": projectSlug || "unknown",
+      "handler.path": url.pathname,
+      "handler.method": request.method,
+    },
+  );
+
+  if (response) return response;
+
+  logDebug("[runtime-handler] No handler produced response (unexpected)", {
+    path: url.pathname,
+  });
+  // RFC 9457 error response for no handler case (env-aware filtering)
+  const noHandlerError = UNKNOWN_ERROR.create({
+    detail: "No handler available to process this request",
+    instance: url.pathname,
+  });
+  return errorToRFC9457Response(noHandlerError, ctx, request);
+}
+
+function monitoringNeedsApplicationAuth(
+  req: Request,
+  url: URL,
+  isFrameworkOwnedMonitoringPreflight: boolean,
+): boolean {
+  return !isPlatformLivenessProbe(req.method, url.pathname) &&
+    !skipsApplicationAuth(req, url.pathname, isFrameworkOwnedMonitoringPreflight);
+}
+
+function requestProfileCategory(url: URL): string {
+  if (url.pathname.startsWith("/_vf_styles/")) return "css";
+  if (url.pathname.startsWith("/_vf_modules/")) return "module";
+  if (url.pathname.startsWith("/api/")) return "api";
+  return "html";
+}
+
 /** Handler names in registration order. */
 export const HANDLER_NAMES = [
   "AuthHandler",
@@ -546,6 +714,16 @@ export function createVeryfrontHandler(
     logger.debug("Running in proxy mode - lazy initialization enabled");
   }
 
+  const loadSecurity = () =>
+    profilePhase("runtime.security_load", async () => {
+      if (isProxyMode) return;
+      await securityLoader.ensureLoaded();
+    });
+  const loadConfiguration = () =>
+    profilePhase("runtime.config_load", async () => {
+      await configPromise;
+    });
+
   const handler = async (incoming: Request): Promise<Response> => {
     // First, before any header read: project code sharing this isolate may
     // have replaced Headers.prototype methods, and every later read on a
@@ -581,12 +759,11 @@ export function createVeryfrontHandler(
         // preflights stay public without project or application auth.
         const isFrameworkOwnedMonitoringPreflight = req.method.toUpperCase() === "OPTIONS" &&
           isPreflightRequest(req);
-        const requiresApplicationAuth = !isPlatformLivenessProbe(req.method, url.pathname) &&
-          !skipsApplicationAuth(
-            req,
-            url.pathname,
-            isFrameworkOwnedMonitoringPreflight,
-          );
+        const requiresApplicationAuth = monitoringNeedsApplicationAuth(
+          req,
+          url,
+          isFrameworkOwnedMonitoringPreflight,
+        );
         let requestOrigin: string | null | undefined;
         if (requiresApplicationAuth) {
           const preparedMonitoringRequest = await prepareProjectRequest({
@@ -652,6 +829,7 @@ export function createVeryfrontHandler(
         requestId: lifecycle.requestId,
         request_url: req.url,
         domain: preparedRequest.loggerFacts.domain,
+        environment: preparedRequest.loggerFacts.environment,
         project_slug: preparedRequest.loggerFacts.projectSlug,
         project_id: preparedRequest.loggerFacts.projectId,
         release_id: preparedRequest.loggerFacts.releaseId,
@@ -667,7 +845,12 @@ export function createVeryfrontHandler(
 
     return runWithRequestContextAsync(loggerContext, async () => {
       const spanInfo = startRequestTracing(req, url.pathname);
-      setRequestAttributes(spanInfo.span, req, url);
+      setRequestAttributes(
+        spanInfo.span,
+        req,
+        url,
+        preparedRequest.proxyTrust.forwardedHeadersTrusted,
+      );
 
       // Reject untrusted/malformed proxy identity before any project-keyed
       // accounting is touched. In particular, isolation creates per-slug
@@ -689,7 +872,7 @@ export function createVeryfrontHandler(
         }
       }
 
-      startRequestTracking(
+      const trackingKey = startRequestTracking(
         lifecycle.requestId,
         preparedRequest.trackingFacts.projectSlug,
         preparedRequest.trackingFacts.pathname,
@@ -713,7 +896,7 @@ export function createVeryfrontHandler(
           pathname: url.pathname,
           mode: "isolation",
         });
-        completeRequestTracking(lifecycle.requestId, 503, false);
+        completeRequestTracking(trackingKey, 503, false);
         const response = createIsolationErrorResponse(isolationCheck);
         endRequestTracing(spanInfo.span, response.status);
         return response;
@@ -722,13 +905,7 @@ export function createVeryfrontHandler(
       startIsolatedRequest(headers.projectSlug, lifecycle.shouldCheckIsolation);
 
       try {
-        const profileCategory = url.pathname.startsWith("/_vf_styles/")
-          ? "css"
-          : url.pathname.startsWith("/_vf_modules/")
-          ? "module"
-          : url.pathname.startsWith("/api/")
-          ? "api"
-          : "html";
+        const profileCategory = requestProfileCategory(url);
         let requestProfileRecord: ReturnType<typeof finalizeRequestProfiling> = null;
 
         let requestMetricsIncremented = false;
@@ -736,6 +913,9 @@ export function createVeryfrontHandler(
         let isFrameworkOwnedPreflightForRetry = false;
         const markProjectMiddlewareStarted = () => {
           projectMiddlewareStarted = true;
+        };
+        const markFrameworkOwnedPreflight = (value: boolean) => {
+          isFrameworkOwnedPreflightForRetry = value;
         };
         const executeHandlerAttempt = async (request: Request): Promise<Response> => {
           isFrameworkOwnedPreflightForRetry = false;
@@ -746,16 +926,9 @@ export function createVeryfrontHandler(
 
           await profilePhase("runtime.ready", () => readyPromise);
 
-          await timeAsync("security:load", () =>
-            profilePhase("runtime.security_load", async () => {
-              if (isProxyMode) return;
-              await securityLoader.ensureLoaded();
-            }));
+          await timeAsync("security:load", loadSecurity);
 
-          await timeAsync("config:load", () =>
-            profilePhase("runtime.config_load", async () => {
-              await configPromise;
-            }));
+          await timeAsync("config:load", loadConfiguration);
 
           // Browser-controlled WebSocket query parameters cannot select tenant
           // identity. Local development uses the configured default project;
@@ -766,6 +939,12 @@ export function createVeryfrontHandler(
           // release lookup. Missing release/environment identity is an ingress
           // refusal, not permission to resolve a mutable release on the host.
           if (hostedHttp && isHostedHttpApplicationRequest(request)) {
+            setProjectAttributes(
+              spanInfo.span,
+              headers.projectSlug,
+              parseProxyEnvironment(headers.environment ?? null),
+              preparedRequest.loggerFacts.environment,
+            );
             if (!requestMetricsIncremented) {
               await incrementRequestMetrics();
               requestMetricsIncremented = true;
@@ -777,6 +956,7 @@ export function createVeryfrontHandler(
               environmentId: headers.environmentId,
               environmentName: headers.environmentName,
               mode: parseProxyEnvironment(headers.environment ?? null),
+              hostMode: reqCtx.mode,
               proxyTrusted,
               sourceToken: reqCtx.token,
             });
@@ -802,7 +982,12 @@ export function createVeryfrontHandler(
           );
           updateRequestProfileContext({ projectSlug: projectRes.projectSlug });
 
-          setProjectAttributes(spanInfo.span, projectRes.projectSlug, projectRes.proxyEnv);
+          setProjectAttributes(
+            spanInfo.span,
+            projectRes.projectSlug,
+            isProxyMode ? projectRes.proxyEnv : undefined,
+            preparedRequest.loggerFacts.environment,
+          );
 
           // Handle projects discovery UI
           if (
@@ -850,6 +1035,14 @@ export function createVeryfrontHandler(
             profileEnvVars: (operation) => profilePhase("runtime.load_env_vars", operation),
             onEnvironmentResolved: (envRes) => {
               updateRequestProfileContext({ requestMode: envRes.resolvedEnvironment });
+              loggerContext.logger = loggerContext.logger.child({
+                environment: envRes.resolvedEnvironment,
+              });
+              setProjectAttributes(
+                spanInfo.span,
+                projectRes.projectSlug,
+                envRes.resolvedEnvironment,
+              );
             },
             logDebug,
           });
@@ -876,16 +1069,17 @@ export function createVeryfrontHandler(
               environmentId: ctx.environmentId,
             }
             : undefined;
-          const runInRequestProjectEnv = <T>(operation: () => T): T =>
-            isolatedEnvForRequest === undefined
-              ? operation()
-              : trustedProjectEnvIdentity
-              ? runWithTrustedProjectEnv(
+          const runInRequestProjectEnv = <T>(operation: () => T): T => {
+            if (isolatedEnvForRequest === undefined) return operation();
+            if (trustedProjectEnvIdentity) {
+              return runWithTrustedProjectEnv(
                 isolatedEnvForRequest,
                 trustedProjectEnvIdentity,
                 operation,
-              )
-              : runWithProjectEnv(isolatedEnvForRequest, operation);
+              );
+            }
+            return runWithProjectEnv(isolatedEnvForRequest, operation);
+          };
 
           const runInFilesystemContext = <T>(operation: () => Promise<T>) =>
             runInProjectFilesystemContext(ctx, isProxyMode, operation);
@@ -900,122 +1094,23 @@ export function createVeryfrontHandler(
             runtimeContext.projectTraceConfig,
             { projectId: ctx.projectId, environmentId: ctx.environmentId },
             request,
-            async () => {
-              // This parser-only inspection intentionally precedes application
-              // auth: it never evaluates project code and keeps framework-owned
-              // automatic preflight public without widening authored-route access.
-              const isFrameworkOwnedPreflight = await apiHandler.prepareFrameworkOwnedPreflight(
+            () =>
+              executeProjectApplicationRequest({
                 request,
+                url,
                 ctx,
-              );
-              isFrameworkOwnedPreflightForRetry = isFrameworkOwnedPreflight;
-              const isOptionsRequest = request.method.toUpperCase() === "OPTIONS";
-              const isBrowserPreflight = isOptionsRequest && isPreflightRequest(request);
-              let skipProjectMiddleware = false;
-              if (!skipsApplicationAuth(request, url.pathname, isFrameworkOwnedPreflight)) {
-                const authResult = await runInFilesystemContext(
-                  () =>
-                    runWithRetainedPreviewDocumentSourceSnapshot(
-                      ctx,
-                      async () => {
-                        const result = await runInRequestProjectEnv(() =>
-                          handleApplicationAuthRequest(request, ctx)
-                        );
-                        if (result?.response) {
-                          const terminalResponse = result.response;
-                          const response = await runInRequestProjectEnv(() =>
-                            applyCORSHeaders({
-                              request,
-                              response: terminalResponse,
-                              config: ctx.securityConfig?.cors,
-                            })
-                          );
-                          return response ?? terminalResponse;
-                        }
-                        return result;
-                      },
-                      {
-                        retainAfterOperation: (result) => !(result instanceof Response),
-                        runDeferredOperation: runInFilesystemContext,
-                      },
-                    ),
-                );
-                const authOutcome = applyApplicationAuthResult(
-                  authResult,
-                  ctx,
-                  isOptionsRequest,
-                  isBrowserPreflight,
-                );
-                if (authOutcome.response) return authOutcome.response;
-                skipProjectMiddleware = authOutcome.skipProjectMiddleware;
-              }
-
-              const optionsAdmission = isFrameworkOwnedPreflight
-                ? "not-applicable"
-                : await prepareOptionsBeforeProjectMiddleware({
-                  request,
-                  ctx,
-                  sourceIntegrationPolicy,
-                  runInFilesystemContext,
-                  runInRequestProjectEnv,
-                });
-
-              const executeRegistry = async () =>
-                (await registry.execute(request, ctx, { propagateSourceSnapshotChanges: true })) ??
-                  undefined;
-              const executeRegistryWithRetainedSnapshot = () =>
-                runInFilesystemContext(() =>
-                  runWithRetainedPreviewDocumentSourceSnapshot(
-                    ctx,
-                    executeRegistry,
-                    { runDeferredOperation: runInFilesystemContext },
-                  )
-                );
-              const executeProjectRoute = () => {
-                if (optionsAdmission === "bypass-middleware") return executeRegistry();
-                if (optionsAdmission === "bypass-middleware-retained") {
-                  return executeRegistryWithRetainedSnapshot();
-                }
-                return projectMiddlewareRuntime.execute({
-                  request,
-                  handlerContext: ctx,
-                  isSharedProxy: isProxyMode,
-                  isFrameworkOwnedPreflight,
-                  skipProjectMiddleware,
-                  next: executeRegistry,
-                  onMiddlewareStart: markProjectMiddlewareStarted,
-                });
-              };
-              const executeRoute = () =>
-                runWithExactSourceIntegrationPolicy(
-                  sourceIntegrationPolicy,
-                  executeProjectRoute,
-                );
-              const response = await withSpan(
-                SpanNames.HANDLER_EXECUTE,
-                () =>
-                  profilePhase("handler.execute", () => {
-                    return runInRequestProjectEnv(executeRoute);
-                  }),
-                {
-                  "handler.project_slug": projectRes.projectSlug || "unknown",
-                  "handler.path": url.pathname,
-                  "handler.method": request.method,
-                },
-              );
-
-              if (response) return response;
-
-              logDebug("[runtime-handler] No handler produced response (unexpected)", {
-                path: url.pathname,
-              });
-              // RFC 9457 error response for no handler case (env-aware filtering)
-              const noHandlerError = UNKNOWN_ERROR.create({
-                detail: "No handler available to process this request",
-                instance: url.pathname,
-              });
-              return errorToRFC9457Response(noHandlerError, ctx, request);
-            },
+                apiHandler,
+                handleApplicationAuthRequest,
+                registry,
+                sourceIntegrationPolicy,
+                isProxyMode,
+                projectSlug: projectRes.projectSlug,
+                runInFilesystemContext,
+                runInRequestProjectEnv,
+                onFrameworkOwnedPreflight: markFrameworkOwnedPreflight,
+                onMiddlewareStart: markProjectMiddlewareStarted,
+                logDebug,
+              }),
           );
         };
 
@@ -1047,6 +1142,19 @@ export function createVeryfrontHandler(
           }
         };
 
+        const executeProfiledHandler = async (request: Request): Promise<Response> => {
+          let profiledResponse: Response | undefined;
+          try {
+            profiledResponse = await executeWithTracingContext(
+              spanInfo,
+              () => executeHandler(request),
+            );
+            return profiledResponse;
+          } finally {
+            requestProfileRecord = finalizeRequestProfiling(profiledResponse?.status);
+          }
+        };
+
         const { response, error, settled } = await withRequestTimeout(
           (signal) => {
             // Deno.upgradeWebSocket requires the exact Request received by
@@ -1074,18 +1182,7 @@ export function createVeryfrontHandler(
                 projectSlug: headers.projectSlug,
                 requestMode: headers.environment,
               },
-              async () => {
-                let profiledResponse: Response | undefined;
-                try {
-                  profiledResponse = await executeWithTracingContext(
-                    spanInfo,
-                    () => executeHandler(timeoutRequest),
-                  );
-                  return profiledResponse;
-                } finally {
-                  requestProfileRecord = finalizeRequestProfiling(profiledResponse?.status);
-                }
-              },
+              () => executeProfiledHandler(timeoutRequest),
             );
           },
           url.pathname,
@@ -1120,7 +1217,7 @@ export function createVeryfrontHandler(
         );
 
         return completeRequestTrackingOnResponseEnd(
-          lifecycle.requestId,
+          trackingKey,
           withServerTimingHeader(response, requestProfileRecord),
           isTimeout,
           requestProfileRecord,

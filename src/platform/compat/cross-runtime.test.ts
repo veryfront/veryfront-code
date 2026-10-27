@@ -189,13 +189,15 @@ describe("Process Operations", () => {
     if (typeof Deno === "undefined") return;
     const original = Deno.unrefTimer;
     const seen: number[] = [];
-    Deno.unrefTimer = (id: number) => {
+    Deno.unrefTimer = (id) => {
+      if (typeof id !== "number") throw new Error("Expected numeric legacy timer ID");
       seen.push(id);
     };
     try {
-      const timer = setInterval(() => {}, 10000);
+      // Exercise the legacy numeric backend independently of the host's
+      // current setInterval return type (newer hosts return an opaque handle).
+      const timer = 123;
       unrefTimer(timer);
-      clearInterval(timer);
       assertEquals(seen, [timer], "the timer id is handed to Deno.unrefTimer");
     } finally {
       Deno.unrefTimer = original;

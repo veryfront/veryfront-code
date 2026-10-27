@@ -150,8 +150,8 @@ function buildNavigatorTree(root: Element): NavigatorTreeNode {
       path: config.pagePath,
       parentId: parentId,
       start: {
-        line: parseInt(el.getAttribute(DATA_NODE_LINE) || "0", 10),
-        column: parseInt(el.getAttribute(DATA_NODE_COLUMN) || "0", 10),
+        line: Number.parseInt(el.getAttribute(DATA_NODE_LINE) || "0", 10),
+        column: Number.parseInt(el.getAttribute(DATA_NODE_COLUMN) || "0", 10),
       },
       end: { line: 0, column: 0 },
       children: [],
@@ -338,8 +338,8 @@ export function setupInspectMode(): void {
           name: target.getAttribute(DATA_NODE_NAME) || target.tagName.toLowerCase(),
           type: getNodeType(target),
           file: target.getAttribute(DATA_NODE_FILE) || getConfig().pagePath,
-          line: parseInt(target.getAttribute(DATA_NODE_LINE) || "0", 10),
-          column: parseInt(target.getAttribute(DATA_NODE_COLUMN) || "0", 10),
+          line: Number.parseInt(target.getAttribute(DATA_NODE_LINE) || "0", 10),
+          column: Number.parseInt(target.getAttribute(DATA_NODE_COLUMN) || "0", 10),
           text: getDirectText(target).slice(0, 200),
         },
       });

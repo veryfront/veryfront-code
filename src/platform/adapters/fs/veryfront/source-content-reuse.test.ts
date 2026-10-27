@@ -4,7 +4,7 @@ import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import type { VeryfrontFSAdapter } from "./adapter.ts";
 import { fetchSourceListingForContext } from "./adapter-content-context.ts";
-import { createAdapter, waitFor } from "./adapter.test-helpers.ts";
+import { createAdapter, getAdapterTestTransport, waitFor } from "./adapter.test-helpers.ts";
 import { runWithRequestContext } from "./request-context.ts";
 import {
   admitVerifiedSourceContents,
@@ -79,7 +79,7 @@ function createCredentialAdapter(
       getFileContent: (path: string) => Promise<string>;
       getFileContentBytesWithinLimit: (path: string) => Promise<Uint8Array>;
     };
-    wsManager: { connect: (_projectId: string) => void };
+
     cache: {
       isDistributed: () => boolean;
       setAsync: (key: string, value: unknown) => Promise<void>;
@@ -121,7 +121,7 @@ function createCredentialAdapter(
         path: file.path,
         content: file.content,
         checksum: file.checksum,
-        size: file.content.length,
+        size: new TextEncoder().encode(file.content).length,
         type: "file",
         updated_at: "2026-10-02T12:00:00.000Z",
       })),
@@ -136,7 +136,6 @@ function createCredentialAdapter(
   internals.client.getFileContent = readVisible;
   internals.client.getFileContentBytesWithinLimit = async (path) =>
     new TextEncoder().encode(await readVisible(path));
-  internals.wsManager.connect = () => {};
 
   if (options.distributedCache) internals.cache.isDistributed = () => true;
   const setAsync = internals.cache.setAsync.bind(internals.cache);
@@ -214,6 +213,31 @@ describe("source content reuse across fresh credentials (issue inbox#2277)", () 
       "reads must use the retained listing instead of the listing cache",
     );
     second.adapter.dispose();
+  });
+
+  it("keeps an unchanged Unicode branch fingerprint across a strict metadata refresh", async () => {
+    const files = await sourceFiles({
+      "agents/assistant.ts": "export default {};",
+      "mailboxes/inbox/fixture/ingested.json": '{"filename":"rechnung résumé.txt"}',
+    });
+    const first = createCredentialAdapter(() => files);
+    try {
+      await asCredential("credential-unicode", async () => {
+        await first.adapter.initialize();
+        const before = await first.adapter.getSourceSnapshotFingerprint({
+          purpose: "agent-config",
+        });
+        const generation = first.adapter.getSourceSnapshotVersion();
+        await first.adapter.ensureSourceSnapshotFresh("agent-source-config", { maxAgeMs: 0 });
+        const after = await first.adapter.getSourceSnapshotFingerprint({ purpose: "agent-config" });
+        assertEquals(after, before, "unchanged bytes must not invalidate agent configuration");
+        assertEquals(first.adapter.getSourceSnapshotVersion(), generation);
+      });
+      assertEquals(first.counts.fullListings, 1);
+      assertEquals(first.counts.metadataListings, 1);
+    } finally {
+      first.adapter.dispose();
+    }
   });
 
   it("keeps entity ids answerable when a memory cache holds the assembled listing", async () => {
@@ -371,23 +395,23 @@ describe("source content reuse across fresh credentials (issue inbox#2277)", () 
 
   it("admits poked listings so the next fresh credential reuses them", async () => {
     const files = await sourceFiles({ "pages/index.tsx": "export default 'poked';" });
-    const credential = createCredentialAdapter(() => files);
-    const internals = credential.adapter as unknown as {
-      replaceSourceSnapshot: (
-        cacheKey: string,
-        files: SourceFile[],
-      ) => Promise<number | undefined>;
-    };
-
+    let visibleFiles = await sourceFiles({ "pages/index.tsx": "export default 'before';" });
+    const credential = createCredentialAdapter(() => visibleFiles);
     await asCredential("credential-a", async () => {
-      const applied = await internals.replaceSourceSnapshot(
-        "files:branch:test-project:main",
-        files,
-      );
-      assertEquals(typeof applied, "number");
+      await credential.adapter.initialize();
+      visibleFiles = files;
+      const transport = getAdapterTestTransport(credential.adapter);
+      const socket = transport.sockets.at(-1)!;
+      const acknowledgements = socket.sentMessages.length;
+      transport.poke({ branchName: "main", changedPaths: ["pages/index.tsx"] });
+      await waitFor(() => Promise.resolve(socket.sentMessages.length > acknowledgements), 2000);
     });
     await waitFor(() =>
-      Promise.resolve(hasVerifiedSourceContents("https://api.example.com|branch:test-project:main"))
+      Promise.resolve(
+        assembleSourceListing("https://api.example.com|branch:test-project:main", files)?.[0]
+          ?.content ===
+          "export default 'poked';",
+      )
     );
     credential.adapter.dispose();
   });

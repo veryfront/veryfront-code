@@ -1,0 +1,3068 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:veryfront:events:1:public-payloads",
+  "title": "Canonical public-family typed data payload schemas",
+  "description": "Planning artifact. API typed payload contracts with canonical data.type substitution, plus the explicit target requirement that URL/document references and file attachments identify their owning message. Conditional classification, trusted event-to-message provenance, producer authority and authorization remain outside JSON Schema.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/run_started"
+    },
+    {
+      "$ref": "#/$defs/run_succeeded"
+    },
+    {
+      "$ref": "#/$defs/run_failed"
+    },
+    {
+      "$ref": "#/$defs/run_cancelled"
+    },
+    {
+      "$ref": "#/$defs/run_paused"
+    },
+    {
+      "$ref": "#/$defs/step_started"
+    },
+    {
+      "$ref": "#/$defs/step_succeeded"
+    },
+    {
+      "$ref": "#/$defs/step_failed"
+    },
+    {
+      "$ref": "#/$defs/step_cancelled"
+    },
+    {
+      "$ref": "#/$defs/step_ended"
+    },
+    {
+      "$ref": "#/$defs/tool_call_started"
+    },
+    {
+      "$ref": "#/$defs/tool_call_arguments_delta_emitted"
+    },
+    {
+      "$ref": "#/$defs/tool_call_arguments_ended"
+    },
+    {
+      "$ref": "#/$defs/tool_call_result_recorded"
+    },
+    {
+      "$ref": "#/$defs/tool_call_status_reported"
+    },
+    {
+      "$ref": "#/$defs/input_request_created"
+    },
+    {
+      "$ref": "#/$defs/input_request_updated"
+    },
+    {
+      "$ref": "#/$defs/child_run_reported"
+    },
+    {
+      "$ref": "#/$defs/message_text_started"
+    },
+    {
+      "$ref": "#/$defs/message_text_delta_emitted"
+    },
+    {
+      "$ref": "#/$defs/message_text_ended"
+    },
+    {
+      "$ref": "#/$defs/message_reasoning_started"
+    },
+    {
+      "$ref": "#/$defs/message_reasoning_delta_emitted"
+    },
+    {
+      "$ref": "#/$defs/message_reasoning_ended"
+    },
+    {
+      "$ref": "#/$defs/messages_snapshot_emitted"
+    },
+    {
+      "$ref": "#/$defs/state_snapshot_emitted"
+    },
+    {
+      "$ref": "#/$defs/state_delta_emitted"
+    },
+    {
+      "$ref": "#/$defs/message_url_referenced"
+    },
+    {
+      "$ref": "#/$defs/message_document_referenced"
+    },
+    {
+      "$ref": "#/$defs/message_file_attached"
+    },
+    {
+      "$ref": "#/$defs/run_log_captured"
+    },
+    {
+      "$ref": "#/$defs/stream_heartbeat_emitted"
+    },
+    {
+      "$ref": "#/$defs/model_usage_recorded"
+    }
+  ],
+  "$defs": {
+    "run_started": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "com.veryfront.run.started"
+        },
+        "runId": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "additionalProperties": true,
+      "title": "com.veryfront.run.started",
+      "description": "The run started execution.",
+      "x-sourceRefs": [
+        {
+          "repo": "veryfront-api",
+          "sha": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/lib/types/run-event/payload.ts",
+          "line": 110,
+          "endLine": 110
+        },
+        {
+          "repo": "veryfront-code",
+          "sha": "03903775fbf92852f23cccc1ba6243192042ff64",
+          "path": "src/run-events/payload.ts",
+          "line": 112,
+          "endLine": 112
+        }
+      ],
+      "x-legacyOrigin": "RUN_STARTED"
+    },
+    "run_succeeded": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "com.veryfront.run.succeeded"
+        },
+        "runId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "metadata": {
+          "type": "object",
+          "additionalProperties": {}
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "additionalProperties": true,
+      "title": "com.veryfront.run.succeeded",
+      "description": "The run completed successfully.",
+      "x-sourceRefs": [
+        {
+          "repo": "veryfront-api",
+          "sha": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/lib/types/run-event/payload.ts",
+          "line": 111,
+          "endLine": 111
+        },
+        {
+          "repo": "veryfront-code",
+          "sha": "03903775fbf92852f23cccc1ba6243192042ff64",
+          "path": "src/run-events/payload.ts",
+          "line": 117,
+          "endLine": 120
+        }
+      ],
+      "x-legacyOrigin": "RUN_FINISHED",
+      "x-classificationRequirement": "This event is linked to the owning successful terminal transition or a reviewed equivalent completion producer."
+    },
+    "run_failed": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "com.veryfront.run.failed"
+        },
+        "runId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "code": {
+          "type": "string",
+          "minLength": 1
+        },
+        "message": {
+          "type": "string"
+        },
+        "metadata": {
+          "type": "object",
+          "additionalProperties": {}
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "additionalProperties": true,
+      "title": "com.veryfront.run.failed",
+      "description": "The run failed.",
+      "x-sourceRefs": [
+        {
+          "repo": "veryfront-api",
+          "sha": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/lib/types/run-event/payload.ts",
+          "line": 112,
+          "endLine": 117
+        },
+        {
+          "repo": "veryfront-code",
+          "sha": "03903775fbf92852f23cccc1ba6243192042ff64",
+          "path": "src/run-events/payload.ts",
+          "line": 125,
+          "endLine": 130
+        }
+      ],
+      "x-legacyOrigin": "RUN_ERROR",
+      "x-classificationRequirement": "This event is linked to the owning failed terminal transition."
+    },
+    "run_cancelled": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "com.veryfront.run.cancelled"
+        },
+        "runId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "code": {
+          "type": "string",
+          "minLength": 1
+        },
+        "message": {
+          "type": "string"
+        },
+        "metadata": {
+          "type": "object",
+          "additionalProperties": {}
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "additionalProperties": true,
+      "title": "com.veryfront.run.cancelled",
+      "description": "The run was cancelled.",
+      "x-sourceRefs": [
+        {
+          "repo": "veryfront-api",
+          "sha": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/lib/types/run-event/payload.ts",
+          "line": 112,
+          "endLine": 117
+        },
+        {
+          "repo": "veryfront-code",
+          "sha": "03903775fbf92852f23cccc1ba6243192042ff64",
+          "path": "src/run-events/payload.ts",
+          "line": 125,
+          "endLine": 130
+        }
+      ],
+      "x-legacyOrigin": "RUN_ERROR",
+      "x-classificationRequirement": "This event is linked to the owning cancelled terminal transition."
+    },
+    "run_paused": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "com.veryfront.run.paused"
+        },
+        "runId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "lastEventId": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "type",
+        "runId",
+        "reason",
+        "lastEventId"
+      ],
+      "additionalProperties": true,
+      "title": "com.veryfront.run.paused",
+      "description": "The run paused while waiting for integration authentication.",
+      "x-sourceRefs": [
+        {
+          "repo": "veryfront-api",
+          "sha": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/lib/types/run-event/payload.ts",
+          "line": 238,
+          "endLine": 242
+        },
+        {
+          "repo": "veryfront-code",
+          "sha": "03903775fbf92852f23cccc1ba6243192042ff64",
+          "path": "src/run-events/payload.ts",
+          "line": 328,
+          "endLine": 332
+        }
+      ],
+      "x-legacyOrigin": "RUN_PARKED"
+    },
+    "step_started": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "com.veryfront.step.started"
+        },
+        "stepId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "stepName": {
+          "type": "string",
+          "minLength": 1
+        },
+        "runtime": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "additionalProperties": true,
+      "title": "com.veryfront.step.started",
+      "description": "An execution step or runtime turn started.",
+      "x-sourceRefs": [
+        {
+          "repo": "veryfront-api",
+          "sha": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/lib/types/run-event/payload.ts",
+          "line": 155,
+          "endLine": 159
+        },
+        {
+          "repo": "veryfront-code",
+          "sha": "03903775fbf92852f23cccc1ba6243192042ff64",
+          "path": "src/run-events/payload.ts",
+          "line": 223,
+          "endLine": 227
+        }
+      ],
+      "x-legacyOrigin": "STEP_STARTED"
+    },
+    "step_succeeded": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "com.veryfront.step.succeeded"
+        },
+        "stepId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "stepName": {
+          "type": "string",
+          "minLength": 1
+        },
+        "runtime": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "additionalProperties": true,
+      "title": "com.veryfront.step.succeeded",
+      "description": "The execution step or runtime turn succeeded.",
+      "x-sourceRefs": [
+        {
+          "repo": "veryfront-api",
+          "sha": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/lib/types/run-event/payload.ts",
+          "line": 160,
+          "endLine": 165
+        },
+        {
+          "repo": "veryfront-code",
+          "sha": "03903775fbf92852f23cccc1ba6243192042ff64",
+          "path": "src/run-events/payload.ts",
+          "line": 232,
+          "endLine": 237
+        }
+      ],
+      "x-legacyOrigin": "STEP_FINISHED",
+      "x-classificationRequirement": "Authoritative outcome evidence belonging to this step event establishes success."
+    },
+    "step_failed": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "com.veryfront.step.failed"
+        },
+        "stepId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "stepName": {
+          "type": "string",
+          "minLength": 1
+        },
+        "runtime": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "additionalProperties": true,
+      "title": "com.veryfront.step.failed",
+      "description": "The execution step or runtime turn failed.",
+      "x-sourceRefs": [
+        {
+          "repo": "veryfront-api",
+          "sha": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/lib/types/run-event/payload.ts",
+          "line": 160,
+          "endLine": 165
+        },
+        {
+          "repo": "veryfront-code",
+          "sha": "03903775fbf92852f23cccc1ba6243192042ff64",
+          "path": "src/run-events/payload.ts",
+          "line": 232,
+          "endLine": 237
+        }
+      ],
+      "x-legacyOrigin": "STEP_FINISHED",
+      "x-classificationRequirement": "Authoritative outcome evidence belonging to this step event establishes failure."
+    },
+    "step_cancelled": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "com.veryfront.step.cancelled"
+        },
+        "stepId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "stepName": {
+          "type": "string",
+          "minLength": 1
+        },
+        "runtime": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "additionalProperties": true,
+      "title": "com.veryfront.step.cancelled",
+      "description": "The execution step or runtime turn was cancelled.",
+      "x-sourceRefs": [
+        {
+          "repo": "veryfront-api",
+          "sha": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/lib/types/run-event/payload.ts",
+          "line": 160,
+          "endLine": 165
+        },
+        {
+          "repo": "veryfront-code",
+          "sha": "03903775fbf92852f23cccc1ba6243192042ff64",
+          "path": "src/run-events/payload.ts",
+          "line": 232,
+          "endLine": 237
+        }
+      ],
+      "x-legacyOrigin": "STEP_FINISHED",
+      "x-classificationRequirement": "Authoritative outcome evidence belonging to this step event establishes cancellation."
+    },
+    "step_ended": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "com.veryfront.step.ended"
+        },
+        "stepId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "stepName": {
+          "type": "string",
+          "minLength": 1
+        },
+        "runtime": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "additionalProperties": true,
+      "title": "com.veryfront.step.ended",
+      "description": "The execution step or runtime turn ended without a classified outcome.",
+      "x-sourceRefs": [
+        {
+          "repo": "veryfront-api",
+          "sha": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/lib/types/run-event/payload.ts",
+          "line": 160,
+          "endLine": 165
+        },
+        {
+          "repo": "veryfront-code",
+          "sha": "03903775fbf92852f23cccc1ba6243192042ff64",
+          "path": "src/run-events/payload.ts",
+          "line": 232,
+          "endLine": 237
+        }
+      ],
+      "x-legacyOrigin": "STEP_FINISHED",
+      "x-classificationRequirement": "The end is established, but outcome evidence is missing, unrecognized or conflicting. Preserve the raw outcome fields."
+    },
+    "tool_call_started": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "com.veryfront.tool-call.started"
+        },
+        "toolCallId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "toolCallName": {
+          "type": "string",
+          "minLength": 1
+        },
+        "parentMessageId": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "type",
+        "toolCallId",
+        "toolCallName"
+      ],
+      "additionalProperties": true,
+      "title": "com.veryfront.tool-call.started",
+      "description": "A logical tool call was introduced.",
+      "x-sourceRefs": [
+        {
+          "repo": "veryfront-api",
+          "sha": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/lib/types/run-event/payload.ts",
+          "line": 134,
+          "endLine": 138
+        },
+        {
+          "repo": "veryfront-code",
+          "sha": "03903775fbf92852f23cccc1ba6243192042ff64",
+          "path": "src/run-events/payload.ts",
+          "line": 164,
+          "endLine": 168
+        }
+      ],
+      "x-legacyOrigin": "TOOL_CALL_START"
+    },
+    "tool_call_arguments_delta_emitted": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "com.veryfront.tool-call.arguments.delta.emitted"
+        },
+        "toolCallId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "delta": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "toolCallId",
+        "delta"
+      ],
+      "additionalProperties": true,
+      "title": "com.veryfront.tool-call.arguments.delta.emitted",
+      "description": "A tool call argument delta was emitted.",
+      "x-sourceRefs": [
+        {
+          "repo": "veryfront-api",
+          "sha": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/lib/types/run-event/payload.ts",
+          "line": 139,
+          "endLine": 139
+        },
+        {
+          "repo": "veryfront-code",
+          "sha": "03903775fbf92852f23cccc1ba6243192042ff64",
+          "path": "src/run-events/payload.ts",
+          "line": 173,
+          "endLine": 173
+        }
+      ],
+      "x-legacyOrigin": "TOOL_CALL_ARGS"
+    },
+    "tool_call_arguments_ended": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "com.veryfront.tool-call.arguments.ended"
+        },
+        "toolCallId": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "type",
+        "toolCallId"
+      ],
+      "additionalProperties": true,
+      "title": "com.veryfront.tool-call.arguments.ended",
+      "description": "Tool call argument assembly ended.",
+      "x-sourceRefs": [
+        {
+          "repo": "veryfront-api",
+          "sha": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/lib/types/run-event/payload.ts",
+          "line": 141,
+          "endLine": 141
+        },
+        {
+          "repo": "veryfront-code",
+          "sha": "03903775fbf92852f23cccc1ba6243192042ff64",
+          "path": "src/run-events/payload.ts",
+          "line": 183,
+          "endLine": 183
+        }
+      ],
+      "x-legacyOrigin": "TOOL_CALL_END"
+    },
+    "tool_call_result_recorded": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "com.veryfront.tool-call.result.recorded"
+        },
+        "toolCallId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "messageId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "parentMessageId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "content": {},
+        "isError": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "role": {
+          "type": "string",
+          "const": "tool"
+        }
+      },
+      "required": [
+        "type",
+        "toolCallId",
+        "isError"
+      ],
+      "additionalProperties": true,
+      "title": "com.veryfront.tool-call.result.recorded",
+      "description": "A tool result or error was recorded.",
+      "x-sourceRefs": [
+        {
+          "repo": "veryfront-api",
+          "sha": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/lib/types/run-event/payload.ts",
+          "line": 142,
+          "endLine": 150
+        },
+        {
+          "repo": "veryfront-code",
+          "sha": "03903775fbf92852f23cccc1ba6243192042ff64",
+          "path": "src/run-events/payload.ts",
+          "line": 192,
+          "endLine": 200
+        }
+      ],
+      "x-legacyOrigin": "TOOL_CALL_RESULT"
+    },
+    "tool_call_status_reported": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "com.veryfront.tool-call.status.reported"
+        },
+        "toolCallId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "type": "string",
+          "minLength": 1
+        },
+        "toolCallName": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "toolCallId",
+        "status",
+        "toolCallName"
+      ],
+      "additionalProperties": true,
+      "title": "com.veryfront.tool-call.status.reported",
+      "description": "A tool call's current status was reported.",
+      "x-sourceRefs": [
+        {
+          "repo": "veryfront-api",
+          "sha": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/lib/types/run-event/payload.ts",
+          "line": 202,
+          "endLine": 206
+        },
+        {
+          "repo": "veryfront-code",
+          "sha": "03903775fbf92852f23cccc1ba6243192042ff64",
+          "path": "src/run-events/payload.ts",
+          "line": 292,
+          "endLine": 296
+        }
+      ],
+      "x-legacyOrigin": "TOOL_CALL_STATUS_CHANGED"
+    },
+    "input_request_created": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "com.veryfront.input-request.created"
+        },
+        "inputRequest": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "id"
+          ],
+          "additionalProperties": true
+        }
+      },
+      "required": [
+        "type",
+        "inputRequest"
+      ],
+      "additionalProperties": true,
+      "title": "com.veryfront.input-request.created",
+      "description": "An input request was created.",
+      "x-sourceRefs": [
+        {
+          "repo": "veryfront-api",
+          "sha": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/lib/types/run-event/payload.ts",
+          "line": 207,
+          "endLine": 209
+        },
+        {
+          "repo": "veryfront-code",
+          "sha": "03903775fbf92852f23cccc1ba6243192042ff64",
+          "path": "src/run-events/payload.ts",
+          "line": 301,
+          "endLine": 303
+        }
+      ],
+      "x-legacyOrigin": "INPUT_REQUEST_CREATED"
+    },
+    "input_request_updated": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "com.veryfront.input-request.updated"
+        },
+        "inputRequest": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "id"
+          ],
+          "additionalProperties": true
+        }
+      },
+      "required": [
+        "type",
+        "inputRequest"
+      ],
+      "additionalProperties": true,
+      "title": "com.veryfront.input-request.updated",
+      "description": "An input request was updated.",
+      "x-sourceRefs": [
+        {
+          "repo": "veryfront-api",
+          "sha": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/lib/types/run-event/payload.ts",
+          "line": 210,
+          "endLine": 212
+        },
+        {
+          "repo": "veryfront-code",
+          "sha": "03903775fbf92852f23cccc1ba6243192042ff64",
+          "path": "src/run-events/payload.ts",
+          "line": 308,
+          "endLine": 310
+        }
+      ],
+      "x-legacyOrigin": "INPUT_REQUEST_UPDATED"
+    },
+    "child_run_reported": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "com.veryfront.child-run.reported"
+        },
+        "toolCallId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "childRunId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "type": "string",
+          "minLength": 1
+        },
+        "childConversationId": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "childMessageId": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "childAgentId": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "type",
+        "toolCallId",
+        "childRunId",
+        "status"
+      ],
+      "additionalProperties": true,
+      "title": "com.veryfront.child-run.reported",
+      "description": "A child run's status was reported to its parent.",
+      "x-sourceRefs": [
+        {
+          "repo": "veryfront-api",
+          "sha": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/lib/types/run-event/payload.ts",
+          "line": 213,
+          "endLine": 221
+        },
+        {
+          "repo": "veryfront-code",
+          "sha": "03903775fbf92852f23cccc1ba6243192042ff64",
+          "path": "src/run-events/payload.ts",
+          "line": 315,
+          "endLine": 323
+        }
+      ],
+      "x-legacyOrigin": "CHILD_RUN_STATUS_CHANGED"
+    },
+    "message_text_started": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "com.veryfront.message.text.started"
+        },
+        "messageId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "contentId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "role": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "messageId",
+        "contentId"
+      ],
+      "additionalProperties": true,
+      "title": "com.veryfront.message.text.started",
+      "description": "A text segment started within a message.",
+      "x-sourceRefs": [
+        {
+          "repo": "veryfront-api",
+          "sha": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/lib/types/run-event/payload.ts",
+          "line": 118,
+          "endLine": 127
+        },
+        {
+          "repo": "veryfront-code",
+          "sha": "03903775fbf92852f23cccc1ba6243192042ff64",
+          "path": "src/run-events/payload.ts",
+          "line": 138,
+          "endLine": 142
+        }
+      ],
+      "x-legacyOrigin": "TEXT_MESSAGE_START"
+    },
+    "message_text_delta_emitted": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "com.veryfront.message.text.delta.emitted"
+        },
+        "messageId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "contentId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "delta": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "messageId",
+        "delta"
+      ],
+      "additionalProperties": true,
+      "title": "com.veryfront.message.text.delta.emitted",
+      "description": "A text delta was emitted for a message segment.",
+      "x-sourceRefs": [
+        {
+          "repo": "veryfront-api",
+          "sha": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/lib/types/run-event/payload.ts",
+          "line": 128,
+          "endLine": 132
+        },
+        {
+          "repo": "veryfront-code",
+          "sha": "03903775fbf92852f23cccc1ba6243192042ff64",
+          "path": "src/run-events/payload.ts",
+          "line": 147,
+          "endLine": 151
+        }
+      ],
+      "x-legacyOrigin": "TEXT_MESSAGE_CONTENT"
+    },
+    "message_text_ended": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "com.veryfront.message.text.ended"
+        },
+        "messageId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "contentId": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "type",
+        "messageId"
+      ],
+      "additionalProperties": true,
+      "title": "com.veryfront.message.text.ended",
+      "description": "A streamed text segment ended within a message.",
+      "x-sourceRefs": [
+        {
+          "repo": "veryfront-api",
+          "sha": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/lib/types/run-event/payload.ts",
+          "line": 133,
+          "endLine": 133
+        },
+        {
+          "repo": "veryfront-code",
+          "sha": "03903775fbf92852f23cccc1ba6243192042ff64",
+          "path": "src/run-events/payload.ts",
+          "line": 156,
+          "endLine": 159
+        }
+      ],
+      "x-legacyOrigin": "TEXT_MESSAGE_END"
+    },
+    "message_reasoning_started": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "com.veryfront.message.reasoning.started"
+        },
+        "messageId": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "type",
+        "messageId"
+      ],
+      "additionalProperties": true,
+      "title": "com.veryfront.message.reasoning.started",
+      "description": "A reasoning segment started within a message.",
+      "x-sourceRefs": [
+        {
+          "repo": "veryfront-api",
+          "sha": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/lib/types/run-event/payload.ts",
+          "line": 167,
+          "endLine": 167
+        },
+        {
+          "repo": "veryfront-code",
+          "sha": "03903775fbf92852f23cccc1ba6243192042ff64",
+          "path": "src/run-events/payload.ts",
+          "line": 247,
+          "endLine": 247
+        }
+      ],
+      "x-legacyOrigin": "REASONING_MESSAGE_START"
+    },
+    "message_reasoning_delta_emitted": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "com.veryfront.message.reasoning.delta.emitted"
+        },
+        "messageId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "delta": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "messageId",
+        "delta"
+      ],
+      "additionalProperties": true,
+      "title": "com.veryfront.message.reasoning.delta.emitted",
+      "description": "A reasoning delta was emitted for a message segment.",
+      "x-sourceRefs": [
+        {
+          "repo": "veryfront-api",
+          "sha": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/lib/types/run-event/payload.ts",
+          "line": 168,
+          "endLine": 168
+        },
+        {
+          "repo": "veryfront-code",
+          "sha": "03903775fbf92852f23cccc1ba6243192042ff64",
+          "path": "src/run-events/payload.ts",
+          "line": 252,
+          "endLine": 255
+        }
+      ],
+      "x-legacyOrigin": "REASONING_MESSAGE_CONTENT"
+    },
+    "message_reasoning_ended": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "com.veryfront.message.reasoning.ended"
+        },
+        "messageId": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "type",
+        "messageId"
+      ],
+      "additionalProperties": true,
+      "title": "com.veryfront.message.reasoning.ended",
+      "description": "A streamed reasoning segment ended within a message.",
+      "x-sourceRefs": [
+        {
+          "repo": "veryfront-api",
+          "sha": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/lib/types/run-event/payload.ts",
+          "line": 169,
+          "endLine": 169
+        },
+        {
+          "repo": "veryfront-code",
+          "sha": "03903775fbf92852f23cccc1ba6243192042ff64",
+          "path": "src/run-events/payload.ts",
+          "line": 260,
+          "endLine": 260
+        }
+      ],
+      "x-legacyOrigin": "REASONING_MESSAGE_END"
+    },
+    "messages_snapshot_emitted": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "com.veryfront.messages.snapshot.emitted"
+        },
+        "messages": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": {}
+          }
+        }
+      },
+      "required": [
+        "type",
+        "messages"
+      ],
+      "additionalProperties": true,
+      "title": "com.veryfront.messages.snapshot.emitted",
+      "description": "A public message-list snapshot was emitted.",
+      "x-sourceRefs": [
+        {
+          "repo": "veryfront-api",
+          "sha": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/lib/types/run-event/payload.ts",
+          "line": 153,
+          "endLine": 153
+        },
+        {
+          "repo": "veryfront-code",
+          "sha": "03903775fbf92852f23cccc1ba6243192042ff64",
+          "path": "src/run-events/payload.ts",
+          "line": 218,
+          "endLine": 218
+        }
+      ],
+      "x-legacyOrigin": "MESSAGES_SNAPSHOT"
+    },
+    "state_snapshot_emitted": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "com.veryfront.shared-state.snapshot.emitted"
+        },
+        "snapshot": {
+          "type": "object",
+          "additionalProperties": {}
+        }
+      },
+      "required": [
+        "type",
+        "snapshot"
+      ],
+      "additionalProperties": true,
+      "title": "com.veryfront.shared-state.snapshot.emitted",
+      "description": "A shared/client state snapshot was emitted.",
+      "x-sourceRefs": [
+        {
+          "repo": "veryfront-api",
+          "sha": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/lib/types/run-event/payload.ts",
+          "line": 151,
+          "endLine": 151
+        },
+        {
+          "repo": "veryfront-code",
+          "sha": "03903775fbf92852f23cccc1ba6243192042ff64",
+          "path": "src/run-events/payload.ts",
+          "line": 205,
+          "endLine": 205
+        }
+      ],
+      "x-legacyOrigin": "STATE_SNAPSHOT"
+    },
+    "state_delta_emitted": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "com.veryfront.shared-state.delta.emitted"
+        },
+        "delta": {}
+      },
+      "required": [
+        "type"
+      ],
+      "additionalProperties": true,
+      "title": "com.veryfront.shared-state.delta.emitted",
+      "description": "A shared/client state update was emitted.",
+      "x-sourceRefs": [
+        {
+          "repo": "veryfront-api",
+          "sha": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/lib/types/run-event/payload.ts",
+          "line": 152,
+          "endLine": 152
+        },
+        {
+          "repo": "veryfront-code",
+          "sha": "03903775fbf92852f23cccc1ba6243192042ff64",
+          "path": "src/run-events/payload.ts",
+          "line": 213,
+          "endLine": 213
+        }
+      ],
+      "x-legacyOrigin": "STATE_DELTA"
+    },
+    "message_url_referenced": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "com.veryfront.message.url.referenced"
+        },
+        "messageId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The exact owning message ID, supplied by the producer or trusted event-linked historical provenance."
+        },
+        "contentId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional identity of the source or attachment content segment within the owning message; omission associates it with the message as a whole."
+        },
+        "url": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sourceId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "type",
+        "messageId",
+        "url",
+        "sourceId"
+      ],
+      "additionalProperties": true,
+      "title": "com.veryfront.message.url.referenced",
+      "description": "A URL reference was attached to output.",
+      "x-sourceRefs": [
+        {
+          "repo": "veryfront-api",
+          "sha": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/lib/types/run-event/payload.ts",
+          "line": 248,
+          "endLine": 252
+        },
+        {
+          "repo": "veryfront-code",
+          "sha": "03903775fbf92852f23cccc1ba6243192042ff64",
+          "path": "src/run-events/payload.ts",
+          "line": 350,
+          "endLine": 354
+        }
+      ],
+      "x-legacyOrigin": "URL_CITED",
+      "x-messageOwnership": {
+        "messageId": "Required nonempty owning message ID. It is independent of sourceId, URL, filename, tool-call ID and UI part keys.",
+        "contentId": "Optional nonempty content-segment ID within that same message. It cannot replace messageId or be invented from sourceId or UI part counters.",
+        "sourceCompatibility": "Pinned legacy payloads do not require either identity. Old stored records without trusted event-linked ownership remain explicit legacy members. Derived message replay remains derived; it does not supply stored-event provenance."
+      }
+    },
+    "message_document_referenced": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "com.veryfront.message.document.referenced"
+        },
+        "messageId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The exact owning message ID, supplied by the producer or trusted event-linked historical provenance."
+        },
+        "contentId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional identity of the source or attachment content segment within the owning message; omission associates it with the message as a whole."
+        },
+        "mediaType": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sourceId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "filename": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "type",
+        "messageId",
+        "mediaType",
+        "sourceId"
+      ],
+      "additionalProperties": true,
+      "title": "com.veryfront.message.document.referenced",
+      "description": "A document reference was attached to output.",
+      "x-sourceRefs": [
+        {
+          "repo": "veryfront-api",
+          "sha": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/lib/types/run-event/payload.ts",
+          "line": 253,
+          "endLine": 258
+        },
+        {
+          "repo": "veryfront-code",
+          "sha": "03903775fbf92852f23cccc1ba6243192042ff64",
+          "path": "src/run-events/payload.ts",
+          "line": 359,
+          "endLine": 364
+        }
+      ],
+      "x-legacyOrigin": "DOCUMENT_CITED",
+      "x-messageOwnership": {
+        "messageId": "Required nonempty owning message ID. It is independent of sourceId, URL, filename, tool-call ID and UI part keys.",
+        "contentId": "Optional nonempty content-segment ID within that same message. It cannot replace messageId or be invented from sourceId or UI part counters.",
+        "sourceCompatibility": "Pinned legacy payloads do not require either identity. Old stored records without trusted event-linked ownership remain explicit legacy members. Derived message replay remains derived; it does not supply stored-event provenance."
+      }
+    },
+    "message_file_attached": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "com.veryfront.message.file.attached"
+        },
+        "messageId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The exact owning message ID, supplied by the producer or trusted event-linked historical provenance."
+        },
+        "contentId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional identity of the source or attachment content segment within the owning message; omission associates it with the message as a whole."
+        },
+        "mediaType": {
+          "type": "string",
+          "minLength": 1
+        },
+        "url": {
+          "type": "string",
+          "minLength": 1
+        },
+        "filename": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "type",
+        "messageId",
+        "mediaType"
+      ],
+      "additionalProperties": true,
+      "title": "com.veryfront.message.file.attached",
+      "description": "A file attachment descriptor was emitted.",
+      "x-sourceRefs": [
+        {
+          "repo": "veryfront-api",
+          "sha": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/lib/types/run-event/payload.ts",
+          "line": 259,
+          "endLine": 263
+        },
+        {
+          "repo": "veryfront-code",
+          "sha": "03903775fbf92852f23cccc1ba6243192042ff64",
+          "path": "src/run-events/payload.ts",
+          "line": 369,
+          "endLine": 373
+        }
+      ],
+      "x-legacyOrigin": "FILE_ATTACHED",
+      "x-messageOwnership": {
+        "messageId": "Required nonempty owning message ID. It is independent of sourceId, URL, filename, tool-call ID and UI part keys.",
+        "contentId": "Optional nonempty content-segment ID within that same message. It cannot replace messageId or be invented from sourceId or UI part counters.",
+        "sourceCompatibility": "Pinned legacy payloads do not require either identity. Old stored records without trusted event-linked ownership remain explicit legacy members. Derived message replay remains derived; it does not supply stored-event provenance."
+      }
+    },
+    "run_log_captured": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "com.veryfront.run.log.captured"
+        },
+        "logs": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "logs"
+      ],
+      "additionalProperties": true,
+      "title": "com.veryfront.run.log.captured",
+      "description": "Runtime execution logs were captured for the run.",
+      "x-sourceRefs": [
+        {
+          "repo": "veryfront-api",
+          "sha": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/lib/types/run-event/payload.ts",
+          "line": 243,
+          "endLine": 243
+        },
+        {
+          "repo": "veryfront-code",
+          "sha": "03903775fbf92852f23cccc1ba6243192042ff64",
+          "path": "src/run-events/payload.ts",
+          "line": 337,
+          "endLine": 337
+        }
+      ],
+      "x-legacyOrigin": "RUN_LOG_CAPTURED"
+    },
+    "stream_heartbeat_emitted": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "com.veryfront.stream.heartbeat.emitted"
+        },
+        "runId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "lastEventId": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "type",
+        "runId",
+        "lastEventId"
+      ],
+      "additionalProperties": true,
+      "title": "com.veryfront.stream.heartbeat.emitted",
+      "description": "A stream heartbeat was emitted.",
+      "x-sourceRefs": [
+        {
+          "repo": "veryfront-api",
+          "sha": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/lib/types/run-event/payload.ts",
+          "line": 244,
+          "endLine": 247
+        },
+        {
+          "repo": "veryfront-code",
+          "sha": "03903775fbf92852f23cccc1ba6243192042ff64",
+          "path": "src/run-events/payload.ts",
+          "line": 342,
+          "endLine": 345
+        }
+      ],
+      "x-legacyOrigin": "STREAM_HEARTBEAT_EMITTED"
+    },
+    "model_usage_recorded": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "com.veryfront.model-call.usage.recorded"
+        },
+        "provider": {
+          "type": "string",
+          "minLength": 1
+        },
+        "model": {
+          "type": "string",
+          "minLength": 1
+        },
+        "inputTokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "outputTokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "cacheCreationTokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "cacheReadTokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "totalTokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "costCredits": {
+          "type": "string",
+          "minLength": 1
+        },
+        "latencyMs": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "usageCaptureStatus": {
+          "type": "string",
+          "enum": [
+            "complete",
+            "missing"
+          ]
+        },
+        "providerRequestId": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "modelCallContextEventId": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "provider",
+        "model",
+        "inputTokens",
+        "outputTokens",
+        "cacheCreationTokens",
+        "cacheReadTokens",
+        "totalTokens",
+        "costCredits",
+        "latencyMs",
+        "usageCaptureStatus",
+        "providerRequestId",
+        "modelCallContextEventId"
+      ],
+      "additionalProperties": true,
+      "title": "com.veryfront.model-call.usage.recorded",
+      "description": "Model token usage and cost were recorded.",
+      "x-sourceRefs": [
+        {
+          "repo": "veryfront-api",
+          "sha": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/lib/types/run-event/payload.ts",
+          "line": 224,
+          "endLine": 237
+        },
+        {
+          "repo": "veryfront-code",
+          "sha": "03903775fbf92852f23cccc1ba6243192042ff64",
+          "path": "src/run-events/payload.ts",
+          "line": 69,
+          "endLine": 83
+        }
+      ],
+      "x-legacyOrigin": "MODEL_CALL_COMPLETED"
+    }
+  },
+  "x-status": "source-verified-proposal",
+  "x-sourceSnapshots": {
+    "veryfront-api": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+    "veryfront-code": "03903775fbf92852f23cccc1ba6243192042ff64",
+    "veryfront-studio": "12fc357451982b7af35aed3dbfcabb0d2c11e2f6"
+  },
+  "x-targets": {
+    "com.veryfront.run.started": {
+      "schemaRef": "#/$defs/run_started",
+      "legacyOrigins": [
+        "RUN_STARTED"
+      ],
+      "reviewState": "supported",
+      "sourceRefs": [
+        {
+          "repo": "veryfront-api",
+          "sha": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/lib/types/run-event/payload.ts",
+          "line": 110,
+          "endLine": 110
+        },
+        {
+          "repo": "veryfront-code",
+          "sha": "03903775fbf92852f23cccc1ba6243192042ff64",
+          "path": "src/run-events/payload.ts",
+          "line": 112,
+          "endLine": 112
+        }
+      ],
+      "schemaScope": "API typed payload contract in JSON, after only replacing type with the canonical target",
+      "readProfiles": {
+        "diagnostic": {
+          "schemaRef": "#/$defs/run_started",
+          "eligibility": "Authorized diagnostic payload must satisfy the typed source contract; otherwise retain the explicit legacy/unprojectable representation."
+        },
+        "public": {
+          "schemaRef": "#/$defs/run_started",
+          "eligibility": "Apply existing authorization projection first. Use this canonical member only when the authorized payload satisfies this schema; otherwise retain the explicit legacy/unprojectable representation."
+        }
+      }
+    },
+    "com.veryfront.run.succeeded": {
+      "schemaRef": "#/$defs/run_succeeded",
+      "legacyOrigins": [
+        "RUN_FINISHED"
+      ],
+      "reviewState": "conditional",
+      "sourceRefs": [
+        {
+          "repo": "veryfront-api",
+          "sha": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/lib/types/run-event/payload.ts",
+          "line": 111,
+          "endLine": 111
+        },
+        {
+          "repo": "veryfront-code",
+          "sha": "03903775fbf92852f23cccc1ba6243192042ff64",
+          "path": "src/run-events/payload.ts",
+          "line": 117,
+          "endLine": 120
+        }
+      ],
+      "schemaScope": "API typed payload contract in JSON, after only replacing type with the canonical target",
+      "readProfiles": {
+        "diagnostic": {
+          "schemaRef": "#/$defs/run_succeeded",
+          "eligibility": "Authorized diagnostic payload must satisfy the typed source contract; otherwise retain the explicit legacy/unprojectable representation."
+        },
+        "public": {
+          "schemaRef": "#/$defs/run_succeeded",
+          "eligibility": "Apply existing authorization projection first. Use this canonical member only when the authorized payload satisfies this schema; otherwise retain the explicit legacy/unprojectable representation."
+        }
+      },
+      "classificationRequirement": "This event is linked to the owning successful terminal transition or a reviewed equivalent completion producer."
+    },
+    "com.veryfront.run.failed": {
+      "schemaRef": "#/$defs/run_failed",
+      "legacyOrigins": [
+        "RUN_ERROR"
+      ],
+      "reviewState": "conditional",
+      "sourceRefs": [
+        {
+          "repo": "veryfront-api",
+          "sha": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/lib/types/run-event/payload.ts",
+          "line": 112,
+          "endLine": 117
+        },
+        {
+          "repo": "veryfront-code",
+          "sha": "03903775fbf92852f23cccc1ba6243192042ff64",
+          "path": "src/run-events/payload.ts",
+          "line": 125,
+          "endLine": 130
+        }
+      ],
+      "schemaScope": "API typed payload contract in JSON, after only replacing type with the canonical target",
+      "readProfiles": {
+        "diagnostic": {
+          "schemaRef": "#/$defs/run_failed",
+          "eligibility": "Authorized diagnostic payload must satisfy the typed source contract; otherwise retain the explicit legacy/unprojectable representation."
+        },
+        "public": {
+          "schemaRef": "#/$defs/run_failed",
+          "eligibility": "Apply existing authorization projection first. Use this canonical member only when the authorized payload satisfies this schema; otherwise retain the explicit legacy/unprojectable representation."
+        }
+      },
+      "classificationRequirement": "This event is linked to the owning failed terminal transition."
+    },
+    "com.veryfront.run.cancelled": {
+      "schemaRef": "#/$defs/run_cancelled",
+      "legacyOrigins": [
+        "RUN_ERROR"
+      ],
+      "reviewState": "conditional",
+      "sourceRefs": [
+        {
+          "repo": "veryfront-api",
+          "sha": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/lib/types/run-event/payload.ts",
+          "line": 112,
+          "endLine": 117
+        },
+        {
+          "repo": "veryfront-code",
+          "sha": "03903775fbf92852f23cccc1ba6243192042ff64",
+          "path": "src/run-events/payload.ts",
+          "line": 125,
+          "endLine": 130
+        }
+      ],
+      "schemaScope": "API typed payload contract in JSON, after only replacing type with the canonical target",
+      "readProfiles": {
+        "diagnostic": {
+          "schemaRef": "#/$defs/run_cancelled",
+          "eligibility": "Authorized diagnostic payload must satisfy the typed source contract; otherwise retain the explicit legacy/unprojectable representation."
+        },
+        "public": {
+          "schemaRef": "#/$defs/run_cancelled",
+          "eligibility": "Apply existing authorization projection first. Use this canonical member only when the authorized payload satisfies this schema; otherwise retain the explicit legacy/unprojectable representation."
+        }
+      },
+      "classificationRequirement": "This event is linked to the owning cancelled terminal transition."
+    },
+    "com.veryfront.run.paused": {
+      "schemaRef": "#/$defs/run_paused",
+      "legacyOrigins": [
+        "RUN_PARKED"
+      ],
+      "reviewState": "transport",
+      "sourceRefs": [
+        {
+          "repo": "veryfront-api",
+          "sha": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/lib/types/run-event/payload.ts",
+          "line": 238,
+          "endLine": 242
+        },
+        {
+          "repo": "veryfront-code",
+          "sha": "03903775fbf92852f23cccc1ba6243192042ff64",
+          "path": "src/run-events/payload.ts",
+          "line": 328,
+          "endLine": 332
+        }
+      ],
+      "schemaScope": "API typed payload contract in JSON, after only replacing type with the canonical target",
+      "readProfiles": {
+        "diagnostic": {
+          "schemaRef": "#/$defs/run_paused",
+          "eligibility": "Authorized diagnostic payload must satisfy the typed source contract; otherwise retain the explicit legacy/unprojectable representation."
+        },
+        "public": {
+          "schemaRef": "#/$defs/run_paused",
+          "eligibility": "Apply existing authorization projection first. Use this canonical member only when the authorized payload satisfies this schema; otherwise retain the explicit legacy/unprojectable representation."
+        }
+      }
+    },
+    "com.veryfront.step.started": {
+      "schemaRef": "#/$defs/step_started",
+      "legacyOrigins": [
+        "STEP_STARTED"
+      ],
+      "reviewState": "supported",
+      "sourceRefs": [
+        {
+          "repo": "veryfront-api",
+          "sha": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/lib/types/run-event/payload.ts",
+          "line": 155,
+          "endLine": 159
+        },
+        {
+          "repo": "veryfront-code",
+          "sha": "03903775fbf92852f23cccc1ba6243192042ff64",
+          "path": "src/run-events/payload.ts",
+          "line": 223,
+          "endLine": 227
+        }
+      ],
+      "schemaScope": "API typed payload contract in JSON, after only replacing type with the canonical target",
+      "readProfiles": {
+        "diagnostic": {
+          "schemaRef": "#/$defs/step_started",
+          "eligibility": "Authorized diagnostic payload must satisfy the typed source contract; otherwise retain the explicit legacy/unprojectable representation."
+        },
+        "public": {
+          "schemaRef": "#/$defs/step_started",
+          "eligibility": "Apply existing authorization projection first. Use this canonical member only when the authorized payload satisfies this schema; otherwise retain the explicit legacy/unprojectable representation."
+        }
+      }
+    },
+    "com.veryfront.step.succeeded": {
+      "schemaRef": "#/$defs/step_succeeded",
+      "legacyOrigins": [
+        "STEP_FINISHED"
+      ],
+      "reviewState": "conditional",
+      "sourceRefs": [
+        {
+          "repo": "veryfront-api",
+          "sha": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/lib/types/run-event/payload.ts",
+          "line": 160,
+          "endLine": 165
+        },
+        {
+          "repo": "veryfront-code",
+          "sha": "03903775fbf92852f23cccc1ba6243192042ff64",
+          "path": "src/run-events/payload.ts",
+          "line": 232,
+          "endLine": 237
+        }
+      ],
+      "schemaScope": "API typed payload contract in JSON, after only replacing type with the canonical target",
+      "readProfiles": {
+        "diagnostic": {
+          "schemaRef": "#/$defs/step_succeeded",
+          "eligibility": "Authorized diagnostic payload must satisfy the typed source contract; otherwise retain the explicit legacy/unprojectable representation."
+        },
+        "public": {
+          "schemaRef": "#/$defs/step_succeeded",
+          "eligibility": "Apply existing authorization projection first. Use this canonical member only when the authorized payload satisfies this schema; otherwise retain the explicit legacy/unprojectable representation."
+        }
+      },
+      "classificationRequirement": "Authoritative outcome evidence belonging to this step event establishes success."
+    },
+    "com.veryfront.step.failed": {
+      "schemaRef": "#/$defs/step_failed",
+      "legacyOrigins": [
+        "STEP_FINISHED"
+      ],
+      "reviewState": "conditional",
+      "sourceRefs": [
+        {
+          "repo": "veryfront-api",
+          "sha": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/lib/types/run-event/payload.ts",
+          "line": 160,
+          "endLine": 165
+        },
+        {
+          "repo": "veryfront-code",
+          "sha": "03903775fbf92852f23cccc1ba6243192042ff64",
+          "path": "src/run-events/payload.ts",
+          "line": 232,
+          "endLine": 237
+        }
+      ],
+      "schemaScope": "API typed payload contract in JSON, after only replacing type with the canonical target",
+      "readProfiles": {
+        "diagnostic": {
+          "schemaRef": "#/$defs/step_failed",
+          "eligibility": "Authorized diagnostic payload must satisfy the typed source contract; otherwise retain the explicit legacy/unprojectable representation."
+        },
+        "public": {
+          "schemaRef": "#/$defs/step_failed",
+          "eligibility": "Apply existing authorization projection first. Use this canonical member only when the authorized payload satisfies this schema; otherwise retain the explicit legacy/unprojectable representation."
+        }
+      },
+      "classificationRequirement": "Authoritative outcome evidence belonging to this step event establishes failure."
+    },
+    "com.veryfront.step.cancelled": {
+      "schemaRef": "#/$defs/step_cancelled",
+      "legacyOrigins": [
+        "STEP_FINISHED"
+      ],
+      "reviewState": "conditional",
+      "sourceRefs": [
+        {
+          "repo": "veryfront-api",
+          "sha": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/lib/types/run-event/payload.ts",
+          "line": 160,
+          "endLine": 165
+        },
+        {
+          "repo": "veryfront-code",
+          "sha": "03903775fbf92852f23cccc1ba6243192042ff64",
+          "path": "src/run-events/payload.ts",
+          "line": 232,
+          "endLine": 237
+        }
+      ],
+      "schemaScope": "API typed payload contract in JSON, after only replacing type with the canonical target",
+      "readProfiles": {
+        "diagnostic": {
+          "schemaRef": "#/$defs/step_cancelled",
+          "eligibility": "Authorized diagnostic payload must satisfy the typed source contract; otherwise retain the explicit legacy/unprojectable representation."
+        },
+        "public": {
+          "schemaRef": "#/$defs/step_cancelled",
+          "eligibility": "Apply existing authorization projection first. Use this canonical member only when the authorized payload satisfies this schema; otherwise retain the explicit legacy/unprojectable representation."
+        }
+      },
+      "classificationRequirement": "Authoritative outcome evidence belonging to this step event establishes cancellation."
+    },
+    "com.veryfront.step.ended": {
+      "schemaRef": "#/$defs/step_ended",
+      "legacyOrigins": [
+        "STEP_FINISHED"
+      ],
+      "reviewState": "conditional",
+      "sourceRefs": [
+        {
+          "repo": "veryfront-api",
+          "sha": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/lib/types/run-event/payload.ts",
+          "line": 160,
+          "endLine": 165
+        },
+        {
+          "repo": "veryfront-code",
+          "sha": "03903775fbf92852f23cccc1ba6243192042ff64",
+          "path": "src/run-events/payload.ts",
+          "line": 232,
+          "endLine": 237
+        }
+      ],
+      "schemaScope": "API typed payload contract in JSON, after only replacing type with the canonical target",
+      "readProfiles": {
+        "diagnostic": {
+          "schemaRef": "#/$defs/step_ended",
+          "eligibility": "Authorized diagnostic payload must satisfy the typed source contract; otherwise retain the explicit legacy/unprojectable representation."
+        },
+        "public": {
+          "schemaRef": "#/$defs/step_ended",
+          "eligibility": "Apply existing authorization projection first. Use this canonical member only when the authorized payload satisfies this schema; otherwise retain the explicit legacy/unprojectable representation."
+        }
+      },
+      "classificationRequirement": "The end is established, but outcome evidence is missing, unrecognized or conflicting. Preserve the raw outcome fields."
+    },
+    "com.veryfront.tool-call.started": {
+      "schemaRef": "#/$defs/tool_call_started",
+      "legacyOrigins": [
+        "TOOL_CALL_START"
+      ],
+      "reviewState": "supported",
+      "sourceRefs": [
+        {
+          "repo": "veryfront-api",
+          "sha": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/lib/types/run-event/payload.ts",
+          "line": 134,
+          "endLine": 138
+        },
+        {
+          "repo": "veryfront-code",
+          "sha": "03903775fbf92852f23cccc1ba6243192042ff64",
+          "path": "src/run-events/payload.ts",
+          "line": 164,
+          "endLine": 168
+        }
+      ],
+      "schemaScope": "API typed payload contract in JSON, after only replacing type with the canonical target",
+      "readProfiles": {
+        "diagnostic": {
+          "schemaRef": "#/$defs/tool_call_started",
+          "eligibility": "Authorized diagnostic payload must satisfy the typed source contract; otherwise retain the explicit legacy/unprojectable representation."
+        },
+        "public": {
+          "schemaRef": "#/$defs/tool_call_started",
+          "eligibility": "Apply existing authorization projection first. Use this canonical member only when the authorized payload satisfies this schema; otherwise retain the explicit legacy/unprojectable representation."
+        }
+      }
+    },
+    "com.veryfront.tool-call.arguments.delta.emitted": {
+      "schemaRef": "#/$defs/tool_call_arguments_delta_emitted",
+      "legacyOrigins": [
+        "TOOL_CALL_ARGS"
+      ],
+      "reviewState": "supported",
+      "sourceRefs": [
+        {
+          "repo": "veryfront-api",
+          "sha": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/lib/types/run-event/payload.ts",
+          "line": 139,
+          "endLine": 139
+        },
+        {
+          "repo": "veryfront-code",
+          "sha": "03903775fbf92852f23cccc1ba6243192042ff64",
+          "path": "src/run-events/payload.ts",
+          "line": 173,
+          "endLine": 173
+        }
+      ],
+      "schemaScope": "API typed payload contract in JSON, after only replacing type with the canonical target",
+      "readProfiles": {
+        "diagnostic": {
+          "schemaRef": "#/$defs/tool_call_arguments_delta_emitted",
+          "eligibility": "Authorized diagnostic payload must satisfy the typed source contract; otherwise retain the explicit legacy/unprojectable representation."
+        },
+        "public": {
+          "schemaRef": "#/$defs/tool_call_arguments_delta_emitted",
+          "eligibility": "Apply existing authorization projection first. Use this canonical member only when the authorized payload satisfies this schema; otherwise retain the explicit legacy/unprojectable representation."
+        }
+      }
+    },
+    "com.veryfront.tool-call.arguments.ended": {
+      "schemaRef": "#/$defs/tool_call_arguments_ended",
+      "legacyOrigins": [
+        "TOOL_CALL_END"
+      ],
+      "reviewState": "supported",
+      "sourceRefs": [
+        {
+          "repo": "veryfront-api",
+          "sha": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/lib/types/run-event/payload.ts",
+          "line": 141,
+          "endLine": 141
+        },
+        {
+          "repo": "veryfront-code",
+          "sha": "03903775fbf92852f23cccc1ba6243192042ff64",
+          "path": "src/run-events/payload.ts",
+          "line": 183,
+          "endLine": 183
+        }
+      ],
+      "schemaScope": "API typed payload contract in JSON, after only replacing type with the canonical target",
+      "readProfiles": {
+        "diagnostic": {
+          "schemaRef": "#/$defs/tool_call_arguments_ended",
+          "eligibility": "Authorized diagnostic payload must satisfy the typed source contract; otherwise retain the explicit legacy/unprojectable representation."
+        },
+        "public": {
+          "schemaRef": "#/$defs/tool_call_arguments_ended",
+          "eligibility": "Apply existing authorization projection first. Use this canonical member only when the authorized payload satisfies this schema; otherwise retain the explicit legacy/unprojectable representation."
+        }
+      }
+    },
+    "com.veryfront.tool-call.result.recorded": {
+      "schemaRef": "#/$defs/tool_call_result_recorded",
+      "legacyOrigins": [
+        "TOOL_CALL_RESULT"
+      ],
+      "reviewState": "supported",
+      "sourceRefs": [
+        {
+          "repo": "veryfront-api",
+          "sha": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/lib/types/run-event/payload.ts",
+          "line": 142,
+          "endLine": 150
+        },
+        {
+          "repo": "veryfront-code",
+          "sha": "03903775fbf92852f23cccc1ba6243192042ff64",
+          "path": "src/run-events/payload.ts",
+          "line": 192,
+          "endLine": 200
+        }
+      ],
+      "schemaScope": "API typed payload contract in JSON, after only replacing type with the canonical target",
+      "readProfiles": {
+        "diagnostic": {
+          "schemaRef": "#/$defs/tool_call_result_recorded",
+          "eligibility": "Authorized diagnostic payload must satisfy the typed source contract; otherwise retain the explicit legacy/unprojectable representation."
+        },
+        "public": {
+          "schemaRef": "#/$defs/tool_call_result_recorded",
+          "eligibility": "Apply existing authorization projection first. Use this canonical member only when the authorized payload satisfies this schema; otherwise retain the explicit legacy/unprojectable representation."
+        }
+      }
+    },
+    "com.veryfront.tool-call.status.reported": {
+      "schemaRef": "#/$defs/tool_call_status_reported",
+      "legacyOrigins": [
+        "TOOL_CALL_STATUS_CHANGED"
+      ],
+      "reviewState": "supported",
+      "sourceRefs": [
+        {
+          "repo": "veryfront-api",
+          "sha": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/lib/types/run-event/payload.ts",
+          "line": 202,
+          "endLine": 206
+        },
+        {
+          "repo": "veryfront-code",
+          "sha": "03903775fbf92852f23cccc1ba6243192042ff64",
+          "path": "src/run-events/payload.ts",
+          "line": 292,
+          "endLine": 296
+        }
+      ],
+      "schemaScope": "API typed payload contract in JSON, after only replacing type with the canonical target",
+      "readProfiles": {
+        "diagnostic": {
+          "schemaRef": "#/$defs/tool_call_status_reported",
+          "eligibility": "Authorized diagnostic payload must satisfy the typed source contract; otherwise retain the explicit legacy/unprojectable representation."
+        },
+        "public": {
+          "schemaRef": "#/$defs/tool_call_status_reported",
+          "eligibility": "Apply existing authorization projection first. Use this canonical member only when the authorized payload satisfies this schema; otherwise retain the explicit legacy/unprojectable representation."
+        }
+      }
+    },
+    "com.veryfront.input-request.created": {
+      "schemaRef": "#/$defs/input_request_created",
+      "legacyOrigins": [
+        "INPUT_REQUEST_CREATED"
+      ],
+      "reviewState": "supported",
+      "sourceRefs": [
+        {
+          "repo": "veryfront-api",
+          "sha": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/lib/types/run-event/payload.ts",
+          "line": 207,
+          "endLine": 209
+        },
+        {
+          "repo": "veryfront-code",
+          "sha": "03903775fbf92852f23cccc1ba6243192042ff64",
+          "path": "src/run-events/payload.ts",
+          "line": 301,
+          "endLine": 303
+        }
+      ],
+      "schemaScope": "API typed payload contract in JSON, after only replacing type with the canonical target",
+      "readProfiles": {
+        "diagnostic": {
+          "schemaRef": "#/$defs/input_request_created",
+          "eligibility": "Authorized diagnostic payload must satisfy the typed source contract; otherwise retain the explicit legacy/unprojectable representation."
+        },
+        "public": {
+          "schemaRef": "#/$defs/input_request_created",
+          "eligibility": "Apply existing authorization projection first. Use this canonical member only when the authorized payload satisfies this schema; otherwise retain the explicit legacy/unprojectable representation."
+        }
+      }
+    },
+    "com.veryfront.input-request.updated": {
+      "schemaRef": "#/$defs/input_request_updated",
+      "legacyOrigins": [
+        "INPUT_REQUEST_UPDATED"
+      ],
+      "reviewState": "supported",
+      "sourceRefs": [
+        {
+          "repo": "veryfront-api",
+          "sha": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/lib/types/run-event/payload.ts",
+          "line": 210,
+          "endLine": 212
+        },
+        {
+          "repo": "veryfront-code",
+          "sha": "03903775fbf92852f23cccc1ba6243192042ff64",
+          "path": "src/run-events/payload.ts",
+          "line": 308,
+          "endLine": 310
+        }
+      ],
+      "schemaScope": "API typed payload contract in JSON, after only replacing type with the canonical target",
+      "readProfiles": {
+        "diagnostic": {
+          "schemaRef": "#/$defs/input_request_updated",
+          "eligibility": "Authorized diagnostic payload must satisfy the typed source contract; otherwise retain the explicit legacy/unprojectable representation."
+        },
+        "public": {
+          "schemaRef": "#/$defs/input_request_updated",
+          "eligibility": "Apply existing authorization projection first. Use this canonical member only when the authorized payload satisfies this schema; otherwise retain the explicit legacy/unprojectable representation."
+        }
+      }
+    },
+    "com.veryfront.child-run.reported": {
+      "schemaRef": "#/$defs/child_run_reported",
+      "legacyOrigins": [
+        "CHILD_RUN_STATUS_CHANGED"
+      ],
+      "reviewState": "supported",
+      "sourceRefs": [
+        {
+          "repo": "veryfront-api",
+          "sha": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/lib/types/run-event/payload.ts",
+          "line": 213,
+          "endLine": 221
+        },
+        {
+          "repo": "veryfront-code",
+          "sha": "03903775fbf92852f23cccc1ba6243192042ff64",
+          "path": "src/run-events/payload.ts",
+          "line": 315,
+          "endLine": 323
+        }
+      ],
+      "schemaScope": "API typed payload contract in JSON, after only replacing type with the canonical target",
+      "readProfiles": {
+        "diagnostic": {
+          "schemaRef": "#/$defs/child_run_reported",
+          "eligibility": "Authorized diagnostic payload must satisfy the typed source contract; otherwise retain the explicit legacy/unprojectable representation."
+        },
+        "public": {
+          "schemaRef": "#/$defs/child_run_reported",
+          "eligibility": "Apply existing authorization projection first. Use this canonical member only when the authorized payload satisfies this schema; otherwise retain the explicit legacy/unprojectable representation."
+        }
+      }
+    },
+    "com.veryfront.message.text.started": {
+      "schemaRef": "#/$defs/message_text_started",
+      "legacyOrigins": [
+        "TEXT_MESSAGE_START"
+      ],
+      "reviewState": "supported",
+      "sourceRefs": [
+        {
+          "repo": "veryfront-api",
+          "sha": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/lib/types/run-event/payload.ts",
+          "line": 118,
+          "endLine": 127
+        },
+        {
+          "repo": "veryfront-code",
+          "sha": "03903775fbf92852f23cccc1ba6243192042ff64",
+          "path": "src/run-events/payload.ts",
+          "line": 138,
+          "endLine": 142
+        }
+      ],
+      "schemaScope": "API typed payload contract in JSON, after only replacing type with the canonical target",
+      "readProfiles": {
+        "diagnostic": {
+          "schemaRef": "#/$defs/message_text_started",
+          "eligibility": "Authorized diagnostic payload must satisfy the typed source contract; otherwise retain the explicit legacy/unprojectable representation."
+        },
+        "public": {
+          "schemaRef": "#/$defs/message_text_started",
+          "eligibility": "Apply existing authorization projection first. Use this canonical member only when the authorized payload satisfies this schema; otherwise retain the explicit legacy/unprojectable representation."
+        }
+      }
+    },
+    "com.veryfront.message.text.delta.emitted": {
+      "schemaRef": "#/$defs/message_text_delta_emitted",
+      "legacyOrigins": [
+        "TEXT_MESSAGE_CONTENT"
+      ],
+      "reviewState": "supported",
+      "sourceRefs": [
+        {
+          "repo": "veryfront-api",
+          "sha": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/lib/types/run-event/payload.ts",
+          "line": 128,
+          "endLine": 132
+        },
+        {
+          "repo": "veryfront-code",
+          "sha": "03903775fbf92852f23cccc1ba6243192042ff64",
+          "path": "src/run-events/payload.ts",
+          "line": 147,
+          "endLine": 151
+        }
+      ],
+      "schemaScope": "API typed payload contract in JSON, after only replacing type with the canonical target",
+      "readProfiles": {
+        "diagnostic": {
+          "schemaRef": "#/$defs/message_text_delta_emitted",
+          "eligibility": "Authorized diagnostic payload must satisfy the typed source contract; otherwise retain the explicit legacy/unprojectable representation."
+        },
+        "public": {
+          "schemaRef": "#/$defs/message_text_delta_emitted",
+          "eligibility": "Apply existing authorization projection first. Use this canonical member only when the authorized payload satisfies this schema; otherwise retain the explicit legacy/unprojectable representation."
+        }
+      }
+    },
+    "com.veryfront.message.text.ended": {
+      "schemaRef": "#/$defs/message_text_ended",
+      "legacyOrigins": [
+        "TEXT_MESSAGE_END"
+      ],
+      "reviewState": "supported",
+      "sourceRefs": [
+        {
+          "repo": "veryfront-api",
+          "sha": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/lib/types/run-event/payload.ts",
+          "line": 133,
+          "endLine": 133
+        },
+        {
+          "repo": "veryfront-code",
+          "sha": "03903775fbf92852f23cccc1ba6243192042ff64",
+          "path": "src/run-events/payload.ts",
+          "line": 156,
+          "endLine": 159
+        }
+      ],
+      "schemaScope": "API typed payload contract in JSON, after only replacing type with the canonical target",
+      "readProfiles": {
+        "diagnostic": {
+          "schemaRef": "#/$defs/message_text_ended",
+          "eligibility": "Authorized diagnostic payload must satisfy the typed source contract; otherwise retain the explicit legacy/unprojectable representation."
+        },
+        "public": {
+          "schemaRef": "#/$defs/message_text_ended",
+          "eligibility": "Apply existing authorization projection first. Use this canonical member only when the authorized payload satisfies this schema; otherwise retain the explicit legacy/unprojectable representation."
+        }
+      }
+    },
+    "com.veryfront.message.reasoning.started": {
+      "schemaRef": "#/$defs/message_reasoning_started",
+      "legacyOrigins": [
+        "REASONING_MESSAGE_START"
+      ],
+      "reviewState": "supported",
+      "sourceRefs": [
+        {
+          "repo": "veryfront-api",
+          "sha": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/lib/types/run-event/payload.ts",
+          "line": 167,
+          "endLine": 167
+        },
+        {
+          "repo": "veryfront-code",
+          "sha": "03903775fbf92852f23cccc1ba6243192042ff64",
+          "path": "src/run-events/payload.ts",
+          "line": 247,
+          "endLine": 247
+        }
+      ],
+      "schemaScope": "API typed payload contract in JSON, after only replacing type with the canonical target",
+      "readProfiles": {
+        "diagnostic": {
+          "schemaRef": "#/$defs/message_reasoning_started",
+          "eligibility": "Authorized diagnostic payload must satisfy the typed source contract; otherwise retain the explicit legacy/unprojectable representation."
+        },
+        "public": {
+          "schemaRef": "#/$defs/message_reasoning_started",
+          "eligibility": "Apply existing authorization projection first. Use this canonical member only when the authorized payload satisfies this schema; otherwise retain the explicit legacy/unprojectable representation."
+        }
+      }
+    },
+    "com.veryfront.message.reasoning.delta.emitted": {
+      "schemaRef": "#/$defs/message_reasoning_delta_emitted",
+      "legacyOrigins": [
+        "REASONING_MESSAGE_CONTENT"
+      ],
+      "reviewState": "supported",
+      "sourceRefs": [
+        {
+          "repo": "veryfront-api",
+          "sha": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/lib/types/run-event/payload.ts",
+          "line": 168,
+          "endLine": 168
+        },
+        {
+          "repo": "veryfront-code",
+          "sha": "03903775fbf92852f23cccc1ba6243192042ff64",
+          "path": "src/run-events/payload.ts",
+          "line": 252,
+          "endLine": 255
+        }
+      ],
+      "schemaScope": "API typed payload contract in JSON, after only replacing type with the canonical target",
+      "readProfiles": {
+        "diagnostic": {
+          "schemaRef": "#/$defs/message_reasoning_delta_emitted",
+          "eligibility": "Authorized diagnostic payload must satisfy the typed source contract; otherwise retain the explicit legacy/unprojectable representation."
+        },
+        "public": {
+          "schemaRef": "#/$defs/message_reasoning_delta_emitted",
+          "eligibility": "Apply existing authorization projection first. Use this canonical member only when the authorized payload satisfies this schema; otherwise retain the explicit legacy/unprojectable representation."
+        }
+      }
+    },
+    "com.veryfront.message.reasoning.ended": {
+      "schemaRef": "#/$defs/message_reasoning_ended",
+      "legacyOrigins": [
+        "REASONING_MESSAGE_END"
+      ],
+      "reviewState": "supported",
+      "sourceRefs": [
+        {
+          "repo": "veryfront-api",
+          "sha": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/lib/types/run-event/payload.ts",
+          "line": 169,
+          "endLine": 169
+        },
+        {
+          "repo": "veryfront-code",
+          "sha": "03903775fbf92852f23cccc1ba6243192042ff64",
+          "path": "src/run-events/payload.ts",
+          "line": 260,
+          "endLine": 260
+        }
+      ],
+      "schemaScope": "API typed payload contract in JSON, after only replacing type with the canonical target",
+      "readProfiles": {
+        "diagnostic": {
+          "schemaRef": "#/$defs/message_reasoning_ended",
+          "eligibility": "Authorized diagnostic payload must satisfy the typed source contract; otherwise retain the explicit legacy/unprojectable representation."
+        },
+        "public": {
+          "schemaRef": "#/$defs/message_reasoning_ended",
+          "eligibility": "Apply existing authorization projection first. Use this canonical member only when the authorized payload satisfies this schema; otherwise retain the explicit legacy/unprojectable representation."
+        }
+      }
+    },
+    "com.veryfront.messages.snapshot.emitted": {
+      "schemaRef": "#/$defs/messages_snapshot_emitted",
+      "legacyOrigins": [
+        "MESSAGES_SNAPSHOT"
+      ],
+      "reviewState": "supported",
+      "sourceRefs": [
+        {
+          "repo": "veryfront-api",
+          "sha": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/lib/types/run-event/payload.ts",
+          "line": 153,
+          "endLine": 153
+        },
+        {
+          "repo": "veryfront-code",
+          "sha": "03903775fbf92852f23cccc1ba6243192042ff64",
+          "path": "src/run-events/payload.ts",
+          "line": 218,
+          "endLine": 218
+        }
+      ],
+      "schemaScope": "API typed payload contract in JSON, after only replacing type with the canonical target",
+      "readProfiles": {
+        "diagnostic": {
+          "schemaRef": "#/$defs/messages_snapshot_emitted",
+          "eligibility": "Authorized diagnostic payload must satisfy the typed source contract; otherwise retain the explicit legacy/unprojectable representation."
+        },
+        "public": {
+          "schemaRef": "#/$defs/messages_snapshot_emitted",
+          "eligibility": "Apply existing authorization projection first. Use this canonical member only when the authorized payload satisfies this schema; otherwise retain the explicit legacy/unprojectable representation."
+        }
+      }
+    },
+    "com.veryfront.shared-state.snapshot.emitted": {
+      "schemaRef": "#/$defs/state_snapshot_emitted",
+      "legacyOrigins": [
+        "STATE_SNAPSHOT"
+      ],
+      "reviewState": "supported",
+      "sourceRefs": [
+        {
+          "repo": "veryfront-api",
+          "sha": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/lib/types/run-event/payload.ts",
+          "line": 151,
+          "endLine": 151
+        },
+        {
+          "repo": "veryfront-code",
+          "sha": "03903775fbf92852f23cccc1ba6243192042ff64",
+          "path": "src/run-events/payload.ts",
+          "line": 205,
+          "endLine": 205
+        }
+      ],
+      "schemaScope": "API typed payload contract in JSON, after only replacing type with the canonical target",
+      "readProfiles": {
+        "diagnostic": {
+          "schemaRef": "#/$defs/state_snapshot_emitted",
+          "eligibility": "Authorized diagnostic payload must satisfy the typed source contract; otherwise retain the explicit legacy/unprojectable representation."
+        },
+        "public": {
+          "schemaRef": "#/$defs/state_snapshot_emitted",
+          "eligibility": "Apply existing authorization projection first. Use this canonical member only when the authorized payload satisfies this schema; otherwise retain the explicit legacy/unprojectable representation."
+        }
+      }
+    },
+    "com.veryfront.shared-state.delta.emitted": {
+      "schemaRef": "#/$defs/state_delta_emitted",
+      "legacyOrigins": [
+        "STATE_DELTA"
+      ],
+      "reviewState": "supported",
+      "sourceRefs": [
+        {
+          "repo": "veryfront-api",
+          "sha": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/lib/types/run-event/payload.ts",
+          "line": 152,
+          "endLine": 152
+        },
+        {
+          "repo": "veryfront-code",
+          "sha": "03903775fbf92852f23cccc1ba6243192042ff64",
+          "path": "src/run-events/payload.ts",
+          "line": 213,
+          "endLine": 213
+        }
+      ],
+      "schemaScope": "API typed payload contract in JSON, after only replacing type with the canonical target",
+      "readProfiles": {
+        "diagnostic": {
+          "schemaRef": "#/$defs/state_delta_emitted",
+          "eligibility": "Authorized diagnostic payload must satisfy the typed source contract; otherwise retain the explicit legacy/unprojectable representation."
+        },
+        "public": {
+          "schemaRef": "#/$defs/state_delta_emitted",
+          "eligibility": "Apply existing authorization projection first. Use this canonical member only when the authorized payload satisfies this schema; otherwise retain the explicit legacy/unprojectable representation."
+        }
+      }
+    },
+    "com.veryfront.message.url.referenced": {
+      "schemaRef": "#/$defs/message_url_referenced",
+      "legacyOrigins": [
+        "URL_CITED"
+      ],
+      "reviewState": "supported",
+      "sourceRefs": [
+        {
+          "repo": "veryfront-api",
+          "sha": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/lib/types/run-event/payload.ts",
+          "line": 248,
+          "endLine": 252
+        },
+        {
+          "repo": "veryfront-code",
+          "sha": "03903775fbf92852f23cccc1ba6243192042ff64",
+          "path": "src/run-events/payload.ts",
+          "line": 350,
+          "endLine": 354
+        }
+      ],
+      "schemaScope": "Canonical target preserves the pinned source fields and adds required nonempty messageId plus optional nonempty contentId. This is an explicit draft target extension, not source-schema parity or deployed producer support.",
+      "readProfiles": {
+        "diagnostic": {
+          "schemaRef": "#/$defs/message_url_referenced",
+          "eligibility": "Apply existing authorization projection first. Canonical conversion requires the exact owning message ID from the producer or trusted event-linked historical provenance and a payload satisfying this target schema. Otherwise retain the explicit legacy representation; never infer ownership from source IDs, URLs, neighboring rows, tool calls or current snapshots."
+        },
+        "public": {
+          "schemaRef": "#/$defs/message_url_referenced",
+          "eligibility": "Apply existing authorization projection first. Canonical conversion requires the exact owning message ID from the producer or trusted event-linked historical provenance and a payload satisfying this target schema. Otherwise retain the explicit legacy representation; never infer ownership from source IDs, URLs, neighboring rows, tool calls or current snapshots."
+        }
+      }
+    },
+    "com.veryfront.message.document.referenced": {
+      "schemaRef": "#/$defs/message_document_referenced",
+      "legacyOrigins": [
+        "DOCUMENT_CITED"
+      ],
+      "reviewState": "supported",
+      "sourceRefs": [
+        {
+          "repo": "veryfront-api",
+          "sha": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/lib/types/run-event/payload.ts",
+          "line": 253,
+          "endLine": 258
+        },
+        {
+          "repo": "veryfront-code",
+          "sha": "03903775fbf92852f23cccc1ba6243192042ff64",
+          "path": "src/run-events/payload.ts",
+          "line": 359,
+          "endLine": 364
+        }
+      ],
+      "schemaScope": "Canonical target preserves the pinned source fields and adds required nonempty messageId plus optional nonempty contentId. This is an explicit draft target extension, not source-schema parity or deployed producer support.",
+      "readProfiles": {
+        "diagnostic": {
+          "schemaRef": "#/$defs/message_document_referenced",
+          "eligibility": "Apply existing authorization projection first. Canonical conversion requires the exact owning message ID from the producer or trusted event-linked historical provenance and a payload satisfying this target schema. Otherwise retain the explicit legacy representation; never infer ownership from source IDs, URLs, neighboring rows, tool calls or current snapshots."
+        },
+        "public": {
+          "schemaRef": "#/$defs/message_document_referenced",
+          "eligibility": "Apply existing authorization projection first. Canonical conversion requires the exact owning message ID from the producer or trusted event-linked historical provenance and a payload satisfying this target schema. Otherwise retain the explicit legacy representation; never infer ownership from source IDs, URLs, neighboring rows, tool calls or current snapshots."
+        }
+      }
+    },
+    "com.veryfront.message.file.attached": {
+      "schemaRef": "#/$defs/message_file_attached",
+      "legacyOrigins": [
+        "FILE_ATTACHED"
+      ],
+      "reviewState": "supported",
+      "sourceRefs": [
+        {
+          "repo": "veryfront-api",
+          "sha": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/lib/types/run-event/payload.ts",
+          "line": 259,
+          "endLine": 263
+        },
+        {
+          "repo": "veryfront-code",
+          "sha": "03903775fbf92852f23cccc1ba6243192042ff64",
+          "path": "src/run-events/payload.ts",
+          "line": 369,
+          "endLine": 373
+        }
+      ],
+      "schemaScope": "Canonical target preserves the pinned source fields and adds required nonempty messageId plus optional nonempty contentId. This is an explicit draft target extension, not source-schema parity or deployed producer support.",
+      "readProfiles": {
+        "diagnostic": {
+          "schemaRef": "#/$defs/message_file_attached",
+          "eligibility": "Apply existing authorization projection first. Canonical conversion requires the exact owning message ID from the producer or trusted event-linked historical provenance and a payload satisfying this target schema. Otherwise retain the explicit legacy representation; never infer ownership from source IDs, URLs, neighboring rows, tool calls or current snapshots."
+        },
+        "public": {
+          "schemaRef": "#/$defs/message_file_attached",
+          "eligibility": "Apply existing authorization projection first. Canonical conversion requires the exact owning message ID from the producer or trusted event-linked historical provenance and a payload satisfying this target schema. Otherwise retain the explicit legacy representation; never infer ownership from source IDs, URLs, neighboring rows, tool calls or current snapshots."
+        }
+      }
+    },
+    "com.veryfront.run.log.captured": {
+      "schemaRef": "#/$defs/run_log_captured",
+      "legacyOrigins": [
+        "RUN_LOG_CAPTURED"
+      ],
+      "reviewState": "supported",
+      "sourceRefs": [
+        {
+          "repo": "veryfront-api",
+          "sha": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/lib/types/run-event/payload.ts",
+          "line": 243,
+          "endLine": 243
+        },
+        {
+          "repo": "veryfront-code",
+          "sha": "03903775fbf92852f23cccc1ba6243192042ff64",
+          "path": "src/run-events/payload.ts",
+          "line": 337,
+          "endLine": 337
+        }
+      ],
+      "schemaScope": "API typed payload contract in JSON, after only replacing type with the canonical target",
+      "readProfiles": {
+        "diagnostic": {
+          "schemaRef": "#/$defs/run_log_captured",
+          "eligibility": "Authorized diagnostic payload must satisfy the typed source contract; otherwise retain the explicit legacy/unprojectable representation."
+        },
+        "public": {
+          "schemaRef": "#/$defs/run_log_captured",
+          "eligibility": "Apply existing authorization projection first. Use this canonical member only when the authorized payload satisfies this schema; otherwise retain the explicit legacy/unprojectable representation."
+        }
+      }
+    },
+    "com.veryfront.stream.heartbeat.emitted": {
+      "schemaRef": "#/$defs/stream_heartbeat_emitted",
+      "legacyOrigins": [
+        "STREAM_HEARTBEAT_EMITTED"
+      ],
+      "reviewState": "transport",
+      "sourceRefs": [
+        {
+          "repo": "veryfront-api",
+          "sha": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/lib/types/run-event/payload.ts",
+          "line": 244,
+          "endLine": 247
+        },
+        {
+          "repo": "veryfront-code",
+          "sha": "03903775fbf92852f23cccc1ba6243192042ff64",
+          "path": "src/run-events/payload.ts",
+          "line": 342,
+          "endLine": 345
+        }
+      ],
+      "schemaScope": "API typed payload contract in JSON, after only replacing type with the canonical target",
+      "readProfiles": {
+        "diagnostic": {
+          "schemaRef": "#/$defs/stream_heartbeat_emitted",
+          "eligibility": "Authorized diagnostic payload must satisfy the typed source contract; otherwise retain the explicit legacy/unprojectable representation."
+        },
+        "public": {
+          "schemaRef": "#/$defs/stream_heartbeat_emitted",
+          "eligibility": "Apply existing authorization projection first. Use this canonical member only when the authorized payload satisfies this schema; otherwise retain the explicit legacy/unprojectable representation."
+        }
+      }
+    },
+    "com.veryfront.model-call.usage.recorded": {
+      "schemaRef": "#/$defs/model_usage_recorded",
+      "legacyOrigins": [
+        "MODEL_CALL_COMPLETED"
+      ],
+      "reviewState": "supported",
+      "sourceRefs": [
+        {
+          "repo": "veryfront-api",
+          "sha": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/lib/types/run-event/payload.ts",
+          "line": 224,
+          "endLine": 237
+        },
+        {
+          "repo": "veryfront-code",
+          "sha": "03903775fbf92852f23cccc1ba6243192042ff64",
+          "path": "src/run-events/payload.ts",
+          "line": 69,
+          "endLine": 83
+        }
+      ],
+      "schemaScope": "API typed payload contract in JSON, after only replacing type with the canonical target",
+      "readProfiles": {
+        "diagnostic": {
+          "schemaRef": "#/$defs/model_usage_recorded",
+          "eligibility": "Authorized diagnostic payload must satisfy the typed source contract; otherwise retain the explicit legacy/unprojectable representation."
+        },
+        "public": {
+          "schemaRef": "#/$defs/model_usage_recorded",
+          "eligibility": "Apply existing authorization projection first. Use this canonical member only when the authorized payload satisfies this schema; otherwise retain the explicit legacy/unprojectable representation."
+        }
+      }
+    }
+  },
+  "x-profiles": {
+    "primary": "API typed producer/valid-source payload contract. Root oneOf enumerates this profile.",
+    "public": "Use each x-targets.readProfiles.public ref after existing authorization projection and only with the stated eligibility. Invalid authorized rows retain the explicit legacy/unprojectable page member.",
+    "diagnostic": "Use each x-targets.readProfiles.diagnostic ref only after the authorized diagnostic projection.",
+    "agui": "Separate existing wire profile and adapter; no AG-UI wire schema is replaced by this bundle."
+  },
+  "x-excluded": [
+    {
+      "type": "com.veryfront.files.changes.reported",
+      "legacyOrigins": [
+        "FILES_CHANGED"
+      ],
+      "reviewState": "blocked",
+      "reason": "Blocked vocabulary mapping; no normative canonical schema is approved."
+    }
+  ],
+  "x-unknownAndReserved": "Reserved sources and UNKNOWN have no canonical target and are excluded. Open record/unknown values are represented as unconstrained JSON, without invented nested fields.",
+  "x-gaps": [
+    {
+      "id": "source-valid-opaque-omission",
+      "kind": "source_behavior",
+      "targets": [
+        "com.veryfront.tool-call.result.recorded",
+        "com.veryfront.shared-state.delta.emitted"
+      ],
+      "disposition": "Preserve source acceptance; do not invent requiredness.",
+      "finding": "Bare Zod unknown accepts absent keys. content and delta are therefore properties with unconstrained JSON schemas, absent from required.",
+      "sourceRefs": [
+        {
+          "repo": "veryfront-api",
+          "sha": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/lib/types/run-event/payload.ts",
+          "line": 92,
+          "endLine": 97
+        },
+        {
+          "repo": "veryfront-api",
+          "sha": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/lib/types/run-event/payload.ts",
+          "line": 142,
+          "endLine": 150
+        },
+        {
+          "repo": "veryfront-api",
+          "sha": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/lib/types/run-event/payload.ts",
+          "line": 152,
+          "endLine": 152
+        }
+      ]
+    },
+    {
+      "id": "agui-reader-profile-distinct",
+      "kind": "representation_boundary",
+      "targets": [
+        "com.veryfront.message.text.delta.emitted",
+        "com.veryfront.message.text.ended",
+        "com.veryfront.shared-state.delta.emitted"
+      ],
+      "disposition": "Keep AG-UI adapter validation separate; these typed schemas do not redefine the AG-UI wire profile.",
+      "finding": "Public AG-UI requires contentId on text content/end and constrains state delta to an object or JSON Patch operation array. Typed payload schemas intentionally retain optional contentId and opaque delta.",
+      "sourceRefs": [
+        {
+          "repo": "veryfront-api",
+          "sha": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/lib/types/ag-ui.types.ts",
+          "line": 208,
+          "endLine": 219
+        },
+        {
+          "repo": "veryfront-api",
+          "sha": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/lib/types/ag-ui.types.ts",
+          "line": 251,
+          "endLine": 266
+        }
+      ]
+    },
+    {
+      "id": "authorized-read-fallback",
+      "kind": "read_completeness_limit",
+      "targets": [
+        "com.veryfront.run.started",
+        "com.veryfront.run.succeeded",
+        "com.veryfront.run.failed",
+        "com.veryfront.run.cancelled",
+        "com.veryfront.run.paused",
+        "com.veryfront.step.started",
+        "com.veryfront.step.succeeded",
+        "com.veryfront.step.failed",
+        "com.veryfront.step.cancelled",
+        "com.veryfront.step.ended",
+        "com.veryfront.tool-call.started",
+        "com.veryfront.tool-call.arguments.delta.emitted",
+        "com.veryfront.tool-call.arguments.ended",
+        "com.veryfront.tool-call.result.recorded",
+        "com.veryfront.tool-call.status.reported",
+        "com.veryfront.input-request.created",
+        "com.veryfront.input-request.updated",
+        "com.veryfront.child-run.reported",
+        "com.veryfront.message.text.started",
+        "com.veryfront.message.text.delta.emitted",
+        "com.veryfront.message.text.ended",
+        "com.veryfront.message.reasoning.started",
+        "com.veryfront.message.reasoning.delta.emitted",
+        "com.veryfront.message.reasoning.ended",
+        "com.veryfront.messages.snapshot.emitted",
+        "com.veryfront.shared-state.snapshot.emitted",
+        "com.veryfront.shared-state.delta.emitted",
+        "com.veryfront.message.url.referenced",
+        "com.veryfront.message.document.referenced",
+        "com.veryfront.message.file.attached",
+        "com.veryfront.run.log.captured",
+        "com.veryfront.stream.heartbeat.emitted",
+        "com.veryfront.model-call.usage.recorded"
+      ],
+      "disposition": "Preserve event identity, count and cursor in the explicit legacy/unprojectable member whenever the authorized payload fails the selected typed schema; do not fabricate required fields or globally loosen schemas.",
+      "finding": "Current total projection can serve malformed known payloads and type-only degraded rows with unrecoverableFields. The primary typed schemas cover valid canonical source contracts, not every historical or redacted served row.",
+      "sourceRefs": [
+        {
+          "repo": "veryfront-api",
+          "sha": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/usecases/runs/event-projection/index.ts",
+          "line": 255,
+          "endLine": 284
+        },
+        {
+          "repo": "veryfront-api",
+          "sha": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/usecases/runs/event-projection/index.ts",
+          "line": 381,
+          "endLine": 414
+        }
+      ]
+    },
+    {
+      "id": "terminal-public-metadata-projection",
+      "kind": "authorization_boundary",
+      "targets": [
+        "com.veryfront.run.succeeded",
+        "com.veryfront.run.failed",
+        "com.veryfront.run.cancelled"
+      ],
+      "disposition": "Apply existing public metadata allowlist before schema validation; schema acceptance does not grant permission to publish a field.",
+      "finding": "The typed metadata contract is an open record. Public egress filters it to an allowlist without validating each copied value; diagnostic access and producer contracts differ from public visibility.",
+      "sourceRefs": [
+        {
+          "repo": "veryfront-api",
+          "sha": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/lib/types/ag-ui.types.ts",
+          "line": 101,
+          "endLine": 137
+        },
+        {
+          "repo": "veryfront-api",
+          "sha": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/usecases/agent-runs/public-event-payload.ts",
+          "line": 186,
+          "endLine": 196
+        }
+      ]
+    },
+    {
+      "id": "tool-result-read-normalization",
+      "kind": "normalization_boundary",
+      "targets": [
+        "com.veryfront.tool-call.result.recorded"
+      ],
+      "disposition": "Preserve the authorized normalized read payload. The typed source schema remains permissive where the API writer accepts omission.",
+      "finding": "Current read projection strips result/is_error aliases and supplies content:null for absent content; isError remains true, false or null. No boolean default to false is introduced.",
+      "sourceRefs": [
+        {
+          "repo": "veryfront-api",
+          "sha": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/usecases/runs/event-projection/index.ts",
+          "line": 217,
+          "endLine": 245
+        }
+      ]
+    }
+  ],
+  "x-verification": {
+    "method": "Executed pinned API payload.ts and compared its Zod acceptance with the saved Draft 2020-12 schemas over generated JSON fixtures and adversarial field mutations.",
+    "apiJsonSchemaAcceptanceComparisons": 1161,
+    "mismatches": 0,
+    "sourceZodVersion": "3.25.76",
+    "verifierAjvVersion": "8.18.0",
+    "limitations": "No runtime, AG-UI adapter, authorization integration, staging or production compatibility execution. The runtime read companions have source evidence and direct schema validation; trusted redaction provenance remains a representation gate."
+  },
+  "x-legacy-fallbacks": {
+    "RUNTIME_EVENT_RECORDED": {
+      "disposition": "Reserved legacy carrier. Preserve the authorized source type, payload, persisted identity and cursor without assigning a generic canonical runtime event.",
+      "visibility": "Reapply the existing nested/private source visibility policy. The opaque body alone does not establish provenance or public permission.",
+      "schemaStatus": "No canonical payload schema is registered for this source.",
+      "sourceRefs": [
+        {
+          "repo": "veryfront-api",
+          "sha": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/usecases/agent-runs/public-event-payload.ts",
+          "line": 242,
+          "endLine": 261
+        },
+        {
+          "repo": "veryfront-api",
+          "sha": "4f103f7cc5ea11b909b5df1ba0110d31641fce9e",
+          "path": "src/usecases/agent-runs/public-event-payload.ts",
+          "line": 293,
+          "endLine": 331
+        }
+      ]
+    }
+  }
+}

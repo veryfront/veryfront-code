@@ -48,6 +48,10 @@ import {
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { DurableRunEventPersistenceError } from "../conversation/private-run-event.ts";
 import {
+  bindManagedToolResultFence,
+  createManagedToolResultFence,
+} from "./managed-tool-result-fence.ts";
+import {
   bindRuntimeObservationWriterCapability,
   createRuntimeObservationWriterCapability,
 } from "#veryfront/runtime/runtime-observation-carrier.ts";
@@ -55,6 +59,20 @@ import {
 const getAdmissionScopeSchema = defineSchema((v) =>
   v.object({ projectId: v.string().uuid() }).strict()
 );
+
+function requireActivePersistenceRun(run: ConversationRunProjection): void {
+  if (run.status !== "pending" && run.status !== "running" && run.status !== "waiting_for_tool") {
+    throw new TypeError("Managed broker persistence requires an active run");
+  }
+}
+
+function requireCanonicalWriterScope(
+  scope: { projectId: string } | undefined,
+  canonicalRunId: string | undefined,
+  message: string,
+): void {
+  if (scope && !canonicalRunId) throw new TypeError(message);
+}
 
 /** Acknowledging output writes and terminal finalization for a canonical run. */
 export interface ManagedBrokerOutput {
@@ -132,6 +150,8 @@ export function createManagedBrokerPersistence(input: {
   modelId: string;
   resolveProvider(modelId: string): string;
   fetch?: typeof globalThis.fetch;
+  /** Internal/test persistence deadline; production uses the sink default. */
+  eventPersistenceTimeoutMs?: number;
   /** Trusted migration opt-in. Requires API support and a project-bound generation writer. */
   toolCallAdmissions?: { projectId: string };
   /** Trusted migration opt-in. Disabled until the API accepts runtime_observations. */
@@ -155,6 +175,9 @@ export function createManagedBrokerPersistence(input: {
     }),
     run,
     terminal,
+    ...(input.eventPersistenceTimeoutMs !== undefined
+      ? { eventPersistenceTimeoutMs: input.eventPersistenceTimeoutMs }
+      : {}),
     ...(input.toolCallAdmissions ? { toolCallAdmissions: input.toolCallAdmissions } : {}),
     ...(input.runtimeObservations ? { runtimeObservations: input.runtimeObservations } : {}),
   });
@@ -165,15 +188,15 @@ export function createManagedBrokerPersistenceFromCapability(input: {
   capability: HostedRunEventWriterCapability;
   run: ConversationRunProjection;
   terminal: ManagedBrokerTerminal;
+  /** Internal/test persistence deadline; production uses the sink default. */
+  eventPersistenceTimeoutMs?: number;
   toolCallAdmissions?: { projectId: string };
   runtimeObservations?: { projectId: string };
 }) {
   const run = getConversationRunProjectionSchema().parse(input.run);
-  if (run.status !== "pending" && run.status !== "running" && run.status !== "waiting_for_tool") {
-    throw new TypeError("Managed broker persistence requires an active run");
-  }
+  requireActivePersistenceRun(run);
   const terminalState = terminalStates.get(input.terminal);
-  if (!terminalState || terminalState.runId !== run.runId) {
+  if (terminalState?.runId !== run.runId) {
     throw new TypeError("Managed broker terminal authority is not bound to this run");
   }
   const dispatchTerminal = terminalState.dispatch;
@@ -184,12 +207,16 @@ export function createManagedBrokerPersistenceFromCapability(input: {
     ? undefined
     : getAdmissionScopeSchema().parse(input.runtimeObservations);
   const canonicalRunId = hostedRunCanonicalId(input.capability, run.runId);
-  if (admissionScope && !canonicalRunId) {
-    throw new TypeError("Tool-call admissions require an exact canonical run writer");
-  }
-  if (runtimeObservationScope && !canonicalRunId) {
-    throw new TypeError("Runtime observations require an exact canonical run writer");
-  }
+  requireCanonicalWriterScope(
+    admissionScope,
+    canonicalRunId,
+    "Tool-call admissions require an exact canonical run writer",
+  );
+  requireCanonicalWriterScope(
+    runtimeObservationScope,
+    canonicalRunId,
+    "Runtime observations require an exact canonical run writer",
+  );
   const toolAdmissions = createPrivateMap<string, {
     receipt?: AgentRunToolCallAdmissionReceipt;
     waiter?: {
@@ -225,7 +252,13 @@ export function createManagedBrokerPersistenceFromCapability(input: {
   });
   if (!mirror) throw new TypeError("Managed broker run-event capability is not bound");
   const durableMirror = mirror;
-  const durableSink = createDurableRunEventSink({ mirror: durableMirror });
+  const durableSink = createDurableRunEventSink({
+    mirror: durableMirror,
+    ...(input.eventPersistenceTimeoutMs !== undefined
+      ? { timeoutMs: input.eventPersistenceTimeoutMs }
+      : {}),
+  });
+  const resultFence = runtimeObservationScope ? createManagedToolResultFence() : undefined;
   let tail = Promise.resolve();
   let failure: unknown;
   let failed = false;
@@ -254,6 +287,7 @@ export function createManagedBrokerPersistenceFromCapability(input: {
         failure = error;
         failed = true;
         rejectToolAdmissions(error);
+        resultFence?.fail(error);
         throw error;
       }
     });
@@ -273,6 +307,7 @@ export function createManagedBrokerPersistenceFromCapability(input: {
     });
   const modelRunEventSink: AgentRunEventSink = (event) =>
     queue(async () => await durableSink(event));
+  if (resultFence) bindManagedToolResultFence(modelRunEventSink, resultFence);
   if (runtimeObservationScope) {
     bindRuntimeObservationWriterCapability(
       modelRunEventSink,
@@ -299,6 +334,7 @@ export function createManagedBrokerPersistenceFromCapability(input: {
       return queue(async () => {
         await durableMirror.handleChunk(chunk);
         await flush();
+        resultFence?.resultPersisted(chunk);
         if (
           admissionScope && chunk.type === "tool-input-start" &&
           !isObservedToolResultStart(chunk)
@@ -387,12 +423,18 @@ export function createManagedBrokerPersistenceFromCapability(input: {
           throw terminalDispatchError;
         }
         if (terminalFailure.failed && !priorFailure.failed) throw terminalFailure.error;
+        resultFence?.fail(
+          new DurableRunEventPersistenceError(
+            "Managed output finished before the required tool result was persisted",
+          ),
+        );
       }, true);
     },
   };
   async function cleanup(): Promise<void> {
     if (cleaned) return;
     cleaned = true;
+    resultFence?.fail(new DurableRunEventPersistenceError("Managed result owner closed"));
     rejectToolAdmissions(new DurableRunEventPersistenceError("Tool-call admission owner closed"));
     toolAdmissions.clear();
     await tail;

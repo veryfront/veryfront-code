@@ -25,7 +25,12 @@ function replacePropertyForTest(target: object, key: PropertyKey, value: unknown
   TestReflectApply(TestObjectDefineProperty, undefined, [
     target,
     key,
-    { ...descriptor, value },
+    {
+      configurable: descriptor.configurable,
+      enumerable: descriptor.enumerable,
+      writable: "writable" in descriptor ? descriptor.writable : true,
+      value,
+    },
   ]);
   return () => {
     TestReflectApply(TestObjectDefineProperty, undefined, [target, key, descriptor]);

@@ -991,6 +991,44 @@ export {
   type PersistConversationUserMessageFailure,
   persistLatestConversationUserMessage,
 } from "./conversation/bootstrap.ts";
+export type {
+  ConversationBranchSelection,
+  ConversationCallOptions,
+  ConversationClientOptions,
+  ConversationDetails,
+  ConversationMessage,
+  ConversationMessagePage,
+  ConversationMessagePart,
+  ConversationMessageRole,
+  ConversationMessageSenderType,
+  ConversationMessageStatus,
+  ConversationMetadata,
+  ConversationPage,
+  ConversationPageInfo,
+  ConversationPageOf,
+  ConversationParticipant,
+  ConversationParticipantPage,
+  ConversationParticipantRole,
+  ConversationParticipantSummary,
+  ConversationParticipantType,
+  ConversationReadState,
+  ConversationSortBy,
+  ConversationSortOrder,
+  ConversationsProblem,
+  ConversationStatus,
+  ConversationType,
+  CreateConversationInitialMessageInput,
+  CreateConversationInput,
+  CreateConversationMessageBranchInput,
+  CreateConversationMessageInput,
+  CreateConversationParticipantInput,
+  ListConversationMessageBranchesParams,
+  ListConversationMessagesParams,
+  ListConversationsParams,
+  UpdateConversationInput,
+  UpdateConversationMessageInput,
+  UpdateConversationReadStateInput,
+} from "#veryfront/conversations/index.ts";
 export {
   buildHostedDurableChildInvokeFailureResult,
   type BuildHostedDurableChildInvokeFailureResultInput,
@@ -1907,3 +1945,10 @@ export {
   isHostedServiceAuthError,
   isHostedServiceAuthError as isAgentServiceAuthError,
 } from "./service/auth.ts";
+
+export {
+  type HostedChildTaskInputResolver,
+  withHostedChildTaskInputResolver,
+} from "./hosted/accepted-child-input-scope.ts";
+
+export { getVerifiedHostedTaskInput } from "./hosted/task-input.ts";

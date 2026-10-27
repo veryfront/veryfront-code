@@ -3,6 +3,10 @@ type GlobalWithRuntime = typeof globalThis & {
   Bun?: unknown;
 };
 
+const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const hasOwnProperty = Object.prototype.hasOwnProperty;
+const apply = Reflect.apply;
+
 export type RuntimeKind = "bun" | "cloudflare" | "deno" | "node" | "unknown";
 
 /** @internal Exported so overlapping host signals can be regression-tested. */
@@ -22,6 +26,39 @@ export function classifyRuntimeSignals(signals: {
 }
 
 function hasNodeProcess(): boolean {
+  // An existing Node process data property remains authoritative even when a
+  // shim copies Deno's namespace footprint. Inspecting the descriptor does not
+  // initialize a host's lazy process getter.
+  const processDescriptor = getOwnPropertyDescriptor(globalThis, "process");
+  if (
+    processDescriptor &&
+    (apply(hasOwnProperty, processDescriptor, ["value"]) || !processDescriptor.enumerable)
+  ) {
+    // Node 24 installs a non-enumerable lazy accessor; Deno 2.9's lazy global
+    // is enumerable. Keep Node's accessor authoritative over Deno shims too.
+    const process = (apply(hasOwnProperty, processDescriptor, ["value"])
+      ? processDescriptor.value
+      : (globalThis as GlobalWithRuntime).process) as GlobalWithRuntime["process"];
+    return process?.versions?.node != null && !process?.versions?.deno;
+  }
+  // Native Deno carries an opaque bootstrap slot. Read only its data-property
+  // footprint; do not call or expose its APIs. This avoids initializing Deno
+  // 2.9's lazy Node global during runtime detection under hostile prototypes.
+  // Unknown namespace layouts and ordinary shims retain the process probe.
+  const deno = getDenoRuntime();
+  if (deno) {
+    const marker = getOwnPropertyDescriptor(deno, "internal");
+    if (
+      marker && apply(hasOwnProperty, marker, ["value"]) &&
+      typeof marker.value === "symbol"
+    ) {
+      const slot = getOwnPropertyDescriptor(deno, marker.value);
+      if (
+        slot && apply(hasOwnProperty, slot, ["value"]) &&
+        slot.value !== null && typeof slot.value === "object"
+      ) return false;
+    }
+  }
   const global = globalThis as GlobalWithRuntime;
   return global.process?.versions?.node != null && !global.process?.versions?.deno;
 }
@@ -43,8 +80,16 @@ export function getDenoRuntime(): typeof Deno | undefined {
   return undefined;
 }
 
+// Capture the host before project code can replace its namespace or properties.
+const capturedDenoRuntime = getDenoRuntime();
+
+/** @internal Trusted bootstrap namespace; does not inspect mutable project globals. */
+export function getCapturedDenoRuntime(): typeof Deno | undefined {
+  return capturedDenoRuntime;
+}
+
 function hasRealDeno(): boolean {
-  return getDenoRuntime() != null;
+  return capturedDenoRuntime != null;
 }
 
 /**

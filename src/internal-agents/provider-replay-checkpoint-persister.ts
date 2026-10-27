@@ -1,3 +1,7 @@
+import {
+  readRecoveryAppendAcknowledgement,
+  type RecoveryAppendAcknowledgement,
+} from "./recovery-append-acknowledgement.ts";
 import { instrumentConversationRunFetch } from "#veryfront/agent/conversation/durable.ts";
 import {
   assertNativeRequestProcessing,
@@ -17,7 +21,7 @@ import {
   createVeryfrontApiRequestUrlResolver,
   type VeryfrontApiRequestUrlResolver,
 } from "#veryfront/platform/adapters/veryfront-api-url.ts";
-import { createOriginBoundOutboundFetch } from "#veryfront/security/http/outbound-fetch.ts";
+import { createVeryfrontApiOriginBoundOutboundFetch } from "#veryfront/security/http/outbound-fetch.ts";
 
 const DEFAULT_PROVIDER_REPLAY_APPEND_TIMEOUT_MS = 15_000;
 
@@ -97,53 +101,30 @@ function readDetachableProperty(target: DetachableContainer, key: string): unkno
   return descriptor.value;
 }
 
-/** Copy a validated JSON value into containers no tenant prototype can reach. */
-function detachJsonValue(value: unknown, depth: number, budget: { nodes: number }): unknown {
-  if (value === null) return null;
-  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
-    return value;
+function detachJsonArray(value: unknown[], depth: number, budget: { nodes: number }): unknown[] {
+  const detached = createDetachedArray();
+  // `length` is a non-enumerable own data property on every array exotic
+  // object, so it is read directly rather than through the enumerable check.
+  const lengthDescriptor = apply(getOwnPropertyDescriptor, Object, [value, "length"]) as
+    | PropertyDescriptor
+    | undefined;
+  const length = lengthDescriptor !== undefined && hasOwn(lengthDescriptor, "value") &&
+      typeof lengthDescriptor.value === "number"
+    ? lengthDescriptor.value
+    : 0;
+  for (let index = 0; index < length; index += 1) {
+    const entry = detachJsonValue(readDetachableProperty(value, `${index}`), depth + 1, budget);
+    // JSON.stringify writes null for array entries it cannot represent.
+    detached[index] = entry === OMITTED ? null : entry;
   }
-  if (
-    typeof value === "undefined" || typeof value === "function" || typeof value === "symbol"
-  ) {
-    return OMITTED;
-  }
-  if (typeof value !== "object") {
-    // bigint, and any other primitive JSON.stringify refuses to represent.
-    throw persistenceFailure("Provider replay checkpoint carries a non-serializable value");
-  }
-  // Root sits at depth 0 and the maximum depth is inclusive, matching the
-  // `depth > maxDepth` rule the snapshot validator behind
-  // `parseProviderReplayCheckpointEvent` applies. Keeping the two in step means
-  // the persister never rejects a checkpoint that read-back would accept.
-  if (depth > MAX_PROVIDER_REPLAY_RAW_METADATA_DEPTH) {
-    throw persistenceFailure("Provider replay checkpoint exceeds the serializable depth bound");
-  }
-  if (budget.nodes <= 0) {
-    throw persistenceFailure("Provider replay checkpoint exceeds the serializable node bound");
-  }
-  budget.nodes -= 1;
+  return detached;
+}
 
-  if (isArray(value)) {
-    const detached = createDetachedArray();
-    // `length` is a non-enumerable own data property on every array exotic
-    // object, so it is read directly rather than through the enumerable check.
-    const lengthDescriptor = apply(getOwnPropertyDescriptor, Object, [value, "length"]) as
-      | PropertyDescriptor
-      | undefined;
-    const length = lengthDescriptor !== undefined && hasOwn(lengthDescriptor, "value") &&
-        typeof lengthDescriptor.value === "number"
-      ? lengthDescriptor.value
-      : 0;
-    for (let index = 0; index < length; index += 1) {
-      const entry = detachJsonValue(readDetachableProperty(value, `${index}`), depth + 1, budget);
-      // JSON.stringify writes null for array entries it cannot represent.
-      detached[index] = entry === OMITTED ? null : entry;
-    }
-    return detached;
-  }
-
-  const record = value as Record<string, unknown>;
+function detachJsonRecord(
+  record: Record<string, unknown>,
+  depth: number,
+  budget: { nodes: number },
+): Record<string, unknown> {
   const detached = createDetachedObject();
   // `Reflect.ownKeys` hands back an ordinary array, so `for...of` would resolve
   // `Symbol.iterator` through the shared `Array.prototype` and hand a tenant
@@ -171,6 +152,40 @@ function detachJsonValue(value: unknown, depth: number, budget: { nodes: number 
   return detached;
 }
 
+/** Copy a validated JSON value into containers no tenant prototype can reach. */
+function detachJsonValue(value: unknown, depth: number, budget: { nodes: number }): unknown {
+  if (value === null) return null;
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    return value;
+  }
+  if (
+    value === undefined || typeof value === "function" || typeof value === "symbol"
+  ) {
+    return OMITTED;
+  }
+  if (typeof value !== "object") {
+    // bigint, and any other primitive JSON.stringify refuses to represent.
+    throw persistenceFailure("Provider replay checkpoint carries a non-serializable value");
+  }
+  // Root sits at depth 0 and the maximum depth is inclusive, matching the
+  // `depth > maxDepth` rule the snapshot validator behind
+  // `parseProviderReplayCheckpointEvent` applies. Keeping the two in step means
+  // the persister never rejects a checkpoint that read-back would accept.
+  if (depth > MAX_PROVIDER_REPLAY_RAW_METADATA_DEPTH) {
+    throw persistenceFailure("Provider replay checkpoint exceeds the serializable depth bound");
+  }
+  if (budget.nodes <= 0) {
+    throw persistenceFailure("Provider replay checkpoint exceeds the serializable node bound");
+  }
+  budget.nodes -= 1;
+
+  if (isArray(value)) {
+    return detachJsonArray(value, depth, budget);
+  }
+
+  return detachJsonRecord(value as Record<string, unknown>, depth, budget);
+}
+
 /** Serialize the privileged append body without touching a shared prototype. */
 function serializeCheckpointAppendBody(checkpoint: ProviderReplayCheckpoint): string {
   const budget = { nodes: MAX_PROVIDER_REPLAY_RAW_METADATA_NODES };
@@ -183,6 +198,15 @@ function serializeCheckpointAppendBody(checkpoint: ProviderReplayCheckpoint): st
   const body = createDetachedObject();
   body.events = events;
   return apply(jsonStringify, JSON, [body]) as string;
+}
+
+function serializeCheckpointAppendBodyOpaque(checkpoint: ProviderReplayCheckpoint): string {
+  try {
+    return serializeCheckpointAppendBody(checkpoint);
+  } catch (error) {
+    if (isPersistenceFailure(error)) throw error;
+    throw persistenceFailure("Provider replay checkpoint is not serializable");
+  }
 }
 
 function snapshotFetch(fetchImpl: Fetch): Fetch {
@@ -227,18 +251,27 @@ export function createRunScopedProviderReplayCheckpointPersister(input: {
   runId: string;
   runEventAppendToken: string | null | undefined;
   timeoutMs?: number;
+  /** Private managed host only; requires the actual canonical UUID and durable external cursor. */
+  onAcknowledged?: (
+    checkpoint: ProviderReplayCheckpoint,
+    acknowledgement: RecoveryAppendAcknowledgement,
+  ) => Promise<void>;
   /** Explicit host-owned transport for tests; it joins the active trace like the default. */
   fetch?: Fetch;
 }): ProviderReplayCheckpointPersister | undefined {
   if (!isValidRunEventAppendToken(input.runEventAppendToken)) return undefined;
 
+  const onAcknowledged = input.onAcknowledged;
+  const canonicalRunId = input.runId;
   const token = input.runEventAppendToken;
   const timeoutMs = input.timeoutMs ?? DEFAULT_PROVIDER_REPLAY_APPEND_TIMEOUT_MS;
   // Checkpoint appends are the only durable writes the shared runtime makes
   // over HTTP during a streamed run, so they must carry the execution trace to
   // veryfront-api. The wrapper is a no-op until a tracer provider is installed.
   const fetchImpl = instrumentConversationRunFetch(
-    input.fetch ? snapshotFetch(input.fetch) : createOriginBoundOutboundFetch(input.apiUrl),
+    input.fetch
+      ? snapshotFetch(input.fetch)
+      : createVeryfrontApiOriginBoundOutboundFetch(input.apiUrl),
   );
   const resolveApiUrl: VeryfrontApiRequestUrlResolver = createVeryfrontApiRequestUrlResolver(
     input.apiUrl,
@@ -253,13 +286,7 @@ export function createRunScopedProviderReplayCheckpointPersister(input: {
     // may throw a tenant-controlled value. Only this module's own typed
     // failures may cross the boundary; everything else becomes opaque, exactly
     // as it did when the body was serialized inside the request's try block.
-    let body: string;
-    try {
-      body = serializeCheckpointAppendBody(checkpoint);
-    } catch (error) {
-      if (isPersistenceFailure(error)) throw error;
-      throw persistenceFailure("Provider replay checkpoint is not serializable");
-    }
+    const body = serializeCheckpointAppendBodyOpaque(checkpoint);
     const controller = new AbortController();
     const timeoutError = persistenceFailure("Provider replay checkpoint persistence timed out");
     const timeout = setTimeout(() => controller.abort(timeoutError), timeoutMs);
@@ -289,7 +316,13 @@ export function createRunScopedProviderReplayCheckpointPersister(input: {
           `Provider replay checkpoint append failed with status ${response.status}`,
         );
       }
-      await response.body?.cancel().catch(() => undefined);
+      if (onAcknowledged) {
+        const acknowledgement = await readRecoveryAppendAcknowledgement(response, canonicalRunId);
+        if (abortSignal?.aborted) throw getAbortReason(abortSignal);
+        await onAcknowledged(checkpoint, acknowledgement);
+      } else {
+        await response.body?.cancel().catch(() => undefined);
+      }
       if (abortSignal?.aborted) throw getAbortReason(abortSignal);
     } catch (error) {
       if (abortSignal?.aborted) throw getAbortReason(abortSignal);

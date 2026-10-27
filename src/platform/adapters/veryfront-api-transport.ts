@@ -13,7 +13,10 @@ import {
 } from "#veryfront/utils/config-resource-limits.ts";
 import { serverLogger } from "#veryfront/utils/logger/logger.ts";
 import { sanitizeUrlCredentials, sanitizeUrlForSpan } from "#veryfront/utils/logger/redact.ts";
-import { guardedOutboundFetch, trustedHostFetch } from "#veryfront/security/http/outbound-fetch.ts";
+import {
+  createVeryfrontApiOriginBoundOutboundFetch,
+  trustedHostFetch,
+} from "#veryfront/security/http/outbound-fetch.ts";
 import {
   assertNativeRequestProcessing,
   createNativeRequestInit,
@@ -43,6 +46,7 @@ const NON_RETRYABLE_RESPONSE_PROTOCOL_ERRORS = new WeakSet<object>();
 // initialization so replacing `Headers` or its accessors cannot observe a
 // host-private token.
 const NativeHeaders = Headers;
+const NativeURL = URL;
 const IntrinsicReflectApply = Reflect.apply;
 const HeadersPrototypeHas = NativeHeaders.prototype.has;
 const HeadersPrototypeSet = NativeHeaders.prototype.set;
@@ -241,10 +245,10 @@ function createValidatedVeryfrontApiTransport<T>(
             });
             let res: Response;
             if (config.outboundPolicy) {
-              res = await guardedOutboundFetch(
+              await config.outboundPolicy.authorizeUrl?.(new NativeURL(url));
+              res = await createVeryfrontApiOriginBoundOutboundFetch(config.baseUrl)(
                 url,
                 createNativeRequestInit(requestInit, { redirect: "error" }),
-                { authorizeUrl: config.outboundPolicy.authorizeUrl },
               );
             } else {
               // Indexed, not destructured: destructuring runs Array.prototype's
@@ -454,7 +458,11 @@ export async function readVeryfrontApiResponse(
   }
 }
 
-function requireSuccessResponseByteLimit(value: number | undefined): number {
+/**
+ * Resolve a success-body byte limit, defaulting when absent and throwing a `RangeError` for
+ * anything other than a positive safe integer within the transport ceiling.
+ */
+export function requireSuccessResponseByteLimit(value: number | undefined): number {
   const limit = value ?? DEFAULT_VERYFRONT_API_SUCCESS_BODY_BYTES;
   if (
     !Number.isSafeInteger(limit) ||
@@ -501,7 +509,11 @@ function snapshotBoundedJsonFieldOptions(
   return Object.freeze({ fieldName, maximumBytes });
 }
 
-function successfulResponseProtocolError(
+/**
+ * A 502 error for a successful response whose body breaks the protocol (for example over
+ * its byte limit). The transport never retries it: a retry would download the same body.
+ */
+export function successfulResponseProtocolError(
   detail: string,
   url: string,
   cause?: unknown,

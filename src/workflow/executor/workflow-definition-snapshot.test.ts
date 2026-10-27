@@ -3,6 +3,11 @@ import "#veryfront/schemas/_test-setup.ts";
 import { VeryfrontError } from "#veryfront/errors";
 import { assert, assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import {
+  MAX_WORKFLOW_DEFINITION_COLLECTION_ENTRIES,
+  MAX_WORKFLOW_DEFINITION_STATIC_BYTES,
+  MAX_WORKFLOW_DEFINITION_TEXT_CODE_UNITS,
+} from "../limits.ts";
 import type { WaitNodeConfig, WorkflowDefinition, WorkflowNode } from "../types.ts";
 import {
   captureWorkflowDefinition,
@@ -386,5 +391,215 @@ describe("workflow definition snapshot", () => {
       "must be an own data property",
     );
     assertEquals(calls, 0);
+  });
+  it("detaches and freezes Map and Set contents while retaining shared references", () => {
+    const key = { id: "key" };
+    const value = { count: 1 };
+    const source = { map: new Map([[key, value]]), set: new Set([value]) };
+    const captured = captureWorkflowStaticValue(source, "Collections");
+    const capturedKey = [...captured.map.keys()][0]!;
+    const capturedValue = captured.map.get(capturedKey)!;
+
+    key.id = "changed";
+    value.count = 2;
+    source.map.clear();
+    source.set.clear();
+
+    assertEquals(capturedKey, { id: "key" });
+    assertEquals(capturedValue, { count: 1 });
+    assertEquals([...captured.set][0], capturedValue);
+    assert(capturedKey !== key);
+    assert(capturedValue !== value);
+    for (const item of [captured.map, captured.set, capturedKey, capturedValue]) {
+      assertEquals(Object.isFrozen(item), true);
+    }
+
+    const clone = cloneCapturedWorkflowStaticValue(captured, "Collection clone");
+    const cloneKey = [...clone.map.keys()][0]!;
+    clone.map.get(cloneKey)!.count = 3;
+    assertEquals(capturedValue.count, 1);
+    assertEquals([...clone.set][0], clone.map.get(cloneKey));
+  });
+
+  it("detaches binary views and preserves canonical Date and RegExp values", () => {
+    const buffer = new Uint8Array([1, 2, 3, 4]).buffer;
+    const source = {
+      buffer,
+      view: new DataView(buffer, 1, 2),
+      typed: new Uint16Array([5, 6]),
+      date: new Date("2026-01-02T03:04:05.000Z"),
+      regexp: /value/giu,
+    };
+    const captured = captureWorkflowStaticValue(source, "Native values");
+    new Uint8Array(buffer).fill(9);
+    source.typed.fill(8);
+    source.date.setUTCFullYear(2030);
+
+    assertEquals([...new Uint8Array(captured.buffer)], [1, 2, 3, 4]);
+    assertEquals(captured.view.buffer, captured.buffer);
+    assertEquals(captured.view.byteOffset, 1);
+    assertEquals(captured.view.byteLength, 2);
+    assertEquals(captured.view.getUint8(0), 2);
+    assertEquals([...captured.typed], [5, 6]);
+    assertEquals(captured.date.toISOString(), "2026-01-02T03:04:05.000Z");
+    assertEquals(captured.regexp.source, "value");
+    assertEquals(captured.regexp.flags, "giu");
+    assertEquals(captured.regexp.lastIndex, 0);
+    assertEquals(Object.isFrozen(captured.date), true);
+    assertEquals(Object.isFrozen(captured.regexp), true);
+    assertEquals(Object.isFrozen(captured.view), true);
+  });
+
+  it("rejects custom native properties and stateful regular expressions", () => {
+    const values = [
+      Object.assign(new Map(), { extra: true }),
+      Object.assign(new Set(), { extra: true }),
+      Object.assign(new Uint8Array([1]), { extra: true }),
+      Object.assign(new Date(0), { extra: true }),
+      Object.assign(new ArrayBuffer(1), { extra: true }),
+      Object.assign(new DataView(new ArrayBuffer(1)), { extra: true }),
+      Object.assign(/value/u, { extra: true }),
+    ];
+    for (const value of values) {
+      assertThrows(
+        () => captureWorkflowStaticValue(value, "Custom native value"),
+        VeryfrontError,
+        "custom properties",
+      );
+    }
+    const regexp = /value/g;
+    regexp.lastIndex = 1;
+    assertThrows(
+      () => captureWorkflowStaticValue(regexp, "Stateful expression"),
+      VeryfrontError,
+      "lastIndex must be zero",
+    );
+    assertThrows(
+      () => captureWorkflowStaticValue(new Date(NaN), "Invalid date"),
+      VeryfrontError,
+      "invalid Date",
+    );
+  });
+
+  it("rejects shared memory before exposing buffers or views in a snapshot", () => {
+    const shared = new SharedArrayBuffer(8);
+    assertThrows(
+      () => captureWorkflowStaticValue(shared, "Shared buffer"),
+      VeryfrontError,
+      "SharedArrayBuffer",
+    );
+    for (const value of [new DataView(shared), new Uint8Array(shared)]) {
+      assertThrows(
+        () => captureWorkflowStaticValue(value, "Shared view"),
+        VeryfrontError,
+        "must not view shared memory",
+      );
+    }
+  });
+
+  it("enforces collection, text, and byte budgets for native static values", () => {
+    const count = MAX_WORKFLOW_DEFINITION_COLLECTION_ENTRIES + 1;
+    const entries = Array.from({ length: count }, (_, index) => [index, index] as const);
+    for (
+      const value of [
+        new Map(entries),
+        new Set(entries.map(([key]) => key)),
+        new Uint8Array(count),
+      ]
+    ) {
+      assertThrows(
+        () => captureWorkflowStaticValue(value, "Large collection"),
+        VeryfrontError,
+        "too many entries",
+      );
+    }
+    assertThrows(
+      () =>
+        captureWorkflowStaticValue(
+          "x".repeat(MAX_WORKFLOW_DEFINITION_TEXT_CODE_UNITS + 1),
+          "Long text",
+        ),
+      VeryfrontError,
+      "string exceeds",
+    );
+    assertThrows(
+      () =>
+        captureWorkflowStaticValue(
+          new ArrayBuffer(MAX_WORKFLOW_DEFINITION_STATIC_BYTES + 1),
+          "Large buffer",
+        ),
+      VeryfrontError,
+      "maximum static size",
+    );
+  });
+  it("captures nested workflow and map collaborators without retaining static inputs", () => {
+    const input = { count: 1 };
+    const items = () => [1];
+    const nested = { id: "nested", steps: [step()] };
+    const configs = [
+      { type: "subWorkflow", workflow: nested, input },
+      { type: "subWorkflow", workflow: "nested", input: items },
+      { type: "map", items, processor: nested, concurrency: 2 },
+    ];
+    const captured = configs.map((config) => {
+      const definition = captureWorkflowDefinition(
+        workflowWith({ id: "parent", config } as WorkflowNode),
+      );
+      assert(Array.isArray(definition.steps));
+      return definition.steps[0]!.config;
+    });
+    input.count = 2;
+    nested.steps.length = 0;
+    assertEquals((captured[0]! as { input: unknown }).input, { count: 1 });
+    const subWorkflow = captured[0]!;
+    assert(subWorkflow.type === "subWorkflow");
+    assert(typeof subWorkflow.workflow !== "string");
+    assert(Array.isArray(subWorkflow.workflow.steps));
+    assertEquals(subWorkflow.workflow.steps.length, 1);
+    assertEquals((captured[1]! as { input: unknown }).input, items);
+    const map = captured[2]!;
+    assert(map.type === "map");
+    assertEquals(map.items, items);
+    assert("steps" in map.processor);
+    assert(Array.isArray(map.processor.steps));
+    assertEquals(map.processor.steps.length, 1);
+    assertEquals(Object.isFrozen(map.processor), true);
+  });
+
+  it("rejects invalid config collaborators and static record descriptors", () => {
+    const configs: Record<string, unknown>[] = [
+      { type: "step", agent: 1 },
+      { type: "parallel", strategy: "invalid", nodes: [] },
+      { type: "wait", waitType: "invalid" },
+      { type: "wait", waitType: "event" },
+      { type: "subWorkflow", workflow: 1 },
+      { type: "map", processor: step() },
+      { type: "map", items: 1, processor: step() },
+      { type: "map", items: [], processor: null },
+      { type: "map", items: [], processor: step(), concurrency: 0 },
+      { type: "loop", while: () => true, steps: 1, maxIterations: 2 },
+      { type: "loop", while: () => true, steps: [], maxIterations: 101 },
+    ];
+    for (const config of configs) {
+      assertThrows(
+        () =>
+          captureWorkflowDefinition(
+            workflowWith({ id: "invalid", config } as unknown as WorkflowNode),
+          ),
+        VeryfrontError,
+      );
+    }
+    const values = [
+      { [Symbol("unsupported")]: true },
+      { ["x".repeat(MAX_WORKFLOW_DEFINITION_TEXT_CODE_UNITS + 1)]: true },
+      Object.defineProperty({}, "hidden", { value: true }),
+      Object.fromEntries(Array.from(
+        { length: MAX_WORKFLOW_DEFINITION_COLLECTION_ENTRIES + 1 },
+        (_, index) => [String(index), true],
+      )),
+    ];
+    for (const value of values) {
+      assertThrows(() => captureWorkflowStaticValue(value, "Invalid record"), VeryfrontError);
+    }
   });
 });

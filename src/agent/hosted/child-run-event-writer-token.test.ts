@@ -2,6 +2,14 @@ import { assert, assertEquals, assertRejects, assertThrows } from "#veryfront/te
 import { TIMEOUT_ERROR } from "#veryfront/errors";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { installMockFetch, restoreMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import { createDurableRunEventSink } from "./durable-run-event-sink.ts";
+import { sendSSE } from "#veryfront/agent/runtime/sse-utils.ts";
+import { runWithMandatoryRunEventSink } from "#veryfront/runtime/run-event-sink-context.ts";
+import { withRuntimeStreamOwnership } from "#veryfront/runtime/runtime-stream-ownership.ts";
+import {
+  acknowledgeMirroredToolResult,
+  waitForQueuedToolResults,
+} from "#veryfront/runtime/tool-result-mirror-barrier.ts";
 import {
   _resetShimForTests,
   setGlobalTracerProvider,
@@ -14,6 +22,7 @@ import {
   getActiveHostedRunEventWriterCapability,
   HostedChildRunEventWriterTokenExchangeError,
   inheritedChildAdmitter,
+  refreshHostedRunEventWriterCapability,
   registerHostedRunEventWriterToken,
   runWithHostedRunEventWriterCapability,
   runWithVerifiedHostedRunEventWriterRequest,
@@ -1007,7 +1016,12 @@ function tokenReceipt(token: unknown, run_id = "22222222-2222-4222-8222-22222222
   };
 }
 
-function inheritedAdmissionFixture(timeoutMs = 1000, retryOnce = false, timeoutOnce = false) {
+function inheritedAdmissionFixture(
+  timeoutMs = 1000,
+  retryOnce = false,
+  timeoutOnce = false,
+  observed = false,
+) {
   const runId = "44444444-4444-4444-8444-444444444444";
   let admissionCount = 0;
   let attempts = 0;
@@ -1019,6 +1033,7 @@ function inheritedAdmissionFixture(timeoutMs = 1000, retryOnce = false, timeoutO
   const capability = createHostedRunEventWriterCapability({
     apiUrl: "https://trusted.example.test",
     runId,
+    ...(observed ? { canonicalRunId: "55555555-5555-4555-8555-555555555555" } : {}),
     runEventAppendToken: "synthetic-parent-token",
     timeoutMs,
     inheritedAdmitter: () => async () => {
@@ -1034,7 +1049,8 @@ function inheritedAdmissionFixture(timeoutMs = 1000, retryOnce = false, timeoutO
       if (retryOnce && attempts++ === 0) {
         return Response.json({ error: "temporarily unavailable" }, { status: 503 });
       }
-      const count = JSON.parse(String(init?.body)).events.length;
+      const count =
+        JSON.parse(String(init && "body" in init ? init.body : undefined)).events.length;
       cursor += count;
       return Response.json({
         run_id: runId,
@@ -1049,6 +1065,7 @@ function inheritedAdmissionFixture(timeoutMs = 1000, retryOnce = false, timeoutO
     conversationId: "11111111-1111-4111-8111-111111111111",
     latestEventId: 0,
     latestExternalEventSequence: 0,
+    ...(observed ? { runtimeObservations: true } : {}),
   })!;
   return {
     mirror,
@@ -1057,6 +1074,52 @@ function inheritedAdmissionFixture(timeoutMs = 1000, retryOnce = false, timeoutO
     admit: inheritedChildAdmitter(capability, runId, "child-tool", "prompt"),
   };
 }
+
+Deno.test("inherited child mirror preserves the result barrier through its admission wrapper", async () => {
+  const fixture = inheritedAdmissionFixture(1000, false, false, true);
+  try {
+    const sink = createDurableRunEventSink({ mirror: fixture.mirror });
+    const encoder = new TextEncoder();
+    const stream = runWithMandatoryRunEventSink(
+      sink,
+      () =>
+        withRuntimeStreamOwnership(() =>
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              sendSSE(controller, encoder, { type: "message-start", messageId: "message-1" });
+              sendSSE(controller, encoder, {
+                type: "tool-output-available",
+                toolCallId: "fresh-result",
+                output: {},
+              });
+              controller.close();
+            },
+          })
+        ),
+    );
+    await stream.cancel();
+    let captureUnblocked = false;
+    const capture = waitForQueuedToolResults(fixture.mirror, [{
+      role: "tool",
+      content: [{
+        type: "tool-result",
+        toolCallId: "fresh-result",
+        toolName: "reader",
+        output: { type: "json", value: {} },
+      }],
+    }], new AbortController().signal).then(() => {
+      captureUnblocked = true;
+    });
+    await Promise.resolve();
+    assertEquals(captureUnblocked, false);
+    acknowledgeMirroredToolResult(fixture.mirror, "fresh-result");
+    await capture;
+    assertEquals(captureUnblocked, true);
+  } finally {
+    fixture.acknowledge();
+    fixture.mirror.dispose();
+  }
+});
 
 for (const differentTool of [false, true]) {
   Deno.test(`inherited child admission ${differentTool ? "ignores a different persisted tool start" : "waits for its durable parent tool start"}`, async () => {
@@ -1152,4 +1215,37 @@ Deno.test("an unrelated tool append timeout retries without failing child execut
     fixture.mirror.dispose();
     await outcome;
   }
+});
+
+Deno.test("trusted worker renewal replaces the exact-run writer credential", async () => {
+  let authorization: string | null = null;
+  const capability = createHostedRunEventWriterCapability({
+    apiUrl: "https://api.example.com",
+    runId: "run_parent",
+    runEventAppendToken: "old-writer",
+    fetch: (_url, init) => {
+      authorization = new Headers(init?.headers).get("Authorization");
+      return Promise.resolve(
+        Response.json({
+          token: "child-writer",
+          token_type: "Bearer",
+          run_id: "22222222-2222-4222-8222-222222222222",
+          expires_at: "2030-01-01T00:00:00Z",
+          permissions: ["run.events.append"],
+        }, { headers: { "Cache-Control": "no-store" } }),
+      );
+    },
+  });
+  assertThrows(() =>
+    refreshHostedRunEventWriterCapability(capability, {
+      runId: "other-run",
+      runEventAppendToken: "new-writer",
+    })
+  );
+  refreshHostedRunEventWriterCapability(capability, {
+    runId: "run_parent",
+    runEventAppendToken: "new-writer",
+  });
+  await capability.mintChildRunEventWriterCapability("22222222-2222-4222-8222-222222222222");
+  assertEquals(authorization, "Bearer new-writer");
 });

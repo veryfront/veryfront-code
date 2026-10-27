@@ -1,0 +1,333 @@
+import { privateJsonParse, privateJsonStringify } from "#veryfront/security/private-json.ts";
+import { pushPrivateArray } from "#veryfront/security/private-array.ts";
+import {
+  createPrivateTextDecoder,
+  encodePrivateText,
+  privateTextStartsWith,
+} from "#veryfront/security/private-text.ts";
+import {
+  privateByteLength,
+  privateByteSubarray,
+  PrivateUint8Array,
+} from "#veryfront/security/private-bytes.ts";
+import {
+  close as closeCallback,
+  constants,
+  Dir,
+  fstat as statCallback,
+  fsync as syncCallback,
+  open as openCallback,
+  read as readCallback,
+  Stats,
+  writeFile as writeFileCallback,
+} from "node:fs";
+import { createPrivateDeferred } from "#veryfront/security/private-promise.ts";
+import { link, lstat, mkdir, opendir, unlink } from "node:fs/promises";
+import { dirname, join } from "node:path";
+import { randomUUID } from "node:crypto";
+import { privateSha256Hex } from "#veryfront/security/private-sha256.ts";
+import {
+  type DurableRunIdentity,
+  getDurableRunIdentitySchema,
+  MAX_DURABLE_HOME_BYTES,
+  MAX_DURABLE_RECORD_BYTES,
+  MAX_DURABLE_RECORDS,
+  snapshotDurableValue,
+} from "./durable-run-home-schema.ts";
+
+const apply = Reflect.apply;
+// FileHandle and Stats prototypes remain visible to project modules. Use captured
+// descriptor operations so a replaced method cannot acknowledge bytes or fsync.
+function callbackOperation<T>(
+  start: (done: (error: NodeJS.ErrnoException | null, value: T) => void) => void,
+): Promise<T> {
+  const completion = createPrivateDeferred<T>();
+  start((error, value) => error ? completion.reject(error) : completion.resolve(value));
+  return completion.promise;
+}
+const openDescriptor = (path: string, flags: string | number, mode?: number) =>
+  callbackOperation<number>((done) => openCallback(path, flags, mode, done));
+const closeDescriptor = (fd: number) =>
+  callbackOperation<void>((done) => closeCallback(fd, (error) => done(error, undefined)));
+const syncDescriptor = (fd: number) =>
+  callbackOperation<void>((done) => syncCallback(fd, (error) => done(error, undefined)));
+const statDescriptor = (fd: number) => callbackOperation<Stats>((done) => statCallback(fd, done));
+const readDescriptor = (
+  fd: number,
+  bytes: Uint8Array,
+  offset: number,
+  length: number,
+  position: number | null,
+) =>
+  callbackOperation<{ bytesRead: number }>((done) =>
+    readCallback(
+      fd,
+      bytes,
+      offset,
+      length,
+      position,
+      (error, bytesRead) => done(error, { bytesRead }),
+    )
+  );
+const writeDescriptor = (fd: number, text: string) =>
+  callbackOperation<void>((done) => writeFileCallback(fd, text, (error) => done(error, undefined)));
+const directoryRead = Dir.prototype.read;
+const directoryClose = Dir.prototype.close;
+const statsIsFile = Stats.prototype.isFile;
+const statsIsDirectory = Stats.prototype.isDirectory;
+const statsIsSymbolicLink = Stats.prototype.isSymbolicLink;
+const sort = Array.prototype.sort;
+const regexTest = RegExp.prototype.test;
+const objectKeys = Object.keys;
+const safeInteger = Number.isSafeInteger;
+const nativeString = String;
+const padStart = String.prototype.padStart;
+const recordPattern = /^\d{10}\.json$/;
+const byteLength = (text: string) => privateByteLength(encodePrivateText(text));
+const recordName = (sequence: number) =>
+  `${apply(padStart, nativeString(sequence), [10, "0"])}.json`;
+const digest = (value: string) => privateSha256Hex(value);
+const invalid = () => new Error("Durable run home is invalid or conflicts with this run");
+function isExists(error: unknown): boolean {
+  return error instanceof Error && "code" in error && error.code === "EEXIST";
+}
+
+async function syncDirectory(directory: string): Promise<void> {
+  const folder = await openDescriptor(directory, constants.O_RDONLY);
+  try {
+    await syncDescriptor(folder);
+  } finally {
+    await closeDescriptor(folder);
+  }
+}
+
+async function readBounded(path: string): Promise<string> {
+  const file = await openDescriptor(
+    path,
+    constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+  );
+  try {
+    const info = await statDescriptor(file);
+    if (!apply(statsIsFile, info, []) || info.size > MAX_DURABLE_RECORD_BYTES) throw invalid();
+    const bytes = new PrivateUint8Array(info.size + 1);
+    let count = 0;
+    while (count < bytes.length) {
+      const result = await readDescriptor(file, bytes, count, bytes.length - count, null);
+      if (result.bytesRead === 0) break;
+      count += result.bytesRead;
+    }
+    if (count !== info.size) throw invalid();
+    return createPrivateTextDecoder("utf-8", { fatal: true }).decode(
+      privateByteSubarray(bytes, 0, count),
+    );
+  } finally {
+    await closeDescriptor(file);
+  }
+}
+
+/** Publish complete immutable bytes exclusively; a crash before link leaves an ignored temporary. */
+async function publish(directory: string, name: string, text: string): Promise<void> {
+  if (byteLength(text) > MAX_DURABLE_RECORD_BYTES) throw invalid();
+  const temporary = join(directory, `.pending-${randomUUID()}`);
+  const file = await openDescriptor(temporary, "wx", 0o600);
+  try {
+    await writeDescriptor(file, text);
+    await syncDescriptor(file);
+  } finally {
+    await closeDescriptor(file);
+  }
+  try {
+    await link(temporary, join(directory, name));
+    await syncDirectory(directory);
+  } finally {
+    await unlink(temporary);
+  }
+}
+
+export type DurableRunRecord = {
+  sequence: number;
+  value: ReturnType<typeof snapshotDurableValue>;
+};
+
+function retainDirectoryEntryName(names: string[], name: string): void {
+  // Pending publications may belong to a live writer; ignore without retaining them.
+  if (privateTextStartsWith(name, ".pending-")) return;
+  if (names.length >= MAX_DURABLE_RECORDS + 64) throw invalid();
+  pushPrivateArray(names, name);
+}
+
+function decodeDurableRecord(
+  text: string,
+  readIdentity: () => DurableRunIdentity,
+  sequence: number,
+): DurableRunRecord {
+  const raw: unknown = privateJsonParse(text);
+  if (
+    !raw || typeof raw !== "object" || !("body" in raw) || !("checksum" in raw) ||
+    typeof raw.body !== "string" || typeof raw.checksum !== "string" ||
+    objectKeys(raw).length !== 2 || digest(raw.body) !== raw.checksum
+  ) throw invalid();
+  const body: unknown = privateJsonParse(raw.body);
+  if (
+    !body || typeof body !== "object" || !("identity" in body) || !("sequence" in body) ||
+    !("value" in body) || !("version" in body) || body.version !== 1 ||
+    objectKeys(body).length !== 4 || body.sequence !== sequence ||
+    privateJsonStringify(getDurableRunIdentitySchema().parse(body.identity)) !==
+      privateJsonStringify(readIdentity())
+  ) {
+    throw invalid();
+  }
+  return { sequence, value: snapshotDurableValue(body.value) };
+}
+
+function assertRecordSequenceName(name: string, sequence: number): void {
+  if (name !== recordName(sequence)) throw invalid();
+}
+
+function assertExecutionBinding(binding: unknown, readIdentity: () => DurableRunIdentity): void {
+  if (
+    !binding || typeof binding !== "object" || !("version" in binding) ||
+    binding.version !== 1 || !("identity" in binding) || !("requestHash" in binding) ||
+    typeof binding.requestHash !== "string" ||
+    !apply(regexTest, /^[a-f0-9]{64}$/, [binding.requestHash]) ||
+    objectKeys(binding).length !== 3 ||
+    privateJsonStringify(binding.identity) !== privateJsonStringify(readIdentity())
+  ) throw invalid();
+}
+
+function compareRecordNames(left: string, right: string): number {
+  if (left < right) return -1;
+  if (left > right) return 1;
+  return 0;
+}
+
+/** Internal disk primitive only. Live API generation authority remains the caller's responsibility. */
+export class DurableRunHome {
+  private constructor(
+    private readonly directory: string,
+    private readonly identity: DurableRunIdentity,
+  ) {}
+
+  static async open(
+    input: { directory: string; identity: DurableRunIdentity },
+  ): Promise<DurableRunHome> {
+    const identity = getDurableRunIdentitySchema().parse(input.identity);
+    try {
+      await mkdir(input.directory, { mode: 0o700 });
+    } catch (error) {
+      if (!isExists(error)) throw error;
+    }
+    const info = await lstat(input.directory);
+    if (!apply(statsIsDirectory, info, []) || apply(statsIsSymbolicLink, info, [])) throw invalid();
+    await syncDirectory(dirname(input.directory));
+    const manifest = privateJsonStringify({ version: 1, identity });
+    try {
+      await publish(input.directory, "identity.json", manifest);
+    } catch (error) {
+      if (!isExists(error)) throw error;
+    }
+    if (await readBounded(join(input.directory, "identity.json")) !== manifest) throw invalid();
+    await syncDirectory(input.directory);
+    const home = new DurableRunHome(input.directory, identity);
+    await home.read();
+    return home;
+  }
+
+  async read(): Promise<DurableRunRecord[]> {
+    const names: string[] = [];
+    const directory = await opendir(this.directory);
+    try {
+      for (;;) {
+        const entry = await apply(directoryRead, directory, []);
+        if (!entry) break;
+        const name = entry.name;
+        retainDirectoryEntryName(names, name);
+      }
+    } finally {
+      await apply(directoryClose, directory, []);
+    }
+    const records: string[] = [];
+    for (let index = 0; index < names.length; index++) {
+      const name = names[index]!;
+      if (apply(regexTest, recordPattern, [name])) pushPrivateArray(records, name);
+      else if (name === "execution-binding.json") {
+        const binding: unknown = privateJsonParse(await readBounded(join(this.directory, name)));
+        assertExecutionBinding(binding, () => this.identity);
+      } else if (name !== "identity.json") throw invalid();
+    }
+    apply(sort, records, [
+      compareRecordNames,
+    ]);
+    if (records.length > MAX_DURABLE_RECORDS) throw invalid();
+    const result: DurableRunRecord[] = [];
+    let totalBytes = 0;
+    for (let index = 0; index < records.length; index++) {
+      const name = records[index]!;
+      assertRecordSequenceName(name, index + 1);
+      const text = await readBounded(join(this.directory, name));
+      totalBytes += byteLength(text);
+      if (totalBytes > MAX_DURABLE_HOME_BYTES) throw invalid();
+      pushPrivateArray(result, decodeDurableRecord(text, () => this.identity, index + 1));
+    }
+    return result;
+  }
+
+  /** Bind request-scoped execution settings once, across every owner generation. */
+  async assertExecutionBinding(requestHash: string, requireExisting: boolean): Promise<void> {
+    if (!apply(regexTest, /^[a-f0-9]{64}$/, [requestHash])) throw invalid();
+    const manifest = privateJsonStringify({ version: 1, identity: this.identity, requestHash });
+    const path = join(this.directory, "execution-binding.json");
+    if (!requireExisting) {
+      try {
+        await publish(this.directory, "execution-binding.json", manifest);
+      } catch (error) {
+        if (!isExists(error)) throw error;
+      }
+    }
+    if (await readBounded(path) !== manifest) throw invalid();
+  }
+
+  async append(input: { sequence: number; value: unknown }): Promise<void> {
+    if (
+      !safeInteger(input.sequence) || input.sequence < 1 ||
+      input.sequence > MAX_DURABLE_RECORDS
+    ) {
+      throw invalid();
+    }
+    const value = snapshotDurableValue(input.value);
+    const records = await this.read();
+    const previous = records[input.sequence - 1];
+    if (previous) {
+      if (privateJsonStringify(previous.value) !== privateJsonStringify(value)) throw invalid();
+      await syncDirectory(this.directory);
+      return;
+    }
+    if (input.sequence !== records.length + 1) throw invalid();
+    const body = privateJsonStringify({
+      version: 1,
+      identity: this.identity,
+      sequence: input.sequence,
+      value,
+    });
+    const text = privateJsonStringify({ body, checksum: digest(body) });
+    let total = 0;
+    for (let index = 0; index < records.length; index++) {
+      const record = records[index]!;
+      total += byteLength(privateJsonStringify({
+        body: privateJsonStringify({ version: 1, identity: this.identity, ...record }),
+        checksum: "0000000000000000000000000000000000000000000000000000000000000000",
+      }));
+    }
+    if (total + byteLength(text) > MAX_DURABLE_HOME_BYTES) throw invalid();
+    try {
+      await publish(this.directory, recordName(input.sequence), text);
+    } catch (error) {
+      if (!isExists(error)) throw error;
+      // Concurrent writers may only converge on identical immutable bytes.
+      if (await readBounded(join(this.directory, recordName(input.sequence))) !== text) {
+        throw invalid();
+      }
+      await syncDirectory(this.directory);
+    }
+  }
+}

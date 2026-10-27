@@ -127,8 +127,7 @@ async function executeDurableFormInputFlow(
       values: context.submittedFormInputResult.values,
       inputRequestId: context.submittedFormInputResult.inputRequestId,
       reused: true,
-      reason:
-        "A submitted form_input result already exists for this run. Use these values as final input, do not call form_input again, and continue to the requested output.",
+      reason: "A submitted form already exists for this run. These are its final values.",
     };
   }
 

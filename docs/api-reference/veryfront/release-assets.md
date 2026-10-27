@@ -1,7 +1,7 @@
 ---
 title: "veryfront/release-assets"
 description: "Content-addressed release asset build, schema, cache, and consumption contracts."
-order: 28
+order: 29
 ---
 
 ## Import
@@ -25,7 +25,10 @@ import {
 import { parseReadyReleaseAssetManifestResponse } from "veryfront/release-assets";
 
 const expectedReleaseId = "release-123";
-const response = await fetch("/api/releases/current/asset-manifest");
+const response = await fetch(
+  `https://api.veryfront.com/projects/<PROJECT_SLUG>/releases/${expectedReleaseId}/asset-manifest`,
+  { headers: { Authorization: "Bearer <API_KEY>" } },
+);
 const ready = parseReadyReleaseAssetManifestResponse(
   await response.json(),
   expectedReleaseId,

@@ -103,7 +103,7 @@ export interface EnvironmentAccessToken {
 
 interface WireEnvironmentAccessToken {
   access_token: string;
-  expires_in: number;
+  expires_in_seconds: number;
 }
 
 interface WireEnvironmentDeployment {
@@ -119,8 +119,6 @@ interface WireEnvironment {
   name: string;
   protected: boolean;
   project_id?: string;
-  project?: string | { id: string };
-  projectId?: string;
   deployment?: WireEnvironmentDeployment | null;
   domains?: string[];
 }
@@ -159,7 +157,7 @@ interface ReleaseFileVersion {
   data?: unknown;
 }
 
-interface ListReleaseVersionsResponse {
+interface ListReleaseFilesResponse {
   data: ReleaseFileVersion[];
   page_info?: {
     next?: string;
@@ -175,8 +173,7 @@ function normalizeProject(project: ProjectTarget): DeployProjectRecord {
 }
 
 function normalizeEnvironment(environment: WireEnvironment): DeployEnvironment {
-  const projectId = environment.project_id ?? environment.projectId ??
-    referenceId(environment.project);
+  const projectId = environment.project_id;
   return {
     id: environment.id,
     name: environment.name,
@@ -307,8 +304,8 @@ export function createHttpDeployControlPlane(
       do {
         const params: Record<string, string> = { limit: "100" };
         if (cursor) params.cursor = cursor;
-        const response = await client.get<ListReleaseVersionsResponse>(
-          `/projects/${reference}/releases/${releaseId}/versions`,
+        const response = await client.get<ListReleaseFilesResponse>(
+          `/projects/${reference}/releases/${releaseId}/files`,
           params,
         );
         for (const file of response.data) {
@@ -352,15 +349,16 @@ export function createHttpDeployControlPlane(
     },
 
     async createEnvironmentAccessToken(target) {
-      const response = await client.post<WireEnvironmentAccessToken>("/auth/environment-token", {
-        project_reference: target.projectId,
-        environment_name: target.environmentName,
-      });
+      const response = await client.post<WireEnvironmentAccessToken>(
+        `/projects/${encodeURIComponent(target.projectId)}/environments/${
+          encodeURIComponent(target.environmentName)
+        }/access-tokens`,
+      );
       const token = response?.access_token;
       if (typeof token !== "string" || token.length === 0) {
         throw new Error("The API did not return an environment access token");
       }
-      const expiresIn = response?.expires_in;
+      const expiresIn = response?.expires_in_seconds;
       if (typeof expiresIn !== "number" || !Number.isInteger(expiresIn) || expiresIn <= 0) {
         throw new Error("The API did not return a positive integer expiry");
       }

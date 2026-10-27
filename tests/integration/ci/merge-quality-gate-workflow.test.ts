@@ -2,6 +2,7 @@ import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/a
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { parse } from "#std/yaml/parse";
 import { inlinePublicPoolJobs } from "../../../scripts/ci/public-pool-jobs.ts";
+import { normalizeLcovSourcePaths } from "../../../scripts/test/coverage-ci.ts";
 import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 
 type YamlRecord = Record<string, unknown>;
@@ -263,6 +264,10 @@ describe("merge quality gate workflow", () => {
     assertStringIncludes(String(run.run), "planIntegrationShard({ index, total: 3 })");
     assertStringIncludes(String(run.run), "DENO_SUITE_PROFILES[suite]");
     assertStringIncludes(String(run.run), "buildDenoSuiteCommandArgs(suite, files");
+    // The shard must execute the reviewed dependency graph, not resolve new
+    // transitive versions that can conflict with the dependency-age policy.
+    assertStringIncludes(String(run.run), 'passthroughArgs: ["--frozen"]');
+    assertEquals(String(run.run).includes("--no-lock"), false);
     assertStringIncludes(String(run.run), "buildTestProcessEnv(Deno.env.toObject(), profile.env)");
     assertStringIncludes(String(run.run), "if (!status.success) Deno.exit(status.code)");
     const aggregate = asRecord(jobs.tests, "integration aggregate");
@@ -463,10 +468,10 @@ describe("merge quality gate workflow", () => {
     const mergeIndex = producerSteps.findIndex((step) =>
       step.name === "Merge coverage reports for SonarQube"
     );
-    const normalizeIndex = producerSteps.findIndex((step) => step.name === "Normalize lcov paths");
     const uploadIndex = producerSteps.findIndex((step) =>
       step.name === "Upload merged Sonar coverage"
     );
+    const coverageScript = await readRepoFile("scripts/test/coverage-ci.ts");
 
     assertEquals(asRecord(producer.permissions, "sonar coverage permissions"), {
       actions: "read",
@@ -521,7 +526,7 @@ describe("merge quality gate workflow", () => {
     );
     assert(
       mergeIndex > setupIndex,
-      "sonar coverage must merge every report before normalizing",
+      "sonar coverage must merge and normalize every report before upload",
     );
     const mergeRun = String(producerSteps[mergeIndex].run);
     assertStringIncludes(
@@ -538,19 +543,57 @@ describe("merge quality gate workflow", () => {
       "coverage-profiles/coverage-integration-client",
     );
     assert(
-      normalizeIndex > mergeIndex,
-      "sonar coverage must normalize merged coverage",
+      !producerSteps.some((step) => step.name === "Normalize lcov paths"),
+      "sonar coverage path normalization must stay inside the merge task",
     );
     assertStringIncludes(
-      String(producerSteps[normalizeIndex].run),
-      'sed -i "s|^SF:${GITHUB_WORKSPACE}/|SF:|"',
+      coverageScript,
+      "export function normalizeLcovSourcePaths",
     );
     assertStringIncludes(
-      String(producerSteps[normalizeIndex].run),
-      "coverage/lcov.info",
+      coverageScript,
+      String.raw`/^\/home\/runner\/_?work\/([^/]+)\/\1\/(.+)$/`,
+    );
+    assertStringIncludes(
+      coverageScript,
+      "function githubWorkspaceRoots",
+    );
+    assertEquals(
+      normalizeLcovSourcePaths(
+        [
+          "SF:/home/runner/.cache/veryfront/veryfront-mdx-esm/v0-1-1271/id-project/src/app/page.tsx.v0-1-1271.12345678.mjs",
+          "DA:1,99",
+          "end_of_record",
+          "SF:/home/runner/.cache/veryfront/src/app/page.tsx.mjs",
+          "DA:2,7",
+          "end_of_record",
+          "SF:/home/runner/_work/veryfront-code/veryfront-code/src/eval/runner.ts",
+          "DA:3,5",
+          "end_of_record",
+        ].join("\n"),
+        ["/local/checkout"],
+        (path) => path === "src/eval/runner.ts",
+      ),
+      [
+        "SF:src/eval/runner.ts",
+        "DA:3,5",
+        "end_of_record",
+      ].join("\n"),
+    );
+    assertStringIncludes(
+      coverageScript,
+      "normalizeLcovArtifacts(",
+    );
+    assertStringIncludes(
+      coverageScript,
+      "checkoutSourceExists",
+    );
+    assertStringIncludes(
+      coverageScript,
+      "LCOV source path does not exist in the project",
     );
     assert(
-      uploadIndex > normalizeIndex,
+      uploadIndex > mergeIndex,
       "sonar coverage must upload the normalized report",
     );
     assertEquals(
@@ -775,6 +818,95 @@ done
     assertEquals(config.exclude, ["node_modules", "dist", ".cache", "npm"]);
   });
 
+  it("collects context ownership coverage in the head-owned Sonar job while keeping the pool trusted", async () => {
+    const jobs = asRecord(
+      asRecord(parse(await Deno.readTextFile(WORKFLOW_PATH)), "workflow").jobs,
+      "jobs",
+    );
+    const shards = asRecord(jobs["coverage-shards"], "coverage shards");
+    assertEquals(shards.uses, "veryfront/veryfront-code/.github/workflows/ci-public-pool.yml@main");
+    const sonar = asRecord(jobs["sonar-coverage"], "Sonar coverage");
+    assert(Array.isArray(sonar.steps));
+    const steps = sonar.steps.map((step) => asRecord(step, "Sonar coverage step"));
+    const collectorIndex = steps.findIndex((step) =>
+      step.name === "Collect context ownership coverage from checked-out source"
+    );
+    const mergeIndex = steps.findIndex((step) =>
+      step.name === "Merge coverage reports for SonarQube"
+    );
+    assert(
+      collectorIndex >= 0 && collectorIndex < mergeIndex,
+      "Head-owned tests must produce raw coverage before the final merge",
+    );
+    const collector = steps[collectorIndex];
+    const merge = steps[mergeIndex];
+    assert(collector);
+    assert(merge);
+    assertEquals(
+      asRecord(collector.env, "context ownership coverage environment").DENO_COVERAGE_DIR,
+      "coverage-profiles/coverage-context-ownership",
+    );
+    const command = String(collector.run);
+    assertStringIncludes(
+      command,
+      "deno task test:file --coverage=coverage-profiles/coverage-context-ownership",
+    );
+    for (
+      const target of [
+        "tests/integration/semantic-unit-boundary/server/handlers/request/project-run-runtime-ownership-probe.test.ts",
+        "tests/integration/semantic-unit-boundary/cli/commands/knowledge/indexing.test.ts",
+        "tests/integration/agent/managed-recovery",
+        "tests/integration/server/agent-stream.project-event-persistence.test.ts",
+      ]
+    ) assertStringIncludes(command, target);
+    assertStringIncludes(
+      command,
+      "scripts/test/coverage-ci.ts report coverage-profiles/coverage-context-ownership",
+    );
+    assertEquals(command.includes("coverage:ci:merge"), false);
+    assertStringIncludes(
+      String(merge.run),
+      "coverage-profiles/coverage-context-ownership",
+    );
+    const onboarding = steps.find((step) =>
+      step.name === "Collect connected local CLI coverage from checked-out source"
+    );
+    assert(onboarding, "Relocated onboarding tests must contribute to the Sonar report");
+    assertStringIncludes(String(onboarding.run), "--coverage-raw-data-only");
+    assertEquals(
+      asRecord(onboarding.env, "onboarding coverage environment").DENO_COVERAGE_DIR,
+      "coverage-profiles/coverage-connected-local",
+    );
+    for (
+      const target of [
+        "tests/integration/cli/dev/proxy-mode.test.ts",
+        "tests/integration/cli/dev/display-options.test.ts",
+        "tests/integration/cli/pull/project-bootstrap.test.ts",
+        "tests/integration/cli/shared/cloud-project.test.ts",
+        "tests/integration/agent/connected-local-inference.test.ts",
+        "tests/integration/agent/connected-local-tools.test.ts",
+        "tests/integration/agent/connected-local-platform-boundary.test.ts",
+        "tests/integration/agent/inherited-local-platform-scope.test.ts",
+        "tests/integration/agent/run-stream-project-observation.test.ts",
+        "tests/integration/agent/connected-writer-verifier.test.ts",
+        "tests/integration/agent/connected-local-setup-cleanup.test.ts",
+        "tests/integration/agent/connected-platform-cleanup.test.ts",
+        "tests/integration/semantic-unit-boundary/cli/commands/dev/connected-dev.test.ts",
+        "tests/integration/semantic-unit-boundary/src/agent/ag-ui/connected-local-runtime-security.test.ts",
+        "tests/integration/semantic-unit-boundary/src/agent/service/external-worker-client.test.ts",
+      ]
+    ) assertStringIncludes(String(onboarding.run), target);
+    assertStringIncludes(
+      String(onboarding.run),
+      "scripts/test/coverage-ci.ts report coverage-profiles/coverage-connected-local",
+    );
+    assertStringIncludes(String(merge.run), "coverage-profiles/coverage-connected-local");
+    assertEquals(
+      steps.filter((step) => String(step.run ?? "").includes("coverage:ci:merge")).length,
+      1,
+    );
+  });
+
   it("uploads raw shard reports so block ids are normalized only in the final merge", async () => {
     const jobs = asRecord((await readWorkflow()).jobs, "cicd workflow jobs");
     const shards = asRecord(jobs["coverage-shards"], "coverage shards job");
@@ -785,6 +917,14 @@ done
     const steps = shards.steps.map((step) => asRecord(step, "coverage shard step"));
     const runCommands = steps.map((step) => String(step.run ?? "")).join("\n");
     assertEquals(runCommands.includes("mergeLcovReports"), false);
+    assertStringIncludes(
+      runCommands,
+      "tests/integration/semantic-unit-boundary/server/handlers/request/project-run-runtime-ownership-probe.test.ts",
+    );
+    assertStringIncludes(
+      runCommands,
+      "tests/integration/semantic-unit-boundary/cli/commands/knowledge/indexing.test.ts",
+    );
     assertStringIncludes(runCommands, "> coverage-shard-1/history/lcov.info");
     assertStringIncludes(runCommands, "> coverage-shard-1/cli/lcov.info");
     const upload = steps.find((step) => step.name === "Upload unit coverage lcov");
@@ -1365,7 +1505,8 @@ it("binary e2e cancellation stops signal-ignoring descendants and preserves exit
 import os, pathlib, select, signal, subprocess, sys, tempfile, time
 
 step_script = sys.argv[1]
-with tempfile.TemporaryDirectory() as directory:
+temp_parent = "/private/tmp" if sys.platform == "darwin" and pathlib.Path("/private/tmp").is_dir() else None
+with tempfile.TemporaryDirectory(dir=temp_parent) as directory:
     deno = pathlib.Path(directory) / "deno"
     env = dict(os.environ, PATH=directory + os.pathsep + os.environ["PATH"])
     def fixture(body):

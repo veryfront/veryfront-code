@@ -26,6 +26,18 @@ function requireStepId(value: unknown): string {
 }
 
 describe("agent/conversation-run-events", () => {
+  it("keeps a transport-only manual pause out of durable events", () => {
+    const encoder = new ConversationRunEventEncoder();
+    encoder.encode({ type: "start", messageId: "msg-1" });
+    assertEquals(encoder.encode({ type: "data-veryfront.manual_pause", data: {} }), []);
+    assertEquals(encoder.encode({ type: "text-start", id: "text-1" }), [{
+      type: "TEXT_MESSAGE_START",
+      messageId: "msg-1",
+      contentId: "text-1",
+      role: "assistant",
+    }]);
+  });
+
   it("stores a textual rendering for tool output JSON cannot encode", () => {
     // `JSON.stringify` returns `undefined` rather than throwing for a top-level
     // function or symbol, so an unguarded encode would store no content at all.
@@ -369,26 +381,57 @@ describe("agent/conversation-run-events", () => {
     }]);
   });
 
-  it("encodes reasoning segment ids as content ids under the active assistant message", () => {
+  it("encodes reasoning segments as ordinal content ids under the active assistant message", () => {
     const encoder = new ConversationRunEventEncoder();
     assertEquals(encoder.encode({ type: "start", messageId: "assistant-1" }), []);
     assertEquals(encoder.encode({ type: "reasoning-start", id: "reasoning-1" }), [{
       type: conversationRunEventTypes.reasoningMessageStart,
       messageId: "assistant-1",
-      contentId: "reasoning-1",
+      contentId: "assistant-1:reasoning:0",
       role: "assistant",
     }]);
     assertEquals(encoder.encode({ type: "reasoning-delta", id: "reasoning-1", delta: "think" }), [{
       type: conversationRunEventTypes.reasoningMessageContent,
       messageId: "assistant-1",
-      contentId: "reasoning-1",
+      contentId: "assistant-1:reasoning:0",
       delta: "think",
     }]);
     assertEquals(encoder.encode({ type: "reasoning-end", id: "reasoning-1" }), [{
       type: conversationRunEventTypes.reasoningMessageEnd,
       messageId: "assistant-1",
-      contentId: "reasoning-1",
+      contentId: "assistant-1:reasoning:0",
     }]);
+  });
+
+  // Providers restart their block ids (`thinking-0`) every step, so the provider id
+  // alone collides across a multi-step run. The ordinal is the span id veryfront-api
+  // derives (`message:<id>:reasoning:<n>`) and the live AG-UI encoder emits.
+  it("drops an orphan reasoning end without consuming an ordinal", () => {
+    const encoder = new ConversationRunEventEncoder();
+    encoder.encode({ type: "start", messageId: "assistant-1" });
+    assertEquals(encoder.encode({ type: "reasoning-end", id: "thinking-0" }), []);
+    assertEquals(
+      encoder.encode({ type: "reasoning-start", id: "thinking-0" })[0]?.contentId,
+      "assistant-1:reasoning:0",
+    );
+  });
+
+  it("numbers reasoning segments across steps even when the provider id repeats", () => {
+    const encoder = new ConversationRunEventEncoder();
+    encoder.encode({ type: "start", messageId: "assistant-1" });
+    const contentIds = [0, 1].flatMap(() => [
+      ...encoder.encode({ type: "reasoning-start", id: "thinking-0" }),
+      ...encoder.encode({ type: "reasoning-delta", id: "thinking-0", delta: "x" }),
+      ...encoder.encode({ type: "reasoning-end", id: "thinking-0" }),
+    ]).map((event) => event.contentId);
+    assertEquals(contentIds, [
+      "assistant-1:reasoning:0",
+      "assistant-1:reasoning:0",
+      "assistant-1:reasoning:0",
+      "assistant-1:reasoning:1",
+      "assistant-1:reasoning:1",
+      "assistant-1:reasoning:1",
+    ]);
   });
 
   it("encodes tool input availability with args when not previously streamed", () => {
@@ -1093,4 +1136,152 @@ describe("agent/conversation-run-events", () => {
       true,
     );
   });
+});
+
+Deno.test("review denied fallback provider ownership survives version1 replay", async () => {
+  const { readConversationRunLifecycleFrames } = await import("./legacy-run-read-adapter.ts");
+  for (const ownership of [true, false]) {
+    const encoder = new ConversationRunEventEncoder();
+    const events = [
+      ...encoder.encode({ type: "tool-input-start", toolCallId: "denied", toolName: "web_fetch" }),
+      ...encoder.encode({
+        type: "tool-input-available",
+        toolCallId: "denied",
+        toolName: "web_fetch",
+        input: {},
+      }),
+      ...encoder.encode({
+        type: "tool-output-denied",
+        toolCallId: "denied",
+        providerExecuted: ownership,
+      }),
+    ];
+    assertEquals(
+      events.find((event) => event.type === "TOOL_CALL_RESULT")?.providerExecuted,
+      ownership,
+    );
+    const replay = readConversationRunLifecycleFrames({ streamProtocolVersion: 1, events });
+    assertEquals(replay.status, "ok");
+    if (replay.status === "ok") {
+      assertEquals(
+        replay.frames.some((frame) =>
+          frame.class === "semantic" && frame.event.type === "provider_tool_result"
+        ),
+        ownership,
+      );
+    }
+  }
+});
+
+Deno.test("explicit local input ownership survives encoding and normalization before a provider-marked result", async () => {
+  const { readConversationRunLifecycleFrames } = await import("./legacy-run-read-adapter.ts");
+  for (const outcome of ["success", "error", "denied"] as const) {
+    for (
+      const inputMarker of ["start", "end", "true-start-false-end", "false-start-true-end"] as const
+    ) {
+      const startOwnership = inputMarker === "start" || inputMarker === "false-start-true-end"
+        ? false
+        : inputMarker === "true-start-false-end"
+        ? true
+        : undefined;
+      const endOwnership = inputMarker === "end" || inputMarker === "true-start-false-end"
+        ? false
+        : inputMarker === "false-start-true-end"
+        ? true
+        : undefined;
+      const toolCallId = `${outcome}:${inputMarker}`;
+      const events = normalizeEncodedConversationRunEvents([
+        { type: "start", messageId: "assistant-message-1" },
+        {
+          type: "tool-input-start",
+          toolCallId,
+          toolName: "web_fetch",
+          ...(startOwnership === undefined ? {} : { providerExecuted: startOwnership }),
+        },
+        {
+          type: "tool-input-available",
+          toolCallId,
+          toolName: "web_fetch",
+          input: {},
+          ...(endOwnership === undefined ? {} : { providerExecuted: endOwnership }),
+        },
+        outcome === "success"
+          ? { type: "tool-output-available", toolCallId, output: "found", providerExecuted: true }
+          : outcome === "error"
+          ? { type: "tool-output-error", toolCallId, errorText: "failure", providerExecuted: true }
+          : { type: "tool-output-denied", toolCallId, providerExecuted: true },
+      ]);
+      const replay = readConversationRunLifecycleFrames({ streamProtocolVersion: 1, events });
+      assertEquals(replay.status, "ok");
+      if (replay.status === "ok") {
+        assertEquals(
+          replay.frames.filter((frame) =>
+            frame.class === "semantic" &&
+            frame.event.type === "provider_tool_result"
+          ),
+          [],
+        );
+        assertEquals(
+          replay.frames.filter((frame) =>
+            frame.class === "semantic" &&
+            frame.event.type === "custom" && frame.event.name === "legacy-tool-result"
+          ).length,
+          1,
+        );
+      }
+      assertEquals(
+        events.find((event) => event.type === "TOOL_CALL_START")?.providerExecuted,
+        startOwnership,
+      );
+      assertEquals(
+        "providerExecuted" in events.find((event) => event.type === "TOOL_CALL_START")!,
+        startOwnership !== undefined,
+      );
+      assertEquals(
+        "providerExecuted" in events.find((event) => event.type === "TOOL_CALL_END")!,
+        endOwnership !== undefined,
+      );
+      assertEquals(
+        events.find((event) => event.type === "TOOL_CALL_END")?.providerExecuted,
+        endOwnership,
+      );
+      assertEquals(
+        events.find((event) => event.type === "TOOL_CALL_RESULT")?.providerExecuted,
+        true,
+      );
+    }
+    const toolCallId = `provider:${outcome}`;
+    const positive = normalizeEncodedConversationRunEvents([
+      { type: "tool-input-start", toolCallId, toolName: "web_fetch" },
+      {
+        type: "tool-input-available",
+        toolCallId,
+        toolName: "web_fetch",
+        input: {},
+        providerExecuted: true,
+      },
+      outcome === "success"
+        ? { type: "tool-output-available", toolCallId, output: "found", providerExecuted: true }
+        : outcome === "error"
+        ? { type: "tool-output-error", toolCallId, errorText: "failure", providerExecuted: true }
+        : { type: "tool-output-denied", toolCallId, providerExecuted: true },
+    ]);
+    assertEquals(
+      "providerExecuted" in positive.find((event) => event.type === "TOOL_CALL_START")!,
+      false,
+    );
+    const replay = readConversationRunLifecycleFrames({
+      streamProtocolVersion: 1,
+      events: positive,
+    });
+    assertEquals(replay.status, "ok");
+    if (replay.status === "ok") {
+      assertEquals(
+        replay.frames.filter((frame) =>
+          frame.class === "semantic" && frame.event.type === "provider_tool_result"
+        ).length,
+        1,
+      );
+    }
+  }
 });

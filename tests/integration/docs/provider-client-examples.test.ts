@@ -174,7 +174,9 @@ describe("provider guide client snippets", () => {
     );
     const section = guide.split("### Call the AI Gateway from other clients")[1]!
       .split("\n## ")[0]!;
-    return [...section.matchAll(/```ts\n([\s\S]*?)```/g)].map((match) => match[1]!);
+    return [...section.matchAll(/```ts(?:[ \t]+[^\n]*)?\n([\s\S]*?)```/g)].map((match) =>
+      match[1]!
+    );
   }
 
   it("sends the documented gateway requests", async () => {
@@ -250,7 +252,9 @@ describe("AI Gateway quickstart SDK snippets", () => {
       new URL("../../../docs/guides/ai-gateway-quickstart.md", import.meta.url),
     );
     const section = guide.split("\n## SDKs\n")[1]!.split("\n## ")[0]!;
-    return [...section.matchAll(/```ts\n([\s\S]*?)```/g)].map((match) => match[1]!);
+    return [...section.matchAll(/```ts(?:[ \t]+[^\n]*)?\n([\s\S]*?)```/g)].map((match) =>
+      match[1]!
+    );
   }
 
   it("sends each documented SDK request to the gateway route with the project key", async () => {

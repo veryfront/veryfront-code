@@ -93,14 +93,19 @@ const getLiveEvalIdResponseSchema = defineSchema((v) =>
 
 const getProjectUploadResponseSchema = defineSchema((v) =>
   v.object({
-    file_upload_url: v.string().optional(),
+    upload_url: v.string().optional(),
     required_headers: v.record(v.string(), v.string()).optional(),
   })
 );
 
 const getProjectUploadListResponseSchema = defineSchema((v) =>
   v.object({
-    data: v.array(v.object({ path: v.string().optional() }).passthrough()).optional(),
+    // Uploads only. Folders are the separate `folders` array; `data` also repeats
+    // them as `type: "folder"` items, which are not uploads.
+    data: v.array(
+      v.object({ path: v.string().optional(), type: v.string().optional() }).passthrough(),
+    ).optional(),
+    folders: v.array(v.object({ path: v.string().optional() }).passthrough()).optional(),
   })
 );
 
@@ -113,9 +118,17 @@ const getProjectFileResponseSchema = defineSchema((v) =>
 
 const getInputRequestRecordSchema = defineSchema((v) =>
   v.object({
-    id: v.string(),
+    id: v.string().uuid(),
     status: v.string(),
   })
+);
+
+const getInputRequestApiRecordSchema = defineSchema((v) =>
+  v.object({
+    id: v.string().uuid().optional(),
+    input_request_id: v.string().uuid().optional(),
+    status: v.string(),
+  }).passthrough()
 );
 
 const getInputRequestListResponseSchema = defineSchema((v) =>
@@ -141,6 +154,24 @@ export interface LiveEvalApiClient {
   waitForOpenInputRequest(input: LiveEvalWaitForOpenInputRequestInput): Promise<string>;
   submitInputResponse(input: LiveEvalSubmitInputResponseInput): Promise<void>;
   cancelInputRequest(input: LiveEvalInputRequestInput): Promise<void>;
+}
+
+function normalizeLiveEvalInputRequestRecord(
+  item: unknown,
+): LiveEvalInputRequestRecord | null {
+  const parsed = getInputRequestApiRecordSchema().safeParse(item);
+  if (!parsed.success || parsed.data.status !== "open") {
+    return null;
+  }
+
+  const legacyId = parsed.data.id;
+  const canonicalId = parsed.data.input_request_id;
+  if (legacyId && canonicalId && legacyId !== canonicalId) {
+    return null;
+  }
+
+  const id = canonicalId ?? legacyId;
+  return id ? getInputRequestRecordSchema().parse({ id, status: parsed.data.status }) : null;
 }
 
 function createLiveEvalAuthHeaders(context: LiveEvalApiContext): Headers {
@@ -338,6 +369,20 @@ function wait(input: { ms: number; signal?: AbortSignal }): Promise<void> {
   return sleep(input.ms, input.signal);
 }
 
+// Five tries over about ten seconds while the run's event identity settles.
+const INPUT_RESPONSE_PENDING_RETRY_DELAYS_MS = [1_000, 2_000, 3_000, 4_000] as const;
+
+async function isRunEventIdentityPending(response: Response): Promise<boolean> {
+  if (response.status !== 503) return false;
+  try {
+    const problem: unknown = JSON.parse(await getResponseText(response.clone()));
+    return typeof problem === "object" && problem !== null &&
+      (problem as { code?: unknown }).code === "RUN_EVENT_IDENTITY_PENDING";
+  } catch {
+    return false;
+  }
+}
+
 async function throwLiveEvalApiError(prefix: string, response: Response): Promise<never> {
   throw API_CLIENT_ERROR.create({
     detail: `${prefix}: ${response.status} ${await getResponseText(response)}`,
@@ -383,7 +428,9 @@ async function waitForProjectUploadFixture(
     }
 
     const payload = getProjectUploadListResponseSchema().parse(await listResponse.json());
-    if (payload.data?.some((upload) => upload.path === input.filePath)) {
+    if (
+      payload.data?.some((upload) => upload.type !== "folder" && upload.path === input.filePath)
+    ) {
       return input.filePath;
     }
 
@@ -437,7 +484,7 @@ export async function createLiveEvalConversation(
     method: "POST",
     headers: createLiveEvalJsonHeaders(context),
     body: JSON.stringify({
-      ...(projectId ? { project_id: projectId } : {}),
+      ...(projectId ? { project_reference: projectId } : {}),
       title,
     }),
     signal: createRequestSignal(input.requestTimeoutMs),
@@ -506,9 +553,9 @@ export async function createLiveEvalProjectUploadFixture(
       method: "POST",
       headers: createLiveEvalJsonHeaders(context),
       body: JSON.stringify({
-        file_path: filePath,
+        path: filePath,
         content_type: contentType,
-        size: bodySize,
+        size_bytes: bodySize,
       }),
       signal: createRequestSignal(input.requestTimeoutMs),
     },
@@ -519,9 +566,9 @@ export async function createLiveEvalProjectUploadFixture(
   }
 
   const createPayload = getProjectUploadResponseSchema().parse(await createResponse.json());
-  if (!createPayload.file_upload_url) {
+  if (!createPayload.upload_url) {
     throw INVALID_ARGUMENT.create({
-      detail: "Project upload response did not include file_upload_url",
+      detail: "Project upload response did not include upload_url",
     });
   }
 
@@ -533,7 +580,7 @@ export async function createLiveEvalProjectUploadFixture(
     signal: createRequestSignal(input.requestTimeoutMs),
     ...(isReadableStreamBody(uploadBody) ? { duplex: "half" as const } : {}),
   };
-  const uploadResponse = await createFetch(context)(createPayload.file_upload_url, uploadInit);
+  const uploadResponse = await createFetch(context)(createPayload.upload_url, uploadInit);
 
   if (!uploadResponse.ok) {
     await throwLiveEvalApiError("Failed to upload project fixture", uploadResponse);
@@ -674,8 +721,8 @@ async function listOpenLiveEvalInputRequestsWithSignal(
 
     const payload = getInputRequestListResponseSchema().parse(await response.json());
     return (payload.data ?? []).flatMap((item) => {
-      const parsed = getInputRequestRecordSchema().safeParse(item);
-      return parsed.success && parsed.data.status === "open" ? [parsed.data] : [];
+      const normalized = normalizeLiveEvalInputRequestRecord(item);
+      return normalized ? [normalized] : [];
     });
   } finally {
     signalScope.dispose();
@@ -761,22 +808,29 @@ export async function submitLiveEvalInputResponse(
     "Live eval input request id",
   );
   const headers = createLiveEvalJsonHeaders(context);
+  // Retries reuse the key, so a response the API already accepted is not submitted twice.
   headers.set("Idempotency-Key", crypto.randomUUID());
-  const response = await createFetch(context)(
-    createApiUrl(
-      context,
-      `/input-requests/${inputRequestId}/responses`,
-    ),
-    {
-      method: "POST",
-      headers,
-      body: JSON.stringify({ values: input.values }),
-      signal: createRequestSignal(input.requestTimeoutMs),
-    },
-  );
-
-  if (!response.ok) {
-    await throwLiveEvalApiError("Failed to submit eval input response", response);
+  // Serialized once: a reused key with a changed payload is a 409, not a retry.
+  const body = JSON.stringify({ values: input.values });
+  for (const retryDelayMs of [...INPUT_RESPONSE_PENDING_RETRY_DELAYS_MS, undefined]) {
+    const response = await createFetch(context)(
+      createApiUrl(
+        context,
+        `/input-requests/${inputRequestId}/responses`,
+      ),
+      {
+        method: "POST",
+        headers,
+        body,
+        signal: createRequestSignal(input.requestTimeoutMs),
+      },
+    );
+    if (response.ok) return;
+    if (retryDelayMs === undefined || !(await isRunEventIdentityPending(response))) {
+      await throwLiveEvalApiError("Failed to submit eval input response", response);
+    }
+    await response.body?.cancel();
+    await wait({ ms: retryDelayMs! });
   }
 }
 

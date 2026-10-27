@@ -393,7 +393,7 @@ describe("agent/agent-service-registration", () => {
     const fetch: typeof globalThis.fetch = (_input, init) => {
       assert(init && "body" in init, "fetch must receive request options");
       attempts++;
-      bodies.push(String(init?.body));
+      bodies.push(String(init && "body" in init ? init.body : undefined));
       return attempts === 1
         ? Promise.reject(new TypeError("synthetic disconnected transport"))
         : Promise.resolve(jsonResponse(serviceResponse));
@@ -413,7 +413,7 @@ describe("agent/agent-service-registration", () => {
     const fetch: typeof globalThis.fetch = (_input, init) => {
       assert(init && "signal" in init, "fetch must receive request options");
       attempts++;
-      const signal = init?.signal;
+      const signal = init && "signal" in init ? init.signal : undefined;
       assert(signal, "startup requests must carry a deadline signal");
       return new Promise<Response>((_resolve, reject) => {
         signal.addEventListener("abort", () => {
@@ -469,17 +469,29 @@ describe("agent/agent-service-registration", () => {
       "https://api.example.com/agent-runtimes/push-services/22222222-2222-4222-a222-222222222222/heartbeat",
     );
     assertEquals(
-      new Headers(calls[0]?.init?.headers).get("Authorization"),
+      new Headers(calls[0]?.init?.headers).get(
+        "Authorization",
+      ),
       "Bearer token-1",
       "registration must carry bearer auth",
     );
-    assertEquals(calls[0]?.init?.method, "POST", "registration must be a POST");
     assertEquals(
-      new Headers(calls[1]?.init?.headers).get("Authorization"),
+      calls[0]?.init?.method,
+      "POST",
+      "registration must be a POST",
+    );
+    assertEquals(
+      new Headers(calls[1]?.init?.headers).get(
+        "Authorization",
+      ),
       "Bearer token-1",
       "heartbeats must carry bearer auth",
     );
-    assertEquals(calls[1]?.init?.method, "POST", "the heartbeat must be a POST");
+    assertEquals(
+      calls[1]?.init?.method,
+      "POST",
+      "the heartbeat must be a POST",
+    );
     assertEquals(
       calls[1]?.init?.body,
       "{}",
@@ -489,7 +501,7 @@ describe("agent/agent-service-registration", () => {
       service_name: "docs-agent",
       service_key: "docs-agent:test",
       scope_kind: "project",
-      project_id: "11111111-1111-4111-a111-111111111111",
+      project_reference: "11111111-1111-4111-a111-111111111111",
       agent_id: "support",
       base_url: "https://agent.example.com",
       invoke_url: "https://agent.example.com/api/runs",
@@ -1434,10 +1446,14 @@ describe("agent/agent-service-registration heartbeat recovery", () => {
   it("times out a hung re-registration so persistent failures still escalate", async () => {
     using time = new FakeTime();
     let registrationAborts = 0;
+    const started = Array.from({ length: 3 }, () => Promise.withResolvers<void>());
+    const settled = Array.from({ length: 3 }, () => Promise.withResolvers<void>());
+    let failures = 0;
     const script = scriptedHeartbeatFetch([404], {
       registrationResponse: (attempt, signal) => {
         if (attempt === 1) return jsonResponse(serviceResponse);
         assert(signal, "re-registration requests must carry a bounded abort signal");
+        started[attempt - 2]?.resolve();
         return new Promise<Response>((_resolve, reject) => {
           signal.addEventListener("abort", () => {
             registrationAborts++;
@@ -1448,14 +1464,35 @@ describe("agent/agent-service-registration heartbeat recovery", () => {
     });
     const log = recordingLogger();
     const lifecycle = await createAgentServiceRegistrationLifecycle(
-      lifecycleOptions(script.fetch, { heartbeatIntervalMs: 20, logger: log.logger }),
+      lifecycleOptions(script.fetch, {
+        heartbeatIntervalMs: 20,
+        logger: {
+          ...log.logger,
+          warn(message, metadata) {
+            log.logger.warn(message, metadata);
+            if (message === "Agent service heartbeat failed") settled[failures++]?.resolve();
+          },
+          error(message, metadata) {
+            log.logger.error(message, metadata);
+            if (message === "Agent service heartbeat failing persistently") {
+              settled[failures++]?.resolve();
+            }
+          },
+        },
+      }),
     );
 
-    for (let step = 0; step < 10 && log.errors.length === 0; step++) {
-      await time.tickAsync(5_020);
-      await time.tickAsync(0);
+    try {
+      for (let attempt = 0; attempt < 3; attempt++) {
+        await time.tickAsync(20);
+        // Wait for real async request preparation before advancing fake time.
+        await started[attempt]!.promise;
+        await time.tickAsync(5_000);
+        await settled[attempt]!.promise;
+      }
+    } finally {
+      lifecycle.stop();
     }
-    lifecycle.stop();
 
     assertEquals(registrationAborts, 3, "each hung recovery must time out before escalation");
     assertEquals(

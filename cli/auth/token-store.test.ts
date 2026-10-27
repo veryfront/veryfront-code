@@ -6,7 +6,15 @@ import {
   createTestEnvironmentConfig,
   type EnvironmentConfig,
 } from "#veryfront/config/environment-config.ts";
-import { deleteToken, getTokenLocation, readToken, saveToken } from "./token-store.ts";
+import {
+  deleteToken,
+  getTokenLocation,
+  LOGIN_CHECK_TTL_MS,
+  readToken,
+  rememberAcceptedLogin,
+  saveToken,
+  wasLoginAcceptedRecently,
+} from "./token-store.ts";
 
 describe("Token Store", () => {
   const testToken = "test-token-12345";
@@ -92,6 +100,67 @@ describe("Token Store", () => {
 
     it("should not throw when deleting non-existent token", async () => {
       await deleteToken(testEnv);
+    });
+  });
+
+  describe("accepted login check", () => {
+    const API_URL = "https://api.example.test";
+    const NOW = 1_800_000_000_000;
+
+    it("trusts a login the API accepted within the TTL", async () => {
+      await rememberAcceptedLogin(API_URL, "login-a", testEnv, NOW);
+
+      assertEquals(await wasLoginAcceptedRecently(API_URL, "login-a", testEnv, NOW + 1_000), true);
+    });
+
+    it("checks a login again once the TTL has passed", async () => {
+      await rememberAcceptedLogin(API_URL, "login-b", testEnv, NOW);
+
+      assertEquals(
+        await wasLoginAcceptedRecently(API_URL, "login-b", testEnv, NOW + LOGIN_CHECK_TTL_MS),
+        false,
+      );
+    });
+
+    it("checks again when the remembered time is in the future", async () => {
+      // A clock moved back must not stretch the TTL.
+      await rememberAcceptedLogin(API_URL, "login-e", testEnv, NOW);
+
+      assertEquals(await wasLoginAcceptedRecently(API_URL, "login-e", testEnv, NOW - 1), false);
+    });
+
+    it("forgets an accepted login on logout", async () => {
+      await rememberAcceptedLogin(API_URL, "login-f", testEnv, NOW);
+
+      await deleteToken(testEnv);
+
+      assertEquals(await wasLoginAcceptedRecently(API_URL, "login-f", testEnv, NOW), false);
+    });
+
+    it("forgets an accepted login on logout even when the token cannot be removed", async () => {
+      // A non-empty directory where the token file belongs makes its removal fail.
+      const tokenPath = getTokenLocation(testEnv);
+      await Deno.mkdir(tokenPath, { recursive: true });
+      await Deno.writeTextFile(`${tokenPath}/blocker`, "");
+      await rememberAcceptedLogin(API_URL, "login-g", testEnv, NOW);
+
+      try {
+        await deleteToken(testEnv);
+
+        assertEquals(await wasLoginAcceptedRecently(API_URL, "login-g", testEnv, NOW), false);
+      } finally {
+        await Deno.remove(tokenPath, { recursive: true });
+      }
+    });
+
+    it("does not carry an acceptance over to another login or API", async () => {
+      await rememberAcceptedLogin(API_URL, "login-c", testEnv, NOW);
+
+      assertEquals(await wasLoginAcceptedRecently(API_URL, "login-d", testEnv, NOW), false);
+      assertEquals(
+        await wasLoginAcceptedRecently("https://other.example.test", "login-c", testEnv, NOW),
+        false,
+      );
     });
   });
 });

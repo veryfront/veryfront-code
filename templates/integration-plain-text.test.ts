@@ -32,3 +32,9 @@ describe("integration template plain-text extraction", () => {
     );
   });
 });
+
+Deno.test("plain-text extraction preserves long unterminated tag runs", () => {
+  const input = "<".repeat(60_000);
+  assertEquals(confluenceHtmlToPlainText(input), input);
+  assertEquals(teamsHtmlToPlainText(input), input);
+});

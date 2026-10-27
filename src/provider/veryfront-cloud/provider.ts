@@ -4,6 +4,7 @@ import { createGoogleProviderModel } from "@veryfront/ext-llm-google";
 import { createError, toError } from "#veryfront/errors";
 import { ensureBuiltinLLMProviders } from "#veryfront/extensions/builtin-extensions.ts";
 import { getHostSecret } from "#veryfront/platform/compat/process/env.ts";
+import { forEachPrivateArray } from "#veryfront/security/private-array.ts";
 
 import type { ModelRuntime } from "../types.ts";
 import { getCurrentVeryfrontCloudContext } from "./context.ts";
@@ -20,6 +21,9 @@ import {
   createVeryfrontCloudOpenAIResponsesModel,
 } from "./openai.ts";
 import {
+  forwardVeryfrontCloudModelFacts,
+  isVeryfrontCloudCatalogLoadedForScope,
+  readServedVeryfrontCloudCatalogModel,
   registerVeryfrontCloudModelFacts,
   requireVeryfrontCloudWireSurface,
   resolveVeryfrontCloudOpenAIChatFunctionToolReasoning,
@@ -65,6 +69,10 @@ function wrapVeryfrontCloudModel(
   const wrapped = ObjectCreate(model, {
     _generateViaStream: { enumerable: true, value: true },
     modelProvider: { enumerable: true, value: modelProvider },
+    runtimeCapabilities: {
+      enumerable: true,
+      get: () => ({ ...model.runtimeCapabilities, streamRequiresFinish: true }),
+    },
   });
 
   ObjectDefineProperties(wrapped, {
@@ -76,19 +84,19 @@ function wrapVeryfrontCloudModel(
   const forwardedAccessors = new Set<PropertyKey>();
   let source: object | null = model;
   while (source && source !== ObjectPrototype) {
-    for (const key of ReflectOwnKeys(source)) {
-      if (forwardedAccessors.has(key) || ObjectHasOwn(wrapped, key)) continue;
+    forEachPrivateArray(ReflectOwnKeys(source), (key) => {
+      if (forwardedAccessors.has(key) || ObjectHasOwn(wrapped, key)) return;
 
       forwardedAccessors.add(key);
       const descriptor = ObjectGetOwnPropertyDescriptor(source, key);
-      if (!descriptor || (!descriptor.get && !descriptor.set)) continue;
+      if (!descriptor || (!descriptor.get && !descriptor.set)) return;
 
       ObjectDefineProperty(wrapped, key, {
         ...descriptor,
         get: descriptor.get ? bindModelMethod(descriptor.get, model) : undefined,
         set: descriptor.set ? bindModelMethod(descriptor.set, model) : undefined,
       });
-    }
+    });
     source = ObjectGetPrototypeOf(source);
   }
 
@@ -206,14 +214,15 @@ function withServedCatalog(
   };
   let source: object | null = model;
   while (source && source !== ObjectPrototype) {
-    for (const key of ReflectOwnKeys(source)) forward(key);
+    forEachPrivateArray(ReflectOwnKeys(source), forward);
     source = ObjectGetPrototypeOf(source);
   }
-  for (const key of OPTIONAL_FORWARDED_KEYS) forward(key);
+  forEachPrivateArray(OPTIONAL_FORWARDED_KEYS, forward);
   return wrapped;
 }
 
 type VeryfrontCloudModelOptions = {
+  getInferenceCredential?: () => string;
   apiBaseUrl?: string;
   assertInferenceCredentialActive?: () => void;
   credentialSource?: "application";
@@ -261,6 +270,9 @@ function createVeryfrontCloudModelInternal(
   const catalogScope = { apiBaseUrl, apiToken, ...(projectSlug ? { projectSlug } : {}) };
   const catalogScopeKey = veryfrontCloudCatalogScopeKey(catalogScope);
 
+  // The served limit last read from a loaded catalog. An evicted scope reads
+  // no catalog, so it keeps this value rather than dropping the limit.
+  let servedLimit: VeryfrontCloudModelFacts["servedLimit"];
   // The catalog facts a build reads, from this model's own credentials and
   // project. A model built before the catalog loaded is rebuilt at its first
   // async step when these differ.
@@ -279,6 +291,12 @@ function createVeryfrontCloudModelInternal(
         catalogModelId,
       );
       const openAITransport = resolveVeryfrontCloudOpenAITransport(catalogModelId);
+      if (isVeryfrontCloudCatalogLoadedForScope(catalogScopeKey)) {
+        servedLimit = readServedVeryfrontCloudCatalogModel(catalogScopeKey, catalogModelId)?.limit;
+      }
+      // The registry-backed compatible builder reads its own option bucket.
+      const usesCompatibleRegistryBuilder = routing.surface === "openai" &&
+        routing.native !== true && !useFirstPartyTransport && registry?.get("openai") !== undefined;
       return Object.freeze({
         catalogScopeKey,
         provider,
@@ -292,6 +310,10 @@ function createVeryfrontCloudModelInternal(
         ...(openAIChatPreserveSystemMessages === undefined
           ? {}
           : { openAIChatPreserveSystemMessages }),
+        ...(usesCompatibleRegistryBuilder
+          ? { openAIChatProviderName: "openai-compatible" as const }
+          : {}),
+        ...(servedLimit === undefined ? {} : { servedLimit }),
       });
     });
   }
@@ -305,6 +327,7 @@ function createVeryfrontCloudModelInternal(
       String(value.openAITransport),
       String(value.openAIChatReasoningWithFunctionTools),
       String(value.openAIChatPreserveSystemMessages),
+      String(value.openAIChatProviderName),
     ].join("\n");
 
   const build = (): ModelRuntime =>
@@ -412,6 +435,9 @@ function buildVeryfrontCloudModel(build: VeryfrontCloudModelBuild): ModelRuntime
   );
   const fetch = createVeryfrontCloudFetch(apiToken, baseURL, projectSlug, {
     inferenceCredential: inferenceCredential !== undefined,
+    ...(options.getInferenceCredential
+      ? { getInferenceCredential: options.getInferenceCredential }
+      : {}),
     ...(neutral ? { neutralRoute: true } : {}),
     ...(wireModelProvider ? { wireModelProvider } : {}),
     ...(options.assertCredentialActive || options.assertInferenceCredentialActive
@@ -432,6 +458,10 @@ function buildVeryfrontCloudModel(build: VeryfrontCloudModelBuild): ModelRuntime
     const openAIChatPreserveSystemMessages = resolveVeryfrontCloudOpenAIChatSystemMessages(
       `${provider}/${upstreamModelId}`,
     );
+    // The Chat-only wire still rejects reasoning beside function tools for the
+    // models the catalog (or the native OpenAI pattern) marks that way.
+    const openAIChatReasoningWithFunctionTools =
+      resolveVeryfrontCloudOpenAIChatFunctionToolReasoning(`${provider}/${upstreamModelId}`);
     const chatCompletionsOnlyReason =
       `Veryfront Cloud provider "${provider}" speaks the OpenAI chat completions surface, ` +
       "which carries no hosted tools. Use a provider that implements the OpenAI surface " +
@@ -444,6 +474,7 @@ function buildVeryfrontCloudModel(build: VeryfrontCloudModelBuild): ModelRuntime
           baseURL,
           openAIChatCompletionsOnlyReason: chatCompletionsOnlyReason,
           openAIChatPreserveSystemMessages,
+          openAIChatReasoningWithFunctionTools,
           openAITransport: "chat-completions",
           fetch,
         }),
@@ -460,6 +491,7 @@ function buildVeryfrontCloudModel(build: VeryfrontCloudModelBuild): ModelRuntime
           providerName: "openai-compatible",
           openAIChatCompletionsOnlyReason: chatCompletionsOnlyReason,
           openAIChatPreserveSystemMessages,
+          openAIChatReasoningWithFunctionTools,
           openAITransport: "chat-completions",
           fetch,
         }),
@@ -472,7 +504,91 @@ function buildVeryfrontCloudModel(build: VeryfrontCloudModelBuild): ModelRuntime
         baseURL,
         openAIChatCompletionsOnlyReason: chatCompletionsOnlyReason,
         openAIChatPreserveSystemMessages,
+        openAIChatReasoningWithFunctionTools,
         openAITransport: "chat-completions",
+        fetch,
+      }),
+      provider,
+    );
+  }
+
+  function createNativeOpenAIModel(): ModelRuntime {
+    const catalogModelId = `${provider}/${upstreamModelId}`;
+    // One plan decides the transport here and in the durable model-call
+    // context, so what a call records cannot drift from what it sends. An
+    // adaptive plan stays unset, leaving the runtime free to move to the
+    // Responses surface for a request that carries a hosted tool.
+    const transportPlan = resolveVeryfrontCloudOpenAITransportPlan(provider, upstreamModelId);
+    const openAITransport = transportPlan.pinned ? transportPlan.transport : undefined;
+    const openAIChatReasoningWithFunctionTools =
+      resolveVeryfrontCloudOpenAIChatFunctionToolReasoning(catalogModelId);
+    if (transportPlan.pinned && transportPlan.transport === "responses") {
+      if (useFirstPartyTransport) {
+        return wrapVeryfrontCloudModel(
+          createVeryfrontCloudOpenAIResponsesModel(upstreamModelId, {
+            apiToken: providerCredential,
+            baseURL,
+            fetch,
+          }),
+          provider,
+        );
+      }
+      const openai = registry?.get("openai");
+      if (openai?.createResponses) {
+        return wrapVeryfrontCloudModel(
+          openai.createResponses(upstreamModelId, {
+            credential: providerCredential,
+            baseURL,
+            name: "veryfront-cloud",
+            providerName: "veryfront-cloud",
+            fetch,
+          }),
+          provider,
+        );
+      }
+      return wrapVeryfrontCloudModel(
+        createVeryfrontCloudOpenAIResponsesModel(upstreamModelId, {
+          apiToken: providerCredential,
+          baseURL,
+          fetch,
+        }),
+        provider,
+      );
+    }
+
+    if (useFirstPartyTransport) {
+      return wrapVeryfrontCloudModel(
+        createVeryfrontCloudOpenAIModel(upstreamModelId, {
+          apiToken: providerCredential,
+          baseURL,
+          openAIChatReasoningWithFunctionTools,
+          openAITransport,
+          fetch,
+        }),
+        provider,
+      );
+    }
+    const openai = registry?.get("openai");
+    if (openai) {
+      return wrapVeryfrontCloudModel(
+        openai.createModel(upstreamModelId, {
+          credential: providerCredential,
+          baseURL,
+          name: "veryfront-cloud",
+          providerName: "veryfront-cloud",
+          openAIChatReasoningWithFunctionTools,
+          openAITransport,
+          fetch,
+        }),
+        provider,
+      );
+    }
+    return wrapVeryfrontCloudModel(
+      createVeryfrontCloudOpenAIModel(upstreamModelId, {
+        apiToken: providerCredential,
+        baseURL,
+        openAIChatReasoningWithFunctionTools,
+        openAITransport,
         fetch,
       }),
       provider,
@@ -542,86 +658,7 @@ function buildVeryfrontCloudModel(build: VeryfrontCloudModelBuild): ModelRuntime
       // also what a provider this package does not list resolves to.
       if (!routing.native) return createOpenAICompatibleModel();
 
-      const catalogModelId = `${provider}/${upstreamModelId}`;
-      // One plan decides the transport here and in the durable model-call
-      // context, so what a call records cannot drift from what it sends. An
-      // adaptive plan stays unset, leaving the runtime free to move to the
-      // Responses surface for a request that carries a hosted tool.
-      const transportPlan = resolveVeryfrontCloudOpenAITransportPlan(provider, upstreamModelId);
-      const openAITransport = transportPlan.pinned ? transportPlan.transport : undefined;
-      const openAIChatReasoningWithFunctionTools =
-        resolveVeryfrontCloudOpenAIChatFunctionToolReasoning(catalogModelId);
-      if (transportPlan.pinned && transportPlan.transport === "responses") {
-        if (useFirstPartyTransport) {
-          return wrapVeryfrontCloudModel(
-            createVeryfrontCloudOpenAIResponsesModel(upstreamModelId, {
-              apiToken: providerCredential,
-              baseURL,
-              fetch,
-            }),
-            provider,
-          );
-        }
-        const openai = registry?.get("openai");
-        if (openai?.createResponses) {
-          return wrapVeryfrontCloudModel(
-            openai.createResponses(upstreamModelId, {
-              credential: providerCredential,
-              baseURL,
-              name: "veryfront-cloud",
-              providerName: "veryfront-cloud",
-              fetch,
-            }),
-            provider,
-          );
-        }
-        return wrapVeryfrontCloudModel(
-          createVeryfrontCloudOpenAIResponsesModel(upstreamModelId, {
-            apiToken: providerCredential,
-            baseURL,
-            fetch,
-          }),
-          provider,
-        );
-      }
-
-      if (useFirstPartyTransport) {
-        return wrapVeryfrontCloudModel(
-          createVeryfrontCloudOpenAIModel(upstreamModelId, {
-            apiToken: providerCredential,
-            baseURL,
-            openAIChatReasoningWithFunctionTools,
-            openAITransport,
-            fetch,
-          }),
-          provider,
-        );
-      }
-      const openai = registry?.get("openai");
-      if (openai) {
-        return wrapVeryfrontCloudModel(
-          openai.createModel(upstreamModelId, {
-            credential: providerCredential,
-            baseURL,
-            name: "veryfront-cloud",
-            providerName: "veryfront-cloud",
-            openAIChatReasoningWithFunctionTools,
-            openAITransport,
-            fetch,
-          }),
-          provider,
-        );
-      }
-      return wrapVeryfrontCloudModel(
-        createVeryfrontCloudOpenAIModel(upstreamModelId, {
-          apiToken: providerCredential,
-          baseURL,
-          openAIChatReasoningWithFunctionTools,
-          openAITransport,
-          fetch,
-        }),
-        provider,
-      );
+      return createNativeOpenAIModel();
     }
   }
 
@@ -672,8 +709,40 @@ export function createVeryfrontCloudModel(
 /** @internal Build a first-party gateway model with explicit run-scoped authority. */
 export function createVeryfrontCloudInferenceModel(
   modelId: string,
-  inferenceCredential: string,
+  inferenceCredential: string | (() => string),
   options: { apiBaseUrl?: string; assertInferenceCredentialActive?: () => void } = {},
 ): ModelRuntime {
-  return createVeryfrontCloudModelInternal(modelId, inferenceCredential, options);
+  if (typeof inferenceCredential === "string") {
+    return createVeryfrontCloudModelInternal(modelId, inferenceCredential, options);
+  }
+  const getInferenceCredential = inferenceCredential;
+  let credential = getInferenceCredential();
+  let model = createVeryfrontCloudModelInternal(modelId, credential, {
+    ...options,
+    getInferenceCredential,
+  });
+  const current = (): ModelRuntime => {
+    options.assertInferenceCredentialActive?.();
+    const next = getInferenceCredential();
+    if (next !== credential) {
+      model = createVeryfrontCloudModelInternal(modelId, next, {
+        ...options,
+        getInferenceCredential,
+      });
+      credential = next;
+      forwardVeryfrontCloudModelFacts(model, wrapped);
+    }
+    return model;
+  };
+  const wrapped = withServedCatalog(
+    model,
+    current,
+    current,
+    () => Promise.resolve(current()),
+    () => {
+      current();
+    },
+  );
+  forwardVeryfrontCloudModelFacts(model, wrapped);
+  return wrapped;
 }

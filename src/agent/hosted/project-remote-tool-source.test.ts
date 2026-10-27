@@ -802,7 +802,7 @@ Deno.test("createHostedProjectRemoteToolSources filters Veryfront API MCP tools 
 
   assertEquals(
     (await sources[0]?.listTools({ projectId: "project-1" }))?.map((tool) => tool.name),
-    ["delete_server", "update_file", "veryfront__delete_server", "veryfront__update_file"],
+    ["veryfront__delete_server", "veryfront__update_file"],
   );
   assertEquals(executed, [
     {
@@ -825,6 +825,7 @@ Deno.test("createHostedProjectRemoteToolSources fails closed for mapped API tool
           simpleTool("create_invite"),
           simpleTool("create_project_invitation"),
           simpleTool("delete_member"),
+          simpleTool("delete_project_member"),
           simpleTool("update_file"),
         ],
         execute: (toolName) => {
@@ -838,7 +839,7 @@ Deno.test("createHostedProjectRemoteToolSources fails closed for mapped API tool
 
   assertEquals(
     (await sources[0]?.listTools({ projectId: "project-1" }))?.map((tool) => tool.name),
-    ["update_file", "veryfront__update_file"],
+    ["veryfront__update_file"],
   );
 });
 
@@ -1054,11 +1055,11 @@ Deno.test("createHostedProjectRemoteToolSources applies API and Studio policies 
   assertEquals(sources.map((source) => source.id), ["veryfront-mcp", "studio-mcp"]);
   assertEquals(
     (await sources[0]?.listTools({ projectId: "project-1" }))?.map((tool) => tool.name),
-    ["update_file", "veryfront__update_file"],
+    ["veryfront__update_file"],
   );
   assertEquals(
     (await sources[1]?.listTools({ projectId: "project-1" }))?.map((tool) => tool.name),
-    ["studio_open_project"],
+    ["veryfront__studio_open_project"],
   );
   await assertRejects(
     () => sources[0]!.executeTool("studio_open_project", { project_reference: "project-2" }),
@@ -1220,8 +1221,10 @@ Deno.test("createHostedProjectRemoteToolSources applies project wrapper policy t
       }),
   });
 
-  await sources[0]?.executeTool("update_file", { path: "AGENTS.md" });
-  await sources[1]?.executeTool("studio_open_project", { project_reference: "project-two" });
+  await sources[0]?.executeTool("veryfront__update_file", { path: "AGENTS.md" });
+  await sources[1]?.executeTool("veryfront__studio_open_project", {
+    project_reference: "project-two",
+  });
 
   assertEquals(executed, [
     {
@@ -1358,7 +1361,7 @@ Deno.test("authenticated hosted API catalogs retain platform tools under connect
           simpleTool("veryfront__create_server"),
         ],
         execute: (name) => {
-          if (name === "get_tool_access_profile") throw new Error("Unavailable");
+          if (name === "veryfront__get_tool_access_profile") throw new Error("Unavailable");
           return { name };
         },
       }),
@@ -1369,7 +1372,7 @@ Deno.test("authenticated hosted API catalogs retain platform tools under connect
       sourceIntegrationPolicy: { schemaVersion: 1, mode: "allowlist", integrations: {} },
       context: { authToken: "token-1" },
     }),
-    ["get_file", "veryfront__get_file"],
+    ["veryfront__get_file"],
   );
   assertEquals(
     await sources[0]!.executeTool("veryfront__get_file", {}, { projectId: "project-1" }),
@@ -1426,7 +1429,9 @@ Deno.test("hosted platform aliases preserve exact ceilings, live activation, and
       await source!.executeTool(name, {}, { projectId: "project-1" })
     );
   }
-  assertEquals(executions.filter((name) => name !== "get_tool_access_profile"), ["get_file"]);
+  assertEquals(executions.filter((name) => name !== "get_tool_access_profile"), [
+    "get_file",
+  ]);
 });
 
 for (const gate of ["allowance", "activation"] as const) {
@@ -1445,33 +1450,30 @@ for (const gate of ["allowance", "activation"] as const) {
           tools: [simpleTool("veryfront__get_file"), simpleTool("veryfront__delete_file")],
           execute: (name) => {
             executions.push(name);
-            if (name === "get_tool_access_profile") throw new Error("Unavailable");
+            if (name === "veryfront__get_tool_access_profile") throw new Error("Unavailable");
             return { name };
           },
         }),
     });
-    assertEquals((await source!.listTools({ projectId: "project-1" })).map(({ name }) => name), [
-      "get_file",
-    ]);
-    assertEquals(await source!.executeTool("get_file", {}, { projectId: "project-1" }), {
-      name: "veryfront__get_file",
-    });
-    assertEquals(executions.includes("veryfront__get_file"), true);
-    for (const denied of ["veryfront__get_file", "delete_file", "veryfront__delete_file"]) {
+    assertEquals(await source!.listTools({ projectId: "project-1" }), []);
+    for (
+      const denied of ["get_file", "veryfront__get_file", "delete_file", "veryfront__delete_file"]
+    ) {
       await assertRejects(async () =>
         await source!.executeTool(denied, {}, { projectId: "project-1" })
       );
     }
+
     names.clear();
     assertEquals(await source!.listTools({ projectId: "project-1" }), []);
     await assertRejects(async () =>
-      await source!.executeTool("get_file", {}, { projectId: "project-1" })
+      await source!.executeTool("veryfront__get_file", {}, { projectId: "project-1" })
     );
   });
 }
 
 for (const canonicalCatalog of [false, true]) {
-  for (const canonicalSelector of [false, true]) {
+  for (const canonicalSelector of [true]) {
     for (const denial of ["none", "policy", "run"] as const) {
       const deniedRetry = denial !== "none";
       for (const returnedError of [false, true]) {

@@ -53,6 +53,9 @@ export function createRuntimeAgentFromMarkdownDefinition(
     system: definition.system ?? definition.instructions,
     ...(definition.model ? { model: definition.model } : {}),
     ...(definition.temperature === undefined ? {} : { temperature: definition.temperature }),
+    ...(definition.parallelToolCalls === undefined
+      ? {}
+      : { parallelToolCalls: definition.parallelToolCalls }),
     ...(definition.maxSteps === undefined ? {} : { maxSteps: definition.maxSteps }),
     ...(providerTools ? { providerTools } : {}),
     ...(failClosedUnrestrictedSelector
@@ -67,6 +70,15 @@ export function createRuntimeAgentFromMarkdownDefinition(
       ? { tools: selectedTools }
       : {}),
     ...(definition.toolLoading === undefined ? {} : { toolLoading: definition.toolLoading }),
+    ...(definition.bootstrapTools === undefined
+      ? {}
+      : { bootstrapTools: definition.bootstrapTools }),
+    ...(definition.optionalBootstrapTools === undefined
+      ? {}
+      : { optionalBootstrapTools: definition.optionalBootstrapTools }),
+    ...(definition.bootstrapSkill === undefined
+      ? {}
+      : { bootstrapSkill: definition.bootstrapSkill }),
     ...(definition.toolResultContext === undefined
       ? {}
       : { toolResultContext: definition.toolResultContext }),

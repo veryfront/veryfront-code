@@ -144,7 +144,11 @@ export interface ApplicationRequestHeaderOptions {
   readonly denyHeaders?: readonly string[];
 }
 
-function normalizeDynamicDenyHeaders(
+/**
+ * Lowercased deny-header names as request filtering applies them, or `null` when the list
+ * is invalid and filtering removes every application request header.
+ */
+export function normalizeDynamicDenyHeaders(
   names: readonly string[] | undefined,
 ): ReadonlySet<string> | null {
   try {

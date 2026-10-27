@@ -112,6 +112,14 @@ export function findBuildUnsafeMetaProperties(
 
   const uses: MetaPropertyUse[] = [];
 
+  const visitValue = (value: unknown): void => {
+    if (Array.isArray(value)) {
+      for (const item of value) if (isNode(item)) visit(item);
+    } else if (isNode(value)) {
+      visit(value);
+    }
+  };
+
   const visit = (node: Node): void => {
     if (
       node.type === "MetaProperty" && isNode(node.meta) &&
@@ -128,12 +136,7 @@ export function findBuildUnsafeMetaProperties(
 
     for (const key of Object.keys(node)) {
       if (key === "loc" || COMMENT_KEYS.has(key)) continue;
-      const value = node[key];
-      if (Array.isArray(value)) {
-        for (const item of value) if (isNode(item)) visit(item);
-      } else if (isNode(value)) {
-        visit(value);
-      }
+      visitValue(node[key]);
     }
   };
 

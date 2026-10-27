@@ -50,11 +50,27 @@ When no connection exists, ask the person to run
 `--scope project` only for a shared connection). The command waits at most
 `--timeout` seconds and confirms the new row. Do not poll in a loop yourself.
 
+On MCP, use the connection tools instead of copying URLs from tool errors:
+
+- `create_connect_session` with `project_reference`, `name`, `scope`, and
+  `redirect_uri` returns a one-time `connect_url`. Give the link to the person
+  and ask them to open it before `expires_at`.
+- `get_connection_status` with `project_reference`, `name`, and `scope` reports
+  `connected` and the `connection_id`. Not connected is a result, not an error.
+- `delete_connection` with `project_reference`, `name`, `connection_id`,
+  `scope`, and `confirm: true` disconnects one connection. Run it only when the
+  person asks.
+
+REST serves the same operations under
+`/projects/<PROJECT_SLUG>/integrations/<NAME>`: `POST .../connect-sessions`,
+`GET .../connection-status?scope=<SCOPE>`, and
+`DELETE .../connections/<CONNECTION_ID>?scope=<SCOPE>`.
+
 Other surfaces call the same tools:
 
-- REST: `POST /integrations/<name>/tools/<tool>/call` with `arguments`,
+- REST: `POST /integration-tools/<name>__<tool>/run` with `arguments`,
   `connection_id`, and `expected_connection_generation_id`.
-- GraphQL: the `executeIntegrationTool` mutation with `projectReference`,
+- GraphQL: the `runIntegrationTool` mutation with `projectReference`,
   `toolName`, `connectionId`, `expectedConnectionGenerationId`, and `args`.
 - MCP: `https://api.veryfront.com/projects/<PROJECT_SLUG>/mcp`, `tools/call`
   with the canonical tool name, `_meta.connection_id`, and

@@ -43,7 +43,7 @@ const arraySort = Array.prototype.sort;
 const apply = Reflect.apply;
 const mapGet = Map.prototype.get;
 
-const FRAMEWORK_KNOWLEDGE_TOOL_NAME = "search_knowledge";
+const FRAMEWORK_KNOWLEDGE_TOOL_NAME = "veryfront__search_knowledge";
 
 function shouldProjectPositiveToolName(
   name: string,
@@ -333,12 +333,20 @@ export async function createRuntimeAgentDefinitionFromAgent(
     ...(typeof system === "string" ? {} : { system }),
     model: config.model,
     ...(config.temperature === undefined ? {} : { temperature: config.temperature }),
+    ...(config.parallelToolCalls === undefined
+      ? {}
+      : { parallelToolCalls: config.parallelToolCalls }),
     ...(config.thinking === undefined ? {} : { thinking: config.thinking }),
     maxSteps: config.maxSteps,
     ...(config.providerTools ? { providerTools: config.providerTools } : {}),
     ...(skills === undefined ? {} : { skills }),
     ...(toolNames === undefined ? {} : { tools: toolNames }),
     ...(config.toolLoading === undefined ? {} : { toolLoading: config.toolLoading }),
+    ...(config.bootstrapTools === undefined ? {} : { bootstrapTools: config.bootstrapTools }),
+    ...(config.optionalBootstrapTools === undefined
+      ? {}
+      : { optionalBootstrapTools: config.optionalBootstrapTools }),
+    ...(config.bootstrapSkill === undefined ? {} : { bootstrapSkill: config.bootstrapSkill }),
     ...(config.toolResultContext === undefined
       ? {}
       : { toolResultContext: config.toolResultContext }),

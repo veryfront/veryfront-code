@@ -1,3 +1,4 @@
+import { IMPORT_TRIVIA } from "../../modules/loader-shared/import-syntax.mjs";
 import { bundlerLogger as logger } from "#veryfront/utils";
 import * as esbuild from "veryfront/extensions/bundler";
 import { extract } from "#std/front-matter/yaml.ts";
@@ -73,7 +74,11 @@ export async function compileMDXToJS(
 ): Promise<{ code: string; frontmatter: MDXFrontmatter }> {
   const { frontmatter, content } = await extractFrontmatter(mdxContent);
 
-  const importRegex = /import\s+(\w+)\s+from\s+['"]([^'"]+)['"]/g;
+  const importRegex = new RegExp(
+    String
+      .raw`\bimport(?![\p{ID_Continue}$])${IMPORT_TRIVIA}([A-Za-z_$][\w$]*)${IMPORT_TRIVIA}from${IMPORT_TRIVIA}['"]([^'"\r\n]+)['"];?`,
+    "gu",
+  );
   const imports: Array<{ name: string; path: string }> = [];
 
   for (let match: RegExpExecArray | null; (match = importRegex.exec(content)) !== null;) {
@@ -82,7 +87,9 @@ export async function compileMDXToJS(
     if (name && path) imports.push({ name, path });
   }
 
-  const contentWithoutImports = content.replace(/import\s+.*?from\s+['"].*?['"];?\s*/g, "");
+  // Only remove declarations whose bindings were collected above. Other
+  // imports must reach the MDX processor so it can retain their bindings.
+  const contentWithoutImports = content.replace(importRegex, "");
 
   const processor = resolveContract<ContentProcessor>("ContentProcessor");
   const compiled = await processor.compileMdx({

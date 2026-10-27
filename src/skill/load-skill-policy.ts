@@ -47,7 +47,7 @@ export const LOAD_SKILL_CONTINUE_SAME_TURN = "Continue the same turn after calli
  * description.
  */
 export const LOAD_SKILL_OVERRIDE_FORWARDING =
-  "If invoke_agent is available, pass through any returned model, thinking, or maxSteps overrides when delegating to it.";
+  "If veryfront__invoke_agent is available, pass through any returned model, thinking, or maxSteps overrides when delegating to it.";
 
 /**
  * The behavioural contract every `load_skill` tool description must state,

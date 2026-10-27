@@ -1,7 +1,7 @@
 ---
 title: "veryfront/extensions"
 description: "Extension authoring types and runtime helpers."
-order: 10
+order: 11
 ---
 
 ## Import
@@ -935,6 +935,7 @@ import type { InferInput, InferSchema, InferShape } from "veryfront/extensions/s
 | `InferSchema`                  | Extracts the inferred output type `T` from a `Schema<T>`.                                                                                     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/schema/schema-validator.ts) |
 | `InferShape`                   | Maps a raw object shape to its inferred object type, preserving optionality.                                                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/schema/schema-validator.ts) |
 | `JsonSchema`                   |                                                                                                                                               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/schema/json-schema.ts)      |
+| `JsonSchemaCompilationOptions` | Bounded instance budgets for one compiled JSON Schema validator.                                                                              | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/schema/schema-validator.ts) |
 | `JsonSchemaValidationFailure`  | Failed validation of an input against a compiled JSON Schema.                                                                                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/schema/schema-validator.ts) |
 | `JsonSchemaValidationFunction` | Compiled, reusable JSON Schema validation function.                                                                                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/schema/schema-validator.ts) |
 | `JsonSchemaValidationIssue`    | Stable validation issue copied from a JSON Schema validator result.                                                                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/schema/schema-validator.ts) |

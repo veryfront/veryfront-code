@@ -112,6 +112,18 @@ function allSpecifiersAreTypeOnly(node: Record<string, unknown>): boolean {
   });
 }
 
+function dynamicImportSpecifier(node: AstNodeLike): string | null {
+  const record = node as Record<string, unknown>;
+  if (node.type === "CallExpression") {
+    const callee = asRecord(record.callee);
+    const argument = Array.isArray(record.arguments)
+      ? record.arguments[0]
+      : null;
+    return callee?.type === "Import" ? stringValue(argument) : null;
+  }
+  return node.type === "ImportExpression" ? stringValue(record.source) : null;
+}
+
 /** Extract local dependency references from TypeScript using the repository parser. */
 export function extractImports(
   file: string,
@@ -138,25 +150,9 @@ export function extractImports(
       return;
     }
 
-    if (node.type === "CallExpression") {
-      const callee = asRecord(record.callee);
-      const argument = Array.isArray(record.arguments)
-        ? record.arguments[0]
-        : null;
-      const specifier = callee?.type === "Import"
-        ? stringValue(argument)
-        : null;
-      if (specifier) {
-        references.push({ specifier, kind: "dynamic", line: getLine(node) });
-      }
-      return;
-    }
-
-    if (node.type === "ImportExpression") {
-      const specifier = stringValue(record.source);
-      if (specifier) {
-        references.push({ specifier, kind: "dynamic", line: getLine(node) });
-      }
+    const specifier = dynamicImportSpecifier(node);
+    if (specifier) {
+      references.push({ specifier, kind: "dynamic", line: getLine(node) });
     }
   });
 
@@ -235,7 +231,7 @@ function localCandidate(
   }
 
   const mapped = resolveImportMapTarget(cleanSpecifier, imports);
-  if (!mapped || !mapped.startsWith(".")) return null;
+  if (!mapped?.startsWith(".")) return null;
   return normalize(mapped.replace(/^\.\//, ""));
 }
 

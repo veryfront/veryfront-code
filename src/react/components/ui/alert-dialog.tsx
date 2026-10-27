@@ -250,7 +250,9 @@ export function AlertDialogTitle({
       {...props}
       id={resolvedId}
       className={cn("text-lg font-semibold text-[var(--foreground)]", className)}
-    />
+    >
+      {props.children}
+    </h2>
   );
 }
 

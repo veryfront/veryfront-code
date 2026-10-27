@@ -5,6 +5,8 @@ import {
   type AgentModelRuntimeResolver,
   registerModelRuntimeResolverRevoker,
 } from "../runtime/model-transport.ts";
+import type { ModelStreamTimeouts } from "../types.ts";
+import { hostedFirstProgressWindowMs } from "./hosted-model-stream-timeouts.ts";
 import type { ParsedHostedChatRequest } from "./chat-request-parser.ts";
 import type {
   DefaultHostedChatRuntimeCreationOptions,
@@ -31,6 +33,7 @@ export type HostedInferenceAuthorityOwner =
 const inferenceCredentials = createPrivateWeakStore<object, string>();
 const VERYFRONT_CLOUD_MODEL_PREFIX = "veryfront-cloud/";
 const IntrinsicReflectApply = Reflect.apply;
+const ObjectFreeze = Object.freeze;
 const StringStartsWith = String.prototype.startsWith;
 const EventTargetAddEventListener = EventTarget.prototype.addEventListener;
 const EventTargetRemoveEventListener = EventTarget.prototype.removeEventListener;
@@ -48,7 +51,7 @@ export function registerHostedInferenceCredential(
 
 /** @internal Create a model resolver without exposing verified inference authority. */
 export function createVeryfrontCloudInferenceModelResolver(
-  credential: string,
+  credential: string | (() => string),
   options: { apiBaseUrl?: string; assertParentActive?: () => void } = {},
 ): AgentModelRuntimeResolver {
   let active = true;
@@ -129,11 +132,72 @@ export function bindHostedChildInferenceAuthority(
   };
 }
 
+const inheritedModelStreamTimeouts = createPrivateWeakStore<
+  HostedInferenceAuthorityOwner,
+  Readonly<ModelStreamTimeouts>
+>();
+
+/** @internal Bind host-owned model stream budgets so delegated child runtimes inherit them. */
+export function bindHostedChildModelStreamTimeouts(
+  target: HostedInferenceAuthorityOwner,
+  timeouts: ModelStreamTimeouts | undefined,
+): void {
+  if (!timeouts) return;
+  inheritedModelStreamTimeouts.set(target, ObjectFreeze({ ...timeouts }));
+}
+
+/** @internal Read the host-owned model stream budgets inherited by a child runtime owner. */
+export function readHostedChildModelStreamTimeouts(
+  target: HostedInferenceAuthorityOwner,
+): ModelStreamTimeouts | undefined {
+  const timeouts = inheritedModelStreamTimeouts.get(target);
+  return timeouts &&
+      (timeouts.firstProgressTimeoutMs !== undefined ||
+        timeouts.semanticIdleTimeoutMs !== undefined)
+    ? { ...timeouts }
+    : undefined;
+}
+
+/**
+ * @internal Keep only inherited budgets that expire before a child's own stream
+ * watchdog, counting the replay of a first-progress timeout. A longer budget
+ * would never surface there, so the child keeps its framework default instead.
+ */
+export function restrictHostedChildModelStreamTimeouts(
+  target: HostedInferenceAuthorityOwner,
+  watchdogIdleTimeoutMs: number,
+): void {
+  const timeouts = inheritedModelStreamTimeouts.get(target);
+  if (!timeouts) return;
+  const first = timeouts.firstProgressTimeoutMs;
+  const idle = timeouts.semanticIdleTimeoutMs;
+  inheritedModelStreamTimeouts.set(
+    target,
+    ObjectFreeze({
+      ...(first !== undefined && hostedFirstProgressWindowMs(first) < watchdogIdleTimeoutMs
+        ? { firstProgressTimeoutMs: first }
+        : {}),
+      ...(idle !== undefined && idle < watchdogIdleTimeoutMs
+        ? { semanticIdleTimeoutMs: idle }
+        : {}),
+    }),
+  );
+}
+
+function inheritHostedChildModelStreamTimeouts(
+  target: HostedInferenceAuthorityOwner,
+  source: HostedInferenceAuthorityOwner,
+): void {
+  const timeouts = inheritedModelStreamTimeouts.get(source);
+  if (timeouts) inheritedModelStreamTimeouts.set(target, timeouts);
+}
+
 /** @internal Preserve private inference authority across owned context copies. */
 export function inheritHostedChildInferenceAuthority(
   target: HostedInferenceAuthorityOwner,
   source: HostedInferenceAuthorityOwner,
 ): void {
+  inheritHostedChildModelStreamTimeouts(target, source);
   const factory = inheritedInferenceFactories.get(source);
   if (factory) inheritedInferenceFactories.set(target, factory);
 }
@@ -151,6 +215,7 @@ export function scopeHostedChildInferenceAuthority(
   source: HostedInferenceAuthorityOwner,
   signal?: AbortSignal,
 ): () => void {
+  inheritHostedChildModelStreamTimeouts(target, source);
   const factory = inheritedInferenceFactories.get(source);
   if (!factory) return () => {};
   let active = true;

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { dashboardMutationHeaders } from "../mutation-request.ts";
 import type { Prompt, Resource, Tool } from "../App.tsx";
 import { Sidebar } from "./Sidebar.tsx";
@@ -217,6 +217,7 @@ function prettyPrintJson(value: unknown, label: string): string {
 }
 
 function ToolDetail({ tool }: { tool: Tool }): React.JSX.Element {
+  const argumentsId = useId();
   const [args, setArgs] = useState(() => {
     const example = generateExampleFromSchema(tool.schema);
     return JSON.stringify(example, null, 2);
@@ -329,10 +330,14 @@ function ToolDetail({ tool }: { tool: Tool }): React.JSX.Element {
 
       <Card title="Execute">
         <div className="p-4">
-          <label className="block text-xs font-medium uppercase tracking-wide text-gray-600 mb-1">
+          <label
+            htmlFor={argumentsId}
+            className="block text-xs font-medium uppercase tracking-wide text-gray-600 mb-1"
+          >
             Arguments (JSON)
           </label>
           <textarea
+            id={argumentsId}
             value={args}
             onChange={(e) => setArgs(e.target.value)}
             className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded text-sm font-mono focus:outline-none focus:border-sky-500 focus:bg-white min-h-[80px] resize-y"
@@ -356,6 +361,7 @@ function ToolDetail({ tool }: { tool: Tool }): React.JSX.Element {
 }
 
 function ResourceDetail({ resource }: { resource: Resource }): React.JSX.Element {
+  const uriId = useId();
   const [uri, setUri] = useState(resource.pattern);
   const [result, setResult] = useState<
     { success: boolean; data: string; duration?: number } | null
@@ -416,11 +422,15 @@ function ResourceDetail({ resource }: { resource: Resource }): React.JSX.Element
 
       <Card title="Read Resource">
         <div className="p-4">
-          <label className="block text-xs font-medium uppercase tracking-wide text-gray-600 mb-1">
+          <label
+            htmlFor={uriId}
+            className="block text-xs font-medium uppercase tracking-wide text-gray-600 mb-1"
+          >
             URI
           </label>
           <input
             type="text"
+            id={uriId}
             value={uri}
             onChange={(e) => setUri(e.target.value)}
             className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded text-sm focus:outline-none focus:border-sky-500 focus:bg-white"
@@ -444,6 +454,7 @@ function ResourceDetail({ resource }: { resource: Resource }): React.JSX.Element
 }
 
 function PromptDetail({ prompt }: { prompt: Prompt }): React.JSX.Element {
+  const variablesId = useId();
   const [variables, setVariables] = useState("{}");
   const [result, setResult] = useState<{ success: boolean; data: string } | null>(null);
   const [loading, setLoading] = useState(false);
@@ -500,10 +511,14 @@ function PromptDetail({ prompt }: { prompt: Prompt }): React.JSX.Element {
 
       <Card title="Render Prompt">
         <div className="p-4">
-          <label className="block text-xs font-medium uppercase tracking-wide text-gray-600 mb-1">
+          <label
+            htmlFor={variablesId}
+            className="block text-xs font-medium uppercase tracking-wide text-gray-600 mb-1"
+          >
             Variables (JSON)
           </label>
           <textarea
+            id={variablesId}
             value={variables}
             onChange={(e) => setVariables(e.target.value)}
             className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded text-sm font-mono focus:outline-none focus:border-sky-500 focus:bg-white min-h-[80px] resize-y"

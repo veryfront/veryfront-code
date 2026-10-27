@@ -2,6 +2,11 @@ import type { ChatMessageMetadata, ChatUiMessageChunk } from "#veryfront/chat/pr
 import type { AgentRunModelCallCaptureReceipt } from "#veryfront/runtime/model-call-capture-receipt.ts";
 import type { AgentRunToolCallAdmissionReceipt } from "#veryfront/runtime/tool-call-admission-receipt.ts";
 import {
+  acknowledgeMirroredToolResult,
+  disposeToolResultMirrorBarrier,
+  enableToolResultMirrorBarrier,
+} from "#veryfront/runtime/tool-result-mirror-barrier.ts";
+import {
   getToolCallOccurrence,
   isObservedToolResultStart,
 } from "#veryfront/runtime/tool-call-occurrence-carrier.ts";
@@ -34,6 +39,17 @@ import {
   createConversationRunEventQueueController,
 } from "./durable.ts";
 
+function acknowledgeMirroredResults(
+  mirror: ConversationRunChunkMirror,
+  events: ConversationRunEvent[],
+): void {
+  for (const event of events) {
+    if (event.type === "TOOL_CALL_RESULT" && typeof event.toolCallId === "string") {
+      acknowledgeMirroredToolResult(mirror, event.toolCallId);
+    }
+  }
+}
+
 const DEFAULT_IMMEDIATE_FLUSH_EVENT_COUNT = 24;
 const DEFAULT_MAX_CURSOR_RESYNCS_PER_FLUSH = 3;
 const DEFAULT_HOSTED_CHUNK_MIRROR_BATCH_SIZE = 24;
@@ -50,6 +66,8 @@ export interface ConversationRunChunkMirror {
   flush(options?: {
     abortSignal?: AbortSignal;
     throwOnTimeoutRetry?: boolean;
+    /** Wait through scheduled retries. Requires a caller-owned abort signal. */
+    waitForRetries?: boolean;
   }): Promise<ConversationRunMirrorSnapshot>;
   getSnapshot(): ReturnType<ConversationRunMirror["getSnapshot"]>;
   dispose(): void;
@@ -114,6 +132,8 @@ export interface ConversationRunChunkMirrorQueueOptions
 export interface ConversationRunChunkMirrorApiOptions
   extends ConversationRunChunkMirrorSharedOptions {
   authToken: string;
+  /** Host-owned renewable credential reader; ordinary callers retain the fixed token. */
+  getAuthToken?: () => string;
   apiUrl: string;
   conversationId: string;
   runId: string;
@@ -153,6 +173,8 @@ export interface HostedConversationRunChunkMirrorOptions {
   /** Trusted opt-in using the normal private append transport. */
   runtimeObservations?: true;
   authToken: string;
+  /** Host-owned renewable credential reader; ordinary callers retain the fixed token. */
+  getAuthToken?: () => string;
   apiUrl: string;
   conversationId: string;
   runId: string;
@@ -177,6 +199,7 @@ function resolveQueueController(
   const maxEventsPerBatch = input.maxEventsPerBatch ?? DEFAULT_IMMEDIATE_FLUSH_EVENT_COUNT;
   return createConversationRunEventQueueController({
     authToken: input.authToken,
+    ...("getAuthToken" in input && input.getAuthToken ? { getAuthToken: input.getAuthToken } : {}),
     apiUrl: input.apiUrl,
     conversationId: input.conversationId,
     runId: input.runId,
@@ -265,7 +288,7 @@ export function createConversationRunChunkMirror(
     ...(input.runQueueFlush ? { runQueueFlush: input.runQueueFlush } : {}),
   });
 
-  return {
+  const result: ConversationRunChunkMirror = {
     timing,
     takeModelCallCaptureReceipt(modelCallId) {
       return queueController.takeModelCallCaptureReceipt?.(modelCallId);
@@ -321,6 +344,7 @@ export function createConversationRunChunkMirror(
       } else {
         mirror.enqueue(events);
       }
+      acknowledgeMirroredResults(result, events);
     },
     async appendEvents(events) {
       if (mirror.getSnapshot().disabled || events.length === 0) {
@@ -347,9 +371,12 @@ export function createConversationRunChunkMirror(
       return mirror.getSnapshot();
     },
     dispose() {
+      disposeToolResultMirrorBarrier(result);
       mirror.dispose();
     },
   };
+  if (input.runtimeObservations) enableToolResultMirrorBarrier(result);
+  return result;
 }
 
 function createHostedChunkMirrorRetryMetadata(input: {
@@ -522,6 +549,7 @@ export function createHostedConversationRunChunkMirror(
 
   return createConversationRunChunkMirror({
     authToken: input.authToken,
+    ...(input.getAuthToken ? { getAuthToken: input.getAuthToken } : {}),
     apiUrl: input.apiUrl,
     conversationId: input.conversationId,
     runId: input.runId,

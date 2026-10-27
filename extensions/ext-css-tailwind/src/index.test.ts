@@ -8,6 +8,8 @@ import factory, { TAILWIND_DEFAULT_STYLESHEET, TailwindCSSProcessor } from "./in
 import { exactTailwindVersion } from "./manifest-dependency.ts";
 import { TAILWIND_PLUGIN_POLICY_IDENTITY } from "./plugin-policy.ts";
 
+import { TW_ANIMATE_CSS } from "../vendor/tw-animate-css.js";
+
 const noopLogger = { debug() {}, info() {}, warn() {}, error() {} };
 
 describe("ext-css-tailwind", () => {
@@ -99,6 +101,44 @@ describe("ext-css-tailwind", () => {
       assertEquals(fetchCalls, 0);
     } finally {
       globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("compiles pinned animation CSS and binds its exact bytes to the cache", async () => {
+    const processor = new TailwindCSSProcessor();
+    const hash = createHash("sha256").update(TW_ANIMATE_CSS, "utf8").digest("hex");
+    assertEquals(hash, "6035b41301945cd65eb233b4653965e3c235338faae51b0f55676d591daaef23");
+    assertStringIncludes(processor.cacheIdentity, `tw-animate-css@1.4.0=${hash}`);
+    assertEquals(extensionPackage.imports["tw-animate-css"], "npm:tw-animate-css@1.4.0");
+    const compiler = await processor.compile('@import "tailwindcss";\n@import "tw-animate-css";');
+    const css = compiler.build(["animate-in", "fade-in", "zoom-in-95", "slide-in-from-top-2"]);
+    for (
+      const expected of [
+        ".animate-in",
+        ".fade-in",
+        ".zoom-in-95",
+        ".slide-in-from-top-2",
+        "@keyframes enter",
+      ]
+    ) {
+      assertStringIncludes(css, expected);
+    }
+    assertEquals(
+      compiler.build(["animate-in", "fade-in", "zoom-in-95", "slide-in-from-top-2"]),
+      css,
+    );
+    for (
+      const specifier of [
+        "tw-animate-css@1.3.0",
+        "tw-animate-css/prefix",
+        "../animation.css",
+      ]
+    ) {
+      await assertRejects(
+        () => processor.compile(`@import "${specifier}";`),
+        Error,
+        "cannot resolve stylesheet import",
+      );
     }
   });
 

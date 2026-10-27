@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { it } from "#veryfront/testing/bdd.ts";
 import { defineSchema } from "#veryfront/schemas";
 import { tool } from "#veryfront/tool";
@@ -19,7 +19,13 @@ function observedToolNames(model: ScriptedModel): string[][] {
 
 it("deferred generate searches, exposes on the next step, and executes once", async () => {
   const model = scriptedModel([
-    { toolCalls: [{ id: "search-1", name: "tool_search", input: { query: "release marker" } }] },
+    {
+      toolCalls: [{
+        id: "search-1",
+        name: "veryfront__tool_search",
+        input: { query: "release marker" },
+      }],
+    },
     { toolCalls: [{ id: "marker-1", name: "read_release_marker", input: {} }] },
     { text: "Release marker marker-1" },
   ], { modelId: "hosted/deferred-tools", only: "generate" });
@@ -61,12 +67,11 @@ it("deferred generate searches, exposes on the next step, and executes once", as
   const response = await assistant.generate({ input: "Read the release marker" });
 
   const observedSystems = model.systemPrompts();
-  assertEquals(model.toolNames(0), ["load_skill", "tool_search", "veryfront__load_skill"]);
+  assertEquals(model.toolNames(0), ["veryfront__load_skill", "veryfront__tool_search"]);
   assertEquals(model.toolNames(1), [
-    "load_skill",
     "read_release_marker",
-    "tool_search",
     "veryfront__load_skill",
+    "veryfront__tool_search",
   ]);
   assertEquals((observedSystems[0] ?? "").includes("form_input"), false);
   assertEquals((observedSystems[0] ?? "").includes("read_release_marker"), false);
@@ -80,14 +85,14 @@ it("authored deferred loading hides explicit tool map schemas until lookup", asy
     {
       toolCalls: [{
         id: "search-denied",
-        name: "tool_search",
+        name: "veryfront__tool_search",
         input: { query: "denied marker" },
       }],
     },
     {
       toolCalls: [{
         id: "search-allowed",
-        name: "tool_search",
+        name: "veryfront__tool_search",
         input: { query: "release marker" },
       }],
     },
@@ -123,8 +128,8 @@ it("authored deferred loading hides explicit tool map schemas until lookup", asy
 
   const observedSystems = model.systemPrompts();
   assertEquals(observedToolNames(model), [
-    ["tool_search"],
-    ["tool_search"],
+    ["veryfront__tool_search"],
+    ["veryfront__tool_search"],
     ["read_release_marker"],
     ["read_release_marker"],
   ]);
@@ -135,7 +140,7 @@ it("authored deferred loading hides explicit tool map schemas until lookup", asy
   assertEquals(response.text, "Release marker marker-1");
 });
 
-it("authored tool_search false keeps deferred loading from reintroducing tool search", async () => {
+it("authored veryfront__tool_search false keeps deferred loading from reintroducing tool search", async () => {
   const model = scriptedModel([
     { toolCalls: [{ id: "marker-1", name: "read_release_marker", input: {} }] },
     { text: "Release marker marker-1" },
@@ -148,7 +153,7 @@ it("authored tool_search false keeps deferred loading from reintroducing tool se
       system: "Use tools when needed.",
       skills: false,
       tools: {
-        tool_search: false,
+        veryfront__tool_search: false,
         read_release_marker: tool({
           id: "read_release_marker",
           description: "Read the release marker",
@@ -180,7 +185,7 @@ it("deferred generate can reload create_agent after a successful agent write", a
     {
       toolCalls: [{
         id: "search-create-agent-1",
-        name: "tool_search",
+        name: "veryfront__tool_search",
         input: { query: "create_agent" },
       }],
     },
@@ -188,7 +193,7 @@ it("deferred generate can reload create_agent after a successful agent write", a
     {
       toolCalls: [{
         id: "search-create-agent-3",
-        name: "tool_search",
+        name: "veryfront__tool_search",
         input: { query: "create_agent" },
       }],
     },
@@ -239,11 +244,11 @@ it("deferred generate can reload create_agent after a successful agent write", a
 
   const observedSystems = model.systemPrompts();
   assertEquals(observedToolNames(model), [
-    ["load_skill", "tool_search", "veryfront__load_skill"],
-    ["create_agent", "load_skill", "tool_search", "veryfront__load_skill"],
-    ["load_skill", "tool_search", "veryfront__load_skill"],
-    ["create_agent", "load_skill", "tool_search", "veryfront__load_skill"],
-    ["load_skill", "tool_search", "veryfront__load_skill"],
+    ["veryfront__load_skill", "veryfront__tool_search"],
+    ["create_agent", "veryfront__load_skill", "veryfront__tool_search"],
+    ["veryfront__load_skill", "veryfront__tool_search"],
+    ["create_agent", "veryfront__load_skill", "veryfront__tool_search"],
+    ["veryfront__load_skill", "veryfront__tool_search"],
   ]);
   assertEquals(
     observedSystems[2]?.includes("- create_agent: Create a project agent"),
@@ -262,7 +267,7 @@ it("deferred stream can reload another agent write tool after a successful write
     {
       toolCalls: [{
         id: "search-create-agent-1",
-        name: "tool_search",
+        name: "veryfront__tool_search",
         input: { query: "create_agent" },
       }],
     },
@@ -270,7 +275,7 @@ it("deferred stream can reload another agent write tool after a successful write
     {
       toolCalls: [{
         id: "search-create-agent-3",
-        name: "tool_search",
+        name: "veryfront__tool_search",
         input: { query: "update_agent" },
       }],
     },
@@ -331,11 +336,11 @@ it("deferred stream can reload another agent write tool after a successful write
 
   const observedSystems = model.systemPrompts();
   assertEquals(observedToolNames(model), [
-    ["load_skill", "tool_search", "veryfront__load_skill"],
-    ["create_agent", "load_skill", "tool_search", "veryfront__load_skill"],
-    ["load_skill", "tool_search", "veryfront__load_skill"],
-    ["load_skill", "tool_search", "update_agent", "veryfront__load_skill"],
-    ["load_skill", "tool_search", "veryfront__load_skill"],
+    ["veryfront__load_skill", "veryfront__tool_search"],
+    ["create_agent", "veryfront__load_skill", "veryfront__tool_search"],
+    ["veryfront__load_skill", "veryfront__tool_search"],
+    ["update_agent", "veryfront__load_skill", "veryfront__tool_search"],
+    ["veryfront__load_skill", "veryfront__tool_search"],
   ]);
   assertEquals(
     observedSystems[2]?.includes("- update_agent: Update a project agent"),
@@ -351,7 +356,13 @@ it("deferred stream can reload another agent write tool after a successful write
 
 it("deferred generate activates and executes provider-native web search on demand", async () => {
   const model = scriptedModel([
-    { toolCalls: [{ id: "search-native-1", name: "tool_search", input: { query: "web_search" } }] },
+    {
+      toolCalls: [{
+        id: "search-native-1",
+        name: "veryfront__tool_search",
+        input: { query: "web_search" },
+      }],
+    },
     {
       content: [
         {
@@ -389,14 +400,14 @@ it("deferred generate activates and executes provider-native web search on deman
   const response = await assistant.generate({ input: "Search the web for Veryfront" });
 
   const observedSystems = model.systemPrompts();
-  assertEquals(model.toolNames(0), ["tool_search"]);
-  assertEquals(model.toolNames(1), ["tool_search", "web_search"]);
-  assertEquals(model.toolNames(2), ["tool_search", "web_search"]);
+  assertEquals(model.toolNames(0), ["veryfront__tool_search"]);
+  assertEquals(model.toolNames(1), ["veryfront__tool_search", "web_search"]);
+  assertEquals(model.toolNames(2), ["veryfront__tool_search", "web_search"]);
   assertEquals((observedSystems[0] ?? "").includes("web_search"), false);
   assertEquals((observedSystems[0] ?? "").includes("web_fetch"), false);
   assertEquals((observedSystems[1] ?? "").includes("web_search"), false);
   assertEquals(response.toolCalls.map((call) => [call.name, call.status]), [
-    ["tool_search", "completed"],
+    ["veryfront__tool_search", "completed"],
     ["web_search", "completed"],
   ]);
   assertEquals(response.text, "Found Veryfront.");
@@ -458,7 +469,7 @@ async function toolSearchNextSteps(
     ...searchTurns.map((queries, turn) => ({
       toolCalls: queries.map((query, index) => ({
         id: `search-${turn}-${index}`,
-        name: "tool_search",
+        name: "veryfront__tool_search",
         input: { query },
       })),
     })),
@@ -483,7 +494,7 @@ async function toolSearchNextSteps(
   });
 }
 
-it("tool_search hit names the loaded tools and asks the model to call one next", async () => {
+it("veryfront__tool_search hit names the loaded tools and asks the model to call one next", async () => {
   assertEquals(
     await toolSearchNextSteps([["list_files"]], {
       list_files: noopTool("list_files", "List project files"),
@@ -495,13 +506,13 @@ it("tool_search hit names the loaded tools and asks the model to call one next",
   );
 });
 
-it("tool_search miss asks for a refined search while authorized tools stay deferred", async () => {
+it("veryfront__tool_search miss asks for a refined search while authorized tools stay deferred", async () => {
   const tools = {
     list_files: noopTool("list_files", "List project files"),
     read_release_marker: noopTool("read_release_marker", "Read the release marker"),
   };
   assertEquals(await toolSearchNextSteps([["zzz unrelated capability"]], tools), [
-    "No authorized tool matched this query, but other authorized tools are not loaded yet. Call tool_search again with one exact tool name or a different short capability phrase before answering without a tool.",
+    "No executable tool matched this query. Use veryfront__tool_search with inventory: 'all' to browse authorized tool names, then use schema with one exact name. A project resource title is not a tool name.",
   ]);
 
   // A search in the same step that loaded the last deferred tool leaves nothing to discover.
@@ -511,3 +522,151 @@ it("tool_search miss asks for a refined search while authorized tools stay defer
   );
   assertEquals(steps[1], "Continue with the available tools or answer without a tool.");
 });
+
+it("veryfront__tool_search does not recommend executing the first available phrase match", async () => {
+  const steps = await toolSearchNextSteps(
+    [["conversation"], ["conversation"]],
+    {
+      create_conversation: noopTool("create_conversation", "Create a conversation"),
+      delete_conversation: noopTool("delete_conversation", "Delete a conversation"),
+      read_release_marker: noopTool("read_release_marker", "Read the release marker"),
+    },
+  );
+  assertEquals(
+    steps[1],
+    "Matching candidates are already available. A search match does not establish that a tool can perform the request; check its contract before calling it.",
+  );
+});
+for (const mode of ["generate", "stream"] as const) {
+  it(`browses authorized executable names before exact loading and execution (${mode})`, async () => {
+    const model = scriptedModel([
+      {
+        toolCalls: [{
+          id: "browse",
+          name: "veryfront__tool_search",
+          input: { inventory: "all", limit: 2 },
+        }],
+      },
+      {
+        toolCalls: [{
+          id: "load",
+          name: "veryfront__tool_search",
+          input: { query: "read_release_marker" },
+        }],
+      },
+      { toolCalls: [{ id: "read", name: "read_release_marker", input: {} }] },
+      { text: "Verified marker" },
+    ], { modelId: "hosted/browse-tools", only: mode });
+    let executions = 0;
+    const assistant = agent({
+      id: "browse-runtime-test",
+      model: "hosted/browse-tools",
+      system: "Verify the marker using executable tools.",
+      tools: {
+        denied_tool: false,
+        read_release_marker: tool({
+          id: "read_release_marker",
+          description: "Read the release marker",
+          inputSchema: defineSchema((v) => v.object({}))(),
+          execute: () => {
+            executions++;
+            return { marker: "verified" };
+          },
+        }),
+      },
+      toolLoading: "deferred",
+      maxSteps: 4,
+      resolveModelTransport: () => ({ model }),
+    });
+    const resultText = mode === "generate"
+      ? (await assistant.generate({ input: "Read the release marker" })).text
+      : await (await assistant.stream({ input: "Read the release marker" })).toDataStreamResponse()
+        .text();
+    const browseContext = JSON.stringify(model.calls[1]);
+    assert(browseContext.includes("read_release_marker"));
+    assertEquals(browseContext.includes("denied_tool"), false);
+    assertEquals(model.toolNames(0), ["veryfront__tool_search"]);
+    assertEquals(model.toolNames(1), ["veryfront__tool_search"]);
+    assertEquals(model.toolNames(2), ["read_release_marker"]);
+    assertEquals(executions, 1);
+    assert(resultText.includes("Verified marker"));
+  });
+}
+
+for (const mode of ["generate", "stream"] as const) {
+  it(`enforces one veryfront__tool_search mode, then searches and loads by exact schema (${mode})`, async () => {
+    const model = scriptedModel([
+      {
+        toolCalls: [{
+          id: "both",
+          name: "veryfront__tool_search",
+          input: { query: "marker", inventory: "all" },
+        }],
+      },
+      {
+        toolCalls: [{
+          id: "stray-option",
+          name: "veryfront__tool_search",
+          input: { search: "release marker", limit: 2 },
+        }],
+      },
+      {
+        toolCalls: [{
+          id: "nested-inventory",
+          name: "veryfront__tool_search",
+          input: { inventory: { limit: 2 } },
+        }],
+      },
+      {
+        toolCalls: [{
+          id: "find",
+          name: "veryfront__tool_search",
+          input: { search: "release marker" },
+        }],
+      },
+      {
+        toolCalls: [{
+          id: "inspect",
+          name: "veryfront__tool_search",
+          input: { schema: "read_release_marker" },
+        }],
+      },
+      { toolCalls: [{ id: "read", name: "read_release_marker", input: {} }] },
+      { text: "Verified marker" },
+    ], { modelId: "hosted/schema-tools", only: mode });
+    let executions = 0;
+    const assistant = agent({
+      id: "schema-runtime-test",
+      model: "hosted/schema-tools",
+      system: "Verify the marker using executable tools.",
+      tools: {
+        read_release_marker: tool({
+          id: "read_release_marker",
+          description: "Read the release marker",
+          inputSchema: defineSchema((v) => v.object({}))(),
+          execute: () => {
+            executions++;
+            return { marker: "verified" };
+          },
+        }),
+      },
+      toolLoading: "deferred",
+      maxSteps: 7,
+      resolveModelTransport: () => ({ model }),
+    });
+    const resultText = mode === "generate"
+      ? (await assistant.generate({ input: "Read the release marker" })).text
+      : await (await assistant.stream({ input: "Read the release marker" })).toDataStreamResponse()
+        .text();
+    assert(JSON.stringify(model.calls[1]).includes("exactly one of"));
+    assert(JSON.stringify(model.calls[2]).includes("limit applies only with inventory"));
+    assert(JSON.stringify(model.calls[3]).includes("cursor, and limit as top-level fields"));
+    const searchContext = JSON.stringify(model.calls[4]);
+    assert(searchContext.includes("read_release_marker"));
+    assertEquals(model.toolNames(4), ["veryfront__tool_search"]);
+    assert(JSON.stringify(model.calls[5]).includes("inputSchema"));
+    assertEquals(model.toolNames(5), ["read_release_marker"]);
+    assertEquals(executions, 1);
+    assert(resultText.includes("Verified marker"));
+  });
+}

@@ -88,7 +88,7 @@ export function normalizeReleaseAssetModulePath(path: string | undefined | null)
   return String(path || "")
     .replace(/^\/?_vf_modules\//, "")
     .replace(/^\/+/, "")
-    .replace(/[?#].*$/, "");
+    .replace(/[?#].*$/s, "");
 }
 
 /** The hardened RSC endpoint used for App Router and isolated client pages. */

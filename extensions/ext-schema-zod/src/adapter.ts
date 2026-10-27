@@ -18,6 +18,7 @@ import { z } from "zod";
 import type {
   InferShape,
   JsonSchema,
+  JsonSchemaCompilationOptions,
   JsonSchemaValidationFailure,
   JsonSchemaValidationFunction,
   JsonSchemaValidationIssue,
@@ -29,7 +30,14 @@ import type {
   ValidationIssue,
   ValidationResult,
 } from "veryfront/extensions/schema";
-import { isOptionalSchema, recordStaticJsonSchemaDefault, zodToJsonSchema } from "./json-schema.ts";
+import {
+  isOptionalSchema,
+  recordStaticJsonSchemaDefault,
+  recordTransparentSchemaInput,
+  zodToJsonSchema,
+} from "./json-schema.ts";
+import { preserveDeclaredObjectDataProperty } from "./object-data-properties.ts";
+import { preserveUnionCheckDiagnostics } from "./union-diagnostics.ts";
 
 // Deno exposes the CommonJS default as a callable value at runtime while the
 // package declaration describes the imported value as a module namespace.
@@ -50,6 +58,8 @@ function toZod<T>(schema: Schema<T>): AnyZodSchema {
 
 /** Wrap a zod schema as an opaque Schema<T> with chainables routed through zod. */
 function wrap<T>(zs: AnyZodSchema): Schema<T> {
+  preserveDeclaredObjectDataProperty(zs);
+  preserveUnionCheckDiagnostics(zs);
   // The wrapper fakes the full Schema<T> surface; unsupported chainables on
   // unsuitable kinds (e.g. calling `.email()` on a number) throw at runtime
   // just like zod would.
@@ -138,6 +148,15 @@ function wrap<T>(zs: AnyZodSchema): Schema<T> {
   return s;
 }
 
+// An unconstrained input stage preserves omission for unknown/any/custom fields.
+// The actual validator stays outside optional(), so required refinements still
+// run. A validation pipeline also keeps opaque promises synchronous.
+function withMissingInputValidation(schema: AnyZodSchema): AnyZodSchema {
+  const input = z.unknown().optional().pipe(schema);
+  recordTransparentSchemaInput(input, schema);
+  return input;
+}
+
 function toZodShape(
   shape: Record<string, Schema<unknown>>,
 ): Record<string, AnyZodSchema> {
@@ -193,6 +212,7 @@ const JSON_INSTANCE_MAX_NODES = 100_000;
 const JSON_INSTANCE_MAX_SERIALIZED_BYTES = 4 * 1024 * 1024;
 const JSON_INSTANCE_MAX_STRING_BYTES = 1024 * 1024;
 const JSON_INSTANCE_MAX_KEY_BYTES = 16 * 1024;
+const JSON_INSTANCE_OVERRIDE_MAX_BYTES = 16 * 1024 * 1024;
 const JSON_UTF8_ENCODER = new TextEncoder();
 
 interface CanonicalizationLimits {
@@ -224,6 +244,23 @@ const JSON_INSTANCE_LIMITS: CanonicalizationLimits = {
   maxStringBytes: JSON_INSTANCE_MAX_STRING_BYTES,
   maxKeyBytes: JSON_INSTANCE_MAX_KEY_BYTES,
 };
+
+function jsonInstanceLimits(options?: JsonSchemaCompilationOptions): CanonicalizationLimits {
+  const requested = options?.instanceLimits;
+  if (!requested) return JSON_INSTANCE_LIMITS;
+  const { maxSerializedBytes, maxStringBytes } = requested;
+  for (const value of [maxSerializedBytes, maxStringBytes]) {
+    if (!Number.isSafeInteger(value) || value < 1 || value > JSON_INSTANCE_OVERRIDE_MAX_BYTES) {
+      throw new RangeError(
+        "JSON Schema instance byte limits must be positive safe integers at most 16777216",
+      );
+    }
+  }
+  if (maxStringBytes > maxSerializedBytes) {
+    throw new RangeError("JSON Schema string byte limit must not exceed its serialized byte limit");
+  }
+  return { ...JSON_INSTANCE_LIMITS, maxSerializedBytes, maxStringBytes };
+}
 
 type JsonSchemaCompiler = {
   compile(schema: AnySchema): ValidateFunction<unknown>;
@@ -723,9 +760,12 @@ const DATA_ONLY_INPUT_FAILURE: JsonSchemaValidationFailure = Object.freeze({
   ]),
 });
 
-function snapshotJsonInstance(input: unknown): CanonicalJsonSnapshot | undefined {
+function snapshotJsonInstance(
+  input: unknown,
+  limits: CanonicalizationLimits,
+): CanonicalJsonSnapshot | undefined {
   try {
-    return canonicalizeJsonValue(input, JSON_INSTANCE_LIMITS);
+    return canonicalizeJsonValue(input, limits);
   } catch {
     // Accessors, throwing/revoked Proxies, cycles, custom prototypes, and
     // oversized inputs are ordinary validation failures at this boundary.
@@ -747,11 +787,14 @@ function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
     typeof value.then === "function";
 }
 
-function compileJsonSchemaValidator<T>(schema: JsonSchema): JsonSchemaValidationFunction<T> {
+function compileJsonSchemaValidator<T>(
+  schema: JsonSchema,
+  limits: CanonicalizationLimits,
+): JsonSchemaValidationFunction<T> {
   const validate = createJsonSchemaCompiler(schema).compile(schemaForCompilation(schema));
 
   return (input) => {
-    const inputSnapshot = snapshotJsonInstance(input);
+    const inputSnapshot = snapshotJsonInstance(input, limits);
     if (!inputSnapshot) return DATA_ONLY_INPUT_FAILURE;
     const acceptedInput = inputSnapshot.value;
     const outcome = validate(acceptedInput);
@@ -778,16 +821,21 @@ function createJsonSchemaCompilationCache(): SchemaValidator["compileJsonSchema"
   const cache = new Map<string, CacheEntry>();
   let cacheWeight = 0;
 
-  return <T>(schema: JsonSchema): JsonSchemaValidationFunction<T> => {
+  return <T>(
+    schema: JsonSchema,
+    options?: JsonSchemaCompilationOptions,
+  ): JsonSchemaValidationFunction<T> => {
+    const limits = jsonInstanceLimits(options);
     const snapshot = snapshotJsonSchema(schema);
-    const cached = cache.get(snapshot.key);
+    const key = `${limits.maxSerializedBytes}:${limits.maxStringBytes}:${snapshot.key}`;
+    const cached = cache.get(key);
     if (cached) {
-      cache.delete(snapshot.key);
-      cache.set(snapshot.key, cached);
+      cache.delete(key);
+      cache.set(key, cached);
       return cached.validator as JsonSchemaValidationFunction<T>;
     }
 
-    const compiled = compileJsonSchemaValidator<T>(snapshot.schema);
+    const compiled = compileJsonSchemaValidator<T>(snapshot.schema, limits);
     while (
       cache.size >= JSON_SCHEMA_VALIDATOR_CACHE_SIZE ||
       cacheWeight + snapshot.cacheWeight > JSON_SCHEMA_VALIDATOR_CACHE_MAX_WEIGHT
@@ -798,7 +846,7 @@ function createJsonSchemaCompilationCache(): SchemaValidator["compileJsonSchema"
       cache.delete(oldestKey);
       if (oldest) cacheWeight -= oldest.weight;
     }
-    cache.set(snapshot.key, { validator: compiled, weight: snapshot.cacheWeight });
+    cache.set(key, { validator: compiled, weight: snapshot.cacheWeight });
     cacheWeight += snapshot.cacheWeight;
     return compiled;
   };
@@ -822,10 +870,10 @@ export function createZodAdapter(): SchemaValidator {
     boolean: (): Schema<boolean> => wrap(z.boolean()),
     date: (): Schema<Date> => wrap(z.date()),
     null: (): Schema<null> => wrap(z.null()),
-    unknown: (): Schema<unknown> => wrap(z.unknown()),
+    unknown: (): Schema<unknown> => wrap(withMissingInputValidation(z.unknown())),
     bigint: (): Schema<bigint> => wrap(z.bigint()),
     // deno-lint-ignore no-explicit-any -- contract mirrors zod's `any` constructor
-    any: (): Schema<any> => wrap(z.any()),
+    any: (): Schema<any> => wrap(withMissingInputValidation(z.any())),
     function: (): Schema<(...args: unknown[]) => unknown> =>
       // zod 4's z.function() is callable without args/returns and produces a
       // schema accepting any function. We wrap it as Schema<AnyFunction>.
@@ -899,7 +947,7 @@ export function createZodAdapter(): SchemaValidator {
       ),
 
     custom: <T>(check?: (value: unknown) => boolean, message?: string): Schema<T> =>
-      wrap<T>(z.custom<T>(check as (v: unknown) => boolean, message)),
+      wrap<T>(withMissingInputValidation(z.custom<T>(check as (v: unknown) => boolean, message))),
 
     coerce,
 

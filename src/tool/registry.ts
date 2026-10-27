@@ -1,3 +1,5 @@
+import { readToolDiscoveryMetadata } from "./discovery-metadata.ts";
+import { sealToolPlatformDependencies } from "./factory.ts";
 import type { Tool, ToolDefinition } from "./types.ts";
 import { zodToJsonSchema } from "./schema/zod-json-schema.ts";
 import { agentLogger } from "#veryfront/utils";
@@ -56,12 +58,20 @@ class ToolRegistryInternal extends ScopedRegistryFacade<Tool> {
     if (existing !== undefined && existing !== item && isSameToolDefinition(existing, item)) {
       agentLogger.debug(`[tool] "${id}" re-registered with equivalent definition; replacing.`);
     }
-    super.register(id, item);
+    super.register(id, sealToolPlatformDependencies(item));
   }
 
   override registerShared(id: string, item: Tool): void {
     assertLocalToolId(id);
     if (item.id !== id) assertLocalToolId(item.id);
+    super.registerShared(id, sealToolPlatformDependencies(item));
+  }
+
+  /** Register a framework-owned canonical platform tool outside the local namespace. */
+  registerPlatformShared(id: `veryfront__${string}`, item: Tool): void {
+    if (item.id !== id) {
+      throw INVALID_ARGUMENT.create({ detail: `Platform tool registration must preserve "${id}"` });
+    }
     super.registerShared(id, item);
   }
 
@@ -121,6 +131,7 @@ function snapshotProviderMcpMetadata(
 }
 
 export function toolToProviderDefinition(tool: Tool): ToolDefinition {
+  const discovery = readToolDiscoveryMetadata(tool);
   const hasPreConvertedSchema = tool.inputSchemaJson != null;
   const jsonSchema = snapshotProviderSchema(
     tool.inputSchemaJson ?? zodToJsonSchema(tool.inputSchema),
@@ -137,6 +148,7 @@ export function toolToProviderDefinition(tool: Tool): ToolDefinition {
     name: tool.id,
     description: tool.description,
     parameters: jsonSchema,
+    ...(discovery ? { discovery } : {}),
     ...snapshotProviderMcpMetadata(tool.mcp, tool.id),
   };
 }

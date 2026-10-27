@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { IMPORT_FROM, IMPORT_TRIVIA } from "../../src/modules/loader-shared/import-syntax.mjs";
 /**
  * Verify that all documented exports resolve from the built npm package.
  *
@@ -13,7 +14,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { BROWSER_SAFE_CLIENT_MODULES, BROWSER_SAFE_EXPORTS, BROWSER_SAFE_TRANSITIVE_EXPORTS } from "../build/browser-safe-exports.mjs";
+import { BROWSER_SAFE_CLIENT_MODULES, BROWSER_SAFE_EXPORTS } from "../build/browser-safe-exports.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, "../..");
@@ -76,7 +77,7 @@ const REQUIRED_EXPORTS = {
 let passed = 0;
 let failed = 0;
 
-const IMPORT_SPECIFIER_PATTERN = /(?:import|export)\s+(?:[^"';]+?\s+from\s+)?["']([^"']+)["']|import\(["']([^"']+)["']\)/g;
+const IMPORT_SPECIFIER_PATTERN = new RegExp(String.raw`\b(?:import|export)(?![\p{ID_Continue}$])${IMPORT_TRIVIA}(?:${IMPORT_FROM})?["']([^"']+)["']|import\(["']([^"']+)["']\)`, "gu");
 
 function moduleSpecifiers(source) {
   const specifiers = [];
@@ -203,15 +204,13 @@ for (const exportPath of BROWSER_SAFE_EXPORTS) {
     continue;
   }
 
-  if (BROWSER_SAFE_TRANSITIVE_EXPORTS.includes(exportPath)) {
-    const transitiveDntImporters = collectTransitiveDntImporters(builtFile);
-    if (transitiveDntImporters.length > 0) {
-      failed++;
-      const relativeImporters = transitiveDntImporters.map((file) => file.replace(`${resolve(NPM_DIR, "esm")}/`, ""));
-      errors.push(`  ${label}: transitive browser graph imports dnt shim/polyfill via ${relativeImporters.join(", ")}`);
-      console.log(`  FAIL  ${label} — transitive graph imports dnt shim/polyfill`);
-      continue;
-    }
+  const transitiveDntImporters = collectTransitiveDntImporters(builtFile);
+  if (transitiveDntImporters.length > 0) {
+    failed++;
+    const relativeImporters = transitiveDntImporters.map((file) => file.replace(`${resolve(NPM_DIR, "esm")}/`, ""));
+    errors.push(`  ${label}: transitive browser graph imports dnt shim/polyfill via ${relativeImporters.join(", ")}`);
+    console.log(`  FAIL  ${label} — transitive graph imports dnt shim/polyfill`);
+    continue;
   }
 
   passed++;

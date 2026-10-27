@@ -8,9 +8,7 @@ A schedule owns a trigger definition. Platform-managed schedules can create
 runs at configured recurring times or at one configured time. Source-defined
 `schedule()` configurations are recurring schedules.
 
-Schedules exist because scheduled work has two separate concerns: when work
-starts and what work does. The schedule owns the trigger. The target owns the
-business logic.
+The schedule defines when work starts. The target defines what it does.
 
 ## Characteristics
 
@@ -21,8 +19,6 @@ business logic.
   or agent definition.
 
 ## Boundary
-
-This keeps scheduling separate from execution.
 
 Use a schedule when work should start automatically. Put the work in a task or
 workflow and let the schedule trigger it.
@@ -80,7 +76,7 @@ export default schedule({
 | `none`             | Runs standalone with no hosted conversation           |
 
 `none` is the default, and it is the wrong choice for any agent that delegates.
-Delegation through `invoke_agent` needs a hosted conversation to attach the
+Delegation through `veryfront__invoke_agent` needs a hosted conversation to attach the
 child run to, so a scheduled agent that delegates fails on every occurrence
 under `none`. Use `create_new` for those agents.
 

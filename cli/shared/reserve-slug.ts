@@ -24,6 +24,7 @@ export interface ReserveResult {
 
 export interface ReserveProjectSlugOptions {
   allowAlternativeSlug?: boolean;
+  transport?: typeof fetch;
 }
 
 export class ProjectSlugConflictError extends Error {
@@ -53,7 +54,7 @@ export async function reserveProjectSlug(
   let currentSlug = slug;
 
   for (let attempt = 1; attempt <= MAX_SLUG_ATTEMPTS; attempt++) {
-    const result = await tryCreateProject(currentSlug, name, token, apiUrl);
+    const result = await tryCreateProject(currentSlug, name, token, apiUrl, options.transport);
 
     if (result.success) {
       return {
@@ -82,9 +83,10 @@ async function tryCreateProject(
   name: string,
   token: string,
   apiUrl: string,
+  transport: typeof fetch = fetch,
 ): Promise<CreateProjectResult> {
   try {
-    const response = await fetch(`${apiUrl.replace(/\/+$/, "")}/projects`, {
+    const response = await transport(`${apiUrl.replace(/(?<!\/)\/+$/, "")}/projects`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${token}`,

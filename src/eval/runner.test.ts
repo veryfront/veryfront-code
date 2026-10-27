@@ -897,6 +897,12 @@ describe("eval/runner", () => {
       target: "agent:researcher",
       dataset,
     });
+    Object.defineProperty(controller.signal, "throwIfAborted", {
+      configurable: true,
+      value: () => {
+        throw undefined;
+      },
+    });
     await assertRejects(
       () => runEval(definition, { signal: controller.signal, adapters: {} }),
       Error,
@@ -1681,4 +1687,131 @@ describe("eval/runner", () => {
       },
     ]);
   });
+});
+
+describe("expected error outcomes", () => {
+  it("passes a declared terminal error and keeps its error and trace", async () => {
+    const definition = evalAgent({
+      target: "agent:test",
+      dataset: [{ id: "invalid-reference", input: "invalid", expectedOutcome: "error" }],
+      check({ record }) {
+        assertEquals(record.error, "Invalid reference");
+      },
+    });
+    const report = await runEval(definition, {
+      adapters: {
+        agent: () => ({ completed: false, outcome: "error", error: "Invalid reference" }),
+      },
+    });
+    assertEquals(report.summary.passed, 1);
+    assertEquals(report.summary.gateFailures, []);
+    assertEquals(report.records[0]?.completed, false);
+    assertEquals(report.records[0]?.error, "Invalid reference");
+  });
+});
+
+describe("expected outcome gates", () => {
+  for (const targetKind of ["agent", "tool"] as const) {
+    it(`keeps ${targetKind} success, infrastructure, and grading failures strict`, async () => {
+      const define = targetKind === "agent" ? evalAgent : evalTool;
+      const results = [
+        { completed: true },
+        { completed: false, error: "Connection failed" },
+        { completed: false },
+        { completed: false, error: "Invalid input", outcome: "error" as const },
+        { completed: true, outcome: "error" as const },
+        { outcome: "error" as const },
+      ];
+      for (const [index, result] of results.entries()) {
+        for (const expectedOutcome of [undefined, "success", "error"] as const) {
+          const definition = define({
+            target: "test",
+            dataset: [{ id: "case", input: {}, expectedOutcome }],
+          });
+          const report = await runEval(definition, {
+            adapters: { [targetKind]: () => ({ output: {}, ...result }) },
+          });
+          if (index === 5) assertEquals(report.records[0]?.completed, false);
+          assertEquals(
+            report.summary.passed,
+            expectedOutcome === "error" ? Number(index === 3 || index === 5) : Number(index === 0),
+          );
+        }
+      }
+      for (const grading of ["assertion", "check-throw", "metric-throw", "timeout"] as const) {
+        const definition = define({
+          target: "test",
+          dataset: [{ id: "case", input: {}, expectedOutcome: "error" }],
+          metrics: grading === "metric-throw"
+            ? [{
+              ...metrics.answer.exactMatch().soft(),
+              evaluate() {
+                throw new Error("Grading failed");
+              },
+            }]
+            : [],
+          async check({ expect, signal }) {
+            if (grading === "assertion") expect.completed().gate();
+            if (grading === "check-throw") throw new Error("Grading failed");
+            if (grading === "timeout") {
+              assertExists(signal);
+              await new Promise<void>((resolve) => {
+                if (signal.aborted) resolve();
+                else signal.addEventListener("abort", () => resolve(), { once: true });
+              });
+            }
+          },
+        });
+        const report = await runEval(definition, {
+          recordTimeoutMs: grading === "timeout" ? 5 : undefined,
+          adapters: {
+            [targetKind]: () => ({
+              output: {},
+              completed: false,
+              outcome: "error",
+              error: "Invalid input",
+            }),
+          },
+        });
+        assertEquals(report.summary.failed, 1, grading);
+      }
+    });
+  }
+});
+
+describe("expected outcome review regressions", () => {
+  it("marks outcome-only direct tool traces as failed for behavior gates", async () => {
+    const report = await runEval(
+      evalTool({
+        target: "tool:test",
+        dataset: [{ id: "negative", input: {}, expectedOutcome: "error" }],
+        check({ expect }) {
+          expect.noFailedTools().gate();
+        },
+      }),
+      { adapters: { tool: () => ({ output: {}, outcome: "error" }) } },
+    );
+    assertEquals(report.records[0]?.trace.toolCalls[0]?.status, "error");
+    assertEquals(report.records[0]?.checks?.[0]?.pass, false);
+    assertEquals(report.summary.failed, 1);
+  });
+
+  for (const targetKind of ["agent", "tool"] as const) {
+    it(`preserves the ${targetKind} expectation when the target times out`, async () => {
+      const define = targetKind === "agent" ? evalAgent : evalTool;
+      const report = await runEval(
+        define({
+          target: "test",
+          dataset: [{ id: "negative", input: {}, expectedOutcome: "error" }],
+        }),
+        {
+          recordTimeoutMs: 5,
+          adapters: { [targetKind]: () => new Promise(() => {}) },
+        },
+      );
+      assertEquals(report.records[0]?.expectedOutcome, "error");
+      assertEquals(report.records[0]?.outcome, undefined);
+      assertEquals(report.summary.failed, 1);
+    });
+  }
 });

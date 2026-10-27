@@ -1,8 +1,15 @@
+import { hashString } from "#veryfront/cache/hash.ts";
 import { rendererLogger } from "#veryfront/utils";
 import { markRequestProfilePhase, metrics, SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import type { RenderResult } from "../orchestrator/types.ts";
-import type { CachePayload, CacheStore } from "../cache/types.ts";
+import {
+  CACHE_ALIAS_EPOCH_KEY,
+  CACHE_ALIAS_KEY_PREFIX,
+  CACHE_ALIAS_PROJECT_EPOCH_KEY,
+  type CachePayload,
+  type CacheStore,
+} from "../cache/types.ts";
 import type { CacheLookupStatus } from "../cache/cache-coordinator.ts";
 import { MemoryCacheStore, type MemoryCacheStoreOptions } from "../cache/stores/index.ts";
 import type { RenderContext } from "../context/render-context.ts";
@@ -23,6 +30,7 @@ const DEFAULT_CACHE_STALE_MS = 30 * 60 * 1_000;
 const DEFAULT_MAX_ENTRIES = 500;
 
 export interface ContextAwareCacheOptions {
+  /** Runtime/pinning-scoped entries need deleteByPrefix for shared invalidation. */
   store?: CacheStore;
   memory?: MemoryCacheStoreOptions;
   ttlMs?: number;
@@ -41,15 +49,62 @@ function hasResponseMetadata(result: RenderResult): boolean {
   return Object.keys(result.headers ?? {}).length > 0 || (result.cookies?.length ?? 0) > 0;
 }
 
+function isScopedOverride(key?: string): boolean {
+  return Boolean(key && /(?:^|:)(?:react-runtime:|pins:|render-identity:hash-)/.test(key));
+}
+
+function pairedRenderHash(namespace: string, value: string): string {
+  const first = hashString(`${namespace}:a:${value}`);
+  const second = hashString(`${namespace}:b:${value}`);
+  return `${first}-${second}`;
+}
+
+function scopedSlugPrefix(slug: string): string {
+  const digest = pairedRenderHash("render-slug", slug);
+  return `render-variants:v1:${digest}:`;
+}
+
+// Serialize legacy alias control operations within a process, including separate
+// handles for one context. Stored generations provide invalidation across restarts.
+const aliasGenerationOperations = new Map<string, { settled: Promise<void> }>();
+async function withAliasGeneration<T>(key: string, action: () => Promise<T>): Promise<T> {
+  const previous = aliasGenerationOperations.get(key)?.settled ?? Promise.resolve();
+  const operation = (async () => {
+    await previous;
+    return await action();
+  })();
+  const entry = { settled: operation.then(() => {}, () => {}) };
+  aliasGenerationOperations.set(key, entry);
+  try {
+    return await operation;
+  } finally {
+    if (aliasGenerationOperations.get(key) === entry) aliasGenerationOperations.delete(key);
+  }
+}
+
 export class ContextAwareCacheCoordinator {
-  private store: CacheStore;
-  private ttlMs: number | undefined;
-  private staleMs: number;
+  private readonly store: CacheStore;
+  private readonly ttlMs: number | undefined;
+  private readonly staleMs: number;
   private readonly defaultTtlMs = DEFAULT_CACHE_TTL_MS;
+  // Track only writes in flight, not cached entries: eviction belongs to the store.
+  private readonly writes = new Map<string, { slugKey: string; write: Promise<void> }>();
+  private invalidationBarrier: Promise<void> = Promise.resolve();
+  private destroyed = false;
+  private readonly legacyKeys = new Map<string, string>();
+  private readonly maxLegacyKeys: number;
+  private legacyWriteBarrier: Promise<void> = Promise.resolve();
+  private readonly aliasEpochKeys = new Set<string>();
+  private readonly aliasProjectEpochKeys = new Set<string>();
 
   constructor(options: ContextAwareCacheOptions = {}) {
     this.ttlMs = options.ttlMs ?? this.defaultTtlMs;
     this.staleMs = options.staleMs ?? DEFAULT_CACHE_STALE_MS;
+    const legacyLimit = options.memory?.maxEntries;
+    this.maxLegacyKeys =
+      typeof legacyLimit === "number" && Number.isSafeInteger(legacyLimit) && legacyLimit > 0
+        ? legacyLimit
+        : DEFAULT_MAX_ENTRIES;
     this.store = options.store ??
       new MemoryCacheStore({
         maxEntries: options.memory?.maxEntries ?? DEFAULT_MAX_ENTRIES,
@@ -64,8 +119,14 @@ export class ContextAwareCacheCoordinator {
     colorScheme?: "light" | "dark",
     cacheKeyOverride?: string,
     nonce?: string,
+    cacheKeyKind: "route" | "alias" = isScopedOverride(cacheKeyOverride) ? "route" : "alias",
   ): Promise<ContextAwareCacheLookupResult> {
-    const cacheKey = this.getCacheKey(slug, ctx, colorScheme, cacheKeyOverride);
+    const cacheKey = this.getCacheKey(slug, ctx, colorScheme, cacheKeyOverride, cacheKeyKind);
+    if (
+      cacheKeyKind === "route" && isScopedOverride(cacheKeyOverride) && !this.store.deleteByPrefix
+    ) {
+      return Promise.resolve({ cacheKey, hit: false, status: "miss", lookupDurationMs: 0 });
+    }
 
     return withSpan(
       SpanNames.CACHE_CHECK_SPECULATIVE,
@@ -85,6 +146,25 @@ export class ContextAwareCacheCoordinator {
           });
           return { cacheKey, hit: false, status: "miss", lookupDurationMs };
         }
+
+        if (
+          cached.aliasEpoch !== undefined || cached.aliasProjectEpoch !== undefined ||
+          (!this.store.deleteByPrefix && cacheKeyOverride)
+        ) {
+          const [epoch, projectEpoch] = await Promise.all([
+            this.store.get(this.aliasEpochKey(ctx)),
+            this.store.get(this.aliasProjectEpochKey(ctx.projectId)),
+          ]);
+          if (
+            this.aliasEpochsChanged(cached, epoch, projectEpoch)
+          ) {
+            const lookupDurationMs = roundDurationMs(performance.now() - lookupStart);
+            recordCacheLookup("miss", lookupDurationMs);
+            return { cacheKey, hit: false, status: "miss", lookupDurationMs };
+          }
+        }
+
+        this.refreshTrackedLegacyKey(cacheKey, cached, ctx);
 
         if (hasResponseMetadata(cached.result)) {
           if (this.store.deleteIfUnchanged) {
@@ -120,6 +200,7 @@ export class ContextAwareCacheCoordinator {
 
         if (this.isExpired(cached)) {
           if (this.isStaleUsable(cached, ctx)) {
+            this.touchCachedAliasEpochs(cached, ctx);
             const lookupDurationMs = roundDurationMs(performance.now() - lookupStart);
             recordCacheLookup("stale", lookupDurationMs);
             logger.debug("Cache stale hit", {
@@ -159,6 +240,7 @@ export class ContextAwareCacheCoordinator {
           return { cacheKey, hit: false, status: "expired", lookupDurationMs };
         }
 
+        this.touchCachedAliasEpochs(cached, ctx);
         const lookupDurationMs = roundDurationMs(performance.now() - lookupStart);
         recordCacheLookup("hit", lookupDurationMs);
         logger.debug("Cache hit", {
@@ -191,6 +273,34 @@ export class ContextAwareCacheCoordinator {
     );
   }
 
+  private aliasEpochsChanged(
+    cached: CachePayload,
+    epoch: CachePayload | undefined,
+    projectEpoch: CachePayload | undefined,
+  ): boolean {
+    return !!(
+      typeof cached.aliasEpoch !== "string" || cached.aliasEpoch !== epoch?.aliasEpoch ||
+      (epoch && this.isExpired(epoch)) ||
+      typeof cached.aliasProjectEpoch !== "string" ||
+      cached.aliasProjectEpoch !== projectEpoch?.aliasEpoch ||
+      (projectEpoch && this.isExpired(projectEpoch))
+    );
+  }
+
+  private refreshTrackedLegacyKey(
+    cacheKey: string,
+    cached: CachePayload,
+    ctx: RenderContext,
+  ): void {
+    const trackedSlug = this.legacyKeys.get(cacheKey);
+    if (trackedSlug !== undefined) {
+      this.legacyKeys.delete(cacheKey);
+      if (!this.isExpired(cached) || this.isStaleUsable(cached, ctx)) {
+        this.legacyKeys.set(cacheKey, trackedSlug);
+      }
+    }
+  }
+
   async persistResult(
     result: RenderResult,
     slug: string,
@@ -198,16 +308,91 @@ export class ContextAwareCacheCoordinator {
     colorScheme?: "light" | "dark",
     cacheKeyOverride?: string,
     nonce?: string,
+    cacheKeyKind: "route" | "alias" = isScopedOverride(cacheKeyOverride) ? "route" : "alias",
   ): Promise<void> {
-    if (!result || result.stream) return;
+    if (!result || result.stream || this.destroyed) return;
+    // Scoped entries require store-level prefix deletion, including across
+    // coordinators/restarts. An unsupported store remains usable for legacy keys.
+    if (
+      cacheKeyKind === "route" && isScopedOverride(cacheKeyOverride) && !this.store.deleteByPrefix
+    ) return;
 
-    const cacheKey = this.getCacheKey(slug, ctx, colorScheme, cacheKeyOverride);
+    const cacheKey = this.getCacheKey(slug, ctx, colorScheme, cacheKeyOverride, cacheKeyKind);
     const now = Date.now();
 
     const cachedResult = this.cloneResult(result);
     const sealedHtml = sealHtmlNonceForCache(result.html, nonce);
     cachedResult.html = sealedHtml.html;
-    await this.store.set(cacheKey, {
+    const previous = this.writes.get(cacheKey)?.write;
+    const barrier = this.invalidationBarrier;
+    const legacyWrite = !this.store.deleteByPrefix ? this.legacyWriteBarrier : undefined;
+    const write = (async () => {
+      // Prior operations report their errors to their own callers. Settlement
+      // establishes ordering without making a failed write poison later writes.
+      await Promise.allSettled([
+        barrier,
+        ...(previous !== undefined ? [previous] : []),
+        ...(legacyWrite !== undefined ? [legacyWrite] : []),
+      ]);
+      if (!this.store.deleteByPrefix && !this.legacyKeys.has(cacheKey)) {
+        while (this.legacyKeys.size >= this.maxLegacyKeys) {
+          const oldest = this.legacyKeys.keys().next().value;
+          if (oldest === undefined) break;
+          await this.store.delete(oldest);
+          this.legacyKeys.delete(oldest);
+        }
+      }
+      const aliasEpoch = !this.store.deleteByPrefix && cacheKeyOverride
+        ? await this.captureAliasEpoch(ctx)
+        : undefined;
+      const aliasProjectEpoch = aliasEpoch
+        ? await this.captureAliasProjectEpoch(ctx.projectId)
+        : undefined;
+      await this.store.set(
+        cacheKey,
+        this.createPayload(
+          result,
+          ctx,
+          cachedResult,
+          sealedHtml,
+          aliasEpoch,
+          aliasProjectEpoch,
+          now,
+        ),
+      );
+      if (!this.store.deleteByPrefix) {
+        this.legacyKeys.delete(cacheKey);
+        this.legacyKeys.set(cacheKey, createCacheKey(ctx, `page:${slug}`));
+      }
+    })();
+    if (!this.store.deleteByPrefix) this.legacyWriteBarrier = write.then(() => {}, () => {});
+    const entry = { slugKey: createCacheKey(ctx, `page:${slug}`), write };
+    this.writes.set(cacheKey, entry);
+    try {
+      await write;
+    } finally {
+      if (this.writes.get(cacheKey) === entry) this.writes.delete(cacheKey);
+    }
+
+    logger.debug("Cached result", {
+      slug,
+      projectId: ctx.projectId,
+      environment: ctx.environment,
+      cacheKey,
+    });
+  }
+
+  private createPayload(
+    result: RenderResult,
+    ctx: RenderContext,
+    cachedResult: RenderResult,
+    sealedHtml: ReturnType<typeof sealHtmlNonceForCache>,
+    aliasEpoch: string | undefined,
+    aliasProjectEpoch: string | undefined,
+    now: number,
+  ): CachePayload {
+    return {
+      ...(aliasEpoch ? { aliasEpoch, aliasProjectEpoch } : {}),
       result: cachedResult,
       ...(sealedHtml.placeholder === undefined
         ? {}
@@ -218,96 +403,212 @@ export class ContextAwareCacheCoordinator {
       staleUntil: this.shouldServeStale(ctx) && this.ttlMs && this.staleMs > 0
         ? now + this.ttlMs + this.staleMs
         : undefined,
-    });
-
-    logger.debug("Cached result", {
-      slug,
-      projectId: ctx.projectId,
-      environment: ctx.environment,
-      cacheKey,
-    });
+    };
   }
 
-  async clearForContext(ctx: RenderContext): Promise<void> {
-    const startTime = Date.now();
+  private aliasEpochKey(ctx: RenderContext): string {
+    return createCacheKey(ctx, CACHE_ALIAS_EPOCH_KEY);
+  }
 
+  private captureAliasEpoch(ctx: RenderContext): Promise<string> {
+    const key = this.aliasEpochKey(ctx);
+    return withAliasGeneration(key, () => this.initializeEpoch(key, this.aliasEpochKeys));
+  }
+
+  private aliasProjectEpochKey(projectId: string): string {
+    return `${projectId}:${CACHE_ALIAS_PROJECT_EPOCH_KEY}`;
+  }
+
+  private touchCachedAliasEpochs(cached: CachePayload, ctx: RenderContext): void {
+    if (cached.aliasEpoch !== undefined) this.touchAliasEpochs(ctx);
+  }
+
+  private touchAliasEpochs(ctx: RenderContext): void {
+    const contextKey = this.aliasEpochKey(ctx);
+    if (this.aliasEpochKeys.delete(contextKey)) this.aliasEpochKeys.add(contextKey);
+    const projectKey = this.aliasProjectEpochKey(ctx.projectId);
+    if (this.aliasProjectEpochKeys.delete(projectKey)) this.aliasProjectEpochKeys.add(projectKey);
+  }
+
+  private captureAliasProjectEpoch(projectId: string): Promise<string> {
+    const key = this.aliasProjectEpochKey(projectId);
+    return withAliasGeneration(key, () => this.initializeEpoch(key, this.aliasProjectEpochKeys));
+  }
+
+  // Cross-process cold starts may supersede a token and lose a cache hit.
+  // The losing entry fails closed; the next write observes the winning token.
+  // Arbitrary stores lack atomic creation, so this fallback is best effort.
+  private async initializeEpoch(key: string, trackedKeys: Set<string>): Promise<string> {
+    const existing = await this.store.get(key);
+    // Do not renew a token read before another process revokes it. Generation
+    // records have no TTL; bounded tracking and backing-store eviction own cleanup.
+    // Rotate earlier finite leases instead of making their old tokens permanent.
+    const valid = typeof existing?.aliasEpoch === "string" && existing.expiresAt === undefined;
+    const token = valid ? existing.aliasEpoch! : crypto.randomUUID();
     if (!this.store.deleteByPrefix) {
-      logger.warn("Store does not support prefix deletion", {
-        projectId: ctx.projectId,
-        cachePrefix: ctx.cachePrefix,
-      });
-      return;
+      trackedKeys.delete(key);
+      while (trackedKeys.size >= this.maxLegacyKeys) {
+        const oldest = trackedKeys.values().next().value;
+        if (oldest === undefined) break;
+        await this.store.delete(oldest);
+        trackedKeys.delete(oldest);
+      }
+      trackedKeys.add(key);
     }
+    if (!valid) {
+      await this.store.set(key, {
+        aliasEpoch: token,
+        storedAt: Date.now(),
+        result: { html: "", frontmatter: {}, stream: null },
+      });
+    }
+    return token;
+  }
 
-    logger.debug("Clearing cache for context", {
-      projectId: ctx.projectId,
-      environment: ctx.environment,
-      cachePrefix: ctx.cachePrefix,
-    });
-
-    const deleted = await this.store.deleteByPrefix(ctx.cachePrefix);
-
-    logger.debug("✓ Cleared cache for context", {
-      projectId: ctx.projectId,
-      entriesDeleted: deleted,
-      durationMs: Date.now() - startTime,
+  private revokeAliasEpoch(ctx: RenderContext): Promise<void> {
+    const key = this.aliasEpochKey(ctx);
+    return withAliasGeneration(key, async () => {
+      const epoch = await this.store.get(key);
+      if (typeof epoch?.aliasEpoch === "string") await this.store.delete(key);
+      this.aliasEpochKeys.delete(key);
     });
   }
 
-  async clearForProject(projectId: string): Promise<void> {
-    const startTime = Date.now();
+  private async deleteAliasEpochs(matches: (key: string) => boolean): Promise<void> {
+    const results = await Promise.allSettled(
+      [...this.aliasEpochKeys].filter(matches).map(async (key) => {
+        await this.store.delete(key);
+        this.aliasEpochKeys.delete(key);
+      }),
+    );
+    const errors = results.flatMap((result) => result.status === "rejected" ? [result.reason] : []);
+    if (errors.length) throw new AggregateError(errors, "Alias epoch invalidation failed");
+  }
+
+  clearForContext(ctx: RenderContext): Promise<void> {
+    const prefix = `${ctx.cachePrefix}:`;
+    return this.invalidate((key) => key.startsWith(prefix), async () => {
+      if (this.store.deleteByPrefix) await this.store.deleteByPrefix(prefix);
+      else {
+        const results = await Promise.allSettled([
+          this.deleteLegacyKeys((key) => key.startsWith(prefix)),
+          this.revokeAliasEpoch(ctx),
+        ]);
+        const errors = results.flatMap((result) =>
+          result.status === "rejected" ? [result.reason] : []
+        );
+        if (errors.length) throw new AggregateError(errors, "Cache invalidation failed");
+      }
+    });
+  }
+
+  clearForProject(projectId: string): Promise<void> {
     const prefix = `${projectId}:`;
-
-    if (!this.store.deleteByPrefix) {
-      logger.warn("Store does not support prefix deletion", { projectId });
-      return;
-    }
-
-    logger.debug("Clearing cache for project", { projectId, prefix });
-
-    const deleted = await this.store.deleteByPrefix(prefix);
-
-    logger.debug("✓ Cleared cache for project", {
-      projectId,
-      entriesDeleted: deleted,
-      durationMs: Date.now() - startTime,
+    return this.invalidate((key) => key.startsWith(prefix), async () => {
+      if (this.store.deleteByPrefix) await this.store.deleteByPrefix(prefix);
+      else {
+        const results = await Promise.allSettled([
+          this.deleteLegacyKeys((key) => key.startsWith(prefix)),
+          this.deleteAliasEpochs((key) => key.startsWith(prefix)),
+          withAliasGeneration(this.aliasProjectEpochKey(projectId), async () => {
+            const key = this.aliasProjectEpochKey(projectId);
+            await this.store.delete(key);
+            this.aliasProjectEpochKeys.delete(key);
+          }),
+        ]);
+        const errors = results.flatMap((result) =>
+          result.status === "rejected" ? [result.reason] : []
+        );
+        if (errors.length) throw new AggregateError(errors, "Cache invalidation failed");
+      }
     });
   }
 
-  async clearSlug(slug: string, ctx: RenderContext): Promise<void> {
-    if (this.store.deleteByPrefix) {
-      const prefix = createCacheKey(ctx, `page:${slug}`);
-      await this.store.deleteByPrefix(prefix);
-      logger.debug("Cleared slug from cache by prefix", {
-        slug,
-        projectId: ctx.projectId,
-        prefix,
-      });
-      return;
-    }
-
-    const keys = [
-      createCacheKey(ctx, `page:${slug}`),
-      createCacheKey(ctx, `page:${slug}:theme-light`),
-      createCacheKey(ctx, `page:${slug}:theme-dark`),
-    ];
-
-    await Promise.all(keys.map((key) => this.store.delete(key)));
-
-    logger.debug("Cleared slug from cache (all variants)", {
-      slug,
-      projectId: ctx.projectId,
-      keys,
+  clearSlug(slug: string, ctx: RenderContext): Promise<void> {
+    const slugKey = createCacheKey(ctx, `page:${slug}`);
+    // Alias keys intentionally erase route identity. Drain this context before
+    // revoking its alias generation so pending writes cannot restore old data.
+    return this.invalidate((key) => key.startsWith(`${ctx.cachePrefix}:`), async () => {
+      const deletions = [slugKey, `${slugKey}:theme-light`, `${slugKey}:theme-dark`]
+        .map((key) => Promise.resolve().then(() => this.store.delete(key)));
+      if (!this.store.deleteByPrefix) deletions.push(this.revokeAliasEpoch(ctx));
+      if (this.store.deleteByPrefix) {
+        deletions.push(
+          Promise.resolve().then(() =>
+            this.store.deleteByPrefix!(createCacheKey(ctx, CACHE_ALIAS_KEY_PREFIX))
+          ).then(() => {}),
+          Promise.resolve().then(() => this.store.deleteByPrefix!(`${slugKey}:`)).then(() => {}),
+          Promise.resolve().then(() => this.store.deleteByPrefix!(`${slugKey}?`)).then(() => {}),
+          Promise.resolve().then(() =>
+            this.store.deleteByPrefix!(createCacheKey(ctx, scopedSlugPrefix(slug)))
+          ).then(() => {}),
+        );
+      }
+      if (!this.store.deleteByPrefix) {
+        deletions.push(this.deleteLegacyKeys((_key, trackedSlug) => trackedSlug === slugKey));
+      }
+      const settled = await Promise.allSettled(deletions);
+      const errors = settled.flatMap((result) =>
+        result.status === "rejected" ? [result.reason] : []
+      );
+      if (errors.length) throw new AggregateError(errors, "Cache slug invalidation failed");
     });
   }
 
-  async clearAll(): Promise<void> {
-    await this.store.clear();
-    logger.debug("Cleared all cached data");
+  private async deleteLegacyKeys(
+    matches: (key: string, slugKey: string) => boolean,
+  ): Promise<void> {
+    const entries = [...this.legacyKeys].filter(([key, slugKey]) => matches(key, slugKey));
+    const settled = await Promise.allSettled(entries.map(async ([key, slugKey]) => {
+      await this.store.delete(key);
+      if (this.legacyKeys.get(key) === slugKey) this.legacyKeys.delete(key);
+    }));
+    const errors = settled.flatMap((result) => result.status === "rejected" ? [result.reason] : []);
+    if (errors.length) throw new AggregateError(errors, "Legacy cache invalidation failed");
   }
 
-  async destroy(): Promise<void> {
-    await this.store.destroy();
+  private invalidate(
+    matches: (key: string, slugKey: string) => boolean,
+    clear: () => Promise<void>,
+  ): Promise<void> {
+    const writes = [...this.writes].filter(([key, entry]) => matches(key, entry.slugKey))
+      .map(([, entry]) => entry.write);
+    const previous = this.invalidationBarrier;
+    const operation = (async () => {
+      await previous;
+      const settled = await Promise.allSettled(writes);
+      const errors = settled.flatMap((result) =>
+        result.status === "rejected" ? [result.reason] : []
+      );
+      try {
+        await clear();
+      } catch (error) {
+        errors.push(error);
+      }
+      if (errors.length) throw new AggregateError(errors, "Cache invalidation failed");
+    })();
+    // Future writes wait for deletion, but receive only their own storage errors.
+    this.invalidationBarrier = operation.then(() => {}, () => {});
+    return operation;
+  }
+
+  clearAll(): Promise<void> {
+    return this.invalidate(() => true, async () => {
+      await this.store.clear();
+      this.legacyKeys.clear();
+      this.aliasEpochKeys.clear();
+      this.aliasProjectEpochKeys.clear();
+    });
+  }
+
+  destroy(): Promise<void> {
+    this.destroyed = true;
+    return this.invalidate(() => true, async () => {
+      await this.store.destroy();
+      this.legacyKeys.clear();
+      this.aliasEpochKeys.clear();
+      this.aliasProjectEpochKeys.clear();
+    });
   }
 
   getStats(): { size: number } {
@@ -322,14 +623,27 @@ export class ContextAwareCacheCoordinator {
     ctx: RenderContext,
     colorScheme?: "light" | "dark",
     cacheKeyOverride?: string,
+    cacheKeyKind: "route" | "alias" = isScopedOverride(cacheKeyOverride) ? "route" : "alias",
   ): string {
     // Use hyphen instead of equals sign (API cache key validation only allows: a-z A-Z 0-9 _ : . * - /)
     const themeKey = colorScheme ? `:theme-${colorScheme}` : "";
+    if (
+      isScopedOverride(cacheKeyOverride) && cacheKeyKind === "route"
+    ) {
+      const identity = `${cacheKeyOverride}:${colorScheme ?? "default"}`;
+      const digest = pairedRenderHash("render-variant", identity);
+      return createCacheKey(ctx, `${scopedSlugPrefix(slug)}${digest}${themeKey}`);
+    }
     const baseKey = cacheKeyOverride && cacheKeyOverride.length > 0 ? cacheKeyOverride : slug;
     const contentKey = baseKey.startsWith("page:") ? baseKey : `page:${baseKey}`;
     const themedKey = themeKey && !/:theme-(light|dark)$/.test(contentKey)
       ? `${contentKey}${themeKey}`
       : contentKey;
+    if (cacheKeyOverride && cacheKeyKind === "alias") {
+      const digest = pairedRenderHash("render-alias", themedKey);
+      const suffix = /:theme-(light|dark)$/.exec(themedKey)?.[0] ?? "";
+      return createCacheKey(ctx, `${CACHE_ALIAS_KEY_PREFIX}${digest}${suffix}`);
+    }
     return createCacheKey(ctx, themedKey);
   }
 

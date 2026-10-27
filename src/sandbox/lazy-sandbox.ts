@@ -13,9 +13,12 @@ import {
   buildSandboxCommandOptions,
   buildSandboxCreateInput,
 } from "./create-input.ts";
-import { CONFIG_INVALID, REQUEST_ERROR } from "#veryfront/errors";
+import { CONFIG_INVALID, isVeryfrontError, REQUEST_ERROR } from "#veryfront/errors";
+import { createSandboxHttpError } from "./http-error.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { logger, sleep } from "#veryfront/utils";
+import { awaitAbortable, throwIfAborted } from "#veryfront/utils/abort.ts";
+import { isRetriableConnectFailure } from "#veryfront/platform/compat/http/pinned-fetch.ts";
 import {
   fetchSandboxRuntimeUrl,
   fetchSandboxUrl,
@@ -37,7 +40,13 @@ import {
   type CommandResult,
   type CommandStreamEvent,
   type SandboxOptions,
+  type SandboxWriteFilesOptions,
 } from "./types.ts";
+
+type CommandFetchAttempt<T> =
+  | { kind: "result"; result: T }
+  | { kind: "fetch-failure"; error: unknown };
+const anyAbortSignal = AbortSignal.any.bind(AbortSignal);
 
 /** Options accepted by lazy sandbox. */
 export interface LazySandboxOptions extends SandboxOptions {
@@ -51,6 +60,8 @@ export interface LazySandboxOptions extends SandboxOptions {
   /** Delete the sandbox when closing. Defaults to false for persistent, always-on or attached workspaces, and true for temporary workspaces created by this client. */
   deleteOnClose?: boolean;
   getProjectId?: () => string | null | undefined;
+  /** Read the current credential before each request when the host renews it. */
+  getAuthToken?: () => string;
   startupTimeoutMs?: number;
   pollIntervalMs?: number;
   heartbeatIntervalMs?: number;
@@ -93,14 +104,13 @@ const DEFAULT_EXEC_START_RETRY_DELAY_MS = 1_000;
 const CREATED_SESSION_BOOTSTRAP_MAX_ATTEMPTS = 2;
 const DATA_PLANE_READINESS_FAILURE_PREFIX = "Sandbox data plane did not become ready:";
 const RETRYABLE_DATA_PLANE_READINESS_STATUS_CODES = new Set([404, 502, 503, 504]);
-const REPROVISIONABLE_EXEC_START_ERROR_CODES = new Set([
-  "ECONNREFUSED",
-  "ECONNRESET",
-  "ENOTFOUND",
-  "EHOSTUNREACH",
-]);
 const VERYFRONT_SANDBOX_PUBLIC_HOST_PATTERN = /^([a-z0-9-]+)\.sandbox\.veryfront\.[a-z0-9.-]+$/i;
 const applyIntrinsic = Reflect.apply;
+const getOwnDescriptor = Object.getOwnPropertyDescriptor;
+const hasOwn = Object.hasOwn;
+const failedSessionLookups = new WeakSet<object>();
+const weakSetAdd = WeakSet.prototype.add;
+const weakSetHas = WeakSet.prototype.has;
 const NativeMap = Map;
 const mapGet = Map.prototype.get;
 const mapSet = Map.prototype.set;
@@ -115,6 +125,7 @@ const urlHostnameGetter = Object.getOwnPropertyDescriptor(NativeURL.prototype, "
 const regExpExec = RegExp.prototype.exec;
 interface LazySandboxPrivateState {
   authToken: string;
+  getAuthToken?: () => string;
   apiUrl: string;
   allowsCustomRuntimeEndpoint: boolean;
 }
@@ -131,7 +142,10 @@ function getLazySandboxPrivateState(sandbox: LazySandbox): LazySandboxPrivateSta
 }
 
 function getLazySandboxAuthToken(sandbox: LazySandbox): string {
-  return getLazySandboxPrivateState(sandbox).authToken;
+  const state = getLazySandboxPrivateState(sandbox);
+  return state.getAuthToken
+    ? applyIntrinsic(state.getAuthToken, undefined, []) as string
+    : state.authToken;
 }
 
 /** Resolves default sandbox runtime endpoint. */
@@ -162,7 +176,7 @@ export function resolveDefaultSandboxRuntimeEndpoint(input: { endpoint: string }
 
 function normalizeDataPlaneBaseUrl(url: string): string {
   const trimmed = applyIntrinsic(stringTrim, url, []) as string;
-  return applyIntrinsic(stringReplace, trimmed, [/\/+$/, ""]) as string;
+  return applyIntrinsic(stringReplace, trimmed, [/(?<!\/)\/+$/, ""]) as string;
 }
 
 /** Provisions a sandbox when first used and records activity while the client is active. */
@@ -190,17 +204,20 @@ export class LazySandbox {
       sandboxId: string;
     }) => string)
     | undefined;
+  private provisioningSignal: AbortSignal | undefined;
 
   private endpoint: string | null = null;
   private sessionId: string | null = null;
   private readonly retainedSessions = new Map<string | null, string>();
+  private readonly replaceableRetainedSessions = new Map<string | null, string>();
   private sessionProjectId: string | null = null;
+  private sessionCanBeReplacedOnMissing = false;
   private ensurePromise: PendingOperation | null = null;
   private closePromise: PendingOperation | null = null;
   private heartbeatPromise: PendingOperation | null = null;
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private lastHeartbeatAt = 0;
-  #activeBackgroundCommands = new NativeMap<string, TrackedBackgroundCommand>();
+  readonly #activeBackgroundCommands = new NativeMap<string, TrackedBackgroundCommand>();
 
   constructor(options: LazySandboxOptions = {}) {
     assertSandboxCreationOptions(options);
@@ -210,6 +227,7 @@ export class LazySandbox {
     applyIntrinsic(weakMapSet, lazySandboxPrivateStates, [this, {
       apiUrl: resolveSandboxApiUrl(options),
       authToken: resolveSandboxAuthToken(options),
+      getAuthToken: options.getAuthToken,
       allowsCustomRuntimeEndpoint: explicitAuthToken.length > 0,
     }]);
     this.creationPolicy = {
@@ -236,10 +254,12 @@ export class LazySandbox {
     this.execStartRetryDelayMs = options.execStartRetryDelayMs ??
       DEFAULT_EXEC_START_RETRY_DELAY_MS;
     this.resolveRuntimeEndpointOption = options.resolveRuntimeEndpoint;
+    this.provisioningSignal = options.signal;
   }
 
   async ensure(): Promise<void> {
     if (this.endpoint) return;
+    throwIfAborted(this.provisioningSignal);
     if (this.ensurePromise) {
       await this.ensurePromise.promise;
       return;
@@ -250,6 +270,7 @@ export class LazySandbox {
 
     try {
       await pending.promise;
+      this.provisioningSignal = undefined;
     } finally {
       if (this.ensurePromise === pending) {
         this.ensurePromise = null;
@@ -258,40 +279,40 @@ export class LazySandbox {
   }
 
   async runCommand(command: string, options?: CommandOptions): Promise<CommandResult> {
-    await this.touchSession();
+    await this.#touchSessionForCommand(options?.signal);
     const route = this.#resolveDataPlaneRoute();
     if (route.kind === "proxy") {
       for (let attempt = 1;; attempt += 1) {
-        try {
-          return await withSandboxRequestDeadline(
-            sandboxCommandRequestTimeoutMs(options),
-            async (signal) => {
-              const response = await fetchSandboxUrl(`${route.baseUrl}/commands/run`, {
-                method: "POST",
-                headers: this.#jsonHeaders(),
-                signal,
-                body: JSON.stringify({ command, ...buildSandboxCommandOptions(options) }),
-              });
-              if (!response.ok) {
-                throw REQUEST_ERROR.create({
-                  detail: `Sandbox command failed: ${response.status}`,
-                });
-              }
-              return parseSandboxCommandResult(await response.json());
-            },
-          );
-        } catch (error) {
-          const cause = error instanceof Error ? error.cause : undefined;
-          const code = cause && typeof cause === "object" && "code" in cause
-            ? cause.code
-            : undefined;
-          // These failures occur before dispatch. Other failures may have executed the command.
-          if (
-            attempt >= this.execStartMaxAttempts ||
-            !["ECONNREFUSED", "ENETUNREACH", "EHOSTUNREACH", "EAI_AGAIN"].includes(String(code))
-          ) throw error;
-          await this.waitForExecStartRetry();
+        const outcome = await withSandboxRequestDeadline<CommandFetchAttempt<CommandResult>>(
+          sandboxCommandRequestTimeoutMs(options),
+          async (signal) => {
+            const requestSignal = options?.signal && signal
+              ? anyAbortSignal([options.signal, signal])
+              : options?.signal ?? signal;
+            const init: RequestInit = {
+              method: "POST",
+              headers: this.#jsonHeaders(),
+              signal: requestSignal,
+              body: JSON.stringify({ command, ...buildSandboxCommandOptions(options) }),
+            };
+            let response: Response;
+            try {
+              response = await fetchSandboxUrl(`${route.baseUrl}/commands/run`, init);
+            } catch (error) {
+              return { kind: "fetch-failure", error };
+            }
+            // A received response ends retry admission, including later body/decoder failures.
+            if (!response.ok) {
+              throw await createSandboxHttpError(response, "Sandbox command failed", signal);
+            }
+            return { kind: "result", result: parseSandboxCommandResult(await response.json()) };
+          },
+        );
+        if (outcome.kind === "result") return outcome.result;
+        if (attempt >= this.execStartMaxAttempts || !isPreDispatchExecStartFailure(outcome.error)) {
+          throw outcome.error;
         }
+        await awaitAbortable(this.waitForExecStartRetry(), options?.signal);
       }
     }
     let stdout = "";
@@ -319,25 +340,24 @@ export class LazySandbox {
     command: string,
     options?: CommandOptions,
   ): AsyncGenerator<CommandStreamEvent> {
-    await this.touchSession();
-    let res: Response;
-    try {
-      res = await this.startExec(command, options);
-    } catch (error) {
-      if (!shouldReprovisionAfterExecStartFailure(error)) {
-        throw error;
-      }
-
-      await this.reprovisionAfterExecStartFailure();
-      await this.touchSession();
-      res = await this.startExec(command, options);
+    await this.#touchSessionForCommand(options?.signal);
+    let outcome = await this.startExec(command, options);
+    if (outcome.kind === "fetch-failure") {
+      if (!isPreDispatchExecStartFailure(outcome.error)) throw outcome.error;
+      throwIfAborted(options?.signal);
+      await awaitAbortable(this.reprovisionAfterExecStartFailure(), options?.signal);
+      await this.#touchSessionForCommand(options?.signal);
+      outcome = await this.startExec(command, options);
+      if (outcome.kind === "fetch-failure") throw outcome.error;
     }
+    const res = outcome.result;
+    if (!res.ok) throw await createSandboxHttpError(res, "Exec failed");
 
     if (!res.body) {
       throw new Error("Exec response has no body");
     }
 
-    yield* readCommandStreamEvents(res.body);
+    yield* readCommandStreamEvents(res.body, options?.signal);
   }
 
   async readFile(path: string): Promise<string> {
@@ -353,20 +373,24 @@ export class LazySandbox {
     );
 
     if (!res.ok) {
-      throw REQUEST_ERROR.create({ detail: `Read file failed: ${res.status} ${await res.text()}` });
+      throw await createSandboxHttpError(res, "Read file failed");
     }
 
     return await readSandboxFileContent(res);
   }
 
-  async writeFiles(files: Array<{ path: string; content: string }>): Promise<void> {
-    await this.touchSession();
+  async writeFiles(
+    files: Array<{ path: string; content: string }>,
+    options?: SandboxWriteFilesOptions,
+  ): Promise<void> {
+    await this.#touchSessionForCommand(options?.signal);
     const route = this.#resolveDataPlaneRoute();
 
     const res = await this.#fetchControl(
       `${route.baseUrl}/files`,
       {
         method: "POST",
+        signal: options?.signal,
         headers: this.#jsonHeaders(),
         body: JSON.stringify({ files }),
       },
@@ -374,9 +398,7 @@ export class LazySandbox {
     );
 
     if (!res.ok) {
-      throw REQUEST_ERROR.create({
-        detail: `Write files failed: ${res.status} ${await res.text()}`,
-      });
+      throw await createSandboxHttpError(res, "Write files failed");
     }
     const result = await res.json();
     const paths = files.map((file) => file.path);
@@ -388,7 +410,7 @@ export class LazySandbox {
     command: string,
     options?: CommandOptions,
   ): Promise<BackgroundCommand> {
-    await this.touchSession();
+    await this.#touchSessionForCommand(options?.signal);
     const route = this.#resolveDataPlaneRoute();
 
     const commandsUrl = backgroundCommandsUrl(route);
@@ -397,15 +419,14 @@ export class LazySandbox {
       {
         method: "POST",
         headers: this.#jsonHeaders(),
+        signal: options?.signal,
         body: JSON.stringify({ command, ...this.resolveCommandOptions(options, route.kind) }),
       },
       route.kind,
     );
 
     if (!res.ok) {
-      throw REQUEST_ERROR.create({
-        detail: `Start background command failed: ${res.status} ${await res.text()}`,
-      });
+      throw await createSandboxHttpError(res, "Start background command failed");
     }
 
     const backgroundCommand = mapBackgroundCommand(await res.json(), route.kind);
@@ -428,9 +449,7 @@ export class LazySandbox {
     );
 
     if (!res.ok) {
-      throw REQUEST_ERROR.create({
-        detail: `Get background command failed: ${res.status} ${await res.text()}`,
-      });
+      throw await createSandboxHttpError(res, "Get background command failed");
     }
 
     const backgroundCommand = mapBackgroundCommand(await res.json(), route.routeKind);
@@ -450,9 +469,7 @@ export class LazySandbox {
     );
 
     if (!res.ok) {
-      throw REQUEST_ERROR.create({
-        detail: `Get background command output failed: ${res.status} ${await res.text()}`,
-      });
+      throw await createSandboxHttpError(res, "Get background command output failed");
     }
 
     const json = await res.json();
@@ -480,7 +497,7 @@ export class LazySandbox {
       }`;
       const res = await this.#fetchControl(url, { headers: this.#authHeaders() }, route.kind);
       if (!res.ok) {
-        throw REQUEST_ERROR.create({ detail: `List background commands failed: ${res.status}` });
+        throw await createSandboxHttpError(res, "List background commands failed");
       }
       return res.json();
     };
@@ -508,9 +525,7 @@ export class LazySandbox {
     );
 
     if (!res.ok) {
-      throw REQUEST_ERROR.create({
-        detail: `Cancel background command failed: ${res.status} ${await res.text()}`,
-      });
+      throw await createSandboxHttpError(res, "Cancel background command failed");
     }
 
     const backgroundCommand = mapBackgroundCommand(await res.json(), route.routeKind);
@@ -518,7 +533,7 @@ export class LazySandbox {
     return backgroundCommand;
   }
 
-  async heartbeat(force = false): Promise<void> {
+  async heartbeat(force = false, signal?: AbortSignal): Promise<void> {
     const currentSessionId = this.sessionId;
     if (!currentSessionId) return;
 
@@ -542,6 +557,7 @@ export class LazySandbox {
           }/heartbeat`,
           {
             method: "POST",
+            signal,
             headers: this.#authHeaders(),
           },
         );
@@ -557,7 +573,7 @@ export class LazySandbox {
             }
           }
 
-          throw new Error(`Sandbox heartbeat failed: ${res.status} ${await res.text()}`);
+          throw await createSandboxHttpError(res, "Sandbox heartbeat failed");
         }
 
         this.lastHeartbeatAt = Date.now();
@@ -604,7 +620,7 @@ export class LazySandbox {
           await this.deleteSession(currentSessionId);
         }
         if (!this.deleteOnClose) {
-          this.retainedSessions.set(this.sessionProjectId, currentSessionId);
+          this.retainSession(this.sessionProjectId, currentSessionId);
         }
         this.resetSessionState(currentSessionId);
       })(),
@@ -638,12 +654,20 @@ export class LazySandbox {
       await this.attachExistingSession(this.sandboxId);
       return;
     }
-    const retained = this.retainedSessions.get(this.resolveProjectId());
+    const projectId = this.resolveProjectId();
+    const retained = this.retainedSessions.get(projectId);
     if (retained) {
       // Only workspaces protected from automatic deletion enter this map.
       this.deleteOnClose = false;
-      await this.attachExistingSession(retained);
-      return;
+      try {
+        await this.attachExistingSession(retained);
+        return;
+      } catch (error) {
+        if (!this.shouldReplaceMissingRetainedSession(projectId, retained, error)) {
+          throw error;
+        }
+        this.forgetRetainedSession(projectId, retained);
+      }
     }
 
     // A failed cleanup must not be overwritten by the next provisioning attempt.
@@ -657,6 +681,10 @@ export class LazySandbox {
       this.resetSessionState(pendingCleanupId);
     }
 
+    await this.bootstrapNewSession();
+  }
+
+  private async bootstrapNewSession(): Promise<void> {
     for (let attempt = 1; attempt <= CREATED_SESSION_BOOTSTRAP_MAX_ATTEMPTS; attempt += 1) {
       try {
         await this.bootstrapCreatedSession();
@@ -679,30 +707,31 @@ export class LazySandbox {
       `${getLazySandboxPrivateState(this).apiUrl}/sandboxes`,
       {
         method: "POST",
+        signal: this.provisioningSignal,
         headers: this.#jsonHeaders(),
         body: JSON.stringify(buildSandboxCreateInput(this.creationPolicy, projectId ?? undefined)),
       },
     );
 
     if (!res.ok) {
-      throw REQUEST_ERROR.create({
-        detail: `Failed to create sandbox: ${res.status} ${await res.text()}`,
-      });
+      throw await createSandboxHttpError(res, "Failed to create sandbox");
     }
 
     const session = await res.json();
+    this.sessionCanBeReplacedOnMissing = this.canReplaceMissingSession(session);
     this.deleteOnClose = this.requestedDeleteOnClose ??
-      (hasTemporarySandboxPolicy(session) && this.creationPolicy.ttlMode !== "always_on");
+      this.sessionCanBeReplacedOnMissing;
     this.sessionId = session.id;
     this.sessionProjectId = projectId;
 
     try {
       const endpoint = await this.resolveReadyEndpoint(session, (readySession) => {
+        this.sessionCanBeReplacedOnMissing = this.canReplaceMissingSession(readySession);
         this.deleteOnClose = this.requestedDeleteOnClose ??
-          (hasTemporarySandboxPolicy(readySession) && this.creationPolicy.ttlMode !== "always_on");
+          this.sessionCanBeReplacedOnMissing;
       });
       this.endpoint = endpoint;
-      await this.heartbeat(true);
+      await this.heartbeat(true, this.provisioningSignal);
       this.startHeartbeatLoop();
     } catch (error) {
       this.endpoint = null;
@@ -711,7 +740,7 @@ export class LazySandbox {
         await this.deleteSession(currentSessionId);
       }
       if (currentSessionId && !this.deleteOnClose) {
-        this.retainedSessions.set(this.sessionProjectId, currentSessionId);
+        this.retainSession(this.sessionProjectId, currentSessionId);
       }
       this.resetSessionState(currentSessionId ?? undefined);
       throw error;
@@ -724,10 +753,10 @@ export class LazySandbox {
   ): Promise<string> {
     const readySession = session.status === "running"
       ? session
-      : await this.waitForReadySession(session.id, onSession);
+      : await this.waitForReadySession(session.id, onSession, this.provisioningSignal);
 
     if (this.#shouldUseInternalDataPlane(readySession.endpoint, readySession.id)) {
-      await this.waitForRuntimeDataPlaneReady(readySession);
+      await this.waitForRuntimeDataPlaneReady(readySession, this.provisioningSignal);
     }
     return readySession.endpoint;
   }
@@ -740,9 +769,10 @@ export class LazySandbox {
     try {
       const session = this.sandboxEndpoint
         ? { id: sessionId, endpoint: this.sandboxEndpoint, status: "running" }
-        : await this.getSession(sessionId);
+        : await this.getSession(sessionId, this.provisioningSignal);
+      this.sessionCanBeReplacedOnMissing = this.canReplaceMissingSession(session);
       this.endpoint = await this.resolveReadyEndpoint(session);
-      await this.heartbeat(true);
+      await this.heartbeat(true, this.provisioningSignal);
       this.startHeartbeatLoop();
     } catch (error) {
       this.resetSessionState(sessionId);
@@ -750,18 +780,22 @@ export class LazySandbox {
     }
   }
 
-  private async getSession(sessionId: string): Promise<SandboxSessionRecord> {
+  private async getSession(
+    sessionId: string,
+    signal?: AbortSignal,
+  ): Promise<SandboxSessionRecord> {
     const res = await this.#fetchControl(
       `${getLazySandboxPrivateState(this).apiUrl}/sandboxes/${encodeURIComponent(sessionId)}`,
       {
+        signal,
         headers: this.#authHeaders(),
       },
     );
 
     if (!res.ok) {
-      throw REQUEST_ERROR.create({
-        detail: `Failed to get sandbox: ${res.status} ${await res.text()}`,
-      });
+      const error = await createSandboxHttpError(res, "Failed to get sandbox");
+      applyIntrinsic(weakSetAdd, failedSessionLookups, [error]);
+      throw error;
     }
 
     return await res.json() as SandboxSessionRecord;
@@ -770,15 +804,17 @@ export class LazySandbox {
   private async waitForReadySession(
     sessionId: string,
     onSession?: (session: SandboxSessionRecord) => void,
+    signal?: AbortSignal,
   ): Promise<SandboxSessionRecord> {
     const start = Date.now();
 
     while (Date.now() - start < this.startupTimeoutMs) {
-      await sleep(this.pollIntervalMs);
+      await awaitAbortable(sleep(this.pollIntervalMs), signal);
 
       const res = await this.#fetchControl(
         `${getLazySandboxPrivateState(this).apiUrl}/sandboxes/${encodeURIComponent(sessionId)}`,
         {
+          signal,
           headers: this.#authHeaders(),
         },
       );
@@ -802,7 +838,10 @@ export class LazySandbox {
     throw REQUEST_ERROR.create({ detail: "Sandbox did not become ready within timeout" });
   }
 
-  private async waitForRuntimeDataPlaneReady(session: SandboxSessionRecord): Promise<void> {
+  private async waitForRuntimeDataPlaneReady(
+    session: SandboxSessionRecord,
+    signal?: AbortSignal,
+  ): Promise<void> {
     if (resolveDefaultSandboxRuntimeEndpoint({ endpoint: session.endpoint }) === session.endpoint) {
       return;
     }
@@ -814,13 +853,13 @@ export class LazySandbox {
 
     while (Date.now() - start < this.startupTimeoutMs) {
       try {
-        const res = await this.#fetchControl(`${runtimeEndpoint}/readyz`, {}, routeKind);
+        const res = await this.#fetchControl(`${runtimeEndpoint}/readyz`, { signal }, routeKind);
 
         if (res.ok) {
           return;
         }
 
-        lastFailure = `${res.status} ${await res.text()}`;
+        lastFailure = (await createSandboxHttpError(res, "Runtime readiness failed")).message;
         if (!RETRYABLE_DATA_PLANE_READINESS_STATUS_CODES.has(res.status)) {
           break;
         }
@@ -828,7 +867,7 @@ export class LazySandbox {
         lastFailure = error instanceof Error ? error.message : String(error);
       }
 
-      await sleep(this.pollIntervalMs);
+      await awaitAbortable(sleep(this.pollIntervalMs), signal);
     }
 
     throw REQUEST_ERROR.create({
@@ -844,13 +883,18 @@ export class LazySandbox {
         await this.deleteSession(currentSessionId);
       }
       if (currentSessionId && !this.deleteOnClose) {
-        this.retainedSessions.set(this.sessionProjectId, currentSessionId);
+        this.retainSession(this.sessionProjectId, currentSessionId);
       }
       this.resetSessionState(currentSessionId ?? undefined);
     }
 
     await this.ensure();
     await this.heartbeat();
+  }
+
+  async #touchSessionForCommand(signal?: AbortSignal): Promise<void> {
+    throwIfAborted(signal);
+    await awaitAbortable(this.touchSession(), signal);
   }
 
   private heartbeatFailureCount = 0;
@@ -877,6 +921,37 @@ export class LazySandbox {
     }, this.heartbeatIntervalMs);
   }
 
+  private canReplaceMissingSession(session: Partial<SandboxSessionRecord>): boolean {
+    return hasTemporarySandboxPolicy(session) && this.creationPolicy.ttlMode !== "always_on";
+  }
+
+  private retainSession(projectId: string | null, sessionId: string): void {
+    this.retainedSessions.set(projectId, sessionId);
+    if (this.sessionCanBeReplacedOnMissing) {
+      this.replaceableRetainedSessions.set(projectId, sessionId);
+      return;
+    }
+    applyIntrinsic(mapDelete, this.replaceableRetainedSessions, [projectId]);
+  }
+
+  private forgetRetainedSession(projectId: string | null, sessionId: string): void {
+    if (this.retainedSessions.get(projectId) === sessionId) {
+      applyIntrinsic(mapDelete, this.retainedSessions, [projectId]);
+    }
+    if (this.replaceableRetainedSessions.get(projectId) === sessionId) {
+      applyIntrinsic(mapDelete, this.replaceableRetainedSessions, [projectId]);
+    }
+  }
+
+  private shouldReplaceMissingRetainedSession(
+    projectId: string | null,
+    sessionId: string,
+    error: unknown,
+  ): boolean {
+    return this.replaceableRetainedSessions.get(projectId) === sessionId &&
+      isFailedSandboxLookupStatus(error, 404);
+  }
+
   private stopHeartbeatLoop(): void {
     if (!this.heartbeatTimer) return;
     clearInterval(this.heartbeatTimer);
@@ -888,13 +963,14 @@ export class LazySandbox {
       const policy = await currentSandboxCleanupPolicy({
         apiUrl: getLazySandboxPrivateState(this).apiUrl,
         sessionId,
-        authToken: getLazySandboxPrivateState(this).authToken,
+        authToken: getLazySandboxAuthToken(this),
         timeoutMs: this.controlRequestTimeoutMs,
       });
       if (policy === "unavailable") return;
       if (policy === "retain") {
         this.deleteOnClose = false;
-        this.retainedSessions.set(this.sessionProjectId, sessionId);
+        this.sessionCanBeReplacedOnMissing = false;
+        this.retainSession(this.sessionProjectId, sessionId);
         return;
       }
     }
@@ -908,7 +984,7 @@ export class LazySandbox {
     // A 404 means no sandbox is available to this client; cleanup is idempotent.
     // Other denials and server failures must preserve the handle for retry.
     if (!response.ok && response.status !== 404) {
-      throw REQUEST_ERROR.create({ detail: `Delete sandbox failed: ${response.status}` });
+      throw await createSandboxHttpError(response, "Delete sandbox failed");
     }
   }
 
@@ -934,6 +1010,7 @@ export class LazySandbox {
       this.sessionProjectId = null;
       this.heartbeatPromise = null;
       this.lastHeartbeatAt = 0;
+      this.sessionCanBeReplacedOnMissing = false;
     }
   }
 
@@ -998,41 +1075,25 @@ export class LazySandbox {
     return active;
   }
 
-  private async startExec(command: string, options?: CommandOptions): Promise<Response> {
+  private async startExec(
+    command: string,
+    options?: CommandOptions,
+  ): Promise<CommandFetchAttempt<Response>> {
     const route = this.#resolveDataPlaneRoute();
     const body = JSON.stringify({ command, ...this.resolveCommandOptions(options, route.kind) });
-
+    const signal = options?.signal;
     for (let attempt = 1; attempt <= this.execStartMaxAttempts; attempt += 1) {
-      try {
-        const res = await this.#fetchExecStart(
-          commandStreamUrl(route),
-          {
-            method: "POST",
-            headers: this.#jsonHeaders(),
-            body,
-          },
-          route.kind,
-        );
-
-        if (res.ok) {
-          return res;
-        }
-
-        if (isRetryableExecStartStatus(res.status) && attempt < this.execStartMaxAttempts) {
-          await this.waitForExecStartRetry();
-          continue;
-        }
-
-        throw REQUEST_ERROR.create({ detail: `Exec failed: ${res.status} ${await res.text()}` });
-      } catch (error) {
-        if (!isRetryableExecStartError(error) || attempt >= this.execStartMaxAttempts) {
-          throw error;
-        }
-
-        await this.waitForExecStartRetry();
+      const outcome = await this.#fetchExecStart(
+        commandStreamUrl(route),
+        { method: "POST", headers: this.#jsonHeaders(), body, signal },
+        route.kind,
+      );
+      if (outcome.kind === "result") return outcome;
+      if (!isPreDispatchExecStartFailure(outcome.error) || attempt >= this.execStartMaxAttempts) {
+        return outcome;
       }
+      await awaitAbortable(this.waitForExecStartRetry(), options?.signal);
     }
-
     throw new Error("Sandbox exec failed before a request was made");
   }
 
@@ -1040,8 +1101,25 @@ export class LazySandbox {
     url: string,
     init: RequestInit,
     routeKind: DataPlaneRoute["kind"],
-  ): Promise<Response> {
-    return fetchWithTimeout(url, this.execStartTimeoutMs, init, routeKind === "internal");
+  ): Promise<CommandFetchAttempt<Response>> {
+    const fetchUrl = routeKind === "internal" ? fetchSandboxRuntimeUrl : fetchSandboxUrl;
+    return await withSandboxRequestDeadline<CommandFetchAttempt<Response>>(
+      this.execStartTimeoutMs,
+      async (signal) => {
+        try {
+          const requestSignal = init.signal && signal
+            ? anyAbortSignal([init.signal, signal])
+            : init.signal ?? signal;
+          const response = await fetchUrl(
+            url,
+            requestSignal ? { ...init, signal: requestSignal } : init,
+          );
+          return { kind: "result", result: response };
+        } catch (error) {
+          return { kind: "fetch-failure", error };
+        }
+      },
+    );
   }
 
   async #fetchControl(
@@ -1070,7 +1148,7 @@ export class LazySandbox {
       await this.deleteSession(sessionId);
     }
     if (!this.deleteOnClose) {
-      this.retainedSessions.set(this.sessionProjectId, sessionId);
+      this.retainSession(this.sessionProjectId, sessionId);
     }
     this.resetSessionState(sessionId);
   }
@@ -1154,10 +1232,6 @@ export class LazySandbox {
   }
 }
 
-function isRetryableExecStartStatus(status: number): boolean {
-  return status === 502 || status === 503 || status === 504;
-}
-
 function commandStreamUrl(route: DataPlaneRoute): string {
   return `${route.baseUrl}${route.kind === "proxy" ? "/commands/stream" : "/exec"}`;
 }
@@ -1166,15 +1240,9 @@ function backgroundCommandsUrl(route: DataPlaneRoute): string {
   return `${route.baseUrl}${route.kind === "proxy" ? "/commands" : "/exec/commands"}`;
 }
 
-/**
- * Heuristic: Deno's fetch throws an `Error` with message "fetch failed" (case-
- * insensitive) when the TCP connection is refused or the host is unreachable.
- * If Deno changes this wording the check stops matching, causing exec failures
- * to be treated as non-retryable — fail-safe (agent surfaces an error) but
- * requires a code update to restore automatic retry.
- */
-function isRetryableExecStartError(error: unknown): boolean {
-  return error instanceof Error && /fetch failed/i.test(error.message);
+function isFailedSandboxLookupStatus(error: unknown, status: number): boolean {
+  return isVeryfrontError(error) && error.slug === REQUEST_ERROR.slug && error.status === status &&
+    applyIntrinsic(weakSetHas, failedSessionLookups, [error]);
 }
 
 /**
@@ -1192,24 +1260,41 @@ function isDataPlaneReadinessFailure(error: unknown): boolean {
     detail?.startsWith(DATA_PLANE_READINESS_FAILURE_PREFIX) === true;
 }
 
-/**
- * Heuristic: reprovisioning is triggered by known Node.js/Deno error codes on
- * the error's `cause` (ECONNREFUSED, ECONNRESET, ENOTFOUND, EHOSTUNREACH).
- * These codes are stable across Deno versions and represent network-layer
- * failures where the sandbox pod is no longer reachable.
- */
-function shouldReprovisionAfterExecStartFailure(error: unknown): boolean {
-  if (!(error instanceof Error)) {
+function ownTransportData(value: unknown, key: string): unknown {
+  const descriptor = getOwnDescriptor(value, key);
+  if (!descriptor) return undefined;
+  if (!hasOwn(descriptor, "value")) throw new TypeError("Unsupported transport metadata");
+  return descriptor.value;
+}
+
+/** Admit retries/replacement only when native data identifies failed connection setup. */
+function isPreDispatchExecStartFailure(error: unknown): boolean {
+  try {
+    if (isVeryfrontError(error) && error.slug === REQUEST_ERROR.slug) return false;
+    if (!(error instanceof Error)) return false;
+    let code = ownTransportData(error, "code");
+    let syscall = ownTransportData(error, "syscall");
+    // Pinned Node/Bun transports preserve the native error directly. Native
+    // fetch instead wraps it in cause. Direct metadata must not be overridden
+    // by an inner cause that claims a different phase.
+    if (code === undefined && syscall === undefined) {
+      const cause = ownTransportData(error, "cause");
+      if (typeof cause !== "object" || cause === null) return false;
+      code = ownTransportData(cause, "code");
+      syscall = ownTransportData(cause, "syscall");
+    }
+    if (code === "ENOTFOUND" || code === "EAI_AGAIN") {
+      return syscall === undefined || syscall === "getaddrinfo";
+    }
+    if (
+      syscall !== undefined && syscall !== "connect" &&
+      !(code === "EADDRNOTAVAIL" && syscall === "bind")
+    ) return false;
+    return isRetriableConnectFailure({ code, syscall });
+  } catch {
+    // Uninspectable metadata cannot authorize replay; callers retain the original failure.
     return false;
   }
-
-  const cause = error.cause;
-  if (typeof cause !== "object" || cause === null || !("code" in cause)) {
-    return false;
-  }
-
-  return typeof cause.code === "string" &&
-    REPROVISIONABLE_EXEC_START_ERROR_CODES.has(cause.code);
 }
 
 async function fetchWithTimeout(
@@ -1223,7 +1308,13 @@ async function fetchWithTimeout(
   return await withSandboxRequestDeadline(
     timeoutMs,
     async (signal) => {
-      const response = await fetchUrl(url, signal ? { ...init, signal } : init);
+      const requestSignal = init.signal && signal
+        ? anyAbortSignal([init.signal, signal])
+        : init.signal ?? signal;
+      const response = await fetchUrl(
+        url,
+        requestSignal ? { ...init, signal: requestSignal } : init,
+      );
       // Control responses are finite receipts/data; consume their bytes while the
       // request deadline can still abort a partial body. Exec streams stay streaming.
       if (!bufferResponseBody || !response.body) return response;

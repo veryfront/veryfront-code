@@ -1,6 +1,6 @@
 import { cliLogger, exitProcess } from "#cli/utils";
 import { type EnvironmentConfig, getEnvironmentConfig } from "veryfront/config";
-import { deleteToken, getTokenLocation, hasToken, readToken, saveToken } from "./token-store.ts";
+import { deleteToken, getTokenLocation, saveToken } from "./token-store.ts";
 import { getCallbackUrl, startCallbackServer } from "./callback-server.ts";
 import { type BrowserLaunchOptions, canOpenBrowser, openBrowser } from "./browser.ts";
 import { isTTY, promptUser } from "../utils/index.ts";
@@ -62,12 +62,9 @@ export function formatEnvSourcePathForDisplay(file: string, currentCwd = cwd()):
   // with one, so `.config/.env` would otherwise be the only nested path printed
   // without the prefix.
   const rel = relative(currentCwd, file);
-  const shown = rel === "." || rel.startsWith("..") || isAbsolute(rel)
-    ? basename(file)
-    : /[/\\]/.test(rel) && !rel.startsWith("./")
-    ? `./${rel}`
-    : rel;
-  return shown;
+  if (rel === "." || rel.startsWith("..") || isAbsolute(rel)) return basename(file);
+  if (/[/\\]/.test(rel) && !rel.startsWith("./")) return `./${rel}`;
+  return rel;
 }
 
 function describeApiTokenSource(token: string): string {
@@ -79,7 +76,8 @@ function describeApiTokenSource(token: string): string {
   return `(via VERYFRONT_API_TOKEN from ${formatEnvSourcePathForDisplay(origin.file)})`;
 }
 
-export type AuthMethod = "google" | "github" | "microsoft" | "token";
+type BrowserAuthMethod = "google" | "github" | "microsoft";
+export type AuthMethod = BrowserAuthMethod | "token";
 
 export interface UserInfo {
   id: string;
@@ -157,7 +155,11 @@ class CredentialValidationUnavailableError extends Error {
     readonly kind: CredentialValidationUnavailableKind,
     readonly status?: number,
   ) {
-    super("Could not validate existing login credentials");
+    super(
+      `Veryfront API is unavailable (${kind}${
+        status ? `, HTTP ${status}` : ""
+      }). Check the API URL and service, then retry. Your login was retained.`,
+    );
   }
 }
 
@@ -166,7 +168,7 @@ function isCredentialTimeoutFailure(error: unknown): boolean {
     (error.name === "AbortError" || error.name === "TimeoutError");
 }
 
-function isCredentialRejectionStatus(status: number): boolean {
+export function isCredentialRejectionStatus(status: number): boolean {
   return status === 401 || status === 403;
 }
 
@@ -253,7 +255,7 @@ export function createOAuthState(): string {
 }
 
 export function createOAuthAuthorizationUrl(
-  provider: "google" | "github" | "microsoft",
+  provider: BrowserAuthMethod,
   callbackUrl: string,
   state: string,
   env: EnvironmentConfig = getEnvironmentConfig(),
@@ -265,6 +267,36 @@ export function createOAuthAuthorizationUrl(
   authUrl.searchParams.set("redirect_uri", stateBoundCallbackUrl.toString());
   authUrl.searchParams.set("state", state);
   return authUrl.toString();
+}
+
+function unavailableValidationFailure(error: unknown, fallback: () => unknown): unknown {
+  if (error instanceof CredentialValidationUnavailableError) return error;
+  if (isCredentialTimeoutFailure(error)) return new CredentialValidationUnavailableError("timeout");
+  if (error instanceof TypeError) return new CredentialValidationUnavailableError("network");
+  return fallback();
+}
+
+function handleCredentialValidationFailure(
+  error: unknown,
+  options: CredentialValidationOptions,
+): void {
+  if (options.throwOnCredentialValidationUnavailable) {
+    throw unavailableValidationFailure(error, () => error);
+  }
+  if (error instanceof NetworkError) throw error;
+  if (options.throwOnNetworkError && isCredentialNetworkFailure(error)) throwNetworkError();
+}
+
+function handleRejectedCredentialResponse(
+  response: Response,
+  options: CredentialValidationOptions,
+): void {
+  if (
+    options.throwOnCredentialValidationUnavailable && !isCredentialRejectionStatus(response.status)
+  ) {
+    throw new CredentialValidationUnavailableError("service", response.status);
+  }
+  if (options.throwOnNetworkError && response.status >= 500) throwNetworkError();
 }
 
 export async function validateToken(
@@ -285,13 +317,7 @@ export async function validateToken(
     if (!response.ok) {
       // Consume response body to prevent resource leak
       await response.body?.cancel();
-      if (
-        options.throwOnCredentialValidationUnavailable &&
-        !isCredentialRejectionStatus(response.status)
-      ) {
-        throw new CredentialValidationUnavailableError("service", response.status);
-      }
-      if (options.throwOnNetworkError && response.status >= 500) throwNetworkError();
+      handleRejectedCredentialResponse(response, options);
       return null;
     }
 
@@ -304,34 +330,15 @@ export async function validateToken(
       return null;
     } catch (error) {
       if (options.throwOnCredentialValidationUnavailable) {
-        if (error instanceof CredentialValidationUnavailableError) {
-          throw error;
-        }
-        if (isCredentialTimeoutFailure(error)) {
-          throw new CredentialValidationUnavailableError("timeout");
-        }
-        if (error instanceof TypeError) {
-          throw new CredentialValidationUnavailableError("network");
-        }
-        throw new CredentialValidationUnavailableError("service", response.status);
+        throw unavailableValidationFailure(
+          error,
+          () => new CredentialValidationUnavailableError("service", response.status),
+        );
       }
       throw error;
     }
   } catch (e) {
-    if (options.throwOnCredentialValidationUnavailable) {
-      if (e instanceof CredentialValidationUnavailableError) {
-        throw e;
-      }
-      if (isCredentialTimeoutFailure(e)) {
-        throw new CredentialValidationUnavailableError("timeout");
-      }
-      if (e instanceof TypeError) {
-        throw new CredentialValidationUnavailableError("network");
-      }
-      throw e;
-    }
-    if (e instanceof NetworkError) throw e;
-    if (options.throwOnNetworkError && isCredentialNetworkFailure(e)) throwNetworkError();
+    handleCredentialValidationFailure(e, options);
     return null;
   }
 }
@@ -362,31 +369,12 @@ async function validateApiKey(
     });
     await response.body?.cancel();
     if (!response.ok) {
-      if (
-        options.throwOnCredentialValidationUnavailable &&
-        !isCredentialRejectionStatus(response.status)
-      ) {
-        throw new CredentialValidationUnavailableError("service", response.status);
-      }
-      if (options.throwOnNetworkError && response.status >= 500) throwNetworkError();
+      handleRejectedCredentialResponse(response, options);
       return false;
     }
     return true;
   } catch (e) {
-    if (options.throwOnCredentialValidationUnavailable) {
-      if (e instanceof CredentialValidationUnavailableError) {
-        throw e;
-      }
-      if (isCredentialTimeoutFailure(e)) {
-        throw new CredentialValidationUnavailableError("timeout");
-      }
-      if (e instanceof TypeError) {
-        throw new CredentialValidationUnavailableError("network");
-      }
-      throw e;
-    }
-    if (e instanceof NetworkError) throw e;
-    if (options.throwOnNetworkError && isCredentialNetworkFailure(e)) throwNetworkError();
+    handleCredentialValidationFailure(e, options);
     return false;
   }
 }
@@ -472,7 +460,7 @@ export async function openOAuthLogin(
 }
 
 async function loginWithOAuth(
-  provider: "google" | "github" | "microsoft",
+  provider: BrowserAuthMethod,
   env: EnvironmentConfig,
   spinner: SpinnerController,
 ): Promise<string | null> {
@@ -616,6 +604,79 @@ function writeAuthoritativeCredentialUnavailableMessage(
   writeConfigFileSwitchingGuidance();
 }
 
+type ExistingCredentialSource = "config-file" | "stored" | "environment";
+
+function existingCredentialSource(source: ApiTokenSource): ExistingCredentialSource {
+  if (source === "config-file") return "config-file";
+  if (source === "token-store") return "stored";
+  return "environment";
+}
+
+function writeExistingSession(
+  identity: AuthIdentity,
+  source: ExistingCredentialSource,
+  hasStoredToken: boolean,
+  hasConfigToken: boolean,
+): void {
+  console.log();
+  console.log(
+    "  ✓ " +
+      (isApiKeyIdentity(identity)
+        ? "Already authenticated with an API key"
+        : "Already logged in as " + brand(identity.email)),
+  );
+  // An environment credential is a valid session for every command, but this
+  // path stores nothing, and `login` implies it did. The variable is often set
+  // by a `.env` in the working directory the developer has forgotten about,
+  // the case `whoami` now names, so the session ends at the directory
+  // boundary. Say so rather than let them discover it elsewhere.
+  if (source === "environment") {
+    if (hasStoredToken) {
+      console.log(
+        "  " + dim("Using VERYFRONT_API_TOKEN; it takes precedence over a stored credential."),
+      );
+      console.log(
+        "  " +
+          dim(
+            "Unset VERYFRONT_API_TOKEN before attempting to use the stored credential, or replace the variable to switch tokens.",
+          ),
+      );
+    } else {
+      console.log("  " + dim("Using VERYFRONT_API_TOKEN; no stored login was created."));
+      console.log(
+        "  " +
+          dim(
+            "Unset VERYFRONT_API_TOKEN before using another login method, or replace the variable to switch tokens.",
+          ),
+      );
+    }
+    if (hasConfigToken) writeEnvironmentConfigFileSwitchingGuidance();
+  } else if (source === "config-file") {
+    console.log(
+      "  " +
+        dim("Using apiToken from veryfront.json; it takes precedence over stored credentials."),
+    );
+    writeConfigFileSwitchingGuidance();
+  }
+  console.log(
+    "  " +
+      dim(
+        "Run 'veryfront login --token' (or --google, --github, --microsoft) to sign in again.",
+      ),
+  );
+}
+
+function reportRejectedAuthoritativeCredential(
+  source: ExistingCredentialSource,
+  hasConfigToken: boolean,
+): boolean {
+  if (!isJsonMode() && source !== "stored") {
+    writeAuthoritativeCredentialRejectedMessage(source, hasConfigToken);
+    return true;
+  }
+  return false;
+}
+
 /**
  * Report an already-valid session, or null when there is nothing usable.
  *
@@ -626,6 +687,7 @@ function writeAuthoritativeCredentialUnavailableMessage(
 async function describeExistingSession(
   env: EnvironmentConfig,
   projectDir: string = cwd(),
+  validationOptions: CredentialValidationOptions = {},
 ): Promise<AuthIdentity | "failure-output" | null> {
   const candidates = await resolveApiCredentialCandidatesForAuth(env, projectDir);
   if (candidates.length === 0) return null;
@@ -634,12 +696,44 @@ async function describeExistingSession(
   const signal = AbortSignal.timeout(existingSessionTimeoutMs);
   let unavailable: CredentialValidationUnavailableError | null = null;
 
-  for (const { apiToken, apiTokenSource, authoritative, validationEnv } of candidates) {
-    const source = apiTokenSource === "config-file"
-      ? "config-file"
-      : apiTokenSource === "token-store"
-      ? "stored"
-      : "environment";
+  const unavailableCandidateAction = (
+    authoritative: boolean,
+    apiTokenSource: ApiTokenSource,
+    source: ExistingCredentialSource,
+    error: CredentialValidationUnavailableError,
+  ): "failure-output" | "stop" | "next" => {
+    if (authoritative || apiTokenSource === "token-store") {
+      if (!isJsonMode() && source !== "stored") {
+        writeAuthoritativeCredentialUnavailableMessage(
+          source,
+          error,
+          hasConfigToken,
+        );
+        return "failure-output";
+      }
+      return "stop";
+    }
+    return "next";
+  };
+  const rejectCandidate = async (
+    apiTokenSource: ApiTokenSource,
+    authoritative: boolean,
+    source: ExistingCredentialSource,
+  ): Promise<"failure-output" | "stop" | "next"> => {
+    if (apiTokenSource === "token-store") {
+      await deleteToken(env);
+      hasStoredToken = false;
+    }
+    if (authoritative) {
+      if (reportRejectedAuthoritativeCredential(source, hasConfigToken)) return "failure-output";
+      return "stop";
+    }
+    return "next";
+  };
+  const inspectCandidate = async (
+    { apiToken, apiTokenSource, authoritative, validationEnv }: (typeof candidates)[number],
+  ): Promise<AuthIdentity | "failure-output" | "stop" | "next"> => {
+    const source = existingCredentialSource(apiTokenSource);
     let identity: AuthIdentity | null;
     try {
       // Bounded: this preflight only decides whether to say "already logged in"
@@ -647,42 +741,19 @@ async function describeExistingSession(
       // checked must still stop, because later commands will resolve it ahead
       // of any replacement login.
       identity = await validateCredential(apiToken, validationEnv, {
+        ...validationOptions,
         signal,
         throwOnCredentialValidationUnavailable: true,
       });
     } catch (error) {
       if (error instanceof CredentialValidationUnavailableError) {
         unavailable ??= error;
-        if (authoritative || apiTokenSource === "token-store") {
-          if (!isJsonMode() && source !== "stored") {
-            writeAuthoritativeCredentialUnavailableMessage(
-              source,
-              error,
-              hasConfigToken,
-            );
-            return "failure-output";
-          }
-          break;
-        }
-        continue;
+        return unavailableCandidateAction(authoritative, apiTokenSource, source, error);
       }
       throw error;
     }
     if (!identity) {
-      if (apiTokenSource === "token-store") {
-        await deleteToken(env);
-        hasStoredToken = false;
-      }
-      if (authoritative) {
-        if (!isJsonMode()) {
-          if (source !== "stored") {
-            writeAuthoritativeCredentialRejectedMessage(source, hasConfigToken);
-            return "failure-output";
-          }
-        }
-        break;
-      }
-      continue;
+      return rejectCandidate(apiTokenSource, authoritative, source);
     }
 
     if (isJsonMode()) {
@@ -693,53 +764,14 @@ async function describeExistingSession(
       return identity;
     }
 
-    console.log();
-    console.log(
-      "  ✓ " +
-        (isApiKeyIdentity(identity)
-          ? "Already authenticated with an API key"
-          : "Already logged in as " + brand(identity.email)),
-    );
-    // An environment credential is a valid session for every command, but this
-    // path stores nothing, and `login` implies it did. The variable is often set
-    // by a `.env` in the working directory the developer has forgotten about,
-    // the case `whoami` now names, so the session ends at the directory
-    // boundary. Say so rather than let them discover it elsewhere.
-    if (source === "environment") {
-      if (hasStoredToken) {
-        console.log(
-          "  " + dim("Using VERYFRONT_API_TOKEN; it takes precedence over a stored credential."),
-        );
-        console.log(
-          "  " +
-            dim(
-              "Unset VERYFRONT_API_TOKEN before attempting to use the stored credential, or replace the variable to switch tokens.",
-            ),
-        );
-      } else {
-        console.log("  " + dim("Using VERYFRONT_API_TOKEN; no stored login was created."));
-        console.log(
-          "  " +
-            dim(
-              "Unset VERYFRONT_API_TOKEN before using another login method, or replace the variable to switch tokens.",
-            ),
-        );
-      }
-      if (hasConfigToken) writeEnvironmentConfigFileSwitchingGuidance();
-    } else if (source === "config-file") {
-      console.log(
-        "  " +
-          dim("Using apiToken from veryfront.json; it takes precedence over stored credentials."),
-      );
-      writeConfigFileSwitchingGuidance();
-    }
-    console.log(
-      "  " +
-        dim(
-          "Run 'veryfront login --token' (or --google, --github, --microsoft) to sign in again.",
-        ),
-    );
+    writeExistingSession(identity, source, hasStoredToken, hasConfigToken);
     return identity;
+  };
+  for (const candidate of candidates) {
+    const result = await inspectCandidate(candidate);
+    if (result === "next") continue;
+    if (result === "stop") break;
+    return result;
   }
 
   if (isJsonMode() && unavailable) {
@@ -749,79 +781,51 @@ async function describeExistingSession(
   return null;
 }
 
-export async function login(
-  method?: AuthMethod,
-  env: EnvironmentConfig = getEnvironmentConfig(),
-  projectDir: string = cwd(),
+async function loginWithBrowserCredential(
+  authMethod: BrowserAuthMethod,
+  env: EnvironmentConfig,
+  validationOptions: CredentialValidationOptions,
 ): Promise<AuthIdentity | null> {
-  if (isJsonMode() && method !== undefined) {
-    await outputLoginExplicitMethodJson();
+  const spinner = createSpinner("Starting authentication server...");
+  const token = await loginWithOAuth(authMethod, env, spinner);
+  if (!token) return null;
+
+  spinner.update("Validating token...");
+  let identity: AuthIdentity | null;
+  try {
+    identity = await validateCredential(token, env, {
+      ...validationOptions,
+      throwOnNetworkError: true,
+    });
+  } catch (e) {
+    if (e instanceof NetworkError) {
+      spinner.stop();
+      console.log();
+      console.log("  " + error("✗") + " Could not reach the Veryfront API");
+      console.log("  " + dim("Check your network connection and try again"));
+      return null;
+    }
+    throw e;
+  }
+
+  if (!identity) {
+    spinner.error("Invalid token");
     return null;
   }
 
-  // A bare `veryfront login` is the documented first step of the deploy
-  // journey, and an already-authenticated developer ran it only to be asked for
-  // a token they do not need. Report the session instead. An explicit method is
-  // intent to sign in again, so account switching still works — and a session
-  // that no longer validates falls through to the normal flow.
-  if (method === undefined) {
-    const existing = await describeExistingSession(env, projectDir);
-    if (existing === "failure-output") return null;
-    if (existing) return existing;
-    if (isJsonMode()) {
-      await outputLoginAuthenticationRequiredJson();
-      return null;
-    }
-  }
+  await saveToken(token, env);
+  spinner.success(
+    isApiKeyIdentity(identity)
+      ? "Authenticated with an API key"
+      : `Logged in as ${brand(identity.email)}`,
+  );
+  return identity;
+}
 
-  // Past this point login mints a new credential and validates it against
-  // `env`, whose apiUrl a cloned project `.env` may have chosen. A new token is
-  // always the developer's own, never something the repository supplied, so
-  // there is no candidate that could make this host acceptable: stop instead of
-  // handing the token to it.
-  await assertApiUrlAcceptsNewCredential(env, projectDir);
-
-  if (!isInteractive() && (method === undefined || method === "token")) {
-    cliLogger.error("Not logged in. Set VERYFRONT_API_TOKEN or run in interactive mode.");
-    return null;
-  }
-
-  const authMethod = method ?? (isTTY() ? await promptAuthMethod() : "token");
-
-  if (authMethod === "google" || authMethod === "github" || authMethod === "microsoft") {
-    const spinner = createSpinner("Starting authentication server...");
-    const token = await loginWithOAuth(authMethod, env, spinner);
-    if (!token) return null;
-
-    spinner.update("Validating token...");
-    let identity: AuthIdentity | null;
-    try {
-      identity = await validateCredential(token, env, { throwOnNetworkError: true });
-    } catch (e) {
-      if (e instanceof NetworkError) {
-        spinner.stop();
-        console.log();
-        console.log("  " + error("✗") + " Could not reach the Veryfront API");
-        console.log("  " + dim("Check your network connection and try again"));
-        return null;
-      }
-      throw e;
-    }
-
-    if (!identity) {
-      spinner.error("Invalid token");
-      return null;
-    }
-
-    await saveToken(token, env);
-    spinner.success(
-      isApiKeyIdentity(identity)
-        ? "Authenticated with an API key"
-        : `Logged in as ${brand(identity.email)}`,
-    );
-    return identity;
-  }
-
+async function loginWithEnteredToken(
+  env: EnvironmentConfig,
+  validationOptions: CredentialValidationOptions,
+): Promise<AuthIdentity | null> {
   // Token path: no spinner, plain text status
   const token = await loginWithToken();
   if (!token) return null;
@@ -830,7 +834,10 @@ export async function login(
 
   let identity: AuthIdentity | null;
   try {
-    identity = await validateCredential(token, env, { throwOnNetworkError: true });
+    identity = await validateCredential(token, env, {
+      ...validationOptions,
+      throwOnNetworkError: true,
+    });
   } catch (e) {
     if (e instanceof NetworkError) {
       console.log();
@@ -857,27 +864,124 @@ export async function login(
   return identity;
 }
 
+export async function login(
+  method?: AuthMethod,
+  env: EnvironmentConfig = getEnvironmentConfig(),
+  projectDir: string = cwd(),
+  validationOptions: CredentialValidationOptions = {},
+): Promise<AuthIdentity | null> {
+  if (isJsonMode() && method !== undefined) {
+    await outputLoginExplicitMethodJson();
+    return null;
+  }
+
+  // A bare `veryfront login` is the documented first step of the deploy
+  // journey, and an already-authenticated developer ran it only to be asked for
+  // a token they do not need. Report the session instead. An explicit method is
+  // intent to sign in again, so account switching still works — and a session
+  // that no longer validates falls through to the normal flow.
+  if (method === undefined) {
+    const existing = await describeExistingSession(env, projectDir, validationOptions);
+    if (existing === "failure-output") return null;
+    if (existing) return existing;
+    if (isJsonMode()) {
+      await outputLoginAuthenticationRequiredJson();
+      return null;
+    }
+  }
+
+  // Past this point login mints a new credential and validates it against
+  // `env`, whose apiUrl a cloned project `.env` may have chosen. A new token is
+  // always the developer's own, never something the repository supplied, so
+  // there is no candidate that could make this host acceptable: stop instead of
+  // handing the token to it.
+  await assertApiUrlAcceptsNewCredential(env, projectDir);
+
+  if (!isInteractive() && (method === undefined || method === "token")) {
+    cliLogger.error("Not logged in. Set VERYFRONT_API_TOKEN or run in interactive mode.");
+    return null;
+  }
+
+  const authMethod = method ?? (isTTY() ? await promptAuthMethod() : "token");
+
+  if (authMethod === "google" || authMethod === "github" || authMethod === "microsoft") {
+    return loginWithBrowserCredential(authMethod, env, validationOptions);
+  }
+
+  return loginWithEnteredToken(env, validationOptions);
+}
+
+function warnRejectedCredentialSource(source: ApiTokenSource, humanOutput: boolean): void {
+  if (source === "env" && humanOutput) {
+    console.log("  " + warning("Warning: VERYFRONT_API_TOKEN is invalid"));
+  }
+  if (source === "config-file" && humanOutput) {
+    console.log("  " + warning("Warning: apiToken from veryfront.json is invalid"));
+  }
+}
+
+async function removeRejectedStoredToken(
+  env: EnvironmentConfig,
+  humanOutput: boolean,
+): Promise<void> {
+  await deleteToken(env);
+  if (humanOutput) {
+    console.log("  " + warning("Session expired. Please log in again."));
+  }
+}
+
+async function requestInteractiveAuthentication(
+  env: EnvironmentConfig,
+  projectDir: string,
+  validationOptions: CredentialValidationOptions,
+): Promise<AuthIdentity | null> {
+  if (!isTTY() || !isInteractive()) {
+    cliLogger.error("Not logged in. Set VERYFRONT_API_TOKEN or run in interactive mode.");
+    return null;
+  }
+
+  return login(undefined, env, projectDir, validationOptions);
+}
+
+function shouldRetainStoredCredential(
+  source: ApiTokenSource,
+  error: unknown,
+  options: CredentialValidationOptions,
+): boolean {
+  return source === "token-store" && error instanceof CredentialValidationUnavailableError &&
+    !options.throwOnCredentialValidationUnavailable;
+}
+
 export async function ensureAuthenticated(
   env: EnvironmentConfig = getEnvironmentConfig(),
   projectDir: string = cwd(),
+  validationOptions: CredentialValidationOptions = {},
 ): Promise<AuthIdentity | null> {
   const humanOutput = !isJsonMode();
 
   const candidates = await resolveApiCredentialCandidatesForAuth(env, projectDir);
-  for (const candidate of candidates) {
+  async function authenticateCandidate(index: number): Promise<AuthIdentity | null> {
+    const candidate = candidates[index];
+    if (!candidate) {
+      return humanOutput
+        ? requestInteractiveAuthentication(env, projectDir, validationOptions)
+        : null;
+    }
     let credential: AuthIdentity | null;
     try {
       credential = await validateCredential(
         candidate.apiToken,
         candidate.validationEnv,
-        candidate.apiTokenSource === "token-store"
-          ? { throwOnCredentialValidationUnavailable: true }
-          : undefined,
+        {
+          ...(candidate.apiTokenSource === "token-store"
+            ? { throwOnCredentialValidationUnavailable: true }
+            : {}),
+          ...validationOptions,
+        },
       );
     } catch (error) {
       if (
-        candidate.apiTokenSource === "token-store" &&
-        error instanceof CredentialValidationUnavailableError
+        shouldRetainStoredCredential(candidate.apiTokenSource, error, validationOptions)
       ) {
         return null;
       }
@@ -885,29 +989,15 @@ export async function ensureAuthenticated(
     }
     if (credential) return credential;
 
-    if (candidate.apiTokenSource === "env" && humanOutput) {
-      console.log("  " + warning("Warning: VERYFRONT_API_TOKEN is invalid"));
-    }
-    if (candidate.apiTokenSource === "config-file" && humanOutput) {
-      console.log("  " + warning("Warning: apiToken from veryfront.json is invalid"));
-    }
+    warnRejectedCredentialSource(candidate.apiTokenSource, humanOutput);
     if (candidate.authoritative) return null;
     if (candidate.apiTokenSource === "token-store") {
-      await deleteToken(env);
-      if (humanOutput) {
-        console.log("  " + warning("Session expired. Please log in again."));
-      }
+      await removeRejectedStoredToken(env, humanOutput);
     }
+    return authenticateCandidate(index + 1);
   }
 
-  if (!humanOutput) return null;
-
-  if (!isTTY() || !isInteractive()) {
-    cliLogger.error("Not logged in. Set VERYFRONT_API_TOKEN or run in interactive mode.");
-    return null;
-  }
-
-  return login(undefined, env, projectDir);
+  return authenticateCandidate(0);
 }
 
 const CREDENTIAL_VALIDATION_UNAVAILABLE = Symbol("credential-validation-unavailable");
@@ -916,6 +1006,16 @@ export async function logout(env: EnvironmentConfig = getEnvironmentConfig()): P
   await deleteToken(env);
   console.log();
   console.log("  ✓ Logged out");
+}
+
+function reportedCredentialLocation(
+  token: string,
+  source: ApiTokenSource,
+  env: EnvironmentConfig,
+): string {
+  if (source === "env" || source === "env-file") return describeApiTokenSource(token);
+  if (source === "config-file") return "apiToken from veryfront.json";
+  return `Token stored at: ${getTokenLocation(env)}`;
 }
 
 async function reportCredential(
@@ -965,11 +1065,7 @@ async function reportCredential(
 
   console.log(
     "  " + dim(
-      source === "env" || source === "env-file"
-        ? describeApiTokenSource(token)
-        : source === "config-file"
-        ? "apiToken from veryfront.json"
-        : `Token stored at: ${getTokenLocation(env)}`,
+      reportedCredentialLocation(token, source, env),
     ),
   );
   return credential;
@@ -1008,4 +1104,4 @@ export async function whoami(
   return null;
 }
 
-export { deleteToken, hasToken, readToken, saveToken };
+export { deleteToken, hasToken, readToken, saveToken } from "./token-store.ts";

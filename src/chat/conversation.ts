@@ -1,9 +1,11 @@
+import type { ChatMessage, ChatMessagePart } from "./protocol.ts";
 import { filterPrivateArray } from "#veryfront/security/private-array.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 import type { ChatUiMessage, ChatUiMessagePart, ProviderModelMessage } from "./types.ts";
 import { getOptionalStringField, isRecord, toRecord } from "./part-field-access.ts";
 import { isTextPart } from "./message-part-parsing.ts";
+import { markToolPartAsErrored } from "./tool-ui-errors.ts";
 
 export { getStringField, isRecord, stringifyUnknown } from "./part-field-access.ts";
 export type { JsonValue } from "./part-field-access.ts";
@@ -246,7 +248,7 @@ export function isDataUiPart(
 }
 
 /** Check whether a chat part is a tool UI part. */
-export function isToolUiPart(part: ChatUiMessagePart): part is ToolUiPart {
+export function isToolUiPart(part: ChatUiMessagePart | ChatMessagePart): part is ToolUiPart {
   return (
     (part.type === "dynamic-tool" || part.type === "tool_call" ||
       part.type.startsWith("tool-")) &&
@@ -459,55 +461,38 @@ export function hasIncompleteToolParts(message: ChatUiMessage): boolean {
 }
 
 /** Mark incomplete tool parts as stopped. */
-export function markIncompleteToolPartsAsStopped(message: ChatUiMessage): ChatUiMessage {
-  return markIncompleteToolPartsAsErrored(message, "Stopped by user");
+export function markIncompleteToolPartsAsStopped<T extends ChatUiMessage | ChatMessage>(
+  message: T,
+  options: {
+    /** Include server-executed AG-UI tools whose result has not arrived. */
+    includePendingProviderTools?: boolean;
+  } = {},
+): T {
+  return markIncompleteToolPartsAsErrored(message, "Stopped by user", options);
 }
 
 /** Mark incomplete tool parts as errored. */
-export function markIncompleteToolPartsAsErrored(
-  message: ChatUiMessage,
+export function markIncompleteToolPartsAsErrored<T extends ChatUiMessage | ChatMessage>(
+  message: T,
   errorText: string,
-): ChatUiMessage {
+  options: {
+    /** Include server-executed AG-UI tools whose result has not arrived. */
+    includePendingProviderTools?: boolean;
+  } = {},
+): T {
   let mutated = false;
 
   const parts = message.parts.map((part) => {
-    if (!isToolUiPart(part) || isToolComplete(part)) {
-      return part;
-    }
+    if (!isToolUiPart(part)) return part;
+    const pendingProviderTool = options.includePendingProviderTools === true &&
+      part.state === "input-available" && part.providerExecuted === true;
+    if (isToolComplete(part) && !pendingProviderTool) return part;
 
     mutated = true;
     return markToolPartAsErrored(part, errorText);
   });
 
   return mutated ? { ...message, parts } : message;
-}
-
-function markToolPartAsErrored(part: ToolUiPart, errorText: string): ChatUiMessagePart {
-  if (part.type === "dynamic-tool") {
-    return {
-      type: "dynamic-tool",
-      toolName: part.toolName,
-      toolCallId: part.toolCallId,
-      ...(part.title ? { title: part.title } : {}),
-      ...(part.providerExecuted !== undefined ? { providerExecuted: part.providerExecuted } : {}),
-      ...(part.callProviderMetadata ? { callProviderMetadata: part.callProviderMetadata } : {}),
-      input: part.input,
-      state: "output-error",
-      errorText,
-    };
-  }
-
-  return {
-    type: part.type,
-    toolCallId: part.toolCallId,
-    ...(part.toolName ? { toolName: part.toolName } : {}),
-    ...(part.title ? { title: part.title } : {}),
-    ...(part.providerExecuted !== undefined ? { providerExecuted: part.providerExecuted } : {}),
-    ...(part.callProviderMetadata ? { callProviderMetadata: part.callProviderMetadata } : {}),
-    input: part.input,
-    state: "output-error",
-    errorText,
-  };
 }
 
 /** Check whether a value is a tool-call part. */

@@ -15,6 +15,11 @@ import {
   __resetLogRecordEmitterForTests,
   type LogEntry,
 } from "#veryfront/utils/logger/logger.ts";
+import { getBaseLogger } from "#veryfront/utils/logger/logger.ts";
+import {
+  getRequestLogger,
+  runWithRequestContextAsync,
+} from "#veryfront/utils/logger/request-context.ts";
 import { createRequestContext } from "../context/request-context.ts";
 import { AuthHandler } from "#veryfront/security/http/auth.ts";
 import { CsrfHandler } from "#veryfront/security/http/csrf/csrf-handler.ts";
@@ -27,6 +32,7 @@ import {
   resolveProjectIdentity,
   resolveProjectRuntimeContext,
 } from "./project-runtime-context.ts";
+import { setProjectAttributes, setRequestAttributes } from "./tracing.ts";
 import { preparePreviewDocumentSourceSnapshot } from "../handlers/request/source-snapshot-freshness.ts";
 
 const defaultParsedDomain: ParsedDomain = {
@@ -210,7 +216,111 @@ async function assertJsonResponse(
 }
 
 describe("prepareProjectRequest", () => {
+  it("records preview target facts only from a trusted proxy", async () => {
+    const req = new Request("http://runtime.internal/page", {
+      headers: {
+        host: "runtime.internal",
+        "x-forwarded-host": "demo.preview.example.com",
+        "x-project-slug": "demo",
+        "x-token": "test-token",
+        "x-environment": "preview",
+      },
+    });
+    for (const trusted of [true, false]) {
+      const prepared = await prepareProjectRequest({
+        req,
+        url: new URL(req.url),
+        isProxyMode: true,
+        trustProxy: () => Promise.resolve(trusted),
+      });
+      assertEquals(
+        prepared.loggerFacts.domain,
+        trusted ? "demo.preview.example.com" : "runtime.internal",
+      );
+      assertEquals(prepared.loggerFacts.environment, trusted ? "preview" : undefined);
+    }
+  });
+
+  it("derives a trusted host-routed log environment when the header is absent, empty, or invalid", async () => {
+    for (const headerValue of [undefined, "", "staging"]) {
+      for (const environment of ["preview", "production"]) {
+        const req = new Request("http://runtime.internal/page", {
+          headers: {
+            host: "runtime.internal",
+            "x-forwarded-host": `demo.${environment}.example.com`,
+            "x-project-slug": "demo",
+            "x-token": "test-token",
+            ...(headerValue === undefined ? {} : { "x-environment": headerValue }),
+          },
+        });
+        const prepared = await prepareProjectRequest({
+          req,
+          url: new URL(req.url),
+          isProxyMode: true,
+          trustProxy: () => Promise.resolve(true),
+        });
+        assertEquals(prepared.proxyGuard, undefined);
+        assertEquals(prepared.requestContext.mode, environment);
+        assertEquals(prepared.loggerFacts.environment, environment);
+      }
+    }
+  });
+
+  it("uses configured standalone proxy trust consistently for routing, logs, and traces", async () => {
+    const req = new Request("http://runtime.internal/page", {
+      headers: { "x-forwarded-host": "demo.preview.localhost", "x-project-slug": "demo" },
+    });
+    for (const trustForwarded of [false, true]) {
+      Deno.env.set("VERYFRONT_TRUST_FORWARDED_HEADERS", trustForwarded ? "1" : "0");
+      const prepared = await prepareProjectRequest({
+        req,
+        url: new URL(req.url),
+        isProxyMode: false,
+      });
+      const attributes: Record<string, unknown> = {};
+      const span = {
+        setAttribute: (key: string, value: unknown) => {
+          attributes[key] = value;
+        },
+      };
+      setRequestAttributes(
+        span,
+        req,
+        new URL(req.url),
+        prepared.proxyTrust.forwardedHeadersTrusted,
+      );
+      assertEquals(prepared.requestContext.mode, trustForwarded ? "preview" : "production");
+      assertEquals(
+        prepared.loggerFacts.domain,
+        trustForwarded ? "demo.preview.localhost" : "runtime.internal",
+      );
+      const project = await resolveProjectIdentity({
+        req,
+        url: new URL(req.url),
+        headers: prepared.headers,
+        requestContext: prepared.requestContext,
+        config: undefined,
+        defaultProjectSlug: undefined,
+        defaultProjectId: undefined,
+        defaultReleaseId: undefined,
+        wsSlugOverride: undefined,
+        proxyTrust: prepared.proxyTrust,
+      });
+      setProjectAttributes(
+        span,
+        project.projectSlug,
+        project.proxyEnv,
+        prepared.loggerFacts.environment,
+      );
+      assertEquals(attributes["http.host"], prepared.loggerFacts.domain);
+      assertEquals(attributes["veryfront.project_slug"], "demo");
+      assertEquals(prepared.loggerFacts.environment, undefined);
+      assertEquals(attributes["veryfront.environment"], "unknown");
+    }
+  });
+
   it("reuses explicit false proxy trust for headers and request context", async () => {
+    Deno.env.set("VERYFRONT_TRUST_FORWARDED_HEADERS", "1");
     let trustChecks = 0;
     const req = new Request("http://localhost/page", {
       headers: {
@@ -616,6 +726,51 @@ describe("resolveProjectIdentity", () => {
     assertEquals(trusted.projectSlug, "forwarded-project");
     assertEquals(trusted.parsedDomain.slug, "forwarded-project");
     assertEquals(trusted.parsedDomain.environment, "preview");
+  });
+
+  it("keeps host, project, and environment together on a host-routed preview span", async () => {
+    const req = new Request("http://runtime.internal/page", {
+      headers: {
+        "x-forwarded-host": "demo.preview.localhost",
+        "x-project-slug": "demo",
+        "x-token": "test-token",
+      },
+    });
+    const url = new URL(req.url);
+    const prepared = await prepareProjectRequest({
+      req,
+      url,
+      isProxyMode: true,
+      trustProxy: () => Promise.resolve(true),
+    });
+    const project = await resolveProjectIdentity({
+      req,
+      url,
+      headers: prepared.headers,
+      requestContext: prepared.requestContext,
+      config: undefined,
+      defaultProjectSlug: undefined,
+      defaultProjectId: undefined,
+      defaultReleaseId: undefined,
+      wsSlugOverride: undefined,
+      proxyTrust: prepared.proxyTrust,
+    });
+    const attributes: Record<string, unknown> = {};
+    const span = {
+      setAttribute: (key: string, value: unknown) => {
+        attributes[key] = value;
+      },
+    };
+    setRequestAttributes(span, req, url, prepared.proxyTrust.forwardedHeadersTrusted);
+    setProjectAttributes(
+      span,
+      project.projectSlug,
+      project.proxyEnv,
+      prepared.loggerFacts.environment,
+    );
+    assertEquals(attributes["http.host"], "demo.preview.localhost");
+    assertEquals(attributes["veryfront.project_slug"], "demo");
+    assertEquals(attributes["veryfront.environment"], "preview");
   });
 
   it("preserves the trusted canonical environment name when release identity is complete", async () => {
@@ -1420,6 +1575,55 @@ describe("resolveProjectRuntimeContext", () => {
     assertEquals(warning?.context?.host, "remote-project.production.veryfront.com");
   });
 
+  it("withholds a standalone environment when adapter resolution fails before execution", async () => {
+    const req = new Request("http://ordinary.example.com/diagnostics");
+    const prepared = await prepareProjectRequest({
+      req,
+      url: new URL(req.url),
+      isProxyMode: false,
+    });
+    const entries: LogEntry[] = [];
+    __registerLogRecordEmitter((entry) => entries.push(entry));
+    let environmentResolved = false;
+    await assertRejects(
+      () =>
+        runWithRequestContextAsync({
+          requestId: "adapter-failure",
+          logger: getBaseLogger("SERVER").child({ environment: prepared.loggerFacts.environment }),
+        }, () =>
+          resolveProjectRuntimeContext(makeRuntimeContextInput({
+            req,
+            url: new URL(req.url),
+            headers: prepared.headers,
+            requestContext: prepared.requestContext,
+            isProxyMode: false,
+            defaultEnvironment: "preview",
+            projectIdentity: {
+              projectSlug: "diagnostics",
+              projectId: undefined,
+              releaseId: undefined,
+              environmentName: undefined,
+              proxyEnv: undefined,
+              parsedDomain: defaultParsedDomain,
+            },
+            onEnvironmentResolved: () => {
+              environmentResolved = true;
+            },
+            profileAdapter: () => {
+              getRequestLogger()?.error("Adapter resolution failed");
+              throw new Error("Adapter resolution failed");
+            },
+          }))),
+      Error,
+      "Adapter resolution failed",
+    );
+    assertEquals(prepared.requestContext.mode, "production");
+    assertEquals(environmentResolved, false);
+    const error = entries.find((entry) => entry.message === "Adapter resolution failed");
+    assertExists(error);
+    assertEquals(error.environment, undefined);
+  });
+
   it("notifies environment resolution before source policy access and later failures", async () => {
     const events: string[] = [];
     const config = {} as VeryfrontConfig;
@@ -1454,9 +1658,38 @@ describe("resolveProjectRuntimeContext", () => {
     ] as const
   ) {
     it(`preserves the environment loading contract for ${method} run${suffix} without a production release`, async () => {
-      const req = new Request(`http://localhost/api/control-plane/runs/run_1${suffix}`, {
+      const path = `/api/control-plane/runs/run_1${suffix}`;
+      const adapter = createExtendedMockAdapter();
+      const body = method === "POST" && suffix === "/execute"
+        ? JSON.stringify({
+          runId: "run_1",
+          projectId: "proj-proxy",
+          kind: "task",
+          target: "task:knowledge-ingest",
+        })
+        : undefined;
+      let jws: string | undefined;
+      if (body) {
+        const { createControlPlaneSignature } = await import(
+          "../handlers/request/internal-agent-run.test-helpers.ts"
+        );
+        const signed = await createControlPlaneSignature(body, {
+          audience: "proxy-project",
+          projectId: "proj-proxy",
+          requestId: "run_1",
+          requestMethod: method,
+          requestPath: path,
+        });
+        const originalGet = adapter.env.get.bind(adapter.env);
+        adapter.env.get = (name: string) =>
+          name === "CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY" ? signed.publicKeyPem : originalGet(name);
+        jws = signed.jws;
+      }
+      const req = new Request(`http://localhost${path}`, {
         method,
+        ...(body ? { body } : {}),
         headers: {
+          ...(jws ? { "x-veryfront-control-plane-jws": jws } : {}),
           "x-project-slug": "proxy-project",
           "x-project-id": "proj-proxy",
           "x-token": "proxy-token",
@@ -1468,7 +1701,7 @@ describe("resolveProjectRuntimeContext", () => {
       const result = await resolveProjectRuntimeContext(makeRuntimeContextInput({
         req,
         url,
-        adapter: createExtendedMockAdapter(),
+        adapter,
         headers: extractRequestHeaders(req, url, true, true),
         requestContext: createRequestContext(req, { proxyTrusted: true }),
         isProxyMode: true,

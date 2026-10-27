@@ -20,6 +20,12 @@ import {
   useClipboard,
 } from "./code-block.tsx";
 
+// These Deno fixtures replace the Web timer API with numeric handles.
+const webTimers = globalThis as Pick<
+  Window,
+  "setTimeout" | "clearTimeout" | "setInterval" | "clearInterval"
+>;
+
 function installDom(
   dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>'),
 ): { restore: () => void; window: JSDOM["window"] } {
@@ -148,16 +154,16 @@ describe("waitFor", () => {
     // The contract is predicate, then deadline, then sleep: every poll except
     // the last is followed by a sleep. A trailing sleep would mean waiting a
     // tick the loop can never use.
-    const realSetTimeout = globalThis.setTimeout;
+    const realSetTimeout = webTimers.setTimeout;
     let sleeps = 0;
     let polls = 0;
-    (globalThis as { setTimeout: typeof setTimeout }).setTimeout = ((
+    (globalThis as { setTimeout: Window["setTimeout"] }).setTimeout = ((
       handler: TimerHandler,
       timeout?: number,
     ) => {
       sleeps += 1;
       return realSetTimeout(handler as () => void, timeout);
-    }) as typeof setTimeout;
+    }) as Window["setTimeout"];
 
     try {
       await waitFor(
@@ -169,7 +175,7 @@ describe("waitFor", () => {
         20,
       ).catch(() => {});
     } finally {
-      (globalThis as { setTimeout: typeof setTimeout }).setTimeout = realSetTimeout;
+      (globalThis as { setTimeout: Window["setTimeout"] }).setTimeout = realSetTimeout;
     }
 
     assert(polls > 1, "the loop polls more than once before giving up");

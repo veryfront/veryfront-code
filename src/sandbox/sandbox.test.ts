@@ -39,6 +39,12 @@ import { __resetEnvLoaderForTests } from "#veryfront/utils/env-loader.ts";
 import { __runWithOutboundFetchTransportForTests } from "#veryfront/security/http/outbound-fetch.ts";
 import { runWithVeryfrontCloudContext } from "#veryfront/provider/veryfront-cloud/context.ts";
 
+// These Deno fixtures replace the Web timer API with numeric handles.
+const webTimers = globalThis as Pick<
+  Window,
+  "setTimeout" | "clearTimeout" | "setInterval" | "clearInterval"
+>;
+
 // Mock fetch for testing
 let fetchCalls: FetchCall[] = [];
 let fetchResponses: MockResponseEntry[] = [];
@@ -1093,6 +1099,37 @@ describe("Sandbox", () => {
       assertEquals(jsonBody(fetchCalls, 0), { access_scope: "project", ttl_mode: "default" });
     });
 
+    it("cancels readiness and deletes a partially provisioned sandbox", async () => {
+      const controller = new AbortController();
+      const canceled = new Error("setup deadline reached");
+      mockFetch([
+        jsonResponse({
+          id: "session-canceled-setup",
+          endpoint: "https://sandbox.example.com",
+          status: "creating",
+        }),
+        textResponse(""),
+      ]);
+
+      const creation = Sandbox.create({
+        authToken: "test-token",
+        apiUrl: "https://api.test.com",
+        signal: controller.signal,
+      });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      controller.abort(canceled);
+      let rejection: unknown;
+      try {
+        await creation;
+      } catch (error) {
+        rejection = error;
+      }
+
+      assertEquals(rejection, canceled);
+      assertEquals(fetchCalls[1]!.init?.method, "DELETE");
+      assertStringIncludes(fetchCalls[1]!.url, "/sandboxes/session-canceled-setup");
+    });
+
     it("should pass project_reference when creating a project-scoped sandbox", async () => {
       mockFetch([
         jsonResponse({
@@ -2009,6 +2046,32 @@ describe("Sandbox", () => {
       );
     });
 
+    it("aborts a stalled command stream through CommandOptions.signal", async () => {
+      let cancelCalled = false;
+      const stream = new ReadableStream<Uint8Array>({
+        pull() {
+          return new Promise<void>(() => {});
+        },
+        cancel() {
+          cancelCalled = true;
+        },
+      });
+      mockFetch([
+        jsonResponse({ id: "stream-abort", endpoint: "https://sb.test", status: "running" }),
+        new Response(stream, { status: 200 }),
+      ]);
+      const sandbox = await Sandbox.create({ authToken: "token", apiUrl: "https://api.test.com" });
+      const controller = new AbortController();
+      const events = Array.fromAsync(sandbox.streamCommand("cmd", { signal: controller.signal }));
+
+      for (let attempt = 0; attempt < 10 && !fetchCalls[1]; attempt++) await Promise.resolve();
+      assertEquals(fetchCalls[1]!.init?.signal, controller.signal);
+      controller.abort(new Error("command cancelled"));
+
+      await assertRejects(() => events, Error, "command cancelled");
+      assertEquals(cancelCalled, true);
+    });
+
     it("flushes the decoder after the static command stream completes", async () => {
       const encoder = new TextEncoder();
       const stream = new ReadableStream({
@@ -2173,6 +2236,73 @@ describe("Sandbox", () => {
   });
 
   describe("writeFiles()", () => {
+    it("cancels a lazy write while shared bootstrap remains pending", async () => {
+      const controller = new AbortController();
+      let reportStarted!: () => void;
+      const started = new Promise<void>((resolve) => reportStarted = resolve);
+      let releaseCreate!: (response: Response) => void;
+      mockFetch([
+        () =>
+          new Promise<Response>((resolve) => {
+            releaseCreate = resolve;
+            reportStarted();
+          }),
+        jsonResponse({ ok: true }),
+        jsonResponse({ ok: true }),
+      ]);
+      const sandbox = Sandbox.createLazy({
+        authToken: "token",
+        apiUrl: "https://api.test.com",
+      });
+      const write = sandbox.writeFiles([{ path: "a.txt", content: "hello" }], {
+        signal: controller.signal,
+      });
+      await started;
+      controller.abort(new Error("write cancelled"));
+      await assertRejects(() => write, Error, "write cancelled");
+
+      releaseCreate(jsonResponse({
+        id: "write-bootstrap",
+        endpoint: "https://sb.test",
+        status: "running",
+        workspace_storage: "ephemeral",
+        ttl_mode: "default",
+      }));
+      await sandbox.close();
+      assertEquals(fetchCalls.some((call) => call.url.endsWith("/files")), false);
+    });
+
+    it("cancels a stalled lazy file upload", async () => {
+      const controller = new AbortController();
+      let reportStarted!: () => void;
+      const started = new Promise<void>((resolve) => reportStarted = resolve);
+      mockFetch([
+        jsonResponse({ ok: true }),
+        (_input, init) =>
+          new Promise<Response>((_, reject) => {
+            init?.signal?.addEventListener(
+              "abort",
+              () => reject(init.signal?.reason),
+              { once: true },
+            );
+            reportStarted();
+          }),
+      ]);
+      const sandbox = Sandbox.createLazy({
+        sandboxId: "write-upload",
+        sandboxEndpoint: "https://sb.test",
+        authToken: "token",
+        apiUrl: "https://api.test.com",
+      });
+      const write = sandbox.writeFiles([{ path: "a.txt", content: "hello" }], {
+        signal: controller.signal,
+      });
+      await started;
+      controller.abort(new Error("upload cancelled"));
+      await assertRejects(() => write, Error, "upload cancelled");
+      await sandbox.close();
+    });
+
     it("reports a per-file failure even when HTTP succeeds", async () => {
       mockFetch([
         jsonResponse({ id: "write-test", endpoint: "https://sb.test", status: "running" }),
@@ -2300,7 +2430,7 @@ describe("Sandbox", () => {
       await assertRejects(
         () => sandbox.heartbeat(),
         Error,
-        "Sandbox heartbeat failed: 503 upstream timeout",
+        "Sandbox heartbeat failed: 503",
       );
     });
   });
@@ -2375,7 +2505,7 @@ describe("Sandbox", () => {
       await assertRejects(
         () => sandbox.close(),
         Error,
-        "Delete sandbox failed: 503 delete failed",
+        "Delete sandbox failed: 503",
       );
     });
   });
@@ -2408,6 +2538,86 @@ describe("Sandbox", () => {
   });
 
   describe("createLazy()", () => {
+    it("does not provision when its creation signal is already aborted", async () => {
+      const controller = new AbortController();
+      controller.abort(new Error("creation cancelled"));
+      const sandbox = Sandbox.createLazy({
+        authToken: "token",
+        apiUrl: "https://api.test.com",
+        signal: controller.signal,
+      });
+
+      await assertRejects(() => sandbox.ensure(), Error, "creation cancelled");
+      assertEquals(fetchCalls.length, 0);
+    });
+
+    it("cancels readiness and deletes its partially provisioned sandbox", async () => {
+      const controller = new AbortController();
+      let reportPolling!: () => void;
+      const polling = new Promise<void>((resolve) => reportPolling = resolve);
+      mockFetch([
+        jsonResponse({
+          id: "lazy-creation-cancelled",
+          endpoint: "https://sb.test",
+          status: "creating",
+          workspace_storage: "ephemeral",
+          ttl_mode: "default",
+        }),
+        (_input, init) =>
+          new Promise<Response>((_, reject) => {
+            init?.signal?.addEventListener(
+              "abort",
+              () => reject(init.signal?.reason),
+              { once: true },
+            );
+            reportPolling();
+          }),
+        jsonResponse({ ok: true }),
+      ]);
+      const sandbox = Sandbox.createLazy({
+        authToken: "token",
+        apiUrl: "https://api.test.com",
+        deleteOnClose: true,
+        pollIntervalMs: 0,
+        signal: controller.signal,
+      });
+      const creation = sandbox.ensure();
+      await polling;
+      controller.abort(new Error("readiness cancelled"));
+      await assertRejects(() => creation, Error, "readiness cancelled");
+      assertEquals(
+        fetchCalls.some((call) =>
+          call.url.endsWith("/sandboxes/lazy-creation-cancelled") &&
+          call.init?.method === "DELETE"
+        ),
+        true,
+      );
+    });
+
+    it("does not reuse its provisioning signal after the sandbox is ready", async () => {
+      const controller = new AbortController();
+      mockFetch([
+        jsonResponse({
+          id: "lazy-ready-before-abort",
+          endpoint: "https://sb.test",
+          status: "running",
+        }),
+        jsonResponse({ ok: true }),
+        jsonResponse({ results: [{ path: "a.txt", status: "written", error: null }] }),
+      ]);
+      const sandbox = Sandbox.createLazy({
+        authToken: "token",
+        apiUrl: "https://api.test.com",
+        deleteOnClose: false,
+        signal: controller.signal,
+      });
+      await sandbox.ensure();
+      controller.abort(new Error("provisioning window closed"));
+      await sandbox.writeFiles([{ path: "a.txt", content: "hello" }]);
+      assertEquals(fetchCalls.some((call) => call.url.endsWith("/files")), true);
+      await sandbox.close();
+    });
+
     it("rejects a custom API origin for a host token carried by request context", async () => {
       setEnv("VERYFRONT_API_URL", "https://api.test.com");
       setHostSecret("VERYFRONT_API_TOKEN", "stored-login-token");
@@ -2622,7 +2832,7 @@ describe("Sandbox", () => {
       await assertRejects(
         () => sandbox.readFile("notes.txt"),
         Error,
-        "Sandbox heartbeat failed: 503 heartbeat failed",
+        "Sandbox heartbeat failed: 503",
       );
 
       assertEquals(sandbox.isActive, false);
@@ -2797,12 +3007,12 @@ describe("Sandbox", () => {
     });
 
     it("keeps an active sandbox session heartbeating until close", async () => {
-      const originalSetInterval = globalThis.setInterval;
-      const originalClearInterval = globalThis.clearInterval;
+      const originalSetInterval = webTimers.setInterval;
+      const originalClearInterval = webTimers.clearInterval;
       const intervalCallbacks = new Map<number, () => void>();
       let nextIntervalId = 1;
 
-      globalThis.setInterval = ((handler: TimerHandler) => {
+      webTimers.setInterval = ((handler: TimerHandler) => {
         const id = nextIntervalId;
         nextIntervalId += 1;
         if (typeof handler !== "function") {
@@ -2811,12 +3021,12 @@ describe("Sandbox", () => {
         intervalCallbacks.set(id, () => {
           handler();
         });
-        return id as ReturnType<typeof setInterval>;
-      }) as typeof setInterval;
+        return id as ReturnType<Window["setInterval"]>;
+      }) as Window["setInterval"];
 
-      globalThis.clearInterval = ((id: number) => {
+      webTimers.clearInterval = ((id: number) => {
         intervalCallbacks.delete(id);
-      }) as typeof clearInterval;
+      }) as Window["clearInterval"];
 
       mockFetch([
         jsonResponse({
@@ -2853,8 +3063,8 @@ describe("Sandbox", () => {
         assertEquals(fetchCalls.length, callsAfterClose);
         assertEquals(intervalCallbacks.size, 0);
       } finally {
-        globalThis.setInterval = originalSetInterval;
-        globalThis.clearInterval = originalClearInterval;
+        webTimers.setInterval = originalSetInterval;
+        webTimers.clearInterval = originalClearInterval;
       }
     });
 
@@ -2973,7 +3183,9 @@ describe("Sandbox", () => {
 
     it("retries synchronous commands only after a connection refusal before dispatch", async () => {
       mockFetch([jsonResponse({ ok: true }), () => {
-        throw new TypeError("fetch failed", { cause: { code: "ECONNREFUSED" } });
+        throw new TypeError("fetch failed", {
+          cause: { code: "ECONNREFUSED", syscall: "connect" },
+        });
       }, jsonResponse({ stdout: "ok", stderr: "", exit_code: 0 })]);
       const sandbox = Sandbox.createLazy({
         sandboxId: "existing",
@@ -3014,6 +3226,146 @@ describe("Sandbox", () => {
         1,
         "the command may already have run",
       );
+    });
+
+    for (const body of ["Sandbox not found", ""]) {
+      it(`replaces an expired retained temporary workspace after ${body ? "a text" : "an empty"} 404 body`, async () => {
+        mockFetch([
+          jsonResponse({
+            id: "expired-temporary",
+            endpoint: "https://old.test",
+            status: "running",
+            workspace_storage: "ephemeral",
+            ttl_mode: "default",
+          }),
+          jsonResponse({ ok: true }),
+          textResponse(body, 404),
+          jsonResponse({
+            id: "replacement-temporary",
+            endpoint: "https://new.test",
+            status: "running",
+            workspace_storage: "ephemeral",
+            ttl_mode: "default",
+          }),
+          jsonResponse({ ok: true }),
+        ]);
+        const sandbox = Sandbox.createLazy({
+          authToken: "token",
+          apiUrl: "https://api.test.com",
+          projectReference: "project",
+          deleteOnClose: false,
+        });
+
+        await sandbox.ensure();
+        await sandbox.close();
+        assertEquals(sandbox.id, "expired-temporary");
+
+        await sandbox.ensure();
+        assertEquals(sandbox.id, "replacement-temporary");
+        assertEquals(
+          fetchCalls.filter((call) =>
+            call.init?.method === "POST" && call.url.endsWith("/sandboxes")
+          )
+            .length,
+          2,
+        );
+        assertEquals(
+          fetchCalls.filter((call) => call.url.endsWith("/sandboxes/expired-temporary")).length,
+          1,
+        );
+        await sandbox.close();
+      });
+    }
+
+    it("keeps a retained temporary workspace cached after a transient reconnect failure", async () => {
+      mockFetch([
+        jsonResponse({
+          id: "retained-temporary",
+          endpoint: "https://old.test",
+          status: "running",
+          workspace_storage: "ephemeral",
+          ttl_mode: "default",
+        }),
+        jsonResponse({ ok: true }),
+        textResponse("temporarily unavailable", 503),
+        jsonResponse({
+          id: "retained-temporary",
+          endpoint: "https://old.test",
+          status: "running",
+          workspace_storage: "ephemeral",
+          ttl_mode: "default",
+        }),
+        jsonResponse({ ok: true }),
+      ]);
+      const sandbox = Sandbox.createLazy({
+        authToken: "token",
+        apiUrl: "https://api.test.com",
+        projectReference: "project",
+        deleteOnClose: false,
+      });
+
+      await sandbox.ensure();
+      await sandbox.close();
+      await assertRejects(() => sandbox.ensure(), Error, "Failed to get sandbox: 503");
+      assertEquals(sandbox.id, "retained-temporary");
+
+      await sandbox.ensure();
+      assertEquals(sandbox.id, "retained-temporary");
+      assertEquals(
+        fetchCalls.filter((call) => call.init?.method === "POST" && call.url.endsWith("/sandboxes"))
+          .length,
+        1,
+      );
+      await sandbox.close();
+    });
+
+    it("keeps a retained temporary workspace cached after a reconnect heartbeat 404", async () => {
+      mockFetch([
+        jsonResponse({
+          id: "retained-temporary",
+          endpoint: "https://old.test",
+          status: "running",
+          workspace_storage: "ephemeral",
+          ttl_mode: "default",
+        }),
+        jsonResponse({ ok: true }),
+        jsonResponse({
+          id: "retained-temporary",
+          endpoint: "https://old.test",
+          status: "running",
+          workspace_storage: "ephemeral",
+          ttl_mode: "default",
+        }),
+        textResponse("", 404),
+        jsonResponse({
+          id: "retained-temporary",
+          endpoint: "https://old.test",
+          status: "running",
+          workspace_storage: "ephemeral",
+          ttl_mode: "default",
+        }),
+        jsonResponse({ ok: true }),
+      ]);
+      const sandbox = Sandbox.createLazy({
+        authToken: "token",
+        apiUrl: "https://api.test.com",
+        projectReference: "project",
+        deleteOnClose: false,
+      });
+
+      await sandbox.ensure();
+      await sandbox.close();
+      await assertRejects(() => sandbox.ensure(), Error, "Sandbox heartbeat failed: 404");
+      assertEquals(sandbox.id, "retained-temporary");
+
+      await sandbox.ensure();
+      assertEquals(sandbox.id, "retained-temporary");
+      assertEquals(
+        fetchCalls.filter((call) => call.init?.method === "POST" && call.url.endsWith("/sandboxes"))
+          .length,
+        1,
+      );
+      await sandbox.close();
     });
 
     it("retains identity without silently replacing an inaccessible always-on workspace", async () => {
@@ -3621,6 +3973,100 @@ describe("Sandbox", () => {
       }
     });
 
+    it("cancels a stalled synchronous proxy request with the caller signal", async () => {
+      const controller = new AbortController();
+      let reportStarted!: () => void;
+      const started = new Promise<void>((resolve) => reportStarted = resolve);
+      mockFetch([
+        jsonResponse({
+          id: "sync-cancel",
+          endpoint: "https://sb.test",
+          status: "running",
+          workspace_storage: "ephemeral",
+          ttl_mode: "default",
+        }),
+        jsonResponse({ ok: true }),
+        (_input, init) =>
+          new Promise<Response>((_, reject) => {
+            init?.signal?.addEventListener(
+              "abort",
+              () => reject(init.signal?.reason),
+              { once: true },
+            );
+            reportStarted();
+          }),
+        jsonResponse({ ok: true }),
+      ]);
+      const sandbox = new LazySandbox({
+        authToken: "token",
+        apiUrl: "https://api.test.com",
+        heartbeatIntervalMs: 120_000,
+      });
+      try {
+        const execution = sandbox.runCommand("echo cancel", { signal: controller.signal });
+        await started;
+        controller.abort(new Error("caller cancelled"));
+        await assertRejects(() => execution, Error);
+      } finally {
+        await sandbox.close();
+      }
+    });
+
+    it("cancels a command while shared lazy bootstrap remains pending", async () => {
+      const controller = new AbortController();
+      let reportStarted!: () => void;
+      const started = new Promise<void>((resolve) => reportStarted = resolve);
+      let releaseCreate!: (response: Response) => void;
+      mockFetch([
+        () =>
+          new Promise<Response>((resolve) => {
+            releaseCreate = resolve;
+            reportStarted();
+          }),
+        jsonResponse({ ok: true }),
+        jsonResponse({ ok: true }),
+      ]);
+      const sandbox = new LazySandbox({
+        authToken: "token",
+        apiUrl: "https://api.test.com",
+        heartbeatIntervalMs: 120_000,
+      });
+      const execution = sandbox.runCommand("echo cancel", { signal: controller.signal });
+      await started;
+      controller.abort(new Error("caller cancelled"));
+      await assertRejects(() => execution, Error, "caller cancelled");
+
+      releaseCreate(jsonResponse({
+        id: "bootstrap-after-cancel",
+        endpoint: "https://sb.test",
+        status: "running",
+        workspace_storage: "ephemeral",
+        ttl_mode: "default",
+      }));
+      await sandbox.close();
+      assertEquals(
+        fetchCalls.some((call) => call.url.endsWith("/commands/run")),
+        false,
+      );
+    });
+
+    it("does not provision for a command whose caller signal is already aborted", async () => {
+      mockFetch([]);
+      const controller = new AbortController();
+      controller.abort(new Error("already cancelled"));
+      const sandbox = new LazySandbox({
+        authToken: "token",
+        apiUrl: "https://api.test.com",
+      });
+
+      await assertRejects(
+        () => sandbox.runCommand("echo never", { signal: controller.signal }),
+        Error,
+        "already cancelled",
+      );
+      assertEquals(fetchCalls.length, 0);
+    });
+
     it("retries failed bootstrap cleanup before allocating another workspace", async () => {
       mockFetch([
         jsonResponse({
@@ -3744,6 +4190,44 @@ describe("Sandbox", () => {
       }
     });
 
+    it("cancels a stalled lazy background-command request with the caller signal", async () => {
+      const controller = new AbortController();
+      let reportStarted!: () => void;
+      const started = new Promise<void>((resolve) => reportStarted = resolve);
+      mockFetch([
+        jsonResponse({
+          id: "background-cancel",
+          endpoint: "https://sandbox-1.example.com",
+          status: "running",
+        }),
+        jsonResponse({ ok: true }),
+        (_input, init) =>
+          new Promise<Response>((_, reject) => {
+            init?.signal?.addEventListener(
+              "abort",
+              () => reject(init.signal?.reason),
+              { once: true },
+            );
+            reportStarted();
+          }),
+        jsonResponse({ ok: true }),
+      ]);
+      const sandbox = Sandbox.createLazy({
+        authToken: "test-token",
+        apiUrl: "https://api.test.com",
+      });
+      try {
+        const execution = sandbox.startBackgroundCommand("npm test", {
+          signal: controller.signal,
+        });
+        await started;
+        controller.abort(new Error("caller cancelled"));
+        await assertRejects(() => execution, Error);
+      } finally {
+        await sandbox.close();
+      }
+    });
+
     it("retries retryable lazy exec transport failures before streaming starts", async () => {
       mockFetch([
         jsonResponse({
@@ -3753,7 +4237,9 @@ describe("Sandbox", () => {
         }),
         jsonResponse({ ok: true }),
         () => {
-          throw new TypeError("fetch failed");
+          throw new TypeError("fetch failed", {
+            cause: { code: "ECONNREFUSED", syscall: "connect" },
+          });
         },
         ndjsonResponse([
           { type: "stdout", data: "ok\n" },
@@ -3881,9 +4367,10 @@ describe("Sandbox", () => {
       }
     });
 
-    it("reprovisions lazy exec after exhausted in-cluster transport failures", async () => {
+    it("reprovisions after exec failures when the completed creation signal is aborted", async () => {
+      const creation = new AbortController();
       const connectionRefusedError = () =>
-        new TypeError("fetch failed", { cause: { code: "ECONNREFUSED" } });
+        new TypeError("fetch failed", { cause: { code: "ECONNREFUSED", syscall: "connect" } });
 
       mockFetch([
         jsonResponse({
@@ -3923,11 +4410,14 @@ describe("Sandbox", () => {
         authToken: "test-token",
         apiUrl: "https://api.test.com",
         execStartRetryDelayMs: 0,
+        signal: creation.signal,
         resolveRuntimeEndpoint: ({ sandboxId }) =>
           `http://sandbox.veryfront-sandbox-${sandboxId}.svc.cluster.local`,
       });
 
       try {
+        await sandbox.ensure();
+        creation.abort(new Error("creation phase completed"));
         const result = await sandbox.runCommand("echo ok");
         assertEquals(result.stdout, "ok\n");
         assertEquals(
@@ -3954,13 +4444,70 @@ describe("Sandbox", () => {
       }
     });
 
+    it("cancels a command while failed-exec reprovision cleanup remains pending", async () => {
+      const connectionRefusedError = () =>
+        new TypeError("fetch failed", { cause: { code: "ECONNREFUSED", syscall: "connect" } });
+      const controller = new AbortController();
+      let reportDeleteStarted!: () => void;
+      const deleteStarted = new Promise<void>((resolve) => reportDeleteStarted = resolve);
+      let releaseDelete!: (response: Response) => void;
+      mockFetch([
+        jsonResponse({
+          id: "sandbox-cancel-reprovision",
+          endpoint: "https://1111111111.sandbox.example.com",
+          status: "running",
+          workspace_storage: "ephemeral",
+          ttl_mode: "default",
+        }),
+        jsonResponse({ ok: true }),
+        () => {
+          throw connectionRefusedError();
+        },
+        () => {
+          throw connectionRefusedError();
+        },
+        () => {
+          throw connectionRefusedError();
+        },
+        () =>
+          new Promise<Response>((resolve) => {
+            releaseDelete = resolve;
+            reportDeleteStarted();
+          }),
+        jsonResponse({ ok: true }),
+      ]);
+      const sandbox = Sandbox.createLazy({
+        authToken: "test-token",
+        apiUrl: "https://api.test.com",
+        execStartRetryDelayMs: 0,
+        resolveRuntimeEndpoint: ({ sandboxId }) =>
+          `http://sandbox.veryfront-sandbox-${sandboxId}.svc.cluster.local`,
+      });
+      const execution = Array.fromAsync(
+        sandbox.streamCommand("echo cancel", { signal: controller.signal }),
+      );
+      await deleteStarted;
+      controller.abort(new Error("caller cancelled"));
+      await assertRejects(() => execution, Error, "caller cancelled");
+
+      releaseDelete(jsonResponse({ ok: true }));
+      await Promise.resolve();
+      await Promise.resolve();
+      assertEquals(
+        fetchCalls.filter((call) => call.init?.method === "POST" && call.url.endsWith("/sandboxes"))
+          .length,
+        1,
+      );
+      await sandbox.close();
+    });
+
     it("keeps client heartbeats active while proxy-routed async commands run", async () => {
-      const originalSetInterval = globalThis.setInterval;
-      const originalClearInterval = globalThis.clearInterval;
+      const originalSetInterval = webTimers.setInterval;
+      const originalClearInterval = webTimers.clearInterval;
       const intervalCallbacks = new Map<number, () => void>();
       let nextIntervalId = 1;
 
-      globalThis.setInterval = ((handler: TimerHandler) => {
+      webTimers.setInterval = ((handler: TimerHandler) => {
         const id = nextIntervalId;
         nextIntervalId += 1;
         if (typeof handler !== "function") {
@@ -3969,12 +4516,12 @@ describe("Sandbox", () => {
         intervalCallbacks.set(id, () => {
           handler();
         });
-        return id as ReturnType<typeof setInterval>;
-      }) as typeof setInterval;
+        return id as ReturnType<Window["setInterval"]>;
+      }) as Window["setInterval"];
 
-      globalThis.clearInterval = ((id: number) => {
+      webTimers.clearInterval = ((id: number) => {
         intervalCallbacks.delete(id);
-      }) as typeof clearInterval;
+      }) as Window["clearInterval"];
 
       mockFetch([
         jsonResponse({
@@ -4040,19 +4587,19 @@ describe("Sandbox", () => {
         );
       } finally {
         await sandbox.close();
-        globalThis.setInterval = originalSetInterval;
-        globalThis.clearInterval = originalClearInterval;
+        webTimers.setInterval = originalSetInterval;
+        webTimers.clearInterval = originalClearInterval;
       }
     });
 
     it("pauses client heartbeats while internal-routed async commands run", async () => {
       setEnv("KUBERNETES_SERVICE_HOST", "kubernetes.default.svc");
-      const originalSetInterval = globalThis.setInterval;
-      const originalClearInterval = globalThis.clearInterval;
+      const originalSetInterval = webTimers.setInterval;
+      const originalClearInterval = webTimers.clearInterval;
       const intervalCallbacks = new Map<number, () => void>();
       let nextIntervalId = 1;
 
-      globalThis.setInterval = ((handler: TimerHandler) => {
+      webTimers.setInterval = ((handler: TimerHandler) => {
         const id = nextIntervalId;
         nextIntervalId += 1;
         if (typeof handler !== "function") {
@@ -4061,12 +4608,12 @@ describe("Sandbox", () => {
         intervalCallbacks.set(id, () => {
           handler();
         });
-        return id as ReturnType<typeof setInterval>;
-      }) as typeof setInterval;
+        return id as ReturnType<Window["setInterval"]>;
+      }) as Window["setInterval"];
 
-      globalThis.clearInterval = ((id: number) => {
+      webTimers.clearInterval = ((id: number) => {
         intervalCallbacks.delete(id);
-      }) as typeof clearInterval;
+      }) as Window["clearInterval"];
 
       mockFetch([
         jsonResponse({
@@ -4134,8 +4681,8 @@ describe("Sandbox", () => {
         );
       } finally {
         await sandbox.close();
-        globalThis.setInterval = originalSetInterval;
-        globalThis.clearInterval = originalClearInterval;
+        webTimers.setInterval = originalSetInterval;
+        webTimers.clearInterval = originalClearInterval;
       }
     });
 
@@ -4193,11 +4740,12 @@ describe("Sandbox", () => {
       try {
         await sandbox.startBackgroundCommand("npm test");
 
-        await assertRejects(
+        const heartbeatError = await assertRejects(
           () => sandbox.heartbeat(true),
           Error,
-          "Sandbox heartbeat failed: 503 upstream timeout",
+          "Sandbox heartbeat failed: 503",
         );
+        assertEquals((heartbeatError as VeryfrontError).status, 503);
 
         assertEquals(sandbox.isActive, true);
         const output = await sandbox.getBackgroundCommandOutput("command-1");
@@ -4268,11 +4816,12 @@ describe("Sandbox", () => {
       try {
         await sandbox.startBackgroundCommand("npm test");
 
-        await assertRejects(
+        const heartbeatError = await assertRejects(
           () => sandbox.heartbeat(true),
           Error,
-          "Sandbox heartbeat failed: 503 upstream timeout",
+          "Sandbox heartbeat failed: 503",
         );
+        assertEquals((heartbeatError as VeryfrontError).status, 503);
 
         assertEquals(sandbox.isActive, true);
         const output = await sandbox.getBackgroundCommandOutput("command-1");
@@ -5055,6 +5604,34 @@ describe("Sandbox", () => {
     });
   });
 
+  it("uses renewed lazy sandbox credentials for commands and cleanup", async () => {
+    let token = "initial-token";
+    mockFetch([
+      jsonResponse({ ok: true }),
+      textResponse("attachment text"),
+      jsonResponse({ ok: true }),
+    ]);
+    const sandbox = new LazySandbox({
+      authToken: token,
+      getAuthToken: function (this: unknown) {
+        assertEquals(this, undefined, "Credential provider must not receive private sandbox state");
+        return token;
+      },
+      apiUrl: "https://api.test.com",
+      sandboxId: "renewed-session",
+      sandboxEndpoint: "https://sb.test",
+      deleteOnClose: true,
+    });
+    await sandbox.ensure();
+    token = "renewed-token";
+    await sandbox.readFile("attachment.txt");
+    await sandbox.close();
+    assertEquals(headerValue(fetchCalls, 0, "Authorization"), "Bearer initial-token");
+    for (let index = 1; index < fetchCalls.length; index++) {
+      assertEquals(headerValue(fetchCalls, index, "Authorization"), "Bearer renewed-token");
+    }
+  });
+
   it("rejects malformed command metadata instead of returning typed guesses", async () => {
     mockFetch([
       jsonResponse({ command_id: "invalid-command", command: "true", status: "unknown" }),
@@ -5354,6 +5931,39 @@ describe("Sandbox", () => {
       await sandbox.close();
       assertEquals(fetchCalls.length, 1);
     });
+    it("sends the selected billing project in capabilities without changing its value", async () => {
+      mockFetch([jsonResponse({
+        private_creation: true,
+        private_always_on: false,
+        coding_agent_terminal: true,
+        limits: {
+          max_ttl_hours: 24,
+          max_command_timeout_seconds: 55,
+          max_background_timeout_seconds: 600,
+          max_command_output_bytes: 1048576,
+          max_page_size: 100,
+          max_file_bytes: 1048576,
+          max_write_files: 100,
+        },
+        defaults: { command_timeout_seconds: 30, background_timeout_seconds: 600, page_size: 20 },
+      })]);
+      const projectReference = "project + ?&=#";
+      const options = { authToken: "token", apiUrl: "https://api.test.com", projectReference };
+      const capabilities = await Sandbox.capabilities(options);
+      const url = new URL(fetchCalls[0]!.url);
+      assertEquals(url.pathname, "/sandboxes/capabilities");
+      assertEquals([...url.searchParams], [["project_reference", projectReference]]);
+      assertEquals(capabilities.privateAlwaysOn, false);
+      assertEquals(capabilities.privateCreation, true);
+    });
+    for (const projectReference of ["", "   "]) {
+      it(`rejects capabilities with an empty billing project ${JSON.stringify(projectReference)}`, async () => {
+        mockFetch([]);
+        const options = { authToken: "token", apiUrl: "https://api.test.com", projectReference };
+        await assertRejects(() => Sandbox.capabilities(options), Error, "projectReference");
+        assertEquals(fetchCalls.length, 0);
+      });
+    }
     it("reads capabilities with SDK field names", async () => {
       mockFetch([jsonResponse({
         private_creation: true,

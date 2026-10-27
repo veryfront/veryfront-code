@@ -96,6 +96,7 @@ export interface LogEntry {
   project_slug?: string;
   request_url?: string;
   domain?: string;
+  environment?: string;
   project_id?: string;
   process_role?: string;
   release_id?: string;
@@ -211,6 +212,12 @@ function getDefaultFormat(
  * per-request project env overlay cannot change process-level logger config.
  */
 let loggerConfig: LoggerConfig | null = null;
+let stderrOnly = false;
+
+/** Reserve stdout for a host protocol while preserving framework diagnostics. */
+export function setLoggerStderrOnly(enabled: boolean): void {
+  stderrOnly = enabled;
+}
 
 let legacyLogRecordEmitter: LogRecordEmitter | null = null;
 const logRecordSubscribers = new NativeSet<LogRecordEmitter>();
@@ -530,6 +537,7 @@ class ConsoleLogger implements Logger {
     // runs, so scrub credential-shaped text while preserving the field value.
     extractToEntryField(entry, mergedContext, "request_url", sanitizeStringFieldValue);
     extractToEntryField(entry, mergedContext, "domain", sanitizeStringFieldValue);
+    extractToEntryField(entry, mergedContext, "environment", sanitizeStringFieldValue);
     extractToEntryField(entry, mergedContext, "project_id", sanitizeStringFieldValue);
     extractToEntryField(entry, mergedContext, "release_id", sanitizeStringFieldValue);
     extractToEntryField(entry, mergedContext, "branch_id", sanitizeStringFieldValue);
@@ -710,7 +718,7 @@ class ConsoleLogger implements Logger {
         }
       }
 
-      const consoleFn = NativeConsole[consoleMethod];
+      const consoleFn = NativeConsole[stderrOnly ? "error" : consoleMethod];
       if (typeof consoleFn === "function") {
         try {
           apply(consoleFn, NativeConsole, [line]);

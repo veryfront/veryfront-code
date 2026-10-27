@@ -1,14 +1,16 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   AGENT_DELEGATE_TOOL_PREFIX,
   buildAgentDelegateTools,
+  CANONICAL_INVOKE_AGENT_TOOL_ID,
   createInvokeAgentTool,
   isFrameworkChildRunTool,
   isProviderSafeDelegateId,
 } from "./agent-delegation.ts";
 import type { Agent } from "../types.ts";
+import { withLocalChildExecution } from "../composition/local-child-execution.ts";
 import {
   getRuntimeSourceIntegrationPolicy,
   SOURCE_INTEGRATION_POLICY_CONTEXT_KEY,
@@ -16,6 +18,8 @@ import {
 import { runWithExactSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 import { getAvailableTools } from "./tool-helpers.ts";
+import { toolToProviderDefinition } from "#veryfront/tool/registry.ts";
+import { convertToolsToRuntimeTools } from "./model-tool-converter.ts";
 
 it("buildAgentDelegateTools exposes one tool per delegate, excluding self and dupes", () => {
   const tools = buildAgentDelegateTools({
@@ -122,6 +126,65 @@ it("delegate tool reports an error when the target agent is unavailable", async 
 });
 
 describe("invoke_agent", () => {
+  it("exports provider-compatible selection bounds through the direct runtime conversion", () => {
+    const invokeAgent = createInvokeAgentTool();
+    const definition = toolToProviderDefinition(invokeAgent);
+    const runtimeTools = convertToolsToRuntimeTools([definition], {
+      model: "openai/qwen2.5-7b-instruct",
+    });
+    const runtimeTool = runtimeTools?.[CANONICAL_INVOKE_AGENT_TOOL_ID] as {
+      inputSchema: { jsonSchema: { properties: { agent_id: Record<string, unknown> } } };
+    };
+    const selection = runtimeTool.inputSchema.jsonSchema.properties.agent_id;
+    assertEquals(selection.type, "string");
+    assertEquals(selection.minLength, 1);
+    assertEquals(selection.pattern, undefined);
+
+    for (
+      const [agentId, accepted] of [
+        ["writer", true],
+        [" \nwriter\r\n ", true],
+        ["first\nsecond", true],
+        ["\u2003writer\u2028", true],
+        ["", false],
+        [" \t\r\n", false],
+        ["\u2003\u2028\uFEFF", false],
+      ] as const
+    ) {
+      assertEquals(
+        invokeAgent.inputSchema.safeParse({
+          agent_id: agentId,
+          description: "Draft reply",
+          prompt: "Draft it.",
+        }).success,
+        accepted,
+      );
+    }
+  });
+
+  it("rejects blank selections before resolving a direct-runtime child", async () => {
+    let childResolutions = 0;
+    const invokeAgent = createInvokeAgentTool({
+      resolveAgent: () => {
+        childResolutions++;
+        return undefined;
+      },
+    });
+    for (const agentId of ["   ", " \t\r\n", "\u2003\u2028\uFEFF"]) {
+      await assertRejects(
+        () =>
+          invokeAgent.execute({
+            agent_id: agentId,
+            description: "Draft reply",
+            prompt: "Draft it.",
+          }),
+        Error,
+        "agent_id must not be blank",
+      );
+    }
+    assertEquals(childResolutions, 0);
+  });
+
   it("resolves and runs a registered project agent", async () => {
     let streamedInput: string | undefined;
     const writer = {
@@ -138,6 +201,7 @@ describe("invoke_agent", () => {
       resolveAgent: (id) => id === "writer" ? writer : undefined,
     });
 
+    assertEquals(invokeAgent.id, "veryfront__invoke_agent");
     const result = await invokeAgent.execute({
       agent_id: "writer",
       description: "Draft support reply",
@@ -152,7 +216,7 @@ describe("invoke_agent", () => {
     assertEquals(result, { text: "drafted copy", toolCalls: 0, status: "completed" });
   });
 
-  it("keeps generic invoke_agent child stream events private", async () => {
+  it("forwards generic invoke_agent child stream events to its parent chat", async () => {
     const writer = {
       id: "writer",
       config: {},
@@ -184,7 +248,11 @@ describe("invoke_agent", () => {
       },
     });
 
-    assertEquals(published, []);
+    assertEquals(published, [{
+      toolCallId: "call-1",
+      agentId: "writer",
+      event: { type: "text-delta", id: "child-1", delta: "hi" },
+    }]);
   });
 
   it("reports an error when the invoked agent id is unknown", async () => {
@@ -367,4 +435,119 @@ it("isFrameworkChildRunTool recognizes framework invoke_agent and delegate tools
     false,
   );
   assertEquals(isFrameworkChildRunTool(true), false);
+});
+
+for (const connected of [false, true]) {
+  it(`streams child activity before completion ${connected ? "with a local execution owner" : "without a Cloud connection"}`, async () => {
+    let finish!: () => void;
+    const finished = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    let firstEvent!: () => void;
+    const first = new Promise<void>((resolve) => {
+      firstEvent = resolve;
+    });
+    const published: unknown[] = [];
+    const observed: unknown[] = [];
+    let completed = false;
+    const child = {
+      id: "writer",
+      config: { name: "Writer" },
+      stream: async (input: { onFinish?: (response: unknown) => void }) => ({
+        toDataStreamResponse: () =>
+          new Response(
+            new ReadableStream({
+              async start(controller) {
+                controller.enqueue(new TextEncoder().encode(
+                  'data: {"type":"text-delta","id":"child-text","delta":"Working"}\n\n',
+                ));
+                await finished;
+                input.onFinish?.({ text: "Done", toolCalls: [], status: "completed" });
+                controller.close();
+              },
+            }),
+          ),
+      }),
+    } as unknown as Agent;
+    const tool = createInvokeAgentTool({ resolveAgent: () => child });
+    const execute = () =>
+      tool.execute({ agent_id: "writer", description: "Write", prompt: "Write" }, {
+        toolCallId: "parent-call",
+        publishDataEvent: (event) => {
+          published.push(event.value);
+          firstEvent();
+        },
+      }).then((value) => {
+        completed = true;
+        return value;
+      });
+    const result = connected
+      ? withLocalChildExecution((invocation) =>
+        invocation.execute({
+          onEvent: async (event) => {
+            observed.push(event);
+          },
+        }), execute)
+      : execute();
+    let deadline: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        first,
+        new Promise<never>((_, reject) => {
+          deadline = setTimeout(() => reject(new Error("Child event was not forwarded")), 5000);
+        }),
+      ]);
+      assertEquals(completed, false);
+      assertEquals(published, [{
+        toolCallId: "parent-call",
+        agentId: "writer",
+        agentName: "Writer",
+        event: { type: "text-delta", id: "child-text", delta: "Working" },
+      }]);
+      assertEquals(observed.length, connected ? 1 : 0);
+    } finally {
+      if (deadline !== undefined) clearTimeout(deadline);
+      finish();
+    }
+    assertEquals(await result, { text: "Done", toolCalls: 0, status: "completed" });
+  });
+}
+
+it("forwards partial child activity and preserves a child stream failure", async () => {
+  const published: unknown[] = [];
+  const child = {
+    id: "writer",
+    config: {},
+    stream: async () => ({
+      toDataStreamResponse: () =>
+        new Response(
+          'data: {"type":"text-delta","id":"child-text","delta":"Checking"}\n\n' +
+            'data: {"type":"error","error":"Child failed"}\n\n',
+        ),
+    }),
+  } as unknown as Agent;
+  const tool = createInvokeAgentTool({ resolveAgent: () => child });
+  await assertRejects(
+    () =>
+      tool.execute({ agent_id: "writer", description: "Write", prompt: "Write" }, {
+        toolCallId: "parent-call",
+        publishDataEvent: (event) => {
+          published.push(event.value);
+        },
+      }),
+    Error,
+    "Child failed",
+  );
+  assertEquals(published, [
+    {
+      toolCallId: "parent-call",
+      agentId: "writer",
+      event: { type: "text-delta", id: "child-text", delta: "Checking" },
+    },
+    {
+      toolCallId: "parent-call",
+      agentId: "writer",
+      event: { type: "error", error: "Child failed" },
+    },
+  ]);
 });

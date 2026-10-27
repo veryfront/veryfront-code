@@ -48,6 +48,8 @@ const UNIT_CWD_FILES = [
 const UNIT_SERIAL_FILES = [
   "extensions/ext-bundler-esbuild/src/esbuild-bundler.test.ts",
   "src/agent/child-run/result-summary.test.ts",
+  "src/platform/adapters/runtime/deno/filesystem-adapter.test.ts",
+  "src/platform/compat/process/command.test.ts",
   "src/transforms/mdx/esm-module-loader/utils/source-spans.test.ts",
 ];
 
@@ -70,6 +72,58 @@ describe("child-run CPU measurement isolation", () => {
       assertEquals(
         buildDenoSuiteCommandArgs(suite, [summaryTest], {
           parallel: shouldRunDenoBatchInParallel(true, [summaryTest]),
+        }).includes("--parallel"),
+        false,
+      );
+    }
+  });
+});
+
+describe("native filesystem watcher measurement isolation", () => {
+  it("runs native watcher assertions alone without dropping unit or coverage ownership", async () => {
+    const watcherTest =
+      "src/platform/adapters/runtime/deno/filesystem-adapter.test.ts";
+    const files = ["src/a.test.ts", watcherTest, "src/b.test.ts"];
+    for (const limit of [50, null]) {
+      assertEquals(
+        partitionDenoSuiteFiles(files, limit),
+        files.map((file) => [file]),
+      );
+    }
+    const parallel = await planSuiteFiles({ suite: "unit:parallel" });
+    const serial = await planSuiteFiles({ suite: "unit:serial" });
+    const coverage = await planSuiteFiles({ suite: "coverage:unit" });
+    assertEquals(parallel.files.includes(watcherTest), false);
+    assertEquals(serial.files.filter((file) => file === watcherTest).length, 1);
+    assertEquals(
+      coverage.files.filter((file) => file === watcherTest).length,
+      1,
+    );
+    for (const suite of ["unit:serial", "coverage:unit"] as const) {
+      assertEquals(
+        buildDenoSuiteCommandArgs(suite, [watcherTest], {
+          parallel: shouldRunDenoBatchInParallel(true, [watcherTest]),
+        }).includes("--parallel"),
+        false,
+      );
+    }
+  });
+});
+
+describe("native command deadline measurement isolation", () => {
+  it("runs native command latency assertions alone in unit and coverage batches", () => {
+    const commandTest = "src/platform/compat/process/command.test.ts";
+    assertEquals(
+      partitionDenoSuiteFiles(
+        ["src/a.test.ts", commandTest, "src/b.test.ts"],
+        100,
+      ),
+      [["src/a.test.ts"], [commandTest], ["src/b.test.ts"]],
+    );
+    for (const suite of ["unit:serial", "coverage:unit"] as const) {
+      assertEquals(
+        buildDenoSuiteCommandArgs(suite, [commandTest], {
+          parallel: shouldRunDenoBatchInParallel(true, [commandTest]),
         }).includes("--parallel"),
         false,
       );
@@ -252,6 +306,82 @@ describe("suite planning parity", () => {
           `${suite} must select ${file} so its non-Deno branch executes`,
         );
       }
+    }
+  });
+
+  it("retains relocated adapter intrinsic coverage in every original runtime", async () => {
+    for (
+      const suite of [
+        "integration:legacy-tests-root",
+        "runtime:node",
+        "runtime:bun",
+      ] as const
+    ) {
+      const plan = await planSuiteFiles({ suite });
+      assert(
+        plan.files.includes(
+          "tests/integration/security/eval-agent-service-failure-intrinsics.test.ts",
+        ),
+        `${suite} must retain the relocated adapter intrinsic regression`,
+      );
+    }
+    const unit = await planSuiteFiles({ suite: "unit:parallel" });
+    assert(
+      unit.files.includes("src/eval/agent-service/failure-diagnostic.test.ts"),
+    );
+  });
+
+  it("keeps service attribution intrinsics in Node and Bun runtime suites", async () => {
+    const fixture =
+      "tests/integration/semantic-unit-boundary/src/agent/service/runtime-attribution-intrinsics.test.ts";
+    for (const suite of ["runtime:node", "runtime:bun"] as const) {
+      const plan = await planSuiteFiles({ suite });
+      assert(
+        plan.files.includes(fixture),
+        `${suite} must retain service attribution intrinsic coverage`,
+      );
+      assert(
+        plan.files.includes(
+          "tests/integration/semantic-unit-boundary/server/handlers/request/response-cleanup-intrinsics.test.ts",
+        ),
+        `${suite} must retain response cleanup intrinsic coverage`,
+      );
+      assert(
+        plan.files.includes(
+          "tests/integration/semantic-unit-boundary/src/utils/header-identity-intrinsics.test.ts",
+        ),
+        `${suite} must retain header identity intrinsic coverage`,
+      );
+      assert(
+        plan.files.includes(
+          "tests/integration/semantic-unit-boundary/src/agent/service/runtime-identity-startup.test.ts",
+        ),
+        `${suite} must retain standalone identity startup coverage`,
+      );
+      assert(
+        plan.files.includes(
+          "tests/integration/semantic-unit-boundary/src/agent/service/runtime-identity-process-target-startup.test.ts",
+        ),
+        `${suite} must retain processTarget identity startup coverage`,
+      );
+      assert(
+        plan.files.includes(
+          "tests/integration/semantic-unit-boundary/src/agent/service/runtime-identity-env-file-startup.test.ts",
+        ),
+        `${suite} must retain env-file identity startup coverage`,
+      );
+    }
+  });
+
+  it("keeps hosted executor intrinsics in Node and Bun runtime suites", async () => {
+    const fixture =
+      "tests/integration/semantic-unit-boundary/src/agent/hosted/executor-model-dispatch-intrinsics.test.ts";
+    for (const suite of ["runtime:node", "runtime:bun"] as const) {
+      const plan = await planSuiteFiles({ suite });
+      assert(
+        plan.files.includes(fixture),
+        `${suite} must retain hosted executor intrinsic coverage`,
+      );
     }
   });
 
@@ -927,6 +1057,9 @@ async function legacyRuntimeFiles(runtime: "node" | "bun"): Promise<string[]> {
   const patterns = runtime === "node"
     ? [
       "src/**/*.test.ts",
+      "tests/integration/runtime/compat/react-paths.test.ts",
+      "tests/integration/runtime/compat/renderer-peer-cache.test.ts",
+      "tests/integration/transforms/ssr-local-react.test.ts",
       "extensions/ext-bundler-esbuild/src/binary.test.ts",
       "tests/ensure-npm-links.test.mjs",
       "tests/test-file-utils.test.mjs",
@@ -937,11 +1070,21 @@ async function legacyRuntimeFiles(runtime: "node" | "bun"): Promise<string[]> {
       "tests/integration/runtime/compat/kv-polyfill.test.ts",
       "tests/integration/runtime/compat/spawn-missing-executable.test.ts",
       "tests/integration/security/sandbox-runtime-guard.test.ts",
+      "tests/integration/security/host-api-http.test.ts",
+      "tests/integration/security/eval-agent-service-failure-intrinsics.test.ts",
       "tests/integration/server/dependency-snapshot-intrinsics.test.ts",
+      "tests/integration/server/runtime-file-mutation-authority-intrinsics.test.ts",
+      "tests/integration/agent/external-worker-client-intrinsics.test.ts",
       "tests/integration/server/dependency-snapshot-error-boundary.test.ts",
       "tests/integration/server/dependency-snapshot-stream.test.ts",
       "tests/integration/server/package-registry-shared.test.ts",
       "tests/integration/agent/service-response-init.test.ts",
+      "tests/integration/semantic-unit-boundary/src/agent/service/runtime-attribution-intrinsics.test.ts",
+      "tests/integration/semantic-unit-boundary/src/utils/header-identity-intrinsics.test.ts",
+      "tests/integration/semantic-unit-boundary/server/handlers/request/response-cleanup-intrinsics.test.ts",
+      "tests/integration/semantic-unit-boundary/src/agent/service/runtime-identity-startup.test.ts",
+      "tests/integration/semantic-unit-boundary/src/agent/service/runtime-identity-process-target-startup.test.ts",
+      "tests/integration/semantic-unit-boundary/src/agent/service/runtime-identity-env-file-startup.test.ts",
       "tests/integration/agent/service-header-boundary.test.ts",
       "tests/integration/agent/service-request-defaults.test.ts",
       "tests/integration/agent/service-native-invocation.test.ts",
@@ -951,10 +1094,14 @@ async function legacyRuntimeFiles(runtime: "node" | "bun"): Promise<string[]> {
       "tests/integration/agent/executor-project-policy-intrinsics.test.ts",
       "tests/integration/agent/executor-discovery-request-intrinsics.test.ts",
       "tests/integration/security/application-request.test.ts",
+      "tests/integration/semantic-unit-boundary/src/agent/hosted/executor-model-dispatch-intrinsics.test.ts",
       "tests/integration/semantic-unit-boundary/src/transforms/pipeline/__fixtures__/fixture-runner-ssr.test.ts",
     ]
     : [
       "src/",
+      "tests/integration/runtime/compat/react-paths.test.ts",
+      "tests/integration/runtime/compat/renderer-peer-cache.test.ts",
+      "tests/integration/transforms/ssr-local-react.test.ts",
       "tests/bun/dynamic-alias-resolution.test.ts",
       "tests/bun/npm-protocol-resolution.test.ts",
       "tests/bun/workspace-resolution.test.ts",
@@ -966,11 +1113,21 @@ async function legacyRuntimeFiles(runtime: "node" | "bun"): Promise<string[]> {
       "tests/integration/runtime/compat/kv-polyfill.test.ts",
       "tests/integration/runtime/compat/spawn-missing-executable.test.ts",
       "tests/integration/security/sandbox-runtime-guard.test.ts",
+      "tests/integration/security/host-api-http.test.ts",
+      "tests/integration/security/eval-agent-service-failure-intrinsics.test.ts",
       "tests/integration/server/dependency-snapshot-intrinsics.test.ts",
+      "tests/integration/server/runtime-file-mutation-authority-intrinsics.test.ts",
+      "tests/integration/agent/external-worker-client-intrinsics.test.ts",
       "tests/integration/server/dependency-snapshot-error-boundary.test.ts",
       "tests/integration/server/dependency-snapshot-stream.test.ts",
       "tests/integration/server/package-registry-shared.test.ts",
       "tests/integration/agent/service-response-init.test.ts",
+      "tests/integration/semantic-unit-boundary/src/agent/service/runtime-attribution-intrinsics.test.ts",
+      "tests/integration/semantic-unit-boundary/src/utils/header-identity-intrinsics.test.ts",
+      "tests/integration/semantic-unit-boundary/server/handlers/request/response-cleanup-intrinsics.test.ts",
+      "tests/integration/semantic-unit-boundary/src/agent/service/runtime-identity-startup.test.ts",
+      "tests/integration/semantic-unit-boundary/src/agent/service/runtime-identity-process-target-startup.test.ts",
+      "tests/integration/semantic-unit-boundary/src/agent/service/runtime-identity-env-file-startup.test.ts",
       "tests/integration/agent/service-header-boundary.test.ts",
       "tests/integration/agent/service-request-defaults.test.ts",
       "tests/integration/agent/service-native-invocation.test.ts",
@@ -980,6 +1137,7 @@ async function legacyRuntimeFiles(runtime: "node" | "bun"): Promise<string[]> {
       "tests/integration/agent/executor-project-policy-intrinsics.test.ts",
       "tests/integration/agent/executor-discovery-request-intrinsics.test.ts",
       "tests/integration/security/application-request.test.ts",
+      "tests/integration/semantic-unit-boundary/src/agent/hosted/executor-model-dispatch-intrinsics.test.ts",
       "tests/integration/semantic-unit-boundary/src/transforms/pipeline/__fixtures__/fixture-runner-ssr.test.ts",
     ];
   const incompatible = runtime === "node"

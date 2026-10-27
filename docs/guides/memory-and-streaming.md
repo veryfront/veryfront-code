@@ -1,7 +1,7 @@
 ---
 title: "Memory and streaming"
 description: "Conversation memory strategies and streaming responses."
-order: 21
+order: 180
 ---
 
 Agents are stateless by default: each `stream()` / `generate()` call gets the
@@ -32,7 +32,9 @@ runs. For per-item fan-out, create a fresh agent per run instead. To keep the
 stateless default explicitly (for a single-shot agent that should never persist
 history), set `enabled: false`:
 
-```ts
+```ts title="agents/assistant.ts"
+import { agent } from "veryfront/agent";
+
 export default agent({
   system: "You are a one-shot classifier.",
   memory: { type: "conversation", enabled: false }, // never persists across calls
@@ -111,11 +113,16 @@ out of callback-based audit logs. The violation type and reason remain available
 
 ### Custom memory transactions
 
-When transactional input validation is enabled, your custom `Memory` backend
-must implement `beginTransaction(): Promise<MemoryTransaction>`. Veryfront rejects
+When transactional input validation or provider admission is enabled, your custom
+`Memory` backend must implement `beginTransaction(): Promise<MemoryTransaction>`.
+Provider admission includes hosted models with served catalog limits, tool-exposure
+checkpoint persistence, and manual pause support. Input stays staged until the
+request passes validation and its exposure checkpoint is persisted, or a pause is
+acknowledged. A pre-dispatch failure rolls back the staged input. Veryfront rejects
 an unsupported backend before writing input. Configured conversation, buffer,
-summary, and stateless memory need no changes. Without transactional validators,
-the existing custom-memory interface still works.
+summary, and stateless memory need no changes. Direct-provider turns without these
+admission requirements or transactional validators retain the existing custom-memory
+interface.
 
 Import the `Memory` and `MemoryTransaction` types from `veryfront/agent`. Your
 transaction must provide these methods:
@@ -187,12 +194,14 @@ export const POST = createAgUiHandler("assistant");
 
 export async function DELETE() {
   const agent = getAgent("assistant");
+  if (!agent) throw new Error("Agent not found: assistant");
   await agent.clearMemory();
   return new Response(null, { status: 204 });
 }
 
 export async function GET() {
   const agent = getAgent("assistant");
+  if (!agent) throw new Error("Agent not found: assistant");
   const messages = await agent.getMemory();
   const stats = await agent.getMemoryStats();
   return Response.json({ messages, stats });
@@ -252,19 +261,20 @@ non-chat streaming surface.
 
 Pass `onComplete` to persist the finalized conversation server-side after a
 successful run. It is the counterpart to the client-side `useConversationChat` path.
-It fires once, only on success, after the stream is fully flushed and closed, so
-a slow or throwing persistence never delays or corrupts the response:
+Provide `saveTurn` in `lib/conversations.ts` using your storage backend. It accepts the thread ID and input/output message arrays and returns a promise after saving them.
 
-```ts
-// app/api/ag-ui/route.ts
+The callback fires once, only on success, after the stream is flushed and closed:
+
+```ts title="app/api/ag-ui/route.ts"
 import { createAgUiHandler } from "veryfront/agent";
+import { saveTurn } from "../../../lib/conversations.ts";
 
 export const POST = createAgUiHandler({
   agent: "assistant",
   onComplete: async ({ threadId, messages, inputMessages, response }) => {
     // `messages` is the finalized assistant turn; `inputMessages` is what was
     // sent. Persist however you like, with no need to rebuild it from the stream.
-    await db.saveTurn({ threadId, input: inputMessages, output: messages });
+    await saveTurn({ threadId, input: inputMessages, output: messages });
   },
 });
 ```
@@ -315,8 +325,8 @@ envelope (`run_id`, `event_class`, `span_id`, `parent_span_id`, `turn_id`,
 row uses `event_type: "CUSTOM"`.
 
 The typed contract is the only one, on every surface: the run-scoped route,
-the conversation-scoped events route, GraphQL `agentRunEvents`, the MCP
-`get_agent_run_events` tool, and the SSE streams. Do not send a `format`
+the conversation-scoped events route, GraphQL `listRunEvents`, the agent platform
+`veryfront__list_run_events` tool, and the SSE streams. Do not send a `format`
 query parameter. `format=typed` is deprecated: the API accepts and ignores it.
 Any other value, including `format=raw`, is refused.
 
@@ -422,16 +432,7 @@ Eight of these types come from the Veryfront Code runtime itself:
 
 ### Non-streaming generation
 
-Use `generate()` when you need the complete response at once:
-
-```ts
-const agent = getAgent("assistant");
-const result = await agent.generate({
-  input: "Write a haiku about programming.",
-});
-// result.text: full text response
-// result.usage: { promptTokens, completionTokens, totalTokens }
-```
+For a complete response without streaming, use [server-side generation](./agents.md#non-streaming-response). The same configured memory behavior applies.
 
 ## Verify it worked
 
@@ -454,3 +455,7 @@ curl -s http://localhost:3000/api/ag-ui \
 
 The second response should mention "Sam". For streaming, watch the SSE output:
 tokens arrive incrementally rather than in one chunk.
+
+## Related
+
+- [Agent API](../api-reference/veryfront/agent.md): Memory configuration and handlers.

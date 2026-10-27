@@ -42,6 +42,8 @@ import {
   ssrOwnsDocumentPathname,
 } from "../handlers/request/ssr/document-ownership.ts";
 
+import { prepareControlPlaneExecuteIngress } from "#veryfront/internal-agents/control-plane-auth.ts";
+
 const baseLogger = getBaseLogger("SERVER");
 
 const logger = baseLogger.component("adapter-factory");
@@ -335,6 +337,11 @@ async function prepareProxyConfigLoad(
 export async function resolveAdapter(
   opts: AdapterResolutionOptions,
 ): Promise<AdapterResolutionResult> {
+  await prepareControlPlaneExecuteIngress(opts.req, {
+    adapter: opts.adapter,
+    projectSlug: opts.projectSlug,
+    projectId: opts.projectId,
+  });
   const cache = opts.cache ?? defaultDiscoveryCache;
 
   let effectiveProjectDir = opts.projectDir;

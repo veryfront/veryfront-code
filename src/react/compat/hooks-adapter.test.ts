@@ -28,6 +28,12 @@ import {
 } from "./hooks-adapter.ts";
 import { getReactVersionInfo, hasFeature } from "./version-detector/index.ts";
 
+// These Deno fixtures replace the Web timer API with numeric handles.
+const webTimers = globalThis as Pick<
+  Window,
+  "setTimeout" | "clearTimeout" | "setInterval" | "clearInterval"
+>;
+
 const clientOnlyIt = makeClientOnlyIt(it);
 
 describe("hooks-adapter", () => {
@@ -767,24 +773,24 @@ describe("hooks-adapter", () => {
     });
 
     it("fallback queues multiple transitions instead of debouncing them", () => {
-      const originalSetTimeout = globalThis.setTimeout;
-      const originalClearTimeout = globalThis.clearTimeout;
+      const originalSetTimeout = webTimers.setTimeout;
+      const originalClearTimeout = webTimers.clearTimeout;
       const scheduled = new Map<number, () => void>();
       let nextTimerId = 1;
 
       try {
-        globalThis.setTimeout = ((callback: Parameters<typeof setTimeout>[0]) => {
+        webTimers.setTimeout = ((callback: Parameters<Window["setTimeout"]>[0]) => {
           const timerId = nextTimerId++;
           scheduled.set(timerId, () => {
             scheduled.delete(timerId);
             if (typeof callback === "function") callback();
           });
-          return timerId as ReturnType<typeof setTimeout>;
-        }) as typeof setTimeout;
+          return timerId as ReturnType<Window["setTimeout"]>;
+        }) as Window["setTimeout"];
 
-        globalThis.clearTimeout = ((timerId?: ReturnType<typeof setTimeout>) => {
+        webTimers.clearTimeout = ((timerId?: ReturnType<Window["setTimeout"]>) => {
           if (typeof timerId === "number") scheduled.delete(timerId);
-        }) as typeof clearTimeout;
+        }) as Window["clearTimeout"];
 
         const callbacks: string[] = [];
         const scheduler = createTransitionFallbackScheduler(() => {});
@@ -797,30 +803,30 @@ describe("hooks-adapter", () => {
 
         assertEquals(callbacks, ["first", "second"]);
       } finally {
-        globalThis.setTimeout = originalSetTimeout;
-        globalThis.clearTimeout = originalClearTimeout;
+        webTimers.setTimeout = originalSetTimeout;
+        webTimers.clearTimeout = originalClearTimeout;
       }
     });
 
     it("fallback stays pending through queued work and resets after callback errors", () => {
-      const originalSetTimeout = globalThis.setTimeout;
-      const originalClearTimeout = globalThis.clearTimeout;
+      const originalSetTimeout = webTimers.setTimeout;
+      const originalClearTimeout = webTimers.clearTimeout;
       const scheduled = new Map<number, () => void>();
       let nextTimerId = 1;
 
       try {
-        globalThis.setTimeout = ((callback: Parameters<typeof setTimeout>[0]) => {
+        webTimers.setTimeout = ((callback: Parameters<Window["setTimeout"]>[0]) => {
           const timerId = nextTimerId++;
           scheduled.set(timerId, () => {
             scheduled.delete(timerId);
             if (typeof callback === "function") callback();
           });
-          return timerId as ReturnType<typeof setTimeout>;
-        }) as typeof setTimeout;
+          return timerId as ReturnType<Window["setTimeout"]>;
+        }) as Window["setTimeout"];
 
-        globalThis.clearTimeout = ((timerId?: ReturnType<typeof setTimeout>) => {
+        webTimers.clearTimeout = ((timerId?: ReturnType<Window["setTimeout"]>) => {
           if (typeof timerId === "number") scheduled.delete(timerId);
-        }) as typeof clearTimeout;
+        }) as Window["clearTimeout"];
 
         const pending: boolean[] = [];
         const scheduler = createTransitionFallbackScheduler((value) => pending.push(value));
@@ -836,8 +842,8 @@ describe("hooks-adapter", () => {
         assertThrows(() => runSecond?.(), Error, "transition failed");
         assertEquals(pending, [true, true, false]);
       } finally {
-        globalThis.setTimeout = originalSetTimeout;
-        globalThis.clearTimeout = originalClearTimeout;
+        webTimers.setTimeout = originalSetTimeout;
+        webTimers.clearTimeout = originalClearTimeout;
       }
     });
   });

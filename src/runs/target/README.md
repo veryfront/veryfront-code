@@ -34,6 +34,27 @@ uses the same request path and response hook, then yields bounded frames rather
 than buffering the entire event stream. The host's transport owns tracing,
 metrics, retry decisions, redirect protection and outbound origin authorization.
 
+`sdk.readRunArtifact({ path: { run_id, artifact_id } })` downloads a file a run
+produced, using an `artifact_id` from `run.artifacts`, and resolves with a `Blob`. Its
+size is bounded by `maxResponseBytes` like a JSON body.
+
+List operations return `{ data, page_info }`. `page_info.next` is an opaque
+cursor: pass it back unchanged as `query.cursor`, with the same filters and
+ordering, and do not parse or build it. `sdk.paginate(operationId, input)`
+follows it for you.
+
+An error response rejects with a `VeryfrontError`; `runsProblemOf(error)` returns
+its Problem body. Each normalized `RUN_*` code maps to one shared error kind: `RUN_INVALID_INPUT` is `invalid_input`, `RUN_UNAUTHENTICATED` is
+`unauthenticated`, `RUN_FORBIDDEN` is `forbidden`, `RUN_NOT_FOUND` and `RUN_GONE`
+are `not_found`, `RUN_CONFLICT` is `conflict`, `RUN_SNAPSHOT_LIMIT_EXCEEDED` is
+`limit_exceeded`, `RUN_EVENT_IDENTITY_PENDING` is `not_ready`, and
+`RUN_INTERNAL_ERROR` and `RUN_ERROR` are `internal`. Other server codes in a valid
+Problem, such as `IDEMPOTENCY_KEY_REUSED`, pass through unchanged, so handle
+unknown codes by the Problem `status`. An error response without a
+Problem body (empty, HTML or malformed JSON) yields a Problem built from the HTTP
+status with the code `UNEXPECTED_RESPONSE`. The
+[Runs guide](../../../docs/guides/runs.md#error-codes) describes each code.
+
 The target routes remain gated by the consumer integration work in issue #2239;
 fixture replay does not establish deployed five-surface parity.
 
@@ -41,3 +62,33 @@ Contract fixtures exercise the real host HTTP stack in
 `tests/integration/integrations/runs-target-sdk/client.test.ts`, included in the
 existing client-coverage job. Transport boundary regressions and the real
 redirect test live under `tests/integration/semantic-unit-boundary/src/runs/target/`.
+
+### Canonical-v1 compatible event reads
+
+Select `sdk.canonicalEventsV1` to read the versioned compatibility union. Calls to existing methods keep their previous representations and return types. Install `@veryfront/ext-schema-zod` and register its schema validator before decoding these values:
+
+```ts
+import { registerEventSchemaValidator } from "veryfront/events";
+import { createZodAdapter } from "@veryfront/ext-schema-zod";
+
+registerEventSchemaValidator(createZodAdapter());
+
+const page = await sdk.canonicalEventsV1.list("<RUN_ID>", {
+  limit: 20,
+  sort_order: "asc",
+});
+for (const member of page.entries) {
+  if (member.kind === "canonical") console.log(member.event.type);
+  else console.log(member.reason, member.legacy.event_type);
+}
+const sameRecord = await sdk.canonicalEventsV1.get("<RUN_ID>", "42");
+const supported = await sdk.canonicalEventsV1.discover();
+for await (const member of sdk.canonicalEventsV1.stream("<RUN_ID>", "42")) {
+  // Only persisted members have a durable resume position.
+  if (member.kind !== "transient") console.log(member.metadata.event_id);
+}
+```
+
+The decoder validates the selected public or diagnostic schema and producing identity. Legacy payloads remain caller-visible opaque JSON. A legacy source type can contain arbitrary JSON String characters. It never becomes an SSE event name. Derived history is available through list/get and cannot enter durable streams. Stream error frames throw `CanonicalEventsV1StreamError`; they do not appear as a successful end of history. Keep the last persisted member ID when resuming. Keepalive controls and transient members do not advance it.
+
+`next_cursor` identifies the last returned member only when the server reports qualifying lookahead. Retain the same filters, sort order and descendants setting between pages.

@@ -1,7 +1,7 @@
 ---
 title: "Agent Events Protocol"
 description: "Parse target Agent Events Protocol CloudEvents with schema-derived TypeScript payloads."
-order: 58
+order: 190
 ---
 
 Use `veryfront/events` when a surface receives target Agent Events Protocol frames and needs the shared parser, target schemas, and per-type payload typings. Keep `veryfront/run-events` for existing stored run-event rows until your surface has completed the protocol cutover. For all public exports, see the [`veryfront/events` API reference](../api-reference/veryfront/events.md).
@@ -13,23 +13,23 @@ You need an existing Node.js, Bun, or Deno project with `veryfront` installed. B
 <CodeGroup>
 
 ```bash npm
-npm install veryfront @veryfront/ext-schema-zod
+npm install veryfront react@19.2.4 react-dom@19.2.4 @veryfront/ext-schema-zod
 ```
 
 ```bash pnpm
-pnpm add veryfront @veryfront/ext-schema-zod
+pnpm add veryfront react@19.2.4 react-dom@19.2.4 @veryfront/ext-schema-zod
 ```
 
 ```bash yarn
-yarn add veryfront @veryfront/ext-schema-zod
+yarn add veryfront react@19.2.4 react-dom@19.2.4 @veryfront/ext-schema-zod
 ```
 
 ```bash bun
-bun add veryfront @veryfront/ext-schema-zod
+bun add veryfront react@19.2.4 react-dom@19.2.4 @veryfront/ext-schema-zod
 ```
 
 ```bash deno
-deno add npm:veryfront npm:@veryfront/ext-schema-zod
+deno add npm:veryfront npm:react@19.2.4 npm:react-dom@19.2.4 npm:@veryfront/ext-schema-zod
 ```
 
 </CodeGroup>

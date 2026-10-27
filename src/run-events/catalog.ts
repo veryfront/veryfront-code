@@ -258,6 +258,18 @@ const definitions = {
     category: "ag-ui",
     kind: "state",
   },
+  AGENT_RUN_TASK_INPUT_ADMITTED: {
+    name: "Task input admitted",
+    group: "management",
+    category: "system",
+    kind: "runtime",
+  },
+  AGENT_RUN_TASK_INPUT_ACCEPTED: {
+    name: "Task input accepted",
+    group: "management",
+    category: "system",
+    kind: "runtime",
+  },
   AGENT_RUN_AUTHORIZATION_SEALED: {
     name: "Authorization recorded",
     group: "management",

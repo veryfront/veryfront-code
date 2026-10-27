@@ -1,3 +1,4 @@
+export { isExactSemver } from "#veryfront/platform/compat/semver.ts";
 /**
  * Platform dependency-resolution scheduler.
  *
@@ -14,7 +15,7 @@ import {
   requireHostPrivateApiHttps,
   resolveHostOwnedApiBaseUrl,
 } from "#veryfront/config/host-api-base.ts";
-import { guardedOutboundFetch } from "#veryfront/security/http/outbound-fetch.ts";
+import { createVeryfrontApiOriginBoundOutboundFetch } from "#veryfront/security/http/outbound-fetch.ts";
 import { DEPENDENCY_PINNING_ENV_FLAG } from "../../release-assets/constants.ts";
 import type { DependencyWritebackTarget } from "./package-registry.ts";
 
@@ -31,14 +32,6 @@ const stringTrim = String.prototype.trim;
 function isBlank(value: string | undefined): boolean {
   return value === undefined || (applyIntrinsic(stringTrim, value, []) as string) === "";
 }
-const SEMVER_NUMERIC_IDENTIFIER = "(?:0|[1-9]\\d*)";
-const SEMVER_PRERELEASE_IDENTIFIER =
-  `(?:${SEMVER_NUMERIC_IDENTIFIER}|[0-9]*[A-Za-z-][0-9A-Za-z-]*)`;
-const SEMVER_PRERELEASE = `${SEMVER_PRERELEASE_IDENTIFIER}(?:\\.${SEMVER_PRERELEASE_IDENTIFIER})*`;
-const SEMVER_BUILD_IDENTIFIER = "[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*";
-const EXACT_SEMVER_RE = new RegExp(
-  `^v?${SEMVER_NUMERIC_IDENTIFIER}\\.${SEMVER_NUMERIC_IDENTIFIER}\\.${SEMVER_NUMERIC_IDENTIFIER}(?:-${SEMVER_PRERELEASE})?(?:\\+${SEMVER_BUILD_IDENTIFIER})?$`,
-);
 /**
  * Best-effort platform resolver attempts, keyed by project/package/declaration.
  * A short retry window deduplicates repeated transforms while still allowing a
@@ -187,16 +180,32 @@ function pruneExpiredPlatformResolutionAttempts(now: number): void {
   }
 }
 
-/** True when the string is a bare three-part semver version (no range prefix). */
-export function isExactSemver(s: string): boolean {
-  return EXACT_SEMVER_RE.test(s);
-}
-
 /**
  * True when the VERYFRONT_DEPENDENCY_PINNING env flag is set to "1".
  */
 export function isDependencyPinningEnabled(): boolean {
   return getHostEnv(DEPENDENCY_PINNING_ENV_FLAG) === "1";
+}
+
+function prepareQueuedResolutionBatch(
+  queueKey: string,
+  queuedBatch: QueuedPlatformResolutionBatch | undefined,
+  projectId: string,
+  target: DependencyWritebackTarget,
+  options: DependencyResolutionScheduleOptions,
+): QueuedPlatformResolutionBatch {
+  if (!queuedBatch) {
+    queuedBatch = {
+      projectId,
+      target,
+      authToken: options.authToken,
+      resolutions: new Map(),
+    };
+    queuedPlatformResolutions.set(queueKey, queuedBatch);
+  } else if (options.authToken) {
+    queuedBatch.authToken = options.authToken;
+  }
+  return queuedBatch;
 }
 
 /**
@@ -264,17 +273,7 @@ export function schedulePlatformDependencyResolution(
   platformResolutionAttempts.set(key, now);
   pendingPlatformResolutionAttempts.add(key);
 
-  if (!queuedBatch) {
-    queuedBatch = {
-      projectId,
-      target,
-      authToken: options.authToken,
-      resolutions: new Map(),
-    };
-    queuedPlatformResolutions.set(queueKey, queuedBatch);
-  } else if (options.authToken) {
-    queuedBatch.authToken = options.authToken;
-  }
+  queuedBatch = prepareQueuedResolutionBatch(queueKey, queuedBatch, projectId, target, options);
   queuedBatch.resolutions.set(packageName, {
     packageName,
     rawSpecifier,
@@ -353,10 +352,11 @@ function schedulePlatformResolutionFlush(queueKey: string): void {
             },
           );
         } catch (error) {
-          logger.debug("Scheduled platform dependency resolution failed", {
+          logger.warn("Scheduled platform dependency resolution failed", {
             projectId: queued.projectId,
             target: dependencyWritebackTargetKey(queued.target),
             specifierCount: batch.length,
+            code: dependencyResolutionErrorCode(error),
             error: String(error),
           });
         } finally {
@@ -380,6 +380,17 @@ function schedulePlatformResolutionFlush(queueKey: string): void {
   pendingPlatformResolutionPromises.add(flush);
 }
 
+/** A loggable classification of a write-back failure, such as `AbortError`. */
+function dependencyResolutionErrorCode(error: unknown): string {
+  if (error !== null && typeof error === "object") {
+    const code = (error as { code?: unknown }).code;
+    if (typeof code === "string" && code.length > 0) return code;
+    const name = (error as { name?: unknown }).name;
+    if (typeof name === "string" && name.length > 0) return name;
+  }
+  return "unknown";
+}
+
 /** Override the platform write-back transport. For tests only. */
 export function _setDependencyResolutionPosterForTest(
   poster?: DependencyResolutionPoster,
@@ -392,8 +403,9 @@ export function _setDependencyResolutionPosterForTest(
  * declarations.
  *
  * Uses the request-scoped bearer token when provided, with the runtime
- * environment token as a fallback. Silently ignores all failures including
- * 404 (endpoint may not exist yet while the API track is built in parallel).
+ * environment token as a fallback. Never throws: a non-OK status (including
+ * 404 from an API without the endpoint) or a network failure is logged as a
+ * warning, and the render continues unpinned.
  *
  * @param projectId  - project identifier from the render context
  * @param specifiers - raw bare names or package declarations such as
@@ -452,11 +464,9 @@ export async function postDependencyResolution(
     // served in this process can replace the global, and a direct call would
     // hand it the `Authorization` header to read.
     //
-    // This also puts the write-back under the host egress ceiling, which denies
-    // private and loopback destinations. A deployment whose API base is
-    // internal must set `VERYFRONT_HOST_ALLOW_INTERNAL_EGRESS`; the write-back
-    // is best-effort, so a blocked request degrades to a logged skip.
-    const res = await guardedOutboundFetch(url, {
+    // Bind the host transport to this API origin, including an internal HTTP
+    // endpoint explicitly configured by the operator before startup.
+    const res = await createVeryfrontApiOriginBoundOutboundFetch(apiBaseUrl)(url, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -474,8 +484,8 @@ export async function postDependencyResolution(
       signal: controller.signal,
     });
 
-    if (!res.ok && res.status !== 404) {
-      logger.debug("Dependency resolution write-back returned non-OK status", {
+    if (!res.ok) {
+      logger.warn("Dependency resolution write-back returned non-OK status", {
         projectId,
         status: res.status,
       });
@@ -486,8 +496,9 @@ export async function postDependencyResolution(
       // The response status is all this best-effort transport consumes.
     }
   } catch (err) {
-    logger.debug("Dependency resolution write-back failed", {
+    logger.warn("Dependency resolution write-back failed", {
       projectId,
+      code: dependencyResolutionErrorCode(err),
       error: String(err),
     });
   } finally {

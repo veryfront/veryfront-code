@@ -4,6 +4,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import type { Tool } from "#veryfront/tool/types.ts";
 import type { Agent } from "../types.ts";
+import { isAgentKnowledgeTool } from "../runtime/knowledge-tools.ts";
 import { RunResumeSessionManager } from "../runtime/index.ts";
 import { type AgUiResumeValue, buildMergedAgUiTools } from "./tool-shared.ts";
 
@@ -136,18 +137,38 @@ function makeRegistryTool(id: string, ownerAgentId?: string): Tool {
 }
 
 describe("buildMergedAgUiTools owner scope", () => {
+  it("preserves authored search_knowledge alongside canonical framework knowledge", () => {
+    clearMCPRegistry();
+    try {
+      registerTool("search_knowledge", makeRegistryTool("search_knowledge", "writer"));
+      const agent = { id: "writer", config: { tools: true, knowledge: true } } as unknown as Agent;
+      const sessionManager = new RunResumeSessionManager<AgUiResumeValue>();
+      const tools = buildMergedAgUiTools(agent, "knowledge-run", [], sessionManager);
+      if (!tools || tools === true) throw new Error("Expected explicit tools");
+      assertEquals(tools.search_knowledge, true);
+      assertEquals(isAgentKnowledgeTool(tools.veryfront__search_knowledge), true);
+    } finally {
+      clearMCPRegistry();
+    }
+  });
   it("tools: true excludes other agents' owned tools and includes the owner's", () => {
     clearMCPRegistry();
     try {
       registerTool("global-echo", makeRegistryTool("global-echo"));
       registerTool("load_skill", makeRegistryTool("load_skill"));
+      registerTool("search_knowledge", makeRegistryTool("search_knowledge"));
       registerTool("researcher--fetch", makeRegistryTool("researcher--fetch", "researcher"));
 
       const sessionManager = new RunResumeSessionManager<AgUiResumeValue>();
-      const writer = { id: "writer", config: { tools: true } } as unknown as Agent;
+      const writer = { id: "writer", config: { tools: true, knowledge: true } } as unknown as Agent;
       const writerTools = buildMergedAgUiTools(writer, "run_w", [], sessionManager);
       assertEquals(Object.keys(writerTools ?? {}).includes("global-echo"), true);
       assertEquals(Object.keys(writerTools ?? {}).includes("load_skill"), true);
+      assertEquals(
+        writerTools && writerTools !== true ? writerTools.search_knowledge : undefined,
+        true,
+      );
+      assertEquals(Object.keys(writerTools ?? {}).includes("veryfront__search_knowledge"), true);
       assertEquals(Object.keys(writerTools ?? {}).includes("researcher--fetch"), false);
 
       const researcher = { id: "researcher", config: { tools: true } } as unknown as Agent;

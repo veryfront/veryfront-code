@@ -90,7 +90,7 @@
     {
       "id": "sheets__list_spreadsheets",
       "name": "List Spreadsheets",
-      "description": "List recent Google Sheets spreadsheets from Drive",
+      "description": "List spreadsheets",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -128,7 +128,7 @@
     {
       "id": "sheets__get_spreadsheet",
       "name": "Get Spreadsheet",
-      "description": "Get spreadsheet metadata including sheet names and properties",
+      "description": "Get spreadsheet",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -157,7 +157,7 @@
     {
       "id": "sheets__read_range",
       "name": "Read Range",
-      "description": "Read cell data from a spreadsheet range",
+      "description": "Read range",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -191,7 +191,7 @@
     {
       "id": "sheets__write_range",
       "name": "Write Range",
-      "description": "Write data to a spreadsheet range",
+      "description": "Write range",
       "requiresWrite": true,
       "endpoint": {
         "method": "PUT",
@@ -239,7 +239,7 @@
     {
       "id": "sheets__create_spreadsheet",
       "name": "Create Spreadsheet",
-      "description": "Create a new spreadsheet with optional initial data",
+      "description": "Create spreadsheet",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -260,7 +260,7 @@
     {
       "id": "sheets__append_rows",
       "name": "Append Rows",
-      "description": "Append rows to a spreadsheet range",
+      "description": "Append rows",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -314,7 +314,7 @@
     {
       "id": "sheets__clear_range",
       "name": "Clear Range",
-      "description": "Clear values from a spreadsheet range",
+      "description": "Clear range values",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -329,7 +329,7 @@
           "range": {
             "type": "string",
             "in": "path",
-            "description": "A1 notation range to clear",
+            "description": "A1 notation range to clear. This clears cell values only; it does not delete cells or remove their formatting.",
             "required": true
           }
         },
@@ -339,7 +339,7 @@
     {
       "id": "sheets__batch_update",
       "name": "Batch Update",
-      "description": "Run raw Google Sheets batchUpdate requests for formatting and structural changes",
+      "description": "Update spreadsheet structure and formatting",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -368,7 +368,7 @@
     {
       "id": "sheets__add_sheet",
       "name": "Add Sheet",
-      "description": "Add a new sheet/tab to a spreadsheet",
+      "description": "Add sheet",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -393,7 +393,7 @@
     {
       "id": "sheets__delete_sheet",
       "name": "Delete Sheet",
-      "description": "Delete a sheet/tab from a spreadsheet by sheet ID",
+      "description": "Delete sheet",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -418,7 +418,7 @@
     {
       "id": "sheets__rename_sheet",
       "name": "Rename Sheet",
-      "description": "Rename a sheet/tab by sheet ID",
+      "description": "Rename sheet",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -435,7 +435,51 @@
           "requests": {
             "type": "array",
             "description": "A batchUpdate requests array containing an updateSheetProperties request",
-            "required": true
+            "required": true,
+            "inputSchema": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "required": [
+                  "updateSheetProperties"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "updateSheetProperties": {
+                    "type": "object",
+                    "required": [
+                      "properties",
+                      "fields"
+                    ],
+                    "additionalProperties": false,
+                    "properties": {
+                      "properties": {
+                        "type": "object",
+                        "required": [
+                          "sheetId",
+                          "title"
+                        ],
+                        "additionalProperties": false,
+                        "properties": {
+                          "sheetId": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "title": {
+                            "type": "string"
+                          }
+                        }
+                      },
+                      "fields": {
+                        "type": "string",
+                        "const": "title"
+                      }
+                    }
+                  }
+                }
+              }
+            }
           }
         }
       }
@@ -443,7 +487,7 @@
     {
       "id": "sheets__delete_spreadsheet",
       "name": "Delete Spreadsheet",
-      "description": "Move an app-accessible spreadsheet file to trash",
+      "description": "Trash spreadsheet",
       "requiresWrite": true,
       "endpoint": {
         "method": "PATCH",
@@ -468,7 +512,7 @@
     {
       "id": "sheets__find_replace",
       "name": "Find and Replace",
-      "description": "Find and replace text in a spreadsheet or sheet",
+      "description": "Find and replace spreadsheet text",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -485,7 +529,112 @@
           "requests": {
             "type": "array",
             "description": "A batchUpdate requests array containing a findReplace request",
-            "required": true
+            "required": true,
+            "inputSchema": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "required": [
+                  "findReplace"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "findReplace": {
+                    "type": "object",
+                    "required": [
+                      "find",
+                      "replacement"
+                    ],
+                    "properties": {
+                      "find": {
+                        "type": "string"
+                      },
+                      "replacement": {
+                        "type": "string"
+                      },
+                      "allSheets": {
+                        "type": "boolean",
+                        "const": true
+                      },
+                      "sheetId": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "matchCase": {
+                        "type": "boolean"
+                      },
+                      "matchEntireCell": {
+                        "type": "boolean"
+                      },
+                      "searchByRegex": {
+                        "type": "boolean"
+                      },
+                      "includeFormulas": {
+                        "type": "boolean"
+                      },
+                      "range": {
+                        "type": "object",
+                        "description": "Grid range with the actual sheet ID from spreadsheet metadata and zero-based, end-exclusive indexes.",
+                        "required": [
+                          "sheetId"
+                        ],
+                        "properties": {
+                          "sheetId": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "startRowIndex": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "endRowIndex": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "startColumnIndex": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "endColumnIndex": {
+                            "type": "integer",
+                            "minimum": 0
+                          }
+                        },
+                        "additionalProperties": false
+                      }
+                    },
+                    "oneOf": [
+                      {
+                        "properties": {
+                          "range": {}
+                        },
+                        "required": [
+                          "range"
+                        ]
+                      },
+                      {
+                        "properties": {
+                          "sheetId": {}
+                        },
+                        "required": [
+                          "sheetId"
+                        ]
+                      },
+                      {
+                        "properties": {
+                          "allSheets": {}
+                        },
+                        "required": [
+                          "allSheets"
+                        ]
+                      }
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              }
+            }
           }
         }
       }
@@ -493,7 +642,7 @@
     {
       "id": "sheets__copy_sheet",
       "name": "Copy Sheet",
-      "description": "Copy a sheet/tab to another spreadsheet",
+      "description": "Copy sheet",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -524,7 +673,7 @@
     {
       "id": "sheets__create_chart",
       "name": "Create Chart",
-      "description": "Create an embedded chart using a Sheets API chart specification",
+      "description": "Create chart",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -541,7 +690,577 @@
           "requests": {
             "type": "array",
             "description": "A batchUpdate requests array containing an addChart request",
-            "required": true
+            "required": true,
+            "inputSchema": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "required": [
+                  "addChart"
+                ],
+                "properties": {
+                  "addChart": {
+                    "type": "object",
+                    "required": [
+                      "chart"
+                    ],
+                    "properties": {
+                      "chart": {
+                        "type": "object",
+                        "required": [
+                          "spec",
+                          "position"
+                        ],
+                        "properties": {
+                          "chartId": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "description": "Optional new unused chart ID. Normally omit this field so Google assigns an ID; do not reuse an existing chart ID."
+                          },
+                          "spec": {
+                            "type": "object",
+                            "description": "Chart specification. Position belongs beside spec on the chart.",
+                            "properties": {
+                              "title": {
+                                "type": "string"
+                              },
+                              "basicChart": {
+                                "type": "object",
+                                "required": [
+                                  "chartType",
+                                  "series"
+                                ],
+                                "properties": {
+                                  "chartType": {
+                                    "type": "string",
+                                    "enum": [
+                                      "BAR",
+                                      "LINE",
+                                      "AREA",
+                                      "COLUMN",
+                                      "SCATTER",
+                                      "COMBO",
+                                      "STEPPED_AREA"
+                                    ]
+                                  },
+                                  "headerCount": {
+                                    "type": "integer",
+                                    "minimum": 0
+                                  },
+                                  "legendPosition": {
+                                    "type": "string",
+                                    "enum": [
+                                      "BOTTOM_LEGEND",
+                                      "LEFT_LEGEND",
+                                      "RIGHT_LEGEND",
+                                      "TOP_LEGEND",
+                                      "NO_LEGEND"
+                                    ]
+                                  },
+                                  "domains": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "object",
+                                      "required": [
+                                        "domain"
+                                      ],
+                                      "properties": {
+                                        "domain": {
+                                          "type": "object",
+                                          "properties": {
+                                            "sourceRange": {
+                                              "type": "object",
+                                              "required": [
+                                                "sources"
+                                              ],
+                                              "properties": {
+                                                "sources": {
+                                                  "type": "array",
+                                                  "minItems": 1,
+                                                  "items": {
+                                                    "type": "object",
+                                                    "description": "Grid range with the actual sheet ID from spreadsheet metadata and zero-based, end-exclusive indexes.",
+                                                    "required": [
+                                                      "sheetId"
+                                                    ],
+                                                    "properties": {
+                                                      "sheetId": {
+                                                        "type": "integer",
+                                                        "minimum": 0
+                                                      },
+                                                      "startRowIndex": {
+                                                        "type": "integer",
+                                                        "minimum": 0
+                                                      },
+                                                      "endRowIndex": {
+                                                        "type": "integer",
+                                                        "minimum": 0
+                                                      },
+                                                      "startColumnIndex": {
+                                                        "type": "integer",
+                                                        "minimum": 0
+                                                      },
+                                                      "endColumnIndex": {
+                                                        "type": "integer",
+                                                        "minimum": 0
+                                                      }
+                                                    },
+                                                    "additionalProperties": false
+                                                  },
+                                                  "description": "Each source range must span one row or one column. Google validates range dimensions."
+                                                }
+                                              },
+                                              "additionalProperties": false
+                                            },
+                                            "columnReference": {
+                                              "type": "object",
+                                              "required": [
+                                                "name"
+                                              ],
+                                              "properties": {
+                                                "name": {
+                                                  "type": "string"
+                                                }
+                                              },
+                                              "additionalProperties": false
+                                            }
+                                          },
+                                          "oneOf": [
+                                            {
+                                              "properties": {
+                                                "sourceRange": {}
+                                              },
+                                              "required": [
+                                                "sourceRange"
+                                              ]
+                                            },
+                                            {
+                                              "properties": {
+                                                "columnReference": {}
+                                              },
+                                              "required": [
+                                                "columnReference"
+                                              ]
+                                            }
+                                          ]
+                                        }
+                                      }
+                                    },
+                                    "maxItems": 1
+                                  },
+                                  "series": {
+                                    "type": "array",
+                                    "minItems": 1,
+                                    "items": {
+                                      "type": "object",
+                                      "required": [
+                                        "series"
+                                      ],
+                                      "properties": {
+                                        "series": {
+                                          "type": "object",
+                                          "properties": {
+                                            "sourceRange": {
+                                              "type": "object",
+                                              "required": [
+                                                "sources"
+                                              ],
+                                              "properties": {
+                                                "sources": {
+                                                  "type": "array",
+                                                  "minItems": 1,
+                                                  "items": {
+                                                    "type": "object",
+                                                    "description": "Grid range with the actual sheet ID from spreadsheet metadata and zero-based, end-exclusive indexes.",
+                                                    "required": [
+                                                      "sheetId"
+                                                    ],
+                                                    "properties": {
+                                                      "sheetId": {
+                                                        "type": "integer",
+                                                        "minimum": 0
+                                                      },
+                                                      "startRowIndex": {
+                                                        "type": "integer",
+                                                        "minimum": 0
+                                                      },
+                                                      "endRowIndex": {
+                                                        "type": "integer",
+                                                        "minimum": 0
+                                                      },
+                                                      "startColumnIndex": {
+                                                        "type": "integer",
+                                                        "minimum": 0
+                                                      },
+                                                      "endColumnIndex": {
+                                                        "type": "integer",
+                                                        "minimum": 0
+                                                      }
+                                                    },
+                                                    "additionalProperties": false
+                                                  },
+                                                  "description": "Each source range must span one row or one column. Google validates range dimensions."
+                                                }
+                                              },
+                                              "additionalProperties": false
+                                            },
+                                            "columnReference": {
+                                              "type": "object",
+                                              "required": [
+                                                "name"
+                                              ],
+                                              "properties": {
+                                                "name": {
+                                                  "type": "string"
+                                                }
+                                              },
+                                              "additionalProperties": false
+                                            }
+                                          },
+                                          "oneOf": [
+                                            {
+                                              "properties": {
+                                                "sourceRange": {}
+                                              },
+                                              "required": [
+                                                "sourceRange"
+                                              ]
+                                            },
+                                            {
+                                              "properties": {
+                                                "columnReference": {}
+                                              },
+                                              "required": [
+                                                "columnReference"
+                                              ]
+                                            }
+                                          ]
+                                        },
+                                        "targetAxis": {
+                                          "type": "string",
+                                          "enum": [
+                                            "BOTTOM_AXIS",
+                                            "LEFT_AXIS",
+                                            "RIGHT_AXIS"
+                                          ],
+                                          "description": "Use a minor axis for the chart type: BOTTOM_AXIS for BAR, LEFT_AXIS or RIGHT_AXIS for other basic charts."
+                                        },
+                                        "type": {
+                                          "type": "string",
+                                          "enum": [
+                                            "LINE",
+                                            "AREA",
+                                            "COLUMN"
+                                          ]
+                                        }
+                                      }
+                                    }
+                                  }
+                                }
+                              },
+                              "pieChart": {
+                                "type": "object"
+                              },
+                              "bubbleChart": {
+                                "type": "object"
+                              },
+                              "candlestickChart": {
+                                "type": "object"
+                              },
+                              "orgChart": {
+                                "type": "object"
+                              },
+                              "histogramChart": {
+                                "type": "object"
+                              },
+                              "waterfallChart": {
+                                "type": "object"
+                              },
+                              "treemapChart": {
+                                "type": "object"
+                              },
+                              "scorecardChart": {
+                                "type": "object"
+                              }
+                            },
+                            "not": {
+                              "anyOf": [
+                                {
+                                  "required": [
+                                    "position"
+                                  ],
+                                  "properties": {
+                                    "position": {}
+                                  }
+                                },
+                                {
+                                  "required": [
+                                    "chartType"
+                                  ],
+                                  "properties": {
+                                    "chartType": {}
+                                  }
+                                },
+                                {
+                                  "required": [
+                                    "legendPosition"
+                                  ],
+                                  "properties": {
+                                    "legendPosition": {}
+                                  }
+                                },
+                                {
+                                  "required": [
+                                    "axis"
+                                  ],
+                                  "properties": {
+                                    "axis": {}
+                                  }
+                                },
+                                {
+                                  "required": [
+                                    "domains"
+                                  ],
+                                  "properties": {
+                                    "domains": {}
+                                  }
+                                },
+                                {
+                                  "required": [
+                                    "series"
+                                  ],
+                                  "properties": {
+                                    "series": {}
+                                  }
+                                },
+                                {
+                                  "required": [
+                                    "headerCount"
+                                  ],
+                                  "properties": {
+                                    "headerCount": {}
+                                  }
+                                },
+                                {
+                                  "required": [
+                                    "threeDimensional"
+                                  ],
+                                  "properties": {
+                                    "threeDimensional": {}
+                                  }
+                                },
+                                {
+                                  "required": [
+                                    "interpolateNulls"
+                                  ],
+                                  "properties": {
+                                    "interpolateNulls": {}
+                                  }
+                                },
+                                {
+                                  "required": [
+                                    "stackedType"
+                                  ],
+                                  "properties": {
+                                    "stackedType": {}
+                                  }
+                                },
+                                {
+                                  "required": [
+                                    "lineSmoothing"
+                                  ],
+                                  "properties": {
+                                    "lineSmoothing": {}
+                                  }
+                                },
+                                {
+                                  "required": [
+                                    "compareMode"
+                                  ],
+                                  "properties": {
+                                    "compareMode": {}
+                                  }
+                                },
+                                {
+                                  "required": [
+                                    "totalDataLabel"
+                                  ],
+                                  "properties": {
+                                    "totalDataLabel": {}
+                                  }
+                                }
+                              ]
+                            },
+                            "oneOf": [
+                              {
+                                "properties": {
+                                  "basicChart": {}
+                                },
+                                "required": [
+                                  "basicChart"
+                                ]
+                              },
+                              {
+                                "properties": {
+                                  "pieChart": {}
+                                },
+                                "required": [
+                                  "pieChart"
+                                ]
+                              },
+                              {
+                                "properties": {
+                                  "bubbleChart": {}
+                                },
+                                "required": [
+                                  "bubbleChart"
+                                ]
+                              },
+                              {
+                                "properties": {
+                                  "candlestickChart": {}
+                                },
+                                "required": [
+                                  "candlestickChart"
+                                ]
+                              },
+                              {
+                                "properties": {
+                                  "orgChart": {}
+                                },
+                                "required": [
+                                  "orgChart"
+                                ]
+                              },
+                              {
+                                "properties": {
+                                  "histogramChart": {}
+                                },
+                                "required": [
+                                  "histogramChart"
+                                ]
+                              },
+                              {
+                                "properties": {
+                                  "waterfallChart": {}
+                                },
+                                "required": [
+                                  "waterfallChart"
+                                ]
+                              },
+                              {
+                                "properties": {
+                                  "treemapChart": {}
+                                },
+                                "required": [
+                                  "treemapChart"
+                                ]
+                              },
+                              {
+                                "properties": {
+                                  "scorecardChart": {}
+                                },
+                                "required": [
+                                  "scorecardChart"
+                                ]
+                              }
+                            ]
+                          },
+                          "position": {
+                            "type": "object",
+                            "description": "Chart placement, outside spec.",
+                            "properties": {
+                              "overlayPosition": {
+                                "type": "object",
+                                "required": [
+                                  "anchorCell"
+                                ],
+                                "properties": {
+                                  "anchorCell": {
+                                    "type": "object",
+                                    "required": [
+                                      "sheetId"
+                                    ],
+                                    "properties": {
+                                      "sheetId": {
+                                        "type": "integer",
+                                        "minimum": 0
+                                      },
+                                      "rowIndex": {
+                                        "type": "integer",
+                                        "minimum": 0
+                                      },
+                                      "columnIndex": {
+                                        "type": "integer",
+                                        "minimum": 0
+                                      }
+                                    },
+                                    "additionalProperties": false
+                                  },
+                                  "offsetXPixels": {
+                                    "type": "integer"
+                                  },
+                                  "offsetYPixels": {
+                                    "type": "integer"
+                                  },
+                                  "widthPixels": {
+                                    "type": "integer",
+                                    "minimum": 0
+                                  },
+                                  "heightPixels": {
+                                    "type": "integer",
+                                    "minimum": 0
+                                  }
+                                }
+                              },
+                              "newSheet": {
+                                "type": "boolean",
+                                "const": true
+                              },
+                              "sheetId": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "description": "New unused ID for a dedicated chart-only sheet. For an existing grid tab, use overlayPosition.anchorCell.sheetId."
+                              }
+                            },
+                            "additionalProperties": false,
+                            "oneOf": [
+                              {
+                                "properties": {
+                                  "overlayPosition": {}
+                                },
+                                "required": [
+                                  "overlayPosition"
+                                ]
+                              },
+                              {
+                                "properties": {
+                                  "newSheet": {}
+                                },
+                                "required": [
+                                  "newSheet"
+                                ]
+                              },
+                              {
+                                "properties": {
+                                  "sheetId": {}
+                                },
+                                "required": [
+                                  "sheetId"
+                                ]
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
           }
         }
       }
@@ -549,7 +1268,7 @@
     {
       "id": "sheets__set_data_validation",
       "name": "Set Data Validation",
-      "description": "Set data validation rules on a sheet range",
+      "description": "Set data validation",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -566,7 +1285,299 @@
           "requests": {
             "type": "array",
             "description": "A batchUpdate requests array containing a setDataValidation request",
-            "required": true
+            "required": true,
+            "inputSchema": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "required": [
+                  "setDataValidation"
+                ],
+                "properties": {
+                  "setDataValidation": {
+                    "type": "object",
+                    "required": [
+                      "range"
+                    ],
+                    "properties": {
+                      "range": {
+                        "type": "object",
+                        "description": "Grid range with the actual sheet ID from spreadsheet metadata and zero-based, end-exclusive indexes.",
+                        "required": [
+                          "sheetId"
+                        ],
+                        "properties": {
+                          "sheetId": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "startRowIndex": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "endRowIndex": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "startColumnIndex": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "endColumnIndex": {
+                            "type": "integer",
+                            "minimum": 0
+                          }
+                        },
+                        "additionalProperties": false
+                      },
+                      "rule": {
+                        "type": "object",
+                        "description": "Omit rule to remove validation.",
+                        "required": [
+                          "condition"
+                        ],
+                        "properties": {
+                          "condition": {
+                            "type": "object",
+                            "required": [
+                              "type"
+                            ],
+                            "properties": {
+                              "type": {
+                                "type": "string",
+                                "enum": [
+                                  "NUMBER_GREATER",
+                                  "NUMBER_GREATER_THAN_EQ",
+                                  "NUMBER_LESS",
+                                  "NUMBER_LESS_THAN_EQ",
+                                  "NUMBER_EQ",
+                                  "NUMBER_NOT_EQ",
+                                  "NUMBER_BETWEEN",
+                                  "NUMBER_NOT_BETWEEN",
+                                  "TEXT_CONTAINS",
+                                  "TEXT_NOT_CONTAINS",
+                                  "TEXT_EQ",
+                                  "TEXT_IS_EMAIL",
+                                  "TEXT_IS_URL",
+                                  "DATE_EQ",
+                                  "DATE_BEFORE",
+                                  "DATE_AFTER",
+                                  "DATE_ON_OR_BEFORE",
+                                  "DATE_ON_OR_AFTER",
+                                  "DATE_BETWEEN",
+                                  "DATE_NOT_BETWEEN",
+                                  "DATE_IS_VALID",
+                                  "ONE_OF_RANGE",
+                                  "ONE_OF_LIST",
+                                  "CUSTOM_FORMULA",
+                                  "BOOLEAN"
+                                ]
+                              },
+                              "values": {
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "required": [
+                                    "userEnteredValue"
+                                  ],
+                                  "properties": {
+                                    "userEnteredValue": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "additionalProperties": false
+                                },
+                                "description": "ONE_OF_RANGE uses an A1 range; CUSTOM_FORMULA starts with = or +; ONE_OF_LIST uses literal values. Google validates syntax."
+                              }
+                            },
+                            "additionalProperties": false,
+                            "oneOf": [
+                              {
+                                "type": "object",
+                                "required": [
+                                  "values"
+                                ],
+                                "properties": {
+                                  "type": {
+                                    "type": "string",
+                                    "enum": [
+                                      "NUMBER_GREATER",
+                                      "NUMBER_GREATER_THAN_EQ",
+                                      "NUMBER_LESS",
+                                      "NUMBER_LESS_THAN_EQ",
+                                      "NUMBER_EQ",
+                                      "NUMBER_NOT_EQ",
+                                      "TEXT_CONTAINS",
+                                      "TEXT_NOT_CONTAINS",
+                                      "TEXT_EQ",
+                                      "DATE_EQ",
+                                      "DATE_BEFORE",
+                                      "DATE_AFTER",
+                                      "DATE_ON_OR_BEFORE",
+                                      "DATE_ON_OR_AFTER",
+                                      "ONE_OF_RANGE",
+                                      "CUSTOM_FORMULA"
+                                    ]
+                                  },
+                                  "values": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "object",
+                                      "required": [
+                                        "userEnteredValue"
+                                      ],
+                                      "properties": {
+                                        "userEnteredValue": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "additionalProperties": false
+                                    },
+                                    "minItems": 1,
+                                    "maxItems": 1,
+                                    "description": "ONE_OF_RANGE uses an A1 range; CUSTOM_FORMULA starts with = or +; ONE_OF_LIST uses literal values. Google validates syntax."
+                                  }
+                                }
+                              },
+                              {
+                                "type": "object",
+                                "required": [
+                                  "values"
+                                ],
+                                "properties": {
+                                  "type": {
+                                    "type": "string",
+                                    "enum": [
+                                      "NUMBER_BETWEEN",
+                                      "NUMBER_NOT_BETWEEN",
+                                      "DATE_BETWEEN",
+                                      "DATE_NOT_BETWEEN"
+                                    ]
+                                  },
+                                  "values": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "object",
+                                      "required": [
+                                        "userEnteredValue"
+                                      ],
+                                      "properties": {
+                                        "userEnteredValue": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "additionalProperties": false
+                                    },
+                                    "minItems": 2,
+                                    "maxItems": 2
+                                  }
+                                }
+                              },
+                              {
+                                "type": "object",
+                                "required": [],
+                                "properties": {
+                                  "type": {
+                                    "type": "string",
+                                    "enum": [
+                                      "TEXT_IS_EMAIL",
+                                      "TEXT_IS_URL",
+                                      "DATE_IS_VALID"
+                                    ]
+                                  },
+                                  "values": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "object",
+                                      "required": [
+                                        "userEnteredValue"
+                                      ],
+                                      "properties": {
+                                        "userEnteredValue": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "additionalProperties": false
+                                    },
+                                    "maxItems": 0
+                                  }
+                                }
+                              },
+                              {
+                                "type": "object",
+                                "required": [],
+                                "properties": {
+                                  "type": {
+                                    "type": "string",
+                                    "const": "BOOLEAN"
+                                  },
+                                  "values": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "object",
+                                      "required": [
+                                        "userEnteredValue"
+                                      ],
+                                      "properties": {
+                                        "userEnteredValue": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "additionalProperties": false
+                                    },
+                                    "maxItems": 2
+                                  }
+                                }
+                              },
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "type": {
+                                    "type": "string",
+                                    "const": "ONE_OF_LIST"
+                                  },
+                                  "values": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "object",
+                                      "required": [
+                                        "userEnteredValue"
+                                      ],
+                                      "properties": {
+                                        "userEnteredValue": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "additionalProperties": false
+                                    }
+                                  }
+                                }
+                              }
+                            ]
+                          },
+                          "inputMessage": {
+                            "type": "string"
+                          },
+                          "strict": {
+                            "type": "boolean"
+                          },
+                          "showCustomUi": {
+                            "type": "boolean"
+                          }
+                        },
+                        "additionalProperties": false
+                      },
+                      "filteredRowsIncluded": {
+                        "type": "boolean"
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
           }
         }
       }

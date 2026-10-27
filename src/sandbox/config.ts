@@ -10,7 +10,7 @@ import { getRuntimeRequestContext } from "#veryfront/platform/runtime-request-co
 import { getCurrentVeryfrontCloudContext } from "#veryfront/provider/veryfront-cloud/context.ts";
 import {
   createHostInternalOriginBoundOutboundFetch,
-  createOriginBoundOutboundFetch,
+  createVeryfrontApiOriginBoundOutboundFetch,
   guardedExactHttpLoopbackOutboundFetch,
 } from "#veryfront/security/http/outbound-fetch.ts";
 import type { SandboxClientOptions } from "./types.ts";
@@ -46,7 +46,7 @@ export function fetchSandboxUrl(url: string, init?: RequestInit): Promise<Respon
   if (/^http:\/\/(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?$/.test(origin)) {
     return guardedExactHttpLoopbackOutboundFetch(url, { ...init, redirect: "error" });
   }
-  return createOriginBoundOutboundFetch(url)(url, init);
+  return createVeryfrontApiOriginBoundOutboundFetch(url)(url, init);
 }
 
 /** @internal Fetch a host-selected sandbox runtime route, including private Kubernetes DNS. */
@@ -57,7 +57,7 @@ export function fetchSandboxRuntimeUrl(url: string, init?: RequestInit): Promise
 export function resolveSandboxApiUrl(options: SandboxClientOptions = {}): string {
   const url = options.apiUrl || getCurrentVeryfrontCloudContext()?.apiBaseUrl ||
     getHostEnv("VERYFRONT_API_URL");
-  if (url) return applyIntrinsic(stringReplace, url, [/\/+$/, ""]) as string;
+  if (url) return applyIntrinsic(stringReplace, url, [/(?<!\/)\/+$/, ""]) as string;
 
   // Fail closed: never silently default to the production API while attaching an
   // ambient auth token — a missing VERYFRONT_API_URL in staging/CI would
@@ -67,18 +67,11 @@ export function resolveSandboxApiUrl(options: SandboxClientOptions = {}): string
   });
 }
 
-export function resolveSandboxAuthToken(options: SandboxClientOptions = {}): string {
-  const explicitToken = trimString(options.authToken);
-  if (explicitToken) return explicitToken;
-
-  // Caller-selected origins form a separate credential domain. Ambient
-  // host login credentials can be reused only for the host API. A credential
-  // already bound to the current request remains caller-owned unless it is
-  // the host-private login credential.
-  const selectedApiUrl = resolveSandboxApiUrl(options);
-  const scopedContext = getCurrentVeryfrontCloudContext();
-  const scopedToken = trimString(scopedContext?.apiToken);
-  const scopedApiUrl = trimString(scopedContext?.apiBaseUrl);
+function resolveScopedSandboxAuthToken(
+  selectedApiUrl: string,
+  scopedToken: string | undefined,
+  scopedApiUrl: string | undefined,
+): string | undefined {
   if (scopedApiUrl && sameApiOrigin(selectedApiUrl, scopedApiUrl)) {
     if (scopedToken) return scopedToken;
     throw CONFIG_INVALID.create({
@@ -92,19 +85,13 @@ export function resolveSandboxAuthToken(options: SandboxClientOptions = {}): str
     });
   }
 
-  const requestToken = trimString(getRuntimeRequestContext()?.token);
-  if (requestToken) {
-    if (requestToken === getHostSecret("VERYFRONT_API_TOKEN")) {
-      if (!isHostApiOrigin(selectedApiUrl)) {
-        throw CONFIG_INVALID.create({
-          detail: "Sandbox auth must be provided explicitly for a custom API URL.",
-        });
-      }
-      requireHostPrivateApiHttps(selectedApiUrl);
-    }
-    return requestToken;
-  }
+  return undefined;
+}
 
+function resolveEnvironmentSandboxAuthToken(
+  options: SandboxClientOptions,
+  selectedApiUrl: string,
+): string | undefined {
   if (options.apiUrl === undefined) {
     const environmentToken = trimString(getHostEnv("VERYFRONT_API_TOKEN"));
     if (environmentToken) {
@@ -125,6 +112,40 @@ export function resolveSandboxAuthToken(options: SandboxClientOptions = {}): str
       });
     }
   }
+
+  return undefined;
+}
+
+export function resolveSandboxAuthToken(options: SandboxClientOptions = {}): string {
+  const explicitToken = trimString(options.authToken);
+  if (explicitToken) return explicitToken;
+
+  // Caller-selected origins form a separate credential domain. Ambient
+  // host login credentials can be reused only for the host API. A credential
+  // already bound to the current request remains caller-owned unless it is
+  // the host-private login credential.
+  const selectedApiUrl = resolveSandboxApiUrl(options);
+  const scopedContext = getCurrentVeryfrontCloudContext();
+  const scopedToken = trimString(scopedContext?.apiToken);
+  const scopedApiUrl = trimString(scopedContext?.apiBaseUrl);
+  const scopedAuthToken = resolveScopedSandboxAuthToken(selectedApiUrl, scopedToken, scopedApiUrl);
+  if (scopedAuthToken !== undefined) return scopedAuthToken;
+
+  const requestToken = trimString(getRuntimeRequestContext()?.token);
+  if (requestToken) {
+    if (requestToken === getHostSecret("VERYFRONT_API_TOKEN")) {
+      if (!isHostApiOrigin(selectedApiUrl)) {
+        throw CONFIG_INVALID.create({
+          detail: "Sandbox auth must be provided explicitly for a custom API URL.",
+        });
+      }
+      requireHostPrivateApiHttps(selectedApiUrl);
+    }
+    return requestToken;
+  }
+
+  const environmentToken = resolveEnvironmentSandboxAuthToken(options, selectedApiUrl);
+  if (environmentToken !== undefined) return environmentToken;
 
   if (!isHostApiOrigin(selectedApiUrl)) {
     throw CONFIG_INVALID.create({

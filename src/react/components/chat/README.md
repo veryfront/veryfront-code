@@ -29,7 +29,7 @@ components it re-exports live here.
 | JSDoc on the exports themselves                                                            | Per-prop meaning                                             | Feeds the generated reference above                                                                                                                            |
 
 Docs changes belong in one of those. Adding an export? Regenerate the reference
-with `deno task docs` (CI pins Deno 2.7.7 — put it first on `PATH`).
+with `deno task docs` (CI pins Deno 2.9.7 — put it first on `PATH`).
 
 ## Layout
 

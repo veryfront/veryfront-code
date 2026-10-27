@@ -4,12 +4,7 @@ description: "How Veryfront Code apps, agents, tools, skills, prompts, resources
 order: 2
 ---
 
-Veryfront Code uses primitives to separate responsibility. A primitive is an
-ownership boundary: it names what kind of work is happening, what lifecycle owns
-that work, and where the runtime boundary sits.
-
-The goal is not to use every primitive. The goal is to pick the smallest one
-that explains the work clearly.
+Each primitive has one responsibility. Choose the smallest one that fits the work.
 
 ## Primitives
 
@@ -39,11 +34,6 @@ event and primary lifecycle.
 For example, an app route can receive a webhook. A workflow can coordinate the
 response. A task can run slow background work. An agent can reason about a
 user-facing decision. A skill can give the agent task-specific instructions.
-
-This keeps the project understandable. The app owns entry points. Agents own
-model decisions. Tools own callable actions. Tasks own background targets.
-Evals own quality measurement. Workflows own automation logic. Runs own
-durable execution. Extensions own replaceable runtime infrastructure.
 
 For task-focused selection, see [Choose a primitive](../guides/choose-a-primitive.md).
 For exact agent runtime APIs, see

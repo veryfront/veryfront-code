@@ -1,8 +1,13 @@
+import { readToolDiscoveryMetadata } from "#veryfront/tool/discovery-metadata.ts";
 import { markTrustedPlatformSource } from "#veryfront/tool/platform-source-provenance.ts";
 import { markTrustedHostToolProvenance } from "#veryfront/tool/host-tool-provenance.ts";
 import type { ExecutorChannel } from "../executor/channel.ts";
 import type { HostToolSet } from "#veryfront/tool/host-tools.ts";
-import type { RemoteToolSource, ToolExecutionContext } from "#veryfront/tool/types.ts";
+import type {
+  RemoteToolSource,
+  ToolDefinition,
+  ToolExecutionContext,
+} from "#veryfront/tool/types.ts";
 import { revokeModelRuntimeResolver } from "../runtime/model-transport.ts";
 import type { ExecutorRuntimeFacades } from "./executor-runtime-prepare.ts";
 import type { ExecutorRuntimeInstall } from "./executor-runtime-install-schema.ts";
@@ -70,8 +75,43 @@ export async function createExecutorRuntimeFacades(options: {
     forgetCatalog();
     return Promise.resolve();
   }
-  try {
-    signal.throwIfAborted();
+  function buildHostTools(
+    source: RemoteToolSource,
+    definitions: readonly ToolDefinition[],
+  ): HostToolSet {
+    const tools: HostToolSet = Object.create(null);
+    for (const definition of definitions) {
+      const alias = input.hostToolAliases?.find((entry) =>
+        entry.sourceId === source.id && entry.toolName === definition.name
+      );
+      tools[definition.name] = {
+        id: definition.name,
+        ...(alias ? { ownerAgentId: alias.ownerAgentId, shortName: alias.shortName } : {}),
+        title: definition.title,
+        description: definition.description,
+        discovery: readToolDiscoveryMetadata(definition),
+        inputSchemaJson: definition.parameters,
+        async execute(args: unknown, context?: ToolExecutionContext) {
+          signal.throwIfAborted();
+          if (!args || typeof args !== "object" || Array.isArray(args)) {
+            throw new TypeError("Invalid executor tool arguments");
+          }
+          return await source.executeTool(
+            definition.name,
+            args as Record<string, unknown>,
+            context,
+          );
+        },
+      };
+    }
+    for (const entry of input.platformHostTools ?? []) {
+      const tool = tools[entry.toolName];
+      if (entry.sourceId === source.id && tool) markTrustedHostToolProvenance(tool);
+    }
+    return tools;
+  }
+
+  function snapshotSourceGrants() {
     const hostIds = new Set(input.grant.hostToolFacadeIds);
     const remoteIds = new Set(input.grant.remoteToolSourceIds);
     const expected = new Set([...hostIds, ...remoteIds]);
@@ -81,6 +121,12 @@ export async function createExecutorRuntimeFacades(options: {
     for (const id of projectContextSources) {
       if (!expected.has(id)) throw new TypeError("Project context source is unavailable");
     }
+    return { remoteIds, expected };
+  }
+
+  try {
+    signal.throwIfAborted();
+    const { remoteIds, expected } = snapshotSourceGrants();
     const sources = expected.size
       ? await createExecutorRemoteToolSources({
         channel,
@@ -103,34 +149,7 @@ export async function createExecutorRuntimeFacades(options: {
         continue;
       }
       const definitions = await source.listTools({ abortSignal: signal });
-      const tools: HostToolSet = Object.create(null);
-      for (const definition of definitions) {
-        const alias = input.hostToolAliases?.find((entry) =>
-          entry.sourceId === source.id && entry.toolName === definition.name
-        );
-        tools[definition.name] = {
-          id: definition.name,
-          ...(alias ? { ownerAgentId: alias.ownerAgentId, shortName: alias.shortName } : {}),
-          title: definition.title,
-          description: definition.description,
-          inputSchemaJson: definition.parameters,
-          async execute(args: unknown, context?: ToolExecutionContext) {
-            signal.throwIfAborted();
-            if (!args || typeof args !== "object" || Array.isArray(args)) {
-              throw new TypeError("Invalid executor tool arguments");
-            }
-            return await source.executeTool(
-              definition.name,
-              args as Record<string, unknown>,
-              context,
-            );
-          },
-        };
-      }
-      for (const entry of input.platformHostTools ?? []) {
-        const tool = tools[entry.toolName];
-        if (entry.sourceId === source.id && tool) markTrustedHostToolProvenance(tool);
-      }
+      const tools = buildHostTools(source, definitions);
       hostTools.set(source.id, tools);
     }
     const persistence = createExecutorPersistenceFacades({

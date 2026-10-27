@@ -40,15 +40,18 @@ function createManualTimers(): {
   clearTimeoutFn: typeof clearTimeout;
 } {
   const callbacks: Array<() => void> = [];
-  const setTimeoutFn: typeof setTimeout = (callback, _delay, ...args) => {
-    callbacks.push(() => {
-      if (typeof callback !== "function") {
-        throw new TypeError("String timer handlers are unsupported in resume-session tests");
-      }
-      callback(...args);
-    });
-    return globalThis.setTimeout(() => {}, 60_000);
-  };
+  const setTimeoutFn = Object.assign(
+    (callback: TimerHandler, _delay?: number, ...args: unknown[]) => {
+      callbacks.push(() => {
+        if (typeof callback !== "function") {
+          throw new TypeError("String timer handlers are unsupported in resume-session tests");
+        }
+        callback(...args);
+      });
+      return globalThis.setTimeout(() => {}, 60_000);
+    },
+    globalThis.setTimeout,
+  );
   return {
     callbacks,
     setTimeoutFn,
@@ -569,6 +572,47 @@ describe("agent/runtime/resume-session", () => {
       threadId: crypto.randomUUID(),
     });
     manager.completeRun("run_1000", replacement);
+    assertEquals(manager.isSupersededRun("run_1000", overflowSignal), false);
+    manager.reset();
+  });
+
+  it("settles overflow cancellation bookkeeping without changing another producer", () => {
+    const manager = new RunResumeSessionManager<{ ok: boolean }>();
+    let overflowSignal: AbortSignal | undefined;
+
+    for (let index = 0; index <= 1_000; index += 1) {
+      const runId = `run_${index}`;
+      const signal = manager.startRun({ runId, threadId: crypto.randomUUID() });
+      manager.cancelRun(runId);
+      if (index === 1_000) overflowSignal = signal;
+    }
+
+    assertExists(overflowSignal);
+    assertEquals(manager.getRunStatus("run_1000"), "cancelled");
+    assertThrows(
+      () => manager.startRun({ runId: "run_1000", threadId: crypto.randomUUID() }),
+      RunAlreadyExistsError,
+    );
+
+    const foreign = new AbortController();
+    foreign.abort();
+    manager.settleCancelledRun("run_1000", foreign.signal);
+    assertEquals(manager.getRunStatus("run_1000"), "cancelled");
+    manager.settleCancelledRun("run_1000", overflowSignal);
+    assertEquals(manager.getRunStatus("run_1000"), null);
+    const replacement = manager.startRun({
+      runId: "run_1000",
+      threadId: crypto.randomUUID(),
+    });
+    manager.settleCancelledRun("run_1000", overflowSignal);
+    manager.settleCancelledRun("run_1000", replacement);
+    assertEquals(manager.getRunStatus("run_1000"), "running");
+    manager.cancelRun("run_1000");
+    assertEquals(manager.getRunStatus("run_1000"), "cancelled");
+    manager.settleCancelledRun("run_1000", overflowSignal);
+    assertEquals(manager.getRunStatus("run_1000"), "cancelled");
+    manager.settleCancelledRun("run_1000", replacement);
+    assertEquals(manager.getRunStatus("run_1000"), null);
     assertEquals(manager.isSupersededRun("run_1000", overflowSignal), false);
     manager.reset();
   });

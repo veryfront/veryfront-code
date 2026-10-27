@@ -7,6 +7,28 @@ const BOTS = new Map([
 const CODEX_LOGIN = "chatgpt-codex-connector[bot]";
 const GITHUB_ACTIONS_LOGIN = "github-actions[bot]";
 const CODEX_NO_FINDINGS = "Codex Review: Didn't find any major issues.";
+const CODEX_REVIEW_RECEIPT_PREFIX = "<!-- codex-review-receipt:v1 -->\n\n";
+
+// Only one known receipt envelope may surround a clean connector verdict.
+function isCodexCleanVerdict(body, allowLegacyWhitespace = false) {
+  const normalized = body.replaceAll("\r\n", "\n");
+  const markers = normalized.match(/<!--\s*codex-review-receipt\b/g) ?? [];
+  if (markers.length === 0) {
+    const legacy = allowLegacyWhitespace ? normalized.trim() : normalized;
+    return legacy.startsWith(CODEX_NO_FINDINGS);
+  }
+  if (
+    markers.length !== 1 || !normalized.startsWith(CODEX_REVIEW_RECEIPT_PREFIX)
+  ) {
+    return false;
+  }
+  return normalized.slice(CODEX_REVIEW_RECEIPT_PREFIX.length).startsWith(
+    CODEX_NO_FINDINGS,
+  );
+}
+
+const CODEX_REVIEW_STATE_METADATA =
+  /^<!-- codex-review-state:v1 (\{[^\r\n]{1,4096}\}) -->$/;
 const CODEX_REVIEW_SUMMARY_MARKER =
   "<!-- codex-pull-request-review-summary -->";
 const CODEX_REVIEW_SUMMARY_ROW =
@@ -259,12 +281,82 @@ function hasInvalidSummaryCompletionTime(
       (!updatedAtIsWholeSecond || completedAt >= updatedAt + 1000));
 }
 
+// The live v1 connector inserts compact state metadata before its display table.
+// Security state never substitutes for a completed, clean code review.
+function parseCompletedCodexStateMetadata(line) {
+  const match = CODEX_REVIEW_STATE_METADATA.exec(line);
+  if (!match) return undefined;
+  let metadata;
+  try {
+    metadata = JSON.parse(match[1]);
+  } catch {
+    return undefined;
+  }
+  if (
+    !metadata || typeof metadata !== "object" || Array.isArray(metadata) ||
+    JSON.stringify(metadata) !== match[1] ||
+    Object.keys(metadata).length !== 2 ||
+    !Object.hasOwn(metadata, "code_review") ||
+    !Object.hasOwn(metadata, "security_review")
+  ) return undefined;
+  const keys = [
+    "commit_sha",
+    "has_any_findings",
+    "has_unresolved_findings",
+    "status",
+  ];
+  for (const state of [metadata.code_review, metadata.security_review]) {
+    if (
+      !state || typeof state !== "object" || Array.isArray(state) ||
+      Object.keys(state).length !== keys.length ||
+      !keys.every((key) => Object.hasOwn(state, key)) ||
+      (state.commit_sha !== null &&
+        (typeof state.commit_sha !== "string" ||
+          !FULL_SHA.test(state.commit_sha))) ||
+      (state.has_any_findings !== null &&
+        typeof state.has_any_findings !== "boolean") ||
+      (state.has_unresolved_findings !== null &&
+        typeof state.has_unresolved_findings !== "boolean") ||
+      (state.status !== null &&
+        (typeof state.status !== "string" || state.status.length === 0 ||
+          state.status.length > 32))
+    ) return undefined;
+  }
+  const code = metadata.code_review;
+  const security = metadata.security_review;
+  if (
+    typeof code.commit_sha !== "string" || code.status !== "completed" ||
+    (security.commit_sha !== null &&
+      security.commit_sha.toLowerCase() !== code.commit_sha.toLowerCase())
+  ) return undefined;
+  return {
+    head: code.commit_sha,
+    // Historical findings persist after resolution. They do not revoke a
+    // separate clean receipt, but never qualify this summary as clean proof.
+    hasFindings: [code, security].some((state) =>
+      state.has_unresolved_findings === true ||
+      (state.has_any_findings === true &&
+        state.has_unresolved_findings !== false)
+    ),
+    clean: code.has_any_findings === false &&
+      code.has_unresolved_findings === false,
+  };
+}
+
 function parseCompletedCodexSummary(comment) {
   if (
     !isPinnedBot(comment?.user, CODEX_LOGIN) ||
     typeof comment?.body !== "string"
   ) return undefined;
   const lines = comment.body.replaceAll("\r\n", "\n").split("\n");
+  let stateMetadata;
+  const stateMarkers = comment.body.match(/<!--\s*codex-review-state\b/g) ?? [];
+  if (stateMarkers.length > 0) {
+    if (stateMarkers.length !== 1) return undefined;
+    stateMetadata = parseCompletedCodexStateMetadata(lines[1] ?? "");
+    if (!stateMetadata) return undefined;
+    lines.splice(1, 1);
+  }
   // The connector now includes its separate security-review display in this
   // comment. It is never code-review proof: retain the exact Code Review row,
   // head resolution, pinned identity, epoch and later reaction requirements.
@@ -327,6 +419,8 @@ function parseCompletedCodexSummary(comment) {
     completedAt,
     updatedAt,
     securityHead: securityDisplay?.headSha,
+    stateHead: stateMetadata?.head,
+    stateMetadata,
   };
 }
 
@@ -339,11 +433,16 @@ async function resolvedCompletedCodexSummary(
   const summary = parseCompletedCodexSummary(comment);
   if (
     !summary ||
+    (summary.stateHead !== undefined &&
+      summary.stateHead.toLowerCase() !== headSha.toLowerCase()) ||
     (summary.securityHead !== undefined &&
       summary.securityHead.toLowerCase() !== headSha.toLowerCase()) ||
     (boundary !== undefined &&
-      (summary.completedAt <= boundary.time ||
-        summary.updatedAt <= boundary.time)) ||
+      ((!summary.stateMetadata?.hasFindings &&
+        summary.completedAt <= boundary.time) ||
+        (summary.stateMetadata?.hasFindings
+          ? summary.updatedAt < boundary.time
+          : summary.updatedAt <= boundary.time))) ||
     !headSha.toLowerCase().startsWith(summary.shortRef.toLowerCase())
   ) return undefined;
   const resolved = await resolveCommit(summary.shortRef);
@@ -1203,6 +1302,23 @@ export async function findAutomatedReview(
       resolveCommit,
     );
     if (!summary) continue;
+    if (summary.stateMetadata?.hasFindings) {
+      const freshness = boundary && summary.updatedAt === boundary.time
+        ? "ambiguous"
+        : evidenceFreshness(
+          comment, "commented", boundary, timeline, "finding",
+        );
+      if (freshness !== "older") {
+        codexFindings.push({
+          evidence: comment,
+          freshness,
+          time: summary.updatedAt,
+          timelineEvent: "commented",
+        });
+      }
+      continue;
+    }
+    if (summary.stateMetadata && !summary.stateMetadata.clean) continue;
     const reaction = codexCompletionReaction(reactions, summary, boundary);
     if (!reaction) continue;
     codexSuccesses.push({
@@ -1240,7 +1356,7 @@ export async function findAutomatedReview(
       typeof resolved === "string" && FULL_SHA.test(resolved) &&
       resolved.toLowerCase() === headSha.toLowerCase()
     ) {
-      const cleanVerdict = comment.body.startsWith(CODEX_NO_FINDINGS);
+      const cleanVerdict = isCodexCleanVerdict(comment.body);
       const freshness = evidenceFreshness(
         comment,
         "commented",
@@ -1820,6 +1936,8 @@ export async function publishAutomatedReviewStatus({
             );
             if (
               summary &&
+              !summary.stateMetadata?.hasFindings &&
+              (!summary.stateMetadata || summary.stateMetadata.clean) &&
               !codexCompletionReaction(reactions, summary, summaryBoundary)
             ) {
               waitsForReaction = true;

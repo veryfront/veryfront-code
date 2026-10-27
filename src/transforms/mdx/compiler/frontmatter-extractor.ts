@@ -52,14 +52,14 @@ function parseExportValue(rawValue: string): unknown {
   if (rawValue === "true") return true;
   if (rawValue === "false") return false;
   if (rawValue === "null") return null;
-  if (/^\d+(?:\.\d+)?$/.test(rawValue)) return parseFloat(rawValue);
+  if (/^\d+(?:\.\d+)?$/.test(rawValue)) return Number.parseFloat(rawValue);
 
   return rawValue.replace(/^['"`]|['"`]$/g, "");
 }
 
 function extractExportConstants(body: string): { body: string; exports: Record<string, unknown> } {
   const exportRegex =
-    /^export\s+const\s+(\w+)\s*=\s*(['"`][^'"`\n]*['"`]|\d+(?:\.\d+)?|true|false|null)\s*;?\s*$/gm;
+    /^export\s+const\s+(\w+)\s*=\s*(['"`][^'"`\n]*['"`]|\d+(?:\.\d+)?|true|false|null)\s*(?:;\s*)?$/gm;
 
   const exports: Record<string, unknown> = {};
   let cleanedBody = body;

@@ -1,3 +1,4 @@
+import { IMPORT_FROM, IMPORT_TRIVIA } from "../../../../modules/loader-shared/import-syntax.mjs";
 export function extractBalancedBlock(
   source: string,
   startIndex: number,
@@ -56,7 +57,14 @@ export function cleanModuleCode(moduleCode: string): string {
   // which is correct for well-formed ESM (a variable literally named `from`
   // inside an import binding would break this, but that never appears in
   // MDX-compiled output).
-  let cleaned = moduleCode.replace(/import\s+[\s\S]*?\bfrom\b\s+['"][^'"]+['"];?[ \t]*\n?/g, "");
+  let cleaned = moduleCode.replace(
+    new RegExp(
+      String
+        .raw`\bimport(?![\p{ID_Continue}$])${IMPORT_TRIVIA}${IMPORT_FROM}['"][^'"]+['"];?[ \t]*\n?`,
+      "gu",
+    ),
+    "",
+  );
   // Remove side-effect-only imports (no bindings, no `from`): import "mod"
   cleaned = cleaned.replace(/^import\s+['"][^'"]+['"];?[ \t]*\n?/gm, "");
 

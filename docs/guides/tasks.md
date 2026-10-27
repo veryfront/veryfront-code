@@ -1,7 +1,7 @@
 ---
 title: "Tasks"
 description: "Define background task functions that can run locally or as cloud runs."
-order: 30
+order: 290
 ---
 
 Tasks are user-defined functions in `tasks/`. Run them locally with `veryfront task <name>` or in the cloud as task runs.
@@ -102,6 +102,8 @@ interface TaskContext {
   projectId?: string;
   environmentId?: string;
   signal?: AbortSignal;
+  dataDir?: string;
+  attempt?: number;
 }
 ```
 
@@ -118,7 +120,15 @@ interface TaskContext {
   `veryfront task <name>` runs
 - **`projectId`**: project identifier (available in cloud context)
 - **`environmentId`**: runtime-target environment identifier, when selected
+- **`attempt`**: 1-based execution attempt. The task runner sets it to `1`
+  when no attempt is supplied; hand-built contexts can omit it
 - **`signal`**: optional cooperative cancellation signal
+- **`dataDir`**: writable scratch directory for this run. Hosted runtimes mount
+  the project filesystem read-only, so writes to relative paths such as
+  `.data/` fail there with `TASK_FILESYSTEM_READ_ONLY`. Write temporary files
+  under `ctx.dataDir` instead. It is removed when the run ends; keep durable
+  state in a database or blob store. It is unset when the process cannot write
+  to the OS temp directory
 
 Use `ctx.input` for the data a task works on and `ctx.config` for settings
 that control how it runs. Tasks that read business data from `ctx.config`
@@ -128,7 +138,7 @@ new runs with `input` instead of `config`. See
 [Run input and output](./run-input-output.md) for how the return value becomes
 the run's output.
 
-```ts
+```ts title="tasks/classify-ticket.ts"
 import type { TaskContext } from "veryfront/task";
 
 export default {
@@ -167,6 +177,10 @@ ignores the signal. The run fails with `RUN_TIMEOUT`. Code that ignores cancella
 can continue executing inside the runtime process after the response returns;
 a timeout does not roll back side effects.
 
+A task that throws fails with error code `TASK_EXECUTION_FAILED`, or
+`TASK_FILESYSTEM_READ_ONLY` when it wrote outside `ctx.dataDir` on a read-only
+filesystem.
+
 ### Retries
 
 A project task run is retried under its `backoff_limit` (default 3), so it
@@ -185,7 +199,7 @@ retry starts when its backoff would pass the `timeout_seconds` deadline; the
 run then fails with the last attempt's error. `ctx.attempt` is the 1-based
 attempt number.
 
-```ts
+```ts title="tasks/sync-invoices.ts"
 import { RetryableError, type TaskContext } from "veryfront/task";
 
 export default {
@@ -232,7 +246,7 @@ on reads. Access control and read filtering are unchanged.
 A recorded mismatch has this shape. A run keeps the first mismatch detected,
 with at most 20 errors:
 
-```json
+```json title="schema-violation.json"
 {
   "phase": "output",
   "reason": "invalid",
@@ -244,11 +258,23 @@ with at most 20 errors:
 
 The runtime records `reason` `invalid` or `schema_uncompilable` for the
 `input` and `output` phases. The platform records the `identity` phase, with
-`reason` `identity_missing` or `identity_mismatch`, when it finalizes the run. Each run records `input_schema_sha256` and
-`output_schema_sha256`: the lowercase sha256 hex of the canonical JSON Schema
-(a `defineSchema` schema converted to JSON Schema, object keys sorted at every
-depth, serialized without whitespace). A task without that schema records
-`null`. Runs created before identities existed are never revalidated.
+`reason` `identity_missing` or `identity_mismatch`, when it finalizes the run.
+
+The SDK compatibility `Run` shape exposes `input_schema_sha256` and
+`output_schema_sha256`; canonical REST declares the corresponding optional
+`schemas.input.sha256` and `schemas.output.sha256` fields.
+
+Reported identities are
+the lowercase sha256 hex of the canonical JSON Schema (a `defineSchema` schema
+converted to JSON Schema, object keys sorted at every depth, serialized without
+whitespace).
+
+A deployed API may omit the optional schema entries, so the SDK may
+return `null` even for a schema-bound task. Missing identities do
+not prove that no schema was declared.
+
+Runs created before identities existed are
+never revalidated. See [Run input and output](./run-input-output.md#schema-identity).
 
 ## Child runs
 
@@ -263,7 +289,7 @@ const result = await ctx.runChild({
 });
 ```
 
-## Waiting on child runs
+## Wait for child runs
 
 Tasks do not support durable child-dependency waiting. Using `await` inside
 `run(ctx)` does not checkpoint the task or put its run into
@@ -320,8 +346,10 @@ await runs.createTaskRun({
 
 To send business input over REST, add `input` to the request next to `config`:
 
-```bash
-curl -X POST "$VERYFRONT_API_URL/runs" \
+Set `VERYFRONT_API_BASE_URL` to your REST base URL before running this command.
+
+```bash title="create-task-run.sh"
+curl -X POST "$VERYFRONT_API_BASE_URL/runs" \
   -H "Authorization: Bearer <TOKEN>" \
   -H "Content-Type: application/json" \
   -H "Idempotency-Key: <UNIQUE_REQUEST_ID>" \

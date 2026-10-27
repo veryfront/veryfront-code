@@ -1,3 +1,13 @@
+import {
+  assertPreparedMessageBudget,
+  DEFAULT_TOKEN_BUDGET,
+  estimateTokens,
+} from "./message-prep-budget.ts";
+export {
+  assertPreparedMessageBudget,
+  estimateOverhead,
+  estimateTokens,
+} from "./message-prep-budget.ts";
 import { inheritToolResultSource } from "./tool-result-source.ts";
 import { cleanContent, hasValidContent } from "./provider-message-content.ts";
 import { filterPrivateArray } from "#veryfront/security/private-array.ts";
@@ -21,15 +31,18 @@ import {
 } from "./provider-message-tool-pair-repair.ts";
 import { findProviderVisibleToolReplayMatches } from "./tool-replay-reconciliation.ts";
 import {
-  buildDataFileAnnotation,
+  type ChatAssistantContentPart,
   type ChatToolResultOutput,
   type ChatToolResultPart,
   type ChatUiMessage,
   type ChatUiMessagePart,
-  normalizeInlineAttachmentMediaType,
+  type ChatUserContentPart,
   type ProviderModelMessage,
-  type UploadedFileReference,
 } from "./types.ts";
+import {
+  normalizeMessageFilePartMediaTypes,
+  rewriteUnsupportedFilePartsAsAnnotations,
+} from "./message-file-parts.ts";
 import { historicalToolSummaries } from "../integrations/_tool_summaries.ts";
 import type { IntegrationEndpointHistoricalSummary } from "../integrations/schema.ts";
 import { safeJsonParse } from "#veryfront/utils/json.ts";
@@ -46,11 +59,15 @@ import type {
   HistoricalToolInputRetentionOptions,
   HistoricalToolInputRetentionPolicy,
   MessagePrepLimits,
-  MessageTokenBreakdown,
   PrepareProviderModelMessagesFromUiMessagesOptions,
 } from "./message-prep-types.ts";
 export { DEFAULT_MESSAGE_PREP_LIMITS } from "./message-prep-types.ts";
 export { repairToolPairs } from "./provider-message-tool-pair-repair.ts";
+export {
+  isModelSupportedFileMediaType,
+  normalizeMessageFilePartMediaTypes,
+  rewriteUnsupportedFilePartsAsAnnotations,
+} from "./message-file-parts.ts";
 export type {
   HistoricalToolInputCompactionDiagnostic,
   HistoricalToolInputRetainedField,
@@ -62,122 +79,26 @@ export type {
   PrepareProviderModelMessagesFromUiMessagesOptions,
 } from "./message-prep-types.ts";
 
-const CHARS_PER_TOKEN = DEFAULT_MESSAGE_PREP_LIMITS.charsPerToken;
-
-/** Estimate tokens. */
-export function estimateTokens(value: unknown): number {
-  return Math.ceil(stringifyChatJson(value ?? "").length / CHARS_PER_TOKEN);
-}
-
-function createEmptyTokenBreakdown(totalTokens: number): MessageTokenBreakdown {
-  return {
-    totalTokens,
-    systemTextTokens: 0,
-    userContentTokens: 0,
-    assistantContentTokens: 0,
-    reasoningTokens: 0,
-    toolCallInputTokens: 0,
-    toolResultOutputTokens: 0,
-    fileTokens: 0,
-    unknownTokens: 0,
-  };
-}
-
-function addPartTokenBreakdown(
-  breakdown: MessageTokenBreakdown,
-  role: string,
-  part: unknown,
-): void {
-  if (!isRecord(part) || typeof part.type !== "string") {
-    breakdown.unknownTokens += estimateTokens(part);
-    return;
-  }
-
-  switch (part.type) {
-    case "text": {
-      const tokens = estimateTokens(typeof part.text === "string" ? part.text : part);
-      if (role === "system") breakdown.systemTextTokens += tokens;
-      else if (role === "user") breakdown.userContentTokens += tokens;
-      else if (role === "assistant") breakdown.assistantContentTokens += tokens;
-      else breakdown.unknownTokens += tokens;
-      return;
-    }
-    case "reasoning":
-      breakdown.reasoningTokens += estimateTokens(part);
-      return;
-    case "tool-call":
-    case "tool_call":
-    case "dynamic-tool":
-      breakdown.toolCallInputTokens += estimateTokens(
-        "input" in part ? part.input : "args" in part ? part.args : part,
-      );
-      return;
-    case "tool-result":
-    case "tool_result":
-      breakdown.toolResultOutputTokens += estimateTokens(
-        "output" in part ? part.output : "result" in part ? part.result : part,
-      );
-      return;
-    case "file":
-    case "image":
-      breakdown.fileTokens += estimateTokens(part);
-      return;
-    default:
-      if (part.type.startsWith("tool-")) {
-        breakdown.toolCallInputTokens += estimateTokens(
-          "input" in part ? part.input : "args" in part ? part.args : part,
-        );
-        return;
-      }
-      breakdown.unknownTokens += estimateTokens(part);
-  }
-}
-
-/** Estimate token categories for provider, UI, or runtime messages. */
-export function estimateMessageTokenBreakdown(messages: readonly unknown[]): MessageTokenBreakdown {
-  const breakdown = createEmptyTokenBreakdown(estimateTokens(messages));
-
-  for (const message of messages) {
-    if (!isRecord(message)) {
-      breakdown.unknownTokens += estimateTokens(message);
-      continue;
-    }
-
-    const role = typeof message.role === "string" ? message.role : "unknown";
-    if ("parts" in message && Array.isArray(message.parts)) {
-      for (const part of message.parts) {
-        addPartTokenBreakdown(breakdown, role, part);
-      }
-      continue;
-    }
-
-    if ("content" in message) {
-      const content = message.content;
-      if (typeof content === "string") {
-        const tokens = estimateTokens(content);
-        if (role === "system") breakdown.systemTextTokens += tokens;
-        else if (role === "user") breakdown.userContentTokens += tokens;
-        else if (role === "assistant") breakdown.assistantContentTokens += tokens;
-        else breakdown.unknownTokens += tokens;
-      } else if (Array.isArray(content)) {
-        for (const part of content) {
-          addPartTokenBreakdown(breakdown, role, part);
-        }
-      } else {
-        breakdown.unknownTokens += estimateTokens(content);
-      }
-      continue;
-    }
-
-    breakdown.unknownTokens += estimateTokens(message);
-  }
-
-  return breakdown;
-}
+export { estimateMessageTokenBreakdown } from "./message-token-breakdown.ts";
 
 function truncate(text: string, maxLen: number): string {
   if (text.length <= maxLen) return text;
   return `${text.slice(0, maxLen)}…`;
+}
+
+function summarizeAssistantTurnParts(
+  content: Exclude<ProviderModelMessage["content"], string>,
+  toolNames: string[],
+  assistantConclusion: string,
+): string {
+  for (const part of content) {
+    if (part.type === "tool-call") {
+      toolNames.push(part.toolName);
+    } else if (part.type === "text") {
+      assistantConclusion = truncate(part.text, 150);
+    }
+  }
+  return assistantConclusion;
 }
 
 /** Compress turn. */
@@ -198,13 +119,11 @@ export function compressTurn(
       const text = typeof msg.content === "string" ? msg.content : stringifyChatJson(msg.content);
       userQuery = truncate(text, 100);
     } else if (msg.role === "assistant" && Array.isArray(msg.content)) {
-      for (const part of msg.content) {
-        if (part.type === "tool-call") {
-          toolNames.push(part.toolName);
-        } else if (part.type === "text") {
-          assistantConclusion = truncate(part.text, 150);
-        }
-      }
+      assistantConclusion = summarizeAssistantTurnParts(
+        msg.content,
+        toolNames,
+        assistantConclusion,
+      );
     } else if (msg.role === "assistant" && typeof msg.content === "string") {
       assistantConclusion = truncate(msg.content, 150);
     }
@@ -260,7 +179,13 @@ export function enforceTokenBudgetWithTurnCompression(
   messages: ProviderModelMessage[],
   budget: number,
   overhead: number,
+  preserveSourceMessageIds: readonly string[] = [],
 ): ProviderModelMessage[] {
+  const preservedIds = new Set(preserveSourceMessageIds);
+  const isPreserved = (message: ProviderModelMessage): boolean => {
+    const sourceId = getProviderModelMessageSourceId(message);
+    return sourceId !== undefined && preservedIds.has(sourceId);
+  };
   if (!Number.isSafeInteger(budget) || budget < 0) {
     throw new TypeError("Chat message token budget must be a non-negative safe integer");
   }
@@ -287,7 +212,13 @@ export function enforceTokenBudgetWithTurnCompression(
 
     // Read from `result`: after the first splice, turn indices are positions
     // in the mutated array, not in the original `messages`.
-    const compressed = compressTurn(result, turn.startIdx, turn.endIdx);
+    const turnMessages = result.slice(turn.startIdx, turn.endIdx + 1);
+    const preserved = turnMessages.filter(isPreserved);
+    const compressible = turnMessages.filter((message) => !isPreserved(message));
+    const summary = compressTurn(compressible, 0, compressible.length - 1);
+    const compressed = preserved.length === 0
+      ? summary
+      : [summary[0]!, ...preserved, ...summary.slice(1)];
     const compressedTokens = compressed.reduce(
       (sum, message) => sum + estimateTokens(message.content),
       0,
@@ -318,29 +249,27 @@ export function enforceTokenBudgetWithTurnCompression(
 
   const finalTurns = collectTurns(result);
   const finalMinKeep = Math.min(2, finalTurns.length);
-  let dropCount = 0;
-  while (totalTokens > effectiveBudget && dropCount < finalTurns.length - finalMinKeep) {
-    const turn = finalTurns[dropCount];
-    if (!turn) break;
+  const droppedIndices = new Set<number>();
+  for (
+    let index = 0;
+    totalTokens > effectiveBudget && index < finalTurns.length - finalMinKeep;
+    index++
+  ) {
+    const turn = finalTurns[index];
+    if (!turn) continue;
+    if (result.slice(turn.startIdx, turn.endIdx + 1).some(isPreserved)) continue;
     totalTokens -= turn.tokens;
-    dropCount++;
+    for (let messageIndex = turn.startIdx; messageIndex <= turn.endIdx; messageIndex++) {
+      droppedIndices.add(messageIndex);
+    }
   }
-
-  if (dropCount === 0) return result;
-
-  const firstKeptTurn = finalTurns[dropCount];
-  if (!firstKeptTurn) return result;
-
-  const firstKeepIdx = firstKeptTurn.startIdx;
-  return result.slice(firstKeepIdx);
+  return droppedIndices.size === 0
+    ? result
+    : result.filter((_, index) => !droppedIndices.has(index));
 }
 
-const BUDGET_RATIO = 0.85;
-const DEFAULT_CONTEXT_WINDOW = 200_000;
-const DEFAULT_TOKEN_BUDGET = Math.floor(DEFAULT_CONTEXT_WINDOW * BUDGET_RATIO);
-const TOKENS_PER_TOOL = 250;
-
 const MASK_THRESHOLD = DEFAULT_MESSAGE_PREP_LIMITS.historicalToolOutputMaskChars;
+const RECENT_COLLECTION_MAX_CHARS = 4096;
 const HISTORICAL_TOOL_INPUT_SUMMARY_KIND = "historical_tool_input_summary";
 const PRECEDING_TURN_FILE_READ_TOOL_NAMES = new Set([
   "get_file",
@@ -489,6 +418,38 @@ function resolveHistoricalToolInputRetentionPolicy(
   return fallback ? validateHistoricalToolInputRetentionPolicy(fallback) : undefined;
 }
 
+function validateHistoricalToolInputRetainedField(field: HistoricalToolInputRetainedField): void {
+  if (typeof field === "string") {
+    if (field.length === 0) {
+      throw new TypeError("Historical tool input retained field names must not be empty");
+    }
+    return;
+  }
+  if (!isRecord(field)) {
+    throw new TypeError("Historical tool input retained fields must be strings or objects");
+  }
+  if ("inputNames" in field) {
+    if (
+      !Array.isArray(field.inputNames) ||
+      field.inputNames.length === 0 ||
+      !field.inputNames.every((name) => typeof name === "string" && name.length > 0) ||
+      typeof field.outputName !== "string" ||
+      field.outputName.length === 0
+    ) {
+      throw new TypeError("Historical tool input multi-field selectors are invalid");
+    }
+    return;
+  }
+  if (
+    typeof field.inputName !== "string" ||
+    field.inputName.length === 0 ||
+    (field.outputName !== undefined &&
+      (typeof field.outputName !== "string" || field.outputName.length === 0))
+  ) {
+    throw new TypeError("Historical tool input field selectors are invalid");
+  }
+}
+
 function validateHistoricalToolInputRetentionPolicy(
   policy: HistoricalToolInputRetentionPolicy,
 ): HistoricalToolInputRetentionPolicy {
@@ -508,35 +469,7 @@ function validateHistoricalToolInputRetentionPolicy(
   }
 
   for (const field of policy.retainInputFields ?? []) {
-    if (typeof field === "string") {
-      if (field.length === 0) {
-        throw new TypeError("Historical tool input retained field names must not be empty");
-      }
-      continue;
-    }
-    if (!isRecord(field)) {
-      throw new TypeError("Historical tool input retained fields must be strings or objects");
-    }
-    if ("inputNames" in field) {
-      if (
-        !Array.isArray(field.inputNames) ||
-        field.inputNames.length === 0 ||
-        !field.inputNames.every((name) => typeof name === "string" && name.length > 0) ||
-        typeof field.outputName !== "string" ||
-        field.outputName.length === 0
-      ) {
-        throw new TypeError("Historical tool input multi-field selectors are invalid");
-      }
-      continue;
-    }
-    if (
-      typeof field.inputName !== "string" ||
-      field.inputName.length === 0 ||
-      (field.outputName !== undefined &&
-        (typeof field.outputName !== "string" || field.outputName.length === 0))
-    ) {
-      throw new TypeError("Historical tool input field selectors are invalid");
-    }
+    validateHistoricalToolInputRetainedField(field);
   }
   return policy;
 }
@@ -701,95 +634,6 @@ interface ToolCallInfo {
   input: unknown;
 }
 
-/** Check whether the model supports the file media type. */
-export function isModelSupportedFileMediaType(mediaType: string): boolean {
-  return mediaType.startsWith("image/") || mediaType === "application/pdf" ||
-    mediaType === "text/plain";
-}
-
-/** Normalizes message file part media types. */
-export function normalizeMessageFilePartMediaTypes(messages: ChatUiMessage[]): ChatUiMessage[] {
-  return messages.map((message) => {
-    if (!message.parts.some((part) => part.type === "file")) {
-      return message;
-    }
-
-    const parts = message.parts.map((part) => {
-      if (part.type !== "file") {
-        return part;
-      }
-
-      const mediaType = normalizeInlineAttachmentMediaType(part.filename, part.mediaType);
-      if (mediaType === part.mediaType) {
-        return part;
-      }
-
-      return {
-        ...part,
-        mediaType,
-      };
-    });
-
-    return { ...message, parts };
-  });
-}
-
-/** Rewrite unsupported file parts as annotations. */
-export function rewriteUnsupportedFilePartsAsAnnotations(
-  messages: ChatUiMessage[],
-): ChatUiMessage[] {
-  return messages.map((message) => {
-    if (message.parts.length === 0) {
-      return message;
-    }
-
-    const kept: ChatUiMessagePart[] = [];
-    const dataFiles: UploadedFileReference[] = [];
-
-    for (const part of message.parts) {
-      if (part.type !== "file") {
-        kept.push(part);
-        continue;
-      }
-
-      const normalizedMediaType = normalizeInlineAttachmentMediaType(part.filename, part.mediaType);
-      if (isModelSupportedFileMediaType(normalizedMediaType)) {
-        kept.push({
-          ...part,
-          mediaType: normalizedMediaType,
-        });
-        continue;
-      }
-
-      dataFiles.push({
-        name: part.filename || "file",
-        mediaType: normalizedMediaType,
-        ...(part.url ? { url: part.url } : {}),
-        ...(part.uploadId ? { uploadId: part.uploadId } : {}),
-        ...(part.uploadPath ? { path: part.uploadPath } : {}),
-      });
-    }
-
-    if (dataFiles.length === 0) {
-      return message;
-    }
-
-    const annotation = buildDataFileAnnotation(dataFiles);
-    const lastTextIndex = kept.findLastIndex((part) => part.type === "text");
-
-    if (lastTextIndex >= 0) {
-      const textPart = kept[lastTextIndex];
-      if (textPart?.type === "text") {
-        kept[lastTextIndex] = { type: "text", text: textPart.text + annotation };
-      }
-    } else {
-      kept.push({ type: "text", text: annotation.trimStart() });
-    }
-
-    return { ...message, parts: kept };
-  });
-}
-
 function isPendingToolPart(part: unknown): boolean {
   if (!isRecord(part) || typeof part.type !== "string") {
     return false;
@@ -837,8 +681,11 @@ function isToolErrorState(part: unknown): boolean {
 }
 
 /** Strip pending tool parts. */
-export function stripPendingToolParts(messages: ChatUiMessage[]): ChatUiMessage[] {
-  const replayMatches = findProviderVisibleToolReplayMatches(messages);
+export function stripPendingToolParts(
+  messages: ChatUiMessage[],
+  trustedToolReplayMessageIds: readonly string[] = [],
+): ChatUiMessage[] {
+  const replayMatches = findProviderVisibleToolReplayMatches(messages, trustedToolReplayMessageIds);
 
   return messages.flatMap((message) => {
     if (message.parts.length === 0) {
@@ -920,6 +767,45 @@ function stripSupersededToolErrorParts(messages: ChatUiMessage[]): ChatUiMessage
   });
 }
 
+function appendSanitizedArrayMessage(
+  result: ProviderModelMessage[],
+  message: ProviderModelMessage,
+  options: ProviderMessageSanitizationOptions,
+): void {
+  if (message.role === "user") {
+    const cleaned = cleanContent(
+      message.content as ChatUserContentPart[],
+      message.role,
+    );
+    if (cleaned.length > 0) {
+      result.push(copyProviderModelMessageSourceId(message, { ...message, content: cleaned }));
+    }
+    return;
+  }
+  if (message.role === "assistant") {
+    const cleaned = cleanContent(
+      message.content as ChatAssistantContentPart[],
+      message.role,
+    );
+    if (cleaned.length > 0) {
+      result.push(copyProviderModelMessageSourceId(message, { ...message, content: cleaned }));
+    } else if (shouldPreserveEmptyAssistantMessage(message, options)) {
+      const emptyAssistantMessage: ProviderModelMessage = { role: "assistant", content: [] };
+      result.push(copyProviderModelMessageSourceId(message, emptyAssistantMessage));
+    }
+    return;
+  }
+  if (message.role === "tool") {
+    const cleaned = cleanContent(
+      message.content,
+      message.role,
+    );
+    if (cleaned.length > 0) {
+      result.push(copyProviderModelMessageSourceId(message, { ...message, content: cleaned }));
+    }
+  }
+}
+
 /** Sanitize provider model messages. */
 export function sanitizeProviderModelMessages(
   messages: ProviderModelMessage[],
@@ -929,25 +815,7 @@ export function sanitizeProviderModelMessages(
 
   for (const message of messages) {
     if (Array.isArray(message.content)) {
-      if (message.role === "user") {
-        const cleaned = cleanContent(message.content, message.role);
-        if (cleaned.length > 0) {
-          result.push(copyProviderModelMessageSourceId(message, { ...message, content: cleaned }));
-        }
-      } else if (message.role === "assistant") {
-        const cleaned = cleanContent(message.content, message.role);
-        if (cleaned.length > 0) {
-          result.push(copyProviderModelMessageSourceId(message, { ...message, content: cleaned }));
-        } else if (shouldPreserveEmptyAssistantMessage(message, options)) {
-          const emptyAssistantMessage: ProviderModelMessage = { role: "assistant", content: [] };
-          result.push(copyProviderModelMessageSourceId(message, emptyAssistantMessage));
-        }
-      } else if (message.role === "tool") {
-        const cleaned = cleanContent(message.content, message.role);
-        if (cleaned.length > 0) {
-          result.push(copyProviderModelMessageSourceId(message, { ...message, content: cleaned }));
-        }
-      }
+      appendSanitizedArrayMessage(result, message, options);
       continue;
     }
 
@@ -1007,17 +875,25 @@ export function prepareProviderModelMessagesFromUiMessages(
     options.providerOwnedToolNames,
     options.preserveProviderOwnedToolSourceMessageIds,
   );
-  const strippedPendingToolMessages = stripPendingToolParts(strippedProviderOwnedToolMessages);
+  const strippedPendingToolMessages = stripPendingToolParts(
+    strippedProviderOwnedToolMessages,
+    options.trustedToolReplayMessageIds,
+  );
   const strippedSupersededToolMessages = stripSupersededToolErrorParts(strippedPendingToolMessages);
   const rewrittenMessages = rewriteUnsupportedFilePartsAsAnnotations(
     strippedSupersededToolMessages,
   );
   const providerModelMessages = preserveEmptyAssistantAnchors(
-    convertUiMessagesToProviderModelMessages(rewrittenMessages),
+    convertUiMessagesToProviderModelMessages(
+      rewrittenMessages,
+      options.trustedToolReplayMessageIds,
+    ),
     rewrittenMessages,
     options.preserveProviderOwnedToolSourceMessageIds,
   );
-  const patchedMessages = ensureToolCallInputs(dedupeToolHistory(providerModelMessages));
+  const patchedMessages = ensureToolCallInputs(
+    dedupeToolHistory(providerModelMessages, options.trustedToolReplayMessageIds),
+  );
   const preserveOptions = {
     preserveEmptyAssistantSourceMessageIds: options.preserveProviderOwnedToolSourceMessageIds,
   };
@@ -1143,6 +1019,38 @@ function compactNamedArrayValue(value: unknown): string | null {
   return null;
 }
 
+function compactHistoricalContactArray(fieldValue: unknown): unknown {
+  if (!Array.isArray(fieldValue)) return null;
+  const contacts = fieldValue
+    .map((item) => compactContactValue(item))
+    .filter((item): item is Record<string, unknown> | string => item !== null);
+  return contacts.length > 0 ? contacts : null;
+}
+
+function compactHistoricalNamedArray(fieldValue: unknown): unknown {
+  if (!Array.isArray(fieldValue)) return null;
+  const names = fieldValue
+    .map((item) => compactNamedArrayValue(item))
+    .filter((item): item is string => item !== null);
+  return names.length > 0 ? names : null;
+}
+
+function compactHistoricalObject(fieldValue: unknown): unknown {
+  if (!isRecord(fieldValue)) return null;
+  const compact: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(fieldValue)) {
+    if (typeof value === "string" || typeof value === "boolean" || typeof value === "number") {
+      compact[key] = value;
+    }
+  }
+  return Object.keys(compact).length > 0 ? compact : null;
+}
+
+function compactHistoricalStringArray(fieldValue: unknown[]): unknown {
+  const strings = filterPrivateArray(fieldValue, (item) => typeof item === "string");
+  return strings.length > 0 ? strings : null;
+}
+
 function compactHistoricalField(
   field: HistoricalToolSummaryField,
   fieldValue: unknown,
@@ -1151,38 +1059,16 @@ function compactHistoricalField(
     return compactContactValue(fieldValue);
   }
 
-  if (field.kind === "contact-array") {
-    if (!Array.isArray(fieldValue)) return null;
-    const contacts = fieldValue
-      .map((item) => compactContactValue(item))
-      .filter((item): item is Record<string, unknown> | string => item !== null);
-    return contacts.length > 0 ? contacts : null;
-  }
+  if (field.kind === "contact-array") return compactHistoricalContactArray(fieldValue);
 
   if (field.kind === "string-array") {
     if (!Array.isArray(fieldValue)) return null;
-    const strings = filterPrivateArray(fieldValue, (item) => typeof item === "string");
-    return strings.length > 0 ? strings : null;
+    return compactHistoricalStringArray(fieldValue);
   }
 
-  if (field.kind === "named-array") {
-    if (!Array.isArray(fieldValue)) return null;
-    const names = fieldValue
-      .map((item) => compactNamedArrayValue(item))
-      .filter((item): item is string => item !== null);
-    return names.length > 0 ? names : null;
-  }
+  if (field.kind === "named-array") return compactHistoricalNamedArray(fieldValue);
 
-  if (field.kind === "object") {
-    if (!isRecord(fieldValue)) return null;
-    const compact: Record<string, unknown> = {};
-    for (const [key, value] of Object.entries(fieldValue)) {
-      if (typeof value === "string" || typeof value === "boolean" || typeof value === "number") {
-        compact[key] = value;
-      }
-    }
-    return Object.keys(compact).length > 0 ? compact : null;
-  }
+  if (field.kind === "object") return compactHistoricalObject(fieldValue);
 
   if (typeof fieldValue === "string") {
     return field.maxLength ? truncate(fieldValue, field.maxLength) : fieldValue;
@@ -1193,8 +1079,7 @@ function compactHistoricalField(
   }
 
   if (Array.isArray(fieldValue)) {
-    const strings = filterPrivateArray(fieldValue, (item) => typeof item === "string");
-    return strings.length > 0 ? strings : null;
+    return compactHistoricalStringArray(fieldValue);
   }
 
   return null;
@@ -1269,7 +1154,8 @@ function compactHistoricalToolSummaryOutput(
     .map((item) => compactHistoricalItemValue(item, contract.itemFields))
     .filter((item): item is Record<string, unknown> => item !== null);
 
-  if (items.length === 0) return null;
+  // A valid empty page may still carry a continuation token.
+  if (items.length === 0 && sourceItems.length > 0) return null;
 
   const compacted: Record<string, unknown> = {
     [`${contract.collectionName}Count`]: items.length,
@@ -1309,7 +1195,38 @@ function wrapToolResultOutput(
   return original;
 }
 
-/** Mask old tool outputs while retaining preceding-turn file evidence for follow-up edits. */
+function hasRecentResourceIdentity(collection: unknown): boolean {
+  try {
+    if (Array.isArray(collection)) {
+      return Object.values(Object.getOwnPropertyDescriptors(collection)).some((descriptor) =>
+        descriptor.enumerable && "value" in descriptor && isRecord(descriptor.value) &&
+        hasRecentResourceIdentity(descriptor.value)
+      );
+    }
+    if (!isRecord(collection)) return false;
+    const descriptors = Object.getOwnPropertyDescriptors(collection);
+    const data = Object.getOwnPropertyDescriptor(collection, "data");
+    return (data?.enumerable === true && Array.isArray(data.value)) ||
+      Object.entries(descriptors).some(([key, descriptor]) => {
+        if (!descriptor.enumerable || !("value" in descriptor)) return false;
+        const value: unknown = descriptor.value;
+        return /(?:^id$|Id$|ID$|_id$)/.test(key) &&
+          !/^(?:request|provider_?request)_?id$|(?:tool_?call|trace|span|correlation)_?id$/i.test(
+            key,
+          ) &&
+          ((typeof value === "string" && value.length > 0) ||
+            (typeof value === "number" && Number.isFinite(value)));
+      });
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Mask old tool outputs while retaining preceding-turn file evidence and resource results for follow-ups.
+ * Resource arrays, collection results, and objects with resource IDs retain up to 4,096 output characters;
+ * request, tool-call, trace, span, and correlation IDs alone do not qualify. Existing summary contracts take precedence.
+ */
 export function maskOldToolOutputs(
   messages: ProviderModelMessage[],
   options: Pick<HistoricalToolInputRetentionOptions, "preserveSourceMessageIds"> = {},
@@ -1374,14 +1291,27 @@ export function maskOldToolOutputs(
       const charCount = serializedLength(rawValue);
 
       if (charCount < MASK_THRESHOLD) return part;
+      const summaryContract = findHistoricalToolSummaryContract(toolName);
+      const collection = tryParseJson(getOutputValue(tryParseJson(rawValue)));
+      // Keep the preceding turn's bounded resource results, including real resource IDs
+      // and pagination, available for follow-ups. Older/large results still compact.
+      if (
+        !summaryContract &&
+        previousUserIdx >= 0 &&
+        idx > previousUserIdx &&
+        idx < lastUserIdx &&
+        (typeof rawValue === "string" ? rawValue.length : charCount) <=
+          RECENT_COLLECTION_MAX_CHARS &&
+        serializedLength(collection) <= RECENT_COLLECTION_MAX_CHARS &&
+        hasRecentResourceIdentity(collection)
+      ) return part;
 
       const input = callInfo?.input;
 
       let masked: unknown;
 
-      const summaryContract = findHistoricalToolSummaryContract(toolName);
       if (summaryContract) {
-        masked = compactHistoricalToolSummaryOutput(rawValue, summaryContract) ??
+        masked = compactHistoricalToolSummaryOutput(collection, summaryContract) ??
           maskGeneric(toolName, charCount);
       } else {
         switch (toolName) {
@@ -1623,12 +1553,6 @@ export function compactHistoricalUiMessageToolInputs(
   return mutated ? result : messages;
 }
 
-/** Estimate overhead. */
-export function estimateOverhead(instructions: unknown, toolCount: number): number {
-  const instructionTokens = estimateTokens(instructions);
-  return instructionTokens + toolCount * TOKENS_PER_TOOL;
-}
-
 /** Ensure tool call inputs helper. */
 export function ensureToolCallInputs(messages: ProviderModelMessage[]): ProviderModelMessage[] {
   let mutated = false;
@@ -1666,6 +1590,8 @@ export function compactForStep(
   overhead: number = 0,
   options: {
     historicalToolInputRetention?: HistoricalToolInputRetentionOptions;
+    /** Reject a latest turn that still exceeds the existing budget after compaction. */
+    requireBudgetFit?: boolean;
   } = {},
 ): ProviderModelMessage[] {
   const compacted = enforceTokenBudget(
@@ -1675,6 +1601,7 @@ export function compactForStep(
     ),
     DEFAULT_TOKEN_BUDGET,
     overhead,
+    options.historicalToolInputRetention?.preserveSourceMessageIds,
   );
 
   let end = compacted.length;
@@ -1684,11 +1611,20 @@ export function compactForStep(
 
   const trimmed = end < compacted.length ? compacted.slice(0, end) : compacted;
 
-  return ensureToolCallInputs(repairToolPairs(dedupeToolHistory(trimmed)));
+  const prepared = ensureToolCallInputs(repairToolPairs(dedupeToolHistory(trimmed)));
+  if (options.requireBudgetFit) assertPreparedMessageBudget(prepared, overhead);
+  return prepared;
 }
 
 /** Dedupe tool history. */
-export function dedupeToolHistory(messages: ProviderModelMessage[]): ProviderModelMessage[] {
+export function dedupeToolHistory(
+  messages: ProviderModelMessage[],
+  trustedSourceMessageIds: readonly string[] = [],
+): ProviderModelMessage[] {
+  const trustedIds = new Set(trustedSourceMessageIds.filter((id) => id.length > 0));
+  const callSourceIds = new Map<string, string>();
+  const closedTrustedCallIds = new Set<string>();
+  let sourceId: string | undefined;
   const seenToolCallIds = new Set<string>();
   const seenToolResultIds = new Set<string>();
   let mutated = false;
@@ -1699,9 +1635,18 @@ export function dedupeToolHistory(messages: ProviderModelMessage[]): ProviderMod
     const filtered = filterPrivateArray(parts, (part) => {
       if (isToolCallPart(part)) {
         if (seenToolCallIds.has(part.toolCallId)) {
-          mutated = true;
-          return false;
+          if (
+            !sourceId || !trustedIds.has(sourceId) ||
+            callSourceIds.get(part.toolCallId) === sourceId ||
+            !closedTrustedCallIds.has(part.toolCallId)
+          ) {
+            mutated = true;
+            return false;
+          }
+          seenToolResultIds.delete(part.toolCallId);
         }
+        closedTrustedCallIds.delete(part.toolCallId);
+        if (sourceId) callSourceIds.set(part.toolCallId, sourceId);
         seenToolCallIds.add(part.toolCallId);
         return true;
       }
@@ -1711,6 +1656,10 @@ export function dedupeToolHistory(messages: ProviderModelMessage[]): ProviderMod
           return false;
         }
         seenToolResultIds.add(part.toolCallId);
+        if (
+          sourceId && trustedIds.has(sourceId) &&
+          trustedIds.has(callSourceIds.get(part.toolCallId) ?? "")
+        ) closedTrustedCallIds.add(part.toolCallId);
         return true;
       }
       return true;
@@ -1719,9 +1668,12 @@ export function dedupeToolHistory(messages: ProviderModelMessage[]): ProviderMod
   };
 
   for (const message of messages) {
+    sourceId = getProviderModelMessageSourceId(message);
     if (message.role === "user" || message.role === "system") {
       seenToolCallIds.clear();
       seenToolResultIds.clear();
+      callSourceIds.clear();
+      closedTrustedCallIds.clear();
     }
     if (message.role === "user" && Array.isArray(message.content)) {
       const { filtered, changed } = filterParts(message.content);
@@ -1763,10 +1715,16 @@ export function enforceTokenBudget(
   messages: ProviderModelMessage[],
   budget: number = DEFAULT_TOKEN_BUDGET,
   overhead: number = 0,
+  preserveSourceMessageIds: readonly string[] = [],
 ): ProviderModelMessage[] {
   if (messages.length === 0) {
     return messages;
   }
 
-  return enforceTokenBudgetWithTurnCompression(messages, budget, overhead);
+  return enforceTokenBudgetWithTurnCompression(
+    messages,
+    budget,
+    overhead,
+    preserveSourceMessageIds,
+  );
 }

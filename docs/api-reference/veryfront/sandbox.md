@@ -1,7 +1,7 @@
 ---
 title: "veryfront/sandbox"
 description: "Isolated workspaces for commands and files."
-order: 33
+order: 34
 ---
 
 ## Import
@@ -10,10 +10,10 @@ order: 33
 import {
   createAgentServiceSandboxClient,
   createAgentServiceSandboxTools,
+  createHostedSandboxClient,
+  createHostedSandboxTools,
   createSandboxShellTools,
   normalizeBashToolSet,
-  renameSandboxFileTools,
-  resolveDefaultSandboxRuntimeEndpoint,
 } from "veryfront/sandbox";
 ```
 
@@ -50,7 +50,7 @@ Attach to an existing sandbox. Closing detaches; use delete() to remove it.
 
 ### `Sandbox.capabilities()`
 
-Get sandbox capabilities, limits and defaults for the current caller.
+Get platform features or selected-project creation eligibility. Creation rechecks capacity.
 
 **Returns:** <code>Promise&lt;SandboxCapabilities&gt;</code>
 
@@ -114,7 +114,7 @@ Read a file from the sandbox workspace.
 
 **Returns:** <code>Promise&lt;string&gt;</code>
 
-### `sandbox.writeFiles(files)`
+### `sandbox.writeFiles(files, options)`
 
 Write one or more files to the sandbox workspace.
 
@@ -186,15 +186,17 @@ Get the sandbox endpoint URL.
 
 Options for creating a sandbox.
 
-| Property            | Type                  | Description                                                                                              | Source                                                                               |
-| ------------------- | --------------------- | -------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
-| `apiUrl?`           | `string`              | Base URL of the Veryfront API. Set apiUrl or VERYFRONT_API_URL outside a scoped Veryfront Cloud context. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts) |
-| `authToken?`        | `string`              | Explicit Veryfront auth token or API key override.                                                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts) |
-| `projectReference?` | `string`              | Project UUID or slug used for billing.                                                                   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts) |
-| `accessScope?`      | `SandboxAccessScope`  | Project access or creator-only access. Defaults to project.                                              | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts) |
-| `ttlMode?`          | `SandboxLifetimeMode` | Cleanup policy. Defaults to default.                                                                     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts) |
-| `ttlHours?`         | `number`              | Required only for duration cleanup.                                                                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts) |
-| `environmentId?`    | `string`              | Environment whose variables are copied once.                                                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts) |
+| Property            | Type                         | Description                                                                                              | Source                                                                               |
+| ------------------- | ---------------------------- | -------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| `apiUrl?`           | `string`                     | Base URL of the Veryfront API. Set apiUrl or VERYFRONT_API_URL outside a scoped Veryfront Cloud context. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts) |
+| `authToken?`        | `string`                     | Explicit Veryfront auth token or API key override.                                                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts) |
+| `getAuthToken?`     | <code>() =&gt; string</code> | Read the current credential before each request when the host renews it.                                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts) |
+| `signal?`           | `AbortSignal`                | Cancel sandbox provisioning and readiness polling.                                                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts) |
+| `projectReference?` | `string`                     | Project UUID or slug used for billing.                                                                   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts) |
+| `accessScope?`      | `SandboxAccessScope`         | Project access or creator-only access. Defaults to project.                                              | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts) |
+| `ttlMode?`          | `SandboxLifetimeMode`        | Cleanup policy. Defaults to default.                                                                     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts) |
+| `ttlHours?`         | `number`                     | Required only for duration cleanup.                                                                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts) |
+| `environmentId?`    | `string`                     | Environment whose variables are copied once.                                                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts) |
 
 ### `CommandResult`
 
@@ -224,6 +226,8 @@ Streaming event emitted during command execution.
 | -------------------------------------- | ------------------------------------------ | -------------------------------------------------------------------------------------------------- |
 | `createAgentServiceSandboxClient`      | Create agent service sandbox client.       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/agent-service-tools.ts) |
 | `createAgentServiceSandboxTools`       | Create agent service sandbox tools.        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/agent-service-tools.ts) |
+| `createHostedSandboxClient`            | Create hosted sandbox client.              | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/agent-service-tools.ts) |
+| `createHostedSandboxTools`             | Create hosted sandbox tools.               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/agent-service-tools.ts) |
 | `createSandboxShellTools`              | Create sandbox shell tools.                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/shell-tools.ts)         |
 | `normalizeBashToolSet`                 | Normalizes bash tool set.                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/shell-tools.ts)         |
 | `renameSandboxFileTools`               | Rename sandbox file tools.                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/shell-tools.ts)         |
@@ -239,51 +243,45 @@ Streaming event emitted during command execution.
 
 ### Types
 
-| Name                                         | Description                                                                           | Source                                                                                                |
-| -------------------------------------------- | ------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| `AgentServiceSandboxBackgroundCommandClient` | Public API contract for agent service sandbox background command client.              | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/agent-service-tools.ts)    |
-| `AgentServiceSandboxClient`                  | Public API contract for agent service sandbox client.                                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/agent-service-tools.ts)    |
-| `AgentServiceSandboxClientOptions`           | Options accepted by agent service sandbox client.                                     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/agent-service-tools.ts)    |
-| `AgentServiceSandboxToolsOptions`            | Options accepted by agent service sandbox tools.                                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/agent-service-tools.ts)    |
-| `AgentServiceSandboxToolsResult`             | Result returned from agent service sandbox tools.                                     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/agent-service-tools.ts)    |
-| `BackgroundCommand`                          | An async background command running in a sandbox.                                     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts)                  |
-| `BackgroundCommandHeartbeatStatus`           | Heartbeat health status for a background command.                                     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts)                  |
-| `BackgroundCommandOutput`                    | A background command with its captured output.                                        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts)                  |
-| `BackgroundCommandStatus`                    | Status of an async background command.                                                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts)                  |
-| `BashToolSandboxLike`                        | Public API contract for sandbox shell client.                                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/sandbox/shell-tools.ts) |
-| `CommandOptions`                             | Options for command execution: working directory, timeout, environment variables.     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts)                  |
-| `CommandResult`                              | Result of a command execution: stdout, stderr, and exit code.                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts)                  |
-| `CommandStreamEvent`                         | Streaming event emitted during command execution.                                     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts)                  |
-| `CreateSandboxBashTool`                      | Public API contract for sandbox shell tools provider.                                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/sandbox/shell-tools.ts) |
-| `HostedSandboxBackgroundCommandClient`       | Public API contract for hosted sandbox background command client.                     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/agent-service-tools.ts)    |
-| `HostedSandboxClient`                        | Public API contract for hosted sandbox client.                                        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/agent-service-tools.ts)    |
-| `HostedSandboxClientOptions`                 | Options accepted by hosted sandbox client.                                            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/agent-service-tools.ts)    |
-| `HostedSandboxToolsOptions`                  | Options accepted by hosted sandbox tools.                                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/agent-service-tools.ts)    |
-| `HostedSandboxToolsResult`                   | Result returned from hosted sandbox tools.                                            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/agent-service-tools.ts)    |
-| `LazySandboxOptions`                         | Options accepted by lazy sandbox.                                                     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/lazy-sandbox.ts)           |
-| `SandboxAccessScope`                         | Sandbox access, storage and lifetime policies.                                        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts)                  |
-| `SandboxAttachment`                          | Known sandbox connection details used to attach without a lookup round-trip.          | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts)                  |
-| `SandboxCapabilities`                        | Sandbox creation capabilities, limits and defaults for the current caller.            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts)                  |
-| `SandboxClientOptions`                       |                                                                                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts)                  |
-| `SandboxDetails`                             | A sandbox summary returned by list.                                                   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts)                  |
-| `SandboxEnvironment`                         | Snapshot of environment variable names with redacted values.                          | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts)                  |
-| `SandboxFileEntry`                           | Directory entry metadata, without file contents.                                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts)                  |
-| `SandboxFileListOptions`                     | Directory listing options.                                                            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts)                  |
-| `SandboxFileListResult`                      | One directory page. Follow pageInfo.next to request another page.                     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts)                  |
-| `SandboxLifetimeInput`                       | Sandbox cleanup policy. Duration requires hours; other policies accept no duration.   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts)                  |
-| `SandboxLifetimeMode`                        |                                                                                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts)                  |
-| `SandboxListOptions`                         | Options for listing sandboxes.                                                        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts)                  |
-| `SandboxListResult`                          | Paginated result of sandboxes.                                                        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts)                  |
-| `SandboxOptions`                             | Options for creating a sandbox.                                                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts)                  |
-| `SandboxRuntimeCheck`                        | Runtime health or readiness result. A false check is a result, not a transport error. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts)                  |
-| `SandboxShellToolDefinition`                 | Definition for sandbox shell tool.                                                    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/sandbox/shell-tools.ts) |
-| `SandboxShellToolSet`                        | Public API contract for sandbox shell tool set.                                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/sandbox/shell-tools.ts) |
-| `SandboxStatus`                              | Observed sandbox runtime state.                                                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts)                  |
-| `SandboxWorkspaceStorage`                    |                                                                                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts)                  |
-
-### Constants
-
-| Name                        | Description                   | Source                                                                                             |
-| --------------------------- | ----------------------------- | -------------------------------------------------------------------------------------------------- |
-| `createHostedSandboxClient` | Create hosted sandbox client. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/agent-service-tools.ts) |
-| `createHostedSandboxTools`  | Create hosted sandbox tools.  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/agent-service-tools.ts) |
+| Name                                         | Description                                                                                     | Source                                                                                                |
+| -------------------------------------------- | ----------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `AgentServiceSandboxBackgroundCommandClient` | Public API contract for agent service sandbox background command client.                        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/agent-service-tools.ts)    |
+| `AgentServiceSandboxClient`                  | Public API contract for agent service sandbox client.                                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/agent-service-tools.ts)    |
+| `AgentServiceSandboxClientOptions`           | Options accepted by agent service sandbox client.                                               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/agent-service-tools.ts)    |
+| `AgentServiceSandboxToolsOptions`            | Options accepted by agent service sandbox tools.                                                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/agent-service-tools.ts)    |
+| `AgentServiceSandboxToolsResult`             | Result returned from agent service sandbox tools.                                               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/agent-service-tools.ts)    |
+| `BackgroundCommand`                          | An async background command running in a sandbox.                                               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts)                  |
+| `BackgroundCommandHeartbeatStatus`           | Heartbeat health status for a background command.                                               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts)                  |
+| `BackgroundCommandOutput`                    | A background command with its captured output.                                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts)                  |
+| `BackgroundCommandStatus`                    | Status of an async background command.                                                          | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts)                  |
+| `BashToolSandboxLike`                        | Public API contract for sandbox shell client.                                                   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/sandbox/shell-tools.ts) |
+| `CommandOptions`                             | Options for command execution: working directory, timeout, environment variables.               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts)                  |
+| `CommandResult`                              | Result of a command execution: stdout, stderr, and exit code.                                   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts)                  |
+| `CommandStreamEvent`                         | Streaming event emitted during command execution.                                               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts)                  |
+| `CreateSandboxBashTool`                      | Public API contract for sandbox shell tools provider.                                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/sandbox/shell-tools.ts) |
+| `HostedSandboxBackgroundCommandClient`       | Public API contract for hosted sandbox background command client.                               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/agent-service-tools.ts)    |
+| `HostedSandboxClient`                        | Public API contract for hosted sandbox client.                                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/agent-service-tools.ts)    |
+| `HostedSandboxClientOptions`                 | Options accepted by hosted sandbox client.                                                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/agent-service-tools.ts)    |
+| `HostedSandboxToolsOptions`                  | Options accepted by hosted sandbox tools.                                                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/agent-service-tools.ts)    |
+| `HostedSandboxToolsResult`                   | Result returned from hosted sandbox tools.                                                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/agent-service-tools.ts)    |
+| `LazySandboxOptions`                         | Options accepted by lazy sandbox.                                                               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/lazy-sandbox.ts)           |
+| `SandboxAccessScope`                         | Sandbox access, storage and lifetime policies.                                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts)                  |
+| `SandboxAttachment`                          | Known sandbox connection details used to attach without a lookup round-trip.                    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts)                  |
+| `SandboxCapabilities`                        | Sandbox creation options, limits and defaults. A project selector opts into caller eligibility. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts)                  |
+| `SandboxCapabilitiesOptions`                 | Options for discovering caller creation capabilities in a billing project.                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts)                  |
+| `SandboxClientOptions`                       |                                                                                                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts)                  |
+| `SandboxDetails`                             | A sandbox summary returned by list.                                                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts)                  |
+| `SandboxEnvironment`                         | Snapshot of environment variable names with redacted values.                                    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts)                  |
+| `SandboxFileEntry`                           | Directory entry metadata, without file contents.                                                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts)                  |
+| `SandboxFileListOptions`                     | Directory listing options.                                                                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts)                  |
+| `SandboxFileListResult`                      | One directory page. Follow pageInfo.next to request another page.                               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts)                  |
+| `SandboxLifetimeInput`                       | Sandbox cleanup policy. Duration requires hours; other policies accept no duration.             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts)                  |
+| `SandboxLifetimeMode`                        |                                                                                                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts)                  |
+| `SandboxListOptions`                         | Options for listing sandboxes.                                                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts)                  |
+| `SandboxListResult`                          | Paginated result of sandboxes.                                                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts)                  |
+| `SandboxOptions`                             | Options for creating a sandbox.                                                                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts)                  |
+| `SandboxRuntimeCheck`                        | Runtime health or readiness result. A false check is a result, not a transport error.           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts)                  |
+| `SandboxShellToolDefinition`                 | Definition for sandbox shell tool.                                                              | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/sandbox/shell-tools.ts) |
+| `SandboxShellToolSet`                        | Public API contract for sandbox shell tool set.                                                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/sandbox/shell-tools.ts) |
+| `SandboxStatus`                              | Observed sandbox runtime state.                                                                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts)                  |
+| `SandboxWorkspaceStorage`                    |                                                                                                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts)                  |

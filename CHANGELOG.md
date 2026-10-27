@@ -6,6 +6,78 @@ versions are listed at
 
 ## Unreleased
 
+### Added: attachment budgets with explicit omissions
+
+`planFileParts` from `veryfront/llm` applies per-file, total, and count byte
+budgets to local files in input order without throwing for file data. It returns
+the file parts to send, each omitted file with a reason (`invalid_metadata`,
+`invalid_content`, `over_file_limit`, `over_count_limit`, or
+`over_total_budget`), and `complete`. A PDF (by `application/pdf` MIME type or
+`.pdf` filename) without a `%PDF-` header is omitted as `invalid_content`. A path or padded filename
+is omitted as `invalid_metadata`, and omitted entries report only a base name. Budgets count raw bytes and do
+not infer page or context limits.
+
+### Breaking: unsupported file parts fail before inference
+
+File parts that a provider transport cannot send now throw a `TypeError` that
+names the file and MIME type, before any provider request. Before, they were
+dropped silently and the model answered without the file. This affects
+non-image files on Chat Completions transports, non-image and non-PDF files on
+Anthropic, remote non-image URLs on Google, document URLs that are not
+`http` or `https` on OpenAI Responses and Anthropic, and image URLs that are not
+`data:`, `http`, or `https` on every provider. Audio and video files on
+OpenAI Responses fail the same way. An inline `data:` part must be
+`data:<mime>[;<param>=<value>];base64,<payload>` with the part's MIME type, or
+it fails before inference on every provider. MIME types compare
+case-insensitively, and `image/jpg` matches `image/jpeg`. Errors show an invalid
+MIME type as `invalid media type`. Inline files on OpenAI Responses must be a
+PDF, text, code, JSON, XML, or office document, and inline files on Google must
+be an image, audio, video, PDF, text, code, JSON, or XML file. Other inline
+types, such as `application/zip`, fail before inference.
+
+OpenAI Responses requests carry only the base name of a file part's filename,
+so a stored or hand-built part with a local path does not send that path. A
+filename without an extension gets one from the MIME type.
+
+Chat and agent message preparation keeps inline `data:` file parts in user
+messages for the provider instead of rewriting unsupported types into
+`<uploaded_files>` text that carried the whole data URL. It normalizes their MIME
+type as before, for example a `.ts` file to `text/plain`, and rewrites a base64
+data URL to match. Inline files in other roles, which runtimes do not send, are
+annotated without their data URL. Uploaded `https` files are annotated as before.
+
+OpenAI and Veryfront Cloud OpenAI models on the default `auto` transport now
+send a request that carries a non-image file to the Responses API, as they
+already did for hosted tools, so those requests keep working. Mistral and
+custom OpenAI-compatible base URLs do not move a request to Responses for a
+file, so Chat Completions rejects it. This includes an `OpenAIProvider` model
+created directly with a `baseURL` that is not on `api.openai.com`, such as a
+proxy or gateway. Reasoning models and hosted tools still use Responses there.
+OpenAI Responses sends inline `data:` files as `file_data`, Anthropic sends PDFs as `document` blocks, and Google sends inline
+files as `inlineData`. Use `fileFromBytes` from `veryfront/llm` to build inline
+file parts from local bytes.
+
+The check applies to every message in the prompt, including stored chat
+history. A conversation that already holds a document attachment now fails on a
+transport that cannot read it, instead of continuing without the file. To
+recover, set `openAITransport: "responses"` for an OpenAI model pinned to Chat
+Completions or served by a compatible server that implements Responses, switch to a document-capable provider, or remove the file parts
+from the history before the next turn.
+
+### Changed: managed knowledge embeddings use the registered Gemini model
+
+Managed knowledge indexing defaults to `google/gemini-embedding-001` with 3072
+dimensions. Retrieval carries the query model identity so compatible API ranking
+keeps embeddings from different models separate. Deploy with the matching API
+model policy and query isolation changes.
+
+### Fixed: native push preserves referenced OKF assets
+
+`veryfront push` includes text assets explicitly referenced by OKF frontmatter,
+including SQL, Python, CSV, notebooks and extensionless executors. Push and pull
+share bundle-root reference rules. Ignore rules and path safety still apply;
+unreferenced files with unsupported extensions remain outside sync.
+
 ### Changed: PurgeCSS uses a verified in-memory distribution and patched parser
 
 The CSS purging extension now uses PurgeCSS 8's in-memory algorithm with exact
@@ -84,6 +156,16 @@ including when you combine it with `--deploy`. A deployment failure exits with
 code 1 and retains the created project in `error.context.localProject`.
 `veryfront routes --json` returns pages and APIs under `data`. Update scripts
 that read these commands' previous output.
+
+### Breaking: bare UUID run ids are reserved for control-plane runs
+
+`WorkflowClient.start()` and `WorkflowExecutor.start()` now also throw
+`INVALID_ARGUMENT` when you pass a caller-chosen `runId` that is a bare UUID.
+The control plane identifies a run by its UUID, so that shape is reserved the
+same way as `run_<uuid>`.
+
+- If you choose your own run ids as bare UUIDs, add a prefix before you
+  upgrade. Generated run ids are unaffected.
 
 ### Breaking: `run_<uuid>` run ids are reserved for control-plane runs
 
@@ -616,7 +698,7 @@ Operational error strings and approval request messages remain visible. Do not
 place secrets, tokens, customer payloads, or private model output in those
 developer-authored fields.
 
-See [Workflows: loops, blob storage, React hooks](./docs/guides/workflows-advanced.md#understand-run-summaries)
+See [Workflows: loops, blob storage, React hooks](./docs/guides/workflow-ui.md#understand-run-summaries)
 for the exact summary shape and authorization guidance.
 
 ### Breaking: `veryfront dev` enforces CSRF

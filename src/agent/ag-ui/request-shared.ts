@@ -94,6 +94,19 @@ function isSchemaValidationError(
   );
 }
 
+/** Format schema failures consistently across AG-UI request handlers. */
+export function createAgUiSchemaValidationErrorResponse(
+  error: unknown,
+  errorLabel: string,
+): Response | undefined {
+  if (!isSchemaValidationError(error)) return undefined;
+  const issues = error.issues;
+  return Response.json({
+    error: errorLabel,
+    details: issues.map((issue) => ({ path: issue.path, message: issue.message })),
+  }, { status: 400 });
+}
+
 function isInputValidationError(error: unknown): error is VeryfrontError {
   return error instanceof VeryfrontError && error.slug === "input-validation-failed";
 }

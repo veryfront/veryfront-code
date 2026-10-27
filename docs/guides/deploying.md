@@ -1,7 +1,7 @@
 ---
 title: "Manage Cloud deployments"
 description: "Control source, environments, access, and verification for Veryfront Cloud deployments."
-order: 44
+order: 500
 ---
 
 Use this guide after the first successful deployment when you need explicit
@@ -109,15 +109,23 @@ Deploy uses the last verified Push receipt, confirms the release source digest,
 and prints the environment URL. If the receipt is missing, Deploy first runs a
 quiet Push.
 
-Preview accepts no deployments. It renders the latest push to `main`, so
-`veryfront push` updates it, and `veryfront deploy --env preview` fails with
-`preview-deployment-not-allowed` before anything is uploaded or built.
-
 For a named nonproduction environment:
 
 ```bash
 npx veryfront@latest push --branch feature-x
 npx veryfront@latest deploy --branch feature-x --env staging
+```
+
+## Pull a release
+
+A release is an immutable snapshot of a branch's saved files and its browser
+asset build. A deployment serves one release in one environment. To copy the
+files of a release into the local project, select the release by ID, by
+version, or with `latest`:
+
+```bash
+npx veryfront@latest pull --release latest
+npx veryfront@latest pull --release <RELEASE_VERSION>
 ```
 
 ## Resolve project identity

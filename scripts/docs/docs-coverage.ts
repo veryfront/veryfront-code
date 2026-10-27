@@ -137,7 +137,7 @@ function extractStringArrayConst(source: string, name: string): string[] {
 }
 
 function extractGuideContracts(source: string): string[] {
-  return [...source.matchAll(/^\s+"([^"]+\.md)":\s+\{/gm)]
+  return [...source.matchAll(/^[ \t]+"([^"]+\.md)":\s+\{/gm)]
     .map((match) => match[1] ?? "")
     .sort(byCodeUnit);
 }

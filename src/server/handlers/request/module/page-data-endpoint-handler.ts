@@ -114,6 +114,7 @@ async function resolvePageDataWithinDeadline(
       abortSignal: controller.signal,
       dependencyPinningCacheKey: dependencySnapshot.cacheKey,
       dependencyPinningDependencies: dependencySnapshot.dependencies,
+      dependencyPinningConfiguredVersions: dependencySnapshot.configuredVersions,
       dependencyPinningSource,
       applicationIdentity,
     }),

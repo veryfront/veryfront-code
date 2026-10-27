@@ -1,0 +1,1432 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:veryfront:events:1:stored-envelope",
+  "allOf": [
+    {
+      "$ref": "urn:veryfront:events:1:envelope"
+    },
+    {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "com.veryfront.run.requested"
+            },
+            "dataschema": {
+              "const": "urn:veryfront:events:1:data:run.requested:public"
+            },
+            "data": {
+              "$ref": "urn:veryfront:events:1:data:run.requested:public"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "com.veryfront.run.requested"
+            },
+            "dataschema": {
+              "const": "urn:veryfront:events:1:data:run.requested:diagnostic"
+            },
+            "data": {
+              "$ref": "urn:veryfront:events:1:data:run.requested:diagnostic"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "com.veryfront.run.enqueued"
+            },
+            "dataschema": {
+              "const": "urn:veryfront:events:1:data:run.enqueued:public"
+            },
+            "data": {
+              "$ref": "urn:veryfront:events:1:data:run.enqueued:public"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "com.veryfront.run.enqueued"
+            },
+            "dataschema": {
+              "const": "urn:veryfront:events:1:data:run.enqueued:diagnostic"
+            },
+            "data": {
+              "$ref": "urn:veryfront:events:1:data:run.enqueued:diagnostic"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "com.veryfront.run.started"
+            },
+            "dataschema": {
+              "const": "urn:veryfront:events:1:data:run.started:public"
+            },
+            "data": {
+              "$ref": "urn:veryfront:events:1:data:run.started:public"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "com.veryfront.run.started"
+            },
+            "dataschema": {
+              "const": "urn:veryfront:events:1:data:run.started:diagnostic"
+            },
+            "data": {
+              "$ref": "urn:veryfront:events:1:data:run.started:diagnostic"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "com.veryfront.run.succeeded"
+            },
+            "dataschema": {
+              "const": "urn:veryfront:events:1:data:run.succeeded:public"
+            },
+            "data": {
+              "$ref": "urn:veryfront:events:1:data:run.succeeded:public"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "com.veryfront.run.succeeded"
+            },
+            "dataschema": {
+              "const": "urn:veryfront:events:1:data:run.succeeded:diagnostic"
+            },
+            "data": {
+              "$ref": "urn:veryfront:events:1:data:run.succeeded:diagnostic"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "com.veryfront.run.failed"
+            },
+            "dataschema": {
+              "const": "urn:veryfront:events:1:data:run.failed:public"
+            },
+            "data": {
+              "$ref": "urn:veryfront:events:1:data:run.failed:public"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "com.veryfront.run.failed"
+            },
+            "dataschema": {
+              "const": "urn:veryfront:events:1:data:run.failed:diagnostic"
+            },
+            "data": {
+              "$ref": "urn:veryfront:events:1:data:run.failed:diagnostic"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "com.veryfront.run.cancelled"
+            },
+            "dataschema": {
+              "const": "urn:veryfront:events:1:data:run.cancelled:public"
+            },
+            "data": {
+              "$ref": "urn:veryfront:events:1:data:run.cancelled:public"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "com.veryfront.run.cancelled"
+            },
+            "dataschema": {
+              "const": "urn:veryfront:events:1:data:run.cancelled:diagnostic"
+            },
+            "data": {
+              "$ref": "urn:veryfront:events:1:data:run.cancelled:diagnostic"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "com.veryfront.step.started"
+            },
+            "dataschema": {
+              "const": "urn:veryfront:events:1:data:step.started:public"
+            },
+            "data": {
+              "$ref": "urn:veryfront:events:1:data:step.started:public"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "com.veryfront.step.started"
+            },
+            "dataschema": {
+              "const": "urn:veryfront:events:1:data:step.started:diagnostic"
+            },
+            "data": {
+              "$ref": "urn:veryfront:events:1:data:step.started:diagnostic"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "com.veryfront.step.succeeded"
+            },
+            "dataschema": {
+              "const": "urn:veryfront:events:1:data:step.succeeded:public"
+            },
+            "data": {
+              "$ref": "urn:veryfront:events:1:data:step.succeeded:public"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "com.veryfront.step.succeeded"
+            },
+            "dataschema": {
+              "const": "urn:veryfront:events:1:data:step.succeeded:diagnostic"
+            },
+            "data": {
+              "$ref": "urn:veryfront:events:1:data:step.succeeded:diagnostic"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "com.veryfront.step.failed"
+            },
+            "dataschema": {
+              "const": "urn:veryfront:events:1:data:step.failed:public"
+            },
+            "data": {
+              "$ref": "urn:veryfront:events:1:data:step.failed:public"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "com.veryfront.step.failed"
+            },
+            "dataschema": {
+              "const": "urn:veryfront:events:1:data:step.failed:diagnostic"
+            },
+            "data": {
+              "$ref": "urn:veryfront:events:1:data:step.failed:diagnostic"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "com.veryfront.step.cancelled"
+            },
+            "dataschema": {
+              "const": "urn:veryfront:events:1:data:step.cancelled:public"
+            },
+            "data": {
+              "$ref": "urn:veryfront:events:1:data:step.cancelled:public"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "com.veryfront.step.cancelled"
+            },
+            "dataschema": {
+              "const": "urn:veryfront:events:1:data:step.cancelled:diagnostic"
+            },
+            "data": {
+              "$ref": "urn:veryfront:events:1:data:step.cancelled:diagnostic"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "com.veryfront.step.ended"
+            },
+            "dataschema": {
+              "const": "urn:veryfront:events:1:data:step.ended:public"
+            },
+            "data": {
+              "$ref": "urn:veryfront:events:1:data:step.ended:public"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "com.veryfront.step.ended"
+            },
+            "dataschema": {
+              "const": "urn:veryfront:events:1:data:step.ended:diagnostic"
+            },
+            "data": {
+              "$ref": "urn:veryfront:events:1:data:step.ended:diagnostic"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "com.veryfront.tool-call.started"
+            },
+            "dataschema": {
+              "const": "urn:veryfront:events:1:data:tool-call.started:public"
+            },
+            "data": {
+              "$ref": "urn:veryfront:events:1:data:tool-call.started:public"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "com.veryfront.tool-call.started"
+            },
+            "dataschema": {
+              "const": "urn:veryfront:events:1:data:tool-call.started:diagnostic"
+            },
+            "data": {
+              "$ref": "urn:veryfront:events:1:data:tool-call.started:diagnostic"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "com.veryfront.tool-call.arguments.delta.emitted"
+            },
+            "dataschema": {
+              "const": "urn:veryfront:events:1:data:tool-call.arguments.delta.emitted:public"
+            },
+            "data": {
+              "$ref": "urn:veryfront:events:1:data:tool-call.arguments.delta.emitted:public"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "com.veryfront.tool-call.arguments.delta.emitted"
+            },
+            "dataschema": {
+              "const": "urn:veryfront:events:1:data:tool-call.arguments.delta.emitted:diagnostic"
+            },
+            "data": {
+              "$ref": "urn:veryfront:events:1:data:tool-call.arguments.delta.emitted:diagnostic"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "com.veryfront.tool-call.arguments.ended"
+            },
+            "dataschema": {
+              "const": "urn:veryfront:events:1:data:tool-call.arguments.ended:public"
+            },
+            "data": {
+              "$ref": "urn:veryfront:events:1:data:tool-call.arguments.ended:public"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "com.veryfront.tool-call.arguments.ended"
+            },
+            "dataschema": {
+              "const": "urn:veryfront:events:1:data:tool-call.arguments.ended:diagnostic"
+            },
+            "data": {
+              "$ref": "urn:veryfront:events:1:data:tool-call.arguments.ended:diagnostic"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "com.veryfront.tool-call.result.recorded"
+            },
+            "dataschema": {
+              "const": "urn:veryfront:events:1:data:tool-call.result.recorded:public"
+            },
+            "data": {
+              "$ref": "urn:veryfront:events:1:data:tool-call.result.recorded:public"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "com.veryfront.tool-call.result.recorded"
+            },
+            "dataschema": {
+              "const": "urn:veryfront:events:1:data:tool-call.result.recorded:diagnostic"
+            },
+            "data": {
+              "$ref": "urn:veryfront:events:1:data:tool-call.result.recorded:diagnostic"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "com.veryfront.tool-call.status.reported"
+            },
+            "dataschema": {
+              "const": "urn:veryfront:events:1:data:tool-call.status.reported:public"
+            },
+            "data": {
+              "$ref": "urn:veryfront:events:1:data:tool-call.status.reported:public"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "com.veryfront.tool-call.status.reported"
+            },
+            "dataschema": {
+              "const": "urn:veryfront:events:1:data:tool-call.status.reported:diagnostic"
+            },
+            "data": {
+              "$ref": "urn:veryfront:events:1:data:tool-call.status.reported:diagnostic"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "com.veryfront.tool-call.result.submitted"
+            },
+            "dataschema": {
+              "const": "urn:veryfront:events:1:data:tool-call.result.submitted:public"
+            },
+            "data": {
+              "$ref": "urn:veryfront:events:1:data:tool-call.result.submitted:public"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "com.veryfront.tool-call.result.submitted"
+            },
+            "dataschema": {
+              "const": "urn:veryfront:events:1:data:tool-call.result.submitted:diagnostic"
+            },
+            "data": {
+              "$ref": "urn:veryfront:events:1:data:tool-call.result.submitted:diagnostic"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "com.veryfront.tool-call.result.delivery.failed"
+            },
+            "dataschema": {
+              "const": "urn:veryfront:events:1:data:tool-call.result.delivery.failed:public"
+            },
+            "data": {
+              "$ref": "urn:veryfront:events:1:data:tool-call.result.delivery.failed:public"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "com.veryfront.tool-call.result.delivery.failed"
+            },
+            "dataschema": {
+              "const": "urn:veryfront:events:1:data:tool-call.result.delivery.failed:diagnostic"
+            },
+            "data": {
+              "$ref": "urn:veryfront:events:1:data:tool-call.result.delivery.failed:diagnostic"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "com.veryfront.input-request.created"
+            },
+            "dataschema": {
+              "const": "urn:veryfront:events:1:data:input-request.created:public"
+            },
+            "data": {
+              "$ref": "urn:veryfront:events:1:data:input-request.created:public"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "com.veryfront.input-request.created"
+            },
+            "dataschema": {
+              "const": "urn:veryfront:events:1:data:input-request.created:diagnostic"
+            },
+            "data": {
+              "$ref": "urn:veryfront:events:1:data:input-request.created:diagnostic"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "com.veryfront.input-request.updated"
+            },
+            "dataschema": {
+              "const": "urn:veryfront:events:1:data:input-request.updated:public"
+            },
+            "data": {
+              "$ref": "urn:veryfront:events:1:data:input-request.updated:public"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "com.veryfront.input-request.updated"
+            },
+            "dataschema": {
+              "const": "urn:veryfront:events:1:data:input-request.updated:diagnostic"
+            },
+            "data": {
+              "$ref": "urn:veryfront:events:1:data:input-request.updated:diagnostic"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "com.veryfront.child-run.reported"
+            },
+            "dataschema": {
+              "const": "urn:veryfront:events:1:data:child-run.reported:public"
+            },
+            "data": {
+              "$ref": "urn:veryfront:events:1:data:child-run.reported:public"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "com.veryfront.child-run.reported"
+            },
+            "dataschema": {
+              "const": "urn:veryfront:events:1:data:child-run.reported:diagnostic"
+            },
+            "data": {
+              "$ref": "urn:veryfront:events:1:data:child-run.reported:diagnostic"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "com.veryfront.message.text.started"
+            },
+            "dataschema": {
+              "const": "urn:veryfront:events:1:data:message.text.started:public"
+            },
+            "data": {
+              "$ref": "urn:veryfront:events:1:data:message.text.started:public"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "com.veryfront.message.text.started"
+            },
+            "dataschema": {
+              "const": "urn:veryfront:events:1:data:message.text.started:diagnostic"
+            },
+            "data": {
+              "$ref": "urn:veryfront:events:1:data:message.text.started:diagnostic"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "com.veryfront.message.text.delta.emitted"
+            },
+            "dataschema": {
+              "const": "urn:veryfront:events:1:data:message.text.delta.emitted:public"
+            },
+            "data": {
+              "$ref": "urn:veryfront:events:1:data:message.text.delta.emitted:public"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "com.veryfront.message.text.delta.emitted"
+            },
+            "dataschema": {
+              "const": "urn:veryfront:events:1:data:message.text.delta.emitted:diagnostic"
+            },
+            "data": {
+              "$ref": "urn:veryfront:events:1:data:message.text.delta.emitted:diagnostic"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "com.veryfront.message.text.ended"
+            },
+            "dataschema": {
+              "const": "urn:veryfront:events:1:data:message.text.ended:public"
+            },
+            "data": {
+              "$ref": "urn:veryfront:events:1:data:message.text.ended:public"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "com.veryfront.message.text.ended"
+            },
+            "dataschema": {
+              "const": "urn:veryfront:events:1:data:message.text.ended:diagnostic"
+            },
+            "data": {
+              "$ref": "urn:veryfront:events:1:data:message.text.ended:diagnostic"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "com.veryfront.message.reasoning.started"
+            },
+            "dataschema": {
+              "const": "urn:veryfront:events:1:data:message.reasoning.started:public"
+            },
+            "data": {
+              "$ref": "urn:veryfront:events:1:data:message.reasoning.started:public"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "com.veryfront.message.reasoning.started"
+            },
+            "dataschema": {
+              "const": "urn:veryfront:events:1:data:message.reasoning.started:diagnostic"
+            },
+            "data": {
+              "$ref": "urn:veryfront:events:1:data:message.reasoning.started:diagnostic"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "com.veryfront.message.reasoning.delta.emitted"
+            },
+            "dataschema": {
+              "const": "urn:veryfront:events:1:data:message.reasoning.delta.emitted:public"
+            },
+            "data": {
+              "$ref": "urn:veryfront:events:1:data:message.reasoning.delta.emitted:public"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "com.veryfront.message.reasoning.delta.emitted"
+            },
+            "dataschema": {
+              "const": "urn:veryfront:events:1:data:message.reasoning.delta.emitted:diagnostic"
+            },
+            "data": {
+              "$ref": "urn:veryfront:events:1:data:message.reasoning.delta.emitted:diagnostic"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "com.veryfront.message.reasoning.ended"
+            },
+            "dataschema": {
+              "const": "urn:veryfront:events:1:data:message.reasoning.ended:public"
+            },
+            "data": {
+              "$ref": "urn:veryfront:events:1:data:message.reasoning.ended:public"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "com.veryfront.message.reasoning.ended"
+            },
+            "dataschema": {
+              "const": "urn:veryfront:events:1:data:message.reasoning.ended:diagnostic"
+            },
+            "data": {
+              "$ref": "urn:veryfront:events:1:data:message.reasoning.ended:diagnostic"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "com.veryfront.messages.snapshot.emitted"
+            },
+            "dataschema": {
+              "const": "urn:veryfront:events:1:data:messages.snapshot.emitted:public"
+            },
+            "data": {
+              "$ref": "urn:veryfront:events:1:data:messages.snapshot.emitted:public"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "com.veryfront.messages.snapshot.emitted"
+            },
+            "dataschema": {
+              "const": "urn:veryfront:events:1:data:messages.snapshot.emitted:diagnostic"
+            },
+            "data": {
+              "$ref": "urn:veryfront:events:1:data:messages.snapshot.emitted:diagnostic"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "com.veryfront.shared-state.snapshot.emitted"
+            },
+            "dataschema": {
+              "const": "urn:veryfront:events:1:data:shared-state.snapshot.emitted:public"
+            },
+            "data": {
+              "$ref": "urn:veryfront:events:1:data:shared-state.snapshot.emitted:public"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "com.veryfront.shared-state.snapshot.emitted"
+            },
+            "dataschema": {
+              "const": "urn:veryfront:events:1:data:shared-state.snapshot.emitted:diagnostic"
+            },
+            "data": {
+              "$ref": "urn:veryfront:events:1:data:shared-state.snapshot.emitted:diagnostic"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "com.veryfront.shared-state.delta.emitted"
+            },
+            "dataschema": {
+              "const": "urn:veryfront:events:1:data:shared-state.delta.emitted:public"
+            },
+            "data": {
+              "$ref": "urn:veryfront:events:1:data:shared-state.delta.emitted:public"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "com.veryfront.shared-state.delta.emitted"
+            },
+            "dataschema": {
+              "const": "urn:veryfront:events:1:data:shared-state.delta.emitted:diagnostic"
+            },
+            "data": {
+              "$ref": "urn:veryfront:events:1:data:shared-state.delta.emitted:diagnostic"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "com.veryfront.message.url.referenced"
+            },
+            "dataschema": {
+              "const": "urn:veryfront:events:1:data:message.url.referenced:public"
+            },
+            "data": {
+              "$ref": "urn:veryfront:events:1:data:message.url.referenced:public"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "com.veryfront.message.url.referenced"
+            },
+            "dataschema": {
+              "const": "urn:veryfront:events:1:data:message.url.referenced:diagnostic"
+            },
+            "data": {
+              "$ref": "urn:veryfront:events:1:data:message.url.referenced:diagnostic"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "com.veryfront.message.document.referenced"
+            },
+            "dataschema": {
+              "const": "urn:veryfront:events:1:data:message.document.referenced:public"
+            },
+            "data": {
+              "$ref": "urn:veryfront:events:1:data:message.document.referenced:public"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "com.veryfront.message.document.referenced"
+            },
+            "dataschema": {
+              "const": "urn:veryfront:events:1:data:message.document.referenced:diagnostic"
+            },
+            "data": {
+              "$ref": "urn:veryfront:events:1:data:message.document.referenced:diagnostic"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "com.veryfront.message.file.attached"
+            },
+            "dataschema": {
+              "const": "urn:veryfront:events:1:data:message.file.attached:public"
+            },
+            "data": {
+              "$ref": "urn:veryfront:events:1:data:message.file.attached:public"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "com.veryfront.message.file.attached"
+            },
+            "dataschema": {
+              "const": "urn:veryfront:events:1:data:message.file.attached:diagnostic"
+            },
+            "data": {
+              "$ref": "urn:veryfront:events:1:data:message.file.attached:diagnostic"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "com.veryfront.run.log.captured"
+            },
+            "dataschema": {
+              "const": "urn:veryfront:events:1:data:run.log.captured:public"
+            },
+            "data": {
+              "$ref": "urn:veryfront:events:1:data:run.log.captured:public"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "com.veryfront.run.log.captured"
+            },
+            "dataschema": {
+              "const": "urn:veryfront:events:1:data:run.log.captured:diagnostic"
+            },
+            "data": {
+              "$ref": "urn:veryfront:events:1:data:run.log.captured:diagnostic"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "com.veryfront.model-call.input.captured"
+            },
+            "dataschema": {
+              "const": "urn:veryfront:events:1:data:model-call.input.captured:public"
+            },
+            "data": {
+              "$ref": "urn:veryfront:events:1:data:model-call.input.captured:public"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "com.veryfront.model-call.input.captured"
+            },
+            "dataschema": {
+              "const": "urn:veryfront:events:1:data:model-call.input.captured:diagnostic"
+            },
+            "data": {
+              "$ref": "urn:veryfront:events:1:data:model-call.input.captured:diagnostic"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "com.veryfront.model-call.usage.recorded"
+            },
+            "dataschema": {
+              "const": "urn:veryfront:events:1:data:model-call.usage.recorded:public"
+            },
+            "data": {
+              "$ref": "urn:veryfront:events:1:data:model-call.usage.recorded:public"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "com.veryfront.model-call.usage.recorded"
+            },
+            "dataschema": {
+              "const": "urn:veryfront:events:1:data:model-call.usage.recorded:diagnostic"
+            },
+            "data": {
+              "$ref": "urn:veryfront:events:1:data:model-call.usage.recorded:diagnostic"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "com.veryfront.run.authorization.sealed"
+            },
+            "dataschema": {
+              "const": "urn:veryfront:events:1:data:run.authorization.sealed:public"
+            },
+            "data": {
+              "$ref": "urn:veryfront:events:1:data:run.authorization.sealed:public"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "com.veryfront.run.authorization.sealed"
+            },
+            "dataschema": {
+              "const": "urn:veryfront:events:1:data:run.authorization.sealed:diagnostic"
+            },
+            "data": {
+              "$ref": "urn:veryfront:events:1:data:run.authorization.sealed:diagnostic"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "com.veryfront.run.runtime.owner.changed"
+            },
+            "dataschema": {
+              "const": "urn:veryfront:events:1:data:run.runtime.owner.changed:public"
+            },
+            "data": {
+              "$ref": "urn:veryfront:events:1:data:run.runtime.owner.changed:public"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "com.veryfront.run.runtime.owner.changed"
+            },
+            "dataschema": {
+              "const": "urn:veryfront:events:1:data:run.runtime.owner.changed:diagnostic"
+            },
+            "data": {
+              "$ref": "urn:veryfront:events:1:data:run.runtime.owner.changed:diagnostic"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "com.veryfront.run.runtime.retry.recorded"
+            },
+            "dataschema": {
+              "const": "urn:veryfront:events:1:data:run.runtime.retry.recorded:public"
+            },
+            "data": {
+              "$ref": "urn:veryfront:events:1:data:run.runtime.retry.recorded:public"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "com.veryfront.run.runtime.retry.recorded"
+            },
+            "dataschema": {
+              "const": "urn:veryfront:events:1:data:run.runtime.retry.recorded:diagnostic"
+            },
+            "data": {
+              "$ref": "urn:veryfront:events:1:data:run.runtime.retry.recorded:diagnostic"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "com.veryfront.run.context.compacted"
+            },
+            "dataschema": {
+              "const": "urn:veryfront:events:1:data:run.context.compacted:public"
+            },
+            "data": {
+              "$ref": "urn:veryfront:events:1:data:run.context.compacted:public"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "com.veryfront.run.context.compacted"
+            },
+            "dataschema": {
+              "const": "urn:veryfront:events:1:data:run.context.compacted:diagnostic"
+            },
+            "data": {
+              "$ref": "urn:veryfront:events:1:data:run.context.compacted:diagnostic"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "com.veryfront.run.tool.exposure.checkpointed"
+            },
+            "dataschema": {
+              "const": "urn:veryfront:events:1:data:run.tool.exposure.checkpointed:public"
+            },
+            "data": {
+              "$ref": "urn:veryfront:events:1:data:run.tool.exposure.checkpointed:public"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "com.veryfront.run.tool.exposure.checkpointed"
+            },
+            "dataschema": {
+              "const": "urn:veryfront:events:1:data:run.tool.exposure.checkpointed:diagnostic"
+            },
+            "data": {
+              "$ref": "urn:veryfront:events:1:data:run.tool.exposure.checkpointed:diagnostic"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "com.veryfront.run.provider.replay.checkpointed"
+            },
+            "dataschema": {
+              "const": "urn:veryfront:events:1:data:run.provider.replay.checkpointed:public"
+            },
+            "data": {
+              "$ref": "urn:veryfront:events:1:data:run.provider.replay.checkpointed:public"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "com.veryfront.run.provider.replay.checkpointed"
+            },
+            "dataschema": {
+              "const": "urn:veryfront:events:1:data:run.provider.replay.checkpointed:diagnostic"
+            },
+            "data": {
+              "$ref": "urn:veryfront:events:1:data:run.provider.replay.checkpointed:diagnostic"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "com.veryfront.run.provider.replay.boundary.required"
+            },
+            "dataschema": {
+              "const": "urn:veryfront:events:1:data:run.provider.replay.boundary.required:public"
+            },
+            "data": {
+              "$ref": "urn:veryfront:events:1:data:run.provider.replay.boundary.required:public"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "com.veryfront.run.provider.replay.boundary.required"
+            },
+            "dataschema": {
+              "const": "urn:veryfront:events:1:data:run.provider.replay.boundary.required:diagnostic"
+            },
+            "data": {
+              "$ref": "urn:veryfront:events:1:data:run.provider.replay.boundary.required:diagnostic"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "com.veryfront.run.provider.replay.boundary.recorded"
+            },
+            "dataschema": {
+              "const": "urn:veryfront:events:1:data:run.provider.replay.boundary.recorded:public"
+            },
+            "data": {
+              "$ref": "urn:veryfront:events:1:data:run.provider.replay.boundary.recorded:public"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "com.veryfront.run.provider.replay.boundary.recorded"
+            },
+            "dataschema": {
+              "const": "urn:veryfront:events:1:data:run.provider.replay.boundary.recorded:diagnostic"
+            },
+            "data": {
+              "$ref": "urn:veryfront:events:1:data:run.provider.replay.boundary.recorded:diagnostic"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "com.veryfront.run.dispatch.requested"
+            },
+            "dataschema": {
+              "const": "urn:veryfront:events:1:data:run.dispatch.requested:public"
+            },
+            "data": {
+              "$ref": "urn:veryfront:events:1:data:run.dispatch.requested:public"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "com.veryfront.run.dispatch.requested"
+            },
+            "dataschema": {
+              "const": "urn:veryfront:events:1:data:run.dispatch.requested:diagnostic"
+            },
+            "data": {
+              "$ref": "urn:veryfront:events:1:data:run.dispatch.requested:diagnostic"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "com.veryfront.run.dispatch.accepted"
+            },
+            "dataschema": {
+              "const": "urn:veryfront:events:1:data:run.dispatch.accepted:public"
+            },
+            "data": {
+              "$ref": "urn:veryfront:events:1:data:run.dispatch.accepted:public"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "com.veryfront.run.dispatch.accepted"
+            },
+            "dataschema": {
+              "const": "urn:veryfront:events:1:data:run.dispatch.accepted:diagnostic"
+            },
+            "data": {
+              "$ref": "urn:veryfront:events:1:data:run.dispatch.accepted:diagnostic"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "com.veryfront.run.billing.mode.retained"
+            },
+            "dataschema": {
+              "const": "urn:veryfront:events:1:data:run.billing.mode.retained:public"
+            },
+            "data": {
+              "$ref": "urn:veryfront:events:1:data:run.billing.mode.retained:public"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "com.veryfront.run.billing.mode.retained"
+            },
+            "dataschema": {
+              "const": "urn:veryfront:events:1:data:run.billing.mode.retained:diagnostic"
+            },
+            "data": {
+              "$ref": "urn:veryfront:events:1:data:run.billing.mode.retained:diagnostic"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "com.veryfront.run.billing.usage.retained"
+            },
+            "dataschema": {
+              "const": "urn:veryfront:events:1:data:run.billing.usage.retained:public"
+            },
+            "data": {
+              "$ref": "urn:veryfront:events:1:data:run.billing.usage.retained:public"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "com.veryfront.run.billing.usage.retained"
+            },
+            "dataschema": {
+              "const": "urn:veryfront:events:1:data:run.billing.usage.retained:diagnostic"
+            },
+            "data": {
+              "$ref": "urn:veryfront:events:1:data:run.billing.usage.retained:diagnostic"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "com.veryfront.tool-call.refused"
+            },
+            "dataschema": {
+              "const": "urn:veryfront:events:1:data:tool-call.refused:public"
+            },
+            "data": {
+              "$ref": "urn:veryfront:events:1:data:tool-call.refused:public"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "com.veryfront.tool-call.refused"
+            },
+            "dataschema": {
+              "const": "urn:veryfront:events:1:data:tool-call.refused:diagnostic"
+            },
+            "data": {
+              "$ref": "urn:veryfront:events:1:data:tool-call.refused:diagnostic"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "com.veryfront.run.input.uploads.sealed"
+            },
+            "dataschema": {
+              "const": "urn:veryfront:events:1:data:run.input.uploads.sealed:public"
+            },
+            "data": {
+              "$ref": "urn:veryfront:events:1:data:run.input.uploads.sealed:public"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "com.veryfront.run.input.uploads.sealed"
+            },
+            "dataschema": {
+              "const": "urn:veryfront:events:1:data:run.input.uploads.sealed:diagnostic"
+            },
+            "data": {
+              "$ref": "urn:veryfront:events:1:data:run.input.uploads.sealed:diagnostic"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "type": "object",
+      "required": [
+        "runid",
+        "runkind",
+        "subject",
+        "recordedat"
+      ],
+      "properties": {
+        "id": {
+          "pattern": "^[1-9][0-9]*$"
+        },
+        "source": {
+          "format": "uri",
+          "pattern": "^https://[^?#]+/runs/[^/?#]+$"
+        }
+      }
+    }
+  ],
+  "x-view-rule": "The selected payload schema is chosen from the trusted authorization view, not client-declared data."
+}

@@ -36,7 +36,7 @@ export async function readPinnedDenoVersion(): Promise<string> {
  */
 export async function readActionDenoVersions(): Promise<string[]> {
   const text = await Deno.readTextFile(SETUP_ACTION);
-  const install = [...text.matchAll(/^\s*version="(\d+\.\d+\.\d+)"/gm)];
+  const install = [...text.matchAll(/^[ \t]*version="(\d+\.\d+\.\d+)"/gm)];
   const cacheKeys = [...text.matchAll(/veryfront-deno-v\d+-[^\n]*?-(\d+\.\d+\.\d+)-/g)];
   return [...install, ...cacheKeys].map((m) => m[1]);
 }

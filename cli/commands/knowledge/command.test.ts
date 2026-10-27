@@ -34,6 +34,7 @@ import {
 } from "./command.ts";
 import {
   createDownloadUploadsStub,
+  createIndexReceipt,
   createKnowledgeCommandArgs,
   createLocalSource,
   createMockClient,
@@ -696,7 +697,7 @@ describe("collectKnowledgeSources", () => {
       localSourcePath: null,
       reason: "unsupported_file_type",
       message:
-        "OKF bundle mode preserves Markdown documents and referenced UTF-8 companion assets; unreferenced generated artifacts are skipped.",
+        "OKF bundle mode preserves Markdown documents and referenced text and binary companions; unreferenced generated artifacts are skipped.",
     }]);
   });
 
@@ -872,6 +873,66 @@ describe("collectKnowledgeSources", () => {
 });
 
 describe("ingestResolvedSources", () => {
+  it("preserves generic custom destinations without claiming a canonical knowledge index", async () => {
+    for (const knowledgePath of ["knowledge", "docs/imports/acme", "knowledge-sibling"]) {
+      let indexCalls = 0;
+      const result = await ingestResolvedSources(
+        [createUploadSource("uploads/contracts/q1.pdf")],
+        createKnowledgeCommandArgs({ knowledgePath }),
+        {
+          client: createMockClient(),
+          projectSlug: "my-project",
+          outputDir: "/workspace/knowledge",
+          runParser: async () => createParserSuccess(),
+          uploadKnowledgeFile: async (remotePath) => ({ path: remotePath }),
+          indexKnowledgeDocument: async (input) => {
+            indexCalls++;
+            return createIndexReceipt(input.published.path);
+          },
+        },
+      );
+      assertEquals(result.failed, []);
+      assertEquals(result.ingested.length, 1);
+      assertEquals(result.ingested[0]?.remotePath, `${knowledgePath}/contracts-q1.md`);
+      assertEquals(indexCalls, knowledgePath === "knowledge" ? 1 : 0);
+      assertEquals(result.ingested[0]?.canonicalIndex !== undefined, knowledgePath === "knowledge");
+    }
+  });
+
+  it("indexes the selected branch while preserving runtime destination authority and main default", async () => {
+    for (
+      const { branch, destinationBranch, expected } of [
+        { branch: "feature/docs", destinationBranch: undefined, expected: "feature/docs" },
+        {
+          branch: "feature/docs",
+          destinationBranch: "runtime-preview",
+          expected: "runtime-preview",
+        },
+        { branch: undefined, destinationBranch: undefined, expected: "main" },
+      ]
+    ) {
+      const indexedBranches: string[] = [];
+      const result = await ingestResolvedSources(
+        [createUploadSource("uploads/contracts/q1.pdf")],
+        createKnowledgeCommandArgs({ branch }),
+        {
+          client: createMockClient(),
+          projectSlug: "my-project",
+          outputDir: "/workspace/knowledge",
+          destinationBranch,
+          runParser: async () => createParserSuccess(),
+          uploadKnowledgeFile: async (remotePath) => ({ path: remotePath }),
+          indexKnowledgeDocument: async (input) => {
+            indexedBranches.push(input.branch);
+            return createIndexReceipt(input.published.path);
+          },
+        },
+      );
+      assertEquals(result.failed, []);
+      assertEquals(indexedBranches, [expected]);
+    }
+  });
+
   it("stops parsing and uploads when the run is cancelled", async () => {
     const controller = new AbortController();
     let parserCalls = 0;
@@ -895,6 +956,7 @@ describe("ingestResolvedSources", () => {
               controller.abort(new Error("run cancelled"));
               return createParserSuccess();
             },
+            indexKnowledgeDocument: async (input) => createIndexReceipt(input.published.path),
             uploadKnowledgeFile: async (remotePath) => {
               uploadCalls++;
               return { path: remotePath };
@@ -931,6 +993,7 @@ describe("ingestResolvedSources", () => {
               receivedSignal?.throwIfAborted();
               return createParserSuccess();
             },
+            indexKnowledgeDocument: async (input) => createIndexReceipt(input.published.path),
             uploadKnowledgeFile: async (remotePath) => {
               uploadCalls++;
               return { path: remotePath };
@@ -953,12 +1016,14 @@ describe("ingestResolvedSources", () => {
         projectSlug: "my-project",
         outputDir: "/workspace/knowledge",
         runParser: async () => createParserSuccess(),
+        indexKnowledgeDocument: async (input) => createIndexReceipt(input.published.path),
         uploadKnowledgeFile: async (remotePath) => ({ path: remotePath }),
       },
     );
 
     assertEquals(results, {
       ingested: [{
+        canonicalIndex: createIndexReceipt("knowledge/contracts-q1.md"),
         source: "uploads/contracts/q1.pdf",
         localSourcePath: "/workspace/uploads/contracts/q1.pdf",
         outputPath: "/workspace/knowledge/contracts-q1.md",
@@ -971,6 +1036,44 @@ describe("ingestResolvedSources", () => {
       }],
       failed: [],
     });
+  });
+
+  it("uploads OKF bundle-root metadata for custom knowledge prefixes", async () => {
+    const uploads: Array<{ remotePath: string; metadata?: Record<string, unknown> }> = [];
+
+    const results = await ingestResolvedSources(
+      [{
+        kind: "local",
+        input: "/workspace/acme/index.md",
+        localPath: "/workspace/acme/index.md",
+      }],
+      createKnowledgeCommandArgs({
+        path: "/workspace/acme",
+        all: true,
+        outputDir: "/workspace/knowledge",
+        knowledgePath: "knowledge/imports/acme",
+        okfBundle: true,
+      }),
+      {
+        client: createMockClient(),
+        projectSlug: "my-project",
+        outputDir: "/workspace/knowledge",
+        runParser: async () =>
+          createParserSuccess({
+            sandbox_output_path: "/workspace/knowledge/index.md",
+          }),
+        uploadKnowledgeFile: async (remotePath, _localPath, metadata) => {
+          uploads.push({ remotePath, metadata });
+          return { path: remotePath };
+        },
+      },
+    );
+
+    assertEquals(results.failed, []);
+    assertEquals(uploads, [{
+      remotePath: "knowledge/imports/acme/index.md",
+      metadata: { _veryfront: { okf: { bundle_root_path: "knowledge/imports/acme" } } },
+    }]);
   });
 
   it("logs real page and slide extraction progress emitted by the parser", async () => {
@@ -1014,6 +1117,7 @@ describe("ingestResolvedSources", () => {
             stats: { engine: "kreuzberg", characters: 80 },
           });
         },
+        indexKnowledgeDocument: async (input) => createIndexReceipt(input.published.path),
         uploadKnowledgeFile: async (remotePath) => ({ path: remotePath }),
         eventLogger: createMemoryEventLogger(events),
       },
@@ -1029,6 +1133,9 @@ describe("ingestResolvedSources", () => {
         progress_unit: "page",
         progress_current: 1,
         progress_total: 2,
+        source_ordinal: 1,
+        source_count: 2,
+        source_type: "pdf",
         page_current: 1,
         page_total: 2,
         characters: 100,
@@ -1039,6 +1146,9 @@ describe("ingestResolvedSources", () => {
         progress_unit: "page",
         progress_current: 2,
         progress_total: 2,
+        source_ordinal: 1,
+        source_count: 2,
+        source_type: "pdf",
         page_current: 2,
         page_total: 2,
         characters: 120,
@@ -1049,12 +1159,52 @@ describe("ingestResolvedSources", () => {
         progress_unit: "slide",
         progress_current: 1,
         progress_total: 1,
+        source_ordinal: 2,
+        source_count: 2,
+        source_type: "pptx",
         slide_current: 1,
         slide_total: 1,
         characters: 80,
         source_name: "roadmap.pptx",
       },
     ]);
+  });
+
+  it("logs parser-start progress before invoking the parser without claiming a real parser callback", async () => {
+    const events: LoggedEvent[] = [];
+    let parserCalled = false;
+
+    await ingestResolvedSources(
+      [createUploadSource("uploads/manuals/bosch.pdf")],
+      createKnowledgeCommandArgs(),
+      {
+        client: createMockClient(),
+        projectSlug: "my-project",
+        outputDir: "/workspace/knowledge",
+        runParser: async () => {
+          const parserStart = events.find((event) =>
+            event.message === "Starting knowledge source parser"
+          );
+          assertEquals(parserStart?.metadata, {
+            phase: "parser_started_pre_call",
+            progress_unit: "file",
+            progress_current: 1,
+            progress_total: 1,
+            source_ordinal: 1,
+            source_count: 1,
+            source_type: "pdf",
+            source_name: "bosch.pdf",
+          });
+          parserCalled = true;
+          return createParserSuccess();
+        },
+        indexKnowledgeDocument: async (input) => createIndexReceipt(input.published.path),
+        uploadKnowledgeFile: async (remotePath) => ({ path: remotePath }),
+        eventLogger: createMemoryEventLogger(events),
+      },
+    );
+
+    assertEquals(parserCalled, true);
   });
 
   it("does not request extraction progress when no event logger can report it", async () => {
@@ -1071,6 +1221,7 @@ describe("ingestResolvedSources", () => {
           hasProgressCallback = typeof deps?.onProgress === "function";
           return createParserSuccess();
         },
+        indexKnowledgeDocument: async (input) => createIndexReceipt(input.published.path),
         uploadKnowledgeFile: async (remotePath) => ({ path: remotePath }),
       },
     );
@@ -1105,6 +1256,7 @@ describe("ingestResolvedSources", () => {
             warnings: [],
           };
         },
+        indexKnowledgeDocument: async (input) => createIndexReceipt(input.published.path),
         uploadKnowledgeFile: async (remotePath) => ({ path: remotePath }),
       },
     );
@@ -1133,11 +1285,13 @@ describe("ingestResolvedSources", () => {
             summary: "Parsed as text.",
             stats: { lines: 1 },
           }),
+        indexKnowledgeDocument: async (input) => createIndexReceipt(input.published.path),
         uploadKnowledgeFile: async (remotePath) => ({ path: remotePath }),
       },
     );
 
     assertEquals(results.ingested, [{
+      canonicalIndex: createIndexReceipt("knowledge/run-benchmark.md"),
       source: "/workspace/contracts/run_benchmark.py",
       localSourcePath: "/workspace/contracts/run_benchmark.py",
       outputPath: "/workspace/knowledge/run-benchmark.md",
@@ -1204,6 +1358,7 @@ describe("ingestResolvedSources", () => {
             warnings: [],
           };
         },
+        indexKnowledgeDocument: async (input) => createIndexReceipt(input.published.path),
         uploadKnowledgeFile: async (remotePath) => ({ path: remotePath }),
       },
     );
@@ -1213,6 +1368,7 @@ describe("ingestResolvedSources", () => {
       "/workspace/contracts/run_benchmark.py",
     ]);
     assertEquals(results.ingested, [{
+      canonicalIndex: createIndexReceipt("knowledge/run-benchmark.md"),
       source: "/workspace/contracts/run_benchmark.py",
       localSourcePath: "/workspace/contracts/run_benchmark.py",
       outputPath: "/workspace/knowledge/run-benchmark.md",
@@ -1261,6 +1417,7 @@ describe("ingestResolvedSources", () => {
         runParser: async () => {
           throw new Error("Unsupported file type: .bin");
         },
+        indexKnowledgeDocument: async (input) => createIndexReceipt(input.published.path),
         uploadKnowledgeFile: async (remotePath) => ({ path: remotePath }),
       },
     );
@@ -1310,6 +1467,7 @@ describe("ingestResolvedSources", () => {
             runParser: async () => {
               throw new Error("runParser should not be called");
             },
+            indexKnowledgeDocument: async (input) => createIndexReceipt(input.published.path),
             uploadKnowledgeFile: async () => {
               throw new Error("uploadKnowledgeFile should not be called");
             },
@@ -1454,6 +1612,31 @@ it("collects hidden OKF upload Markdown without downloading viewer artifacts", a
   );
   assertEquals(collection.skipped.length, 1);
   assertEquals(collection.skipped[0]?.source, "uploads/.bundle/viz.html");
+});
+
+it("retains skipped-only prefix results without retrying a directory prefix", async () => {
+  let calls = 0;
+  const collection = await collectKnowledgeSources(
+    { sources: [], path: "uploads/docs", all: true, recursive: true, okfBundle: false },
+    {
+      client: createMockClient({
+        get: () => {
+          calls++;
+          return Promise.resolve({
+            data: [{ type: "file", path: "uploads/docs/archive.zip" }],
+            page_info: { next: null },
+          });
+        },
+      }),
+      projectSlug: "my-project",
+      downloadUploads: async () => {
+        throw new Error("must not download unsupported files");
+      },
+    },
+  );
+  assertEquals(calls, 1);
+  assertEquals(collection.sources, []);
+  assertEquals(collection.skipped.map((source) => source.reason), ["unsupported_file_type"]);
 });
 
 it("collects Markdown in hidden OKF roots and directories", async () => {
@@ -1639,7 +1822,9 @@ it("keeps the canonical 14-file GA4 OKF bundle paths and skips generated viewer 
     );
     assertEquals(collection.skipped.map((skipped) => basename(skipped.source)), ["viz.html"]);
 
-    const uploads: Array<{ remotePath: string; content: string }> = [];
+    const uploads: Array<
+      { remotePath: string; content: string; metadata?: Record<string, unknown> }
+    > = [];
     const results = await ingestResolvedSources(
       collection.sources,
       createKnowledgeCommandArgs({
@@ -1653,8 +1838,9 @@ it("keeps the canonical 14-file GA4 OKF bundle paths and skips generated viewer 
         projectSlug: "my-project",
         outputDir,
         runParser: runKnowledgeParser,
-        uploadKnowledgeFile: async (remotePath, localPath) => {
-          uploads.push({ remotePath, content: await Deno.readTextFile(localPath) });
+        indexKnowledgeDocument: async (input) => createIndexReceipt(input.published.path),
+        uploadKnowledgeFile: async (remotePath, localPath, metadata) => {
+          uploads.push({ remotePath, content: await Deno.readTextFile(localPath), metadata });
           return { path: remotePath };
         },
       },
@@ -1663,6 +1849,13 @@ it("keeps the canonical 14-file GA4 OKF bundle paths and skips generated viewer 
     assertEquals(
       uploads.map((upload) => upload.remotePath).sort(),
       canonicalGa4OkfDocuments.map((document) => `knowledge/${document.path}`).sort(),
+    );
+    assertEquals(
+      uploads.every((upload) =>
+        JSON.stringify(upload.metadata) ===
+          JSON.stringify({ _veryfront: { okf: { bundle_root_path: "knowledge" } } })
+      ),
+      true,
     );
     for (const document of canonicalGa4OkfDocuments) {
       assertEquals(
@@ -1716,6 +1909,7 @@ it("preserves accepted uppercase Markdown bundle extensions", async () => {
       },
     );
     const uploads: Array<{ remotePath: string; content: string }> = [];
+    const indexedPaths: string[] = [];
     const results = await ingestResolvedSources(
       collection.sources,
       createKnowledgeCommandArgs({ path: bundleDir, all: true, outputDir, okfBundle: true }),
@@ -1724,6 +1918,10 @@ it("preserves accepted uppercase Markdown bundle extensions", async () => {
         projectSlug: "my-project",
         outputDir,
         runParser: runKnowledgeParser,
+        indexKnowledgeDocument: async (input) => {
+          indexedPaths.push(input.published.path);
+          return createIndexReceipt(input.published.path);
+        },
         uploadKnowledgeFile: async (remotePath, localPath) => {
           uploads.push({ remotePath, content: await Deno.readTextFile(localPath) });
           return { path: remotePath };
@@ -1734,6 +1932,8 @@ it("preserves accepted uppercase Markdown bundle extensions", async () => {
     assertEquals(results.failed, []);
     assertEquals(uploads, [{ remotePath: "knowledge/Concept.MD", content: source }]);
     assertEquals(results.ingested[0]?.documentKind, "okf_concept");
+    assertEquals(indexedPaths, ["knowledge/Concept.MD"]);
+    assertEquals(results.ingested[0]?.canonicalIndex?.path, "knowledge/Concept.MD");
   } finally {
     await Deno.remove(tempDir, { recursive: true }).catch(() => undefined);
   }
@@ -1768,6 +1968,7 @@ it("reports legacy OKF diagnostics as partial failures without rewriting valid s
         projectSlug: "my-project",
         outputDir,
         runParser: runKnowledgeParser,
+        indexKnowledgeDocument: async (input) => createIndexReceipt(input.published.path),
         uploadKnowledgeFile: async (remotePath) => {
           uploads.push(remotePath);
           return { path: remotePath };
@@ -2135,6 +2336,7 @@ it("preserves referenced computation executor and attester UTF-8 companions byte
       projectSlug: "my-project",
       outputDir,
       runParser: runKnowledgeParser,
+      indexKnowledgeDocument: async (input) => createIndexReceipt(input.published.path),
       uploadKnowledgeFile: async (remotePath, localPath) => {
         uploaded.set(remotePath, await Deno.readTextFile(localPath));
         return { path: remotePath };
@@ -2145,6 +2347,130 @@ it("preserves referenced computation executor and attester UTF-8 companions byte
       [...uploaded].sort(),
       [...files].map(([path, content]) => [`knowledge/${path}`, content]).sort(),
     );
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+it("preserves structured UTF-8 companions at custom destinations and preflights protected bytes", async () => {
+  const root = await makeTempDir({ prefix: "veryfront-okf-companions-" });
+  const outputDir = join(root, "output");
+  const bundle = join(root, "bundle");
+  const files = new Map([
+    [
+      "topic.md",
+      "---\ntype: Attested Computation\ncomputation: scripts/revenue.js\nexecutor: bin/run\nresource: references/schema.json\nsources:\n  - resource: notes.csv\n  - resource: script.py\n  - resource: query.sql\n  - resource: run.sh\n  - resource: data.yaml\n  - resource: references/raw.json\n    id: scripts/orphan.js\n    label: viz.html\n    description: viz.html\nattester:\n  resource: references/check.json\n  id: scripts/orphan.js\n  description: viz.html\n---\nRevenue\n[CSV](notes.csv) [Python](script.py) [SQL](query.sql) [Shell](run.sh) [YAML](data.yaml)\n",
+    ],
+    ["scripts/revenue.js", "export const revenue = 42;\r\n"],
+    ["bin/run", "#!/bin/sh\necho run\n"],
+    ["references/check.json", '{"ok":true}\n'],
+    ["references/schema.json", '\ufeff{"type":"object"}\r\n'],
+    ["references/raw.json", '{"value":42}\n'],
+    ["notes.csv", "key,value\r\na,1\r\n"],
+    ["script.py", "print(42)\n"],
+    ["query.sql", "SELECT 42;\n"],
+    ["run.sh", "echo ok\n"],
+    ["data.yaml", "value: 42\n"],
+  ]);
+  try {
+    for (const [path, content] of files) {
+      await Deno.mkdir(dirname(join(bundle, path)), { recursive: true });
+      await Deno.writeTextFile(join(bundle, path), content);
+    }
+    await Deno.writeTextFile(join(bundle, "viz.html"), "<html>viewer</html>");
+    await Deno.writeTextFile(join(bundle, "scripts", "orphan.js"), "export {};\n");
+    const options = createKnowledgeCommandArgs({
+      path: bundle,
+      all: true,
+      okfBundle: true,
+      knowledgePath: "docs/imports/acme",
+    });
+    const collection = await collectKnowledgeSources(options, {
+      client: createMockClient(),
+      projectSlug: "my-project",
+      downloadUploads: async () => [],
+    });
+    assertEquals(
+      collection.sources.map((source) => source.localPath.slice(bundle.length + 1)).sort(),
+      [
+        "bin/run",
+        "notes.csv",
+        "script.py",
+        "query.sql",
+        "run.sh",
+        "data.yaml",
+        "references/check.json",
+        "references/raw.json",
+        "references/schema.json",
+        "scripts/revenue.js",
+        "topic.md",
+      ].sort(),
+    );
+    assertEquals(
+      collection.skipped.map((skipped) => skipped.source.slice(bundle.length + 1)).sort(),
+      ["scripts/orphan.js", "viz.html"],
+    );
+    const uploaded = new Map<string, string>();
+    const result = await ingestResolvedSources(collection.sources, options, {
+      client: createMockClient(),
+      projectSlug: "my-project",
+      outputDir,
+      runParser: runKnowledgeParser,
+      indexKnowledgeDocument: async (input) => createIndexReceipt(input.published.path),
+      uploadKnowledgeFile: async (remotePath, localPath, _metadata, storageKind) => {
+        assertEquals(storageKind, undefined);
+        uploaded.set(remotePath, await Deno.readTextFile(localPath));
+        return { path: remotePath };
+      },
+    });
+    assertEquals(result.failed, []);
+    assertEquals(
+      [...uploaded].sort(),
+      [...files].map(([path, content]) => [`docs/imports/acme/${path}`, content]).sort(),
+    );
+    await Deno.writeFile(join(bundle, "references/schema.json"), new Uint8Array([255]));
+    let writes = 0;
+    await assertRejects(
+      () =>
+        ingestResolvedSources(collection.sources, options, {
+          client: createMockClient(),
+          projectSlug: "my-project",
+          outputDir,
+          runParser: runKnowledgeParser,
+          uploadKnowledgeFile: async () => {
+            writes++;
+            return { path: "unexpected" };
+          },
+        }),
+      Error,
+      "UTF-8",
+    );
+    assertEquals(writes, 0);
+    await Deno.writeTextFile(join(bundle, "references/schema.json"), '{"valid":true}');
+    await Deno.writeFile(join(bundle, "image.bin"), new Uint8Array([255, 0]));
+    await Deno.writeTextFile(
+      join(bundle, "topic.md"),
+      "---\ntype: Concept\nresource: image.bin\n---\nBinary asset\n",
+    );
+    await Deno.writeTextFile(join(bundle, "bad.md"), "---\ntype: [\n---\ninvalid\n");
+    const withBinary = await collectKnowledgeSources(options, {
+      client: createMockClient(),
+      projectSlug: "my-project",
+      downloadUploads: async () => [],
+    });
+    await assertRejects(() =>
+      ingestResolvedSources(withBinary.sources, options, {
+        client: createMockClient(),
+        projectSlug: "my-project",
+        outputDir,
+        runParser: runKnowledgeParser,
+        uploadKnowledgeFile: async () => {
+          writes++;
+          return { path: "unexpected" };
+        },
+      })
+    );
+    assertEquals(writes, 0);
   } finally {
     await Deno.remove(root, { recursive: true });
   }
@@ -2320,7 +2646,7 @@ it("ignores escaping and external OKF companion references", async () => {
   }
 });
 
-it("fails referenced OKF companion assets that are not valid UTF-8", async () => {
+it("preserves referenced binary OKF companion assets without UTF-8 decoding", async () => {
   const root = await makeTempDir({ prefix: "veryfront-okf-binary-companion-" });
   const outputDir = join(root, "output");
   const bundle = join(root, "bundle");
@@ -2349,14 +2675,17 @@ it("fails referenced OKF companion assets that are not valid UTF-8", async () =>
       projectSlug: "my-project",
       outputDir,
       runParser: runKnowledgeParser,
+      indexKnowledgeDocument: async (input) => createIndexReceipt(input.published.path),
       uploadKnowledgeFile: async (remotePath) => ({ path: remotePath }),
     });
-    assertEquals(result.ingested.map((item) => item.remotePath), ["knowledge/topic.md"]);
-    assertEquals(result.failed.length, 1);
-    assertEquals(result.failed[0]?.source.endsWith("bin/run.wasm"), true);
-    assertStringIncludes(
-      result.failed[0]?.message ?? "",
-      "not valid UTF-8 and cannot be uploaded through text knowledge storage",
+    assertEquals(result.ingested.map((item) => item.remotePath).sort(), [
+      "knowledge/bin/run.wasm",
+      "knowledge/topic.md",
+    ]);
+    assertEquals(result.failed, []);
+    assertEquals(
+      await Deno.readFile(join(outputDir, "bin", "run.wasm")),
+      new Uint8Array([0xff, 0xfe, 0xfd]),
     );
   } finally {
     await Deno.remove(root, { recursive: true });
@@ -2503,6 +2832,7 @@ it("preserves a UTF-8 BOM-prefixed OKF document byte-for-byte", async () => {
         projectSlug: "my-project",
         outputDir,
         runParser: runKnowledgeParser,
+        indexKnowledgeDocument: async (input) => createIndexReceipt(input.published.path),
         uploadKnowledgeFile: async (remotePath, localPath) => {
           uploads.push({ remotePath, bytes: await Deno.readFile(localPath) });
           return { path: remotePath };
@@ -2588,6 +2918,7 @@ for (const sourceKind of ["local", "upload"] as const) {
         projectSlug: "my-project",
         outputDir: join(root, "output"),
         runParser: runKnowledgeParser,
+        indexKnowledgeDocument: async (input) => createIndexReceipt(input.published.path),
         uploadKnowledgeFile: async (remotePath, localPath) => {
           uploaded.set(remotePath, await Deno.readFile(localPath));
           return { path: remotePath };

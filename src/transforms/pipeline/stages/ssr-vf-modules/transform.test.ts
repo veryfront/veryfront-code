@@ -1,3 +1,4 @@
+import { getSSRReactRuntimeCacheScope } from "#veryfront/transforms/esm/http-cache-helpers.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import {
   assert,
@@ -10,7 +11,7 @@ import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 import { VeryfrontError } from "#veryfront/errors";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
-import { fromFileUrl, join } from "#veryfront/compat/path/index.ts";
+import { fromFileUrl, join, toFileUrl } from "#veryfront/compat/path/index.ts";
 import {
   isCyclePlaceholder,
   reactReExportToEsmUrl,
@@ -114,7 +115,10 @@ describe("reactReExportToEsmUrl", () => {
     const reactSrcDir = new URL("../../../../../react/", import.meta.url);
     const sources: string[] = [];
     for await (const entry of Deno.readDir(reactSrcDir)) {
-      if (entry.isFile && entry.name.endsWith(".ts") && !entry.name.endsWith(".test.ts")) {
+      if (
+        entry.isFile && entry.name.endsWith(".ts") && !entry.name.endsWith(".test.ts") &&
+        !entry.name.endsWith(".d.ts")
+      ) {
         sources.push(entry.name);
       }
     }
@@ -140,6 +144,22 @@ describe("transformFrameworkCode depth-limit fallback", {
 }, () => {
   afterAll(async () => {
     await stopEsbuild();
+  });
+
+  it("preserves the original framework URL after relocating a module into cache", async () => {
+    const directory = await makeTempDir({ prefix: "vf-framework-anchor-" });
+    const sourcePath = join(directory, "framework", "peer-resolution.ts");
+    try {
+      const code = await transformFrameworkCode(
+        "export const anchor = import.meta.url;",
+        sourcePath,
+        { reactVersion: "19.2.4", projectDir: directory, fs: createFileSystem() },
+      );
+      assertStringIncludes(code, toFileUrl(sourcePath).href);
+      assertEquals(code.includes("import.meta.url"), false);
+    } finally {
+      await Deno.remove(directory, { recursive: true });
+    }
   });
 
   it("isolates cached framework transforms by React version", async () => {
@@ -179,8 +199,23 @@ describe("transformFrameworkCode depth-limit fallback", {
     await Deno.mkdir(projectA);
     await Deno.mkdir(projectB);
 
-    const keyA = buildFrameworkTransformCacheKey(sourcePath, "19.2.4", projectA, source);
-    const keyB = buildFrameworkTransformCacheKey(sourcePath, "19.2.4", projectB, source);
+    const runtimeScope = await getSSRReactRuntimeCacheScope();
+    const keyA = buildFrameworkTransformCacheKey(
+      sourcePath,
+      "19.2.4",
+      projectA,
+      source,
+      undefined,
+      runtimeScope,
+    );
+    const keyB = buildFrameworkTransformCacheKey(
+      sourcePath,
+      "19.2.4",
+      projectB,
+      source,
+      undefined,
+      runtimeScope,
+    );
 
     const importMapKeyA = buildFrameworkTransformCacheKey(
       sourcePath,
@@ -348,6 +383,8 @@ describe("transformFrameworkCode depth-limit fallback", {
       "19.2.4",
       tmp,
       source,
+      undefined,
+      await getSSRReactRuntimeCacheScope(),
     );
 
     try {

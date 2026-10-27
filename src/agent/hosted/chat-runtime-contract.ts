@@ -1,3 +1,4 @@
+import type { HostedTaskInput } from "./task-input.ts";
 import type { ChatFinishReason } from "#veryfront/chat/protocol.ts";
 import type {
   ChatSystemMessage,
@@ -132,11 +133,19 @@ export type HostedChatRuntimeCreationOptions<TRuntimeAgentDefinition, TThinkingC
   authToken: string;
   instructions: string | ChatSystemMessage[];
   runId?: string;
+  rootRunId?: string;
+  taskInput?: HostedTaskInput;
   agentId?: string;
   model?: string;
   temperature?: number;
+  parallelToolCalls?: boolean;
   maxSteps?: number;
   maxOutputTokens?: number;
+  /**
+   * @internal False when `maxOutputTokens` is the grant's allowance rather than
+   * a caller request, so the runtime caps implicit output instead of reserving it.
+   */
+  maxOutputTokensExplicit?: boolean;
   allowedTools?: string[];
   /**
    * Tool names the agent configuration denied explicitly (`false` entries).
@@ -152,6 +161,11 @@ export type HostedChatRuntimeCreationOptions<TRuntimeAgentDefinition, TThinkingC
   allowedProviderTools?: string[];
   /** Authored tool schema loading mode. Request overrides cannot set this. */
   toolLoading?: AgentConfig["toolLoading"];
+  /** Authored exact startup tool schemas. Request overrides cannot set this. */
+  bootstrapTools?: AgentConfig["bootstrapTools"];
+  optionalBootstrapTools?: AgentConfig["optionalBootstrapTools"];
+  /** Authored startup skill. Request overrides cannot set this. */
+  bootstrapSkill?: AgentConfig["bootstrapSkill"];
   /** Authored model-visible tool result context budget. Request overrides cannot set this. */
   toolResultContext?: AgentConfig["toolResultContext"];
   /** Authored framework knowledge selection. Request overrides cannot set this. */

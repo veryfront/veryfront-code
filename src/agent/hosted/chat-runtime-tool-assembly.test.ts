@@ -1,6 +1,7 @@
 import { markTrustedPlatformSource } from "#veryfront/tool/platform-source-provenance.ts";
 import {
   hasTrustedHostToolProvenance,
+  markTrustedHostToolProvenance,
   markTrustedHostToolSet,
 } from "#veryfront/tool/host-tool-provenance.ts";
 import { toolToProviderDefinition } from "#veryfront/tool/registry.ts";
@@ -12,6 +13,7 @@ import {
   assertStrictEquals,
   assertStringIncludes,
 } from "#veryfront/testing/assert.ts";
+import { VeryfrontError } from "#veryfront/errors";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import type {
@@ -435,34 +437,6 @@ describe("filterHostedChatRuntimeLocalTools", () => {
     assertEquals(await toolAssembly.runtimeTools.veryfront__form_input?.execute({}), { ok: true });
   });
 
-  it("keeps a trusted legacy form executable for parked canonical-only resume", async () => {
-    const taskContext: HostedChatRuntimeToolAssemblyContext = {
-      authToken: "token",
-      projectId: "project-1",
-      model: "anthropic/claude-sonnet-4-6",
-    };
-    const localTools = withPlatformHostToolAliases(markTrustedHostToolSet({
-      veryfront__form_input: localTool("Canonical platform form input"),
-    }));
-
-    const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
-      sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
-      taskContext,
-      instructions: "Base instructions",
-      localTools,
-      hostToolPolicy: { allow: ["form_input"] },
-      apiUrl: "https://api.example.com",
-      apiMcpUrl: "https://api.example.com/mcp",
-      allowedToolNames: ["form_input"],
-      createRemoteToolSource: remoteSourceFromConfig,
-      preloadLatestConversationUserText: false,
-    });
-
-    assertEquals(toolAssembly.localToolNames, ["form_input", "veryfront__form_input"]);
-    assertEquals(await toolAssembly.runtimeTools.form_input?.execute({}), { ok: true });
-    assertEquals(await toolAssembly.runtimeTools.veryfront__form_input?.execute({}), { ok: true });
-  });
-
   it("does not let a legacy host policy select canonical form over a project collision", async () => {
     const taskContext: HostedChatRuntimeToolAssemblyContext = {
       authToken: "token",
@@ -518,8 +492,8 @@ Deno.test("prepareHostedChatRuntimeToolAssembly preserves skill loading without 
     preloadLatestConversationUserText: false,
   });
 
-  assertEquals(toolAssembly.localToolNames, ["load_skill", "sleep"]);
-  assertEquals(taskContext.availableToolNames, ["load_skill", "sleep"]);
+  assertEquals(toolAssembly.localToolNames, ["veryfront__load_skill", "veryfront__sleep"]);
+  assertEquals(taskContext.availableToolNames, ["veryfront__load_skill", "veryfront__sleep"]);
 });
 
 Deno.test("prepareHostedChatRuntimeToolAssembly preserves only trusted skill loaders under canonical grants", async () => {
@@ -865,13 +839,12 @@ Deno.test("prepareHostedChatRuntimeToolAssembly defers an omitted allowed tools 
 
   assertEquals(toolAssembly.toolLoadingMode, "deferred");
   assertEquals(toolAssembly.availableToolNames, [
-    "create_file",
     "form_input",
     "load_skill",
     "sleep",
     "veryfront__create_file",
   ]);
-  assertEquals(taskContext.availableToolNames, ["load_skill", "tool_search"]);
+  assertEquals(taskContext.availableToolNames, ["load_skill", "veryfront__tool_search"]);
 });
 
 Deno.test("prepareHostedChatRuntimeToolAssembly bootstraps a trusted canonical load_skill collision", async () => {
@@ -904,128 +877,7 @@ Deno.test("prepareHostedChatRuntimeToolAssembly bootstraps a trusted canonical l
 
   assertEquals(toolAssembly.toolLoadingMode, "deferred");
   assertEquals(toolAssembly.availableToolNames, ["sleep", "veryfront__load_skill"]);
-  assertEquals(taskContext.availableToolNames, ["tool_search", "veryfront__load_skill"]);
-});
-
-it("prepareHostedChatRuntimeToolAssembly exposes one deferred skill loader when aliases coexist", async () => {
-  const taskContext: HostedChatRuntimeToolAssemblyContext = {
-    authToken: "token",
-    projectId: "project-1",
-    agentId: "agent-1",
-    model: "anthropic/claude-sonnet-4-6",
-    availableSkillIds: ["plan"],
-  };
-  const localTools = withPlatformHostToolAliases(
-    markTrustedHostToolSet({ load_skill: localTool("Platform load skill") }),
-    {
-      sleep: localTool("Sleep"),
-    },
-  );
-
-  const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
-    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
-    taskContext,
-    instructions: "Base instructions",
-    localTools,
-    apiUrl: "https://api.example.com",
-    apiMcpUrl: "https://api.example.com/mcp",
-    toolLoading: "deferred",
-    createRemoteToolSource: remoteSourceFromConfig,
-    preloadLatestConversationUserText: false,
-  });
-
-  assertEquals(toolAssembly.toolLoadingMode, "deferred");
-  assertEquals(toolAssembly.localToolNames, ["load_skill", "sleep", "veryfront__load_skill"]);
-  assertEquals(toolAssembly.modelVisibleToolNames, ["tool_search", "veryfront__load_skill"]);
-  assertEquals(taskContext.availableToolNames, ["tool_search", "veryfront__load_skill"]);
-  assertEquals(await toolAssembly.runtimeTools.load_skill?.execute({}), { ok: true });
-  assertEquals(await toolAssembly.runtimeTools.veryfront__load_skill?.execute({}), { ok: true });
-});
-
-it("prepareHostedChatRuntimeToolAssembly does not expose tool_search for loader aliases only", async () => {
-  const taskContext: HostedChatRuntimeToolAssemblyContext = {
-    authToken: "token",
-    projectId: "project-1",
-    agentId: "agent-1",
-    model: "anthropic/claude-sonnet-4-6",
-    availableSkillIds: ["plan"],
-  };
-  const localTools = withPlatformHostToolAliases(
-    markTrustedHostToolSet({ load_skill: localTool("Platform load skill") }),
-  );
-
-  const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
-    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
-    taskContext,
-    instructions: "Base instructions",
-    localTools,
-    apiUrl: "https://api.example.com",
-    apiMcpUrl: "https://api.example.com/mcp",
-    allowedToolNames: ["load_skill", "veryfront__load_skill"],
-    toolLoading: "deferred",
-    createRemoteToolSource: remoteSourceFromConfig,
-    preloadLatestConversationUserText: false,
-  });
-
-  assertEquals(toolAssembly.availableToolNames, ["load_skill", "veryfront__load_skill"]);
-  assertEquals(toolAssembly.modelVisibleToolNames, ["veryfront__load_skill"]);
-  assertEquals(taskContext.availableToolNames, ["veryfront__load_skill"]);
-});
-
-it("prepareHostedChatRuntimeToolAssembly keeps the unused loader alias out of deferred search", async () => {
-  const taskContext: HostedChatRuntimeToolAssemblyContext = {
-    authToken: "token",
-    projectId: "project-1",
-    agentId: "agent-1",
-    model: "anthropic/claude-sonnet-4-6",
-    availableSkillIds: ["plan"],
-  };
-  const localTools = withPlatformHostToolAliases(
-    markTrustedHostToolSet({ load_skill: localTool("Platform load skill") }),
-    {
-      sleep: localTool("Sleep"),
-    },
-  );
-
-  const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
-    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
-    taskContext,
-    instructions: "Base instructions",
-    localTools,
-    apiUrl: "https://api.example.com",
-    apiMcpUrl: "https://api.example.com/mcp",
-    toolLoading: "deferred",
-    createRemoteToolSource: remoteSourceFromConfig,
-    preloadLatestConversationUserText: false,
-  });
-  const state = createToolExposureState();
-  const providerDefinitions = await getAvailableTools(toolAssembly.runtimeTools, {
-    includeSkillTools: true,
-    includeIntegrationTools: false,
-    strictConfiguredToolsOnly: true,
-  });
-  const exposurePlan = createToolExposurePlan({
-    authorized: providerDefinitions,
-    mode: toolAssembly.toolLoadingMode,
-    state,
-    bootstrapToolNames: new Set(toolAssembly.modelVisibleToolNames),
-  });
-  const search = searchToolExposure({
-    query: "load_skill",
-    authorized: exposurePlan.deferred,
-    available: exposurePlan.visible,
-    state,
-    maxLoadedTools: exposurePlan.maxLoadedTools,
-  });
-
-  assertEquals(exposurePlan.visible.map((tool) => tool.name), [
-    "tool_search",
-    "veryfront__load_skill",
-  ]);
-  assertEquals(exposurePlan.deferred.map((tool) => tool.name), ["sleep"]);
-  assertEquals(search.matches.map((match) => match.name), ["veryfront__load_skill"]);
-  assertEquals(state.loadedToolNames.has("load_skill"), false);
-  assertEquals(await toolAssembly.runtimeTools.load_skill?.execute({}), { ok: true });
+  assertEquals(taskContext.availableToolNames, ["veryfront__load_skill", "veryfront__tool_search"]);
 });
 
 it("prepareHostedChatRuntimeToolAssembly keeps a project load_skill collision discoverable", async () => {
@@ -1079,10 +931,13 @@ it("prepareHostedChatRuntimeToolAssembly keeps a project load_skill collision di
     maxLoadedTools: exposurePlan.maxLoadedTools,
   });
 
-  assertEquals(toolAssembly.modelVisibleToolNames, ["tool_search", "veryfront__load_skill"]);
-  assertEquals(exposurePlan.visible.map((tool) => tool.name), [
-    "tool_search",
+  assertEquals(toolAssembly.modelVisibleToolNames, [
     "veryfront__load_skill",
+    "veryfront__tool_search",
+  ]);
+  assertEquals(exposurePlan.visible.map((tool) => tool.name), [
+    "veryfront__load_skill",
+    "veryfront__tool_search",
   ]);
   assertEquals(exposurePlan.deferred.map((tool) => tool.name), ["load_skill", "sleep"]);
   assertEquals(search.matches.map((match) => match.name), ["load_skill"]);
@@ -1091,7 +946,7 @@ it("prepareHostedChatRuntimeToolAssembly keeps a project load_skill collision di
   assertEquals(await toolAssembly.runtimeTools.veryfront__load_skill?.execute({}), { ok: true });
 });
 
-it("prepareHostedChatRuntimeToolAssembly keeps tool_search for only a project load_skill collision", async () => {
+it("prepareHostedChatRuntimeToolAssembly keeps veryfront__tool_search for only a project load_skill collision", async () => {
   const taskContext: HostedChatRuntimeToolAssemblyContext = {
     authToken: "token",
     projectId: "project-1",
@@ -1141,10 +996,13 @@ it("prepareHostedChatRuntimeToolAssembly keeps tool_search for only a project lo
     maxLoadedTools: exposurePlan.maxLoadedTools,
   });
 
-  assertEquals(toolAssembly.modelVisibleToolNames, ["tool_search", "veryfront__load_skill"]);
-  assertEquals(exposurePlan.visible.map((tool) => tool.name), [
-    "tool_search",
+  assertEquals(toolAssembly.modelVisibleToolNames, [
     "veryfront__load_skill",
+    "veryfront__tool_search",
+  ]);
+  assertEquals(exposurePlan.visible.map((tool) => tool.name), [
+    "veryfront__load_skill",
+    "veryfront__tool_search",
   ]);
   assertEquals(exposurePlan.deferred.map((tool) => tool.name), ["load_skill"]);
   assertEquals(search.matches.map((match) => match.name), ["load_skill"]);
@@ -1202,48 +1060,19 @@ it("prepareHostedChatRuntimeToolAssembly keeps canonical loader visible when exp
     maxLoadedTools: exposurePlan.maxLoadedTools,
   });
 
-  assertEquals(toolAssembly.modelVisibleToolNames, ["tool_search", "veryfront__load_skill"]);
-  assertEquals(taskContext.availableToolNames, ["tool_search", "veryfront__load_skill"]);
-  assertEquals(exposurePlan.visible.map((tool) => tool.name), [
-    "tool_search",
+  assertEquals(toolAssembly.modelVisibleToolNames, [
     "veryfront__load_skill",
+    "veryfront__tool_search",
+  ]);
+  assertEquals(taskContext.availableToolNames, ["veryfront__load_skill", "veryfront__tool_search"]);
+  assertEquals(exposurePlan.visible.map((tool) => tool.name), [
+    "veryfront__load_skill",
+    "veryfront__tool_search",
   ]);
   assertEquals(exposurePlan.deferred.map((tool) => tool.name), ["load_skill", "sleep"]);
   assertEquals(search.matches.map((match) => match.name), ["load_skill"]);
   assertEquals(await toolAssembly.runtimeTools.load_skill?.execute({}), { project: true });
   assertEquals(await toolAssembly.runtimeTools.veryfront__load_skill?.execute({}), { ok: true });
-});
-
-it("prepareHostedChatRuntimeToolAssembly preserves an explicit legacy loader selector", async () => {
-  const taskContext: HostedChatRuntimeToolAssemblyContext = {
-    authToken: "token",
-    projectId: "project-1",
-    agentId: "agent-1",
-    model: "anthropic/claude-sonnet-4-6",
-    availableSkillIds: ["plan"],
-  };
-  const localTools = withPlatformHostToolAliases(
-    markTrustedHostToolSet({ load_skill: localTool("Platform load skill") }),
-    {
-      sleep: localTool("Sleep"),
-    },
-  );
-
-  const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
-    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
-    taskContext,
-    instructions: "Base instructions",
-    localTools,
-    apiUrl: "https://api.example.com",
-    apiMcpUrl: "https://api.example.com/mcp",
-    allowedToolNames: ["load_skill", "sleep"],
-    toolLoading: "deferred",
-    createRemoteToolSource: remoteSourceFromConfig,
-    preloadLatestConversationUserText: false,
-  });
-
-  assertEquals(toolAssembly.modelVisibleToolNames, ["load_skill", "tool_search"]);
-  assertEquals(taskContext.availableToolNames, ["load_skill", "tool_search"]);
 });
 
 it("prepareHostedChatRuntimeToolAssembly preserves an explicit canonical loader selector", async () => {
@@ -1274,73 +1103,11 @@ it("prepareHostedChatRuntimeToolAssembly preserves an explicit canonical loader 
     preloadLatestConversationUserText: false,
   });
 
-  assertEquals(toolAssembly.modelVisibleToolNames, ["tool_search", "veryfront__load_skill"]);
-  assertEquals(taskContext.availableToolNames, ["tool_search", "veryfront__load_skill"]);
-});
-
-it("prepareHostedChatRuntimeToolAssembly does not leak hidden loader alias state across assemblies", async () => {
-  const localTools = withPlatformHostToolAliases(
-    markTrustedHostToolSet({ load_skill: localTool("Platform load skill") }),
-    {
-      sleep: localTool("Sleep"),
-    },
-  );
-
-  const canonicalAssembly = await prepareHostedChatRuntimeToolAssembly({
-    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
-    taskContext: {
-      authToken: "token",
-      projectId: "project-1",
-      agentId: "agent-1",
-      model: "anthropic/claude-sonnet-4-6",
-      availableSkillIds: ["plan"],
-    },
-    instructions: "Base instructions",
-    localTools,
-    apiUrl: "https://api.example.com",
-    apiMcpUrl: "https://api.example.com/mcp",
-    toolLoading: "deferred",
-    createRemoteToolSource: remoteSourceFromConfig,
-    preloadLatestConversationUserText: false,
-  });
-
-  assertEquals(Object.keys(canonicalAssembly.runtimeTools), [
-    "load_skill",
-    "sleep",
+  assertEquals(toolAssembly.modelVisibleToolNames, [
     "veryfront__load_skill",
+    "veryfront__tool_search",
   ]);
-  assertEquals(await canonicalAssembly.runtimeTools.load_skill?.execute({}), { ok: true });
-  assertEquals(Object.keys(localTools).sort(), [
-    "load_skill",
-    "sleep",
-    "veryfront__load_skill",
-  ]);
-
-  const legacyAssembly = await prepareHostedChatRuntimeToolAssembly({
-    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
-    taskContext: {
-      authToken: "token",
-      projectId: "project-1",
-      agentId: "agent-1",
-      model: "anthropic/claude-sonnet-4-6",
-      availableSkillIds: ["plan"],
-    },
-    instructions: "Base instructions",
-    localTools,
-    apiUrl: "https://api.example.com",
-    apiMcpUrl: "https://api.example.com/mcp",
-    allowedToolNames: ["load_skill", "sleep"],
-    toolLoading: "deferred",
-    createRemoteToolSource: remoteSourceFromConfig,
-    preloadLatestConversationUserText: false,
-  });
-
-  assertEquals(Object.keys(legacyAssembly.runtimeTools), [
-    "load_skill",
-    "sleep",
-    "veryfront__load_skill",
-  ]);
-  assertEquals(legacyAssembly.modelVisibleToolNames, ["load_skill", "tool_search"]);
+  assertEquals(taskContext.availableToolNames, ["veryfront__load_skill", "veryfront__tool_search"]);
 });
 
 Deno.test("prepareHostedChatRuntimeToolAssembly defers an unrestricted tools true catalog", async () => {
@@ -1363,7 +1130,7 @@ Deno.test("prepareHostedChatRuntimeToolAssembly defers an unrestricted tools tru
   });
 
   assertEquals(toolAssembly.toolLoadingMode, "deferred");
-  assertEquals(taskContext.availableToolNames, ["tool_search"]);
+  assertEquals(taskContext.availableToolNames, ["veryfront__tool_search"]);
 });
 
 Deno.test("prepareHostedChatRuntimeToolAssembly honors authored deferred loading before legacy allowlist eager mode", async () => {
@@ -1388,10 +1155,10 @@ Deno.test("prepareHostedChatRuntimeToolAssembly honors authored deferred loading
 
   assertEquals(toolAssembly.toolLoadingMode, "deferred");
   assertEquals(toolAssembly.availableToolNames, ["sleep"]);
-  assertEquals(taskContext.availableToolNames, ["tool_search"]);
+  assertEquals(taskContext.availableToolNames, ["veryfront__tool_search"]);
 });
 
-Deno.test("prepareHostedChatRuntimeToolAssembly rejects local search_knowledge when authored knowledge is enabled", async () => {
+Deno.test("prepareHostedChatRuntimeToolAssembly rejects local veryfront__search_knowledge when authored knowledge is enabled", async () => {
   const taskContext: HostedChatRuntimeToolAssemblyContext = {
     authToken: "token",
     projectId: "project-1",
@@ -1404,7 +1171,11 @@ Deno.test("prepareHostedChatRuntimeToolAssembly rejects local search_knowledge w
         sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
         taskContext,
         instructions: "Base instructions",
-        localTools: { search_knowledge: localTool("Unscoped knowledge search") },
+        localTools: {
+          veryfront__search_knowledge: markTrustedHostToolProvenance(
+            localTool("Unscoped knowledge search"),
+          ),
+        },
         apiUrl: "https://api.example.com",
         apiMcpUrl: "https://api.example.com/mcp",
         allowedToolNames: null,
@@ -1413,11 +1184,11 @@ Deno.test("prepareHostedChatRuntimeToolAssembly rejects local search_knowledge w
         preloadLatestConversationUserText: false,
       }),
     Error,
-    'Local tool "search_knowledge" conflicts with the agent knowledge scope',
+    'Local tool "veryfront__search_knowledge" conflicts with the agent knowledge scope',
   );
 });
 
-Deno.test("prepareHostedChatRuntimeToolAssembly ignores unselected local search_knowledge when framework knowledge is excluded", async () => {
+Deno.test("prepareHostedChatRuntimeToolAssembly ignores unselected local veryfront__search_knowledge when framework knowledge is excluded", async () => {
   const taskContext: HostedChatRuntimeToolAssemblyContext = {
     authToken: "token",
     projectId: "project-1",
@@ -1428,7 +1199,7 @@ Deno.test("prepareHostedChatRuntimeToolAssembly ignores unselected local search_
     sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
     taskContext,
     instructions: "Base instructions",
-    localTools: { search_knowledge: localTool("Unselected local knowledge search") },
+    localTools: { veryfront__search_knowledge: localTool("Unselected local knowledge search") },
     apiUrl: "https://api.example.com",
     apiMcpUrl: "https://api.example.com/mcp",
     allowedToolNames: [],
@@ -1437,9 +1208,9 @@ Deno.test("prepareHostedChatRuntimeToolAssembly ignores unselected local search_
     preloadLatestConversationUserText: false,
   });
 
-  assertEquals(toolAssembly.localToolNames.includes("search_knowledge"), false);
-  assertEquals(toolAssembly.remoteToolNames.includes("search_knowledge"), false);
-  assertEquals(toolAssembly.availableToolNames.includes("search_knowledge"), false);
+  assertEquals(toolAssembly.localToolNames.includes("veryfront__search_knowledge"), false);
+  assertEquals(toolAssembly.remoteToolNames.includes("veryfront__search_knowledge"), false);
+  assertEquals(toolAssembly.availableToolNames.includes("veryfront__search_knowledge"), false);
 });
 
 Deno.test("prepareHostedChatRuntimeToolAssembly allows denied local knowledge collisions to stay denied", async () => {
@@ -1453,19 +1224,19 @@ Deno.test("prepareHostedChatRuntimeToolAssembly allows denied local knowledge co
     sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
     taskContext,
     instructions: "Base instructions",
-    localTools: { search_knowledge: localTool("Denied local knowledge search") },
+    localTools: { veryfront__search_knowledge: localTool("Denied local knowledge search") },
     apiUrl: "https://api.example.com",
     apiMcpUrl: "https://api.example.com/mcp",
     allowedToolNames: null,
-    deniedToolNames: ["search_knowledge"],
+    deniedToolNames: ["veryfront__search_knowledge"],
     knowledge: true,
     createRemoteToolSource: remoteSourceFromConfig,
     preloadLatestConversationUserText: false,
   });
 
-  assertEquals(toolAssembly.localToolNames.includes("search_knowledge"), false);
-  assertEquals(toolAssembly.remoteToolNames.includes("search_knowledge"), false);
-  assertEquals(toolAssembly.availableToolNames.includes("search_knowledge"), false);
+  assertEquals(toolAssembly.localToolNames.includes("veryfront__search_knowledge"), false);
+  assertEquals(toolAssembly.remoteToolNames.includes("veryfront__search_knowledge"), false);
+  assertEquals(toolAssembly.availableToolNames.includes("veryfront__search_knowledge"), false);
 });
 
 Deno.test("prepareHostedChatRuntimeToolAssembly supplies authored framework knowledge as a scoped remote tool", async () => {
@@ -1489,12 +1260,12 @@ Deno.test("prepareHostedChatRuntimeToolAssembly supplies authored framework know
   });
 
   assertEquals(toolAssembly.toolLoadingMode, "deferred");
-  assertEquals(toolAssembly.remoteToolNames.includes("search_knowledge"), true);
-  assertEquals(toolAssembly.availableToolNames.includes("search_knowledge"), true);
-  assertEquals(taskContext.availableToolNames, ["tool_search"]);
+  assertEquals(toolAssembly.remoteToolNames.includes("veryfront__search_knowledge"), true);
+  assertEquals(toolAssembly.availableToolNames.includes("veryfront__search_knowledge"), true);
+  assertEquals(taskContext.availableToolNames, ["veryfront__tool_search"]);
 });
 
-Deno.test("prepareHostedChatRuntimeToolAssembly rejects remote search_knowledge when authored knowledge is enabled", async () => {
+Deno.test("prepareHostedChatRuntimeToolAssembly rejects remote veryfront__search_knowledge when authored knowledge is enabled", async () => {
   await assertRejects(
     () =>
       prepareHostedChatRuntimeToolAssembly({
@@ -1512,13 +1283,14 @@ Deno.test("prepareHostedChatRuntimeToolAssembly rejects remote search_knowledge 
         knowledge: true,
         createRemoteToolSource: (config) => ({
           id: config.id ?? "source",
-          listTools: () => Promise.resolve([remoteTool("search_knowledge", "Remote search")]),
+          listTools: () =>
+            Promise.resolve([remoteTool("veryfront__search_knowledge", "Remote search")]),
           executeTool: () => Promise.resolve({ ok: true }),
         }),
         preloadLatestConversationUserText: false,
       }),
     Error,
-    'Remote tool "search_knowledge" conflicts with the agent knowledge scope',
+    'Remote tool "veryfront__search_knowledge" conflicts with the agent knowledge scope',
   );
 });
 
@@ -1535,17 +1307,18 @@ Deno.test("prepareHostedChatRuntimeToolAssembly allows denied knowledge collisio
     apiUrl: "https://api.example.com",
     apiMcpUrl: "https://api.example.com/mcp",
     allowedToolNames: null,
-    deniedToolNames: ["search_knowledge"],
+    deniedToolNames: ["veryfront__search_knowledge"],
     knowledge: true,
     createRemoteToolSource: (config) => ({
       id: config.id ?? "source",
-      listTools: () => Promise.resolve([remoteTool("search_knowledge", "Remote search")]),
+      listTools: () =>
+        Promise.resolve([remoteTool("veryfront__search_knowledge", "Remote search")]),
       executeTool: () => Promise.resolve({ ok: true }),
     }),
     preloadLatestConversationUserText: false,
   });
 
-  assertEquals(toolAssembly.remoteToolNames.includes("search_knowledge"), false);
+  assertEquals(toolAssembly.remoteToolNames.includes("veryfront__search_knowledge"), false);
 });
 
 Deno.test("prepareHostedChatRuntimeToolAssembly binds trusted project-id credentials to hosted knowledge", async () => {
@@ -1572,29 +1345,33 @@ Deno.test("prepareHostedChatRuntimeToolAssembly binds trusted project-id credent
     source.id === "framework-knowledge"
   );
   assertExists(knowledgeSource);
-  const result = await withMockFetch(async (input: RequestInfo | URL, init?: RequestInit) => {
-    const request = input instanceof Request ? input : new Request(input, init);
-    requestedUrls.push(request.url);
-    authorizationPresent.push((request.headers.get("authorization") ?? "").length > 0);
-    return Response.json({
-      data: [{
-        id: "file-1",
-        version_id: "version-1",
-        path: "knowledge/support.md",
-        content: [
-          "---",
-          "title: Support guide",
-          "---",
-          "",
-          "Project credential lookup needle.",
-        ].join("\n"),
-        type: "file",
-        size: 96,
-        updated_at: "2026-01-01T00:00:00.000Z",
-      }],
-      page_info: { self: null, first: null, next: null, prev: null },
-    });
-  }, () => knowledgeSource.executeTool("search_knowledge", { query: "credential needle" }));
+  const result = await withMockFetch(
+    async (input: RequestInfo | URL, init?: RequestInit) => {
+      const request = input instanceof Request ? input : new Request(input, init);
+      requestedUrls.push(request.url);
+      authorizationPresent.push((request.headers.get("authorization") ?? "").length > 0);
+      return Response.json({
+        data: [{
+          id: "file-1",
+          version_id: "version-1",
+          path: "knowledge/support.md",
+          content: [
+            "---",
+            "title: Support guide",
+            "---",
+            "",
+            "Project credential lookup needle.",
+          ].join("\n"),
+          type: "file",
+          size: 96,
+          updated_at: "2026-01-01T00:00:00.000Z",
+        }],
+        page_info: { self: null, first: null, next: null, prev: null },
+      });
+    },
+    () =>
+      knowledgeSource.executeTool("veryfront__search_knowledge", { query: "credential needle" }),
+  );
   const returned = typeof result === "object" && result !== null && "returned" in result
     ? result.returned
     : undefined;
@@ -1650,7 +1427,7 @@ Deno.test("prepareFacadedHostedChatRuntimeToolAssembly binds broker-owned hosted
       page_info: { self: null, first: null, next: null, prev: null },
     });
   }, () =>
-    knowledgeSource.executeTool("search_knowledge", { query: "managed needle" }, {
+    knowledgeSource.executeTool("veryfront__search_knowledge", { query: "managed needle" }, {
       projectId: "forged-project",
       projectSlug: "forged-slug",
       branch: "forged-branch",
@@ -1664,7 +1441,7 @@ Deno.test("prepareFacadedHostedChatRuntimeToolAssembly binds broker-owned hosted
   assertEquals(requestedUrls.length, 1);
   assertEquals(new URL(requestedUrls[0] ?? "").origin, "https://staging-api.example.test");
   assertStringIncludes(requestedUrls[0] ?? "", "/projects/project-1/files");
-  assertStringIncludes(requestedUrls[0] ?? "", "branch=feature-x");
+  assertEquals(new URL(requestedUrls[0] ?? "").searchParams.get("ref"), "branch:feature-x");
 });
 
 Deno.test("prepareHostedChatRuntimeToolAssembly forwards the active branch to hosted knowledge", async () => {
@@ -1712,7 +1489,7 @@ Deno.test("prepareHostedChatRuntimeToolAssembly forwards the active branch to ho
       }],
       page_info: { self: null, first: null, next: null, prev: null },
     });
-  }, () => knowledgeSource.executeTool("search_knowledge", { query: "branch needle" }));
+  }, () => knowledgeSource.executeTool("veryfront__search_knowledge", { query: "branch needle" }));
   const returned = typeof result === "object" && result !== null && "returned" in result
     ? result.returned
     : undefined;
@@ -1720,7 +1497,7 @@ Deno.test("prepareHostedChatRuntimeToolAssembly forwards the active branch to ho
   assertEquals(returned, 1);
   assertEquals(requestedUrls.length, 1);
   assertStringIncludes(requestedUrls[0] ?? "", "/projects/project-1/files");
-  assertStringIncludes(requestedUrls[0] ?? "", "branch=feature-x");
+  assertEquals(new URL(requestedUrls[0] ?? "").searchParams.get("ref"), "branch:feature-x");
 });
 
 Deno.test("prepareHostedChatRuntimeToolAssembly reads live project context for hosted knowledge", async () => {
@@ -1751,26 +1528,29 @@ Deno.test("prepareHostedChatRuntimeToolAssembly reads live project context for h
     source.id === "framework-knowledge"
   );
   assertExists(knowledgeSource);
-  const result = await withMockFetch(async (input: RequestInfo | URL) => {
-    const url = input instanceof Request ? input.url : String(input);
-    requestedUrls.push(url);
-    return Response.json({
-      data: [{
-        id: "file-1",
-        version_id: "version-1",
-        path: "knowledge/live-project.md",
-        content: "Live project lookup needle.",
-        type: "file",
-        size: 27,
-        updated_at: "2026-01-01T00:00:00.000Z",
-      }],
-      page_info: { self: null, first: null, next: null, prev: null },
-    });
-  }, () =>
-    knowledgeSource.executeTool("search_knowledge", { query: "live project needle" }, {
-      projectId: "forged-project",
-      branch: "forged-branch",
-    }));
+  const result = await withMockFetch(
+    async (input: RequestInfo | URL) => {
+      const url = input instanceof Request ? input.url : String(input);
+      requestedUrls.push(url);
+      return Response.json({
+        data: [{
+          id: "file-1",
+          version_id: "version-1",
+          path: "knowledge/live-project.md",
+          content: "Live project lookup needle.",
+          type: "file",
+          size: 27,
+          updated_at: "2026-01-01T00:00:00.000Z",
+        }],
+        page_info: { self: null, first: null, next: null, prev: null },
+      });
+    },
+    () =>
+      knowledgeSource.executeTool("veryfront__search_knowledge", { query: "live project needle" }, {
+        projectId: "forged-project",
+        branch: "forged-branch",
+      }),
+  );
   const returned = typeof result === "object" && result !== null && "returned" in result
     ? result.returned
     : undefined;
@@ -1778,7 +1558,10 @@ Deno.test("prepareHostedChatRuntimeToolAssembly reads live project context for h
   assertEquals(returned, 1);
   assertEquals(requestedUrls.length, 1);
   assertStringIncludes(requestedUrls[0] ?? "", "/projects/project-after-switch/files");
-  assertStringIncludes(requestedUrls[0] ?? "", "branch=branch-after-switch");
+  assertEquals(
+    new URL(requestedUrls[0] ?? "").searchParams.get("ref"),
+    "branch:branch-after-switch",
+  );
 });
 
 Deno.test("prepareHostedChatRuntimeToolAssembly keeps research mirroring behind denied remote tools", async () => {
@@ -1860,7 +1643,6 @@ Deno.test("prepareHostedChatRuntimeToolAssembly preserves the full deferred Open
     remoteTool("write_sandbox_files", "Write sandbox files"),
   ];
   const remoteToolNames = [
-    ...remoteTools.map((tool) => tool.name),
     ...remoteTools.map((tool) => `veryfront__${tool.name}`),
   ].sort();
   const taskContext: HostedChatRuntimeToolAssemblyContext = {
@@ -1889,7 +1671,7 @@ Deno.test("prepareHostedChatRuntimeToolAssembly preserves the full deferred Open
   assertEquals(toolAssembly.remoteToolNames, remoteToolNames);
   assertEquals(toolAssembly.compatibleRemoteToolNames, remoteToolNames);
   assertEquals(toolAssembly.availableToolNames, ["load_skill", ...remoteToolNames].sort());
-  assertEquals(taskContext.availableToolNames, ["load_skill", "tool_search"]);
+  assertEquals(taskContext.availableToolNames, ["load_skill", "veryfront__tool_search"]);
 });
 
 Deno.test("prepareHostedChatRuntimeToolAssembly enforces the host authorization ceiling before discovery", async () => {
@@ -1944,8 +1726,11 @@ Deno.test("prepareHostedChatRuntimeToolAssembly keeps skill infrastructure for c
     preloadLatestConversationUserText: false,
   });
 
-  assertEquals(toolAssembly.localToolNames, ["invoke_agent", "load_skill"]);
-  assertEquals(taskContext.availableToolNames, ["invoke_agent", "load_skill"]);
+  assertEquals(toolAssembly.localToolNames, ["veryfront__invoke_agent", "veryfront__load_skill"]);
+  assertEquals(taskContext.availableToolNames, [
+    "veryfront__invoke_agent",
+    "veryfront__load_skill",
+  ]);
 });
 
 describe("explicit hosted runtime tool denials", () => {
@@ -2060,12 +1845,14 @@ describe("explicit hosted runtime tool denials", () => {
         id: config.id ?? "source",
         listTools: () =>
           Promise.resolve([
-            remoteTool("create_file", "Create a file"),
-            remoteTool("update_file", "Update a file"),
+            remoteTool("veryfront__create_file", "Create a file"),
+            remoteTool("veryfront__update_file", "Update a file"),
           ]),
         executeTool: (toolName) => {
           executions.push(toolName);
-          return Promise.resolve(toolName === "create_file" ? { exists: true } : { ok: true });
+          return Promise.resolve(
+            toolName === "veryfront__create_file" ? { exists: true } : { ok: true },
+          );
         },
       }),
       shouldRetryWithRemoteTool: ({ toolName, error }) =>
@@ -2076,9 +1863,11 @@ describe("explicit hosted runtime tool denials", () => {
 
     const [remoteToolSource] = toolAssembly.remoteToolSources;
     assertExists(remoteToolSource);
-    await assertRejects(async () => await remoteToolSource.executeTool("create_file", {}));
-    assertEquals(executions.includes("create_file"), true);
-    assertEquals(executions.includes("update_file"), false);
+    await assertRejects(async () =>
+      await remoteToolSource.executeTool("veryfront__create_file", {})
+    );
+    assertEquals(executions.includes("veryfront__create_file"), true);
+    assertEquals(executions.includes("veryfront__update_file"), false);
   });
 });
 
@@ -2107,8 +1896,8 @@ Deno.test("prepareHostedChatRuntimeToolAssembly keeps non-empty public selectors
     preloadLatestConversationUserText: false,
   });
 
-  assertEquals(toolAssembly.localToolNames, ["load_skill", "sleep"]);
-  assertEquals(taskContext.availableToolNames, ["load_skill", "sleep"]);
+  assertEquals(toolAssembly.localToolNames, ["veryfront__load_skill", "veryfront__sleep"]);
+  assertEquals(taskContext.availableToolNames, ["veryfront__load_skill", "veryfront__sleep"]);
 });
 
 Deno.test("configured runtime assembly keeps delegation for non-empty agent tools", async () => {
@@ -2136,8 +1925,16 @@ Deno.test("configured runtime assembly keeps delegation for non-empty agent tool
     preloadLatestConversationUserText: false,
   });
 
-  assertEquals(toolAssembly.localToolNames, ["invoke_agent", "load_skill", "sleep"]);
-  assertEquals(taskContext.availableToolNames, ["invoke_agent", "load_skill", "sleep"]);
+  assertEquals(toolAssembly.localToolNames, [
+    "veryfront__invoke_agent",
+    "veryfront__load_skill",
+    "veryfront__sleep",
+  ]);
+  assertEquals(taskContext.availableToolNames, [
+    "veryfront__invoke_agent",
+    "veryfront__load_skill",
+    "veryfront__sleep",
+  ]);
 });
 
 Deno.test("prepareHostedChatRuntimeToolAssembly removes skill infrastructure for known empty skill runs", async () => {
@@ -2197,9 +1994,9 @@ Deno.test("prepareHostedChatRuntimeToolAssembly builds provider-compatible runti
     studioMcpUrl: "https://studio.example.com/mcp",
     mcpServers: [{ kind: "veryfront-api" }, { kind: "veryfront-studio" }],
     conversationId: "conversation-1",
-    allowedToolNames: ["sleep", "create_file", "studio_open_project"],
+    allowedToolNames: ["sleep", "veryfront__create_file", "veryfront__studio_open_project"],
     projectScopedRemoteToolOptions: {
-      projectNavigationToolNames: ["studio_open_project"],
+      projectNavigationToolNames: ["veryfront__studio_open_project"],
     },
     createRemoteToolSource: remoteSourceFromConfig,
     traceLocalTools: {
@@ -2212,12 +2009,22 @@ Deno.test("prepareHostedChatRuntimeToolAssembly builds provider-compatible runti
   });
 
   assertEquals(toolAssembly.localToolNames, ["sleep"]);
-  assertEquals(toolAssembly.remoteToolNames, ["create_file", "studio_open_project"]);
+  assertEquals(toolAssembly.remoteToolNames, [
+    "veryfront__create_file",
+    "veryfront__studio_open_project",
+  ]);
   assertEquals(toolAssembly.providerToolNames, []);
   // Configured-binding remote tools ARE in the initial inventory (combined semantics).
   // The full MCP catalog does not flood the union; only the allowedToolNames subset does.
-  assertEquals(toolAssembly.compatibleRemoteToolNames, ["create_file", "studio_open_project"]);
-  assertEquals(taskContext.availableToolNames, ["create_file", "sleep", "studio_open_project"]);
+  assertEquals(toolAssembly.compatibleRemoteToolNames, [
+    "veryfront__create_file",
+    "veryfront__studio_open_project",
+  ]);
+  assertEquals(taskContext.availableToolNames, [
+    "sleep",
+    "veryfront__create_file",
+    "veryfront__studio_open_project",
+  ]);
   assertEquals(toolAssembly.systemInstructions.includes("Current run tool inventory:"), true);
 
   const runtimeSleepTool = toolAssembly.runtimeTools.sleep;
@@ -2289,16 +2096,16 @@ Deno.test("prepareHostedChatRuntimeToolAssembly widens the veryfront-api allowli
     localTools: {},
     apiUrl: "https://api.example.com",
     apiMcpUrl: "https://api.example.com/mcp",
-    mcpServers: [{ kind: "veryfront-api", toolPolicy: { allow: ["get_integration"] } }],
+    mcpServers: [{ kind: "veryfront-api", toolPolicy: { allow: ["veryfront__get_integration"] } }],
     serverResolvedIntegrationToolNames: ["outlook__list_emails"],
-    allowedToolNames: ["get_integration", "outlook__list_emails", "outlook__send_email"],
+    allowedToolNames: ["veryfront__get_integration", "outlook__list_emails", "outlook__send_email"],
     createRemoteToolSource: (config) => ({
       id: config.id ?? "api-mcp",
       listTools: () =>
         Promise.resolve([
           remoteTool("outlook__list_emails", "List Outlook emails"),
           remoteTool("outlook__send_email", "Send an Outlook email"),
-          remoteTool("get_integration", "Get an integration"),
+          remoteTool("veryfront__get_integration", "Get an integration"),
         ]),
       executeTool: () => Promise.resolve({ ok: true }),
     }),
@@ -2307,7 +2114,7 @@ Deno.test("prepareHostedChatRuntimeToolAssembly widens the veryfront-api allowli
 
   assertEquals(
     toolAssembly.remoteToolNames,
-    ["get_integration", "outlook__list_emails"],
+    ["outlook__list_emails", "veryfront__get_integration"],
     "the integration grant must widen the veryfront-api allowlist for exactly the resolved names",
   );
 });
@@ -2325,14 +2132,14 @@ Deno.test("prepareHostedChatRuntimeToolAssembly keeps the veryfront-api allowlis
     localTools: {},
     apiUrl: "https://api.example.com",
     apiMcpUrl: "https://api.example.com/mcp",
-    mcpServers: [{ kind: "veryfront-api", toolPolicy: { allow: ["get_integration"] } }],
-    allowedToolNames: ["get_integration", "outlook__list_emails"],
+    mcpServers: [{ kind: "veryfront-api", toolPolicy: { allow: ["veryfront__get_integration"] } }],
+    allowedToolNames: ["veryfront__get_integration", "outlook__list_emails"],
     createRemoteToolSource: (config) => ({
       id: config.id ?? "api-mcp",
       listTools: () =>
         Promise.resolve([
           remoteTool("outlook__list_emails", "List Outlook emails"),
-          remoteTool("get_integration", "Get an integration"),
+          remoteTool("veryfront__get_integration", "Get an integration"),
         ]),
       executeTool: () => Promise.resolve({ ok: true }),
     }),
@@ -2341,7 +2148,7 @@ Deno.test("prepareHostedChatRuntimeToolAssembly keeps the veryfront-api allowlis
 
   assertEquals(
     toolAssembly.remoteToolNames,
-    ["get_integration"],
+    ["veryfront__get_integration"],
     "without a grant the static allowlist must keep denying integration tools",
   );
 });
@@ -2384,7 +2191,11 @@ Deno.test("prepareHostedChatRuntimeToolAssembly honors explicit API-only MCP wit
 });
 
 Deno.test("prepareHostedChatRuntimeToolAssembly applies configured tools before the OpenAI cap", async () => {
-  const availableConfiguredToolNames = ["get_agent", "get_agent_source", "update_agent"];
+  const availableConfiguredToolNames = [
+    "veryfront__get_agent",
+    "veryfront__get_agent_source",
+    "veryfront__update_agent",
+  ];
   const configuredToolNames = ["bash", ...availableConfiguredToolNames];
   const remoteTools = [
     ...Array.from(
@@ -2482,7 +2293,7 @@ describe("denial-aware eager tool compatibility", () => {
     });
 
     assertEquals(toolAssembly.localToolNames, []);
-    assertEquals(taskContext.availableToolNames, ["tool_search"]);
+    assertEquals(taskContext.availableToolNames, ["veryfront__tool_search"]);
     assertEquals(
       taskContext.availableToolNames?.includes("researcher--fetch-paper") ?? false,
       false,
@@ -2506,7 +2317,7 @@ describe("denial-aware eager tool compatibility", () => {
       allowedToolNames: null,
       allowedProviderToolNames: ["web_search"],
       sourceProviderToolNames: ["web_search"],
-      deniedToolNames: ["web_search", "tool_search"],
+      deniedToolNames: ["web_search", "veryfront__tool_search"],
       createRemoteToolSource: remoteSourceFromConfig,
       preloadLatestConversationUserText: false,
     });
@@ -2517,10 +2328,13 @@ describe("denial-aware eager tool compatibility", () => {
       "an explicit denial must remove the provider tool even when it is allowlisted",
     );
     assertEquals(taskContext.availableToolNames?.includes("web_search") ?? false, false);
-    assertEquals(taskContext.availableToolNames?.includes("tool_search") ?? false, false);
+    assertEquals(
+      taskContext.availableToolNames?.includes("veryfront__tool_search") ?? false,
+      false,
+    );
   });
 
-  it("prepareHostedChatRuntimeToolAssembly keeps tool_search denied when authored deferred loading is requested", async () => {
+  it("prepareHostedChatRuntimeToolAssembly keeps veryfront__tool_search denied when authored deferred loading is requested", async () => {
     const taskContext: HostedChatRuntimeToolAssemblyContext = {
       authToken: "token",
       projectId: "project-1",
@@ -2535,7 +2349,7 @@ describe("denial-aware eager tool compatibility", () => {
       apiUrl: "https://api.example.com",
       apiMcpUrl: "https://api.example.com/mcp",
       allowedToolNames: null,
-      deniedToolNames: ["tool_search"],
+      deniedToolNames: ["veryfront__tool_search"],
       toolLoading: "deferred",
       createRemoteToolSource: remoteSourceFromConfig,
       preloadLatestConversationUserText: false,
@@ -2543,7 +2357,10 @@ describe("denial-aware eager tool compatibility", () => {
 
     assertEquals(toolAssembly.toolLoadingMode, "eager");
     assertEquals(taskContext.availableToolNames?.includes("lookup") ?? false, true);
-    assertEquals(taskContext.availableToolNames?.includes("tool_search") ?? false, false);
+    assertEquals(
+      taskContext.availableToolNames?.includes("veryfront__tool_search") ?? false,
+      false,
+    );
     const exposurePlan = createToolExposurePlan({
       authorized: Object.values(toolAssembly.runtimeTools).map(toolToProviderDefinition),
       mode: toolAssembly.toolLoadingMode,
@@ -2554,7 +2371,7 @@ describe("denial-aware eager tool compatibility", () => {
       ["lookup"],
     );
     assertEquals(
-      exposurePlan.visible.some((tool) => tool.name === "tool_search"),
+      exposurePlan.visible.some((tool) => tool.name === "veryfront__tool_search"),
       false,
     );
   });
@@ -2580,7 +2397,7 @@ describe("denial-aware eager tool compatibility", () => {
       apiUrl: "https://api.example.com",
       apiMcpUrl: "https://api.example.com/mcp",
       allowedToolNames: null,
-      deniedToolNames: ["tool_search"],
+      deniedToolNames: ["veryfront__tool_search"],
       createRemoteToolSource: remoteSourceFromConfig,
       preloadLatestConversationUserText: false,
     });
@@ -2588,6 +2405,74 @@ describe("denial-aware eager tool compatibility", () => {
     assertEquals(toolAssembly.toolLoadingMode, "eager");
     assertEquals(Object.keys(toolAssembly.runtimeTools), toolAssembly.availableToolNames);
     assertEquals(Object.keys(toolAssembly.runtimeTools).length, 128);
+  });
+
+  it("prepareHostedChatRuntimeToolAssembly caps eager schemas by the run's wire surface", async () => {
+    const taskContext: HostedChatRuntimeToolAssemblyContext = {
+      authToken: "token",
+      projectId: "project-1",
+      model: "google/local-model",
+    };
+    const localTools = Object.fromEntries(
+      Array.from({ length: 129 }, (_, index) => [
+        `local_tool_${String(index).padStart(3, "0")}`,
+        localTool(`Local tool ${index}`),
+      ]),
+    );
+
+    const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
+      sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+      taskContext,
+      instructions: "Base instructions",
+      localTools,
+      apiUrl: "https://api.example.com",
+      apiMcpUrl: "https://api.example.com/mcp",
+      allowedToolNames: null,
+      deniedToolNames: ["veryfront__tool_search"],
+      toolSchemaTarget: { model: "veryfront-cloud/google/local-model", wireSurface: "openai" },
+      createRemoteToolSource: remoteSourceFromConfig,
+      preloadLatestConversationUserText: false,
+    });
+
+    assertEquals(toolAssembly.toolLoadingMode, "eager");
+    assertEquals(Object.keys(toolAssembly.runtimeTools).length, 128);
+    assertEquals(toolAssembly.toolSchemaTarget, {
+      model: "veryfront-cloud/google/local-model",
+      wireSurface: "openai",
+    });
+  });
+
+  it("prepareHostedChatRuntimeToolAssembly keeps eager slots for runtime-appended schemas", async () => {
+    const taskContext: HostedChatRuntimeToolAssemblyContext = {
+      authToken: "token",
+      projectId: "project-1",
+      model: "google/local-model",
+    };
+    const localTools = Object.fromEntries(
+      Array.from({ length: 129 }, (_, index) => [
+        `local_tool_${String(index).padStart(3, "0")}`,
+        localTool(`Local tool ${index}`),
+      ]),
+    );
+
+    const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
+      sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+      taskContext,
+      instructions: "Base instructions",
+      localTools,
+      apiUrl: "https://api.example.com",
+      apiMcpUrl: "https://api.example.com/mcp",
+      allowedToolNames: null,
+      deniedToolNames: ["veryfront__tool_search"],
+      toolSchemaTarget: { model: "veryfront-cloud/google/local-model", wireSurface: "openai" },
+      reservedToolSlots: 1,
+      createRemoteToolSource: remoteSourceFromConfig,
+      preloadLatestConversationUserText: false,
+    });
+
+    assertEquals(toolAssembly.toolLoadingMode, "eager");
+    assertEquals(Object.keys(toolAssembly.runtimeTools).length, 127);
+    assertEquals(toolAssembly.reservedToolSlots, 1);
   });
 
   it("prepareHostedChatRuntimeToolAssembly caps provider tools with eager schemas", async () => {
@@ -2613,7 +2498,7 @@ describe("denial-aware eager tool compatibility", () => {
       allowedToolNames: null,
       allowedProviderToolNames: ["web_search"],
       sourceProviderToolNames: ["web_search"],
-      deniedToolNames: ["tool_search"],
+      deniedToolNames: ["veryfront__tool_search"],
       createRemoteToolSource: remoteSourceFromConfig,
       preloadLatestConversationUserText: false,
     });
@@ -2640,18 +2525,18 @@ Deno.test("prepareHostedChatRuntimeToolAssembly separates provider tools from re
     apiUrl: "https://api.example.com",
     apiMcpUrl: "https://api.example.com/mcp",
     mcpServers: [{ kind: "veryfront-api" }],
-    allowedToolNames: ["create_file"],
+    allowedToolNames: ["veryfront__create_file"],
     allowedProviderToolNames: ["web_search"],
     createRemoteToolSource: remoteSourceFromConfig,
     preloadLatestConversationUserText: false,
   });
 
-  assertEquals(toolAssembly.remoteToolNames, ["create_file"]);
+  assertEquals(toolAssembly.remoteToolNames, ["veryfront__create_file"]);
   // Configured-binding remote tools appear in compatibleRemoteToolNames (combined semantics).
-  assertEquals(toolAssembly.compatibleRemoteToolNames, ["create_file"]);
+  assertEquals(toolAssembly.compatibleRemoteToolNames, ["veryfront__create_file"]);
   assertEquals(toolAssembly.providerToolNames, ["web_search"]);
   // Both configured remote tools and provider-native tools seed the initial inventory.
-  assertEquals(taskContext.availableToolNames, ["create_file", "web_search"]);
+  assertEquals(taskContext.availableToolNames, ["veryfront__create_file", "web_search"]);
 });
 
 Deno.test("prepareHostedChatRuntimeToolAssembly separates matching direct and provider bindings", async () => {
@@ -3241,10 +3126,10 @@ it("assembled trusted loader remains executable with an explicit grant and sibli
       createRemoteToolSource: remoteSourceFromConfig,
       preloadLatestConversationUserText: false,
     });
-    assertEquals(assembly.localToolNames, granted ? [granted] : []);
+    assertEquals(assembly.localToolNames, granted ? ["veryfront__load_skill"] : []);
     if (granted) {
       assertEquals(
-        await assembly.runtimeTools[granted]!.execute!({}),
+        await assembly.runtimeTools.veryfront__load_skill!.execute!({}),
         { ok: true },
       );
     }
@@ -3273,4 +3158,235 @@ it("explicit canonical platform grant survives legacy denial through remote exec
   await assertRejects(async () =>
     await assembly.remoteToolSources[0]!.executeTool("create_file", {})
   );
+});
+
+it("hosted deferred inventory includes authored bootstrap tools and keeps the rest deferred", async () => {
+  const taskContext: HostedChatRuntimeToolAssemblyContext = {
+    authToken: "token",
+    projectId: "project-1",
+    agentId: "agent-1",
+    model: "anthropic/claude-sonnet-4-6",
+    availableSkillIds: ["plan"],
+  };
+  const assembly = await prepareHostedChatRuntimeToolAssembly({
+    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+    taskContext,
+    instructions: "Base instructions",
+    localTools: withPlatformHostToolAliases(
+      markTrustedHostToolSet({ load_skill: localTool("Loader") }),
+      { sleep: localTool("Sleep"), other: localTool("Other") },
+    ),
+    apiUrl: "https://api.example.com",
+    apiMcpUrl: "https://api.example.com/mcp",
+    toolLoading: "deferred",
+    bootstrapTools: ["sleep"],
+    createRemoteToolSource: remoteSourceFromConfig,
+    preloadLatestConversationUserText: false,
+  });
+  assertEquals(assembly.modelVisibleToolNames, [
+    "sleep",
+    "veryfront__load_skill",
+    "veryfront__tool_search",
+  ]);
+  assertEquals(taskContext.availableToolNames, assembly.modelVisibleToolNames);
+  assertEquals(assembly.availableToolNames.includes("other"), true);
+});
+
+it("hosted bootstrap selection does not bypass an explicit tool denial", async () => {
+  const error = await assertRejects(
+    () =>
+      prepareHostedChatRuntimeToolAssembly({
+        sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+        taskContext: {
+          authToken: "token",
+          projectId: "project-1",
+          agentId: "agent-1",
+          model: "anthropic/claude-sonnet-4-6",
+        },
+        instructions: "Base instructions",
+        localTools: { sleep: localTool("Sleep") },
+        apiUrl: "https://api.example.com",
+        apiMcpUrl: "https://api.example.com/mcp",
+        toolLoading: "deferred",
+        bootstrapTools: ["sleep"],
+        deniedToolNames: ["sleep"],
+        createRemoteToolSource: remoteSourceFromConfig,
+        preloadLatestConversationUserText: false,
+      }),
+    VeryfrontError,
+    "outside the authorized executable catalog",
+  );
+  assertEquals((error as VeryfrontError).slug, "config-invalid");
+});
+
+it("hosted eager capping retains the selected authored remote startup tool", async () => {
+  const tools = Array.from(
+    { length: 130 },
+    (_, index) => remoteTool(`remote_${String(index).padStart(3, "0")}`, "Remote"),
+  );
+  const assembly = await prepareHostedChatRuntimeToolAssembly({
+    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+    taskContext: { authToken: "token", projectId: "project-1", model: "openai/gpt-4.1" },
+    instructions: "Base",
+    localTools: {},
+    apiUrl: "https://api.example.com",
+    apiMcpUrl: "https://api.example.com/mcp",
+    mcpServers: [{ id: "custom", endpoint: "https://custom.example/mcp" }],
+    toolLoading: "eager",
+    bootstrapTools: ["remote_129"],
+    preloadLatestConversationUserText: false,
+    createRemoteToolSource: (config) => ({
+      id: config.id ?? "platform",
+      listTools: async () => tools,
+      executeTool: async () => "ok",
+    }),
+  });
+  assertEquals(assembly.modelVisibleToolNames?.includes("remote_129"), true);
+  assertEquals(assembly.remoteToolNames.includes("remote_129"), true);
+  assertEquals(assembly.modelVisibleToolNames?.length, 128);
+});
+
+it("hosted eager selection prioritizes authorized optional schemas after mandatory tools", async () => {
+  const tools = Array.from(
+    { length: 130 },
+    (_, index) => remoteTool(`remote_${String(index).padStart(3, "0")}`, "Remote"),
+  );
+  for (const scenario of ["capacity", "mandatory-only", "denied"] as const) {
+    const assembly = await prepareHostedChatRuntimeToolAssembly({
+      sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+      taskContext: { authToken: "token", projectId: "project-1", model: "openai/gpt-4.1" },
+      instructions: "Base",
+      localTools: {},
+      apiUrl: "https://api.example.com",
+      apiMcpUrl: "https://api.example.com/mcp",
+      mcpServers: [{ id: "custom", endpoint: "https://custom.example/mcp" }],
+      toolLoading: "eager",
+      bootstrapTools: ["remote_128"],
+      optionalBootstrapTools: ["remote_129", "missing_tool"],
+      ...(scenario === "mandatory-only" ? { reservedToolSlots: 127 } : {}),
+      ...(scenario === "denied" ? { deniedToolNames: ["remote_129"] } : {}),
+      preloadLatestConversationUserText: false,
+      createRemoteToolSource: (config) => ({
+        id: config.id ?? "platform",
+        listTools: async () => tools,
+        executeTool: async () => "ok",
+      }),
+    });
+    assertEquals(assembly.modelVisibleToolNames?.includes("remote_128"), true);
+    assertEquals(assembly.modelVisibleToolNames?.includes("remote_129"), scenario === "capacity");
+    assertEquals(assembly.availableToolNames.includes("remote_129"), scenario === "capacity");
+    assertEquals(assembly.availableToolNames.includes("missing_tool"), false);
+    assertEquals(assembly.modelVisibleToolNames?.length, scenario === "mandatory-only" ? 1 : 128);
+  }
+});
+
+it("hosted optional bootstrap exposes only authorized schemas without requiring absent write tools", async () => {
+  for (const denied of [false, true]) {
+    const assembly = await prepareHostedChatRuntimeToolAssembly({
+      sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+      taskContext: { authToken: "token", model: "mistral/mistral-small-2503" },
+      instructions: "Base",
+      localTools: {
+        read_project: localTool("Read project"),
+        other_tool: localTool("Deferred tool"),
+        form_input: localTool("Collect input"),
+        create_file: localTool("Write file"),
+      },
+      apiUrl: "https://api.example.com",
+      apiMcpUrl: "https://api.example.com/mcp",
+      mcpServers: [],
+      toolLoading: "deferred",
+      bootstrapTools: ["read_project"],
+      ...{ optionalBootstrapTools: ["form_input", "create_file", "missing_tool", "form_input"] },
+      ...(denied ? { deniedToolNames: ["create_file"] } : {}),
+      preloadLatestConversationUserText: false,
+    });
+    assertEquals(
+      assembly.modelVisibleToolNames,
+      denied
+        ? ["form_input", "read_project", "veryfront__tool_search"]
+        : ["create_file", "form_input", "read_project", "veryfront__tool_search"],
+    );
+    assertEquals(assembly.availableToolNames.includes("create_file"), !denied);
+    assertEquals("create_file" in assembly.runtimeTools, !denied);
+    assertEquals(assembly.availableToolNames.includes("missing_tool"), false);
+  }
+});
+
+it("optional canonical API bootstrap hints cannot widen a restricted read-only grant", async () => {
+  const assembly = await prepareHostedChatRuntimeToolAssembly({
+    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+    taskContext: {
+      authToken: "token",
+      projectId: "project-1",
+      model: "mistral/mistral-small-2503",
+    },
+    instructions: "Read only",
+    localTools: {},
+    apiUrl: "https://api.example.com",
+    apiMcpUrl: "https://api.example.com/mcp",
+    mcpServers: [{ kind: "veryfront-api" }],
+    allowedToolNames: ["veryfront__get_file"],
+    deniedToolNames: ["veryfront__create_file"],
+    bootstrapTools: ["veryfront__get_file"],
+    optionalBootstrapTools: ["veryfront__create_file"],
+    createRemoteToolSource: () => ({
+      id: "api-mcp",
+      listTools:
+        async () => [remoteTool("get_file", "Read file"), remoteTool("create_file", "Write file")],
+      executeTool: async () => ({ ok: true }),
+    }),
+    preloadLatestConversationUserText: false,
+  });
+  assertEquals(assembly.modelVisibleToolNames, ["veryfront__get_file"]);
+  assertEquals(assembly.availableToolNames, ["veryfront__get_file"]);
+  assertEquals(assembly.compatibleRemoteToolNames, ["veryfront__get_file"]);
+  assertEquals("veryfront__create_file" in assembly.runtimeTools, false);
+  assertEquals(await assembly.remoteToolSources[0]!.executeTool("veryfront__get_file", {}), {
+    ok: true,
+  });
+});
+
+it("optional bootstrap schemas yield to mandatory tools and provider discovery capacity", async () => {
+  const assembly = await prepareHostedChatRuntimeToolAssembly({
+    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+    taskContext: { authToken: "token", model: "openai/gpt-4.1" },
+    instructions: "Base",
+    localTools: {
+      read: localTool("Read"),
+      write: localTool("Write"),
+      form: localTool("Form"),
+      other: localTool("Other"),
+    },
+    apiUrl: "https://api.example.com",
+    apiMcpUrl: "https://api.example.com/mcp",
+    mcpServers: [],
+    toolLoading: "deferred",
+    bootstrapTools: ["read"],
+    optionalBootstrapTools: ["form", "write"],
+    reservedToolSlots: 125,
+    preloadLatestConversationUserText: false,
+  });
+  assertEquals(assembly.modelVisibleToolNames?.length, 2);
+  assertEquals(assembly.modelVisibleToolNames?.includes("read"), true);
+  assertEquals(assembly.modelVisibleToolNames?.includes("veryfront__tool_search"), true);
+  assertEquals(assembly.availableToolNames.includes("write"), true);
+});
+
+it("optional startup hints cannot recover tools removed by an empty execution grant", async () => {
+  const assembly = await prepareHostedChatRuntimeToolAssembly({
+    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+    taskContext: { authToken: "token", model: "mistral/mistral-small-2503" },
+    instructions: "Answer without tools",
+    localTools: { create_file: localTool("Write file") },
+    apiUrl: "https://api.example.com",
+    apiMcpUrl: "https://api.example.com/mcp",
+    mcpServers: [],
+    allowedToolNames: [],
+    optionalBootstrapTools: ["create_file"],
+    preloadLatestConversationUserText: false,
+  });
+  assertEquals(assembly.modelVisibleToolNames, []);
+  assertEquals(assembly.availableToolNames, []);
+  assertEquals(Object.keys(assembly.runtimeTools), []);
 });

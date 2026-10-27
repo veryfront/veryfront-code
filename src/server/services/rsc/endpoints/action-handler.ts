@@ -1,3 +1,6 @@
+import { isBun, isNode } from "#veryfront/platform/compat/runtime.ts";
+import { captureLocalReactPeers } from "#veryfront/platform/compat/react-paths.ts";
+import { getRuntimeModuleLoader } from "#veryfront/platform/adapters/module-loader.ts";
 /**
  * Fail-closed Server Action request and extension authorization boundary.
  * @module rsc-endpoints/action-handler
@@ -271,6 +274,14 @@ export async function handleActionRequestWithRegisteredAuthorizationForTesting(
   );
 }
 
+function actionBodyParseFailure(error: unknown): Response {
+  if (isRequestBodyTooLargeError(error)) {
+    return createActionJsonErrorResponse(HTTP_PAYLOAD_TOO_LARGE, "Request body too large");
+  }
+  logger.warn("Failed to parse action request body", { error });
+  return createActionJsonErrorResponse(HttpStatus.BAD_REQUEST, "Invalid JSON body");
+}
+
 async function handleActionRequestInner(
   {
     req,
@@ -318,11 +329,7 @@ async function handleActionRequestInner(
   try {
     body = JSON.parse(await readBodyWithLimit(req, DEFAULT_MAX_BODY_SIZE_BYTES));
   } catch (error) {
-    if (isRequestBodyTooLargeError(error)) {
-      return createActionJsonErrorResponse(HTTP_PAYLOAD_TOO_LARGE, "Request body too large");
-    }
-    logger.warn("Failed to parse action request body", { error });
-    return createActionJsonErrorResponse(HttpStatus.BAD_REQUEST, "Invalid JSON body");
+    return actionBodyParseFailure(error);
   }
 
   const parseResult = await parseActionBody(body);
@@ -375,12 +382,18 @@ async function handleActionRequestInner(
     releaseId ??
     (branch ? `branch:${branch}` : undefined) ??
     (mode === "development" ? "preview-main" : "production");
+  const reactPeers = (isNode || isBun) && !getRuntimeModuleLoader(adapter)
+    ? captureLocalReactPeers()
+    : undefined;
   const reactVersion = await resolveProjectReactVersion({
+    adapter: adapter,
+    reactPeers,
     projectDir,
     dependencyPinningSource: dependencySource,
     config,
     dependencyPinningCacheKey: dependencySnapshot.cacheKey,
     dependencyPinningDependencies: dependencySnapshot.dependencies,
+    dependencyPinningConfiguredVersions: dependencySnapshot.configuredVersions,
   });
   const mod = await actionModuleLoader(source, file, projectDir, adapter, {
     projectId: projectId ?? projectDir,
@@ -389,8 +402,10 @@ async function handleActionRequestInner(
     dev: mode === "development",
     mode: mode === "development" ? "preview" : "production",
     reactVersion,
+    reactPeers,
     dependencyPinningCacheKey: dependencySnapshot.cacheKey,
     dependencyPinningDependencies: dependencySnapshot.dependencies,
+    dependencyPinningConfiguredVersions: dependencySnapshot.configuredVersions,
     dependencyPinningSource: dependencySource,
     moduleServerOrigin: dependencySnapshot.cacheKey.startsWith("on:")
       ? new NativeURL(apply(requestUrlGetter, req, []) as string).origin
@@ -627,7 +642,9 @@ function raceAuthorizationAgainstGrace(
   });
 }
 
-function ignoreAuthorizationSettlement(_value: unknown): void {}
+function ignoreAuthorizationSettlement(_value: unknown): void {
+  // Consume late success or failure after the lease release continuation has settled.
+}
 
 function releaseLeaseAfterAuthorizationSettlement(
   settlement: Promise<ActionAuthorizationSettlement>,
@@ -678,6 +695,29 @@ function removeAbortListener(signal: AbortSignal, listener: () => void): void {
   apply(eventTargetRemoveEventListener, signal, ["abort", listener]);
 }
 
+function clearAuthorizationTimer(timeoutId: ReturnType<typeof setTimeout> | undefined): void {
+  if (timeoutId !== undefined) clearScheduledTimeout(timeoutId);
+}
+
+function removeAuthorizationSourceListener(
+  sourceSignal: AbortSignal | undefined,
+  sourceAbortListener: (() => void) | undefined,
+): void {
+  if (sourceSignal !== undefined && sourceAbortListener !== undefined) {
+    removeAbortListener(sourceSignal, sourceAbortListener);
+  }
+}
+
+function authorizationSettlementResponse(
+  settlement: ActionAuthorizationSettlement,
+): Response | null {
+  if (!settlement.fulfilled) throw settlement.reason;
+  if (typeof settlement.value !== "boolean") {
+    throw new NativeTypeError("RSC action authorization provider must return a boolean");
+  }
+  return settlement.value ? null : actionAuthorizationDenied();
+}
+
 async function authorizeActionRequest(
   binding: ActionAuthorizationBinding,
   request: Request,
@@ -717,6 +757,15 @@ async function authorizeActionRequest(
       abortAuthorization(authorizationController, reason);
     } catch (error) {
       logger.error("RSC action authorization cancellation failed", { error });
+    }
+  };
+
+  const quarantineLease = (settlement?: Promise<ActionAuthorizationSettlement>): void => {
+    if (lease === undefined) return;
+    lease.quarantine();
+    releaseLease = false;
+    if (settlement !== undefined) {
+      releaseLeaseAfterAuthorizationSettlement(settlement, lease.release);
     }
   };
 
@@ -762,37 +811,24 @@ async function authorizeActionRequest(
       observed = observeAuthorizationPromise(candidate);
     } catch (error) {
       terminate(error);
-      if (lease !== undefined) {
-        lease.quarantine();
-        releaseLease = false;
-      }
+      quarantineLease();
       throw error;
     }
 
     const race = await raceAuthorizationAgainstGrace(observed, graceExpired);
     if (race.kind === "grace-expired") {
-      if (lease !== undefined) {
-        lease.quarantine();
-        releaseLease = false;
-        releaseLeaseAfterAuthorizationSettlement(observed, lease.release);
-      }
+      quarantineLease(observed);
       throw terminationReason ?? new NativeError("RSC action authorization cancelled");
     }
     if (terminationStarted) throw terminationReason;
-    if (!race.settlement.fulfilled) throw race.settlement.reason;
-    if (typeof race.settlement.value !== "boolean") {
-      throw new NativeTypeError("RSC action authorization provider must return a boolean");
-    }
-    return race.settlement.value ? null : actionAuthorizationDenied();
+    return authorizationSettlementResponse(race.settlement);
   } catch (error) {
     logger.error("RSC action authorization failed closed", { error });
     return actionAuthorizationUnavailable();
   } finally {
-    if (deadlineTimeoutId !== undefined) clearScheduledTimeout(deadlineTimeoutId);
-    if (graceTimeoutId !== undefined) clearScheduledTimeout(graceTimeoutId);
-    if (sourceSignal !== undefined && sourceAbortListener !== undefined) {
-      removeAbortListener(sourceSignal, sourceAbortListener);
-    }
+    clearAuthorizationTimer(deadlineTimeoutId);
+    clearAuthorizationTimer(graceTimeoutId);
+    removeAuthorizationSourceListener(sourceSignal, sourceAbortListener);
     if (releaseLease) lease?.release();
   }
 }

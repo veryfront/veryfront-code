@@ -1,6 +1,17 @@
-import { getHostEnvExcludingEnvFile } from "#veryfront/platform/compat/process/env.ts";
+import {
+  getHostBootEnv,
+  getHostEnvExcludingEnvFile,
+} from "#veryfront/platform/compat/process/env.ts";
 
+const NativeURL = URL;
+const urlOrigin = Object.getOwnPropertyDescriptor(NativeURL.prototype, "origin")!.get!;
+const urlProtocol = Object.getOwnPropertyDescriptor(NativeURL.prototype, "protocol")!.get!;
+const urlUsername = Object.getOwnPropertyDescriptor(NativeURL.prototype, "username")!.get!;
+const urlPassword = Object.getOwnPropertyDescriptor(NativeURL.prototype, "password")!.get!;
+const urlSearch = Object.getOwnPropertyDescriptor(NativeURL.prototype, "search")!.get!;
+const urlHash = Object.getOwnPropertyDescriptor(NativeURL.prototype, "hash")!.get!;
 const DEFAULT_HOST_API_BASE_URL = "https://api.veryfront.com";
+const HOST_API_ENV_KEYS = ["VERYFRONT_API_URL", "VERYFRONT_API_BASE_URL"] as const;
 const applyIntrinsic = Reflect.apply;
 const stringCharCodeAt = String.prototype.charCodeAt;
 const stringEndsWith = String.prototype.endsWith;
@@ -14,10 +25,44 @@ function normalizeHostApiEnv(value: string | undefined): string | undefined {
   return trimmed || undefined;
 }
 
-/** Require encrypted transport before attaching host-private credentials. */
+/** @internal Exact HTTP API origin authorized by the operator at process boot. */
+export function isHostHttpApiOrigin(value: string): boolean {
+  let target: URL;
+  try {
+    target = new NativeURL(value);
+    if (
+      applyIntrinsic(urlProtocol, target, []) !== "http:" ||
+      applyIntrinsic(urlUsername, target, []) || applyIntrinsic(urlPassword, target, [])
+    ) {
+      return false;
+    }
+  } catch {
+    return false;
+  }
+  for (let index = 0; index < HOST_API_ENV_KEYS.length; index++) { // NOSONAR: bypass project-replaced iterator hooks.
+    const configuredApi = normalizeHostApiEnv(getHostBootEnv(HOST_API_ENV_KEYS[index]!));
+    if (!configuredApi) continue;
+    try {
+      const configured = new NativeURL(configuredApi);
+      if (
+        applyIntrinsic(urlProtocol, configured, []) === "http:" &&
+        applyIntrinsic(urlSearch, configured, []) === "" &&
+        applyIntrinsic(urlHash, configured, []) === "" &&
+        applyIntrinsic(urlUsername, configured, []) === "" &&
+        applyIntrinsic(urlPassword, configured, []) === "" &&
+        applyIntrinsic(urlOrigin, target, []) === applyIntrinsic(urlOrigin, configured, [])
+      ) return true;
+    } catch {
+      // An invalid host URL cannot authorize this origin.
+    }
+  }
+  return false;
+}
+
+/** Require HTTPS or an explicitly authorized HTTP API before attaching host credentials. */
 export function requireHostPrivateApiHttps(value: string): string {
   const prefix = applyIntrinsic(stringSlice, value, [0, 8]) as string;
-  if (applyIntrinsic(stringToLowerCase, prefix, []) !== "https://") {
+  if (applyIntrinsic(stringToLowerCase, prefix, []) !== "https://" && !isHostHttpApiOrigin(value)) {
     throw new TypeError("Host-private credentials require an HTTPS API endpoint");
   }
   return value;

@@ -46,7 +46,7 @@ export function parseBarrelJSDoc(content: string): BarrelJSDoc {
   };
 
   const updateCodeFence = (line: string): void => {
-    const fenceMatch = line.match(/^( {0,3})(`{3,}|~{3,})(.*)$/);
+    const fenceMatch = line.match(/^( {0,3})(`{3,}|~{3,})(.*)$/s);
     if (!fenceMatch) return;
     const fence = fenceMatch[2];
     const marker = fence[0] as "`" | "~";
@@ -118,13 +118,13 @@ export function parseBarrelJSDoc(content: string): BarrelJSDoc {
 
 export function normalizePublicDocText(text: string): string {
   const withoutInlineJsDocLinks = text.replace(
-    /\{@(?:link|linkcode|linkplain)\s+([^}]+)\}/g,
+    /\{@(?:link|linkcode|linkplain)\s+(\S[^}]*)\}/g,
     (_match, rawTarget: string) => {
       const target = rawTarget.trim();
       const pipeIndex = target.indexOf("|");
       const display = pipeIndex >= 0
         ? target.slice(pipeIndex + 1).trim()
-        : target.match(/^\S+\s+(.+)$/)?.[1]?.trim() || target;
+        : target.match(/^\S+\s+(\S.*)$/)?.[1]?.trim() || target;
       const longestBacktickRun = Math.max(
         0,
         ...(display.match(/`+/g) ?? []).map((run) => run.length),

@@ -1,3 +1,7 @@
+import {
+  revokeHostedPlatformDependencies,
+  runWithHostedPlatformDependencies,
+} from "../hosted/platform-dependency-credential.ts";
 import { CONTROL_PLANE_RUN_STREAM_PATH } from "../../channels/control-plane.ts";
 import {
   resolveRuntimeOwnerInvokeUrl as resolveDefaultRuntimeOwnerInvokeUrl,
@@ -30,6 +34,7 @@ import {
   type HostedServiceRunEventAppendTokenVerification,
 } from "./auth.ts";
 import { createRequestAuthCache } from "./request-auth-cache.ts";
+import { withoutPrivateInvocationCredentials } from "./application-request-credentials.ts";
 import {
   cancelUnusedRequestBody,
   createApplicationRequest,
@@ -54,7 +59,14 @@ import {
 import { privateJsonStringify } from "#veryfront/security/private-json.ts";
 import { snapshotOwnDeploymentArtifactOption } from "./deployment-artifact.ts";
 import { buildResponseInit } from "./response-init.ts";
+import {
+  getServiceRuntimeIdentity,
+  RUNTIME_ID_HEADER,
+  RUNTIME_MODE_HEADER,
+  RUNTIME_NAME_HEADER,
+} from "./runtime-identity.ts";
 
+const RuntimeEncodeURIComponent = encodeURIComponent;
 const IntrinsicReflectApply = Reflect.apply;
 const NativeHeaders = Headers;
 const NativeObjectPrototype = Object.prototype;
@@ -66,8 +78,17 @@ const RequestMethodGet = Object.getOwnPropertyDescriptor(NativeRequest.prototype
 const RequestSignalGet = Object.getOwnPropertyDescriptor(NativeRequest.prototype, "signal")?.get;
 const RequestUrlGet = Object.getOwnPropertyDescriptor(NativeRequest.prototype, "url")?.get;
 const HeadersDelete = NativeHeaders.prototype.delete;
-const ObjectCreate = Object.create;
-const ObjectKeys = Object.keys;
+const HeadersForEach = NativeHeaders.prototype.forEach;
+const HeadersAppend = NativeHeaders.prototype.append;
+const HeadersSet = NativeHeaders.prototype.set;
+const ResponseBodyGet = Object.getOwnPropertyDescriptor(NativeResponse.prototype, "body")?.get;
+const ResponseHeadersGet = Object.getOwnPropertyDescriptor(NativeResponse.prototype, "headers")
+  ?.get;
+const ResponseStatusGet = Object.getOwnPropertyDescriptor(NativeResponse.prototype, "status")?.get;
+const ResponseStatusTextGet = Object.getOwnPropertyDescriptor(
+  NativeResponse.prototype,
+  "statusText",
+)?.get;
 const ArrayIsArray = Array.isArray;
 const JsonParse = JSON.parse;
 const JsonStringify = JSON.stringify;
@@ -83,7 +104,7 @@ function createVersionResponse(deploymentArtifact: string | null): Response {
   );
 }
 
-function readRequestValue<T>(request: Request, getter: (() => T) | undefined): T {
+function readRequestValue<T>(request: Request | Response, getter: (() => T) | undefined): T {
   if (!getter) throw new TypeError("Request accessor is unavailable");
   return IntrinsicReflectApply(getter, request, []) as T;
 }
@@ -91,16 +112,6 @@ function readRequestValue<T>(request: Request, getter: (() => T) | undefined): T
 function isCredentialRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null &&
     !IntrinsicReflectApply(ArrayIsArray, Array, [value]);
-}
-
-function withoutInferenceCredential(credentials: Record<string, unknown>): Record<string, unknown> {
-  const keys = IntrinsicReflectApply(ObjectKeys, Object, [credentials]) as string[];
-  const retained = ObjectCreate(null) as Record<string, unknown>;
-  for (let index = 0; index < keys.length; index++) {
-    const key = keys[index]!;
-    if (key !== "inferenceAuthToken") retained[key] = credentials[key];
-  }
-  return retained;
 }
 
 /** Public API contract for hosted agent service routes logger. */
@@ -182,6 +193,10 @@ export type HostedAgentServiceRouteSetOptions<TExecution extends object> = {
       error: { errorCode: string; message: string; statusCode: number };
     }
   >;
+  /** Verify exact-run terminal identity for credentialed evidence reads. */
+  verifyRunTerminalToken?: (
+    input: { token: string; projectId: string; runId: string },
+  ) => Promise<boolean>;
   verifyRunEventAppendToken?: (input: {
     token: string;
     projectId: string;
@@ -269,7 +284,7 @@ async function createRuntimeInvocationApplicationRequest(request: Request): Prom
   const sanitizedPayload = isCredentialRecord(credentials)
     ? {
       ...payload,
-      credentials: withoutInferenceCredential(credentials),
+      credentials: withoutPrivateInvocationCredentials(credentials),
     }
     : payload;
   assertNativeHeaderProcessing();
@@ -335,6 +350,8 @@ function createAgUiSetupErrorResponse(input: {
 export function createHostedAgentServiceRouteSet<TExecution extends object>(
   options: HostedAgentServiceRouteSetOptions<TExecution>,
 ): HostedAgentServiceRouteSet<TExecution> {
+  const runtimeIdentity = getServiceRuntimeIdentity();
+  const runtimeNameHeader = RuntimeEncodeURIComponent(runtimeIdentity.name);
   const deploymentArtifact = snapshotOwnDeploymentArtifactOption(options);
   const trace = options.trace ?? defaultTrace;
   const forwardedConfigNamespace = options.forwardedConfigNamespace ?? "veryfront";
@@ -423,22 +440,49 @@ export function createHostedAgentServiceRouteSet<TExecution extends object>(
     requestOrCtx?: unknown;
   }): Promise<Response> {
     const requestOrCtx = input.requestOrCtx instanceof Request ? input.request : input.requestOrCtx;
-    return executeHostedDurableChatRun({
+    let prepared = false;
+    const response = await executeHostedDurableChatRun({
       req: input.req,
       rawRequest: input.request,
       requestOrCtx,
       tracker: options.tracker,
-      prepareExecution: (request) =>
-        runWithHostedRequestPreparationSignal(
-          input.request.signal,
-          () =>
-            runWithVerifiedHostedRunEventWriterRequest(
-              input.req,
-              () => options.prepareExecution(request),
-            ),
-        ),
-      startDetachedExecution: options.startDetachedExecution,
-      cleanupExecution: options.cleanupExecution,
+      prepareExecution: async (request) => {
+        try {
+          const result = await runWithHostedRequestPreparationSignal(
+            input.request.signal,
+            () =>
+              runWithVerifiedHostedRunEventWriterRequest(
+                input.req,
+                () =>
+                  runWithHostedPlatformDependencies(input.req, () =>
+                    options.prepareExecution(request)),
+              ),
+          );
+          prepared = true;
+          return result;
+        } catch (error) {
+          revokeHostedPlatformDependencies(input.req);
+          throw error;
+        }
+      },
+      startDetachedExecution: async (executionInput) => {
+        const onAbort = () => revokeHostedPlatformDependencies(input.req);
+        executionInput.abortSignal.addEventListener("abort", onAbort, { once: true });
+        try {
+          executionInput.abortSignal.throwIfAborted();
+          await runWithHostedPlatformDependencies(
+            input.req,
+            () => options.startDetachedExecution(executionInput),
+          );
+        } finally {
+          revokeHostedPlatformDependencies(input.req);
+          executionInput.abortSignal.removeEventListener("abort", onAbort);
+        }
+      },
+      cleanupExecution: async (cleanupInput) => {
+        revokeHostedPlatformDependencies(input.req);
+        await options.cleanupExecution?.(cleanupInput);
+      },
       resolveAuthError: (error) =>
         error instanceof HostedServiceAuthError
           ? {
@@ -448,6 +492,8 @@ export function createHostedAgentServiceRouteSet<TExecution extends object>(
           : null,
       logger: options.logger,
     });
+    if (!prepared || response.status !== 202) revokeHostedPlatformDependencies(input.req);
+    return response;
   }
 
   async function handleDurableChatRunExecuteRequest(input: {
@@ -461,6 +507,7 @@ export function createHostedAgentServiceRouteSet<TExecution extends object>(
         verifyProjectAccess: ({ projectId, authToken }) =>
           options.verifyProjectAccess(projectId, authToken),
         verifyRunEventAppendToken: options.verifyRunEventAppendToken,
+        verifyRunTerminalToken: options.verifyRunTerminalToken,
       });
       if (isResponseLike(req)) {
         return req;
@@ -475,30 +522,43 @@ export function createHostedAgentServiceRouteSet<TExecution extends object>(
     });
   }
 
-  /** Names the replica that accepted a run start; leaves any other response unchanged. */
+  /** Names the service process that accepted work, even without a direct owner URL. */
   async function withRuntimeOwner(response: Response, request: Request): Promise<Response> {
-    if (response.status !== 202) {
+    const status = readRequestValue<number>(response, ResponseStatusGet);
+    if (status !== 202) {
       return response;
     }
+    // Construct with an empty header dictionary. Passing Headers to the constructor
+    // would call a project-replaced iterator after work has already been accepted.
+    const init = buildResponseInit(
+      NativeObjectPrototype,
+      status,
+      readRequestValue<string>(response, ResponseStatusTextGet),
+    );
+    const result = new NativeResponse(
+      readRequestValue<ReadableStream<Uint8Array> | null>(response, ResponseBodyGet),
+      init,
+    );
+    const headers = readRequestValue<Headers>(result, ResponseHeadersGet);
+    IntrinsicReflectApply(HeadersForEach, readRequestValue<Headers>(response, ResponseHeadersGet), [
+      (value: string, name: string) => IntrinsicReflectApply(HeadersAppend, headers, [name, value]),
+    ]);
+    IntrinsicReflectApply(HeadersSet, headers, [RUNTIME_ID_HEADER, runtimeIdentity.id]);
+    IntrinsicReflectApply(HeadersSet, headers, [RUNTIME_NAME_HEADER, runtimeNameHeader]);
+    IntrinsicReflectApply(HeadersSet, headers, [RUNTIME_MODE_HEADER, runtimeIdentity.mode]);
     const resolve = options.resolveRuntimeOwnerInvokeUrl ?? resolveDefaultRuntimeOwnerInvokeUrl;
-    let ownerInvokeUrl: string | null = null;
     try {
-      ownerInvokeUrl = await resolve(request);
+      const ownerInvokeUrl = await resolve(request);
+      if (ownerInvokeUrl) {
+        IntrinsicReflectApply(HeadersSet, headers, [
+          RUNTIME_OWNER_INVOKE_URL_HEADER,
+          ownerInvokeUrl,
+        ]);
+      }
     } catch {
-      // The run is accepted either way; without an address, run control keeps
-      // reaching it through the load-balanced service address.
-      return response;
+      // Direct run control remains optional; the accepting process is still known.
     }
-    if (!ownerInvokeUrl) {
-      return response;
-    }
-    const headers = new Headers(response.headers);
-    headers.set(RUNTIME_OWNER_INVOKE_URL_HEADER, ownerInvokeUrl);
-    return new Response(response.body, {
-      status: response.status,
-      statusText: response.statusText,
-      headers,
-    });
+    return result;
   }
 
   async function handleRuntimeAgentRunInvocationExecuteRequest(input: {
@@ -524,6 +584,7 @@ export function createHostedAgentServiceRouteSet<TExecution extends object>(
             verifyProjectAccess: ({ projectId, authToken }) =>
               options.verifyProjectAccess(projectId, authToken),
             verifyRunEventAppendToken: options.verifyRunEventAppendToken,
+            verifyRunTerminalToken: options.verifyRunTerminalToken,
             runtimeSource,
           },
         );
@@ -542,11 +603,12 @@ export function createHostedAgentServiceRouteSet<TExecution extends object>(
           applicationRequestSource,
         );
 
-        return executeParsedDurableChatRun({
+        const response = await executeParsedDurableChatRun({
           req,
           request: applicationRequest,
           requestOrCtx: input.requestOrCtx,
         });
+        return await withRuntimeOwner(response, input.request);
       } finally {
         // Release the retained branch on every exit; a read branch is already closed.
         cancelUnusedRequestBody(applicationRequestSource);

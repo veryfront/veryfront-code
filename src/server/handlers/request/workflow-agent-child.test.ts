@@ -1,9 +1,16 @@
+import { getActiveRunEventSink } from "#veryfront/runtime/run-event-sink-context.ts";
+import { getRuntimeObservationWriterBinding } from "#veryfront/runtime/runtime-observation-carrier.ts";
 import {
   acceptInheritedRunAdmission,
   acceptWorkflowInheritedRunAdmission,
 } from "#veryfront/agent/hosted/terminal-credential.ts";
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { observeFetchRequestInit } from "#veryfront/testing/mock-fetch.ts";
 import { agent } from "#veryfront/agent/factory.ts";
@@ -29,14 +36,14 @@ const encode = (value: unknown) => `test.${btoa(JSON.stringify(value))}.signatur
 const eventToken = encode({
   tokenUse: "run_event_writer",
   runId: "run_parent",
-  projectId: "project",
+  projectId: "11111111-1111-4111-8111-111111111111",
   projectExecutionAttempt: { canonicalRunId: parentId, workerId: "worker", attemptId: "attempt" },
 });
 const terminalToken = encode({
   tokenUse: "run_event_writer",
   writerPurpose: "current_run_terminal",
   runId: "run_child",
-  projectId: "project",
+  projectId: "11111111-1111-4111-8111-111111111111",
   canonicalRunId: childId,
   dispatchNonce: "nonce",
 });
@@ -58,30 +65,48 @@ function admission(
   id = childId,
   publicId = "run_child",
   parent = parentId,
+  outputFormat?: "text-data-v1",
 ) {
-  return json(
-    {
+  const responseBody = outputFormat
+    ? {
+      version: 1,
+      canonicalRunId: id,
+      parentRunId: parent,
+      projectId: "11111111-1111-4111-8111-111111111111",
+      agentId: "coordinator",
+      dispatchNonce: id === childId ? "nonce" : "nonce-child",
+      conversationId,
+      outputMessageId: "44444444-4444-4444-8444-444444444444",
+      status,
+      output,
+      outputFormat,
+    }
+    : {
       id,
       status,
       output,
-      project_id: "project",
+      project_id: "11111111-1111-4111-8111-111111111111",
       parent_run_id: parent,
       target: { type: "agent", id: "coordinator" },
       conversation_id: conversationId,
       output_message_id: "44444444-4444-4444-8444-444444444444",
-    },
+    };
+  return json(
+    responseBody,
     202,
     {
       "Cache-Control": "no-store",
+      ...(outputFormat ? { "Content-Type": "application/vnd.veryfront.inherited-run+json" } : {}),
       "X-Veryfront-Run-Terminal-Token": id === childId ? terminalToken : encode({
         tokenUse: "run_event_writer",
         writerPurpose: "current_run_terminal",
         runId: publicId,
-        projectId: "project",
+        projectId: "11111111-1111-4111-8111-111111111111",
         canonicalRunId: id,
         dispatchNonce: "nonce-child",
       }),
       "X-Veryfront-Run-Invocation-Token": "child-invocation",
+      "X-Veryfront-Inference-Token": "child-inference",
       "X-Veryfront-Run-Event-Token": "child-event",
       "X-Veryfront-Run-Renewal-Token": "child-renewal",
       "X-Veryfront-Run-Lease-Expires-At": new Date(Date.now() + 60000).toISOString(),
@@ -93,7 +118,7 @@ function admission(
 function runner(send: typeof fetch, token = eventToken) {
   return createWorkflowAgentNodeRunner({
     runId: "run_parent",
-    projectId: "project",
+    projectId: "11111111-1111-4111-8111-111111111111",
     apiUrl: "https://api.example.test",
     eventToken: token,
     authToken: "parent-invocation",
@@ -136,13 +161,128 @@ describe("workflow agent child protocol", () => {
             throw new Error("Completed child must not execute again");
           },
         }),
-        { success: true, output: { result: 42 }, executionTime: 0 },
+        {
+          success: true,
+          output: { result: 42 },
+          executionTime: 0,
+        },
       );
     }
     assertEquals(starts[0], starts[1]);
     assertEquals(starts[0] === starts[2], false);
     assertEquals(children, [children[0], children[0], children[0]]);
   });
+
+  for (const structured of [false, true]) {
+    it(`stores only ${structured ? "structured" : "text-only"} workflow agent results`, async () => {
+      const output = {
+        text: "brief",
+        toolCalls: [],
+        status: "completed",
+        usage: { totalTokens: 1 },
+        ...(structured ? { object: { category: "billing" } } : {}),
+      };
+      let finalized: unknown;
+      const persistedText: string[] = [];
+      let cursor = 0;
+      const send: typeof fetch = (url, init) => {
+        if (String(url).endsWith("/runs")) return Promise.resolve(admission());
+        if (String(url).endsWith(`/runs/${childId}/events`)) {
+          const events = requestJsonBody(init).events;
+          for (const event of events) {
+            if (event.type === "TEXT_MESSAGE_CONTENT") persistedText.push(event.delta);
+          }
+          cursor += events.length;
+          return Promise.resolve(json({
+            run_id: childId,
+            latest_event_id: cursor,
+            latest_external_event_sequence: cursor,
+            appended_count: events.length,
+          }));
+        }
+        if (String(url).endsWith("/finalize")) {
+          finalized = requestJsonBody(init);
+          return Promise.resolve(json({ id: childId, status: "completed" }));
+        }
+        return Promise.resolve(json({}));
+      };
+      const result = await runner(send)({
+        ...invocation,
+        execute: () => Promise.resolve({ success: true, output, executionTime: 1 }),
+      });
+      assertEquals(result.output, output);
+      assertEquals(persistedText, ["brief"]);
+      assertEquals(finalized, {
+        status: "completed",
+        final_text: "brief",
+        ...(structured ? { output: { category: "billing" } } : {}),
+      });
+    });
+  }
+
+  for (const filteredText of ["Contact [REDACTED]", ""]) {
+    it(`replays authoritative post-middleware text ${JSON.stringify(filteredText)}`, async () => {
+      let stored: unknown;
+      let cursor = 0;
+      let finalized = false;
+      const deltas: string[] = [];
+      const send: typeof fetch = (url, init) => {
+        const path = new URL(String(url)).pathname;
+        const body = requestJsonBody(init);
+        if (path === `/runs/${parentId}/events`) return Promise.resolve(json({}));
+        if (path === "/runs") {
+          return Promise.resolve(
+            finalized
+              ? admission("completed", stored, childId, "run_child", parentId, "text-data-v1")
+              : admission(),
+          );
+        }
+        if (path.endsWith("/events")) {
+          for (const event of body.events) {
+            if (event.type === "TEXT_MESSAGE_CONTENT") deltas.push(event.delta);
+          }
+          cursor += body.events.length;
+          return Promise.resolve(
+            json({
+              run_id: childId,
+              latest_event_id: cursor,
+              latest_external_event_sequence: cursor,
+              appended_count: body.events.length,
+            }),
+          );
+        }
+        assertEquals(body.final_text, filteredText);
+        assertEquals(body.output, undefined);
+        stored = { text: body.final_text };
+        finalized = true;
+        return Promise.resolve(json({ id: childId, status: "completed" }));
+      };
+      const fresh = await runner(send)({
+        ...invocation,
+        execute: async () => {
+          await observeGeneratedAgentTurn("provider-message", {
+            text: "Contact synthetic-person@example.test",
+            toolCalls: [],
+          });
+          return {
+            success: true,
+            output: { text: filteredText, toolCalls: 0, status: "completed" },
+            executionTime: 1,
+          };
+        },
+      });
+      assertEquals(fresh.success, true);
+      assertEquals(fresh.output, { text: filteredText, toolCalls: 0, status: "completed" });
+      const replay = await runner(send)({
+        ...invocation,
+        execute: () => {
+          throw new Error("Replay must not execute");
+        },
+      });
+      assertEquals(replay.output, { text: filteredText, status: "completed" });
+      assertEquals(deltas, ["Contact synthetic-person@example.test"]);
+    });
+  }
 
   it("acknowledges node start then admits, executes locally once and finalizes with exact child authority", async () => {
     const order: string[] = [];
@@ -163,7 +303,7 @@ describe("workflow agent child protocol", () => {
         assertEquals(headers.get("Authorization"), "Bearer parent-invocation");
         assertEquals(body.parent_run_id, parentId);
         assertEquals(body.node_id, "research");
-        assertEquals(body.input, { prompt: JSON.stringify(invocation.input) });
+        assertEquals(body.input, { text: JSON.stringify(invocation.input) });
         return Promise.resolve(admission());
       }
       assertEquals(url, `https://api.example.test/runs/${childId}/finalize`);
@@ -185,6 +325,76 @@ describe("workflow agent child protocol", () => {
     assertEquals(order, ["start", "admit", "execute", "finalize"]);
     assertEquals(getActiveHostedRunEventWriterCapability(), undefined);
   });
+
+  for (
+    const stored of [
+      { text: "classified", data: { category: "billing" } },
+      { text: "classified", object: { category: "billing" }, toolCalls: [], status: "completed" },
+    ]
+  ) {
+    it(`restores structured workflow replay for downstream context ${JSON.stringify(stored)}`, async () => {
+      const model = scriptedModel([{ text: "must not execute" }], { only: "generate" });
+      const actualAgent = agent({
+        id: "coordinator",
+        model: "test/workflow",
+        system: "Classify",
+        skills: false,
+        resolveModelTransport: () => ({ model }),
+      });
+      const consumed: unknown[] = [];
+      const consumer = tool({
+        id: "consume",
+        description: "Consume classification",
+        inputSchema: defineSchema((v) => v.object({ category: v.string() }))(),
+        execute: (input) => {
+          consumed.push(input);
+          return input;
+        },
+      });
+      const nodes: WorkflowNode[] = [
+        step("research", { agent: actualAgent, input: "Classify" }),
+        {
+          ...step("consume", {
+            tool: consumer,
+            input: (context) => (context.research as { object: unknown }).object,
+          }),
+          dependsOn: ["research"],
+        },
+      ];
+      const send: typeof fetch = (url) =>
+        Promise.resolve(
+          String(url).endsWith("/runs")
+            ? admission(
+              "completed",
+              stored,
+              childId,
+              "run_child",
+              parentId,
+              "data" in stored && !("object" in stored) ? "text-data-v1" : undefined,
+            )
+            : json({}),
+        );
+      const run: WorkflowRun = {
+        id: "run_parent",
+        workflowId: "workflow",
+        status: "running",
+        input: {},
+        context: { input: {} },
+        nodeStates: {},
+        currentNodes: [],
+        checkpoints: [],
+        pendingApprovals: [],
+        createdAt: new Date(),
+        sourceIntegrationPolicy: normalizeSourceIntegrationPolicy(undefined),
+      };
+      const outcome = await new DAGExecutor({
+        stepExecutor: new StepExecutor({ runAgentNode: runner(send) }),
+      }).execute(nodes, run);
+      assertEquals(outcome.completed, true, JSON.stringify(outcome));
+      assertEquals(consumed, [{ category: "billing" }]);
+      assertEquals(model.callCount, 0);
+    });
+  }
 
   it("keeps repeated local agent nodes distinct across composite owners and loop iterations with stable replay", async () => {
     const model = scriptedModel([
@@ -290,10 +500,10 @@ describe("workflow agent child protocol", () => {
     assertEquals(model.callCount, 4);
     assertEquals(records.size, 4);
     assertEquals([...records.values()].map((record) => record.input), [
-      { prompt: "first-input" },
-      { prompt: "second-input" },
-      { prompt: "iteration-0" },
-      { prompt: "iteration-1" },
+      { text: "first-input" },
+      { text: "second-input" },
+      { text: "iteration-0" },
+      { text: "iteration-1" },
     ]);
     assertEquals((await run()).completed, true);
     assertEquals(model.callCount, 4);
@@ -333,6 +543,7 @@ describe("workflow agent child protocol", () => {
     >();
     const starts = new Set<string>();
     const cursors = new Map<string, number>();
+    const texts = new Map<string, string>();
     const send: typeof fetch = (url, init) => {
       const path = new URL(String(url)).pathname;
       const body = requestJsonBody(init);
@@ -359,6 +570,11 @@ describe("workflow agent child protocol", () => {
       }
       const id = path.split("/")[2]!;
       if (path.endsWith("/events")) {
+        for (const event of body.events) {
+          if (event.type === "TEXT_MESSAGE_CONTENT") {
+            texts.set(id, (texts.get(id) ?? "") + event.delta);
+          }
+        }
         const cursor = (cursors.get(id) ?? 0) + body.events.length;
         cursors.set(id, cursor);
         return Promise.resolve(
@@ -372,7 +588,7 @@ describe("workflow agent child protocol", () => {
       }
       const record = [...records.values()].find((value) => value.id === id)!;
       record.status = body.status;
-      record.output = body.output;
+      record.output = Object.hasOwn(body, "output") ? body.output : { text: texts.get(id) ?? "" };
       return Promise.resolve(json({ id, status: body.status }));
     };
     const freshRun = (): WorkflowRun => ({
@@ -637,87 +853,124 @@ describe("workflow agent child protocol", () => {
     );
   });
 
-  it("persists actual coordinator tool evidence before admitting and locally streaming its child", async () => {
-    const grandchildId = "44444444-4444-4444-8444-444444444444";
-    const order: string[] = [];
-    const counts = new Map<string, number>();
-    const send: typeof fetch = (url, init) => {
-      const path = new URL(String(url)).pathname;
-      const body = requestJsonBody(init);
-      if (path === `/runs/${parentId}/events`) return Promise.resolve(json({}));
-      if (path.endsWith("/events")) {
-        const id = path.split("/")[2]!;
-        const events = body.events;
-        for (const event of events) {
-          if (event.type === "TOOL_CALL_START") {
-            assertEquals(id, childId);
-            assertEquals(event.toolCallId, "call-research");
-            assertEquals(event.toolCallName, "invoke_agent");
-            order.push("tool-evidence");
+  for (const terminalReplay of [false, true]) {
+    it(`persists coordinator evidence and settles its child (terminal replay: ${terminalReplay})`, async () => {
+      const grandchildId = "44444444-4444-4444-8444-444444444444";
+      let childBinding: ReturnType<typeof getRuntimeObservationWriterBinding>;
+      let parentSink: ReturnType<typeof getActiveRunEventSink>;
+      const order: string[] = [];
+      const counts = new Map<string, number>();
+      const send: typeof fetch = (url, init) => {
+        const path = new URL(String(url)).pathname;
+        const body = requestJsonBody(init);
+        if (path === `/runs/${parentId}/events`) return Promise.resolve(json({}));
+        if (path.endsWith("/events")) {
+          const id = path.split("/")[2]!;
+          const events = body.events;
+          for (const event of events) {
+            if (event.type === "TOOL_CALL_START") {
+              assertEquals(id, childId);
+              assertEquals(event.toolCallId, "call-research");
+              assertEquals(event.toolCallName, "invoke_agent");
+              order.push("tool-evidence");
+            }
+            if (event.type === "TEXT_MESSAGE_CONTENT") order.push("child-text");
           }
-          if (event.type === "TEXT_MESSAGE_CONTENT") order.push("child-text");
+          const count = (counts.get(id) ?? 0) + events.length;
+          counts.set(id, count);
+          return Promise.resolve(
+            json({
+              run_id: id,
+              latest_event_id: count,
+              latest_external_event_sequence: count,
+              appended_count: events.length,
+            }),
+          );
         }
-        const count = (counts.get(id) ?? 0) + events.length;
-        counts.set(id, count);
-        return Promise.resolve(
-          json({
-            run_id: id,
-            latest_event_id: count,
-            latest_external_event_sequence: count,
-            appended_count: events.length,
-          }),
-        );
-      }
-      if (path === "/runs") {
-        if (body.node_id) return Promise.resolve(admission());
-        assertEquals(order.includes("tool-evidence"), true);
-        assertEquals(body.parent_run_id, childId);
-        assertEquals(body.tool_call_id, "call-research");
-        assertEquals(body.target.id, "brief-research");
-        order.push("admit-research");
-        return Promise.resolve(admission("running", null, grandchildId, "run_research"));
-      }
-      order.push(path.includes(grandchildId) ? "finish-research" : "finish-coordinator");
-      return Promise.resolve(json({ id: path.split("/")[2], status: body.status }));
-    };
-    const result = await runner(send)({
-      ...invocation,
-      execute: async () => {
-        await observeGeneratedAgentTurn("coordinator-message", {
-          text: "",
-          toolCalls: [{
-            toolCallId: "call-research",
+        if (path === "/runs") {
+          if (body.node_id) return Promise.resolve(admission());
+          assertEquals(order.includes("tool-evidence"), true);
+          assertEquals(body.parent_run_id, childId);
+          assertEquals(body.tool_call_id, "call-research");
+          assertEquals(body.target.id, "brief-research");
+          order.push("admit-research");
+          if (terminalReplay) {
+            return Promise.resolve(json(
+              {
+                id: grandchildId,
+                project_id: "11111111-1111-4111-8111-111111111111",
+                parent_run_id: childId,
+                target: { type: "agent", id: "brief-research" },
+                conversation_id: conversationId,
+                output_message_id: "44444444-4444-4444-8444-444444444444",
+                status: "completed",
+                output: { text: "Finding", toolCalls: 0, status: "completed" },
+              },
+              202,
+              { "Cache-Control": "no-store" },
+            ));
+          }
+          return Promise.resolve(admission("running", null, grandchildId, "run_research"));
+        }
+        order.push(path.includes(grandchildId) ? "finish-research" : "finish-coordinator");
+        return Promise.resolve(json({ id: path.split("/")[2], status: body.status }));
+      };
+      const result = await runner(send)({
+        ...invocation,
+        execute: async () => {
+          parentSink = getActiveRunEventSink();
+          await observeGeneratedAgentTurn("coordinator-message", {
+            text: "",
+            toolCalls: [{
+              toolCallId: "call-research",
+              toolName: "invoke_agent",
+              input: { agent_id: "brief-research", prompt: "Research" },
+            }],
+          });
+          const output = await executeLocalChild({
+            agentId: "brief-research",
+            input: "Research",
             toolName: "invoke_agent",
-            input: { agent_id: "brief-research", prompt: "Research" },
-          }],
-        });
-        const output = await executeLocalChild({
-          agentId: "brief-research",
-          input: "Research",
-          toolName: "invoke_agent",
-          toolInput: { agent_id: "brief-research", prompt: "Research" },
-          context: { toolCallId: "call-research" },
-          execute: async (control) => {
-            order.push("local-research");
-            await control?.onEvent?.({ type: "text-start", id: "text" });
-            await control?.onEvent?.({ type: "text-delta", id: "text", delta: "Finding" });
-            await control?.onEvent?.({ type: "text-end", id: "text" });
-            return { text: "Finding", toolCalls: 0, status: "completed" };
-          },
-        });
-        return { success: true, output, executionTime: 0 };
-      },
+            toolInput: { agent_id: "brief-research", prompt: "Research" },
+            context: { toolCallId: "call-research" },
+            execute: async (control) => {
+              const childSink = getActiveRunEventSink();
+              assertEquals(childSink === parentSink, false);
+              childBinding = getRuntimeObservationWriterBinding(childSink);
+              assertEquals(childBinding?.scope.canonicalRunId, grandchildId);
+              childBinding?.assertActive();
+              order.push("local-research");
+              await control?.onEvent?.({ type: "text-start", id: "text" });
+              await control?.onEvent?.({ type: "text-delta", id: "text", delta: "Finding" });
+              await control?.onEvent?.({ type: "text-end", id: "text" });
+              return { text: "Finding", toolCalls: 0, status: "completed" };
+            },
+          });
+          return { success: true, output, executionTime: 0 };
+        },
+      });
+      assertEquals(result.success, true);
+      if (terminalReplay) {
+        assertEquals(childBinding, undefined);
+        assertEquals(result.output, { text: "Finding", toolCalls: 0, status: "completed" });
+      } else {
+        assertExists(childBinding);
+        assertThrows(() => childBinding!.assertActive(), Error, "no longer active");
+      }
+      assertEquals(
+        order,
+        terminalReplay ? ["tool-evidence", "admit-research", "child-text", "finish-coordinator"] : [
+          "tool-evidence",
+          "admit-research",
+          "local-research",
+          "child-text",
+          "finish-research",
+          "child-text",
+          "finish-coordinator",
+        ],
+      );
     });
-    assertEquals(result.success, true);
-    assertEquals(order, [
-      "tool-evidence",
-      "admit-research",
-      "local-research",
-      "child-text",
-      "finish-research",
-      "finish-coordinator",
-    ]);
-  });
+  }
 
   for (const staleAuthority of [false, true]) {
     it(`settles timed-out delegated execution before terminal persistence (stale authority: ${staleAuthority})`, async () => {
@@ -912,14 +1165,14 @@ describe("workflow agent child protocol", () => {
       };
       const second = createWorkflowAgentNodeRunner({
         runId: "run_parent_b",
-        projectId: "project",
+        projectId: "11111111-1111-4111-8111-111111111111",
         apiUrl: "https://api.example.test",
         fetch: send,
         authToken: "parent-b",
         eventToken: encode({
           tokenUse: "run_event_writer",
           runId: "run_parent_b",
-          projectId: "project",
+          projectId: "11111111-1111-4111-8111-111111111111",
           projectExecutionAttempt: {
             canonicalRunId: parentB,
             workerId: "worker-b",
@@ -1025,7 +1278,7 @@ describe("workflow agent child protocol", () => {
         ++calls === 1 ? json({}) : json(
           {
             id: childId,
-            project_id: "project",
+            project_id: "11111111-1111-4111-8111-111111111111",
             parent_run_id: parentId,
             target: { type: "agent", id: "coordinator" },
             status: "completed",
@@ -1043,7 +1296,11 @@ describe("workflow agent child protocol", () => {
         throw new Error("must not execute");
       },
     });
-    assertEquals(result, { success: true, output, executionTime: 0 });
+    assertEquals(result, {
+      success: true,
+      output,
+      executionTime: 0,
+    });
     assertEquals(calls, 2);
   });
 
@@ -1058,7 +1315,11 @@ describe("workflow agent child protocol", () => {
         throw new Error("must not execute");
       },
     });
-    assertEquals(result, { success: true, output, executionTime: 0 });
+    assertEquals(result, {
+      success: true,
+      output,
+      executionTime: 0,
+    });
     assertEquals(calls, 2);
   });
 
@@ -1068,7 +1329,7 @@ describe("workflow agent child protocol", () => {
       const token = encode({
         tokenUse: "run_event_writer",
         runId: "run_parent",
-        projectId: "project",
+        projectId: "11111111-1111-4111-8111-111111111111",
         projectExecutionAttempt: { canonicalRunId: id, workerId: "worker", attemptId: "attempt" },
       });
       let requests = 0;
@@ -1096,7 +1357,7 @@ describe("workflow agent child protocol", () => {
     const token = encode({
       tokenUse: "run_event_writer",
       runId: "run_parent",
-      projectId: "project",
+      projectId: "11111111-1111-4111-8111-111111111111",
       projectExecutionAttempt: {
         canonicalRunId: `prefix-${parentId}`,
         workerId: "worker",
@@ -1122,7 +1383,7 @@ describe("workflow agent child protocol", () => {
         encode({
           tokenUse: "run_event_writer",
           runId: "foreign",
-          projectId: "project",
+          projectId: "11111111-1111-4111-8111-111111111111",
           projectExecutionAttempt: {
             canonicalRunId: parentId,
             workerId: "worker",
@@ -1150,7 +1411,7 @@ describe("workflow agent child protocol", () => {
 
 describe("private workflow inherited execution response", () => {
   const binding = {
-    projectId: "project",
+    projectId: "11111111-1111-4111-8111-111111111111",
     parentRunId: parentId,
     agentId: "coordinator",
     apiUrl: "https://api.example.test",
@@ -1160,7 +1421,7 @@ describe("private workflow inherited execution response", () => {
     version: 1,
     canonicalRunId: childId,
     parentRunId: parentId,
-    projectId: "project",
+    projectId: "11111111-1111-4111-8111-111111111111",
     agentId: "coordinator",
     status: "running",
     conversationId,
@@ -1287,7 +1548,7 @@ describe("private workflow inherited execution response", () => {
 
 describe("workflow terminal admission result validation", () => {
   const binding = {
-    projectId: "project",
+    projectId: "11111111-1111-4111-8111-111111111111",
     parentRunId: parentId,
     agentId: "coordinator",
     apiUrl: "https://api.example.test",
@@ -1295,7 +1556,7 @@ describe("workflow terminal admission result validation", () => {
   };
   const row = {
     id: childId,
-    project_id: "project",
+    project_id: "11111111-1111-4111-8111-111111111111",
     parent_run_id: parentId,
     target: { type: "agent", id: "coordinator" },
     status: "completed",

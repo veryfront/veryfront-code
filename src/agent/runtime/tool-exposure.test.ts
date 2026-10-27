@@ -1,4 +1,4 @@
-import { assert, assertEquals } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { it } from "#veryfront/testing/bdd.ts";
 import { tool, type ToolDefinition } from "#veryfront/tool";
 import {
@@ -6,14 +6,86 @@ import {
   createToolExposurePlan,
   createToolExposureState,
   createToolSearchDefinition,
+  listToolExposure,
+  readToolExposureContract,
   restoreToolExposureState,
   searchToolExposure,
+  searchToolExposureMetadata,
   TOOL_SEARCH_TOOL_NAME,
 } from "./tool-exposure.ts";
+import { createProviderNativeToolExposureDefinitions } from "./provider-native-tool-inventory.ts";
+import { markTrustedPlatformPolicyToolDefinition } from "./skill-policy-enforcement.ts";
+import { sanitizeProviderToolSchema } from "./provider-tool-compat.ts";
 import {
   inheritRuntimeProviderSchemaHiddenTool,
   markRuntimeProviderSchemaHiddenTool,
 } from "./local-tool.ts";
+
+it("browses executable metadata in bounded pages without loading schemas", () => {
+  const state = createToolExposureState();
+  const authorized = [
+    definition("write_agent", "Write an agent"),
+    definition("get_agent", "Read an agent"),
+    definition("list_agents", "List agents"),
+  ];
+  const first = listToolExposure({ authorized, available: [authorized[1]!], limit: 2 });
+  assertEquals(first.matches.map((entry) => [entry.name, entry.status]), [[
+    "get_agent",
+    "available",
+  ], ["list_agents", "deferred"]]);
+  assertEquals(first.nextCursor, "2");
+  assertEquals(first.loadedCount, 0);
+  assertEquals(state.loadedToolNames.size, 0);
+  const second = listToolExposure({ authorized, limit: 2, cursor: first.nextCursor! });
+  assertEquals(second.matches.map((entry) => entry.name), ["write_agent"]);
+  assertEquals(second.nextCursor, null);
+  assertEquals(Object.hasOwn(second.matches[0]!, "parameters"), false);
+});
+
+it("browsing metadata never reads parameter schemas or lists provider-hidden tools", () => {
+  const candidate = definition("get_agent", "Read an agent");
+  const accessorSchema = definition("load_agent", "Load an agent");
+  let schemaReads = 0;
+  Object.defineProperty(accessorSchema, "parameters", {
+    get() {
+      schemaReads++;
+      throw new Error("must not inspect schemas");
+    },
+  });
+  const hidden = hiddenDefinition("native_hidden", "Provider-owned hidden tool");
+  const result = listToolExposure({ authorized: [candidate, accessorSchema, hidden] });
+  // query cannot load a tool whose schema is an accessor, so inventory must not list it.
+  assertEquals(result.matches.map((entry) => entry.name), ["get_agent"]);
+  assertEquals(schemaReads, 0);
+  assertEquals(
+    searchToolExposure({
+      query: "load_agent",
+      authorized: [accessorSchema],
+      state: createToolExposureState(),
+    }).matches,
+    [],
+  );
+});
+
+it("bounds inventory descriptions and rejects invalid pagination", () => {
+  const authorized = [definition("get_agent", "x".repeat(1000))];
+  const result = listToolExposure({ authorized });
+  assertEquals(result.matches[0]?.description, "x".repeat(240) + "...");
+  const astral = listToolExposure({
+    authorized: [definition("get_agent", "x".repeat(239) + "\u{1F600}" + "x".repeat(10))],
+  });
+  assertEquals(astral.matches[0]?.description, "x".repeat(239) + "...");
+  for (const limit of [0, 21, 1.5, Infinity]) {
+    assertThrows(() => listToolExposure({ authorized, limit }));
+  }
+  for (const cursor of ["", "-1", "1.5", "1e1", "2", "99999999999"]) {
+    assertThrows(() => listToolExposure({ authorized, cursor }));
+  }
+});
+
+function platform(domain: string, resource: string) {
+  return { version: 1 as const, type: "platform" as const, domain, resource };
+}
 
 function definition(
   name: string,
@@ -55,6 +127,39 @@ const catalog = [
   definition("form_input", "Ask the user for structured input"),
   definition("load_skill", "Load a configured skill"),
 ];
+
+it("does not activate an unrelated tool from one generic field in a resource title", () => {
+  const state = createToolExposureState();
+  const result = searchToolExposure({
+    query: "Lifecycle Audit Helper",
+    authorized: [
+      definition("finalize", "Finalize a run", "Lifecycle status for the target record"),
+      definition("get_audit", "Read an audit record"),
+      definition("list_audits", "List audit records"),
+      definition("create_audit", "Create an audit record"),
+    ],
+    state,
+  });
+  assertEquals(result.miss, true);
+  assertEquals(result.matches, []);
+  assertEquals([...state.loadedToolNames], []);
+});
+
+it("keeps a longer capability phrase that matches the resource and operation detail", () => {
+  const state = createToolExposureState();
+  const result = searchToolExposure({
+    query: "retrieve saved agent",
+    authorized: [
+      definition("get_agent", "Read a saved project agent"),
+      definition("finalize", "Save run output"),
+      definition("get_log", "Read a saved log"),
+      definition("get_file", "Read a saved file"),
+    ],
+    state,
+  });
+  assertEquals(result.matches.map((match) => match.name), ["get_agent"]);
+  assertEquals(result.loadedCount, 1);
+});
 
 it("searches private catalog entries without invoking their iterator", () => {
   const authorized = [definition("lookup", "synthetic private search")];
@@ -156,8 +261,8 @@ it("keeps hidden provider-schema aliases authorized but out of model exposure", 
     "project_loader",
   ]);
   assertEquals(plan.visible.map((entry) => entry.name), [
-    TOOL_SEARCH_TOOL_NAME,
     "veryfront__load_skill",
+    TOOL_SEARCH_TOOL_NAME,
   ]);
   assertEquals(plan.deferred.map((entry) => entry.name), ["project_loader"]);
   assertEquals(
@@ -177,6 +282,21 @@ it("keeps hidden provider-schema aliases authorized but out of model exposure", 
     ],
     [],
   );
+});
+
+it("default bootstrap keeps the visible legacy loader when the canonical schema is hidden", () => {
+  const plan = createToolExposurePlan({
+    authorized: [
+      hiddenDefinition("veryfront__load_skill", "Hidden canonical loader"),
+      definition("load_skill", "Legacy loader"),
+      definition("project_loader", "Project loader"),
+    ],
+    mode: "deferred",
+    state: createToolExposureState(),
+  });
+
+  assertEquals(plan.visible.map((entry) => entry.name), ["load_skill", TOOL_SEARCH_TOOL_NAME]);
+  assertEquals(plan.deferred.map((entry) => entry.name), ["project_loader"]);
 });
 
 it("deferred exposure keeps form_input searchable and omits search for load_skill alone", () => {
@@ -204,7 +324,7 @@ it("deferred exposure keeps form_input searchable and omits search for load_skil
   assertEquals(loadSkillOnly.deferred, []);
 });
 
-it("deferred exposure keeps injected tool_search in visible ASCII order", () => {
+it("deferred exposure keeps injected veryfront__tool_search in visible ASCII order", () => {
   const deferred = createToolExposurePlan({
     authorized: [
       definition("z_bootstrap", "Always visible"),
@@ -219,6 +339,35 @@ it("deferred exposure keeps injected tool_search in visible ASCII order", () => 
     deferred.visible.map((tool) => tool.name),
     [TOOL_SEARCH_TOOL_NAME, "z_bootstrap"],
   );
+});
+
+it("an exact local tool name loads only that tool, retaining aliases and related readers for discovery", () => {
+  const authorized = [
+    definition("list_skills", "List project skills"),
+    definition("veryfront__list_skills", "List project skills"),
+    definition("get_skill", "Read a skill from the list_skills inventory"),
+    definition("read_skill_source", "Read source for list_skills entries"),
+  ];
+  const state = createToolExposureState();
+  const first = searchToolExposure({ query: "  LIST_SKILLS  ", authorized, state });
+  assertEquals(first.matches.map((match) => match.name), ["list_skills"]);
+  assertEquals([...state.loadedToolNames], ["list_skills"]);
+  const plan = createToolExposurePlan({ authorized, state, mode: "deferred" });
+  const repeated = searchToolExposure({
+    query: "list_skills",
+    authorized: plan.deferred,
+    available: plan.visible,
+    state,
+  });
+  assertEquals(repeated.matches.map((match) => match.name), ["list_skills"]);
+  assertEquals(repeated.loadedCount, 0);
+  assertEquals([...state.loadedToolNames], ["list_skills"]);
+  const broad = searchToolExposure({
+    query: "list skills",
+    authorized,
+    state: createToolExposureState(),
+  });
+  assert(broad.resultCount > 1);
 });
 
 it("tool search ranks exact name, description, and parameter matches", () => {
@@ -266,6 +415,49 @@ it("tool search reports a capability-matched visible tool without loading deferr
   assertEquals([...state.loadedToolNames], []);
 });
 
+it("a broad capability query loads deferred tools despite equally matching visible readers", () => {
+  const names = ["create_agent", "create_agent_avatar", "delete_agent", "get_agent"];
+  const authorized = [
+    ...names.map((name) => definition(name, "Manage project agents")),
+    ...names.map((name) => definition(`veryfront__${name}`, "Manage project agents")),
+    definition("get_agent_run", "Read a project agent run"),
+  ];
+  const state = createToolExposureState();
+  const result = searchToolExposure({
+    query: "agent",
+    available: [
+      definition("list_agent_tool_references", "Find attachable agent tools"),
+      definition("veryfront__list_agent_tool_references", "Find attachable agent tools"),
+      definition("load_skill", "Load agent task instructions"),
+    ],
+    authorized,
+    state,
+  });
+
+  for (const name of names) {
+    assert(result.matches.some((match) => match.name === name && match.status === "loaded"));
+    assert(state.loadedToolNames.has(name));
+  }
+  // TOOL_SEARCH_RESULT_LIMIT caps the nine authorized matches at five results.
+  assertEquals(result.loadedCount, 5);
+  assertEquals(result.matches.length, 5);
+});
+
+it("an exact visible reader match does not load weaker deferred capabilities", () => {
+  const state = createToolExposureState();
+  const result = searchToolExposure({
+    query: "list_agent_tool_references",
+    available: [definition("list_agent_tool_references", "Find attachable agent tools")],
+    authorized: [
+      definition("create_agent", "Use list_agent_tool_references before creating agents"),
+    ],
+    state,
+  });
+  assertEquals(result.matches.map((match) => match.name), ["list_agent_tool_references"]);
+  assertEquals(result.loadedCount, 0);
+  assertEquals([...state.loadedToolNames], []);
+});
+
 it("tool search loads a deferred exact-name match ahead of a visible capability match", () => {
   const state = createToolExposureState();
   const result = searchToolExposure({
@@ -283,21 +475,21 @@ it("tool search loads a deferred exact-name match ahead of a visible capability 
   assertEquals([...state.loadedToolNames], ["release"]);
 });
 
-it("tool search orders all four match ranks before name tie-breaking", () => {
+it("capability phrase search orders all four match ranks before name tie-breaking", () => {
   const rankedCatalog = [
-    definition("a_parameter", "Other capability", "Release value"),
-    definition("z_description", "Release information"),
-    definition("release_notes", "Other capability"),
-    definition("release", "Other capability"),
+    definition("a_parameter", "Other capability", "Release info value"),
+    definition("z_description", "Release info information"),
+    definition("release_info_notes", "Other capability"),
+    definition("release_info", "Other capability"),
   ];
 
   assertEquals(
     searchToolExposure({
-      query: "release",
+      query: "release info",
       authorized: rankedCatalog,
       state: createToolExposureState(),
     }).matches.map((match) => match.name),
-    ["release", "release_notes", "z_description", "a_parameter"],
+    ["release_info", "release_info_notes", "z_description", "a_parameter"],
   );
 });
 
@@ -367,18 +559,237 @@ it("tool search misses when a common verb is the only match in a realistic catal
   );
 });
 
-it("tool_search tells the model to search before declaring a requested tool unavailable", () => {
+it("veryfront__tool_search parameters are authored without root combinators", () => {
+  // OpenAI rejects root combinators; the definition itself must not rely on a
+  // provider sanitizer to remove them.
+  const parameters = createToolSearchDefinition().parameters as Record<string, unknown>;
+  assertEquals(parameters.type, "object");
+  for (const key of ["oneOf", "anyOf", "allOf", "not", "enum"]) {
+    assertEquals(Object.hasOwn(parameters, key), false, `root ${key}`);
+  }
+});
+
+it("veryfront__tool_search parameters have no root combinator for any provider profile", () => {
+  const parameters = createToolSearchDefinition().parameters as Record<string, unknown>;
+  for (
+    const model of [
+      "openai/gpt-5",
+      "moonshot/kimi-k2",
+      "anthropic/claude-sonnet-4",
+      "google/gemini-2.5-pro",
+    ]
+  ) {
+    const sanitized = sanitizeProviderToolSchema(parameters, { model }) as Record<string, unknown>;
+    for (const key of ["oneOf", "anyOf", "allOf", "not", "enum"]) {
+      assertEquals(Object.hasOwn(sanitized, key), false, `${model} root ${key}`);
+    }
+    assertEquals(sanitized.type, "object");
+  }
+});
+
+it("veryfront__tool_search tells the model to search before declaring a requested tool unavailable", () => {
   const search = createToolSearchDefinition();
-  const querySchema = (search.parameters as {
-    properties?: { query?: { description?: string; maxLength?: number } };
-  }).properties?.query;
+  const properties = (search.parameters as {
+    properties?: Record<string, { description?: string; maxLength?: number }>;
+  }).properties!;
 
   assert(search.description.includes("before declaring a requested tool unavailable"));
+  assert(search.description.includes("exactly one of"));
+  assert(search.description.length <= 400);
+  assertEquals(Object.keys(properties).sort(), [
+    "cursor",
+    "domain",
+    "inventory",
+    "limit",
+    "query",
+    "resource",
+    "schema",
+    "search",
+  ]);
+  assertEquals(properties.query?.maxLength, undefined);
+});
+
+it("veryfront__tool_search parameters are flat top-level scalars", () => {
+  // Nested mode objects such as {"search":{"query":"..."}} led Claude models
+  // to stream invalid JSON under fine-grained tool streaming.
+  const parameters = createToolSearchDefinition().parameters as {
+    properties: Record<string, Record<string, unknown>>;
+  };
+  for (const [name, property] of Object.entries(parameters.properties)) {
+    assert(
+      property.type === "string" || property.type === "integer",
+      `${name} must be a scalar, received ${String(property.type)}`,
+    );
+    for (const nested of ["properties", "items", "oneOf", "anyOf", "allOf"]) {
+      assertEquals(Object.hasOwn(property, nested), false, `${name}.${nested}`);
+    }
+  }
+  assertEquals(parameters.properties.inventory?.enum, ["all", "platform"]);
+});
+
+it("veryfront__tool_search raw parameter schema declares no root combinator", () => {
+  const parameters = createToolSearchDefinition().parameters as Record<string, unknown>;
+  assertEquals(parameters.type, "object");
+  for (const key of ["oneOf", "anyOf", "allOf", "not", "if", "then", "else"]) {
+    assertEquals(Object.hasOwn(parameters, key), false, `root ${key}`);
+  }
+});
+
+it("metadata search ranks tools without loading schemas", () => {
+  const state = createToolExposureState();
+  const authorized = [
+    definition("create_agent", "Create an agent"),
+    definition("list_files", "List project files"),
+  ];
+  const result = searchToolExposureMetadata({
+    query: "create agent",
+    authorized,
+    available: [definition("get_agent", "Read an agent")],
+  });
+  assertEquals(result.matches.map((match) => [match.name, match.status]), [[
+    "create_agent",
+    "deferred",
+  ]]);
+  assertEquals(result.loadedCount, 0);
+  assertEquals(state.loadedToolNames.size, 0);
+  assertEquals(Object.hasOwn(result.matches[0]!, "parameters"), false);
+});
+
+it("reads one exact input contract without matching by substring", () => {
+  const authorized = [definition("get_agent", "Read an agent")];
+  const contract = readToolExposureContract({ name: "get_agent", authorized });
+  assertEquals(contract?.name, "get_agent");
   assertEquals(
-    querySchema?.description,
-    "One exact tool name when known, or one short capability phrase. UTF-8 input must be at most 256 bytes. Do not combine alternatives.",
+    (contract?.inputSchema as { properties?: Record<string, unknown> }).properties?.value,
+    { type: "string", description: "get_agent unique parameter" },
   );
-  assertEquals(querySchema?.maxLength, undefined);
+  assertEquals(readToolExposureContract({ name: "get", authorized }), undefined);
+  assertThrows(() => readToolExposureContract({ name: "", authorized }));
+});
+
+it("schema lookup does not read accessors or inspect provider-native entries", () => {
+  const accessorSchema = definition("load_agent", "Load an agent");
+  let reads = 0;
+  Object.defineProperty(accessorSchema, "parameters", {
+    get() {
+      reads++;
+      return {};
+    },
+  });
+  assertEquals(
+    readToolExposureContract({ name: "load_agent", authorized: [accessorSchema] }),
+    undefined,
+  );
+  assertEquals(reads, 0);
+  const [nativeSearch] = createProviderNativeToolExposureDefinitions({
+    provider: "anthropic",
+    toolNames: ["web_search"],
+  });
+  assert(nativeSearch);
+  assertThrows(
+    () => readToolExposureContract({ name: "web_search", authorized: [nativeSearch] }),
+    Error,
+    "use query",
+  );
+  assertEquals(
+    readToolExposureContract({
+      name: "native_hidden",
+      authorized: [hiddenDefinition("native_hidden", "Hidden")],
+    }),
+    undefined,
+  );
+});
+
+it("filters inventory by discovery domain and resource before pagination", () => {
+  const authorized = [
+    { ...definition("list_agents", "List agents"), discovery: platform("agents", "Agents") },
+    { ...definition("get_agent", "Read an agent"), discovery: platform("agents", "Agents") },
+    { ...definition("list_files", "List files"), discovery: platform("files", "Files") },
+    definition("plain_tool", "No metadata"),
+  ];
+  const first = listToolExposure({ authorized, domain: "agents", limit: 1 });
+  assertEquals(first.matches.map((entry) => entry.name), ["get_agent"]);
+  assertEquals(first.matches[0]!.discovery, platform("agents", "Agents"));
+  assertEquals(first.nextPageInput, {
+    inventory: "all",
+    cursor: "1",
+    limit: 1,
+    domain: "agents",
+  });
+  const { inventory: scope, ...nextPage } = first.nextPageInput!;
+  const second = listToolExposure({ authorized, scope, ...nextPage });
+  assertEquals(second.matches.map((entry) => entry.name), ["list_agents"]);
+  assertEquals(second.nextPageInput, null);
+  assertEquals(
+    listToolExposure({ authorized, resource: "Files" }).matches.map((entry) => entry.name),
+    ["list_files"],
+  );
+});
+
+it("filters and pages inventory past the ranked search candidate limit", () => {
+  const authorized = Array.from(
+    { length: 4_100 },
+    (_, index) => definition(`tool_${String(index).padStart(4, "0")}`, "Bulk tool"),
+  );
+  authorized.push({ ...definition("zz_late", "Late tool"), discovery: platform("late", "Late") });
+  const filtered = listToolExposure({ authorized, domain: "late" });
+  assertEquals(filtered.invalidFilter, undefined);
+  assertEquals(filtered.matches.map((entry) => entry.name), ["zz_late"]);
+  const last = listToolExposure({ authorized, cursor: "4100", limit: 5 });
+  assertEquals(last.matches.map((entry) => entry.name), ["zz_late"]);
+});
+
+it("reports advertised values for an unknown inventory filter", () => {
+  const authorized = [
+    { ...definition("list_agents", "List agents"), discovery: platform("agents", "Agents") },
+    { ...definition("list_files", "List files"), discovery: platform("files", "Files") },
+  ];
+  const result = listToolExposure({ authorized, domain: "missing", scope: "all", limit: 5 });
+  assertEquals(result.miss, true);
+  assertEquals(result.invalidFilter, {
+    field: "domain",
+    allowedValues: ["agents", "files"],
+    truncated: false,
+  });
+  assertEquals(result.restartInput, { inventory: "all", limit: 5 });
+  assertEquals(
+    listToolExposure({ authorized, domain: "missing", scope: "platform", limit: 5 }).restartInput,
+    { inventory: "platform", limit: 5 },
+  );
+  const resource = listToolExposure({ authorized, domain: "agents", resource: "Files" });
+  assertEquals(resource.invalidFilter?.field, "resource");
+  assertEquals(resource.invalidFilter?.allowedValues, ["Agents"]);
+  for (const filter of ["", "x".repeat(129)]) {
+    assertThrows(() => listToolExposure({ authorized, domain: filter }));
+    assertThrows(() => listToolExposure({ authorized, resource: filter }));
+  }
+  assertThrows(() => listToolExposure({ authorized, scope: "project" as unknown as "all" }));
+});
+
+it("platform inventory scope lists only trusted platform tools", () => {
+  const platformTool = markTrustedPlatformPolicyToolDefinition({
+    ...definition("veryfront__list_agents", "List agents"),
+    discovery: platform("agents", "Agents"),
+  });
+  const integrationTool = markTrustedPlatformPolicyToolDefinition({
+    ...definition("gmail__send", "Send mail"),
+    discovery: { version: 1 as const, type: "integration" as const },
+  });
+  const projectTool = definition("project_tool", "Project tool");
+  const result = listToolExposure({
+    authorized: [
+      platformTool,
+      integrationTool,
+      projectTool,
+      markTrustedPlatformPolicyToolDefinition(definition("github__search", "Search GitHub")),
+      markTrustedPlatformPolicyToolDefinition({
+        ...definition("gmail__read", "Read mail"),
+        discovery: platform("mail", "Mail"),
+      }),
+    ],
+    scope: "platform",
+  });
+  assertEquals(result.matches.map((entry) => entry.name), ["veryfront__list_agents"]);
 });
 
 it("tool search enforces query limits in UTF-8 bytes", () => {
@@ -768,6 +1179,42 @@ it("exact-fit deferred exposure loads the final schema without exceeding the pro
   assertEquals(loadedStep.visible.some((tool) => tool.name === TOOL_SEARCH_TOOL_NAME), false);
 });
 
+it("keeps the hosted framework loader visible when a local skill loader is also authorized", () => {
+  const authorized = [
+    definition("load_skill", "Project-owned loader"),
+    definition("veryfront__load_skill", "Framework skill loader"),
+  ];
+  const state = createToolExposureState();
+  const initial = createToolExposurePlan({ authorized, mode: "deferred", state });
+  assertEquals(initial.visible.map((tool) => tool.name), [
+    "veryfront__load_skill",
+    TOOL_SEARCH_TOOL_NAME,
+  ]);
+  assertEquals(initial.deferred.map((tool) => tool.name), ["load_skill"]);
+  const searched = searchToolExposure({
+    query: "load_skill",
+    authorized: initial.deferred,
+    available: initial.visible,
+    state,
+  });
+  assertEquals(searched.matches.map((tool) => tool.name), ["load_skill"]);
+  const loaded = createToolExposurePlan({ authorized, mode: "deferred", state });
+  assertEquals(loaded.visible.map((tool) => tool.name), ["load_skill", "veryfront__load_skill"]);
+  assertEquals(
+    createToolExposurePlan({ authorized, mode: "eager", state: createToolExposureState() }).visible,
+    authorized,
+  );
+  assertEquals(
+    createToolExposurePlan({
+      authorized,
+      mode: "deferred",
+      state: createToolExposureState(),
+      bootstrapToolNames: new Set(["load_skill", "veryfront__load_skill"]),
+    }).visible.map((tool) => tool.name),
+    ["load_skill", "veryfront__load_skill"],
+  );
+});
+
 it("deferred exposure exposes canonical load_skill as a bootstrap tool", () => {
   const state = createToolExposureState();
 
@@ -782,7 +1229,7 @@ it("deferred exposure exposes canonical load_skill as a bootstrap tool", () => {
 
   assertEquals(
     plan.visible.map((tool) => tool.name),
-    [TOOL_SEARCH_TOOL_NAME, "veryfront__load_skill"],
+    ["veryfront__load_skill", TOOL_SEARCH_TOOL_NAME],
   );
 });
 
@@ -1002,8 +1449,8 @@ it("new and child runs start with fresh tool exposure state", () => {
   assertEquals([...child.loadedToolNames], []);
 });
 
-it("tool_search is reserved only when deferred framework search is injected", () => {
-  const customSearch = definition("tool_search", "Custom eager search");
+it("veryfront__tool_search is reserved only when deferred framework search is injected", () => {
+  const customSearch = definition("veryfront__tool_search", "Custom eager search");
   const eager = createToolExposurePlan({
     authorized: [customSearch],
     mode: "eager",
@@ -1033,6 +1480,7 @@ const VERYFRONT_LIST_TOOL_NAMES = [
   "list_agents",
   "list_child_agent_runs",
   "list_child_agent_runs_by_parent_conversation",
+  "list_connected_agents",
   "list_eval_runs",
   "list_evals",
   "list_external_files",
@@ -1114,6 +1562,29 @@ it("tool search prefers an authorized integration tool over its namespace catalo
   });
 
   assertEquals(result.matches[0]?.name, "jira__list_projects");
+});
+
+it("an unavailable exact Gmail action does not load an attachment action", () => {
+  const result = searchToolExposure({
+    query: "gmail__list_emails",
+    authorized: [definition("gmail__upload_attachment", "Download a Gmail attachment")],
+    state: createToolExposureState(),
+  });
+  assertEquals(result.matches, []);
+  assertEquals(result.loadedCount, 0);
+  assertEquals(result.miss, true);
+});
+
+it("an unavailable exact action discovers catalog guidance without sibling actions", () => {
+  const result = searchToolExposure({
+    query: "gmail__list_emails",
+    authorized: [
+      definition("get_integration", "Inspect the Gmail integration and available actions"),
+      definition("gmail__upload_attachment", "Download a Gmail attachment"),
+    ],
+    state: createToolExposureState(),
+  });
+  assertEquals(result.matches.map((match) => match.name), ["get_integration"]);
 });
 
 it("tool search does not let a same-named local tool satisfy a canonical id", () => {
@@ -1236,8 +1707,8 @@ it("tool search never strips a non-platform namespace onto a local tool", () => 
   );
 });
 
-it("tool search keeps integration evidence ahead of the local id fallback", () => {
-  // A namespace with real evidence is discovery, not a mistyped local id.
+it("tool search does not replace missing canonical actions with sibling or local ids", () => {
+  // Namespace evidence must not substitute a sibling action or a local tool.
   assertEquals(
     searchToolExposure({
       query: "jira__list_files",
@@ -1247,7 +1718,7 @@ it("tool search keeps integration evidence ahead of the local id fallback", () =
       ],
       state: createToolExposureState(),
     }).matches.map((match) => match.name),
-    ["jira__list_projects"],
+    [],
   );
   assertEquals(
     searchToolExposure({
@@ -1258,7 +1729,7 @@ it("tool search keeps integration evidence ahead of the local id fallback", () =
       ],
       state: createToolExposureState(),
     }).matches.map((match) => match.name),
-    ["veryfront__list_projects"],
+    [],
   );
   // A malformed canonical query has no local id to fall back to.
   assertEquals(
@@ -1318,4 +1789,48 @@ it("tool search still resolves a bare platform tool id to its exact name match",
     }).matches[0]?.name,
     "list_projects",
   );
+});
+
+it("an unavailable exact action preserves the canonical platform catalog reader", () => {
+  const result = searchToolExposure({
+    query: "gmail__list_emails",
+    authorized: [
+      definition(
+        "veryfront__get_integration",
+        "Inspect the Gmail integration and available actions",
+      ),
+      definition("gmail__upload_attachment", "Download a Gmail attachment"),
+      definition("veryfront__send_email", "Send a Gmail email"),
+    ],
+    state: createToolExposureState(),
+  });
+  assertEquals(result.matches.map((match) => match.name), ["veryfront__get_integration"]);
+});
+
+it("does not load an unrelated local action for a missing canonical query", () => {
+  const state = createToolExposureState();
+  const result = searchToolExposure({
+    query: "gmail__list_emails",
+    authorized: [definition("archive_messages", "Archive Gmail messages")],
+    state,
+  });
+  assertEquals(result.matches, []);
+  assertEquals([...state.loadedToolNames], []);
+});
+
+it("tool exposure caps eager schemas at the visible limit, keeping bootstrap tools first", () => {
+  const plan = createToolExposurePlan({
+    authorized: [
+      definition("alpha", "Alpha"),
+      definition("beta", "Beta"),
+      definition("load_skill", "Load skill"),
+    ],
+    mode: "eager",
+    state: createToolExposureState(),
+    bootstrapToolNames: new Set(["load_skill"]),
+    maxVisibleTools: 2,
+  });
+
+  assertEquals(plan.visible.map((tool) => tool.name), ["alpha", "load_skill"]);
+  assertEquals(plan.deferred, []);
 });

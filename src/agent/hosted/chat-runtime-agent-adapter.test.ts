@@ -1,3 +1,4 @@
+import { registerHostedToolRunAuthorization } from "./tool-run-authorization.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
@@ -414,4 +415,34 @@ describe("createHostedChatRuntimeAgentAdapter", () => {
     assertEquals(runErrorPayload?.code, "INSUFFICIENT_CREDITS");
     assertEquals(runErrorPayload?.message, "Buy credits");
   });
+});
+
+it("adapter rechecks private canonical binding against each resolved project", async () => {
+  let projectId = "project-1";
+  const observed: unknown[] = [];
+  const input: HostedChatRuntimeAgentAdapterInput = {
+    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+    projectId,
+    runId: "run-1",
+    resolveProjectContext: () => ({ projectId }),
+    runtimeAgent: {
+      stream: (options) => {
+        observed.push(options.context?.runIdBindsToolAuthorization);
+        return Promise.resolve({
+          toDataStreamResponse: () => createSseResponse([{ type: "message-finish" }]),
+        });
+      },
+    },
+  };
+  registerHostedToolRunAuthorization(input, { projectId, runId: "run-1" });
+  const adapter = createHostedChatRuntimeAgentAdapter(input);
+  for (const nextProjectId of ["project-1", "other-project", "project-1"]) {
+    projectId = nextProjectId;
+    const result = await adapter.stream({
+      messages: [],
+      abortSignal: new AbortController().signal,
+    });
+    await collectChunks(result.toUIMessageStream());
+  }
+  assertEquals(observed, [true, false, true]);
 });

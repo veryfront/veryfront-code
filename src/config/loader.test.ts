@@ -118,10 +118,15 @@ function replacePropertyForTest(
 ): () => void {
   const original = TestObjectGetOwnPropertyDescriptor(target, key);
   if (!original) throw new Error(`Expected an own descriptor for ${String(key)}`);
-  TestObjectDefineProperty(target, key, {
-    ...original,
-    ...replacement,
-  });
+  const descriptor = { ...original, ...replacement };
+  if ("value" in replacement || "writable" in replacement) {
+    delete descriptor.get;
+    delete descriptor.set;
+  } else if ("get" in replacement || "set" in replacement) {
+    delete descriptor.value;
+    delete descriptor.writable;
+  }
+  TestObjectDefineProperty(target, key, descriptor);
   return () => {
     TestObjectDefineProperty(target, key, original);
   };
@@ -12510,6 +12515,47 @@ export default config as const;
         type: "github",
         github: { token: "token", owner: "owner", repo: "repo" },
       });
+    });
+
+    it("copies GitHub cache and retry options without sharing mutable user configuration", () => {
+      const github = {
+        token: "<TOKEN>",
+        owner: "owner",
+        repo: "repo",
+        cache: { enabled: false, ttl: 1234 },
+        retry: { maxRetries: 1, initialDelay: 12, maxDelay: 200 },
+      };
+      const merged = mergeConfigs({ fs: { type: "github", github } });
+      assertEquals(merged.fs, { type: "github", github });
+      const selected = merged.fs?.github;
+      assert(selected?.cache && selected.retry);
+      assert(selected !== github);
+      assert(selected.cache !== github.cache);
+      assert(selected.retry !== github.retry);
+      selected.cache.ttl = 9999;
+      selected.retry.maxRetries = 9;
+      assertEquals(github.cache.ttl, 1234);
+      assertEquals(github.retry.maxRetries, 1);
+    });
+
+    it("copies explicit Veryfront cache and retry options outside proxy mode", () => {
+      const veryfront = {
+        apiBaseUrl: "https://api.example.com",
+        proxyMode: false,
+        cache: { enabled: false, ttl: 1234 },
+        retry: { maxRetries: 1, initialDelay: 12, maxDelay: 200 },
+      };
+      const merged = mergeConfigs({ fs: { type: "veryfront-api", veryfront } });
+      assertEquals(merged.fs, { type: "veryfront-api", veryfront });
+      const selected = merged.fs?.veryfront;
+      assert(selected?.cache && selected.retry);
+      assert(selected !== veryfront);
+      assert(selected.cache !== veryfront.cache);
+      assert(selected.retry !== veryfront.retry);
+      selected.cache.ttl = 9999;
+      selected.retry.maxRetries = 9;
+      assertEquals(veryfront.cache.ttl, 1234);
+      assertEquals(veryfront.retry.maxRetries, 1);
     });
 
     it("rejects project filesystem overrides when proxy mode owns the backend", () => {

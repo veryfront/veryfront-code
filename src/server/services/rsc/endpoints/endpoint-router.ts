@@ -7,6 +7,7 @@ import { HTTP_SERVER_ERROR, isRSCEnabled, serverLogger } from "#veryfront/utils"
 import { metrics } from "#veryfront/observability";
 import { HttpStatus, jsonErrorResponse } from "#veryfront/http/responses";
 import { isWithinDirectory, joinPath, normalizePath } from "#veryfront/utils/path-utils.ts";
+import { redactPathFromText } from "#veryfront/utils/logger/redact.ts";
 import { escapeHtml } from "#veryfront/html/html-escape.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
@@ -552,6 +553,7 @@ async function handleModuleEndpoint({
             moduleServerOrigin,
             dependencyPinningCacheKey: bundle.dependencyPinningCacheKey,
             dependencyPinningDependencies: bundle.dependencyPinningDependencies,
+            dependencyPinningConfiguredVersions: bundle.dependencyPinningConfiguredVersions,
             dependencyPinningSource,
           },
         });
@@ -604,9 +606,12 @@ async function handleModuleEndpoint({
       });
     }
 
-    rscEndpointRouterLog.debug("module build failed", {
-      errorName: error instanceof Error ? error.name : "UnknownError",
-    });
+    // Warn with the message: a bare error name at debug level left hosted
+    // 500s undiagnosable (#5109).
+    rscEndpointRouterLog.warn(
+      "module build failed",
+      describeModuleBuildFailure(error, projectDir),
+    );
     return new Response("Internal Error", {
       status: HTTP_SERVER_ERROR,
       headers: { "cache-control": "no-store" },
@@ -624,6 +629,20 @@ interface BrowserModuleCacheKeyOptions {
   moduleServerOrigin?: string;
   dependencyPinningCacheKey?: string;
   modulePath: string;
+}
+
+/**
+ * Log-safe summary of a module build failure. Native filesystem errors can
+ * carry the absolute tenant path, so the project directory is redacted.
+ */
+export function describeModuleBuildFailure(
+  error: unknown,
+  projectDir: string,
+): { errorName: string; errorMessage?: string } {
+  if (!(error instanceof Error)) return { errorName: "UnknownError" };
+  // Matches either slash style, and Windows roots case-insensitively.
+  const message = redactPathFromText(error.message, projectDir, "<project>");
+  return { errorName: error.name, errorMessage: message.slice(0, 500) };
 }
 
 export function buildBrowserModuleCacheKey(

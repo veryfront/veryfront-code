@@ -1,7 +1,7 @@
 ---
 title: "Runs"
 description: "Run agent, task, workflow, and eval definitions through the Veryfront platform."
-order: 31
+order: 320
 ---
 
 Veryfront runs are durable executions of agents, tasks, and workflows. An eval
@@ -15,9 +15,11 @@ runs through the built-in eval task.
 - A **target** names the capability being executed, for example
   `task:knowledge-ingest`, `workflow:content-pipeline`, or `task:eval`.
 - **events** are the canonical user-visible output stream.
-- The run record stores the terminal execution shape directly: `target`,
-  `input`, `config`, `output`, `error`, `logs`, `artifacts`, `duration_ms`,
-  and `exit_code`.
+- The run that `runs.getRun()` returns groups its execution details: `target`
+  is `{ type, id }`, `input`, `config`, `output`, `error` and `artifacts` sit at
+  the top level, and `execution` holds `logs`, `duration_ms`, `exit_code` and
+  `timeout_seconds`. The deprecated `get()` returns the older flat shape,
+  with those fields at the top level.
 - Runtime adapters such as process execution are implementation details.
 
 ## Prerequisites
@@ -61,13 +63,22 @@ console.log(accepted.run.status);
 
 `input` on task, workflow and eval runs is any JSON value: an object, an
 array, a string, a number, a boolean or `null`. A task reads it as
-`ctx.input` and its execution settings as `ctx.config`. A task run created
+`ctx.input` and its execution settings as `ctx.config`.
+
+A task run created
 without `input`, or with `input: null`, gives the task `ctx.input` equal to
 `ctx.config`, so tasks that read business data from `config` keep working. A
 task that needs a nullable input should wrap it, for example
 `{ "value": null }`.
 
-```ts
+```ts title="scripts/create-task-run.ts"
+import { createRunsClient } from "veryfront/runs";
+
+const runs = createRunsClient({
+  authToken: process.env.VERYFRONT_API_TOKEN,
+  projectReference: "dreamy-haven",
+});
+
 await runs.createTaskRun({
   projectId: "22222222-2222-4222-8222-222222222222",
   target: "task:classify-ticket",
@@ -77,10 +88,12 @@ await runs.createTaskRun({
 ```
 
 A run's `input` and `output` read back as the same JSON values. When the
-target declares an input or output schema, the run also carries
-`input_schema_sha256` and `output_schema_sha256`: the sha256 of the canonical
-JSON Schema it was admitted against. They are `null` when the target declares
-no schema, and absent on API versions that predate them.
+target declares an input or output schema, the run from `runs.getRun()` also
+carries `schemas.input` and `schemas.output`, each with the canonical JSON
+Schema the run was admitted against and its `sha256`. Each is `null` when the
+target declares no schema, and `schemas` is absent on API versions that
+predate it. The deprecated `get()` exposes the digests as
+`input_schema_sha256` and `output_schema_sha256`.
 
 See [Run input and output](./run-input-output.md) for what each run kind
 stores, declared schemas, rejected input, `null` output, and JSON
@@ -127,19 +140,19 @@ for (const entry of events.data) {
 }
 ```
 
-Read the current run summary:
+Read the current run:
 
 ```ts
-const run = await runs.get(accepted.run.run_id);
+const run = await runs.getRun(accepted.run.run_id);
 console.log(run.status);
 console.log(run.output);
 ```
 
-Both `get()` and `getRun()` require the canonical run UUID. `get()` adapts the
-resource for existing framework callers. `getRun()` exposes the full grouped
-response: its `id` is the UUID, `target` is
-an object, labels stay available, and execution diagnostics live in `execution`.
-Retain its ETag when preparing a metadata update:
+`getRun()` requires the canonical run UUID and returns the grouped run
+resource: its `id` is the UUID, `target` is an object, labels stay available,
+and execution diagnostics live in `execution`. The older `get()` is deprecated:
+it reads the same resource and adapts it to the flat shape existing framework
+callers use. Retain the ETag when preparing a metadata update:
 
 ```ts
 let etag: string | null = null;
@@ -194,6 +207,27 @@ const page = await runs.list({ limit: 50 });
 console.log(page.data.map((run) => run.run_id));
 ```
 
+## Hosted context compaction
+
+Hosted agents can compact a long active turn by retaining its exact latest user
+request and a recent tail of messages. Retained tool calls and results stay together.
+Compaction changes the model context without deleting the durable conversation history.
+
+Hosted services protect two recent turns by default. With only one user turn,
+compaction can shorten its tool loop while preserving the exact request. With
+two turns, their protected suffix stays complete. If that suffix cannot fit,
+compaction raises `ContextCompactionError` before generating a summary.
+
+Trusted replay preserves completed tool-call occurrences across messages when
+their source identities distinguish them. Pending duplicates and reuse within
+one message are rejected. Older or untrusted replay retains its existing
+snapshot behavior.
+
+Deploy compatible API and runtime versions before enabling this compaction path.
+Replay fails when the stored evidence cannot verify the retained request or
+edited messages. Bounded replay may omit older turns; this path does not guarantee
+complete two-turn replay from the full durable history.
+
 ## Typed Runs contract SDK
 
 `veryfront/runs/target` publishes the typed SDK for the Runs target contract that
@@ -208,7 +242,7 @@ serves it. The legacy client at
 resource for existing framework callers. Creation returns either this full
 resource or a compact receipt with only `run_id` and `status`. Both variants
 use `run_id` as the canonical UUID. Narrow with `"output" in accepted.run`
-before reading full-resource fields, or call `runs.get(accepted.run.run_id)`
+before reading full-resource fields, or call `runs.getRun(accepted.run.run_id)`
 to read the current run.
 Caller-selected aliases and workflow `startMode` are rejected; retries use
 `Idempotency-Key`. Use the target SDK for the complete grouped resource.
@@ -276,6 +310,35 @@ compiles, so update the validator when the pinned contract changes. Error
 responses reject with a `VeryfrontError`, and `runsProblemOf(error)` returns the
 RFC 9457 problem body.
 
+### Error codes
+
+The Runs service normalizes its failures to uppercase `RUN_*` codes. Each maps
+to one shared error kind, and REST, GraphQL and MCP report the same code for the same failure:
+
+| Run code                      | Error kind        | Meaning                                                                       |
+| ----------------------------- | ----------------- | ----------------------------------------------------------------------------- |
+| `RUN_INVALID_INPUT`           | `invalid_input`   | The request failed validation.                                                |
+| `RUN_UNAUTHENTICATED`         | `unauthenticated` | No valid credential was supplied.                                             |
+| `RUN_FORBIDDEN`               | `forbidden`       | The credential cannot perform this action on the run.                         |
+| `RUN_NOT_FOUND`               | `not_found`       | The run, event or input request does not exist.                               |
+| `RUN_GONE`                    | `not_found`       | The resource is no longer available (HTTP 410), for example after it expired. |
+| `RUN_CONFLICT`                | `conflict`        | A state, idempotency, precondition (409, 412, 428) or duplicate conflict.     |
+| `RUN_SNAPSHOT_LIMIT_EXCEEDED` | `limit_exceeded`  | The snapshot is over 5,000 events or 10 MiB; page through the run events.     |
+| `RUN_EVENT_IDENTITY_PENDING`  | `not_ready`       | Run events are temporarily unavailable (HTTP 503); retry the request.         |
+| `RUN_INTERNAL_ERROR`          | `internal`        | The service failed.                                                           |
+| `RUN_ERROR`                   | `internal`        | A failure without a more specific run code.                                   |
+
+HTTP 413 and 429 responses map to `limit_exceeded` as well.
+
+Read the code from `runsProblemOf(error)?.code`. The table lists the
+normalized `RUN_*` codes. A valid Problem may also carry another server code,
+such as `IDEMPOTENCY_KEY_REUSED` or `FORBIDDEN`, which the SDK passes through
+unchanged. Match the codes you handle and fall back to the Problem `status` for
+any other code. When an error response has no Problem body (empty, HTML,
+truncated or malformed JSON), the target SDK builds one from the HTTP status
+with the code `UNEXPECTED_RESPONSE`. Treat it by its `status`, not as a Runs
+Problem.
+
 A `RUN_CONFLICT` may include an optional `cause`:
 `schedule_concurrency_forbidden` means the schedule forbids a new run while an
 earlier fire is active; `schedule_fire_in_progress` means the same fire is
@@ -301,7 +364,7 @@ console.log("created", accepted.run.run_id);
 
 // Poll status until terminal
 while (true) {
-  const { status } = await runs.get(accepted.run.run_id);
+  const { status } = await runs.getRun(accepted.run.run_id);
   if (status === "completed" || status === "failed" || status === "cancelled") {
     break;
   }
@@ -318,9 +381,16 @@ for (const entry of events.data) {
 A working setup ends with `status: "completed"` and an event log whose entries
 describe the run.
 
+When a Task or Workflow consumes a nested agent stream that fails, the owned
+run keeps the failure as a `RUNTIME_EVENT_RECORDED` event with
+`runtime: "veryfront"` and `kind: "agent_error"`. Its value retains the streamed
+error message, code when present, and timing. This observation does not terminate
+the parent run: the Task or Workflow can handle the failure and complete with its
+own result.
+
 ## Runs target CLI reference
 
-Use `veryfront project runs <command>` with an API that serves the Runs 0.8.8
+Use `veryfront project runs <command>` with an API that serves the Runs 0.8.9
 contract. The CLI calls the typed Runs SDK. Target deployment and live parity
 are tracked separately from the fixture tests for these commands.
 
@@ -404,13 +474,24 @@ veryfront project runs create --idempotency-key <REQUEST_KEY> --json \
 veryfront project runs create --idempotency-key <REQUEST_KEY> --json \
   --body '{"project_id":"<PROJECT_ID>","source":{"type":"schedule","id":"<SCHEDULE_ID>"}}'
 veryfront project runs stream --run-id <RUN_ID> --last-event-id <EVENT_ID> --json
-veryfront project runs finalize --run-id <RUN_ID> --idempotency-key <REQUEST_KEY> \
-  --json --body '{"status":"completed","output":null}'
 veryfront project runs succeed --run-id <RUN_ID> --idempotency-key <REQUEST_KEY> \
   --json --body '{"output":null}'
 veryfront project runs fail --run-id <RUN_ID> --idempotency-key <REQUEST_KEY> \
   --json --body '{"error":{"code":"TASK_FAILED","message":"Task failed"}}'
+veryfront project runs finalize --run-id <RUN_ID> --idempotency-key <REQUEST_KEY> \
+  --json --body '{"status":"completed","output":null}'
 ```
+
+To run a webhook manually, use `create` with `source.type` set to `webhook`.
+The body requires `project_id`, `source.id` with the webhook ID, and `input`
+with the payload as a JSON value:
+
+```sh
+veryfront project runs create --idempotency-key <REQUEST_KEY> --json \
+  --body '{"project_id":"<PROJECT_ID>","source":{"type":"webhook","id":"<WEBHOOK_ID>"},"input":{}}'
+```
+
+See [Webhooks](https://veryfront.com/docs/cloud/webhooks) for webhooks and webhook events.
 
 Use `--ndjson` on a paginated list command to receive items as they arrive:
 
@@ -446,9 +527,10 @@ the CLI's normal usage-error envelope.
 
 The target CLI includes children, individual events, event types, all input
 request actions, finalization, heartbeats, and event-writer credentials.
-Use `finalize` to select completion with output or failure, `succeed` with
-`{"output":<JSON>}`, or `fail` with `{"error":{"code":"<CODE>","message":"<MESSAGE>"}}`.
-Supply explicit `null` when there is no output.
+Complete a run with `succeed` and `{"output":<JSON>}`, or fail it with `fail`
+and `{"error":{"code":"<CODE>","message":"<MESSAGE>"}}`. Supply explicit `null`
+when there is no output. `finalize` remains for compatibility: it selects
+completion or failure through its `status` field.
 
 For these terminal actions, your user token or API key requires project run write
 permission and editor access to any bound conversation. Execution credentials
@@ -464,4 +546,12 @@ schedule creation both use `create`. Existing local `task`, `workflow`, `eval`,
 and `schedule` execution commands retain their local behavior. The existing
 `schedule run --remote` legacy source-name resolver stays until the coordinated
 consumer cutover; use the target `create` invocation with a saved schedule UUID
-for the 0.8.8 contract. These tests do not prove deployed parity.
+for the 0.8.9 contract. These tests do not prove deployed parity.
+
+### Process attribution
+
+Hosted task and workflow executions report the same process identity as agent
+executions through `x-veryfront-runtime-id`, `x-veryfront-runtime-name` and
+`x-veryfront-runtime-mode`. Use these headers to distinguish processes behind a
+shared URL. Recording the identity requires compatible API and runtime versions;
+older runtimes still execute but omit it.

@@ -1,3 +1,5 @@
+import { registerCachedSourceObserver } from "#veryfront/platform/adapters/fs/cached-source-observation.ts";
+import { getServiceRuntimeIdentity } from "#veryfront/agent/service/runtime-identity.ts";
 import { createTerminalRunControl } from "#veryfront/agent/runtime/terminal-run-control.ts";
 import { bindRuntimeRemoteToolSourcesToCredentialOwner } from "#veryfront/agent/runtime/mcp-server-tool-sources.ts";
 import { executeConfiguredTool, getAvailableTools } from "#veryfront/agent/runtime/tool-helpers.ts";
@@ -27,6 +29,7 @@ import {
   VERYFRONT_API_MCP_SOURCE_ID,
 } from "#veryfront/agent/runtime/mcp-server-tool-sources.ts";
 import {
+  INGRESS_RUN_EVENT_TOKEN_HEADER,
   INGRESS_RUN_TERMINAL_TOKEN_HEADER,
   sealIngressCredentials,
 } from "#veryfront/security/http/ingress-credentials.ts";
@@ -467,6 +470,136 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertEquals(discoveryCalls, 0);
   });
 
+  it("rejects an environment execution with an omitted branch source selector before discovery", async () => {
+    let discoveryCalls = 0;
+    const handler = createTestAgentStreamHandler({
+      sessionManager: new AgentRunSessionManager(),
+      ensureProjectDiscovery: async () => {
+        discoveryCalls += 1;
+        return createEmptyDiscoveryResult();
+      },
+      getAgent: () => undefined,
+      getAllAgentIds: () => [],
+    });
+    const body = createAgentStreamRequestBody({
+      project: {
+        runtimeTargetKind: "environment",
+        runtimeTargetEnvironmentId: "10000000-1000-4000-8000-100000000098",
+      },
+      agentSource: { type: "branch", branch: "feature/source" },
+    });
+    const { jws, publicKeyPem } = await createControlPlaneSignature(body, { requestId: "run_1" });
+    const result = await handler.handle(
+      new Request("https://example.com/api/control-plane/runs/run_1/stream", {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-veryfront-control-plane-jws": jws },
+        body,
+      }),
+      createCtx(publicKeyPem),
+    );
+    assertExists(result.response);
+    assertEquals(result.response.status, 400);
+    assertEquals(discoveryCalls, 0);
+  });
+
+  for (
+    const selection of [
+      "environment-on-main",
+      "preview-on-main",
+      "root-on-preview",
+      "root-on-environment",
+    ] as const
+  ) {
+    it(`executes independent signed source ${selection} through the handler`, async () => {
+      const sourceEnvironmentId = "10000000-1000-4000-8000-100000000098";
+      const sourceBranchId = "10000000-1000-4000-8000-100000000006";
+      let loadedEnvironment: string | undefined;
+      let scopedEnvironment: string | undefined;
+      const handler = createTestAgentStreamHandler({
+        loadAgentSourceEnvironment: (ctx, _source, target) => {
+          loadedEnvironment = target.sourceTargetEnvironmentId ?? undefined;
+          scopedEnvironment = ctx.environmentId;
+          return Promise.resolve({});
+        },
+        ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
+        getAgent: (id) => id === "assistant-1" ? createAgent("assistant-1") : undefined,
+        getAllAgentIds: () => ["assistant-1"],
+        sessionManager: new AgentRunSessionManager(),
+        createRuntime: () => ({
+          stream: async (_messages, _context, callbacks) => {
+            callbacks?.onFinish?.({
+              text: "accepted",
+              messages: [],
+              toolCalls: [],
+              status: "completed",
+              usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+              metadata: { finishReason: "stop" },
+            });
+            return new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.enqueue(
+                  encodeDataStreamEvent({ type: "message-start", messageId: "accepted-message" }),
+                );
+                controller.enqueue(
+                  encodeDataStreamEvent({ type: "text-start", id: "accepted-text" }),
+                );
+                controller.enqueue(
+                  encodeDataStreamEvent({
+                    type: "text-delta",
+                    id: "accepted-text",
+                    delta: "accepted",
+                  }),
+                );
+                controller.enqueue(
+                  encodeDataStreamEvent({ type: "text-end", id: "accepted-text" }),
+                );
+                controller.close();
+              },
+            });
+          },
+        }),
+      });
+      const project = selection === "root-on-preview"
+        ? {
+          runtimeTargetKind: "preview_branch",
+          runtimeTargetBranchId: sourceBranchId,
+          sourceTargetBranchId: null,
+        }
+        : selection === "root-on-environment"
+        ? {
+          runtimeTargetKind: "environment",
+          runtimeTargetEnvironmentId: sourceEnvironmentId,
+          sourceTargetBranchId: null,
+        }
+        : selection === "preview-on-main"
+        ? { runtimeTargetKind: "main_branch", sourceTargetBranchId: sourceBranchId }
+        : { runtimeTargetKind: "main_branch", sourceTargetEnvironmentId: sourceEnvironmentId };
+      const body = createAgentStreamRequestBody({
+        project,
+        credentials: { authToken: "source-reader-token" },
+        agentSource: selection === "environment-on-main"
+          ? { type: "environment", environmentName: "staging", releaseId: "release-selected" }
+          : { type: "branch", branch: "main" },
+      });
+      const { jws, publicKeyPem } = await createControlPlaneSignature(body, { requestId: "run_1" });
+      const result = await handler.handle(
+        new Request("https://example.com/api/control-plane/runs/run_1/stream", {
+          method: "POST",
+          headers: { "content-type": "application/json", "x-veryfront-control-plane-jws": jws },
+          body,
+        }),
+        createCtx(publicKeyPem),
+      );
+      assertExists(result.response);
+      assertEquals(result.response.status, 200);
+      assertStringIncludes(await result.response.text(), "event: RunFinished");
+      if (selection === "environment-on-main") {
+        assertEquals(loadedEnvironment, sourceEnvironmentId);
+        assertEquals(scopedEnvironment, sourceEnvironmentId);
+      }
+    });
+  }
+
   it("accepts a non-main default branch only when it matches trusted proxy metadata", async () => {
     let discoveryCalls = 0;
     const handler = createTestAgentStreamHandler({
@@ -522,6 +655,178 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertExists(rejected.response);
     assertEquals(rejected.response.status, 403);
     assertEquals(discoveryCalls, 0);
+  });
+
+  for (
+    const replacement of ["headers", "response", "strings", "constructors", "encoder"] as const
+  ) {
+    it(`preserves managed SSE identity after project-mutated ${replacement}`, async () => {
+      const responseFields = ["status", "statusText", "headers", "body"] as const;
+      const responseDescriptors = responseFields.map((field) =>
+        [field, Object.getOwnPropertyDescriptor(Response.prototype, field)!] as const
+      );
+      const headerFields = [
+        Symbol.iterator,
+        "get",
+        "set",
+        "has",
+        "entries",
+        "forEach",
+        "append",
+      ] as const;
+      const headerDescriptors = headerFields.map((field) =>
+        [field, Object.getOwnPropertyDescriptor(Headers.prototype, field)!] as const
+      );
+      const nativeResponse = Response;
+      const nativeHeaders = Headers;
+      const split = String.prototype.split;
+      const encode = globalThis.encodeURIComponent;
+      let poisonedCalls = 0;
+      const poison = () => {
+        poisonedCalls++;
+        throw new Error("project intrinsic invoked");
+      };
+      const identity = getServiceRuntimeIdentity();
+      const handler = createTestAgentStreamHandler({
+        ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
+        getAgent: () => {
+          if (replacement === "strings") {
+            Object.defineProperty(String.prototype, "split", {
+              configurable: true,
+              writable: true,
+              value: function (this: string, ...args: unknown[]) {
+                if (String(this) === "text/event-stream") return poison();
+                return Reflect.apply(split, this, args);
+              },
+            });
+            globalThis.encodeURIComponent = (value) =>
+              value === identity.name ? poison() : encode(value);
+          }
+          return createAgent("assistant-1");
+        },
+        getAllAgentIds: () => ["assistant-1"],
+        sessionManager: new AgentRunSessionManager(),
+        createRuntime: () => ({
+          stream: async () =>
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.enqueue(
+                  encodeDataStreamEvent({ type: "message-start", messageId: "assistant-1" }),
+                );
+                controller.enqueue(encodeDataStreamEvent({ type: "text-start", id: "text-1" }));
+                controller.enqueue(
+                  encodeDataStreamEvent({ type: "text-delta", id: "text-1", delta: "hello" }),
+                );
+                controller.enqueue(encodeDataStreamEvent({ type: "text-end", id: "text-1" }));
+                controller.close();
+              },
+            }),
+        }),
+        resolveRuntimeOwnerInvokeUrl: async () => {
+          if (replacement === "headers") {
+            for (const [field, descriptor] of headerDescriptors) {
+              Object.defineProperty(Headers.prototype, field, { ...descriptor, value: poison });
+            }
+          }
+          if (replacement === "response") {
+            for (const [field, descriptor] of responseDescriptors) {
+              Object.defineProperty(Response.prototype, field, { ...descriptor, get: poison });
+            }
+          }
+          if (replacement === "constructors") {
+            globalThis.Response = new Proxy(nativeResponse, { construct: poison });
+            globalThis.Headers = new Proxy(nativeHeaders, { construct: poison });
+          }
+          return "http://10.0.0.7:20000/channels/invoke";
+        },
+      });
+      const body = createAgentStreamRequestBody();
+      const { jws, publicKeyPem } = await createControlPlaneSignature(body, { requestId: "run_1" });
+      let result: Awaited<ReturnType<AgentStreamHandler["handle"]>>;
+      try {
+        if (replacement === "encoder") globalThis.encodeURIComponent = poison;
+        result = await handler.handle(
+          new Request("https://example.com/api/control-plane/runs/run_1/stream", {
+            method: "POST",
+            headers: { "content-type": "application/json", "x-veryfront-control-plane-jws": jws },
+            body,
+          }),
+          createCtx(publicKeyPem),
+        );
+      } finally {
+        globalThis.Response = nativeResponse;
+        globalThis.Headers = nativeHeaders;
+        String.prototype.split = split;
+        globalThis.encodeURIComponent = encode;
+        for (const [field, descriptor] of headerDescriptors) {
+          Object.defineProperty(Headers.prototype, field, descriptor);
+        }
+        for (const [field, descriptor] of responseDescriptors) {
+          Object.defineProperty(Response.prototype, field, descriptor);
+        }
+      }
+      assertExists(result.response);
+      assertEquals(poisonedCalls, 0);
+      assertEquals(result.response.status, 200);
+      assertEquals(result.response.headers.get("content-type"), "text/event-stream");
+      assertEquals(result.response.headers.get("x-veryfront-runtime-id"), identity.id);
+      assertEquals(result.response.headers.get("x-veryfront-runtime-name"), encode(identity.name));
+      assertEquals(result.response.headers.get("x-veryfront-runtime-mode"), "service");
+      assertEquals(
+        result.response.headers.get("x-veryfront-runtime-owner-invoke-url"),
+        "http://10.0.0.7:20000/channels/invoke",
+      );
+      const text = await result.response.text();
+      assertStringIncludes(text, "event: RunStarted");
+      assertStringIncludes(text, "event: RunFinished");
+    });
+  }
+
+  it("preserves the managed error response without attribution after project response getter replacement", async () => {
+    const fields = ["status", "statusText", "headers", "body"] as const;
+    const descriptors = fields.map((field) =>
+      [field, Object.getOwnPropertyDescriptor(Response.prototype, field)!] as const
+    );
+    let poisonedCalls = 0;
+    const poison = () => {
+      poisonedCalls++;
+      throw new Error("project response getter invoked");
+    };
+    const failure = SERVICE_OVERLOADED.create({ detail: "Project setup failed" });
+    const handler = createTestAgentStreamHandler({
+      ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
+      getAgent: () => {
+        for (const [field, descriptor] of descriptors) {
+          Object.defineProperty(Response.prototype, field, { ...descriptor, get: poison });
+        }
+        throw failure;
+      },
+      getAllAgentIds: () => ["assistant-1"],
+      sessionManager: new AgentRunSessionManager(),
+    });
+    const body = createAgentStreamRequestBody();
+    const { jws, publicKeyPem } = await createControlPlaneSignature(body, { requestId: "run_1" });
+    let result: Awaited<ReturnType<AgentStreamHandler["handle"]>>;
+    try {
+      result = await handler.handle(
+        new Request("https://example.com/api/control-plane/runs/run_1/stream", {
+          method: "POST",
+          headers: { "content-type": "application/json", "x-veryfront-control-plane-jws": jws },
+          body,
+        }),
+        createCtx(publicKeyPem),
+      );
+    } finally {
+      for (const [field, descriptor] of descriptors) {
+        Object.defineProperty(Response.prototype, field, descriptor);
+      }
+    }
+    assertExists(result.response);
+    assertEquals(poisonedCalls, 0);
+    assertEquals(result.response.status, 503);
+    assertEquals(result.response.headers.get("x-veryfront-runtime-id"), null);
+    assertEquals(result.response.headers.get("x-veryfront-runtime-mode"), null);
+    assertEquals((await result.response.json()).status, 503);
   });
 
   it("streams AG-UI events for a valid signed request", async () => {
@@ -618,6 +923,13 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertEquals(discoveryCalls, 1);
     assertEquals(streamContext?.authToken, "run-scoped-token");
     assertEquals(result.response.headers.get("content-type"), "text/event-stream");
+    const runtimeIdentity = getServiceRuntimeIdentity();
+    assertEquals(result.response.headers.get("x-veryfront-runtime-id"), runtimeIdentity.id);
+    assertEquals(
+      result.response.headers.get("x-veryfront-runtime-name"),
+      encodeURIComponent(runtimeIdentity.name),
+    );
+    assertEquals(result.response.headers.get("x-veryfront-runtime-mode"), "service");
     assertEquals(
       result.response.headers.get("x-veryfront-runtime-owner-invoke-url"),
       "http://10.0.0.7:20000/channels/invoke",
@@ -1233,6 +1545,8 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertEquals(streamContext, {
       threadId: "10000000-1000-4000-8000-100000000001",
       runId: "run_1",
+      projectId: "proj-1",
+      branch: "50000000-5000-4000-8000-500000000001",
       context: [{ type: "text", text: "Current file: app.tsx" }],
       forwardedProps: {
         runtimeOverrides: {
@@ -1244,7 +1558,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertEquals(injectedToolSchema, inputSchema);
   });
 
-  it("runs control-plane streams with request-scoped project agent config", async () => {
+  it("admits legacy knowledge selectors with canonical MCP tools and no injected tools", async () => {
     let capturedSystem: unknown;
     let capturedSkills: unknown;
     let capturedTools: unknown;
@@ -1271,12 +1585,12 @@ describe("server/handlers/request/agent-stream.handler", () => {
                 result: {
                   tools: [
                     {
-                      name: "search_knowledge",
+                      name: "veryfront__search_knowledge",
                       description: "Search project knowledge",
                       inputSchema: { type: "object", properties: {} },
                     },
                     {
-                      name: "get_file",
+                      name: "veryfront__get_file",
                       description: "Read a project file",
                       inputSchema: { type: "object", properties: {} },
                     },
@@ -1341,6 +1655,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
 
       const body = createAgentStreamRequestBody({
         credentials: { authToken: "request-scoped-user-token" },
+        tools: [],
         agentConfig: {
           id: "assistant-1",
           name: "Project Assistant",
@@ -1380,11 +1695,9 @@ describe("server/handlers/request/agent-stream.handler", () => {
         "Use project-scoped instructions.",
       );
       assertEquals(capturedSkills, []);
-      assertEquals((capturedTools as Record<string, unknown>).search_knowledge, true);
-      assertEquals((capturedTools as Record<string, unknown>).get_file, true);
+      assertEquals((capturedTools as Record<string, unknown>).veryfront__search_knowledge, true);
+      assertEquals((capturedTools as Record<string, unknown>).veryfront__get_file, true);
       assertEquals(capturedAllowedRemoteTools, [
-        "get_file",
-        "search_knowledge",
         "veryfront__get_file",
         "veryfront__search_knowledge",
       ]);
@@ -1487,7 +1800,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
             description: "Ends its own run.",
             instructions: "Fail the run.",
             skills: [],
-            tools: ["finalize"],
+            tools: ["veryfront__finalize"],
           },
         });
         const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
@@ -1515,7 +1828,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
         await source.listTools({ runId: "run_1" });
         for (const runId of ["run_1", "run_other"]) {
           await source.executeTool(
-            "finalize",
+            "veryfront__finalize",
             { runId, status: "failed" },
             createTerminalRunControl({ runId }).context,
           );
@@ -1523,11 +1836,139 @@ describe("server/handlers/request/agent-stream.handler", () => {
         const root = createTerminalRunControl({ runId: "run_1" }).context;
         const child = createTerminalRunControl({ runId: "run_child" }).context;
         const inherited = bindRuntimeRemoteToolSourcesToCredentialOwner([source], root)![0]!;
-        await inherited.executeTool("finalize", { runId: "run_1", status: "failed" }, child);
+        await inherited.executeTool(
+          "veryfront__finalize",
+          { runId: "run_1", status: "failed" },
+          child,
+        );
         assertEquals(finalizeCalls, [
           { runId: "run_1", authorization, terminal: expected },
           { runId: "run_other", authorization, terminal: null },
           { runId: "run_1", authorization, terminal: null },
+        ]);
+      } finally {
+        restoreMockFetch();
+        if (originalApiUrl === undefined) Deno.env.delete("VERYFRONT_API_URL");
+        else Deno.env.set("VERYFRONT_API_URL", originalApiUrl);
+        if (originalApiBaseUrl === undefined) Deno.env.delete("VERYFRONT_API_BASE_URL");
+        else Deno.env.set("VERYFRONT_API_BASE_URL", originalApiBaseUrl);
+      }
+    });
+    it(`retains signed ingress authority for canonical MCP mutations: ${name}`, async () => {
+      const authorization = `Bearer ${authToken ?? "host-proxy-token"}`;
+      const finalizeCalls: Array<
+        { name: unknown; authorization: string | null; writer: string | null }
+      > = [];
+      let platformSources: RemoteToolSource[] = [];
+      const originalApiUrl = Deno.env.get("VERYFRONT_API_URL");
+      const originalApiBaseUrl = Deno.env.get("VERYFRONT_API_BASE_URL");
+      Deno.env.set("VERYFRONT_API_URL", TEST_PUBLIC_API_ORIGIN);
+      Deno.env.delete("VERYFRONT_API_BASE_URL");
+      installMockFetch(
+        ((url, init) => {
+          if (String(url) !== `${TEST_PUBLIC_API_ORIGIN}/mcp`) {
+            return Promise.resolve(Response.json({ data: [] }));
+          }
+          const requestInit = observeFetchRequestInit(init);
+          const headers = new Headers(requestInit.headers);
+          const request = JSON.parse(String(requestInit.body));
+          if (request.method === "tools/call") {
+            finalizeCalls.push({
+              name: request.params?.name,
+              authorization: headers.get("authorization"),
+              writer: headers.get(INGRESS_RUN_EVENT_TOKEN_HEADER),
+            });
+            return Promise.resolve(
+              Response.json({ jsonrpc: "2.0", id: request.id, result: { content: [] } }),
+            );
+          }
+          assertEquals(headers.get(INGRESS_RUN_EVENT_TOKEN_HEADER), null);
+          return Promise.resolve(Response.json({
+            jsonrpc: "2.0",
+            id: request.id,
+            result: {
+              tools: [{
+                name: "veryfront__update_file",
+                description: "Finalize the current run",
+                inputSchema: { type: "object", properties: {} },
+              }, {
+                name: "veryfront__get_file",
+                description: "Read file",
+                inputSchema: { type: "object", properties: {} },
+              }],
+            },
+          }));
+        }) as typeof fetch,
+      );
+
+      try {
+        const handler = createTestAgentStreamHandler({
+          ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
+          getAgent: (id) => id === "assistant-1" ? createAgent("assistant-1") : undefined,
+          getAllAgentIds: () => ["assistant-1"],
+          sessionManager: new AgentRunSessionManager(),
+          createRuntime: (runtimeAgent) => {
+            platformSources = (runtimeAgent.config as RuntimeRemoteToolConfig)
+              .__vfRemoteToolSources ?? [];
+            return {
+              stream: () =>
+                Promise.resolve(
+                  new ReadableStream<Uint8Array>({
+                    start(controller) {
+                      controller.close();
+                    },
+                  }),
+                ),
+            };
+          },
+        });
+        const body = createAgentStreamRequestBody({
+          ...(authToken ? { credentials: { authToken } } : {}),
+          agentConfig: {
+            id: "assistant-1",
+            name: "Project Assistant",
+            description: "Ends its own run.",
+            instructions: "Fail the run.",
+            skills: [],
+            tools: ["veryfront__update_file", "veryfront__get_file"],
+          },
+        });
+        const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
+          requestId: "run_1",
+        });
+        const request = sealIngressCredentials(
+          new Request("https://example.com/api/control-plane/runs/run_1/stream", {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              "x-veryfront-control-plane-jws": jws,
+              [INGRESS_RUN_EVENT_TOKEN_HEADER]: "retained-event-authority",
+            },
+            body,
+          }),
+        );
+        assertEquals(request.headers.get(INGRESS_RUN_TERMINAL_TOKEN_HEADER), null);
+        const ctx = createCtx(publicKeyPem);
+        ctx.proxyToken = "host-proxy-token";
+        const result = await handler.handle(request, ctx);
+        assertExists(result.response);
+        assertEquals(result.response.status, 200);
+        const source = platformSources.find((entry) => entry.id === VERYFRONT_API_MCP_SOURCE_ID);
+        assertExists(source);
+        await source.listTools({ runId: "run_1" });
+        await source.executeTool("veryfront__update_file", { path: "knowledge/current.md" }, {
+          runId: "run_1",
+        });
+        await source.executeTool("veryfront__get_file", { path: "knowledge/current.md" }, {
+          runId: "run_1",
+        });
+        assertEquals(finalizeCalls, [
+          {
+            name: "veryfront__update_file",
+            authorization,
+            writer: authToken ? "retained-event-authority" : null,
+          },
+          { name: "veryfront__get_file", authorization, writer: null },
         ]);
       } finally {
         restoreMockFetch();
@@ -2269,6 +2710,8 @@ describe("server/handlers/request/agent-stream.handler", () => {
     Object.assign(fs, {
       exists: async (path: string) => path === "/veryfront.config.ts",
       readFile: async () => "export default { integrations:",
+      refreshSourceSnapshot: async () => {},
+      getSourceSnapshotFingerprint: () => "invalid-config-source-snapshot",
     });
     const body = createAgentStreamRequestBody();
     const { jws, publicKeyPem } = await createControlPlaneSignature(body, { requestId: "run_1" });
@@ -2517,7 +2960,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
         getAgent: (id) =>
           id === "assistant-1"
             ? createAgentWithConfig("assistant-1", {
-              tools: { studio_todo_write: true },
+              tools: { veryfront__studio_todo_write: true },
               mcpServers: [{
                 kind: "veryfront-studio",
                 toolPolicy: { allow: ["studio_todo_write"] },
@@ -2577,8 +3020,8 @@ describe("server/handlers/request/agent-stream.handler", () => {
 
       assertExists(result.response);
       assertEquals(result.response.status, 200, await result.response.clone().text());
-      assertEquals(capturedRemoteToolNames, ["studio_todo_write"]);
-      assertEquals(capturedAllowedRemoteTools, ["studio_todo_write"]);
+      assertEquals(capturedRemoteToolNames, ["veryfront__studio_todo_write"]);
+      assertEquals(capturedAllowedRemoteTools, ["veryfront__studio_todo_write"]);
     } finally {
       restoreMockFetch();
       if (originalStudioMcpUrl === undefined) Deno.env.delete("VERYFRONT_STUDIO_MCP_URL");
@@ -2661,7 +3104,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
       );
 
       assertEquals(result.response?.status, 200);
-      assertEquals(capturedAllowedRemoteTools, ["studio_todo_write"]);
+      assertEquals(capturedAllowedRemoteTools, ["veryfront__studio_todo_write"]);
     } finally {
       restoreMockFetch();
       if (originalStudioMcpUrl === undefined) Deno.env.delete("VERYFRONT_STUDIO_MCP_URL");
@@ -2758,7 +3201,10 @@ describe("server/handlers/request/agent-stream.handler", () => {
 
       assertEquals(result.response?.status, 200);
       assertEquals(requestCount, 2);
-      assertEquals(capturedAllowedRemoteTools, ["studio_panel_control", "studio_todo_write"]);
+      assertEquals(capturedAllowedRemoteTools, [
+        "veryfront__studio_panel_control",
+        "veryfront__studio_todo_write",
+      ]);
     } finally {
       restoreMockFetch();
       if (originalStudioMcpUrl === undefined) Deno.env.delete("VERYFRONT_STUDIO_MCP_URL");
@@ -2850,7 +3296,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
           ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
           getAgent: () =>
             createAgentWithConfig("assistant-1", {
-              tools: { studio_todo_write: true },
+              tools: { veryfront__studio_todo_write: true },
               mcpServers: [{
                 kind: "veryfront-studio",
                 required: false,
@@ -2904,9 +3350,9 @@ describe("server/handlers/request/agent-stream.handler", () => {
         assertExists(result.response);
         assertEquals(result.response.status, 200, await result.response.clone().text());
         assertEquals(remoteSources, 0);
-        assertEquals(unavailableNames, ["studio_todo_write"]);
-        assertEquals(unavailablePrefixes, ["studio_"]);
-        assertEquals(availableToolNames?.includes("studio_todo_write"), false);
+        assertEquals(unavailableNames, ["studio_todo_write", "veryfront__studio_todo_write"]);
+        assertEquals(unavailablePrefixes, ["studio_", "veryfront__studio_"]);
+        assertEquals(availableToolNames?.includes("veryfront__studio_todo_write"), false);
       }
     } finally {
       if (previousUrl === undefined) Deno.env.delete("VERYFRONT_STUDIO_MCP_URL");
@@ -3406,7 +3852,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     ]
   ) {
     it(`preserves ${canonical ? "canonical" : "legacy"} platform identities through MCP dispatch (denied: ${denied}, map: ${toolMapDenial}, all: ${allowAll}, tools: ${allTools}, legacy allow: ${legacyAllow}, canonical allow: ${canonicalAllow}, owned denial: ${ownedProjectDenial})`, async () => {
-      const selectedName = canonical ? "veryfront__list_uploads" : "list_uploads";
+      const selectedName = "veryfront__list_uploads";
       let capturedAllowedRemoteTools: string[] | undefined;
       let capturedRemoteToolNames: string[] = [];
       let capturedToolArguments: Record<string, unknown> | undefined;
@@ -3615,19 +4061,11 @@ describe("server/handlers/request/agent-stream.handler", () => {
         assertEquals(result.response.status, 200);
         assertEquals(
           capturedAllowedRemoteTools?.slice().sort(),
-          denied
-            ? []
-            : ownedProjectDenial
-            ? [selectedName]
-            : ["list_uploads", "veryfront__list_uploads"],
+          denied ? [] : ownedProjectDenial ? [selectedName] : ["veryfront__list_uploads"],
         );
         assertEquals(
           capturedRemoteToolNames.slice().sort(),
-          denied
-            ? []
-            : ownedProjectDenial
-            ? [selectedName]
-            : ["list_uploads", "veryfront__list_uploads"],
+          denied ? [] : ownedProjectDenial ? [selectedName] : ["veryfront__list_uploads"],
         );
         assertEquals(
           capturedToolArguments,
@@ -3660,7 +4098,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
         capturedProjectContextToken = getCurrentRequestContext()?.token;
         return `project_reference=${getEnv("VERYFRONT_PROJECT_SLUG")}`;
       },
-      tools: { search_knowledge: true, list_projects: true },
+      tools: { veryfront__search_knowledge: true, veryfront__list_projects: true },
     });
 
     const handler = new AgentStreamHandler({
@@ -3765,14 +4203,12 @@ describe("server/handlers/request/agent-stream.handler", () => {
           );
         }
 
-        if (String(url).includes("/projects/support-agent-fork/environment-variables?")) {
+        if (
+          String(url).includes(
+            "/projects/support-agent-fork/environments/10000000-1000-4000-8000-100000000097/variables?",
+          )
+        ) {
           assertEquals(authorization, "Bearer request-scoped-user-token");
-          assertEquals(
-            String(url).includes(
-              "environment_id=10000000-1000-4000-8000-100000000097",
-            ),
-            true,
-          );
           return Promise.resolve(
             new Response(
               JSON.stringify({
@@ -3870,14 +4306,10 @@ describe("server/handlers/request/agent-stream.handler", () => {
       authorization: "Bearer request-scoped-user-token",
     });
     assertEquals(capturedAllowedRemoteTools, [
-      "list_projects",
-      "search_knowledge",
       "veryfront__list_projects",
       "veryfront__search_knowledge",
     ]);
     assertEquals(capturedRemoteToolNames, [
-      "search_knowledge",
-      "list_projects",
       "veryfront__search_knowledge",
       "veryfront__list_projects",
     ]);
@@ -3885,7 +4317,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     // both the config and the MCP tool headers see the same variables.
     assertEquals(fetchUrls, [
       `${TEST_PUBLIC_API_ORIGIN}/projects/support-agent-fork/environments`,
-      `${TEST_PUBLIC_API_ORIGIN}/projects/support-agent-fork/environment-variables?environment_id=10000000-1000-4000-8000-100000000097&limit=100`,
+      `${TEST_PUBLIC_API_ORIGIN}/projects/support-agent-fork/environments/10000000-1000-4000-8000-100000000097/variables?limit=100`,
       `${TEST_PUBLIC_API_ORIGIN}/mcp`,
     ]);
   });
@@ -3918,7 +4350,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
         }
         assertEquals(
           urlString,
-          `https://api.veryfront.org/projects/demo-project/environment-variables?environment_id=${targetEnvironmentId}&limit=100`,
+          `https://api.veryfront.org/projects/demo-project/environments/${targetEnvironmentId}/variables?limit=100`,
         );
         return Promise.resolve(
           new Response(
@@ -4006,7 +4438,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertStringIncludes(capturedProjectEnv ?? "", "target=staging-value");
     assertEquals(fetchUrls, [
       "https://api.veryfront.org/projects/demo-project/environments",
-      `https://api.veryfront.org/projects/demo-project/environment-variables?environment_id=${targetEnvironmentId}&limit=100`,
+      `https://api.veryfront.org/projects/demo-project/environments/${targetEnvironmentId}/variables?limit=100`,
     ]);
   });
 
@@ -4135,14 +4567,10 @@ describe("server/handlers/request/agent-stream.handler", () => {
         }
 
         if (
-          String(url).includes(`${apiBaseUrl}/projects/base-url-agent-fork/environment-variables?`)
+          String(url).includes(
+            `${apiBaseUrl}/projects/base-url-agent-fork/environments/10000000-1000-4000-8000-100000000096/variables?`,
+          )
         ) {
-          assertEquals(
-            String(url).includes(
-              "environment_id=10000000-1000-4000-8000-100000000096",
-            ),
-            true,
-          );
           return Promise.resolve(
             new Response(
               JSON.stringify({
@@ -4189,7 +4617,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertStringIncludes(capturedSystem ?? "", `api=${apiBaseUrl}`);
     assertEquals(fetchUrls, [
       `${canonicalApiOrigin}/projects/base-url-agent-fork/environments`,
-      `${apiBaseUrl}/projects/base-url-agent-fork/environment-variables?environment_id=10000000-1000-4000-8000-100000000096&limit=100`,
+      `${apiBaseUrl}/projects/base-url-agent-fork/environments/10000000-1000-4000-8000-100000000096/variables?limit=100`,
       `${canonicalApiOrigin}/mcp`,
     ]);
   });
@@ -5501,7 +5929,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
             }],
           }));
         }
-        if (url.includes("/environment-variables?")) {
+        if (url.includes("/variables?")) {
           environmentVariableCalls += 1;
         }
         return Promise.reject(new Error(`unexpected fetch: ${url}`));
@@ -5607,7 +6035,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
         calls.push(String(url));
         if (
           String(url).includes(
-            "/projects/preview-env-regression/environment-variables?environment_id=10000000-1000-4000-8000-100000000071&",
+            "/projects/preview-env-regression/environments/10000000-1000-4000-8000-100000000071/variables?",
           )
         ) {
           return Promise.resolve(Response.json({
@@ -6374,6 +6802,7 @@ describe("agent stream handler application-error reporting", () => {
       assertExists(result.response);
       await result.response.body?.cancel();
       assertEquals(result.response.status, 503);
+      assertEquals(result.response.headers.get("x-veryfront-runtime-id"), null);
 
       assertEquals(captures.length, 1);
       const captured = captures[0];
@@ -6408,3 +6837,201 @@ describe("agent stream handler application-error reporting", () => {
     assertEquals(captures.length, 0);
   });
 });
+
+for (const verification of ["valid", "rejected", "throws"] as const) {
+  Deno.test(`canonical terminal verification fails closed: ${verification}`, async () => {
+    const runId = "run_1";
+    const projectId = "10000000-1000-4000-8000-100000000005";
+    const payload = btoa(JSON.stringify({
+      tokenUse: "run_event_writer",
+      writerPurpose: "current_run_terminal",
+      runId,
+      canonicalRunId: "22222222-2222-4222-8222-222222222222",
+      dispatchNonce: "dispatch-1",
+    })).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
+    const token = `header.${payload}.signature`;
+    let verified = 0;
+    let streamed = false;
+    const handler = createTestAgentStreamHandler({
+      ensureProjectDiscovery: () => Promise.resolve(createEmptyDiscoveryResult()),
+      getAgent: () => createAgent("assistant-1"),
+      getAllAgentIds: () => ["assistant-1"],
+      sessionManager: new AgentRunSessionManager(),
+      verifyRunTerminalToken: (input) => {
+        verified++;
+        assertEquals(input, { token, projectId, runId });
+        if (verification === "throws") throw new Error("Verifier unavailable");
+        return Promise.resolve(verification === "valid");
+      },
+      createRuntime: () => ({
+        stream: () => {
+          streamed = true;
+          return Promise.resolve(
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.close();
+              },
+            }),
+          );
+        },
+      }),
+    });
+    const body = createAgentStreamRequestBody();
+    const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
+      requestId: runId,
+      projectId,
+    });
+    const result = await handler.handle(
+      sealIngressCredentials(
+        new Request(
+          `https://example.com/api/control-plane/runs/${runId}/stream`,
+          {
+            method: "POST",
+            headers: {
+              "x-veryfront-control-plane-jws": jws,
+              [INGRESS_RUN_TERMINAL_TOKEN_HEADER]: token,
+            },
+            body,
+          },
+        ),
+      ),
+      { ...createCtx(publicKeyPem), projectId },
+    );
+    assertExists(result.response);
+    assertEquals(result.response.status, 200, await result.response.clone().text());
+    await result.response.text();
+    assertEquals(verified, 1);
+    assertEquals(streamed, true);
+  });
+}
+
+for (const target of ["preview_branch", "main_branch"] as const) {
+  Deno.test(`signed ${target} ingress preserves ordinary execution and scopes source proof`, async () => {
+    const runId = "run_1";
+    const canonicalRunId = "22222222-2222-4222-8222-222222222222";
+    const encoded = btoa(
+      JSON.stringify({
+        tokenUse: "run_event_writer",
+        writerPurpose: "current_run_terminal",
+        runId,
+        canonicalRunId,
+        dispatchNonce: "dispatch-source",
+      }),
+    );
+    const token = `header.${encoded}.signature`;
+    let captures = 0;
+    let modelCalls = 0;
+    const handler = createTestAgentStreamHandler({
+      ensureProjectDiscovery: () => Promise.resolve(createEmptyDiscoveryResult()),
+      getAgent: () =>
+        createAgentWithConfig("assistant-1", {
+          toolLoading: "deferred",
+          toolResultContext: { maxInlineBytes: 1024, previewBytes: 256, maxSectionBytes: 65536 },
+        }),
+      getAllAgentIds: () => ["assistant-1"],
+      sessionManager: new AgentRunSessionManager(),
+      verifyRunTerminalToken: () => Promise.resolve(true),
+      createRuntime: () => ({
+        stream: () => {
+          assertEquals(
+            captures,
+            target === "preview_branch" ? 2 : 0,
+            "only qualifying preview snapshots precede model execution",
+          );
+          modelCalls++;
+          return Promise.resolve(
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.enqueue(encodeDataStreamEvent({ type: "text-start", id: "proof-text" }));
+                controller.enqueue(
+                  encodeDataStreamEvent({
+                    type: "text-delta",
+                    id: "proof-text",
+                    delta: "ordinary output",
+                  }),
+                );
+                controller.enqueue(encodeDataStreamEvent({ type: "text-end", id: "proof-text" }));
+                controller.close();
+              },
+            }),
+          );
+        },
+      }),
+    });
+    const branchId = "10000000-1000-4000-8000-100000000006";
+    const body = createAgentStreamRequestBody({
+      project: target === "preview_branch"
+        ? { runtimeTargetKind: target, runtimeTargetBranchId: branchId }
+        : { runtimeTargetKind: target },
+      agentSource: {
+        type: "branch",
+        branch: target === "preview_branch" ? "proof-branch" : "main",
+      },
+    });
+    const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
+      requestId: runId,
+      projectId: "10000000-1000-4000-8000-100000000005",
+    });
+    const baseContext = createCtx(publicKeyPem);
+    const {
+      branchId: _branchId,
+      branchName: _branchName,
+      defaultBranchName: _defaultBranchName,
+      ...sharedContext
+    } = baseContext;
+    const ctx = {
+      ...sharedContext,
+      projectId: "10000000-1000-4000-8000-100000000005",
+      ...(target === "preview_branch"
+        ? { branchId, branchName: "proof-branch" }
+        : { defaultBranchName: "main" }),
+    };
+    registerCachedSourceObserver(ctx.adapter.fs, () => {
+      if (target === "main_branch") throw new Error("ordinary main runs must not hash source");
+      captures++;
+      return Promise.resolve({
+        identity: `branch:test-project:${target === "preview_branch" ? "proof-branch" : "main"}`,
+        version: captures,
+        fingerprint: { algorithm: "veryfront-source-snapshot-multiset-v1", value: "a".repeat(64) },
+        members: Array.from(
+          { length: 46 },
+          (_, i) => ({ path: `source-${String(i).padStart(2, "0")}.ts`, sha256: "b".repeat(64) }),
+        ),
+      });
+    });
+    const result = await handler.handle(
+      sealIngressCredentials(
+        new Request(`https://example.com/api/control-plane/runs/${runId}/stream`, {
+          method: "POST",
+          headers: {
+            "x-veryfront-control-plane-jws": jws,
+            [INGRESS_RUN_TERMINAL_TOKEN_HEADER]: token,
+          },
+          body,
+        }),
+      ),
+      ctx,
+    );
+    assertExists(result.response);
+    const text = await result.response.text();
+    assertEquals(result.response.status, 200, text);
+    const observations = text.split("\n\n").filter((frame) =>
+      frame.startsWith("event: AgentRunSourceSnapshot\n")
+    ).map((frame) => JSON.parse(frame.split("\ndata: ")[1]!));
+    assertEquals(modelCalls, 1);
+    assertEquals(text.includes("ordinary output"), true);
+    if (target === "main_branch") {
+      // Main has no concrete branch UUID, so it runs without preview qualification proof.
+      assertEquals(observations, []);
+      return;
+    }
+    assertEquals(observations[1].identity.branchId, branchId);
+    assertEquals(observations.map((frame) => frame.stage), [
+      "config_loaded",
+      "discovery_completed",
+    ]);
+    assertEquals(observations[1].identity.canonicalRunId, canonicalRunId);
+    assertEquals(observations[1].snapshot.members.length, 46);
+    assertEquals(observations[1].resolvedConfig.toolResultContext.maxStoredResults, 256);
+  });
+}

@@ -1,4 +1,4 @@
-import { withPlatformHostToolAliases } from "../platform-host-tools.ts";
+import { canonicalPlatformHostTools, withPlatformHostToolAliases } from "../platform-host-tools.ts";
 import {
   createPlatformMcpCatalogSource,
   withPlatformMcpPolicyAliases,
@@ -10,6 +10,7 @@ import {
   type RemoteMCPToolSourceConfig,
   type RemoteToolSource,
 } from "#veryfront/tool";
+import { markTrustedHostToolSet } from "#veryfront/tool/host-tool-provenance.ts";
 import { AGENT_ERROR } from "#veryfront/errors";
 import { isErrorAcrossRealms } from "#veryfront/platform/compat/error-introspection.ts";
 import {
@@ -36,7 +37,10 @@ import {
   type DefaultHostedChildForkToolAssemblySourceResult,
 } from "./child-requested-tools.ts";
 import { createMcpToolPolicyGate, wrapHostToolSetWithMcpPolicy } from "../mcp-tool-policy.ts";
-import { filterVeryfrontApiToolDefinitionsWithAccessProfile } from "./veryfront-api-tool-access.ts";
+import {
+  filterVeryfrontApiToolDefinitionsWithAccessProfile,
+  resolveVeryfrontApiToolAccessProfileToolName,
+} from "./veryfront-api-tool-access.ts";
 import {
   createHostedMcpToolPolicySource,
   throwExplicitStudioMcpUnavailable,
@@ -86,6 +90,7 @@ export type PrepareDefaultHostedChildForkSandboxToolSourcesInput =
   & PrepareDefaultHostedChildForkToolSourcesInput
   & {
     apiUrl: string;
+    getAuthToken?: AgentServiceSandboxToolsOptions["getAuthToken"];
     createBashTool: AgentServiceSandboxToolsOptions["createBashTool"];
     createAgentServiceSandboxTools?: (
       input: AgentServiceSandboxToolsOptions,
@@ -135,14 +140,14 @@ export async function prepareDefaultHostedChildForkToolSources(
         });
         const policyTools = wrapHostToolSetWithMcpPolicy(
           studioTools.tools,
-          server.toolPolicy,
+          withPlatformMcpPolicyAliases(server.toolPolicy),
           {
             deniedDetail: (toolName) => `Tool "${toolName}" is not allowed for this MCP server`,
           },
         );
         studioMcpTools = {
           ...studioMcpTools,
-          ...policyTools,
+          ...canonicalPlatformHostTools(markTrustedHostToolSet(policyTools)),
         };
         closeStudioMcpTools = studioTools.close;
         continue;
@@ -165,6 +170,7 @@ export async function prepareDefaultHostedChildForkToolSources(
           source: rawSource,
           toolDefinitions: rawDefinitions,
           projectId: input.getProjectId() ?? null,
+          profileToolName: resolveVeryfrontApiToolAccessProfileToolName(rawDefinitions),
         })
         : rawDefinitions;
       const catalog = server.kind === "veryfront-api"
@@ -206,6 +212,7 @@ export async function prepareDefaultHostedChildForkToolSources(
   if (input.onConfirmedStudioProjectSwitch) {
     wrapHostedChildProjectSwitchTool({
       tools: studioMcpTools,
+      toolName: "veryfront__studio_open_project",
       onConfirmedProjectSwitch: input.onConfirmedStudioProjectSwitch,
     });
   }
@@ -229,6 +236,7 @@ export async function prepareDefaultHostedChildForkSandboxToolSources(
 ): Promise<DefaultHostedChildForkToolAssemblySourceResult> {
   const {
     apiUrl,
+    getAuthToken,
     createBashTool,
     createAgentServiceSandboxTools: createAgentServiceSandboxToolsOverride,
     globalTools,
@@ -238,6 +246,7 @@ export async function prepareDefaultHostedChildForkSandboxToolSources(
     createAgentServiceSandboxTools;
   const sandboxResult = await createSandboxTools({
     authToken: input.authToken,
+    ...(getAuthToken ? { getAuthToken } : {}),
     apiUrl,
     getProjectId: input.getProjectId,
     createBashTool,

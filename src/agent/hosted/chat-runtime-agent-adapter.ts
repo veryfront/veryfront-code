@@ -1,3 +1,8 @@
+import {
+  hasHostedToolRunAuthorization,
+  inheritHostedToolRunAuthorization,
+} from "./tool-run-authorization.ts";
+import { type HostedTaskInput, resolveHostedTaskInput } from "./task-input.ts";
 import type { ToolExecutionDataEvent } from "#veryfront/tool/types.ts";
 import { AGENT_ERROR } from "#veryfront/errors";
 import { createChatUiMessageStreamFromDataStream } from "../streaming/chat-ui-message-stream.ts";
@@ -26,6 +31,8 @@ export type HostedChatRuntimeAgentAdapterInput = {
   runtimeAgent: Pick<Agent, "stream">;
   sourceIntegrationPolicy: SourceIntegrationPolicyManifest;
   runId?: string;
+  rootRunId?: string;
+  taskInput?: HostedTaskInput;
   agentId?: string;
   conversationId?: string;
   projectId?: string;
@@ -55,6 +62,8 @@ function previewToolInput(inputText: string): string {
 export function createHostedChatRuntimeAgentAdapter(
   input: HostedChatRuntimeAgentAdapterInput,
 ): HostedChatRuntimeAgent {
+  const taskInput = resolveHostedTaskInput(input.taskInput, input);
+  input = inheritHostedToolRunAuthorization({ ...input, taskInput }, input);
   const runStream = input.runStream ?? ((operation) => operation());
   return {
     stream: async (streamInput): Promise<HostedChatRuntimeStreamResult> => {
@@ -104,12 +113,23 @@ export async function createHostedChatRuntimeDataStream(
           projectId: input.projectId,
           projectSlug: input.projectSlug,
         };
+        const taskInput = resolveHostedTaskInput(input.taskInput, {
+          projectId: projectContext?.projectId,
+          rootRunId: input.rootRunId,
+          runId: input.runId,
+        });
         const response = await input.runtimeAgent.stream({
           messages: streamInput.messages,
           ...(input.maxOutputTokens !== undefined
             ? { maxOutputTokens: input.maxOutputTokens }
             : {}),
           context: {
+            runIdBindsToolAuthorization: hasHostedToolRunAuthorization(input, {
+              projectId: projectContext?.projectId,
+              runId: input.runId,
+            }),
+            ...(taskInput ? { taskInput } : {}),
+            ...(input.rootRunId ? { rootRunId: input.rootRunId } : {}),
             ...(input.runId ? { runId: input.runId } : {}),
             ...(input.agentId ? { agentId: input.agentId } : {}),
             ...(input.conversationId ? { conversationId: input.conversationId } : {}),

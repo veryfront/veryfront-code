@@ -16,22 +16,23 @@ The CLI groups commands by category. Each command supports `--help` for its full
 
 ### Development
 
-| Command                    | Description                                          |
-| -------------------------- | ---------------------------------------------------- |
-| `veryfront analyze-chunks` | Analyze bundle chunks and sizes                      |
-| `veryfront build`          | Build your application for production                |
-| `veryfront clean`          | Clean build artifacts and caches                     |
-| `veryfront completions`    | Generate shell completion scripts                    |
-| `veryfront dev`            | Start development server with hot module replacement |
-| `veryfront doctor`         | Check system requirements and project health         |
-| `veryfront extension`      | Scaffold and validate veryfront extensions           |
-| `veryfront generate`       | Generate code scaffolds                              |
-| `veryfront lint`           | Run linter with optional structured JSON output      |
-| `veryfront routes`         | List all discovered routes in your application       |
-| `veryfront schema`         | Show CLI command schema for agent discovery          |
-| `veryfront serve`          | Run the production HTTP server (headless)            |
-| `veryfront styles`         | Build project CSS artifacts                          |
-| `veryfront test`           | Run tests with optional structured JSON output       |
+| Command                    | Description                                                           |
+| -------------------------- | --------------------------------------------------------------------- |
+| `veryfront analyze-chunks` | Analyze bundle chunks and sizes                                       |
+| `veryfront build`          | Build your application for production                                 |
+| `veryfront clean`          | Clean build artifacts and caches                                      |
+| `veryfront completions`    | Generate shell completion scripts                                     |
+| `veryfront dev`            | Start local development with HMR; sync source when connected to Cloud |
+| `veryfront docs`           | Open the public Veryfront Code documentation                          |
+| `veryfront doctor`         | Check system requirements and project health                          |
+| `veryfront extension`      | Scaffold and validate veryfront extensions                            |
+| `veryfront generate`       | Generate code scaffolds                                               |
+| `veryfront lint`           | Run linter with optional structured JSON output                       |
+| `veryfront routes`         | List all discovered routes in your application                        |
+| `veryfront schema`         | Show CLI command schema for agent discovery                           |
+| `veryfront serve`          | Run the production HTTP server (headless)                             |
+| `veryfront styles`         | Build project CSS artifacts                                           |
+| `veryfront test`           | Run tests with optional structured JSON output                        |
 
 ### Deploy & Sync
 
@@ -91,3 +92,5 @@ The CLI groups commands by category. Each command supports `--help` for its full
 | `veryfront login`  | Authenticate with Veryfront             |
 | `veryfront logout` | Clear stored authentication credentials |
 | `veryfront whoami` | Show the current authenticated identity |
+
+`veryfront whoami` validates an API key by listing projects (`GET /projects`), because the current user endpoint (`GET /me`) accepts only sign-in sessions. For an API key, `whoami` reports the credential type, not a user.

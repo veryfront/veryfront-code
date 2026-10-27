@@ -1,9 +1,14 @@
+import {
+  applyRecoveryToolExecutionPolicy,
+  assertExecutionOwnership,
+} from "#veryfront/runtime/execution-ownership-guard.ts";
 import { findSequential } from "./sequential.ts";
 import { dispatchWithTerminalRunControl, executeTerminalRunTool } from "./terminal-run-control.ts";
 import { hasTrustedPlatformSource } from "#veryfront/tool/platform-source-provenance.ts";
 import { isReservedPlatformToolName } from "#veryfront/tool/platform-tool-policy.ts";
 import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
 import { hasTrustedHostToolProvenance } from "#veryfront/tool/host-tool-provenance.ts";
+import { isActiveEvalMockTool } from "./eval-mock-tool-scope.ts";
 import { markTrustedPlatformPolicyToolDefinition } from "./skill-policy-enforcement.ts";
 import {
   inheritRuntimeProviderSchemaHiddenTool,
@@ -11,6 +16,11 @@ import {
 } from "./local-tool.ts";
 import { createPrivateSet } from "#veryfront/security/private-set.ts";
 import { createPrivateMap } from "#veryfront/security/private-map.ts";
+import {
+  getActivePlatformDependencySources,
+  getActivePlatformToolDependencies,
+} from "#veryfront/agent/service/auth.ts";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { mapPrivateArray } from "#veryfront/security/private-array.ts";
 import { stripLeadingEmptyObjectPlaceholder } from "../streaming/tool-input.ts";
 /**
@@ -31,8 +41,8 @@ import { isSkillInfrastructureToolId } from "#veryfront/skill/types.ts";
 import { serverLogger } from "#veryfront/utils";
 import { createError, PERMISSION_DENIED, toError } from "#veryfront/errors";
 import {
-  executeRemoteIntegrationTool,
   isRemoteIntegrationTool,
+  runRemoteIntegrationTool,
 } from "#veryfront/integrations/remote-tools.ts";
 import type { RemoteIntegrationToolDiscoveryResult } from "#veryfront/integrations/remote-tools.ts";
 import {
@@ -42,17 +52,104 @@ import {
 import { compareStrings } from "#veryfront/utils/compare.ts";
 
 const trustedPlatformDefinitions = createPrivateWeakStore<object, true>();
+const platformWrapperInvocation = new AsyncLocalStorage<object>();
+const InvocationRun = AsyncLocalStorage.prototype.run;
+const InvocationGet = AsyncLocalStorage.prototype.getStore;
+const DefineProperty = Object.defineProperty;
+const GetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const DeleteProperty = Reflect.deleteProperty;
+
+async function executeLocalWrapper(
+  toolName: string,
+  localTool: Tool,
+  input: Record<string, unknown>,
+  context: ToolExecutionContext | undefined,
+  sources: RemoteToolSource[] | undefined,
+  sourcePolicy: SourceIntegrationPolicyManifest,
+): Promise<unknown> {
+  const mapping = context ? getActivePlatformToolDependencies(context) : undefined;
+  const abortSignal = context?.abortSignal;
+  const declared = createPrivateSet(localTool.delegatedPlatformTools ?? []);
+  const allowed = createPrivateSet<string>();
+  // Do not consult tenant-mutable Array prototypes when selecting authority.
+  for (let index = 0; mapping && index < mapping.length; index++) {
+    const entry = mapping[index]!;
+    if (localTool.id !== toolName || entry.toolId !== toolName) continue;
+    for (let nameIndex = 0; nameIndex < entry.platformTools.length; nameIndex++) {
+      const name = entry.platformTools[nameIndex]!;
+      if (declared.has(name)) allowed.add(name);
+    }
+  }
+  const invocation = {};
+  let active = true;
+  const executionContext = context ?? {};
+  const priorCallback = GetOwnPropertyDescriptor(executionContext, "executePlatformTool");
+  return await intrinsicReflectApply(InvocationRun, platformWrapperInvocation, [
+    invocation,
+    async () => {
+      const assertInvocationAuthority = (name: string) => {
+        if (
+          !active ||
+          !context || getActivePlatformToolDependencies(context) !== mapping ||
+          intrinsicReflectApply(InvocationGet, platformWrapperInvocation, []) !== invocation ||
+          !allowed.has(name)
+        ) {
+          throw PERMISSION_DENIED.create({
+            detail: `Platform operation "${name}" is not admitted for this wrapper invocation`,
+          });
+        }
+        abortSignal?.throwIfAborted();
+      };
+      const executePlatformTool = async (name: string, arguments_: Record<string, unknown>) => {
+        assertInvocationAuthority(name);
+        const trusted = [...(sources ?? []), ...getActivePlatformDependencySources(context ?? {})]
+          .filter(hasTrustedPlatformSource);
+        const result = await executeRemoteToolFromSources(
+          name,
+          arguments_,
+          context,
+          [...allowed],
+          trusted,
+          sourcePolicy,
+          { assertAuthority: () => assertInvocationAuthority(name) },
+        );
+        if (!result.handled) throw new Error(`Platform operation "${name}" is unavailable`);
+        return result.result;
+      };
+      try {
+        // Keep the original context identity: terminal and native-input authority
+        // are private host associations and must not be lost through object spread.
+        DefineProperty(executionContext, "executePlatformTool", {
+          value: executePlatformTool,
+          enumerable: false,
+          configurable: true,
+        });
+        return await dispatchWithTerminalRunControl(
+          context,
+          () => localTool.execute(input, executionContext),
+        );
+      } finally {
+        active = false;
+        if (priorCallback) {
+          DefineProperty(executionContext, "executePlatformTool", priorCallback);
+        } else DeleteProperty(executionContext, "executePlatformTool");
+      }
+    },
+  ]);
+}
 
 function isAllowedBySourcePolicy(
   name: string,
   policy: SourceIntegrationPolicyManifest,
   entry?: unknown,
   remoteDefinitions: ToolDefinition[] = [],
+  strictConfiguredToolsOnly = false,
 ): boolean {
   if (!isReservedPlatformToolName(name)) {
     return isIntegrationToolAllowedBySourcePolicy(name, policy);
   }
   if (hasTrustedHostToolProvenance(entry)) return true;
+  if (strictConfiguredToolsOnly && isActiveEvalMockTool(name, entry)) return true;
   for (let index = 0; index < remoteDefinitions.length; index++) {
     if (!intrinsicHasOwn(remoteDefinitions, index)) continue;
     const definition = remoteDefinitions[index]!;
@@ -321,8 +418,9 @@ async function executeRemoteToolFromSources(
   allowedRemoteToolNames: string[] | undefined,
   remoteToolSources: RemoteToolSource[] | undefined,
   sourceIntegrationPolicy?: SourceIntegrationPolicyManifest,
-  selectedSource?: RemoteToolSource,
+  dispatch?: { selectedSource?: RemoteToolSource; assertAuthority?: () => void },
 ): Promise<{ handled: boolean; result?: unknown }> {
+  const selectedSource = dispatch?.selectedSource;
   const sources = selectedSource ? [selectedSource] : remoteToolSources ?? [];
   const source = await findSequential(sources, async (candidate) => {
     if (isReservedPlatformToolName(toolName) && !hasTrustedPlatformSource(candidate)) return false;
@@ -340,13 +438,18 @@ async function executeRemoteToolFromSources(
     ) {
       throw new Error(`Tool "${toolName}" is not allowed by the source integration policy`);
     }
+    const execute = (args: Record<string, unknown> = input) => {
+      // Discovery and terminal admission can both suspend. The owner may have
+      // settled during either await, so check at the actual effect boundary.
+      dispatch?.assertAuthority?.();
+      return source.executeTool(toolName, args, context);
+    };
     return {
       handled: true,
       result: await (hasTrustedPlatformSource(source)
-        ? executeTerminalRunTool(toolName, input, context, () =>
-          source.executeTool(toolName, input, context))
+        ? executeTerminalRunTool(toolName, input, context, execute)
         : dispatchWithTerminalRunControl(context, () =>
-          source.executeTool(toolName, input, context))),
+          execute())),
     };
   }
 
@@ -395,7 +498,17 @@ export function resolveConfiguredTool(
   return null;
 }
 
-export async function executeConfiguredTool(
+export function executeConfiguredTool(
+  ...args: Parameters<typeof executeConfiguredToolImplementation>
+): Promise<unknown> {
+  const managed = applyRecoveryToolExecutionPolicy(
+    { toolName: args[0], input: args[1] },
+    () => executeConfiguredToolImplementation(...args),
+  );
+  return managed ?? executeConfiguredToolImplementation(...args);
+}
+
+async function executeConfiguredToolImplementation(
   toolName: string,
   input: Record<string, unknown>,
   toolsConfig: true | Record<string, ToolConfigEntry> | undefined,
@@ -411,6 +524,8 @@ export async function executeConfiguredTool(
     frameworkLocalTools?: Record<string, Tool>;
   },
 ): Promise<unknown> {
+  const ownershipCheck = assertExecutionOwnership();
+  if (ownershipCheck) await ownershipCheck;
   const configuredEntry = toolsConfig === true ? undefined : toolsConfig?.[toolName];
   const configuredRemoteToolName = getConfiguredRemoteToolName(configuredEntry);
   const authorizationToolName = getConfiguredToolAuthorizationName(toolName, configuredEntry);
@@ -424,6 +539,8 @@ export async function executeConfiguredTool(
       configuredEntry === true || configuredEntry === undefined
         ? resolveVisibleRegistryTool(toolName, context?.agentId)
         : configuredEntry,
+      [],
+      options?.strictConfiguredToolsOnly,
     ) &&
     !((configuredEntry === undefined || configuredEntry === true) &&
       (selectedSource = await resolveTrustedPlatformSource(
@@ -455,7 +572,7 @@ export async function executeConfiguredTool(
       allowedRemoteToolNames,
       remoteToolSources,
       sourceIntegrationPolicy,
-      selectedSource,
+      { selectedSource },
     );
     if (remoteSourceResult.handled) {
       return remoteSourceResult.result;
@@ -466,9 +583,13 @@ export async function executeConfiguredTool(
     allowIntegrationStyleConcreteTools: options?.strictConfiguredToolsOnly,
   });
   if (configuredTool) {
-    return await dispatchWithTerminalRunControl(
+    return await executeLocalWrapper(
+      toolName,
+      configuredTool,
+      input,
       context,
-      () => configuredTool.execute(input, context),
+      remoteToolSources,
+      sourceIntegrationPolicy,
     );
   }
 
@@ -481,9 +602,13 @@ export async function executeConfiguredTool(
   // fall through and surface as "not found" via executeTool.
   const registryTool = toolRegistry.get(toolName);
   if (registryTool && isToolVisibleTo(registryTool, context)) {
-    return await dispatchWithTerminalRunControl(
+    return await executeLocalWrapper(
+      toolName,
+      registryTool,
+      input,
       context,
-      () => registryTool.execute(input, context),
+      remoteToolSources,
+      sourceIntegrationPolicy,
     );
   }
 
@@ -494,7 +619,7 @@ export async function executeConfiguredTool(
     allowedRemoteToolNames,
     remoteToolSources,
     sourceIntegrationPolicy,
-    selectedSource,
+    { selectedSource },
   );
   if (remoteSourceResult.handled) {
     return remoteSourceResult.result;
@@ -507,7 +632,7 @@ export async function executeConfiguredTool(
     }
     return await dispatchWithTerminalRunControl(
       context,
-      () => executeRemoteIntegrationTool(toolName, input, context),
+      () => runRemoteIntegrationTool(toolName, input, context),
     );
   }
 
@@ -689,6 +814,7 @@ export async function getAvailableTools(
         sourceIntegrationPolicy,
         entry === true ? resolveVisibleRegistryTool(name, options?.callerAgentId) : entry,
         remoteDefs,
+        strictConfiguredToolsOnly,
       )
     ) {
       continue;
@@ -800,5 +926,6 @@ export async function getAvailableTools(
         ? resolveVisibleRegistryTool(definition.name, options?.callerAgentId)
         : toolsConfig[definition.name],
       remoteDefs,
+      strictConfiguredToolsOnly,
     ));
 }

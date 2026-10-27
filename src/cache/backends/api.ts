@@ -21,10 +21,7 @@ import {
   requireHostPrivateApiHttps,
   resolveHostOwnedApiBaseUrl,
 } from "#veryfront/config/host-api-base.ts";
-import {
-  guardedOutboundFetch,
-  OutboundRequestBlockedError,
-} from "#veryfront/security/http/outbound-fetch.ts";
+import { createVeryfrontApiOriginBoundOutboundFetch } from "#veryfront/security/http/outbound-fetch.ts";
 import {
   assertCacheReadMaximumBytes,
   assertCacheValueWithinLimit,
@@ -324,7 +321,7 @@ export class ApiCacheBackend implements CacheBackend {
           : this.apiBaseUrl;
         if (tokenSource === "host-private") requireHostPrivateApiHttps(apiBaseUrl);
         const parsedApiBaseUrl = new NativeURL(apiBaseUrl);
-        const apiOrigin = readUrlProperty(parsedApiBaseUrl, urlOriginGetter);
+        const apiFetch = createVeryfrontApiOriginBoundOutboundFetch(apiBaseUrl);
         const cacheBaseUrl = `${apiBaseUrl}/projects/${encodedProjectRef}/cache`;
         const url = `${cacheBaseUrl}${path}`;
         // The operation is a route template; appended after sanitizing so its
@@ -337,7 +334,7 @@ export class ApiCacheBackend implements CacheBackend {
           const response = await withSpan(
             SpanNames.HTTP_CLIENT_FETCH,
             () =>
-              guardedOutboundFetch(
+              apiFetch(
                 url,
                 {
                   method,
@@ -348,15 +345,6 @@ export class ApiCacheBackend implements CacheBackend {
                   body: body ? JSON.stringify(body) : undefined,
                   signal: controller.signal,
                   redirect: "error",
-                },
-                {
-                  authorizeUrl: (target) => {
-                    if (readUrlProperty(target, urlOriginGetter) !== apiOrigin) {
-                      throw new OutboundRequestBlockedError(
-                        "Cache API request blocked: destination origin is not authorized",
-                      );
-                    }
-                  },
                 },
               ),
             {
@@ -646,8 +634,10 @@ export class ApiCacheBackend implements CacheBackend {
     // backend cannot open the breaker every cache read (agent streams,
     // execute, agents/list) depends on, nor stop other projects' invalidations.
     const invalidationCircuitBreaker = this.invalidationCircuitBreaker(projectRef ?? "");
+    // The API acknowledges a pattern delete with `{ ok: true }` and no count, so
+    // this backend reports 0: the number of deleted entries is unknown.
     const deletePattern = async () => {
-      const result = await this.request<{ deleted_count?: number }>(
+      await this.request<{ ok: true }>(
         "DELETE",
         `${ENTRIES_OPERATION}?pattern=${encodeURIComponent(prefixed)}`,
         undefined,
@@ -658,7 +648,7 @@ export class ApiCacheBackend implements CacheBackend {
           operation: ENTRIES_OPERATION,
         },
       );
-      return result?.deleted_count ?? 0;
+      return 0;
     };
 
     if (!token || !projectRef) return await deletePattern();

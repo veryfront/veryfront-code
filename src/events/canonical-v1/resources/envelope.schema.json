@@ -1,0 +1,143 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:veryfront:events:1:envelope",
+  "title": "Veryfront Events 1 core envelope",
+  "type": "object",
+  "required": [
+    "specversion",
+    "vfversion",
+    "id",
+    "source",
+    "type",
+    "datacontenttype",
+    "dataschema",
+    "data"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "format": "ce-string"
+    },
+    "source": {
+      "type": "string",
+      "minLength": 1,
+      "format": "uri-reference"
+    },
+    "type": {
+      "type": "string",
+      "minLength": 1,
+      "format": "ce-string",
+      "pattern": "^com\\.veryfront\\.[a-z][a-z0-9]*(?:-[a-z0-9]+)*(?:\\.[a-z][a-z0-9]*(?:-[a-z0-9]+)*)+$"
+    },
+    "subject": {
+      "type": "string",
+      "minLength": 1,
+      "format": "ce-string"
+    },
+    "dataschema": {
+      "type": "string",
+      "minLength": 1,
+      "format": "uri"
+    },
+    "runid": {
+      "type": "string",
+      "minLength": 1,
+      "format": "ce-string"
+    },
+    "projectid": {
+      "type": "string",
+      "minLength": 1,
+      "format": "ce-string"
+    },
+    "modelcallid": {
+      "type": "string",
+      "minLength": 1,
+      "format": "ce-string"
+    },
+    "attemptid": {
+      "type": "string",
+      "minLength": 1,
+      "format": "ce-string"
+    },
+    "providerrequestid": {
+      "type": "string",
+      "minLength": 1,
+      "format": "ce-string"
+    },
+    "modelcontextid": {
+      "type": "string",
+      "minLength": 1,
+      "format": "ce-string",
+      "pattern": "^[1-9][0-9]*$"
+    },
+    "specversion": {
+      "const": "1.0"
+    },
+    "vfversion": {
+      "const": "1"
+    },
+    "datacontenttype": {
+      "const": "application/json"
+    },
+    "time": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "recordedat": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "runkind": {
+      "enum": [
+        "agent",
+        "task",
+        "workflow"
+      ]
+    },
+    "data": {
+      "type": "object",
+      "required": [
+        "type"
+      ],
+      "properties": {
+        "type": {
+          "type": "string",
+          "minLength": 1,
+          "format": "ce-string"
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "propertyNames": {
+    "pattern": "^[a-z0-9]+$"
+  },
+  "additionalProperties": {
+    "anyOf": [
+      {
+        "type": "string",
+        "format": "ce-string"
+      },
+      {
+        "type": "boolean"
+      },
+      {
+        "type": "integer",
+        "minimum": -2147483648,
+        "maximum": 2147483647
+      }
+    ]
+  },
+  "not": {
+    "required": [
+      "data_base64"
+    ]
+  },
+  "x-semantic-rules": [
+    "Context strings must satisfy CloudEvents String rules including noncharacters and unpaired surrogates.",
+    "type must equal data.type.",
+    "dataschema must select the registered type and authorization view.",
+    "Correlation values require trusted same-call, same-producing-run and project provenance; null is omitted."
+  ]
+}

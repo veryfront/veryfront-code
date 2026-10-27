@@ -1,3 +1,4 @@
+import { getRecoveryAdmissionSchema } from "./recovery-admission-schema.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema, Schema } from "#veryfront/extensions/schema/index.ts";
 import {
@@ -97,6 +98,8 @@ export const getInternalAgentControlPlaneStreamRequestSchema = defineSchema((v) 
     runtimeTargetEnvironmentId: v.string().uuid().nullable().optional(),
     executionEnvironmentId: v.string().uuid().optional(),
     runtimeTargetBranchId: v.string().uuid().nullable().optional(),
+    sourceTargetEnvironmentId: v.string().uuid().nullable().optional(),
+    sourceTargetBranchId: v.string().uuid().nullable().optional(),
     agentSource: getRuntimeAgentSourceContextSchema(),
     sourceProject: getRuntimeAgentProjectContextSchema().optional(),
     executionProject: getRuntimeAgentProjectContextSchema().optional(),
@@ -109,6 +112,7 @@ export const getInternalAgentControlPlaneStreamRequestSchema = defineSchema((v) 
       (value) => value === undefined || isWithinJsonSizeLimit(value, MAX_FORWARDED_PROPS_BYTES),
       { message: "forwardedProps must be less than 192 KB" },
     ),
+    managedRecoveryAdmission: getRecoveryAdmissionSchema().optional(),
     serverResolvedProviderReplayCheckpoints: v.unknown().optional(),
     serverResolvedTrustedHostedHistoryMessageIds: v.array(v.string()).optional(),
     resumeToolCall: getRuntimeResumeToolCallSchema().optional(),

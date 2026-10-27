@@ -77,6 +77,43 @@ function cloneBoundedString(
   return value;
 }
 
+function cloneJsonArray(value: unknown[], state: CloneState, depth: number): unknown[] {
+  const clonedEntries: unknown[] = [];
+  for (let index = 0; index < value.length; index++) {
+    if (!Object.hasOwn(value, index)) fail("contains a sparse array");
+    const entry = ownDataValue(value, index);
+    const clonedEntry = cloneJsonValue(entry, state, depth + 1);
+    if (clonedEntry === undefined) fail("contains undefined array data");
+    clonedEntries.push(clonedEntry);
+  }
+  return clonedEntries;
+}
+
+function cloneJsonRecord(
+  value: Record<string, unknown>,
+  state: CloneState,
+  depth: number,
+): Record<string, unknown> {
+  const cloned: Record<string, unknown> = {};
+  for (const key of Object.keys(value)) {
+    cloneBoundedString(key, state, "object key", MAX_METADATA_STRING_UTF8_BYTES);
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (!descriptor || descriptor.get || descriptor.set) {
+      fail("contains accessor properties");
+    }
+    const entry = cloneJsonValue(descriptor.value, state, depth + 1);
+    if (entry !== undefined) {
+      Object.defineProperty(cloned, key, {
+        value: entry,
+        enumerable: true,
+        configurable: true,
+        writable: true,
+      });
+    }
+  }
+  return cloned;
+}
+
 function cloneJsonValue(value: unknown, state: CloneState, depth = 0): unknown {
   countNode(state, depth);
 
@@ -98,39 +135,14 @@ function cloneJsonValue(value: unknown, state: CloneState, depth = 0): unknown {
   state.ancestors.add(value);
   try {
     if (Array.isArray(value)) {
-      const clonedEntries: unknown[] = [];
-      for (let index = 0; index < value.length; index++) {
-        if (!Object.hasOwn(value, index)) fail("contains a sparse array");
-        const entry = ownDataValue(value, index);
-        const clonedEntry = cloneJsonValue(entry, state, depth + 1);
-        if (clonedEntry === undefined) fail("contains undefined array data");
-        clonedEntries.push(clonedEntry);
-      }
-      return clonedEntries;
+      return cloneJsonArray(value, state, depth);
     }
 
     if (!isPlainRecord(value)) {
       fail("contains an unsupported object type");
     }
 
-    const cloned: Record<string, unknown> = {};
-    for (const key of Object.keys(value)) {
-      cloneBoundedString(key, state, "object key", MAX_METADATA_STRING_UTF8_BYTES);
-      const descriptor = Object.getOwnPropertyDescriptor(value, key);
-      if (!descriptor || descriptor.get || descriptor.set) {
-        fail("contains accessor properties");
-      }
-      const entry = cloneJsonValue(descriptor.value, state, depth + 1);
-      if (entry !== undefined) {
-        Object.defineProperty(cloned, key, {
-          value: entry,
-          enumerable: true,
-          configurable: true,
-          writable: true,
-        });
-      }
-    }
-    return cloned;
+    return cloneJsonRecord(value, state, depth);
   } finally {
     state.ancestors.delete(value);
   }
@@ -407,6 +419,59 @@ function recordDatePath(
   state.datePaths.push([...path]);
 }
 
+function encodeLegacyCacheWireArray(
+  value: unknown[],
+  state: WireEncodeState,
+  path: CacheDatePath,
+  depth: number,
+): unknown[] {
+  const length = ownDataValue(value, "length");
+  if (
+    typeof length !== "number" || !Number.isSafeInteger(length) ||
+    length < 0
+  ) {
+    fail("contains an invalid array");
+  }
+  const encoded: unknown[] = [];
+  for (let index = 0; index < length; index++) {
+    if (!Object.hasOwn(value, index)) fail("contains a sparse array");
+    const entry = encodeLegacyCacheWireValue(
+      ownDataValue(value, index),
+      state,
+      [...path, index],
+      depth + 1,
+    );
+    if (entry === undefined) fail("contains undefined array data");
+    encoded.push(entry);
+  }
+  return encoded;
+}
+
+function encodeLegacyCacheWireRecord(
+  value: Record<string, unknown>,
+  state: WireEncodeState,
+  path: CacheDatePath,
+  depth: number,
+): Record<string, unknown> {
+  const encoded: Record<string, unknown> = {};
+  for (const key of Object.keys(value)) {
+    cloneBoundedString(
+      key,
+      state,
+      "serialized cache key",
+      MAX_METADATA_STRING_UTF8_BYTES,
+    );
+    const entry = encodeLegacyCacheWireValue(
+      ownDataValue(value, key),
+      state,
+      [...path, key],
+      depth + 1,
+    );
+    if (entry !== undefined) defineDataProperty(encoded, key, entry);
+  }
+  return encoded;
+}
+
 function encodeLegacyCacheWireValue(
   value: unknown,
   state: WireEncodeState,
@@ -443,47 +508,12 @@ function encodeLegacyCacheWireValue(
   state.ancestors.add(value);
   try {
     if (Array.isArray(value)) {
-      const length = ownDataValue(value, "length");
-      if (
-        typeof length !== "number" || !Number.isSafeInteger(length) ||
-        length < 0
-      ) {
-        fail("contains an invalid array");
-      }
-      const encoded: unknown[] = [];
-      for (let index = 0; index < length; index++) {
-        if (!Object.hasOwn(value, index)) fail("contains a sparse array");
-        const entry = encodeLegacyCacheWireValue(
-          ownDataValue(value, index),
-          state,
-          [...path, index],
-          depth + 1,
-        );
-        if (entry === undefined) fail("contains undefined array data");
-        encoded.push(entry);
-      }
-      return encoded;
+      return encodeLegacyCacheWireArray(value, state, path, depth);
     }
 
     if (!isPlainRecord(value)) fail("contains an unsupported object type");
 
-    const encoded: Record<string, unknown> = {};
-    for (const key of Object.keys(value)) {
-      cloneBoundedString(
-        key,
-        state,
-        "serialized cache key",
-        MAX_METADATA_STRING_UTF8_BYTES,
-      );
-      const entry = encodeLegacyCacheWireValue(
-        ownDataValue(value, key),
-        state,
-        [...path, key],
-        depth + 1,
-      );
-      if (entry !== undefined) defineDataProperty(encoded, key, entry);
-    }
-    return encoded;
+    return encodeLegacyCacheWireRecord(value, state, path, depth);
   } finally {
     state.ancestors.delete(value);
   }
@@ -510,6 +540,45 @@ function decodeSerializedCacheEnvelope(value: unknown): unknown {
       ancestors: new WeakSet<object>(),
     },
   );
+}
+
+function decodeCacheWireArray(value: unknown[], state: CloneState, depth: number): unknown[] {
+  const length = ownDataValue(value, "length");
+  if (
+    typeof length !== "number" || !Number.isSafeInteger(length) ||
+    length < 0
+  ) {
+    fail("contains an invalid array");
+  }
+  const decoded: unknown[] = [];
+  for (let index = 0; index < length; index++) {
+    if (!Object.hasOwn(value, index)) fail("contains a sparse array");
+    const entry = decodeCacheWireValue(
+      ownDataValue(value, index),
+      state,
+      depth + 1,
+    );
+    if (entry === undefined) fail("contains undefined array data");
+    decoded.push(entry);
+  }
+  return decoded;
+}
+
+function decodeCacheWireDate(value: unknown, state: CloneState): Date {
+  if (typeof value !== "string") fail("contains an invalid date");
+  const serializedDate = cloneBoundedString(
+    value,
+    state,
+    "serialized cache date",
+    MAX_METADATA_STRING_UTF8_BYTES,
+  );
+  const timestamp = Date.parse(serializedDate);
+  if (!Number.isFinite(timestamp)) fail("contains an invalid date");
+  const date = new Date(timestamp);
+  if (date.toISOString() !== serializedDate) {
+    fail("contains an invalid date");
+  }
+  return date;
 }
 
 function decodeCacheWireValue(
@@ -540,44 +609,13 @@ function decodeCacheWireValue(
   state.ancestors.add(value);
   try {
     if (Array.isArray(value)) {
-      const length = ownDataValue(value, "length");
-      if (
-        typeof length !== "number" || !Number.isSafeInteger(length) ||
-        length < 0
-      ) {
-        fail("contains an invalid array");
-      }
-      const decoded: unknown[] = [];
-      for (let index = 0; index < length; index++) {
-        if (!Object.hasOwn(value, index)) fail("contains a sparse array");
-        const entry = decodeCacheWireValue(
-          ownDataValue(value, index),
-          state,
-          depth + 1,
-        );
-        if (entry === undefined) fail("contains undefined array data");
-        decoded.push(entry);
-      }
-      return decoded;
+      return decodeCacheWireArray(value, state, depth);
     }
 
     if (!isPlainRecord(value)) fail("contains an unsupported object type");
     const marker = readCacheWireMarker(value);
     if (marker?.tag === "date") {
-      if (typeof marker.value !== "string") fail("contains an invalid date");
-      const serializedDate = cloneBoundedString(
-        marker.value,
-        state,
-        "serialized cache date",
-        MAX_METADATA_STRING_UTF8_BYTES,
-      );
-      const timestamp = Date.parse(serializedDate);
-      if (!Number.isFinite(timestamp)) fail("contains an invalid date");
-      const date = new Date(timestamp);
-      if (date.toISOString() !== serializedDate) {
-        fail("contains an invalid date");
-      }
-      return date;
+      return decodeCacheWireDate(marker.value, state);
     }
     if (marker?.tag === "record") {
       if (!isPlainRecord(marker.value)) {
@@ -644,6 +682,30 @@ function defineDataProperty(
   });
 }
 
+function validateCacheDatePath(path: CacheDatePath): void {
+  if (
+    path[0] !== "frontmatter" &&
+    (
+      path[0] !== "nodeMap" ||
+      typeof path[1] !== "number"
+    )
+  ) {
+    fail("cache codec Date path has an invalid root");
+  }
+  if (path[0] === "frontmatter" && typeof path[1] !== "string") {
+    fail("cache codec frontmatter Date path is invalid");
+  }
+  for (let segmentIndex = 1; segmentIndex < path.length; segmentIndex++) {
+    if (
+      typeof path[segmentIndex] === "number" &&
+      (path[0] !== "nodeMap" || segmentIndex !== 1) &&
+      (path[segmentIndex] as number) < 0
+    ) {
+      fail("cache codec contains a negative array index");
+    }
+  }
+}
+
 function readCacheDatePaths(value: unknown): CacheDatePath[] | undefined {
   if (!isPlainRecord(value) || !Object.hasOwn(value, SERIALIZED_CACHE_CODEC_KEY)) {
     return undefined;
@@ -670,19 +732,7 @@ function readCacheDatePaths(value: unknown): CacheDatePath[] | undefined {
   const paths: CacheDatePath[] = [];
   const seen = new Set<string>();
   let pathBytes = 0;
-  for (let pathIndex = 0; pathIndex < rawPaths.length; pathIndex++) {
-    if (!Object.hasOwn(rawPaths, pathIndex)) {
-      fail("cache codec Date paths cannot be sparse");
-    }
-    const rawPath = ownDataValue(rawPaths, pathIndex);
-    if (
-      !Array.isArray(rawPath) ||
-      rawPath.length < 2 ||
-      rawPath.length > MAX_CACHE_DATE_PATH_SEGMENTS
-    ) {
-      fail("cache codec contains an invalid Date path");
-    }
-
+  const readPathSegments = (rawPath: unknown[]): CacheDatePath => {
     const path: CacheDatePath = [];
     for (let segmentIndex = 0; segmentIndex < rawPath.length; segmentIndex++) {
       if (!Object.hasOwn(rawPath, segmentIndex)) {
@@ -706,28 +756,24 @@ function readCacheDatePaths(value: unknown): CacheDatePath[] | undefined {
       }
       path.push(segment);
     }
-
+    return path;
+  };
+  for (let pathIndex = 0; pathIndex < rawPaths.length; pathIndex++) {
+    if (!Object.hasOwn(rawPaths, pathIndex)) {
+      fail("cache codec Date paths cannot be sparse");
+    }
+    const rawPath = ownDataValue(rawPaths, pathIndex);
     if (
-      path[0] !== "frontmatter" &&
-      (
-        path[0] !== "nodeMap" ||
-        typeof path[1] !== "number"
-      )
+      !Array.isArray(rawPath) ||
+      rawPath.length < 2 ||
+      rawPath.length > MAX_CACHE_DATE_PATH_SEGMENTS
     ) {
-      fail("cache codec Date path has an invalid root");
+      fail("cache codec contains an invalid Date path");
     }
-    if (path[0] === "frontmatter" && typeof path[1] !== "string") {
-      fail("cache codec frontmatter Date path is invalid");
-    }
-    for (let segmentIndex = 1; segmentIndex < path.length; segmentIndex++) {
-      if (
-        typeof path[segmentIndex] === "number" &&
-        (path[0] !== "nodeMap" || segmentIndex !== 1) &&
-        (path[segmentIndex] as number) < 0
-      ) {
-        fail("cache codec contains a negative array index");
-      }
-    }
+
+    const path = readPathSegments(rawPath);
+
+    validateCacheDatePath(path);
 
     const identity = JSON.stringify(path);
     if (seen.has(identity)) fail("cache codec contains duplicate Date paths");
@@ -888,7 +934,13 @@ function clonePageModule(value: unknown, state: CloneState): RenderResult["pageM
   };
 }
 
-function buildCachePayload(value: unknown): CachePayload {
+function assertAliasEpoch(value: unknown, label: string): asserts value is string | undefined {
+  if (value !== undefined && (typeof value !== "string" || !/^[a-f0-9-]{36}$/i.test(value))) {
+    fail(`${label} is invalid`);
+  }
+}
+
+function readCachePayloadFields(value: unknown) {
   if (!isPlainRecord(value)) fail("payload must be an object");
   const rawResult = ownDataValue(value, "result");
   if (!isPlainRecord(rawResult)) fail("result must be an object");
@@ -899,6 +951,11 @@ function buildCachePayload(value: unknown): CachePayload {
   const stream = ownDataValue(result, "stream");
   const rawFrontmatter = ownDataValue(result, "frontmatter");
   const rawHtmlNoncePlaceholder = ownDataValue(value, "htmlNoncePlaceholder");
+  const aliasEpoch = ownDataValue(value, "aliasEpoch");
+  assertAliasEpoch(aliasEpoch, "aliasEpoch");
+
+  const aliasProjectEpoch = ownDataValue(value, "aliasProjectEpoch");
+  assertAliasEpoch(aliasProjectEpoch, "aliasProjectEpoch");
 
   if (typeof html !== "string") fail("result.html must be a string");
   if (css !== undefined && typeof css !== "string") {
@@ -918,40 +975,20 @@ function buildCachePayload(value: unknown): CachePayload {
     fail("htmlNoncePlaceholder is invalid");
   }
 
-  const state: CloneState = { nodes: 0, stringBytes: 0, ancestors: new WeakSet<object>() };
-  const clonedHtml = cloneBoundedString(
+  return {
+    record: value,
+    result,
     html,
-    state,
-    "result.html",
-    MAX_RENDER_ARTIFACT_UTF8_BYTES,
-  );
-  const clonedCss = css === undefined ? undefined : cloneBoundedString(
     css,
-    state,
-    "result.css",
-    MAX_RENDER_ARTIFACT_UTF8_BYTES,
-  );
-  const clonedSsrHash = ssrHash === undefined ? undefined : cloneBoundedString(
     ssrHash,
-    state,
-    "result.ssrHash",
-    MAX_METADATA_STRING_UTF8_BYTES,
-  );
-  const htmlNoncePlaceholder = rawHtmlNoncePlaceholder === undefined
-    ? undefined
-    : cloneBoundedString(
-      rawHtmlNoncePlaceholder,
-      state,
-      "htmlNoncePlaceholder",
-      MAX_METADATA_STRING_UTF8_BYTES,
-    );
-  const headers = cloneResponseHeaders(ownDataValue(result, "headers"), state);
-  const frontmatter = cloneJsonValue(rawFrontmatter, state);
-  if (!isPlainRecord(frontmatter)) fail("result.frontmatter must be an object");
+    rawFrontmatter,
+    rawHtmlNoncePlaceholder,
+    aliasEpoch,
+    aliasProjectEpoch,
+  };
+}
 
-  const nodeMapEntries = cloneNodeMapEntries(result, value, state);
-  const headings = cloneHeadings(ownDataValue(result, "headings"), state);
-  const pageModule = clonePageModule(ownDataValue(result, "pageModule"), state);
+function readCachePayloadTimes(value: Record<string, unknown>) {
   const storedAt = optionalTimestamp(value, "storedAt");
   if (storedAt === undefined) fail("storedAt is required");
   const expiresAt = optionalTimestamp(value, "expiresAt");
@@ -965,6 +1002,65 @@ function buildCachePayload(value: unknown): CachePayload {
   if (staleUntil !== undefined && staleUntil < (expiresAt ?? storedAt)) {
     fail("staleUntil cannot precede expiry");
   }
+
+  return { storedAt, expiresAt, staleUntil };
+}
+
+function cloneOptionalBoundedString(
+  value: string | undefined,
+  state: CloneState,
+  label: string,
+  maxBytes: number,
+): string | undefined {
+  return value === undefined ? undefined : cloneBoundedString(value, state, label, maxBytes);
+}
+
+function buildCachePayload(value: unknown): CachePayload {
+  const {
+    record,
+    result,
+    html,
+    css,
+    ssrHash,
+    rawFrontmatter,
+    rawHtmlNoncePlaceholder,
+    aliasEpoch,
+    aliasProjectEpoch,
+  } = readCachePayloadFields(value);
+
+  const state: CloneState = { nodes: 0, stringBytes: 0, ancestors: new WeakSet<object>() };
+  const clonedHtml = cloneBoundedString(
+    html,
+    state,
+    "result.html",
+    MAX_RENDER_ARTIFACT_UTF8_BYTES,
+  );
+  const clonedCss = cloneOptionalBoundedString(
+    css,
+    state,
+    "result.css",
+    MAX_RENDER_ARTIFACT_UTF8_BYTES,
+  );
+  const clonedSsrHash = cloneOptionalBoundedString(
+    ssrHash,
+    state,
+    "result.ssrHash",
+    MAX_METADATA_STRING_UTF8_BYTES,
+  );
+  const htmlNoncePlaceholder = cloneOptionalBoundedString(
+    rawHtmlNoncePlaceholder,
+    state,
+    "htmlNoncePlaceholder",
+    MAX_METADATA_STRING_UTF8_BYTES,
+  );
+  const headers = cloneResponseHeaders(ownDataValue(result, "headers"), state);
+  const frontmatter = cloneJsonValue(rawFrontmatter, state);
+  if (!isPlainRecord(frontmatter)) fail("result.frontmatter must be an object");
+
+  const nodeMapEntries = cloneNodeMapEntries(result, record, state);
+  const headings = cloneHeadings(ownDataValue(result, "headings"), state);
+  const pageModule = clonePageModule(ownDataValue(result, "pageModule"), state);
+  const { storedAt, expiresAt, staleUntil } = readCachePayloadTimes(record);
 
   const resultNodeMap = nodeMapEntries === undefined
     ? undefined
@@ -983,6 +1079,8 @@ function buildCachePayload(value: unknown): CachePayload {
       ...(headers === undefined ? {} : { headers }),
     },
     ...(htmlNoncePlaceholder === undefined ? {} : { htmlNoncePlaceholder }),
+    ...(aliasEpoch === undefined ? {} : { aliasEpoch: aliasEpoch as string }),
+    ...(aliasProjectEpoch === undefined ? {} : { aliasProjectEpoch: aliasProjectEpoch as string }),
     storedAt,
     ...(expiresAt === undefined ? {} : { expiresAt }),
     ...(staleUntil === undefined ? {} : { staleUntil }),
@@ -1045,6 +1143,10 @@ export function serializeCachePayload(value: CachePayload): string {
       ? {}
       : { htmlNoncePlaceholder: snapshot.htmlNoncePlaceholder }),
     ...(encodedNodeMapEntries === undefined ? {} : { nodeMapEntries: encodedNodeMapEntries }),
+    ...(snapshot.aliasEpoch === undefined ? {} : { aliasEpoch: snapshot.aliasEpoch }),
+    ...(snapshot.aliasProjectEpoch === undefined
+      ? {}
+      : { aliasProjectEpoch: snapshot.aliasProjectEpoch }),
     storedAt: snapshot.storedAt,
     ...(snapshot.expiresAt === undefined ? {} : { expiresAt: snapshot.expiresAt }),
     ...(snapshot.staleUntil === undefined ? {} : { staleUntil: snapshot.staleUntil }),

@@ -7,12 +7,13 @@
  * @module schemas/json-value
  */
 
-const JSON_VALUE_MAX_DEPTH = 128;
-const JSON_VALUE_MAX_NODES = 100_000;
+/** Maximum nesting depth admitted by data-only JSON snapshots. */
+export const JSON_VALUE_MAX_DEPTH = 128;
+/** Maximum value-node count admitted by data-only JSON snapshots. */
+export const JSON_VALUE_MAX_NODES = 100_000;
 export const JSON_VALUE_MAX_SERIALIZED_BYTES = 4 * 1024 * 1024;
 export const JSON_VALUE_MAX_STRING_BYTES = 1024 * 1024;
 const JSON_VALUE_MAX_KEY_BYTES = 16 * 1024;
-const JSON_UTF8_ENCODER = new TextEncoder();
 const NativeSet = Set;
 const OBJECT_PROTOTYPE = Object.prototype;
 const arrayIsArray = Array.isArray;
@@ -27,11 +28,9 @@ const reflectOwnKeys = Reflect.ownKeys;
 const setAdd = Set.prototype.add;
 const setDelete = Set.prototype.delete;
 const setHas = Set.prototype.has;
-const textEncoderEncode = TextEncoder.prototype.encode;
-const typedArrayByteLengthGetter = reflectGetOwnPropertyDescriptor(
-  reflectGetPrototypeOf(Uint8Array.prototype)!,
-  "byteLength",
-)!.get!;
+const stringCharCodeAt: (value: string, index: number) => number = Function.prototype.call.bind(
+  String.prototype.charCodeAt,
+);
 
 /** Data-only JSON shape; runtime ceilings are imposed by the snapshot entry point. */
 export type BoundedJsonValue =
@@ -123,13 +122,23 @@ function snapshotPrimitiveBytes(
   return typeof value === "string" ? encodedByteLength(value) + 2 : 0;
 }
 
+// Count UTF-8 without allocating an encoded array for every primitive and key.
+// Unpaired UTF-16 surrogates encode as the three-byte replacement character.
 function encodedByteLength(value: string): number {
-  const encoded = reflectApply(
-    textEncoderEncode,
-    JSON_UTF8_ENCODER,
-    [value],
-  ) as Uint8Array;
-  return reflectApply(typedArrayByteLengthGetter, encoded, []) as number;
+  let bytes = 0;
+  for (let index = 0; index < value.length; index++) {
+    const code = stringCharCodeAt(value, index);
+    if (code < 0x80) bytes++;
+    else if (code < 0x800) bytes += 2;
+    else if (
+      code >= 0xd800 && code <= 0xdbff && index + 1 < value.length &&
+      stringCharCodeAt(value, index + 1) >= 0xdc00 && stringCharCodeAt(value, index + 1) <= 0xdfff
+    ) {
+      bytes += 4;
+      index++;
+    } else bytes += 3;
+  }
+  return bytes;
 }
 
 /**
@@ -221,72 +230,46 @@ function snapshotBoundedJsonWithSize(
       defineOwnDataProperty(frame.parent, frame.key as string, canonical);
     };
 
-    while (stack.length > 0) {
-      const frame = stack.length === 0 ? undefined : stack[stack.length - 1];
-      if (!frame) break;
-      stack.length -= 1;
-      if (frame.kind === "exit") {
-        reflectApply(setDelete, activeAncestors, [frame.value]);
-        continue;
+    const snapshotPrimitive = (
+      frame: SnapshotVisitFrame,
+      current: unknown,
+    ): "assigned" | "invalid" | undefined => {
+      if (typeof current === "string") {
+        if (utf8LengthWithin(current, maxSourceBytes ?? maxStringBytes) === undefined) {
+          return "invalid";
+        }
+      } else if (typeof current === "number") {
+        if (!numberIsFinite(current)) return "invalid";
+      } else if (current !== null && typeof current !== "boolean") {
+        return undefined;
       }
+      const bytes = snapshotPrimitiveBytes(current, maxSourceBytes !== undefined);
+      if (bytes === undefined || !addSerializedBytes(bytes)) return "invalid";
+      assign(frame, current);
+      return "assigned";
+    };
+    const snapshotVisit = (frame: SnapshotVisitFrame): InvalidSnapshotPath | null => {
       activePath = frame.path;
 
       if (frame.depth > JSON_VALUE_MAX_DEPTH || ++nodeCount > JSON_VALUE_MAX_NODES) {
-        return invalidJsonSnapshot(frame.path);
+        return invalidSnapshotPath(frame.path);
       }
 
       const current = frame.value;
-      if (current === null || typeof current === "boolean") {
-        const bytes = snapshotPrimitiveBytes(current, maxSourceBytes !== undefined);
-        if (bytes === undefined || !addSerializedBytes(bytes)) {
-          return invalidJsonSnapshot(frame.path);
-        }
-        assign(frame, current);
-        continue;
-      }
-      if (typeof current === "string") {
-        if (
-          utf8LengthWithin(current, maxSourceBytes ?? maxStringBytes) === undefined
-        ) {
-          return invalidJsonSnapshot(frame.path);
-        }
-        const bytes = snapshotPrimitiveBytes(current, maxSourceBytes !== undefined);
-        if (bytes === undefined || !addSerializedBytes(bytes)) {
-          return invalidJsonSnapshot(frame.path);
-        }
-        assign(frame, current);
-        continue;
-      }
-      if (typeof current === "number") {
-        if (!numberIsFinite(current)) return invalidJsonSnapshot(frame.path);
-        const bytes = snapshotPrimitiveBytes(current, maxSourceBytes !== undefined);
-        if (bytes === undefined || !addSerializedBytes(bytes)) {
-          return invalidJsonSnapshot(frame.path);
-        }
-        assign(frame, current);
-        continue;
-      }
+      const primitive = snapshotPrimitive(frame, current);
+      if (primitive === "invalid") return invalidSnapshotPath(frame.path);
+      if (primitive === "assigned") return null;
       if (
-        typeof current !== "object" ||
+        current === null || typeof current !== "object" ||
         reflectApply(setHas, activeAncestors, [current]) as boolean
       ) {
-        return invalidJsonSnapshot(frame.path);
+        return invalidSnapshotPath(frame.path);
       }
 
       if (arrayIsArray(current)) {
-        const invalidPath = snapshotArray(
-          current,
-          frame,
-          stack,
-          activeAncestors,
-          addSerializedBytes,
-          assign,
-        );
-        if (invalidPath !== null) return invalidJsonSnapshot(invalidPath.path);
-        continue;
+        return snapshotArray(current, frame, stack, activeAncestors, addSerializedBytes, assign);
       }
-
-      const invalidPath = snapshotObject(
+      return snapshotObject(
         current,
         frame,
         stack,
@@ -295,6 +278,16 @@ function snapshotBoundedJsonWithSize(
         assign,
         maxSourceBytes !== undefined,
       );
+    };
+    while (stack.length > 0) {
+      const frame = stack.length === 0 ? undefined : stack[stack.length - 1];
+      if (!frame) break;
+      stack.length -= 1;
+      if (frame.kind === "exit") {
+        reflectApply(setDelete, activeAncestors, [frame.value]);
+        continue;
+      }
+      const invalidPath = snapshotVisit(frame);
       if (invalidPath !== null) return invalidJsonSnapshot(invalidPath.path);
     }
 

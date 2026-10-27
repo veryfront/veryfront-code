@@ -1,6 +1,9 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert";
+import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
+import { buildChildRunSuccessResult } from "../child-run/execution-snapshot.ts";
+import { buildChildRunResultSummary } from "../child-run/result-summary.ts";
+import { withRootOwnedChildResultHint } from "../conversation/delegation-policy.ts";
 import type {
   ChatToolResultOutput,
   ChatToolResultPart,
@@ -11,7 +14,106 @@ import {
   type AgentRuntimeMessagePart,
   convertAgentRuntimeMessagesToProviderMessages,
   convertProviderMessagesToAgentRuntimeMessages,
+  createToolResultPart as createRawToolResultPart,
 } from "./message-adapter.ts";
+
+import { markTrustedPlatformPolicyToolResultPart } from "./skill-policy-enforcement.ts";
+import type { ToolResultPart } from "../types.ts";
+
+/** These existing projection fixtures represent admitted framework child calls. */
+function createPlatformFixtureResult(part: Parameters<typeof createRawToolResultPart>[0]) {
+  const source: ToolResultPart = {
+    type: "tool-result",
+    toolCallId: part.toolCallId,
+    toolName: part.toolName,
+    result: part.output,
+  };
+  if (part.toolName === "invoke_agent" || part.toolName === "veryfront__invoke_agent") {
+    markTrustedPlatformPolicyToolResultPart(source);
+  }
+  return createRawToolResultPart(part, source);
+}
+
+Deno.test("provider child handoff carries summary text once without changing the durable result", () => {
+  const original = {
+    ok: true,
+    childRunId: "fixture-child",
+    text: "repeated ".repeat(1000),
+    summary: { text: "repeated ".repeat(1000), truncated: false, returnedChars: 9000 },
+  };
+  const part = createPlatformFixtureResult({
+    toolName: "invoke_agent",
+    toolCallId: "fixture-call",
+    output: original,
+  });
+  assertEquals(part.output, {
+    type: "json",
+    value: { ...original, summary: { truncated: false, returnedChars: 9000 } },
+  });
+  assertEquals(original.summary.text, original.text);
+});
+
+Deno.test("provider handoff preserves different summary text and unrelated tool results", () => {
+  for (const toolName of ["invoke_agent", "other_tool"]) {
+    const original = { text: "full", summary: { text: "different" } };
+    assertEquals(
+      createPlatformFixtureResult({ toolName, toolCallId: "fixture-call", output: original })
+        .output,
+      { type: "json", value: original },
+    );
+  }
+  const original = { text: "same", summary: { text: "same" } };
+  assertEquals(
+    createPlatformFixtureResult({
+      toolName: "other_tool",
+      toolCallId: "fixture-call",
+      output: original,
+    })
+      .output,
+    { type: "json", value: original },
+  );
+});
+
+Deno.test("provider replay deduplicates the recorded JSON-encoded child envelope", () => {
+  const child = {
+    ok: true,
+    childRunId: "fixture-child",
+    text: "annotated fixture ".repeat(500),
+    output: "raw fixture ".repeat(500),
+    summary: { text: "annotated fixture ".repeat(500) },
+  };
+  const recorded = { type: "json", value: JSON.stringify(child) };
+  const part = createPlatformFixtureResult({
+    toolName: "invoke_agent",
+    toolCallId: "fixture-call",
+    output: recorded,
+  });
+  assertEquals(part.output, { type: "json", value: { ...child, summary: {} } });
+  assertEquals(recorded.value, JSON.stringify(child));
+  assertEquals(
+    createPlatformFixtureResult({
+      toolName: "invoke_agent",
+      toolCallId: "fixture-call",
+      output: { type: "json", value: "not JSON" },
+    }).output,
+    { type: "json", value: { type: "json", value: "not JSON" } },
+  );
+});
+
+Deno.test("provider replay removes raw child output only when it is contained in annotated text", () => {
+  const raw = "synthetic child output";
+  const text = `Host annotation\n${raw}`;
+  const child = { ok: true, childRunId: "fixture-child", text, output: raw, summary: { text } };
+  assertEquals(
+    createPlatformFixtureResult({
+      toolName: "invoke_agent",
+      toolCallId: "fixture-call",
+      output: { type: "json", value: JSON.stringify(child) },
+    }).output,
+    { type: "json", value: { ok: true, childRunId: "fixture-child", text, summary: {} } },
+  );
+  assertEquals(child.output, raw);
+});
 
 type ProviderStructuredPart = Exclude<ProviderModelMessage["content"], string>[number];
 
@@ -134,7 +236,7 @@ describe("agent runtime message adapter", () => {
         [agentRuntimeTextPart("Searching…"), agentRuntimeToolCallPart({ query: "chat runtime" })],
         1,
       ),
-      agentRuntimeMessage("tool", [agentRuntimeToolResultPart(jsonOutput({ matches: 2 }))], 2),
+      agentRuntimeMessage("tool", [agentRuntimeToolResultPart({ matches: 2 })], 2),
     ]);
   });
 
@@ -652,4 +754,299 @@ describe("agent runtime message adapter", () => {
 
     assertEquals(providerMessages, []);
   });
+});
+
+Deno.test("completed structured child output excludes conflicting trace prose from provider context", () => {
+  const receipt = {
+    outcome: "completed",
+    message_id: "message-17",
+    email_directory: "mailboxes/inbox/confirmed",
+  };
+  const child = {
+    ok: true,
+    status: "completed",
+    childRunId: "child",
+    summary: { text: "Use other directory: mailboxes/inbox/unconfirmed", truncated: false },
+    output: receipt,
+  };
+  for (const original of [child, { ...child, text: "Trace contains ten other directories" }]) {
+    for (
+      const recorded of [original, { type: "json", value: original }, {
+        type: "json",
+        value: JSON.stringify(original),
+      }]
+    ) {
+      const before = JSON.stringify(recorded);
+      assertEquals(
+        createPlatformFixtureResult({
+          toolName: "invoke_agent",
+          toolCallId: "call",
+          output: recorded,
+        })
+          .output,
+        {
+          type: "json",
+          value: {
+            ok: true,
+            status: "completed",
+            childRunId: "child",
+            summary: { truncated: false },
+            output: receipt,
+          },
+        },
+      );
+      assertEquals(JSON.stringify(recorded), before);
+    }
+  }
+});
+
+Deno.test("failed children and ordinary tools keep diagnostic prose beside structured values", () => {
+  for (const toolName of ["invoke_agent", "ordinary_tool"]) {
+    const original = {
+      ok: false,
+      status: "failed",
+      childRunId: "child",
+      summary: { text: "Failure details" },
+      output: { outcome: "failed" },
+    };
+    assertEquals(
+      createPlatformFixtureResult({ toolName, toolCallId: "call", output: original }).output,
+      {
+        type: "json",
+        value: original,
+      },
+    );
+  }
+});
+
+Deno.test("canonical child alias projects accepted output through public chat replay", () => {
+  const child = {
+    ok: true,
+    status: "completed",
+    childRunId: "child",
+    text: "conflicting trace",
+    summary: { text: "conflicting trace" },
+    output: { directory: "accepted" },
+  };
+  for (const recorded of [child, { type: "json", value: JSON.stringify(child) }]) {
+    const before = JSON.stringify(recorded);
+    const source: ToolResultPart = markTrustedPlatformPolicyToolResultPart({
+      type: "tool-result",
+      toolCallId: "call",
+      toolName: "veryfront__invoke_agent",
+      result: recorded,
+    });
+    const messages = convertAgentRuntimeMessagesToProviderMessages([{
+      role: "tool",
+      parts: [source],
+    }]);
+    assertEquals(messages, [{
+      role: "tool",
+      content: [{
+        type: "tool-result",
+        toolCallId: "call",
+        toolName: "veryfront__invoke_agent",
+        output: {
+          type: "json",
+          value: {
+            ok: true,
+            status: "completed",
+            childRunId: "child",
+            summary: {},
+            output: { directory: "accepted" },
+          },
+        },
+      }],
+    }]);
+    assertEquals(JSON.stringify(recorded), before);
+  }
+});
+
+Deno.test("completed child replay removes root hint prose and retains its guidance", () => {
+  for (const toolName of ["invoke_agent", "veryfront__invoke_agent"]) {
+    for (const output of [{ directory: "accepted" }, "child response"]) {
+      const child = withRootOwnedChildResultHint({
+        ok: true,
+        status: "completed",
+        childRunId: "child",
+        text: "child response",
+        summary: { text: "child response" },
+        output,
+      });
+      const childHint = child.rootResponseHint;
+      assertExists(childHint);
+      const before = JSON.stringify(child);
+      for (const recorded of [child, { type: "json", value: JSON.stringify(child) }]) {
+        assertEquals(
+          createPlatformFixtureResult({ toolName, toolCallId: "call", output: recorded }).output,
+          {
+            type: "json",
+            value: {
+              ok: true,
+              status: "completed",
+              childRunId: "child",
+              summary: {},
+              rootResponseHint: { instruction: childHint.instruction },
+              output,
+            },
+          },
+        );
+      }
+      assertEquals(JSON.stringify(child), before);
+    }
+  }
+});
+
+Deno.test("child replay retains diagnostic hints for failures and unrelated tools", () => {
+  const failed = {
+    ok: false,
+    status: "failed",
+    childRunId: "child",
+    text: "failure details",
+    summary: { text: "distinct summary" },
+    rootResponseHint: { instruction: "guidance", suggestedText: "failure details" },
+    output: { outcome: "failed" },
+  };
+  for (const toolName of ["invoke_agent", "veryfront__invoke_agent", "ordinary_tool"]) {
+    assertEquals(
+      createPlatformFixtureResult({ toolName, toolCallId: "call", output: failed }).output,
+      {
+        type: "json",
+        value: failed,
+      },
+    );
+  }
+  const ordinary = { ...failed, ok: true, status: "completed" };
+  assertEquals(
+    createPlatformFixtureResult({ toolName: "ordinary_tool", toolCallId: "call", output: ordinary })
+      .output,
+    { type: "json", value: ordinary },
+  );
+});
+
+Deno.test("completed prose handoff omits a rewritten root suggestion without requiring summary equality", () => {
+  const text = "Let me inspect the receipt. Child result confirmed.";
+  const child = withRootOwnedChildResultHint({
+    ok: true,
+    status: "completed",
+    childRunId: "child",
+    text,
+    summary: { text: "distinct summary", truncated: true },
+  });
+  const hint = child.rootResponseHint;
+  assertExists(hint);
+  assertEquals(hint.suggestedText, "Child result confirmed.");
+  const before = JSON.stringify(child);
+  for (const toolName of ["invoke_agent", "veryfront__invoke_agent"]) {
+    for (const output of [child, { type: "json", value: JSON.stringify(child) }]) {
+      assertEquals(createPlatformFixtureResult({ toolName, toolCallId: "call", output }).output, {
+        type: "json",
+        value: {
+          ok: true,
+          status: "completed",
+          childRunId: "child",
+          text,
+          summary: child.summary,
+          rootResponseHint: { instruction: hint.instruction },
+        },
+      });
+    }
+  }
+  assertEquals(JSON.stringify(child), before);
+});
+
+Deno.test("projection preserves a root suggestion when no accepted child output is available", () => {
+  const child = {
+    ok: true,
+    status: "completed",
+    childRunId: "child",
+    rootResponseHint: { instruction: "guidance", suggestedText: "Only available result" },
+  };
+  for (const toolName of ["invoke_agent", "veryfront__invoke_agent"]) {
+    for (const output of [child, { type: "json", value: JSON.stringify(child) }]) {
+      assertEquals(createPlatformFixtureResult({ toolName, toolCallId: "call", output }).output, {
+        type: "json",
+        value: output,
+      });
+    }
+  }
+});
+
+Deno.test("provider result normalization omits accessor execution and bounds cyclic output", () => {
+  for (const toolName of ["veryfront__invoke_agent"]) {
+    let reads = 0;
+    const child = {
+      ok: true,
+      status: "completed",
+      childRunId: "child",
+      text: "diagnostic prose",
+      summary: { text: "diagnostic prose" },
+    };
+    Object.defineProperty(child, "output", {
+      enumerable: true,
+      get() {
+        reads++;
+        return { directory: "getter-owned" };
+      },
+    });
+    const part = createPlatformFixtureResult({ toolName, toolCallId: "call", output: child });
+    assertEquals(reads, 0);
+    assertEquals(part.output, {
+      type: "json",
+      value: {
+        ok: true,
+        status: "completed",
+        childRunId: "child",
+        text: "diagnostic prose",
+        output: "[Accessor omitted]",
+        summary: { text: "diagnostic prose" },
+      },
+    });
+    assertEquals(reads, 0);
+    const receipt: Record<string, unknown> = { directory: "accepted" };
+    receipt.self = receipt;
+    assertEquals(
+      createPlatformFixtureResult({
+        toolName,
+        toolCallId: "call",
+        output: { ok: true, status: "completed", childRunId: "child", output: receipt },
+      }).output,
+      {
+        type: "json",
+        value: {
+          ok: true,
+          status: "completed",
+          childRunId: "child",
+          output: { directory: "accepted", self: "[Circular]" },
+        },
+      },
+    );
+  }
+});
+
+Deno.test("successful local child summary replays once with root guidance retained", () => {
+  const summary = buildChildRunResultSummary("Let me inspect the receipt. Local result confirmed.");
+  const child = withRootOwnedChildResultHint(
+    buildChildRunSuccessResult({
+      description: "synthetic child",
+      steps: 1,
+      toolCalls: [],
+      toolResults: [],
+      durationMs: 1,
+    }, summary),
+  );
+  const hint = child.rootResponseHint;
+  assertExists(hint);
+  const before = JSON.stringify(child);
+  for (const toolName of ["invoke_agent", "veryfront__invoke_agent"]) {
+    for (const output of [child, { type: "json", value: JSON.stringify(child) }]) {
+      const projected =
+        createPlatformFixtureResult({ toolName, toolCallId: "call", output }).output;
+      assertEquals<unknown>(projected, {
+        type: "json",
+        value: { ...child, rootResponseHint: { instruction: hint.instruction } },
+      });
+    }
+  }
+  assertEquals(JSON.stringify(child), before);
 });

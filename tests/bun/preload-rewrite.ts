@@ -1,7 +1,7 @@
 import { rewriteNpmProtocolImports } from "./npm-protocol-imports.ts";
 
 export const bunPreloadRewriteFilter =
-  /(\.test\.[cm]?[jt]sx?|[/\\]extensions[/\\]ext-[^/\\]+[/\\]src[/\\].*\.[cm]?[jt]sx?)$/;
+  /^(?!.*[/\\]node_modules[/\\]).*(\.test\.[cm]?[jt]sx?|[/\\](?:scripts|tests)[/\\].*\.[cm]?[jt]sx?|[/\\]extensions[/\\]ext-[^/\\]+[/\\]src[/\\].*\.[cm]?[jt]sx?)$/;
 
 function normalizePreloadPath(path: string): string {
   return path.replaceAll("\\", "/");
@@ -17,11 +17,9 @@ export function rewriteBunPreloadSource(
   rewriteExtensionImports: (source: string) => string | null,
 ): string {
   const posixPath = normalizePreloadPath(path);
-  let contents = isExtensionSourcePath(posixPath)
+  const contents = isExtensionSourcePath(posixPath)
     ? rewriteExtensionImports(source) ?? source
     : source;
-  if (/\.test\.[cm]?[jt]sx?$/.test(posixPath)) {
-    contents = rewriteNpmProtocolImports(contents) ?? contents;
-  }
-  return contents;
+  // Helpers imported by tests need the same protocol translation as test files.
+  return rewriteNpmProtocolImports(contents) ?? contents;
 }

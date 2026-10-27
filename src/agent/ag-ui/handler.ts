@@ -1,5 +1,11 @@
+import {
+  ConnectedLocalAdmissionError,
+  type ConnectedLocalRun,
+  getConnectedLocalRuntime,
+} from "./connected-local-runtime.ts";
 import { defineOwnDataProperty } from "#veryfront/security/own-data-property.ts";
 import { getAgentExecutionConfig } from "../runtime/execution-config.ts";
+import { resolveRuntimeToolLoading } from "../runtime/runtime-tool-config.ts";
 import { isResponseLike } from "../service/response-like.ts";
 import { getAgent } from "../composition/index.ts";
 import {
@@ -13,6 +19,7 @@ import {
   shouldUseApplicationInferenceRuntime,
 } from "../runtime/application-inference-admission.ts";
 import type { Agent, AgentResponse, Message } from "../types.ts";
+import { readStructuredAgentOutput } from "../output-schema.ts";
 import { fromError } from "#veryfront/errors";
 import {
   AgentRuntime,
@@ -43,7 +50,7 @@ import {
   normalizeAgUiMessages,
   parseAgUiRequestOrError,
 } from "./host-support.ts";
-import { extractRequest } from "./request-shared.ts";
+import { createAgUiSchemaValidationErrorResponse, extractRequest } from "./request-shared.ts";
 import { type AgUiResumeValue, buildMergedAgUiTools } from "./tool-shared.ts";
 import {
   type AgUiRuntimeRestrictions,
@@ -209,19 +216,21 @@ function prepareAgUiStreamInput(options: {
   baseContext: Record<string, unknown>;
   runId: string;
   privateRuntime?: PrivateApplicationInferenceRuntime;
+  localRun?: ConnectedLocalRun;
 }): PreparedAgUiStreamInput {
-  const effectiveRunId = options.privateRuntime?.runId ?? options.runId;
-  const runIdBindsToolAuthorization = options.privateRuntime &&
+  const effectiveRunId = options.privateRuntime?.runId ?? options.localRun?.runId ?? options.runId;
+  const runIdBindsToolAuthorization = (options.privateRuntime || options.localRun) &&
       typeof options.baseContext.runIdBindsToolAuthorization !== "boolean"
     ? true
     : options.context.runIdBindsToolAuthorization;
 
   return {
     effectiveRunId,
-    messages: applyBeforeStreamResult(options.messages, options.beforeStreamResult),
+    messages: options.messages,
     context: {
       // beforeStream may return a fresh context, dropping the generated-run marker.
       ...(options.beforeStreamResult?.context ?? options.context),
+      ...options.localRun?.context,
       runId: effectiveRunId,
       runIdBindsToolAuthorization,
     },
@@ -254,7 +263,192 @@ function hasFinalizedAssistantOutput(response: AgentResponse | null): boolean {
   if (response.text.length > 0) return true;
   if (response.messages.length > 0) return true;
   if (response.toolCalls.length > 0) return true;
-  return response.object !== undefined;
+  return readStructuredAgentOutput(response) !== undefined;
+}
+
+function createAgUiRequestErrorResponse(error: unknown): Response {
+  if (error instanceof ConnectedLocalAdmissionError) {
+    return Response.json({ error: error.message }, { status: error.status });
+  }
+  const validationError = createAgUiSchemaValidationErrorResponse(error, "Invalid AG-UI request");
+  if (validationError) return validationError;
+
+  const vfError = fromError(error);
+  if (isModelCredentialError(vfError)) {
+    return Response.json(
+      {
+        code: vfError?.type === "no_ai_available" ? "NO_AI_AVAILABLE" : "NO_MODEL_CREDENTIALS",
+        error:
+          "No model credentials configured. Run veryfront login or set VERYFRONT_API_TOKEN, OPENAI_API_KEY, ANTHROPIC_API_KEY, or GOOGLE_API_KEY.",
+      },
+      { status: 503 },
+    );
+  }
+
+  return Response.json(
+    { error: "Internal server error" },
+    { status: 500 },
+  );
+}
+
+async function pumpAgUiRuntimeEvents(
+  upstreamBody: ReadableStream<Uint8Array>,
+  state: ReturnType<typeof createStreamTransformState>,
+  controller: ReadableStreamDefaultController<Uint8Array>,
+  recordRunError: (event: string) => void,
+  prepareToolResultIfNeeded: (event: string, payload: Record<string, unknown>) => void,
+): Promise<boolean> {
+  for await (
+    const event of streamDataStreamEvents(upstreamBody) as AsyncIterable<AgUiRuntimePart>
+  ) {
+    for (const mapped of mapRuntimeEventToAgUi(state, event)) {
+      recordRunError(mapped.event);
+      prepareToolResultIfNeeded(mapped.event, mapped.payload);
+      if (!enqueueEvent(controller, mapped.event, mapped.payload)) {
+        return false;
+      }
+    }
+  }
+
+  return true;
+}
+
+function enqueueAgUiFinalEvents(
+  state: ReturnType<typeof createStreamTransformState>,
+  completedResponse: AgentResponse | null,
+  controller: ReadableStreamDefaultController<Uint8Array>,
+  recordRunError: (event: string) => void,
+): boolean {
+  for (const event of finalizeRunEvents(state, completedResponse)) {
+    recordRunError(event.event);
+    if (!enqueueEvent(controller, event.event, event.payload)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function enqueueAgUiInitialEvents(
+  controller: ReadableStreamDefaultController<Uint8Array>,
+  run: Record<string, unknown>,
+  request: AgUiRequest,
+): boolean {
+  if (!enqueueEvent(controller, "RunStarted", run)) return false;
+  if (!enqueueEvent(controller, "StateSnapshot", { snapshot: {} })) return false;
+  return enqueueEvent(controller, "MessagesSnapshot", { messages: request.messages });
+}
+
+function finalizeAgUiEmptyUpstream(
+  state: ReturnType<typeof createStreamTransformState>,
+  completedResponse: AgentResponse | null,
+  controller: ReadableStreamDefaultController<Uint8Array>,
+  recordRunError: (event: string) => void,
+  finishRun: () => void,
+): void {
+  if (hasFinalizedAssistantOutput(completedResponse)) state.sawVisibleOutput = true;
+  if (!enqueueAgUiFinalEvents(state, completedResponse, controller, recordRunError)) return;
+  finishRun();
+}
+
+async function completeAgUiStream(
+  onComplete: (response: AgentResponse) => void | Promise<void>,
+  response: AgentResponse,
+): Promise<void> {
+  try {
+    await onComplete(response);
+  } catch (error) {
+    console.error("[AgUi] onComplete callback threw:", error);
+  }
+}
+
+function startAgUiInjectedSession(
+  sessionManager: RunResumeSessionManager<AgUiResumeValue>,
+  effectiveRunId: string,
+  threadId: string,
+  privateRuntime: PrivateApplicationInferenceRuntime | undefined,
+  onStarted: () => void,
+): Response | undefined {
+  try {
+    sessionManager.startRun({ runId: effectiveRunId, threadId });
+    onStarted();
+    if (privateRuntime) {
+      const cancelSession = () => sessionManager.cancelRun(effectiveRunId);
+      if (privateRuntime.signal.aborted) cancelSession();
+      else privateRuntime.signal.addEventListener("abort", cancelSession, { once: true });
+    }
+  } catch (error) {
+    privateRuntime?.onAbandon();
+    if (error instanceof RunAlreadyExistsError) {
+      return Response.json({ error: "Run already active" }, { status: 409 });
+    }
+    throw error;
+  }
+
+  return undefined;
+}
+
+function createAgUiInjectedStreamDispatch(
+  agent: Agent,
+  runtimeConfig: ConstructorParameters<typeof AgentRuntime>[1],
+  inferenceAgent: Agent | undefined,
+  restrictions: AgUiRuntimeRestrictions | undefined,
+): (...args: Parameters<AgentRuntime["stream"]>) => Promise<ReadableStream<Uint8Array>> {
+  return inferenceAgent
+    ? async (messages, context, callbacks, model, maxOutputTokens, abortSignal) => {
+      const result = await inferenceAgent.stream({
+        messages,
+        context,
+        onFinish: callbacks?.onFinish,
+        model,
+        maxOutputTokens,
+        abortSignal,
+      });
+      const body = result.toDataStreamResponse().body;
+      if (!body) throw new Error("Agent stream is unavailable");
+      return body;
+    }
+    : (() => {
+      const runtime = new AgentRuntime(agent.id, runtimeConfig);
+      return hasAgUiRuntimeRestrictions(restrictions)
+        ? (...args: Parameters<AgentRuntime["stream"]>) =>
+          streamWithAgentRuntimeDispatch(runtime, ...args)
+        : (...args: Parameters<AgentRuntime["stream"]>) => runtime.stream(...args);
+    })();
+}
+
+function checkInjectedAgUiRequest(
+  options: AgUiHandlerOptions | undefined,
+): Response | undefined {
+  if (getConnectedLocalRuntime()) {
+    return Response.json({
+      error: "Client-injected tools are not supported by connected local development.",
+    }, { status: 501 });
+  }
+  if (options?.runtimeRestrictions?.allowedTools !== undefined) {
+    // The injected-tools path merges client tool definitions into the
+    // agent runtime, so those tools would run outside a tool allowlist.
+    // Refuse the run rather than execute it outside the ceiling. A
+    // step-only ceiling has no allowlist to bypass, so it still runs and
+    // the bound is applied to the merged runtime below.
+    return Response.json(
+      {
+        error: "Injected AG-UI tools are not available on a restricted AG-UI run.",
+      },
+      { status: 400 },
+    );
+  }
+
+  if (!options?.sessionManager) {
+    return Response.json(
+      {
+        error:
+          "Injected AG-UI tools require a public RunResumeSessionManager on createAgUiHandler().",
+      },
+      { status: 501 },
+    );
+  }
+
+  return undefined;
 }
 
 async function createAgUiStreamResponse(
@@ -316,22 +510,14 @@ async function createAgUiStreamResponse(
       };
 
       if (
-        !enqueueEvent(controller, "RunStarted", {
+        !enqueueAgUiInitialEvents(controller, {
           runId,
           threadId,
           agentId,
           ...(agentName ? { agentName } : {}),
           ...(agentAvatarUrl ? { agent_avatar_url: agentAvatarUrl } : {}),
-        })
-      ) {
-        return;
-      }
-      if (!enqueueEvent(controller, "StateSnapshot", { snapshot: {} })) {
-        return;
-      }
-      if (!enqueueEvent(controller, "MessagesSnapshot", { messages: request.messages })) {
-        return;
-      }
+        }, request)
+      ) return;
 
       // Fires the completion callback exactly once, after the stream is closed,
       // so persistence never delays or corrupts the response. Only set on the
@@ -344,52 +530,51 @@ async function createAgUiStreamResponse(
         failed = true;
         onError?.(new Error("Agent run failed"));
       };
-      try {
-        if (!upstreamBody) {
-          const completedResponse = getCompletedResponse?.() ?? null;
-          if (hasFinalizedAssistantOutput(completedResponse)) {
-            state.sawVisibleOutput = true;
-          }
-          for (const event of finalizeRunEvents(state, completedResponse)) {
-            recordRunError(event.event);
-            if (!enqueueEvent(controller, event.event, event.payload)) {
-              return;
-            }
-          }
-          if (!failed) {
-            onFinish?.();
-            succeeded = true;
-          }
-          return;
-        }
-
-        for await (
-          const event of streamDataStreamEvents(upstreamBody) as AsyncIterable<AgUiRuntimePart>
-        ) {
-          for (const mapped of mapRuntimeEventToAgUi(state, event)) {
-            recordRunError(mapped.event);
-            prepareToolResultIfNeeded(mapped.event, mapped.payload);
-            if (!enqueueEvent(controller, mapped.event, mapped.payload)) {
-              return;
-            }
-          }
-        }
-
-        for (const event of finalizeRunEvents(state, getCompletedResponse?.() ?? null)) {
-          recordRunError(event.event);
-          if (!enqueueEvent(controller, event.event, event.payload)) {
-            return;
-          }
-        }
+      const finishRun = () => {
         if (!failed) {
           onFinish?.();
           succeeded = true;
         }
-      } catch (error) {
+      };
+      const recordFailure = (error: unknown) => {
         if (!failed) {
           failed = true;
           onError?.(error);
         }
+      };
+      try {
+        if (!upstreamBody) {
+          finalizeAgUiEmptyUpstream(
+            state,
+            getCompletedResponse?.() ?? null,
+            controller,
+            recordRunError,
+            finishRun,
+          );
+          return;
+        }
+
+        if (
+          !(await pumpAgUiRuntimeEvents(
+            upstreamBody,
+            state,
+            controller,
+            recordRunError,
+            prepareToolResultIfNeeded,
+          ))
+        ) return;
+
+        if (
+          !enqueueAgUiFinalEvents(
+            state,
+            getCompletedResponse?.() ?? null,
+            controller,
+            recordRunError,
+          )
+        ) return;
+        finishRun();
+      } catch (error) {
+        recordFailure(error);
         enqueueEvent(controller, "RunError", {
           message: error instanceof Error ? error.message : "Agent run failed",
         });
@@ -400,11 +585,7 @@ async function createAgUiStreamResponse(
         if (succeeded && onComplete) {
           const response = getCompletedResponse?.() ?? null;
           if (response) {
-            try {
-              await onComplete(response);
-            } catch (error) {
-              console.error("[AgUi] onComplete callback threw:", error);
-            }
+            await completeAgUiStream(onComplete, response);
           }
         }
       }
@@ -459,6 +640,7 @@ async function createDirectAgentUpstream(options: {
   onFinish: (response: AgentResponse) => void;
   privateRuntime?: PrivateApplicationInferenceRuntime;
   preserveRestrictedToolCatalog?: boolean;
+  localRun?: ConnectedLocalRun;
 }): Promise<DirectAgentUpstream> {
   const privateRuntime = options.privateRuntime;
   if (privateRuntime) {
@@ -493,19 +675,26 @@ async function createDirectAgentUpstream(options: {
     };
   }
 
-  const result = await options.streamAgent.stream({
-    messages: options.messages,
-    context: options.context,
-    ...(options.request.model ? { model: options.request.model } : {}),
-    ...(options.request.maxOutputTokens
-      ? { maxOutputTokens: options.request.maxOutputTokens }
-      : {}),
-    onFinish: options.onFinish,
-  });
+  const connectedAgent = options.localRun
+    ? await options.localRun.prepareAgent(options.streamAgent)
+    : options.streamAgent;
+  const startStream = () =>
+    connectedAgent.stream({
+      messages: options.messages,
+      context: options.context,
+      ...(options.request.model ? { model: options.request.model } : {}),
+      ...(options.request.maxOutputTokens
+        ? { maxOutputTokens: options.request.maxOutputTokens }
+        : {}),
+      onFinish: options.onFinish,
+      ...(options.localRun ? { abortSignal: options.localRun.signal } : {}),
+    });
+  const result = await (options.localRun ? options.localRun.execute(startStream) : startStream());
 
   const upstream = result.toDataStreamResponse();
+  const body = upstream.body ? options.toolDataEvents.wrapStream(upstream.body) : upstream.body;
   return {
-    body: upstream.body ? options.toolDataEvents.wrapStream(upstream.body) : upstream.body,
+    body: body && options.localRun ? options.localRun.wrapStream(body) : body,
     status: upstream.status,
     statusText: upstream.statusText,
   };
@@ -556,8 +745,17 @@ async function createAgUiDirectStreamResponse(
     lastUserText: extractLastUserText(messages),
   });
   if (isResponseLike(beforeStreamResult)) return beforeStreamResult;
+  messages = applyBeforeStreamResult(messages, beforeStreamResult ?? undefined);
 
-  const privateRuntime = await getRequiredPrivateApplicationInferenceRuntime(
+  const connectedRuntime = getConnectedLocalRuntime();
+  const localRun = await connectedRuntime?.admit({
+    agentId: agent.id,
+    agentName: agent.config.name ?? agent.id,
+    threadId,
+    messages,
+    signal: rawRequest.signal,
+  });
+  const privateRuntime = localRun ? undefined : await getRequiredPrivateApplicationInferenceRuntime(
     agent.id,
     request.model ?? getAgentExecutionConfig(agent.config).model,
     rawRequest.signal,
@@ -570,6 +768,7 @@ async function createAgUiDirectStreamResponse(
       baseContext,
       runId,
       privateRuntime,
+      localRun,
     });
     messages = prepared.messages;
 
@@ -598,7 +797,7 @@ async function createAgUiDirectStreamResponse(
     // A restricted run uses a fresh ephemeral agent, so it has no prior memory
     // to clear. Do not call mutable methods on the source agent before the
     // capability ceiling is in place.
-    if (streamAgent === agent) await agent.clearMemory();
+    if (streamAgent === agent && !localRun) await agent.clearMemory();
 
     let upstream: DirectAgentUpstream;
     try {
@@ -612,6 +811,7 @@ async function createAgUiDirectStreamResponse(
         onFinish,
         privateRuntime,
         preserveRestrictedToolCatalog,
+        localRun,
       });
     } catch (error) {
       privateRuntime?.onAbandon();
@@ -637,6 +837,7 @@ async function createAgUiDirectStreamResponse(
       },
       onCancel: () => {
         privateRuntime?.finish("cancelled");
+        void localRun?.finish("cancelled").catch(() => {});
       },
       onComplete: onComplete
         ? (response) =>
@@ -652,6 +853,7 @@ async function createAgUiDirectStreamResponse(
     });
   } catch (error) {
     privateRuntime?.onAbandon();
+    await localRun?.finish("failed");
     throw error;
   }
 }
@@ -662,10 +864,9 @@ async function createAgUiInjectedToolsStreamResponse(
   rawRequest: Request,
   baseContext: Record<string, unknown>,
   sessionManager: RunResumeSessionManager<AgUiResumeValue>,
-  beforeStream?: AgUiBeforeStream,
-  onComplete?: AgUiOnComplete,
-  restrictions?: AgUiRuntimeRestrictions,
+  options?: Pick<AgUiHandlerOptions, "beforeStream" | "onComplete" | "runtimeRestrictions">,
 ): Promise<Response> {
+  const { beforeStream, onComplete, runtimeRestrictions: restrictions } = options ?? {};
   const threadId = request.threadId ?? crypto.randomUUID();
   const runId = request.runId ?? generateRunId();
   const context = buildStreamContext(request, baseContext, threadId, runId);
@@ -680,6 +881,7 @@ async function createAgUiInjectedToolsStreamResponse(
     lastUserText: extractLastUserText(messages),
   });
   if (isResponseLike(beforeStreamResult)) return beforeStreamResult;
+  messages = applyBeforeStreamResult(messages, beforeStreamResult ?? undefined);
 
   const privateRuntime = await getRequiredPrivateApplicationInferenceRuntime(
     agent.id,
@@ -699,21 +901,16 @@ async function createAgUiInjectedToolsStreamResponse(
     const effectiveRunId = prepared.effectiveRunId;
     messages = prepared.messages;
 
-    try {
-      sessionManager.startRun({ runId: effectiveRunId, threadId });
-      sessionStarted = true;
-      if (privateRuntime) {
-        const cancelSession = () => sessionManager.cancelRun(effectiveRunId);
-        if (privateRuntime.signal.aborted) cancelSession();
-        else privateRuntime.signal.addEventListener("abort", cancelSession, { once: true });
-      }
-    } catch (error) {
-      privateRuntime?.onAbandon();
-      if (error instanceof RunAlreadyExistsError) {
-        return Response.json({ error: "Run already active" }, { status: 409 });
-      }
-      throw error;
-    }
+    const conflict = startAgUiInjectedSession(
+      sessionManager,
+      effectiveRunId,
+      threadId,
+      privateRuntime,
+      () => {
+        sessionStarted = true;
+      },
+    );
+    if (conflict) return conflict;
 
     // Only a step-only ceiling reaches here: a tool allowlist refuses the
     // injected-tools path outright, so this narrows the step budget without
@@ -729,6 +926,7 @@ async function createAgUiInjectedToolsStreamResponse(
     const runtimeConfig = {
       ...restrictedConfig,
       tools: buildMergedAgUiTools(agent, effectiveRunId, request.tools, sessionManager),
+      toolLoading: resolveRuntimeToolLoading(restrictedConfig).mode,
     };
     const inferenceAgent = privateRuntime
       ? await privateRuntime.prepareAgent(() => {
@@ -745,29 +943,12 @@ async function createAgUiInjectedToolsStreamResponse(
     // run outside the narrowed configuration, so the restricted run dispatches
     // through the framework-owned private capability instead. An unrestricted
     // run keeps the public method, which stays available as an extension seam.
-    const streamRun: (
-      ...args: Parameters<AgentRuntime["stream"]>
-    ) => Promise<ReadableStream<Uint8Array>> = inferenceAgent
-      ? async (messages, context, callbacks, model, maxOutputTokens, abortSignal) => {
-        const result = await inferenceAgent.stream({
-          messages,
-          context,
-          onFinish: callbacks?.onFinish,
-          model,
-          maxOutputTokens,
-          abortSignal,
-        });
-        const body = result.toDataStreamResponse().body;
-        if (!body) throw new Error("Agent stream is unavailable");
-        return body;
-      }
-      : (() => {
-        const runtime = new AgentRuntime(agent.id, runtimeConfig);
-        return hasAgUiRuntimeRestrictions(restrictions)
-          ? (...args: Parameters<AgentRuntime["stream"]>) =>
-            streamWithAgentRuntimeDispatch(runtime, ...args)
-          : (...args: Parameters<AgentRuntime["stream"]>) => runtime.stream(...args);
-      })();
+    const streamRun = createAgUiInjectedStreamDispatch(
+      agent,
+      runtimeConfig,
+      inferenceAgent,
+      restrictions,
+    );
 
     let upstreamBody: ReadableStream<Uint8Array>;
     let completedResponse: AgentResponse | null = null;
@@ -928,29 +1109,8 @@ export function createAgUiHandler(
       }
 
       if (parsed.tools.length > 0) {
-        if (options?.runtimeRestrictions?.allowedTools !== undefined) {
-          // The injected-tools path merges client tool definitions into the
-          // agent runtime, so those tools would run outside a tool allowlist.
-          // Refuse the run rather than execute it outside the ceiling. A
-          // step-only ceiling has no allowlist to bypass, so it still runs and
-          // the bound is applied to the merged runtime below.
-          return Response.json(
-            {
-              error: "Injected AG-UI tools are not available on a restricted AG-UI run.",
-            },
-            { status: 400 },
-          );
-        }
-
-        if (!options?.sessionManager) {
-          return Response.json(
-            {
-              error:
-                "Injected AG-UI tools require a public RunResumeSessionManager on createAgUiHandler().",
-            },
-            { status: 501 },
-          );
-        }
+        const rejection = checkInjectedAgUiRequest(options);
+        if (rejection) return rejection;
 
         const context = typeof options?.context === "function"
           ? await options.context(applicationRequest)
@@ -961,10 +1121,12 @@ export function createAgUiHandler(
           parsed,
           applicationRequest,
           context,
-          options.sessionManager,
-          options?.beforeStream,
-          options?.onComplete,
-          options?.runtimeRestrictions,
+          options!.sessionManager!,
+          {
+            beforeStream: options?.beforeStream,
+            onComplete: options?.onComplete,
+            runtimeRestrictions: options?.runtimeRestrictions,
+          },
         );
       }
 
@@ -982,40 +1144,7 @@ export function createAgUiHandler(
         options?.runtimeRestrictions,
       );
     } catch (error) {
-      if (
-        error instanceof Error &&
-        "issues" in error &&
-        Array.isArray((error as Record<string, unknown>).issues)
-      ) {
-        const issues = (error as { issues: Array<{ path: unknown[]; message: string }> }).issues;
-        return Response.json(
-          {
-            error: "Invalid AG-UI request",
-            details: issues.map((issue) => ({
-              path: issue.path,
-              message: issue.message,
-            })),
-          },
-          { status: 400 },
-        );
-      }
-
-      const vfError = fromError(error);
-      if (isModelCredentialError(vfError)) {
-        return Response.json(
-          {
-            code: vfError?.type === "no_ai_available" ? "NO_AI_AVAILABLE" : "NO_MODEL_CREDENTIALS",
-            error:
-              "No model credentials configured. Run veryfront login or set VERYFRONT_API_TOKEN, OPENAI_API_KEY, ANTHROPIC_API_KEY, or GOOGLE_API_KEY.",
-          },
-          { status: 503 },
-        );
-      }
-
-      return Response.json(
-        { error: "Internal server error" },
-        { status: 500 },
-      );
+      return createAgUiRequestErrorResponse(error);
     }
   };
 }

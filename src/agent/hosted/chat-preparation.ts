@@ -1,6 +1,8 @@
+import { bindHostedToolRunAuthorization } from "./terminal-credential.ts";
 import { somePrivateArray } from "#veryfront/security/private-array.ts";
 import {
   bindHostedTerminalRun,
+  hostedAcceptedChildEvidence,
   hostedInheritedRunAdmitter,
   hostedTerminalCanonicalRunId,
 } from "./terminal-credential.ts";
@@ -108,6 +110,7 @@ export type PrepareHostedChatRuntimeMessagesOptions =
     | "abortSignal"
     | "fileContentFetchTimeoutMs"
     | "historicalToolInputRetention"
+    | "trustedToolReplayMessageIds"
     | "onUnresolvableAttachment"
   >
   & {
@@ -173,6 +176,9 @@ export type HostedChatRuntimeCreationPreparationInput<TRuntimeAgentDefinition> =
     deniedTools?: string[];
     skills?: import("#veryfront/skill/selector.ts").SkillSelector;
     toolLoading?: AgentConfig["toolLoading"];
+    bootstrapTools?: AgentConfig["bootstrapTools"];
+    optionalBootstrapTools?: AgentConfig["optionalBootstrapTools"];
+    bootstrapSkill?: AgentConfig["bootstrapSkill"];
     toolResultContext?: AgentConfig["toolResultContext"];
     knowledge?: AgentConfig["knowledge"];
   };
@@ -568,24 +574,16 @@ export async function prepareHostedChatRuntimeCreationOptions<
     availableToolNames: initialModelVisibleToolNames,
     skillLoaderToolName: resolveHostedRuntimeSkillLoaderToolName(initialModelVisibleToolNames),
   });
-  return {
-    creationOptions: {
-      projectId: input.projectId,
-      ...(input.request.projectSlug ? { projectSlug: input.request.projectSlug } : {}),
-      authToken: input.authToken,
-      instructions: agentInstructions,
-      ...(input.branchId !== undefined ? { branchId: input.branchId } : {}),
-      ...(input.runtimeTargetKind !== undefined
-        ? { runtimeTargetKind: input.runtimeTargetKind }
-        : {}),
-      ...(input.runtimeTargetEnvironmentId !== undefined
-        ? { runtimeTargetEnvironmentId: input.runtimeTargetEnvironmentId }
-        : {}),
+  function createModelOptions() {
+    return {
       ...(runtimeConfig.requestedModel ? { model: runtimeConfig.requestedModel } : {}),
       ...(runtimeConfig.requestedThinking ? { thinking: runtimeConfig.requestedThinking } : {}),
       ...(runtimeConfig.requestedTemperature !== undefined
         ? { temperature: runtimeConfig.requestedTemperature }
         : {}),
+      ...(runtimeConfig.requestedParallelToolCalls === undefined
+        ? {}
+        : { parallelToolCalls: runtimeConfig.requestedParallelToolCalls }),
       ...(runtimeConfig.requestedMaxSteps !== undefined
         ? { maxSteps: runtimeConfig.requestedMaxSteps }
         : {}),
@@ -598,8 +596,22 @@ export async function prepareHostedChatRuntimeCreationOptions<
       ...(runtimeConfig.deniedToolNames !== undefined
         ? { deniedTools: runtimeConfig.deniedToolNames }
         : {}),
+    };
+  }
+
+  function createAgentToolOptions() {
+    return {
       ...(input.agentConfig.toolLoading !== undefined
         ? { toolLoading: input.agentConfig.toolLoading }
+        : {}),
+      ...(input.agentConfig.bootstrapTools !== undefined
+        ? { bootstrapTools: input.agentConfig.bootstrapTools }
+        : {}),
+      ...(input.agentConfig.optionalBootstrapTools !== undefined
+        ? { optionalBootstrapTools: input.agentConfig.optionalBootstrapTools }
+        : {}),
+      ...(input.agentConfig.bootstrapSkill !== undefined
+        ? { bootstrapSkill: input.agentConfig.bootstrapSkill }
         : {}),
       ...(input.agentConfig.toolResultContext !== undefined
         ? { toolResultContext: input.agentConfig.toolResultContext }
@@ -607,8 +619,11 @@ export async function prepareHostedChatRuntimeCreationOptions<
       ...(input.agentConfig.knowledge !== undefined
         ? { knowledge: input.agentConfig.knowledge }
         : {}),
-      allowedProviderTools: runtimeConfig.requestedAllowedProviderTools,
-      includeRuntimeEssentialToolsWhenEmpty: runtimeConfig.includeRuntimeEssentialToolsWhenEmpty,
+    };
+  }
+
+  function createReplayAndRunOptions() {
+    return {
       ...(input.serverResolvedToolExposureCheckpoint
         ? { serverResolvedToolExposureCheckpoint: input.serverResolvedToolExposureCheckpoint }
         : {}),
@@ -630,6 +645,27 @@ export async function prepareHostedChatRuntimeCreationOptions<
       ...(input.rootRunContext?.durableRootRun?.runId
         ? { runId: input.rootRunContext.durableRootRun.runId }
         : {}),
+    };
+  }
+
+  return {
+    creationOptions: {
+      projectId: input.projectId,
+      ...(input.request.projectSlug ? { projectSlug: input.request.projectSlug } : {}),
+      authToken: input.authToken,
+      instructions: agentInstructions,
+      ...(input.branchId !== undefined ? { branchId: input.branchId } : {}),
+      ...(input.runtimeTargetKind !== undefined
+        ? { runtimeTargetKind: input.runtimeTargetKind }
+        : {}),
+      ...(input.runtimeTargetEnvironmentId !== undefined
+        ? { runtimeTargetEnvironmentId: input.runtimeTargetEnvironmentId }
+        : {}),
+      ...createModelOptions(),
+      ...createAgentToolOptions(),
+      allowedProviderTools: runtimeConfig.requestedAllowedProviderTools,
+      includeRuntimeEssentialToolsWhenEmpty: runtimeConfig.includeRuntimeEssentialToolsWhenEmpty,
+      ...createReplayAndRunOptions(),
       agentId: input.agentConfig.id,
       ...(input.rootRunContext?.effectiveParentRunId
         ? { parentRunId: input.rootRunContext.effectiveParentRunId }
@@ -699,6 +735,9 @@ export async function prepareHostedChatExecution<
     tools?: true | string[];
     deniedTools?: string[];
     toolLoading?: AgentConfig["toolLoading"];
+    bootstrapTools?: AgentConfig["bootstrapTools"];
+    optionalBootstrapTools?: AgentConfig["optionalBootstrapTools"];
+    bootstrapSkill?: AgentConfig["bootstrapSkill"];
     toolResultContext?: AgentConfig["toolResultContext"];
     knowledge?: AgentConfig["knowledge"];
   },
@@ -711,18 +750,25 @@ export async function prepareHostedChatExecution<
 ): Promise<
   HostedChatExecutionPreparationResult<TRuntimeAgentDefinition, TRuntimeResult>
 > {
-  if (input.request.conversationId && !input.request.durableRootRun) {
-    throw new Error("Hosted conversation execution requires an API-admitted durable root run");
+  function assertDurableRunAdmission() {
+    if (input.request.conversationId && !input.request.durableRootRun) {
+      throw new Error("Hosted conversation execution requires an API-admitted durable root run");
+    }
+    if (input.request.durableRootRun && !hostedTerminalCanonicalRunId(input.request)) {
+      throw new Error("Current run terminal authority is required");
+    }
   }
-  if (input.request.durableRootRun && !hostedTerminalCanonicalRunId(input.request)) {
-    throw new Error("Current run terminal authority is required");
-  }
+  assertDurableRunAdmission();
   const normalized = normalizeParsedHostedChatRequest(input.request);
   const rootRunEventWriterCapability = input.request.durableRootRun
     ? createHostedRunEventWriterCapabilityForRequest(input.request, {
       apiUrl: input.apiUrl.toString(),
       runId: input.request.durableRootRun.runId,
       canonicalRunId: hostedTerminalCanonicalRunId(input.request),
+      acceptedChildEvidence: (projectId, signal) =>
+        hostedAcceptedChildEvidence(input.request, projectId, signal, {
+          apiUrl: input.apiUrl.toString(),
+        }),
       inheritedAdmitter: hostedInheritedRunAdmitter(input.request, {
         apiUrl: input.apiUrl.toString(),
       }),
@@ -794,6 +840,9 @@ export async function prepareHostedChatExecution<
       abortSignal: input.abortSignal,
       providerReplayCheckpointMessageIds,
       trustedHostedHistoryMessageIds: input.request.serverResolvedTrustedHostedHistoryMessageIds,
+      trustedToolReplayMessageIds: input.request.serverEnvelopeVerified === true
+        ? normalized.effectiveMessages.map((message) => message.id)
+        : undefined,
       legacyLoadSkillReplayAllowed: input.legacyLoadSkillReplayAllowed,
       historicalToolInputRetention: {
         diagnostics: historicalToolInputCompactions,
@@ -853,8 +902,18 @@ export async function prepareHostedChatExecution<
   }
   const creationOptions = {
     ...runtimePreparation.creationOptions,
+    ...(input.request.serverResolvedRootRunId
+      ? { rootRunId: input.request.serverResolvedRootRunId }
+      : {}),
+    ...(input.request.serverResolvedTaskInput
+      ? {
+        taskInput: input.request.serverResolvedTaskInput,
+        rootRunId: input.request.serverResolvedTaskInput.rootRunId,
+      }
+      : {}),
     ...(submittedFormInputResult ? { submittedFormInputResult } : {}),
   };
+  bindHostedToolRunAuthorization(creationOptions, input.request);
   registerHostedAgentPauseCreationOptions(
     creationOptions,
     input.request,
@@ -885,25 +944,43 @@ export function restoreTrustedHostedPolicyMetadataFromUiMessages(
   if (!trustedSourceMessageIds || trustedSourceMessageIds.length === 0) {
     return [...runtimeMessages];
   }
-  const trustedSourceIds = createPrivateMap<string, true>();
-  for (let index = 0; index < trustedSourceMessageIds.length; index++) {
-    if (!Object.hasOwn(trustedSourceMessageIds, index)) continue;
-    const messageId = trustedSourceMessageIds[index];
-    if (typeof messageId === "string") trustedSourceIds.set(messageId, true);
-  }
-  const sourceById = createPrivateMap<string, ChatUiMessage | null>();
-  for (let index = 0; index < sourceMessages.length; index++) {
-    if (!Object.hasOwn(sourceMessages, index)) continue;
-    const message = sourceMessages[index]!;
-    if (!message.id || !trustedSourceIds.has(message.id)) continue;
-    if (
-      sourceById.has(message.id) ||
-      (message.role !== "assistant" && message.role !== "tool")
-    ) {
-      sourceById.set(message.id, null);
-    } else {
-      sourceById.set(message.id, message);
+  function collectTrustedSourceMessages(ids: readonly string[]) {
+    const trustedSourceIds = createPrivateMap<string, true>();
+    for (let index = 0; index < ids.length; index++) {
+      if (!Object.hasOwn(ids, index)) continue;
+      const messageId = ids[index];
+      if (typeof messageId === "string") trustedSourceIds.set(messageId, true);
     }
+    const sourceById = createPrivateMap<string, ChatUiMessage | null>();
+    for (let index = 0; index < sourceMessages.length; index++) {
+      if (!Object.hasOwn(sourceMessages, index)) continue;
+      const message = sourceMessages[index]!;
+      if (!message.id || !trustedSourceIds.has(message.id)) continue;
+      if (
+        sourceById.has(message.id) ||
+        (message.role !== "assistant" && message.role !== "tool")
+      ) {
+        sourceById.set(message.id, null);
+      } else {
+        sourceById.set(message.id, message);
+      }
+    }
+
+    return sourceById;
+  }
+  const sourceById = collectTrustedSourceMessages(trustedSourceMessageIds);
+
+  function restoreMessagePolicyMetadata(
+    message: AgentRuntimeMessage,
+    sourceMessage: ChatUiMessage | null | undefined,
+  ): AgentRuntimeMessage {
+    if (message.role === "tool") {
+      return inheritTrustedPlatformPolicyToolResultMetadata(message, (id) => sourceById.get(id));
+    }
+    if (sourceMessage?.role === "assistant" && message.role === "assistant") {
+      return inheritTrustedPlatformPolicyMessageMetadata(sourceMessage, message);
+    }
+    return message;
   }
 
   const restoredMessages: AgentRuntimeMessage[] = [];
@@ -911,11 +988,7 @@ export function restoreTrustedHostedPolicyMetadataFromUiMessages(
     if (!Object.hasOwn(runtimeMessages, index)) continue;
     const message = runtimeMessages[index]!;
     const sourceMessage = sourceById.get(message.id);
-    const restoredMessage = message.role === "tool"
-      ? inheritTrustedPlatformPolicyToolResultMetadata(message, (id) => sourceById.get(id))
-      : sourceMessage && sourceMessage.role === "assistant" && message.role === "assistant"
-      ? inheritTrustedPlatformPolicyMessageMetadata(sourceMessage, message)
-      : message;
+    const restoredMessage = restoreMessagePolicyMetadata(message, sourceMessage);
     restoredMessages[restoredMessages.length] = sourceMessage
       ? inheritTrustedHostedHistorySourceIdentity(sourceMessage, restoredMessage)
       : restoredMessage;
@@ -930,6 +1003,7 @@ export async function prepareHostedChatRuntimeMessages(
 ): Promise<AgentRuntimeMessage[]> {
   if (!options.authToken || !options.apiUrl) {
     const runtimeMessages = await prepareAgentRuntimeMessagesFromUiMessages({
+      trustedToolReplayMessageIds: options.trustedToolReplayMessageIds,
       messages,
       emptyConversationPrompt: options.emptyConversationPrompt,
       providerOwnedToolNames: options.providerOwnedToolNames,
@@ -961,6 +1035,7 @@ export async function prepareHostedChatRuntimeMessages(
   const apiUrl = options.apiUrl;
 
   const runtimeMessages = await prepareAgentRuntimeMessagesFromUiMessages({
+    trustedToolReplayMessageIds: options.trustedToolReplayMessageIds,
     messages,
     emptyConversationPrompt: options.emptyConversationPrompt,
     providerOwnedToolNames: options.providerOwnedToolNames,

@@ -1,3 +1,5 @@
+import { isBun, isNode } from "#veryfront/platform/compat/runtime.ts";
+import { captureLocalReactPeers } from "#veryfront/platform/compat/react-paths.ts";
 import type { HandlerContext } from "../../types.ts";
 import type { ResponseBuilder } from "#veryfront/security/index.ts";
 import { join as joinPath } from "#veryfront/compat/path/index.ts";
@@ -8,6 +10,7 @@ import {
   resolveProjectReactVersion,
 } from "#veryfront/transforms/esm/package-registry.ts";
 import { createHandlerDependencyPinningSource } from "#veryfront/server/handlers/utils/dependency-pinning-source.ts";
+import { getRuntimeModuleLoader } from "#veryfront/platform/adapters/module-loader.ts";
 import { runWithHeadCollector } from "#veryfront/react/head-collector.ts";
 
 type AppReservedModule = typeof import("../../../../rendering/app-reserved.ts");
@@ -29,11 +32,15 @@ export async function tryNotFoundFallback(
   requestedDependencySnapshot?: DependencyPinningSnapshot,
 ): Promise<Response | null> {
   try {
+    const reactPeers = (isNode || isBun) && !getRuntimeModuleLoader(ctx.adapter)
+      ? captureLocalReactPeers()
+      : undefined;
     const dependencyPinningSource = createHandlerDependencyPinningSource(ctx);
     const dependencySnapshot = await resolveDependencyPinningSnapshot(
       dependencyPinningSource,
       requestedDependencySnapshot?.cacheKey,
       requestedDependencySnapshot?.dependencies,
+      requestedDependencySnapshot?.configuredVersions,
     );
     const appRoot = joinPath(
       ctx.projectDir,
@@ -58,10 +65,13 @@ export async function tryNotFoundFallback(
 
     const dirs = await collectAncestorDirs(searchBase, appRoot);
     const reactVersion = await resolveProjectReactVersion({
+      adapter: ctx.adapter,
+      reactPeers,
       projectDir: ctx.projectDir,
       config: ctx.config,
       dependencyPinningCacheKey: dependencySnapshot.cacheKey,
       dependencyPinningDependencies: dependencySnapshot.dependencies,
+      dependencyPinningConfiguredVersions: dependencySnapshot.configuredVersions,
       dependencyPinningSource,
     });
     // Server-trusted request environment. `resolvedEnvironment` and
@@ -74,7 +84,8 @@ export async function tryNotFoundFallback(
     // cache entry can never disagree with how it was built. The "preview" tail
     // is the platform-wide convention for an unresolved environment, the same
     // one that already picks the cache strategy and the no-cache headers.
-    const environment = ctx.resolvedEnvironment ?? ctx.requestContext?.mode ?? "preview";
+    const environment = ctx.resolvedEnvironment ?? ctx.requestContext?.mode ??
+      "preview";
     const contentSourceId = ctx.enriched?.contentSourceId ??
       computeContentSourceId(
         !!ctx.isLocalProject,
@@ -99,6 +110,11 @@ export async function tryNotFoundFallback(
       dependencySnapshot.dependencies,
       dependencyPinningSource,
       new URL(req.url).origin,
+      ctx.config?.build?.serverExternalPackages,
+      undefined,
+      undefined,
+      dependencySnapshot.configuredVersions,
+      reactPeers,
     );
 
     if (!NotFoundComp) return null;
@@ -106,7 +122,7 @@ export async function tryNotFoundFallback(
     const { getProjectReact, renderToStringAdapter } = await import(
       "#veryfront/react/compat/ssr-adapter/index.ts"
     );
-    const React = await getProjectReact(reactVersion, ctx.adapter);
+    const React = await getProjectReact(reactVersion, ctx.adapter, reactPeers);
 
     const element = React.createElement(NotFoundComp, {});
     let inner: string;
@@ -118,13 +134,14 @@ export async function tryNotFoundFallback(
             nonce: builder.nonce,
             renderContext,
             reactVersion,
+            reactPeers,
           }, ctx.adapter),
         { nonce: builder.nonce },
       );
       inner = rendered.result;
     } catch (_) {
-      /* expected: SSR render may fail, fall back to text extraction */
-      inner = (await extractNotFoundText(dirs, ctx)) ?? "<p>Not Found</p>";
+      /* A failed component may have rejected authorization or other application conditions. */
+      inner = "<p>Not Found</p>";
     }
 
     const html =
@@ -139,32 +156,4 @@ export async function tryNotFoundFallback(
     /* expected: entire not-found fallback may fail gracefully */
     return null;
   }
-}
-
-async function extractNotFoundText(
-  dirs: string[],
-  ctx: HandlerContext,
-): Promise<string | null> {
-  for (const dir of dirs) {
-    for (
-      const file of [
-        joinPath(dir, "not-found.tsx"),
-        joinPath(dir, "not-found.jsx"),
-      ]
-    ) {
-      try {
-        const st = await ctx.adapter.fs.stat(file);
-        if (!st.isFile) continue;
-
-        const src = await ctx.adapter.fs.readFile(file);
-        const match = src.match(/>\s*([^<]+?)\s*</);
-
-        if (match?.[1]) return `<p>${match[1]}</p>`;
-      } catch (_) {
-        /* expected: not-found file may not exist, try next */
-      }
-    }
-  }
-
-  return null;
 }

@@ -38,14 +38,14 @@ const MAX_UPSTREAM_REDIRECTS = 5;
 const MAX_TIMER_DELAY_MS = 2_147_483_647;
 
 export interface DependencyArtifactBuildClient {
-  uploadAsset(input: {
+  writeAsset(input: {
     artifactId: string;
     attemptCount: number;
     contentHash: string;
     contentType: DependencyArtifactContentType;
     bytes: Uint8Array<ArrayBuffer>;
   }): Promise<{ stored: true; existed: boolean }>;
-  reportResult(input: {
+  createResult(input: {
     artifactId: string;
     attemptCount: number;
     result: DependencyArtifactBuildResultBody;
@@ -746,13 +746,13 @@ function uniqueAssets(assets: readonly DependencyArtifactAsset[]): DependencyArt
   return [...new Map(assets.map((asset) => [asset.contentHash, asset])).values()];
 }
 
-async function reportFailedResult(
+async function createFailedResult(
   client: DependencyArtifactBuildClient,
   input: DependencyArtifactBuildTaskInput,
   result: Extract<DependencyArtifactBuildResultBody, { outcome: "failed" }>,
 ): Promise<void> {
   try {
-    await client.reportResult({
+    await client.createResult({
       artifactId: input.artifact_id,
       attemptCount: input.attempt_count,
       result,
@@ -802,7 +802,7 @@ export async function runDependencyArtifactBuild(
           : "Dependency artifact policy denied the build",
         ...(input.policy.decision === "too_young" ? { retry_after: input.policy.retry_after } : {}),
       };
-      await reportFailedResult(client, input, failedResult);
+      await createFailedResult(client, input, failedResult);
       deps.signal?.throwIfAborted();
       const durationMs = Math.max(0, now() - startedAt);
       recordMetric({
@@ -832,7 +832,7 @@ export async function runDependencyArtifactBuild(
           "Dependency artifact hash verification failed",
         );
       }
-      await client.uploadAsset({
+      await client.writeAsset({
         artifactId: input.artifact_id,
         attemptCount: input.attempt_count,
         contentHash: asset.contentHash,
@@ -854,7 +854,7 @@ export async function runDependencyArtifactBuild(
         })),
       },
     };
-    const published = await client.reportResult({
+    const published = await client.createResult({
       artifactId: input.artifact_id,
       attemptCount: input.attempt_count,
       result: publication,
@@ -893,7 +893,7 @@ export async function runDependencyArtifactBuild(
       failure_code: code,
       failure_message: sanitizedFailureMessage(error),
     };
-    await reportFailedResult(client, input, result);
+    await createFailedResult(client, input, result);
     deps.signal?.throwIfAborted();
     const durationMs = Math.max(0, now() - startedAt);
     recordMetric({

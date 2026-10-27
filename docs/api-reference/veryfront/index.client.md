@@ -1,7 +1,7 @@
 ---
 title: "veryfront/index.client"
 description: "Browser- and SSR-safe helpers from the `veryfront` package. This entrypoint exposes the root package's client-safe configuration, platform, routing, data, and security helpers without server bootstrap functions. Most app code can import these helpers from `veryfront`; use this explicit entrypoint when a browser or SSR module needs to declare that boundary directly."
-order: 14
+order: 15
 ---
 
 ## Import
@@ -47,7 +47,7 @@ export function GET() {
 | `createValidationError`  | Create an input validation error. Convenience wrapper around INPUT_VALIDATION_FAILED.create().                                                                                                                     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/input-validation/errors.ts)       |
 | `csrfMutationHeaders`    | Add the double-submit token to a browser mutation aimed at this origin.                                                                                                                                            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/csrf/browser-mutation-headers.ts) |
 | `defineConfig`           | Define a Veryfront project configuration object.                                                                                                                                                                   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/config/define-config-core.ts)              |
-| `defineConfigWithEnv`    | Define a Veryfront project configuration from the current environment name.                                                                                                                                        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/config/define-config.ts)                   |
+| `defineConfigWithEnv`    | Define a Veryfront project configuration from the current environment name.                                                                                                                                        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/config/define-config.client.ts)            |
 | `forbidden`              | Create a 403 Forbidden response.                                                                                                                                                                                   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/http/responses.ts)         |
 | `getEnv`                 | Read an environment variable from the active project scope.                                                                                                                                                        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/process/env.ts)            |
 | `json`                   | Create a JSON response with the correct content type.                                                                                                                                                              | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/http/responses.ts)         |

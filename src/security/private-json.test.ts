@@ -85,6 +85,19 @@ describe("private JSON serialization", () => {
     assertEquals(observations, 0);
   });
 
+  it("keeps the default structural bound while supporting a bounded owned event budget", () => {
+    const values = Array.from({ length: 100_001 }, () => 0);
+    assertThrows(() => privateJsonStringify(values), TypeError);
+    assertEquals(
+      JSON.parse(privateJsonStringify(values, null, undefined, 100_010)).length,
+      values.length,
+    );
+    assertThrows(() => privateJsonStringify([0, 1, 2], null, undefined, 3), TypeError);
+    for (const budget of [0, -1, Number.NaN, Number.POSITIVE_INFINITY, 1.5]) {
+      assertThrows(() => privateJsonStringify([], null, undefined, budget), TypeError);
+    }
+  });
+
   it("rejects cycles and bigint values", () => {
     const value: { self?: unknown } = {};
     value.self = value;

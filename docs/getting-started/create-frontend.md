@@ -1,4 +1,5 @@
 ---
+sidebarSection: guides
 title: "Create frontend"
 description: "Add a chat page that streams responses from a Veryfront agent."
 order: 8
@@ -43,11 +44,9 @@ of a bulleted list.
 
 ## Supply the Markdown renderer
 
-[Create project](./create-project.md) preselects the `ai-agent` template, and
-that starter, like the other chat starters, scaffolds
-`app/markdown-renderer.tsx`, so those projects already have this file. Create it
-yourself if yours does not: the `minimal` and `agentic-workflow` templates ship
-without a renderer, as does a project you added Veryfront to.
+The `ai-agent` and other chat starters include `app/markdown-renderer.tsx`.
+Create it if your project lacks it. The `minimal` and `agentic-workflow`
+templates and existing apps need this step.
 
 ```bash
 npm install --save-exact react-markdown@9.0.3 remark-gfm@4.0.1
@@ -89,7 +88,7 @@ export function MarkdownRenderer({ source }: MarkdownRendererProps): React.JSX.E
         ),
         // Auto-loading images would let an injected answer beacon to arbitrary
         // hosts. Render inert text, not an anchor: Markdown allows a linked
-        // image wrapped in a link, and an anchor here would nest inside
+        // image (`[![alt](src)](href)`), and an anchor here would nest inside
         // that link, which is invalid HTML and breaks hydration.
         img: ({ src, alt }) => (
           <span title={typeof src === "string" ? src : undefined}>{alt || "image"}</span>

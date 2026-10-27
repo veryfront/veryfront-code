@@ -13,6 +13,10 @@ import {
   type RuntimeAgentControlPlaneStreamRequest,
   RuntimeAgentRunInvocationSchema,
 } from "../index.ts";
+import {
+  parseRuntimeAgentRunInvocationValue,
+  safeParseRuntimeAgentRunInvocationValue,
+} from "./agent-invocation-contract.ts";
 import { DEFAULT_LIMITS } from "#veryfront/security/input-validation/types.ts";
 
 const conversationId = "10000000-1000-4000-8000-100000000001";
@@ -412,54 +416,85 @@ describe("agent/runtime-agent-invocation-contract", () => {
     });
   });
 
-  it("rejects agent sources that do not match the selected runtime target", () => {
-    assertThrows(
-      () =>
-        RuntimeAgentRunInvocationSchema.parse(createInvocation({
-          run: {
-            ...createInvocation().run,
-            project: {
-              projectId,
-              projectSlug: "demo-project",
-              runtimeTargetKind: "environment",
-              runtimeTargetEnvironmentId: environmentId,
-            },
-          },
-          agentSource: { type: "branch", branch: "main" },
-        })),
-      Error,
-      "environment runtime target requires an environment agent source",
+  it("keeps source selection independent of the execution target", () => {
+    for (
+      const project of [
+        { runtimeTargetKind: "main_branch", sourceTargetEnvironmentId: environmentId },
+        {
+          runtimeTargetKind: "preview_branch",
+          runtimeTargetBranchId: branchId,
+          sourceTargetEnvironmentId: environmentId,
+        },
+      ]
+    ) {
+      const parsed = RuntimeAgentRunInvocationSchema.parse(createInvocation({
+        run: {
+          ...createInvocation().run,
+          project: { projectId, projectSlug: "demo-project", ...project },
+        },
+        agentSource: { type: "environment", environmentName: "staging", releaseId: "release-1" },
+      }));
+      assertEquals(parsed.run.project.sourceTargetEnvironmentId, environmentId);
+      assertEquals(
+        buildRuntimeAgentControlPlaneStreamRequestFromInvocation(parsed).sourceTargetEnvironmentId,
+        environmentId,
+      );
+    }
+    for (
+      const project of [
+        { runtimeTargetKind: "preview_branch", runtimeTargetBranchId: branchId },
+        { runtimeTargetKind: "environment", runtimeTargetEnvironmentId: environmentId },
+      ]
+    ) {
+      const parsed = RuntimeAgentRunInvocationSchema.parse(createInvocation({
+        run: {
+          ...createInvocation().run,
+          project: { projectId, projectSlug: "demo-project", ...project },
+        },
+        agentSource: { type: "release", releaseId: "release-1" },
+      }));
+      assertEquals(parsed.agentSource, { type: "release", releaseId: "release-1" });
+    }
+  });
+
+  it("requires an explicit branch source selector on an environment execution", () => {
+    const invocation = createInvocation({
+      run: {
+        ...createInvocation().run,
+        project: {
+          projectId,
+          projectSlug: "demo-project",
+          runtimeTargetKind: "environment",
+          runtimeTargetEnvironmentId: environmentId,
+        },
+      },
+      agentSource: { type: "branch", branch: "feature/source" },
+    });
+    assertThrows(() => RuntimeAgentRunInvocationSchema.parse(invocation));
+    assertEquals(
+      RuntimeAgentRunInvocationSchema.parse({
+        ...invocation,
+        run: {
+          ...invocation.run,
+          project: { ...invocation.run.project, sourceTargetBranchId: null },
+        },
+      }).run.project.sourceTargetBranchId,
+      null,
     );
   });
 
-  it("rejects a release agent source outside a main-branch runtime target", () => {
-    assertThrows(
-      () =>
-        RuntimeAgentRunInvocationSchema.parse(createInvocation({
-          agentSource: { type: "release", releaseId: "release-1" },
-        })),
-      Error,
-      "release agent source requires a main-branch runtime target",
-      "a release source must not bind to a preview branch target",
-    );
-
+  it("rejects an environment source without its own or legacy environment ID", () => {
     assertThrows(
       () =>
         RuntimeAgentRunInvocationSchema.parse(createInvocation({
           run: {
             ...createInvocation().run,
-            project: {
-              projectId,
-              projectSlug: "demo-project",
-              runtimeTargetKind: "environment",
-              runtimeTargetEnvironmentId: environmentId,
-            },
+            project: { projectId, projectSlug: "demo-project", runtimeTargetKind: "main_branch" },
           },
-          agentSource: { type: "release", releaseId: "release-1" },
+          agentSource: { type: "environment", environmentName: "staging", releaseId: "release-1" },
         })),
       Error,
-      "release agent source requires a main-branch runtime target",
-      "a release source must not bind to an environment target",
+      "environment source requires its source environment identifier",
     );
   });
 
@@ -681,6 +716,338 @@ describe("agent/runtime-agent-invocation-contract", () => {
       skills: ["support-triage"],
       tools: ["search_knowledge", "get_file"],
     });
+  });
+
+  it("maps an authored deny-all agent config to an empty selector with a provider-only allowlist", () => {
+    const parsed = parseRuntimeAgentRunInvocationValue(createInvocation({
+      agentConfig: {
+        id: "builder",
+        name: "Builder",
+        description: "Runs without host tools.",
+        instructions: "Answer directly.",
+        skills: ["support-triage"],
+        tools: false,
+        providerTools: ["web_search", "code_execution"],
+        bootstrapTools: ["load_skill"],
+        optionalBootstrapTools: ["create_file"],
+        bootstrapSkill: "support-triage",
+      },
+      forwardedProps: {
+        activeChatId: "chat_123",
+        runtimeOverrides: { allowedTools: ["studio_focus_component", "web_search"] },
+      },
+    }));
+
+    assertEquals(parsed.agentConfig?.tools, []);
+    assertEquals(parsed.agentConfig?.providerTools, ["web_search", "code_execution"]);
+    assertEquals(parsed.agentConfig?.skills, []);
+    assertEquals(parsed.agentConfig?.bootstrapTools, undefined);
+    assertEquals(parsed.agentConfig?.optionalBootstrapTools, undefined);
+    assertEquals(parsed.agentConfig?.bootstrapSkill, undefined);
+    assertEquals(parsed.forwardedProps, {
+      activeChatId: "chat_123",
+      runtimeOverrides: { allowedTools: ["web_search"], toolAllowlist: ["web_search"] },
+    });
+  });
+
+  it("gives a deny-all agent without provider tools an explicit empty allowlist", () => {
+    const parsed = safeParseRuntimeAgentRunInvocationValue(createInvocation({
+      agentConfig: {
+        id: "builder",
+        name: "Builder",
+        description: "Runs without host tools.",
+        instructions: "Answer directly.",
+        tools: false,
+      },
+      forwardedProps: undefined,
+    }));
+
+    assertEquals(parsed.success, true);
+    if (!parsed.success) return;
+    assertEquals(parsed.data.agentConfig?.tools, []);
+    assertEquals(parsed.data.forwardedProps, {
+      runtimeOverrides: { allowedTools: [], toolAllowlist: [] },
+    });
+  });
+
+  function denyAllConfig(extra: Record<string, unknown> = {}) {
+    return {
+      id: "builder",
+      name: "Builder",
+      description: "Runs without host tools.",
+      instructions: "Answer directly.",
+      tools: false,
+      ...extra,
+    };
+  }
+
+  it("fails closed when a deny-all allowlist would exceed the override limit", () => {
+    const providerTools = Array.from({ length: 101 }, (_, index) => `provider_tool_${index}`);
+    const invocation = createInvocation({
+      agentConfig: denyAllConfig({ providerTools }),
+      forwardedProps: undefined,
+    });
+
+    const parsed = safeParseRuntimeAgentRunInvocationValue(invocation);
+    assertEquals(parsed.success, false);
+    const error = assertThrows(() => parseRuntimeAgentRunInvocationValue(invocation));
+    assertStringIncludes(String(error), "tools: false requires valid");
+  });
+
+  it("deduplicates deny-all provider tools before applying the override limit", () => {
+    const providerTools = Array.from({ length: 150 }, () => "web_search");
+    const parsed = parseRuntimeAgentRunInvocationValue(createInvocation({
+      agentConfig: denyAllConfig({ providerTools }),
+      forwardedProps: undefined,
+    }));
+
+    assertEquals(parsed.forwardedProps, {
+      runtimeOverrides: { allowedTools: ["web_search"], toolAllowlist: ["web_search"] },
+    });
+  });
+
+  it("fails closed when a deny-all invocation carries an invalid sibling override", () => {
+    const invalidOverrides: unknown[] = [
+      { maxSteps: 0 },
+      { thinking: -1 },
+      { maxOutputTokens: 1.5 },
+      "all-tools",
+      [],
+    ];
+    for (const runtimeOverrides of invalidOverrides) {
+      const parsed = safeParseRuntimeAgentRunInvocationValue(createInvocation({
+        agentConfig: denyAllConfig({ providerTools: ["web_search"] }),
+        forwardedProps: { runtimeOverrides },
+      }));
+      assertEquals(parsed.success, false, `accepted ${JSON.stringify(runtimeOverrides)}`);
+    }
+  });
+
+  it("rejects malformed deny-all forwardedProps instead of replacing them", () => {
+    for (const forwardedProps of [null, [], "props"]) {
+      const parsed = safeParseRuntimeAgentRunInvocationValue(createInvocation({
+        agentConfig: denyAllConfig({ providerTools: ["web_search"] }),
+        forwardedProps,
+      }));
+      assertEquals(parsed.success, false, `accepted ${JSON.stringify(forwardedProps)}`);
+    }
+  });
+
+  it("drops deny-all provider tools that collide with host tool names", () => {
+    const parsed = parseRuntimeAgentRunInvocationValue(createInvocation({
+      agentConfig: denyAllConfig({
+        skills: ["support-triage"],
+        knowledge: true,
+        providerTools: [
+          "invoke_agent",
+          "veryfront__invoke_agent",
+          "search_knowledge",
+          "load_skill",
+          "tool_search",
+          "form_input",
+          "agent_researcher",
+          "web_fetch",
+          "web_search",
+        ],
+      }),
+      forwardedProps: undefined,
+    }));
+
+    assertEquals(parsed.agentConfig?.tools, []);
+    assertEquals(parsed.forwardedProps, {
+      runtimeOverrides: { allowedTools: ["web_search"], toolAllowlist: ["web_search"] },
+    });
+  });
+
+  it("rejects malformed caller allowlists on a deny-all invocation", () => {
+    const malformed: Array<Record<string, unknown>> = [
+      { allowedTools: "none" },
+      { allowedTools: ["web_search", 1] },
+      { toolAllowlist: "none" },
+      { toolAllowlist: [null] },
+    ];
+    for (const runtimeOverrides of malformed) {
+      const parsed = safeParseRuntimeAgentRunInvocationValue(createInvocation({
+        agentConfig: denyAllConfig({ providerTools: ["web_search"] }),
+        forwardedProps: { runtimeOverrides },
+      }));
+      assertEquals(parsed.success, false, `accepted ${JSON.stringify(runtimeOverrides)}`);
+    }
+  });
+
+  it("restricts agent-stream runs through toolAllowlist and narrows by a caller toolAllowlist", () => {
+    const parsed = parseRuntimeAgentRunInvocationValue(createInvocation({
+      agentConfig: denyAllConfig({ providerTools: ["web_search", "code_execution"] }),
+      forwardedProps: { runtimeOverrides: { toolAllowlist: ["code_execution", "get_file"] } },
+    }));
+    assertEquals(parsed.forwardedProps, {
+      runtimeOverrides: { allowedTools: ["code_execution"], toolAllowlist: ["code_execution"] },
+    });
+  });
+
+  it("removes caller-injected tools from a deny-all invocation", () => {
+    const parsed = parseRuntimeAgentRunInvocationValue(createInvocation({
+      agentConfig: denyAllConfig({ providerTools: ["web_search"] }),
+      tools: [
+        { name: "web_search", description: "Injected caller tool", parameters: {} },
+        { name: "studio_focus_component", description: "Injected UI tool", parameters: {} },
+      ],
+      forwardedProps: undefined,
+    }));
+
+    assertEquals(parsed.tools, []);
+    assertEquals(parsed.forwardedProps, {
+      runtimeOverrides: { allowedTools: ["web_search"], toolAllowlist: ["web_search"] },
+    });
+  });
+
+  it("clears remote tool sources from a deny-all invocation", () => {
+    const parsed = parseRuntimeAgentRunInvocationValue(createInvocation({
+      agentConfig: denyAllConfig({
+        providerTools: ["get_file"],
+        mcpServers: [{ kind: "veryfront-api", toolPolicy: { allow: ["get_file"] } }],
+      }),
+      forwardedProps: {
+        runtimeOverrides: {
+          integrationToolDefinitions: [{ name: "get_file", description: "Integration tool" }],
+          serverResolvedIntegrationTools: [{ name: "get_file" }],
+        },
+      },
+    }));
+
+    assertEquals(parsed.agentConfig?.mcpServers, []);
+    assertEquals(parsed.forwardedProps, {
+      runtimeOverrides: { allowedTools: ["get_file"], toolAllowlist: ["get_file"] },
+    });
+  });
+
+  it("rejects a deny-all config that is oversized only through an unknown field", () => {
+    const parsed = safeParseRuntimeAgentRunInvocationValue(createInvocation({
+      agentConfig: denyAllConfig({
+        providerTools: ["web_search"],
+        unknownPadding: "x".repeat(70_000),
+      }),
+      tools: [{ name: "web_search", description: "Injected caller tool", parameters: {} }],
+      forwardedProps: {
+        runtimeOverrides: { allowedTools: ["web_search"], toolAllowlist: ["web_search"] },
+      },
+    }));
+    assertEquals(parsed.success, false);
+  });
+
+  it("forces eager tool loading for a deny-all agent", () => {
+    const parsed = parseRuntimeAgentRunInvocationValue(createInvocation({
+      agentConfig: denyAllConfig({ providerTools: ["web_search"], toolLoading: "deferred" }),
+      forwardedProps: undefined,
+    }));
+    assertEquals(parsed.agentConfig?.toolLoading, "eager");
+  });
+
+  it("disables the tool-result reader for a deny-all agent", () => {
+    const parsed = parseRuntimeAgentRunInvocationValue(createInvocation({
+      agentConfig: denyAllConfig({
+        providerTools: ["web_search"],
+        toolResultContext: { maxInlineBytes: 1_024 },
+      }),
+      forwardedProps: undefined,
+    }));
+    assertEquals(parsed.agentConfig?.toolResultContext, false);
+
+    const invalid = safeParseRuntimeAgentRunInvocationValue(createInvocation({
+      agentConfig: denyAllConfig({ toolResultContext: { maxInlineBytes: 0 } }),
+      forwardedProps: undefined,
+    }));
+    assertEquals(invalid.success, false);
+  });
+
+  it("enforces the forwardedProps size cap before discarding deny-all remote sources", () => {
+    const padding = "x".repeat(200_000);
+    for (
+      const key of ["integrationToolDefinitions", "serverResolvedIntegrationTools", "toolAllowlist"]
+    ) {
+      const parsed = safeParseRuntimeAgentRunInvocationValue(createInvocation({
+        agentConfig: denyAllConfig({ providerTools: ["web_search"] }),
+        forwardedProps: {
+          runtimeOverrides: { [key]: [{ name: "web_search", description: padding }] },
+        },
+      }));
+      assertEquals(parsed.success, false, `accepted oversized ${key}`);
+    }
+  });
+
+  it("rejects malformed caller-injected tools on a deny-all invocation instead of clearing them", () => {
+    for (const tools of ["web_search", [{ description: "missing name" }]]) {
+      const parsed = safeParseRuntimeAgentRunInvocationValue(createInvocation({
+        agentConfig: denyAllConfig({ providerTools: ["web_search"] }),
+        tools,
+      }));
+      assertEquals(parsed.success, false, `accepted ${JSON.stringify(tools)}`);
+    }
+  });
+
+  it("validates deny-all agent config fields before discarding them", () => {
+    const invalidFields: Array<Record<string, unknown>> = [
+      { bootstrapTools: Array.from({ length: 17 }, (_, index) => `tool_${index}`) },
+      { bootstrapSkill: "s".repeat(257) },
+      { bootstrapSkill: "" },
+      { skills: 5 },
+      { skills: [""] },
+      { skills: Array.from({ length: 70 }, () => "s".repeat(1_024)) },
+    ];
+    for (const fields of invalidFields) {
+      const parsed = safeParseRuntimeAgentRunInvocationValue(createInvocation({
+        agentConfig: denyAllConfig({ providerTools: ["web_search"], ...fields }),
+        forwardedProps: undefined,
+      }));
+      assertEquals(parsed.success, false, `accepted ${Object.keys(fields).join(",")}`);
+    }
+  });
+
+  it("validates the caller allowlist against the override contract before intersecting it", () => {
+    const invalidOverrides: Array<Record<string, unknown>> = [
+      { allowedTools: Array.from({ length: 101 }, () => "web_search") },
+      { allowedTools: [""] },
+      { allowedTools: ["web_search", ""] },
+    ];
+    for (const runtimeOverrides of invalidOverrides) {
+      const parsed = safeParseRuntimeAgentRunInvocationValue(createInvocation({
+        agentConfig: denyAllConfig({ providerTools: ["web_search"] }),
+        forwardedProps: { runtimeOverrides },
+      }));
+      assertEquals(parsed.success, false, `accepted ${JSON.stringify(runtimeOverrides)}`);
+    }
+  });
+
+  it("intersects large disjoint deny-all allowlists to an empty allowlist", () => {
+    const providerTools = Array.from({ length: 3_000 }, (_, index) => `p${index}`);
+    const toolAllowlist = Array.from({ length: 5_000 }, (_, index) => `caller_${index}`);
+    const parsed = parseRuntimeAgentRunInvocationValue(createInvocation({
+      agentConfig: denyAllConfig({ providerTools }),
+      forwardedProps: { runtimeOverrides: { toolAllowlist } },
+    }));
+    assertEquals(parsed.forwardedProps, {
+      runtimeOverrides: { allowedTools: [], toolAllowlist: [] },
+    });
+  });
+
+  it("leaves non-deny agent tool selections unchanged", () => {
+    const selections: Array<true | string[]> = [[], ["get_file"], true];
+    for (const tools of selections) {
+      const parsed = parseRuntimeAgentRunInvocationValue(createInvocation({
+        agentConfig: {
+          id: "builder",
+          name: "Builder",
+          description: "Builds with project skills.",
+          instructions: "Use project skills.",
+          tools,
+          bootstrapSkill: "support-triage",
+        },
+      }));
+
+      assertEquals(parsed.agentConfig?.tools, tools);
+      assertEquals(parsed.agentConfig?.bootstrapSkill, "support-triage");
+      assertEquals(parsed.forwardedProps, { activeChatId: "chat_123" });
+    }
   });
 
   it("rejects request-scoped agent config for a different agent", () => {

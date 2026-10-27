@@ -31,12 +31,19 @@ describe("build/renderer/services/css-bundler", () => {
     it("should minify CSS in production mode", () => {
       const result = createBundleResult();
       bundleCss(
-        { path: "style.css", content: "body {\n  color: red;\n  /* comment */\n}" },
+        {
+          path: "style.css",
+          content: "body {\n  color: red;\n  /* comment */\n}",
+        },
         { mode: "production", projectDir: "/tmp", external: [] },
         result,
       );
       const output = result.outputs.get("style.css")!;
-      assertEquals(output.content, "body{color:red}", "production CSS must be fully minified");
+      assertEquals(
+        output.content,
+        "body{color:red}",
+        "production CSS must be fully minified",
+      );
     });
 
     it("should not minify CSS in development mode", () => {
@@ -97,6 +104,27 @@ describe("build/renderer/services/css-bundler", () => {
   });
 
   describe("extractCssVariables", () => {
+    it("does not accept custom-property markers inside BEM selectors or prefixed names", () => {
+      assertEquals(extractCssVariables("abc--theme: red;"), {});
+      assertEquals(extractCssVariables(".button--primary:hover { --color: red; }"), {
+        color: "red",
+      });
+    });
+
+    it("keeps declaration precedence and ignores unterminated or malformed runs", () => {
+      assertEquals(
+        extractCssVariables(
+          "-".repeat(10000) +
+            "; --: bad; abc--theme: red; --theme: blue; --missing: value",
+        ),
+        { theme: "blue" },
+      );
+      assertEquals(
+        extractCssVariables("--a: ; --b: two > one; --c: three:four;"),
+        { b: "two > one", c: "three:four" },
+      );
+    });
+
     it("should extract CSS custom properties", () => {
       const css = `:root {
         --primary-color: #ff0000;
@@ -125,7 +153,10 @@ describe("build/renderer/services/css-bundler", () => {
         --font-stack: 'Helvetica Neue', Arial, sans-serif;
       `;
       const vars = extractCssVariables(css);
-      assertEquals(vars["bg-gradient"], "linear-gradient(to right, #000, #fff)");
+      assertEquals(
+        vars["bg-gradient"],
+        "linear-gradient(to right, #000, #fff)",
+      );
       assertEquals(vars["font-stack"], "'Helvetica Neue', Arial, sans-serif");
     });
 

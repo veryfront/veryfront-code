@@ -19,7 +19,7 @@ describe("integration command primitives", () => {
   it("passes native arguments and explicit connection independently in one call", async () => {
     const calls: unknown[] = [];
     const client = {
-      call: (...args: unknown[]) => {
+      runTool: (...args: unknown[]) => {
         calls.push(args);
         return Promise.resolve({ status: "success", result: { content: [] } });
       },
@@ -50,7 +50,7 @@ describe("integration command primitives", () => {
       provider_verification: { state: "not_checked" },
     };
     const client = {
-      readiness: (...args: unknown[]) => {
+      checkReadiness: (...args: unknown[]) => {
         calls.push(args);
         return Promise.resolve(result);
       },
@@ -72,7 +72,7 @@ describe("integration command primitives", () => {
   it("fails malformed arguments before calling a provider", async () => {
     let calls = 0;
     const client = {
-      call: () => {
+      runTool: () => {
         calls++;
       },
     } as unknown as IntegrationClient;
@@ -141,7 +141,7 @@ describe("complete CLI collection output", () => {
         yield { name: "last" };
       }
       const client = {
-        discover: rows,
+        listIntegrations: rows,
         listTools: rows,
         listConnections: rows,
       } as unknown as IntegrationClient;

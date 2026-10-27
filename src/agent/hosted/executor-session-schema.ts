@@ -10,6 +10,8 @@ import { verifyHostedRuntimeSourceBinding } from "#veryfront/agent/hosted/runtim
 const getIdentifierSchema = defineSchema((v) =>
   v.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/)
 );
+/** The identifier rule shared by executor bindings, such as `brokerInstanceId`. */
+export const getHostedExecutorIdentifierSchema = getIdentifierSchema;
 const getAllocationIdSchema = defineSchema((v) =>
   v.string().regex(/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/)
 );

@@ -1,5 +1,4 @@
 import {
-  readProviderOptions,
   toOpenAICompatibleMessages,
   toOpenAICompatibleTools,
   unwrapToolInputSchema,
@@ -13,7 +12,13 @@ import {
   rejectsOpenAISamplingParams,
   resolveOpenAIReasoningConfig,
 } from "./openai-reasoning-models.ts";
-import { defineOpenAIProviderOptions } from "./openai-provider-options.ts";
+import {
+  defineOpenAIProviderOptions,
+  readOpenAIProviderOptions,
+} from "./openai-provider-options.ts";
+
+const ArrayIsArray = Array.isArray;
+const ObjectHasOwn = Object.hasOwn;
 
 export interface OpenAICompatibleLanguageOptions extends ModelRuntimeCallOptions {
   serviceTier?: "auto" | "default" | "flex" | "scale";
@@ -64,19 +69,21 @@ export function buildOpenAIChatRequest(
   // keep merging that bucket at the lowest precedence. max_tokens is normalized
   // per bucket BEFORE merging so a higher-precedence bucket's max_tokens
   // override still beats a lower bucket's max_completion_tokens.
-  const bucketNames = [
-    ...(providerName === "openai" ? ["openai-compatible"] : []),
-    "openai",
-    providerName,
-  ];
+  const bucketNames = providerName === "openai"
+    ? ["openai-compatible", "openai", providerName]
+    : ["openai", providerName];
   const providerOpts: Record<string, unknown> = {};
-  for (const bucketName of bucketNames) {
+  for (let index = 0; index < bucketNames.length; index += 1) {
+    const bucketName = bucketNames[index]!;
     defineOpenAIProviderOptions(
       providerOpts,
-      normalizeNativeMaxTokens(readProviderOptions(options.providerOptions, bucketName), modelId),
+      normalizeNativeMaxTokens(
+        readOpenAIProviderOptions(options.providerOptions, [bucketName]),
+        modelId,
+      ),
     );
   }
-  const finalTools = Object.hasOwn(providerOpts, "tools") ? providerOpts.tools : tools;
+  const finalTools = ObjectHasOwn(providerOpts, "tools") ? providerOpts.tools : tools;
   const resolvedReasoning = resolveOpenAIReasoningConfig(
     modelId,
     providerName,
@@ -105,7 +112,13 @@ export function buildOpenAIChatRequest(
 
   // Reasoning models and models with fixed sampling params
   // reject sampling params outright. Emit warnings.
-  if (dropSamplingParams) {
+  const samplingWarningDetails = (openaiName: string) => {
+    if (fixedSampling) return `Dropped because this model uses fixed sampling parameters.`;
+    if (samplingRejected) return `Dropped because this model rejects ${openaiName}.`;
+    return `Dropped because reasoning was active for this request and OpenAI rejects ${openaiName} with reasoning.`;
+  };
+  const warnDroppedSamplingParams = () => {
+    if (!dropSamplingParams) return;
     const dropped: Array<[keyof typeof options, string]> = [
       ["temperature", "temperature"],
       ["topP", "top_p"],
@@ -118,25 +131,20 @@ export function buildOpenAIChatRequest(
           type: "unsupported-setting",
           provider: "openai",
           setting: key,
-          details: fixedSampling
-            ? `Dropped because this model uses fixed sampling parameters.`
-            : samplingRejected
-            ? `Dropped because this model rejects ${openaiName}.`
-            : `Dropped because reasoning was active for this request and OpenAI rejects ${openaiName} with reasoning.`,
+          details: samplingWarningDetails(openaiName),
         });
       }
     }
-  }
+  };
+  warnDroppedSamplingParams();
 
-  const body: OpenAICompatibleChatRequest = {
-    model: modelId,
-    messages,
-    ...(stream ? { stream: true, stream_options: { include_usage: true } } : {}),
-    ...(options.maxOutputTokens !== undefined
-      ? isNativeOpenAIModel(modelId)
-        ? { max_completion_tokens: options.maxOutputTokens }
-        : { max_tokens: options.maxOutputTokens }
-      : {}),
+  const tokenLimitFields = () => {
+    if (options.maxOutputTokens === undefined) return {};
+    return isNativeOpenAIModel(modelId)
+      ? { max_completion_tokens: options.maxOutputTokens }
+      : { max_tokens: options.maxOutputTokens };
+  };
+  const samplingAndStopFields = () => ({
     ...(!dropSamplingParams && options.temperature !== undefined
       ? { temperature: options.temperature }
       : {}),
@@ -144,23 +152,16 @@ export function buildOpenAIChatRequest(
     ...(options.stopSequences && options.stopSequences.length > 0
       ? { stop: [...options.stopSequences] }
       : {}),
-    ...(tools ? { tools } : {}),
-    ...(options.toolChoice !== undefined ? { tool_choice: options.toolChoice } : {}),
-    ...(options.seed !== undefined ? { seed: options.seed } : {}),
+  });
+  const penaltyFields = () => ({
     ...(!dropSamplingParams && options.presencePenalty !== undefined
       ? { presence_penalty: options.presencePenalty }
       : {}),
     ...(!dropSamplingParams && options.frequencyPenalty !== undefined
       ? { frequency_penalty: options.frequencyPenalty }
       : {}),
-    ...(reasoning !== undefined ? { reasoning_effort: reasoning.effort } : {}),
-    ...(typeof options.userId === "string" && options.userId.length > 0
-      ? { user: options.userId }
-      : {}),
-    ...(options.serviceTier !== undefined ? { service_tier: options.serviceTier } : {}),
-    ...(options.parallelToolCalls !== undefined
-      ? { parallel_tool_calls: options.parallelToolCalls }
-      : {}),
+  });
+  const responseFormatFields = () => ({
     ...(options.responseFormat && options.responseFormat.type !== "text"
       ? {
         response_format: options.responseFormat.type === "json" ? { type: "json_object" } : {
@@ -178,40 +179,67 @@ export function buildOpenAIChatRequest(
         },
       }
       : {}),
+  });
+  const userFields = () => ({
+    ...(typeof options.userId === "string" && options.userId.length > 0
+      ? { user: options.userId }
+      : {}),
+  });
+  const body: OpenAICompatibleChatRequest = {
+    model: modelId,
+    messages,
+    ...(stream ? { stream: true, stream_options: { include_usage: true } } : {}),
+    ...tokenLimitFields(),
+    ...samplingAndStopFields(),
+    ...(tools ? { tools } : {}),
+    ...(options.toolChoice !== undefined ? { tool_choice: options.toolChoice } : {}),
+    ...(options.seed !== undefined ? { seed: options.seed } : {}),
+    ...penaltyFields(),
+    ...(reasoning !== undefined ? { reasoning_effort: reasoning.effort } : {}),
+    ...userFields(),
+    ...(options.serviceTier !== undefined ? { service_tier: options.serviceTier } : {}),
+    ...(options.parallelToolCalls !== undefined
+      ? { parallel_tool_calls: options.parallelToolCalls }
+      : {}),
+    ...responseFormatFields(),
   };
 
   defineOpenAIProviderOptions(body as Record<string, unknown>, providerOpts);
   // Provider-native options may tune request behavior, but they must not
   // replace the runtime-owned transport mode, model, or conversation.
-  body.model = modelId;
-  body.messages = messages;
-  if (stream) {
-    body.stream = true;
-    body.stream_options = { include_usage: true };
-  } else {
-    delete body.stream;
-    delete body.stream_options;
-  }
-  if (suppressReasoningForFunctionTools) {
-    if (resolvedReasoning !== undefined || body.reasoning_effort !== undefined) {
-      warnings.push({
-        type: "unsupported-setting",
-        provider: "openai",
-        setting: "reasoning",
-        details: "Veryfront drops reasoning because this Chat Completions transport " +
-          "does not support reasoning alongside function tools.",
-      });
+  const applyTransportCapabilities = () => {
+    body.model = modelId;
+    body.messages = messages;
+    if (stream) {
+      body.stream = true;
+      body.stream_options = { include_usage: true };
+    } else {
+      delete body.stream;
+      delete body.stream_options;
     }
-    delete body.reasoning_effort;
-  }
+    if (suppressReasoningForFunctionTools) {
+      if (resolvedReasoning !== undefined || body.reasoning_effort !== undefined) {
+        warnings.push({
+          type: "unsupported-setting",
+          provider: "openai",
+          setting: "reasoning",
+          details: "Veryfront drops reasoning because this Chat Completions transport " +
+            "does not support reasoning alongside function tools.",
+        });
+      }
+      delete body.reasoning_effort;
+    }
+  };
+  applyTransportCapabilities();
   return body;
 }
 
 function hasOpenAIFunctionTools(value: unknown): boolean {
-  if (!Array.isArray(value)) {
+  if (!ArrayIsArray(value)) {
     return false;
   }
-  for (const tool of value) {
+  for (let index = 0; index < value.length; index += 1) {
+    const tool = value[index];
     if (
       typeof tool === "object" &&
       tool !== null &&

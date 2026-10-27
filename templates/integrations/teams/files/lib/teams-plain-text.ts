@@ -1,25 +1,82 @@
-export function htmlToPlainText(html: string): string {
-  // Strip tags to a fixed point so overlapping fragments cannot survive a
-  // single pass. Decode &amp; last so nested entities unescape exactly once.
-  let text = html;
-  let previous: string;
-  do {
-    previous = text;
-    text = text
-      .replace(
-        /<\/?(?:address|article|aside|blockquote|br|dd|div|dl|dt|fieldset|figcaption|figure|footer|form|h[1-6]|header|hr|li|main|nav|ol|p|pre|section|table|tbody|td|tfoot|th|thead|tr|ul)\b[^>]*>/gi,
-        " ",
-      )
-      .replace(/<[^>]*>/g, "");
-  } while (text !== previous);
+const capturedTextReplace = String.prototype.replace;
+const applyTextReplace = Reflect.apply;
 
-  return text
-    .replace(/&nbsp;/g, " ")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&amp;/g, "&")
+const namedEntityText: Record<string, string> = {
+  "&nbsp;": " ",
+  "&lt;": "<",
+  "&gt;": ">",
+  "&quot;": '"',
+  "&#39;": "'",
+  "&amp;": "&",
+};
+
+function decodeNamedEntities(value: string): string {
+  return applyTextReplace(capturedTextReplace, value, [
+    /&(?:nbsp|lt|gt|quot|#39|amp);/g,
+    (entity: string): string => namedEntityText[entity]!,
+  ]) as string;
+}
+
+const BLOCK_TAGS = new Set([
+  "address",
+  "article",
+  "aside",
+  "blockquote",
+  "br",
+  "dd",
+  "div",
+  "dl",
+  "dt",
+  "fieldset",
+  "figcaption",
+  "figure",
+  "footer",
+  "form",
+  "h1",
+  "h2",
+  "h3",
+  "h4",
+  "h5",
+  "h6",
+  "header",
+  "hr",
+  "li",
+  "main",
+  "nav",
+  "ol",
+  "p",
+  "pre",
+  "section",
+  "table",
+  "tbody",
+  "td",
+  "tfoot",
+  "th",
+  "thead",
+  "tr",
+  "ul",
+]);
+
+export function htmlToPlainText(html: string): string {
+  let text = "";
+  let cursor = 0;
+  while (cursor < html.length) {
+    const open = html.indexOf("<", cursor);
+    const close = open === -1 ? -1 : html.indexOf(">", open + 1);
+    if (close === -1) {
+      text += html.slice(cursor);
+      break;
+    }
+    text += html.slice(cursor, open);
+    const tag = html.slice(open, close + 1);
+    const tagName = /^<\/?(\w+)\b/.exec(tag)?.[1]?.toLowerCase();
+    if (BLOCK_TAGS.has(tagName ?? "")) {
+      text += " ";
+    }
+    cursor = close + 1;
+  }
+
+  return decodeNamedEntities(text)
     .replace(/\s+/g, " ")
     .trim();
 }

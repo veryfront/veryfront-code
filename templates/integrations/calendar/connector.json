@@ -79,7 +79,7 @@
     {
       "id": "calendar__list_calendars",
       "name": "List Calendars",
-      "description": "List all calendars in the authenticated user's calendar list",
+      "description": "List a page of calendars",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -88,19 +88,61 @@
           "maxResults": {
             "type": "number",
             "in": "query",
-            "description": "Maximum calendars to return",
+            "description": "Maximum calendars per page",
             "default": 100
+          },
+          "pageToken": {
+            "type": "string",
+            "in": "query",
+            "description": "Continuation token from nextPageToken. Keep the other query parameters unchanged."
           }
         },
         "response": {
-          "transform": "items"
+          "historicalSummary": {
+            "collectionKeys": [
+              "items",
+              "data",
+              "calendars"
+            ],
+            "collectionName": "calendars",
+            "itemFields": [
+              {
+                "name": "id"
+              },
+              {
+                "name": "summary"
+              },
+              {
+                "name": "timeZone"
+              },
+              {
+                "name": "accessRole"
+              },
+              {
+                "name": "primary"
+              }
+            ],
+            "outputFields": [
+              {
+                "name": "nextPageToken"
+              },
+              {
+                "name": "nextSyncToken"
+              },
+              {
+                "name": "pagination",
+                "kind": "object"
+              }
+            ],
+            "omitted": "other provider fields"
+          }
         }
       }
     },
     {
       "id": "calendar__list_events",
       "name": "List Events",
-      "description": "Get upcoming calendar events",
+      "description": "List a page of calendar events",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -126,7 +168,7 @@
           "maxResults": {
             "type": "number",
             "in": "query",
-            "description": "Maximum events",
+            "description": "Maximum events per page",
             "default": 10
           },
           "orderBy": {
@@ -140,17 +182,67 @@
             "in": "query",
             "description": "Expand recurring events",
             "default": true
+          },
+          "pageToken": {
+            "type": "string",
+            "in": "query",
+            "description": "Continuation token from nextPageToken. Keep the other query parameters unchanged."
           }
         },
         "response": {
-          "transform": "items"
+          "historicalSummary": {
+            "collectionKeys": [
+              "items",
+              "data",
+              "events"
+            ],
+            "collectionName": "events",
+            "itemFields": [
+              {
+                "name": "id"
+              },
+              {
+                "name": "summary"
+              },
+              {
+                "name": "start",
+                "kind": "object"
+              },
+              {
+                "name": "end",
+                "kind": "object"
+              },
+              {
+                "name": "status"
+              },
+              {
+                "name": "htmlLink"
+              }
+            ],
+            "outputFields": [
+              {
+                "name": "nextPageToken"
+              },
+              {
+                "name": "nextSyncToken"
+              },
+              {
+                "name": "timeZone"
+              },
+              {
+                "name": "pagination",
+                "kind": "object"
+              }
+            ],
+            "omitted": "event descriptions and other provider fields"
+          }
         }
       }
     },
     {
       "id": "calendar__create_event",
       "name": "Create Event",
-      "description": "Schedule a new calendar event",
+      "description": "Create event",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -198,7 +290,7 @@
     {
       "id": "calendar__get_event",
       "name": "Get Event",
-      "description": "Get details of a specific calendar event",
+      "description": "Get event",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -223,7 +315,7 @@
     {
       "id": "calendar__update_event",
       "name": "Update Event",
-      "description": "Update an existing calendar event",
+      "description": "Update event",
       "requiresWrite": true,
       "endpoint": {
         "method": "PATCH",
@@ -280,7 +372,7 @@
     {
       "id": "calendar__delete_event",
       "name": "Delete Event",
-      "description": "Delete a calendar event by ID",
+      "description": "Delete event",
       "requiresWrite": true,
       "endpoint": {
         "method": "DELETE",
@@ -311,7 +403,7 @@
     {
       "id": "calendar__find_free_time",
       "name": "Find Free Time",
-      "description": "Find available time slots in calendar",
+      "description": "Find free time",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",

@@ -46,14 +46,17 @@ export interface LabelProps
 
 /** Render a form label. */
 export function Label(
-  { className, size, weight, ref, ...props }: LabelProps,
+  { className, size, weight, ref, children, htmlFor, ...props }: LabelProps,
 ): React.ReactElement {
   return (
     <label
       className={cn(labelVariants({ size, weight }), className)}
       ref={ref}
+      htmlFor={htmlFor}
       {...props}
-    />
+    >
+      {children}
+    </label>
   );
 }
 

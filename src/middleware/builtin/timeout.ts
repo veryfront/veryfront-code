@@ -10,7 +10,7 @@ import { HTTP_GATEWAY_TIMEOUT } from "#veryfront/utils/constants/http.ts";
 
 const logger = serverLogger.component("timeout");
 
-const TIMEOUT_SENTINEL = Symbol("timeout");
+const TIMEOUT_SENTINEL = new Error("Request timeout");
 const DEFAULT_EXCLUDE_PATHS = ["/healthz", "/readyz", "/_health"];
 
 /** Options accepted by timeout. */

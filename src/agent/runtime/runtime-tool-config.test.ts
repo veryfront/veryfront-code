@@ -1,5 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
+import { VeryfrontError } from "#veryfront/errors";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { AgentConfig } from "../types.ts";
 import type { ProviderReplayCheckpoint } from "./provider-replay.ts";
@@ -13,6 +14,7 @@ import {
   getRuntimeToolBootstrapNames,
   getRuntimeToolExposureCheckpoint,
   resolveRuntimeToolLoading,
+  snapshotConfiguredToolBootstrapNames,
 } from "./runtime-tool-config.ts";
 
 function runtimeConfig(extra: Record<string, unknown> = {}): AgentConfig {
@@ -63,7 +65,7 @@ describe("agent/runtime-tool-config", () => {
     );
     assertEquals(
       resolveRuntimeToolLoading(runtimeConfig({
-        tools: { get_release: true, tool_search: false },
+        tools: { get_release: true, veryfront__tool_search: false },
         toolLoading: "deferred",
       })),
       {
@@ -131,7 +133,7 @@ describe("agent/runtime-tool-config", () => {
       resolveRuntimeToolLoading(runtimeConfig({
         tools: true,
         __vfToolLoadingMode: "deferred",
-        deniedTools: ["tool_search"],
+        deniedTools: ["veryfront__tool_search"],
       })),
       {
         mode: "eager",
@@ -141,7 +143,7 @@ describe("agent/runtime-tool-config", () => {
     assertEquals(
       resolveRuntimeToolLoading(runtimeConfig({
         tools: true,
-        deniedTools: ["tool_search"],
+        deniedTools: ["veryfront__tool_search"],
       })),
       {
         mode: "eager",
@@ -230,10 +232,10 @@ describe("agent/runtime-tool-config", () => {
       assertEquals(
         Array.from(
           getRuntimeToolBootstrapNames(runtimeConfig({
-            __vfToolBootstrapNames: ["tool_search", "veryfront__load_skill"],
+            __vfToolBootstrapNames: ["veryfront__load_skill", "veryfront__tool_search"],
           })) ?? [],
         ),
-        ["tool_search", "veryfront__load_skill"],
+        ["veryfront__load_skill", "veryfront__tool_search"],
       );
       assertEquals(
         Array.from(
@@ -338,6 +340,46 @@ describe("agent/runtime-tool-config", () => {
       );
     });
 
+    it("carries normalized discovery metadata and drops invalid discovery", () => {
+      assertEquals(
+        getRuntimeForwardedIntegrationToolDefs(runtimeConfig({
+          __vfForwardedIntegrationToolDefs: [
+            {
+              name: "search_docs",
+              description: "Search docs",
+              parameters: { type: "object" },
+              discovery: {
+                version: 1,
+                type: "integration",
+                domain: "docs",
+                resource: "pages",
+                extra: "dropped",
+              } as never,
+            },
+            {
+              name: "bad_discovery",
+              description: "Bad discovery",
+              parameters: { type: "object" },
+              discovery: { version: 1, type: "other" } as never,
+            },
+          ],
+        })),
+        [
+          {
+            name: "search_docs",
+            description: "Search docs",
+            parameters: { type: "object" },
+            discovery: { version: 1, type: "integration", domain: "docs", resource: "pages" },
+          },
+          {
+            name: "bad_discovery",
+            description: "Bad discovery",
+            parameters: { type: "object" },
+          },
+        ],
+      );
+    });
+
     it("returns undefined when no forwarded definitions are present", () => {
       assertEquals(getRuntimeForwardedIntegrationToolDefs(runtimeConfig()), undefined);
       assertEquals(
@@ -384,4 +426,48 @@ describe("agent/runtime-tool-config", () => {
       );
     });
   });
+});
+
+it("authored bootstrap selection is bounded, copied, and excludes veryfront__tool_search", () => {
+  assertEquals(snapshotConfiguredToolBootstrapNames(undefined), []);
+  const names = ["get_run"];
+  const snapshot = snapshotConfiguredToolBootstrapNames(names);
+  names[0] = "mutated";
+  assertEquals(snapshot, ["get_run"]);
+  const malformedSelections: unknown[] = [
+    null,
+    true,
+    "get_run",
+    [""],
+    ["veryfront__tool_search"],
+    ["x".repeat(513)],
+    ["get_run", 3],
+    Array(17).fill("get_run"),
+  ];
+  for (const malformed of malformedSelections) {
+    const error = assertThrows(
+      () => snapshotConfiguredToolBootstrapNames(malformed),
+      VeryfrontError,
+      "bootstrapTools",
+    );
+    assertEquals((error as VeryfrontError).slug, "config-invalid");
+  }
+});
+
+it("optional bootstrap hints retain the same bounded exact-name validation", () => {
+  assertEquals(snapshotConfiguredToolBootstrapNames(["create_file"], "optionalBootstrapTools"), [
+    "create_file",
+  ]);
+  for (
+    const invalid of [["veryfront__tool_search"], [""], Array(17).fill("create_file"), [
+      "create_file",
+      3,
+    ]]
+  ) {
+    assertThrows(
+      () => snapshotConfiguredToolBootstrapNames(invalid, "optionalBootstrapTools"),
+      VeryfrontError,
+      "optionalBootstrapTools",
+    );
+  }
 });

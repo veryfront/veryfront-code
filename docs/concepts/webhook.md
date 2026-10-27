@@ -104,7 +104,7 @@ apply an explicit input policy and keep authorization in application code.
 Conversation addressing belongs on the target. `conversationMode` may be
 `create_new`, `existing`, or `none`, and `existing` requires a `conversationId`
 UUID on the target. `none` is the default, and it is the wrong choice for an
-agent that delegates: `invoke_agent` needs a hosted conversation to attach the
+agent that delegates: `veryfront__invoke_agent` needs a hosted conversation to attach the
 child run to. Local runs execute standalone and therefore reject attempts to
 attach to an existing cloud conversation.
 

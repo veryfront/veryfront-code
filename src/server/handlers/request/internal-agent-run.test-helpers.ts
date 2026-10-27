@@ -107,6 +107,9 @@ async function sha256Base64url(body: string): Promise<string> {
   return base64urlEncodeBytes(new Uint8Array(digest));
 }
 
+// Match the verifier's host clock while workflow tests independently fake time.
+const signingDateNow = Date.now;
+
 export async function createControlPlaneSignature(
   body: string,
   overrides: Partial<{
@@ -125,7 +128,7 @@ export async function createControlPlaneSignature(
   ) as CryptoKeyPair;
   const publicKeyDer = await crypto.subtle.exportKey("spki", keyPair.publicKey);
   const publicKeyPem = encodePem("PUBLIC KEY", publicKeyDer);
-  const now = Math.floor(Date.now() / 1000);
+  const now = Math.floor(signingDateNow() / 1000);
 
   const header = base64urlEncode(JSON.stringify({ alg: "EdDSA", typ: "JWT" }));
   const payload = base64urlEncode(JSON.stringify({

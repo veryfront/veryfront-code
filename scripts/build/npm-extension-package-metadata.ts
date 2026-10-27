@@ -1,4 +1,16 @@
-import { dirname, isAbsolute, join, normalize, relative, toFileUrl } from "#std/path";
+import {
+  IMPORT_FROM,
+  IMPORT_TRIVIA,
+} from "../../src/modules/loader-shared/import-syntax.mjs";
+import { normalizeReactPeerDependencies } from "./npm-react-peers.ts";
+import {
+  dirname,
+  isAbsolute,
+  join,
+  normalize,
+  relative,
+  toFileUrl,
+} from "#std/path";
 import { parseNpmImport } from "./npm-dependency-sources.ts";
 import { MINIMUM_NODE_VERSION, NPM_NODE_ENGINE } from "./runtime-support.ts";
 
@@ -78,7 +90,8 @@ const TEST_ONLY_IMPORTS = new Set([
   "@std/testing/bdd",
 ]);
 
-const NODE_ENGINE_PATTERN = /^>=(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$/;
+const NODE_ENGINE_PATTERN =
+  /^>=(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$/;
 
 /**
  * Native npm dependencies must be pinned to a release that ships prebuilt
@@ -579,6 +592,8 @@ export function normalizeExtensionPackageJson(input: {
     delete pkg.peerDependencies;
   }
 
+  normalizeReactPeerDependencies(pkg);
+
   pkg.type = "module";
   const importPath = packageImportPath(pkg);
   if (importPath) {
@@ -662,11 +677,17 @@ function addExportTypes(pkg: {
 
 const BARE_IMPORT_SPECIFIER_PATTERNS = [
   // Static imports with bindings: `import x from "pkg"`, `import { a } from "pkg"`.
-  /^\s*import\s[^"'()]*?from\s*["']([^"'\n]+)["']/gm,
-  // Side-effect-only static imports: `import "pkg";`.
-  /^\s*import\s*["']([^"'\n]+)["']/gm,
+  new RegExp(
+    String
+      .raw`^[^\S\n]*import(?![\p{ID_Continue}$])${IMPORT_TRIVIA}(?:${IMPORT_FROM})?["']([^"'\n]+)["']`,
+    "gmu",
+  ),
   // Re-exports: `export { a } from "pkg"`, `export * from "pkg"`.
-  /^\s*export\s[^"'()]*?from\s*["']([^"'\n]+)["']/gm,
+  new RegExp(
+    String
+      .raw`^[^\S\n]*export(?![\p{ID_Continue}$])${IMPORT_TRIVIA}${IMPORT_FROM}["']([^"'\n]+)["']`,
+    "gmu",
+  ),
   // Dynamic imports: `import("pkg")`.
   /\bimport\s*\(\s*["']([^"'\n]+)["']\s*\)/g,
   // CommonJS requires: `require("pkg")`.

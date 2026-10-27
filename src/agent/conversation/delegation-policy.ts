@@ -1,3 +1,8 @@
+import { boundChildResultTelemetry } from "../child-run/result-telemetry.ts";
+import type {
+  ChildRunToolCallSnapshot,
+  ChildRunToolResultSnapshot,
+} from "../child-run/execution-snapshot.ts";
 import { extractLatestUserText } from "../artifacts/default-research-artifact-support.ts";
 import { buildRootOwnedChildRunResultHint } from "../child-run/result-summary.ts";
 import { isRecord } from "../../chat/conversation.ts";
@@ -94,10 +99,22 @@ export function withRootOwnedChildResultHint<T extends object>(
     return result;
   }
 
-  return {
+  const hinted = {
     ...result,
     rootResponseHint: buildRootOwnedChildResultHint(text),
   };
+  if (
+    "toolCalls" in hinted && Array.isArray(hinted.toolCalls) &&
+    "toolResults" in hinted && Array.isArray(hinted.toolResults)
+  ) {
+    return boundChildResultTelemetry(
+      hinted as T & RootOwnedChildResultHinted & {
+        toolCalls: ChildRunToolCallSnapshot[];
+        toolResults: ChildRunToolResultSnapshot[];
+      },
+    ) as T & RootOwnedChildResultHinted;
+  }
+  return hinted;
 }
 
 /** Builds invoke agent followup instruction. */
@@ -107,17 +124,16 @@ export function buildInvokeAgentFollowupInstruction(): string {
 
 /** Builds starter intent root ownership reminder. */
 export function buildStarterIntentRootOwnershipReminder(): string {
-  return `CRITICAL: For first-turn /plan and /research starter requests, keep the root assistant visibly owning the work, continue in the same turn after load_skill, and delegate only when isolation, parallelism, or a different tool/model budget materially helps.`;
+  return `The root assistant owns the first /plan or /research turn.`;
 }
 
 /** Message shape for build starter intent root ownership block. */
 export function buildStarterIntentRootOwnershipBlockMessage(): string {
-  return `Keep the first /plan or /research turn root-owned. Continue in the main thread after load_skill, explain the approach first, and delegate only when isolation, parallelism, or a different tool/model budget materially helps.`;
+  return `The first /plan or /research turn remains owned by the root assistant.`;
 }
 
 /** Shared load skill continuation reminder value. */
-export const LOAD_SKILL_CONTINUATION_REMINDER =
-  `CRITICAL: load_skill only loaded instructions. ${LOAD_SKILL_CONTINUE_SAME_TURN_NOW} ${LOAD_SKILL_ROOT_OWNERSHIP} Use the loaded skill guidance to proceed. ${LOAD_SKILL_DELEGATION_THRESHOLD} Do not stop immediately after load_skill.`;
+export const LOAD_SKILL_CONTINUATION_REMINDER = "Skill instructions are loaded.";
 /** Shared slash command artifact reminder value. */
 export const SLASH_COMMAND_ARTIFACT_REMINDER =
   `CRITICAL: This slash-command task names an exact artifact path. ${LOAD_SKILL_ROOT_OWNERSHIP} Treat that path as a required deliverable, and continue in the same turn. Delegate only when isolation materially helps.`;

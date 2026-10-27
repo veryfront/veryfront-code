@@ -111,7 +111,9 @@ export async function importFirstPartyExtensionModule<TModule>(
         sourceSpecifier,
         import.meta.url,
       ).href;
-      if (!isMissingFirstPartyExtensionModule(error, [expectedSourceSpecifier])) {
+      if (
+        !isMissingFirstPartyExtensionModule(error, [expectedSourceSpecifier])
+      ) {
         throw error;
       }
       sourceError ??= error;
@@ -140,7 +142,9 @@ export async function importFirstPartyExtensionModule<TModule>(
 function captureImportOptions(
   options: unknown,
 ): CapturedFirstPartyExtensionImportOptions {
-  if (typeof options !== "object" || options === null || Array.isArray(options)) {
+  if (
+    typeof options !== "object" || options === null || Array.isArray(options)
+  ) {
     return throwInvalidImportOptions();
   }
 
@@ -193,7 +197,9 @@ function throwInvalidImportOptions(): never {
   throw new TypeError("Invalid first-party extension import options");
 }
 
-function assertValidSourceDirectory(sourceDirectory: unknown): asserts sourceDirectory is string {
+function assertValidSourceDirectory(
+  sourceDirectory: unknown,
+): asserts sourceDirectory is string {
   if (
     typeof sourceDirectory !== "string" ||
     !regexpMatches(FIRST_PARTY_SOURCE_DIRECTORY_PATTERN, sourceDirectory)
@@ -204,7 +210,9 @@ function assertValidSourceDirectory(sourceDirectory: unknown): asserts sourceDir
   }
 }
 
-function assertValidPackageName(packageName: unknown): asserts packageName is string {
+function assertValidPackageName(
+  packageName: unknown,
+): asserts packageName is string {
   if (
     typeof packageName !== "string" ||
     !regexpMatches(FIRST_PARTY_PACKAGE_PATTERN, packageName)
@@ -215,8 +223,14 @@ function assertValidPackageName(packageName: unknown): asserts packageName is st
   }
 }
 
-function assertValidEntry(label: string, entry: unknown): asserts entry is string {
-  if (typeof entry !== "string" || !regexpMatches(FIRST_PARTY_ENTRY_PATTERN, entry)) {
+function assertValidEntry(
+  label: string,
+  entry: unknown,
+): asserts entry is string {
+  if (
+    typeof entry !== "string" ||
+    !regexpMatches(FIRST_PARTY_ENTRY_PATTERN, entry)
+  ) {
     throw new TypeError(`Invalid first-party extension ${label}`);
   }
 }
@@ -318,17 +332,27 @@ const RUNTIME_TRAILER_LINE =
  * failure. Deno colours its `hint:` and `at` lines, so the escape is stripped
  * before the shape is tested.
  */
-function firstLineIfOnlyRuntimeTrailerFollows(message: string): string | undefined {
+function firstLineIfOnlyRuntimeTrailerFollows(
+  message: string,
+): string | undefined {
   const lines = ReflectApply(StringPrototypeSplit, message, ["\n"]) as string[];
   if (lines.length < 2) return undefined;
   for (let index = 1; index < lines.length; index += 1) {
-    const withoutEscape = ReflectApply(StringPrototypeReplaceAll, lines[index]!, [
-      ESCAPE_CHARACTER,
-      "",
-    ]) as string;
+    const withoutEscape = ReflectApply(
+      StringPrototypeReplaceAll,
+      lines[index]!,
+      [
+        ESCAPE_CHARACTER,
+        "",
+      ],
+    ) as string;
     const line = removeSgrResidue(withoutEscape);
-    if ((ReflectApply(StringPrototypeTrim, line, []) as string).length === 0) continue;
-    if (ReflectApply(RegExpPrototypeExec, RUNTIME_TRAILER_LINE, [line]) === null) {
+    if ((ReflectApply(StringPrototypeTrim, line, []) as string).length === 0) {
+      continue;
+    }
+    if (
+      ReflectApply(RegExpPrototypeExec, RUNTIME_TRAILER_LINE, [line]) === null
+    ) {
       return undefined;
     }
   }
@@ -344,11 +368,43 @@ function removeSgrResidue(value: string): string {
       | RegExpExecArray
       | null;
     if (!match) break;
-    result += ReflectApply(StringPrototypeSlice, value, [offset, match.index]) as string;
+    result += ReflectApply(StringPrototypeSlice, value, [
+      offset,
+      match.index,
+    ]) as string;
     offset = match.index + match[0].length;
   }
   SGR_RESIDUE.lastIndex = 0;
-  return result + (ReflectApply(StringPrototypeSlice, value, [offset]) as string);
+  return result +
+    (ReflectApply(StringPrototypeSlice, value, [offset]) as string);
+}
+
+/** Scan manifest boundaries once; a valid importer suffix accepts the remaining single line. */
+function reportedManifestPath(value: string): string | undefined {
+  const importer = /\s+imported from\s+\S/y;
+  const acceptsTail = (index: number): boolean => {
+    if (index === value.length) return true;
+    importer.lastIndex = index;
+    return ReflectApply(RegExpPrototypeExec, importer, [value]) !== null;
+  };
+  if (value[0] === '"' || value[0] === "'") {
+    const quoted = ReflectApply(RegExpPrototypeExec, /^["']([^"']+)["']/, [value]) as
+      | RegExpExecArray
+      | null;
+    const path = quoted?.[1];
+    return path && path.length > 13 && regexpMatches(/[/\\]package\.json$/, path) &&
+        acceptsTail(quoted![0].length)
+      ? path
+      : undefined;
+  }
+  const boundary = /[/\\]package\.json/g;
+  let match: RegExpExecArray | null;
+  while ((match = ReflectApply(RegExpPrototypeExec, boundary, [value]) as RegExpExecArray | null)) {
+    if (match.index > 0 && acceptsTail(boundary.lastIndex)) {
+      return ReflectApply(StringPrototypeSlice, value, [0, boundary.lastIndex]) as string;
+    }
+  }
+  return undefined;
 }
 
 /**
@@ -386,15 +442,14 @@ function matchReportedMissingSpecifier(message: string): string | undefined {
     return `${unknownExport[2]}/${unknownExport[1]!.slice(2)}`;
   }
 
-  const packageSubpath = ReflectApply(
+  const packageSubpath = regexpMatches(/[\r\n\u2028\u2029]/, message) ? null : ReflectApply(
     RegExpPrototypeExec,
-    /^Package subpath\s+["'](\.\/[^"']+)["']\s+is not defined by\s+["']exports["']\s+in\s+(?:["']([^"']+[/\\]package\.json)["']|(.+?[/\\]package\.json))(?:\s+imported from\s+.+)?$/,
+    /^Package subpath\s+["'](\.\/[^"']+)["']\s+is not defined by\s+["']exports["']\s+in\s+(\S.*)$/,
     [message],
   ) as RegExpExecArray | null;
   if (packageSubpath) {
-    const packageName = packageNameFromManifestPath(
-      packageSubpath[2] ?? packageSubpath[3]!,
-    );
+    const manifest = reportedManifestPath(packageSubpath[2]!);
+    const packageName = manifest === undefined ? undefined : packageNameFromManifestPath(manifest);
     if (packageName) return `${packageName}/${packageSubpath[1]!.slice(2)}`;
   }
 
@@ -441,8 +496,8 @@ function matchReportedMissingSpecifier(message: string): string | undefined {
       // trailing parenthetical names the owning package when the referrer
       // lives in the global Deno npm cache (`deno add npm:veryfront`).
       /^Could not find package\s+["']([^"']+)["']\s+from referrer\s+["'][^"']+["'](?:\s+\([^()]*\))?\.?$/,
-      /^Import\s+["']([^"']+)["']\s+not a dependency(?: and not in import map)?(?:\s+from\s+.+)?$/,
-      /^Unable to resolve\s+["']([^"']+)["'](?:\s+from\s+.+)?$/,
+      /^Import\s+["']([^"']+)["']\s+not a dependency(?: and not in import map)?(?:\s+from\s+\S.*)?$/,
+      /^Unable to resolve\s+["']([^"']+)["'](?:\s+from\s+\S.*)?$/,
     ]
   ) {
     const match = ReflectApply(RegExpPrototypeExec, pattern, [message]) as
@@ -478,12 +533,17 @@ function matchesExpectedSpecifier(
   }
 
   if (regexpMatches(FIRST_PARTY_PACKAGE_SPECIFIER_PATTERN, expectedSpecifier)) {
-    return regexpMatches(FIRST_PARTY_PACKAGE_SPECIFIER_PATTERN, reportedSpecifier) &&
+    return regexpMatches(
+      FIRST_PARTY_PACKAGE_SPECIFIER_PATTERN,
+      reportedSpecifier,
+    ) &&
       reportedSpecifier === expectedSpecifier;
   }
 
   const relativeFragment = expectedSpecifier.replaceAll("\\", "/");
-  if (!regexpMatches(SAFE_RELATIVE_PATH_FRAGMENT_PATTERN, relativeFragment)) return false;
+  if (!regexpMatches(SAFE_RELATIVE_PATH_FRAGMENT_PATTERN, relativeFragment)) {
+    return false;
+  }
   const normalizedReportedSpecifier = reportedSpecifier.replaceAll("\\", "/");
   if (
     reportedFilePath === undefined &&
@@ -550,7 +610,9 @@ function normalizeAbsoluteFilePath(path: string): string {
   if (regexpMatches(/^[A-Za-z]:\//, path)) {
     return `${path[0]!.toLowerCase()}${path.slice(1)}`;
   }
-  const uncPath = ReflectApply(RegExpPrototypeExec, /^\/\/([^/]+)(\/.*)$/, [path]) as
+  const uncPath = ReflectApply(RegExpPrototypeExec, /^\/\/([^/]+)(\/.*)$/, [
+    path,
+  ]) as
     | RegExpExecArray
     | null;
   return uncPath ? `//${uncPath[1]!.toLowerCase()}${uncPath[2]}` : path;
@@ -565,7 +627,9 @@ function isMissingModuleError(error: unknown): boolean {
   }
   const message = errorMessage(error);
   if (message === undefined) return false;
-  if (typeof code === "string" && MISSING_MODULE_ERROR_CODES.has(code)) return true;
+  if (typeof code === "string" && MISSING_MODULE_ERROR_CODES.has(code)) {
+    return true;
+  }
 
   return reportedMissingSpecifier(message) !== undefined;
 }

@@ -33,6 +33,11 @@ import {
 } from "./fork-runtime-stream.ts";
 
 import { markTrustedHostToolProvenance } from "#veryfront/tool/host-tool-provenance.ts";
+import {
+  bindHostedChildModelStreamTimeouts,
+  inheritHostedChildInferenceAuthority,
+  scopeHostedChildInferenceAuthority,
+} from "../hosted/inference-credential.ts";
 
 const encoder = new TextEncoder();
 
@@ -748,6 +753,84 @@ describe("agent/fork-runtime-stream", () => {
     assertEquals(parts, [{ type: "text-delta", text: "Done." }]);
   });
 
+  it("publishes only canonical trusted host names in a child fork", async () => {
+    const capturedInputs: RunAgentRuntimeForkStepInput[] = [];
+    const traceCalls: string[] = [];
+    const attributes: Record<string, unknown>[] = [];
+    const response: AgentResponse = {
+      text: "Done.",
+      messages: [
+        {
+          id: "assistant-1",
+          role: "assistant",
+          timestamp: 2,
+          parts: [{ type: "text", text: "Done." }],
+        },
+      ],
+      toolCalls: [],
+      status: "completed",
+      usage: {
+        promptTokens: 1,
+        completionTokens: 2,
+        totalTokens: 3,
+      },
+      metadata: { finishReason: "stop" },
+    };
+
+    const { streamResult, forkToolNames } = startAgentRuntimeForkWithHostTools({
+      apiUrl: "https://api.example.com",
+      authToken: "auth-token",
+      projectId: "project-1",
+      provider: "anthropic",
+      forkModel: "anthropic/claude-sonnet-4",
+      maxSteps: 1,
+      prompt: "Do the work.",
+      forkTools: {
+        create_file: markTrustedHostToolProvenance({
+          description: "Create a file.",
+          inputSchema: defineSchema((v) => v.object({ path: v.string() }))(),
+          execute: () => ({ ok: true }),
+        }),
+      },
+      forkToolNames: ["create_file", "veryfront__create_file"],
+      traceTools: {
+        trace: (spanName, operation) => {
+          traceCalls.push(spanName);
+          return operation();
+        },
+        buildAttributes: ({ toolName, toolCallId }) => ({ toolName, toolCallId }),
+        setAttributes: (nextAttributes) => {
+          attributes.push(nextAttributes);
+        },
+      },
+      runStep: async (input) => {
+        capturedInputs.push(input);
+        const createFileTool = input.runtimeTools.veryfront__create_file;
+        if (createFileTool && typeof createFileTool !== "boolean") {
+          await createFileTool.execute({ path: "artifact.md" }, { toolCallId: "tool-call-1" });
+        }
+
+        return {
+          stream: createRuntimeEventStream([{ type: "text-delta", delta: "Done." }]),
+          responsePromise: Promise.resolve(response),
+        };
+      },
+      buildInstructions: () => "Base instructions.",
+    });
+
+    const parts: ForkPart[] = [];
+    for await (const part of streamResult.fullStream) {
+      parts.push(part);
+    }
+
+    assertEquals(forkToolNames, ["veryfront__create_file"]);
+    assertEquals(capturedInputs[0]?.forkToolNames, forkToolNames);
+    assertEquals(Object.keys(capturedInputs[0]?.runtimeTools ?? {}), ["veryfront__create_file"]);
+    assertEquals(traceCalls, ["tool.veryfront__create_file"]);
+    assertEquals(attributes, [{ toolName: "veryfront__create_file", toolCallId: "tool-call-1" }]);
+    assertEquals(parts, [{ type: "text-delta", text: "Done." }]);
+  });
+
   it("preserves and executes an authorized remote alias across repeated child runtimes", async () => {
     const providerId = "child-remote-tool-regression";
     let streamCalls = 0;
@@ -1217,5 +1300,41 @@ describe("agent/fork-runtime-stream", () => {
     }
 
     assertEquals(capturedReasoning, { enabled: true, budgetTokens: 2048 });
+  });
+  it("applies inherited host model stream budgets to a delegated child step", async () => {
+    const rootOptions = {} as Parameters<typeof bindHostedChildModelStreamTimeouts>[0];
+    const childContext = {} as Parameters<typeof bindHostedChildModelStreamTimeouts>[0];
+    bindHostedChildModelStreamTimeouts(rootOptions, { firstProgressTimeoutMs: 20 });
+    scopeHostedChildInferenceAuthority(childContext, rootOptions);
+    const silentModel = {
+      provider: "test",
+      modelId: "silent",
+      doGenerate: () => Promise.reject(new Error("Unexpected generate")),
+      doStream: () => Promise.resolve({ stream: new ReadableStream({}) }),
+    } as unknown as ModelRuntime;
+    const stepInput: RunAgentRuntimeForkStepInput = {
+      resolveModelRuntime: () => silentModel,
+      apiUrl: "https://api.example.com",
+      authToken: "test-token",
+      projectId: null,
+      model: "test/silent",
+      messages: [{ id: "user-1", role: "user", parts: [{ type: "text", text: "Work." }] }],
+      system: "Fork instructions.",
+      forkToolNames: [],
+      runtimeTools: {},
+    };
+    inheritHostedChildInferenceAuthority(stepInput, childContext);
+
+    const result = await runAgentRuntimeForkStep(stepInput);
+    result.responsePromise.catch(() => {});
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const body = await Promise.race([
+      new Response(result.stream).text(),
+      new Promise<string>((resolve) => {
+        timer = setTimeout(() => resolve("child budget not applied"), 2_000);
+      }),
+    ]).finally(() => clearTimeout(timer));
+
+    assertEquals(body.includes("FIRST_PROGRESS_TIMEOUT"), true);
   });
 });

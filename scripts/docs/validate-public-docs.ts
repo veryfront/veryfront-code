@@ -500,7 +500,7 @@ function blockedRepositoryRule(repository: string): RepositoryRule {
 
 function canonicalizeHttpUrls(text: string): string {
   return text.replace(/https?:\/\/[^\s<>"'`]+/gi, (rawUrl) => {
-    const suffix = rawUrl.match(/[),.;:!?]+$/)?.[0] ?? "";
+    const suffix = rawUrl.match(/(?<![),.;:!?])[),.;:!?]+$/)?.[0] ?? "";
     const candidate = rawUrl.slice(0, rawUrl.length - suffix.length);
     try {
       const url = new URL(candidate);
@@ -575,7 +575,7 @@ const RULES: Rule[] = [
   {
     pattern: /Ready on\s+`?\[?https?:\/\//i,
     message:
-      "veryfront dev prints a '✓ Ready in <duration>' line followed by the URL on its own line. Do not document a 'Ready on <url>' line the CLI never prints.",
+      "veryfront dev prints '✓ App ready' followed by the URL. Do not document a 'Ready on <url>' line the CLI never prints.",
   },
 ];
 

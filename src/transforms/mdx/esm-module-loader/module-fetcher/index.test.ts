@@ -104,7 +104,11 @@ interface CountingAdapter {
  */
 function createProjectAdapter(
   marker: string,
-  options: { failFirstReadOf?: string; missingPaths?: readonly string[] } = {},
+  options: {
+    failFirstReadOf?: string;
+    missingPaths?: readonly string[];
+    onRead?: (path: string) => void;
+  } = {},
 ): CountingAdapter {
   const sourceByPath = new Map<string, string>([
     [
@@ -131,6 +135,7 @@ function createProjectAdapter(
         // Only project module sources count; config lookups also use this adapter.
         if (path.startsWith("/virtual/")) reads.push(path);
         await delay(REMOTE_LATENCY_MS);
+        options.onRead?.(path);
         if (options.failFirstReadOf === path && !failed) {
           failed = true;
           throw new Error(`Project source unavailable: ${path}`);
@@ -1060,31 +1065,52 @@ describe("module-fetcher", () => {
     });
 
     it("retries alone when the leading render hits its own deadline", async () => {
-      const project = createProjectAdapter("deadline");
+      const sourceRead = Promise.withResolvers<void>();
+      let expired = false;
+      const project = createProjectAdapter("deadline", {
+        onRead: (path) => {
+          if (path === "/virtual/page.ts" && !expired) {
+            expired = true;
+            leader.transformDeadline = 0;
+            sourceRead.resolve();
+          }
+        },
+      });
       const dirs = {
         esmCacheDir: await tempDir("vf-shared-deadline-cache-"),
         projectDir: await tempDir("vf-shared-deadline-proj-"),
       };
       const leader = await newRender(project.adapter, "p-deadline", dirs);
-      // The leading render is almost out of time; nested fetches start after it.
-      leader.transformDeadline = Date.now() + REMOTE_LATENCY_MS / 2;
       const follower = await newRender(project.adapter, "p-deadline", dirs);
 
+      // Expire the leader when its entry source returns, before nested imports
+      // are admitted. Wait for that source read before starting the follower:
+      // asynchronous identity preparation can otherwise reverse flight ownership.
+
+      const leaderFetch = fetchAndCacheModule("/_vf_modules/page.js", leader);
+      await sourceRead.promise;
       const [leaderResult, followerResult] = await Promise.allSettled([
-        fetchAndCacheModule("/_vf_modules/page.js", leader),
+        leaderFetch,
         fetchAndCacheModule("/_vf_modules/page.js", follower),
       ]);
 
+      assertEquals(expired, true, "the leader must read the entry source");
       assertEquals(leaderResult.status, "rejected");
       assert(
         leaderResult.status === "rejected" &&
           leaderResult.reason instanceof TransformTreeTimeoutError,
       );
       assertEquals(followerResult.status, "fulfilled");
+      assertEquals(project.reads.filter((path) => path === "/virtual/page.ts").length, 2);
     });
 
     it("counts shared modules toward each joined render's graph limit", async () => {
-      const project = createProjectAdapter("graph-limit");
+      const sourceRead = Promise.withResolvers<void>();
+      const project = createProjectAdapter("graph-limit", {
+        onRead: (path) => {
+          if (path === "/virtual/page.ts") sourceRead.resolve();
+        },
+      });
       const dirs = {
         esmCacheDir: await tempDir("vf-shared-limit-cache-"),
         projectDir: await tempDir("vf-shared-limit-proj-"),
@@ -1096,8 +1122,12 @@ describe("module-fetcher", () => {
         follower.moduleGraph!.add(`_vf_modules/existing-${index}.js`);
       }
 
+      // Wait for the intended owner to read its source: asynchronous identity
+      // preparation can otherwise let the graph-limited render lead the flight.
+      const leaderFetch = fetchAndCacheModule("/_vf_modules/page.js", leader);
+      await sourceRead.promise;
       const [leaderResult, followerResult] = await Promise.allSettled([
-        fetchAndCacheModule("/_vf_modules/page.js", leader),
+        leaderFetch,
         fetchAndCacheModule("/_vf_modules/page.js", follower),
       ]);
 
@@ -1110,7 +1140,12 @@ describe("module-fetcher", () => {
     });
 
     it("retries alone when the leading render has no room in its graph", async () => {
-      const project = createProjectAdapter("leader-full");
+      const sourceRead = Promise.withResolvers<void>();
+      const project = createProjectAdapter("leader-full", {
+        onRead: (path) => {
+          if (path === "/virtual/page.ts") sourceRead.resolve();
+        },
+      });
       const dirs = {
         esmCacheDir: await tempDir("vf-shared-leaderfull-cache-"),
         projectDir: await tempDir("vf-shared-leaderfull-proj-"),
@@ -1121,8 +1156,10 @@ describe("module-fetcher", () => {
       }
       const follower = await newRender(project.adapter, "p-leader-full", dirs);
 
+      const leaderFetch = fetchAndCacheModule("/_vf_modules/page.js", leader);
+      await sourceRead.promise;
       const [leaderResult, followerResult] = await Promise.allSettled([
-        fetchAndCacheModule("/_vf_modules/page.js", leader),
+        leaderFetch,
         fetchAndCacheModule("/_vf_modules/page.js", follower),
       ]);
 
@@ -1130,6 +1167,8 @@ describe("module-fetcher", () => {
         leaderResult.status === "rejected" && leaderResult.reason instanceof ModuleGraphLimitError,
       );
       assertEquals(followerResult.status, "fulfilled");
+      assertEquals(project.reads.filter((path) => path === "/virtual/page.ts").length, 2);
+      assertEquals(project.reads.length, 5, "the healthy follower retries the failed entry");
     });
 
     it("admits modules a shared resolution could not resolve into joined graphs", async () => {

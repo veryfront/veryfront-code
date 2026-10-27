@@ -27,7 +27,11 @@ import {
 import { getRuntimeRequestContext } from "#veryfront/platform/runtime-request-context.ts";
 import { getHostEnv, getHostSecret } from "#veryfront/platform/compat/process/env.ts";
 import { createVeryfrontApiRequestUrlResolver } from "#veryfront/platform/adapters/veryfront-api-url.ts";
-import { type BoundedJsonValue, snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
+import {
+  type BoundedJsonValue,
+  snapshotBoundedJsonValue,
+  snapshotBoundedParsedJsonValue,
+} from "#veryfront/schemas/json-value.ts";
 import { logger } from "#veryfront/utils";
 import {
   hasProjectIdentityControlCharacters,
@@ -47,7 +51,8 @@ import {
 } from "./integration-transport.ts";
 import { readIntegrationFailureCondition as readRemoteFailureCondition } from "./integration-condition.ts";
 
-import type { ToolDefinition, ToolExecutionContext } from "#veryfront/tool";
+import type { ToolDefinition, ToolDiscoveryMetadata, ToolExecutionContext } from "#veryfront/tool";
+import { readToolDiscoveryMetadata } from "#veryfront/tool/discovery-metadata.ts";
 import { isIntegrationAuthenticationActionResult } from "#veryfront/tool/result.ts";
 import {
   INTEGRATION_REQUEST_TIMEOUT_MS,
@@ -73,6 +78,7 @@ interface RemoteToolDefinition {
   name: string;
   description: string;
   inputSchema: Record<string, unknown>;
+  discovery?: ToolDiscoveryMetadata;
 }
 
 /**
@@ -308,9 +314,13 @@ function joinCallToolText(content: unknown[]): string {
     .join("\n");
 }
 
-function parseJsonText(text: string): unknown | undefined {
+/** Text comes from a byte-bounded response, so one string may use the whole response bound. */
+function parseJsonText(text: string): unknown {
   try {
-    const snapshot = snapshotBoundedJsonValue(JSON.parse(text));
+    const snapshot = snapshotBoundedParsedJsonValue(
+      JSON.parse(text),
+      MAX_INTEGRATION_TOOL_CALL_RESPONSE_BYTES,
+    );
     return snapshot.success ? snapshot.value : undefined;
   } catch {
     return undefined;
@@ -401,10 +411,12 @@ function parseRemoteToolDefinition(value: unknown): RemoteToolDefinition | undef
     return undefined;
   }
 
+  const discovery = readToolDiscoveryMetadata(value);
   return {
     name: value.name,
     description: value.description,
     inputSchema: schemaSnapshot.value,
+    ...(discovery ? { discovery } : {}),
   };
 }
 
@@ -431,7 +443,7 @@ function parseToolListResponse(value: unknown): RemoteToolDefinition[] | undefin
 function snapshotRemoteToolArguments(
   args: Record<string, unknown>,
 ): Record<string, BoundedJsonValue> {
-  const snapshot = snapshotBoundedJsonValue(args);
+  const snapshot = snapshotBoundedJsonValue(args, MAX_INTEGRATION_CALL_REQUEST_BYTES);
   if (!snapshot.success || !isRecord(snapshot.value)) {
     throw new TypeError(
       "Remote integration tool arguments must be a bounded JSON object without accessors or cycles",
@@ -493,6 +505,7 @@ async function fetchToolListAttempt(
     token,
     projectSlug,
     signal,
+    method: "GET",
   });
 
   if (!response.ok) {
@@ -644,6 +657,62 @@ function getRemoteIntegrationToolCatalog(
   return result;
 }
 
+function decodeRemoteToolFailure(
+  result: Record<string, unknown>,
+  hasStructuredContent: boolean,
+  text: string,
+): unknown {
+  const parsed = hasStructuredContent && isRecord(result.structuredContent) &&
+      Object.keys(result.structuredContent).length > 0
+    ? result.structuredContent
+    : parseJsonText(text);
+  const condition = isRecord(result._meta) ? result._meta.condition : undefined;
+  // The failure copies the text into `message`, so re-bound the decoded result.
+  const failure = snapshotBoundedJsonValue(
+    applyRemoteFailureCondition(parsed, text, condition),
+    MAX_INTEGRATION_TOOL_CALL_RESPONSE_BYTES,
+    MAX_INTEGRATION_TOOL_CALL_RESPONSE_BYTES,
+  );
+  if (!failure.success) {
+    throw new TypeError("Integration tools API failure result exceeds the response bound");
+  }
+  return failure.value;
+}
+
+function decodeRemoteToolResult(result: BoundedJsonValue): unknown {
+  // If MCP CallToolResult format, extract content.
+  if (isRecord(result) && Array.isArray(result.content)) {
+    const text = joinCallToolText(result.content);
+
+    const hasStructuredContent = Object.hasOwn(result, "structuredContent");
+    if (hasStructuredContent && !isRecord(result.structuredContent)) {
+      throw new TypeError(
+        "Integration tools API returned malformed MCP structured content",
+      );
+    }
+
+    if (Object.hasOwn(result, "isError") && typeof result.isError !== "boolean") {
+      throw new TypeError("Integration tools API returned a malformed MCP error marker");
+    }
+    if (result.isError === true) {
+      return decodeRemoteToolFailure(result, hasStructuredContent, text);
+    }
+
+    if (hasStructuredContent) {
+      if (!isRecord(result.structuredContent)) {
+        throw new TypeError(
+          "Integration tools API returned malformed MCP structured content",
+        );
+      }
+      return result.structuredContent;
+    }
+
+    return parseJsonText(text) ?? text;
+  }
+
+  return result;
+}
+
 async function callRemoteTool(
   baseUrl: string,
   token: string,
@@ -656,8 +725,10 @@ async function callRemoteTool(
   try {
     const serializedBody = serializeCallRequest(args, context);
     const projectSlug = resolveRequestProjectSlug(context);
-    const requestUrl = createVeryfrontApiRequestUrlResolver(baseUrl)(
-      `/integrations/${encodeURIComponent(integration)}/tools/${encodeURIComponent(toolId)}/call`,
+    const resolveRequestUrl = createVeryfrontApiRequestUrlResolver(baseUrl);
+    const remoteToolName = `${integration}__${toolId}`;
+    const requestUrl = resolveRequestUrl(
+      `/integration-tools/${encodeURIComponent(remoteToolName)}/run`,
     );
     const response = await dispatchIntegrationApiRequest({
       requestUrl,
@@ -683,7 +754,11 @@ async function callRemoteTool(
       requestScope.signal,
       "Integration tools API call response",
     );
-    const resultSnapshot = snapshotBoundedJsonValue(rawResult);
+    // The source text is already bounded, so one string may use the whole response.
+    const resultSnapshot = snapshotBoundedParsedJsonValue(
+      rawResult,
+      MAX_INTEGRATION_TOOL_CALL_RESPONSE_BYTES,
+    );
     if (!resultSnapshot.success) {
       throw new TypeError(
         "Integration tools API call response exceeds bounded JSON shape limits",
@@ -691,42 +766,7 @@ async function callRemoteTool(
     }
     const result = resultSnapshot.value;
 
-    // If MCP CallToolResult format, extract content.
-    if (isRecord(result) && Array.isArray(result.content)) {
-      const text = joinCallToolText(result.content);
-
-      const hasStructuredContent = Object.hasOwn(result, "structuredContent");
-      if (hasStructuredContent && !isRecord(result.structuredContent)) {
-        throw new TypeError(
-          "Integration tools API returned malformed MCP structured content",
-        );
-      }
-
-      if (Object.hasOwn(result, "isError") && typeof result.isError !== "boolean") {
-        throw new TypeError("Integration tools API returned a malformed MCP error marker");
-      }
-      if (result.isError === true) {
-        const parsed = hasStructuredContent && isRecord(result.structuredContent) &&
-            Object.keys(result.structuredContent).length > 0
-          ? result.structuredContent
-          : parseJsonText(text);
-        const condition = isRecord(result._meta) ? result._meta.condition : undefined;
-        return applyRemoteFailureCondition(parsed, text, condition);
-      }
-
-      if (hasStructuredContent) {
-        if (!isRecord(result.structuredContent)) {
-          throw new TypeError(
-            "Integration tools API returned malformed MCP structured content",
-          );
-        }
-        return result.structuredContent;
-      }
-
-      return parseJsonText(text) ?? text;
-    }
-
-    return result;
+    return decodeRemoteToolResult(result);
   } finally {
     requestScope.dispose();
   }
@@ -754,9 +794,8 @@ export async function getRemoteIntegrationToolDiscovery(
   if (!baseUrl || !token) return { status: "ok", tools: [] };
 
   try {
-    const toolListUrl = createVeryfrontApiRequestUrlResolver(baseUrl)(
-      "/integrations/tools/list",
-    );
+    // No query parameters: the API then returns the complete list in one response.
+    const toolListUrl = createVeryfrontApiRequestUrlResolver(baseUrl)("/integration-tools");
     const projectSlug = resolveRequestProjectSlug(requestContext);
     const catalog = await getRemoteIntegrationToolCatalog(
       toolListUrl,
@@ -778,6 +817,7 @@ export async function getRemoteIntegrationToolDiscovery(
         parameters: def.inputSchema && Object.keys(def.inputSchema).length > 0
           ? def.inputSchema
           : { type: "object", properties: {} },
+        ...(def.discovery ? { discovery: def.discovery } : {}),
       })),
     };
   } catch (err) {
@@ -813,12 +853,12 @@ export function isRemoteIntegrationTool(toolName: string): boolean {
 }
 
 /**
- * Execute a remote integration tool via the API.
+ * Run a remote integration tool via the API.
  * Called by the agent runtime when a tool isn't found in the local registry.
  * The request, response, and caller-supplied cancellation signal remain
  * bounded for the complete network and response-body lifecycle.
  */
-export async function executeRemoteIntegrationTool(
+export async function runRemoteIntegrationTool(
   toolName: string,
   args: Record<string, unknown>,
   context?: ToolExecutionContext,
@@ -865,3 +905,11 @@ export async function executeRemoteIntegrationTool(
     requestContext,
   );
 }
+
+/**
+ * Deprecated alias of `runRemoteIntegrationTool`.
+ *
+ * @deprecated Use `runRemoteIntegrationTool`.
+ */
+export const executeRemoteIntegrationTool: typeof runRemoteIntegrationTool =
+  runRemoteIntegrationTool;

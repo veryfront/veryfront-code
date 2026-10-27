@@ -52,7 +52,7 @@ export function getRequestTimeout(): number {
 export { HTTP_GATEWAY_TIMEOUT };
 
 /** Sentinel value for timeout detection (avoids string comparison) */
-export const TIMEOUT_SENTINEL = Symbol("request_timeout");
+export const TIMEOUT_SENTINEL = new Error("Request timeout");
 
 /** Check if request path is a monitoring endpoint that should skip domain lookup */
 export function isMonitoringPath(pathname: string): boolean {
