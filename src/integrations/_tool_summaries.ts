@@ -469,6 +469,31 @@ export const historicalToolSummaries: Record<string, IntegrationEndpointHistoric
     }, { "name": "web_url" }],
     "omitted": "pipeline step definitions and provider webhook settings",
   },
+  "calendar__list_calendars": {
+    "collectionKeys": ["items", "data"],
+    "collectionName": "calendars",
+    "itemFields": [{ "name": "id" }, { "name": "summary" }, { "name": "timeZone" }, {
+      "name": "accessRole",
+    }, { "name": "primary" }],
+    "outputFields": [{ "name": "nextPageToken" }, { "name": "nextSyncToken" }],
+    "omitted": "other provider fields",
+  },
+  "calendar__list_events": {
+    "collectionKeys": ["items", "data"],
+    "collectionName": "events",
+    "itemFields": [
+      { "name": "id" },
+      { "name": "summary" },
+      { "name": "start", "kind": "object" },
+      { "name": "end", "kind": "object" },
+      { "name": "status" },
+      { "name": "htmlLink" },
+    ],
+    "outputFields": [{ "name": "nextPageToken" }, { "name": "nextSyncToken" }, {
+      "name": "timeZone",
+    }],
+    "omitted": "event descriptions and other provider fields",
+  },
   "calendly__list_event_invitees": {
     "collectionKeys": ["collection", "invitees"],
     "collectionName": "invitees",

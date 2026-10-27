@@ -950,7 +950,7 @@ Deno.test("maskOldToolOutputs retains recent bounded collection identities for f
       content: [{
         type: "tool-call",
         toolCallId: "list",
-        toolName: "calendar__list_events",
+        toolName: "fixture__list_resources",
         input: {},
       }],
     },
@@ -959,7 +959,7 @@ Deno.test("maskOldToolOutputs retains recent bounded collection identities for f
       content: [{
         type: "tool-result",
         toolCallId: "list",
-        toolName: "calendar__list_events",
+        toolName: "fixture__list_resources",
         output: { type: "json", value: result },
       }],
     },

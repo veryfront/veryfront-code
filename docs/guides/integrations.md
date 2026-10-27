@@ -40,6 +40,17 @@ grants remain active until the user revokes access and reconnects. Update the
 Google Cloud consent configuration to match the runtime scopes before recording
 verification evidence.
 
+## Calendar result pages
+
+`calendar__list_events` and `calendar__list_calendars` return a provider page
+object with an `items` array. If `nextPageToken` is present, pass it as
+`pageToken` on the next call with the other query arguments unchanged. An empty
+page can still have a continuation token. Stop when the token is absent.
+
+Earlier versions returned only the item array. Read `items` on the page object
+instead. The number of items is the current page size, not a total count.
+Page-size defaults are unchanged, and free/busy results are unchanged.
+
 ## Make your first call
 
 This walkthrough reads one Gmail message summary with `gmail__list_emails` and

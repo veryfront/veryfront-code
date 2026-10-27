@@ -1154,7 +1154,8 @@ function compactHistoricalToolSummaryOutput(
     .map((item) => compactHistoricalItemValue(item, contract.itemFields))
     .filter((item): item is Record<string, unknown> => item !== null);
 
-  if (items.length === 0) return null;
+  // A valid empty page may still carry a continuation token.
+  if (items.length === 0 && sourceItems.length > 0) return null;
 
   const compacted: Record<string, unknown> = {
     [`${contract.collectionName}Count`]: items.length,

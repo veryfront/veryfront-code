@@ -8887,7 +8887,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "calendar__list_calendars",
       "name": "List Calendars",
-      "description": "List calendars",
+      "description": "List a page of calendars",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -8896,16 +8896,32 @@ export const connectors: IntegrationConfig[] = [
           "maxResults": {
             "type": "number",
             "in": "query",
-            "description": "Maximum calendars to return",
+            "description": "Maximum calendars per page",
             "default": 100,
           },
+          "pageToken": {
+            "type": "string",
+            "in": "query",
+            "description":
+              "Continuation token from nextPageToken. Keep the other query parameters unchanged.",
+          },
         },
-        "response": { "transform": "items" },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["items", "data"],
+            "collectionName": "calendars",
+            "itemFields": [{ "name": "id" }, { "name": "summary" }, { "name": "timeZone" }, {
+              "name": "accessRole",
+            }, { "name": "primary" }],
+            "outputFields": [{ "name": "nextPageToken" }, { "name": "nextSyncToken" }],
+            "omitted": "other provider fields",
+          },
+        },
       },
     }, {
       "id": "calendar__list_events",
       "name": "List Events",
-      "description": "List events",
+      "description": "List a page of calendar events",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -8923,7 +8939,7 @@ export const connectors: IntegrationConfig[] = [
           "maxResults": {
             "type": "number",
             "in": "query",
-            "description": "Maximum events",
+            "description": "Maximum events per page",
             "default": 10,
           },
           "orderBy": {
@@ -8938,8 +8954,31 @@ export const connectors: IntegrationConfig[] = [
             "description": "Expand recurring events",
             "default": true,
           },
+          "pageToken": {
+            "type": "string",
+            "in": "query",
+            "description":
+              "Continuation token from nextPageToken. Keep the other query parameters unchanged.",
+          },
         },
-        "response": { "transform": "items" },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["items", "data"],
+            "collectionName": "events",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "summary" },
+              { "name": "start", "kind": "object" },
+              { "name": "end", "kind": "object" },
+              { "name": "status" },
+              { "name": "htmlLink" },
+            ],
+            "outputFields": [{ "name": "nextPageToken" }, { "name": "nextSyncToken" }, {
+              "name": "timeZone",
+            }],
+            "omitted": "event descriptions and other provider fields",
+          },
+        },
       },
     }, {
       "id": "calendar__create_event",
