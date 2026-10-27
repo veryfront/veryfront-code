@@ -535,7 +535,9 @@ export async function* streamGoogleCompatibleParts(
         const rawPartIndex = rawAssistantParts.length;
         // Without a provider ID, each complete call is a distinct stream part.
         // Candidate-part indices restart in every envelope and are not call IDs.
-        const deduplicationKey = providerId ?? `anonymous-${nextRawPartPosition}`;
+        const deduplicationKey = providerId === undefined
+          ? `anonymous:${nextRawPartPosition}`
+          : `provider:${providerId}`;
         const callShape = `${functionCall.name}\u0000${serializedInput}`;
         const previousToolCall = seenToolCalls.get(deduplicationKey);
         if (previousToolCall !== undefined) {

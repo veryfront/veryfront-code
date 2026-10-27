@@ -542,6 +542,28 @@ describe("ext-llm-google/google-stream", () => {
     });
   }
 
+  for (const providerFirst of [false, true]) {
+    it(`separates provider ids from anonymous correlation keys: ${providerFirst}`, async () => {
+      const anonymous = { functionCall: { name: "lookup", args: { city: "Paris" } } };
+      const explicit = {
+        functionCall: {
+          id: `anonymous-${providerFirst ? 1 : 0}`,
+          name: "lookup",
+          args: { city: "Paris" },
+        },
+      };
+      const calls = providerFirst ? [explicit, anonymous] : [anonymous, explicit];
+      const parts = await collectParts(streamFromText([
+        ...calls.map((call) => data({ candidates: [{ content: { parts: [call] } }] })),
+        data({ candidates: [{ finishReason: "STOP" }] }),
+      ].join("")));
+      assertEquals(
+        parts.filter((part) => (part as { type?: string }).type === "tool-call").length,
+        2,
+      );
+    });
+  }
+
   it("rejects changed arguments for a repeated provider function call id", async () => {
     await assertRejects(
       () =>
