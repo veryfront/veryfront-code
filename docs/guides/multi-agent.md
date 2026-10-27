@@ -86,7 +86,7 @@ server for the eval, start it again:
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) and ask:
+Open the local URL printed by the CLI and ask:
 
 ```text
 Compare two ways a small team could reduce support response time. Recommend one.
@@ -94,6 +94,40 @@ Compare two ways a small team could reduce support response time. Recommend one.
 
 Ensure the run calls `agent_researcher` and `agent_writer`, then returns one
 combined recommendation.
+
+Replace `evals/assistant.eval.ts` so the smoke eval checks delegation instead
+of the starter's calculator behavior:
+
+```ts
+// evals/assistant.eval.ts
+import { datasets, evalAgent, metrics } from "veryfront/eval";
+
+export default evalAgent({
+  name: "Assistant delegation smoke test",
+  target: "agent:assistant",
+  dataset: datasets.inline([
+    {
+      id: "support-recommendation",
+      input:
+        "Compare two ways a small team could reduce support response time. Recommend one.",
+    },
+  ]),
+  metrics: [
+    metrics.agent.calledTool("agent_researcher").gate(),
+    metrics.agent.calledTool("agent_writer").gate(),
+    metrics.agent.noFailedTools().gate(),
+  ],
+});
+```
+
+Stop the dev server with `Ctrl+C`, then run:
+
+```bash
+npm run eval -- assistant
+```
+
+The eval passes when both specialists run without tool errors. It does not grade
+the recommendation's quality; add answer checks for your application's needs.
 
 ## Agent-as-tool
 
