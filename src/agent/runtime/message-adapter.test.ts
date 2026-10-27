@@ -236,7 +236,7 @@ describe("agent runtime message adapter", () => {
         [agentRuntimeTextPart("Searching…"), agentRuntimeToolCallPart({ query: "chat runtime" })],
         1,
       ),
-      agentRuntimeMessage("tool", [agentRuntimeToolResultPart(jsonOutput({ matches: 2 }))], 2),
+      agentRuntimeMessage("tool", [agentRuntimeToolResultPart({ matches: 2 })], 2),
     ]);
   });
 
