@@ -245,6 +245,24 @@ describe("suite planning parity", () => {
     }
   });
 
+  it("keeps the relocated preview tool scope fixture in both native runtime suites", async () => {
+    const fixture =
+      "tests/integration/semantic-unit-boundary/internal-agents/run-stream-preview-context.test.ts";
+    for (const suite of ["runtime:node", "runtime:bun"] as const) {
+      const plan = await planSuiteFiles({ suite });
+      assert(
+        plan.files.includes(fixture),
+        `${suite} must retain preview tool scope coverage`,
+      );
+      assertEquals(
+        plan.files.includes(
+          "src/internal-agents/run-stream-preview-context.test.ts",
+        ),
+        false,
+      );
+    }
+  });
+
   it("keeps the Deno unit-preload transport test out of external runtimes", async () => {
     const denoOnlyFile = "src/testing/offline-react-transport.test.ts";
 
@@ -1094,6 +1112,7 @@ async function legacyRuntimeFiles(runtime: "node" | "bun"): Promise<string[]> {
       "tests/integration/agent/executor-project-policy-intrinsics.test.ts",
       "tests/integration/agent/executor-discovery-request-intrinsics.test.ts",
       "tests/integration/security/application-request.test.ts",
+      "tests/integration/semantic-unit-boundary/internal-agents/run-stream-preview-context.test.ts",
       "tests/integration/semantic-unit-boundary/src/agent/hosted/executor-model-dispatch-intrinsics.test.ts",
       "tests/integration/semantic-unit-boundary/src/transforms/pipeline/__fixtures__/fixture-runner-ssr.test.ts",
     ]
@@ -1137,6 +1156,7 @@ async function legacyRuntimeFiles(runtime: "node" | "bun"): Promise<string[]> {
       "tests/integration/agent/executor-project-policy-intrinsics.test.ts",
       "tests/integration/agent/executor-discovery-request-intrinsics.test.ts",
       "tests/integration/security/application-request.test.ts",
+      "tests/integration/semantic-unit-boundary/internal-agents/run-stream-preview-context.test.ts",
       "tests/integration/semantic-unit-boundary/src/agent/hosted/executor-model-dispatch-intrinsics.test.ts",
       "tests/integration/semantic-unit-boundary/src/transforms/pipeline/__fixtures__/fixture-runner-ssr.test.ts",
     ];
