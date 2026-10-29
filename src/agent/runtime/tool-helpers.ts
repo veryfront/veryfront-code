@@ -248,10 +248,18 @@ export function parseToolArgs(
 }
 
 /**
- * Check if a tool is dynamic (for SSE event formatting).
+ * Check if a tool is dynamic (for SSE event formatting). A tool object in the
+ * agent config wins over the project registry: remote-source tools under a
+ * canonical integration name live only there.
  */
-export function isDynamicTool(name: string): boolean {
-  return toolRegistry.get(name)?.type === "dynamic";
+export function isDynamicTool(
+  name: string,
+  toolsConfig?: true | Record<string, ToolConfigEntry>,
+): boolean {
+  const entry = typeof toolsConfig === "object" && intrinsicHasOwn(toolsConfig, name)
+    ? toolsConfig[name]
+    : undefined;
+  return (typeof entry === "object" ? entry : toolRegistry.get(name))?.type === "dynamic";
 }
 
 /**
