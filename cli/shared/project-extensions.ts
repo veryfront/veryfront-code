@@ -14,6 +14,8 @@ import { cliLogger } from "#cli/utils";
 import { wireTracingShim } from "../../src/server/tracing-shim.ts";
 import { isJsonMode } from "./json-output.ts";
 
+const telemetryDisposals = new WeakMap<ExtensionLoader, () => boolean>();
+
 /** Start the default local runtime for task and workflow execution. */
 export async function setupDefaultProjectCliExtensions(
   options: Pick<Parameters<typeof orchestrateExtensions>[0], "projectDir" | "config" | "logger">,
@@ -45,7 +47,14 @@ export async function setupProjectCliExtensions(
   options: Parameters<typeof orchestrateExtensions>[0],
 ): Promise<ExtensionLoader> {
   const loader = await orchestrateExtensions(options);
-  wireTracingShim();
+  try {
+    telemetryDisposals.set(loader, wireTracingShim());
+  } catch (error) {
+    // The caller has not received the loader yet, so startup owns cleanup.
+    // Preserve the wiring failure even if extension teardown fails too.
+    await releaseProjectCliExtensions(loader);
+    throw error;
+  }
   return loader;
 }
 
@@ -62,5 +71,9 @@ export async function releaseProjectCliExtensions(loader: ExtensionLoader): Prom
     if (!isJsonMode()) {
       cliLogger.warn("Extension teardown failed; some telemetry may not have been exported");
     }
+  } finally {
+    const dispose = telemetryDisposals.get(loader);
+    telemetryDisposals.delete(loader);
+    dispose?.();
   }
 }
