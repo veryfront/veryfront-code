@@ -18,7 +18,8 @@ export function createMockAdapter(): RuntimeAdapter {
       symlinkSemantics: "none" as const,
       exists: () => Promise.resolve(false),
       readFile: () => Promise.resolve(""),
-      readFileBytesWithinLimit: () => Promise.reject(new Deno.errors.NotFound("No test file")),
+      readFileBytesWithinLimit: () =>
+        Promise.reject(Object.assign(new Error("No test file"), { code: "ENOENT" })),
       writeFile: () => Promise.resolve(),
       readDir: async function* () {},
       mkdir: () => Promise.resolve(),
