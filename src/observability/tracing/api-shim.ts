@@ -825,8 +825,8 @@ export const publicTrace: Readonly<
     const getPlatformTracer = (): Tracer => {
       const current = telemetryState;
       if (current.tracerProviderRevision !== platformRevision) {
-        platformRevision = current.tracerProviderRevision;
         platformTracer = current.tracerProvider.getTracer(name, version);
+        platformRevision = current.tracerProviderRevision;
       }
       return platformTracer;
     };
