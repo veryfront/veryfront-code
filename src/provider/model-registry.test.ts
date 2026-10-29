@@ -1,3 +1,4 @@
+import { resolveRuntimeModel } from "#veryfront/agent/runtime/model-resolution.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { installMockFetch, restoreMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { assertEquals, assertStrictEquals, assertThrows } from "#veryfront/testing/assert.ts";
@@ -438,7 +439,7 @@ describe("provider/model-registry", () => {
       const result = await runWithCacheKeyContext(
         PROJECT_A,
         () =>
-          resolveModel(`${provider}/${model}`).doGenerate({
+          resolveModel(resolveRuntimeModel(`${provider}/${model}`)).doGenerate({
             prompt: [{ role: "user", content: [{ type: "text", text: "hi" }] }],
           }),
       );

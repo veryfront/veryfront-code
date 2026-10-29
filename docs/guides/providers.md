@@ -215,7 +215,7 @@ An explicit `openai/<model>` or `anthropic/<model>` uses the matching environmen
 key directly, even when Cloud context is available. Use a
 `veryfront-cloud/<provider>/<model>` name to select the AI Gateway explicitly.
 Direct provider usage reports token counters, not a settled platform charge.
-The API Gateway ledger determines platform model charges; runtime-reported
+The AI Gateway ledger determines platform model charges; runtime-reported
 usage alone does not establish a charge or a billing exemption.
 
 ### Keeping keys out of the project
