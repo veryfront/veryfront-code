@@ -253,3 +253,10 @@ describe("findFrontDoorBypasses", () => {
     assertEquals(groupsOf(source), []);
   });
 });
+
+it("finds cast fetch assignments after long type whitespace", () => {
+  assertEquals(
+    groupsOf(`(globalThis as CustomGlobal${" ".repeat(10000)}).fetch = stub;`),
+    ["fetch-assignment"],
+  );
+});

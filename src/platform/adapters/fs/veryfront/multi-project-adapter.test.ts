@@ -21,6 +21,39 @@ import {
 } from "./multi-project-adapter.ts";
 import { VeryfrontFSAdapter } from "./adapter.ts";
 import { ProxyFSAdapterManager } from "./proxy-manager.ts";
+import { AdapterTestTransport } from "./adapter.test-helpers.ts";
+
+async function createInitializedConcreteAdapter(): Promise<VeryfrontFSAdapter> {
+  const transport = new AdapterTestTransport();
+  const adapter = new VeryfrontFSAdapter({
+    veryfront: {
+      apiBaseUrl: "https://api.example.com",
+      apiToken: "test-token",
+      projectSlug: "project-a",
+      cache: { enabled: false },
+    },
+  }, { createWebSocket: transport.createWebSocket });
+  adapter.setContentContext({ sourceType: "branch", projectSlug: "project-a", branch: "main" });
+  const internals = adapter as unknown as {
+    client: {
+      initialize: () => Promise<void>;
+      getProjectSlug: () => string;
+      getProjectId: () => string;
+      getCachedProject: () => { provider: string; layout: string };
+      listAllFiles: () => Promise<{ path: string; content: string }[]>;
+    };
+  };
+  internals.client.initialize = () => Promise.resolve();
+  internals.client.getProjectSlug = () => "project-a";
+  internals.client.getProjectId = () => "project-id-a";
+  internals.client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
+  internals.client.listAllFiles = () =>
+    Promise.resolve([
+      { path: "pages/index.tsx", content: "trusted source" },
+    ]);
+  await adapter.initialize();
+  return adapter;
+}
 
 function createAdapter(): MultiProjectFSAdapter {
   const config = {
@@ -815,11 +848,7 @@ describe("MultiProjectFSAdapter", () => {
           VeryfrontFSAdapter.prototype,
           "getSourceSnapshotFingerprint",
         );
-        const concreteAdapter = Object.assign(Object.create(VeryfrontFSAdapter.prototype), {
-          sourceSnapshotFiles: [{ path: "pages/index.tsx", content: "trusted source" }],
-          sourceSnapshotVersion: 1,
-          sourceSnapshotFingerprint: undefined,
-        }) as VeryfrontFSAdapter;
+        const concreteAdapter = await createInitializedConcreteAdapter();
 
         (adapter as any).manager = {
           getAdapter: () => Promise.resolve(concreteAdapter),
@@ -859,11 +888,7 @@ describe("MultiProjectFSAdapter", () => {
           MultiProjectFSAdapter.prototype,
           "getAdapter",
         );
-        const concreteAdapter = Object.assign(Object.create(VeryfrontFSAdapter.prototype), {
-          sourceSnapshotFiles: [{ path: "pages/index.tsx", content: "trusted source" }],
-          sourceSnapshotVersion: 1,
-          sourceSnapshotFingerprint: undefined,
-        }) as VeryfrontFSAdapter;
+        const concreteAdapter = await createInitializedConcreteAdapter();
         let spoofedLookupCalls = 0;
 
         (adapter as any).manager = {
@@ -906,11 +931,7 @@ describe("MultiProjectFSAdapter", () => {
     it("keeps adapter selection independent of a mutable public method name", async () => {
       await withAdapterAsync(async (adapter) => {
         const originalManager = (adapter as any).manager;
-        const concreteAdapter = Object.assign(Object.create(VeryfrontFSAdapter.prototype), {
-          sourceSnapshotFiles: [{ path: "pages/index.tsx", content: "trusted source" }],
-          sourceSnapshotVersion: 1,
-          sourceSnapshotFingerprint: undefined,
-        }) as VeryfrontFSAdapter;
+        const concreteAdapter = await createInitializedConcreteAdapter();
         const interceptedTokens: string[] = [];
 
         (adapter as any).manager = {
@@ -968,22 +989,8 @@ describe("MultiProjectFSAdapter", () => {
           VeryfrontFSAdapter.prototype,
           "performSourceSnapshotRefresh",
         );
-        const concreteAdapter = new VeryfrontFSAdapter({
-          veryfront: {
-            apiBaseUrl: "https://api.example.com",
-            apiToken: "test-token",
-            projectSlug: "project-a",
-            cache: { enabled: false },
-          },
-        });
-        const internals = concreteAdapter as unknown as {
-          initialized: boolean;
-          contentContext: null;
-          sourceSnapshotVersion: number;
-        };
-        internals.initialized = true;
-        internals.contentContext = null;
-        internals.sourceSnapshotVersion = 7;
+        const concreteAdapter = await createInitializedConcreteAdapter();
+        const expectedVersion = concreteAdapter.getSourceSnapshotVersion();
         let spoofedFreshnessCalls = 0;
         let spoofedRefreshCalls = 0;
         let spoofedInitializationCalls = 0;
@@ -1016,8 +1023,7 @@ describe("MultiProjectFSAdapter", () => {
           configurable: true,
           value: () => {
             spoofedInitializationCalls++;
-            internals.sourceSnapshotVersion = -1;
-            return Promise.resolve();
+            throw new Error("project initialization must not be called");
           },
         });
         Object.defineProperty(VeryfrontFSAdapter.prototype, "performSourceSnapshotRefresh", {
@@ -1046,7 +1052,7 @@ describe("MultiProjectFSAdapter", () => {
             "project-id-a",
             { branch: "main" },
           );
-          assertEquals(version, 7);
+          assertEquals(version, expectedVersion);
           assertEquals(spoofedFreshnessCalls, 0);
           assertEquals(spoofedRefreshCalls, 0);
           assertEquals(spoofedInitializationCalls, 0);

@@ -24,6 +24,8 @@ export function isProjectDefinitionBootstrapEnabled(
 }
 
 const encoder = new TextEncoder();
+const LESS_THAN_ESCAPE = String.raw`\u003c`;
+const GREATER_THAN_ESCAPE = String.raw`\u003e`;
 const MAX_RESPONSE_BYTES = 64 * 1024;
 const DEFAULT_BLOCK_BYTES = 1_024;
 const MAX_BLOCK_BYTES = 4 * 1_024;
@@ -212,9 +214,9 @@ function record(value: unknown): Record<string, unknown> | null {
 }
 
 function safeJson(value: unknown): string {
-  return JSON.stringify(value).replaceAll("<", "\\u003c").replaceAll(
+  return JSON.stringify(value).replaceAll("<", LESS_THAN_ESCAPE).replaceAll(
     ">",
-    "\\u003e",
+    GREATER_THAN_ESCAPE,
   );
 }
 
@@ -230,6 +232,33 @@ function sameSelection(
   return source?.source_target_kind === expected.sourceTargetKind &&
     source.target_environment_id === expected.targetEnvironmentId &&
     source.target_branch_id === expected.targetBranchId;
+}
+
+function selectProjectDefinitionRow(row: Record<string, unknown>): Record<string, unknown> {
+  const selected: Record<string, unknown> = {
+    kind: row.kind,
+    id: row.id,
+    name: row.name,
+    sourcePath: row.source_path,
+  };
+  if (text(row.description, 240)) selected.description = row.description;
+  const reader = record(row.reader);
+  if (
+    reader && text(reader.operation, 80) &&
+    text(reader.identity_parameter, 80) &&
+    reader.identity === row.id
+  ) {
+    selected.reader = {
+      operation: reader.operation,
+      identityParameter: reader.identity_parameter,
+      identity: row.id,
+    };
+  } else if (
+    row.reader === null && text(row.reader_unavailable_reason, 160)
+  ) {
+    selected.readerUnavailableReason = row.reader_unavailable_reason;
+  }
+  return selected;
 }
 
 /** Render only validated, bounded identities from one authorized lookup page. */
@@ -305,29 +334,7 @@ export function renderProjectDefinitionBootstrap(input: {
       omitted++;
       continue;
     }
-    const selected: Record<string, unknown> = {
-      kind: row.kind,
-      id: row.id,
-      name: row.name,
-      sourcePath: row.source_path,
-    };
-    if (text(row.description, 240)) selected.description = row.description;
-    const reader = record(row.reader);
-    if (
-      reader && text(reader.operation, 80) &&
-      text(reader.identity_parameter, 80) &&
-      reader.identity === row.id
-    ) {
-      selected.reader = {
-        operation: reader.operation,
-        identityParameter: reader.identity_parameter,
-        identity: row.id,
-      };
-    } else if (
-      row.reader === null && text(row.reader_unavailable_reason, 160)
-    ) {
-      selected.readerUnavailableReason = row.reader_unavailable_reason;
-    }
+    const selected = selectProjectDefinitionRow(row);
     const candidate = [
       ...header,
       ...rows.map(safeJson),

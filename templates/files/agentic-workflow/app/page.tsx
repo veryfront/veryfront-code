@@ -14,7 +14,7 @@ const STATUS_STYLES: Record<string, string> = {
 export default function WorkflowDashboard(): React.JSX.Element {
   const [topic, setTopic] = useState('')
   const { start, isStarting } = useWorkflowStart({ workflowId: 'content-pipeline' })
-  const { runs, isLoading, refresh } = useWorkflowList()
+  const { runs, isLoading, refresh } = useWorkflowList({ autoRefresh: true })
 
   async function handleStart(e: React.FormEvent) {
     e.preventDefault()

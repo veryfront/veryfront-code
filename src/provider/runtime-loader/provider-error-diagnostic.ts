@@ -44,8 +44,8 @@ const allowedPlainParams = new Set([
   "reasoning",
 ]);
 const allowedToolParam =
-  /^tools\[(?:0|[1-9][0-9]{0,2})\]\.(?:type|function\.(?:parameters|name|description))$/;
-const allowedMessageParam = /^messages\[(?:0|[1-9][0-9]{0,3})\]\.(?:role|content)$/;
+  /^tools\[(?:0|[1-9]\d{0,2})\]\.(?:type|function\.(?:parameters|name|description))$/;
+const allowedMessageParam = /^messages\[(?:0|[1-9]\d{0,3})\]\.(?:role|content)$/;
 
 /** Retain only known protocol fields, never response text or user-defined paths. */
 export function recordProviderErrorDiagnostic(

@@ -12517,6 +12517,47 @@ export default config as const;
       });
     });
 
+    it("copies GitHub cache and retry options without sharing mutable user configuration", () => {
+      const github = {
+        token: "<TOKEN>",
+        owner: "owner",
+        repo: "repo",
+        cache: { enabled: false, ttl: 1234 },
+        retry: { maxRetries: 1, initialDelay: 12, maxDelay: 200 },
+      };
+      const merged = mergeConfigs({ fs: { type: "github", github } });
+      assertEquals(merged.fs, { type: "github", github });
+      const selected = merged.fs?.github;
+      assert(selected?.cache && selected.retry);
+      assert(selected !== github);
+      assert(selected.cache !== github.cache);
+      assert(selected.retry !== github.retry);
+      selected.cache.ttl = 9999;
+      selected.retry.maxRetries = 9;
+      assertEquals(github.cache.ttl, 1234);
+      assertEquals(github.retry.maxRetries, 1);
+    });
+
+    it("copies explicit Veryfront cache and retry options outside proxy mode", () => {
+      const veryfront = {
+        apiBaseUrl: "https://api.example.com",
+        proxyMode: false,
+        cache: { enabled: false, ttl: 1234 },
+        retry: { maxRetries: 1, initialDelay: 12, maxDelay: 200 },
+      };
+      const merged = mergeConfigs({ fs: { type: "veryfront-api", veryfront } });
+      assertEquals(merged.fs, { type: "veryfront-api", veryfront });
+      const selected = merged.fs?.veryfront;
+      assert(selected?.cache && selected.retry);
+      assert(selected !== veryfront);
+      assert(selected.cache !== veryfront.cache);
+      assert(selected.retry !== veryfront.retry);
+      selected.cache.ttl = 9999;
+      selected.retry.maxRetries = 9;
+      assertEquals(veryfront.cache.ttl, 1234);
+      assertEquals(veryfront.retry.maxRetries, 1);
+    });
+
     it("rejects project filesystem overrides when proxy mode owns the backend", () => {
       setEnv("PROXY_MODE", "1");
       setEnv("VERYFRONT_API_BASE_URL", "https://api.example.com");

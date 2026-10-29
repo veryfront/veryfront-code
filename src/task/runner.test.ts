@@ -644,6 +644,19 @@ describe("src/task/runner", () => {
       assertEquals(removed, ["/scratch/veryfront-task-1"]);
     });
 
+    it("returns a structured failure when the captured run getter throws", async () => {
+      const task = makeTask({ run: () => "unreachable" });
+      Object.defineProperty(task.definition, "run", {
+        get() {
+          throw new Error("run getter failed");
+        },
+      });
+      const result = await runTask({ task }, createInMemoryHostRuntime());
+      assertEquals(result.success, false);
+      assertEquals(result.errorCode, "TASK_EXECUTION_FAILED");
+      assertEquals(result.error, "run getter failed");
+    });
+
     it("gives any other thrown error the stable TASK_EXECUTION_FAILED code", async () => {
       const task = makeTask({
         run: () => {

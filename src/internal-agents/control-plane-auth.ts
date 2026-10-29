@@ -1,3 +1,4 @@
+import { isHostedConfigRequestCancellation } from "#veryfront/config/request-cancellation.ts";
 import type { HostedServiceRunEventAppendTokenResult } from "#veryfront/agent/service/auth.ts";
 import { readOwnDataProperty } from "#veryfront/agent/runtime/data-property-descriptor.ts";
 import {
@@ -11,9 +12,16 @@ import {
   readPlatformToolDependencies,
   type VerifiedPlatformToolDependencies,
 } from "#veryfront/agent/service/platform-tool-dependency-claims.ts";
+import {
+  INTERNAL_AGENT_CONTROL_PLANE_MAX_BODY_BYTES,
+  InternalAgentRequestBodyTooLargeError,
+  readInternalAgentRequestBody,
+} from "./request-body.ts";
 import type { HandlerContext } from "#veryfront/types";
 import { serverLogger } from "#veryfront/utils";
 import { HTTP_INTERNAL_SERVER_ERROR } from "#veryfront/utils/constants/index.ts";
+
+import { getRecoveryAdmissionSchema, type RecoveryAdmission } from "./recovery-admission-schema.ts";
 
 const CONTROL_PLANE_JWS_HEADER = "x-veryfront-control-plane-jws";
 const MAX_CONTROL_PLANE_SIGNATURE_AGE_SECONDS = 60;
@@ -37,6 +45,19 @@ const verifiedPlatformGrants = createPrivateWeakStore<
     }
   >
 >();
+
+const verifiedRecoveryGrants = createPrivateWeakStore<object, RecoveryAdmission>();
+
+/** Only an exact-body signature from the operator boot key can carry recovery authority. */
+export function getVerifiedControlPlaneRecoveryAdmission(
+  claims: VerifiedControlPlaneRequestClaims,
+): RecoveryAdmission | undefined {
+  const grant = verifiedRecoveryGrants.get(claims);
+  if (grant && grant.expiresAt <= DateNow() / 1000) {
+    throw new Error("Managed recovery admission expired");
+  }
+  return grant;
+}
 
 /** Read a private exact-body operator grant. Compatibility adapter signatures cannot mint it. */
 export function getVerifiedControlPlanePlatformDependencies(
@@ -117,7 +138,9 @@ export class ControlPlaneRequestError extends Error {
   }
 }
 
-export function getControlPlaneVerificationPublicKey(ctx: HandlerContext): string | undefined {
+export function getControlPlaneVerificationPublicKey(
+  ctx: Pick<HandlerContext, "adapter">,
+): string | undefined {
   // Project env overlays intentionally hide host secrets from request-scoped reads.
   // Control-plane verification is framework-owned config, so it must fall back to
   // the host environment when the runtime adapter env is overlay-aware.
@@ -125,9 +148,114 @@ export function getControlPlaneVerificationPublicKey(ctx: HandlerContext): strin
     getHostEnv(CONTROL_PLANE_SIGNING_KEY_ENV);
 }
 
+function readControlPlaneBody(rawBody: string): Record<string, unknown> | undefined {
+  try {
+    const parsed: unknown = IntrinsicReflectApply(JsonParse, JSON, [rawBody]);
+    if (parsed !== null && typeof parsed === "object" && !ArrayIsArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+  } catch {
+    // A valid signature can cover a plain cancel or malformed resume body.
+    // The handler owns payload validation; no dependency grant is minted.
+  }
+  return undefined;
+}
+
+function readPlatformDependencyScope(
+  body: Record<string, unknown>,
+  claims: ControlPlaneClaims,
+): { projectId: string; runId: string; agentId: string } {
+  const run = readOwnDataProperty(body, "run", "Platform dependency scope");
+  const project = readOwnDataProperty(run, "project", "Platform dependency scope");
+  const runId = readOwnDataProperty(run, "runId", "Platform dependency scope");
+  const agentId = readOwnDataProperty(run, "agentId", "Platform dependency scope");
+  const projectId = readOwnDataProperty(project, "projectId", "Platform dependency scope");
+  let authenticatedProjectId = projectId;
+  if (ObjectHasOwn(body, "sourceProject") || ObjectHasOwn(body, "executionProject")) {
+    const sourceProject = readOwnDataProperty(
+      body,
+      "sourceProject",
+      "Platform dependency scope",
+    );
+    const executionProject = readOwnDataProperty(
+      body,
+      "executionProject",
+      "Platform dependency scope",
+    );
+    authenticatedProjectId = readOwnDataProperty(
+      sourceProject,
+      "projectId",
+      "Platform dependency scope",
+    );
+    const executionProjectId = readOwnDataProperty(
+      executionProject,
+      "projectId",
+      "Platform dependency scope",
+    );
+    if (executionProjectId !== projectId) {
+      throw new Error("Platform dependency scope is invalid");
+    }
+  }
+  if (
+    typeof runId !== "string" || runId !== claims.sub ||
+    typeof agentId !== "string" || typeof projectId !== "string" ||
+    authenticatedProjectId !== claims.project_id
+  ) throw new Error("Platform dependency scope is invalid");
+  return { projectId, runId, agentId };
+}
+
+function readControlPlaneRequestContext(req: Request, ctx: Pick<HandlerContext, "projectSlug">) {
+  const projectSlug = ctx.projectSlug;
+  if (!projectSlug) {
+    throw new ControlPlaneRequestError(400, "Project context is unavailable");
+  }
+
+  const controlPlaneJws = req.headers.get(CONTROL_PLANE_JWS_HEADER);
+  if (!controlPlaneJws) {
+    throw new ControlPlaneRequestError(401, "Missing control-plane signature");
+  }
+
+  return { projectSlug, controlPlaneJws };
+}
+
+function requirePinnedRecoveryKey(pinnedKey: string | undefined): asserts pinnedKey is string {
+  if (!pinnedKey) throw new Error("Managed recovery requires the pinned operator signing key");
+}
+
+function retainRecoveryAdmission(
+  admission: RecoveryAdmission,
+  claims: ControlPlaneClaims,
+  verifiedClaims: VerifiedControlPlaneRequestClaims,
+): void {
+  if (
+    admission.identity.publicRunId !== claims.sub ||
+    admission.sourceBinding.projectId !== claims.project_id ||
+    admission.expiresAt > claims.exp || admission.expiresAt <= DateNow() / 1000
+  ) throw new Error("Managed recovery admission scope is invalid");
+  ObjectFreeze(admission.identity);
+  ObjectFreeze(admission.generation);
+  ObjectFreeze(admission.sourceBinding);
+  verifiedRecoveryGrants.set(verifiedClaims, ObjectFreeze(admission));
+}
+
+async function verifyOperatorSignature(
+  signature: string,
+  rawBody: string,
+  verificationOptions: Parameters<typeof verifyControlPlaneJws>[2],
+  publicKeyPem: string,
+): Promise<boolean> {
+  try {
+    await verifyControlPlaneJws(signature, rawBody, { ...verificationOptions, publicKeyPem });
+    return true;
+  } catch {
+    // Adapter compatibility never grants platform dependencies.
+    return false;
+  }
+}
+
 export async function verifyControlPlaneRequest(
   req: Request,
-  ctx: HandlerContext,
+  ctx: Pick<HandlerContext, "adapter" | "projectSlug" | "projectId">,
   rawBody: string,
   options: {
     expectedSubject?: string;
@@ -143,15 +271,7 @@ export async function verifyControlPlaneRequest(
     );
   }
 
-  const projectSlug = ctx.projectSlug;
-  if (!projectSlug) {
-    throw new ControlPlaneRequestError(400, "Project context is unavailable");
-  }
-
-  const controlPlaneJws = req.headers.get(CONTROL_PLANE_JWS_HEADER);
-  if (!controlPlaneJws) {
-    throw new ControlPlaneRequestError(401, "Missing control-plane signature");
-  }
+  const { projectSlug, controlPlaneJws } = readControlPlaneRequestContext(req, ctx);
 
   try {
     const requestMethod = req.method;
@@ -175,79 +295,44 @@ export async function verifyControlPlaneRequest(
     // This new authority uses the operator's value captured before tenant env
     // loading. Legacy transport/cache compatibility deliberately stays separate.
     const pinnedKey = getHostBootEnv("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY");
-    let body: Record<string, unknown> | undefined;
-    try {
-      const parsed: unknown = IntrinsicReflectApply(JsonParse, JSON, [rawBody]);
-      if (parsed !== null && typeof parsed === "object" && !ArrayIsArray(parsed)) {
-        body = parsed as Record<string, unknown>;
-      }
-    } catch {
-      // A valid signature can cover a plain cancel or malformed resume body.
-      // The handler owns payload validation; no dependency grant is minted.
+    const body = readControlPlaneBody(rawBody);
+    if (body && ObjectHasOwn(body, "managedRecoveryAdmission")) {
+      // A recovery request may never fall back to ordinary execution authority.
+      requirePinnedRecoveryKey(pinnedKey);
+      // Adapter compatibility keys are not operator recovery authority.
+      await verifyControlPlaneJws(controlPlaneJws, rawBody, {
+        ...verificationOptions,
+        publicKeyPem: pinnedKey,
+      });
+      const admission = getRecoveryAdmissionSchema().parse(
+        readOwnDataProperty(body, "managedRecoveryAdmission", "Managed recovery admission"),
+      );
+      retainRecoveryAdmission(admission, claims, verifiedClaims);
     }
+
     if (body && ObjectHasOwn(body, "platformToolDependencies")) {
       const dependencies = readPlatformToolDependencies(
         readOwnDataProperty(body, "platformToolDependencies", "Platform dependencies"),
       );
-      if (pinnedKey) {
-        let operatorVerified = pinnedKey === publicKeyPem;
-        if (!operatorVerified) {
-          try {
-            await verifyControlPlaneJws(controlPlaneJws, rawBody, {
-              ...verificationOptions,
-              publicKeyPem: pinnedKey,
-            });
-            operatorVerified = true;
-          } catch { /* Adapter compatibility never grants platform dependencies. */ }
-        }
-        if (operatorVerified) {
-          const run = readOwnDataProperty(body, "run", "Platform dependency scope");
-          const project = readOwnDataProperty(run, "project", "Platform dependency scope");
-          const runId = readOwnDataProperty(run, "runId", "Platform dependency scope");
-          const agentId = readOwnDataProperty(run, "agentId", "Platform dependency scope");
-          const projectId = readOwnDataProperty(project, "projectId", "Platform dependency scope");
-          let authenticatedProjectId = projectId;
-          if (ObjectHasOwn(body, "sourceProject") || ObjectHasOwn(body, "executionProject")) {
-            const sourceProject = readOwnDataProperty(
-              body,
-              "sourceProject",
-              "Platform dependency scope",
-            );
-            const executionProject = readOwnDataProperty(
-              body,
-              "executionProject",
-              "Platform dependency scope",
-            );
-            authenticatedProjectId = readOwnDataProperty(
-              sourceProject,
-              "projectId",
-              "Platform dependency scope",
-            );
-            const executionProjectId = readOwnDataProperty(
-              executionProject,
-              "projectId",
-              "Platform dependency scope",
-            );
-            if (executionProjectId !== projectId) {
-              throw new Error("Platform dependency scope is invalid");
-            }
-          }
-          if (
-            typeof runId !== "string" || runId !== claims.sub ||
-            typeof agentId !== "string" || typeof projectId !== "string" ||
-            authenticatedProjectId !== claims.project_id
-          ) throw new Error("Platform dependency scope is invalid");
-          verifiedPlatformGrants.set(
-            verifiedClaims,
-            ObjectFreeze({
-              projectId,
-              runId,
-              agentId,
-              expiresAt: claims.exp,
-              dependencies,
-            }),
-          );
-        }
+      if (
+        pinnedKey && (pinnedKey === publicKeyPem || await verifyOperatorSignature(
+          controlPlaneJws,
+          rawBody,
+          verificationOptions,
+          pinnedKey,
+        ))
+      ) {
+        const { projectId, runId, agentId } = readPlatformDependencyScope(body, claims);
+        verifiedPlatformGrants.set(
+          verifiedClaims,
+          ObjectFreeze({
+            projectId,
+            runId,
+            agentId,
+            expiresAt: claims.exp,
+            dependencies,
+          }),
+        );
       }
     }
     let hostVerified = hostPublicKeyPem === publicKeyPem && Boolean(hostPublicKeyPem);
@@ -285,4 +370,91 @@ export async function verifyControlPlaneRequest(
     });
     throw new ControlPlaneRequestError(401, "Invalid control-plane signature");
   }
+}
+
+interface ExecuteIngressReceipt {
+  readonly rawBody: string;
+  readonly claims: VerifiedControlPlaneRequestClaims;
+  readonly projectSlug: string;
+  readonly projectId: string;
+  readonly runId: string;
+}
+const executeIngressReceipts = createPrivateWeakStore<Request, ExecuteIngressReceipt | null>();
+
+/** Authenticate before any tenant filesystem/configuration work. No client-visible receipt. */
+export async function prepareControlPlaneExecuteIngress(
+  req: Request,
+  ctx: Pick<HandlerContext, "adapter" | "projectSlug" | "projectId">,
+): Promise<void> {
+  const path = new URL(req.url).pathname;
+  const match = /^\/api\/control-plane\/runs\/([^/]+)\/execute$/.exec(path);
+  if (req.method !== "POST" || !match || !match[1]) return;
+  if (executeIngressReceipts.get(req) !== undefined) {
+    throw new ControlPlaneRequestError(401, "Control-plane request already admitted");
+  }
+  if (!ctx.projectSlug || !ctx.projectId) {
+    throw new ControlPlaneRequestError(401, "Control-plane project context is unavailable");
+  }
+  const runId = match[1];
+  let rawBody: string;
+  try {
+    rawBody = await readInternalAgentRequestBody(req, INTERNAL_AGENT_CONTROL_PLANE_MAX_BODY_BYTES);
+  } catch (error) {
+    if (
+      error instanceof InternalAgentRequestBodyTooLargeError ||
+      isHostedConfigRequestCancellation(error)
+    ) throw error;
+    // Match the execute handler's opaque client error for malformed/cancelled reads.
+    throw new ControlPlaneRequestError(400, "Invalid project run execute request");
+  }
+  const claims = await verifyControlPlaneRequest(req, ctx, rawBody, {
+    expectedSubject: runId,
+    expectedSurface: "studio",
+  });
+  const body = readControlPlaneBody(rawBody);
+  if (body) {
+    const protocol = readOwnDataProperty(
+      body,
+      "schema_snapshot_protocol",
+      "Schema snapshot protocol",
+      false,
+    );
+    if (protocol !== undefined && protocol !== 1) {
+      throw new ControlPlaneRequestError(400, "Unsupported schema snapshot protocol");
+    }
+  }
+  if (
+    !body || readOwnDataProperty(body, "projectId", "Project", false) !== ctx.projectId ||
+    readOwnDataProperty(body, "runId", "Run", false) !== runId
+  ) {
+    throw new ControlPlaneRequestError(401, "Invalid control-plane signature");
+  }
+  executeIngressReceipts.set(
+    req,
+    ObjectFreeze({
+      rawBody,
+      claims,
+      projectSlug: ctx.projectSlug,
+      projectId: ctx.projectId,
+      runId,
+    }),
+  );
+}
+
+/** Consume once on the identical Request and routed identity; never refresh signature time. */
+export function consumeControlPlaneExecuteIngress(
+  req: Request,
+  ctx: Pick<HandlerContext, "projectSlug" | "projectId">,
+  runId: string,
+): ExecuteIngressReceipt | undefined {
+  const receipt = executeIngressReceipts.get(req);
+  if (receipt === undefined) return undefined;
+  executeIngressReceipts.set(req, null);
+  if (
+    !receipt || receipt.projectSlug !== ctx.projectSlug || receipt.projectId !== ctx.projectId ||
+    receipt.runId !== runId || receipt.claims.exp <= DateNow() / 1000
+  ) {
+    throw new ControlPlaneRequestError(401, "Invalid control-plane ingress receipt");
+  }
+  return receipt;
 }

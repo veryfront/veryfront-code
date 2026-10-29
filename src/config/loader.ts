@@ -1856,17 +1856,81 @@ function filesystemBackendKey(
   }
 }
 
+function assertFilesystemBackendOptionsMatch(
+  selectedKey: FilesystemBackendKey,
+  selectedType: string,
+  userConfig: VeryfrontConfig["fs"],
+): void {
+  for (const key of FILESYSTEM_BACKEND_KEYS) {
+    if (key !== selectedKey && userConfig?.[key] !== undefined) {
+      throw CONFIG_VALIDATION_FAILED.create({
+        detail: `Filesystem options for "${key}" do not match selected backend "${selectedType}"`,
+      });
+    }
+  }
+}
+
+function mergeVeryfrontFilesystemOptions(
+  selectedDefaults: VeryfrontConfig["fs"],
+  userConfig: VeryfrontConfig["fs"],
+): NonNullable<NonNullable<VeryfrontConfig["fs"]>["veryfront"]> {
+  const veryfront = {
+    ...selectedDefaults?.veryfront,
+    ...userConfig?.veryfront,
+  } as NonNullable<NonNullable<VeryfrontConfig["fs"]>["veryfront"]>;
+  if (selectedDefaults?.veryfront?.cache || userConfig?.veryfront?.cache) {
+    veryfront.cache = {
+      ...selectedDefaults?.veryfront?.cache,
+      ...userConfig?.veryfront?.cache,
+    };
+  }
+  if (selectedDefaults?.veryfront?.retry || userConfig?.veryfront?.retry) {
+    veryfront.retry = {
+      ...selectedDefaults?.veryfront?.retry,
+      ...userConfig?.veryfront?.retry,
+    };
+  }
+  return veryfront;
+}
+
+function mergeGithubFilesystemOptions(
+  selectedDefaults: VeryfrontConfig["fs"],
+  userConfig: VeryfrontConfig["fs"],
+): NonNullable<NonNullable<VeryfrontConfig["fs"]>["github"]> {
+  const github = {
+    ...selectedDefaults?.github,
+    ...userConfig?.github,
+  } as NonNullable<NonNullable<VeryfrontConfig["fs"]>["github"]>;
+  if (selectedDefaults?.github?.cache || userConfig?.github?.cache) {
+    github.cache = {
+      ...selectedDefaults?.github?.cache,
+      ...userConfig?.github?.cache,
+    };
+  }
+  if (selectedDefaults?.github?.retry || userConfig?.github?.retry) {
+    github.retry = {
+      ...selectedDefaults?.github?.retry,
+      ...userConfig?.github?.retry,
+    };
+  }
+  return github;
+}
+
+function assertPlatformManagedFilesystemNotOverridden(userConfig: VeryfrontConfig["fs"]): void {
+  if (userConfig && Object.keys(userConfig).length > 0) {
+    throw CONFIG_VALIDATION_FAILED.create({
+      detail:
+        "Filesystem configuration is platform-managed in proxy mode and cannot be overridden by project config",
+    });
+  }
+}
+
 function mergeFilesystemConfig(
   defaults: VeryfrontConfig["fs"],
   userConfig: VeryfrontConfig["fs"],
 ): NonNullable<VeryfrontConfig["fs"]> {
   if (defaults?.type === "veryfront-api" && defaults.veryfront?.proxyMode === true) {
-    if (userConfig && Object.keys(userConfig).length > 0) {
-      throw CONFIG_VALIDATION_FAILED.create({
-        detail:
-          "Filesystem configuration is platform-managed in proxy mode and cannot be overridden by project config",
-      });
-    }
+    assertPlatformManagedFilesystemNotOverridden(userConfig);
     return {
       ...defaults,
       veryfront: {
@@ -1879,13 +1943,7 @@ function mergeFilesystemConfig(
 
   const selectedType = userConfig?.type ?? defaults?.type ?? "local";
   const selectedKey = filesystemBackendKey(selectedType);
-  for (const key of FILESYSTEM_BACKEND_KEYS) {
-    if (key !== selectedKey && userConfig?.[key] !== undefined) {
-      throw CONFIG_VALIDATION_FAILED.create({
-        detail: `Filesystem options for "${key}" do not match selected backend "${selectedType}"`,
-      });
-    }
-  }
+  assertFilesystemBackendOptionsMatch(selectedKey, selectedType, userConfig);
 
   const selectedDefaults = defaults?.type === selectedType ? defaults : undefined;
   const merged: NonNullable<VeryfrontConfig["fs"]> = {
@@ -1900,41 +1958,9 @@ function mergeFilesystemConfig(
     selectedKey === "veryfront" &&
     (selectedDefaults?.veryfront || userConfig?.veryfront)
   ) {
-    const veryfront = {
-      ...selectedDefaults?.veryfront,
-      ...userConfig?.veryfront,
-    } as NonNullable<NonNullable<VeryfrontConfig["fs"]>["veryfront"]>;
-    if (selectedDefaults?.veryfront?.cache || userConfig?.veryfront?.cache) {
-      veryfront.cache = {
-        ...selectedDefaults?.veryfront?.cache,
-        ...userConfig?.veryfront?.cache,
-      };
-    }
-    if (selectedDefaults?.veryfront?.retry || userConfig?.veryfront?.retry) {
-      veryfront.retry = {
-        ...selectedDefaults?.veryfront?.retry,
-        ...userConfig?.veryfront?.retry,
-      };
-    }
-    merged.veryfront = veryfront;
+    merged.veryfront = mergeVeryfrontFilesystemOptions(selectedDefaults, userConfig);
   } else if (selectedKey === "github" && (selectedDefaults?.github || userConfig?.github)) {
-    const github = {
-      ...selectedDefaults?.github,
-      ...userConfig?.github,
-    } as NonNullable<NonNullable<VeryfrontConfig["fs"]>["github"]>;
-    if (selectedDefaults?.github?.cache || userConfig?.github?.cache) {
-      github.cache = {
-        ...selectedDefaults?.github?.cache,
-        ...userConfig?.github?.cache,
-      };
-    }
-    if (selectedDefaults?.github?.retry || userConfig?.github?.retry) {
-      github.retry = {
-        ...selectedDefaults?.github?.retry,
-        ...userConfig?.github?.retry,
-      };
-    }
-    merged.github = github;
+    merged.github = mergeGithubFilesystemOptions(selectedDefaults, userConfig);
   }
 
   return merged;
@@ -2001,12 +2027,12 @@ export function mergeConfigs(userConfig: Partial<VeryfrontConfig>): VeryfrontCon
   if (merged.resolve && (defaultMap || userMap)) {
     merged.resolve.importMap = {
       imports: {
-        ...(defaultMap?.imports ?? {}),
-        ...(userMap?.imports ?? {}),
+        ...defaultMap?.imports,
+        ...userMap?.imports,
       },
       scopes: {
-        ...(defaultMap?.scopes ?? {}),
-        ...(userMap?.scopes ?? {}),
+        ...defaultMap?.scopes,
+        ...userMap?.scopes,
       },
     };
   }
@@ -5059,6 +5085,48 @@ function asResolvedConfigSpecifier(resolved: string): string {
     : resolved;
 }
 
+function resolvedConfigPackageImportPath(
+  specifier: string,
+  esmResolution: Extract<ProjectPackageImportResolution, { kind: "resolved" }>,
+  resolvedPath: string,
+  lstatSync: ConfigPackageLstatSync,
+  realpathSync: ConfigPackageRealpathSync,
+): string {
+  const packageRoot = realpathSync(esmResolution.directory);
+  const boundary = configPackageTargetBoundary(realpathSync, lstatSync, resolvedPath);
+  if (!isPathContainedBy(boundary.path, packageRoot)) {
+    throw configPackageResolutionError(specifier, "ERR_PACKAGE_PATH_NOT_EXPORTED");
+  }
+  const containedPath = boundary.targetExists ? boundary.path : resolvedPath;
+  const query = stringIndexOf(esmResolution.specifier, "?");
+  const fragment = stringIndexOf(esmResolution.specifier, "#");
+  let suffixStart: number;
+  if (query < 0) suffixStart = fragment;
+  else if (fragment < 0) suffixStart = query;
+  else suffixStart = Math.min(query, fragment);
+  const suffix = suffixStart < 0 ? "" : stringSlice(esmResolution.specifier, suffixStart);
+  return asResolvedConfigSpecifier(containedPath) + suffix;
+}
+
+function resolveLegacyConfigPackageImport(
+  esmResolution: Extract<ProjectPackageImportResolution, { kind: "legacy" }>,
+  baseRequire: NodeJS.Require,
+): string {
+  const legacyTarget = esmResolution.subpath === null
+    ? esmResolution.directory
+    : join(esmResolution.directory, stringSlice(esmResolution.subpath, 1));
+  const resolved = ReflectApply(baseRequire.resolve, baseRequire, [legacyTarget]);
+  if (typeof resolved !== "string") throw new TypeError("Config import resolution failed");
+  return asResolvedConfigSpecifier(resolved);
+}
+
+function recordConfigPackageImportAlias(seenAliases: Set<string>, specifier: string): void {
+  if (ReflectApply(SetPrototypeHas, seenAliases, [specifier]) as boolean) {
+    throw new TypeError(`Circular package import alias "${specifier}"`);
+  }
+  ReflectApply(SetPrototypeAdd, seenAliases, [specifier]);
+}
+
 async function createProjectConfigImportResolver(
   configPath: string,
 ): Promise<ProjectConfigImportResolver> {
@@ -5101,31 +5169,19 @@ async function createProjectConfigImportResolver(
       const resolvedUrl = new IntrinsicURL(esmResolution.specifier);
       const resolvedPath = pathFromCapturedFileUrl(resolvedUrl);
       const { lstatSync, realpathSync } = await import("node:fs");
-      const packageRoot = realpathSync(esmResolution.directory);
-      const boundary = configPackageTargetBoundary(realpathSync, lstatSync, resolvedPath);
-      if (!isPathContainedBy(boundary.path, packageRoot)) {
-        throw configPackageResolutionError(specifier, "ERR_PACKAGE_PATH_NOT_EXPORTED");
-      }
-      const containedPath = boundary.targetExists ? boundary.path : resolvedPath;
-      const query = stringIndexOf(esmResolution.specifier, "?");
-      const fragment = stringIndexOf(esmResolution.specifier, "#");
-      const suffixStart = query < 0 ? fragment : fragment < 0 ? query : Math.min(query, fragment);
-      const suffix = suffixStart < 0 ? "" : stringSlice(esmResolution.specifier, suffixStart);
-      return asResolvedConfigSpecifier(containedPath) + suffix;
+      return resolvedConfigPackageImportPath(
+        specifier,
+        esmResolution,
+        resolvedPath,
+        lstatSync,
+        realpathSync,
+      );
     }
     if (esmResolution?.kind === "legacy") {
-      const legacyTarget = esmResolution.subpath === null
-        ? esmResolution.directory
-        : join(esmResolution.directory, stringSlice(esmResolution.subpath, 1));
-      const resolved = ReflectApply(baseRequire.resolve, baseRequire, [legacyTarget]);
-      if (typeof resolved !== "string") throw new TypeError("Config import resolution failed");
-      return asResolvedConfigSpecifier(resolved);
+      return resolveLegacyConfigPackageImport(esmResolution, baseRequire);
     }
     if (esmResolution?.kind === "external") {
-      if (ReflectApply(SetPrototypeHas, seenAliases, [specifier]) as boolean) {
-        throw new TypeError(`Circular package import alias "${specifier}"`);
-      }
-      ReflectApply(SetPrototypeAdd, seenAliases, [specifier]);
+      recordConfigPackageImportAlias(seenAliases, specifier);
       // Resolve the external target from the scope that declared it, the way
       // native package-imports resolution does, so the declaring package's
       // own dependencies win over copies nested nearer the config file.
@@ -5259,6 +5315,44 @@ export async function rewriteProjectConfigImportsFromProject(
   );
 }
 
+function rewriteDynamicConfigImportRanges(
+  source: string,
+  observerKey: string,
+  argumentOpeningCounts: Map<number, number>,
+  argumentClosingCounts: Map<number, number>,
+  importOpeningCounts: Map<number, number>,
+  importClosingCounts: Map<number, number>,
+): string {
+  // Insert wrappers against offsets in the original source. Dynamic imports
+  // can nest, so rewriting one expression first would invalidate the lexer's
+  // range for its containing import even when records are visited in reverse.
+  let rewritten = "";
+  let sourceOffset = 0;
+  for (let position = 0; position <= source.length; position++) {
+    const argumentOpeningCount = mapGet(argumentOpeningCounts, position) ?? 0;
+    const argumentClosingCount = mapGet(argumentClosingCounts, position) ?? 0;
+    const importOpeningCount = mapGet(importOpeningCounts, position) ?? 0;
+    const importClosingCount = mapGet(importClosingCounts, position) ?? 0;
+    if (
+      argumentOpeningCount === 0 && argumentClosingCount === 0 &&
+      importOpeningCount === 0 && importClosingCount === 0
+    ) continue;
+    rewritten += stringSlice(source, sourceOffset, position);
+    for (let index = 0; index < importClosingCount; index++) rewritten += ")";
+    for (let index = 0; index < argumentClosingCount; index++) rewritten += ")";
+    for (let index = 0; index < importOpeningCount; index++) {
+      rewritten += `${observerKey}.settle(`;
+    }
+    for (let index = 0; index < argumentOpeningCount; index++) {
+      rewritten += `${observerKey}.resolve(`;
+    }
+    sourceOffset = position;
+  }
+  rewritten += stringSlice(source, sourceOffset);
+
+  return rewritten;
+}
+
 async function rewriteDynamicProjectConfigImports(
   source: string,
   observerKey: string,
@@ -5299,32 +5393,14 @@ async function rewriteDynamicProjectConfigImports(
   }
   if (!hasDynamicImport) return source;
 
-  // Insert wrappers against offsets in the original source. Dynamic imports
-  // can nest, so rewriting one expression first would invalidate the lexer's
-  // range for its containing import even when records are visited in reverse.
-  let rewritten = "";
-  let sourceOffset = 0;
-  for (let position = 0; position <= source.length; position++) {
-    const argumentOpeningCount = mapGet(argumentOpeningCounts, position) ?? 0;
-    const argumentClosingCount = mapGet(argumentClosingCounts, position) ?? 0;
-    const importOpeningCount = mapGet(importOpeningCounts, position) ?? 0;
-    const importClosingCount = mapGet(importClosingCounts, position) ?? 0;
-    if (
-      argumentOpeningCount === 0 && argumentClosingCount === 0 &&
-      importOpeningCount === 0 && importClosingCount === 0
-    ) continue;
-    rewritten += stringSlice(source, sourceOffset, position);
-    for (let index = 0; index < importClosingCount; index++) rewritten += ")";
-    for (let index = 0; index < argumentClosingCount; index++) rewritten += ")";
-    for (let index = 0; index < importOpeningCount; index++) {
-      rewritten += `${observerKey}.settle(`;
-    }
-    for (let index = 0; index < argumentOpeningCount; index++) {
-      rewritten += `${observerKey}.resolve(`;
-    }
-    sourceOffset = position;
-  }
-  rewritten += stringSlice(source, sourceOffset);
+  const rewritten = rewriteDynamicConfigImportRanges(
+    source,
+    observerKey,
+    argumentOpeningCounts,
+    argumentClosingCounts,
+    importOpeningCounts,
+    importClosingCounts,
+  );
 
   // The generated import binding is chosen absent from the authored source,
   // and its data module reads the real host global in its own lexical scope.
@@ -5630,29 +5706,42 @@ function ownStringProperty(value: unknown, key: string): string | undefined {
     : undefined;
 }
 
+function configResolveErrorConstructorName(
+  error: unknown,
+): DeferredConfigResolveError["constructorName"] {
+  if (error instanceof TypeError) return "TypeError";
+  if (error instanceof RangeError) return "RangeError";
+  if (error instanceof SyntaxError) return "SyntaxError";
+  return "Error";
+}
+
+function configResolveErrorName(
+  error: unknown,
+  errorObject: unknown,
+  constructorName: DeferredConfigResolveError["constructorName"],
+): string {
+  if (error instanceof Error && error.name) return error.name;
+  if (errorObject) return ownStringProperty(errorObject, "name") ?? constructorName;
+  return constructorName;
+}
+
+function configResolveErrorMessage(error: unknown, errorObject: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (errorObject) {
+    return ownStringProperty(errorObject, "message") ??
+      "Config import.meta.resolve could not resolve the requested module";
+  }
+  return "Config import.meta.resolve could not resolve the requested module";
+}
+
 function serializeConfigResolveError(
   error: unknown,
   seen = new IntrinsicSet<object>(),
 ): DeferredConfigResolveError {
   const errorObject = typeof error === "object" && error !== null ? error : undefined;
-  const constructorName = error instanceof TypeError
-    ? "TypeError"
-    : error instanceof RangeError
-    ? "RangeError"
-    : error instanceof SyntaxError
-    ? "SyntaxError"
-    : "Error";
-  const name = error instanceof Error && error.name
-    ? error.name
-    : errorObject
-    ? ownStringProperty(errorObject, "name") ?? constructorName
-    : constructorName;
-  const message = error instanceof Error
-    ? error.message
-    : errorObject
-    ? ownStringProperty(errorObject, "message") ??
-      "Config import.meta.resolve could not resolve the requested module"
-    : "Config import.meta.resolve could not resolve the requested module";
+  const constructorName = configResolveErrorConstructorName(error);
+  const name = configResolveErrorName(error, errorObject, constructorName);
+  const message = configResolveErrorMessage(error, errorObject);
   const code = errorObject ? ownStringProperty(errorObject, "code") : undefined;
   let cause: DeferredConfigResolveError | string | number | boolean | null | undefined;
 
@@ -5689,14 +5778,17 @@ export function __serializeConfigResolveErrorForTests(error: unknown) {
   return serializeConfigResolveError(error);
 }
 
+function deferredErrorCauseExpression(error: DeferredConfigResolveError): string {
+  if (error.cause === undefined) return "";
+  return `, { cause: ${
+    typeof error.cause === "object" && error.cause !== null && "constructorName" in error.cause
+      ? deferredErrorConstructorExpression(error.cause)
+      : configCodeLiteral(error.cause)
+  } }`;
+}
+
 function deferredErrorConstructorExpression(error: DeferredConfigResolveError): string {
-  const cause = error.cause === undefined
-    ? ""
-    : `, { cause: ${
-      typeof error.cause === "object" && error.cause !== null && "constructorName" in error.cause
-        ? deferredErrorConstructorExpression(error.cause)
-        : configCodeLiteral(error.cause)
-    } }`;
+  const cause = deferredErrorCauseExpression(error);
   const assignments = [
     error.name !== error.constructorName ? `failure.name = ${configCodeLiteral(error.name)};` : "",
     error.code ? `failure.code = ${configCodeLiteral(error.code)};` : "",
@@ -5744,16 +5836,17 @@ function isConfigPackageIntegerIndexKey(key: string): boolean {
   return key.length < 10 || (key.length === 10 && key < "4294967295");
 }
 
+function configPackageSuffixIndex(queryIndex: number, fragmentIndex: number): number {
+  if (queryIndex < 0) return fragmentIndex;
+  if (fragmentIndex < 0) return queryIndex;
+  if (queryIndex < fragmentIndex) return queryIndex;
+  return fragmentIndex;
+}
+
 function isValidConfigPackageTargetString(target: string): boolean {
   const queryIndex = ReflectApply(StringPrototypeIndexOf, target, ["?"]) as number;
   const fragmentIndex = ReflectApply(StringPrototypeIndexOf, target, ["#"]) as number;
-  const suffixIndex = queryIndex < 0
-    ? fragmentIndex
-    : fragmentIndex < 0
-    ? queryIndex
-    : queryIndex < fragmentIndex
-    ? queryIndex
-    : fragmentIndex;
+  const suffixIndex = configPackageSuffixIndex(queryIndex, fragmentIndex);
   const targetPath = suffixIndex < 0
     ? target
     : ReflectApply(StringPrototypeSlice, target, [0, suffixIndex]) as string;
@@ -5776,20 +5869,33 @@ function tokenizeNodeOptions(options: string | undefined): string[] {
   let token = "";
   let quote = "";
   let escaped = false;
-  for (let index = 0; index < options.length; index++) {
-    const character = options[index]!;
+  const consumeEscape = (character: string): boolean => {
     if (escaped) {
       token += character;
       escaped = false;
-      continue;
+      return true;
     }
     if (character === "\\" && quote === '"') {
       escaped = true;
-      continue;
+      return true;
     }
+    return false;
+  };
+  const consumeQuotedCharacter = (character: string): void => {
+    if (character === quote) quote = "";
+    else token += character;
+  };
+  const appendToken = (): void => {
+    if (token.length > 0) {
+      tokens[tokens.length] = token;
+      token = "";
+    }
+  };
+  for (let index = 0; index < options.length; index++) {
+    const character = options[index]!;
+    if (consumeEscape(character)) continue;
     if (quote !== "") {
-      if (character === quote) quote = "";
-      else token += character;
+      consumeQuotedCharacter(character);
       continue;
     }
     if (character === '"' || character === "'") {
@@ -5799,16 +5905,13 @@ function tokenizeNodeOptions(options: string | undefined): string[] {
     if (
       character === " " || character === "\t" || character === "\r" || character === "\n"
     ) {
-      if (token.length > 0) {
-        tokens[tokens.length] = token;
-        token = "";
-      }
+      appendToken();
       continue;
     }
     token += character;
   }
   if (escaped) token += "\\";
-  if (token.length > 0) tokens[tokens.length] = token;
+  appendToken();
   return tokens;
 }
 
@@ -5832,18 +5935,22 @@ function nodeConfigPackageConditions(
     }
     customConditions[customConditions.length] = condition;
   };
+  const consumeAddonOption = (argument: string): boolean => {
+    if (matchesNodeBooleanOption(argument, "--no-addons")) {
+      addons = false;
+      return true;
+    }
+    if (matchesNodeBooleanOption(argument, "--addons")) {
+      addons = true;
+      return true;
+    }
+    return false;
+  };
   const collect = (arguments_: readonly string[]): void => {
     for (let index = 0; index < arguments_.length; index++) {
       const argument = arguments_[index];
       if (argument === undefined) continue;
-      if (matchesNodeBooleanOption(argument, "--no-addons")) {
-        addons = false;
-        continue;
-      }
-      if (matchesNodeBooleanOption(argument, "--addons")) {
-        addons = true;
-        continue;
-      }
+      if (consumeAddonOption(argument)) continue;
       if (
         argument === "-e" || argument === "--eval" || argument === "-p" ||
         argument === "--print"
@@ -5856,7 +5963,6 @@ function nodeConfigPackageConditions(
       }
       if (ReflectApply(StringPrototypeStartsWith, argument, ["--conditions="]) as boolean) {
         appendCustom(ReflectApply(StringPrototypeSlice, argument, [13]) as string);
-        continue;
       }
     }
   };
@@ -5918,6 +6024,34 @@ function isConfigPackageConditionActive(
   return false;
 }
 
+function configPackageArrayTarget(
+  entry: readonly unknown[],
+  conditions: readonly string[],
+): ConfigPackageTarget {
+  if (entry.length === 0) return null;
+  let fallback: ConfigPackageTarget = CONFIG_PACKAGE_TARGET_NO_MATCH;
+  for (let index = 0; index < entry.length; index += 1) {
+    const target = configPackageTarget(entry[index], conditions);
+    if (target === CONFIG_PACKAGE_TARGET_NO_MATCH) continue;
+    if (target === CONFIG_PACKAGE_TARGET_INVALID_CONFIG) return target;
+    if (target === CONFIG_PACKAGE_TARGET_INVALID || target === null) {
+      fallback = target;
+      continue;
+    }
+    return target;
+  }
+  return fallback;
+}
+
+function hasConfigPackageIntegerIndex(keys: readonly PropertyKey[]): boolean {
+  for (const key of keys) {
+    if (typeof key === "string" && isConfigPackageIntegerIndexKey(key)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function configPackageTarget(
   entry: unknown,
   conditions: readonly string[] = CONFIG_NODE_IMPORT_CONDITIONS,
@@ -5927,27 +6061,11 @@ function configPackageTarget(
   }
   if (entry === null) return null;
   if (ArrayIsArray(entry)) {
-    if (entry.length === 0) return null;
-    let fallback: ConfigPackageTarget = CONFIG_PACKAGE_TARGET_NO_MATCH;
-    for (let index = 0; index < entry.length; index += 1) {
-      const target = configPackageTarget(entry[index], conditions);
-      if (target === CONFIG_PACKAGE_TARGET_NO_MATCH) continue;
-      if (target === CONFIG_PACKAGE_TARGET_INVALID_CONFIG) return target;
-      if (target === CONFIG_PACKAGE_TARGET_INVALID || target === null) {
-        fallback = target;
-        continue;
-      }
-      return target;
-    }
-    return fallback;
+    return configPackageArrayTarget(entry, conditions);
   }
   if (typeof entry !== "object") return CONFIG_PACKAGE_TARGET_INVALID;
   const keys = ReflectOwnKeys(entry);
-  for (const key of keys) {
-    if (typeof key === "string" && isConfigPackageIntegerIndexKey(key)) {
-      return CONFIG_PACKAGE_TARGET_INVALID_CONFIG;
-    }
-  }
+  if (hasConfigPackageIntegerIndex(keys)) return CONFIG_PACKAGE_TARGET_INVALID_CONFIG;
   for (const key of keys) {
     if (typeof key !== "string" || !isConfigPackageConditionActive(key, conditions)) {
       continue;
@@ -6023,24 +6141,27 @@ function configPackageMapTarget(
 
   let bestKey: string | undefined;
   let bestPrefixLength = -1;
-  for (const key of ReflectOwnKeys(map)) {
-    if (typeof key !== "string") continue;
+  const considerPatternKey = (key: string): void => {
     const star = ReflectApply(StringPrototypeIndexOf, key, ["*"]) as number;
-    if (star < 0) continue;
-    if ((ReflectApply(StringPrototypeIndexOf, key, ["*", star + 1]) as number) >= 0) continue;
+    if (star < 0) return;
+    if ((ReflectApply(StringPrototypeIndexOf, key, ["*", star + 1]) as number) >= 0) return;
     const prefix = ReflectApply(StringPrototypeSlice, key, [0, star]) as string;
     const suffix = ReflectApply(StringPrototypeSlice, key, [star + 1]) as string;
-    if (!(ReflectApply(StringPrototypeStartsWith, specifier, [prefix]) as boolean)) continue;
-    if (!(ReflectApply(StringPrototypeEndsWith, specifier, [suffix]) as boolean)) continue;
+    if (!(ReflectApply(StringPrototypeStartsWith, specifier, [prefix]) as boolean)) return;
+    if (!(ReflectApply(StringPrototypeEndsWith, specifier, [suffix]) as boolean)) return;
     if (
       specifier.length < key.length ||
       prefix.length < bestPrefixLength ||
       (prefix.length === bestPrefixLength && bestKey !== undefined && key.length <= bestKey.length)
     ) {
-      continue;
+      return;
     }
     bestKey = key;
     bestPrefixLength = prefix.length;
+  };
+  for (const key of ReflectOwnKeys(map)) {
+    if (typeof key !== "string") continue;
+    considerPatternKey(key);
   }
   if (bestKey === undefined) return CONFIG_PACKAGE_TARGET_NO_MATCH;
 
@@ -6068,14 +6189,17 @@ function configPackageExportsTarget(
   if (exports !== null && typeof exports === "object" && !ArrayIsArray(exports)) {
     let hasSubpathKey = false;
     let hasConditionKey = false;
-    for (const key of ReflectOwnKeys(exports)) {
-      if (typeof key !== "string") continue;
-      if (ReflectApply(StringPrototypeStartsWith, key, ["."]) as boolean) {
-        hasSubpathKey = true;
-      } else {
-        hasConditionKey = true;
+    const classifyExportKeys = (): void => {
+      for (const key of ReflectOwnKeys(exports)) {
+        if (typeof key !== "string") continue;
+        if (ReflectApply(StringPrototypeStartsWith, key, ["."]) as boolean) {
+          hasSubpathKey = true;
+        } else {
+          hasConditionKey = true;
+        }
       }
-    }
+    };
+    classifyExportKeys();
     if (hasSubpathKey && hasConditionKey) return CONFIG_PACKAGE_TARGET_INVALID_CONFIG;
     if (hasSubpathKey) return configPackageMapTarget(exports, subpath, conditions);
   }
@@ -6203,6 +6327,46 @@ async function resolveLiteralConfigPackageImport(
   );
 }
 
+function readConfigPackageRootImportTarget(
+  specifier: string,
+  moduleScope: ConfigPackageScope | null,
+  conditions: readonly string[],
+): { target: string; directory: string } {
+  if (isInvalidConfigPackageImportSpecifier(specifier)) {
+    throw configPackageInvalidSpecifier(specifier);
+  }
+  const imports = moduleScope ? configPackageOwnValue(moduleScope.manifest, "imports") : undefined;
+  const target = configPackageMapTarget(
+    imports,
+    specifier,
+    conditions,
+  );
+  if (target === CONFIG_PACKAGE_TARGET_INVALID_CONFIG) {
+    throw configPackageInvalidConfig(specifier);
+  }
+  if (target === CONFIG_PACKAGE_TARGET_INVALID) throw configPackageInvalidTarget(specifier);
+  if (moduleScope === null || target === null || target === CONFIG_PACKAGE_TARGET_NO_MATCH) {
+    throw configPackageResolutionError(specifier, "ERR_PACKAGE_IMPORT_NOT_DEFINED");
+  }
+  return { target, directory: moduleScope.directory };
+}
+
+function findConfigPackageSearchDirectory(
+  searchPaths: string[] | null,
+  parsed: NonNullable<ReturnType<typeof parseBarePackageSpecifier>>,
+  existsSync: typeof import("node:fs").existsSync,
+): string | null {
+  if (searchPaths) {
+    for (let index = 0; index < searchPaths.length; index += 1) {
+      const packageDir = join(searchPaths[index]!, parsed.packageName);
+      if (existsSync(join(packageDir, "package.json"))) {
+        return packageDir;
+      }
+    }
+  }
+  return null;
+}
+
 async function configPackageResolutionRoot(
   specifier: string,
   modulePath: string,
@@ -6221,26 +6385,13 @@ async function configPackageResolutionRoot(
 
   const moduleScope = findConfigPackageScope(modulePath, readFileSync);
   if (ReflectApply(StringPrototypeStartsWith, specifier, ["#"]) as boolean) {
-    if (isInvalidConfigPackageImportSpecifier(specifier)) {
-      throw configPackageInvalidSpecifier(specifier);
-    }
-    const imports = moduleScope
-      ? configPackageOwnValue(moduleScope.manifest, "imports")
-      : undefined;
-    const target = configPackageMapTarget(
-      imports,
+    const { target, directory } = readConfigPackageRootImportTarget(
       specifier,
+      moduleScope,
       conditions,
     );
-    if (target === CONFIG_PACKAGE_TARGET_INVALID_CONFIG) {
-      throw configPackageInvalidConfig(specifier);
-    }
-    if (target === CONFIG_PACKAGE_TARGET_INVALID) throw configPackageInvalidTarget(specifier);
-    if (moduleScope === null || target === null || target === CONFIG_PACKAGE_TARGET_NO_MATCH) {
-      throw configPackageResolutionError(specifier, "ERR_PACKAGE_IMPORT_NOT_DEFINED");
-    }
     if (ReflectApply(StringPrototypeStartsWith, target, ["./"]) as boolean) {
-      return { directory: moduleScope.directory, errorCode: "ERR_PACKAGE_IMPORT_NOT_DEFINED" };
+      return { directory, errorCode: "ERR_PACKAGE_IMPORT_NOT_DEFINED" };
     }
     if (
       ReflectApply(StringPrototypeStartsWith, target, ["../"]) as boolean ||
@@ -6254,7 +6405,7 @@ async function configPackageResolutionRoot(
     }
     return await configPackageResolutionRoot(
       target,
-      join(moduleScope.directory, "package.json"),
+      join(directory, "package.json"),
       depth + 1,
       conditions,
     );
@@ -6274,15 +6425,8 @@ async function configPackageResolutionRoot(
 
   const projectRequire = createRequire(toFileUrl(modulePath).href);
   const searchPaths = projectRequire.resolve.paths(parsed.packageName);
-  if (searchPaths) {
-    for (let index = 0; index < searchPaths.length; index += 1) {
-      const packageDir = join(searchPaths[index]!, parsed.packageName);
-      if (existsSync(join(packageDir, "package.json"))) {
-        return { directory: packageDir, errorCode: "ERR_PACKAGE_PATH_NOT_EXPORTED" };
-      }
-    }
-  }
-  return null;
+  const directory = findConfigPackageSearchDirectory(searchPaths, parsed, existsSync);
+  return directory === null ? null : { directory, errorCode: "ERR_PACKAGE_PATH_NOT_EXPORTED" };
 }
 
 async function resolveLiteralConfigPackageExport(
@@ -6343,6 +6487,21 @@ async function resolveLiteralConfigPackageExport(
 type ConfigPackageRealpathSync = typeof import("node:fs").realpathSync;
 type ConfigPackageLstatSync = typeof import("node:fs").lstatSync;
 
+function assertConfigPackageBoundaryCandidateMissing(
+  lstatSync: ConfigPackageLstatSync,
+  current: string,
+  error: unknown,
+): void {
+  let candidateIsMissing = false;
+  try {
+    lstatSync(current);
+  } catch (lstatError) {
+    if (!isNotFoundError(lstatError)) throw lstatError;
+    candidateIsMissing = true;
+  }
+  if (!candidateIsMissing) throw error;
+}
+
 function configPackageTargetBoundary(
   realpathSync: ConfigPackageRealpathSync,
   lstatSync: ConfigPackageLstatSync,
@@ -6354,14 +6513,7 @@ function configPackageTargetBoundary(
       return { path: realpathSync(current), targetExists: current === resolvedPath };
     } catch (error) {
       if (!isNotFoundError(error)) throw error;
-      let candidateIsMissing = false;
-      try {
-        lstatSync(current);
-      } catch (lstatError) {
-        if (!isNotFoundError(lstatError)) throw lstatError;
-        candidateIsMissing = true;
-      }
-      if (!candidateIsMissing) throw error;
+      assertConfigPackageBoundaryCandidateMissing(lstatSync, current, error);
     }
     const parent = dirname(current);
     if (parent === current) {
@@ -6535,16 +6687,17 @@ async function resolveConfigFileUrl(
   }
 }
 
+function configSpecifierSuffixStart(query: number, fragment: number): number {
+  if (query < 0) return fragment;
+  if (fragment < 0) return query;
+  if (query < fragment) return query;
+  return fragment;
+}
+
 function resolveConfigImportMetaUrl(specifier: string, moduleUrl: string): string | null {
   const query = ReflectApply(StringPrototypeIndexOf, specifier, ["?"]) as number;
   const fragment = ReflectApply(StringPrototypeIndexOf, specifier, ["#"]) as number;
-  const suffixStart = query < 0
-    ? fragment
-    : fragment < 0
-    ? query
-    : query < fragment
-    ? query
-    : fragment;
+  const suffixStart = configSpecifierSuffixStart(query, fragment);
   const path = suffixStart < 0
     ? specifier
     : ReflectApply(StringPrototypeSlice, specifier, [0, suffixStart]) as string;
@@ -6804,21 +6957,27 @@ function isConfigSourceModule(path: string): boolean {
   }
 }
 
+function linkedWorkspaceConfigPackageName(specifier: string, resolvedPath: string): string | null {
+  if (!isConfigSourceModule(resolvedPath)) return null;
+  const parsed = parseBarePackageSpecifier(specifier);
+  if (!parsed || parsed.version !== null) return null;
+  return parsed.packageName;
+}
+
 async function linkedWorkspaceConfigRoot(
   fs: ReturnType<typeof createFileSystem>,
   specifier: string,
   importer: string,
   resolvedPath: string,
 ): Promise<string | null> {
-  if (!isConfigSourceModule(resolvedPath)) return null;
-  const parsed = parseBarePackageSpecifier(specifier);
-  if (!parsed || parsed.version !== null) return null;
+  const packageName = linkedWorkspaceConfigPackageName(specifier, resolvedPath);
+  if (packageName === null) return null;
   const lstat = fs.lstat?.bind(fs);
   if (!lstat) throw new TypeError("Config package link inspection is unavailable");
 
   let current = dirname(importer);
   while (true) {
-    const packagePath = join(current, "node_modules", parsed.packageName);
+    const packagePath = join(current, "node_modules", packageName);
     try {
       const stat = await lstat(packagePath);
       if (stat.isSymlink) {

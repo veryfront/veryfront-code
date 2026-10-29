@@ -8,6 +8,7 @@ import {
 interface GuideContract {
   references: string[];
   snippets: string[];
+  verificationHeading?: string;
 }
 
 const PUBLIC_DOC_DIRS = ["getting-started", "guides", "concepts"] as const;
@@ -323,24 +324,19 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
   "getting-started/quickstart.md": {
     references: [
       "../guides/providers.md",
-      "../guides/multi-agent.md",
-      "./create-project.md",
-      "../api-reference/veryfront/agent.md",
-      "../api-reference/veryfront/tool.md",
-      "../api-reference/veryfront/chat.md",
+      "../guides/multi-agent.md#local-delegation",
+      "../guides/tools.md",
+      "../guides/evals.md",
     ],
     snippets: [
       "npm create veryfront@latest support-agent",
       "does not require a Veryfront account or Veryfront Cloud",
       'export OPENAI_API_KEY="<API_KEY>"',
       "npm run eval -- assistant",
-      "Self-host the app",
+      "Self-host",
       "calculator.ts",
       "What is 128 divided by 8?",
       "Inference OpenAI direct",
-      'delegates: ["researcher", "writer"]',
-      "agent_researcher",
-      "agent_writer",
     ],
   },
   "getting-started/cloud-quickstart.md": {
@@ -424,6 +420,9 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "security.auth.trustedProxy",
       "createLocalIntegrationToolSource",
       "loadRemoteToolsFromSource",
+      "`outlook__upload_attachment`",
+      "returns an upload reference, not bytes",
+      "up to 25 MiB",
       "Deploy to Kubernetes",
       "--from-env-file=.env",
       "startupProbe:",
@@ -508,9 +507,9 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "Local quickstart",
       "Cloud quickstart",
       "Self-host",
-      "Build individual parts",
-      "Installation",
-      "Coding agents",
+      "Continue after the quickstart",
+      "Task guides",
+      "API reference",
     ],
   },
   "concepts/framework-overview.md": {
@@ -592,7 +591,11 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "../guides/pages-and-routing.md",
       "../guides/api-routes.md",
     ],
-    snippets: ["user-facing surface", "routes", "request and response boundary"],
+    snippets: [
+      "user-facing surface",
+      "routes",
+      "request and response boundary",
+    ],
   },
   "concepts/agent.md": {
     references: [
@@ -642,7 +645,14 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "../guides/runs.md",
       "../api-reference/veryfront/runs.md",
     ],
-    snippets: ["durable execution", "status", "events", "eval target"],
+    snippets: [
+      "durable background-work",
+      "status",
+      "Events",
+      "eval target",
+      "`output`",
+      "`error`",
+    ],
   },
   "concepts/schedule.md": {
     references: [
@@ -655,7 +665,12 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
     references: [
       "../api-reference/veryfront/webhook.md",
     ],
-    snippets: ["eventFilter", "promptTemplate", "64 KiB", "filtered event is ignored"],
+    snippets: [
+      "eventFilter",
+      "promptTemplate",
+      "64 KiB",
+      "filtered event is ignored",
+    ],
   },
   "concepts/prompt.md": {
     references: ["../api-reference/veryfront/prompt.md"],
@@ -667,7 +682,11 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
   },
   "concepts/skill.md": {
     references: ["../guides/skills.md"],
-    snippets: ["agent instructions", "not an authorization boundary", "SKILL.md"],
+    snippets: [
+      "agent instructions",
+      "not an authorization boundary",
+      "SKILL.md",
+    ],
   },
   "concepts/integration.md": {
     references: [
@@ -681,7 +700,11 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "./integration.md",
       "./mcp-server.md",
     ],
-    snippets: ["Salesforce MCP", "allowedTools", "cross-system"],
+    snippets: [
+      "Salesforce MCP",
+      "which write actions are allowed",
+      "cross-system",
+    ],
   },
   "concepts/mcp-server.md": {
     references: [
@@ -714,7 +737,7 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
     references: ["../api-reference/veryfront/integrations.md"],
     snippets: [
       "agent source",
-      "There is no project integration policy",
+      "Project integration policy is an optional control-plane guardrail",
       "Make your first call",
       "runIntegrationTool",
       "/projects/<PROJECT_SLUG>/mcp",
@@ -857,6 +880,9 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "agentAsTool",
       "getAgentsAsTools",
       "workflow",
+      "agent_researcher",
+      "agent_writer",
+      'delegates: ["researcher", "writer"]',
     ],
   },
   "guides/oauth.md": {
@@ -1042,6 +1068,11 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "styleSrc",
       "fontSrc",
       "VERYFRONT_CSP",
+    ],
+  },
+  "guides/csrf-requests.md": {
+    references: ["/code/guides/security-headers"],
+    snippets: [
       "__Host-vf_csrf",
       "x-csrf-token",
       "csrfMutationHeaders",
@@ -1095,13 +1126,37 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
   },
   "guides/workflows-advanced.md": {
     references: ["../api-reference/veryfront/workflow.md"],
+    snippets: ["workflow-loops", "blobStorage", "workflow-ui"],
+  },
+  "guides/workflow-loops.md": {
+    references: ["/code/guides/workflows"],
+    snippets: ["loop", "doWhile", "times", "map"],
+  },
+  "guides/workflow-ui.md": {
+    references: ["/code/guides/workflows"],
     snippets: [
-      "loop",
-      "doWhile",
-      "blobStorage",
       "useWorkflow",
       "useWorkflowStart",
     ],
+  },
+  "guides/workflow-retention.md": {
+    references: [],
+    snippets: [
+      "reapTerminalRuns",
+      "Waiting and active runs",
+      "cutoff is exclusive",
+    ],
+    verificationHeading: "## Verify the sweep",
+  },
+  "guides/eval-comparison.md": {
+    references: ["/code/guides/evals"],
+    snippets: ["baselineModel", "candidateModels", "comparison.json"],
+    verificationHeading: "## Verify the comparison",
+  },
+  "guides/eval-reporting.md": {
+    references: ["/code/guides/evals"],
+    snippets: ["runEval", "export", "redacted"],
+    verificationHeading: "## Verify the export",
   },
 };
 
@@ -1129,7 +1184,10 @@ describe("published guide contracts", () => {
         filename !== "guides/errors.md" &&
         filename !== "getting-started/installation.md"
       ) {
-        assertStringIncludes(guide, "## Verify it worked");
+        assertStringIncludes(
+          guide,
+          contract.verificationHeading ?? "## Verify it worked",
+        );
       }
 
       if (filename === "getting-started/installation.md") {
@@ -1143,7 +1201,9 @@ describe("Connect-runtime worker admission", () => {
   it("persists the prompt as a user message before worker admission", async () => {
     const guide = await readPublishedGuide("guides/connect-runtime.md");
     const prompt = guide.indexOf('  const prompt = "');
-    const admission = guide.indexOf('const accepted = await api<{ id: string }>("/runs"');
+    const admission = guide.indexOf(
+      'const accepted = await api<{ id: string }>("/runs"',
+    );
     const beforeAdmission = guide.slice(prompt, admission);
     assertStringIncludes(
       beforeAdmission,

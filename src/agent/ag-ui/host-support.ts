@@ -144,15 +144,16 @@ function isToolPartWithOutput(
   type: string;
   toolCallId: string;
   toolName: string;
-  output: unknown;
+  output?: unknown;
+  errorText?: string;
 } {
   return typeof part.type === "string" &&
-    part.type.startsWith("tool-") &&
+    (part.type === "dynamic-tool" || part.type.startsWith("tool-")) &&
     part.type !== "tool-result" &&
     typeof part.toolCallId === "string" &&
     typeof part.toolName === "string" &&
-    "output" in part &&
-    part.output !== undefined;
+    (("output" in part && part.output !== undefined) ||
+      (part.state === "output-error" && typeof part.errorText === "string"));
 }
 
 function hasToolResultPart(
@@ -242,13 +243,13 @@ function normalizeMessagePart(
 
   if (
     typeof part.type === "string" &&
-    part.type.startsWith("tool-") &&
+    (part.type === "dynamic-tool" || part.type.startsWith("tool-")) &&
     part.type !== "tool-result" &&
     typeof part.toolCallId === "string" &&
     typeof part.toolName === "string"
   ) {
     return {
-      type: part.type,
+      type: part.type === "dynamic-tool" ? "tool-call" : part.type,
       toolCallId: part.toolCallId,
       toolName: part.toolName,
       args: normalizeToolArgs(part),
@@ -354,7 +355,10 @@ function normalizeAssistantMessage(
           type: "tool-result",
           toolCallId: part.toolCallId,
           toolName: part.toolName,
-          result: part.output,
+          result: part.output === undefined && part.state === "output-error" &&
+              typeof part.errorText === "string"
+            ? { error: part.errorText }
+            : part.output,
         }],
       } as Message);
       continue;

@@ -1,7 +1,7 @@
 ---
 title: "Evals"
 description: "Define and run quality checks for agents and datasets."
-order: 40
+order: 160
 ---
 
 Evals are project-defined quality checks in `evals/`. Use `veryfront eval` to
@@ -94,7 +94,7 @@ options. Name the eval when using them.
 
 An agent eval can declare the input accepted when a durable run is created:
 
-```ts
+```ts title="evals/invoice-lookup.ts"
 import { datasets, evalAgent } from "veryfront/eval";
 import { defineSchema } from "veryfront/schemas";
 
@@ -107,7 +107,9 @@ export default evalAgent({
 
 Veryfront creates the run, then validates its submitted `input` in the runtime before the eval
 executes. Invalid input fails with `INPUT_VALIDATION_FAILED` and structured `{ path, message }`
-errors. Without `inputSchema`, durable eval runs continue to accept any JSON input. The run input
+errors. Without `inputSchema`, durable eval runs continue to accept any JSON input.
+
+The run input
 is separate from each dataset example's `input`.
 
 The report and summary artifacts include `schemaVersion`. New reports also
@@ -119,28 +121,6 @@ includes pass/fail counts, metric aggregates, skipped metric or check results,
 gate failures, failed examples, flake classification for repeated examples,
 duration aggregates, and usage totals. Use `results.jsonl` when you need the
 full input, output, trace, and per-record metric evidence.
-
-## Progress and timeouts
-
-Agent eval cases often take a minute or more each, because every case makes
-real model requests. `veryfront eval` reports progress while cases run:
-
-- In an interactive terminal, one live line shows the eval, finished cases,
-  the current case, and elapsed time, for example
-  `[eval 2/3] disposition-agent 4/11 · case "label-and-move" · 3m 12s`.
-- Elsewhere, such as CI or a piped log, each finished case prints one line with
-  its duration.
-- A model request that fails transiently and is sent again prints a notice,
-  for example `Retrying model request (HTTP 429), attempt 2/3 in 1.0s`.
-
-`--quiet` and `--json` print no progress. Set `LOG_LEVEL=DEBUG` to also log
-each model request with its status, duration, and attempt number.
-
-Each case, including its metrics and checks, fails after 600 seconds by
-default with the `eval-record-timeout` error, and the eval continues with the
-next case. A model stream that stops sending data has no other deadline. Use
-`--record-timeout <seconds>` to change the limit, or `--record-timeout 0` to
-disable it.
 
 ## Tool evals
 
@@ -245,9 +225,12 @@ the comparison keeps the baseline or asks for review.
 Gateway-backed runs add split input/output tokens, billable input/output tokens,
 credits, and cost source to the comparison report. The comparison Markdown
 renderer still includes legacy USD columns for historical reports; those columns
-are `not measured` for credits-only gateway usage. Its metered-USD note describes
+are `not measured` for credits-only gateway usage.
+
+Its metered-USD note describes
 the preference when both reports contain USD measurements. When both reports
 contain only gateway credit measurements, the default comparison uses credits.
+
 The framework keeps no pricing table and does not convert credits to currency.
 Direct local runs do not estimate prices in the framework.
 
@@ -282,11 +265,15 @@ Policy metrics can reference `passRate`, `failed`, `gateFailures`,
 `billableInputTokens`, `billableOutputTokens`, `costUsd`, `costCredits`, and
 `p95Ms`. Use `costCredits` for credits-only gateway runs. `costUsd` reads
 USD measurements from historical reports only; it does not fall back to credits.
+
 A `costUsd` constraint fails with `costUsd was not measured` when those
 measurements are absent, and a `costUsd` objective cannot score that report.
+
 Migrate the policy key to `costCredits` and set thresholds in credits; do not
 reuse a USD threshold as a credit amount. Use `min`, `max`, and
-`maxRegressionPct` for constraints. Use `weight` with `direction` set to
+`maxRegressionPct` for constraints.
+
+Use `weight` with `direction` set to
 `"minimize"` or `"maximize"` for objectives.
 
 Each report includes provenance metadata. Local runs record git SHA, branch,
@@ -350,12 +337,9 @@ Absolute paths are used as given and ignore the base directory.
 
 ### Grading text that was not produced by an agent
 
-`judges.llm.rubric()` grades an agent's answer to a task by default, and sends
-the task input alongside the answer. When the graded value was not produced in
-response to that input -- a stored document, a labelled corpus, a reply written
-earlier -- that framing works against you: the judge sees the same string as
-both the question and the answer and reads it as an agent that echoed its prompt
-instead of doing the work.
+`judges.llm.rubric()` grades an agent's answer against its task by default.
+Stored documents, labelled corpora and earlier replies need text grading;
+otherwise the judge treats the value as both the question and the answer.
 
 Pass `framing: "text"` for those cases:
 
@@ -422,7 +406,9 @@ metrics.ops.cost({ maxCredits: 0.5 }).budget();
 
 `metrics.ops.cost` budgets the gateway `costCredits` of a record. A credit is
 the unit of account; the framework keeps no pricing table and does not convert
-credits to a currency. `maxUsd` is removed; `metrics.ops.cost({ maxUsd })`
+credits to a currency.
+
+`maxUsd` is removed; `metrics.ops.cost({ maxUsd })`
 throws at construction and names `maxCredits`. Token and cost budgets fail
 when the measurement required by their configured limit is missing; absent
 usage evidence never passes a budget.
@@ -630,7 +616,11 @@ export default evalAgent({
 ```
 
 `mockTools` can also be a resolver. The local CLI calls it once for each
-example repetition so each record can receive fresh state:
+example repetition so each record can receive fresh state. The resolver receives
+`runId`, the same host-created UUID shown in the agent’s `runtime_context` for that
+case. Each case gets a separate ID. This does not create a persisted platform run
+or bind tool authorization; mock run
+lookups should validate this ID instead of accepting any model-supplied value.
 
 ```ts
 export default evalAgent({
@@ -649,7 +639,9 @@ unless they are explicitly included in the `mockTools` result. Skills agents kee
 only the read-only skill loader tools, `veryfront__load_skill` and
 `veryfront__load_skill_reference`, so a skills agent can inspect skill instructions during a
 mocked eval; `veryfront__execute_skill_script` is not retained unless `mockTools` supplies
-it explicitly.
+it explicitly. Canonical `veryfront__*` fixtures are advertised and executed
+only within that local eval request; they do not gain platform authority in
+ordinary agent requests.
 
 Loaded-skill allowed-tool policies and delegation overrides are
 disabled while mock tools are active; the mock tool map is the complete tool
@@ -700,6 +692,18 @@ proxy. The adapter reads AG-UI events into `record.trace.events`, records tool
 calls as `record.trace.toolCalls`, captures tool call IDs, status, streamed
 arguments, result payloads, and denied/error state when the AG-UI endpoint emits
 them, and puts the parsed text at `record.output.text`.
+
+If request construction, transport, response reading, or result processing throws,
+the agent-service adapter adds `record.output.agUi.failure`. Its `stage` is
+`request-build`, `request-fetch`, `response-read`, or `result-processing`.
+`errorName` contains an allowlisted native error name, and `transportCode`
+contains an allowlisted code from the error or its immediate native error cause.
+Unknown values are `redacted`. This metadata excludes error messages, URLs,
+stacks, request bodies, and model content. Existing `record.error` and
+`record.output.agUi.runError` retain their existing behavior and can contain
+sensitive error details. Use the fixed failure metadata when you need a safe
+diagnostic projection. Successful results and ordinary HTTP or AG-UI failures
+do not add this field.
 
 Live adapters and CLI helpers require a non-empty `VERYFRONT_TOKEN`. CLI case
 filters cannot opt into mutation: a requested write case still requires
@@ -850,6 +854,8 @@ Gateways should treat `context.trace` as correlation metadata. It is not span
 export, does not include logs or metric streams, and does not replace ambient
 OpenTelemetry export.
 
+The MLflow exporter is bundled with `veryfront`; no separate package installation is required.
+
 Use `veryfront/extensions/ext-eval-report-mlflow` when completed reports should become
 MLflow Tracking runs. The CLI path can be environment-only: set
 `MLFLOW_TRACKING_URI` to activate the extension and select the default `mlflow`
@@ -939,7 +945,8 @@ veryfront eval deep-research \
   --report-dir .veryfront/evals/deep-research \
   --report .veryfront/evals/deep-research/report.json \
   --junit .veryfront/evals/deep-research/junit.xml \
-  --export braintrust,langfuse \
+  --export mlflow \
+  --require-export \
   --json
 ```
 
@@ -1009,11 +1016,6 @@ const report = await runEval(definition, {
 });
 ```
 
-Braintrust should follow the same contract as a sibling
-`@veryfront/ext-eval-report-*` exporter, for example a future
-`@veryfront/ext-eval-report-braintrust`, instead of being special-cased in
-project eval definitions or the MLflow exporter.
-
 ## Discovery
 
 Eval files are discovered from `evals/`:
@@ -1068,3 +1070,12 @@ veryfront eval deep-research
 
 The command exits with status `0` when all gate and budget checks pass. It exits
 with status `1` when any gate or budget check fails.
+
+## Next
+
+- [Compare eval runs and models](./eval-comparison.md): Check a regression or evaluate another model.
+- [Export eval reports](./eval-reporting.md): Share evidence with an external reporting system.
+
+## Related
+
+- [Eval API](../api-reference/veryfront/eval.md): Definitions, metrics, and reporters.

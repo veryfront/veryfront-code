@@ -676,102 +676,25 @@ describe("provider-tool-compat", () => {
     assertEquals(selected.at(-1)?.name, "tool_127");
   });
 
-  it("sanitizes Google tool schemas to avoid unsupported JSON Schema keywords", () => {
-    const sanitized = sanitizeProviderToolSchema(
-      {
-        $schema: "https://json-schema.org/draft/2020-12/schema",
-        $id: "tool-schema",
-        type: "object",
-        additionalProperties: false,
-        properties: {
-          kind: {
-            type: "string",
-            const: "file",
-            default: "file",
-          },
-          nested: {
-            anyOf: [
-              { type: "string", const: "a" },
-              { type: "string", const: "b" },
-            ],
-          },
-          refValue: {
-            $ref: "#/$defs/refValue",
-          },
-        },
-      } as never,
-      { model: "veryfront-cloud/google-ai-studio/gemini-2.5-flash" },
+  it("preserves canonical JSON Schema for Google's native JSON Schema field", () => {
+    const schema: ToolDefinition["parameters"] = {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        enabled: { type: "boolean", const: true, enum: [true] },
+        count: { type: "integer", enum: [1, 2], exclusiveMinimum: 0 },
+        nested: { type: "object", properties: { value: { type: "string" } } },
+      },
+      oneOf: [{ properties: { enabled: {} }, required: ["enabled"] }, {
+        properties: { nested: {} },
+        required: ["nested"],
+      }],
+      not: { properties: { forbidden: {} }, required: ["forbidden"] },
+    };
+    assertEquals(
+      sanitizeProviderToolSchema(schema as never, { model: "google/gemini-2.5-pro" }),
+      schema,
     );
-
-    assertEquals(containsKey(sanitized, "const"), false);
-    assertEquals(containsKey(sanitized, "default"), false);
-    assertEquals(containsKey(sanitized, "additionalProperties"), false);
-    assertEquals(containsKey(sanitized, "$schema"), false);
-    assertEquals(containsKey(sanitized, "$id"), false);
-    assertEquals(containsKey(sanitized, "$ref"), false);
-    assertEquals(containsKey(sanitized, "anyOf"), false);
-    assertEquals(sanitized.properties?.kind?.enum, ["file"]);
-    assertEquals(sanitized.properties?.nested?.enum, ["a", "b"]);
-  });
-
-  it("does not assign a schema type when collapsed anyOf literals are mixed types", () => {
-    const sanitized = sanitizeProviderToolSchema(
-      {
-        anyOf: [
-          { const: "file" },
-          { const: 1 },
-        ],
-      } as never,
-      { model: "google-ai-studio/gemini-2.5-pro" },
-    );
-
-    assertEquals(sanitized.enum, ["file", 1]);
-    assertEquals(sanitized.type, undefined);
-  });
-
-  it("normalizes Google schemas that use JSON Schema type arrays and numeric exclusive bounds", () => {
-    const sanitized = sanitizeProviderToolSchema(
-      {
-        type: "object",
-        properties: {
-          maybeText: {
-            type: ["string", "null"],
-          },
-          flexible: {
-            type: ["string", "number"],
-          },
-          count: {
-            type: "number",
-            exclusiveMinimum: 0,
-            exclusiveMaximum: 10,
-          },
-        },
-      } as never,
-      { model: "google-ai-studio/gemini-2.5-pro" },
-    );
-
-    assertEquals(sanitized.properties?.maybeText?.type, "string");
-    assertEquals(sanitized.properties?.flexible?.type, undefined);
-    assertEquals(containsKey(sanitized, "exclusiveMinimum"), false);
-    assertEquals(containsKey(sanitized, "exclusiveMaximum"), false);
-  });
-
-  it("keeps Google array schemas valid when upstream tools omit item schemas", () => {
-    const sanitized = sanitizeProviderToolSchema(
-      {
-        type: "object",
-        properties: {
-          labelIds: {
-            type: "array",
-            description: "Label IDs to apply.",
-          },
-        },
-      } as never,
-      { model: "google-ai-studio/gemini-2.5-pro" },
-    );
-
-    assertEquals(sanitized.properties?.labelIds?.type, "array");
-    assertEquals(sanitized.properties?.labelIds?.items, {});
   });
 
   for (const wireSurface of [undefined, "openai"] as const) {

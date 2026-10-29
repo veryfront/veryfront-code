@@ -42,6 +42,28 @@ function getLocalToolIds(connectorName: string, tools: { id?: string }[]): (stri
 }
 
 describe("integration endpoint specs", () => {
+  it("keeps Gmail inbox management without permanent message deletion", () => {
+    const gmail = getConnector("gmail");
+    assertEquals(gmail.auth?.scopes, ["https://www.googleapis.com/auth/gmail.modify"]);
+    const tools = getLocalToolIds("gmail", gmail.tools);
+    for (const id of ["delete_email", "batch_delete_emails", "delete_thread"]) {
+      assertEquals(tools.includes(id), false, `${id} requires withdrawn full-mail access`);
+    }
+    for (
+      const id of [
+        "trash_email",
+        "untrash_email",
+        "trash_thread",
+        "untrash_thread",
+        "send_email",
+        "create_draft",
+        "create_label",
+      ]
+    ) {
+      assert(tools.includes(id), `${id} remains available with gmail.modify`);
+    }
+  });
+
   it("keeps every generated tool summary between two and six words", () => {
     for (const connector of connectors) {
       for (const tool of connector.tools) {
@@ -135,9 +157,6 @@ describe("integration endpoint specs", () => {
       ["power-bi", "execute_dax_query", "Run read-only DAX query"],
       ["salesforce", "run_soql_query", "Run read-only SOQL query"],
       ["google-bigquery", "run_query", "Run SQL query (SELECT by default)"],
-      ["gmail", "delete_email", "Permanently delete email"],
-      ["gmail", "batch_delete_emails", "Permanently delete multiple emails"],
-      ["gmail", "delete_thread", "Permanently delete thread"],
       ["gmail", "delete_draft", "Permanently delete draft"],
       ["drive", "delete_file", "Permanently delete file"],
       ["gcp", "start_compute_instance", "Request compute instance start"],
@@ -1307,7 +1326,7 @@ describe("integration endpoint specs", () => {
       totalEndpointTools += endpointTools.length;
     }
 
-    assertEquals(totalEndpointTools, 73);
+    assertEquals(totalEndpointTools, 70);
   });
 
   it("adds endpoint specs for the newly configured integration providers", () => {
@@ -1505,7 +1524,7 @@ describe("integration endpoint specs", () => {
       ["gitlab", 10],
       ["jira", 12],
       ["confluence", 7],
-      ["outlook", 60],
+      ["outlook", 67],
       ["teams", 7],
     ]);
 
@@ -2435,6 +2454,16 @@ describe("integration endpoint specs", () => {
       return getConnectorLocalToolId("gmail", tool.id).replaceAll("_", "-");
     }).sort();
     assertEquals(toolFiles.sort(), expectedFiles);
+    const clientSource = await Deno.readTextFile(
+      new URL("../../templates/integrations/gmail/files/lib/gmail-client.ts", import.meta.url),
+    );
+    for (const method of ["deleteMessage", "batchDeleteMessages", "deleteThread"]) {
+      assertEquals(
+        clientSource.includes(method),
+        false,
+        `${method} needs withdrawn full-mail access`,
+      );
+    }
   });
 
   it("ships scaffolded Outlook tool handlers required by the request-desk demo", async () => {
@@ -2740,6 +2769,7 @@ describe("integration endpoint specs", () => {
       "Mail.Send",
       "Mail.ReadWrite",
       "Mail.Read.Shared",
+      "Mail.ReadWrite.Shared",
       "Calendars.Read",
       "Calendars.ReadWrite",
       "offline_access",
@@ -2787,6 +2817,13 @@ describe("integration endpoint specs", () => {
       "get_thread",
       "list_shared_mailbox_emails",
       "search_shared_mailbox_emails",
+      "get_shared_mailbox_email",
+      "list_shared_mailbox_folders",
+      "list_shared_mailbox_child_folders",
+      "list_shared_mailbox_attachments",
+      "get_shared_mailbox_attachment",
+      "move_shared_mailbox_email",
+      "get_shared_mailbox_email_mime",
       "list_calendars",
       "get_calendar",
       "create_calendar",
@@ -2874,6 +2911,63 @@ describe("integration endpoint specs", () => {
         ?.queryValueFormat,
       "microsoft-graph-search",
     );
+    const sharedMailboxRoutes = {
+      list_shared_mailbox_emails: ["GET", "/users/{mailbox}/mailFolders/{folderId}/messages"],
+      search_shared_mailbox_emails: ["GET", "/users/{mailbox}/messages"],
+      get_shared_mailbox_email: ["GET", "/users/{mailbox}/messages/{messageId}"],
+      list_shared_mailbox_folders: ["GET", "/users/{mailbox}/mailFolders"],
+      list_shared_mailbox_child_folders: [
+        "GET",
+        "/users/{mailbox}/mailFolders/{folderId}/childFolders",
+      ],
+      list_shared_mailbox_attachments: [
+        "GET",
+        "/users/{mailbox}/messages/{messageId}/attachments",
+      ],
+      get_shared_mailbox_attachment: [
+        "GET",
+        "/users/{mailbox}/messages/{messageId}/attachments/{attachmentId}",
+      ],
+      move_shared_mailbox_email: ["POST", "/users/{mailbox}/messages/{messageId}/move"],
+      get_shared_mailbox_email_mime: ["GET", "/users/{mailbox}/messages/{messageId}/$value"],
+    } as const;
+    for (const [toolId, [method, path]] of Object.entries(sharedMailboxRoutes)) {
+      const sharedEndpoint = getTool("outlook", toolId).endpoint;
+      assertEquals(sharedEndpoint?.method, method, toolId);
+      assertEquals(sharedEndpoint?.url, `https://graph.microsoft.com/v1.0${path}`, toolId);
+      assertEquals(sharedEndpoint?.params?.mailbox?.in, "path", toolId);
+      assertEquals(sharedEndpoint?.params?.mailbox?.required, true, toolId);
+      assertEquals(sharedEndpoint?.params?.mailbox?.default, undefined, toolId);
+      // Graph immutable IDs cover messages and attachments, not mail folders.
+      assertEquals(
+        sharedEndpoint?.params?.prefer,
+        toolId.endsWith("folders") ? undefined : {
+          type: "string",
+          in: "header",
+          headerName: "Prefer",
+          pattern: '^IdType="ImmutableId"$',
+          description:
+            'Set to IdType="ImmutableId" to read and address messages by immutable ID. Immutable IDs do not change when a message moves to another folder.',
+        },
+        toolId,
+      );
+      assertEquals(
+        getTool("outlook", toolId).requiresWrite,
+        toolId === "move_shared_mailbox_email",
+        toolId,
+      );
+    }
+    assertEquals(getTool("outlook", "get_shared_mailbox_email_mime").endpoint?.response, {
+      encoding: "base64",
+    });
+    assertEquals(getTool("outlook", "move_shared_mailbox_email").endpoint?.body, {
+      destinationId: {
+        type: "string",
+        description:
+          "Destination folder ID or well-known folder name in the same mailbox. The folder must already exist.",
+        required: true,
+      },
+    });
     assertEquals(
       connectors.find((connector) => connector.name === "outlook")?.tools.some(
         (tool) => tool.id === "outlook__find_group_by_mail",

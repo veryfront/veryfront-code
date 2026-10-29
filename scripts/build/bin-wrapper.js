@@ -159,13 +159,31 @@ function selectedProjectDirectory() {
     ) index++;
   }
   launcherCommand = command ?? "cli";
+  const { project, projectDirectory } = readProjectDirectoryOptions(
+    args, command, directoryAliasCommands,
+  );
+  // Explicit project-dir belongs to every project-aware command, including
+  // schedule, routes and local task execution.
+  if (projectDirectory) return projectDirectory;
+  if (command === "dev" || command === "lock") return project ?? process.cwd();
+  if (command === "start" || command === undefined) {
+    return project ?? process.cwd();
+  }
+  return process.cwd();
+}
+
+function projectDirectoryKeys(command, directoryAliasCommands) {
+  return directoryAliasCommands.has(command)
+    ? ["--project-dir", "--dir", "-d"]
+    : ["--project-dir", "--dir"];
+}
+
+function readProjectDirectoryOptions(args, command, directoryAliasCommands) {
   let project;
   let projectDirectory;
   for (let index = 0; index < args.length && args[index] !== "--"; index++) {
     const arg = args[index];
-    const directoryKeys = directoryAliasCommands.has(command)
-      ? ["--project-dir", "--dir", "-d"]
-      : ["--project-dir", "--dir"];
+    const directoryKeys = projectDirectoryKeys(command, directoryAliasCommands);
     const key = ["--project", ...directoryKeys].find((name) =>
       arg === name || arg.startsWith(`${name}=`)
     );
@@ -179,14 +197,7 @@ function selectedProjectDirectory() {
       } else project = resolve(process.cwd(), value);
     }
   }
-  // Explicit project-dir belongs to every project-aware command, including
-  // schedule, routes and local task execution.
-  if (projectDirectory) return projectDirectory;
-  if (command === "dev" || command === "lock") return project ?? process.cwd();
-  if (command === "start" || command === undefined) {
-    return project ?? process.cwd();
-  }
-  return process.cwd();
+  return { project, projectDirectory };
 }
 
 function findProjectPnp() {
@@ -200,40 +211,44 @@ function findProjectPnp() {
   }
 }
 
+function resolveProjectPnpCli(require, issuer, pnpFile) {
+  const api = require(pnpFile);
+  if (
+    typeof api.setup !== "function" ||
+    typeof api.resolveToUnqualified !== "function"
+  ) throw new Error("Invalid project Plug'n'Play API");
+
+  let root;
+  try {
+    root = api.resolveToUnqualified("veryfront", issuer);
+  } catch (error) {
+    if (error?.pnpCode === "UNDECLARED_DEPENDENCY") return undefined;
+    throw error;
+  }
+  if (typeof root !== "string") {
+    throw new Error("Project Plug'n'Play framework resolution failed");
+  }
+  const entry = checkedProjectCli(join(root, "package.json"), api);
+  if (!entry) return undefined;
+  const loader = join(dirname(pnpFile), ".pnp.loader.mjs");
+  if (!existsSync(loader)) {
+    throw new Error(
+      "Enable pnpEnableEsmLoader in .yarnrc.yml and run yarn install for the project CLI",
+    );
+  }
+  if (typeof nodeModule.register !== "function") {
+    throw new Error(formatUnsupportedNodeMessage(process.versions.node));
+  }
+  nodeModule.register(pathToFileURL(loader).href, import.meta.url);
+  return entry;
+}
+
 function resolveProjectCli() {
   const issuer = join(selectedProjectDirectory(), "package.json");
   const require = createRequire(issuer);
   const pnpFile = findProjectPnp();
   if (pnpFile) {
-    const api = require(pnpFile);
-    if (
-      typeof api.setup !== "function" ||
-      typeof api.resolveToUnqualified !== "function"
-    ) throw new Error("Invalid project Plug'n'Play API");
-
-    let root;
-    try {
-      root = api.resolveToUnqualified("veryfront", issuer);
-    } catch (error) {
-      if (error?.pnpCode === "UNDECLARED_DEPENDENCY") return undefined;
-      throw error;
-    }
-    if (typeof root !== "string") {
-      throw new Error("Project Plug'n'Play framework resolution failed");
-    }
-    const entry = checkedProjectCli(join(root, "package.json"), api);
-    if (!entry) return undefined;
-    const loader = join(dirname(pnpFile), ".pnp.loader.mjs");
-    if (!existsSync(loader)) {
-      throw new Error(
-        "Enable pnpEnableEsmLoader in .yarnrc.yml and run yarn install for the project CLI",
-      );
-    }
-    if (typeof nodeModule.register !== "function") {
-      throw new Error(formatUnsupportedNodeMessage(process.versions.node));
-    }
-    nodeModule.register(pathToFileURL(loader).href, import.meta.url);
-    return entry;
+    return resolveProjectPnpCli(require, issuer, pnpFile);
   }
   for (const root of require.resolve.paths("veryfront") ?? []) {
     const packageFile = join(root, "veryfront", "package.json");
@@ -305,6 +320,10 @@ function launcherJsonMode() {
   return enabled || ndjsonEnabled;
 }
 
+function isOutputPathValue(value) {
+  return typeof value === "string" && !value.startsWith("-");
+}
+
 function launcherOutputPath() {
   let output;
   let shortOutput;
@@ -314,7 +333,7 @@ function launcherOutputPath() {
     if (arg === "--") break;
     if (arg === "--output" || arg === "-o") {
       const value = args[index + 1];
-      if (typeof value === "string" && !value.startsWith("-")) {
+      if (isOutputPathValue(value)) {
         if (arg === "--output") output = value;
         else shortOutput = value;
         index++;

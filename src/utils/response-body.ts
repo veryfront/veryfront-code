@@ -4,6 +4,7 @@ export interface ResponseTextPrefix {
   truncated: boolean;
 }
 
+const numberIsSafeInteger = Number.isSafeInteger;
 const NativeUint8Array = Uint8Array;
 const NativeTextDecoder = TextDecoder;
 const ReflectApply = Reflect.apply;
@@ -49,7 +50,7 @@ function requireTypedArrayGetter(
 
 function byteLengthOf(bytes: Uint8Array): number {
   const byteLength = ReflectApply(typedArrayByteLengthGetter, bytes, []);
-  if (!Number.isSafeInteger(byteLength) || (byteLength as number) < 0) {
+  if (!numberIsSafeInteger(byteLength) || (byteLength as number) < 0) {
     throw new InvalidResponseBodyChunkError("Response body chunk has an invalid byte length");
   }
   return byteLength as number;
@@ -58,8 +59,8 @@ function byteLengthOf(bytes: Uint8Array): number {
 function viewBytes(bytes: Uint8Array, start: number, length: number): Uint8Array {
   const byteLength = byteLengthOf(bytes);
   if (
-    !Number.isSafeInteger(start) || start < 0 ||
-    !Number.isSafeInteger(length) || length < 0 ||
+    !numberIsSafeInteger(start) || start < 0 ||
+    !numberIsSafeInteger(length) || length < 0 ||
     start > byteLength - length
   ) {
     throw new InvalidResponseBodyChunkError(
@@ -913,7 +914,7 @@ class TopLevelJsonStringReader {
 }
 
 function validateJsonStringReadLimit(value: number, label: string, allowZero: boolean): number {
-  if (!Number.isSafeInteger(value) || value < (allowZero ? 0 : 1)) {
+  if (!numberIsSafeInteger(value) || value < (allowZero ? 0 : 1)) {
     throw new RangeError(
       `${label} must be ${allowZero ? "a non-negative" : "a positive"} safe integer`,
     );
@@ -1024,7 +1025,7 @@ async function readResponseJsonStringEncodedWithinLimit(
       );
     }
     const contentLength = Number(contentLengthHeader);
-    if (!Number.isSafeInteger(contentLength)) {
+    if (!numberIsSafeInteger(contentLength)) {
       cancelResponseBody(response, "invalid content-length");
       throw new InvalidResponseBodyMetadataError(
         "Response body has an invalid Content-Length",
@@ -1123,6 +1124,77 @@ async function readChunk(
   });
 }
 
+/**
+ * Starts cancelling a reader without waiting for it. Detached for the same
+ * reason as readResponseTextPrefix: an untrusted cancellation promise must not
+ * hold the caller past its deadline.
+ */
+function startDetachedCancel(reader: ReadableStreamDefaultReader<Uint8Array>): void {
+  void reader.cancel().catch(() => {});
+}
+
+export interface ResponseBytesPrefix {
+  bytes: Uint8Array;
+  /** True when the byte limit was reached before EOF was observed. */
+  truncated: boolean;
+}
+
+/** Read at most maxBytes raw bytes from a response body and cancel any unread remainder. */
+export async function readResponseBytesPrefix(
+  response: { body: { getReader(): ReadableStreamDefaultReader<Uint8Array> } | null },
+  maxBytes: number,
+  abortSignal?: AbortSignal,
+): Promise<ResponseBytesPrefix> {
+  if (!numberIsSafeInteger(maxBytes) || maxBytes < 0) {
+    throw new RangeError("maxBytes must be a non-negative safe integer");
+  }
+  abortSignal?.throwIfAborted();
+
+  const body = response.body;
+  if (!body) return { bytes: new NativeUint8Array(0), truncated: false };
+
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  let completed = false;
+  let truncated = false;
+
+  try {
+    while (true) {
+      const { done, value } = await readChunk(reader, abortSignal);
+      if (done) {
+        completed = true;
+        break;
+      }
+      const copy = copyResponseBodyChunk(value, maxBytes - total);
+      if (copy === null) {
+        truncated = true;
+        break;
+      }
+      chunks[chunks.length] = copy.bytes;
+      total += copy.byteLength;
+    }
+  } finally {
+    if (!completed) {
+      try {
+        startDetachedCancel(reader);
+      } catch {
+        /* cancellation is best-effort cleanup */
+      }
+    }
+    reader.releaseLock();
+  }
+
+  const bytes = new NativeUint8Array(total);
+  let offset = 0;
+  for (let index = 0; index < chunks.length; index++) {
+    const chunk = chunks[index]!;
+    ReflectApply(Uint8ArrayPrototypeSet, bytes, [chunk, offset]);
+    offset += byteLengthOf(chunk);
+  }
+  return { bytes, truncated };
+}
+
 /** Read at most maxBytes from a response body and cancel any unread remainder. */
 export async function readResponseTextPrefix(
   response: { body: { getReader(): ReadableStreamDefaultReader<Uint8Array> } | null },
@@ -1130,7 +1202,7 @@ export async function readResponseTextPrefix(
   abortSignal?: AbortSignal,
   options: { fatalUtf8?: boolean } = {},
 ): Promise<ResponseTextPrefix> {
-  if (!Number.isSafeInteger(maxBytes) || maxBytes < 0) {
+  if (!numberIsSafeInteger(maxBytes) || maxBytes < 0) {
     throw new RangeError("maxBytes must be a non-negative safe integer");
   }
   abortSignal?.throwIfAborted();

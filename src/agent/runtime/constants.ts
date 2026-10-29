@@ -20,6 +20,9 @@ const MODEL_MAX_OUTPUT_TOKENS: Record<string, number> = {
   "anthropic/claude-sonnet-4-6": 64_000,
   "anthropic/claude-haiku-4-5-20251001": 64_000,
   "openai/gpt-5.5": 128_000,
+  "openai/gpt-5.6-sol": 128_000,
+  "openai/gpt-5.6-terra": 128_000,
+  "openai/gpt-5.6-luna": 128_000,
   "openai/gpt-6-sol": 128_000,
   "openai/gpt-6-luna": 128_000,
   "openai/gpt-5.4": 128_000,
@@ -43,6 +46,8 @@ const MODEL_MAX_OUTPUT_TOKENS: Record<string, number> = {
 };
 
 const MODEL_MAX_OUTPUT_TOKEN_ALIASES: Record<string, string> = {
+  // OpenAI routes the bare gpt-5.6 alias to GPT-5.6 Sol.
+  "openai/gpt-5.6": "openai/gpt-5.6-sol",
   "google/gemini-3.1-pro": "google-ai-studio/gemini-3.1-pro-preview",
   "google/gemini-3.1-pro-preview": "google-ai-studio/gemini-3.1-pro-preview",
   "google/gemini-3.5-flash": "google-ai-studio/gemini-3.5-flash",

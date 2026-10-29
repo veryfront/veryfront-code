@@ -1,3 +1,9 @@
+import { createPublicKey, verify as verifySignature } from "node:crypto";
+import { Buffer as NativeBuffer } from "node:buffer";
+import { filterPrivateArray, somePrivateArray } from "#veryfront/security/private-array.ts";
+import { chainPrivatePromise } from "#veryfront/security/private-promise.ts";
+import { privateJsonParse } from "#veryfront/security/private-json.ts";
+import { createVeryfrontApiOriginBoundOutboundFetch } from "#veryfront/security/http/outbound-fetch.ts";
 import { getHostBootEnv } from "#veryfront/platform/compat/process/env.ts";
 import type { RuntimeRunAgentInput } from "#veryfront/internal-agents/schema.ts";
 import { tryResolve } from "#veryfront/extensions/contracts.ts";
@@ -19,6 +25,11 @@ import {
 import type { RemoteToolSource } from "#veryfront/tool/types.ts";
 import { hasTrustedPlatformSource } from "#veryfront/tool/platform-source-provenance.ts";
 
+const PublicKey = createPublicKey;
+const VerifySignature = verifySignature;
+const BufferFrom = NativeBuffer.from;
+const BufferToString = NativeBuffer.prototype.toString;
+const ResponseJson = Response.prototype.json;
 const ReflectApply = Reflect.apply;
 const ArrayIsArray = Array.isArray;
 const DateNow = Date.now;
@@ -29,6 +40,12 @@ const RegExpExec = RegExp.prototype.exec;
 const StringStartsWith = String.prototype.startsWith;
 const StringSlice = String.prototype.slice;
 const ObjectFreeze = Object.freeze;
+const ObjectSetPrototypeOf = Object.setPrototypeOf;
+const StringIndexOf = String.prototype.indexOf;
+const NativeURL = URL;
+const URLOrigin = Object.getOwnPropertyDescriptor(NativeURL.prototype, "origin")!.get!;
+const AbortSignalTimeout = AbortSignal.timeout;
+const ResponseOk = Object.getOwnPropertyDescriptor(Response.prototype, "ok")!.get!;
 
 type PlatformDependencyScope = Readonly<{ projectId: string; runId: string; agentId: string }>;
 type HostedWriterScope = Readonly<{ projectId: string; runId: string; agentId?: string }>;
@@ -220,7 +237,6 @@ export function isHostedServiceAuthError(
 
 export const AgentServiceAuthError = HostedServiceAuthError;
 export type AgentServiceAuthError = HostedServiceAuthError;
-export type AgentServiceAuthErrorCode = HostedServiceAuthErrorCode;
 
 /** Request payload for hosted service authenticated. */
 export type HostedServiceAuthenticatedRequest = {
@@ -250,6 +266,9 @@ export type HostedServiceRunEventAppendTokenResult = {
   resumeToolCallSha256?: string;
   /** SHA-256 of the run's latest tool exposure checkpoint, carried by the signed token. */
   toolExposureCheckpointSha256?: string;
+  rootRunId?: string;
+  taskInputSha256?: string;
+  taskInputRootRunId?: string;
 };
 
 /**
@@ -375,11 +394,7 @@ const RUN_RESUME_SCOPES = [
 ] as const;
 
 function hasExactScopes(scopes: unknown, expected: readonly string[]): boolean {
-  return Array.isArray(scopes) &&
-    scopes.length === expected.length &&
-    scopes.every((value): value is string => typeof value === "string") &&
-    new Set(scopes).size === scopes.length &&
-    expected.every((requiredScope) => scopes.includes(requiredScope));
+  return hasExactCancellationScopes(scopes, expected, "Token scopes");
 }
 
 function hasExactCancellationScopes(
@@ -427,6 +442,10 @@ export type HostedServiceAuthOptions = {
 
 /** Public API contract for hosted service auth. */
 export type HostedServiceAuth = {
+  /** Verify exact-run terminal identity without granting event append authority. */
+  verifyRunTerminalToken?: (
+    input: { token: string; projectId: string; runId: string },
+  ) => Promise<boolean>;
   /** Verify the API's signed exact-run cancellation bearer; ordinary user tokens are insufficient. */
   verifyRunCancellationToken: (input: { token: string; runId: string }) => Promise<boolean>;
   /** Verify the API's signed exact-run resume bearer; ordinary user tokens are insufficient. */
@@ -451,17 +470,20 @@ export type HostedServiceAuth = {
   ) => Promise<HostedServiceProjectAccessResult>;
 };
 
-export type AgentServiceAuthenticatedRequest = HostedServiceAuthenticatedRequest;
-export type AgentServiceJwtError = HostedServiceJwtError;
-export type AgentServiceJwtResult = HostedServiceJwtResult;
-export type AgentServiceProjectAccessError = HostedServiceProjectAccessError;
-export type AgentServiceProjectAccessResult = HostedServiceProjectAccessResult;
-export type AgentServiceAuthConfig = HostedServiceAuthConfig;
-export type AgentServiceAuthLogger = HostedServiceAuthLogger;
-export type AgentServiceAuthTrace = HostedServiceAuthTrace;
-export type AgentServiceAuthFetch = HostedServiceAuthFetch;
-export type AgentServiceAuthOptions = HostedServiceAuthOptions;
-export type AgentServiceAuth = HostedServiceAuth;
+export type {
+  HostedServiceAuth as AgentServiceAuth,
+  HostedServiceAuthConfig as AgentServiceAuthConfig,
+  HostedServiceAuthenticatedRequest as AgentServiceAuthenticatedRequest,
+  HostedServiceAuthErrorCode as AgentServiceAuthErrorCode,
+  HostedServiceAuthFetch as AgentServiceAuthFetch,
+  HostedServiceAuthLogger as AgentServiceAuthLogger,
+  HostedServiceAuthOptions as AgentServiceAuthOptions,
+  HostedServiceAuthTrace as AgentServiceAuthTrace,
+  HostedServiceJwtError as AgentServiceJwtError,
+  HostedServiceJwtResult as AgentServiceJwtResult,
+  HostedServiceProjectAccessError as AgentServiceProjectAccessError,
+  HostedServiceProjectAccessResult as AgentServiceProjectAccessResult,
+};
 
 function defaultTrace<TResult>(
   _operationName: string,
@@ -649,6 +671,117 @@ function decodeHostedServiceJwtWithoutVerify(
       success: false,
       error: makeUnauthenticatedError("Invalid token"),
     };
+  }
+}
+
+function isValidWriterDigest(value: unknown): value is string | undefined {
+  return value === undefined ||
+    (typeof value === "string" && ReflectApply(RegExpExec, /^[a-f0-9]{64}$/, [value]) !== null);
+}
+
+function hasValidRunEventWriterIdentity(
+  payload: TokenPayload,
+  config: HostedServiceAuthConfig,
+  input: HostedServiceRunEventAppendTokenInput,
+): boolean {
+  return payload.actorType === "service_account" &&
+    payload.tokenUse === RUN_EVENT_WRITER_TOKEN_USE &&
+    typeof payload.serviceAccountId === "string" &&
+    payload.userId === payload.serviceAccountId &&
+    payload.serviceAccountId === config.SERVICE_ACCOUNT_VERYFRONT_SERVER_ID &&
+    payload.projectId === input.projectId &&
+    payload.runId === input.runId &&
+    hasExactRunEventWriterScopes(payload);
+}
+
+function readWriterReplayDigests(payload: TokenPayload) {
+  const resumeToolCallSha256 = readOwnDataProperty(
+    payload,
+    "resumeToolCallSha256",
+    "Writer claims",
+    false,
+  );
+  if (!isValidWriterDigest(resumeToolCallSha256)) {
+    return undefined;
+  }
+  const toolExposureCheckpointSha256 = readOwnDataProperty(
+    payload,
+    "toolExposureCheckpointSha256",
+    "Writer claims",
+    false,
+  );
+  if (!isValidWriterDigest(toolExposureCheckpointSha256)) {
+    return undefined;
+  }
+  return { resumeToolCallSha256, toolExposureCheckpointSha256 };
+}
+
+function readWriterTaskInputClaims(payload: TokenPayload) {
+  const rootRunId = readOwnDataProperty(payload, "rootRunId", "Writer claims", false);
+  if (
+    rootRunId !== undefined &&
+    (typeof rootRunId !== "string" ||
+      ReflectApply(RegExpExec, /^[a-zA-Z0-9_-]{1,128}$/, [rootRunId]) === null)
+  ) return undefined;
+  const taskInputSha256 = readOwnDataProperty(
+    payload,
+    "taskInputSha256",
+    "Writer claims",
+    false,
+  );
+  const taskInputRootRunId = readOwnDataProperty(
+    payload,
+    "taskInputRootRunId",
+    "Writer claims",
+    false,
+  );
+  if (taskInputSha256 !== undefined || taskInputRootRunId !== undefined) {
+    if (
+      typeof taskInputSha256 !== "string" ||
+      ReflectApply(RegExpExec, /^[a-f0-9]{64}$/, [taskInputSha256]) === null ||
+      typeof taskInputRootRunId !== "string" ||
+      ReflectApply(RegExpExec, /^[a-zA-Z0-9_-]{1,128}$/, [taskInputRootRunId]) === null
+    ) return undefined;
+  }
+  return { rootRunId, taskInputSha256, taskInputRootRunId };
+}
+
+function hasValidWriterDependencyScope(
+  dependencies: VerifiedPlatformToolDependencies | undefined,
+  input: HostedServiceRunEventAppendTokenInput,
+  payload: TokenPayload,
+): boolean {
+  return dependencies === undefined ||
+    (!!input.agentId && payload.agentId === input.agentId &&
+      readOwnDataProperty(payload, "runEventWriterTokenPurpose", "Writer claims", false) ===
+        undefined);
+}
+
+function recordVerifiedWriterGrants(
+  result: HostedServiceRunEventAppendTokenResult,
+  input: HostedServiceRunEventAppendTokenInput,
+  operatorWriter: Awaited<ReturnType<typeof readOperatorWriterDependencies>>,
+): void {
+  if (operatorWriter) {
+    verifiedHostedWriterScopes.set(
+      result,
+      ObjectFreeze({
+        projectId: input.projectId,
+        runId: input.runId,
+        ...(operatorWriter.agentId ? { agentId: operatorWriter.agentId } : {}),
+      }),
+    );
+  }
+  if (operatorWriter?.dependencies !== undefined && input.agentId) {
+    verifiedPlatformDependencies.set(
+      result,
+      ObjectFreeze({
+        projectId: input.projectId,
+        runId: input.runId,
+        agentId: input.agentId,
+        dependencies: operatorWriter.dependencies,
+      }),
+    );
   }
 }
 
@@ -888,6 +1021,61 @@ export function createHostedServiceAuth(
     }
   }
 
+  async function verifyRunTerminalToken(
+    input: { token: string; projectId: string; runId: string },
+  ): Promise<boolean> {
+    try {
+      if (!isSafeHostedJwtVerificationEnvironment(input)) return false;
+      const config = options.getConfig();
+      if (!isSafeHostedJwtVerificationEnvironment(config)) return false;
+      const publicKey = readOwnDataProperty(config, "OAUTH_PUBLIC_KEY", "Service config", false);
+      const serverId = readOwnDataProperty(
+        config,
+        "SERVICE_ACCOUNT_VERYFRONT_SERVER_ID",
+        "Service config",
+        false,
+      );
+      if (
+        typeof publicKey !== "string" || !publicKey || typeof serverId !== "string" || !serverId
+      ) return false;
+      const token = readOwnDataProperty(input, "token", "Terminal request");
+      const projectId = readOwnDataProperty(input, "projectId", "Terminal request");
+      const runId = readOwnDataProperty(input, "runId", "Terminal request");
+      if (
+        typeof token !== "string" || !token || typeof projectId !== "string" || !projectId ||
+        typeof runId !== "string" || !runId
+      ) return false;
+      const provider = await getAuthProvider(options);
+      if (!provider || !isSafeHostedJwtVerificationEnvironment(provider)) return false;
+      const claims = await provider.verifyWithPublicKey(token, publicKey, {
+        algorithms: ["RS256"],
+      });
+      if (!isSafeHostedJwtVerificationEnvironment(claims)) return false;
+      const read = (key: string) => readOwnDataProperty(claims, key, "Terminal claims", false);
+      const scopes = read("scopes");
+      const exp = read("exp");
+      const canonicalRunId = read("canonicalRunId");
+      const dispatchNonce = read("dispatchNonce");
+      return read("actorType") === "service_account" &&
+        read("tokenUse") === RUN_EVENT_WRITER_TOKEN_USE &&
+        read("writerPurpose") === "current_run_terminal" && read("serviceAccountId") === serverId &&
+        read("userId") === serverId && read("projectId") === projectId &&
+        read("runId") === runId &&
+        typeof canonicalRunId === "string" &&
+        ReflectApply(
+            RegExpExec,
+            /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+            [canonicalRunId],
+          ) !== null &&
+        typeof dispatchNonce === "string" && !!dispatchNonce &&
+        typeof exp === "number" && NumberIsFinite(exp) && exp * 1000 > DateNow() &&
+        read("scope") === undefined && (hasExactScopes(scopes, ["agent-runs:terminal:complete"]) ||
+          hasExactScopes(scopes, ["agent-runs:terminal:complete", "agent-runs:terminal:cancel"]));
+    } catch {
+      return false;
+    }
+  }
+
   async function verifyRunEventAppendToken(
     input: HostedServiceRunEventAppendTokenInput,
   ): Promise<HostedServiceRunEventAppendTokenResult> {
@@ -909,45 +1097,18 @@ export function createHostedServiceAuth(
           { algorithms: ["RS256"] },
         ) as TokenPayload;
 
-        const verified = payload.actorType === "service_account" &&
-          payload.tokenUse === RUN_EVENT_WRITER_TOKEN_USE &&
-          typeof payload.serviceAccountId === "string" &&
-          payload.userId === payload.serviceAccountId &&
-          payload.serviceAccountId === config.SERVICE_ACCOUNT_VERYFRONT_SERVER_ID &&
-          payload.projectId === input.projectId &&
-          payload.runId === input.runId &&
-          hasExactRunEventWriterScopes(payload);
+        const verified = hasValidRunEventWriterIdentity(payload, config, input);
 
         if (!verified) {
           return { verified: false };
         }
 
-        const resumeToolCallSha256 = readOwnDataProperty(
-          payload,
-          "resumeToolCallSha256",
-          "Writer claims",
-          false,
-        );
-        if (
-          resumeToolCallSha256 !== undefined &&
-          (typeof resumeToolCallSha256 !== "string" ||
-            ReflectApply(RegExpExec, /^[a-f0-9]{64}$/, [resumeToolCallSha256]) === null)
-        ) {
-          return { verified: false };
-        }
-        const toolExposureCheckpointSha256 = readOwnDataProperty(
-          payload,
-          "toolExposureCheckpointSha256",
-          "Writer claims",
-          false,
-        );
-        if (
-          toolExposureCheckpointSha256 !== undefined &&
-          (typeof toolExposureCheckpointSha256 !== "string" ||
-            ReflectApply(RegExpExec, /^[a-f0-9]{64}$/, [toolExposureCheckpointSha256]) === null)
-        ) {
-          return { verified: false };
-        }
+        const replayDigests = readWriterReplayDigests(payload);
+        if (replayDigests === undefined) return { verified: false };
+        const { resumeToolCallSha256, toolExposureCheckpointSha256 } = replayDigests;
+        const taskInputClaims = readWriterTaskInputClaims(payload);
+        if (taskInputClaims === undefined) return { verified: false };
+        const { rootRunId, taskInputSha256, taskInputRootRunId } = taskInputClaims;
         const integrationTools = (payload as { integrationTools?: unknown }).integrationTools;
         const dependenciesClaim = readOwnDataProperty(
           payload,
@@ -958,40 +1119,19 @@ export function createHostedServiceAuth(
         const dependencies = dependenciesClaim === undefined
           ? undefined
           : readPlatformToolDependencies(dependenciesClaim);
-        if (
-          dependencies !== undefined &&
-          (!input.agentId || payload.agentId !== input.agentId ||
-            readOwnDataProperty(payload, "runEventWriterTokenPurpose", "Writer claims", false) !==
-              undefined)
-        ) return { verified: false };
+        if (!hasValidWriterDependencyScope(dependencies, input, payload)) {
+          return { verified: false };
+        }
         const result: HostedServiceRunEventAppendTokenResult = {
           verified: true,
+          ...(rootRunId !== undefined ? { rootRunId } : {}),
+          ...(taskInputSha256 !== undefined ? { taskInputSha256, taskInputRootRunId } : {}),
           ...(resumeToolCallSha256 !== undefined ? { resumeToolCallSha256 } : {}),
           ...(toolExposureCheckpointSha256 !== undefined ? { toolExposureCheckpointSha256 } : {}),
           ...(Array.isArray(integrationTools) ? { integrationTools } : {}),
         };
         const operatorWriter = await readOperatorWriterDependencies(input);
-        if (operatorWriter) {
-          verifiedHostedWriterScopes.set(
-            result,
-            ObjectFreeze({
-              projectId: input.projectId,
-              runId: input.runId,
-              ...(operatorWriter.agentId ? { agentId: operatorWriter.agentId } : {}),
-            }),
-          );
-        }
-        if (operatorWriter?.dependencies !== undefined && input.agentId) {
-          verifiedPlatformDependencies.set(
-            result,
-            ObjectFreeze({
-              projectId: input.projectId,
-              runId: input.runId,
-              agentId: input.agentId,
-              dependencies: operatorWriter.dependencies,
-            }),
-          );
-        }
+        recordVerifiedWriterGrants(result, input, operatorWriter);
         return result;
       } catch (error) {
         options.logger?.debug?.("Run-event append token verification failed", {
@@ -1083,6 +1223,7 @@ export function createHostedServiceAuth(
   }
 
   return {
+    verifyRunTerminalToken,
     verifyRunCancellationToken,
     verifyRunResumeToken,
     authenticateRequest,
@@ -1095,3 +1236,156 @@ export function createHostedServiceAuth(
 
 export const createAgentServiceAuth = createHostedServiceAuth;
 export const isAgentServiceAuthError = isHostedServiceAuthError;
+
+/** Verify a terminal capability only against operator values captured outside project env scopes. */
+export async function verifyOperatorRunTerminalToken(
+  input: { token: string; projectId: string; runId: string },
+): Promise<boolean> {
+  const auth = createHostedServiceAuth({
+    getConfig: () => ({
+      OAUTH_PUBLIC_KEY: getHostBootEnv("OAUTH_PUBLIC_KEY"),
+      SERVICE_ACCOUNT_VERYFRONT_SERVER_ID: getHostBootEnv(
+        "SERVICE_ACCOUNT_VERYFRONT_SERVER_ID",
+      ),
+      VERYFRONT_API_URL: getHostBootEnv("VERYFRONT_API_URL") ?? "https://api.veryfront.com",
+    }),
+  });
+  return await auth.verifyRunTerminalToken?.(input) === true;
+}
+
+/** Verify a connected worker's writer using the configured API's public signing keys. */
+export function createConnectedLocalWriterVerifier(
+  apiUrl: string,
+): (
+  input: HostedServiceRunEventAppendTokenInput,
+) => Promise<HostedServiceRunEventAppendTokenResult> {
+  const origin = ReflectApply(URLOrigin, new NativeURL(apiUrl), []) as string;
+  const configured = [
+    "VERYFRONT_API_URL",
+    "VERYFRONT_API_BASE_URL",
+    "VERYFRONT_PUBLIC_API_BASE_URL",
+  ] as const;
+  // Stored CLI logins use the official API without an environment override.
+  const trustedOrigin = origin === "https://api.veryfront.com" ||
+    somePrivateArray(configured, (key) => {
+      const value = getHostBootEnv(key);
+      try {
+        return value !== undefined && ReflectApply(URLOrigin, new NativeURL(value), []) === origin;
+      } catch {
+        return false;
+      }
+    });
+  const transport = createVeryfrontApiOriginBoundOutboundFetch(origin);
+  const endpoint = new NativeURL("/.well-known/jwks.json", origin);
+  let keys: Promise<Array<Record<string, unknown>>> | undefined;
+  const loadKeys = () => {
+    keys ??= chainPrivatePromise(
+      chainPrivatePromise(
+        transport(endpoint, { redirect: "error", signal: AbortSignalTimeout(15_000) }),
+        async (response) => {
+          if (!ReflectApply(ResponseOk, response, [])) {
+            throw new Error("API signing keys are unavailable");
+          }
+          const document = await ReflectApply(ResponseJson, response, []);
+          const keys = readOwnDataProperty(document, "keys", "API signing keys");
+          if (!ArrayIsArray(keys)) throw new Error("Invalid API signing keys");
+          return keys;
+        },
+      ),
+      (value) => value,
+      (error) => {
+        keys = undefined;
+        throw error;
+      },
+    );
+    return keys;
+  };
+  return async (input) => {
+    if (!trustedOrigin || !isSafeHostedJwtVerificationEnvironment()) return { verified: false };
+    try {
+      const firstDot = ReflectApply(StringIndexOf, input.token, ["."]) as number;
+      const secondDot = ReflectApply(StringIndexOf, input.token, [".", firstDot + 1]) as number;
+      if (
+        firstDot <= 0 || secondDot <= firstDot + 1 || secondDot === input.token.length - 1 ||
+        ReflectApply(StringIndexOf, input.token, [".", secondDot + 1]) !== -1
+      ) {
+        return { verified: false };
+      }
+      const headerText = ReflectApply(StringSlice, input.token, [0, firstDot]) as string;
+      const payloadText = ReflectApply(StringSlice, input.token, [
+        firstDot + 1,
+        secondDot,
+      ]) as string;
+      const signature = ReflectApply(StringSlice, input.token, [secondDot + 1]) as string;
+      if (!headerText || !payloadText || !signature) {
+        return { verified: false };
+      }
+      const header = privateJsonParse(
+        ReflectApply(
+          BufferToString,
+          ReflectApply(BufferFrom, NativeBuffer, [headerText, "base64url"]),
+          [],
+        ),
+      );
+      if (!header || typeof header !== "object" || ArrayIsArray(header)) return { verified: false };
+      ObjectSetPrototypeOf(header, null);
+      if (header.alg !== "RS256") return { verified: false };
+      let signatureVerified = false;
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const candidates = filterPrivateArray(
+          await loadKeys(),
+          (key) =>
+            readOwnDataProperty(key, "kty", "API signing key", false) === "RSA" &&
+            (header.kid === undefined ||
+              readOwnDataProperty(key, "kid", "API signing key", false) === header.kid) &&
+            (readOwnDataProperty(key, "alg", "API signing key", false) === undefined ||
+              readOwnDataProperty(key, "alg", "API signing key", false) === "RS256") &&
+            (readOwnDataProperty(key, "use", "API signing key", false) === undefined ||
+              readOwnDataProperty(key, "use", "API signing key", false) === "sig"),
+        );
+        if (candidates.length === 1) {
+          const key = PublicKey({ key: candidates[0]!, format: "jwk" });
+          signatureVerified = VerifySignature(
+            "RSA-SHA256",
+            ReflectApply(BufferFrom, NativeBuffer, [`${headerText}.${payloadText}`]),
+            key,
+            ReflectApply(BufferFrom, NativeBuffer, [signature, "base64url"]),
+          );
+          if (signatureVerified) break;
+        }
+        if (attempt === 0) keys = undefined;
+      }
+      if (!signatureVerified) return { verified: false };
+      const payload = privateJsonParse(
+        ReflectApply(
+          BufferToString,
+          ReflectApply(BufferFrom, NativeBuffer, [payloadText, "base64url"]),
+          [],
+        ),
+      );
+      if (!payload || typeof payload !== "object" || ArrayIsArray(payload)) {
+        return { verified: false };
+      }
+      ObjectSetPrototypeOf(payload, null);
+      const now = DateNow() / 1000;
+      if (
+        typeof payload.exp !== "number" || !NumberIsFinite(payload.exp) || payload.exp <= now ||
+        payload.agentId !== input.agentId ||
+        (payload.nbf !== undefined && payload.nbf > now) ||
+        !hasValidRunEventWriterIdentity(payload, {
+          VERYFRONT_API_URL: apiUrl,
+          SERVICE_ACCOUNT_VERYFRONT_SERVER_ID: payload.serviceAccountId,
+        }, input)
+      ) return { verified: false };
+      const dependencies = payload.platformToolDependencies === undefined
+        ? undefined
+        : readPlatformToolDependencies(payload.platformToolDependencies);
+      if (!hasValidWriterDependencyScope(dependencies, input, payload)) return { verified: false };
+      const result = { verified: true };
+      recordVerifiedWriterGrants(result, input, { agentId: payload.agentId, dependencies });
+      return result;
+    } catch {
+      return { verified: false };
+    }
+  };
+}

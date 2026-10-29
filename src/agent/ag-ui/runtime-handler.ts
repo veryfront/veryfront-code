@@ -12,7 +12,7 @@ import {
   type AgUiRuntimeRequest,
   parseAgUiRuntimeRequestOrError,
 } from "../runtime/ag-ui-contract.ts";
-import { extractRequest } from "./request-shared.ts";
+import { createAgUiSchemaValidationErrorResponse, extractRequest } from "./request-shared.ts";
 import { createApplicationRequest } from "#veryfront/security/http/application-request.ts";
 import { type AgUiResumeValue, buildMergedAgUiTools } from "./tool-shared.ts";
 import { normalizeAgUiRuntimeMessages } from "./runtime-support.ts";
@@ -539,23 +539,11 @@ export function createAgUiRuntimeHandler(
         detail: "createAgUiRuntimeHandler configuration became invalid during execution.",
       });
     } catch (error) {
-      if (
-        error instanceof Error &&
-        "issues" in error &&
-        Array.isArray((error as Record<string, unknown>).issues)
-      ) {
-        const issues = (error as { issues: Array<{ path: unknown[]; message: string }> }).issues;
-        return Response.json(
-          {
-            error: "Invalid AG-UI runtime request",
-            details: issues.map((issue) => ({
-              path: issue.path,
-              message: issue.message,
-            })),
-          },
-          { status: 400 },
-        );
-      }
+      const validationError = createAgUiSchemaValidationErrorResponse(
+        error,
+        "Invalid AG-UI runtime request",
+      );
+      if (validationError) return validationError;
 
       return Response.json(
         { error: "Internal server error" },

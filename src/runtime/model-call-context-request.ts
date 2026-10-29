@@ -5,6 +5,8 @@ import type {
 } from "#veryfront/provider/types.ts";
 import {
   closeSchemaForOutputConfig,
+  promptHasDocumentInput,
+  routesOpenAIDocumentInputToResponses,
   unwrapToolInputSchema,
 } from "#veryfront/provider/shared/index.ts";
 import { snapshotProviderJsonValue } from "#veryfront/provider/runtime-loader/json-snapshot.ts";
@@ -43,13 +45,17 @@ import type {
 
 type ModelCallRuntimeMetadata = Pick<
   RuntimeMetadata,
-  "modelId" | "provider" | "modelProvider" | "openAITransport"
+  "modelId" | "provider" | "modelProvider" | "openAITransport" | "openAIResponsesDocumentInput"
 >;
 type ModelCallRequestSource =
   & Pick<ModelRuntimeCallOptions, keyof ModelCallRequest | "tools" | "responseFormat">
   & {
     providerOptions?: unknown;
+    /** Read only to see whether a document moves an `auto` request to Responses. */
+    prompt?: unknown;
   };
+
+type ModelCallOpenAITransport = "chat-completions" | "responses" | undefined;
 
 type SnapshotContainer = Record<PropertyKey, unknown> | readonly unknown[];
 
@@ -444,10 +450,19 @@ function requestUsesOpenAIHostedTool(options: ModelCallRequestSource): boolean {
     );
 }
 
+/** Whether a request moves to Responses on an unpinned `auto` transport. */
+function requestRequiresOpenAIResponses(
+  options: ModelCallRequestSource,
+  documentsOnResponses: boolean,
+): boolean {
+  return requestUsesOpenAIHostedTool(options) ||
+    (documentsOnResponses && promptHasDocumentInput(options.prompt));
+}
+
 function managedOpenAITransport(
   model: ModelCallRuntimeMetadata,
   options: ModelCallRequestSource,
-): "chat-completions" | "responses" | undefined {
+): ModelCallOpenAITransport {
   if (model.provider !== "veryfront-cloud" || !model.modelId) return undefined;
   const provider = resolveModelCallProvider(model);
   if (provider === undefined) return undefined;
@@ -455,26 +470,35 @@ function managedOpenAITransport(
   // against the call is the one the request is built with. A provider that is
   // not native to the OpenAI surface never reaches the Responses transport,
   // whatever its model IDs look like.
-  const usesHostedTool = requestUsesOpenAIHostedTool(options);
+  // The unpinned plan builds the adaptive runtime as "veryfront-cloud".
+  const requiresResponses = requestRequiresOpenAIResponses(
+    options,
+    routesOpenAIDocumentInputToResponses("veryfront-cloud"),
+  );
   const built = readVeryfrontCloudModelFacts(model);
   if (built) {
     if (built.transportPlan.pinned) return built.transportPlan.transport;
-    return usesHostedTool ? "responses" : "chat-completions";
+    return requiresResponses ? "responses" : "chat-completions";
   }
-  return resolveVeryfrontCloudOpenAICallTransport(provider, model.modelId, usesHostedTool);
+  return resolveVeryfrontCloudOpenAICallTransport(provider, model.modelId, requiresResponses);
 }
 
 function directOpenAITransport(
   model: ModelCallRuntimeMetadata,
   options: ModelCallRequestSource,
-): "chat-completions" | "responses" | undefined {
+): ModelCallOpenAITransport {
   if (typeof model.modelId !== "string") return undefined;
   if (model.openAITransport === "chat-completions" || model.openAITransport === "responses") {
     return model.openAITransport;
   }
   if (model.openAITransport !== "auto" || !usesOpenAIBuilder(model)) return undefined;
-  return isOpenAIReasoningModel(model.modelId, openAIProviderName(model)) ||
-      requestUsesOpenAIHostedTool(options)
+  const providerName = openAIProviderName(model);
+  // The runtime records its base URL decision; a model without it uses the default URL.
+  const documentsOnResponses = typeof model.openAIResponsesDocumentInput === "boolean"
+    ? model.openAIResponsesDocumentInput
+    : routesOpenAIDocumentInputToResponses(providerName);
+  return isOpenAIReasoningModel(model.modelId, providerName) ||
+      requestRequiresOpenAIResponses(options, documentsOnResponses)
     ? "responses"
     : "chat-completions";
 }
@@ -482,7 +506,7 @@ function directOpenAITransport(
 function resolveOpenAIContextTransport(
   model: ModelCallRuntimeMetadata,
   options: ModelCallRequestSource,
-): "chat-completions" | "responses" | undefined {
+): ModelCallOpenAITransport {
   return managedOpenAITransport(model, options) ?? directOpenAITransport(model, options);
 }
 
@@ -595,7 +619,7 @@ function resolveOpenAIMaxOutputTokens(
   model: ModelCallRuntimeMetadata,
   options: ModelCallRequestSource,
   responsesProviderOptions: Record<string, unknown>,
-  transport: "chat-completions" | "responses" | undefined,
+  transport: ModelCallOpenAITransport,
 ): number | undefined {
   const responsesMaxOutputTokens = ownNumberControl(responsesProviderOptions, "max_output_tokens");
   if (transport === "responses") {
@@ -653,7 +677,7 @@ function readNativeOpenAIResponseFormat(value: unknown): ModelCallResponseFormat
 function resolveOpenAIResponseFormat(
   options: ModelCallRequestSource,
   providerOptions: Record<string, unknown>,
-  transport: "chat-completions" | "responses" | undefined,
+  transport: ModelCallOpenAITransport,
 ): ModelCallResponseFormat | undefined {
   if (transport === "chat-completions" && ObjectHasOwn(providerOptions, "response_format")) {
     return readNativeOpenAIResponseFormat(providerOptions.response_format);
@@ -711,6 +735,29 @@ function isArrayIndexKey(key: string, length: number): boolean {
   return numberIsInteger(index) && index >= 0 && index < length && NativeString(index) === key;
 }
 
+function specialProviderOptionSnapshot(
+  providerName: string,
+  value: unknown,
+): { present: boolean; value: unknown } {
+  if (isBoxedBigInt(value)) {
+    throw new TypeError(`Provider options for "${providerName}" must contain JSON-safe values`);
+  }
+  const boxedBoolean = readBoxedBoolean(value);
+  if (boxedBoolean !== undefined) return { present: true, value: boxedBoolean };
+  const boxedNumber = readBoxedNumber(value);
+  if (boxedNumber !== undefined) {
+    if (numberIsFinite(boxedNumber)) return { present: true, value: boxedNumber };
+    throw new TypeError(`Provider options for "${providerName}" must contain JSON-safe values`);
+  }
+  const boxedString = readBoxedString(value);
+  if (boxedString !== undefined) return { present: true, value: boxedString };
+  const dateJson = readDateJsonValue(value);
+  if (dateJson.present) return dateJson;
+  const urlHref = readUrlHref(value);
+  if (urlHref !== undefined) return { present: true, value: urlHref };
+  return { present: false, value: undefined };
+}
+
 function snapshotProviderOptionValue(
   providerName: string,
   value: unknown,
@@ -734,22 +781,8 @@ function snapshotProviderOptionValue(
   if (typeof value !== "object") {
     throw new TypeError(`Provider options for "${providerName}" must contain JSON-safe values`);
   }
-  if (isBoxedBigInt(value)) {
-    throw new TypeError(`Provider options for "${providerName}" must contain JSON-safe values`);
-  }
-  const boxedBoolean = readBoxedBoolean(value);
-  if (boxedBoolean !== undefined) return boxedBoolean;
-  const boxedNumber = readBoxedNumber(value);
-  if (boxedNumber !== undefined) {
-    if (numberIsFinite(boxedNumber)) return boxedNumber;
-    throw new TypeError(`Provider options for "${providerName}" must contain JSON-safe values`);
-  }
-  const boxedString = readBoxedString(value);
-  if (boxedString !== undefined) return boxedString;
-  const dateJson = readDateJsonValue(value);
-  if (dateJson.present) return dateJson.value;
-  const urlHref = readUrlHref(value);
-  if (urlHref !== undefined) return urlHref;
+  const special = specialProviderOptionSnapshot(providerName, value);
+  if (special.present) return special.value;
   const container = value as SnapshotContainer;
   if (depth >= MaxProviderOptionSnapshotDepth) {
     throw new TypeError(`Provider options for "${providerName}" exceeded the snapshot depth limit`);
@@ -1005,48 +1038,71 @@ function readModelCallInputString(container: SnapshotContainer, key: string): st
   return typeof descriptor?.value === "string" ? descriptor.value : undefined;
 }
 
+type ModelCallInputChildPath = { path: ModelCallInputPath; semanticRoot: boolean };
+
+function promptMessageChildPath(
+  container: SnapshotContainer,
+  key: PropertyKey,
+): ModelCallInputChildPath {
+  const path = "promptMessage";
+  const role = readModelCallInputString(container, "role");
+  if (key === "content" && (role === "user" || role === "assistant" || role === "tool")) {
+    return { path: "messageContentArray", semanticRoot: false };
+  }
+  if (key === "providerToolCalls") return { path: "providerToolCallsArray", semanticRoot: false };
+  if (role === "system" && key === "providerOptions") return { path, semanticRoot: true };
+  if (key === "providerMetadata") return { path, semanticRoot: true };
+  return { path: "opaque", semanticRoot: false };
+}
+
+function messageContentChildPath(
+  container: SnapshotContainer,
+  key: PropertyKey,
+): ModelCallInputChildPath {
+  const path = "messageContentPart";
+  const type = readModelCallInputString(container, "type");
+  if (type === "tool-call" && key === "input") return { path, semanticRoot: true };
+  if (type === "tool-result" && key === "result") return { path, semanticRoot: true };
+  if (type === "tool-result" && key === "output") {
+    return { path: "toolOutput", semanticRoot: false };
+  }
+  return { path: "opaque", semanticRoot: false };
+}
+
+function toolDefinitionChildPath(
+  container: SnapshotContainer,
+  key: PropertyKey,
+): ModelCallInputChildPath {
+  const path = "toolDefinition";
+  const type = readModelCallInputString(container, "type");
+  if (type === "function" && key === "inputSchema") return { path, semanticRoot: true };
+  if (type === "provider" && key === "args") return { path, semanticRoot: true };
+  return { path: "opaque", semanticRoot: false };
+}
+
 function childModelCallInputPath(
   path: ModelCallInputPath,
   container: SnapshotContainer,
   key: PropertyKey,
-): { path: ModelCallInputPath; semanticRoot: boolean } {
+): ModelCallInputChildPath {
   if (path === "semantic" || path === "opaque") return { path, semanticRoot: false };
-  if (path === "promptArray" && typeof key === "string" && key !== "length") {
-    return { path: "promptMessage", semanticRoot: false };
-  }
-  if (path === "messageContentArray" && typeof key === "string" && key !== "length") {
-    return { path: "messageContentPart", semanticRoot: false };
-  }
-  if (path === "providerToolCallsArray" && typeof key === "string" && key !== "length") {
-    return { path: "providerToolCall", semanticRoot: false };
-  }
-  if (path === "toolsArray" && typeof key === "string" && key !== "length") {
-    return { path: "toolDefinition", semanticRoot: false };
-  }
-  if (path === "promptMessage") {
-    const role = readModelCallInputString(container, "role");
-    if (key === "content" && (role === "user" || role === "assistant" || role === "tool")) {
-      return { path: "messageContentArray", semanticRoot: false };
-    }
-    if (key === "providerToolCalls") return { path: "providerToolCallsArray", semanticRoot: false };
-    if (role === "system" && key === "providerOptions") return { path, semanticRoot: true };
-  }
-  if (path === "messageContentPart") {
-    const type = readModelCallInputString(container, "type");
-    if (type === "tool-call" && key === "input") return { path, semanticRoot: true };
-    if (type === "tool-result" && key === "result") return { path, semanticRoot: true };
-    if (type === "tool-result" && key === "output") {
-      return { path: "toolOutput", semanticRoot: false };
+  if (typeof key === "string" && key !== "length") {
+    switch (path) {
+      case "promptArray":
+        return { path: "promptMessage", semanticRoot: false };
+      case "messageContentArray":
+        return { path: "messageContentPart", semanticRoot: false };
+      case "providerToolCallsArray":
+        return { path: "providerToolCall", semanticRoot: false };
+      case "toolsArray":
+        return { path: "toolDefinition", semanticRoot: false };
     }
   }
+  if (path === "promptMessage") return promptMessageChildPath(container, key);
+  if (path === "messageContentPart") return messageContentChildPath(container, key);
   if (path === "toolOutput" && key === "value") return { path, semanticRoot: true };
   if (path === "providerToolCall" && key === "input") return { path, semanticRoot: true };
-  if (path === "promptMessage" && key === "providerMetadata") return { path, semanticRoot: true };
-  if (path === "toolDefinition") {
-    const type = readModelCallInputString(container, "type");
-    if (type === "function" && key === "inputSchema") return { path, semanticRoot: true };
-    if (type === "provider" && key === "args") return { path, semanticRoot: true };
-  }
+  if (path === "toolDefinition") return toolDefinitionChildPath(container, key);
   return { path: "opaque", semanticRoot: false };
 }
 
@@ -1337,6 +1393,44 @@ export function buildModelCallContextRequest(
   return buildModelCallRequest(resolvePersistedControls(model, options), reasoning);
 }
 
+function resolveOpenAIParallelToolCalls(
+  providerOptions: Record<string, unknown>,
+  options: ModelCallRequestSource,
+): boolean | undefined {
+  if (ObjectHasOwn(providerOptions, "parallel_tool_calls")) {
+    return typeof providerOptions.parallel_tool_calls === "boolean"
+      ? providerOptions.parallel_tool_calls
+      : undefined;
+  }
+  return options.parallelToolCalls;
+}
+
+function resolveOpenAISeed(
+  providerOptions: Record<string, unknown>,
+  options: ModelCallRequestSource,
+  transport: ModelCallOpenAITransport,
+): number | undefined {
+  if (ObjectHasOwn(providerOptions, "seed")) return numberControl(providerOptions.seed);
+  if (transport === "responses") return undefined;
+  return options.seed;
+}
+
+function resolveOpenAIStops(
+  providerOptions: Record<string, unknown>,
+  options: ModelCallRequestSource,
+  transport: ModelCallOpenAITransport,
+): ModelCallRequestSource["stopSequences"] {
+  if (ObjectHasOwn(providerOptions, "stop")) {
+    if (transport !== "responses" && typeof providerOptions.stop === "string") {
+      return [providerOptions.stop];
+    }
+    return stopControl(providerOptions.stop);
+  }
+  if (transport === "responses") return undefined;
+  if (options.stopSequences?.length) return options.stopSequences;
+  return undefined;
+}
+
 function resolvePersistedControls(
   model: ModelCallRuntimeMetadata,
   options: ModelCallRequestSource,
@@ -1357,26 +1451,10 @@ function resolvePersistedControls(
     ...options,
     maxOutputTokens: resolveOpenAIMaxOutputTokens(model, options, providerOptions, transport),
     responseFormat: resolveOpenAIResponseFormat(options, providerOptions, transport),
-    parallelToolCalls: ObjectHasOwn(providerOptions, "parallel_tool_calls")
-      ? typeof providerOptions.parallel_tool_calls === "boolean"
-        ? providerOptions.parallel_tool_calls
-        : undefined
-      : options.parallelToolCalls,
+    parallelToolCalls: resolveOpenAIParallelToolCalls(providerOptions, options),
     topK: numberControl(providerOptions.top_k),
-    seed: ObjectHasOwn(providerOptions, "seed")
-      ? numberControl(providerOptions.seed)
-      : transport === "responses"
-      ? undefined
-      : options.seed,
-    stopSequences: ObjectHasOwn(providerOptions, "stop")
-      ? transport !== "responses" && typeof providerOptions.stop === "string"
-        ? [providerOptions.stop]
-        : stopControl(providerOptions.stop)
-      : transport === "responses"
-      ? undefined
-      : options.stopSequences?.length
-      ? options.stopSequences
-      : undefined,
+    seed: resolveOpenAISeed(providerOptions, options, transport),
+    stopSequences: resolveOpenAIStops(providerOptions, options, transport),
   };
   forEachPrivateArray(
     [
@@ -1389,13 +1467,13 @@ function resolvePersistedControls(
       const field = fieldPair[0];
       const nativeField = fieldPair[1];
       // Native options merge after neutral filtering in both OpenAI builders.
-      const value = ObjectHasOwn(providerOptions, nativeField)
-        ? providerOptions[nativeField]
-        : dropSampling ||
-            (transport === "responses" &&
-              (field === "presencePenalty" || field === "frequencyPenalty"))
-        ? undefined
-        : options[field];
+      let value: unknown;
+      if (ObjectHasOwn(providerOptions, nativeField)) value = providerOptions[nativeField];
+      else if (
+        dropSampling || (transport === "responses" &&
+          (field === "presencePenalty" || field === "frequencyPenalty"))
+      ) value = undefined;
+      else value = options[field];
       effective[field] = typeof value === "number" ? value : undefined;
     },
   );
@@ -1580,19 +1658,17 @@ function resolveAnthropicControls(
       const field = entry[0];
       const nativeField = entry[1];
       const native = readProviderControl(model, options, nativeField);
-      effective[field] = native
-        ? numberControl(native.value)
-        : !thinkingEnabled && (field === "temperature" || field === "topP")
-        ? options[field]
-        : undefined;
+      if (native) effective[field] = numberControl(native.value);
+      else if (!thinkingEnabled && (field === "temperature" || field === "topP")) {
+        effective[field] = options[field];
+      } else effective[field] = undefined;
     },
   );
   const stops = readProviderControl(model, options, "stop_sequences");
-  effective.stopSequences = stops
-    ? stopControl(stops.value)
-    : options.stopSequences?.length
-    ? slicePrivateArray(options.stopSequences, 0, 4)
-    : undefined;
+  if (stops) effective.stopSequences = stopControl(stops.value);
+  else if (options.stopSequences?.length) {
+    effective.stopSequences = slicePrivateArray(options.stopSequences, 0, 4);
+  } else effective.stopSequences = undefined;
   // Native Anthropic options merge after the neutral request body, so a raw
   // max_tokens override is the effective output limit recorded for replay.
   effective.maxOutputTokens = resolveAnthropicMaxOutputTokens(model, options);
@@ -1698,6 +1774,20 @@ function resolveGoogleControls(
   return effective;
 }
 
+function responseFormatStrictFields(
+  responseFormat: Extract<
+    NonNullable<ModelCallRequestSource["responseFormat"]>,
+    { type: "json_schema" }
+  >,
+  options: { responsesJsonSchemaStrictDefault?: boolean },
+): { strict?: boolean } {
+  if (responseFormat.strict === undefined) {
+    if (options.responsesJsonSchemaStrictDefault) return { strict: false };
+    return {};
+  }
+  return { strict: responseFormat.strict };
+}
+
 function snapshotResponseFormat(
   responseFormat: ModelCallRequestSource["responseFormat"],
   options: { responsesJsonSchemaStrictDefault?: boolean } = {},
@@ -1720,9 +1810,7 @@ function snapshotResponseFormat(
     ...(responseFormat.description === undefined
       ? {}
       : { description: responseFormat.description }),
-    ...(responseFormat.strict === undefined
-      ? options.responsesJsonSchemaStrictDefault ? { strict: false } : {}
-      : { strict: responseFormat.strict }),
+    ...responseFormatStrictFields(responseFormat, options),
   };
 }
 
@@ -1737,17 +1825,23 @@ function snapshotOpenAICaptureResponseFormat(
   return snapshot;
 }
 
-function buildModelCallRequest(
-  options: ModelCallRequestSource,
+function projectModelCallReasoning(
   reasoning: RuntimeReasoningOption | undefined,
-): ModelCallRequest | undefined {
-  const projectedReasoning = reasoning
+) {
+  return reasoning
     ? {
       ...(reasoning.enabled !== undefined ? { enabled: reasoning.enabled } : {}),
       ...(reasoning.effort !== undefined ? { effort: reasoning.effort } : {}),
       ...(reasoning.budgetTokens !== undefined ? { budgetTokens: reasoning.budgetTokens } : {}),
     }
     : undefined;
+}
+
+function buildModelCallRequest(
+  options: ModelCallRequestSource,
+  reasoning: RuntimeReasoningOption | undefined,
+): ModelCallRequest | undefined {
+  const projectedReasoning = projectModelCallReasoning(reasoning);
   const request: ModelCallRequest = {
     ...(options.maxOutputTokens !== undefined ? { maxOutputTokens: options.maxOutputTokens } : {}),
     ...(options.temperature !== undefined ? { temperature: options.temperature } : {}),
@@ -1838,26 +1932,33 @@ export function resolveModelCallProvider(model: ModelCallRuntimeMetadata): strin
   return model.provider === "veryfront-cloud" ? undefined : model.provider;
 }
 
+function resolveOpenAIPersistedReasoning(
+  model: ModelCallRuntimeMetadata,
+  options: ModelCallRequestSource,
+): RuntimeReasoningOption | undefined {
+  const neutral = resolveOpenAINeutralReasoning(model, options);
+  const transport = resolveOpenAIContextTransport(model, options);
+  if (!transport) return neutral;
+  if (suppressOpenAIFunctionToolReasoning(model, options)) return { enabled: false };
+  const native = openAIProviderOptions(model, options);
+  const field = transport === "responses" ? "reasoning" : "reasoning_effort";
+  if (!ObjectHasOwn(native, field)) return neutral;
+  const effort = transport === "responses"
+    ? readOwnEnumerableDataDescriptor(native.reasoning, "effort")?.value
+    : native.reasoning_effort;
+  if (effort === "none") return { enabled: false };
+  return effort === "low" || effort === "medium" || effort === "high" || effort === "max"
+    ? { enabled: true, effort }
+    : undefined;
+}
+
 function resolvePersistedReasoning(
   model: ModelCallRuntimeMetadata,
   options: ModelCallRequestSource,
 ): RuntimeReasoningOption | undefined {
   if (resolveModelCallProtocol(model) === "google") return resolveGoogleReasoning(model, options);
   if (usesOpenAIBuilder(model) && typeof model.modelId === "string") {
-    const neutral = resolveOpenAINeutralReasoning(model, options);
-    const transport = resolveOpenAIContextTransport(model, options);
-    if (!transport) return neutral;
-    if (suppressOpenAIFunctionToolReasoning(model, options)) return { enabled: false };
-    const native = openAIProviderOptions(model, options);
-    const field = transport === "responses" ? "reasoning" : "reasoning_effort";
-    if (!ObjectHasOwn(native, field)) return neutral;
-    const effort = transport === "responses"
-      ? readOwnEnumerableDataDescriptor(native.reasoning, "effort")?.value
-      : native.reasoning_effort;
-    if (effort === "none") return { enabled: false };
-    return effort === "low" || effort === "medium" || effort === "high" || effort === "max"
-      ? { enabled: true, effort }
-      : undefined;
+    return resolveOpenAIPersistedReasoning(model, options);
   }
 
   return resolveNonOpenAIReasoning(model, options);
@@ -1976,6 +2077,13 @@ function resolveNonOpenAIReasoning(
   };
 }
 
+function googleReasoningEffortBudget(neutral: RuntimeReasoningOption | undefined): number {
+  if (neutral?.effort === "low") return 512;
+  if (neutral?.effort === "high") return 8192;
+  if (neutral?.effort === "max") return -1;
+  return 2048;
+}
+
 function resolveGoogleReasoning(
   model: ModelCallRuntimeMetadata,
   options: ModelCallRequestSource,
@@ -1986,14 +2094,7 @@ function resolveGoogleReasoning(
   const budget = readOwnEnumerableDataDescriptor(thinking, "thinkingBudget")?.value;
   if (typeof budget !== "number" || !numberIsSafeInteger(budget) || budget < -1) return undefined;
   const neutral = options.reasoning;
-  const neutralBudget = neutral?.budgetTokens ??
-    (neutral?.effort === "low"
-      ? 512
-      : neutral?.effort === "high"
-      ? 8192
-      : neutral?.effort === "max"
-      ? -1
-      : 2048);
+  const neutralBudget = neutral?.budgetTokens ?? googleReasoningEffortBudget(neutral);
   if (
     neutral?.enabled === true && budget === neutralBudget &&
     readOwnEnumerableDataDescriptor(thinking, "includeThoughts")?.value === true

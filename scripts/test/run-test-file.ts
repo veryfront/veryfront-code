@@ -151,6 +151,22 @@ function rewriteJunitPath(
   junitPath: string,
 ): string[] {
   const rewritten: string[] = [];
+  function appendSeparateOption(
+    arg: string,
+    index: number,
+  ): boolean | undefined {
+    if (!arg.startsWith("-")) return undefined;
+    const option = arg.split("=", 1)[0]!;
+    if (arg.includes("=") || !TEST_OPTIONS_WITH_SEPARATE_VALUE.has(option)) {
+      return undefined;
+    }
+    rewritten.push(arg);
+    if (index + 1 < rawArgs.length) {
+      rewritten.push(rawArgs[index + 1]!);
+      return true;
+    }
+    return false;
+  }
   for (let index = 0; index < rawArgs.length; index++) {
     const arg = rawArgs[index]!;
     if (arg === "--") {
@@ -166,16 +182,10 @@ function rewriteJunitPath(
       rewritten.push(`--junit-path=${junitPath}`);
       continue;
     }
-    if (arg.startsWith("-")) {
-      const option = arg.split("=", 1)[0]!;
-      if (!arg.includes("=") && TEST_OPTIONS_WITH_SEPARATE_VALUE.has(option)) {
-        rewritten.push(arg);
-        if (index + 1 < rawArgs.length) {
-          rewritten.push(rawArgs[index + 1]!);
-          index += 1;
-        }
-        continue;
-      }
+    const separateOptionHasValue = appendSeparateOption(arg, index);
+    if (separateOptionHasValue !== undefined) {
+      if (separateOptionHasValue) index += 1;
+      continue;
     }
     rewritten.push(arg);
   }
@@ -319,8 +329,7 @@ function isIntegrationTarget(
 
   const pending = [normalized];
   let visitedEntries = 0;
-  while (pending.length > 0) {
-    const directory = pending.pop()!;
+  function scanDirectory(directory: string): boolean | undefined {
     try {
       for (const entry of fileSystem.readDirSync(directory)) {
         visitedEntries += 1;
@@ -336,6 +345,12 @@ function isIntegrationTarget(
     } catch {
       return false;
     }
+    return undefined;
+  }
+  while (pending.length > 0) {
+    const directory = pending.pop()!;
+    const found = scanDirectory(directory);
+    if (found !== undefined) return found;
   }
   return false;
 }

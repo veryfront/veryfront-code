@@ -1,9 +1,11 @@
 import { dirname, join } from "#veryfront/compat/path";
-import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
-import type { FileSystem } from "#veryfront/platform/compat/fs.ts";
+import {
+  createFileSystem,
+  type FileSystem,
+  isNotFoundError,
+} from "#veryfront/platform/compat/fs.ts";
 import type { BlobRef, BlobStorage, StoreBlobOptions } from "./types.ts";
 import { agentLogger } from "#veryfront/utils";
-import { isNotFoundError } from "#veryfront/platform/compat/fs.ts";
 import { INVALID_ARGUMENT, UNKNOWN_ERROR } from "#veryfront/errors";
 import { assertSafeBlobId, isSafeBlobId } from "./blob-id.ts";
 import { isBlobRef } from "./guards.ts";
@@ -11,10 +13,10 @@ import { isBlobRef } from "./guards.ts";
 const logger = agentLogger.component("local-blob-storage");
 
 export class LocalBlobStorage implements BlobStorage {
-  private rootDir: string;
-  private baseUrl?: string;
-  private fs: FileSystem;
-  private now: () => Date;
+  private readonly rootDir: string;
+  private readonly baseUrl?: string;
+  private readonly fs: FileSystem;
+  private readonly now: () => Date;
 
   constructor(rootDir: string, baseUrl?: string, options?: { now?: () => Date }) {
     this.rootDir = rootDir;
@@ -172,7 +174,7 @@ export class LocalBlobStorage implements BlobStorage {
         expiresAt: data.expiresAt ? new Date(data.expiresAt) : undefined,
       };
       return isBlobRef(ref) ? ref : null;
-    } catch (_) {
+    } catch {
       /* expected: invalid or incomplete metadata sidecar */
       return null;
     }

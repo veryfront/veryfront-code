@@ -345,6 +345,40 @@ function nonJsonRequirement(): AgUiInvocationProjectionCommand {
   };
 }
 
+function projectFinishedInvocation(
+  event: AgUiEventOf<"SUBAGENT_FINISHED">,
+  context: AgUiInvocationProjectionContext,
+): AgUiInvocationProjectionCommand {
+  const protocol = protocolMetadata(event);
+  if (protocol === undefined) return nonJsonRequirement();
+  if (event.outcome?.type === "suspended") {
+    return {
+      kind: "canonical-event",
+      event: recordEnvelope(context, "com.veryfront.invocation.paused", {
+        invocation: {
+          subagentRunId: event.subagentRunId,
+          ...(event.result === undefined ? {} : { result: event.result }),
+          outcome: event.outcome,
+        },
+        protocol: { agui: protocol.typed },
+      }),
+      protocol: { agui: protocol.json },
+    };
+  }
+  return {
+    kind: "canonical-event",
+    event: recordEnvelope(context, "com.veryfront.invocation.succeeded", {
+      invocation: {
+        subagentRunId: event.subagentRunId,
+        ...(event.result === undefined ? {} : { result: event.result }),
+        ...(event.outcome === undefined ? {} : { outcome: event.outcome }),
+      },
+      protocol: { agui: protocol.typed },
+    }),
+    protocol: { agui: protocol.json },
+  };
+}
+
 export function projectAgUiInvocationEvent(
   input: ProjectAgUiInvocationInput,
 ): AgUiInvocationProjectionCommand {
@@ -368,34 +402,7 @@ export function projectAgUiInvocationEvent(
       };
     }
     case "SUBAGENT_FINISHED": {
-      const protocol = protocolMetadata(event);
-      if (protocol === undefined) return nonJsonRequirement();
-      if (event.outcome?.type === "suspended") {
-        return {
-          kind: "canonical-event",
-          event: recordEnvelope(context, "com.veryfront.invocation.paused", {
-            invocation: {
-              subagentRunId: event.subagentRunId,
-              ...(event.result === undefined ? {} : { result: event.result }),
-              outcome: event.outcome,
-            },
-            protocol: { agui: protocol.typed },
-          }),
-          protocol: { agui: protocol.json },
-        };
-      }
-      return {
-        kind: "canonical-event",
-        event: recordEnvelope(context, "com.veryfront.invocation.succeeded", {
-          invocation: {
-            subagentRunId: event.subagentRunId,
-            ...(event.result === undefined ? {} : { result: event.result }),
-            ...(event.outcome === undefined ? {} : { outcome: event.outcome }),
-          },
-          protocol: { agui: protocol.typed },
-        }),
-        protocol: { agui: protocol.json },
-      };
+      return projectFinishedInvocation(event, context);
     }
     case "SUBAGENT_ERROR": {
       const protocol = protocolMetadata(event);

@@ -25,6 +25,12 @@ import {
   withToolInputStatusTransitions,
 } from "./runtime-loader/tool-input-status.ts";
 import { snapshotProviderJsonValue } from "./runtime-loader/json-snapshot.ts";
+import {
+  isImageFileInput,
+  readInlineFileData,
+  readRemoteFileUrl,
+  unsupportedFileInputError,
+} from "./runtime-loader/inline-file.ts";
 
 export {
   jsonValuesEqual,
@@ -216,7 +222,16 @@ export function readTextParts(
 function toOpenAICompatibleUserContent(
   parts: RuntimePromptUserContent,
 ): OpenAICompatibleUserContent {
-  if (!parts.some((part) => part.type !== "text" && part.mediaType.startsWith("image/"))) {
+  for (const part of parts) {
+    if (part.type !== "text" && !isImageFileInput(part)) {
+      throw unsupportedFileInputError(
+        "Chat Completions",
+        part,
+        'Use openAITransport: "responses" for OpenAI, or a provider with document input support, such as Anthropic or Google.',
+      );
+    }
+  }
+  if (!parts.some((part) => part.type !== "text")) {
     return readTextParts(parts);
   }
 
@@ -229,9 +244,11 @@ function toOpenAICompatibleUserContent(
       }
       continue;
     }
-    if (part.type === "image" || part.mediaType.startsWith("image/")) {
-      content.push({ type: "image_url", image_url: { url: part.url } });
-    }
+    // Inline data is validated; any other image URL must be remote.
+    const url = readInlineFileData(part) === undefined
+      ? readRemoteFileUrl("Chat Completions", part)
+      : part.url;
+    content.push({ type: "image_url", image_url: { url } });
   }
 
   return content.length > 0 ? content : readTextParts(parts);

@@ -1,7 +1,7 @@
 ---
 title: "CLI-first knowledge ingestion"
 description: "Turn uploads and local documents into project knowledge files with one command."
-order: 37
+order: 350
 ---
 
 `veryfront knowledge ingest` is the primary CLI workflow for getting documents
@@ -99,16 +99,21 @@ mode preserves the existing root file when no document-relative file exists. Thi
 behavior preserves bytes during ingestion and does not rewrite OKF graph semantics.
 
 Project pull writes referenced UTF-8 companions returned for a branch proof without adding their extensions to ordinary push or prune source sync.
-Binary companions remain unsupported and fail with an explicit content error. Referenced Markdown companions preserve their bytes even when their contents resemble
+Referenced non-text binary companions use immutable raw-byte asset storage. Each asset is limited to 8 MiB.
+Publication resolves the selected branch name or UUID, then sends a SHA-256 digest and an absent-file precondition.
+A retry reuses an existing binary asset only after verifying its exact scoped path, immutable version, digest and bytes. Different content produces a conflict; ingestion does not overwrite it or blindly repeat an ambiguous write.
+Asset edits require the expected current version UUID. This capability requires a compatible API release.
+Referenced Markdown companions preserve their bytes even when their contents resemble
 malformed YAML frontmatter. Successfully parsed OKF type or version declarations and reserved index/log
 files retain document validation and classification. Unreferenced Markdown remains subject to document
 diagnostics.
 IDs, labels and descriptions in companion objects remain metadata;
 only their `path` and `resource` fields reference files. The same rules apply to a bundle under `uploads/...`.
 
-Documents and companions must be valid UTF-8 because project file uploads store text. Invalid
-binary content produces an explicit ingestion failure rather than a corrupted
-file or a silent skip. Ordinary conversion retains its informational `source`
+Markdown documents and existing text companion formats (including code, JSON, YAML, CSV, XML and notebooks) must be valid UTF-8 and retain their authored bytes through text publication. UTF-8 extensionless executors also use text storage. Invalid UTF-8 in these referenced files fails preflight before bundle publication. Other companions retain raw bytes. Mixed binary bundles are parsed completely before their first publication. Custom `--knowledge-path` destinations use the same portable project path validation and scoped binary publication.
+Binary assets do not use ordinary text project uploads. Native bundle export verifies scoped immutable
+versions and content digests before returning bytes; source-only project pull retains its existing scope.
+Ordinary conversion retains its informational `source`
 field and records standardized provenance only when a usable absolute HTTP(S)
 source URL is available.
 

@@ -2218,6 +2218,12 @@
     },
     "AGENT_RUN_MODEL_CALL_CONTEXT": {
       "$ref": "#/components/schemas/AgentRunModelCallContextPayload"
+    },
+    "AGENT_RUN_TASK_INPUT_ACCEPTED": {
+      "$ref": "#/components/schemas/AgentRunTaskInputAcceptedPayload"
+    },
+    "AGENT_RUN_TASK_INPUT_ADMITTED": {
+      "$ref": "#/components/schemas/AgentRunTaskInputAdmittedPayload"
     }
   },
   "x-architecture": {
@@ -2998,6 +3004,26 @@
         },
         {
           "$ref": "#/components/schemas/AgentRunModelCallContextPayloadRedacted"
+        }
+      ]
+    },
+    "AGENT_RUN_TASK_INPUT_ACCEPTED": {
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/AgentRunTaskInputAcceptedPayload"
+        },
+        {
+          "$ref": "#/components/schemas/AgentRunTaskInputAcceptedPayloadRedacted"
+        }
+      ]
+    },
+    "AGENT_RUN_TASK_INPUT_ADMITTED": {
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/AgentRunTaskInputAdmittedPayload"
+        },
+        {
+          "$ref": "#/components/schemas/AgentRunTaskInputAdmittedPayloadRedacted"
         }
       ]
     }
@@ -16938,12 +16964,15 @@
                 ]
               },
               "output": {
-                "description": "Any JSON value. The HTTP boundary rejects non-JSON values."
+                "description": "Any JSON value. A text-only agent runtime may omit this to use its durable final text."
+              },
+              "final_text": {
+                "type": "string",
+                "description": "Authoritative final text from the current run runtime, including an empty filtered answer. Not accepted for owner finalization."
               }
             },
             "required": [
-              "status",
-              "output"
+              "status"
             ],
             "additionalProperties": false
           },
@@ -23353,6 +23382,214 @@
               },
               "event_type": {
                 "type": "string",
+                "enum": [
+                  "AGENT_RUN_TASK_INPUT_ACCEPTED"
+                ]
+              },
+              "payload": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/AgentRunTaskInputAcceptedPayload"
+                  },
+                  {
+                    "$ref": "#/components/schemas/AgentRunTaskInputAcceptedPayloadRedacted"
+                  }
+                ]
+              },
+              "is_error": {
+                "type": "boolean"
+              },
+              "created_at": {
+                "type": "string"
+              },
+              "run_id": {
+                "type": "string",
+                "format": "uuid",
+                "description": "Run identifier associated with the record."
+              },
+              "event_class": {
+                "type": "string",
+                "enum": [
+                  "fact",
+                  "delta"
+                ],
+                "description": "The event class associated with this record."
+              },
+              "span_id": {
+                "type": "string",
+                "minLength": 1,
+                "description": "The span id associated with this record."
+              },
+              "parent_span_id": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "minLength": 1,
+                "description": "The parent span id associated with this record."
+              },
+              "turn_id": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "minLength": 1,
+                "description": "The turn id associated with this record."
+              },
+              "origin_event_type": {
+                "type": "string",
+                "minLength": 1,
+                "description": "The origin event type associated with this record."
+              },
+              "origin_custom_name": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "minLength": 1,
+                "description": "The origin custom name associated with this record."
+              },
+              "unrecoverable_fields": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "One unrecoverable field item associated with this record."
+                },
+                "description": "List of unrecoverable fields associated with this record."
+              }
+            },
+            "required": [
+              "event_id",
+              "event_type",
+              "payload",
+              "is_error",
+              "created_at",
+              "run_id",
+              "event_class",
+              "span_id",
+              "parent_span_id",
+              "turn_id",
+              "origin_event_type",
+              "origin_custom_name",
+              "unrecoverable_fields"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "event_id": {
+                "type": "integer",
+                "minimum": 0,
+                "format": "int64"
+              },
+              "event_type": {
+                "type": "string",
+                "enum": [
+                  "AGENT_RUN_TASK_INPUT_ADMITTED"
+                ]
+              },
+              "payload": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/AgentRunTaskInputAdmittedPayload"
+                  },
+                  {
+                    "$ref": "#/components/schemas/AgentRunTaskInputAdmittedPayloadRedacted"
+                  }
+                ]
+              },
+              "is_error": {
+                "type": "boolean"
+              },
+              "created_at": {
+                "type": "string"
+              },
+              "run_id": {
+                "type": "string",
+                "format": "uuid",
+                "description": "Run identifier associated with the record."
+              },
+              "event_class": {
+                "type": "string",
+                "enum": [
+                  "fact",
+                  "delta"
+                ],
+                "description": "The event class associated with this record."
+              },
+              "span_id": {
+                "type": "string",
+                "minLength": 1,
+                "description": "The span id associated with this record."
+              },
+              "parent_span_id": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "minLength": 1,
+                "description": "The parent span id associated with this record."
+              },
+              "turn_id": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "minLength": 1,
+                "description": "The turn id associated with this record."
+              },
+              "origin_event_type": {
+                "type": "string",
+                "minLength": 1,
+                "description": "The origin event type associated with this record."
+              },
+              "origin_custom_name": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "minLength": 1,
+                "description": "The origin custom name associated with this record."
+              },
+              "unrecoverable_fields": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "One unrecoverable field item associated with this record."
+                },
+                "description": "List of unrecoverable fields associated with this record."
+              }
+            },
+            "required": [
+              "event_id",
+              "event_type",
+              "payload",
+              "is_error",
+              "created_at",
+              "run_id",
+              "event_class",
+              "span_id",
+              "parent_span_id",
+              "turn_id",
+              "origin_event_type",
+              "origin_custom_name",
+              "unrecoverable_fields"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "event_id": {
+                "type": "integer",
+                "minimum": 0,
+                "format": "int64"
+              },
+              "event_type": {
+                "type": "string",
                 "not": {
                   "enum": [
                     "RUN_STARTED",
@@ -23414,7 +23651,9 @@
                     "AGENT_RUN_CONTROL_PLANE_DISPATCH_RECEIPT",
                     "AGENT_RUN_TOOL_EXPOSURE_CHECKPOINT",
                     "AGENT_RUN_PROVIDER_REPLAY_CHECKPOINT",
-                    "AGENT_RUN_MODEL_CALL_CONTEXT"
+                    "AGENT_RUN_MODEL_CALL_CONTEXT",
+                    "AGENT_RUN_TASK_INPUT_ACCEPTED",
+                    "AGENT_RUN_TASK_INPUT_ADMITTED"
                   ]
                 }
               },
@@ -30860,6 +31099,226 @@
               },
               "event_type": {
                 "type": "string",
+                "enum": [
+                  "AGENT_RUN_TASK_INPUT_ACCEPTED"
+                ]
+              },
+              "payload": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/AgentRunTaskInputAcceptedPayload"
+                  },
+                  {
+                    "$ref": "#/components/schemas/AgentRunTaskInputAcceptedPayloadRedacted"
+                  }
+                ]
+              },
+              "is_error": {
+                "type": "boolean"
+              },
+              "created_at": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "format": "date-time"
+              },
+              "run_id": {
+                "type": "string",
+                "format": "uuid",
+                "description": "Run identifier associated with the record."
+              },
+              "event_class": {
+                "type": "string",
+                "enum": [
+                  "fact",
+                  "delta"
+                ],
+                "description": "The event class associated with this record."
+              },
+              "span_id": {
+                "type": "string",
+                "minLength": 1,
+                "description": "The span id associated with this record."
+              },
+              "parent_span_id": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "minLength": 1,
+                "description": "The parent span id associated with this record."
+              },
+              "turn_id": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "minLength": 1,
+                "description": "The turn id associated with this record."
+              },
+              "origin_event_type": {
+                "type": "string",
+                "minLength": 1,
+                "description": "The origin event type associated with this record."
+              },
+              "origin_custom_name": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "minLength": 1,
+                "description": "The origin custom name associated with this record."
+              },
+              "unrecoverable_fields": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "One unrecoverable field item associated with this record."
+                },
+                "description": "List of unrecoverable fields associated with this record."
+              }
+            },
+            "required": [
+              "event_id",
+              "event_type",
+              "payload",
+              "is_error",
+              "created_at",
+              "run_id",
+              "event_class",
+              "span_id",
+              "parent_span_id",
+              "turn_id",
+              "origin_event_type",
+              "origin_custom_name",
+              "unrecoverable_fields"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "event_id": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "minimum": 0
+              },
+              "event_type": {
+                "type": "string",
+                "enum": [
+                  "AGENT_RUN_TASK_INPUT_ADMITTED"
+                ]
+              },
+              "payload": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/AgentRunTaskInputAdmittedPayload"
+                  },
+                  {
+                    "$ref": "#/components/schemas/AgentRunTaskInputAdmittedPayloadRedacted"
+                  }
+                ]
+              },
+              "is_error": {
+                "type": "boolean"
+              },
+              "created_at": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "format": "date-time"
+              },
+              "run_id": {
+                "type": "string",
+                "format": "uuid",
+                "description": "Run identifier associated with the record."
+              },
+              "event_class": {
+                "type": "string",
+                "enum": [
+                  "fact",
+                  "delta"
+                ],
+                "description": "The event class associated with this record."
+              },
+              "span_id": {
+                "type": "string",
+                "minLength": 1,
+                "description": "The span id associated with this record."
+              },
+              "parent_span_id": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "minLength": 1,
+                "description": "The parent span id associated with this record."
+              },
+              "turn_id": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "minLength": 1,
+                "description": "The turn id associated with this record."
+              },
+              "origin_event_type": {
+                "type": "string",
+                "minLength": 1,
+                "description": "The origin event type associated with this record."
+              },
+              "origin_custom_name": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "minLength": 1,
+                "description": "The origin custom name associated with this record."
+              },
+              "unrecoverable_fields": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "One unrecoverable field item associated with this record."
+                },
+                "description": "List of unrecoverable fields associated with this record."
+              }
+            },
+            "required": [
+              "event_id",
+              "event_type",
+              "payload",
+              "is_error",
+              "created_at",
+              "run_id",
+              "event_class",
+              "span_id",
+              "parent_span_id",
+              "turn_id",
+              "origin_event_type",
+              "origin_custom_name",
+              "unrecoverable_fields"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "event_id": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "minimum": 0
+              },
+              "event_type": {
+                "type": "string",
                 "not": {
                   "enum": [
                     "RUN_STARTED",
@@ -30921,7 +31380,9 @@
                     "AGENT_RUN_CONTROL_PLANE_DISPATCH_RECEIPT",
                     "AGENT_RUN_TOOL_EXPOSURE_CHECKPOINT",
                     "AGENT_RUN_PROVIDER_REPLAY_CHECKPOINT",
-                    "AGENT_RUN_MODEL_CALL_CONTEXT"
+                    "AGENT_RUN_MODEL_CALL_CONTEXT",
+                    "AGENT_RUN_TASK_INPUT_ACCEPTED",
+                    "AGENT_RUN_TASK_INPUT_ADMITTED"
                   ]
                 }
               },
@@ -36837,6 +37298,64 @@
             "additionalProperties": false
           }
         ]
+      },
+      "AgentRunTaskInputAcceptedPayload": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "AGENT_RUN_TASK_INPUT_ACCEPTED"
+            ]
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "AgentRunTaskInputAcceptedPayloadRedacted": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "AGENT_RUN_TASK_INPUT_ACCEPTED"
+            ]
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "additionalProperties": false
+      },
+      "AgentRunTaskInputAdmittedPayload": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "AGENT_RUN_TASK_INPUT_ADMITTED"
+            ]
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "AgentRunTaskInputAdmittedPayloadRedacted": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "AGENT_RUN_TASK_INPUT_ADMITTED"
+            ]
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "additionalProperties": false
       }
     }
   }

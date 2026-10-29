@@ -1,3 +1,5 @@
+import { inheritHostedToolRunAuthorization } from "./tool-run-authorization.ts";
+import { type HostedTaskInput, resolveHostedTaskInput } from "./task-input.ts";
 import { captureHostedPlatformDependencyExecution } from "./platform-dependency-credential.ts";
 import { sealToolPlatformDependencies } from "#veryfront/tool/factory.ts";
 import { getToolResultReaderReservedToolSlots } from "../runtime/tool-result-context.ts";
@@ -91,7 +93,10 @@ import type { AgentConfig, AgentSystem } from "../types.ts";
 import type { RuntimeToolFilterConfig } from "../runtime/runtime-tool-config.ts";
 import type { SourceIntegrationPolicyManifest } from "#veryfront/integrations/source-policy.ts";
 import { runWithEffectiveSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
-import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
+import {
+  JSON_VALUE_MAX_SERIALIZED_BYTES,
+  snapshotBoundedJsonValue,
+} from "#veryfront/schemas/json-value.ts";
 import { defineOwnDataProperty } from "#veryfront/security/own-data-property.ts";
 import { flattenSystemInstructions } from "../runtime/tool-inventory.ts";
 import {
@@ -154,6 +159,8 @@ export type DefaultHostedChatRuntimeCreationOptions =
 export type DefaultHostedChatRuntimeTaskContext = HostedRuntimeStateResolverContext & {
   authToken: string;
   runId?: string;
+  rootRunId?: string;
+  taskInput?: HostedTaskInput;
   agentId?: string;
   projectId: string;
   projectSlug?: string;
@@ -244,11 +251,13 @@ export type CreateDefaultHostedChatRuntimeOptions = {
 };
 
 function createDefaultTaskContext(
-  input: CreateDefaultHostedChatRuntimeContextInput,
+  input: CreateDefaultHostedChatRuntimeContextInput & { taskInput: HostedTaskInput | undefined },
 ): DefaultHostedChatRuntimeTaskContext {
   return {
     authToken: input.options.authToken,
     runId: input.options.runId,
+    rootRunId: input.options.rootRunId,
+    taskInput: input.taskInput,
     agentId: input.options.agentId,
     projectId: input.options.projectId ?? "",
     projectSlug: input.options.projectSlug,
@@ -535,9 +544,10 @@ function withoutHostedCredentials<TResult>(input: {
   );
 }
 
+/** Bound a result by its whole 4 MiB size, so one string may use all of it. */
 function snapshotHostedToolResult(result: unknown): unknown {
   if (result === undefined) return undefined;
-  const snapshot = snapshotBoundedJsonValue(result);
+  const snapshot = snapshotBoundedJsonValue(result, JSON_VALUE_MAX_SERIALIZED_BYTES);
   if (!snapshot.success) {
     throw new TypeError("Hosted project tool result must be a bounded JSON value");
   }
@@ -653,6 +663,7 @@ export async function createDefaultHostedChatRuntime(
   input: CreateDefaultHostedChatRuntimeOptions,
   runtimeOptions: AgentRuntimeInternalOptions = {},
 ): Promise<HostedChatRuntimeCreationResult> {
+  const taskInput = resolveHostedTaskInput(input.options.taskInput, input.options);
   const runWithPlatformDependencies = captureHostedPlatformDependencyExecution();
   const effectiveRunEventWriterCapability = getActiveHostedRunEventWriterCapability();
   return await runWithEffectiveSourceIntegrationPolicy(
@@ -679,7 +690,7 @@ export async function createDefaultHostedChatRuntime(
       );
       const taskContext = input.createTaskContext
         ? input.createTaskContext({ options: input.options, modelId })
-        : createDefaultTaskContext({ options: input.options, modelId });
+        : createDefaultTaskContext({ options: input.options, modelId, taskInput });
       inheritHostedChildInferenceAuthority(taskContext, input.options);
       // The id is normalized, so hosted identity comes from the run's routing,
       // read with the run's credentials and served catalog.
@@ -791,10 +802,12 @@ export async function createDefaultHostedChatRuntime(
           runtimeKind: "framework",
           modelId,
           cleanup,
-          agent: createHostedChatRuntimeAgentAdapter({
+          agent: createHostedChatRuntimeAgentAdapter(inheritHostedToolRunAuthorization({
             runtimeAgent,
             sourceIntegrationPolicy: input.sourceIntegrationPolicy,
             runId: taskContext.runId,
+            rootRunId: input.options.rootRunId,
+            taskInput,
             agentId: taskContext.agentId,
             conversationId: taskContext.conversationId,
             projectId: taskContext.projectId,
@@ -824,7 +837,7 @@ export async function createDefaultHostedChatRuntime(
                   : {}),
               });
             },
-          }),
+          }, input.options)),
         };
       } catch (error) {
         try {

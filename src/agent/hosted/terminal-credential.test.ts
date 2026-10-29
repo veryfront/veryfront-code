@@ -1,3 +1,5 @@
+import { bindHostedToolRunAuthorization } from "./terminal-credential.ts";
+import { hasHostedToolRunAuthorization } from "./tool-run-authorization.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import {
   createHostedConversationRunChunkMirrorFromCapability,
@@ -6,17 +8,27 @@ import {
 } from "./child-run-event-writer-token.ts";
 import { createTerminalRunControl } from "#veryfront/agent/runtime/terminal-run-control.ts";
 import { bindRuntimeRemoteToolSourcesToCredentialOwner } from "#veryfront/agent/runtime/mcp-server-tool-sources.ts";
-import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { ParsedHostedChatRequest } from "./chat-request-parser.ts";
 import type { RemoteMCPToolSourceConfig } from "#veryfront/tool/remote-mcp.ts";
 import type { RemoteToolSource, ToolExecutionContext } from "#veryfront/tool/types.ts";
 import {
+  acceptInheritedRunAdmission,
+  acceptWorkflowInheritedRunAdmission,
+  hostedAcceptedChildEvidence,
+  hostedInheritedRootRunId,
+  hostedInheritedTaskInput,
+  hostedInheritedTerminalReceipt,
   hostedTerminalToolSourceFactory,
   registerHostedTerminalCredential,
   RUN_TERMINAL_TOKEN_HEADER,
   RUN_TERMINAL_TOOL_CALL_ID_HEADER,
+  transferHostedTerminalAuthority,
 } from "./terminal-credential.ts";
+
+import { computeHash } from "#veryfront/utils/hash-utils.ts";
+import { encodeHostedTaskInput, type HostedTaskInput } from "./task-input.ts";
 
 const rootContext = () => createTerminalRunControl({ runId: "run-1" }).context;
 
@@ -417,4 +429,659 @@ describe("private terminal credential routing", () => {
     assertEquals(calls[0]!.endpoint, "https://third-party.example/mcp");
     assertEquals(calls[0]!.headers.get(RUN_TERMINAL_TOKEN_HEADER), null);
   });
+});
+
+const inheritedParentId = "33333333-3333-4333-8333-333333333333";
+const inheritedChildId = "44444444-4444-4444-8444-444444444444";
+const inheritedConversationId = "55555555-5555-4555-8555-555555555555";
+const inheritedToken = `header.${
+  btoa(JSON.stringify({
+    tokenUse: "run_event_writer",
+    writerPurpose: "current_run_terminal",
+    runId: "child-run",
+    canonicalRunId: inheritedChildId,
+    dispatchNonce: "child-dispatch",
+  }))
+}.signature`;
+
+function inheritedExecutionResponse(
+  value: Record<string, unknown> = {},
+  headers: Record<string, string> = {},
+  status = 202,
+) {
+  return Response.json({
+    version: 1,
+    projectId: "project-1",
+    parentRunId: inheritedParentId,
+    agentId: "child",
+    canonicalRunId: inheritedChildId,
+    dispatchNonce: "child-dispatch",
+    conversationId: inheritedConversationId,
+    outputMessageId: "66666666-6666-4666-8666-666666666666",
+    status: "running",
+    ...value,
+  }, {
+    status,
+    headers: {
+      "Content-Type": "application/vnd.veryfront.inherited-run+json",
+      "Cache-Control": "no-store",
+      [RUN_TERMINAL_TOKEN_HEADER]: inheritedToken,
+      "X-Veryfront-Run-Invocation-Token": "child-auth",
+      "X-Veryfront-Run-Renewal-Token": "child-renewal",
+      "X-Veryfront-Run-Event-Token": "child-writer",
+      "X-Veryfront-Run-Event-Sequence": "0",
+      "X-Veryfront-Run-External-Event-Sequence": "0",
+      ...headers,
+    },
+  });
+}
+
+type FetchTransport = typeof globalThis.fetch;
+
+function inheritedBinding(
+  fetch: FetchTransport = () => Promise.reject(new Error("Unexpected fetch")),
+) {
+  return {
+    projectId: "project-1",
+    parentRunId: inheritedParentId,
+    agentId: "child",
+    apiUrl: "https://api.example/v1/",
+    fetch,
+  };
+}
+
+describe("inherited execution input and receipt authority", () => {
+  it("restores immutable task input only from exact admission and signed writer binding", async () => {
+    const taskInput: HostedTaskInput = {
+      version: 1,
+      projectId: "project-1",
+      rootRunId: "root-run",
+      runId: "child-run",
+      payload: { record: { path: "note.txt" } },
+    };
+    const digest = await computeHash(encodeHostedTaskInput(taskInput));
+    const verification = {
+      verified: true as const,
+      rootRunId: "root-run",
+      taskInputRootRunId: "root-run",
+      taskInputSha256: digest,
+    };
+    const binding = { ...inheritedBinding(), verifyRunEventAppendToken: async () => verification };
+    const run = await acceptInheritedRunAdmission(
+      inheritedExecutionResponse({ taskInput }),
+      binding,
+    );
+    assertEquals(run.runId, "child-run");
+    const restored = hostedInheritedTaskInput(run, "project-1");
+    assertEquals(restored, taskInput);
+    assert(Object.isFrozen(restored));
+    assert(Object.isFrozen(restored?.payload.record));
+    assertEquals(hostedInheritedRootRunId(run, "project-1"), "root-run");
+    assertEquals(hostedInheritedTaskInput({ ...run }, "project-1"), undefined);
+    assertEquals(hostedInheritedRootRunId({ ...run }, "project-1"), undefined);
+    assertThrows(() => hostedInheritedTaskInput(run, "foreign"), Error, "project mismatch");
+    assertThrows(() => hostedInheritedRootRunId(run, "foreign"), Error, "project mismatch");
+    const plain = await acceptInheritedRunAdmission(
+      inheritedExecutionResponse(),
+      inheritedBinding(),
+    );
+    assertEquals(hostedInheritedTaskInput(plain, "project-1"), undefined);
+    for (
+      const proof of [
+        false,
+        { ...verification, verified: false },
+        {
+          ...verification,
+          taskInputRootRunId: "foreign-root",
+        },
+        { ...verification, rootRunId: "foreign-root" },
+        { ...verification, taskInputSha256: "wrong" },
+      ]
+    ) {
+      await assertRejects(
+        () =>
+          acceptInheritedRunAdmission(inheritedExecutionResponse({ taskInput }), {
+            ...inheritedBinding(),
+            verifyRunEventAppendToken: async () => proof,
+          }),
+        Error,
+        "signed binding mismatch",
+      );
+    }
+    await assertRejects(
+      () => acceptInheritedRunAdmission(inheritedExecutionResponse(), binding),
+      Error,
+      "signed binding mismatch",
+    );
+    await assertRejects(() =>
+      acceptInheritedRunAdmission(
+        inheritedExecutionResponse({ taskInput: { ...taskInput, projectId: "foreign" } }),
+        binding,
+      )
+    );
+  });
+
+  it("rejects inherited envelopes with conflicting identity, generation or resource scope", async () => {
+    for (
+      const patch of [
+        { version: 2 },
+        { parentRunId: inheritedChildId },
+        { projectId: "foreign" },
+        { agentId: "other" },
+        { canonicalRunId: inheritedParentId },
+        { dispatchNonce: "old-generation" },
+        { conversationId: "not-uuid" },
+        { outputMessageId: null },
+        { status: "unknown" },
+        { status: "completed" },
+        { error: { code: 1, message: "bad" } },
+      ]
+    ) {
+      await assertRejects(
+        () => acceptInheritedRunAdmission(inheritedExecutionResponse(patch), inheritedBinding()),
+        Error,
+        "binding mismatch",
+      );
+    }
+    for (
+      const headers of [
+        { "Cache-Control": "public" } as Record<string, string>,
+        { [RUN_TERMINAL_TOKEN_HEADER]: "malformed" },
+      ]
+    ) {
+      await assertRejects(
+        () =>
+          acceptInheritedRunAdmission(inheritedExecutionResponse({}, headers), inheritedBinding()),
+        Error,
+        "binding mismatch",
+      );
+    }
+    await assertRejects(
+      () =>
+        acceptInheritedRunAdmission(inheritedExecutionResponse({}, {}, 403), inheritedBinding()),
+      Error,
+      "binding mismatch",
+    );
+    await assertRejects(
+      () =>
+        acceptInheritedRunAdmission(
+          new Response("bad-json", {
+            headers: { "Content-Type": "application/vnd.veryfront.inherited-run+json" },
+          }),
+          inheritedBinding(),
+        ),
+      Error,
+      "binding mismatch",
+    );
+    await assertRejects(
+      () =>
+        acceptInheritedRunAdmission(inheritedExecutionResponse(), {
+          ...inheritedBinding(),
+          conversationId: inheritedParentId,
+        }),
+      Error,
+      "binding mismatch",
+    );
+    await assertRejects(
+      () =>
+        acceptInheritedRunAdmission(
+          inheritedExecutionResponse({ outputFormat: "text-data-v1" }),
+          inheritedBinding(),
+        ),
+      Error,
+      "binding mismatch",
+    );
+  });
+
+  it("retains terminal receipts without restoring execution authority", async () => {
+    for (const status of ["completed", "failed", "cancelled"] as const) {
+      const error = status === "failed" ? { code: "CHILD_FAILED", message: "Failure" } : undefined;
+      const response = () =>
+        inheritedExecutionResponse({
+          status,
+          output: { saved: true },
+          ...(error ? { error } : {}),
+        });
+      const workflow = await acceptWorkflowInheritedRunAdmission(response(), inheritedBinding());
+      assertEquals(workflow, {
+        terminalReceipt: { status, output: { saved: true }, ...(error ? { error } : {}) },
+      });
+      assertEquals(hostedInheritedTaskInput(workflow as { runId: string }, "project-1"), undefined);
+      const run = await acceptInheritedRunAdmission(response(), inheritedBinding());
+      assertEquals(hostedInheritedTerminalReceipt(run), {
+        status,
+        output: { saved: true },
+        ...(error ? { error } : {}),
+      });
+      assertEquals(hostedInheritedTerminalReceipt({ ...run }), undefined);
+    }
+    const running = await acceptWorkflowInheritedRunAdmission(
+      inheritedExecutionResponse(),
+      inheritedBinding(),
+    );
+    assertEquals("runId" in running && running.runId, "child-run");
+  });
+
+  it("carries canonical output provenance only from the authenticated execution receipt", async () => {
+    const response = () =>
+      inheritedExecutionResponse({
+        status: "completed",
+        output: { data: { text: "business" } },
+        outputFormat: "text-data-v1",
+      });
+    const workflow = await acceptWorkflowInheritedRunAdmission(response(), inheritedBinding());
+    assertEquals(workflow, {
+      terminalReceipt: {
+        status: "completed",
+        output: { data: { text: "business" } },
+        outputFormat: "text-data-v1",
+      },
+    });
+    const run = await acceptInheritedRunAdmission(response(), inheritedBinding());
+    assertEquals(hostedInheritedTerminalReceipt(run), {
+      status: "completed",
+      output: { data: { text: "business" } },
+      outputFormat: "text-data-v1",
+    });
+
+    await assertRejects(
+      () =>
+        acceptWorkflowInheritedRunAdmission(
+          inheritedExecutionResponse({
+            status: "completed",
+            output: null,
+            outputFormat: "future-format",
+          }),
+          inheritedBinding(),
+        ),
+      Error,
+      "binding mismatch",
+    );
+  });
+});
+
+describe("authenticated accepted child evidence readers", () => {
+  const versionId = "77777777-7777-4777-8777-777777777777";
+  function readers(send: typeof globalThis.fetch, signal?: AbortSignal) {
+    const owner = { ...request(), authToken: "parent-auth" };
+    const token = `header.${
+      btoa(
+        JSON.stringify({
+          tokenUse: "run_event_writer",
+          writerPurpose: "current_run_terminal",
+          runId: "run-1",
+          canonicalRunId: inheritedParentId,
+          dispatchNonce: "parent-dispatch",
+        }),
+      )
+    }.signature`;
+    const writer = `header.${
+      btoa(
+        JSON.stringify({
+          projectId: "project-1",
+          runId: "run-1",
+          workerGeneration: {
+            projectId: "project-1",
+            runId: "run-1",
+            canonicalRunId: inheritedParentId,
+          },
+        }),
+      )
+    }.signature`;
+    registerHostedTerminalCredential(
+      owner,
+      token,
+      writer,
+      () => Promise.resolve({ verified: true }),
+    );
+    return {
+      owner,
+      evidence: hostedAcceptedChildEvidence(owner, "project-1", signal, {
+        apiUrl: "https://api.example/v1///",
+        fetch: send,
+      }),
+    };
+  }
+  it("reads only canonical parent results and exact immutable versions with private credentials", async () => {
+    const calls: Request[] = [];
+    const row = {
+      run_id: inheritedParentId,
+      event_type: "TOOL_CALL_RESULT",
+      event_id: 7,
+      result: { saved: true },
+    };
+    const { owner, evidence } = readers((input, init) => {
+      const request = new Request(input, init);
+      calls.push(request);
+      return Promise.resolve(
+        Response.json(
+          calls.length === 1
+            ? { data: [row], page_info: { next: null } }
+            : { path: "notes/a b.txt", id: versionId, content: "pinned bytes" },
+        ),
+      );
+    });
+    const rows = await evidence.readParentToolResults();
+    assertEquals(rows, [row]);
+    assert(Object.isFrozen(rows));
+    assert(Object.isFrozen(rows[0]));
+    assertEquals(
+      calls[0]?.url,
+      `https://api.example/v1/runs/${inheritedParentId}/events?event_type=TOOL_CALL_RESULT&limit=100&sort_order=desc&include_descendants=false`,
+    );
+    assertEquals(await evidence.readCommittedVersion("notes/a b.txt", versionId), {
+      path: "notes/a b.txt",
+      versionId,
+      content: "pinned bytes",
+    });
+    assertEquals(
+      calls[1]?.url,
+      `https://api.example/v1/projects/project-1/files/notes%2Fa%20b.txt/versions/${versionId}`,
+    );
+    for (const request of calls) {
+      assertEquals(request.headers.get("authorization"), "Bearer parent-auth");
+      assertEquals(request.headers.get("accept"), "application/json");
+      assertEquals(request.redirect, "error");
+    }
+    assertThrows(
+      () =>
+        hostedAcceptedChildEvidence({ ...owner }, "project-1", undefined, {
+          apiUrl: "https://api.example",
+        }),
+      Error,
+      "exact parent authority",
+    );
+    assertThrows(
+      () =>
+        hostedAcceptedChildEvidence(owner, "foreign", undefined, { apiUrl: "https://api.example" }),
+      Error,
+      "exact parent authority",
+    );
+  });
+  it("rejects incomplete or wrongly scoped parent event pages", async () => {
+    const row = { run_id: inheritedParentId, event_type: "TOOL_CALL_RESULT", event_id: 1 };
+    for (
+      const page of [
+        { data: [], page_info: { next: "cursor" } },
+        { data: [] },
+        { data: {}, page_info: { next: null } },
+        { data: Array.from({ length: 101 }, () => row), page_info: { next: null } },
+        ...[null, { ...row, run_id: inheritedChildId }, { ...row, event_type: "RUN_FINISHED" }, {
+          ...row,
+          event_id: 0,
+        }, { ...row, event_id: 1.5 }].map((entry) => ({
+          data: [entry],
+          page_info: { next: null },
+        })),
+      ]
+    ) {
+      const { evidence } = readers(() => Promise.resolve(Response.json(page)));
+      await assertRejects(() => evidence.readParentToolResults(), Error, "receipt evidence");
+    }
+  });
+  it("rejects bad version references before fetch and mismatched historical identity after fetch", async () => {
+    let calls = 0;
+    const { evidence } = readers(() => {
+      calls++;
+      return Promise.resolve(Response.json({ path: "note.txt", id: versionId, content: "bytes" }));
+    });
+    for (
+      const [path, version] of [["", versionId], ["x".repeat(513), versionId], ["note.txt", "main"]]
+    ) {
+      await assertRejects(
+        () => evidence.readCommittedVersion(path!, version!),
+        Error,
+        "Invalid accepted artifact reference",
+      );
+    }
+    assertEquals(calls, 0);
+    for (const patch of [{ path: "other" }, { id: inheritedChildId }, { content: 1 }]) {
+      const { evidence } = readers(() =>
+        Promise.resolve(
+          Response.json({ path: "note.txt", id: versionId, content: "bytes", ...patch }),
+        )
+      );
+      await assertRejects(
+        () => evidence.readCommittedVersion("note.txt", versionId),
+        Error,
+        "Historical artifact identity mismatch",
+      );
+    }
+  });
+  it("fails closed on status errors, invalid JSON, oversized bodies and cancellation", async () => {
+    for (
+      const response of [
+        new Response("denied", { status: 403 }),
+        new Response("not-json"),
+        new Response("x".repeat(3_000_001)),
+      ]
+    ) {
+      const { evidence } = readers(() => Promise.resolve(response));
+      await assertRejects(() => evidence.readParentToolResults());
+    }
+    const controller = new AbortController();
+    controller.abort(new Error("parent cancelled"));
+    const { evidence } = readers((_input, init) => {
+      new Request("https://api.example", init).signal.throwIfAborted();
+      return Promise.resolve(Response.json({ data: [], page_info: { next: null } }));
+    }, controller.signal);
+    await assertRejects(() => evidence.readParentToolResults(), Error, "parent cancelled");
+    const noAuth = request();
+    registerHostedTerminalCredential(noAuth, inheritedToken);
+    assertThrows(
+      () =>
+        hostedAcceptedChildEvidence(noAuth, "project-1", undefined, {
+          apiUrl: "https://api.example",
+        }),
+      Error,
+      "exact parent authority",
+    );
+  });
+});
+
+it("verifies signed task input before returning every terminal workflow receipt", async () => {
+  const taskInput: HostedTaskInput = {
+    version: 1,
+    projectId: "project-1",
+    rootRunId: "root-run",
+    runId: "child-run",
+    payload: { record: "accepted" },
+  };
+  const proof = {
+    verified: true as const,
+    rootRunId: "root-run",
+    taskInputRootRunId: "root-run",
+    taskInputSha256: await computeHash(encodeHostedTaskInput(taskInput)),
+  };
+  for (const status of ["completed", "failed", "cancelled"] as const) {
+    const response = () =>
+      inheritedExecutionResponse({ status, output: { saved: true }, taskInput });
+    const result = await acceptWorkflowInheritedRunAdmission(response(), {
+      ...inheritedBinding(),
+      verifyRunEventAppendToken: async () => proof,
+    });
+    assertEquals("terminalReceipt" in result && result.terminalReceipt.status, status);
+    assertEquals(hostedInheritedTaskInput(result as { runId: string }, "project-1"), undefined);
+    for (
+      const invalid of [
+        { ...proof, taskInputSha256: "wrong" },
+        { ...proof, rootRunId: "foreign" },
+        { ...proof, taskInputRootRunId: "foreign" },
+      ]
+    ) {
+      await assertRejects(
+        () =>
+          acceptWorkflowInheritedRunAdmission(response(), {
+            ...inheritedBinding(),
+            verifyRunEventAppendToken: async () => invalid,
+          }),
+        Error,
+        "signed binding mismatch",
+      );
+    }
+    await assertRejects(
+      () => acceptWorkflowInheritedRunAdmission(response(), inheritedBinding()),
+      Error,
+      "signed binding mismatch",
+    );
+    await assertRejects(
+      () =>
+        acceptWorkflowInheritedRunAdmission(inheritedExecutionResponse({ status, output: null }), {
+          ...inheritedBinding(),
+          verifyRunEventAppendToken: async () => proof,
+        }),
+      Error,
+      "signed binding mismatch",
+    );
+  }
+});
+
+it("retains the verified agent binding when inherited evidence authority transfers", async () => {
+  const writer = `header.${
+    btoa(
+      JSON.stringify({
+        projectId: "project-1",
+        runId: "child-run",
+      }),
+    )
+  }.signature`;
+  let verifications = 0;
+  let terminalVerifications = 0;
+  const binding = {
+    ...inheritedBinding(),
+    verifyRunTerminalToken: (input: { token: string; projectId: string; runId: string }) => {
+      assertEquals(input, { token: inheritedToken, projectId: "project-1", runId: "child-run" });
+      terminalVerifications++;
+      return Promise.resolve(true);
+    },
+    verifyRunEventAppendToken: (
+      input: { token: string; projectId: string; runId: string; agentId?: string },
+    ) => {
+      assertEquals(input, {
+        token: writer,
+        projectId: "project-1",
+        runId: "child-run",
+        agentId: "child",
+      });
+      verifications++;
+      return Promise.resolve({ verified: true });
+    },
+    fetch: ((input: string | URL | Request) => {
+      assertEquals(
+        String(input),
+        `https://api.example/v1/runs/${inheritedChildId}/events?event_type=TOOL_CALL_RESULT&limit=100&sort_order=desc&include_descendants=false`,
+      );
+      return Promise.resolve(Response.json({ data: [], page_info: { next: null } }));
+    }) as typeof fetch,
+  };
+  const run = await acceptInheritedRunAdmission(
+    inheritedExecutionResponse({}, { "X-Veryfront-Run-Event-Token": writer }),
+    binding,
+  );
+  const transferred = { runId: run.runId };
+  transferHostedTerminalAuthority(run, transferred);
+  assertEquals(
+    await hostedAcceptedChildEvidence(transferred, "project-1").readParentToolResults(),
+    [],
+  );
+  assertEquals(verifications, 2);
+  assertEquals(terminalVerifications, 1);
+});
+
+it("reads the current exact-owner bearer for existing first-party MCP sources", async () => {
+  const value = request();
+  registerHostedTerminalCredential(value, "test-terminal", "test-events");
+  let current: string | undefined = "child-invocation-admission";
+  const sent: string[] = [];
+  const fallback = (config: RemoteMCPToolSourceConfig): RemoteToolSource => {
+    const send = async (context?: ToolExecutionContext) => {
+      const headers = new Headers(
+        typeof config.headers === "function" ? await config.headers(context) : config.headers,
+      );
+      sent.push(headers.get("Authorization") ?? "");
+    };
+    return {
+      id: "test-platform",
+      listTools: async (context) => {
+        await send(context);
+        return [];
+      },
+      executeTool: async (_name, _args, context) => {
+        await send(context);
+        return {};
+      },
+    };
+  };
+  const factory = hostedTerminalToolSourceFactory(
+    value,
+    "https://api.example/mcp",
+    fallback,
+    () => current,
+  );
+  const config = {
+    endpoint: "https://api.example/mcp",
+    headers: { Authorization: "Bearer stale" },
+  };
+  const source = factory(config, { kind: "veryfront-api" });
+  current = "child-invocation-1";
+  await source.listTools();
+  current = "child-invocation-2";
+  await source.executeTool("ordinary", {}, rootContext());
+  await source.executeTool("update_file", {}, rootContext());
+  await source.executeTool("finalize", {}, rootContext());
+  assertEquals(sent, [
+    "Bearer child-invocation-1",
+    "Bearer child-invocation-2",
+    "Bearer child-invocation-2",
+    "Bearer child-invocation-2",
+  ]);
+  current = undefined;
+  await assertRejects(() => source.listTools(), Error, "authority is unavailable");
+  await assertRejects(
+    () => source.executeTool("ordinary", {}, rootContext()),
+    Error,
+    "authority is unavailable",
+  );
+  assertEquals(sent.length, 4);
+  const thirdParty = factory(config);
+  await thirdParty.executeTool("ordinary", {}, rootContext());
+  assertEquals(sent.at(-1), "Bearer stale");
+});
+
+it("tool authorization rejects public identifiers, invalid terminal authority, and mutated identities", () => {
+  const runId = "11111111-1111-4111-8111-111111111111";
+  for (
+    const variant of [
+      "canonical",
+      "unbound",
+      "invalid-token",
+      "project-mismatch",
+      "run-mismatch",
+    ] as const
+  ) {
+    const value = request();
+    value.durableRootRun = { runId, messageId: "message-1" };
+    if (variant !== "unbound") {
+      registerHostedTerminalCredential(
+        value,
+        variant === "invalid-token" ? "invalid" : `header.${
+          btoa(JSON.stringify({
+            runId,
+            canonicalRunId: runId,
+            tokenUse: "run_event_writer",
+            writerPurpose: "current_run_terminal",
+            dispatchNonce: "fixture-generation",
+          }))
+        }.signature`,
+      );
+    }
+    const target = {
+      projectId: variant === "project-mismatch" ? "other-project" : "project-1",
+      runId: variant === "run-mismatch" ? "other-run" : runId,
+    };
+    bindHostedToolRunAuthorization(target, value);
+    assertEquals(hasHostedToolRunAuthorization(target, target), variant === "canonical");
+    const spoofed = { ...target, runIdBindsToolAuthorization: true };
+    assertEquals(hasHostedToolRunAuthorization(spoofed, target), false);
+  }
 });

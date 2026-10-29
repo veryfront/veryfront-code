@@ -79,6 +79,18 @@ describe("getModelMaxOutputTokens", () => {
     assertEquals(getModelMaxOutputTokens("veryfront-cloud/openai/gpt-5-nano"), 128_000);
   });
 
+  // veryfront-issue-inbox#3791: the GPT-5.6 tier was missing, so it fell back
+  // to 4_096 and truncated structured output.
+  it("returns the documented limit for the OpenAI GPT-5.6 family", () => {
+    assertEquals(getModelMaxOutputTokens("openai/gpt-5.6-luna"), 128_000);
+    assertEquals(getModelMaxOutputTokens("openai/gpt-5.6-sol"), 128_000);
+    assertEquals(getModelMaxOutputTokens("openai/gpt-5.6-terra"), 128_000);
+    assertEquals(getModelMaxOutputTokens("veryfront-cloud/openai/gpt-5.6-luna"), 128_000);
+    // OpenAI routes the bare gpt-5.6 alias to GPT-5.6 Sol.
+    assertEquals(getModelMaxOutputTokens("openai/gpt-5.6"), 128_000);
+    assertEquals(getModelMaxOutputTokens("veryfront-cloud/openai/gpt-5.6"), 128_000);
+  });
+
   it("returns the safe fallback limit for unknown models", () => {
     assertEquals(getModelMaxOutputTokens("unknown/model"), FALLBACK_MODEL_MAX_OUTPUT_TOKENS);
   });

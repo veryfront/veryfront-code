@@ -572,6 +572,9 @@ const NEUTRAL_REFUSAL_SHAPES: ReadonlyMap<
 > = new Map([
   ["gateway_project_required", { field: "code", value: "gateway_project_required" }],
   ["eu_inference_policy", { field: "code", value: "eu_inference_policy" }],
+  ["account-model-denied", { field: "code", value: "account-model-denied" }],
+  ["policy-model-denied", { field: "code", value: "policy-model-denied" }],
+  ["key-model-denied", { field: "code", value: "key-model-denied" }],
   ["resource-limit-exceeded", { field: "slug", value: "resource-limit-exceeded" }],
   ["insufficient-credits", {
     field: "slug",
@@ -731,6 +734,7 @@ export function createVeryfrontCloudFetch(
   projectSlug?: string,
   options?: {
     inferenceCredential?: boolean;
+    getInferenceCredential?: () => string;
     assertInferenceCredentialActive?: () => void;
     /**
      * The route's {@link VeryfrontCloudGatewayRoute.wireModelProvider}. When
@@ -785,8 +789,14 @@ export function createVeryfrontCloudFetch(
     const neutralRoute = options?.neutralRoute;
 
     // Setting the bearer pushes it onto the header list's internal array.
+    const currentToken = options?.getInferenceCredential
+      ? requireInferenceProviderCredential(
+        options.getInferenceCredential(),
+        "Veryfront Cloud API token",
+      )
+      : trustedApiToken;
     assertNativeRequestProcessing();
-    IntrinsicReflectApply(HeadersSet, headers, ["Authorization", `Bearer ${trustedApiToken}`]);
+    IntrinsicReflectApply(HeadersSet, headers, ["Authorization", `Bearer ${currentToken}`]);
     if (projectSlug) {
       IntrinsicReflectApply(HeadersSet, headers, ["x-veryfront-project-slug", projectSlug]);
     }

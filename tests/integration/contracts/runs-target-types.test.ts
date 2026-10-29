@@ -1,8 +1,9 @@
 /**
- * The vendored Runs target contract types (veryfront-issue-inbox#2233) must stay the
- * bytes veryfront-api generates from its shared Zod schemas, pinned by the kit hash.
+ * The vendored Runs target contract types (veryfront-issue-inbox#2233) retain their
+ * pinned base and maintained event revision, with every artifact hash verified.
  */
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import type { components } from "../../../src/runs/contract/runs-api.generated.ts";
 import { RUNS_OPERATION_FIXTURES } from "../../../src/runs/contract/runs-fixtures.generated.ts";
 import {
   extractRunsFixtures,
@@ -22,6 +23,22 @@ async function sha256(file: string): Promise<string> {
 }
 
 describe("Runs target contract types", () => {
+  it("declares authoritative final text only for completed finalization", async () => {
+    const document = JSON.parse(
+      await Deno.readTextFile(new URL("openapi.target.json", contractDir)),
+    );
+    const [completed, failed] = document.components.schemas.FinalizeRunRequest.oneOf;
+    const request = {
+      status: "completed",
+      final_text: "",
+    } satisfies components["schemas"]["FinalizeRunRequest"];
+    assertEquals(request.final_text, "");
+    assertEquals(completed.properties.final_text?.type, "string");
+    assertEquals(completed.required.includes("final_text"), false);
+    assertEquals(failed.properties.final_text, undefined);
+    assertEquals(completed.additionalProperties, false);
+  });
+
   it("keeps contract examples out of the handwritten SDK helper", async () => {
     const helper = await Deno.readTextFile(
       new URL("../../../src/runs/target/client.test-helpers.ts", import.meta.url),
@@ -76,7 +93,7 @@ describe("Runs target contract types", () => {
     });
   });
 
-  it("are the pinned 0.8.9 artifacts, byte for byte", async () => {
+  it("are the pinned 0.8.9 base plus maintained task-input artifacts, byte for byte", async () => {
     const pin = JSON.parse(await Deno.readTextFile(new URL("pin.json", contractDir))) as {
       contract: string;
       files: Record<string, string>;

@@ -296,6 +296,119 @@ describe("ReadOperations", () => {
       ]);
     });
 
+    it("continues bounded extension resolution after missing candidates", async () => {
+      const calls: Array<[string, number, boolean | undefined]> = [];
+      const readOps = createReadyReadOps(
+        createMockClient({
+          getFileContentBytesWithinLimit: (
+            path: string,
+            maximumBytes: number,
+            options?: { expectedMissing?: boolean },
+          ) => {
+            calls.push([path, maximumBytes, options?.expectedMissing]);
+            return path === "pages/home.jsx"
+              ? Promise.resolve(new Uint8Array([8]))
+              : Promise.reject(notFoundError());
+          },
+        }),
+        false,
+        createBranchContext(),
+      );
+
+      assertEquals([...await readOps.readFileBytesWithinLimit("pages/home", 4)], [8]);
+      assertEquals(calls, [
+        ["pages/home.tsx", 4, true],
+        ["pages/home.ts", 4, true],
+        ["pages/home.jsx", 4, true],
+      ]);
+    });
+
+    it("preserves bounded candidate failures instead of trying another extension", async () => {
+      const failure = new Error("bounded read limit exceeded");
+      const branchCalls: string[] = [];
+      const branchOps = createReadyReadOps(
+        createMockClient({
+          getFileContentBytesWithinLimit: (path: string) => {
+            branchCalls.push(path);
+            return Promise.reject(failure);
+          },
+        }),
+        false,
+        createBranchContext(),
+      );
+      const branchError = await assertRejects(() =>
+        branchOps.readFileBytesWithinLimit("pages/home", 4)
+      );
+      assertEquals(branchError === failure, true);
+      assertEquals(branchCalls, ["pages/home.tsx"]);
+
+      const publishedCalls: string[] = [];
+      const publishedOps = createReadyReadOps(
+        createMockClient({
+          getPublishedFileContentBytesWithinLimit: (path: string) => {
+            publishedCalls.push(path);
+            return Promise.reject(path === "pages/home.jsx" ? failure : notFoundError());
+          },
+        }),
+        false,
+        createReleaseContext(),
+      );
+      const publishedError = await assertRejects(() =>
+        publishedOps.readFileBytesWithinLimit("pages/home.ts", 4)
+      );
+      assertEquals(publishedError === failure, true);
+      assertEquals(publishedCalls, ["pages/home.ts", "pages/home.tsx", "pages/home.jsx"]);
+    });
+
+    it("reports the requested path after every published sibling is missing", async () => {
+      const calls: string[] = [];
+      const readOps = createReadyReadOps(
+        createMockClient({
+          getPublishedFileContentBytesWithinLimit: (path: string) => {
+            calls.push(path);
+            return Promise.reject(notFoundError());
+          },
+        }),
+        false,
+        createReleaseContext(),
+      );
+
+      await assertRejects(
+        () => readOps.readFileBytesWithinLimit("pages/home.ts", 4),
+        Error,
+        "404 Not Found: pages/home.ts",
+      );
+      assertEquals(calls, [
+        "pages/home.ts",
+        "pages/home.tsx",
+        "pages/home.jsx",
+        "pages/home.js",
+        "pages/home.mdx",
+        "pages/home.md",
+      ]);
+    });
+
+    it("does not substitute source extensions for a missing published data file", async () => {
+      const calls: string[] = [];
+      const readOps = createReadyReadOps(
+        createMockClient({
+          getPublishedFileContentBytesWithinLimit: (path: string) => {
+            calls.push(path);
+            return Promise.reject(notFoundError());
+          },
+        }),
+        false,
+        createReleaseContext(),
+      );
+
+      await assertRejects(
+        () => readOps.readFileBytesWithinLimit("data/config.json", 4),
+        Error,
+        "404 Not Found: data/config.json",
+      );
+      assertEquals(calls, ["data/config.json"]);
+    });
+
     it("does not substitute another extension for a published config candidate", async () => {
       const exactCalls: string[] = [];
       const readOps = createReadyReadOps(

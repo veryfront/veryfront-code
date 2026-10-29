@@ -72,21 +72,32 @@ function createPermissiveToolInputSchema(): JsonSchema {
 
 const PROVIDER_TOOL_PROPERTY_KEY_PATTERN = /^[a-zA-Z0-9_.-]{1,64}$/;
 
-const GOOGLE_UNSUPPORTED_SCHEMA_KEYS = new Set([
-  "$id",
-  "$ref",
-  "$schema",
-  "additionalProperties",
-  "allOf",
-  "default",
-  "exclusiveMaximum",
-  "exclusiveMinimum",
-  "oneOf",
-  "prefixItems",
-]);
-
 function normalizeModel(model?: string): string {
   return model?.trim().toLowerCase() ?? "";
+}
+
+function cloudWireToolProfile(
+  provider: string | undefined,
+  wireSurface: VeryfrontCloudSurfaceId,
+): ProviderToolProfile | undefined {
+  if (wireSurface === "google") return { provider: "google", sanitizeSchema: true };
+  if (wireSurface === "anthropic") return { provider: "anthropic", sanitizeSchema: true };
+  if (wireSurface === "openai") {
+    // An OpenAI-compatible wire retains the backend's reference restrictions.
+    if (provider === "moonshot" || provider === "moonshotai") {
+      return { provider: "moonshot", maxTools: OPENAI_MAX_TOOLS, sanitizeSchema: true };
+    }
+    if (provider === "mistral") {
+      return {
+        provider: "openai",
+        maxTools: OPENAI_MAX_TOOLS,
+        sanitizeSchema: false,
+        supportsRootSchemaComposition: true,
+      };
+    }
+    return { provider: "openai", maxTools: OPENAI_MAX_TOOLS, sanitizeSchema: false };
+  }
+  return undefined;
 }
 
 /** Return provider tool profile. */
@@ -102,23 +113,8 @@ export function getProviderToolProfile(
   // The publisher segment of a Veryfront Cloud ID can differ from the gateway
   // protocol. Authenticated transport facts override publisher-based fallbacks.
   if (parts[0] === "veryfront-cloud" && wireSurface !== undefined) {
-    if (wireSurface === "google") return { provider: "google", sanitizeSchema: true };
-    if (wireSurface === "anthropic") return { provider: "anthropic", sanitizeSchema: true };
-    if (wireSurface === "openai") {
-      // An OpenAI-compatible wire retains the backend's reference restrictions.
-      if (provider === "moonshot" || provider === "moonshotai") {
-        return { provider: "moonshot", maxTools: OPENAI_MAX_TOOLS, sanitizeSchema: true };
-      }
-      if (provider === "mistral") {
-        return {
-          provider: "openai",
-          maxTools: OPENAI_MAX_TOOLS,
-          sanitizeSchema: false,
-          supportsRootSchemaComposition: true,
-        };
-      }
-      return { provider: "openai", maxTools: OPENAI_MAX_TOOLS, sanitizeSchema: false };
-    }
+    const profile = cloudWireToolProfile(provider, wireSurface);
+    if (profile) return profile;
   }
 
   if (provider === "openai") {
@@ -166,6 +162,31 @@ function uniqueInOrder(values: readonly string[]): string[] {
   return result;
 }
 
+function selectRequiredToolNames(
+  orderedToolNames: readonly string[],
+  requiredToolNames: readonly string[],
+): { selected: string[]; selectedSet: Set<string> } {
+  const available = new IntrinsicSet<string>();
+  for (let index = 0; index < orderedToolNames.length; index++) {
+    const toolName = orderedToolNames[index];
+    if (toolName !== undefined) IntrinsicReflectApply(IntrinsicSetAdd, available, [toolName]);
+  }
+  const requiredCandidates = uniqueInOrder(requiredToolNames);
+  const selected: string[] = [];
+  const selectedSet = new IntrinsicSet<string>();
+  for (let index = 0; index < requiredCandidates.length; index++) {
+    const toolName = requiredCandidates[index];
+    if (
+      toolName !== undefined && IntrinsicReflectApply(IntrinsicSetHas, available, [toolName])
+    ) {
+      selected[selected.length] = toolName;
+      IntrinsicReflectApply(IntrinsicSetAdd, selectedSet, [toolName]);
+    }
+  }
+
+  return { selected, selectedSet };
+}
+
 /** Select provider compatible tool names helper. */
 export function selectProviderCompatibleToolNames(
   toolNames: readonly string[],
@@ -181,23 +202,10 @@ export function selectProviderCompatibleToolNames(
     return orderedToolNames;
   }
 
-  const available = new IntrinsicSet<string>();
-  for (let index = 0; index < orderedToolNames.length; index++) {
-    const toolName = orderedToolNames[index];
-    if (toolName !== undefined) IntrinsicReflectApply(IntrinsicSetAdd, available, [toolName]);
-  }
-  const requiredCandidates = uniqueInOrder(options.requiredToolNames ?? []);
-  const selected: string[] = [];
-  const selectedSet = new IntrinsicSet<string>();
-  for (let index = 0; index < requiredCandidates.length; index++) {
-    const toolName = requiredCandidates[index];
-    if (
-      toolName !== undefined && IntrinsicReflectApply(IntrinsicSetHas, available, [toolName])
-    ) {
-      selected[selected.length] = toolName;
-      IntrinsicReflectApply(IntrinsicSetAdd, selectedSet, [toolName]);
-    }
-  }
+  const { selected, selectedSet } = selectRequiredToolNames(
+    orderedToolNames,
+    options.requiredToolNames ?? [],
+  );
 
   for (let index = 0; index < orderedToolNames.length; index++) {
     const toolName = orderedToolNames[index];
@@ -253,64 +261,16 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-function getLiteralType(value: unknown): JsonSchema["type"] | undefined {
-  switch (typeof value) {
-    case "string":
-      return "string";
-    case "number":
-      return Number.isInteger(value) ? "integer" : "number";
-    case "boolean":
-      return "boolean";
-    default:
-      return value === null ? "null" : undefined;
+function sanitizeNamedSchemaProperties(
+  rawProperties: Record<string, unknown>,
+  retainedPropertyNames: ReadonlySet<string> | undefined,
+): Record<string, unknown> {
+  const properties: Record<string, unknown> = {};
+  for (const [propertyName, propertySchema] of Object.entries(rawProperties)) {
+    if (!retainedPropertyNames?.has(propertyName)) continue;
+    properties[propertyName] = sanitizeProviderSchemaPropertyKeys(propertySchema);
   }
-}
-
-function getEnumValuesFromAnyOf(anyOf: unknown): unknown[] | undefined {
-  if (!Array.isArray(anyOf)) return undefined;
-
-  const values: unknown[] = [];
-  for (const option of anyOf) {
-    if (!isPlainRecord(option)) return undefined;
-    if ("const" in option) {
-      values.push(option.const);
-      continue;
-    }
-    if (Array.isArray(option.enum) && option.enum.length > 0) {
-      values.push(...option.enum);
-      continue;
-    }
-    return undefined;
-  }
-
-  return values.length > 0 ? uniqueUnknownValues(values) : undefined;
-}
-
-function uniqueUnknownValues(values: unknown[]): unknown[] {
-  const result: unknown[] = [];
-  for (const value of values) {
-    if (result.some((existing) => Object.is(existing, value))) continue;
-    result.push(value);
-  }
-  return result;
-}
-
-function getSharedLiteralType(values: readonly unknown[]): JsonSchema["type"] | undefined {
-  const literalTypes = values.map((value) => getLiteralType(value));
-  const firstType = literalTypes[0];
-
-  if (!firstType || literalTypes.some((literalType) => literalType !== firstType)) {
-    return undefined;
-  }
-
-  return firstType;
-}
-
-function getGoogleCompatibleSchemaType(type: unknown): unknown {
-  if (!Array.isArray(type)) return type;
-
-  const nonNullTypes = type.filter((value) => value !== "null");
-  return nonNullTypes.length === 1 ? nonNullTypes[0] : undefined;
+  return properties;
 }
 
 function sanitizeProviderSchemaPropertyKeys(value: unknown): unknown {
@@ -333,12 +293,7 @@ function sanitizeProviderSchemaPropertyKeys(value: unknown): unknown {
 
   for (const [key, child] of Object.entries(value)) {
     if (key === "properties" && rawProperties) {
-      const properties: Record<string, unknown> = {};
-      for (const [propertyName, propertySchema] of Object.entries(rawProperties)) {
-        if (!retainedPropertyNames?.has(propertyName)) continue;
-        properties[propertyName] = sanitizeProviderSchemaPropertyKeys(propertySchema);
-      }
-      sanitized.properties = properties;
+      sanitized.properties = sanitizeNamedSchemaProperties(rawProperties, retainedPropertyNames);
       continue;
     }
 
@@ -350,69 +305,6 @@ function sanitizeProviderSchemaPropertyKeys(value: unknown): unknown {
     }
 
     sanitized[key] = sanitizeProviderSchemaPropertyKeys(child);
-  }
-
-  return sanitized;
-}
-
-function sanitizeGoogleSchemaValue(value: unknown): unknown {
-  if (Array.isArray(value)) {
-    return value.map((item) => sanitizeGoogleSchemaValue(item));
-  }
-
-  if (!isPlainRecord(value)) {
-    return value;
-  }
-
-  const sanitized: Record<string, unknown> = {};
-  const enumFromAnyOf = getEnumValuesFromAnyOf(value.anyOf);
-  const constValue = value.const;
-
-  for (const [key, child] of Object.entries(value)) {
-    if (key === "const" || key === "anyOf" || GOOGLE_UNSUPPORTED_SCHEMA_KEYS.has(key)) {
-      continue;
-    }
-
-    if (key === "type") {
-      const compatibleType = getGoogleCompatibleSchemaType(child);
-      if (compatibleType !== undefined) sanitized.type = compatibleType;
-      continue;
-    }
-
-    if (key === "properties" && isPlainRecord(child)) {
-      sanitized.properties = Object.fromEntries(
-        Object.entries(child).map(([propertyName, propertySchema]) => [
-          propertyName,
-          sanitizeGoogleSchemaValue(propertySchema),
-        ]),
-      );
-      continue;
-    }
-
-    if (key === "items") {
-      sanitized.items = sanitizeGoogleSchemaValue(child);
-      continue;
-    }
-
-    sanitized[key] = sanitizeGoogleSchemaValue(child);
-  }
-
-  if (enumFromAnyOf) {
-    sanitized.enum = enumFromAnyOf;
-    if (!sanitized.type) {
-      const sharedType = getSharedLiteralType(enumFromAnyOf);
-      if (sharedType) sanitized.type = sharedType;
-    }
-  } else if ("const" in value) {
-    sanitized.enum = [constValue];
-    if (!sanitized.type) {
-      const literalType = getLiteralType(constValue);
-      if (literalType) sanitized.type = literalType;
-    }
-  }
-
-  if (sanitized.type === "array" && !Object.hasOwn(sanitized, "items")) {
-    sanitized.items = {};
   }
 
   return sanitized;
@@ -552,28 +444,13 @@ function chargeMoonshotInlineBudget(
   }
 }
 
-function sanitizeMoonshotSchemaValue(
-  value: unknown,
+function inlineMoonshotSchemaReference(
+  value: Record<string, unknown>,
   root: unknown,
   seenRefs: ReadonlySet<string>,
   inlineDepth: number,
   budget: MoonshotInlineBudget,
-): unknown {
-  // `seenRefs` only blocks cycles along the current path, so sibling references to the
-  // same target still re-expand. Shared node/byte budgets and a depth cap keep a hostile
-  // (or merely dense) schema from expanding exponentially during inlining.
-  chargeMoonshotInlineBudget(budget, value, inlineDepth);
-
-  if (Array.isArray(value)) {
-    return value.map((item) =>
-      sanitizeMoonshotSchemaValue(item, root, seenRefs, inlineDepth, budget)
-    );
-  }
-
-  if (!isPlainRecord(value)) {
-    return value;
-  }
-
+): { value: unknown } | undefined {
   if (
     typeof value.$ref === "string" &&
     !value.$ref.startsWith("#/$defs/") &&
@@ -599,11 +476,40 @@ function sanitizeMoonshotSchemaValue(
         ? sanitizeMoonshotSchemaValue(siblings, root, nextSeenRefs, nextInlineDepth, budget)
         : undefined;
 
-      return isPlainRecord(sanitizedResolved) && isPlainRecord(sanitizedSiblings)
-        ? { ...sanitizedResolved, ...sanitizedSiblings }
-        : sanitizedResolved;
+      return {
+        value: isPlainRecord(sanitizedResolved) && isPlainRecord(sanitizedSiblings)
+          ? { ...sanitizedResolved, ...sanitizedSiblings }
+          : sanitizedResolved,
+      };
     }
   }
+  return undefined;
+}
+
+function sanitizeMoonshotSchemaValue(
+  value: unknown,
+  root: unknown,
+  seenRefs: ReadonlySet<string>,
+  inlineDepth: number,
+  budget: MoonshotInlineBudget,
+): unknown {
+  // `seenRefs` only blocks cycles along the current path, so sibling references to the
+  // same target still re-expand. Shared node/byte budgets and a depth cap keep a hostile
+  // (or merely dense) schema from expanding exponentially during inlining.
+  chargeMoonshotInlineBudget(budget, value, inlineDepth);
+
+  if (Array.isArray(value)) {
+    return value.map((item) =>
+      sanitizeMoonshotSchemaValue(item, root, seenRefs, inlineDepth, budget)
+    );
+  }
+
+  if (!isPlainRecord(value)) {
+    return value;
+  }
+
+  const inlined = inlineMoonshotSchemaReference(value, root, seenRefs, inlineDepth, budget);
+  if (inlined !== undefined) return inlined.value;
 
   const sanitized: Record<string, unknown> = {};
 
@@ -686,10 +592,30 @@ function admitsUndeclaredProperties(schema: Record<string, unknown>): boolean {
     (isPlainRecord(schema.patternProperties) && Object.keys(schema.patternProperties).length > 0);
 }
 
-function mergeObjectSchemas(
+function relaxAlternativeObjectProperties(
+  mergedProperties: Map<string, unknown[]>,
+  schemas: readonly Record<string, unknown>[],
+): void {
+  // An alternative that omits a property can still admit it (through
+  // `additionalProperties` or a pattern), so the folded property is left
+  // unconstrained. Counting keeps this linear in the number of declarations.
+  const admitted = schemas.filter(admitsUndeclaredProperties);
+  const admittedDeclarations = new Map<string, number>();
+  for (const schema of admitted) {
+    if (!isPlainRecord(schema.properties)) continue;
+    for (const name of Object.keys(schema.properties)) {
+      admittedDeclarations.set(name, (admittedDeclarations.get(name) ?? 0) + 1);
+    }
+  }
+  for (const name of mergedProperties.keys()) {
+    if ((admittedDeclarations.get(name) ?? 0) < admitted.length) mergedProperties.set(name, [{}]);
+  }
+}
+
+function collectMergedObjectProperties(
   schemas: readonly Record<string, unknown>[],
   keyword: ObjectCompositionKeyword,
-): Record<string, unknown> {
+): Map<string, unknown[]> {
   const mergedProperties = new Map<string, unknown[]>();
   for (const schema of schemas) {
     if (!isPlainRecord(schema.properties)) continue;
@@ -700,22 +626,16 @@ function mergeObjectSchemas(
     }
   }
 
-  if (keyword === "anyOf") {
-    // An alternative that omits a property can still admit it (through
-    // `additionalProperties` or a pattern), so the folded property is left
-    // unconstrained. Counting keeps this linear in the number of declarations.
-    const admitted = schemas.filter(admitsUndeclaredProperties);
-    const admittedDeclarations = new Map<string, number>();
-    for (const schema of admitted) {
-      if (!isPlainRecord(schema.properties)) continue;
-      for (const name of Object.keys(schema.properties)) {
-        admittedDeclarations.set(name, (admittedDeclarations.get(name) ?? 0) + 1);
-      }
-    }
-    for (const name of mergedProperties.keys()) {
-      if ((admittedDeclarations.get(name) ?? 0) < admitted.length) mergedProperties.set(name, [{}]);
-    }
-  }
+  if (keyword === "anyOf") relaxAlternativeObjectProperties(mergedProperties, schemas);
+
+  return mergedProperties;
+}
+
+function mergeObjectSchemas(
+  schemas: readonly Record<string, unknown>[],
+  keyword: ObjectCompositionKeyword,
+): Record<string, unknown> {
+  const mergedProperties = collectMergedObjectProperties(schemas, keyword);
 
   const properties = Object.fromEntries(
     [...mergedProperties].map(([name, variants]) => [
@@ -822,26 +742,13 @@ function foldObjectCompositions(
   return sanitized;
 }
 
-function normalizeObjectSchemaRoot(
-  schema: unknown,
-  rootSchema: unknown = schema,
-  seenRefs: ReadonlySet<string> = new Set(),
-  budget = createRootNormalizationBudget(createRootSchemaExpansionBudget()),
-  depth = 0,
-): Record<string, unknown> {
-  if (depth > MAX_ROOT_NORMALIZATION_DEPTH) throw rootNormalizationBudgetExceeded();
-  if (depth === 0 && isPlainRecord(schema)) {
-    // Admit the input once under the same bounded contract as public raw schemas.
-    // The smaller normalization allowance applies only to introduced material.
-    const accepted = snapshotJsonSchemaObject(schema);
-    if (!accepted) throw new TypeError("Tool schema root normalization requires bounded JSON data");
-    if (rootSchema === schema) rootSchema = accepted;
-    schema = accepted;
-  }
-  if (!isPlainRecord(schema)) {
-    return createPermissiveToolInputSchema();
-  }
-
+function normalizeReferencedObjectSchema(
+  schema: Record<string, unknown>,
+  rootSchema: unknown,
+  seenRefs: ReadonlySet<string>,
+  budget: RootNormalizationBudget,
+  depth: number,
+): Record<string, unknown> | undefined {
   if (typeof schema.$ref === "string" && !seenRefs.has(schema.$ref)) {
     const resolved = resolveLocalJsonPointer(rootSchema, schema.$ref);
     if (isPlainRecord(resolved) && resolved !== schema) {
@@ -870,6 +777,31 @@ function normalizeObjectSchemaRoot(
       };
     }
   }
+  return undefined;
+}
+
+function normalizeObjectSchemaRoot(
+  schema: unknown,
+  rootSchema: unknown = schema,
+  seenRefs: ReadonlySet<string> = new Set(),
+  budget = createRootNormalizationBudget(createRootSchemaExpansionBudget()),
+  depth = 0,
+): Record<string, unknown> {
+  if (depth > MAX_ROOT_NORMALIZATION_DEPTH) throw rootNormalizationBudgetExceeded();
+  if (depth === 0 && isPlainRecord(schema)) {
+    // Admit the input once under the same bounded contract as public raw schemas.
+    // The smaller normalization allowance applies only to introduced material.
+    const accepted = snapshotJsonSchemaObject(schema);
+    if (!accepted) throw new TypeError("Tool schema root normalization requires bounded JSON data");
+    if (rootSchema === schema) rootSchema = accepted;
+    schema = accepted;
+  }
+  if (!isPlainRecord(schema)) {
+    return createPermissiveToolInputSchema();
+  }
+
+  const referenced = normalizeReferencedObjectSchema(schema, rootSchema, seenRefs, budget, depth);
+  if (referenced !== undefined) return referenced;
 
   const {
     allOf: rawAllOf,
@@ -1014,6 +946,19 @@ function defineDataProperty(target: Record<string, unknown>, key: string, value:
   });
 }
 
+function collectOpenAIDeclaredProperties(
+  declarations: readonly unknown[],
+): Record<string, unknown> {
+  const properties: Record<string, unknown> = {};
+  for (const declared of declarations) {
+    if (!isPlainRecord(declared)) continue;
+    for (const name of Object.keys(declared)) {
+      if (!Object.hasOwn(properties, name)) defineDataProperty(properties, name, {});
+    }
+  }
+  return properties;
+}
+
 /**
  * Build an open object root that admits every value the authored schema
  * admits. Root constraints are kept when they are self-contained, and every
@@ -1030,17 +975,11 @@ function createPermissiveOpenAIRoot(
       if (Object.hasOwn(own, key)) defineDataProperty(base, key, own[key]);
     }
   }
-  const properties: Record<string, unknown> = {};
   const declarations = [
     own.properties,
     ...branches.map((branch) => isPlainRecord(branch) ? branch.properties : undefined),
   ];
-  for (const declared of declarations) {
-    if (!isPlainRecord(declared)) continue;
-    for (const name of Object.keys(declared)) {
-      if (!Object.hasOwn(properties, name)) defineDataProperty(properties, name, {});
-    }
-  }
+  const properties = collectOpenAIDeclaredProperties(declarations);
   if (keepOwnConstraints && isPlainRecord(own.properties)) {
     for (const [name, schema] of Object.entries(own.properties)) {
       defineDataProperty(properties, name, schema);
@@ -1160,7 +1099,8 @@ export function sanitizeProviderToolSchema(
   const propertyKeySafeSchema = sanitizeProviderSchemaPropertyKeys(schema);
 
   if (profile.provider === "google") {
-    return sanitizeGoogleSchemaValue(propertyKeySafeSchema) as JsonSchema;
+    // Native Google requests use parametersJsonSchema, not the OpenAPI Schema field.
+    return propertyKeySafeSchema as JsonSchema;
   }
 
   if (profile.provider === "moonshot") {

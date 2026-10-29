@@ -60,6 +60,20 @@ const getAdmissionScopeSchema = defineSchema((v) =>
   v.object({ projectId: v.string().uuid() }).strict()
 );
 
+function requireActivePersistenceRun(run: ConversationRunProjection): void {
+  if (run.status !== "pending" && run.status !== "running" && run.status !== "waiting_for_tool") {
+    throw new TypeError("Managed broker persistence requires an active run");
+  }
+}
+
+function requireCanonicalWriterScope(
+  scope: { projectId: string } | undefined,
+  canonicalRunId: string | undefined,
+  message: string,
+): void {
+  if (scope && !canonicalRunId) throw new TypeError(message);
+}
+
 /** Acknowledging output writes and terminal finalization for a canonical run. */
 export interface ManagedBrokerOutput {
   write(chunk: ChatUiMessageChunk<ChatMessageMetadata>): Promise<void>;
@@ -180,11 +194,9 @@ export function createManagedBrokerPersistenceFromCapability(input: {
   runtimeObservations?: { projectId: string };
 }) {
   const run = getConversationRunProjectionSchema().parse(input.run);
-  if (run.status !== "pending" && run.status !== "running" && run.status !== "waiting_for_tool") {
-    throw new TypeError("Managed broker persistence requires an active run");
-  }
+  requireActivePersistenceRun(run);
   const terminalState = terminalStates.get(input.terminal);
-  if (!terminalState || terminalState.runId !== run.runId) {
+  if (terminalState?.runId !== run.runId) {
     throw new TypeError("Managed broker terminal authority is not bound to this run");
   }
   const dispatchTerminal = terminalState.dispatch;
@@ -195,12 +207,16 @@ export function createManagedBrokerPersistenceFromCapability(input: {
     ? undefined
     : getAdmissionScopeSchema().parse(input.runtimeObservations);
   const canonicalRunId = hostedRunCanonicalId(input.capability, run.runId);
-  if (admissionScope && !canonicalRunId) {
-    throw new TypeError("Tool-call admissions require an exact canonical run writer");
-  }
-  if (runtimeObservationScope && !canonicalRunId) {
-    throw new TypeError("Runtime observations require an exact canonical run writer");
-  }
+  requireCanonicalWriterScope(
+    admissionScope,
+    canonicalRunId,
+    "Tool-call admissions require an exact canonical run writer",
+  );
+  requireCanonicalWriterScope(
+    runtimeObservationScope,
+    canonicalRunId,
+    "Runtime observations require an exact canonical run writer",
+  );
   const toolAdmissions = createPrivateMap<string, {
     receipt?: AgentRunToolCallAdmissionReceipt;
     waiter?: {

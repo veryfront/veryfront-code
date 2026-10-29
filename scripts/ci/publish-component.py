@@ -11,6 +11,8 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import time
+from urllib.error import HTTPError
 from urllib.parse import quote
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
@@ -96,10 +98,28 @@ def witness(version,env,read_public=public_json,read_source=source_json):
                        'package':{'name':'veryfront','version':version,'integrity':integrity},'binaries':binaries}}
 
 
+def witness_when_ready(version,env,read_public=public_json,read_source=source_json,
+                       clock=time.monotonic,sleep=time.sleep):
+    # An unchanged-version main run can overtake the run publishing that version.
+    # Wait only for absent public material, never for invalid release facts.
+    # The observed publication gap was ten minutes; bound this wait to fifteen.
+    deadline=clock()+15*60
+    while True:
+        try:
+            return witness(version,env,read_public,read_source)
+        except HTTPError as error:
+            if error.code!=404:raise
+            remaining=deadline-clock()
+            if remaining<=0:raise TimeoutError('Code release material was not published within fifteen minutes') from None
+            print('Waiting for public Code release material',file=sys.stderr)
+            sleep(min(30,remaining))
+            if clock()>=deadline:raise TimeoutError('Code release material was not published within fifteen minutes') from None
+
+
 if __name__=='__main__':
     try:
         require(len(sys.argv)==2)
-        value=witness(sys.argv[1],os.environ)
+        value=witness_when_ready(sys.argv[1],os.environ)
         with open('platform-component.json','x') as output:output.write(json.dumps(value,sort_keys=True,separators=(',',':'))+'\n')
     except Exception:
         print('Code release witness refused; no component receipt issued',file=sys.stderr)

@@ -28,6 +28,19 @@ async function writePackage(
   await Deno.writeTextFile(join(directory, "index.js"), "export {};\n");
 }
 
+async function writeReleaseDocs(root: string, version: string, revision: string, mode = "release") {
+  await Deno.mkdir(join(root, "docs"), { recursive: true });
+  await Deno.writeTextFile(
+    join(root, "docs/manifest.json"),
+    JSON.stringify({
+      mode,
+      version,
+      pages: [{ path: "guides/start.md" }],
+      sources: [{ product: "code", version, revision, dirty: mode !== "release" }],
+    }),
+  );
+}
+
 async function sha256File(path: string): Promise<string> {
   const digest = await crypto.subtle.digest(
     "SHA-256",
@@ -45,6 +58,16 @@ async function writeCanonicalTarballArtifact(
 ): Promise<void> {
   await withTempDir(async (staging) => {
     await writePackage(join(staging, "package"), packageManifest);
+    if (
+      packageManifest.name === "veryfront" && typeof packageManifest.gitHead === "string" &&
+      typeof packageManifest.version === "string"
+    ) {
+      await writeReleaseDocs(
+        join(staging, "package"),
+        packageManifest.version,
+        packageManifest.gitHead,
+      );
+    }
     const tarball = join(directory, "veryfront-1.2.3.tgz");
     const output = await new Deno.Command("tar", {
       args: ["-czf", tarball, "package"],
@@ -240,6 +263,7 @@ describe("npm compatibility artifact", () => {
         version: "1.2.3",
       });
       const gitHead = "0123456789abcdef0123456789abcdef01234567";
+      await writeReleaseDocs(root, "1.2.3", gitHead);
 
       await createNpmCompatibilityArtifact(root, artifact, { gitHead });
       await loadNpmCompatibilityArtifact(artifact, {
@@ -373,5 +397,59 @@ describe("npm compatibility artifact", () => {
         "@veryfront/ext-alpha",
       );
     });
+  });
+});
+
+Deno.test("canonical npm packing refuses local, missing, stale, or npm-excluded documentation", async () => {
+  await withTempDirs(["vf-npm-docs-source-", "vf-npm-docs-output-"], async ([root, output]) => {
+    assertExists(root);
+    assertExists(output);
+    const gitHead = "a".repeat(40);
+    await writePackage(root, { name: "veryfront", version: "1.2.3" });
+    await assertRejects(
+      () => createNpmCompatibilityArtifact(root, output, { gitHead }),
+      Error,
+      "release documentation",
+    );
+    await writeReleaseDocs(root, "1.2.3", gitHead, "local");
+    await assertRejects(
+      () => createNpmCompatibilityArtifact(root, output, { gitHead }),
+      Error,
+      "release documentation",
+    );
+    await writeReleaseDocs(root, "9.9.9", gitHead);
+    await assertRejects(
+      () => createNpmCompatibilityArtifact(root, output, { gitHead }),
+      Error,
+      "release documentation",
+    );
+    await writeReleaseDocs(root, "1.2.3", "b".repeat(40));
+    await assertRejects(
+      () => createNpmCompatibilityArtifact(root, output, { gitHead }),
+      Error,
+      "release documentation",
+    );
+    await writeReleaseDocs(root, "1.2.3", gitHead);
+    await writePackage(root, { name: "veryfront", version: "1.2.3", files: ["index.js"] });
+    await assertRejects(
+      () => createNpmCompatibilityArtifact(root, output, { gitHead }),
+      Error,
+      "release documentation",
+    );
+    await writePackage(root, { name: "veryfront", version: "1.2.3", files: ["index.js", "docs"] });
+    await createNpmCompatibilityArtifact(root, output, { gitHead });
+    await loadNpmCompatibilityArtifact(output, { expectedGitHead: gitHead });
+  });
+});
+
+Deno.test("canonical npm artifacts retain full SHA-256 Git source identities", async () => {
+  await withTempDirs(["vf-npm-sha256-source-", "vf-npm-sha256-output-"], async ([root, output]) => {
+    assertExists(root);
+    assertExists(output);
+    const gitHead = "a".repeat(64);
+    await writePackage(root, { name: "veryfront", version: "1.2.3", files: ["index.js", "docs"] });
+    await writeReleaseDocs(root, "1.2.3", gitHead);
+    await createNpmCompatibilityArtifact(root, output, { gitHead });
+    await loadNpmCompatibilityArtifact(output, { expectedGitHead: gitHead });
   });
 });

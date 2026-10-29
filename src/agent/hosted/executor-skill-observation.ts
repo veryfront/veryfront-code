@@ -74,6 +74,25 @@ export function createExecutorSkillObservation(): ExecutorSkillObservation {
         : { body: freeze({ skillId, references: freeze(references) }), value: snapshot.value },
     );
   };
+  const observeToolContent = (content: unknown[]): void => {
+    for (let partIndex = 0; partIndex < content.length; partIndex++) {
+      if (!hasOwn(content, partIndex)) continue;
+      const part = content[partIndex];
+      const toolCallId = readOwn(part, "toolCallId");
+      const toolName = readOwn(part, "toolName");
+      if (
+        readOwn(part, "type") !== "tool-result" || typeof toolCallId !== "string" ||
+        typeof toolName !== "string" || !isLoadSkillToolName(toolName)
+      ) continue;
+      const body = bodies.get(toolCallId);
+      const output = readOwn(part, "output");
+      if (!body || readOwn(output, "type") !== "json") continue;
+      const snapshot = snapshotBoundedJsonValue(readOwn(output, "value"));
+      if (snapshot.success && equalBody(body.value, snapshot.value)) {
+        observed.set(toolCallId, body.body);
+      }
+    }
+  };
   return {
     recordTrustedHistory(messages) {
       const results = snapshotTrustedSkillLoadResults(messages);
@@ -92,23 +111,7 @@ export function createExecutorSkillObservation(): ExecutorSkillObservation {
         const message = prompt[index]!;
         const content = readOwn(message, "content");
         if (readOwn(message, "role") !== "tool" || !isArray(content)) continue;
-        for (let partIndex = 0; partIndex < content.length; partIndex++) {
-          if (!hasOwn(content, partIndex)) continue;
-          const part = content[partIndex];
-          const toolCallId = readOwn(part, "toolCallId");
-          const toolName = readOwn(part, "toolName");
-          if (
-            readOwn(part, "type") !== "tool-result" || typeof toolCallId !== "string" ||
-            typeof toolName !== "string" || !isLoadSkillToolName(toolName)
-          ) continue;
-          const body = bodies.get(toolCallId);
-          const output = readOwn(part, "output");
-          if (!body || readOwn(output, "type") !== "json") continue;
-          const snapshot = snapshotBoundedJsonValue(readOwn(output, "value"));
-          if (snapshot.success && equalBody(body.value, snapshot.value)) {
-            observed.set(toolCallId, body.body);
-          }
-        }
+        observeToolContent(content);
       }
     },
     observedSkillBodies: () => [...observed.values()],

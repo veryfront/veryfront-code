@@ -25,6 +25,7 @@ import type { AgentResponse } from "../types.ts";
 import { buildNativeRunEventFrame, buildRuntimeEventRecordedEvent } from "./native-run-events.ts";
 import { isToolResultErrorOutput } from "#veryfront/tool/result.ts";
 import { getStepIdentity } from "../streaming/step-identity.ts";
+import { readStructuredAgentOutput } from "../output-schema.ts";
 
 // Project code can replace globals before runtime observations are stamped.
 // Keep the timing path on load-time captures.
@@ -375,85 +376,72 @@ function applyDataMetadata(state: AgUiEncoderState, event: AgUiRuntimeStreamEven
   }
 }
 
-function applyResponseMetadata(
+function applyResponseCacheTokenMetadata(
   state: AgUiEncoderState,
-  response: AgentResponse | null,
+  response: AgentResponse,
 ): void {
-  if (!response) return;
-
-  if (response.usage) {
-    state.metadata.inputTokens = response.usage.promptTokens;
-    state.metadata.outputTokens = response.usage.completionTokens;
-    state.metadata.totalTokens = response.usage.totalTokens;
-    const usage = response.usage as typeof response.usage & AgUiRunFinishedMetadata;
-    if (typeof response.usage.cachedInputTokens === "number") {
-      state.metadata.cachedInputTokens = response.usage.cachedInputTokens;
-    } else if (typeof response.usage.cacheReadInputTokens === "number") {
-      state.metadata.cachedInputTokens = response.usage.cacheReadInputTokens;
-    }
-    if (typeof response.usage.cacheCreationInputTokens === "number") {
-      state.metadata.cacheCreationInputTokens = response.usage.cacheCreationInputTokens;
-    }
-    if (typeof response.usage.cacheCreation1hInputTokens === "number") {
-      state.metadata.cacheCreation1hInputTokens = response.usage.cacheCreation1hInputTokens;
-    }
-    if (typeof response.usage.cacheReadInputTokens === "number") {
-      state.metadata.cacheReadInputTokens = response.usage.cacheReadInputTokens;
-    }
-    if (typeof response.usage.reasoningTokens === "number") {
-      state.metadata.reasoningTokens = response.usage.reasoningTokens;
-    }
-    if (typeof usage.billableInputTokens === "number") {
-      state.metadata.billableInputTokens = usage.billableInputTokens;
-    }
-    if (typeof usage.billableOutputTokens === "number") {
-      state.metadata.billableOutputTokens = usage.billableOutputTokens;
-    }
-    if (typeof usage.costUsd === "number") {
-      state.metadata.costUsd = usage.costUsd;
-    }
-    if (typeof usage.providerInputCostUsd === "number") {
-      state.metadata.providerInputCostUsd = usage.providerInputCostUsd;
-    }
-    if (typeof usage.providerOutputCostUsd === "number") {
-      state.metadata.providerOutputCostUsd = usage.providerOutputCostUsd;
-    }
-    if (typeof usage.providerCostUsd === "number") {
-      state.metadata.providerCostUsd = usage.providerCostUsd;
-    }
-    if (typeof usage.veryfrontInputChargeUsd === "number") {
-      state.metadata.veryfrontInputChargeUsd = usage.veryfrontInputChargeUsd;
-    }
-    if (typeof usage.veryfrontOutputChargeUsd === "number") {
-      state.metadata.veryfrontOutputChargeUsd = usage.veryfrontOutputChargeUsd;
-    }
-    if (typeof usage.veryfrontChargeUsd === "number") {
-      state.metadata.veryfrontChargeUsd = usage.veryfrontChargeUsd;
-    }
-    if (typeof usage.veryfrontBilledUsd === "number") {
-      state.metadata.veryfrontBilledUsd = usage.veryfrontBilledUsd;
-    }
-    if (typeof usage.costCredits === "number") {
-      state.metadata.costCredits = usage.costCredits;
-    }
-    if (usage.costSource) {
-      state.metadata.costSource = usage.costSource;
-    }
-    if (usage.billingMode) {
-      state.metadata.billingMode = usage.billingMode;
-    }
-    if (usage.usageCaptureStatus) {
-      state.metadata.usageCaptureStatus = usage.usageCaptureStatus;
-    }
+  if (typeof response.usage!.cachedInputTokens === "number") {
+    state.metadata.cachedInputTokens = response.usage!.cachedInputTokens;
+  } else if (typeof response.usage!.cacheReadInputTokens === "number") {
+    state.metadata.cachedInputTokens = response.usage!.cacheReadInputTokens;
   }
-
-  const metadata = response.metadata && typeof response.metadata === "object"
-    ? response.metadata
-    : undefined;
-  const finishReason = metadata?.finishReason;
-  if (typeof finishReason === "string") {
-    state.metadata.finishReason = finishReason;
+  if (typeof response.usage!.cacheCreationInputTokens === "number") {
+    state.metadata.cacheCreationInputTokens = response.usage!.cacheCreationInputTokens;
   }
+  if (typeof response.usage!.cacheCreation1hInputTokens === "number") {
+    state.metadata.cacheCreation1hInputTokens = response.usage!.cacheCreation1hInputTokens;
+  }
+  if (typeof response.usage!.cacheReadInputTokens === "number") {
+    state.metadata.cacheReadInputTokens = response.usage!.cacheReadInputTokens;
+  }
+  if (typeof response.usage!.reasoningTokens === "number") {
+    state.metadata.reasoningTokens = response.usage!.reasoningTokens;
+  }
+}
+
+function applyResponseUsageBillingMetadata(
+  state: AgUiEncoderState,
+  usage: NonNullable<AgentResponse["usage"]> & AgUiRunFinishedMetadata,
+): void {
+  if (typeof usage.billableInputTokens === "number") {
+    state.metadata.billableInputTokens = usage.billableInputTokens;
+  }
+  if (typeof usage.billableOutputTokens === "number") {
+    state.metadata.billableOutputTokens = usage.billableOutputTokens;
+  }
+  if (typeof usage.costUsd === "number") {
+    state.metadata.costUsd = usage.costUsd;
+  }
+  if (typeof usage.providerInputCostUsd === "number") {
+    state.metadata.providerInputCostUsd = usage.providerInputCostUsd;
+  }
+  if (typeof usage.providerOutputCostUsd === "number") {
+    state.metadata.providerOutputCostUsd = usage.providerOutputCostUsd;
+  }
+  if (typeof usage.providerCostUsd === "number") {
+    state.metadata.providerCostUsd = usage.providerCostUsd;
+  }
+  if (typeof usage.veryfrontInputChargeUsd === "number") {
+    state.metadata.veryfrontInputChargeUsd = usage.veryfrontInputChargeUsd;
+  }
+  if (typeof usage.veryfrontOutputChargeUsd === "number") {
+    state.metadata.veryfrontOutputChargeUsd = usage.veryfrontOutputChargeUsd;
+  }
+  if (typeof usage.veryfrontChargeUsd === "number") {
+    state.metadata.veryfrontChargeUsd = usage.veryfrontChargeUsd;
+  }
+  if (typeof usage.veryfrontBilledUsd === "number") {
+    state.metadata.veryfrontBilledUsd = usage.veryfrontBilledUsd;
+  }
+  if (typeof usage.costCredits === "number") {
+    state.metadata.costCredits = usage.costCredits;
+  }
+}
+
+function applyResponseProviderCostMetadata(
+  state: AgUiEncoderState,
+  metadata: AgentResponse["metadata"] | undefined,
+): void {
   const costUsd = metadata?.costUsd;
   if (typeof costUsd === "number" && numberIsFinite(costUsd) && costUsd >= 0) {
     state.metadata.costUsd = costUsd;
@@ -478,6 +466,12 @@ function applyResponseMetadata(
   ) {
     state.metadata.providerOutputCostUsd = providerOutputCostUsd;
   }
+}
+
+function applyResponseVeryfrontCostMetadata(
+  state: AgUiEncoderState,
+  metadata: AgentResponse["metadata"] | undefined,
+): void {
   const veryfrontChargeUsd = metadata?.veryfrontChargeUsd;
   if (
     typeof veryfrontChargeUsd === "number" && numberIsFinite(veryfrontChargeUsd) &&
@@ -506,6 +500,12 @@ function applyResponseMetadata(
   ) {
     state.metadata.veryfrontBilledUsd = veryfrontBilledUsd;
   }
+}
+
+function applyResponseAccountingMetadata(
+  state: AgUiEncoderState,
+  metadata: AgentResponse["metadata"] | undefined,
+): void {
   const costCredits = metadata?.costCredits;
   if (typeof costCredits === "number" && numberIsFinite(costCredits) && costCredits >= 0) {
     state.metadata.costCredits = costCredits;
@@ -524,6 +524,42 @@ function applyResponseMetadata(
   ) {
     state.metadata.billableOutputTokens = billableOutputTokens;
   }
+}
+
+function applyResponseMetadata(
+  state: AgUiEncoderState,
+  response: AgentResponse | null,
+): void {
+  if (!response) return;
+
+  if (response.usage) {
+    state.metadata.inputTokens = response.usage.promptTokens;
+    state.metadata.outputTokens = response.usage.completionTokens;
+    state.metadata.totalTokens = response.usage.totalTokens;
+    const usage = response.usage as typeof response.usage & AgUiRunFinishedMetadata;
+    applyResponseCacheTokenMetadata(state, response);
+    applyResponseUsageBillingMetadata(state, usage);
+    if (usage.costSource) {
+      state.metadata.costSource = usage.costSource;
+    }
+    if (usage.billingMode) {
+      state.metadata.billingMode = usage.billingMode;
+    }
+    if (usage.usageCaptureStatus) {
+      state.metadata.usageCaptureStatus = usage.usageCaptureStatus;
+    }
+  }
+
+  const metadata = response.metadata && typeof response.metadata === "object"
+    ? response.metadata
+    : undefined;
+  const finishReason = metadata?.finishReason;
+  if (typeof finishReason === "string") {
+    state.metadata.finishReason = finishReason;
+  }
+  applyResponseProviderCostMetadata(state, metadata);
+  applyResponseVeryfrontCostMetadata(state, metadata);
+  applyResponseAccountingMetadata(state, metadata);
   const costSource = metadata?.costSource;
   if (costSource === "gateway" || costSource === "missing" || costSource === "partial") {
     state.metadata.costSource = costSource;
@@ -576,15 +612,20 @@ function copyNumberMetadata(
   if (value !== undefined) target[metadataKey] = value;
 }
 
+function messageFinishUsage(event: AgUiRuntimeStreamEvent): Record<string, unknown> | null {
+  if (event.totalUsage && typeof event.totalUsage === "object" && !ArrayIsArray(event.totalUsage)) {
+    return event.totalUsage as Record<string, unknown>;
+  }
+  if (event.usage && typeof event.usage === "object" && !ArrayIsArray(event.usage)) {
+    return event.usage as Record<string, unknown>;
+  }
+  return null;
+}
+
 function readMessageFinishUsageMetadata(
   event: AgUiRuntimeStreamEvent,
 ): AgUiRunFinishedMetadata | null {
-  const usage = event.totalUsage && typeof event.totalUsage === "object" &&
-      !ArrayIsArray(event.totalUsage)
-    ? event.totalUsage as Record<string, unknown>
-    : event.usage && typeof event.usage === "object" && !ArrayIsArray(event.usage)
-    ? event.usage as Record<string, unknown>
-    : null;
+  const usage = messageFinishUsage(event);
   if (!usage) return null;
 
   const metadata: AgUiRunFinishedMetadata = {};
@@ -816,13 +857,148 @@ function hasMessageFinishArrayTruncationMarker(input: unknown[], length: number)
   return true;
 }
 
-function snapshotMessageFinishObjectValue(
-  input: unknown,
-  context: MessageFinishObjectSnapshotContext = {
+function createMessageFinishObjectSnapshotContext(): MessageFinishObjectSnapshotContext {
+  return {
     remainingBytes: MESSAGE_FINISH_OBJECT_MAX_OUTPUT_BYTES,
     remainingNodes: MESSAGE_FINISH_OBJECT_MAX_NODES,
     seen: createPrivateWeakStore<object, true>(),
-  },
+  };
+}
+
+function snapshotMessageFinishArray(
+  input: unknown[],
+  context: MessageFinishObjectSnapshotContext,
+  depth: number,
+  reasons: string[],
+): MessageFinishObjectSnapshot {
+  const output: unknown[] = [];
+  const length = typeof input.length === "number" && numberIsFinite(input.length)
+    ? mathMax(0, mathRound(input.length))
+    : 0;
+  // A runtime snapshot contains up to 100 source items plus its omission
+  // marker. Keep that bounded extra entry so another snapshot preserves N.
+  const limit = context.preserveArrayTruncationMarkers &&
+      hasMessageFinishArrayTruncationMarker(input, length)
+    ? length
+    : mathMax(0, mathMin(length, MESSAGE_FINISH_OBJECT_MAX_ARRAY_ITEMS));
+  for (let index = 0; index < limit; index++) {
+    const property = objectGetOwnPropertyDescriptor(
+      input,
+      reflectApply(numberToString, index, []) as string,
+    );
+    let item: MessageFinishObjectSnapshot;
+    if (!property?.enumerable) {
+      item = { value: null, status: "complete", reasons: [] };
+    } else if (!objectHasOwn(property, "value")) {
+      item = {
+        value: MESSAGE_FINISH_OBJECT_UNSUPPORTED_ACCESSOR,
+        status: "partial",
+        reasons: ["accessor_property"],
+      };
+    } else {
+      item = snapshotMessageFinishObjectValue(property.value, context, depth + 1);
+    }
+    primordialArrayPush(output, item.value);
+    for (const reason of primordialArrayValues(item.reasons)) addCaptureReason(reasons, reason);
+    if (item.status === "unsupported") addCaptureReason(reasons, "unsupported_array_item");
+  }
+  if (length > limit) {
+    primordialArrayPush(output, `[truncated ${length - limit} items]`);
+    addCaptureReason(reasons, "array_truncated");
+  }
+  return {
+    value: output,
+    status: reasons.length > 0 ? "partial" : "complete",
+    reasons,
+  };
+}
+
+function copyMessageFinishRecordProperty(
+  input: Record<string, unknown>,
+  key: string,
+  output: Record<string, unknown>,
+  context: MessageFinishObjectSnapshotContext,
+  depth: number,
+  reasons: string[],
+): boolean {
+  const property = objectGetOwnPropertyDescriptor(input, key);
+  if (!property?.enumerable) return false;
+  if (!objectHasOwn(property, "value")) {
+    defineDataProperty(output, key, MESSAGE_FINISH_OBJECT_UNSUPPORTED_ACCESSOR);
+    addCaptureReason(reasons, "accessor_property");
+  } else {
+    const item = snapshotMessageFinishObjectValue(property.value, context, depth + 1);
+    defineDataProperty(output, key, item.value);
+    for (const reason of primordialArrayValues(item.reasons)) addCaptureReason(reasons, reason);
+    if (item.status === "unsupported") addCaptureReason(reasons, "unsupported_property");
+  }
+  return true;
+}
+
+function snapshotMessageFinishRecord(
+  input: Record<string, unknown>,
+  context: MessageFinishObjectSnapshotContext,
+  depth: number,
+  reasons: string[],
+): MessageFinishObjectSnapshot {
+  const prototype = objectGetPrototypeOf(input);
+  if (prototype !== null && prototype !== objectPrototype) {
+    return {
+      value: "[unsupported object]",
+      status: "unsupported",
+      reasons: ["unsupported_object"],
+    };
+  }
+  const output = createNullDataRecord();
+  const keys = reflectOwnKeys(input);
+  let copiedKeys = 0;
+  for (let keyIndex = 0; keyIndex < keys.length; keyIndex++) {
+    const key = keys[keyIndex];
+    if (typeof key !== "string") continue;
+    if (!isSupportedMessageFinishObjectKey(key)) {
+      addCaptureReason(reasons, "object_key_unsupported");
+      continue;
+    }
+    if (!copyMessageFinishRecordProperty(input, key, output, context, depth, reasons)) continue;
+    copiedKeys += 1;
+    if (copiedKeys >= MESSAGE_FINISH_OBJECT_MAX_OBJECT_KEYS) {
+      if (hasRemainingEligibleMessageFinishObjectProperty(input, keys, keyIndex + 1)) {
+        addCaptureReason(reasons, "object_keys_truncated");
+      }
+      break;
+    }
+  }
+  return {
+    value: output,
+    status: reasons.length > 0 ? "partial" : "complete",
+    reasons,
+  };
+}
+
+function snapshotMessageFinishString(
+  input: string,
+  context: MessageFinishObjectSnapshotContext,
+  reasons: string[],
+): MessageFinishObjectSnapshot {
+  const truncated = truncateMessageFinishString(context, input);
+  if (truncated.truncated) {
+    addCaptureReason(
+      reasons,
+      truncated.value === MESSAGE_FINISH_OBJECT_TRUNCATED_BUDGET
+        ? "aggregate_budget_exhausted"
+        : "string_truncated",
+    );
+  }
+  return {
+    value: truncated.value,
+    status: truncated.truncated ? "partial" : "complete",
+    reasons,
+  };
+}
+
+function snapshotMessageFinishObjectValue(
+  input: unknown,
+  context: MessageFinishObjectSnapshotContext = createMessageFinishObjectSnapshotContext(),
   depth = 0,
 ): MessageFinishObjectSnapshot {
   const reasons: string[] = [];
@@ -837,22 +1013,7 @@ function snapshotMessageFinishObjectValue(
   if (input === null || typeof input === "boolean") {
     return { value: input, status: "complete", reasons };
   }
-  if (typeof input === "string") {
-    const truncated = truncateMessageFinishString(context, input);
-    if (truncated.truncated) {
-      addCaptureReason(
-        reasons,
-        truncated.value === MESSAGE_FINISH_OBJECT_TRUNCATED_BUDGET
-          ? "aggregate_budget_exhausted"
-          : "string_truncated",
-      );
-    }
-    return {
-      value: truncated.value,
-      status: truncated.truncated ? "partial" : "complete",
-      reasons,
-    };
-  }
+  if (typeof input === "string") return snapshotMessageFinishString(input, context, reasons);
   if (typeof input === "number") {
     return numberIsFinite(input)
       ? { value: input, status: "complete", reasons }
@@ -874,89 +1035,9 @@ function snapshotMessageFinishObjectValue(
 
   context.seen.set(input, true);
   try {
-    if (ArrayIsArray(input)) {
-      const output: unknown[] = [];
-      const length = typeof input.length === "number" && numberIsFinite(input.length)
-        ? mathMax(0, mathRound(input.length))
-        : 0;
-      // A runtime snapshot contains up to 100 source items plus its omission
-      // marker. Keep that bounded extra entry so another snapshot preserves N.
-      const limit = context.preserveArrayTruncationMarkers &&
-          hasMessageFinishArrayTruncationMarker(input, length)
-        ? length
-        : mathMax(0, mathMin(length, MESSAGE_FINISH_OBJECT_MAX_ARRAY_ITEMS));
-      for (let index = 0; index < limit; index++) {
-        const property = objectGetOwnPropertyDescriptor(
-          input,
-          reflectApply(numberToString, index, []) as string,
-        );
-        const item = !property || !property.enumerable
-          ? { value: null, status: "complete", reasons: [] } satisfies MessageFinishObjectSnapshot
-          : !objectHasOwn(property, "value")
-          ? {
-            value: MESSAGE_FINISH_OBJECT_UNSUPPORTED_ACCESSOR,
-            status: "partial",
-            reasons: ["accessor_property"],
-          } satisfies MessageFinishObjectSnapshot
-          : snapshotMessageFinishObjectValue(property.value, context, depth + 1);
-        primordialArrayPush(output, item.value);
-        for (const reason of primordialArrayValues(item.reasons)) addCaptureReason(reasons, reason);
-        if (item.status === "unsupported") addCaptureReason(reasons, "unsupported_array_item");
-      }
-      if (length > limit) {
-        primordialArrayPush(output, `[truncated ${length - limit} items]`);
-        addCaptureReason(reasons, "array_truncated");
-      }
-      return {
-        value: output,
-        status: reasons.length > 0 ? "partial" : "complete",
-        reasons,
-      };
-    }
+    if (ArrayIsArray(input)) return snapshotMessageFinishArray(input, context, depth, reasons);
 
-    const prototype = objectGetPrototypeOf(input);
-    if (prototype !== null && prototype !== objectPrototype) {
-      return {
-        value: "[unsupported object]",
-        status: "unsupported",
-        reasons: ["unsupported_object"],
-      };
-    }
-    const output = createNullDataRecord();
-    const keys = reflectOwnKeys(input);
-    let copiedKeys = 0;
-    for (let keyIndex = 0; keyIndex < keys.length; keyIndex++) {
-      const key = keys[keyIndex];
-      if (typeof key !== "string") continue;
-      if (!isSupportedMessageFinishObjectKey(key)) {
-        addCaptureReason(reasons, "object_key_unsupported");
-        continue;
-      }
-      const property = objectGetOwnPropertyDescriptor(input, key);
-      if (!property?.enumerable) continue;
-      if (!objectHasOwn(property, "value")) {
-        defineDataProperty(output, key, MESSAGE_FINISH_OBJECT_UNSUPPORTED_ACCESSOR);
-        addCaptureReason(reasons, "accessor_property");
-        copiedKeys += 1;
-      } else {
-        const item = snapshotMessageFinishObjectValue(property.value, context, depth + 1);
-        defineDataProperty(output, key, item.value);
-        for (const reason of primordialArrayValues(item.reasons)) addCaptureReason(reasons, reason);
-        if (item.status === "unsupported") addCaptureReason(reasons, "unsupported_property");
-        copiedKeys += 1;
-      }
-      if (copiedKeys >= MESSAGE_FINISH_OBJECT_MAX_OBJECT_KEYS) {
-        if (hasRemainingEligibleMessageFinishObjectProperty(input, keys, keyIndex + 1)) {
-          addCaptureReason(reasons, "object_keys_truncated");
-        }
-        break;
-      }
-    }
-    return {
-      value: output,
-      status: reasons.length > 0 ? "partial" : "complete",
-      reasons,
-    };
+    return snapshotMessageFinishRecord(input as Record<string, unknown>, context, depth, reasons);
   } finally {
     context.seen.set(input, undefined as never);
   }
@@ -999,7 +1080,8 @@ function readMessageFinishObjectObservation(input: unknown): MessageFinishObject
   }
 }
 
-function createMessageFinishObjectObservation(
+/** @internal Snapshot a structured agent result for durable run output. */
+export function createMessageFinishObjectObservation(
   object: unknown,
   maxOutputBytes = MESSAGE_FINISH_OBJECT_MAX_OUTPUT_BYTES,
   encoding: "value" | "snapshot" = "value",
@@ -1111,11 +1193,10 @@ function fitMessageFinishMetadataWithinDurableBudget(
   }
 }
 
-function createMessageFinishMetadataEvent(
-  state: AgUiEncoderState,
+function observeFinishReason(
+  value: Record<string, unknown>,
   event: AgUiRuntimeStreamEvent,
-): AgUiEncodedEvent[] {
-  const value: Record<string, unknown> = {};
+): string | null {
   let finishReasonMetadata: string | null = null;
   if (typeof event.finishReason === "string" && event.finishReason.length > 0) {
     const snapshot = snapshotMessageFinishObjectValue(event.finishReason);
@@ -1132,6 +1213,15 @@ function createMessageFinishMetadataEvent(
       );
     }
   }
+  return finishReasonMetadata;
+}
+
+function createMessageFinishMetadataEvent(
+  state: AgUiEncoderState,
+  event: AgUiRuntimeStreamEvent,
+): AgUiEncodedEvent[] {
+  const value: Record<string, unknown> = {};
+  const finishReasonMetadata = observeFinishReason(value, event);
 
   const usageMetadata = readMessageFinishUsageMetadata(event);
   if (usageMetadata) {
@@ -1139,16 +1229,17 @@ function createMessageFinishMetadataEvent(
     value.totalUsage = usageMetadata;
   }
 
-  const hasObject = objectHasOwn(event, "object");
-  const object = hasObject ? event.object : undefined;
-  const encoding = hasObject && objectHasOwn(event, "objectEncoding") &&
+  const structured = readStructuredAgentOutput(event);
+  const hasStructuredOutput = structured !== undefined;
+  const object = structured?.data;
+  const encoding = hasStructuredOutput && objectHasOwn(event, "objectEncoding") &&
       event.objectEncoding === "snapshot"
     ? "snapshot"
     : "value";
-  const objectSnapshot = hasObject
+  const objectSnapshot = hasStructuredOutput
     ? createMessageFinishObjectObservation(object, undefined, encoding)
     : undefined;
-  if (hasObject) value.object = objectSnapshot;
+  if (hasStructuredOutput) value.object = objectSnapshot;
 
   fitMessageFinishMetadataWithinDurableBudget(value, object, encoding);
 
@@ -1170,14 +1261,10 @@ function createMessageFinishMetadataEvent(
   ];
 }
 
-/** Response payload for build AG-UI finalize. */
-export function buildAgUiFinalizeResponse(
+function copyFinalizeCacheMetadata(
   metadata: AgUiRunFinishedMetadata,
-): AgentResponse | null {
-  const responseMetadata: Record<string, unknown> = {};
-  if (typeof metadata.finishReason === "string" && metadata.finishReason.length > 0) {
-    responseMetadata.finishReason = metadata.finishReason;
-  }
+  responseMetadata: Record<string, unknown>,
+): void {
   if (typeof metadata.cachedInputTokens === "number") {
     responseMetadata.cachedInputTokens = metadata.cachedInputTokens;
   }
@@ -1193,6 +1280,12 @@ export function buildAgUiFinalizeResponse(
   if (typeof metadata.reasoningTokens === "number") {
     responseMetadata.reasoningTokens = metadata.reasoningTokens;
   }
+}
+
+function copyFinalizeBillingMetadata(
+  metadata: AgUiRunFinishedMetadata,
+  responseMetadata: Record<string, unknown>,
+): void {
   if (typeof metadata.billableInputTokens === "number") {
     responseMetadata.billableInputTokens = metadata.billableInputTokens;
   }
@@ -1226,6 +1319,90 @@ export function buildAgUiFinalizeResponse(
   if (typeof metadata.costCredits === "number") {
     responseMetadata.costCredits = metadata.costCredits;
   }
+}
+
+function finalizeCacheUsage(metadata: AgUiRunFinishedMetadata) {
+  return {
+    ...(typeof metadata.cachedInputTokens === "number"
+      ? { cachedInputTokens: metadata.cachedInputTokens }
+      : {}),
+    ...(typeof metadata.cacheCreationInputTokens === "number"
+      ? { cacheCreationInputTokens: metadata.cacheCreationInputTokens }
+      : {}),
+    ...(typeof metadata.cacheCreation1hInputTokens === "number"
+      ? { cacheCreation1hInputTokens: metadata.cacheCreation1hInputTokens }
+      : {}),
+    ...(typeof metadata.cacheReadInputTokens === "number"
+      ? { cacheReadInputTokens: metadata.cacheReadInputTokens }
+      : {}),
+    ...(typeof metadata.reasoningTokens === "number"
+      ? { reasoningTokens: metadata.reasoningTokens }
+      : {}),
+  };
+}
+
+function finalizeBillingUsage(metadata: AgUiRunFinishedMetadata) {
+  return {
+    ...(typeof metadata.billableInputTokens === "number"
+      ? { billableInputTokens: metadata.billableInputTokens }
+      : {}),
+    ...(typeof metadata.billableOutputTokens === "number"
+      ? { billableOutputTokens: metadata.billableOutputTokens }
+      : {}),
+    ...(typeof metadata.costUsd === "number" ? { costUsd: metadata.costUsd } : {}),
+    ...(typeof metadata.providerInputCostUsd === "number"
+      ? { providerInputCostUsd: metadata.providerInputCostUsd }
+      : {}),
+    ...(typeof metadata.providerOutputCostUsd === "number"
+      ? { providerOutputCostUsd: metadata.providerOutputCostUsd }
+      : {}),
+    ...(typeof metadata.providerCostUsd === "number"
+      ? { providerCostUsd: metadata.providerCostUsd }
+      : {}),
+    ...(typeof metadata.veryfrontInputChargeUsd === "number"
+      ? { veryfrontInputChargeUsd: metadata.veryfrontInputChargeUsd }
+      : {}),
+    ...(typeof metadata.veryfrontOutputChargeUsd === "number"
+      ? { veryfrontOutputChargeUsd: metadata.veryfrontOutputChargeUsd }
+      : {}),
+    ...(typeof metadata.veryfrontChargeUsd === "number"
+      ? { veryfrontChargeUsd: metadata.veryfrontChargeUsd }
+      : {}),
+    ...(typeof metadata.veryfrontBilledUsd === "number"
+      ? { veryfrontBilledUsd: metadata.veryfrontBilledUsd }
+      : {}),
+    ...(typeof metadata.costCredits === "number" ? { costCredits: metadata.costCredits } : {}),
+  };
+}
+
+function buildFinalizeUsage(metadata: AgUiRunFinishedMetadata): AgentResponse["usage"] {
+  return typeof metadata.inputTokens === "number" ||
+      typeof metadata.outputTokens === "number" ||
+      typeof metadata.totalTokens === "number"
+    ? {
+      promptTokens: metadata.inputTokens ?? 0,
+      completionTokens: metadata.outputTokens ?? 0,
+      totalTokens: metadata.totalTokens ??
+        ((metadata.inputTokens ?? 0) + (metadata.outputTokens ?? 0)),
+      ...finalizeCacheUsage(metadata),
+      ...finalizeBillingUsage(metadata),
+      ...(metadata.costSource ? { costSource: metadata.costSource } : {}),
+      ...(metadata.billingMode ? { billingMode: metadata.billingMode } : {}),
+      ...(metadata.usageCaptureStatus ? { usageCaptureStatus: metadata.usageCaptureStatus } : {}),
+    }
+    : undefined;
+}
+
+/** Response payload for build AG-UI finalize. */
+export function buildAgUiFinalizeResponse(
+  metadata: AgUiRunFinishedMetadata,
+): AgentResponse | null {
+  const responseMetadata: Record<string, unknown> = {};
+  if (typeof metadata.finishReason === "string" && metadata.finishReason.length > 0) {
+    responseMetadata.finishReason = metadata.finishReason;
+  }
+  copyFinalizeCacheMetadata(metadata, responseMetadata);
+  copyFinalizeBillingMetadata(metadata, responseMetadata);
   if (metadata.costSource) {
     responseMetadata.costSource = metadata.costSource;
   }
@@ -1236,63 +1413,7 @@ export function buildAgUiFinalizeResponse(
     responseMetadata.usageCaptureStatus = metadata.usageCaptureStatus;
   }
 
-  const usage = typeof metadata.inputTokens === "number" ||
-      typeof metadata.outputTokens === "number" ||
-      typeof metadata.totalTokens === "number"
-    ? {
-      promptTokens: metadata.inputTokens ?? 0,
-      completionTokens: metadata.outputTokens ?? 0,
-      totalTokens: metadata.totalTokens ??
-        ((metadata.inputTokens ?? 0) + (metadata.outputTokens ?? 0)),
-      ...(typeof metadata.cachedInputTokens === "number"
-        ? { cachedInputTokens: metadata.cachedInputTokens }
-        : {}),
-      ...(typeof metadata.cacheCreationInputTokens === "number"
-        ? { cacheCreationInputTokens: metadata.cacheCreationInputTokens }
-        : {}),
-      ...(typeof metadata.cacheCreation1hInputTokens === "number"
-        ? { cacheCreation1hInputTokens: metadata.cacheCreation1hInputTokens }
-        : {}),
-      ...(typeof metadata.cacheReadInputTokens === "number"
-        ? { cacheReadInputTokens: metadata.cacheReadInputTokens }
-        : {}),
-      ...(typeof metadata.reasoningTokens === "number"
-        ? { reasoningTokens: metadata.reasoningTokens }
-        : {}),
-      ...(typeof metadata.billableInputTokens === "number"
-        ? { billableInputTokens: metadata.billableInputTokens }
-        : {}),
-      ...(typeof metadata.billableOutputTokens === "number"
-        ? { billableOutputTokens: metadata.billableOutputTokens }
-        : {}),
-      ...(typeof metadata.costUsd === "number" ? { costUsd: metadata.costUsd } : {}),
-      ...(typeof metadata.providerInputCostUsd === "number"
-        ? { providerInputCostUsd: metadata.providerInputCostUsd }
-        : {}),
-      ...(typeof metadata.providerOutputCostUsd === "number"
-        ? { providerOutputCostUsd: metadata.providerOutputCostUsd }
-        : {}),
-      ...(typeof metadata.providerCostUsd === "number"
-        ? { providerCostUsd: metadata.providerCostUsd }
-        : {}),
-      ...(typeof metadata.veryfrontInputChargeUsd === "number"
-        ? { veryfrontInputChargeUsd: metadata.veryfrontInputChargeUsd }
-        : {}),
-      ...(typeof metadata.veryfrontOutputChargeUsd === "number"
-        ? { veryfrontOutputChargeUsd: metadata.veryfrontOutputChargeUsd }
-        : {}),
-      ...(typeof metadata.veryfrontChargeUsd === "number"
-        ? { veryfrontChargeUsd: metadata.veryfrontChargeUsd }
-        : {}),
-      ...(typeof metadata.veryfrontBilledUsd === "number"
-        ? { veryfrontBilledUsd: metadata.veryfrontBilledUsd }
-        : {}),
-      ...(typeof metadata.costCredits === "number" ? { costCredits: metadata.costCredits } : {}),
-      ...(metadata.costSource ? { costSource: metadata.costSource } : {}),
-      ...(metadata.billingMode ? { billingMode: metadata.billingMode } : {}),
-      ...(metadata.usageCaptureStatus ? { usageCaptureStatus: metadata.usageCaptureStatus } : {}),
-    }
-    : undefined;
+  const usage = buildFinalizeUsage(metadata);
 
   if (!usage && objectKeys(responseMetadata).length === 0) {
     return null;
@@ -1362,7 +1483,7 @@ function completeToolInput(
  */
 function createToolResultEvent(
   toolCallId: unknown,
-  content: Record<string, unknown> | unknown,
+  content: unknown,
   isError = false,
 ): AgUiEncodedEvent {
   return {
@@ -1414,34 +1535,33 @@ function createReasoningEvent(
     state.activeReasoningContentId = contentId;
   }
 
-  return {
-    event: type,
-    payload: type === "ReasoningMessageStart"
-      ? { messageId, ...(contentId ? { contentId } : {}), role: "reasoning" }
-      : type === "ReasoningMessageContent"
-      ? {
-        messageId,
-        ...(contentId ? { contentId } : {}),
-        delta: typeof event.delta === "string" ? event.delta : "",
-      }
-      : { messageId, ...(contentId ? { contentId } : {}) },
-  };
+  const payload = { messageId, ...(contentId ? { contentId } : {}) };
+  if (type === "ReasoningMessageStart") {
+    return { event: type, payload: { ...payload, role: "reasoning" } };
+  }
+  if (type === "ReasoningMessageContent") {
+    return {
+      event: type,
+      payload: { ...payload, delta: typeof event.delta === "string" ? event.delta : "" },
+    };
+  }
+  return { event: type, payload };
 }
 
 function createTextEvent(
   messageId: string,
   type: "TextMessageStart" | "TextMessageContent" | "TextMessageEnd",
-  delta = "",
+  delta: string,
   contentId: string,
 ): AgUiEncodedEvent {
-  return {
-    event: type,
-    payload: type === "TextMessageStart"
-      ? { messageId, contentId, role: "assistant" }
-      : type === "TextMessageContent"
-      ? { messageId, contentId, delta }
-      : { messageId, contentId },
-  };
+  const payload = { messageId, contentId };
+  if (type === "TextMessageStart") {
+    return { event: type, payload: { ...payload, role: "assistant" } };
+  }
+  if (type === "TextMessageContent") {
+    return { event: type, payload: { ...payload, delta } };
+  }
+  return { event: type, payload };
 }
 
 function closeOpenTextEvent(state: AgUiEncoderState): AgUiEncodedEvent[] {
@@ -1560,6 +1680,229 @@ function assertValidEmittedAt(value: unknown): asserts value is number {
   }
 }
 
+function mapFileEvent(
+  state: AgUiEncoderState,
+  event: AgUiRuntimeStreamEvent,
+): AgUiEncodedEvent[] {
+  state.sawVisibleOutput = true;
+  const native = buildNativeRunEventFrame({
+    name: event.type,
+    value: event,
+    parentMessageId: state.messageId,
+  });
+  return [native ? native.live : createCustomDataEvent(event.type, event)];
+}
+
+function mapTextStartEvent(
+  state: AgUiEncoderState,
+  event: AgUiRuntimeStreamEvent,
+): AgUiEncodedEvent[] {
+  const events = closeOpenReasoningEvent(state);
+  if (state.textOpen) {
+    if (isActiveTextIdentity(state, event)) return events;
+    appendEncodedEvents(events, closeOpenTextEvent(state));
+  }
+  const { messageId, contentId } = getTextMessageIdentity(state, event);
+  state.textOpen = true;
+  state.activeTextContentId = contentId;
+  state.sawVisibleOutput = true;
+  appendEncodedEvents(events, [createTextEvent(messageId, "TextMessageStart", "", contentId)]);
+  return events;
+}
+
+function mapTextDeltaEvent(
+  state: AgUiEncoderState,
+  event: AgUiRuntimeStreamEvent,
+): AgUiEncodedEvent[] {
+  const events = closeOpenReasoningEvent(state);
+  if (state.textOpen && !isActiveTextIdentity(state, event)) {
+    appendEncodedEvents(events, closeOpenTextEvent(state));
+  }
+  const { messageId, contentId } = getTextMessageIdentity(state, event);
+  state.sawVisibleOutput = true;
+  if (!state.textOpen) {
+    state.textOpen = true;
+    state.activeTextContentId = contentId;
+    appendEncodedEvents(events, [
+      createTextEvent(messageId, "TextMessageStart", "", contentId),
+      createTextEvent(
+        messageId,
+        "TextMessageContent",
+        typeof event.delta === "string" ? event.delta : "",
+        contentId,
+      ),
+    ]);
+    return events;
+  }
+
+  appendEncodedEvents(events, [createTextEvent(
+    messageId,
+    "TextMessageContent",
+    typeof event.delta === "string" ? event.delta : "",
+    state.activeTextContentId ?? contentId,
+  )]);
+  return events;
+}
+
+function mapTextEndEvent(
+  state: AgUiEncoderState,
+  event: AgUiRuntimeStreamEvent,
+): AgUiEncodedEvent[] {
+  if (!state.textOpen) return [];
+  const { messageId, contentId } = getTextMessageIdentity(state, event);
+  state.textOpen = false;
+  const resolvedContentId = state.activeTextContentId ?? contentId;
+  state.activeTextContentId = null;
+  return [createTextEvent(messageId, "TextMessageEnd", "", resolvedContentId)];
+}
+
+function mapReasoningStartEvent(
+  state: AgUiEncoderState,
+  event: AgUiRuntimeStreamEvent,
+): AgUiEncodedEvent[] {
+  const events = closeOpenTextEvent(state);
+  appendEncodedEvents(events, closeOpenReasoningEvent(state));
+  state.sawVisibleOutput = true;
+  appendEncodedEvents(events, [createReasoningEvent(state, event, "ReasoningMessageStart")]);
+  return events;
+}
+
+function mapReasoningDeltaEvent(
+  state: AgUiEncoderState,
+  event: AgUiRuntimeStreamEvent,
+): AgUiEncodedEvent[] {
+  const events = closeOpenTextEvent(state);
+  state.sawVisibleOutput = true;
+  if (state.reasoningMessageId === null) {
+    appendEncodedEvents(events, [createReasoningEvent(state, event, "ReasoningMessageStart")]);
+  }
+  appendEncodedEvents(events, [createReasoningEvent(state, event, "ReasoningMessageContent")]);
+  return events;
+}
+
+function mapToolInputStartEvent(
+  state: AgUiEncoderState,
+  event: AgUiRuntimeStreamEvent,
+): AgUiEncodedEvent[] {
+  const events = combineEncodedEvents([
+    closeOpenTextEvent(state),
+    closeOpenReasoningEvent(state),
+  ]);
+  state.sawVisibleOutput = true;
+  if (typeof event.toolCallId === "string" && event.toolCallId.length > 0) {
+    state.openToolCallIds ??= createPrivateSet<string>();
+    state.openToolCallIds.add(event.toolCallId);
+  }
+  appendEncodedEvents(events, [{
+    event: "ToolCallStart",
+    payload: {
+      toolCallId: event.toolCallId,
+      toolCallName: event.toolName,
+      ...(state.messageId ? { parentMessageId: state.messageId } : {}),
+    },
+  }]);
+  return events;
+}
+
+function mapToolInputAvailableEvent(
+  state: AgUiEncoderState,
+  event: AgUiRuntimeStreamEvent,
+): AgUiEncodedEvent[] {
+  state.sawVisibleOutput = true;
+  return combineEncodedEvents([
+    closeOpenTextEvent(state),
+    closeOpenReasoningEvent(state),
+    completeToolInput(state, event),
+  ]);
+}
+
+function mapToolInputErrorEvent(
+  state: AgUiEncoderState,
+  event: AgUiRuntimeStreamEvent,
+): AgUiEncodedEvent[] {
+  state.sawVisibleOutput = true;
+  const events = combineEncodedEvents([
+    closeOpenTextEvent(state),
+    closeOpenReasoningEvent(state),
+    completeToolInput(state, event),
+  ]);
+  appendEncodedEvents(events, [{
+    event: "ToolCallResult",
+    payload: {
+      toolCallId: event.toolCallId,
+      content: {
+        error: typeof event.errorText === "string" ? event.errorText : "Tool input failed",
+      },
+      isError: true,
+    },
+  }]);
+  return events;
+}
+
+function mapToolInputDeltaEvent(
+  state: AgUiEncoderState,
+  event: AgUiRuntimeStreamEvent,
+): AgUiEncodedEvent[] {
+  state.sawVisibleOutput = true;
+  if (typeof event.toolCallId === "string") {
+    state.streamedToolInputIds.add(event.toolCallId);
+  }
+  return combineEncodedEvents([
+    closeOpenTextEvent(state),
+    closeOpenReasoningEvent(state),
+    [
+      {
+        event: "ToolCallArgs",
+        payload: {
+          toolCallId: event.toolCallId,
+          delta: typeof event.inputTextDelta === "string" ? event.inputTextDelta : "",
+        },
+      },
+    ],
+  ]);
+}
+
+function mapToolOutputAvailableEvent(
+  state: AgUiEncoderState,
+  event: AgUiRuntimeStreamEvent,
+): AgUiEncodedEvent[] {
+  if (event.preliminary === true) return [];
+  state.sawVisibleOutput = true;
+  return combineEncodedEvents([
+    closeOpenTextEvent(state),
+    closeOpenReasoningEvent(state),
+    [
+      createToolResultEvent(
+        event.toolCallId,
+        event.output,
+        // Producers send a provider result they judge failed as tool-output-error,
+        // so only forwarded results without the marker are judged by content.
+        event.providerExecuted !== true && isToolResultErrorOutput(event.output),
+      ),
+    ],
+  ]);
+}
+
+function mapErrorEvent(
+  state: AgUiEncoderState,
+  event: AgUiRuntimeStreamEvent,
+): AgUiEncodedEvent[] {
+  state.sawTerminalError = true;
+  return combineEncodedEvents([
+    closeOpenTextEvent(state),
+    closeOpenReasoningEvent(state),
+    [
+      {
+        event: "RunError",
+        payload: {
+          ...(typeof event.code === "string" && event.code.length > 0 ? { code: event.code } : {}),
+          message: typeof event.error === "string" ? event.error : "Agent run failed",
+        },
+      },
+    ],
+  ]);
+}
+
 function mapRuntimeStreamEventToAgUiEventsUnstamped(
   state: AgUiEncoderState,
   event: AgUiRuntimeStreamEvent,
@@ -1587,15 +1930,8 @@ function mapRuntimeStreamEventToAgUiEventsUnstamped(
   switch (event.type) {
     case "source-document":
     case "source-url":
-    case "file": {
-      state.sawVisibleOutput = true;
-      const native = buildNativeRunEventFrame({
-        name: event.type,
-        value: event,
-        parentMessageId: state.messageId,
-      });
-      return [native ? native.live : createCustomDataEvent(event.type, event)];
-    }
+    case "file":
+      return mapFileEvent(state, event);
 
     case "message-start":
       getMessageId(state, event);
@@ -1605,77 +1941,20 @@ function mapRuntimeStreamEventToAgUiEventsUnstamped(
     case "finish":
       return createMessageFinishMetadataEvent(state, event);
 
-    case "text-start": {
-      const events = closeOpenReasoningEvent(state);
-      if (state.textOpen) {
-        if (isActiveTextIdentity(state, event)) return events;
-        appendEncodedEvents(events, closeOpenTextEvent(state));
-      }
-      const { messageId, contentId } = getTextMessageIdentity(state, event);
-      state.textOpen = true;
-      state.activeTextContentId = contentId;
-      state.sawVisibleOutput = true;
-      appendEncodedEvents(events, [createTextEvent(messageId, "TextMessageStart", "", contentId)]);
-      return events;
-    }
+    case "text-start":
+      return mapTextStartEvent(state, event);
 
-    case "text-delta": {
-      const events = closeOpenReasoningEvent(state);
-      if (state.textOpen && !isActiveTextIdentity(state, event)) {
-        appendEncodedEvents(events, closeOpenTextEvent(state));
-      }
-      const { messageId, contentId } = getTextMessageIdentity(state, event);
-      state.sawVisibleOutput = true;
-      if (!state.textOpen) {
-        state.textOpen = true;
-        state.activeTextContentId = contentId;
-        appendEncodedEvents(events, [
-          createTextEvent(messageId, "TextMessageStart", "", contentId),
-          createTextEvent(
-            messageId,
-            "TextMessageContent",
-            typeof event.delta === "string" ? event.delta : "",
-            contentId,
-          ),
-        ]);
-        return events;
-      }
+    case "text-delta":
+      return mapTextDeltaEvent(state, event);
 
-      appendEncodedEvents(events, [createTextEvent(
-        messageId,
-        "TextMessageContent",
-        typeof event.delta === "string" ? event.delta : "",
-        state.activeTextContentId ?? contentId,
-      )]);
-      return events;
-    }
+    case "text-end":
+      return mapTextEndEvent(state, event);
 
-    case "text-end": {
-      if (!state.textOpen) return [];
-      const { messageId, contentId } = getTextMessageIdentity(state, event);
-      state.textOpen = false;
-      const resolvedContentId = state.activeTextContentId ?? contentId;
-      state.activeTextContentId = null;
-      return [createTextEvent(messageId, "TextMessageEnd", "", resolvedContentId)];
-    }
+    case "reasoning-start":
+      return mapReasoningStartEvent(state, event);
 
-    case "reasoning-start": {
-      const events = closeOpenTextEvent(state);
-      appendEncodedEvents(events, closeOpenReasoningEvent(state));
-      state.sawVisibleOutput = true;
-      appendEncodedEvents(events, [createReasoningEvent(state, event, "ReasoningMessageStart")]);
-      return events;
-    }
-
-    case "reasoning-delta": {
-      const events = closeOpenTextEvent(state);
-      state.sawVisibleOutput = true;
-      if (state.reasoningMessageId === null) {
-        appendEncodedEvents(events, [createReasoningEvent(state, event, "ReasoningMessageStart")]);
-      }
-      appendEncodedEvents(events, [createReasoningEvent(state, event, "ReasoningMessageContent")]);
-      return events;
-    }
+    case "reasoning-delta":
+      return mapReasoningDeltaEvent(state, event);
 
     case "reasoning-end":
       // An end with no span open has nothing to close. Emitting one anyway
@@ -1683,90 +1962,20 @@ function mapRuntimeStreamEventToAgUiEventsUnstamped(
       // span ordinal, shifting every later span's id.
       return closeOpenReasoningEvent(state);
 
-    case "tool-input-start": {
-      const events = combineEncodedEvents([
-        closeOpenTextEvent(state),
-        closeOpenReasoningEvent(state),
-      ]);
-      state.sawVisibleOutput = true;
-      if (typeof event.toolCallId === "string" && event.toolCallId.length > 0) {
-        (state.openToolCallIds ??= createPrivateSet<string>()).add(event.toolCallId);
-      }
-      appendEncodedEvents(events, [{
-        event: "ToolCallStart",
-        payload: {
-          toolCallId: event.toolCallId,
-          toolCallName: event.toolName,
-          ...(state.messageId ? { parentMessageId: state.messageId } : {}),
-        },
-      }]);
-      return events;
-    }
+    case "tool-input-start":
+      return mapToolInputStartEvent(state, event);
 
     case "tool-input-delta":
-      state.sawVisibleOutput = true;
-      if (typeof event.toolCallId === "string") {
-        state.streamedToolInputIds.add(event.toolCallId);
-      }
-      return combineEncodedEvents([
-        closeOpenTextEvent(state),
-        closeOpenReasoningEvent(state),
-        [
-          {
-            event: "ToolCallArgs",
-            payload: {
-              toolCallId: event.toolCallId,
-              delta: typeof event.inputTextDelta === "string" ? event.inputTextDelta : "",
-            },
-          },
-        ],
-      ]);
+      return mapToolInputDeltaEvent(state, event);
 
-    case "tool-input-available": {
-      state.sawVisibleOutput = true;
-      return combineEncodedEvents([
-        closeOpenTextEvent(state),
-        closeOpenReasoningEvent(state),
-        completeToolInput(state, event),
-      ]);
-    }
+    case "tool-input-available":
+      return mapToolInputAvailableEvent(state, event);
 
-    case "tool-input-error": {
-      state.sawVisibleOutput = true;
-      const events = combineEncodedEvents([
-        closeOpenTextEvent(state),
-        closeOpenReasoningEvent(state),
-        completeToolInput(state, event),
-      ]);
-      appendEncodedEvents(events, [{
-        event: "ToolCallResult",
-        payload: {
-          toolCallId: event.toolCallId,
-          content: {
-            error: typeof event.errorText === "string" ? event.errorText : "Tool input failed",
-          },
-          isError: true,
-        },
-      }]);
-      return events;
-    }
+    case "tool-input-error":
+      return mapToolInputErrorEvent(state, event);
 
     case "tool-output-available":
-      if (event.preliminary === true) return [];
-      state.sawVisibleOutput = true;
-      return combineEncodedEvents([
-        closeOpenTextEvent(state),
-        closeOpenReasoningEvent(state),
-        [
-          createToolResultEvent(
-            event.toolCallId,
-            event.output,
-            // Producers send a provider result they judge failed as tool-output-error,
-            // so only forwarded results without the marker are judged by content.
-            event.providerExecuted !== true && isToolResultErrorOutput(event.output),
-          ),
-        ],
-      ]);
+      return mapToolOutputAvailableEvent(state, event);
 
     case "tool-output-error":
       state.sawVisibleOutput = true;
@@ -1821,22 +2030,7 @@ function mapRuntimeStreamEventToAgUiEventsUnstamped(
       return [];
 
     case "error":
-      state.sawTerminalError = true;
-      return combineEncodedEvents([
-        closeOpenTextEvent(state),
-        closeOpenReasoningEvent(state),
-        [
-          {
-            event: "RunError",
-            payload: {
-              ...(typeof event.code === "string" && event.code.length > 0
-                ? { code: event.code }
-                : {}),
-              message: typeof event.error === "string" ? event.error : "Agent run failed",
-            },
-          },
-        ],
-      ]);
+      return mapErrorEvent(state, event);
 
     default:
       // The `data-` guard at the top of this function already returns for
@@ -1880,10 +2074,11 @@ function finalizeAgUiEventsUnstamped(
   appendEncodedEvents(events, closeOpenReasoningEvent(state));
 
   let finishObject = state.finishObject;
-  if (finishObject === undefined && response && objectHasOwn(response, "object")) {
-    let value = createMessageFinishObjectObservation(response.object);
+  const structured = response ? readStructuredAgentOutput(response) : undefined;
+  if (finishObject === undefined && structured) {
+    let value = createMessageFinishObjectObservation(structured.data);
     if (!isMessageFinishMetadataValueWithinDurableBudget({ object: value })) {
-      value = createMessageFinishObjectObservationWithinDurableBudget({}, response.object);
+      value = createMessageFinishObjectObservationWithinDurableBudget({}, structured.data);
     }
     finishObject = { value };
   }

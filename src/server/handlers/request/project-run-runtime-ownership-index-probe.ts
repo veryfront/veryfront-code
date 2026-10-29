@@ -38,6 +38,37 @@ function own(value: unknown, key: string): unknown {
   return (apply(ownDescriptor, Object, [value, key]) as PropertyDescriptor | undefined)?.value;
 }
 
+interface RetainedIndexReceipt {
+  wire: string;
+  path: string;
+  fileId: string;
+  versionId: string;
+}
+
+function matchesRetainedIndexReceipt(
+  retained: RetainedIndexReceipt | undefined,
+  request: { sourcePath: string },
+  canonicalId: string,
+  canonicalVersionId: string,
+): boolean {
+  if (retained === undefined) return false;
+  return retained.path === request.sourcePath && retained.fileId === canonicalId &&
+    retained.versionId === canonicalVersionId;
+}
+
+function assertUnchangedIndexReadiness(before: string, after: string): void {
+  if (before !== after) throw new Error("Stale canonical index changed readiness");
+}
+
+function isManagedProbeVector(vector: number[]): boolean {
+  if (!arrayIsArray(vector) || vector.length !== 3072) return false;
+  for (let i = 0; i < vector.length; i++) {
+    const value = vector[i];
+    if (typeof value !== "number" || !finite(value) || !finite(float32(value))) return false;
+  }
+  return true;
+}
+
 /** The host retains real vectors and replays identical bytes for stale authority; no new inference. */
 export function createRuntimeOwnershipIndexProbe(input: {
   projectId: string;
@@ -46,7 +77,7 @@ export function createRuntimeOwnershipIndexProbe(input: {
   createReader(signal: AbortSignal): OwnershipIndexClient;
   embed(text: string, signal: AbortSignal): Promise<number[]>;
 }) {
-  let retained: { wire: string; path: string; fileId: string; versionId: string } | undefined;
+  let retained: RetainedIndexReceipt | undefined;
   return async (
     request: { sourcePath: string; content: string; stale: boolean; signal: AbortSignal },
   ): Promise<OwnershipIndexProof> => {
@@ -96,13 +127,12 @@ export function createRuntimeOwnershipIndexProbe(input: {
     }/files/${encode(request.sourcePath)}/index`;
     if (request.stale) {
       if (
-        !retained || retained.path !== request.sourcePath || retained.fileId !== canonicalId ||
-        retained.versionId !== canonicalVersionId
+        !matchesRetainedIndexReceipt(retained, request, canonicalId, canonicalVersionId)
       ) throw new Error("No matching current canonical index receipt");
       const before = await ready();
       let rejected = false;
       try {
-        await writer.postRaw(indexPath, retained.wire, { signal });
+        await writer.postRaw(indexPath, retained!.wire, { signal });
       } catch (error) {
         if (!isRuntimeOwnershipProbeApiAuthorityError(error, "canonical-index")) {
           throw new Error("Index request failed without authorization denial");
@@ -111,9 +141,9 @@ export function createRuntimeOwnershipIndexProbe(input: {
       }
       if (!rejected) throw new Error("Stale canonical index was accepted");
       const after = await ready();
-      if (before !== after) throw new Error("Stale canonical index changed readiness");
+      assertUnchangedIndexReadiness(before, after);
       return {
-        requestHash: await computeHash(retained.wire),
+        requestHash: await computeHash(retained!.wire),
         readinessBeforeHash: before,
         readinessAfterHash: after,
         authorizationDenied: true,
@@ -123,13 +153,7 @@ export function createRuntimeOwnershipIndexProbe(input: {
     const body = inspected.body;
     const vector = await input.embed(body, signal);
     if (
-      !arrayIsArray(vector) || vector.length !== 3072 || (() => {
-        for (let i = 0; i < vector.length; i++) {
-          const value = vector[i];
-          if (typeof value !== "number" || !finite(value) || !finite(float32(value))) return true;
-        }
-        return false;
-      })()
+      !isManagedProbeVector(vector)
     ) throw new Error("Managed index probe vector is invalid");
     const offset = request.content.length - body.length;
     const payload = {

@@ -755,29 +755,20 @@ function preflightAst(
   let astNodes = 0;
   let scannedEntries = 0;
 
-  while (cursor < stack.length) {
-    const value = stack[cursor];
-    cursor += 1;
-    if (typeof value !== "object" || value === null) continue;
-    if (weakSetHas(seen, value)) continue;
-    weakSetAdd(seen, value);
-
-    if (ArrayIsArray(value)) {
-      scannedEntries += value.length;
-      if (scannedEntries > AST_SCAN_ENTRY_LIMIT) {
-        throw new DeclarativeConfigEvaluationError({
-          code: "resource-limit-exceeded",
-          phase: "validate",
-          reason: "ast-nodes",
-        });
-      }
-      for (let index = 0; index < value.length; index += 1) {
-        pushValue(stack, value[index]);
-      }
-      continue;
+  const queueArrayEntries = (value: unknown[]): void => {
+    scannedEntries += value.length;
+    if (scannedEntries > AST_SCAN_ENTRY_LIMIT) {
+      throw new DeclarativeConfigEvaluationError({
+        code: "resource-limit-exceeded",
+        phase: "validate",
+        reason: "ast-nodes",
+      });
     }
-
-    const record = value as Record<PropertyKey, unknown>;
+    for (let index = 0; index < value.length; index += 1) {
+      pushValue(stack, value[index]);
+    }
+  };
+  const queueRecordEntries = (record: Record<PropertyKey, unknown>): void => {
     if (typeof record.type === "string") {
       astNodes += 1;
       if (astNodes > DECLARATIVE_CONFIG_LIMITS.maxAstNodes) {
@@ -806,6 +797,21 @@ function preflightAst(
         pushValue(stack, descriptor.value);
       }
     }
+  };
+
+  while (cursor < stack.length) {
+    const value = stack[cursor];
+    cursor += 1;
+    if (typeof value !== "object" || value === null) continue;
+    if (weakSetHas(seen, value)) continue;
+    weakSetAdd(seen, value);
+
+    if (ArrayIsArray(value)) {
+      queueArrayEntries(value);
+      continue;
+    }
+
+    queueRecordEntries(value as Record<PropertyKey, unknown>);
   }
 }
 
@@ -883,9 +889,9 @@ function validateEnvironmentName(name: unknown): string {
   return name;
 }
 
-function snapshotTenantEnvironment(
+function assertTenantEnvironmentPrototype(
   input: unknown,
-): Readonly<Record<string, string>> {
+): asserts input is Record<PropertyKey, unknown> {
   if (typeof input !== "object" || input === null) {
     throw new DeclarativeConfigEvaluationError({
       code: "input-invalid",
@@ -928,6 +934,64 @@ function snapshotTenantEnvironment(
       reason: "environment-prototype",
     });
   }
+}
+
+function compareEnvironmentStrings(left: string, right: string): number {
+  if (left < right) return -1;
+  if (left > right) return 1;
+  return 0;
+}
+
+function compareEnvironmentPropertyKeys(left: PropertyKey, right: PropertyKey): number {
+  if (typeof left === "string" && typeof right === "string") {
+    return compareEnvironmentStrings(left, right);
+  }
+  if (typeof left === "string") return -1;
+  if (typeof right === "string") return 1;
+  return 0;
+}
+
+function readTenantEnvironmentValue(input: Record<PropertyKey, unknown>, key: string): string {
+  let descriptor: PropertyDescriptor | undefined;
+  try {
+    descriptor = ObjectGetOwnPropertyDescriptor(input, key);
+  } catch {
+    throw new DeclarativeConfigEvaluationError({
+      code: "input-invalid",
+      phase: "input",
+      reason: "environment-accessor",
+    });
+  }
+  if (
+    descriptor === undefined ||
+    !hasOwn(descriptor, "value") ||
+    descriptor.enumerable !== true
+  ) {
+    throw new DeclarativeConfigEvaluationError({
+      code: "input-invalid",
+      phase: "input",
+      reason: "environment-accessor",
+    });
+  }
+  if (
+    typeof descriptor.value !== "string" ||
+    descriptor.value.length > DECLARATIVE_CONFIG_LIMITS.maxEnvironmentValueLength ||
+    !isEnvironmentValue(descriptor.value)
+  ) {
+    throw new DeclarativeConfigEvaluationError({
+      code: "input-invalid",
+      phase: "input",
+      reason: "environment-value",
+    });
+  }
+
+  return descriptor.value;
+}
+
+function snapshotTenantEnvironment(
+  input: unknown,
+): Readonly<Record<string, string>> {
+  assertTenantEnvironmentPrototype(input);
 
   let keys: PropertyKey[];
   try {
@@ -946,16 +1010,7 @@ function snapshotTenantEnvironment(
       reason: "environment-entries",
     });
   }
-  ReflectApply(ArrayPrototypeSort, keys, [
-    (left: PropertyKey, right: PropertyKey) =>
-      typeof left === "string" && typeof right === "string"
-        ? left < right ? -1 : left > right ? 1 : 0
-        : typeof left === "string"
-        ? -1
-        : typeof right === "string"
-        ? 1
-        : 0,
-  ]);
+  ReflectApply(ArrayPrototypeSort, keys, [compareEnvironmentPropertyKeys]);
 
   const output = ObjectCreate(null) as Record<string, string>;
   let totalBytes = 0;
@@ -979,38 +1034,7 @@ function snapshotTenantEnvironment(
       });
     }
 
-    let descriptor: PropertyDescriptor | undefined;
-    try {
-      descriptor = ObjectGetOwnPropertyDescriptor(input, key);
-    } catch {
-      throw new DeclarativeConfigEvaluationError({
-        code: "input-invalid",
-        phase: "input",
-        reason: "environment-accessor",
-      });
-    }
-    if (
-      descriptor === undefined ||
-      !hasOwn(descriptor, "value") ||
-      descriptor.enumerable !== true
-    ) {
-      throw new DeclarativeConfigEvaluationError({
-        code: "input-invalid",
-        phase: "input",
-        reason: "environment-accessor",
-      });
-    }
-    if (
-      typeof descriptor.value !== "string" ||
-      descriptor.value.length > DECLARATIVE_CONFIG_LIMITS.maxEnvironmentValueLength ||
-      !isEnvironmentValue(descriptor.value)
-    ) {
-      throw new DeclarativeConfigEvaluationError({
-        code: "input-invalid",
-        phase: "input",
-        reason: "environment-value",
-      });
-    }
+    const value = readTenantEnvironmentValue(input, key);
 
     const remainingBytes = DECLARATIVE_CONFIG_LIMITS.maxEnvironmentBytes - totalBytes;
     const keyBytes = countUtf8BytesUpTo(key, remainingBytes);
@@ -1024,7 +1048,7 @@ function snapshotTenantEnvironment(
     totalBytes += keyBytes;
     const remainingValueBytes = DECLARATIVE_CONFIG_LIMITS.maxEnvironmentBytes - totalBytes;
     const valueBytes = countUtf8BytesUpTo(
-      descriptor.value,
+      value,
       remainingValueBytes,
     );
     if (valueBytes > remainingValueBytes) {
@@ -1038,7 +1062,7 @@ function snapshotTenantEnvironment(
     defineDataProperty(
       output,
       key,
-      descriptor.value,
+      value,
       true,
       false,
       false,
@@ -1059,9 +1083,7 @@ function sortedEnvironmentKeys(
     }
     pushValue(keys, key);
   }
-  ReflectApply(ArrayPrototypeSort, keys, [
-    (left: string, right: string) => left < right ? -1 : left > right ? 1 : 0,
-  ]);
+  ReflectApply(ArrayPrototypeSort, keys, [compareEnvironmentStrings]);
   return keys;
 }
 
@@ -3568,22 +3590,12 @@ function evaluateVariableDeclaration(
   }
 }
 
-function processProgram(
+function validateProgramImports(
+  body: unknown[],
   program: ASTNode,
   context: EvaluationContext,
-): RuntimeValue {
-  const body = program.body as unknown[];
-  if (body.length > DECLARATIVE_CONFIG_LIMITS.maxTopLevelStatements) {
-    return throwEvaluationError(
-      "resource-limit-exceeded",
-      "validate",
-      "statement-count",
-      context,
-      program,
-    );
-  }
-
-  const validationEnvironment = createEnvironment();
+  validationEnvironment: LexicalEnvironment,
+): void {
   let importCount = 0;
   let defaultCount = 0;
 
@@ -3632,7 +3644,13 @@ function processProgram(
       program,
     );
   }
+}
 
+function validateProgramStatements(
+  body: unknown[],
+  context: EvaluationContext,
+  validationEnvironment: LexicalEnvironment,
+): void {
   for (let index = 0; index < body.length; index += 1) {
     const statement = body[index] as ASTNode;
     if (statement.type === "ImportDeclaration" || isTypeOnlyDeclaration(statement)) {
@@ -3659,6 +3677,26 @@ function processProgram(
       statement,
     );
   }
+}
+
+function processProgram(
+  program: ASTNode,
+  context: EvaluationContext,
+): RuntimeValue {
+  const body = program.body as unknown[];
+  if (body.length > DECLARATIVE_CONFIG_LIMITS.maxTopLevelStatements) {
+    return throwEvaluationError(
+      "resource-limit-exceeded",
+      "validate",
+      "statement-count",
+      context,
+      program,
+    );
+  }
+
+  const validationEnvironment = createEnvironment();
+  validateProgramImports(body, program, context, validationEnvironment);
+  validateProgramStatements(body, context, validationEnvironment);
 
   const evaluationEnvironment = createEnvironment();
   for (let index = 0; index < body.length; index += 1) {
@@ -3683,7 +3721,6 @@ function processProgram(
       const declaration = requireAstNode(statement.declaration, context, statement);
       result = evaluateExpression(declaration, context, evaluationEnvironment, 0);
       hasResult = true;
-      continue;
     }
   }
 
@@ -3780,6 +3817,26 @@ function captureEvaluationInput(
   return ObjectFreeze({ source, fileName, preparedState });
 }
 
+function createParserEvaluationError(
+  source: string,
+  error: unknown,
+  fileName: DeclarativeConfigFileName,
+): DeclarativeConfigEvaluationError {
+  const reason = parserErrorReason(error);
+  let code: DeclarativeConfigErrorCode = "syntax-error";
+  if (reason === "duplicate-binding") code = "invalid-binding";
+  else if (reason === "duplicate-default-export") code = "invalid-result";
+  return new DeclarativeConfigEvaluationError({
+    code,
+    phase: reason === "duplicate-binding" ||
+        reason === "duplicate-default-export"
+      ? "validate"
+      : "parse",
+    reason,
+    location: parseErrorLocation(source, error, fileName),
+  });
+}
+
 async function evaluateCapturedInput(
   input: CapturedEvaluationInput,
   parser: TrustedCodeParser,
@@ -3800,20 +3857,7 @@ async function evaluateCapturedInput(
       filePath: fileName,
     });
   } catch (error) {
-    const reason = parserErrorReason(error);
-    throw new DeclarativeConfigEvaluationError({
-      code: reason === "duplicate-binding"
-        ? "invalid-binding"
-        : reason === "duplicate-default-export"
-        ? "invalid-result"
-        : "syntax-error",
-      phase: reason === "duplicate-binding" ||
-          reason === "duplicate-default-export"
-        ? "validate"
-        : "parse",
-      reason,
-      location: parseErrorLocation(source, error, fileName),
-    });
+    throw createParserEvaluationError(source, error, fileName);
   }
 
   if (!isAstNode(parsedAst)) {

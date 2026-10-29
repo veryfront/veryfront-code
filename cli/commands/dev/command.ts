@@ -43,6 +43,7 @@ import {
   applyConnectedDevProjectSlug,
   connectedDevApiBaseUrl,
   connectedDevStudioBaseUrl,
+  type ConnectedDevTarget,
   createConnectedDevControlPlane,
   prepareConnectedDev,
   resolveConnectedDevProject,
@@ -55,7 +56,7 @@ import { isInteractive } from "../../shared/interactive.ts";
 import {
   getConnectedLocalRuntime,
   installConnectedLocalRuntime,
-} from "#veryfront/agent/ag-ui/connected-local-runtime.ts";
+} from "#cli/connected-local-runtime";
 import {
   createVeryfrontApiOriginBoundOutboundFetch,
   trustOperatorConfiguredVeryfrontApiOrigins,
@@ -177,6 +178,25 @@ export async function loginForDevShortcut(
     console.log(`  ${errorColor("✗")} ${err instanceof Error ? err.message : String(err)}`);
     return null;
   }
+}
+
+/** Startup sync updates the linked source with ordinary push conflict guards. */
+export function createConnectedDevSourceSync(
+  projectDir: string,
+  getApiBaseUrl: () => string,
+  push: (options: PushOptions) => Promise<unknown> = pushCommand,
+): (target: Pick<ConnectedDevTarget, "projectId" | "projectSlug">) => Promise<void> {
+  return async (target) => {
+    console.log("  Syncing project source for local development...");
+    await push({
+      projectDir,
+      projectSlug: target.projectSlug,
+      projectId: target.projectId,
+      quiet: true,
+      noAdoptPins: true,
+      transport: createConnectedDevSyncTransport(getApiBaseUrl()),
+    });
+  };
 }
 
 export function createSelectedProjectPushOptions(
@@ -335,6 +355,10 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
             );
             return Boolean(preflightIdentity);
           },
+          sync: createConnectedDevSourceSync(
+            projectDir,
+            () => connectedDevApiBaseUrl(runtimeAuth.apiBaseUrl),
+          ),
           resolve: async (projectSlug, environmentName) => {
             runtimeAuth = await applyQualifiedRuntimeAuth(projectDir, projectSlug);
             runtimeAuth.apiBaseUrl = connectedDevApiBaseUrl(runtimeAuth.apiBaseUrl);

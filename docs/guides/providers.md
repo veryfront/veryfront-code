@@ -1,7 +1,7 @@
 ---
 title: "Providers"
 description: "Choose and configure model inference for a Veryfront project."
-order: 17
+order: 130
 ---
 
 Every agent needs one inference path. Choose it independently from where the app
@@ -39,11 +39,6 @@ the AI Gateway, it does not authenticate you to a vendor.
 
 Model selection follows these rules:
 
-Hosted chat retains the route selected during trusted preparation when execution
-has no ambient API token. A managed run's private inference credential stays
-separate from its callback credential. The catalog model ID and publisher remain
-unchanged, and application-registered direct providers retain their own route.
-
 | Agent model                            | With Cloud context                                  | With a matching direct provider key                      |
 | -------------------------------------- | --------------------------------------------------- | -------------------------------------------------------- |
 | Omitted                                | Uses the Cloud default through the AI Gateway       | Uses the direct default only without Cloud context       |
@@ -71,7 +66,10 @@ models and `model: "auto"`. It is optional.
 Code outside Veryfront can use the AI Gateway through the official OpenAI and
 Anthropic clients. Create a project API key with the Write permission in Studio
 under **Settings > API Keys**. Inference requests are writes, so a Read-only key
-is refused. The key starts with `vf_` and is bound to its project.
+is refused.
+
+The key starts with `vf_` and is bound to its project.
+
 The examples read it from `VERYFRONT_API_KEY`, a name for your own code only.
 The Veryfront CLI and SDK read `VERYFRONT_API_TOKEN`, described above.
 
@@ -80,13 +78,13 @@ AI SDK, see the [AI Gateway quickstart](./ai-gateway-quickstart.md).
 
 Set the project API key in your shell before running the examples:
 
-```bash
+```bash title="Terminal"
 export VERYFRONT_API_KEY="<your-project-api-key>"
 ```
 
 Name the model as `<provider>/<model>`. List the models your key can use:
 
-```bash
+```bash title="list-gateway-models.sh"
 curl https://api.veryfront.com/ai/models \
   -H "Authorization: Bearer $VERYFRONT_API_KEY"
 ```
@@ -107,7 +105,7 @@ or `api_key`. The deployment with `is_default: true` is the default model.
 
 Install the clients for the examples you want to run:
 
-```bash
+```bash title="install-gateway-clients.sh"
 npm install openai @anthropic-ai/sdk
 ```
 
@@ -116,7 +114,7 @@ Use a model that supports Chat Completions with the OpenAI client at
 corresponding endpoints. Model identifiers can include vendors this SDK has no
 built-in entry for:
 
-```ts
+```ts title="gateway-openai.ts"
 import OpenAI from "openai";
 
 const projectApiKey = process.env.VERYFRONT_API_KEY;
@@ -135,7 +133,7 @@ const completion = await client.chat.completions.create({
 });
 ```
 
-```bash
+```bash title="gateway-chat-completions.sh"
 curl https://api.veryfront.com/ai/v1/chat/completions \
   -H "Authorization: Bearer $VERYFRONT_API_KEY" \
   -H "Content-Type: application/json" \
@@ -145,7 +143,7 @@ curl https://api.veryfront.com/ai/v1/chat/completions \
 Anthropic models also speak the Anthropic Messages protocol. The Anthropic
 client adds `/v1/messages` to its base URL:
 
-```ts
+```ts title="gateway-anthropic.ts"
 import Anthropic from "@anthropic-ai/sdk";
 
 const client = new Anthropic({
@@ -161,7 +159,7 @@ const message = await client.messages.create({
 });
 ```
 
-```bash
+```bash title="gateway-messages.sh"
 curl https://api.veryfront.com/ai/v1/messages \
   -H "Authorization: Bearer $VERYFRONT_API_KEY" \
   -H "anthropic-version: 2023-06-01" \
@@ -212,6 +210,13 @@ Set only the variables for the provider you use:
 - `GOOGLE_API_KEY` for Google.
 - `MISTRAL_API_KEY` for direct Mistral requests. Without this key, hosted Mistral models route through Veryfront Cloud when cloud bootstrap is available.
 - `OPENAI_BASE_URL` for OpenAI-compatible services.
+
+An explicit `openai/<model>` or `anthropic/<model>` uses the matching environment
+key directly, even when Cloud context is available. Use a
+`veryfront-cloud/<provider>/<model>` name to select the AI Gateway explicitly.
+Direct provider usage reports token counters, not a settled platform charge.
+The AI Gateway ledger determines platform model charges; runtime-reported
+usage alone does not establish a charge or a billing exemption.
 
 ### Keeping keys out of the project
 
@@ -529,3 +534,128 @@ curl -N http://localhost:3000/api/ag-ui \
 A token stream that ends without an authentication error means the provider
 resolved. In a chat UI, the `inferenceMode` field on `useChat` reports
 whether the call used cloud, server-local, or browser inference.
+
+## Local file input
+
+Use `fileFromBytes` from `veryfront/llm` to send a local PDF without an upload link.
+The helper accepts `Uint8Array` bytes, including Node.js `Buffer` values, and
+returns a file part for `generate` or agent messages.
+
+```ts
+import { readFile } from "node:fs/promises";
+import { fileFromBytes, generate } from "veryfront/llm";
+
+const file = fileFromBytes({
+  bytes: await readFile("report.pdf"),
+  filename: "report.pdf",
+  mediaType: "application/pdf",
+  maxBytes: 4 * 1024 * 1024,
+});
+
+const result = await generate({
+  model: "openai/gpt-5.5",
+  input: [{
+    id: "report-request",
+    role: "user",
+    parts: [{ type: "text", text: "Summarize this report." }, file],
+  }],
+});
+console.log(result.text);
+```
+
+Configure your direct provider key as described above. No Veryfront Cloud token
+or file-upload service is required. Deno applications can use `Deno.readFile`,
+and browser applications can use `new Uint8Array(await file.arrayBuffer())` to
+obtain bytes before passing them to trusted server code.
+
+The framework encodes bytes internally. OpenAI Responses receives `file_data`,
+Anthropic receives a base64 `document` source for PDFs, and Google receives
+`inlineData`. OpenAI Responses and Anthropic also accept PDF URLs. Google
+accepts URLs for images and Gemini Files API URIs only, so send other files to
+Google as inline data. Inline files on OpenAI Responses must be a PDF, text,
+code, JSON, XML, or office document. Inline files on Google must be an image,
+audio, video, PDF, text, code, JSON, or XML file.
+
+A file part that a transport cannot send fails before inference with an error
+that names the file and MIME type. Chat Completions transports reject all
+non-image files, and Anthropic rejects files other than images and PDFs. OpenAI
+and Veryfront Cloud OpenAI models on the default `auto` transport send requests
+with non-image files through Responses. Mistral and custom OpenAI-compatible
+base URLs do not move a request to Responses for a file, so Chat Completions
+rejects it. This includes an OpenAI model created with a `baseURL` that is not
+on `api.openai.com`. Reasoning models and hosted tools still use Responses there.
+Set `openAITransport: "responses"` when a model is pinned to Chat Completions or
+its compatible server implements Responses. Select a model that supports the file type. The helper does
+not add model capabilities. The check covers stored chat history too, so a
+conversation with a document attachment needs a document-capable model on every
+later turn.
+
+`maxBytes` limits one file before encoding. Hosted durable runs record each
+model call, and a record over 10 MiB refuses the call, so keep inline files well
+below that after base64 encoding. Use `planFileParts`
+below for aggregate attachment budgets. Base64 adds about one third to request size;
+provider request and model limits still apply. The helper does not validate file
+contents or extract text. Filenames and MIME types must describe the actual file.
+The filename must be a base name such as `report.pdf`, not a path, a drive prefix such as `C:`, or `.`/`..`,
+without leading or trailing spaces, because providers receive it.
+
+### Attachment budgets
+
+Use `planFileParts` to apply per-file, total, and count budgets to several files
+without throwing. The result lists the parts to send and every omitted file with
+a reason. `complete` is `true` only when every file is sent.
+
+```ts
+import { planFileParts } from "veryfront/llm";
+
+const attachments = [
+  {
+    bytes: await Deno.readFile("./invoice.pdf"),
+    filename: "invoice.pdf",
+    mediaType: "application/pdf",
+  },
+  {
+    bytes: await Deno.readFile("./notes.txt"),
+    filename: "notes.txt",
+    mediaType: "text/plain",
+  },
+];
+
+const plan = planFileParts({
+  files: attachments,
+  // 6 MiB raw is about 8 MiB in base64, under the 10 MiB durable-run record limit.
+  maxFileBytes: 4 * 1024 * 1024,
+  maxTotalBytes: 6 * 1024 * 1024,
+  maxFiles: 10,
+});
+
+if (!plan.complete) {
+  // Filenames can contain customer data, so log only index, bytes, and reason.
+  console.warn(
+    "Files not sent",
+    plan.omitted.map(({ index, bytes, reason }) => ({ index, bytes, reason })),
+  );
+}
+```
+
+The helper checks files in input order. Omitted files do not use the budget, so a
+later smaller file can still be sent. An unset budget does not limit. Reasons are:
+
+| Reason              | Meaning                                                                                 |
+| ------------------- | --------------------------------------------------------------------------------------- |
+| `invalid_metadata`  | The entry is missing, or its filename or MIME type is invalid.                          |
+| `invalid_content`   | The bytes are missing or empty, or a PDF has no `%PDF-` header in its first 1024 bytes. |
+| `over_file_limit`   | The file is larger than `maxFileBytes`.                                                 |
+| `over_count_limit`  | `maxFiles` files were already sent.                                                     |
+| `over_total_budget` | The file does not fit in the rest of `maxTotalBytes`.                                   |
+
+A file is a PDF when its MIME type is `application/pdf` or its filename ends in
+`.pdf`. The filename must be a base name, as for `fileFromBytes`. Omitted
+entries report only the base name of a filename and the lowercased MIME type,
+or `""` when either is invalid, so logging them does not leak local paths. Only
+a non-array `files` value or an invalid budget throws `INVALID_ARGUMENT`.
+
+Budgets count raw bytes only. The helper does not infer page counts or model
+context limits from file size, so a file within budget can still exceed a
+provider page or context limit. Treat an incomplete plan as incomplete input,
+for example by sending the result to review instead of automating on it.

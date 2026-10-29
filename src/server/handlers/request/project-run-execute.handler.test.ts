@@ -3217,6 +3217,102 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     });
   }
 
+  it("publishes a native binary companion through the retained runtime writer", async () => {
+    const branch = "33333333-3333-4333-8333-333333333333";
+    const binary = new Uint8Array([255, 254, 0, 128]);
+    const body = {
+      runId: "run_binary",
+      kind: "task",
+      target: "task:knowledge-ingest",
+      projectId: "77777777-7777-4777-8777-777777777777",
+      canonicalRunId: "12121212-1212-4121-8121-121212121212",
+      runtimeTargetKind: "preview_branch",
+      runtimeTargetBranchId: branch,
+      config: {
+        path_prefix: "uploads/acme",
+        okf_bundle: true,
+        knowledge_path: "knowledge/imports/acme",
+      },
+    };
+    const respondObservation = createKnowledgeObservationResponder(body);
+    const signed = await signedRequest("/api/control-plane/runs/run_binary/execute", body, {
+      "x-token": "test-token",
+      "X-Veryfront-Inference-Token": "managed-embedding-fixture",
+      "X-Veryfront-Run-Event-Token": createKnowledgeIngestEventToken(body),
+    });
+    const checksums = new Map<string, string>();
+    let binaryWrites = 0;
+    const result = await withMockFetch(
+      async (input, init) => {
+        const url = new URL(input instanceof Request ? input.url : String(input));
+        const observed = respondObservation(url.toString(), init);
+        if (observed) return observed;
+        if (url.pathname.includes("/files/") && observeFetchRequestInit(init).method === "GET") {
+          assertEquals(url.searchParams.get("branch_id"), branch);
+          return new Response("missing", { status: 404 });
+        }
+        const indexed = canonicalKnowledgeIndexResponse(url.toString(), init, checksums);
+        if (indexed) return indexed;
+        if (url.pathname === "/projects/demo-project/uploads") {
+          return Response.json({
+            data: [{ type: "file", path: "uploads/acme/guide.md" }, {
+              type: "file",
+              path: "uploads/acme/image.bin",
+            }],
+            page_info: { next: null },
+          });
+        }
+        if (url.pathname.endsWith("uploads%2Facme%2Fguide.md")) {
+          return new Response("---\ntype: Concept\nresource: image.bin\n---\n# Guide\n", {
+            headers: { "content-type": "application/octet-stream" },
+          });
+        }
+        if (url.pathname.endsWith("uploads%2Facme%2Fimage.bin")) {
+          return new Response(binary, {
+            headers: { "content-type": "application/octet-stream" },
+          });
+        }
+        if (url.pathname.includes("/knowledge/assets/")) {
+          binaryWrites++;
+          const wire = observeFetchRequestInit(init);
+          const headers = new Headers(wire.headers);
+          assertEquals(
+            headers.get("X-Veryfront-Run-Event-Token"),
+            createKnowledgeIngestEventToken(body),
+          );
+          assertEquals(headers.get("content-type"), "application/octet-stream");
+          assertEquals(headers.get("x-vf-expected-absent"), "true");
+          assertEquals(url.searchParams.get("branch_id"), branch);
+          assertEquals(wire.body, binary);
+          return Response.json({
+            file_id: branch,
+            file_version_id: branch,
+            path: "knowledge/imports/acme/image.bin",
+            byte_size: binary.length,
+            content_hash: headers.get("x-vf-content-sha256"),
+            content_type: "application/octet-stream",
+          });
+        }
+        return await canonicalKnowledgePublicationResponse(
+          "knowledge/imports/acme/guide.md",
+          init,
+          checksums,
+        );
+      },
+      () =>
+        new ProjectRunExecuteHandler().handle(
+          signed.request,
+          Object.assign(createCtx(signed.publicKeyPem), { projectId: body.projectId }),
+        ),
+    );
+    assertExists(result.response);
+    const payload = await result.response.json();
+    assertEquals(payload.success, true, JSON.stringify(payload));
+    assertEquals(payload.result.summary.failed_count, 0);
+    assertEquals(payload.result.summary.ingested_count, 2);
+    assertEquals(binaryWrites, 1);
+  });
+
   for (const runtimeTargetKind of ["main_branch", "preview_branch"] as const) {
     for (
       const knowledgePath of [
@@ -9639,6 +9735,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       );
       const result = await handler.handle(request, createCtx(publicKeyPem));
       assertExists(result.response);
+      assertEquals(result.response.status, 200, await result.response.clone().text());
       return await result.response.json();
     }
 
@@ -19008,5 +19105,321 @@ describe("runtime ownership actual client problem transport", () => {
         assertEquals(JSON.stringify(receipts).includes("stop execution"), false);
       });
     }
+  }
+});
+
+describe("project run required schema snapshot protocol", () => {
+  for (
+    const [kind, cancellation] of [
+      ["task", "stop"],
+      ["workflow", "stop"],
+      ["task", "disconnect"],
+      ["workflow", "disconnect"],
+      ["task", "deadline"],
+    ] as const
+  ) {
+    it(`interrupts a pending ${kind} schema acknowledgment on ${cancellation}`, async () => {
+      const clock = manualTaskDeadlineClock();
+      const disconnect = new AbortController();
+      const registry = new RunStopRegistry();
+      const started = Promise.withResolvers<AbortSignal>();
+      const blocked = Promise.withResolvers<Response>();
+      let businessCalls = 0;
+      const runId = `run_schema_${cancellation}_${kind}`;
+      const canonicalRunId = "11111111-1111-4111-8111-111111111111";
+      const signed = await signedRequest(`/api/control-plane/runs/${runId}/execute`, {
+        runId,
+        canonicalRunId,
+        projectId: "proj-1",
+        kind,
+        target: kind === "task" ? "task:sync-calendar-events" : "workflow:publish",
+        schema_snapshot_protocol: 1,
+        ...(cancellation === "deadline"
+          ? { deadlineAt: new Date(clock.now() + 25).toISOString() }
+          : {}),
+      }, {
+        "x-veryfront-run-event-token": createProjectRunEventToken({
+          runId,
+          canonicalRunId,
+          projectId: "proj-1",
+        }),
+      });
+      const handler = new ProjectRunExecuteHandler(
+        createDeps({
+          runTask: async () => {
+            businessCalls++;
+            return { success: true, durationMs: 1 };
+          },
+          createWorkflowClient: () => {
+            businessCalls++;
+            throw new Error("workflow must not start before acknowledgment");
+          },
+        }),
+        clock,
+        registry,
+      );
+      await withMockFetch((_url, init) => {
+        const signal = init?.signal;
+        assertExists(signal);
+        started.resolve(signal);
+        signal.addEventListener("abort", () => blocked.reject(signal.reason), { once: true });
+        return blocked.promise;
+      }, async () => {
+        const pending = handler.handle(
+          new Request(signed.request, { signal: disconnect.signal }),
+          createCtx(signed.publicKeyPem),
+        );
+        const signal = await started.promise;
+        try {
+          if (cancellation === "stop") {
+            assertEquals(registry.requestStop(runId), { accepted: true, stopped: false });
+          } else if (cancellation === "disconnect") {
+            disconnect.abort(new Error("request disconnected"));
+          } else {
+            clock.advance(25);
+          }
+          assertEquals(signal.aborted, true);
+        } finally {
+          blocked.reject(new Error("test acknowledgment released"));
+          await pending;
+        }
+        assertEquals(registry.requestStop(runId), { accepted: true, stopped: true });
+      });
+      assertEquals(businessCalls, 0);
+    });
+  }
+
+  for (const shape of ["array-heavy", "deepest-array", "too-deep", "too-many-nodes"] as const) {
+    it(`preserves per-document schema limits through the append envelope: ${shape}`, async () => {
+      let document: Record<string, unknown> = { enum: [] };
+      if (shape === "array-heavy" || shape === "too-many-nodes") {
+        document = {
+          enum: Array.from({ length: shape === "array-heavy" ? 60_000 : 100_000 }, () => []),
+        };
+      } else {
+        for (let depth = 1; depth < (shape === "deepest-array" ? 128 : 129); depth++) {
+          document = { not: document };
+        }
+      }
+      const supported = shape === "array-heavy" || shape === "deepest-array";
+      const digest = await schemaIdentitySha256(document);
+      const runId = `run_schema_budget_${shape}`;
+      const canonicalRunId = "11111111-1111-4111-8111-111111111111";
+      let appends = 0;
+      let executions = 0;
+      const signed = await signedRequest(`/api/control-plane/runs/${runId}/execute`, {
+        runId,
+        canonicalRunId,
+        projectId: "proj-1",
+        kind: "task",
+        target: "task:bounded",
+        schema_snapshot_protocol: 1,
+      }, {
+        "x-veryfront-run-event-token": createProjectRunEventToken({
+          runId,
+          canonicalRunId,
+          projectId: "proj-1",
+        }),
+      });
+      const handler = new ProjectRunExecuteHandler(createDeps({
+        ensureProjectDiscovery: async () => {
+          const discovery = createEmptyDiscoveryResult();
+          discovery.tasks.set("bounded", {
+            name: "Bounded",
+            inputSchema: document,
+            outputSchema: document,
+            run: async () => null,
+          });
+          return discovery;
+        },
+        runTask: async () => {
+          executions++;
+          return { success: true, durationMs: 1 };
+        },
+      }));
+      await withMockFetch((_url, init) => {
+        appends++;
+        const body = requestJsonBody(init);
+        assertExists(body);
+        assertEquals(body.events, []);
+        assertEquals(body.schema_snapshot, {
+          version: 1,
+          state: "captured",
+          input: { schema: document, sha256: digest },
+          output: { schema: document, sha256: digest },
+        });
+        assert(typeof init?.body === "string");
+        assert(new TextEncoder().encode(init.body).length < 10 * 1024 * 1024);
+        return Promise.resolve(Response.json({
+          run_id: canonicalRunId,
+          latest_event_id: 0,
+          appended_count: 0,
+          schema_snapshot_ack: { version: 1, outcome: "stored" },
+        }));
+      }, () => handler.handle(signed.request, createCtx(signed.publicKeyPem)));
+      assertEquals(appends, supported ? 1 : 0);
+      assertEquals(executions, supported ? 1 : 0);
+    });
+  }
+
+  for (const mode of ["mutated", "mutated_schema", "invalid_input", "unknown_schema"] as const) {
+    it(`uses the detached definition and halts unsafe work: ${mode}`, async () => {
+      const runId = "run_schema_definition";
+      const canonicalRunId = "11111111-1111-4111-8111-111111111111";
+      const order: string[] = [];
+      const definition = {
+        name: "Captured task",
+        inputSchema: mode === "unknown_schema"
+          ? { bad: () => "must not execute" }
+          : { type: "object", required: ["name"], properties: { name: { type: "string" } } },
+        run: async () => {
+          order.push("original");
+          return { ok: true };
+        },
+      };
+      const signed = await signedRequest(`/api/control-plane/runs/${runId}/execute`, {
+        runId,
+        canonicalRunId,
+        projectId: "proj-1",
+        kind: "task",
+        target: "task:captured",
+        input: mode === "invalid_input" ? {} : { name: "valid" },
+        schema_snapshot_protocol: 1,
+      }, {
+        "x-veryfront-run-event-token": createProjectRunEventToken({
+          runId,
+          canonicalRunId,
+          projectId: "proj-1",
+        }),
+      });
+      const handler = new ProjectRunExecuteHandler(createDeps({
+        ensureProjectDiscovery: async () => {
+          const discovery = createEmptyDiscoveryResult();
+          discovery.tasks.set("captured", definition);
+          return discovery;
+        },
+        runTask: (options, pair) => runTask(options, createInMemoryHostRuntime(), undefined, pair),
+      }));
+      await withMockFetch(async () => {
+        order.push("ack");
+        if (mode === "mutated_schema") {
+          Object.assign(definition.inputSchema, { type: "number" });
+        }
+        definition.run = async () => {
+          order.push("replacement");
+          return { ok: false };
+        };
+        return Response.json({
+          run_id: canonicalRunId,
+          latest_event_id: 0,
+          appended_count: 0,
+          schema_snapshot_ack: { version: 1, outcome: "stored" },
+        });
+      }, () => handler.handle(signed.request, createCtx(signed.publicKeyPem)));
+      assertEquals(
+        order,
+        mode === "mutated" || mode === "mutated_schema"
+          ? ["ack", "original"]
+          : mode === "invalid_input"
+          ? ["ack"]
+          : [],
+      );
+    });
+  }
+
+  it("awaits workflow capture before client creation or registration", async () => {
+    const runId = "run_schema_workflow";
+    const canonicalRunId = "11111111-1111-4111-8111-111111111111";
+    const order: string[] = [];
+    const signed = await signedRequest(`/api/control-plane/runs/${runId}/execute`, {
+      runId,
+      canonicalRunId,
+      projectId: "proj-1",
+      kind: "workflow",
+      target: "workflow:publish",
+      schema_snapshot_protocol: 1,
+    }, {
+      "x-veryfront-run-event-token": createProjectRunEventToken({
+        runId,
+        canonicalRunId,
+        projectId: "proj-1",
+      }),
+    });
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      createWorkflowClient: () => {
+        order.push("client");
+        throw new Error("stop after host ack");
+      },
+    }));
+    await withMockFetch(async (_url, init) => {
+      assertEquals(requestJsonBody(init)?.schema_snapshot, {
+        version: 1,
+        state: "captured",
+        input: null,
+        output: null,
+      });
+      order.push("ack");
+      return Response.json({
+        run_id: canonicalRunId,
+        latest_event_id: 0,
+        appended_count: 0,
+        schema_snapshot_ack: { version: 1, outcome: "stored" },
+      });
+    }, () => handler.handle(signed.request, createCtx(signed.publicKeyPem)));
+    assertEquals(order, ["ack", "client"]);
+  });
+
+  for (const outcome of ["stored", "exact_replay", "mismatch_warning", "invalid", "refused"]) {
+    it(`awaits schema capture before task callback, acknowledgment ${outcome}`, async () => {
+      const runId = "run_schema_capture";
+      const canonicalRunId = "11111111-1111-4111-8111-111111111111";
+      const order: string[] = [];
+      const signed = await signedRequest(`/api/control-plane/runs/${runId}/execute`, {
+        runId,
+        canonicalRunId,
+        projectId: "proj-1",
+        kind: "task",
+        target: "task:sync-calendar-events",
+        schema_snapshot_protocol: 1,
+      }, {
+        "x-veryfront-run-event-token": createProjectRunEventToken({
+          runId,
+          canonicalRunId,
+          projectId: "proj-1",
+        }),
+      });
+      const handler = new ProjectRunExecuteHandler(createDeps({
+        runTask: async (options, pair) => {
+          order.push("run");
+          assertEquals(pair?.state, "captured");
+          assertEquals(pair?.input, null);
+          return runTask(options, createInMemoryHostRuntime(), undefined, pair);
+        },
+      }));
+      const result = await withMockFetch(async (url, init) => {
+        assertEquals(String(url), `https://api.veryfront.com/runs/${canonicalRunId}/events`);
+        const body = requestJsonBody(init);
+        assertEquals(body?.events, []);
+        assertEquals(body?.schema_snapshot, {
+          version: 1,
+          state: "captured",
+          input: null,
+          output: null,
+        });
+        order.push("ack");
+        if (outcome === "refused") return Response.json({}, { status: 403 });
+        return Response.json({
+          run_id: canonicalRunId,
+          latest_event_id: 0,
+          appended_count: 0,
+          schema_snapshot_ack: { version: 1, outcome },
+        });
+      }, () => handler.handle(signed.request, createCtx(signed.publicKeyPem)));
+      assertEquals(
+        order,
+        outcome === "invalid" || outcome === "refused" ? ["ack"] : ["ack", "run"],
+      );
+      assertExists(result.response);
+    });
   }
 });

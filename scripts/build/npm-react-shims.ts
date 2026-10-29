@@ -17,41 +17,9 @@ export function normalizeEsmShReactNpmShims(root: string): number {
   }
 
   for (const entry of Deno.readDirSync(root)) {
-    if (
-      entry.isFile && entry.name.startsWith(REACT_ROOT_PREFIX) &&
-      isShimFile(entry.name)
-    ) {
-      patchedCount += writeNpmShim(
-        `${root}/${entry.name}`,
-        "react",
-        entry.name,
-      );
-      continue;
-    }
-
-    if (
-      entry.isFile && entry.name.startsWith(REACT_DOM_ROOT_PREFIX) &&
-      isShimFile(entry.name)
-    ) {
-      // The chat UI portals import `react-dom` (createPortal), so dnt now
-      // emits a top-level react-dom root file too — shim it like react's.
-      patchedCount += writeNpmShim(
-        `${root}/${entry.name}`,
-        "react-dom",
-        entry.name,
-      );
-      continue;
-    }
-
-    if (
-      entry.isFile && entry.name.startsWith(SCHEDULER_ROOT_PREFIX) &&
-      isShimFile(entry.name)
-    ) {
-      patchedCount += writeNpmShim(
-        `${root}/${entry.name}`,
-        "scheduler",
-        entry.name,
-      );
+    const patched = patchRootNpmShim(root, entry);
+    if (patched !== undefined) {
+      patchedCount += patched;
       continue;
     }
 
@@ -109,6 +77,48 @@ export function normalizeEsmShReactNpmShims(root: string): number {
 
   assertNoReactInternalPackageImports(root);
   return patchedCount;
+}
+
+function patchRootNpmShim(
+  root: string,
+  entry: Deno.DirEntry,
+): number | undefined {
+  if (
+    entry.isFile && entry.name.startsWith(REACT_ROOT_PREFIX) &&
+    isShimFile(entry.name)
+  ) {
+    return writeNpmShim(
+      `${root}/${entry.name}`,
+      "react",
+      entry.name,
+    );
+  }
+
+  if (
+    entry.isFile && entry.name.startsWith(REACT_DOM_ROOT_PREFIX) &&
+    isShimFile(entry.name)
+  ) {
+    // The chat UI portals import `react-dom` (createPortal), so dnt now
+    // emits a top-level react-dom root file too — shim it like react's.
+    return writeNpmShim(
+      `${root}/${entry.name}`,
+      "react-dom",
+      entry.name,
+    );
+  }
+
+  if (
+    entry.isFile && entry.name.startsWith(SCHEDULER_ROOT_PREFIX) &&
+    isShimFile(entry.name)
+  ) {
+    return writeNpmShim(
+      `${root}/${entry.name}`,
+      "scheduler",
+      entry.name,
+    );
+  }
+
+  return undefined;
 }
 
 function isShimFile(name: string): boolean {

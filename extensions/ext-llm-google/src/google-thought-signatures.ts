@@ -175,6 +175,41 @@ function hasGoogleReplayTriggerProperty(
   return !Object.hasOwn(descriptor, "value") || descriptor.value !== undefined;
 }
 
+function isGooglePartIndex(partKey: string | symbol, partsLength: number): partKey is string {
+  if (partKey === "length" || typeof partKey !== "string") {
+    return false;
+  }
+  const partIndex = Number(partKey);
+  if (
+    !Number.isSafeInteger(partIndex) ||
+    partIndex < 0 ||
+    partIndex >= partsLength ||
+    String(partIndex) !== partKey
+  ) {
+    return false;
+  }
+  return true;
+}
+
+function readGoogleAssistantPartDescriptor(
+  parts: Array<Record<string, unknown>>,
+  partKey: string,
+): PropertyDescriptor {
+  let partDescriptor: PropertyDescriptor | undefined;
+  try {
+    partDescriptor = Object.getOwnPropertyDescriptor(
+      parts,
+      partKey,
+    );
+  } catch {
+    throw new TypeError("Google assistant parts could not be inspected");
+  }
+  if (partDescriptor === undefined) {
+    throw new TypeError("Google assistant parts changed while being inspected");
+  }
+  return partDescriptor;
+}
+
 function needsGoogleExactReplay(
   parts: Array<Record<string, unknown>>,
 ): boolean {
@@ -200,30 +235,8 @@ function needsGoogleExactReplay(
     throw new TypeError("Google assistant parts could not be inspected");
   }
   for (const partKey of partKeys) {
-    if (partKey === "length" || typeof partKey !== "string") {
-      continue;
-    }
-    const partIndex = Number(partKey);
-    if (
-      !Number.isSafeInteger(partIndex) ||
-      partIndex < 0 ||
-      partIndex >= partsLength ||
-      String(partIndex) !== partKey
-    ) {
-      continue;
-    }
-    let partDescriptor: PropertyDescriptor | undefined;
-    try {
-      partDescriptor = Object.getOwnPropertyDescriptor(
-        parts,
-        partKey,
-      );
-    } catch {
-      throw new TypeError("Google assistant parts could not be inspected");
-    }
-    if (partDescriptor === undefined) {
-      throw new TypeError("Google assistant parts changed while being inspected");
-    }
+    if (!isGooglePartIndex(partKey, partsLength)) continue;
+    const partDescriptor = readGoogleAssistantPartDescriptor(parts, partKey);
     if (!Object.hasOwn(partDescriptor, "value")) {
       // Force the protected snapshot path, which rejects array accessors
       // without invoking them.
@@ -309,7 +322,7 @@ export function createGoogleProviderMetadata(
     return undefined;
   }
   let ownedParts: readonly Record<string, unknown>[] | undefined;
-  if (needsExactReplay) {
+  const snapshotReplayParts = () => {
     const partsSnapshot = snapshotGoogleProviderMetadata(parts);
     if (!Array.isArray(partsSnapshot)) {
       throw new TypeError("Google raw assistant parts must be an array");
@@ -325,12 +338,17 @@ export function createGoogleProviderMetadata(
         snapshotGoogleProviderMetadata(rawAssistantPartIndexes),
         partsSnapshot.length,
       );
-    ownedParts = validateGoogleRawAssistantParts(
+    const ownedParts = validateGoogleRawAssistantParts(
       partsSnapshot as readonly JsonSnapshotValue[],
       ownedPartIndexes,
       toolCallScope,
     );
-    rawAssistantPartIndexes = ownedPartIndexes;
+    return { parts: ownedParts, partIndexes: ownedPartIndexes };
+  };
+  if (needsExactReplay) {
+    const replayParts = snapshotReplayParts();
+    ownedParts = replayParts.parts;
+    rawAssistantPartIndexes = replayParts.partIndexes;
   }
 
   const metadata = snapshotGoogleProviderMetadata({
@@ -369,19 +387,11 @@ function validateGoogleRawAssistantParts(
   let hasThoughtSignature = false;
   let hasCodeExecution = false;
   const toolCallRegistry = createGoogleToolCallCorrelationRegistry(toolCallScope);
-  for (let partIndex = 0; partIndex < rawParts.length; partIndex += 1) {
-    const rawPart = rawParts[partIndex];
-    if (rawPart === undefined) {
-      throw new TypeError("Google raw assistant parts must be dense");
-    }
-    const part = asSnapshotRecord(rawPart);
-    if (!part) {
-      throw new TypeError("Google raw assistant part must be an object");
-    }
-    const dataField = validateReplayableGooglePart(part);
-    if (readGoogleThoughtSignature(part) !== undefined) {
-      hasThoughtSignature = true;
-    }
+  const validateToolPart = (
+    dataField: GoogleSupportedPartDataField,
+    part: Record<string, unknown>,
+    partIndex: number,
+  ) => {
     if (dataField === "functionCall") {
       const functionCall = readRecord(part.functionCall);
       const functionCallId = typeof functionCall?.id === "string" ? functionCall.id : undefined;
@@ -414,6 +424,21 @@ function validateGoogleRawAssistantParts(
         );
       }
     }
+  };
+  for (let partIndex = 0; partIndex < rawParts.length; partIndex += 1) {
+    const rawPart = rawParts[partIndex];
+    if (rawPart === undefined) {
+      throw new TypeError("Google raw assistant parts must be dense");
+    }
+    const part = asSnapshotRecord(rawPart);
+    if (!part) {
+      throw new TypeError("Google raw assistant part must be an object");
+    }
+    const dataField = validateReplayableGooglePart(part);
+    if (readGoogleThoughtSignature(part) !== undefined) {
+      hasThoughtSignature = true;
+    }
+    validateToolPart(dataField, part, partIndex);
   }
 
   if (!hasThoughtSignature && !hasCodeExecution) {
@@ -530,13 +555,11 @@ export function reconcileGoogleProviderMetadata(
   const registry = createGoogleToolCallCorrelationRegistry(toolCallScope);
   let retainedToolPart = false;
 
-  for (let partIndex = 0; partIndex < rawAssistantParts.length; partIndex += 1) {
-    const part = rawAssistantParts[partIndex];
-    if (part === undefined) {
-      throw new TypeError("Google raw assistant parts must be dense");
-    }
-
-    const dataField = readGooglePartDataField(part);
+  const resolveToolCallId = (
+    part: Record<string, unknown>,
+    partIndex: number,
+    dataField: GoogleSupportedPartDataField,
+  ) => {
     let toolCallId: string | undefined;
     if (dataField === "functionCall") {
       const functionCall = readRecord(part.functionCall);
@@ -549,6 +572,17 @@ export function reconcileGoogleProviderMetadata(
       const result = readGoogleCodeExecutionResult(part.codeExecutionResult);
       toolCallId = registry.resolveCodeExecutionResult(result.providerId);
     }
+    return toolCallId;
+  };
+
+  for (let partIndex = 0; partIndex < rawAssistantParts.length; partIndex += 1) {
+    const part = rawAssistantParts[partIndex];
+    if (part === undefined) {
+      throw new TypeError("Google raw assistant parts must be dense");
+    }
+
+    const dataField = readGooglePartDataField(part);
+    const toolCallId = resolveToolCallId(part, partIndex, dataField);
 
     if (toolCallId !== undefined && suppressedIds.has(toolCallId)) {
       matchedSuppressedIds.add(toolCallId);

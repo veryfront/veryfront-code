@@ -164,6 +164,7 @@ export const FRAMEWORK_CANDIDATES: readonly string[] = [
   "!event.metaKey",
   "!event.shiftKey",
   "!existing)",
+  "!explicitStopped",
   "!failed)",
   "!failure)",
   "!first",

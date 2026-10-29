@@ -1,19 +1,10 @@
 ---
-title: "Veryfront Code"
-description: "An AI framework to build AI apps and agents."
+title: "Framework architecture"
+description: "How application routes, agents and execution primitives share one project."
 order: 1
 ---
 
-Veryfront Code is an AI framework for building AI apps and agents in TypeScript
-and React. It treats apps, agents, tools,
-workflows, tasks, runs, prompts, resources, skills, integrations, MCP servers,
-sandboxes, and extensions as framework primitives with shared project
-conventions.
-
-The framework exists because AI applications need normal app surfaces and AI
-runtime surfaces to cooperate. A chat page, an AG-UI route, an agent, a tool,
-and a deployment target are separate concerns that belong in the same
-discoverable project.
+A Veryfront project combines application routes, agent behavior and execution primitives. File conventions let the runtime discover their definitions.
 
 ## Main surfaces
 
@@ -26,7 +17,5 @@ discoverable project.
 
 ## Core idea
 
-The shared project model matters more than any single primitive. Routes decide
-how users and HTTP clients enter the system. Agents, tools, workflows, tasks,
-runs, prompts, resources, skills, integrations, and sandboxes define
-capabilities that routes and runtime services can reuse.
+Routes receive requests from users and HTTP clients. Agents, tools, workflows
+and tasks define work that routes and runtime services can reuse.

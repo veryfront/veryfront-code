@@ -2,6 +2,12 @@ import { assertEquals, assertExists, assertStrictEquals } from "#std/assert";
 import type ReactDOMClient from "./react-dom-client.ts";
 import type ReactDOMServer from "./react-dom-server.ts";
 import type ReactDOM from "./react-dom.ts";
+// The upstream browser server build opens a MessageChannel when its module is evaluated. Loading the
+// DOM shims here, at module load, keeps that port out of the op sanitizer of the test that reads them;
+// importing them inside the test made it fail whenever no earlier test in the process had loaded them.
+import * as client from "./react-dom-client.ts";
+import * as server from "./react-dom-server.ts";
+import * as dom from "./react-dom.ts";
 import type React from "./react.ts";
 import * as ReactShim from "./react.ts";
 import { cloneElement, createElement, createRef, useLayoutEffect, useReducer } from "./react.ts";
@@ -39,9 +45,6 @@ Deno.test("react shim exports every upstream runtime export", async () => {
 });
 
 Deno.test("React DOM shims preserve upstream defaults and exports", async () => {
-  const client = await import("./react-dom-client.ts");
-  const server = await import("./react-dom-server.ts");
-  const dom = await import("./react-dom.ts");
   const createRoot: typeof ReactDOMClient.createRoot = client.default.createRoot;
   const renderToString: typeof ReactDOMServer.renderToString = server.default.renderToString;
   const createPortal: typeof ReactDOM.createPortal = dom.default.createPortal;

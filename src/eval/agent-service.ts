@@ -40,6 +40,11 @@ import {
   nativeFetchArguments,
 } from "#veryfront/platform/compat/http/native-request-init.ts";
 
+import {
+  agentServiceFailureDiagnostic,
+  type AgentServiceFailureStage,
+} from "./agent-service/failure-diagnostic.ts";
+
 export * from "./agent-service/live-evals/index.ts";
 export * from "./agent-service/durable-run-canaries/index.ts";
 
@@ -883,6 +888,7 @@ export function createAgentServiceEvalAdapter(
         error: "mockTools are only supported by local eval agent execution.",
       };
     }
+    let failureStage: AgentServiceFailureStage = "request-build";
     try {
       const body = buildAgentServiceEvalRequestBody({
         exampleId: context.example.id,
@@ -910,8 +916,11 @@ export function createAgentServiceEvalAdapter(
       // Indexed, not spread: spreading runs Array.prototype's iterator over a
       // tuple that holds the credential-bearing init.
       const fetchArguments = nativeFetchArguments(endpoint, init);
+      failureStage = "request-fetch";
       const response = await requestFetch(fetchArguments[0], fetchArguments[1]);
+      failureStage = "response-read";
       const run = await parseAgUiSseResponse(response, parseOptions);
+      failureStage = "result-processing";
       const completed = response.ok && run.runError === null &&
         run.eventTypes.includes(agUiSseEventTypes.runFinished);
       if (!completed) throwIfAgentServiceModelAccessDenied(context.definition.id, response, run);
@@ -928,6 +937,9 @@ export function createAgentServiceEvalAdapter(
         ...(usage ? { usage } : {}),
         durationMs: getNow(config) - started,
         completed,
+        ...(response.ok && run.eventTypes.includes(agUiSseEventTypes.runError)
+          ? { outcome: "error" as const }
+          : {}),
         ...(!completed ? { error: describeFailedRun(response, run) } : {}),
       };
     } catch (error) {
@@ -940,6 +952,7 @@ export function createAgentServiceEvalAdapter(
             responseStatus: 0,
             eventTypes: [],
             runError: stringifyEvalError(error),
+            failure: agentServiceFailureDiagnostic(failureStage, error),
           },
         },
         trace: {

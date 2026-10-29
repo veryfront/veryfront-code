@@ -71,7 +71,7 @@ export function createWorkflowAgentNodeRunner(binding: {
         target: { type: "agent", id: invocation.agentId },
         parent_run_id: parentId,
         node_id: nodeId,
-        input: { prompt },
+        input: { text: prompt },
       }),
       signal,
     });
@@ -84,7 +84,12 @@ export function createWorkflowAgentNodeRunner(binding: {
     });
     return await runInheritedLocalAgent(
       child,
-      { projectId: binding.projectId, apiUrl: binding.apiUrl, fetch: send },
+      {
+        projectId: binding.projectId,
+        apiUrl: binding.apiUrl,
+        fetch: send,
+        restoreAgentResponse: true,
+      },
       invocation.execute,
       invocation.signal,
     );

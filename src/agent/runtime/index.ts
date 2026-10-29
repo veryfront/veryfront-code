@@ -1,5 +1,8 @@
 import { MAX_RUNTIME_PROVIDER_STREAM_RETRIES } from "./provider-stream-retry-policy.ts";
-import { runWithToolCallOccurrenceDispatch } from "#veryfront/runtime/tool-call-occurrence.ts";
+import {
+  introduceToolCallOccurrence,
+  runWithToolCallOccurrenceDispatch,
+} from "#veryfront/runtime/tool-call-occurrence.ts";
 import {
   bindRuntimeStreamForwardingController,
   withRuntimeStreamOwnership,
@@ -180,6 +183,7 @@ import {
 } from "./provider-replay-protocol.ts";
 import {
   attachOutputSchemaParser,
+  readStructuredAgentOutput,
   resolveAgentOutputSchema,
   type ResolvedAgentOutputSchema,
 } from "../output-schema.ts";
@@ -204,6 +208,8 @@ import {
   enforceSkillPolicy,
   getProviderObservedSkillBodies,
   getTrustedSkillLoadResultIds,
+  getTrustedSkillLoadResultRefs,
+  hasAmbiguousTrustedSkillLoadResultIds,
   hasTrustedPlatformPolicyToolDefinition,
   hasTrustedPlatformPolicyToolResultPart,
   inheritTrustedPlatformPolicyToolResultPart,
@@ -505,6 +511,12 @@ const EVAL_RETAINED_SKILL_LOADER_TOOL_IDS = [
   "veryfront__load_skill_reference",
 ] as const;
 
+function readSnapshotDescriptorValue(descriptor: PropertyDescriptor, receiver: unknown): unknown {
+  if ("value" in descriptor) return descriptor.value;
+  if (descriptor.get) return IntrinsicReflectApply(descriptor.get, receiver, []);
+  return undefined;
+}
+
 function cloneStructuredValuePreservingOpaque<T>(value: T, allowOpaqueObjects = false): T {
   class UnsafeInputCopyError extends TypeError {}
   const seen = new IntrinsicWeakMap<object, unknown>();
@@ -533,71 +545,112 @@ function cloneStructuredValuePreservingOpaque<T>(value: T, allowOpaqueObjects = 
       if (allowOpaqueObjects) return candidate;
       throw new UnsafeInputCopyError("Object input cannot be safely copied");
     }
-    if (isArray) {
-      const candidateArray = candidate as unknown[];
-      const array: unknown[] = [];
-      IntrinsicReflectApply(WeakMapSet, seen, [candidate, array]);
+    if (isArray) return cloneArray(candidate);
+    return cloneObject(candidate);
+  };
+  const cloneArrayFromDescriptors = (candidate: unknown, array: unknown[]): unknown => {
+    try {
+      // Read array descriptors without invoking a Proxy's indexed get
+      // traps. Provider-visible values must not retain the caller's array.
+      const descriptors = ObjectGetOwnPropertyDescriptors(candidate);
+      const length = descriptors.length?.value;
+      if (typeof length !== "number") throw new TypeError("Invalid array length");
+      array.length = 0;
+      array.length = length;
+      for (let index = 0; index < length; index++) {
+        const descriptor = ObjectHasOwn(descriptors, index) ? descriptors[index] : undefined;
+        array[index] = descriptor
+          ? clone(readSnapshotDescriptorValue(descriptor, candidate))
+          : undefined;
+      }
+    } catch (error) {
+      if (error instanceof UnsafeInputCopyError) throw error;
+      if (!allowOpaqueObjects) {
+        throw new UnsafeInputCopyError("Array input cannot be safely copied");
+      }
+      IntrinsicReflectApply(WeakMapSet, seen, [candidate, candidate]);
+      return candidate;
+    }
+    return array;
+  };
+  const cloneArray = (candidate: unknown): unknown => {
+    const candidateArray = candidate as unknown[];
+    const array: unknown[] = [];
+    IntrinsicReflectApply(WeakMapSet, seen, [candidate, array]);
+    try {
+      const length = candidateArray.length;
+      for (let index = 0; index < length; index++) {
+        array[index] = clone(candidateArray[index]);
+      }
+    } catch (error) {
+      if (error instanceof UnsafeInputCopyError) throw error;
+      return cloneArrayFromDescriptors(candidate, array);
+    }
+    return array;
+  };
+  const cloneObjectDescriptorValue = (
+    descriptor: PropertyDescriptor,
+    candidate: unknown,
+  ): unknown => {
+    if ("value" in descriptor) return clone(descriptor.value);
+    if (descriptor.get) return clone(IntrinsicReflectApply(descriptor.get, candidate, []));
+    return undefined;
+  };
+  const cloneObjectDescriptors = (
+    candidate: unknown,
+    descriptors: PropertyDescriptorMap,
+    object: Record<PropertyKey, unknown>,
+  ): unknown => {
+    IntrinsicReflectApply(WeakMapSet, seen, [candidate, object]);
+    for (const key of ReflectOwnKeys(descriptors)) {
+      const descriptor = descriptors[key as keyof typeof descriptors];
+      if (!descriptor?.enumerable) continue;
+      let detachedValue: unknown;
       try {
-        const length = candidateArray.length;
-        for (let index = 0; index < length; index++) {
-          array[index] = clone(candidateArray[index]);
-        }
+        detachedValue = cloneObjectDescriptorValue(descriptor, candidate);
+        ObjectDefineProperty(object, key, {
+          value: detachedValue,
+          enumerable: descriptor.enumerable,
+          configurable: true,
+          writable: true,
+        });
       } catch (error) {
         if (error instanceof UnsafeInputCopyError) throw error;
-        try {
-          // Read array descriptors without invoking a Proxy's indexed get
-          // traps. Provider-visible values must not retain the caller's array.
-          const descriptors = ObjectGetOwnPropertyDescriptors(candidate);
-          const length = descriptors.length?.value;
-          if (typeof length !== "number") throw new TypeError("Invalid array length");
-          array.length = 0;
-          array.length = length;
-          for (let index = 0; index < length; index++) {
-            const descriptor = ObjectHasOwn(descriptors, index) ? descriptors[index] : undefined;
-            array[index] = descriptor
-              ? clone(
-                "value" in descriptor
-                  ? descriptor.value
-                  : descriptor.get
-                  ? IntrinsicReflectApply(descriptor.get, candidate, [])
-                  : undefined,
-              )
-              : undefined;
-          }
-        } catch (error) {
-          if (error instanceof UnsafeInputCopyError) throw error;
-          if (!allowOpaqueObjects) {
-            throw new UnsafeInputCopyError("Array input cannot be safely copied");
-          }
-          IntrinsicReflectApply(WeakMapSet, seen, [candidate, candidate]);
-          return candidate;
-        }
+        continue;
       }
-      return array;
     }
+    return object;
+  };
+  const readSnapshotPrototype = (candidate: unknown): object | null => {
+    try {
+      return ObjectGetPrototypeOf(candidate);
+    } catch {
+      return ObjectPrototype;
+    }
+  };
+  const cloneSpecialObject = (candidate: unknown): unknown => {
+    const serialize = (candidate as { toJSON?: unknown }).toJSON;
+    if (typeof serialize === "function") {
+      IntrinsicReflectApply(WeakMapSet, seen, [candidate, candidate]);
+      const serialized = IntrinsicReflectApply(serialize, candidate, []);
+      if (serialized !== candidate) {
+        const detached = clone(serialized);
+        IntrinsicReflectApply(WeakMapSet, seen, [candidate, detached]);
+        return detached;
+      }
+    }
+    const detached = IntrinsicStructuredClone(candidate);
+    IntrinsicReflectApply(WeakMapSet, seen, [candidate, detached]);
+    return detached;
+  };
+  const cloneObject = (candidate: unknown): unknown => {
     let prototype: object | null;
     let descriptors: PropertyDescriptorMap;
     try {
-      try {
-        prototype = ObjectGetPrototypeOf(candidate);
-      } catch {
-        prototype = ObjectPrototype;
-      }
+      prototype = readSnapshotPrototype(candidate);
       if (prototype !== ObjectPrototype && prototype !== null) {
         try {
-          const serialize = (candidate as { toJSON?: unknown }).toJSON;
-          if (typeof serialize === "function") {
-            IntrinsicReflectApply(WeakMapSet, seen, [candidate, candidate]);
-            const serialized = IntrinsicReflectApply(serialize, candidate, []);
-            if (serialized !== candidate) {
-              const detached = clone(serialized);
-              IntrinsicReflectApply(WeakMapSet, seen, [candidate, detached]);
-              return detached;
-            }
-          }
-          const detached = IntrinsicStructuredClone(candidate);
-          IntrinsicReflectApply(WeakMapSet, seen, [candidate, detached]);
-          return detached;
+          return cloneSpecialObject(candidate);
         } catch (error) {
           if (error instanceof UnsafeInputCopyError) throw error;
           // A nested Proxy can report a native prototype while exposing an
@@ -614,30 +667,11 @@ function cloneStructuredValuePreservingOpaque<T>(value: T, allowOpaqueObjects = 
       }
       return candidate;
     }
-    const object = ObjectCreate(prototype) as Record<PropertyKey, unknown>;
-    IntrinsicReflectApply(WeakMapSet, seen, [candidate, object]);
-    for (const key of ReflectOwnKeys(descriptors)) {
-      const descriptor = descriptors[key as keyof typeof descriptors];
-      if (!descriptor?.enumerable) continue;
-      let detachedValue: unknown;
-      try {
-        detachedValue = "value" in descriptor
-          ? clone(descriptor.value)
-          : descriptor.get
-          ? clone(IntrinsicReflectApply(descriptor.get, candidate, []))
-          : undefined;
-        ObjectDefineProperty(object, key, {
-          value: detachedValue,
-          enumerable: descriptor.enumerable,
-          configurable: true,
-          writable: true,
-        });
-      } catch (error) {
-        if (error instanceof UnsafeInputCopyError) throw error;
-        continue;
-      }
-    }
-    return object;
+    return cloneObjectDescriptors(
+      candidate,
+      descriptors,
+      ObjectCreate(prototype) as Record<PropertyKey, unknown>,
+    );
   };
   return clone(value) as T;
 }
@@ -708,27 +742,17 @@ function cloneKnownMessagePartFields(part: MessagePart): MessagePart {
     : cloned;
 }
 
-function cloneMessagePartForCommit(part: MessagePart): MessagePart {
-  let descriptors: PropertyDescriptorMap;
-  try {
-    descriptors = ObjectGetOwnPropertyDescriptors(part);
-  } catch {
-    // A structurally valid Proxy can expose the fields consumed by provider
-    // conversion while refusing descriptor enumeration. Detach those known
-    // fields individually so persistence does not introduce a new failure.
-    return cloneKnownMessagePartFields(part);
-  }
-  const detached = ObjectCreate(ObjectPrototype) as Record<string, unknown>;
+function cloneOwnMessagePartFields(
+  part: MessagePart,
+  descriptors: PropertyDescriptorMap,
+  detached: Record<string, unknown>,
+): void {
   for (const key of ObjectKeys(descriptors)) {
     const descriptor = descriptors[key];
     if (!descriptor) continue;
     let value: unknown;
     try {
-      value = "value" in descriptor
-        ? descriptor.value
-        : descriptor.get
-        ? IntrinsicReflectApply(descriptor.get, part, [])
-        : undefined;
+      value = readSnapshotDescriptorValue(descriptor, part);
     } catch {
       // Provider conversion ignores unrelated extension accessors. Preserve
       // valid structural fields when one of those accessors cannot be read.
@@ -744,6 +768,13 @@ function cloneMessagePartForCommit(part: MessagePart): MessagePart {
       writable: true,
     });
   }
+}
+
+function cloneInheritedMessagePartFields(
+  part: MessagePart,
+  descriptors: PropertyDescriptorMap,
+  detached: Record<string, unknown>,
+): void {
   const source = part as Record<string, unknown>;
   for (const key of PROVIDER_VISIBLE_MESSAGE_PART_FIELDS) {
     if (ObjectHasOwn(descriptors, key)) continue;
@@ -762,6 +793,21 @@ function cloneMessagePartForCommit(part: MessagePart): MessagePart {
       writable: true,
     });
   }
+}
+
+function cloneMessagePartForCommit(part: MessagePart): MessagePart {
+  let descriptors: PropertyDescriptorMap;
+  try {
+    descriptors = ObjectGetOwnPropertyDescriptors(part);
+  } catch {
+    // A structurally valid Proxy can expose the fields consumed by provider
+    // conversion while refusing descriptor enumeration. Detach those known
+    // fields individually so persistence does not introduce a new failure.
+    return cloneKnownMessagePartFields(part);
+  }
+  const detached = ObjectCreate(ObjectPrototype) as Record<string, unknown>;
+  cloneOwnMessagePartFields(part, descriptors, detached);
+  cloneInheritedMessagePartFields(part, descriptors, detached);
   const cloned = detached as MessagePart;
   return isToolResultPart(part) && isToolResultPart(cloned)
     ? inheritTrustedPlatformPolicyToolResultPart(part, cloned)
@@ -789,6 +835,18 @@ function cloneMessageForCommit(message: Message): Message {
   return snapshot;
 }
 
+function providerArraysEqual(
+  left: unknown[],
+  right: unknown[],
+  seen: WeakMap<object, object>,
+): boolean {
+  if (left.length !== right.length) return false;
+  for (let index = 0; index < left.length; index++) {
+    if (!providerValuesEqual(left[index], right[index], seen)) return false;
+  }
+  return true;
+}
+
 function providerValuesEqual(
   left: unknown,
   right: unknown,
@@ -807,13 +865,7 @@ function providerValuesEqual(
   const leftIsArray = ArrayIsArray(left);
   if (leftIsArray !== ArrayIsArray(right)) return false;
   if (leftIsArray) {
-    const leftArray = left as unknown[];
-    const rightArray = right as unknown[];
-    if (leftArray.length !== rightArray.length) return false;
-    for (let index = 0; index < leftArray.length; index++) {
-      if (!providerValuesEqual(leftArray[index], rightArray[index], seen)) return false;
-    }
-    return true;
+    return providerArraysEqual(left as unknown[], right as unknown[], seen);
   }
 
   const leftPrototype = ObjectGetPrototypeOf(left);
@@ -987,6 +1039,86 @@ function isOrdinaryRecordPrototype(prototype: object | null): boolean {
   }
 }
 
+function copyRuntimeStateDescriptors(
+  clone: unknown[] | Record<PropertyKey, unknown>,
+  descriptors: PropertyDescriptorMap,
+  isArray: boolean,
+  clones: WeakMap<object, unknown>,
+  proxyDetectionAvailable: boolean,
+  fallback: RuntimeStateCloneFallback,
+  providerOptionKey: string | undefined,
+): void {
+  const lengthDescriptor = isArray ? descriptors.length : undefined;
+  for (const key of ReflectOwnKeys(descriptors)) {
+    if (isArray && key === "length") {
+      continue;
+    }
+    const descriptor = descriptors[key as keyof PropertyDescriptorMap];
+    if (!descriptor) {
+      continue;
+    }
+    if ("value" in descriptor) {
+      descriptor.value = cloneRuntimeStateMutableValue(
+        descriptor.value,
+        clones,
+        proxyDetectionAvailable,
+        getChildRuntimeStateCloneFallback(fallback, isArray, key, providerOptionKey),
+        providerOptionKey,
+      );
+    }
+    ObjectDefineProperty(clone, key, descriptor);
+  }
+  if (lengthDescriptor) {
+    ObjectDefineProperty(clone, "length", lengthDescriptor);
+  }
+}
+
+interface RuntimeStateContainerInput {
+  value: object;
+  isArray: boolean;
+}
+
+function cloneRuntimeStateContainer(
+  input: RuntimeStateContainerInput,
+  clones: WeakMap<object, unknown>,
+  proxyDetectionAvailable: boolean,
+  fallback: RuntimeStateCloneFallback,
+  providerOptionKey: string | undefined,
+): unknown {
+  const { value, isArray } = input;
+  let prototype: object | null;
+  try {
+    prototype = ObjectGetPrototypeOf(value);
+  } catch {
+    return value;
+  }
+  if (!isArray && !isOrdinaryRecordPrototype(prototype)) {
+    return value;
+  }
+
+  let descriptors: PropertyDescriptorMap;
+  try {
+    descriptors = ObjectGetOwnPropertyDescriptors(value);
+  } catch {
+    return value;
+  }
+
+  let clone: unknown[] | Record<PropertyKey, unknown>;
+  if (isArray) clone = [];
+  else clone = ObjectCreate(prototype === null ? null : ObjectPrototype);
+  clones.set(value, clone);
+  copyRuntimeStateDescriptors(
+    clone,
+    descriptors,
+    isArray,
+    clones,
+    proxyDetectionAvailable,
+    fallback,
+    providerOptionKey,
+  );
+  return clone;
+}
+
 function cloneRuntimeStateMutableValue(
   value: unknown,
   clones: WeakMap<object, unknown>,
@@ -1027,59 +1159,23 @@ function cloneRuntimeStateMutableValue(
       // structured-system containers are copied from descriptors before this
       // branch so metadata accessors stay inert. Unknown values still fail
       // closed without reflective Proxy probes.
-      if (isOpaqueProxyCloneFailure(error)) {
-        return value;
-      }
-      if (getStructuredCloneFailureFingerprint(error) === undefined) {
+      if (
+        isOpaqueProxyCloneFailure(error) ||
+        getStructuredCloneFailureFingerprint(error) === undefined
+      ) {
         return value;
       }
     }
   }
 
   const isArray = isArrayWithoutThrowing(value);
-  let prototype: object | null;
-  try {
-    prototype = ObjectGetPrototypeOf(value);
-  } catch {
-    return value;
-  }
-  if (!isArray && !isOrdinaryRecordPrototype(prototype)) {
-    return value;
-  }
-
-  let descriptors: PropertyDescriptorMap;
-  try {
-    descriptors = ObjectGetOwnPropertyDescriptors(value);
-  } catch {
-    return value;
-  }
-
-  const clone = isArray ? [] : ObjectCreate(prototype === null ? null : ObjectPrototype);
-  clones.set(value, clone);
-  const lengthDescriptor = isArray ? descriptors.length : undefined;
-  for (const key of ReflectOwnKeys(descriptors)) {
-    if (isArray && key === "length") {
-      continue;
-    }
-    const descriptor = descriptors[key as keyof PropertyDescriptorMap];
-    if (!descriptor) {
-      continue;
-    }
-    if ("value" in descriptor) {
-      descriptor.value = cloneRuntimeStateMutableValue(
-        descriptor.value,
-        clones,
-        proxyDetectionAvailable,
-        getChildRuntimeStateCloneFallback(fallback, isArray, key, providerOptionKey),
-        providerOptionKey,
-      );
-    }
-    ObjectDefineProperty(clone, key, descriptor);
-  }
-  if (lengthDescriptor) {
-    ObjectDefineProperty(clone, "length", lengthDescriptor);
-  }
-  return clone;
+  return cloneRuntimeStateContainer(
+    { value, isArray },
+    clones,
+    proxyDetectionAvailable,
+    fallback,
+    providerOptionKey,
+  );
 }
 
 export function cloneRuntimeStateMutableData<T>(
@@ -1324,12 +1420,170 @@ function addOutputSchemaObservationReason(reasons: string[], reason: string): vo
   pushPrivateArray(reasons, reason);
 }
 
-function snapshotOutputSchemaObservationValue(
-  value: unknown,
-  context: OutputSchemaObservationSnapshotContext = {
+function createOutputSchemaSnapshotContext(): OutputSchemaObservationSnapshotContext {
+  return {
     seen: new IntrinsicWeakMap<object, true>(),
     remainingNodes: OUTPUT_SCHEMA_OBSERVATION_MAX_NODES,
-  },
+  };
+}
+
+function snapshotOutputSchemaArrayItem(
+  property: PropertyDescriptor | undefined,
+  context: OutputSchemaObservationSnapshotContext,
+  depth: number,
+): OutputSchemaObservationSnapshot {
+  if (property && ObjectHasOwn(property, "value")) {
+    return snapshotOutputSchemaObservationValue(property.value, context, depth + 1);
+  }
+  if (property) {
+    return {
+      value: OUTPUT_SCHEMA_OBSERVATION_UNSUPPORTED_ACCESSOR,
+      status: "partial",
+      reasons: ["accessor_property"],
+    };
+  }
+  return { value: null, status: "complete", reasons: [] };
+}
+
+function snapshotOutputSchemaArray(
+  value: unknown,
+  context: OutputSchemaObservationSnapshotContext,
+  depth: number,
+  reasons: string[],
+): OutputSchemaObservationSnapshot {
+  const output: unknown[] = [];
+  const arrayValue = value as unknown[];
+  let length: number;
+  try {
+    length = arrayValue.length;
+  } catch {
+    return {
+      value: OUTPUT_SCHEMA_OBSERVATION_UNSUPPORTED_OBJECT,
+      status: "unsupported",
+      reasons: ["unsupported_object"],
+    };
+  }
+  const limit = MathMin(length, OUTPUT_SCHEMA_OBSERVATION_MAX_ARRAY_ITEMS);
+  for (let index = 0; index < limit; index++) {
+    let property: PropertyDescriptor | undefined;
+    try {
+      property = ObjectGetOwnPropertyDescriptor(arrayValue, index);
+    } catch {
+      return {
+        value: OUTPUT_SCHEMA_OBSERVATION_UNSUPPORTED_OBJECT,
+        status: "unsupported",
+        reasons: ["unsupported_object"],
+      };
+    }
+    const item = snapshotOutputSchemaArrayItem(property, context, depth);
+    defineOwnDataProperty(output, index, item.value, {
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    });
+    forEachPrivateArray(
+      item.reasons,
+      (reason) => addOutputSchemaObservationReason(reasons, reason),
+    );
+    if (item.status === "unsupported") {
+      addOutputSchemaObservationReason(reasons, "unsupported_array_item");
+    }
+  }
+  if (length > limit) {
+    defineOwnDataProperty(output, limit, `[truncated ${length - limit} items]`, {
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    });
+    addOutputSchemaObservationReason(reasons, "array_truncated");
+  }
+  return { value: output, status: reasons.length > 0 ? "partial" : "complete", reasons };
+}
+
+interface OutputSchemaObjectSnapshotState {
+  output: Record<string, unknown>;
+  reasons: string[];
+  copiedKeys: number;
+}
+
+function snapshotOutputSchemaObjectProperty(
+  key: PropertyKey | undefined,
+  descriptors: PropertyDescriptorMap,
+  context: OutputSchemaObservationSnapshotContext,
+  depth: number,
+  state: OutputSchemaObjectSnapshotState,
+): boolean {
+  if (typeof key !== "string") {
+    addOutputSchemaObservationReason(state.reasons, "unsupported_property_key");
+    return false;
+  }
+  const descriptor = descriptors[key];
+  if (!descriptor?.enumerable) return false;
+  if (state.copiedKeys >= OUTPUT_SCHEMA_OBSERVATION_MAX_OBJECT_KEYS) {
+    addOutputSchemaObservationReason(state.reasons, "object_keys_truncated");
+    return true;
+  }
+  if (context.remainingNodes <= 0) {
+    addOutputSchemaObservationReason(state.reasons, "aggregate_budget_exhausted");
+    return true;
+  }
+  if (!ObjectHasOwn(descriptor, "value")) {
+    defineOwnDataProperty(state.output, key, OUTPUT_SCHEMA_OBSERVATION_UNSUPPORTED_ACCESSOR, {
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    });
+    state.copiedKeys += 1;
+    addOutputSchemaObservationReason(state.reasons, "accessor_property");
+    return false;
+  }
+  const item = snapshotOutputSchemaObservationValue(descriptor.value, context, depth + 1);
+  defineOwnDataProperty(state.output, key, item.value, {
+    enumerable: true,
+    configurable: true,
+    writable: true,
+  });
+  state.copiedKeys += 1;
+  forEachPrivateArray(
+    item.reasons,
+    (reason) => addOutputSchemaObservationReason(state.reasons, reason),
+  );
+  if (item.status === "unsupported") {
+    addOutputSchemaObservationReason(state.reasons, "unsupported_property");
+  }
+  return false;
+}
+
+function snapshotOutputSchemaObject(
+  value: unknown,
+  context: OutputSchemaObservationSnapshotContext,
+  depth: number,
+  reasons: string[],
+): OutputSchemaObservationSnapshot {
+  const output = ObjectCreate(null) as Record<string, unknown>;
+  let descriptors: PropertyDescriptorMap;
+  try {
+    descriptors = ObjectGetOwnPropertyDescriptors(value);
+  } catch {
+    return {
+      value: OUTPUT_SCHEMA_OBSERVATION_UNSUPPORTED_OBJECT,
+      status: "unsupported",
+      reasons: ["unsupported_object"],
+    };
+  }
+  const state: OutputSchemaObjectSnapshotState = { output, reasons, copiedKeys: 0 };
+  const descriptorKeys = ReflectOwnKeys(descriptors);
+  for (let keyIndex = 0; keyIndex < descriptorKeys.length; keyIndex++) {
+    if (!ObjectHasOwn(descriptorKeys, keyIndex)) continue;
+    const key = descriptorKeys[keyIndex];
+    if (snapshotOutputSchemaObjectProperty(key, descriptors, context, depth, state)) break;
+  }
+  return { value: output, status: reasons.length > 0 ? "partial" : "complete", reasons };
+}
+
+function snapshotOutputSchemaObservationValue(
+  value: unknown,
+  context: OutputSchemaObservationSnapshotContext = createOutputSchemaSnapshotContext(),
   depth = 0,
 ): OutputSchemaObservationSnapshot {
   const reasons: string[] = [];
@@ -1413,131 +1667,13 @@ function snapshotOutputSchemaObservationValue(
   }
 
   IntrinsicReflectApply(WeakMapSet, context.seen, [value, true]);
-  {
-    if (isArray) {
-      const output: unknown[] = [];
-      const arrayValue = value as unknown[];
-      let length: number;
-      try {
-        length = arrayValue.length;
-      } catch {
-        return {
-          value: OUTPUT_SCHEMA_OBSERVATION_UNSUPPORTED_OBJECT,
-          status: "unsupported",
-          reasons: ["unsupported_object"],
-        };
-      }
-      const limit = MathMin(length, OUTPUT_SCHEMA_OBSERVATION_MAX_ARRAY_ITEMS);
-      for (let index = 0; index < limit; index++) {
-        let property: PropertyDescriptor | undefined;
-        try {
-          property = ObjectGetOwnPropertyDescriptor(arrayValue, index);
-        } catch {
-          return {
-            value: OUTPUT_SCHEMA_OBSERVATION_UNSUPPORTED_OBJECT,
-            status: "unsupported",
-            reasons: ["unsupported_object"],
-          };
-        }
-        const item = property && ObjectHasOwn(property, "value")
-          ? snapshotOutputSchemaObservationValue(property.value, context, depth + 1)
-          : property
-          ? {
-            value: OUTPUT_SCHEMA_OBSERVATION_UNSUPPORTED_ACCESSOR,
-            status: "partial",
-            reasons: ["accessor_property"],
-          } satisfies OutputSchemaObservationSnapshot
-          : {
-            value: null,
-            status: "complete",
-            reasons: [],
-          } satisfies OutputSchemaObservationSnapshot;
-        defineOwnDataProperty(output, index, item.value, {
-          enumerable: true,
-          configurable: true,
-          writable: true,
-        });
-        forEachPrivateArray(
-          item.reasons,
-          (reason) => addOutputSchemaObservationReason(reasons, reason),
-        );
-        if (item.status === "unsupported") {
-          addOutputSchemaObservationReason(reasons, "unsupported_array_item");
-        }
-      }
-      if (length > limit) {
-        defineOwnDataProperty(output, limit, `[truncated ${length - limit} items]`, {
-          enumerable: true,
-          configurable: true,
-          writable: true,
-        });
-        addOutputSchemaObservationReason(reasons, "array_truncated");
-      }
-      return { value: output, status: reasons.length > 0 ? "partial" : "complete", reasons };
-    }
-
-    const output = ObjectCreate(null) as Record<string, unknown>;
-    let descriptors: PropertyDescriptorMap;
-    try {
-      descriptors = ObjectGetOwnPropertyDescriptors(value);
-    } catch {
-      return {
-        value: OUTPUT_SCHEMA_OBSERVATION_UNSUPPORTED_OBJECT,
-        status: "unsupported",
-        reasons: ["unsupported_object"],
-      };
-    }
-    let copiedKeys = 0;
-    const descriptorKeys = ReflectOwnKeys(descriptors);
-    for (let keyIndex = 0; keyIndex < descriptorKeys.length; keyIndex++) {
-      if (!ObjectHasOwn(descriptorKeys, keyIndex)) continue;
-      const key = descriptorKeys[keyIndex];
-      if (typeof key !== "string") {
-        addOutputSchemaObservationReason(reasons, "unsupported_property_key");
-        continue;
-      }
-      const descriptor = descriptors[key];
-      if (!descriptor?.enumerable) continue;
-      if (copiedKeys >= OUTPUT_SCHEMA_OBSERVATION_MAX_OBJECT_KEYS) {
-        addOutputSchemaObservationReason(reasons, "object_keys_truncated");
-        break;
-      }
-      if (context.remainingNodes <= 0) {
-        addOutputSchemaObservationReason(reasons, "aggregate_budget_exhausted");
-        break;
-      }
-      if (!ObjectHasOwn(descriptor, "value")) {
-        defineOwnDataProperty(output, key, OUTPUT_SCHEMA_OBSERVATION_UNSUPPORTED_ACCESSOR, {
-          enumerable: true,
-          configurable: true,
-          writable: true,
-        });
-        copiedKeys += 1;
-        addOutputSchemaObservationReason(reasons, "accessor_property");
-        continue;
-      }
-      const item = snapshotOutputSchemaObservationValue(descriptor.value, context, depth + 1);
-      defineOwnDataProperty(output, key, item.value, {
-        enumerable: true,
-        configurable: true,
-        writable: true,
-      });
-      copiedKeys += 1;
-      forEachPrivateArray(
-        item.reasons,
-        (reason) => addOutputSchemaObservationReason(reasons, reason),
-      );
-      if (item.status === "unsupported") {
-        addOutputSchemaObservationReason(reasons, "unsupported_property");
-      }
-    }
-    return { value: output, status: reasons.length > 0 ? "partial" : "complete", reasons };
-  }
+  if (isArray) return snapshotOutputSchemaArray(value, context, depth, reasons);
+  return snapshotOutputSchemaObject(value, context, depth, reasons);
 }
 
 function createOutputSchemaObservationFields(
   object: unknown,
-): { object: unknown; objectEncoding: "snapshot" | undefined } {
+): { data: unknown; object: unknown; objectEncoding: "snapshot" | undefined } {
   let snapshot: OutputSchemaObservationSnapshot;
   try {
     snapshot = snapshotOutputSchemaObservationValue(object);
@@ -1548,9 +1684,17 @@ function createOutputSchemaObservationFields(
       reasons: ["unsupported_object"],
     };
   }
-  if (snapshot.status === "complete") return { object: snapshot.value, objectEncoding: undefined };
+  if (snapshot.status === "complete") {
+    return { data: snapshot.value, object: snapshot.value, objectEncoding: undefined };
+  }
+  const value = {
+    captureStatus: snapshot.status,
+    reasons: snapshot.reasons,
+    value: snapshot.value,
+  };
   return {
-    object: { captureStatus: snapshot.status, reasons: snapshot.reasons, value: snapshot.value },
+    data: value,
+    object: value,
     objectEncoding: "snapshot",
   };
 }
@@ -1560,8 +1704,9 @@ function withOutputSchemaObservationObject<
 >(
   turn: TTurn,
 ): TTurn & { objectEncoding?: "snapshot" } {
-  if (!("object" in turn)) return turn;
-  return { ...turn, ...createOutputSchemaObservationFields(turn.object) };
+  const structured = readStructuredAgentOutput(turn);
+  if (!structured) return turn;
+  return { ...turn, ...createOutputSchemaObservationFields(structured.data) };
 }
 
 function buildGeneratedAssistantMessage(
@@ -2874,6 +3019,8 @@ async function executeStartupSkill(input: {
   toolCalls: ToolCall[];
   onToolCall?: (toolCall: ToolCall) => void;
   resolveLoader: (toolName: string) => unknown;
+  recoveryStart?: (call: ToolCall) => Promise<void>;
+  recoveryResult?: (call: ToolCall) => Promise<void>;
   execute: (
     toolName: string,
     toolCallId: string,
@@ -2916,10 +3063,12 @@ async function executeStartupSkill(input: {
   try {
     // An observer failure settles the persisted call like an execution failure.
     input.onToolCall?.(toolCall);
-    result = await runWithFrameworkSkillBootstrap(
-      loader,
-      () => input.execute(definition.name, toolCallId, args, admittedTurn),
-    );
+    if (input.recoveryStart) await input.recoveryStart(toolCall);
+    result = await runWithToolCallOccurrenceDispatch(toolCall, () =>
+      runWithFrameworkSkillBootstrap(
+        loader,
+        () => input.execute(definition.name, toolCallId, args, admittedTurn),
+      ));
     validateRuntimeSkillBootstrapResult(result, skillId);
   } catch (error) {
     toolCall.status = "error";
@@ -2928,6 +3077,7 @@ async function executeStartupSkill(input: {
     const failed = createToolErrorMessage(toolCallId, definition.name, toolCall.error);
     pushPrivateArray(input.messages, failed);
     await input.persistMessage(failed);
+    if (input.recoveryResult) await input.recoveryResult(toolCall);
     throw error;
   }
   toolCall.status = "completed";
@@ -2944,6 +3094,7 @@ async function executeStartupSkill(input: {
   pushPrivateArray(input.messages, resultMessage);
   await input.persistMessage(resultMessage);
   input.skillState.applySuccessfulResult(result);
+  if (input.recoveryResult) await input.recoveryResult(toolCall);
 }
 
 async function traceConfiguredToolExecution(input: {
@@ -3142,8 +3293,41 @@ type RuntimeStepState = {
   context?: Record<string, unknown>;
 };
 
+/** Preserve per-assistant replay identity rather than the external response aggregate ID. */
+function createRecoveryBoundary(
+  messages: Message[],
+  toolExposureCheckpoint: ToolExposureCheckpoint,
+): AgentRuntimeRecoveryBoundary {
+  const replay: ProviderReplayCheckpoint[] = [];
+  const canonicalMessages = mapPrivateArray(messages, (message) => {
+    if (message.role === "assistant") {
+      const state = createProviderReplayCheckpointEmissionState({ messageId: message.id });
+      // Recovery retains native metadata even when the provider emitted only text.
+      state.replayRequired = true;
+      const checkpoint = captureProviderReplayCheckpoint(
+        state,
+        readAttachedProviderMetadata(message),
+      );
+      if (checkpoint) pushPrivateArray(replay, checkpoint);
+    }
+    return message;
+  });
+  return { messages: canonicalMessages, toolExposureCheckpoint, providerReplayCheckpoints: replay };
+}
+
+/** Private host observation of the exact canonical continuation boundary. */
+export type AgentRuntimeRecoveryBoundary = {
+  messages: Message[];
+  toolExposureCheckpoint: ToolExposureCheckpoint;
+  providerReplayCheckpoints: ProviderReplayCheckpoint[];
+  runtimeContinuation?: AgentPauseCheckpoint;
+};
+
 /** @internal Framework-only AgentRuntime construction options. */
 export type AgentRuntimeInternalOptions = {
+  /** Original host callback only; never read from authored agent config or context. */
+  persistRecoveryBoundary?: (boundary: AgentRuntimeRecoveryBoundary) => Promise<void>;
+  recoveryContinuation?: unknown;
   /** Framework-owned continuation and pause capability for this exact dispatch. */
   manualPause?: AgentManualPause;
   resolveModelRuntime?: AgentModelRuntimeResolver;
@@ -3261,6 +3445,8 @@ export class AgentRuntime {
   #modelCallThinking: AgentRuntimeInternalOptions["modelCallThinking"];
   #modelStreamTimeouts: AgentRuntimeInternalOptions["modelStreamTimeouts"];
   #onStreamCompletion: AgentRuntimeInternalOptions["onStreamCompletion"];
+  #persistRecoveryBoundary: AgentRuntimeInternalOptions["persistRecoveryBoundary"];
+  #recoveryContinuation: AgentPauseCheckpoint | undefined;
   #resumeToolCall: AgentRuntimeInternalOptions["resumeToolCall"];
   #runtimeObservationCapability: AgentRuntimeInternalOptions["runtimeObservationCapability"];
   private id: string;
@@ -3288,6 +3474,10 @@ export class AgentRuntime {
     this.#modelStreamTimeouts = internalOptions.modelStreamTimeouts;
     this.#manualPause = internalOptions.manualPause;
     this.#onStreamCompletion = internalOptions.onStreamCompletion;
+    this.#persistRecoveryBoundary = internalOptions.persistRecoveryBoundary;
+    this.#recoveryContinuation = internalOptions.recoveryContinuation === undefined
+      ? undefined
+      : parseAgentPauseCheckpoint(internalOptions.recoveryContinuation);
     this.#resumeToolCall = internalOptions.resumeToolCall;
     this.#runtimeObservationCapability = internalOptions.runtimeObservationCapability;
     this.#modelResolverState = internalOptions.resolveModelRuntime
@@ -4058,16 +4248,31 @@ export class AgentRuntime {
     );
   }
 
-  #stream(...args: AgentRuntimeStreamArgs): Promise<ReadableStream<Uint8Array>> {
-    return withRuntimeStreamOwnership(() =>
-      withRuntimeTurnLineage(
-        this,
-        () => withLocalChildRuntime(this, () => this.#streamWithinTurn(...args)),
-      )
-    );
+  async #stream(...args: AgentRuntimeStreamArgs): Promise<ReadableStream<Uint8Array>> {
+    const completion = createPrivateDeferred<void>();
+    const lifetime = { completion, producerStarted: false };
+    // Reserve the lifetime before transport, model readiness or memory preflight can fail.
+    void chainPrivatePromise(completion.promise, () => {}, () => {});
+    try {
+      this.#onStreamCompletion?.(completion.promise);
+      return await withRuntimeStreamOwnership(() =>
+        withRuntimeTurnLineage(
+          this,
+          () => withLocalChildRuntime(this, () => this.#streamWithinTurn(lifetime, ...args)),
+        )
+      );
+    } catch (error) {
+      // Once start runs, only its actual finalizer can report producer settlement.
+      if (!lifetime.producerStarted) completion.resolve();
+      throw error;
+    }
   }
 
   async #streamWithinTurn(
+    lifetime: {
+      completion: ReturnType<typeof createPrivateDeferred<void>>;
+      producerStarted: boolean;
+    },
     messages: Message[],
     context?: Record<string, unknown>,
     callbacks?: AgentRuntimeStreamCallbacks,
@@ -4191,12 +4396,10 @@ export class AgentRuntime {
       // an unhandled rejection under Deno (#2334).
       let inFlight: Promise<AgentResponse> | undefined;
 
-      const completion = createPrivateDeferred<void>();
-      // The observer is optional; retain cleanup failure without an unhandled rejection.
-      void chainPrivatePromise(completion.promise, () => {}, () => {});
-      this.#onStreamCompletion?.(completion.promise);
+      const { completion } = lifetime;
       const runtimeStream = createPrivateReadableStream<Uint8Array>({
         start: async (controller) => {
+          lifetime.producerStarted = true;
           let streamedResponseText = "";
           let terminalCompleted = false;
           try {
@@ -4312,11 +4515,12 @@ export class AgentRuntime {
 
             const finishUsage = buildStreamFinishUsage(response.usage);
             const finishReason = getResponseFinishReason(response);
+            const structured = readStructuredAgentOutput(response);
             sendSSE(controller, encoder, {
               type: "message-finish",
               ...(finishReason ? { finishReason } : {}),
               ...(finishUsage ? { totalUsage: finishUsage } : {}),
-              ...("object" in response ? createOutputSchemaObservationFields(response.object) : {}),
+              ...(structured ? createOutputSchemaObservationFields(structured.data) : {}),
             });
             closeSSEStream(controller);
           } catch (streamError) {
@@ -4704,6 +4908,13 @@ export class AgentRuntime {
         });
         const modelMessages = fittedRequest.modelMessages;
         effectiveToolExposurePlan = fittedRequest.plan;
+        if (this.#persistRecoveryBoundary) {
+          await this.#persistRecoveryBoundary(createRecoveryBoundary(
+            currentMessages,
+            createToolExposureCheckpoint(effectiveToolExposurePlan.authorized, toolExposureState),
+          ));
+          throwIfAborted(abortSignal);
+        }
         const request = assembleRequest(modelMessages);
         currentSystemPrompt = request.systemPrompt;
         const { tools, runtimeTools, providerSystemPrompt, providerMessages } = request;
@@ -4849,10 +5060,11 @@ export class AgentRuntime {
             );
             generatedTurnAdmissionObserved = true;
           } else {
+            const structured = readStructuredAgentOutput(turn);
             await observeGeneratedAgentTurnFinish({
               finishReason: turn.finishReason,
               usage: turn.usage,
-              ...("object" in turn ? createOutputSchemaObservationFields(turn.object) : {}),
+              ...(structured ? createOutputSchemaObservationFields(structured.data) : {}),
             });
           }
           generatedTurnFinishObserved = true;
@@ -4980,13 +5192,13 @@ export class AgentRuntime {
           }
           await observeGeneratedProviderTurnFinishOnce({
             ...response,
-            ...(outputSchema ? { object: parsedObject } : {}),
+            ...(outputSchema ? { data: parsedObject, object: parsedObject } : {}),
           });
           await persistGeneratedProviderReplayCheckpoint();
           throwIfAborted(abortSignal);
           return attachOutputSchemaParser({
             text: response.text,
-            ...(outputSchema ? { object: parsedObject } : {}),
+            ...(outputSchema ? { data: parsedObject, object: parsedObject } : {}),
             messages: currentMessages,
             toolCalls,
             status: this.status,
@@ -5442,7 +5654,9 @@ export class AgentRuntime {
           maxStepsParsedOutput = await tryParseMaxStepsOutput(response.text, outputSchema);
           await observeGeneratedProviderTurnFinishOnce({
             ...response,
-            ...(maxStepsParsedOutput.parsed ? { object: maxStepsParsedOutput.object } : {}),
+            ...(maxStepsParsedOutput.parsed
+              ? { data: maxStepsParsedOutput.object, object: maxStepsParsedOutput.object }
+              : {}),
           });
         }
       }
@@ -5459,7 +5673,7 @@ export class AgentRuntime {
         await tryParseMaxStepsOutput(finalText, outputSchema);
       return attachOutputSchemaParser({
         text: finalText,
-        ...(parsedOutput.parsed ? { object: parsedOutput.object } : {}),
+        ...(parsedOutput.parsed ? { data: parsedOutput.object, object: parsedOutput.object } : {}),
         messages: currentMessages,
         toolCalls,
         status: this.status,
@@ -5515,7 +5729,7 @@ export class AgentRuntime {
     const effectiveModel = resolveRuntimeModel(modelString || this.config.model);
     const languageModel = resolvedModel ?? resolveModel(effectiveModel);
 
-    const continuation = await this.#manualPause?.load();
+    const continuation = this.#recoveryContinuation ?? await this.#manualPause?.load();
     const checkpoint = continuation == null ? undefined : parseAgentPauseCheckpoint(continuation);
     if (checkpoint?.providerMetadata) {
       mapPrivateArray(checkpoint.messages, (message) => {
@@ -5539,6 +5753,7 @@ export class AgentRuntime {
     restoreTrustedSkillLoadResultsFromPauseCheckpoint(
       currentMessages,
       checkpoint?.trustedSkillLoadResultIds,
+      checkpoint?.trustedSkillLoadResultRefs,
     );
     applyProviderReplayCheckpointsToMessages(
       currentMessages,
@@ -5607,52 +5822,67 @@ export class AgentRuntime {
     let startupSkillLoaded = checkpoint?.startupSkillLoaded === true ||
       this.config.bootstrapSkill === undefined || skillState.hasSubmittedFormInput;
 
+    const captureRecoveryContinuation = (nextStep: number): AgentPauseCheckpoint =>
+      parseAgentPauseCheckpoint({
+        version: 1,
+        nextStep,
+        messages: currentMessages,
+        toolCalls,
+        usage: totalUsage,
+        latestAssistantText,
+        completed: completedWithinStepBudget,
+        ...(finalFinishReason ? { finishReason: finalFinishReason } : {}),
+        recoveredEmptyResponse,
+        startupSkillLoaded,
+        recoveredInterruptedLocalToolBatch,
+        hasSubmittedFormInput: skillState.hasSubmittedFormInput,
+        activeSkillDelegationOverrides: skillState.activeSkillDelegationOverrides,
+        // Omitted when empty so checkpoints without trusted loads keep the prior shape.
+        ...(() => {
+          const ids = getTrustedSkillLoadResultIds(currentMessages);
+          if (hasAmbiguousTrustedSkillLoadResultIds(currentMessages)) {
+            return { trustedSkillLoadResultRefs: getTrustedSkillLoadResultRefs(currentMessages) };
+          }
+          return ids.length > 0 ? { trustedSkillLoadResultIds: ids } : {};
+        })(),
+        resumeToolCallExecuted,
+        agentWriteFinalResponseToolGuardEnabled,
+        interruptedLocalToolBatchRecoveryStep,
+        interruptedLocalToolBatchRecoveryText,
+        providerMetadata: mapPrivateArray(
+          filterPrivateArray(
+            currentMessages,
+            (message) => readAttachedProviderMetadata(message) !== undefined,
+          ),
+          (message) => ({
+            messageId: message.id,
+            metadata: readAttachedProviderMetadata(message)!,
+          }),
+        ),
+        runtimeGeneratedMessageIds: mapPrivateArray(
+          filterPrivateArray(currentMessages, isRuntimeGeneratedUserMessage),
+          (message) => message.id,
+        ),
+        toolExposureCheckpoint: pauseToolExposureAuthorized
+          ? createToolExposureCheckpoint(pauseToolExposureAuthorized, toolExposureState)
+          : initialToolExposureCheckpoint,
+      });
     const pauseAtBoundary = async (nextStep: number) => {
+      if (this.#persistRecoveryBoundary) {
+        const runtimeContinuation = captureRecoveryContinuation(nextStep);
+        await this.#persistRecoveryBoundary({
+          ...createRecoveryBoundary(
+            currentMessages,
+            runtimeContinuation.toolExposureCheckpoint ?? { version: 2, loadedToolNames: [] },
+          ),
+          runtimeContinuation,
+        });
+      }
       if (!this.#manualPause) return;
       if (this.#manualPause.requested && !(await this.#manualPause.requested())) return;
       let saved: AgentPauseCheckpoint;
       try {
-        saved = parseAgentPauseCheckpoint({
-          version: 1,
-          nextStep,
-          messages: currentMessages,
-          toolCalls,
-          usage: totalUsage,
-          latestAssistantText,
-          completed: completedWithinStepBudget,
-          ...(finalFinishReason ? { finishReason: finalFinishReason } : {}),
-          recoveredEmptyResponse,
-          startupSkillLoaded,
-          recoveredInterruptedLocalToolBatch,
-          hasSubmittedFormInput: skillState.hasSubmittedFormInput,
-          activeSkillDelegationOverrides: skillState.activeSkillDelegationOverrides,
-          // Omitted when empty so checkpoints without trusted loads keep the prior shape.
-          ...(() => {
-            const ids = getTrustedSkillLoadResultIds(currentMessages);
-            return ids.length > 0 ? { trustedSkillLoadResultIds: ids } : {};
-          })(),
-          resumeToolCallExecuted,
-          agentWriteFinalResponseToolGuardEnabled,
-          interruptedLocalToolBatchRecoveryStep,
-          interruptedLocalToolBatchRecoveryText,
-          providerMetadata: mapPrivateArray(
-            filterPrivateArray(
-              currentMessages,
-              (message) => readAttachedProviderMetadata(message) !== undefined,
-            ),
-            (message) => ({
-              messageId: message.id,
-              metadata: readAttachedProviderMetadata(message)!,
-            }),
-          ),
-          runtimeGeneratedMessageIds: mapPrivateArray(
-            filterPrivateArray(currentMessages, isRuntimeGeneratedUserMessage),
-            (message) => message.id,
-          ),
-          toolExposureCheckpoint: pauseToolExposureAuthorized
-            ? createToolExposureCheckpoint(pauseToolExposureAuthorized, toolExposureState)
-            : initialToolExposureCheckpoint,
-        });
+        saved = captureRecoveryContinuation(nextStep);
       } catch {
         if (this.#manualPause.release && !(await this.#manualPause.release())) return;
         logger.warn(
@@ -5760,6 +5990,58 @@ export class AgentRuntime {
           skillState,
           toolCalls,
           onToolCall: callbacks?.onToolCall,
+          ...(this.#persistRecoveryBoundary
+            ? {
+              recoveryStart: async (call: ToolCall) => {
+                const occurrenceId = introduceToolCallOccurrence(call);
+                if (!occurrenceId) {
+                  throw new Error("Managed startup skill lacks original occurrence scope");
+                }
+                sendSSE(controller, encoder, {
+                  type: "tool-input-start",
+                  toolCallId: call.id,
+                  toolName: call.name,
+                  privateToolCallOccurrenceId: occurrenceId,
+                });
+                sendSSE(controller, encoder, {
+                  type: "tool-input-available",
+                  toolCallId: call.id,
+                  toolName: call.name,
+                  input: call.args,
+                });
+                await this.#persistRecoveryBoundary!(
+                  createRecoveryBoundary(
+                    currentMessages,
+                    createToolExposureCheckpoint(
+                      effectiveToolExposurePlan.authorized,
+                      toolExposureState,
+                    ),
+                  ),
+                );
+              },
+              recoveryResult: async (call: ToolCall) => {
+                sendSSE(
+                  controller,
+                  encoder,
+                  call.error === undefined
+                    ? { type: "tool-output-available", toolCallId: call.id, output: call.result }
+                    : { type: "tool-output-error", toolCallId: call.id, errorText: call.error },
+                );
+                if (call.status === "completed") startupSkillLoaded = true;
+                const runtimeContinuation = captureRecoveryContinuation(step);
+                await this.#persistRecoveryBoundary!({
+                  ...createRecoveryBoundary(
+                    currentMessages,
+                    createToolExposureCheckpoint(
+                      effectiveToolExposurePlan.authorized,
+                      toolExposureState,
+                    ),
+                  ),
+                  runtimeContinuation,
+                });
+              },
+            }
+            : {}),
           resolveLoader: (name) =>
             resolveConfiguredTool(this.config.tools, name, { agentId: this.id }),
           execute: async (toolName, toolCallId, args, admittedTurn) => {
@@ -5872,6 +6154,14 @@ export class AgentRuntime {
         if (admittedTurn.start === currentMessages.length) {
           pushPrivateArray(currentMessages, assistantToolCallMessage);
           await persistMessage(assistantToolCallMessage);
+        }
+
+        if (this.#persistRecoveryBoundary) {
+          await this.#persistRecoveryBoundary(createRecoveryBoundary(
+            currentMessages,
+            createToolExposureCheckpoint(effectiveToolExposurePlan.authorized, toolExposureState),
+          ));
+          throwIfAborted(abortSignal);
         }
 
         const toolCall: ToolCall = {
@@ -6014,6 +6304,7 @@ export class AgentRuntime {
             toolCalls,
           );
         }
+        if (this.#persistRecoveryBoundary) await pauseAtBoundary(step);
       }
 
       // Include the parked result delivered to this request, but exclude new same-step results.
@@ -6076,6 +6367,13 @@ export class AgentRuntime {
       });
       const modelMessages = fittedRequest.modelMessages;
       effectiveToolExposurePlan = fittedRequest.plan;
+      if (this.#persistRecoveryBoundary) {
+        await this.#persistRecoveryBoundary(createRecoveryBoundary(
+          currentMessages,
+          createToolExposureCheckpoint(effectiveToolExposurePlan.authorized, toolExposureState),
+        ));
+        throwIfAborted(abortSignal);
+      }
       const request = assembleRequest(modelMessages);
       currentSystemPrompt = request.systemPrompt;
       const { tools, runtimeTools, providerSystemPrompt, providerMessages } = request;
@@ -6603,6 +6901,26 @@ export class AgentRuntime {
           : streamedInvokeAgentBatch,
         deferCompletion: streamedBatchCompletionDeferred,
       });
+      if (this.#persistRecoveryBoundary) {
+        // Recovery snapshots require an authenticated admission for every local
+        // call in this turn, including calls interrupted before input finalized.
+        // Announce them before waiting for persistence so both retry and terminal
+        // paths can acknowledge the matching error without an admission cycle.
+        for (const toolCall of streamedToolCalls) {
+          if (
+            toolCall.providerExecuted !== true && isStreamedToolCallIncomplete(toolCall) &&
+            !finalToolResults.has(toolCall.id)
+          ) {
+            announceStreamedToolCallInput(controller, encoder, toolCall);
+          }
+        }
+        await this.#persistRecoveryBoundary(
+          createRecoveryBoundary(
+            currentMessages,
+            createToolExposureCheckpoint(effectiveToolExposurePlan.authorized, toolExposureState),
+          ),
+        );
+      }
 
       if (stoppedEmptyAfterCompletedTool) {
         sendSSE(controller, encoder, {
@@ -6723,8 +7041,31 @@ export class AgentRuntime {
           await persistToolResult(toolResult);
         }
         for (let toolCallIndex = 0; toolCallIndex < streamedToolCalls.length; toolCallIndex++) {
+          // A rejected batch must close committed local calls too, without running
+          // side effects or inventing a result for a provider-owned sibling.
           if (!ObjectHasOwn(streamedToolCalls, toolCallIndex)) continue;
           const toolCall = streamedToolCalls[toolCallIndex]!;
+          if (
+            toolCall.providerExecuted !== true && toolCall.inputAvailable === true &&
+            !finalToolResults.has(toolCall.id) && !currentStepToolResults.has(toolCall.id)
+          ) {
+            const capturedInput = captureStreamedToolCallInput(toolCall);
+            await this.recordToolError(
+              persistMessage,
+              {
+                id: toolCall.id,
+                name: toolCall.name,
+                args: capturedInput.args,
+                ...(capturedInput.inputText ? { inputText: capturedInput.inputText } : {}),
+                status: "pending",
+              },
+              "Tool execution skipped because the model turn ended before local execution could continue.",
+              { controller, encoder },
+              currentMessages,
+              toolCalls,
+            );
+            continue;
+          }
           // Terminal. Every incomplete local call recorded here is also
           // terminalized into history, so announce unconditionally and let the
           // wire carry the same failure. `recordIncompleteLocalToolError`
@@ -6747,6 +7088,16 @@ export class AgentRuntime {
             : {}),
         });
         completedWithinStepBudget = !exhaustedStepBudgetDuringInterruptedLocalToolRecovery;
+        if (completedWithinStepBudget && this.#persistRecoveryBoundary) {
+          const runtimeContinuation = captureRecoveryContinuation(step + 1);
+          await this.#persistRecoveryBoundary({
+            ...createRecoveryBoundary(
+              currentMessages,
+              createToolExposureCheckpoint(effectiveToolExposurePlan.authorized, toolExposureState),
+            ),
+            runtimeContinuation,
+          });
+        }
         if (!completedWithinStepBudget) await pauseAtBoundary(step + 1);
         break;
       }
@@ -7222,7 +7573,6 @@ export class AgentRuntime {
       for (const toolResult of finalToolResults.values()) {
         await persistToolResult(toolResult);
       }
-
       if (state.suppressedToolCalls.length > 0) {
         const unavailableNames = [
           ...new Set(state.suppressedToolCalls.map((toolCall) => toolCall.name)),
@@ -7241,6 +7591,17 @@ export class AgentRuntime {
             timestamp: Date.now(),
           }),
         );
+      }
+
+      if (this.#persistRecoveryBoundary) {
+        const runtimeContinuation = captureRecoveryContinuation(step + 1);
+        await this.#persistRecoveryBoundary({
+          ...createRecoveryBoundary(
+            currentMessages,
+            createToolExposureCheckpoint(effectiveToolExposurePlan.authorized, toolExposureState),
+          ),
+          runtimeContinuation,
+        });
       }
 
       throwIfAborted(abortSignal);
@@ -7270,7 +7631,7 @@ export class AgentRuntime {
       );
       return attachOutputSchemaParser({
         text: latestAssistantText,
-        ...(parsedOutput.parsed ? { object: parsedOutput.object } : {}),
+        ...(parsedOutput.parsed ? { data: parsedOutput.object, object: parsedOutput.object } : {}),
         messages: currentMessages,
         toolCalls,
         status: "completed",
@@ -7287,7 +7648,7 @@ export class AgentRuntime {
 
     return attachOutputSchemaParser({
       text: latestAssistantText,
-      ...(outputSchema ? { object: await outputSchema.parseOutput(latestAssistantText) } : {}),
+      ...(outputSchema ? await parseStructuredOutput(outputSchema, latestAssistantText) : {}),
       messages: currentMessages,
       toolCalls,
       status: "completed",
@@ -7556,6 +7917,14 @@ type MaxStepsOutputParse =
     parsed: false;
     outputSchemaError?: string;
   };
+
+async function parseStructuredOutput(
+  outputSchema: ResolvedAgentOutputSchema,
+  text: string,
+): Promise<{ data: unknown; object: unknown }> {
+  const data = await outputSchema.parseOutput(text);
+  return { data, object: data };
+}
 
 async function tryParseMaxStepsOutput(
   finalText: string,

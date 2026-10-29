@@ -38,8 +38,55 @@ Complete Microsoft Outlook integration following the veryfront integration patte
    - `Mail.Read` - Read user mail
    - `Mail.Send` - Send mail as a user
    - `Mail.ReadWrite` - Read and write access to user mail
+   - `Mail.Read.Shared` - Read mail in mailboxes shared with the user
+   - `Mail.ReadWrite.Shared` - Move mail in mailboxes shared with the user
+   - `Calendars.Read` - Read user calendars
+   - `Calendars.ReadWrite` - Read and write user calendars
    - `offline_access` - Maintain access to data you have given it access to
 4. Click "Grant admin consent" (if available)
+
+### Shared mailbox permissions
+
+The shared mailbox tools call `/users/{mailbox}/...` for the mailbox you name in the
+`mailbox` argument. They never fall back to the signed-in user's mailbox.
+
+| Tool | Delegated permission |
+| --- | --- |
+| List, search and get shared mailbox emails | `Mail.Read.Shared` |
+| List shared mailbox folders and child folders | `Mail.Read.Shared` |
+| List and get shared mailbox attachments | `Mail.Read.Shared` |
+| Move shared mailbox email (write) | `Mail.ReadWrite.Shared` |
+
+- This connector signs in with delegated OAuth only. The signed-in user also needs access to
+  the mailbox in Exchange. Application (app-only) permissions have no effect on this connector.
+- Existing connections must reconnect to grant `Mail.ReadWrite.Shared` before a move works.
+- Move Shared Mailbox Email is a write. It sends `POST /users/{mailbox}/messages/{messageId}/move`
+  with `destinationId` once and does not retry. The destination folder must already exist.
+  List Shared Mailbox Folders returns top-level folders; use List Shared Mailbox Child Folders
+  with a folder ID (or `inbox`) to find nested folders.
+- List Shared Mailbox Attachments returns metadata only. Get Shared Mailbox Attachment returns
+  file contents; pass `$expand: microsoft.graph.itemattachment/item` to read an attached
+  message, event or contact.
+- Pass `prefer: IdType="ImmutableId"` to the message and attachment tools to use immutable
+  message IDs. An immutable ID stays the same when the message moves to another folder.
+
+### Attachments versus original MIME
+
+- `list_shared_mailbox_attachments` returns attachment metadata only. `get_shared_mailbox_attachment`
+  returns one Graph attachment object; a file attachment carries its content as `contentBytes`.
+  Graph does not list every part as an attachment: a signed message (`multipart/signed` or
+  `application/pkcs7-mime`) can hold its files only inside the signed content.
+- `get_shared_mailbox_email_mime` returns the original message as Graph stores it
+  (`GET /users/{mailbox}/messages/{messageId}/$value`). It is read-only. The result is
+  `{ encoding: "base64", content_base64, size, content_type }`, and `content_base64` decodes to
+  the exact bytes, including signed and nested `message/rfc822` parts.
+- Size limits. This connector uses delegated OAuth, so its tools run through Veryfront Cloud,
+  which sets its own MIME limit: at most 774,144 bytes (756 KiB) on current releases, and
+  128 KiB on releases that predate full MIME downloads. The framework's local endpoint executor
+  accepts up to 786,432 bytes (768 KiB), the most that fits one bounded tool-result string. A
+  larger message fails with an error.
+- A response that is partial or shorter than its declared length also fails. The tool never
+  returns truncated MIME.
 
 ### 4. Add Environment Variables
 
@@ -211,6 +258,10 @@ https://login.microsoftonline.com/common/oauth2/v2.0/token
 - `Mail.Read` - Read user mail
 - `Mail.Send` - Send mail
 - `Mail.ReadWrite` - Full mail access
+- `Mail.Read.Shared` - Read shared mailboxes
+- `Mail.ReadWrite.Shared` - Move mail in shared mailboxes
+- `Calendars.Read` - Read calendars
+- `Calendars.ReadWrite` - Read and write calendars
 - `offline_access` - Refresh token
 
 ### Token Authentication

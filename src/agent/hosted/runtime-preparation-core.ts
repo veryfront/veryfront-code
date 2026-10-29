@@ -1,3 +1,4 @@
+import { registerHostedToolRunAuthorization } from "./tool-run-authorization.ts";
 import { getToolResultReaderReservedToolSlots } from "#veryfront/agent/runtime/tool-result-context.ts";
 import { retainTrustedSkillLoaderAliases } from "../platform-host-tools.ts";
 import {
@@ -44,7 +45,10 @@ import {
 import { wrapRemoteToolSourceWithMcpPolicy } from "#veryfront/agent/mcp-tool-policy.ts";
 import { getProviderNativeToolNames } from "#veryfront/agent/runtime/provider-native-tool-inventory.ts";
 import { resolveProviderToolSchemaTarget } from "#veryfront/agent/runtime/model-resolution.ts";
-import type { RuntimeAgentMarkdownDefinition } from "#veryfront/agent/runtime/agent-definition.ts";
+import type {
+  RuntimeAgentMarkdownDefinition,
+  RuntimeAgentThinkingConfig,
+} from "#veryfront/agent/runtime/agent-definition.ts";
 import {
   type ExecutorBinding,
   getExecutorBindingSchema,
@@ -86,7 +90,6 @@ import type {
   HostedChatRuntimeCreationOptions,
   HostedChatRuntimeProjectSteering,
 } from "#veryfront/agent/hosted/chat-runtime-contract.ts";
-import type { RuntimeAgentThinkingConfig } from "#veryfront/agent/runtime/agent-definition.ts";
 import { resolveRuntimeSkillSelectorForAgent } from "#veryfront/agent/runtime/skill-metadata.ts";
 import {
   applyDefaultResearchArtifactPath,
@@ -176,6 +179,42 @@ function privateMapSet<K, V>(map: Map<K, V>, key: K, value: V): void {
   apply(mapSet, map, [key, value]);
 }
 
+function collectUnavailableStudioTools(
+  configuredServers: NonNullable<RuntimeAgentMarkdownDefinition["mcpServers"]>,
+  effective: ExecutorRuntimeGrantData,
+  unavailableNames: ReturnType<typeof createPrivateSet<string>>,
+  unavailablePrefixes: ReturnType<typeof createPrivateSet<string>>,
+): void {
+  for (let index = 0; index < configuredServers.length; index++) {
+    const server = configuredServers[index];
+    if (server?.kind !== "veryfront-studio" || server.required !== false) continue;
+    const sourceId = server.id ?? server.kind;
+    if (includes(effective.remoteToolSourceIds, sourceId)) continue;
+    const allowedNames = server.toolPolicy?.allow;
+    if (allowedNames === undefined) {
+      unavailablePrefixes.add("studio_");
+      unavailablePrefixes.add("veryfront__studio_");
+      continue;
+    }
+    unavailableNames.add("studio_open_project");
+    unavailableNames.add("veryfront__studio_open_project");
+    forEachPrivateArray(allowedNames, (toolName) => {
+      unavailableNames.add(toolName);
+      if (apply(stringIndexOf, toolName, ["__"]) === -1) {
+        unavailableNames.add(`veryfront__${toolName}`);
+      }
+    });
+  }
+}
+
+function runtimePreparationFailureCode(error: unknown, signal: AbortSignal) {
+  const knownFailure = executorAgentFailureCode(error, "EXECUTOR_AGENT_SETUP_FAILED");
+  if (signal.aborted) return "ABORTED";
+  if (error instanceof ExecutorRuntimePreparationError) return error.code;
+  if (knownFailure === "EXECUTOR_AGENT_SETUP_FAILED") return "EXECUTOR_RUNTIME_PREPARATION_FAILED";
+  return knownFailure;
+}
+
 async function pruneUnavailableOptionalStudioToolNames(
   names: readonly string[],
   definition: RuntimeAgentMarkdownDefinition,
@@ -198,26 +237,12 @@ async function pruneUnavailableOptionalStudioToolNames(
     }
     return false;
   };
-  for (let index = 0; index < configuredServers.length; index++) {
-    const server = configuredServers[index];
-    if (server?.kind !== "veryfront-studio" || server.required !== false) continue;
-    const sourceId = server.id ?? server.kind;
-    if (includes(effective.remoteToolSourceIds, sourceId)) continue;
-    const allowedNames = server.toolPolicy?.allow;
-    if (allowedNames === undefined) {
-      unavailablePrefixes.add("studio_");
-      unavailablePrefixes.add("veryfront__studio_");
-      continue;
-    }
-    unavailableNames.add("studio_open_project");
-    unavailableNames.add("veryfront__studio_open_project");
-    forEachPrivateArray(allowedNames, (toolName) => {
-      unavailableNames.add(toolName);
-      if (apply(stringIndexOf, toolName, ["__"]) === -1) {
-        unavailableNames.add(`veryfront__${toolName}`);
-      }
-    });
-  }
+  collectUnavailableStudioTools(
+    configuredServers,
+    effective,
+    unavailableNames,
+    unavailablePrefixes,
+  );
   if (unavailableNames.size === 0 && unavailablePrefixes.size === 0) {
     return slicePrivateArray(names);
   }
@@ -496,6 +521,33 @@ function resolvePreparedOutput(
   return { thinking, maxOutputTokens };
 }
 
+function requireConfiguredServerFacades(
+  definition: RuntimeAgentMarkdownDefinition,
+  effective: ExecutorRuntimeGrantData,
+) {
+  const configuredServers = definition.mcpServers ?? [];
+  for (let index = 0; index < configuredServers.length; index++) {
+    const server = configuredServers[index];
+    if (server === undefined) continue;
+    if (server.kind === "veryfront-studio" && server.required === false) continue;
+    if (!includes(effective.remoteToolSourceIds, server.id ?? server.kind)) {
+      if (server.kind === "veryfront-studio" && server.required === false) continue;
+      refuse("EXECUTOR_RUNTIME_CAPABILITY_UNAVAILABLE");
+    }
+  }
+}
+
+function assertPreparationGrant(
+  grant: ExecutorRuntimeGrantData | undefined,
+  request: ExecutorRuntimePrepareRequest,
+  binding: Parameters<typeof sameBinding>[0],
+  context: ExecutorOperationContext,
+): asserts grant is ExecutorRuntimeGrantData {
+  if (!grant || grant.agentId !== request.agentId || !sameBinding(binding, context.binding)) {
+    refuse("EXECUTOR_RUNTIME_NOT_GRANTED");
+  }
+}
+
 /**
  * One allocation's fixed-project preparation/stream dispatcher. Metadata never
  * installs execution authority; project navigation requires separate broker support.
@@ -548,16 +600,16 @@ export function createRuntimePreparationCore(input: RuntimePreparationCoreOption
     cleanup ??= chain(resolvePrivatePromise(), async () => {
       // Startup can still reserve producer work. Join both before releasing
       // facades, without joining the stream handler that calls this cleanup.
-      if (startup) await chain(startup, () => {}, () => {});
-      if (producerCompletion) await observePrivatePromise(producerCompletion);
+      if (startup !== undefined) await chain(startup, () => {}, () => {});
+      if (producerCompletion !== undefined) await observePrivatePromise(producerCompletion);
       if (resourcesStarted) await observePrivatePromise(facades.cleanup());
     });
     return cleanup;
   };
   function close(): Promise<void> {
-    if (closing) return closing;
+    if (closing !== undefined) return closing;
     closing = chain(resolvePrivatePromise(), async () => {
-      if (preparation) await chain(preparation, () => {}, () => {});
+      if (preparation !== undefined) await chain(preparation, () => {}, () => {});
       let failed = false;
       try {
         await release();
@@ -583,13 +635,7 @@ export function createRuntimePreparationCore(input: RuntimePreparationCoreOption
   apply(addEventListener, input.project.signal, ["abort", onDiscoveryAbort, { once: true }]);
   if (input.project.signal.aborted) onDiscoveryAbort();
 
-  function requireFacades(
-    definition: RuntimeAgentMarkdownDefinition,
-    effective: ExecutorRuntimeGrantData,
-  ) {
-    if (
-      typeof facades.resolveModelRuntime !== "function" || typeof facades.cleanup !== "function"
-    ) refuse("EXECUTOR_RUNTIME_CAPABILITY_UNAVAILABLE");
+  function requireGrantedSourceFacades(effective: ExecutorRuntimeGrantData) {
     for (let index = 0; index < effective.hostToolFacadeIds.length; index++) {
       const id = effective.hostToolFacadeIds[index];
       if (id === undefined) continue;
@@ -602,16 +648,17 @@ export function createRuntimePreparationCore(input: RuntimePreparationCoreOption
         refuse("EXECUTOR_RUNTIME_CAPABILITY_UNAVAILABLE");
       }
     }
-    const configuredServers = definition.mcpServers ?? [];
-    for (let index = 0; index < configuredServers.length; index++) {
-      const server = configuredServers[index];
-      if (server === undefined) continue;
-      if (server.kind === "veryfront-studio" && server.required === false) continue;
-      if (!includes(effective.remoteToolSourceIds, server.id ?? server.kind)) {
-        if (server.kind === "veryfront-studio" && server.required === false) continue;
-        refuse("EXECUTOR_RUNTIME_CAPABILITY_UNAVAILABLE");
-      }
-    }
+  }
+
+  function requireFacades(
+    definition: RuntimeAgentMarkdownDefinition,
+    effective: ExecutorRuntimeGrantData,
+  ) {
+    if (
+      typeof facades.resolveModelRuntime !== "function" || typeof facades.cleanup !== "function"
+    ) refuse("EXECUTOR_RUNTIME_CAPABILITY_UNAVAILABLE");
+    requireGrantedSourceFacades(effective);
+    requireConfiguredServerFacades(definition, effective);
     if (
       (effective.execution.projectId !== null ||
         includes(effective.requiredCapabilities ?? [], "project-steering")) &&
@@ -642,29 +689,36 @@ export function createRuntimePreparationCore(input: RuntimePreparationCoreOption
   ): Promise<JsonValue> {
     try {
       assertActive();
-      if (!grant || grant.agentId !== request.agentId || !sameBinding(binding, context.binding)) {
-        refuse("EXECUTOR_RUNTIME_NOT_GRANTED");
-      }
+      assertPreparationGrant(grant, request, binding, context);
       const preparedSource = await observePrivatePromise(
         input.project.prepare(request.agentId, context),
       );
-      const described = parseDiscoveryData(
-        getExecutorAgentDescribeResultSchema(),
-        preparedSource.description,
-        true,
-      );
-      if (
-        !described.ok || described.value.definition.id !== grant.agentId ||
-        verifyHostedRuntimeSourceBinding(source, described.value.source)
-      ) refuse("EXECUTOR_RUNTIME_NOT_GRANTED");
-      const definition = described.value.definition;
+      const resolveDefinition = () => {
+        const described = parseDiscoveryData(
+          getExecutorAgentDescribeResultSchema(),
+          preparedSource.description,
+          true,
+        );
+        if (
+          !described.ok || described.value.definition.id !== grant!.agentId ||
+          verifyHostedRuntimeSourceBinding(source, described.value.source)
+        ) {
+          refuse("EXECUTOR_RUNTIME_NOT_GRANTED");
+        }
+        return described.value.definition;
+      };
+      const definition = resolveDefinition();
       const modelId = request.modelId ?? grant.defaultModelId;
-      const modelGrant = privateMapGet(modelGrants, modelId);
-      if (
-        !modelGrant || (request.maxSteps !== undefined && request.maxSteps > grant.maxSteps) ||
-        (request.maxOutputTokens !== undefined &&
-          request.maxOutputTokens > modelGrant.maxOutputTokens)
-      ) refuse("EXECUTOR_RUNTIME_NOT_GRANTED");
+      const resolveModelGrant = () => {
+        const modelGrant = privateMapGet(modelGrants, modelId);
+        if (
+          !modelGrant || (request.maxSteps !== undefined && request.maxSteps > grant!.maxSteps) ||
+          (request.maxOutputTokens !== undefined &&
+            request.maxOutputTokens > modelGrant.maxOutputTokens)
+        ) refuse("EXECUTOR_RUNTIME_NOT_GRANTED");
+        return modelGrant;
+      };
+      const modelGrant = resolveModelGrant();
       let catalogScopeKey: string | undefined;
       if (facades.loadModelCatalog) {
         try {
@@ -687,14 +741,18 @@ export function createRuntimePreparationCore(input: RuntimePreparationCoreOption
       // Enroll only after agent.describe returns: a failed discovery operation
       // can await discovery.close(). No remaining preparation work awaits it.
       input.project.retainTask(preparation!);
-      let localTools: HostToolSet = preparedSource.localTools;
-      for (let index = 0; index < grant.hostToolFacadeIds.length; index++) {
-        const id = grant.hostToolFacadeIds[index];
-        if (id === undefined) continue;
-        // Object spread creates own data properties without invoking mutable
-        // Object.assign or inherited setters with private facade values.
-        localTools = { ...localTools, ...privateMapGet(facades.hostTools, id) };
-      }
+      const assembleLocalTools = (): HostToolSet => {
+        let localTools: HostToolSet = preparedSource.localTools;
+        for (let index = 0; index < grant!.hostToolFacadeIds.length; index++) {
+          const id = grant!.hostToolFacadeIds[index];
+          if (id === undefined) continue;
+          // Object spread creates own data properties without invoking mutable
+          // Object.assign or inherited setters with private facade values.
+          localTools = { ...localTools, ...privateMapGet(facades.hostTools, id) };
+        }
+        return localTools;
+      };
+      const localTools = assembleLocalTools();
       const normalizeGrantedToolNames = (names: readonly string[]) => [
         ...resolveOwnerScopedToolNames({
           toolNames: names,
@@ -711,60 +769,72 @@ export function createRuntimePreparationCore(input: RuntimePreparationCoreOption
         );
       const deniedToolSet = createPrivateSet(definition.deniedTools ?? []);
       const normalizedDenials = normalizeToolNames(definition.deniedTools ?? []);
-      for (let index = 0; index < normalizedDenials.length; index++) {
-        const name = normalizedDenials[index];
-        if (name !== undefined) deniedToolSet.add(name);
-      }
+      const appendNormalizedDenials = () => {
+        for (let index = 0; index < normalizedDenials.length; index++) {
+          const name = normalizedDenials[index];
+          if (name !== undefined) deniedToolSet.add(name);
+        }
+      };
+      appendNormalizedDenials();
       const deniedToolNames = [...deniedToolSet];
       const remoteToolSources: RemoteToolSource[] = [];
       const remoteToolCatalogs = new Map<RemoteToolSource, Promise<readonly ToolDefinition[]>>();
-      for (let index = 0; index < grant.remoteToolSourceIds.length; index++) {
-        const id = grant.remoteToolSourceIds[index];
-        if (id === undefined) continue;
-        let remoteToolSource = privateMapGet(facades.remoteToolSources, id)!;
-        const isPlatformSource = hasTrustedPlatformSource(remoteToolSource);
-        if (isPlatformSource) {
-          remoteToolSource = createLivePlatformMcpSource(remoteToolSource);
-        }
-        const servers = filter(
-          definition.mcpServers ?? [],
-          (server) => (server.id ?? server.kind) === id,
-        );
-        for (let serverIndex = 0; serverIndex < servers.length; serverIndex++) {
-          const server = servers[serverIndex];
-          if (server !== undefined) {
-            remoteToolSource = wrapRemoteToolSourceWithMcpPolicy(
-              remoteToolSource,
-              isPlatformSource
-                ? withPlatformMcpPolicyAliases(server.toolPolicy)
-                : server.toolPolicy,
-            );
+      const populateRemoteToolSources = () => {
+        for (let index = 0; index < grant!.remoteToolSourceIds.length; index++) {
+          const id = grant!.remoteToolSourceIds[index];
+          if (id === undefined) continue;
+          let remoteToolSource = privateMapGet(facades.remoteToolSources, id)!;
+          const isPlatformSource = hasTrustedPlatformSource(remoteToolSource);
+          if (isPlatformSource) {
+            remoteToolSource = createLivePlatformMcpSource(remoteToolSource);
           }
+          const servers = filter(
+            definition.mcpServers ?? [],
+            (server) => (server.id ?? server.kind) === id,
+          );
+          for (let serverIndex = 0; serverIndex < servers.length; serverIndex++) {
+            const server = servers[serverIndex];
+            if (server !== undefined) {
+              remoteToolSource = wrapRemoteToolSourceWithMcpPolicy(
+                remoteToolSource,
+                isPlatformSource
+                  ? withPlatformMcpPolicyAliases(server.toolPolicy)
+                  : server.toolPolicy,
+              );
+            }
+          }
+          defineOwnDataProperty(
+            remoteToolSources,
+            remoteToolSources.length,
+            remoteToolSource,
+            { enumerable: true, configurable: true, writable: true },
+          );
         }
-        defineOwnDataProperty(
-          remoteToolSources,
-          remoteToolSources.length,
-          remoteToolSource,
-          { enumerable: true, configurable: true, writable: true },
-        );
-      }
+      };
+      populateRemoteToolSources();
       if (remoteToolSources.length > 0) resourcesStarted = true;
-      const sourceToolNames = resolveHostedRuntimeAllowedTools({
-        configuredTools: definition.tools,
-        configuredDeniedTools: definition.deniedTools,
-        configuredDelegates: definition.delegates,
-        configuredSkills: definition.skills,
-        configuredKnowledge: definition.knowledge,
-        requestedTools: undefined,
-      });
-      let allowedToolNames = intersectNames(
-        normalizeGrantedToolNames(grant.allowedToolNames),
-        arrayIsArray(sourceToolNames) ? normalizeToolNames(sourceToolNames) : sourceToolNames,
-        request.allowedToolNames === undefined
-          ? undefined
-          : normalizeToolNames(request.allowedToolNames),
-        deniedToolNames,
-      );
+      const resolveInitialToolSelection = () => {
+        const sourceToolNames = resolveHostedRuntimeAllowedTools({
+          configuredTools: definition.tools,
+          configuredDeniedTools: definition.deniedTools,
+          configuredDelegates: definition.delegates,
+          configuredSkills: definition.skills,
+          configuredKnowledge: definition.knowledge,
+          requestedTools: undefined,
+        });
+        const allowedToolNames = intersectNames(
+          normalizeGrantedToolNames(grant!.allowedToolNames),
+          arrayIsArray(sourceToolNames) ? normalizeToolNames(sourceToolNames) : sourceToolNames,
+          request.allowedToolNames === undefined
+            ? undefined
+            : normalizeToolNames(request.allowedToolNames),
+          deniedToolNames,
+        );
+        return { sourceToolNames, allowedToolNames };
+      };
+      const { sourceToolNames, allowedToolNames: initialAllowedToolNames } =
+        resolveInitialToolSelection();
+      let allowedToolNames = initialAllowedToolNames;
       allowedToolNames = await pruneUnavailableOptionalStudioToolNames(
         allowedToolNames,
         definition,
@@ -810,59 +880,74 @@ export function createRuntimePreparationCore(input: RuntimePreparationCoreOption
           signal: context.signal,
         }))
         : undefined;
-      const steering = steeringResult === undefined ? undefined : parseRuntimePreparationData(
-        getExecutorRuntimeSteeringSchema(),
-        steeringResult,
-      );
-      assertActive();
-      if (steering && steering.agent.id !== definition.id) refuse("EXECUTOR_RUNTIME_NOT_GRANTED");
-      const skills = resolveRuntimeSkillSelectorForAgent({
-        skills: steering?.initialSkills ?? [],
-        agentId: definition.id,
-        selector: definition.skills === false ? [] : definition.skills,
-      });
+      const resolveSteering = () => {
+        const steering = steeringResult === undefined ? undefined : parseRuntimePreparationData(
+          getExecutorRuntimeSteeringSchema(),
+          steeringResult,
+        );
+        assertActive();
+        if (steering && steering.agent.id !== definition.id) {
+          refuse("EXECUTOR_RUNTIME_NOT_GRANTED");
+        }
+        return steering;
+      };
+      const steering = resolveSteering();
+      const selectRuntimeSkills = () => {
+        return resolveRuntimeSkillSelectorForAgent({
+          skills: steering?.initialSkills ?? [],
+          agentId: definition.id,
+          selector: definition.skills === false ? [] : definition.skills,
+        });
+      };
+      const skills = selectRuntimeSkills();
       const availableSkillIds = skills.allowedSkillIds;
       const hasKnownEmptySkillManifest = availableSkillIds?.length === 0;
       if (
         sourceToolNames !== undefined || request.allowedToolNames === undefined ||
         hasKnownEmptySkillManifest
       ) {
-        const grantedLocalToolNames = filter(
-          normalizeGrantedToolNames(grant.allowedToolNames),
-          (name) => hasOwn(localTools, name),
-        );
-        const trustedGrantedLocalToolNames = filter(
-          grantedLocalToolNames,
-          (name) => hasTrustedHostToolProvenance(localTools[name]),
-        );
-        const effectiveSourceTools = resolveHostedRuntimeAllowedToolNames({
-          allowedToolNames: normalizeToolNames(sourceToolNames ?? allowedToolNames),
-          localToolNames: grantedLocalToolNames,
-          trustedLocalToolNames: trustedGrantedLocalToolNames,
-          availableSkillIds,
-          configDerivedSelector: request.allowedToolNames === undefined &&
-            !(definition.tools === true && (definition.deniedTools?.length ?? 0) > 0),
-        });
-        if (
-          hasKnownEmptySkillManifest && request.allowedToolNames !== undefined &&
-          effectiveSourceTools !== null
-        ) {
-          const requestedToolNames = normalizeToolNames(request.allowedToolNames);
-          forEachPrivateArray(requestedToolNames, (name) => {
-            if (
-              name !== undefined && includes(EMPTY_SKILL_MANIFEST_TOOL_NAMES, name) &&
-              includes(trustedGrantedLocalToolNames, name) && !effectiveSourceTools.has(name)
-            ) refuse("EXECUTOR_RUNTIME_CAPABILITY_UNAVAILABLE");
+        const applySkillToolSelection = () => {
+          const grantedLocalToolNames = filter(
+            normalizeGrantedToolNames(grant!.allowedToolNames),
+            (name) => hasOwn(localTools, name),
+          );
+          const trustedGrantedLocalToolNames = filter(
+            grantedLocalToolNames,
+            (name) => hasTrustedHostToolProvenance(localTools[name]),
+          );
+          const effectiveSourceTools = resolveHostedRuntimeAllowedToolNames({
+            allowedToolNames: normalizeToolNames(sourceToolNames ?? allowedToolNames),
+            localToolNames: grantedLocalToolNames,
+            trustedLocalToolNames: trustedGrantedLocalToolNames,
+            availableSkillIds,
+            configDerivedSelector: request.allowedToolNames === undefined &&
+              !(definition.tools === true && (definition.deniedTools?.length ?? 0) > 0),
           });
-        }
-        allowedToolNames = intersectNames(
-          normalizeGrantedToolNames(grant.allowedToolNames),
-          effectiveSourceTools === null ? undefined : [...effectiveSourceTools],
-          request.allowedToolNames === undefined
-            ? undefined
-            : normalizeToolNames(request.allowedToolNames),
-          deniedToolNames,
-        );
+          const assertEmptySkillSelection = () => {
+            if (
+              hasKnownEmptySkillManifest && request.allowedToolNames !== undefined &&
+              effectiveSourceTools !== null
+            ) {
+              const requestedToolNames = normalizeToolNames(request.allowedToolNames);
+              forEachPrivateArray(requestedToolNames, (name) => {
+                if (
+                  name !== undefined && includes(EMPTY_SKILL_MANIFEST_TOOL_NAMES, name) &&
+                  includes(trustedGrantedLocalToolNames, name) && !effectiveSourceTools.has(name)
+                ) refuse("EXECUTOR_RUNTIME_CAPABILITY_UNAVAILABLE");
+              });
+            }
+          };
+          assertEmptySkillSelection();
+          allowedToolNames = intersectNames(
+            normalizeGrantedToolNames(grant!.allowedToolNames),
+            effectiveSourceTools === null ? undefined : [...effectiveSourceTools],
+            request.allowedToolNames === undefined
+              ? undefined
+              : normalizeToolNames(request.allowedToolNames),
+            deniedToolNames,
+          );
+        };
+        applySkillToolSelection();
         allowedToolNames = await pruneUnavailableOptionalStudioToolNames(
           allowedToolNames,
           definition,
@@ -873,22 +958,22 @@ export function createRuntimePreparationCore(input: RuntimePreparationCoreOption
           context.signal,
         );
       }
-      const taskContext = {
-        ...execution,
-        steeringRevision: 0,
-        agentId: definition.id,
-        model: modelId,
-        availableSkillIds,
-        ...(execution.kind === "canonical"
-          ? { parentRunId: execution.runId, parentMessageId: execution.messageId }
-          : {}),
+      const createTaskContext = () => {
+        return {
+          ...execution,
+          steeringRevision: 0,
+          agentId: definition.id,
+          model: modelId,
+          availableSkillIds,
+          ...(execution.kind === "canonical"
+            ? { parentRunId: execution.runId, parentMessageId: execution.messageId }
+            : {}),
+        };
       };
+      const taskContext = createTaskContext();
       objectSetPrototypeOf(taskContext, null);
-      const options: PreparedHostedRuntimeAgentOptions["options"] = {
-        ...execution,
-        agentId: definition.id,
-        model: modelId,
-        instructions: request.instructions ??
+      const resolveInstructions = () =>
+        request.instructions ??
           (steering
             ? buildInteractiveVeryfrontCloudRuntimeInstructions({
               agentConfig: definition,
@@ -903,22 +988,8 @@ export function createRuntimePreparationCore(input: RuntimePreparationCoreOption
               availableToolNames: allowedToolNames,
               skillLoaderToolName: resolveHostedRuntimeSkillLoaderToolName(allowedToolNames),
             })
-            : definition.system ?? definition.instructions),
-        temperature: request.temperature ?? definition.temperature,
-        ...(definition.parallelToolCalls === undefined
-          ? {}
-          : { parallelToolCalls: definition.parallelToolCalls }),
-        thinking,
-        maxSteps: mathMin(
-          request.maxSteps ?? grant.maxSteps,
-          definition.maxSteps ?? grant.maxSteps,
-          grant.maxSteps,
-        ),
-        maxOutputTokens,
-        maxOutputTokensExplicit: request.maxOutputTokens !== undefined,
-        allowedTools: allowedToolNames,
-        allowedProviderTools: providerToolNames,
-        availableSkillIds,
+            : definition.system ?? definition.instructions);
+      const definitionToolOptions = () => ({
         ...(definition.toolLoading !== undefined ? { toolLoading: definition.toolLoading } : {}),
         ...(definition.bootstrapTools !== undefined
           ? { bootstrapTools: definition.bootstrapTools }
@@ -933,20 +1004,8 @@ export function createRuntimePreparationCore(input: RuntimePreparationCoreOption
           ? { toolResultContext: definition.toolResultContext }
           : {}),
         ...(definition.knowledge !== undefined ? { knowledge: definition.knowledge } : {}),
-        skillSelectorPolicy: skills.policy,
-        skillSourcePaths: skills.skillSourcePaths,
-        ...(request.serverResolvedResumeToolCall
-          ? { serverResolvedResumeToolCall: request.serverResolvedResumeToolCall }
-          : {}),
-        ...(steering
-          ? {
-            liveProjectSteering: {
-              ...steering,
-              agent: definition,
-              initialSkills: skills.definitions,
-            },
-          }
-          : {}),
+      });
+      const canonicalPersistenceOptions = () => ({
         ...(execution.kind === "canonical"
           ? {
             parentRunId: execution.runId,
@@ -954,29 +1013,72 @@ export function createRuntimePreparationCore(input: RuntimePreparationCoreOption
             publishParentRunEvents: facades.publishParentRunEvents,
             persistToolExposureCheckpoint: facades.toolExposureCheckpoint!.persist,
             serverResolvedToolExposureCheckpoint: facades.toolExposureCheckpoint!.initial,
-            requireToolExposureCheckpointPersistence: true,
+            requireToolExposureCheckpointPersistence: true as const,
             ...(execution.providerReplay === "required"
               ? {
                 persistProviderReplayCheckpoint: facades.providerReplayCheckpoint!.persist,
                 serverResolvedProviderReplayCheckpoints: facades.providerReplayCheckpoint!.initial,
                 providerReplayCheckpointMessageId: execution.messageId,
-                requireProviderReplayCheckpointPersistence: true,
+                requireProviderReplayCheckpointPersistence: true as const,
               }
               : {}),
           }
           : {}),
+      });
+      const buildPreparedOptions = (): PreparedHostedRuntimeAgentOptions["options"] => {
+        return {
+          ...execution,
+          agentId: definition.id,
+          model: modelId,
+          instructions: resolveInstructions(),
+          temperature: request.temperature ?? definition.temperature,
+          ...(definition.parallelToolCalls === undefined
+            ? {}
+            : { parallelToolCalls: definition.parallelToolCalls }),
+          thinking,
+          maxSteps: mathMin(
+            request.maxSteps ?? grant!.maxSteps,
+            definition.maxSteps ?? grant!.maxSteps,
+            grant!.maxSteps,
+          ),
+          maxOutputTokens,
+          maxOutputTokensExplicit: request.maxOutputTokens !== undefined,
+          allowedTools: allowedToolNames,
+          allowedProviderTools: providerToolNames,
+          availableSkillIds,
+          ...definitionToolOptions(),
+          skillSelectorPolicy: skills.policy,
+          skillSourcePaths: skills.skillSourcePaths,
+          ...(request.serverResolvedResumeToolCall
+            ? { serverResolvedResumeToolCall: request.serverResolvedResumeToolCall }
+            : {}),
+          ...(steering
+            ? {
+              liveProjectSteering: {
+                ...steering,
+                agent: definition,
+                initialSkills: skills.definitions,
+              },
+            }
+            : {}),
+          ...canonicalPersistenceOptions(),
+        };
       };
+      const options = buildPreparedOptions();
       objectSetPrototypeOf(options, null);
-      const facadeAllowedToolSet = createPrivateSet<string>();
-      for (let index = 0; index < allowedToolNames.length; index++) {
-        const name = allowedToolNames[index];
-        if (name !== undefined) facadeAllowedToolSet.add(name);
-      }
-      for (let index = 0; index < providerToolNames.length; index++) {
-        const name = providerToolNames[index];
-        if (name !== undefined) facadeAllowedToolSet.add(name);
-      }
-      const facadeAllowedToolNames = [...facadeAllowedToolSet];
+      const collectFacadeAllowedToolNames = () => {
+        const facadeAllowedToolSet = createPrivateSet<string>();
+        for (let index = 0; index < allowedToolNames.length; index++) {
+          const name = allowedToolNames[index];
+          if (name !== undefined) facadeAllowedToolSet.add(name);
+        }
+        for (let index = 0; index < providerToolNames.length; index++) {
+          const name = providerToolNames[index];
+          if (name !== undefined) facadeAllowedToolSet.add(name);
+        }
+        return [...facadeAllowedToolSet];
+      };
+      const facadeAllowedToolNames = collectFacadeAllowedToolNames();
       const assemblyInput: Parameters<typeof prepareFacadedHostedChatRuntimeToolAssembly>[0] = {
         signal: context.signal,
         taskContext,
@@ -1031,36 +1133,46 @@ export function createRuntimePreparationCore(input: RuntimePreparationCoreOption
           : prepareFacadedHostedChatRuntimeToolAssembly(assemblyInput),
       );
       assertActive();
-      for (const name of toolAssembly.normalizedAllowedToolNames ?? []) {
-        if (includes(toolAssembly.authorizedToolNames, name)) continue;
-        const localToolDescriptor = objectGetOwnPropertyDescriptor(assemblyInput.localTools, name);
-        const localTool = localToolDescriptor && hasOwn(localToolDescriptor, "value")
-          ? localToolDescriptor.value
-          : undefined;
-        const isBareTrustedHostTool = apply(stringIndexOf, name, ["__"]) === -1 &&
-          hasTrustedHostToolProvenance(localTool);
-        if (
-          !isBareTrustedHostTool ||
-          !includes(toolAssembly.authorizedToolNames, `veryfront__${name}`)
-        ) {
-          refuse("EXECUTOR_RUNTIME_CAPABILITY_UNAVAILABLE");
+      const assertToolAssemblyCoverage = () => {
+        for (const name of toolAssembly.normalizedAllowedToolNames ?? []) {
+          if (includes(toolAssembly.authorizedToolNames, name)) continue;
+          const localToolDescriptor = objectGetOwnPropertyDescriptor(
+            assemblyInput.localTools,
+            name,
+          );
+          const localTool = localToolDescriptor && hasOwn(localToolDescriptor, "value")
+            ? localToolDescriptor.value
+            : undefined;
+          const isBareTrustedHostTool = apply(stringIndexOf, name, ["__"]) === -1 &&
+            hasTrustedHostToolProvenance(localTool);
+          if (
+            !isBareTrustedHostTool ||
+            !includes(toolAssembly.authorizedToolNames, `veryfront__${name}`)
+          ) {
+            refuse("EXECUTOR_RUNTIME_CAPABILITY_UNAVAILABLE");
+          }
         }
-      }
+      };
+      assertToolAssemblyCoverage();
       const scopedAssembly = {
         ...toolAssembly,
         runtimeTools: scopeHostedRuntimeToolResults(toolAssembly.runtimeTools),
       };
       objectSetPrototypeOf(scopedAssembly, null);
-      const runtimeInput: PreparedHostedRuntimeAgentOptions = {
-        options,
-        taskContext,
-        toolAssembly: scopedAssembly,
-        modelId,
-        sourceIntegrationPolicy: preparedSource.sourceIntegrationPolicy,
-        refreshSystem: facades.projectSteering
-          ? () => facades.projectSteering!.refresh(streamSignal, toolAssembly.modelVisibleToolNames)
-          : undefined,
+      const createRuntimeInput = (): PreparedHostedRuntimeAgentOptions => {
+        return {
+          options,
+          taskContext,
+          toolAssembly: scopedAssembly,
+          modelId,
+          sourceIntegrationPolicy: preparedSource.sourceIntegrationPolicy,
+          refreshSystem: facades.projectSteering
+            ? () =>
+              facades.projectSteering!.refresh(streamSignal, toolAssembly.modelVisibleToolNames)
+            : undefined,
+        };
       };
+      const runtimeInput = createRuntimeInput();
       const runtimeOptions: NonNullable<Parameters<typeof createPreparedHostedRuntimeAgent>[1]> = {
         resolveModelRuntime,
         manualPause: getHostedAgentPauseCreationOptions(input.project),
@@ -1102,6 +1214,12 @@ export function createRuntimePreparationCore(input: RuntimePreparationCoreOption
                 }
                 : {}),
             };
+            if (execution.kind === "canonical" && execution.projectId) {
+              registerHostedToolRunAuthorization(streamOptions, {
+                projectId: execution.projectId,
+                runId: execution.runId,
+              });
+            }
             objectSetPrototypeOf(streamOptions, null);
             return createHostedChatRuntimeDataStream(streamOptions, streamInput);
           });
@@ -1120,14 +1238,7 @@ export function createRuntimePreparationCore(input: RuntimePreparationCoreOption
       } catch {
         return { ok: false, code: "EXECUTOR_RUNTIME_CLEANUP_FAILED" };
       }
-      const knownFailure = executorAgentFailureCode(error, "EXECUTOR_AGENT_SETUP_FAILED");
-      const code = lifetime.signal.aborted
-        ? "ABORTED"
-        : error instanceof ExecutorRuntimePreparationError
-        ? error.code
-        : knownFailure === "EXECUTOR_AGENT_SETUP_FAILED"
-        ? "EXECUTOR_RUNTIME_PREPARATION_FAILED"
-        : knownFailure;
+      const code = runtimePreparationFailureCode(error, lifetime.signal);
       return { ok: false, code };
     }
   }
@@ -1138,7 +1249,7 @@ export function createRuntimePreparationCore(input: RuntimePreparationCoreOption
     async handle(value, context) {
       try {
         assertActive();
-        if (preparation) refuse("EXECUTOR_RUNTIME_ALREADY_PREPARED");
+        if (preparation !== undefined) refuse("EXECUTOR_RUNTIME_ALREADY_PREPARED");
         const request = parseRuntimePreparationData(
           getExecutorRuntimePrepareRequestSchema(),
           value,

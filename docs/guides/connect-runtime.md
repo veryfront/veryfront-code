@@ -1,7 +1,7 @@
 ---
 title: "Connect a runtime"
 description: "Connect a local or self-hosted Veryfront agent runtime to a project and inspect its runs."
-order: 59
+order: 330
 ---
 
 Connect a developer-owned Veryfront runtime to a project with the external

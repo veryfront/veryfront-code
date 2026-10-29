@@ -463,20 +463,27 @@ export async function resolveProjectRuntimeContext(
     })
     : undefined;
 
-  const requestSecurity = input.isProxyMode && adapterRes.config !== undefined
-    ? deriveSecurityContext(adapterRes.config, {
-      productionDefaults: envRes.resolvedEnvironment === "production",
-      derivedCsp,
-    })
+  function resolveRequestSecurity(): ReturnType<typeof deriveSecurityContext> | undefined {
+    if (input.isProxyMode && adapterRes.config !== undefined) {
+      return deriveSecurityContext(adapterRes.config, {
+        productionDefaults: envRes.resolvedEnvironment === "production",
+        derivedCsp,
+      });
+    }
     // A hosted project with no config file still gets its own security context
-    // rather than the process-wide one: defaults plus whatever its source
-    // implies. `deferred` control-plane requests keep the config-less shape.
-    : input.isProxyMode && projectRes.projectSlug && adapterRes.configOutcome === "hosted-absent"
-    ? deriveSecurityContext(undefined, {
-      productionDefaults: envRes.resolvedEnvironment === "production",
-      derivedCsp,
-    })
-    : undefined;
+    // rather than the process-wide one. Deferred control-plane requests keep
+    // their deliberately config-less shape.
+    if (
+      input.isProxyMode && projectRes.projectSlug && adapterRes.configOutcome === "hosted-absent"
+    ) {
+      return deriveSecurityContext(undefined, {
+        productionDefaults: envRes.resolvedEnvironment === "production",
+        derivedCsp,
+      });
+    }
+    return undefined;
+  }
+  const requestSecurity = resolveRequestSecurity();
 
   // Falling back here substitutes the process-wide security config for the
   // project's, which serves a 200 whose CSP is the platform floor rather than
@@ -579,15 +586,16 @@ export async function resolveProjectRuntimeContext(
   const sourceIntegrationPolicy = normalizeSourceIntegrationPolicy(
     adapterRes.config?.integrations,
   );
-  const projectTraceConfig: ProjectTraceConfigResult = adapterRes.configOutcome === "deferred"
-    ? { status: "deferred" }
-    : !adapterRes.isLocalProject && reqCtx.token
-    ? await resolveProjectTraceConfig(
+  let projectTraceConfig: ProjectTraceConfigResult = { status: "disabled" };
+  if (adapterRes.configOutcome === "deferred") {
+    projectTraceConfig = { status: "deferred" };
+  } else if (!adapterRes.isLocalProject && reqCtx.token) {
+    projectTraceConfig = await resolveProjectTraceConfig(
       { projectId: projectRes.projectId ?? "", environmentId: environmentId ?? "" },
       adapterRes.config?.extensions ?? [],
       rawEnvVars,
-    )
-    : { status: "disabled" };
+    );
+  }
 
   return {
     adapter: adapterRes,
@@ -625,39 +633,40 @@ function createProxyGuard(
   const hasConflictingBranchIdentity = identityHeadersTrusted &&
     Boolean(headers.defaultBranchName) &&
     (Boolean(headers.branchId) || Boolean(headers.branchName));
-  const body = hasUntrustedIdentityHeaders
-    ? {
+  let body: { error: string; detail: string } | undefined;
+  if (hasUntrustedIdentityHeaders) {
+    body = {
       error: "Untrusted identity context",
       detail:
         "project, environment, and branch identity headers require an operator-authenticated proxy boundary",
-    }
-    : !headers.projectSlug
-    ? {
+    };
+  } else if (!headers.projectSlug) {
+    body = {
       error: "Missing project context",
       detail: "x-project-slug header is required in proxy mode",
-    }
-    : !token
-    ? {
+    };
+  } else if (!token) {
+    body = {
       error: "Missing authentication context",
       detail: "x-token header is required in proxy mode",
-    }
-    : hasIncompleteEnvironmentIdentity
-    ? {
+    };
+  } else if (hasIncompleteEnvironmentIdentity) {
+    body = {
       error: "Incomplete environment identity",
       detail: "x-environment-id and x-environment-name must be supplied together",
-    }
-    : hasIncompleteBranchIdentity || hasConflictingBranchIdentity
-    ? {
+    };
+  } else if (hasIncompleteBranchIdentity || hasConflictingBranchIdentity) {
+    body = {
       error: "Invalid branch identity",
       detail:
         "x-branch-id and x-branch-name must be supplied together and cannot be combined with x-default-branch-name",
-    }
-    : !proxyTrusted
-    ? {
+    };
+  } else if (!proxyTrusted) {
+    body = {
       error: "Untrusted proxy context",
       detail: "proxy mode requires an operator-trusted upstream proxy",
-    }
-    : undefined;
+    };
+  }
 
   if (!body) return undefined;
 

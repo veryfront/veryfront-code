@@ -782,6 +782,122 @@ describe("trigger runtime", () => {
     );
   });
 
+  it("preserves structured output and its legacy alias", async () => {
+    const adapter = createRuntimeAdapter({
+      "/project/agents/signal-aware.ts": [
+        "export default {",
+        '  id: "signal-aware",',
+        '  config: { id: "signal-aware", model: "auto" },',
+        "  async generate({ abortSignal }) {",
+        "    return {",
+        '      text: abortSignal ? "signal-present" : "signal-missing",',
+        '      status: "completed",',
+        "      toolCalls: [],",
+        "      object: { selected_count: 1 },",
+        "    };",
+        "  },",
+        '  async stream() { throw new Error("not used"); },',
+        '  async respond() { throw new Error("not used"); },',
+        '  getMemory() { throw new Error("not used"); },',
+        '  async getMemoryStats() { return { totalMessages: 0, estimatedTokens: 0, type: "test" }; },',
+        "  async clearMemory() {},",
+        "};",
+        "",
+      ].join("\n"),
+    });
+    const controller = new AbortController();
+
+    const result = await runTriggerTarget({
+      projectDir: "/project",
+      adapter,
+      config: { fs: { type: "veryfront-api" } },
+      target: { kind: "agent", id: "signal-aware" },
+      agentInput: "Check the signal.",
+      signal: controller.signal,
+    });
+
+    assertEquals(result.output, {
+      text: "signal-present",
+      status: "completed",
+      toolCalls: 0,
+      data: { selected_count: 1 },
+      object: { selected_count: 1 },
+    });
+    assertEquals(Number.isInteger(result.durationMs), true);
+    assertEquals(result.durationMs >= 0, true);
+  });
+
+  it("preserves an explicitly undefined structured output and its legacy alias", async () => {
+    const adapter = createRuntimeAdapter({
+      "/project/agents/undefined-output.ts": [
+        "export default {",
+        '  id: "undefined-output",',
+        '  config: { id: "undefined-output", model: "auto" },',
+        "  async generate() {",
+        '    return { text: "done", status: "completed", toolCalls: [], data: undefined };',
+        "  },",
+        '  async stream() { throw new Error("not used"); },',
+        '  async respond() { throw new Error("not used"); },',
+        '  getMemory() { throw new Error("not used"); },',
+        '  async getMemoryStats() { return { totalMessages: 0, estimatedTokens: 0, type: "test" }; },',
+        "  async clearMemory() {},",
+        "};",
+        "",
+      ].join("\n"),
+    });
+
+    const result = await runTriggerTarget({
+      projectDir: "/project",
+      adapter,
+      config: { fs: { type: "veryfront-api" } },
+      target: { kind: "agent", id: "undefined-output" },
+      agentInput: "Run once.",
+    });
+
+    const output = result.output as Record<string, unknown>;
+    assertEquals(Object.hasOwn(output, "data"), true);
+    assertEquals(Object.hasOwn(output, "object"), true);
+    assertEquals(output.data, undefined);
+    assertEquals(output.object, undefined);
+  });
+
+  it("rejects conflicting structured aliases", async () => {
+    const adapter = createRuntimeAdapter({
+      "/project/agents/signal-aware.ts": [
+        "export default {",
+        '  id: "signal-aware",',
+        '  config: { id: "signal-aware", model: "auto" },',
+        "  async generate({ abortSignal }) {",
+        "    return {",
+        '      text: abortSignal ? "signal-present" : "signal-missing",',
+        '      status: "completed",',
+        "      toolCalls: [],",
+        "      object: { selected_count: 1 },",
+        "      data: { selected_count: 2 },",
+        "    };",
+        "  },",
+        '  async stream() { throw new Error("not used"); },',
+        '  async respond() { throw new Error("not used"); },',
+        '  getMemory() { throw new Error("not used"); },',
+        '  async getMemoryStats() { return { totalMessages: 0, estimatedTokens: 0, type: "test" }; },',
+        "  async clearMemory() {},",
+        "};",
+        "",
+      ].join("\n"),
+    });
+    const controller = new AbortController();
+
+    await assertRejects(() =>
+      runTriggerTarget({
+        projectDir: "/project",
+        adapter,
+        config: { fs: { type: "veryfront-api" } },
+        target: { kind: "agent", id: "signal-aware" },
+        agentInput: "Check the signal.",
+        signal: controller.signal,
+      }), Error);
+  });
+
   it("rejects malformed non-terminal agent responses", async () => {
     const adapter = createRuntimeAdapter({
       "/project/agents/malformed.ts": [

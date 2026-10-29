@@ -1,16 +1,14 @@
 ---
 title: "UI components"
 description: "Use veryfront/ui - accessible, themeable primitives with a bring-your-own-engine adapter system."
-order: 49
+order: 260
 ---
 
 # UI components
 
-`veryfront/ui` is Veryfront's component library: themeable, accessible primitives
-you compose into your own UI. Every behavioural primitive splits into a **Skin**
-(the Tailwind classes and design tokens you see) and **Mechanics** (focus,
-dismiss, positioning, keyboard, ARIA) provided by a swappable **adapter** - so you
-can keep the look while choosing the engine that powers it.
+`veryfront/ui` provides components for building application interfaces. Each
+behavioural primitive separates its styles and tokens from focus, keyboard,
+positioning and ARIA behaviour. An adapter supplies that behaviour.
 
 ## Quick start
 
@@ -31,19 +29,14 @@ export function Example() {
 }
 ```
 
-No provider, no configuration, no extra dependency - it works out of the box on
-the built-in engine. See [Adapters](#adapters) to swap in Base UI or another
-engine.
+The built-in engine needs no provider or extra dependency. Use an
+[adapter](#adapters) to replace it.
 
 ## The primitives
 
-Every primitive is **documented where it lives** - each has a Storybook page
-(props, variants, and live examples) and JSDoc on its source. This guide stays a
-thin overview; it deliberately does not re-list every component or variant.
-
-**→ Browse the full catalog in the [Storybook UI workbench](./storybook-ui-workbench.md)**
-(`deno task storybook`) - the Overview page links to a docs page for every
-primitive, grouped by Layout, Form, Overlay, Structure, and Theming.
+Browse props, variants and examples in the
+[Storybook UI workbench](./storybook-ui-workbench.md) (`deno task storybook`).
+Its Overview groups components by Layout, Form, Overlay, Structure and Theming.
 
 Compounds (e.g. `Dialog`) expose their parts as named exports, such as `Dialog`,
 `DialogTrigger`, and `DialogContent`, so each part tree-shakes independently.
@@ -94,17 +87,14 @@ Override a token by setting the CSS variable (e.g. `--primary`, `--foreground`,
 
 ## Adapters
 
-Behavioural primitives get their mechanics from an **adapter**. This is opt-in
-and layered. Today the swappable primitives are Dialog, Drawer, Tabs, Popover,
-Combobox, Collapsible/Accordion (`disclosure`), ToggleGroup, Toolbar, and Toast;
-DropdownMenu, Tooltip, and Select run on the builtin, with their swap seam
-landing alongside the prebuilt engine adapters.
+Adapters can replace the behaviour of Dialog, Drawer, Tabs, Popover, Combobox,
+Collapsible/Accordion (`disclosure`), ToggleGroup, Toolbar and Toast.
+DropdownMenu, Tooltip and Select currently use the builtin engine only.
 
 ### The default: builtin (zero dependency)
 
-With no provider, primitives run on the **builtin** adapter - a zero-dependency
-engine bundled with `veryfront/ui`. Nothing to install; nothing changes for
-no-dependency users.
+Without a provider, primitives use the **builtin** adapter bundled with
+`veryfront/ui`.
 
 The builtin covers the basics (roles, `aria-expanded`/`aria-haspopup`, Escape and
 outside-click dismiss, portalling into the token scope). For richer accessibility
@@ -135,16 +125,10 @@ the rest on the builtin:
 
 ### Getting an adapter
 
-Adapters are **vendored** - the file lives in _your_ repo and you own it, so the
-engine (e.g. `@base-ui/react`) is _your_ dependency, on _your_ version. Core
-publishes no adapter package.
-
-Today you **write the adapter yourself** against the exported contract (see
-below) - it's a small, typed file whose only imports are the engine package and
-`veryfront/ui` plus `veryfront/ui/adapter`. Prebuilt reference adapters for Base
-UI / Radix / React Aria / Ariakit (and a `veryfront generate adapter <engine>`
-command that vendors one for you) are in progress and ship alongside the
-remaining swappable primitives.
+Write an adapter against the exported contract below and keep it in your
+repository. Import your chosen engine, `veryfront/ui` and
+`veryfront/ui/adapter`. You own the engine dependency and version; core does
+not currently publish prebuilt adapters or an adapter generator.
 
 ### Writing your own adapter
 

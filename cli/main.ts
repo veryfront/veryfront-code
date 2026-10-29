@@ -15,12 +15,24 @@ if (Deno.args[0] === "__veryfront_internal_scaffold_writer") {
 }
 
 // Set the CLI logger preset before importing modules that may log during initialization.
-const { setLoggerPreset } = await import("#cli/logger-config");
+const { setLoggerPreset, setLoggerStderrOnly } = await import("#cli/logger-config");
 setLoggerPreset("cli");
+// Argument-parser dependencies can log before the command is known. Keep
+// startup diagnostics off stdout until the protocol mode is established.
+setLoggerStderrOnly(true);
+
+// Documentation is available even outside a project or with broken application configuration.
+const { earlyDocsArguments } = await import("./commands/docs/arguments.ts");
+const docsArgs = earlyDocsArguments(Deno.args);
+if (docsArgs) {
+  const { runDocsCommand } = await import("./commands/docs/command.ts");
+  Deno.exit(await runDocsCommand(docsArgs));
+}
 
 // Establish machine-output mode before startup modules can emit diagnostics.
 const { parseCliArgs } = await import("./shared/args.ts");
 const args = parseCliArgs(Deno.args);
+setLoggerStderrOnly(args._[0] === "mcp");
 const ndjsonRuns = args.ndjson === true &&
   (args._[0] === "project" || args._[0] === "projects") && args._[1] === "runs";
 if (args.json || args.j || ndjsonRuns) {

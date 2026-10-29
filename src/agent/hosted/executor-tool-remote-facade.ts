@@ -26,6 +26,12 @@ import {
   throwExecutorToolFailure,
 } from "#veryfront/agent/hosted/executor-tool-schema.ts";
 
+function rethrowToolOperationFailure(error: unknown): never {
+  throw isExecutorToolSettledFailure(error) || error instanceof ExecutorAgentError
+    ? error
+    : new TypeError("Executor tool operation failed");
+}
+
 function callerCorrelation(context?: ToolExecutionContext) {
   return {
     ...(context?.toolCallId === undefined ? {} : { toolCallId: context.toolCallId }),
@@ -81,28 +87,46 @@ export async function createExecutorRemoteToolSources(options: {
       let result: JsonValue | undefined;
       let progressCount = 0;
       let progressBytes = 0;
+      const finishStream = () => {
+        if (!terminal) throw new TypeError("Executor tool completion is missing");
+        complete = true;
+        if (failure) throwExecutorToolFailure(failure, true);
+        return result;
+      };
+      const assertNoTerminalFrame = () => {
+        if (terminal) throw new TypeError("Executor tool has multiple terminal frames");
+      };
+      const acceptNonProgressFrame = (frame: ExecutorToolFrame) => {
+        if (operation === "tool.execute" && frame.type === "result") {
+          result = executorToolJson(frame.result, limits.maxResultBytes);
+          terminal = true;
+        } else if (operation !== "tool.execute" && frame.type === "complete") {
+          terminal = true;
+        } else onFrame(frame);
+      };
       while (true) {
         const next = await iterator.next();
         signal.throwIfAborted();
         if (next.done) {
-          if (!terminal) throw new TypeError("Executor tool completion is missing");
-          complete = true;
-          if (failure) throwExecutorToolFailure(failure, true);
-          return result;
+          return finishStream();
         }
-        if (terminal) throw new TypeError("Executor tool has multiple terminal frames");
+        assertNoTerminalFrame();
         const frame = parseExecutorToolData(getExecutorToolFrameSchema(), next.value);
         if (frame.type === "failure") {
           failure = frame;
           terminal = true;
         } else if (frame.type === "progress" && operation !== "tool.sources") {
-          const event = executorToolProgress(frame.event, limits);
-          if (
-            ++progressCount > limits.maxProgressEvents ||
-            (progressBytes += executorToolBytes(next.value)) > limits.maxProgressBytes
-          ) {
-            throw new TypeError("Executor tool progress limit exceeded");
-          }
+          const readProgressEvent = () => {
+            const event = executorToolProgress(frame.event, limits);
+            if (
+              ++progressCount > limits.maxProgressEvents ||
+              (progressBytes += executorToolBytes(next.value)) > limits.maxProgressBytes
+            ) {
+              throw new TypeError("Executor tool progress limit exceeded");
+            }
+            return event;
+          };
+          const event = readProgressEvent();
           // Joining the local publisher also keeps channel consumption bounded.
           try {
             await context?.publishDataEvent?.(event);
@@ -111,18 +135,11 @@ export async function createExecutorRemoteToolSources(options: {
             // fixed diagnostics before the outer transport catch sees it.
             throwExecutorToolFailure(executorToolFailure(error));
           }
-        } else if (operation === "tool.execute" && frame.type === "result") {
-          result = executorToolJson(frame.result, limits.maxResultBytes);
-          terminal = true;
-        } else if (operation !== "tool.execute" && frame.type === "complete") {
-          terminal = true;
-        } else onFrame(frame);
+        } else acceptNonProgressFrame(frame);
       }
     } catch (error) {
       // Never expose peer/transport diagnostics or classify an unknown failure.
-      throw isExecutorToolSettledFailure(error) || error instanceof ExecutorAgentError
-        ? error
-        : new TypeError("Executor tool operation failed");
+      rethrowToolOperationFailure(error);
     } finally {
       if (!complete) await iterator?.return?.().catch(() => {});
     }
@@ -178,7 +195,7 @@ export async function createExecutorRemoteToolSources(options: {
           toolName,
           args: executorToolJson(args, limits.maxArgumentBytes),
           ...callerCorrelation(context),
-          ...(occurrence ?? {}),
+          ...occurrence,
           ...(projectContext === undefined ? {} : { projectContext }),
         });
         return await consume("tool.execute", request, () => {

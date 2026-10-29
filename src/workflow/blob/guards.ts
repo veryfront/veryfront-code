@@ -17,7 +17,7 @@ const invalid = Symbol("invalid blob ref field");
 function ownDataValue(
   value: unknown,
   key: keyof BlobRef,
-): unknown | typeof missing | typeof invalid {
+): unknown {
   if (typeof value !== "object" || value === null) return invalid;
   const descriptor = objectGetOwnPropertyDescriptor(value, key);
   if (!descriptor) return missing;

@@ -127,6 +127,19 @@ describe("explicit integration client", () => {
     assertEquals(executions, 1);
   });
 
+  it("sends one argument string over 1 MiB within the request bound", async () => {
+    const content = "A".repeat(2 * 1024 * 1024);
+    let sent: unknown;
+    await withClientFetch(async (url, init) => {
+      if (String(url).includes("/integration-tools/")) sent = JSON.parse(String(init?.body));
+      return projectOr(url, { content: [], structuredContent: { ok: true } });
+    }, async () => {
+      const client = await createIntegrationClient(context);
+      await client.runTool("github__create_issue", { body: content });
+    });
+    assertStrictEquals((sent as { arguments: { body: string } }).arguments.body, content);
+  });
+
   it("retains typed rate limit metadata and native retryAfter without replay", async () => {
     let calls = 0;
     const condition = {
@@ -161,7 +174,9 @@ describe("explicit integration client", () => {
       const url = new URL(String(input));
       if (!isToolRoute(url.pathname)) return Response.json(project);
       assertEquals(url.searchParams.get("name"), "get_");
-      assertEquals(url.searchParams.get("order"), "asc");
+      assertEquals(url.searchParams.get("sort_by"), "name");
+      assertEquals(url.searchParams.get("sort_order"), "asc");
+      assertEquals(url.searchParams.has("order"), false);
       seen.push(url.searchParams.get("cursor") ?? "first");
       return Response.json({
         tools: [{ ...tool, name: `github__get_${seen.length}` }],
@@ -912,7 +927,13 @@ describe("audited REST wire contract", () => {
       {
         method: "GET",
         path: "/integration-tools",
-        query: { integration: "github", name: "get_", order: "desc", limit: "100" },
+        query: {
+          integration: "github",
+          sort_by: "name",
+          sort_order: "desc",
+          name: "get_",
+          limit: "100",
+        },
         tool: true,
         response: { tools: [tool], page_info: { next: "tools/next" } },
       },
@@ -921,8 +942,9 @@ describe("audited REST wire contract", () => {
         path: "/integration-tools",
         query: {
           integration: "github",
+          sort_by: "name",
+          sort_order: "desc",
           name: "get_",
-          order: "desc",
           limit: "100",
           cursor: "tools/next",
         },

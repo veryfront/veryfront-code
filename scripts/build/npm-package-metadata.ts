@@ -145,6 +145,7 @@ export const EXTENSION_OWNED_DEPENDENCIES = [
 	"sharp",
 	"tailwind-scrollbar-hide",
 	"tailwindcss",
+	"tw-animate-css",
 	"tailwindcss-animate",
 	"unified",
 	"unist-util-visit",

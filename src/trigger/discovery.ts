@@ -7,6 +7,9 @@ import type { RuntimeAdapter } from "#veryfront/platform";
 import { MAX_PATH_LENGTH_CHARS } from "#veryfront/utils/constants/index.ts";
 import { collectFiles } from "#veryfront/utils/file-discovery.ts";
 
+const reflectApply = Reflect.apply;
+const stringCodePointAt = String.prototype.codePointAt;
+
 const MAX_PROJECT_DISCOVERY_DIRECTORIES = 100;
 
 const TRIGGER_FILE_EXTENSIONS = [".ts", ".tsx", ".js", ".jsx"] as const;
@@ -110,7 +113,7 @@ function invalidDiscoveryConfiguration(detail: string, cause?: unknown): never {
 
 function containsControlCharacter(value: string): boolean {
   for (let index = 0; index < value.length; index++) {
-    const code = value.charCodeAt(index);
+    const code = (reflectApply(stringCodePointAt, value, [index]) as number | undefined) ?? 0xffff;
     if (code <= 0x1f || (code >= 0x7f && code <= 0x9f)) return true;
   }
   return false;
@@ -266,7 +269,8 @@ function toErrorMessage(error: unknown): string {
 }
 
 function compareText(left: string, right: string): number {
-  return left < right ? -1 : left > right ? 1 : 0;
+  if (left < right) return -1;
+  return left > right ? 1 : 0;
 }
 
 function createError(input: {
@@ -347,6 +351,23 @@ function selectTriggerExport<T>(
   };
 }
 
+function assertDiscoveryContracts(
+  projectDir: string,
+  sourceKind: SourceTriggerKind,
+  validate: unknown,
+  normalize: unknown,
+): void {
+  validateDiscoveryProjectDir(projectDir);
+  if (sourceKind !== "schedule" && sourceKind !== "webhook") {
+    invalidDiscoveryConfiguration("Trigger source kind must be schedule or webhook.");
+  }
+  if (typeof validate !== "function" || typeof normalize !== "function") {
+    invalidDiscoveryConfiguration(
+      "Trigger discovery requires callable validation and normalization contracts.",
+    );
+  }
+}
+
 /**
  * Discover, validate, normalize, and deterministically de-duplicate source
  * trigger definitions.
@@ -365,21 +386,55 @@ export async function discoverSourceTriggers<T extends TriggerDefinitionWithId>(
     normalize = (value: T): T => value,
     allowHostProjectCodeExecution,
   } = options;
-  validateDiscoveryProjectDir(projectDir);
-  if (sourceKind !== "schedule" && sourceKind !== "webhook") {
-    invalidDiscoveryConfiguration("Trigger source kind must be schedule or webhook.");
-  }
-  if (typeof validate !== "function" || typeof normalize !== "function") {
-    invalidDiscoveryConfiguration(
-      "Trigger discovery requires callable validation and normalization contracts.",
-    );
-  }
+  assertDiscoveryContracts(projectDir, sourceKind, validate, normalize);
   const baseDirs = normalizeTriggerDirectories(triggerDir, triggerDirs).map(
     (directory) => resolveTriggerBaseDir(projectDir, directory, config),
   );
   const candidates: Array<{ definition: T; sourcePath: string }> = [];
   const errors: SourceTriggerDiscoveryError[] = [];
   const seenSourcePaths = new Set<string>();
+
+  const acceptModule = (module: Record<string, unknown>, file: { path: string }) => {
+    const triggerExport = selectTriggerExport(module, validate);
+
+    if (triggerExport.kind === "missing") {
+      errors.push(createError({
+        sourceKind,
+        sourcePath: file.path,
+        code: "invalid_definition",
+        message: `File must export a valid ${sourceKind} definition.`,
+      }));
+      return;
+    }
+    if (triggerExport.kind === "ambiguous") {
+      errors.push(createError({
+        sourceKind,
+        sourcePath: file.path,
+        code: "invalid_definition",
+        message: `File exports multiple distinct ${sourceKind} definitions: ${
+          triggerExport.exportNames.join(", ")
+        }. Export exactly one definition.`,
+        details: { exportNames: [...triggerExport.exportNames] },
+      }));
+      return;
+    }
+
+    let definition: T;
+    try {
+      definition = normalize(triggerExport.definition);
+    } catch (error) {
+      errors.push(createError({
+        sourceKind,
+        sourcePath: file.path,
+        sourceId: triggerExport.definition.id,
+        code: "invalid_definition",
+        message: toErrorMessage(error),
+      }));
+      return;
+    }
+
+    candidates.push({ definition, sourcePath: file.path });
+  };
 
   for (const baseDir of baseDirs) {
     try {
@@ -397,45 +452,7 @@ export async function discoverSourceTriggers<T extends TriggerDefinitionWithId>(
             projectDir,
             allowHostProjectCodeExecution,
           }) as Record<string, unknown>;
-          const triggerExport = selectTriggerExport(module, validate);
-
-          if (triggerExport.kind === "missing") {
-            errors.push(createError({
-              sourceKind,
-              sourcePath: file.path,
-              code: "invalid_definition",
-              message: `File must export a valid ${sourceKind} definition.`,
-            }));
-            continue;
-          }
-          if (triggerExport.kind === "ambiguous") {
-            errors.push(createError({
-              sourceKind,
-              sourcePath: file.path,
-              code: "invalid_definition",
-              message: `File exports multiple distinct ${sourceKind} definitions: ${
-                triggerExport.exportNames.join(", ")
-              }. Export exactly one definition.`,
-              details: { exportNames: [...triggerExport.exportNames] },
-            }));
-            continue;
-          }
-
-          let definition: T;
-          try {
-            definition = normalize(triggerExport.definition);
-          } catch (error) {
-            errors.push(createError({
-              sourceKind,
-              sourcePath: file.path,
-              sourceId: triggerExport.definition.id,
-              code: "invalid_definition",
-              message: toErrorMessage(error),
-            }));
-            continue;
-          }
-
-          candidates.push({ definition, sourcePath: file.path });
+          acceptModule(module, file);
         } catch (error) {
           errors.push(createError({
             sourceKind,

@@ -23,6 +23,10 @@ import { ExecutorRuntimePreparationError } from "../hosted/executor-runtime-prep
 import { ExecutorDiscoveryError } from "../hosted/executor-discovery-schema.ts";
 import { HostedServiceAuthError } from "./auth.ts";
 import { resolveHostOwnedSourceApiBaseUrl } from "#veryfront/config/host-api-base.ts";
+import { resolveVeryfrontInferenceApiBaseUrlFromHostEnv } from "#veryfront/platform/cloud/resolver.ts";
+import { createVeryfrontCloudInferenceModelResolver } from "../hosted/inference-credential.ts";
+import type { AgentModelRuntimeResolver } from "../runtime/model-transport.ts";
+import { bindManagedBrokerInferenceAuthority } from "./managed-broker-inference.ts";
 import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
 import { getRuntimeAgentResumeToolCallSchema } from "#veryfront/agent/runtime/agent-invocation-contract.ts";
 import { createAgUiChatUiTrackedResponse } from "../ag-ui/chat-ui-chunk-encoder.ts";
@@ -87,6 +91,14 @@ export function createManagedBrokerHandler<TAuthorization>(options: {
 }) {
   return createManagedBrokerIngressHandler({
     ...options,
+    createInferenceResolver(ingress) {
+      const credential = ingress.privateAuthority.inferenceAuthToken;
+      return credential
+        ? createVeryfrontCloudInferenceModelResolver(credential, {
+          apiBaseUrl: resolveVeryfrontInferenceApiBaseUrlFromHostEnv(),
+        })
+        : undefined;
+    },
     async parse(request, signal) {
       const runId = parseBrokerSignedRunPath(new URL(request.url).pathname);
       if (request.method !== "POST" || runId === null) {
@@ -184,6 +196,10 @@ export function createManagedAgUiBrokerHandler(options: {
   return createManagedBrokerIngressHandler({
     ...options,
     responseMode: "sse",
+    createInferenceResolver: (ingress) =>
+      ingress.broker.createInferenceModelResolver({
+        apiBaseUrl: resolveVeryfrontInferenceApiBaseUrlFromHostEnv(),
+      }),
     async parse(request, signal) {
       if (request.method !== "POST" || new URL(request.url).pathname !== "/api/ag-ui") {
         return Response.json({ errorCode: "BROKER_INGRESS_TARGET_MISMATCH" }, { status: 400 });
@@ -237,6 +253,10 @@ export function createManagedDurableBrokerHandler(options: {
   return createManagedBrokerIngressHandler<ManagedDurableAgentIngressResult>({
     ...options,
     responseMode: "detached",
+    createInferenceResolver: (ingress) =>
+      ingress.broker.createInferenceModelResolver({
+        apiBaseUrl: resolveVeryfrontInferenceApiBaseUrlFromHostEnv(),
+      }),
     async prepare(input) {
       const resumeToolCall = snapshotManagedResumeToolCall(
         input.ingress.executor.serverResolvedResumeToolCall,
@@ -328,6 +348,7 @@ function createManagedBrokerIngressHandler<TIngress>(options: {
     }
   >;
   prepare(input: { ingress: TIngress; signal: AbortSignal }): Promise<ManagedBrokerPreparation>;
+  createInferenceResolver(ingress: TIngress): AgentModelRuntimeResolver | undefined;
   onExecutionError?: (error: unknown, runId: string) => void;
 }) {
   const active = new Map<string, { accepted: boolean; settled: Promise<void> }>();
@@ -378,6 +399,17 @@ function createManagedBrokerIngressHandler<TIngress>(options: {
       try {
         const prepared = await options.prepare({ ingress, signal });
         preparedCleanup = prepared.cleanup;
+        const inference = bindManagedBrokerInferenceAuthority({
+          start: prepared.start,
+          createResolver: () => options.createInferenceResolver(ingress),
+          signal: AbortSignal.any([
+            prepared.executionSignal,
+            lifetime.signal,
+            ...(options.signal ? [options.signal] : []),
+          ]),
+          cleanup: prepared.cleanup,
+        });
+        preparedCleanup = inference.cleanup;
         assertAvailable(closed, signal);
         if (
           options.responseMode === "detached" &&
@@ -392,7 +424,7 @@ function createManagedBrokerIngressHandler<TIngress>(options: {
           prepared.executionSignal,
         );
         const start = bindBrokerOwnedHostedKnowledgeCredential({
-          ...prepared.start,
+          ...inference.start,
           session: { ...prepared.start.session, preparationSignal: signal },
         }, ingress);
         inheritHostedAgentPauseCapability(start, prepared.start);

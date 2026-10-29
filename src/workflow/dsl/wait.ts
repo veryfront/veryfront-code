@@ -12,7 +12,8 @@ import {
 /** Options accepted by wait for approval. */
 export interface WaitForApprovalOptions extends Omit<BaseNodeConfig, "checkpoint"> {
   message?: string;
-  payload?: unknown | ((context: WorkflowContext) => unknown);
+  /** Literal payload or a function that derives it from workflow context. */
+  payload?: unknown;
   timeout?: string | number;
   approvers?: string[];
   retry?: RetryConfig;

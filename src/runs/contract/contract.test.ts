@@ -78,6 +78,12 @@ describe("Runs target contract types", () => {
     assertEquals(heartbeat, {});
     assertEquals(input.fields[0]?.default, "Yes");
   });
+  it("types text-only completion without output and keeps explicit null", () => {
+    const omitted = { status: "completed" } satisfies Schemas["FinalizeRunRequest"];
+    const explicit = { status: "completed", output: null } satisfies Schemas["FinalizeRunRequest"];
+    assertEquals(omitted, { status: "completed" });
+    assertEquals(explicit.output, null);
+  });
   it("types a timer wait for a delayed workflow", () => {
     const wait: Schemas["RunWait"] = { reason: "timer", resume_at: "2099-01-01T00:00:00Z" };
     assertEquals(wait.reason, "timer");

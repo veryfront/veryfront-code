@@ -23,6 +23,7 @@ export async function prepareConnectedDev(
   dependencies: {
     authenticate(): Promise<boolean>;
     resolve(projectSlug: string, environmentName: string): Promise<ConnectedDevTarget>;
+    sync(target: ConnectedDevTarget): Promise<void>;
   },
   proxyMode = false,
 ): Promise<ConnectedDevTarget | undefined> {
@@ -32,7 +33,9 @@ export async function prepareConnectedDev(
       "Veryfront Cloud login is required for this linked project. Run veryfront login, then npm run dev again.",
     );
   }
-  return await dependencies.resolve(projectSlug, environmentName);
+  const target = await dependencies.resolve(projectSlug, environmentName);
+  await dependencies.sync(target);
+  return target;
 }
 
 /** Qualified credentials without an override target the official API. */

@@ -53,8 +53,14 @@ function isScopedOverride(key?: string): boolean {
   return Boolean(key && /(?:^|:)(?:react-runtime:|pins:|render-identity:hash-)/.test(key));
 }
 
+function pairedRenderHash(namespace: string, value: string): string {
+  const first = hashString(`${namespace}:a:${value}`);
+  const second = hashString(`${namespace}:b:${value}`);
+  return `${first}-${second}`;
+}
+
 function scopedSlugPrefix(slug: string): string {
-  const digest = `${hashString(`render-slug:a:${slug}`)}-${hashString(`render-slug:b:${slug}`)}`;
+  const digest = pairedRenderHash("render-slug", slug);
   return `render-variants:v1:${digest}:`;
 }
 
@@ -77,9 +83,9 @@ async function withAliasGeneration<T>(key: string, action: () => Promise<T>): Pr
 }
 
 export class ContextAwareCacheCoordinator {
-  private store: CacheStore;
-  private ttlMs: number | undefined;
-  private staleMs: number;
+  private readonly store: CacheStore;
+  private readonly ttlMs: number | undefined;
+  private readonly staleMs: number;
   private readonly defaultTtlMs = DEFAULT_CACHE_TTL_MS;
   // Track only writes in flight, not cached entries: eviction belongs to the store.
   private readonly writes = new Map<string, { slugKey: string; write: Promise<void> }>();
@@ -150,11 +156,7 @@ export class ContextAwareCacheCoordinator {
             this.store.get(this.aliasProjectEpochKey(ctx.projectId)),
           ]);
           if (
-            typeof cached.aliasEpoch !== "string" || cached.aliasEpoch !== epoch?.aliasEpoch ||
-            (epoch && this.isExpired(epoch)) ||
-            typeof cached.aliasProjectEpoch !== "string" ||
-            cached.aliasProjectEpoch !== projectEpoch?.aliasEpoch ||
-            (projectEpoch && this.isExpired(projectEpoch))
+            this.aliasEpochsChanged(cached, epoch, projectEpoch)
           ) {
             const lookupDurationMs = roundDurationMs(performance.now() - lookupStart);
             recordCacheLookup("miss", lookupDurationMs);
@@ -162,13 +164,7 @@ export class ContextAwareCacheCoordinator {
           }
         }
 
-        const trackedSlug = this.legacyKeys.get(cacheKey);
-        if (trackedSlug !== undefined) {
-          this.legacyKeys.delete(cacheKey);
-          if (!this.isExpired(cached) || this.isStaleUsable(cached, ctx)) {
-            this.legacyKeys.set(cacheKey, trackedSlug);
-          }
-        }
+        this.refreshTrackedLegacyKey(cacheKey, cached, ctx);
 
         if (hasResponseMetadata(cached.result)) {
           if (this.store.deleteIfUnchanged) {
@@ -204,7 +200,7 @@ export class ContextAwareCacheCoordinator {
 
         if (this.isExpired(cached)) {
           if (this.isStaleUsable(cached, ctx)) {
-            if (cached.aliasEpoch !== undefined) this.touchAliasEpochs(ctx);
+            this.touchCachedAliasEpochs(cached, ctx);
             const lookupDurationMs = roundDurationMs(performance.now() - lookupStart);
             recordCacheLookup("stale", lookupDurationMs);
             logger.debug("Cache stale hit", {
@@ -244,7 +240,7 @@ export class ContextAwareCacheCoordinator {
           return { cacheKey, hit: false, status: "expired", lookupDurationMs };
         }
 
-        if (cached.aliasEpoch !== undefined) this.touchAliasEpochs(ctx);
+        this.touchCachedAliasEpochs(cached, ctx);
         const lookupDurationMs = roundDurationMs(performance.now() - lookupStart);
         recordCacheLookup("hit", lookupDurationMs);
         logger.debug("Cache hit", {
@@ -277,6 +273,34 @@ export class ContextAwareCacheCoordinator {
     );
   }
 
+  private aliasEpochsChanged(
+    cached: CachePayload,
+    epoch: CachePayload | undefined,
+    projectEpoch: CachePayload | undefined,
+  ): boolean {
+    return !!(
+      typeof cached.aliasEpoch !== "string" || cached.aliasEpoch !== epoch?.aliasEpoch ||
+      (epoch && this.isExpired(epoch)) ||
+      typeof cached.aliasProjectEpoch !== "string" ||
+      cached.aliasProjectEpoch !== projectEpoch?.aliasEpoch ||
+      (projectEpoch && this.isExpired(projectEpoch))
+    );
+  }
+
+  private refreshTrackedLegacyKey(
+    cacheKey: string,
+    cached: CachePayload,
+    ctx: RenderContext,
+  ): void {
+    const trackedSlug = this.legacyKeys.get(cacheKey);
+    if (trackedSlug !== undefined) {
+      this.legacyKeys.delete(cacheKey);
+      if (!this.isExpired(cached) || this.isStaleUsable(cached, ctx)) {
+        this.legacyKeys.set(cacheKey, trackedSlug);
+      }
+    }
+  }
+
   async persistResult(
     result: RenderResult,
     slug: string,
@@ -307,8 +331,8 @@ export class ContextAwareCacheCoordinator {
       // establishes ordering without making a failed write poison later writes.
       await Promise.allSettled([
         barrier,
-        ...(previous ? [previous] : []),
-        ...(legacyWrite ? [legacyWrite] : []),
+        ...(previous !== undefined ? [previous] : []),
+        ...(legacyWrite !== undefined ? [legacyWrite] : []),
       ]);
       if (!this.store.deleteByPrefix && !this.legacyKeys.has(cacheKey)) {
         while (this.legacyKeys.size >= this.maxLegacyKeys) {
@@ -324,19 +348,18 @@ export class ContextAwareCacheCoordinator {
       const aliasProjectEpoch = aliasEpoch
         ? await this.captureAliasProjectEpoch(ctx.projectId)
         : undefined;
-      await this.store.set(cacheKey, {
-        ...(aliasEpoch ? { aliasEpoch, aliasProjectEpoch } : {}),
-        result: cachedResult,
-        ...(sealedHtml.placeholder === undefined
-          ? {}
-          : { htmlNoncePlaceholder: sealedHtml.placeholder }),
-        nodeMapEntries: result.nodeMap ? Array.from(result.nodeMap.entries()) : undefined,
-        storedAt: now,
-        expiresAt: this.ttlMs ? now + this.ttlMs : undefined,
-        staleUntil: this.shouldServeStale(ctx) && this.ttlMs && this.staleMs > 0
-          ? now + this.ttlMs + this.staleMs
-          : undefined,
-      });
+      await this.store.set(
+        cacheKey,
+        this.createPayload(
+          result,
+          ctx,
+          cachedResult,
+          sealedHtml,
+          aliasEpoch,
+          aliasProjectEpoch,
+          now,
+        ),
+      );
       if (!this.store.deleteByPrefix) {
         this.legacyKeys.delete(cacheKey);
         this.legacyKeys.set(cacheKey, createCacheKey(ctx, `page:${slug}`));
@@ -359,6 +382,30 @@ export class ContextAwareCacheCoordinator {
     });
   }
 
+  private createPayload(
+    result: RenderResult,
+    ctx: RenderContext,
+    cachedResult: RenderResult,
+    sealedHtml: ReturnType<typeof sealHtmlNonceForCache>,
+    aliasEpoch: string | undefined,
+    aliasProjectEpoch: string | undefined,
+    now: number,
+  ): CachePayload {
+    return {
+      ...(aliasEpoch ? { aliasEpoch, aliasProjectEpoch } : {}),
+      result: cachedResult,
+      ...(sealedHtml.placeholder === undefined
+        ? {}
+        : { htmlNoncePlaceholder: sealedHtml.placeholder }),
+      nodeMapEntries: result.nodeMap ? Array.from(result.nodeMap.entries()) : undefined,
+      storedAt: now,
+      expiresAt: this.ttlMs ? now + this.ttlMs : undefined,
+      staleUntil: this.shouldServeStale(ctx) && this.ttlMs && this.staleMs > 0
+        ? now + this.ttlMs + this.staleMs
+        : undefined,
+    };
+  }
+
   private aliasEpochKey(ctx: RenderContext): string {
     return createCacheKey(ctx, CACHE_ALIAS_EPOCH_KEY);
   }
@@ -370,6 +417,10 @@ export class ContextAwareCacheCoordinator {
 
   private aliasProjectEpochKey(projectId: string): string {
     return `${projectId}:${CACHE_ALIAS_PROJECT_EPOCH_KEY}`;
+  }
+
+  private touchCachedAliasEpochs(cached: CachePayload, ctx: RenderContext): void {
+    if (cached.aliasEpoch !== undefined) this.touchAliasEpochs(ctx);
   }
 
   private touchAliasEpochs(ctx: RenderContext): void {
@@ -486,14 +537,8 @@ export class ContextAwareCacheCoordinator {
           Promise.resolve().then(() =>
             this.store.deleteByPrefix!(createCacheKey(ctx, CACHE_ALIAS_KEY_PREFIX))
           ).then(() => {}),
-        );
-        deletions.push(
           Promise.resolve().then(() => this.store.deleteByPrefix!(`${slugKey}:`)).then(() => {}),
-        );
-        deletions.push(
           Promise.resolve().then(() => this.store.deleteByPrefix!(`${slugKey}?`)).then(() => {}),
-        );
-        deletions.push(
           Promise.resolve().then(() =>
             this.store.deleteByPrefix!(createCacheKey(ctx, scopedSlugPrefix(slug)))
           ).then(() => {}),
@@ -586,9 +631,7 @@ export class ContextAwareCacheCoordinator {
       isScopedOverride(cacheKeyOverride) && cacheKeyKind === "route"
     ) {
       const identity = `${cacheKeyOverride}:${colorScheme ?? "default"}`;
-      const digest = `${hashString(`render-variant:a:${identity}`)}-${
-        hashString(`render-variant:b:${identity}`)
-      }`;
+      const digest = pairedRenderHash("render-variant", identity);
       return createCacheKey(ctx, `${scopedSlugPrefix(slug)}${digest}${themeKey}`);
     }
     const baseKey = cacheKeyOverride && cacheKeyOverride.length > 0 ? cacheKeyOverride : slug;
@@ -597,10 +640,8 @@ export class ContextAwareCacheCoordinator {
       ? `${contentKey}${themeKey}`
       : contentKey;
     if (cacheKeyOverride && cacheKeyKind === "alias") {
-      const digest = `${hashString(`render-alias:a:${themedKey}`)}-${
-        hashString(`render-alias:b:${themedKey}`)
-      }`;
-      const suffix = themedKey.match(/:theme-(light|dark)$/)?.[0] ?? "";
+      const digest = pairedRenderHash("render-alias", themedKey);
+      const suffix = /:theme-(light|dark)$/.exec(themedKey)?.[0] ?? "";
       return createCacheKey(ctx, `${CACHE_ALIAS_KEY_PREFIX}${digest}${suffix}`);
     }
     return createCacheKey(ctx, themedKey);

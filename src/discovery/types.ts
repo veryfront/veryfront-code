@@ -32,6 +32,8 @@ export interface FileDiscoveryContext {
   baseDir?: string;
   /** Explicit host-owned capability for trusted local/dedicated runtimes only. */
   allowHostProjectCodeExecution?: boolean;
+  /** Host ownership fence checked immediately before project module evaluation. */
+  assertCurrent?: () => Promise<void>;
   /**
    * Overrides compiled-binary detection for the discovery bundler; defaults to
    * `isDenoCompiled`. A compiled binary's npm package set is frozen at build
@@ -62,6 +64,8 @@ export interface DiscoveryConfig {
   fsAdapter?: FileSystemAdapter;
   /** Explicit host-owned capability required before executable modules are imported. */
   allowHostProjectCodeExecution?: boolean;
+  /** Host ownership fence checked immediately before project module evaluation. */
+  assertCurrent?: () => Promise<void>;
 }
 
 /**

@@ -100,6 +100,36 @@ describe("agent/streaming/executor-data-schema", () => {
     );
   });
 
+  it("accepts canonical structured aliases and normalizes data-only finish events", () => {
+    for (const data of [false, 0, null, "", [1, 2], { answer: 42 }]) {
+      assertEquals(parseExecutorDataEvent({ type: "message-finish", data }), {
+        type: "message-finish",
+        data,
+        object: data,
+      });
+      assertEquals(parseExecutorDataEvent({ type: "message-finish", data, object: data }), {
+        type: "message-finish",
+        data,
+        object: data,
+      });
+    }
+    assertThrows(() =>
+      parseExecutorDataEvent({ type: "message-finish", data: false, object: true })
+    );
+  });
+
+  it("normalizes legacy object-only executor finishes", () => {
+    for (const type of ["finish", "message-finish"]) {
+      for (const data of [false, 0, null, "", [1, 2], { answer: 42 }]) {
+        assertEquals(parseExecutorDataEvent({ type, object: data }), {
+          type,
+          data,
+          object: data,
+        });
+      }
+    }
+  });
+
   it("preserves explicit snapshot encoding and rejects unknown encodings", () => {
     const event = {
       type: "message-finish",
@@ -110,7 +140,7 @@ describe("agent/streaming/executor-data-schema", () => {
         value: "[unsupported bigint]",
       },
     };
-    assertEquals(parseExecutorDataEvent(event), event);
+    assertEquals(parseExecutorDataEvent(event), { ...event, data: event.object });
     assertThrows(() => parseExecutorDataEvent({ ...event, objectEncoding: "unknown" }));
   });
 

@@ -7,10 +7,6 @@ order: 30
 An integration owns connector metadata, auth configuration, token state, and
 remote tool discovery for an external service.
 
-Integrations exist because external services have more than one concern. They
-need metadata, OAuth or token setup, tool definitions, prompts, and sometimes
-shared client code.
-
 ## Characteristics
 
 - Metadata describes the external service.

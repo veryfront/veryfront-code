@@ -51,7 +51,7 @@ export function registerHostedInferenceCredential(
 
 /** @internal Create a model resolver without exposing verified inference authority. */
 export function createVeryfrontCloudInferenceModelResolver(
-  credential: string,
+  credential: string | (() => string),
   options: { apiBaseUrl?: string; assertParentActive?: () => void } = {},
 ): AgentModelRuntimeResolver {
   let active = true;

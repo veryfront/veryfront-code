@@ -655,10 +655,13 @@ Deno.test("prepareDefaultHostedChildForkSandboxToolSources merges sandbox tools 
   const fixtures = createRemoteSourceFixtures();
   const sandboxToolInputs: AgentServiceSandboxToolsOptions[] = [];
   let sandboxClosed = false;
+  let credential = "child-invocation-1";
+  let cleanupCredential: string | undefined;
   const createBashTool: CreateSandboxBashTool = () => Promise.resolve({ tools: {} });
 
   const result = await prepareDefaultHostedChildForkSandboxToolSources({
     authToken: "token-1",
+    getAuthToken: () => credential,
     apiUrl: "https://api.example",
     apiMcpUrl: "https://api.example/mcp",
     mcpServers: [{ kind: "veryfront-api" }, { kind: "veryfront-studio" }],
@@ -686,6 +689,7 @@ Deno.test("prepareDefaultHostedChildForkSandboxToolSources merges sandbox tools 
           },
           closeSandbox: () => {
             sandboxClosed = true;
+            cleanupCredential = sandboxInput.getAuthToken?.();
             return Promise.resolve();
           },
         }),
@@ -709,8 +713,11 @@ Deno.test("prepareDefaultHostedChildForkSandboxToolSources merges sandbox tools 
     ["https://api.example", "project-1"],
   ]);
 
+  credential = "child-invocation-2";
+  assertEquals(sandboxToolInputs[0]!.getAuthToken?.(), "child-invocation-2");
   await result.closeRuntime?.();
   assertEquals(sandboxClosed, true);
+  assertEquals(cleanupCredential, "child-invocation-2");
   await result.closeTooling?.();
 });
 

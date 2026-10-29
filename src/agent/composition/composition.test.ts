@@ -21,7 +21,7 @@ import {
   runWithApplicationInferenceAdmission,
 } from "../runtime/application-inference-admission.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import type { Agent, AgentResponse, AgentStreamResult } from "../types.ts";
+import { type Agent, type AgentResponse, type AgentStreamResult } from "../types.ts";
 import type { ToolExecutionContext } from "#veryfront/tool";
 
 // Side-effect import: registers the globalThis bridges
@@ -33,6 +33,11 @@ import { agentAsTool, agentRegistry, registerAgent } from "./composition.ts";
 import { createInvokeAgentTool } from "../runtime/agent-delegation.ts";
 import { parseInvokeAgentStreamValue } from "#veryfront/chat/invoke-agent-stream.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
+import {
+  readInheritedLocalChildResult,
+  runInheritedLocalAgent,
+  terminalAgentOutput,
+} from "./inherited-local-agent.ts";
 
 const BRIDGE_KEYS = ["__vfGetAgent", "__vfRegisterAgent", "__vfGetAllAgentIds"] as const;
 
@@ -164,6 +169,150 @@ function createMinimalAgent(id: string): Agent {
 }
 
 describe("agentAsTool", () => {
+  it("streams a local tool result and final child text after a stop-finished preamble", async () => {
+    const { createEphemeralAgent } = await import("../factory.ts");
+    const { tool } = await import("#veryfront/tool");
+    let executions = 0;
+    const model = scriptedModel([
+      {
+        parts: [
+          { type: "text-delta", text: "Checking the demo record." },
+          { type: "tool-call", toolCallId: "inspect", toolName: "inspect_record", input: {} },
+          { type: "finish", finishReason: "stop" },
+        ],
+      },
+      { text: "The demo record is valid.", finishReason: "stop" },
+    ], { only: "stream", provider: "custom", modelId: "custom/child-stop" });
+    const child = createEphemeralAgent({
+      id: "child-stop",
+      system: "Inspect the synthetic demo record.",
+      model: "custom/child-stop",
+      resolveModelTransport: () => ({ model }),
+      maxSteps: 3,
+      tools: {
+        inspect_record: tool({
+          id: "inspect_record",
+          description: "Inspect a synthetic record",
+          inputSchema: defineSchema((v) => v.object({}))(),
+          execute: () => {
+            executions++;
+            return Promise.resolve({ valid: true });
+          },
+        }),
+      },
+    });
+    const events: Array<Record<string, unknown>> = [];
+    const result = await agentAsTool(child, "Inspect", { publishChildStream: true }).execute(
+      { input: "Check the record" },
+      {
+        toolCallId: "parent",
+        publishDataEvent: (event) => {
+          const value = parseInvokeAgentStreamValue(event.value);
+          if (value) events.push(value.event);
+        },
+      },
+    );
+    assertEquals(executions, 1);
+    assertEquals(result.status, "completed");
+    assertStringIncludes(result.text, "The demo record is valid.");
+    assertEquals(
+      events.filter((event) => event.type === "tool-output-available").map((event) => event.output),
+      [{ valid: true }],
+    );
+    assertStringIncludes(
+      events.filter((event) => event.type === "text-delta").map((event) => event.delta).join(""),
+      "The demo record is valid.",
+    );
+  });
+
+  for (const sibling of ["provider", "incomplete"] as const) {
+    it(`terminalizes a committed local call blocked by an unresolved ${sibling} sibling`, async () => {
+      const { createEphemeralAgent } = await import("../factory.ts");
+      const { tool } = await import("#veryfront/tool");
+      let executions = 0;
+      const model = scriptedModel([{
+        parts: [
+          ...(sibling === "provider"
+            ? [{
+              type: "tool-call" as const,
+              toolCallId: "search",
+              toolName: `blocked_${sibling}_search`,
+              input: {},
+              providerExecuted: true,
+            }]
+            : [
+              {
+                type: "tool-input-start" as const,
+                id: "search",
+                toolName: `blocked_${sibling}_search`,
+              },
+              { type: "tool-input-delta" as const, id: "search", delta: '{"query":' },
+            ]),
+          {
+            type: "tool-call",
+            toolCallId: "inspect",
+            toolName: `inspect_blocked_${sibling}_record`,
+            input: { record: "demo" },
+          },
+          { type: "finish", finishReason: "stop" },
+        ],
+      }], { only: "stream", provider: "custom", modelId: "custom/blocked-child" });
+      const child = createEphemeralAgent({
+        id: "blocked-child",
+        system: "Inspect the demo record.",
+        model: "custom/blocked-child",
+        resolveModelTransport: () => ({ model }),
+        maxSteps: 1,
+        tools: {
+          [`blocked_${sibling}_search`]: tool({
+            id: `blocked_${sibling}_search`,
+            description: "Provider search",
+            inputSchema: defineSchema((v) => v.object({}))(),
+            execute: () => {
+              throw new Error("Provider call must not execute locally");
+            },
+          }),
+          [`inspect_blocked_${sibling}_record`]: tool({
+            id: `inspect_blocked_${sibling}_record`,
+            description: "Inspect a record",
+            inputSchema: defineSchema((v) => v.object({ record: v.string() }))(),
+            execute: () => {
+              executions++;
+              return { valid: true };
+            },
+          }),
+        },
+      });
+      let response: AgentResponse | undefined;
+      const stream = await child.stream({
+        input: "Inspect the record",
+        onFinish: (value) => {
+          response = value;
+        },
+      });
+      const wire = await stream.toDataStreamResponse().text();
+      assertEquals(executions, 0);
+      assertEquals(model.callCount, 1);
+      assertStringIncludes(wire, '"type":"tool-output-error","toolCallId":"inspect"');
+      const parts = response!.messages.flatMap((message) => message.parts);
+      const call = parts.find((part) => "toolCallId" in part && part.toolCallId === "inspect");
+      assertEquals(call && "args" in call ? call.args : undefined, {
+        record: "demo",
+      });
+      const result = parts.find((part) =>
+        part.type === "tool-result" && part.toolCallId === "inspect"
+      );
+      assertEquals(result !== undefined, true);
+      assertStringIncludes(JSON.stringify(result), "Tool execution skipped");
+      if (sibling === "provider") {
+        assertEquals(
+          parts.some((part) => part.type === "tool-result" && part.toolCallId === "search"),
+          false,
+        );
+      }
+    });
+  }
+
   for (const selection of ["all tools", "delegates"] as const) {
     it(`preserves connected child ${selection} when binding its model runtime`, async () => {
       const child = createMinimalAgent(`connected-${selection.replaceAll(" ", "-")}`);
@@ -394,6 +543,7 @@ describe("agentAsTool", () => {
 
     assertEquals(result, {
       text: JSON.stringify(object),
+      data: object,
       object,
       toolCalls: 0,
       status: "completed",
@@ -423,7 +573,13 @@ describe("agentAsTool", () => {
       {} as ToolExecutionContext,
     );
 
-    assertEquals(result, { text: "null", object: null, toolCalls: 0, status: "completed" });
+    assertEquals(result, {
+      text: "null",
+      data: null,
+      object: null,
+      toolCalls: 0,
+      status: "completed",
+    });
   });
 
   it("keeps a parsed undefined object from a schema transform", async () => {
@@ -452,6 +608,7 @@ describe("agentAsTool", () => {
     assertEquals(Object.hasOwn(result, "object"), true);
     assertEquals(result, {
       text: '{"city":"Berlin"}',
+      data: undefined,
       object: undefined,
       toolCalls: 0,
       status: "completed",
@@ -466,6 +623,183 @@ describe("agentAsTool", () => {
 
     assertEquals(result, { text: "ok", toolCalls: 0, status: "completed" });
   });
+
+  it("snapshots an explicit undefined structured result for inherited persistence", () => {
+    assertEquals(
+      terminalAgentOutput({
+        text: '{"city":"Berlin"}',
+        data: undefined,
+        object: undefined,
+        toolCalls: 0,
+        status: "completed",
+      }),
+      {
+        captureStatus: "unsupported",
+        reasons: ["unsupported_undefined"],
+        value: "[unsupported undefined]",
+      },
+    );
+  });
+
+  for (
+    const data of [
+      false,
+      { category: "billing" },
+      { text: "business" },
+      { data: { id: 1 } },
+      { object: 42 },
+    ]
+  ) {
+    it(`restores canonical structured replay ${JSON.stringify(data)}`, async () => {
+      const result = await runInheritedLocalAgent(
+        {
+          terminalReceipt: {
+            status: "completed",
+            output: { data },
+            outputFormat: "text-data-v1",
+          },
+        },
+        { projectId: "project", apiUrl: "https://api.example.test", fetch },
+        () => {
+          throw new Error("must not execute");
+        },
+      );
+
+      assertEquals(result, {
+        success: true,
+        output: {
+          text: JSON.stringify(data),
+          data,
+          object: data,
+          status: "completed",
+        },
+        executionTime: 0,
+      });
+    });
+  }
+
+  it("restores a canonical text-only replay without inventing structured data", async () => {
+    const result = await runInheritedLocalAgent(
+      {
+        terminalReceipt: {
+          status: "completed",
+          output: { text: "done" },
+          outputFormat: "text-data-v1",
+        },
+      },
+      { projectId: "project", apiUrl: "https://api.example.test", fetch },
+      () => {
+        throw new Error("must not execute");
+      },
+    );
+
+    assertEquals(result, {
+      success: true,
+      output: { text: "done", status: "completed" },
+      executionTime: 0,
+    });
+    assertEquals(Object.hasOwn(result.output as object, "toolCalls"), false);
+  });
+
+  it("restores an explicit canonical no-value replay without structured aliases", async () => {
+    const result = await runInheritedLocalAgent(
+      {
+        terminalReceipt: {
+          status: "completed",
+          output: null,
+          outputFormat: "text-data-v1",
+        },
+      },
+      { projectId: "project", apiUrl: "https://api.example.test", fetch },
+      () => {
+        throw new Error("must not execute");
+      },
+    );
+
+    assertEquals(result, {
+      success: true,
+      output: { text: "", status: "completed" },
+      executionTime: 0,
+    });
+  });
+
+  it("rejects unknown fields in a marked canonical output envelope", async () => {
+    await assertRejects(
+      () =>
+        runInheritedLocalAgent(
+          {
+            terminalReceipt: {
+              status: "completed",
+              output: { text: "done", status: "completed" },
+              outputFormat: "text-data-v1",
+            },
+          },
+          { projectId: "project", apiUrl: "https://api.example.test", fetch },
+          () => {
+            throw new Error("must not execute");
+          },
+        ),
+      Error,
+      "Stored local child result is invalid",
+    );
+  });
+
+  it("restores an unmarked legacy agent response without interpreting business keys", async () => {
+    const result = await runInheritedLocalAgent(
+      {
+        terminalReceipt: {
+          status: "completed",
+          output: {
+            text: "stored",
+            data: { selected_count: 1 },
+            object: { selected_count: 1 },
+            toolCalls: 2,
+            status: "completed",
+          },
+        },
+      },
+      { projectId: "project", apiUrl: "https://api.example.test", fetch },
+      () => {
+        throw new Error("must not execute");
+      },
+    );
+
+    assertEquals(result, {
+      success: true,
+      output: {
+        text: "stored",
+        data: { selected_count: 1 },
+        object: { selected_count: 1 },
+        toolCalls: 2,
+        status: "completed",
+      },
+      executionTime: 0,
+    });
+  });
+
+  for (const stored of [{ text: "stored" }, { data: { id: 1 } }, { object: 42 }]) {
+    it(`returns unmarked legacy output unchanged ${JSON.stringify(stored)}`, async () => {
+      const result = await runInheritedLocalAgent(
+        { terminalReceipt: { status: "completed", output: stored } },
+        { projectId: "project", apiUrl: "https://api.example.test", fetch },
+        () => {
+          throw new Error("must not execute");
+        },
+      );
+
+      assertEquals(result, { success: true, output: stored, executionTime: 0 });
+    });
+  }
+
+  for (const stored of [{ text: "stored" }, { data: { id: 1 } }, { object: 42 }]) {
+    it(`rejects bare business output at the SDK result boundary ${JSON.stringify(stored)}`, () => {
+      assertThrows(
+        () => readInheritedLocalChildResult(stored),
+        Error,
+        "Stored local child result is invalid",
+      );
+    });
+  }
 
   it("ignores an object value the child response only inherits", async () => {
     const childAgent = createMinimalAgent("writer");
@@ -488,6 +822,51 @@ describe("agentAsTool", () => {
     );
 
     assertEquals(result, { text: "ok", toolCalls: 0, status: "completed" });
+  });
+
+  for (const data of [false, 0, "", null, { selected_count: 1 }]) {
+    it(`preserves structured child output ${JSON.stringify(data)}`, async () => {
+      const child = createMinimalAgent("structured-child");
+      child.stream = (input) => {
+        input.onFinish?.({
+          text: JSON.stringify(data),
+          messages: [],
+          toolCalls: [],
+          status: "completed",
+          object: data,
+        });
+        return Promise.resolve({ toDataStreamResponse: () => new Response("data: {}\n\n") });
+      };
+      const result = await agentAsTool(child, "Read structured output").execute({ input: "Read" });
+      assertEquals(result, {
+        text: JSON.stringify(data),
+        data,
+        object: data,
+        status: "completed",
+        toolCalls: 0,
+      });
+    });
+  }
+
+  it("preserves a data-only child response", async () => {
+    const child = createMinimalAgent("data-only");
+    child.stream = (input) => {
+      input.onFinish?.({
+        text: "false",
+        data: false,
+        messages: [],
+        toolCalls: [],
+        status: "completed",
+      });
+      return Promise.resolve({ toDataStreamResponse: () => new Response("data: {}\n\n") });
+    };
+    assertEquals(await agentAsTool(child, "Read").execute({ input: "Read" }), {
+      text: "false",
+      data: false,
+      object: false,
+      toolCalls: 0,
+      status: "completed",
+    });
   });
 
   it("preserves the child stream error when no final response is produced", async () => {
@@ -816,7 +1195,7 @@ describe("agentAsTool", () => {
     assertEquals(result, { text: "ok", toolCalls: 0, status: "completed" });
   });
 
-  it("does not publish child stream events from generic invoke_agent calls", async () => {
+  it("publishes child stream events from generic invoke_agent calls", async () => {
     const childResponse: AgentResponse = {
       text: "streamed child result",
       messages: [],
@@ -857,7 +1236,12 @@ describe("agentAsTool", () => {
       },
     );
 
-    assertEquals(events, []);
+    assertEquals(events.length, 2);
+    assertEquals(parseInvokeAgentStreamValue((events[1] as { value: unknown }).value)?.event, {
+      type: "text-delta",
+      id: "child-text",
+      delta: "Fetching cases",
+    });
   });
 
   it("attaches the child agent's name and avatar to every published event", async () => {

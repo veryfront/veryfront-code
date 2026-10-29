@@ -409,36 +409,88 @@ function hasDynamicPrototypeToJson(value: OwnedCheckpointCloneSource): boolean {
   return false;
 }
 
+function createOwnedCheckpointCloneTarget(
+  source: OwnedCheckpointCloneSource,
+  isArray: boolean,
+  prototype: CheckpointCloneSource | null,
+  ownToJsonDescriptor: PropertyDescriptor | undefined,
+): object {
+  if (isArray) {
+    return ownToJsonDescriptor === undefined
+      ? stabilizeWorkflowJsonPrototypeSnapshot(new ArrayConstructor((source as unknown[]).length))
+      : new ArrayConstructor((source as unknown[]).length);
+  }
+  if (prototype === null) return objectCreate(null);
+  return ownToJsonDescriptor === undefined
+    ? stabilizeWorkflowJsonPrototypeSnapshot(objectCreate(objectPrototype))
+    : objectCreate(objectPrototype);
+}
+
+function cloneOwnedCheckpointDateReference(
+  source: OwnedCheckpointCloneSource,
+  deferReference: (source: OwnedCheckpointCloneSource) => object,
+): object {
+  if (!hasStableDatePrototype(source)) {
+    return deferReference(source);
+  }
+  return hasOwnDateSerializationOverride(source) ? deferReference(source) : cloneDate(source);
+}
+
+function requiresDeferredOwnedCheckpointHook(
+  sourceShape: WorkflowJsonRecordShape | undefined,
+  descriptor: PropertyDescriptor | undefined,
+): boolean {
+  return sourceShape === undefined && descriptor !== undefined &&
+    (!("value" in descriptor) || typeof descriptor.value === "function");
+}
+
+type OwnedCheckpointRootSnapshot =
+  | { handled: true; value: unknown }
+  | {
+    handled: false;
+    value: OwnedCheckpointCloneSource;
+    brandChecks: NonNullable<typeof nativeBrandChecks>;
+  };
+
+function prepareOwnedCheckpointRoot(
+  value: unknown,
+  shape: WorkflowJsonRecordShape | undefined,
+): OwnedCheckpointRootSnapshot {
+  if (typeof value === "function") return { handled: true, value: deferWorkflowJsonValue(value) };
+  if (typeof value !== "object" || value === null) return { handled: true, value };
+  if (nativeBrandChecks === undefined) {
+    return { handled: true, value: deferWorkflowJsonValue(value) };
+  }
+  if (nativeBrandChecks.isProxy(value) === true) {
+    return { handled: true, value: checkpointPersistenceSentinel("a Proxy value") };
+  }
+  if (shape === undefined && hasDynamicOwnToJson(value)) {
+    return { handled: true, value: deferWorkflowJsonValue(value) };
+  }
+  if (isDate(value)) {
+    if (!hasStableDatePrototype(value)) {
+      return { handled: true, value: deferWorkflowJsonValue(value) };
+    }
+    return {
+      handled: true,
+      value: hasOwnDateSerializationOverride(value)
+        ? deferWorkflowJsonValue(value)
+        : cloneDate(value),
+    };
+  }
+  const rawJson = cloneRawJsonForOwnedCheckpoint(value);
+  if (rawJson !== undefined) return { handled: true, value: rawJson };
+  return { handled: false, value, brandChecks: nativeBrandChecks };
+}
+
 function cloneOwnedCheckpointValue<T>(
   value: T,
   shape?: WorkflowJsonRecordShape,
   sharedClones?: Map<object, object>,
 ): T {
-  if (typeof value === "function") {
-    return deferWorkflowJsonValue(value) as T;
-  }
-  if (typeof value !== "object" || value === null) return value;
-  if (nativeBrandChecks === undefined) {
-    return deferWorkflowJsonValue(value) as T;
-  }
-  if (nativeBrandChecks.isProxy(value) === true) {
-    return checkpointPersistenceSentinel("a Proxy value") as T;
-  }
-  if (shape === undefined && hasDynamicOwnToJson(value)) {
-    return deferWorkflowJsonValue(value) as T;
-  }
-  if (isDate(value)) {
-    if (!hasStableDatePrototype(value)) {
-      return deferWorkflowJsonValue(value) as T;
-    }
-    return (hasOwnDateSerializationOverride(value)
-      ? deferWorkflowJsonValue(value)
-      : cloneDate(value)) as T;
-  }
-  const rawJson = cloneRawJsonForOwnedCheckpoint(value);
-  if (rawJson !== undefined) return rawJson as T;
-
-  const brandChecks = nativeBrandChecks;
+  const prepared = prepareOwnedCheckpointRoot(value, shape);
+  if (prepared.handled) return prepared.value as T;
+  const brandChecks = prepared.brandChecks;
   const clones = sharedClones ?? new MapConstructor<object, object>();
   const addedSources: object[] = [];
   const frames: OwnedCheckpointCloneFrame[] = [];
@@ -458,17 +510,11 @@ function cloneOwnedCheckpointValue<T>(
       return checkpointPersistenceSentinel("a Proxy value");
     }
     const ownToJsonDescriptor = objectGetOwnPropertyDescriptor(source, "toJSON");
-    if (
-      sourceShape === undefined && ownToJsonDescriptor !== undefined &&
-      (!("value" in ownToJsonDescriptor) || typeof ownToJsonDescriptor.value === "function")
-    ) {
+    if (requiresDeferredOwnedCheckpointHook(sourceShape, ownToJsonDescriptor)) {
       return deferReference(source);
     }
     if (isDate(source)) {
-      if (!hasStableDatePrototype(source)) {
-        return deferReference(source);
-      }
-      return hasOwnDateSerializationOverride(source) ? deferReference(source) : cloneDate(source);
+      return cloneOwnedCheckpointDateReference(source, deferReference);
     }
     const rawJson = cloneRawJsonForOwnedCheckpoint(source);
     if (rawJson !== undefined) return rawJson;
@@ -492,15 +538,12 @@ function cloneOwnedCheckpointValue<T>(
     if (brandChecks.isNonPlainBuiltin(source) === true) {
       return deferReference(source);
     }
-    const target = isArray
-      ? ownToJsonDescriptor === undefined
-        ? stabilizeWorkflowJsonPrototypeSnapshot(new ArrayConstructor(source.length))
-        : new ArrayConstructor(source.length)
-      : prototype === null
-      ? objectCreate(null)
-      : ownToJsonDescriptor === undefined
-      ? stabilizeWorkflowJsonPrototypeSnapshot(objectCreate(objectPrototype))
-      : objectCreate(objectPrototype);
+    const target = createOwnedCheckpointCloneTarget(
+      source,
+      isArray,
+      prototype,
+      ownToJsonDescriptor,
+    );
     reflectApply(mapSet, clones, [source, target]);
     reflectApply(arrayPush, addedSources, [source]);
     reflectApply(arrayPush, frames, [{
@@ -511,46 +554,17 @@ function cloneOwnedCheckpointValue<T>(
     }]);
     return target;
   };
-  const rootTarget = cloneReference(value, shape);
+  const ownedToJsonPropertySnapshot = (value: unknown): unknown => {
+    if (typeof value === "object" && value !== null) return cloneReference(value);
+    if (typeof value === "function") return checkpointPersistenceSentinel("a function");
+    return value;
+  };
 
-  while (frames.length > 0) {
-    const frame = frames[frames.length - 1]!;
-    const index = frame.keyIndex ?? 0;
-    if (index >= frame.keys.length) {
-      if (!objectIsExtensible(frame.source)) objectPreventExtensions(frame.target);
-      reflectApply(arrayPop, frames, []);
-      continue;
-    }
-    frame.keyIndex = index + 1;
-    const key = frame.keys[index]!;
-    const descriptor = objectGetOwnPropertyDescriptor(frame.source, key);
-    if (descriptor === undefined) continue;
-    if (
-      key !== "toJSON" &&
-      (typeof key === "symbol" || descriptor.enumerable !== true) &&
-      !(arrayIsArray(frame.source) && isArrayIndexWithinLength(key, frame.source.length))
-    ) {
-      objectDefineProperty(frame.target, key, descriptor);
-      continue;
-    }
-    if (key === "toJSON" && frame.shape === undefined) {
-      if ("value" in descriptor && typeof descriptor.value !== "function") {
-        const toJsonValue = descriptor.value;
-        descriptor.value = typeof toJsonValue === "object" && toJsonValue !== null
-          ? cloneReference(toJsonValue)
-          : typeof toJsonValue === "function"
-          ? checkpointPersistenceSentinel("a function")
-          : toJsonValue;
-        objectDefineProperty(frame.target, key, descriptor);
-      } else {
-        deferRoot = true;
-      }
-      continue;
-    }
-    if (!("value" in descriptor)) {
-      deferRoot = true;
-      continue;
-    }
+  const cloneOwnedDescriptorValue = (
+    frame: OwnedCheckpointCloneFrame,
+    key: string | symbol,
+    descriptor: PropertyDescriptor,
+  ): void => {
     const descriptorValue = descriptor.value;
     const childShape = workflowJsonFieldShape(frame.shape, key);
     if (typeof descriptorValue === "object" && descriptorValue !== null) {
@@ -563,6 +577,57 @@ function cloneOwnedCheckpointValue<T>(
       }
     }
     objectDefineProperty(frame.target, key, descriptor);
+  };
+
+  const copyOwnedCheckpointProperty = (
+    frame: OwnedCheckpointCloneFrame,
+    key: string | symbol,
+    descriptor: PropertyDescriptor,
+  ): void => {
+    if (
+      key !== "toJSON" &&
+      (typeof key === "symbol" || descriptor.enumerable !== true) &&
+      !(arrayIsArray(frame.source) && isArrayIndexWithinLength(key, frame.source.length))
+    ) {
+      objectDefineProperty(frame.target, key, descriptor);
+      return;
+    }
+    if (key === "toJSON" && frame.shape === undefined) {
+      if ("value" in descriptor && typeof descriptor.value !== "function") {
+        const toJsonValue = descriptor.value;
+        descriptor.value = ownedToJsonPropertySnapshot(toJsonValue);
+        objectDefineProperty(frame.target, key, descriptor);
+      } else {
+        deferRoot = true;
+      }
+      return;
+    }
+    if (!("value" in descriptor)) {
+      deferRoot = true;
+      return;
+    }
+    cloneOwnedDescriptorValue(frame, key, descriptor);
+  };
+
+  const finishOwnedCheckpointCloneFrame = (frame: OwnedCheckpointCloneFrame): void => {
+    if (!objectIsExtensible(frame.source)) objectPreventExtensions(frame.target);
+    reflectApply(arrayPop, frames, []);
+  };
+
+  const rootTarget = cloneReference(prepared.value, shape);
+
+  while (frames.length > 0) {
+    const frame = frames[frames.length - 1]!;
+    const index = frame.keyIndex ?? 0;
+    if (index >= frame.keys.length) {
+      finishOwnedCheckpointCloneFrame(frame);
+      continue;
+    }
+    frame.keyIndex = index + 1;
+    const key = frame.keys[index]!;
+    const descriptor = objectGetOwnPropertyDescriptor(frame.source, key);
+    if (descriptor === undefined) continue;
+    copyOwnedCheckpointProperty(frame, key, descriptor);
   }
 
   if (!deferRoot && requiresJsonClone) {
@@ -571,7 +636,7 @@ function cloneOwnedCheckpointValue<T>(
   if (deferRoot && sharedClones !== undefined) {
     for (const source of addedSources) reflectApply(mapDelete, clones, [source]);
   }
-  return (deferRoot ? deferWorkflowJsonValue(value) : rootTarget) as T;
+  return (deferRoot ? deferWorkflowJsonValue(prepared.value) : rootTarget) as T;
 }
 
 function cloneOwnedCheckpointWithoutNativeBrandChecks(checkpoint: Checkpoint): Checkpoint {
@@ -595,61 +660,138 @@ function cloneOwnedCheckpointWithoutNativeBrandChecks(checkpoint: Checkpoint): C
   return clone;
 }
 
+function captureCheckpointTargetJson(
+  value: CheckpointCloneSource,
+  key: string,
+  applyToJson: boolean,
+): { jsonHook: CheckpointJsonHook | undefined; jsonLookup: CheckpointJsonLookup | undefined } {
+  const jsonCapture = applyToJson ? captureJsonHook(value, key) : false;
+  const jsonHook = jsonCapture && jsonCapture.kind === "hook" ? jsonCapture : undefined;
+  const jsonLookup = jsonCapture && jsonCapture.kind === "lookup" ? jsonCapture : undefined;
+  return { jsonHook, jsonLookup };
+}
+
+function createProxyCheckpointCloneTarget(
+  value: CheckpointCloneSource,
+  key: string,
+  applyToJson: boolean,
+): CheckpointCloneTarget {
+  const jsonHook = applyToJson ? captureProxyJsonHook(value, key) : undefined;
+  if (typeof value === "function") {
+    return {
+      ...(jsonHook ? { jsonHook } : {}),
+      target: function checkpointCallableSnapshot() {},
+      traverseOwnProperties: false,
+    };
+  }
+  if (arrayIsArray(value)) {
+    if (jsonHook) {
+      return {
+        jsonHook,
+        target: new ProxyConstructor([], {}),
+        traverseOwnProperties: false,
+      };
+    }
+    const rawLength = reflectGet(value, "length");
+    const arrayProxyLength = toCheckpointArrayLength(rawLength);
+    if (arrayProxyLength > MAX_PROXY_ARRAY_SNAPSHOT_LENGTH) {
+      return {
+        target: oversizedProxyArraySentinel(arrayProxyLength),
+        traverseOwnProperties: false,
+      };
+    }
+    const proxyTarget: unknown[] = [];
+    return {
+      arrayProxyLength,
+      target: new ProxyConstructor(proxyTarget, {
+        get(target, key, receiver) {
+          return key === "length" ? rawLength : reflectGet(target, key, receiver);
+        },
+      }),
+      traverseOwnProperties: true,
+    };
+  }
+  return {
+    ...(jsonHook ? { jsonHook } : {}),
+    objectProxy: jsonHook === undefined,
+    target: new ProxyConstructor(objectCreate(null), {}),
+    traverseOwnProperties: jsonHook === undefined,
+  };
+}
+
+function createBuiltinCheckpointCloneTarget(
+  value: CheckpointCloneSource,
+  key: string,
+  applyToJson: boolean,
+): CheckpointCloneTarget {
+  try {
+    const cloned = structuredCloneValue(value);
+    if (
+      typeof cloned === "object" && cloned !== null &&
+      nativeBrandChecks!.isNonPlainBuiltin(cloned)
+    ) {
+      const { jsonHook, jsonLookup } = captureCheckpointTargetJson(value, key, applyToJson);
+      return {
+        ...(jsonHook ? { jsonHook } : {}),
+        ...(jsonLookup ? { jsonLookup } : {}),
+        target: cloned,
+        traverseOwnProperties: jsonHook === undefined,
+      };
+    }
+  } catch {
+    // Some JSON-lossy native values are not structured-cloneable. Preserve
+    // their rejection as a Proxy diagnostic while snapshotting the own data
+    // that default JSON persistence can observe.
+  }
+  const jsonHook = captureProxyJsonHook(value, key);
+  return {
+    ...(jsonHook ? { jsonHook } : {}),
+    objectProxy: jsonHook === undefined,
+    target: new ProxyConstructor(objectCreate(null), {}),
+    traverseOwnProperties: jsonHook === undefined,
+  };
+}
+
+function createArrayCheckpointCloneTarget(
+  value: unknown[],
+  key: string,
+  applyToJson: boolean,
+): CheckpointCloneTarget {
+  const target = new ArrayConstructor(value.length);
+  const { jsonHook, jsonLookup } = captureCheckpointTargetJson(value, key, applyToJson);
+  return {
+    ...(jsonHook ? { jsonHook } : {}),
+    ...(jsonLookup ? { jsonLookup } : {}),
+    arrayLength: value.length,
+    arrayPrototypeDiffers: objectGetPrototypeOf(value) !== arrayPrototype,
+    target,
+    traverseOwnProperties: jsonHook === undefined,
+  };
+}
+
+function createCallableCheckpointCloneTarget(
+  value: CheckpointCloneSource,
+  key: string,
+  applyToJson: boolean,
+): CheckpointCloneTarget {
+  const jsonHook = applyToJson ? captureCallableJsonHook(value, key) : undefined;
+  return {
+    ...(jsonHook ? { jsonHook } : {}),
+    target: function checkpointCallableSnapshot() {},
+    traverseOwnProperties: false,
+  };
+}
+
 function createCheckpointCloneTarget(
   value: CheckpointCloneSource,
   key: string,
   applyToJson: boolean,
 ): CheckpointCloneTarget {
   if (nativeBrandChecks?.isProxy(value) === true) {
-    const jsonHook = applyToJson ? captureProxyJsonHook(value, key) : undefined;
-    if (typeof value === "function") {
-      return {
-        ...(jsonHook ? { jsonHook } : {}),
-        target: function checkpointCallableSnapshot() {},
-        traverseOwnProperties: false,
-      };
-    }
-    if (arrayIsArray(value)) {
-      if (jsonHook) {
-        return {
-          jsonHook,
-          target: new ProxyConstructor([], {}),
-          traverseOwnProperties: false,
-        };
-      }
-      const rawLength = reflectGet(value, "length");
-      const arrayProxyLength = toCheckpointArrayLength(rawLength);
-      if (arrayProxyLength > MAX_PROXY_ARRAY_SNAPSHOT_LENGTH) {
-        return {
-          target: oversizedProxyArraySentinel(arrayProxyLength),
-          traverseOwnProperties: false,
-        };
-      }
-      const proxyTarget: unknown[] = [];
-      return {
-        arrayProxyLength,
-        target: new ProxyConstructor(proxyTarget, {
-          get(target, key, receiver) {
-            return key === "length" ? rawLength : reflectGet(target, key, receiver);
-          },
-        }),
-        traverseOwnProperties: true,
-      };
-    }
-    return {
-      ...(jsonHook ? { jsonHook } : {}),
-      objectProxy: jsonHook === undefined,
-      target: new ProxyConstructor(objectCreate(null), {}),
-      traverseOwnProperties: jsonHook === undefined,
-    };
+    return createProxyCheckpointCloneTarget(value, key, applyToJson);
   }
   if (typeof value === "function") {
-    const jsonHook = applyToJson ? captureCallableJsonHook(value, key) : undefined;
-    return {
-      ...(jsonHook ? { jsonHook } : {}),
-      target: function checkpointCallableSnapshot() {},
-      traverseOwnProperties: false,
-    };
+    return createCallableCheckpointCloneTarget(value, key, applyToJson);
   }
   if (jsonIsRawJSON && jsonRawJSON && reflectApply(jsonIsRawJSON, JSON, [value])) {
     const rawSource = objectGetOwnPropertyDescriptor(value, "rawJSON")?.value;
@@ -661,24 +803,11 @@ function createCheckpointCloneTarget(
     }
   }
   if (arrayIsArray(value)) {
-    const target = new ArrayConstructor(value.length);
-    const jsonCapture = applyToJson ? captureJsonHook(value, key) : false;
-    const jsonHook = jsonCapture && jsonCapture.kind === "hook" ? jsonCapture : undefined;
-    const jsonLookup = jsonCapture && jsonCapture.kind === "lookup" ? jsonCapture : undefined;
-    return {
-      ...(jsonHook ? { jsonHook } : {}),
-      ...(jsonLookup ? { jsonLookup } : {}),
-      arrayLength: value.length,
-      arrayPrototypeDiffers: objectGetPrototypeOf(value) !== arrayPrototype,
-      target,
-      traverseOwnProperties: jsonHook === undefined,
-    };
+    return createArrayCheckpointCloneTarget(value, key, applyToJson);
   }
   const clonedUrl = cloneUrl(value);
   if (clonedUrl) {
-    const jsonCapture = applyToJson ? captureJsonHook(value, key) : false;
-    const jsonHook = jsonCapture && jsonCapture.kind === "hook" ? jsonCapture : undefined;
-    const jsonLookup = jsonCapture && jsonCapture.kind === "lookup" ? jsonCapture : undefined;
+    const { jsonHook, jsonLookup } = captureCheckpointTargetJson(value, key, applyToJson);
     return {
       ...(jsonHook ? { jsonHook } : {}),
       ...(jsonLookup ? { jsonLookup } : {}),
@@ -687,39 +816,10 @@ function createCheckpointCloneTarget(
     };
   }
   if (nativeBrandChecks?.isNonPlainBuiltin(value) === true) {
-    try {
-      const cloned = structuredCloneValue(value);
-      if (
-        typeof cloned === "object" && cloned !== null &&
-        nativeBrandChecks.isNonPlainBuiltin(cloned)
-      ) {
-        const jsonCapture = applyToJson ? captureJsonHook(value, key) : false;
-        const jsonHook = jsonCapture && jsonCapture.kind === "hook" ? jsonCapture : undefined;
-        const jsonLookup = jsonCapture && jsonCapture.kind === "lookup" ? jsonCapture : undefined;
-        return {
-          ...(jsonHook ? { jsonHook } : {}),
-          ...(jsonLookup ? { jsonLookup } : {}),
-          target: cloned,
-          traverseOwnProperties: jsonHook === undefined,
-        };
-      }
-    } catch {
-      // Some JSON-lossy native values are not structured-cloneable. Preserve
-      // their rejection as a Proxy diagnostic while snapshotting the own data
-      // that default JSON persistence can observe.
-    }
-    const jsonHook = captureProxyJsonHook(value, key);
-    return {
-      ...(jsonHook ? { jsonHook } : {}),
-      objectProxy: jsonHook === undefined,
-      target: new ProxyConstructor(objectCreate(null), {}),
-      traverseOwnProperties: jsonHook === undefined,
-    };
+    return createBuiltinCheckpointCloneTarget(value, key, applyToJson);
   }
   const target = objectCreate(objectGetPrototypeOf(value));
-  const jsonCapture = applyToJson ? captureJsonHook(value, key) : false;
-  const jsonHook = jsonCapture && jsonCapture.kind === "hook" ? jsonCapture : undefined;
-  const jsonLookup = jsonCapture && jsonCapture.kind === "lookup" ? jsonCapture : undefined;
+  const { jsonHook, jsonLookup } = captureCheckpointTargetJson(value, key, applyToJson);
   return {
     ...(jsonHook ? { jsonHook } : {}),
     ...(jsonLookup ? { jsonLookup } : {}),
@@ -741,6 +841,53 @@ function cloneCheckpointValueForPersistence<T>(value: T, rootShape?: WorkflowJso
   const records = rootShape === undefined
     ? undefined
     : collectWorkflowJsonRecords(value, rootShape);
+  const selectCheckpointCloneMap = (
+    shape: WorkflowJsonRecordShape | undefined,
+    appliesToJson: boolean,
+  ): Map<object, object> => {
+    if (shape !== undefined) return recordClones;
+    if (appliesToJson) return clones;
+    return clonesWithoutRootJson;
+  };
+
+  const installCheckpointJsonHook = (
+    childTarget: CheckpointCloneTarget,
+    source: CheckpointCloneSource,
+    key: string,
+    jsonHookDepth: number,
+    activeJsonHookClone: CheckpointCloneTarget["target"] | undefined,
+  ): boolean => {
+    let traversesSelfReturningHook = false;
+    if (!childTarget.jsonHook) return traversesSelfReturningHook;
+    if (jsonHookDepth >= MAX_TRAVERSAL_DEPTH) {
+      throw ORCHESTRATION_ERROR.create({
+        detail: `Workflow run cannot be persisted: checkpoint toJSON replacements exceed the ` +
+          `stack-safe nesting limit of ${MAX_TRAVERSAL_DEPTH}.`,
+      });
+    }
+    reflectApply(setAdd, keySensitiveJsonSources, [source]);
+    const replacement = childTarget.jsonHook.replacement;
+    traversesSelfReturningHook = replacement === source && typeof source !== "function" &&
+      activeJsonHookClone === undefined;
+    if (traversesSelfReturningHook) {
+      reflectApply(mapSet, activeJsonHookClones, [source, childTarget.target]);
+      reflectApply(arrayPush, frames, [{ exitJsonHookSource: source }]);
+    }
+    let snapshot: unknown;
+    if (replacement === source) snapshot = activeJsonHookClone ?? childTarget.target;
+    else if (isCheckpointCloneReference(replacement)) {
+      snapshot = cloneReference(replacement, key, false, jsonHookDepth + 1);
+    } else snapshot = replacement;
+    const descriptor = childTarget.jsonHook.descriptor;
+    objectDefineProperty(childTarget.target, "toJSON", {
+      configurable: false,
+      enumerable: descriptor.enumerable,
+      value: () => snapshot,
+      writable: "value" in descriptor ? descriptor.writable : false,
+    });
+    return traversesSelfReturningHook;
+  };
+
   const cloneReference = (
     source: CheckpointCloneSource,
     key: string,
@@ -759,11 +906,7 @@ function cloneCheckpointValueForPersistence<T>(value: T, rootShape?: WorkflowJso
         ? undefined
         : reflectApply(weakMapGet, records, [source]) as WorkflowJsonRecordShape | undefined);
     const appliesToJson = applyToJson && shape === undefined;
-    const cloneMap = shape !== undefined
-      ? recordClones
-      : appliesToJson
-      ? clones
-      : clonesWithoutRootJson;
+    const cloneMap = selectCheckpointCloneMap(shape, appliesToJson);
     const existing = (reflectApply(mapGet, cloneMap, [source]) ??
       reflectApply(mapGet, recordClones, [source])) as object | undefined;
     if (
@@ -772,35 +915,13 @@ function cloneCheckpointValueForPersistence<T>(value: T, rootShape?: WorkflowJso
     ) return existing;
     const childTarget = createCheckpointCloneTarget(source, key, appliesToJson);
     reflectApply(mapSet, cloneMap, [source, childTarget.target]);
-    let traversesSelfReturningHook = false;
-    if (childTarget.jsonHook) {
-      if (jsonHookDepth >= MAX_TRAVERSAL_DEPTH) {
-        throw ORCHESTRATION_ERROR.create({
-          detail: `Workflow run cannot be persisted: checkpoint toJSON replacements exceed the ` +
-            `stack-safe nesting limit of ${MAX_TRAVERSAL_DEPTH}.`,
-        });
-      }
-      reflectApply(setAdd, keySensitiveJsonSources, [source]);
-      const replacement = childTarget.jsonHook.replacement;
-      traversesSelfReturningHook = replacement === source && typeof source !== "function" &&
-        activeJsonHookClone === undefined;
-      if (traversesSelfReturningHook) {
-        reflectApply(mapSet, activeJsonHookClones, [source, childTarget.target]);
-        reflectApply(arrayPush, frames, [{ exitJsonHookSource: source }]);
-      }
-      const snapshot = replacement === source
-        ? activeJsonHookClone ?? childTarget.target
-        : isCheckpointCloneReference(replacement)
-        ? cloneReference(replacement, key, false, jsonHookDepth + 1)
-        : replacement;
-      const descriptor = childTarget.jsonHook.descriptor;
-      objectDefineProperty(childTarget.target, "toJSON", {
-        configurable: false,
-        enumerable: descriptor.enumerable,
-        value: () => snapshot,
-        writable: "value" in descriptor ? descriptor.writable : false,
-      });
-    }
+    const traversesSelfReturningHook = installCheckpointJsonHook(
+      childTarget,
+      source,
+      key,
+      jsonHookDepth,
+      activeJsonHookClone,
+    );
     if (
       childTarget.traverseOwnProperties ||
       traversesSelfReturningHook
@@ -819,6 +940,287 @@ function cloneCheckpointValueForPersistence<T>(value: T, rootShape?: WorkflowJso
     }
     return childTarget.target;
   };
+  const copyMissingCheckpointArrayIndex = (
+    frame: CheckpointCloneTraversalFrame,
+    key: string,
+  ): void => {
+    if (frame.arrayPrototypeSnapshot === undefined) {
+      const prototypeSnapshot = objectCreate(arrayPrototype);
+      frame.arrayPrototypeSnapshot = prototypeSnapshot;
+      objectSetPrototypeOf(frame.target, prototypeSnapshot);
+    }
+    const sourceValue = reflectGet(frame.source, key);
+    const snapshot = isCheckpointCloneReference(sourceValue)
+      ? cloneReference(sourceValue, key, true, frame.jsonHookDepth)
+      : sourceValue;
+    objectDefineProperty(frame.arrayPrototypeSnapshot, key, {
+      configurable: true,
+      enumerable: true,
+      value: snapshot,
+      writable: true,
+    });
+  };
+
+  const copyCheckpointArrayDescriptor = (
+    frame: CheckpointCloneTraversalFrame,
+    key: string,
+    descriptor: PropertyDescriptor,
+  ): void => {
+    if ("value" in descriptor) {
+      if (isCheckpointCloneReference(descriptor.value)) {
+        descriptor.value = cloneReference(
+          descriptor.value,
+          key,
+          true,
+          frame.jsonHookDepth,
+        );
+      }
+    } else if (typeof descriptor.get === "function") {
+      const accessorValue = reflectGet(frame.source, key);
+      const snapshot = isCheckpointCloneReference(accessorValue)
+        ? cloneReference(accessorValue, key, true, frame.jsonHookDepth)
+        : accessorValue;
+      descriptor.get = () => snapshot;
+      descriptor.set = undefined;
+    }
+    objectDefineProperty(frame.target, key, descriptor);
+  };
+
+  const advanceCheckpointProxyArray = (frame: CheckpointCloneTraversalFrame): void => {
+    const index = frame.arrayIndex ?? 0;
+    if (index >= frame.arrayProxyLength!) {
+      reflectApply(arrayPop, frames, []);
+      return;
+    }
+    frame.arrayIndex = index + 1;
+    const key = StringConstructor(index);
+    const sourceValue = reflectGet(frame.source, key);
+    const snapshot = isCheckpointCloneReference(sourceValue)
+      ? cloneReference(sourceValue, key, true, frame.jsonHookDepth)
+      : sourceValue;
+    objectDefineProperty(frame.target, key, {
+      configurable: true,
+      enumerable: true,
+      value: snapshot,
+      writable: true,
+    });
+  };
+
+  const advanceCheckpointArrayIndex = (frame: CheckpointCloneTraversalFrame): boolean => {
+    if (frame.arrayPrototypeDiffers === true && frame.arrayPrototypeSnapshot === undefined) {
+      const prototypeSnapshot = objectCreate(arrayPrototype);
+      frame.arrayPrototypeSnapshot = prototypeSnapshot;
+      objectSetPrototypeOf(frame.target, prototypeSnapshot);
+    }
+    const index = frame.arrayIndex ?? 0;
+    if (index >= frame.arrayLength!) {
+      frame.arrayIndicesDone = true;
+    } else {
+      frame.arrayIndex = index + 1;
+      const key = StringConstructor(index);
+      const ownDescriptor = objectGetOwnPropertyDescriptor(frame.source, key);
+      if (ownDescriptor === undefined) {
+        copyMissingCheckpointArrayIndex(frame, key);
+      } else {
+        copyCheckpointArrayDescriptor(frame, key, ownDescriptor);
+      }
+      return true;
+    }
+    return false;
+  };
+
+  const advanceCheckpointArrayFrame = (frame: CheckpointCloneTraversalFrame): boolean => {
+    if (frame.arrayProxyLength !== undefined) {
+      advanceCheckpointProxyArray(frame);
+      return true;
+    }
+    if (frame.arrayLength !== undefined && frame.arrayIndicesDone !== true) {
+      return advanceCheckpointArrayIndex(frame);
+    }
+    return false;
+  };
+
+  const initializeCheckpointFrameKeys = (frame: CheckpointCloneTraversalFrame): void => {
+    frame.keys = reflectOwnKeys(frame.source);
+    if (frame.objectProxy === true) {
+      const descriptors = new ArrayConstructor<PropertyDescriptor | undefined>(
+        frame.keys.length,
+      );
+      for (let index = 0; index < frame.keys.length; index++) {
+        const key = frame.keys[index]!;
+        if (typeof key === "string") {
+          descriptors[index] = objectGetOwnPropertyDescriptor(frame.source, key);
+        }
+      }
+      frame.ownPropertyDescriptors = descriptors;
+    }
+    frame.keyIndex = 0;
+    frame.jsonLookupInstalled = false;
+  };
+
+  const copyCheckpointJsonLookup = (
+    frame: CheckpointCloneTraversalFrame,
+    key: string | symbol,
+  ): boolean => {
+    if (key !== "toJSON" || !frame.jsonLookup) return false;
+    const lookup = frame.jsonLookup;
+    const propertyValue = lookup.propertyValue;
+    const propertySnapshot = isCheckpointCloneReference(propertyValue)
+      ? cloneReference(propertyValue, "toJSON", true, frame.jsonHookDepth)
+      : propertyValue;
+    let reads = 0;
+    objectDefineProperty(frame.target, key, {
+      configurable: false,
+      enumerable: lookup.descriptor.enumerable,
+      get: () => {
+        const propertyRead = lookup.readsTwice && reads++ % 2 === 1;
+        return propertyRead ? propertySnapshot : undefined;
+      },
+    });
+    frame.jsonLookupInstalled = true;
+    return true;
+  };
+
+  const copyFixedCheckpointProperty = (
+    frame: CheckpointCloneTraversalFrame,
+    key: string | symbol,
+    descriptor: PropertyDescriptor,
+  ): boolean => {
+    if (objectGetOwnPropertyDescriptor(frame.target, key)?.configurable !== false) return false;
+    if (arrayIsArray(frame.target) && key === "length") {
+      objectDefineProperty(frame.target, key, descriptor);
+    }
+    return true;
+  };
+
+  const copyObjectProxyCheckpointProperty = (
+    frame: CheckpointCloneTraversalFrame,
+    key: string | symbol,
+    descriptor: PropertyDescriptor,
+  ): boolean => {
+    if (frame.objectProxy !== true || typeof key !== "string" || descriptor.enumerable !== true) {
+      return false;
+    }
+    const sourceValue = reflectGet(frame.source, key);
+    const snapshot = isCheckpointCloneReference(sourceValue)
+      ? cloneReference(
+        sourceValue,
+        key,
+        true,
+        frame.jsonHookDepth,
+        workflowJsonFieldShape(frame.shape, key),
+      )
+      : sourceValue;
+    objectDefineProperty(frame.target, key, {
+      configurable: descriptor.configurable,
+      enumerable: true,
+      value: snapshot,
+      writable: "value" in descriptor ? descriptor.writable : true,
+    });
+    return true;
+  };
+
+  const captureCheckpointDescriptorValue = (
+    frame: CheckpointCloneTraversalFrame,
+    key: string | symbol,
+    descriptor: PropertyDescriptor,
+  ): void => {
+    if ("value" in descriptor) {
+      if (isCheckpointCloneReference(descriptor.value)) {
+        descriptor.value = cloneReference(
+          descriptor.value,
+          typeof key === "string" ? key : "",
+          true,
+          frame.jsonHookDepth,
+          workflowJsonFieldShape(frame.shape, key),
+        );
+      }
+    } else if (
+      typeof key === "string" && descriptor.enumerable === true &&
+      typeof descriptor.get === "function"
+    ) {
+      const accessorValue = reflectGet(frame.source, key);
+      const snapshot = isCheckpointCloneReference(accessorValue)
+        ? cloneReference(
+          accessorValue,
+          key,
+          true,
+          frame.jsonHookDepth,
+          workflowJsonFieldShape(frame.shape, key),
+        )
+        : accessorValue;
+      descriptor.get = () => snapshot;
+      descriptor.set = undefined;
+    }
+  };
+
+  const copyCheckpointProperty = (
+    frame: CheckpointCloneTraversalFrame,
+    key: string | symbol,
+    descriptor: PropertyDescriptor,
+  ): void => {
+    if (
+      key !== "toJSON" &&
+      (typeof key === "symbol" || descriptor.enumerable !== true) &&
+      !(frame.arrayLength !== undefined && isArrayIndexWithinLength(key, frame.arrayLength))
+    ) {
+      objectDefineProperty(frame.target, key, descriptor);
+      return;
+    }
+    if (copyCheckpointJsonLookup(frame, key)) return;
+    if (copyFixedCheckpointProperty(frame, key, descriptor)) return;
+    if (copyObjectProxyCheckpointProperty(frame, key, descriptor)) return;
+    captureCheckpointDescriptorValue(frame, key, descriptor);
+    objectDefineProperty(frame.target, key, descriptor);
+    if (
+      key === "toJSON" && frame.shape !== undefined && "value" in descriptor &&
+      typeof descriptor.value === "function"
+    ) {
+      reflectApply(weakSetAdd, checkpointJsonCloneRoots, [frame.target]);
+    }
+  };
+
+  const finishCheckpointCloneFrame = (frame: CheckpointCloneTraversalFrame): void => {
+    if (frame.jsonLookup && frame.jsonLookupInstalled !== true) {
+      objectDefineProperty(frame.target, "toJSON", {
+        configurable: false,
+        enumerable: false,
+        get: () => undefined,
+      });
+    }
+    if (
+      nativeBrandChecks!.isProxy(frame.source) !== true &&
+      !objectIsExtensible(frame.source)
+    ) {
+      objectPreventExtensions(frame.target);
+    }
+    reflectApply(arrayPop, frames, []);
+  };
+
+  const advanceCheckpointObjectFrame = (frame: CheckpointCloneTraversalFrame): void => {
+    if (frame.keys === undefined) {
+      initializeCheckpointFrameKeys(frame);
+    }
+    if ((frame.keyIndex ?? 0) < frame.keys!.length) {
+      const keyIndex = frame.keyIndex ?? 0;
+      const key = frame.keys![keyIndex]!;
+      frame.keyIndex = keyIndex + 1;
+      if (
+        frame.arrayLength !== undefined &&
+        isArrayIndexWithinLength(key, frame.arrayLength)
+      ) {
+        return;
+      }
+      const descriptor = frame.ownPropertyDescriptors === undefined
+        ? objectGetOwnPropertyDescriptor(frame.source, key)
+        : frame.ownPropertyDescriptors[keyIndex];
+      if (descriptor === undefined) return;
+      copyCheckpointProperty(frame, key, descriptor);
+      return;
+    }
+    finishCheckpointCloneFrame(frame);
+  };
+
   const rootTarget = cloneReference(value, "", true, 0, rootShape);
 
   while (frames.length > 0) {
@@ -828,213 +1230,8 @@ function cloneCheckpointValueForPersistence<T>(value: T, rootShape?: WorkflowJso
       reflectApply(arrayPop, frames, []);
       continue;
     }
-    if (frame.arrayProxyLength !== undefined) {
-      const index = frame.arrayIndex ?? 0;
-      if (index >= frame.arrayProxyLength) {
-        reflectApply(arrayPop, frames, []);
-        continue;
-      }
-      frame.arrayIndex = index + 1;
-      const key = StringConstructor(index);
-      const sourceValue = reflectGet(frame.source, key);
-      const snapshot = isCheckpointCloneReference(sourceValue)
-        ? cloneReference(sourceValue, key, true, frame.jsonHookDepth)
-        : sourceValue;
-      objectDefineProperty(frame.target, key, {
-        configurable: true,
-        enumerable: true,
-        value: snapshot,
-        writable: true,
-      });
-      continue;
-    }
-    if (frame.arrayLength !== undefined && frame.arrayIndicesDone !== true) {
-      if (frame.arrayPrototypeDiffers === true && frame.arrayPrototypeSnapshot === undefined) {
-        const prototypeSnapshot = objectCreate(arrayPrototype);
-        frame.arrayPrototypeSnapshot = prototypeSnapshot;
-        objectSetPrototypeOf(frame.target, prototypeSnapshot);
-      }
-      const index = frame.arrayIndex ?? 0;
-      if (index >= frame.arrayLength) {
-        frame.arrayIndicesDone = true;
-      } else {
-        frame.arrayIndex = index + 1;
-        const key = StringConstructor(index);
-        const ownDescriptor = objectGetOwnPropertyDescriptor(frame.source, key);
-        if (ownDescriptor === undefined) {
-          if (frame.arrayPrototypeSnapshot === undefined) {
-            const prototypeSnapshot = objectCreate(arrayPrototype);
-            frame.arrayPrototypeSnapshot = prototypeSnapshot;
-            objectSetPrototypeOf(frame.target, prototypeSnapshot);
-          }
-          const sourceValue = reflectGet(frame.source, key);
-          const snapshot = isCheckpointCloneReference(sourceValue)
-            ? cloneReference(sourceValue, key, true, frame.jsonHookDepth)
-            : sourceValue;
-          objectDefineProperty(frame.arrayPrototypeSnapshot, key, {
-            configurable: true,
-            enumerable: true,
-            value: snapshot,
-            writable: true,
-          });
-        } else {
-          const descriptor = ownDescriptor;
-          if ("value" in descriptor) {
-            if (isCheckpointCloneReference(descriptor.value)) {
-              descriptor.value = cloneReference(
-                descriptor.value,
-                key,
-                true,
-                frame.jsonHookDepth,
-              );
-            }
-          } else if (typeof descriptor.get === "function") {
-            const accessorValue = reflectGet(frame.source, key);
-            const snapshot = isCheckpointCloneReference(accessorValue)
-              ? cloneReference(accessorValue, key, true, frame.jsonHookDepth)
-              : accessorValue;
-            descriptor.get = () => snapshot;
-            descriptor.set = undefined;
-          }
-          objectDefineProperty(frame.target, key, descriptor);
-        }
-        continue;
-      }
-    }
-    if (frame.keys === undefined) {
-      frame.keys = reflectOwnKeys(frame.source);
-      if (frame.objectProxy === true) {
-        const descriptors = new ArrayConstructor<PropertyDescriptor | undefined>(
-          frame.keys.length,
-        );
-        for (let index = 0; index < frame.keys.length; index++) {
-          const key = frame.keys[index]!;
-          if (typeof key === "string") {
-            descriptors[index] = objectGetOwnPropertyDescriptor(frame.source, key);
-          }
-        }
-        frame.ownPropertyDescriptors = descriptors;
-      }
-      frame.keyIndex = 0;
-      frame.jsonLookupInstalled = false;
-    }
-    if ((frame.keyIndex ?? 0) < frame.keys.length) {
-      const keyIndex = frame.keyIndex ?? 0;
-      const key = frame.keys[keyIndex]!;
-      frame.keyIndex = keyIndex + 1;
-      if (
-        frame.arrayLength !== undefined &&
-        isArrayIndexWithinLength(key, frame.arrayLength)
-      ) {
-        continue;
-      }
-      const descriptor = frame.ownPropertyDescriptors === undefined
-        ? objectGetOwnPropertyDescriptor(frame.source, key)
-        : frame.ownPropertyDescriptors[keyIndex];
-      if (descriptor === undefined) continue;
-      if (
-        key !== "toJSON" &&
-        (typeof key === "symbol" || descriptor.enumerable !== true) &&
-        !(frame.arrayLength !== undefined && isArrayIndexWithinLength(key, frame.arrayLength))
-      ) {
-        objectDefineProperty(frame.target, key, descriptor);
-        continue;
-      }
-      if (key === "toJSON" && frame.jsonLookup) {
-        const lookup = frame.jsonLookup;
-        const propertyValue = lookup.propertyValue;
-        const propertySnapshot = isCheckpointCloneReference(propertyValue)
-          ? cloneReference(propertyValue, "toJSON", true, frame.jsonHookDepth)
-          : propertyValue;
-        let reads = 0;
-        objectDefineProperty(frame.target, key, {
-          configurable: false,
-          enumerable: lookup.descriptor.enumerable,
-          get: () => {
-            const propertyRead = lookup.readsTwice && reads++ % 2 === 1;
-            return propertyRead ? propertySnapshot : undefined;
-          },
-        });
-        frame.jsonLookupInstalled = true;
-        continue;
-      }
-      if (objectGetOwnPropertyDescriptor(frame.target, key)?.configurable === false) {
-        if (arrayIsArray(frame.target) && key === "length") {
-          objectDefineProperty(frame.target, key, descriptor);
-        }
-        continue;
-      }
-      if (
-        frame.objectProxy === true && typeof key === "string" &&
-        descriptor.enumerable === true
-      ) {
-        const sourceValue = reflectGet(frame.source, key);
-        const snapshot = isCheckpointCloneReference(sourceValue)
-          ? cloneReference(
-            sourceValue,
-            key,
-            true,
-            frame.jsonHookDepth,
-            workflowJsonFieldShape(frame.shape, key),
-          )
-          : sourceValue;
-        objectDefineProperty(frame.target, key, {
-          configurable: descriptor.configurable,
-          enumerable: true,
-          value: snapshot,
-          writable: "value" in descriptor ? descriptor.writable : true,
-        });
-        continue;
-      } else if ("value" in descriptor) {
-        if (isCheckpointCloneReference(descriptor.value)) {
-          descriptor.value = cloneReference(
-            descriptor.value,
-            typeof key === "string" ? key : "",
-            true,
-            frame.jsonHookDepth,
-            workflowJsonFieldShape(frame.shape, key),
-          );
-        }
-      } else if (
-        typeof key === "string" && descriptor.enumerable === true &&
-        typeof descriptor.get === "function"
-      ) {
-        const accessorValue = reflectGet(frame.source, key);
-        const snapshot = isCheckpointCloneReference(accessorValue)
-          ? cloneReference(
-            accessorValue,
-            key,
-            true,
-            frame.jsonHookDepth,
-            workflowJsonFieldShape(frame.shape, key),
-          )
-          : accessorValue;
-        descriptor.get = () => snapshot;
-        descriptor.set = undefined;
-      }
-      objectDefineProperty(frame.target, key, descriptor);
-      if (
-        key === "toJSON" && frame.shape !== undefined && "value" in descriptor &&
-        typeof descriptor.value === "function"
-      ) {
-        reflectApply(weakSetAdd, checkpointJsonCloneRoots, [frame.target]);
-      }
-      continue;
-    }
-    if (frame.jsonLookup && frame.jsonLookupInstalled !== true) {
-      objectDefineProperty(frame.target, "toJSON", {
-        configurable: false,
-        enumerable: false,
-        get: () => undefined,
-      });
-    }
-    if (
-      nativeBrandChecks.isProxy(frame.source) !== true &&
-      !objectIsExtensible(frame.source)
-    ) {
-      objectPreventExtensions(frame.target);
-    }
-    reflectApply(arrayPop, frames, []);
+    if (advanceCheckpointArrayFrame(frame)) continue;
+    advanceCheckpointObjectFrame(frame);
   }
   return rootTarget as T;
 }

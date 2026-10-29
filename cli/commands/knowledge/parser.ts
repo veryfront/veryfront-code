@@ -7,6 +7,7 @@ import type {
 } from "veryfront/extensions/compat";
 import { inspectOkfDocument, type OkfDocumentDiagnostic } from "veryfront/knowledge";
 import { VERSION } from "#cli/utils";
+import { isTextKnowledgeCompanionPath } from "./source-policy.ts";
 
 export interface KnowledgeParserResult {
   success: true;
@@ -21,6 +22,7 @@ export interface KnowledgeParserResult {
   summary: string;
   stats: Record<string, unknown>;
   warnings: string[];
+  storage_kind?: "binary";
   document_kind?: "generated" | "okf_concept" | "okf_index" | "okf_log";
   okf?: {
     path: string;
@@ -188,6 +190,7 @@ function isAbsoluteProvenanceUrl(source: string): boolean {
 }
 
 function buildFrontmatter(source: string, sourceType: string, description: string): string {
+  const generatedBy = `veryfront/${VERSION}`;
   const lines = [
     "---",
     `type: ${yamlQuote("Generated Document")}`,
@@ -195,7 +198,7 @@ function buildFrontmatter(source: string, sourceType: string, description: strin
     `source_type: ${yamlQuote(sourceType)}`,
     `description: ${yamlQuote(description)}`,
     "generated:",
-    `  by: ${yamlQuote(`veryfront/${VERSION}`)}`,
+    `  by: ${yamlQuote(generatedBy)}`,
   ];
   if (isAbsoluteProvenanceUrl(source)) {
     lines.push(
@@ -230,6 +233,25 @@ function validateOkfDocumentRelativePath(path: string): string {
 
 function validateOkfCompanionRelativePath(path: string): string {
   return validateOkfBundleRelativePath(path);
+}
+
+export function isOkfTextCompanionPath(path: string): boolean {
+  return isTextKnowledgeCompanionPath(path);
+}
+
+export function isOkfTextCompanion(path: string, bytes: Uint8Array): boolean {
+  if (!isOkfTextCompanionPath(path)) return false;
+  if (extname(path)) return true;
+  try {
+    decodeOkfUtf8(path, bytes);
+    return !bytes.includes(0);
+  } catch {
+    return false;
+  }
+}
+
+export function validateOkfTextCompanionBytes(path: string, bytes: Uint8Array): void {
+  decodeOkfUtf8(path, bytes);
 }
 
 function decodeOkfUtf8(relativePath: string, bytes: Uint8Array): string {
@@ -284,8 +306,9 @@ async function preserveOkfCompanion(input: {
   input.signal?.throwIfAborted();
   const bytes = await Deno.readFile(input.filePath);
   input.signal?.throwIfAborted();
-  const source = decodeOkfUtf8(relativePath, bytes);
+  if (isOkfTextCompanion(relativePath, bytes)) validateOkfTextCompanionBytes(relativePath, bytes);
   if (relativePath.toLowerCase().endsWith(".md")) {
+    const source = decodeOkfUtf8(relativePath, bytes);
     const inspected = inspectOkfDocument(relativePath, source);
     // A reference does not demote canonical documents. Unknown explicit types
     // remain OKF types. Otherwise the explicit artifact role preserves its bytes,
@@ -304,6 +327,7 @@ async function preserveOkfCompanion(input: {
     source_path: input.filePath,
     source_filename: basename(input.filePath),
     source_type: "okf_companion",
+    storage_kind: isOkfTextCompanion(relativePath, bytes) ? undefined : "binary",
     slug: slugifyKnowledgeValue(relativePath.replace(/\.[^.]+$/i, "")),
     sandbox_output_path: outputPath,
     suggested_project_path: `knowledge/${relativePath}`,
@@ -377,7 +401,7 @@ function tableToMarkdown(rows: string[][]): string {
   const normalized = rows.map((row) =>
     Array.from(
       { length: maxColumns },
-      (_, index) => (row[index] ?? "").replaceAll("|", "\\|").replaceAll("\n", " ").trim(),
+      (_, index) => (row[index] ?? "").replaceAll("|", String.raw`\|`).replaceAll("\n", " ").trim(),
     )
   );
   const [header = [], ...body] = normalized;
@@ -653,6 +677,32 @@ export async function runKnowledgeParsers(input: {
   await Deno.mkdir(input.outputDir, { recursive: true });
   const results: KnowledgeParserResult[] = [];
 
+  function preserveOkfFile(file: KnowledgeParserInput): Promise<KnowledgeParserResult> {
+    return file.okfRelativePath!.toLowerCase().endsWith(".md") && file.okfRole !== "companion"
+      ? preserveOkfDocument({
+        filePath: file.filePath,
+        outputDir: input.outputDir,
+        relativePath: file.okfRelativePath!,
+        signal: deps.signal,
+        sourceReference: file.sourceReference,
+      })
+      : preserveOkfCompanion({
+        filePath: file.filePath,
+        outputDir: input.outputDir,
+        relativePath: file.okfRelativePath!,
+        signal: deps.signal,
+        sourceReference: file.sourceReference,
+      });
+  }
+  function throwParserFailure(error: unknown): never {
+    deps.signal?.throwIfAborted();
+    if (error instanceof Error && error.message.startsWith("knowledge ingest parser failed")) {
+      throw error;
+    }
+
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`knowledge ingest parser failed: ${message}`);
+  }
   for (const file of input.files) {
     try {
       deps.signal?.throwIfAborted();
@@ -663,22 +713,7 @@ export async function runKnowledgeParsers(input: {
 
       deps.signal?.throwIfAborted();
       if (file.okfRelativePath !== undefined) {
-        const preserve =
-          file.okfRelativePath.toLowerCase().endsWith(".md") && file.okfRole !== "companion"
-            ? preserveOkfDocument({
-              filePath: file.filePath,
-              outputDir: input.outputDir,
-              relativePath: file.okfRelativePath,
-              signal: deps.signal,
-              sourceReference: file.sourceReference,
-            })
-            : preserveOkfCompanion({
-              filePath: file.filePath,
-              outputDir: input.outputDir,
-              relativePath: file.okfRelativePath,
-              signal: deps.signal,
-              sourceReference: file.sourceReference,
-            });
+        const preserve = preserveOkfFile(file);
         results.push(await preserve);
         continue;
       }
@@ -725,13 +760,7 @@ export async function runKnowledgeParsers(input: {
         document_kind: "generated",
       });
     } catch (error) {
-      deps.signal?.throwIfAborted();
-      if (error instanceof Error && error.message.startsWith("knowledge ingest parser failed")) {
-        throw error;
-      }
-
-      const message = error instanceof Error ? error.message : String(error);
-      throw new Error(`knowledge ingest parser failed: ${message}`);
+      throwParserFailure(error);
     }
   }
 

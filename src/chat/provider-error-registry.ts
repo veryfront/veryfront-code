@@ -90,8 +90,19 @@ export const GATEWAY_PROJECT_REQUIRED_ERROR = {
  */
 export const MODEL_NOT_PERMITTED_ERROR = {
   code: "MODEL_NOT_PERMITTED",
-  message:
-    "The selected model is not available under this project's inference policy (EU-only inference).",
+  message: "The selected model is not available under this project's inference policy.",
+  status: 403,
+} as const;
+
+/** Fixed diagnostics preserve the refusing scope across hosted and streamed boundaries. */
+export const ACCOUNT_MODEL_DENIED_ERROR = {
+  code: "ACCOUNT_MODEL_DENIED",
+  message: "The selected model is not allowed by the account's model policy.",
+  status: 403,
+} as const;
+export const KEY_MODEL_DENIED_ERROR = {
+  code: "KEY_MODEL_DENIED",
+  message: "This API key is not allowed to call the selected model.",
   status: 403,
 } as const;
 
@@ -123,6 +134,8 @@ export const CURATED_PROVIDER_FAILURE_CODES = [
   "PROVIDER_OUTPUT_TRUNCATED",
   "PROVIDER_STREAM_PROTOCOL_ERROR",
   "MODEL_NOT_PERMITTED",
+  "ACCOUNT_MODEL_DENIED",
+  "KEY_MODEL_DENIED",
   "INFERENCE_POLICY_DENIED",
 ] as const;
 export type CuratedProviderFailureCode = typeof CURATED_PROVIDER_FAILURE_CODES[number];
@@ -170,6 +183,8 @@ const failures = {
   PROVIDER_OUTPUT_TRUNCATED: PROVIDER_OUTPUT_TRUNCATED_ERROR,
   PROVIDER_STREAM_PROTOCOL_ERROR: PROVIDER_STREAM_PROTOCOL_ERROR,
   MODEL_NOT_PERMITTED: MODEL_NOT_PERMITTED_ERROR,
+  ACCOUNT_MODEL_DENIED: ACCOUNT_MODEL_DENIED_ERROR,
+  KEY_MODEL_DENIED: KEY_MODEL_DENIED_ERROR,
   INFERENCE_POLICY_DENIED: INFERENCE_POLICY_DENIED_ERROR,
 } as const;
 

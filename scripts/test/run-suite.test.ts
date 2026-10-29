@@ -309,6 +309,28 @@ describe("suite planning parity", () => {
     }
   });
 
+  it("retains relocated adapter intrinsic coverage in every original runtime", async () => {
+    for (
+      const suite of [
+        "integration:legacy-tests-root",
+        "runtime:node",
+        "runtime:bun",
+      ] as const
+    ) {
+      const plan = await planSuiteFiles({ suite });
+      assert(
+        plan.files.includes(
+          "tests/integration/security/eval-agent-service-failure-intrinsics.test.ts",
+        ),
+        `${suite} must retain the relocated adapter intrinsic regression`,
+      );
+    }
+    const unit = await planSuiteFiles({ suite: "unit:parallel" });
+    assert(
+      unit.files.includes("src/eval/agent-service/failure-diagnostic.test.ts"),
+    );
+  });
+
   it("keeps service attribution intrinsics in Node and Bun runtime suites", async () => {
     const fixture =
       "tests/integration/semantic-unit-boundary/src/agent/service/runtime-attribution-intrinsics.test.ts";
@@ -1049,6 +1071,7 @@ async function legacyRuntimeFiles(runtime: "node" | "bun"): Promise<string[]> {
       "tests/integration/runtime/compat/spawn-missing-executable.test.ts",
       "tests/integration/security/sandbox-runtime-guard.test.ts",
       "tests/integration/security/host-api-http.test.ts",
+      "tests/integration/security/eval-agent-service-failure-intrinsics.test.ts",
       "tests/integration/server/dependency-snapshot-intrinsics.test.ts",
       "tests/integration/server/runtime-file-mutation-authority-intrinsics.test.ts",
       "tests/integration/agent/external-worker-client-intrinsics.test.ts",
@@ -1091,6 +1114,7 @@ async function legacyRuntimeFiles(runtime: "node" | "bun"): Promise<string[]> {
       "tests/integration/runtime/compat/spawn-missing-executable.test.ts",
       "tests/integration/security/sandbox-runtime-guard.test.ts",
       "tests/integration/security/host-api-http.test.ts",
+      "tests/integration/security/eval-agent-service-failure-intrinsics.test.ts",
       "tests/integration/server/dependency-snapshot-intrinsics.test.ts",
       "tests/integration/server/runtime-file-mutation-authority-intrinsics.test.ts",
       "tests/integration/agent/external-worker-client-intrinsics.test.ts",

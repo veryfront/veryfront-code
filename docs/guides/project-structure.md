@@ -1,7 +1,7 @@
 ---
 title: "Project structure"
 description: "Where to put routes, AI primitives, shared code, and configuration."
-order: 8
+order: 10
 ---
 
 A Veryfront project keeps routes in `app/` or `pages/`. Keep runtime primitives
@@ -30,7 +30,7 @@ my-app/
       [slug]/
         page.tsx         # /blog/:slug (dynamic route)
     api/
-      chat/
+      ag-ui/
         route.ts         # POST /api/ag-ui
   agents/               # AI agent definitions (auto-discovered)
     assistant.ts
@@ -222,14 +222,10 @@ VERYFRONT_CACHE_DIR=/tmp/veryfront-cache veryfront dev
 
 ### Keeping the cache out of version control
 
-The cache root keeps itself out of version control. When the file is absent,
-both commands create a `.gitignore` in the cache root containing `*`, which
-ignores the directory's contents and the file itself, so a project that adopted
-Veryfront into an existing tree does not have to edit its own `.gitignore`. A
-marker you wrote yourself (a `.cache/.gitignore` of your own, say) is never
-overwritten in either root, so keep the generated bundles ignored there if you
-replace it. `veryfront init` also lists `.cache/` in the `.gitignore` it
-scaffolds.
+Both commands create a cache ignore file, such as `.cache/.gitignore`, with `*`
+if it is absent. This excludes the cache contents from Git without changing your project's
+ignore file. Existing cache ignore files are preserved; keep generated bundles
+ignored if you replace one. `veryfront init` also ignores `.cache/`.
 
 Deleting the cache root costs only time. The next run recompiles the pages and
 refetches the remote dependencies it needs.
