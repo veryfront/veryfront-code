@@ -1,3 +1,8 @@
+import {
+  getVeryfrontCloudAuthToken,
+  isVeryfrontCloudEnabled,
+} from "#veryfront/platform/cloud/resolver.ts";
+import { runWithProjectEnv } from "#veryfront/server/project-env/storage.ts";
 import { resolveRuntimeModel } from "#veryfront/agent/runtime/model-resolution.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { installMockFetch, restoreMockFetch } from "#veryfront/testing/mock-fetch.ts";
@@ -30,7 +35,9 @@ const MODEL_REGISTRY_ENV_KEYS = [
   "GOOGLE_GEMINI_BASE_URL",
   "MISTRAL_API_KEY",
   "VERYFRONT_API_TOKEN",
+  "VERYFRONT_API_TOKEN_FILE",
   "VERYFRONT_PROJECT_SLUG",
+  "VERYFRONT_SERVICE_LAYER",
 ] as const;
 
 const PROJECT_A = {
@@ -403,71 +410,82 @@ describe("provider/model-registry", () => {
   });
 
   for (const provider of ["openai", "anthropic"] as const) {
-    it(`keeps env-backed ${provider} requests direct when Cloud context is present`, async () => {
-      clearModelRegistryEnv();
-      const secret = `synthetic-project-${provider}-key`;
-      setEnv(provider === "openai" ? "OPENAI_API_KEY" : "ANTHROPIC_API_KEY", secret);
-      setEnv("VERYFRONT_API_TOKEN", "synthetic-cloud-token");
-      setEnv("VERYFRONT_PROJECT_SLUG", "synthetic-project");
-      const requests: Request[] = [];
-      installMockFetch(
-        (async (input: URL | Request | string, init?: RequestInit) => {
-          requests.push(new Request(input, init));
-          const payload = provider === "openai"
-            ? {
-              id: "synthetic-response",
-              object: "response",
-              status: "completed",
-              output: [{
+    for (const cloudEnabled of [false, true]) {
+      it(`keeps project-env ${provider} requests direct with Cloud ${cloudEnabled ? "enabled" : "disabled"}`, async () => {
+        clearModelRegistryEnv();
+        const secret = `synthetic-project-${provider}-key`;
+        if (cloudEnabled) {
+          setEnv("VERYFRONT_SERVICE_LAYER", "cloud");
+          setEnv("VERYFRONT_API_TOKEN", "synthetic-cloud-token");
+          setEnv("VERYFRONT_PROJECT_SLUG", "synthetic-project");
+        }
+        const requests: Request[] = [];
+        installMockFetch(
+          (async (input: URL | Request | string, init?: RequestInit) => {
+            requests.push(new Request(input, init));
+            const payload = provider === "openai"
+              ? {
+                id: "synthetic-response",
+                object: "response",
+                status: "completed",
+                output: [{
+                  id: "synthetic-message",
+                  type: "message",
+                  role: "assistant",
+                  status: "completed",
+                  content: [{ type: "output_text", text: "ok" }],
+                }],
+                usage: { input_tokens: 4, output_tokens: 2, total_tokens: 6 },
+              }
+              : {
                 id: "synthetic-message",
                 type: "message",
                 role: "assistant",
-                status: "completed",
-                content: [{ type: "output_text", text: "ok" }],
-              }],
-              usage: { input_tokens: 4, output_tokens: 2, total_tokens: 6 },
-            }
-            : {
-              id: "synthetic-message",
-              type: "message",
-              role: "assistant",
-              content: [{ type: "text", text: "ok" }],
-              stop_reason: "end_turn",
-              usage: { input_tokens: 4, output_tokens: 2 },
-            };
-          return new Response(JSON.stringify(payload), {
-            headers: { "content-type": "application/json" },
-          });
-        }) as typeof fetch,
-      );
-      const model = provider === "openai" ? "gpt-5.4-nano" : "claude-sonnet-4-6";
-      const result = await runWithCacheKeyContext(
-        PROJECT_A,
-        () =>
-          resolveModel(resolveRuntimeModel(`${provider}/${model}`)).doGenerate({
-            prompt: [{ role: "user", content: [{ type: "text", text: "hi" }] }],
-          }),
-      );
-      assertEquals(requests.length, 1);
-      assertEquals(
-        requests[0]?.url,
-        provider === "openai"
-          ? "https://api.openai.com/v1/responses"
-          : "https://api.anthropic.com/v1/messages",
-      );
-      assertEquals(
-        requests[0]?.headers.get(provider === "openai" ? "authorization" : "x-api-key"),
-        provider === "openai" ? `Bearer ${secret}` : secret,
-      );
-      const usage = result.usage;
-      assert(typeof usage === "object" && usage !== null);
-      assertEquals("inputTokens" in usage ? usage.inputTokens : undefined, 4);
-      assertEquals("outputTokens" in usage ? usage.outputTokens : undefined, 2);
-      // Direct provider counters do not claim that platform billing has settled.
-      assertEquals("costCredits" in usage, false);
-      assertEquals("veryfrontChargeUsd" in usage, false);
-      assertEquals("costSource" in usage, false);
-    });
+                content: [{ type: "text", text: "ok" }],
+                stop_reason: "end_turn",
+                usage: { input_tokens: 4, output_tokens: 2 },
+              };
+            return new Response(JSON.stringify(payload), {
+              headers: { "content-type": "application/json" },
+            });
+          }) as typeof fetch,
+        );
+        const model = provider === "openai" ? "gpt-5.4-nano" : "claude-sonnet-4-6";
+        const result = await runWithProjectEnv(
+          { [provider === "openai" ? "OPENAI_API_KEY" : "ANTHROPIC_API_KEY"]: secret },
+          () =>
+            runWithCacheKeyContext(PROJECT_A, () => {
+              assertEquals(isVeryfrontCloudEnabled(), cloudEnabled);
+              assertEquals(
+                getVeryfrontCloudAuthToken(),
+                cloudEnabled ? "synthetic-cloud-token" : undefined,
+              );
+              return resolveModel(resolveRuntimeModel(`${provider}/${model}`)).doGenerate({
+                prompt: [{ role: "user", content: [{ type: "text", text: "hi" }] }],
+              });
+            }),
+        );
+        assertEquals(requests.length, 1);
+        assertEquals(
+          requests[0]?.url,
+          provider === "openai"
+            ? "https://api.openai.com/v1/responses"
+            : "https://api.anthropic.com/v1/messages",
+        );
+        assertEquals(
+          requests[0]?.headers.get(provider === "openai" ? "authorization" : "x-api-key"),
+          provider === "openai" ? `Bearer ${secret}` : secret,
+        );
+        const usage = result.usage;
+        assert(typeof usage === "object" && usage !== null);
+        assertEquals("inputTokens" in usage ? usage.inputTokens : undefined, 4);
+        assertEquals("outputTokens" in usage ? usage.outputTokens : undefined, 2);
+        // Direct provider counters do not claim that platform billing has settled.
+        assertEquals("costCredits" in usage, false);
+        assertEquals("veryfrontChargeUsd" in usage, false);
+        assertEquals("costSource" in usage, false);
+      });
+    }
   }
 
   it("routes env-backed Google models through GOOGLE_GEMINI_BASE_URL", async () => {
