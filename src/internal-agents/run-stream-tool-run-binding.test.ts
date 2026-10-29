@@ -4,7 +4,8 @@ import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { agent as createAgent } from "#veryfront/agent";
 import { scriptedModel } from "#veryfront/agent/runtime/model-runtime.test-helpers.ts";
-import type { Tool, ToolExecutionContext } from "#veryfront/tool";
+import { type Tool, type ToolExecutionContext, toolRegistry } from "#veryfront/tool";
+import { toolRegistryInternal } from "#veryfront/tool/registry.ts";
 import { AgentRunSessionManager } from "./session-manager.ts";
 import {
   createRuntimeAgentStreamResponse,
@@ -13,13 +14,27 @@ import {
 
 const UNBOUND = "PROJECT_TOOL_CONTEXT_UNBOUND_RUN";
 const SPOOF = { runIdBindsToolAuthorization: true };
+// The staging probe fails when any of these keys is visible to project code.
+const RUNTIME_CREDENTIAL_KEYS = [
+  "authToken",
+  "apiToken",
+  "apiKey",
+  "runEventToken",
+  "runTerminalToken",
+  "inferenceToken",
+  "sourceReadToken",
+];
 
 async function runAuthoredTool(
   deps: Pick<
     RuntimeAgentStreamExecutionDeps,
     "projectAgentSandbox" | "runIdBindsToolAuthorization"
   >,
-  request: { forwardedProps?: Record<string, unknown>; spoofContext?: boolean } = {},
+  request: {
+    forwardedProps?: Record<string, unknown>;
+    spoofContext?: boolean;
+    discovered?: boolean;
+  } = {},
 ) {
   const observed: Array<ToolExecutionContext | undefined> = [];
   // Mirrors the staging authorization probe: an authored tool may act on the
@@ -36,6 +51,9 @@ async function runAuthoredTool(
       return Promise.resolve({ runtimeCredentialIsolated: true, projectId: context.projectId });
     },
   };
+  // A discovered project tool reaches the stream as its registry entry.
+  if (request.discovered) toolRegistry.register(probe.id, probe);
+  const localTool = request.discovered ? toolRegistry.get(probe.id)! : probe;
   const modelId = `anthropic/tool-run-binding-${crypto.randomUUID()}`;
   const model = scriptedModel([{ toolCalls: [{ id: "probe-1", name: probe.id, input: {} }] }], {
     modelId,
@@ -63,11 +81,15 @@ async function runAuthoredTool(
     agent,
     {
       sessionManager: new AgentRunSessionManager(),
-      localTools: { runtime_credential_isolation: probe },
+      localTools: { runtime_credential_isolation: localTool },
       ...deps,
     },
   );
-  return { body: await response.text(), observed };
+  try {
+    return { body: await response.text(), observed };
+  } finally {
+    if (request.discovered) toolRegistryInternal.clearAll();
+  }
 }
 
 describe("internal agent authored tool run binding", () => {
@@ -80,6 +102,18 @@ describe("internal agent authored tool run binding", () => {
     assertEquals(body.includes(UNBOUND), false, `authored tool failed with ${UNBOUND}`);
     assertEquals(observed[0]?.runIdBindsToolAuthorization, true);
     assertEquals(observed[0]?.projectId, "project-1");
+  });
+
+  it("keeps runtime credentials out of a discovered project tool's context", async () => {
+    const { body, observed } = await runAuthoredTool({
+      runIdBindsToolAuthorization: true,
+      projectAgentSandbox: { projectId: "project-1", authToken: "test-token" },
+    }, { discovered: true });
+    assertEquals(observed.length, 1);
+    assertEquals(body.includes(UNBOUND), false, `authored tool failed with ${UNBOUND}`);
+    assertEquals(observed[0]?.runIdBindsToolAuthorization, true);
+    assertEquals(observed[0]?.projectId, "project-1");
+    assertEquals(RUNTIME_CREDENTIAL_KEYS.filter((key) => key in (observed[0] ?? {})), []);
   });
 
   for (

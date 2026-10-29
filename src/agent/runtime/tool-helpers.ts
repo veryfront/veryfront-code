@@ -57,7 +57,35 @@ const InvocationRun = AsyncLocalStorage.prototype.run;
 const InvocationGet = AsyncLocalStorage.prototype.getStore;
 const DefineProperty = Object.defineProperty;
 const GetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const GetOwnPropertyDescriptors = Object.getOwnPropertyDescriptors;
 const DeleteProperty = Reflect.deleteProperty;
+const GetPrototypeOf = Object.getPrototypeOf;
+const CreateObject = Object.create;
+// Host credentials that framework tools read from the context. Project code
+// acts through `executePlatformTool` instead and never sees them.
+const RUNTIME_CREDENTIAL_CONTEXT_KEYS = [
+  "authToken",
+  "apiToken",
+  "apiKey",
+  "runEventToken",
+  "runTerminalToken",
+  "inferenceToken",
+  "sourceReadToken",
+] as const;
+
+/** Project-authored tools are the project's registry entries; framework tools carry provenance. */
+function isProjectAuthoredTool(toolName: string, tool: Tool): boolean {
+  return !hasTrustedHostToolProvenance(tool) && toolRegistry.get(toolName) === tool;
+}
+
+/** Copy every property, symbols included, except the runtime credentials. */
+function withoutRuntimeCredentials(context: ToolExecutionContext): ToolExecutionContext {
+  const descriptors = GetOwnPropertyDescriptors(context);
+  for (let index = 0; index < RUNTIME_CREDENTIAL_CONTEXT_KEYS.length; index++) {
+    DeleteProperty(descriptors, RUNTIME_CREDENTIAL_CONTEXT_KEYS[index]!);
+  }
+  return CreateObject(GetPrototypeOf(context), descriptors);
+}
 
 async function executeLocalWrapper(
   toolName: string,
@@ -124,9 +152,12 @@ async function executeLocalWrapper(
           enumerable: false,
           configurable: true,
         });
+        const toolContext = isProjectAuthoredTool(toolName, localTool)
+          ? withoutRuntimeCredentials(executionContext)
+          : executionContext;
         return await dispatchWithTerminalRunControl(
           context,
-          () => localTool.execute(input, executionContext),
+          () => localTool.execute(input, toolContext),
         );
       } finally {
         active = false;
