@@ -257,6 +257,28 @@ function getFirstPartyExtensionPackageName(
 }
 
 export function createBuiltinExtensions(): ResolvedExtension[] {
+  return createBuiltinExtensionSet(DEFERRED_BUILTIN_EXTENSIONS);
+}
+
+/**
+ * The builtin set for `veryfront eval`: everything `createBuiltinExtensions()`
+ * starts, so eval accepts the same project extensions as `dev`, but only the
+ * report exporters that were selected.
+ */
+export function createEvalCliBuiltinExtensions(
+  selectedExporterIds: string[] = [],
+): ResolvedExtension[] {
+  const selected = new Set(selectedExporterIds);
+  return createBuiltinExtensionSet(DEFERRED_BUILTIN_EXTENSIONS.filter((definition) => {
+    const selection = definition.evalExporterSelection;
+    if (!selection) return true;
+    return selection.kind === "any-selected" ? selected.size > 0 : selected.has(selection.id);
+  }));
+}
+
+function createBuiltinExtensionSet(
+  deferred: readonly DeferredBuiltinExtensionDefinition[],
+): ResolvedExtension[] {
   return [
     // ext-schema-zod registers SchemaValidator. Listed FIRST so any subsequent
     // builtin whose setup() builds schemas via defineSchema() finds the
@@ -266,28 +288,7 @@ export function createBuiltinExtensions(): ResolvedExtension[] {
       origin: "veryfront/ext-schema-zod",
       extension: extZod(),
     },
-    ...DEFERRED_BUILTIN_EXTENSIONS.map(createDeferredBuiltinExtension),
-    ...BUILTIN_LLM_PROVIDERS.map(createBuiltinLLMProviderExtension),
-  ];
-}
-
-export function createEvalCliBuiltinExtensions(
-  selectedExporterIds: string[] = [],
-): ResolvedExtension[] {
-  const selected = new Set(selectedExporterIds);
-  const exporterExtensions = DEFERRED_BUILTIN_EXTENSIONS.filter((definition) => {
-    const selection = definition.evalExporterSelection;
-    if (!selection) return false;
-    return selection.kind === "any-selected" ? selected.size > 0 : selected.has(selection.id);
-  });
-
-  return [
-    {
-      source: "builtin",
-      origin: "veryfront/ext-schema-zod",
-      extension: extZod(),
-    },
-    ...exporterExtensions.map(createDeferredBuiltinExtension),
+    ...deferred.map(createDeferredBuiltinExtension),
     ...BUILTIN_LLM_PROVIDERS.map(createBuiltinLLMProviderExtension),
   ];
 }

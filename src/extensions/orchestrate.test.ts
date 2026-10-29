@@ -986,4 +986,23 @@ describe("orchestrateExtensions()", () => {
     assertEquals(registry.get("anthropic"), customProvider);
     await loader.teardownAll();
   });
+
+  it("starts eval CLI builtins that project extensions require (#4022)", async () => {
+    const projectExt = stubExt("needs-bundler", {
+      contracts: { requires: ["Bundler", "ModuleLexer"] },
+      setup() {},
+    });
+
+    const loader = await orchestrateExtensions({
+      projectDir: "/fake",
+      config: { extensions: [projectExt] },
+      logger: noopLogger,
+      discovery: emptyDiscovery(),
+      primeContracts: { [LLMProviderRegistryName]: createLLMProviderRegistry() },
+      builtinExtensions: createEvalCliBuiltinExtensions([]),
+    });
+
+    assertEquals(tryResolve("Bundler") !== undefined, true);
+    await loader.teardownAll();
+  });
 });
