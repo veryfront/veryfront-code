@@ -53,6 +53,65 @@ const response = await ai.responses("openai/gpt-4.1", {
 });
 ```
 
+### Decisions API
+
+For classification and scoring, use a typed decision runtime. This is separate
+from chat and Responses: answers are predicates, choices, scores, or explicit
+refusals, without generated text or tool execution.
+
+```ts
+import { OpenAIProvider } from "@veryfront/ext-llm-openai";
+
+const decisions = new OpenAIProvider().createDecisions("gpt-6-luna", {
+  credential: openaiApiKey,
+});
+const result = await decisions.decide({
+  input: "The export button fails after selecting a date range.",
+  questions: [{
+    name: "category",
+    type: "choice",
+    instructions: "Select the best category for this report.",
+    choices: [{ value: "bug" }, { value: "question" }],
+  }],
+  abortSignal: AbortSignal.timeout(10_000),
+});
+const answer = result.answers[0];
+if (answer.type === "choice") {
+  console.log(answer.choice, answer.confidence, answer.probabilities);
+} else if (answer.type === "refusal") {
+  console.log("Review this report manually.");
+}
+```
+
+Supply the application's OpenAI key as `openaiApiKey`. The runtime also accepts
+the provider's `baseURL` and `fetch` settings and uses the normal guarded provider
+HTTP transport. This is direct-provider support; `ai.chat`, agent model strings,
+and Veryfront Cloud gateway routing do not invoke Decisions.
+
+`input` and question `instructions` accept text or an array of `{ type: "text",
+text }`, `{ type: "image", url }`, and `{ type: "json", data }` parts. JSON data
+must be an object or an array of objects. This initial surface does not accept
+conversation history, files, audio, explicit cache breakpoints, or tool calls.
+`promptCacheKey` partitions automatic shared-input caching. Results retain
+input, output, total, cached-input and cache-write token counts.
+
+Use 1–400 uniquely named questions. Choices accept 2–255 distinct string or
+boolean values; scores accept 2–10 ordered `{ label, description? }` levels and
+return a score on their zero-based index scale. Answers retain request order.
+Always handle `type: "refusal"` independently from a false predicate or low score.
+Malformed responses reject the call, and HTTP failures are not automatically
+retried. Set `timeoutMs` or `abortSignal` to bound a call.
+
+OpenAI currently supports `gpt-6-luna` on this endpoint. The capability is
+available as optional `LLMProvider.createDecisions`, returning `DecisionRuntime`
+from `veryfront/provider/types`. OpenAI Decisions and TypeSafe's Jev System One
+API require separate adapters: their endpoints, input fields, question maps,
+and predicate representations differ.
+
+Sources: [OpenAI Decisions](https://developers.openai.com/api/docs/guides/decisions),
+[OpenAI request/response reference](https://developers.openai.com/api/reference/resources/decisions/methods/create),
+[TypeSafe System One reference](https://docs.typesafe.ai/api/system-one).
+
 ### Hosted Web Search
 
 The agent-facing tool name is `web_search`. It resolves to the current

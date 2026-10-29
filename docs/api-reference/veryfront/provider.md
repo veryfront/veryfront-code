@@ -179,6 +179,7 @@ import {
 | `getGoogleGenerateContentUrl`                 | Return Google generate content URL.                                                                                                                                                                                                                                                                                                                                                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/runtime-loader/provider-endpoints.ts)                       |
 | `getGoogleStreamGenerateContentUrl`           | Return Google stream generate content URL.                                                                                                                                                                                                                                                                                                                                                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/runtime-loader/provider-endpoints.ts)                       |
 | `getOpenAIChatCompletionsUrl`                 | Return OpenAI chat completions URL.                                                                                                                                                                                                                                                                                                                                                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/runtime-loader/provider-endpoints.ts)                       |
+| `getOpenAIDecisionsUrl`                       | Return OpenAI decisions URL.                                                                                                                                                                                                                                                                                                                                                                    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/runtime-loader/provider-endpoints.ts)                       |
 | `getOpenAIEmbeddingUrl`                       | Return OpenAI embedding URL.                                                                                                                                                                                                                                                                                                                                                                    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/runtime-loader/provider-endpoints.ts)                       |
 | `getOpenAIResponsesUrl`                       | Return OpenAI responses URL.                                                                                                                                                                                                                                                                                                                                                                    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/runtime-loader/provider-endpoints.ts)                       |
 | `isImageFileInput`                            | Whether a prompt part is an image. MIME types compare case-insensitively.                                                                                                                                                                                                                                                                                                                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/runtime-loader/inline-file.ts)                              |
@@ -258,30 +259,38 @@ import {
 
 ```ts
 import type {
-  EmbeddingRuntime,
-  ModelRuntime,
-  ModelRuntimeCallOptions,
+  DecisionAnswer,
+  DecisionCallOptions,
+  DecisionContent,
 } from "veryfront/provider/types";
 ```
 
 #### Types
 
-| Name                             | Description                                                                           | Source                                                                                |
-| -------------------------------- | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
-| `EmbeddingRuntime`               |                                                                                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/types.ts) |
-| `ModelRuntime`                   | Public API contract for model runtime.                                                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/types.ts) |
-| `ModelRuntimeCallOptions`        | Canonical request contract passed to `ModelRuntime` generation hooks.                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/types.ts) |
-| `ModelRuntimeCapabilities`       | Explicit behavioral support advertised by a model runtime.                            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/types.ts) |
-| `ModelRuntimeGenerateResult`     |                                                                                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/types.ts) |
-| `ModelRuntimePromptMessage`      | Immutable prompt view accepted by model-runtime calls.                                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/types.ts) |
-| `ModelRuntimeStreamResult`       |                                                                                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/types.ts) |
-| `ModelRuntimeToolDefinition`     | Canonical tool definition sent to a model runtime.                                    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/types.ts) |
-| `RuntimeAssistantContentPart`    | Canonical assistant content accepted when invoking a model runtime.                   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/types.ts) |
-| `RuntimeMetadata`                |                                                                                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/types.ts) |
-| `RuntimePromptMessage`           | Historical mutable provider-facing prompt contract retained for source compatibility. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/types.ts) |
-| `RuntimeReasoningOption`         | Provider-neutral reasoning controls accepted by model runtimes.                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/types.ts) |
-| `RuntimeResponseFormat`          | Provider-neutral structured-output request.                                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/types.ts) |
-| `RuntimeStructuredOutputVariant` |                                                                                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/types.ts) |
+| Name                             | Description                                                                           | Source                                                                                         |
+| -------------------------------- | ------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| `DecisionAnswer`                 | A typed answer or explicit refusal, correlated by question name.                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/decision-types.ts) |
+| `DecisionCallOptions`            | Evidence, questions, and execution controls for a decision call.                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/decision-types.ts) |
+| `DecisionContent`                | Text or structured evidence evaluated together in a decision call.                    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/decision-types.ts) |
+| `DecisionContentPart`            | Shared evidence, or evidence specific to one question.                                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/decision-types.ts) |
+| `DecisionJSON`                   | Typed decision calls are separate from text generation and agent tool calls.          | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/decision-types.ts) |
+| `DecisionQuestion`               | A named predicate, choice, or ordered scoring question.                               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/decision-types.ts) |
+| `DecisionResult`                 | Ordered decision answers and actual provider token usage.                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/decision-types.ts) |
+| `DecisionRuntime`                | Provider capability for typed decisions without text or tool generation.              | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/decision-types.ts) |
+| `EmbeddingRuntime`               |                                                                                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/types.ts)          |
+| `ModelRuntime`                   | Public API contract for model runtime.                                                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/types.ts)          |
+| `ModelRuntimeCallOptions`        | Canonical request contract passed to `ModelRuntime` generation hooks.                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/types.ts)          |
+| `ModelRuntimeCapabilities`       | Explicit behavioral support advertised by a model runtime.                            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/types.ts)          |
+| `ModelRuntimeGenerateResult`     |                                                                                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/types.ts)          |
+| `ModelRuntimePromptMessage`      | Immutable prompt view accepted by model-runtime calls.                                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/types.ts)          |
+| `ModelRuntimeStreamResult`       |                                                                                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/types.ts)          |
+| `ModelRuntimeToolDefinition`     | Canonical tool definition sent to a model runtime.                                    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/types.ts)          |
+| `RuntimeAssistantContentPart`    | Canonical assistant content accepted when invoking a model runtime.                   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/types.ts)          |
+| `RuntimeMetadata`                |                                                                                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/types.ts)          |
+| `RuntimePromptMessage`           | Historical mutable provider-facing prompt contract retained for source compatibility. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/types.ts)          |
+| `RuntimeReasoningOption`         | Provider-neutral reasoning controls accepted by model runtimes.                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/types.ts)          |
+| `RuntimeResponseFormat`          | Provider-neutral structured-output request.                                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/types.ts)          |
+| `RuntimeStructuredOutputVariant` |                                                                                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/types.ts)          |
 
 ### `veryfront/provider/veryfront-cloud/cli-context`
 

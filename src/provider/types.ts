@@ -1,3 +1,14 @@
+export type {
+  DecisionAnswer,
+  DecisionCallOptions,
+  DecisionContent,
+  DecisionContentPart,
+  DecisionJSON,
+  DecisionQuestion,
+  DecisionResult,
+  DecisionRuntime,
+} from "./decision-types.ts";
+
 export interface RuntimeMetadata {
   readonly specificationVersion?: string;
   readonly provider?: string;

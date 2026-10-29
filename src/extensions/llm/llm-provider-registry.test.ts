@@ -96,6 +96,12 @@ describe("LLMProviderRegistry", () => {
     const reg = createLLMProviderRegistry();
 
     assertThrows(
+      () => reg.register({ ...fakeProvider("bad-decisions"), createDecisions: true } as never),
+      TypeError,
+      'optional method "createDecisions"',
+    );
+
+    assertThrows(
       () => reg.register(fakeProvider("  ")),
       TypeError,
       "non-empty canonical string",

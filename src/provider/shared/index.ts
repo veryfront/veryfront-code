@@ -15,6 +15,7 @@ export {
   getGoogleGenerateContentUrl,
   getGoogleStreamGenerateContentUrl,
   getOpenAIChatCompletionsUrl,
+  getOpenAIDecisionsUrl,
   getOpenAIEmbeddingUrl,
   getOpenAIResponsesUrl,
 } from "../runtime-loader/provider-endpoints.ts";

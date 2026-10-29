@@ -64,6 +64,11 @@ export function getOpenAIResponsesUrl(baseURL?: string): string {
   return joinUrl(baseURL ?? DEFAULT_OPENAI_BASE_URL, "responses");
 }
 
+/** Return OpenAI decisions URL. */
+export function getOpenAIDecisionsUrl(baseURL?: string): string {
+  return joinUrl(baseURL ?? DEFAULT_OPENAI_BASE_URL, "decisions");
+}
+
 /** Return Google generate content URL. */
 export function getGoogleGenerateContentUrl(
   baseURL: string | undefined,

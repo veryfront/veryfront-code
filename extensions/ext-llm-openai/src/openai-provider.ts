@@ -10,10 +10,12 @@
 
 import type { LLMProvider, LLMProviderConfig } from "veryfront/extensions/llm";
 import type {
+  DecisionRuntime,
   EmbeddingRuntime,
   ModelRuntime,
   RuntimeAssistantContentPart,
 } from "veryfront/provider/types";
+import { createOpenAIDecisionsRuntime } from "./openai-decisions.ts";
 import {
   buildProviderError,
   createOpenAIRequestInit,
@@ -1429,6 +1431,10 @@ export function createOpenAIEmbeddingRuntime(
 
 export class OpenAIProvider implements LLMProvider {
   readonly id = "openai";
+
+  createDecisions(modelId: string, config: LLMProviderConfig): DecisionRuntime {
+    return createOpenAIDecisionsRuntime(modelId, config);
+  }
 
   createModel(
     modelId: string,
