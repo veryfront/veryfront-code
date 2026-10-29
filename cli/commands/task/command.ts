@@ -142,5 +142,7 @@ export async function taskCommand(options: TaskOptions): Promise<void> {
       cliLogger.error(`Task failed after ${result.durationMs}ms: ${result.error}`);
       exitProcess(1);
     },
+    // A linked project runs the task through Cloud: stop on an expired login.
+    { rejectExpiredLinkedLogin: true },
   );
 }

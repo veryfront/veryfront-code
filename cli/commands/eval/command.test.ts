@@ -23,6 +23,7 @@ import {
   EVAL_REPORT_SCHEMA_VERSION,
   evalAgent,
   evalDataset,
+  type EvalDefinition,
   type EvalReport,
   evalTool,
   metrics,
@@ -673,6 +674,58 @@ describe("eval CLI command helpers", () => {
 
       assertEquals(warnings.filter((line) => line.includes("gateway_project_required")), []);
     }, { prefix: "vf-eval-list-no-project-" });
+  });
+
+  it("checks a linked login only before a run that can call a model", async () => {
+    const bareDataset = evalDataset({
+      id: "eval:bare-dataset",
+      dataset: [{ id: "case", input: "value" }],
+    });
+    const rubricDataset = evalDataset({
+      id: "eval:rubric-dataset",
+      dataset: [{ id: "case", input: "value" }],
+      metrics: [
+        metrics.judge.rubric({ rubric: "Is it good?", judge: () => Promise.resolve({ score: 1 }) }),
+      ],
+    });
+    const cases: Array<[string, boolean, EvalDefinition, boolean]> = [
+      ["listing", true, rubricDataset, false],
+      ["model-free run", false, bareDataset, false],
+      ["model run", false, rubricDataset, true],
+    ];
+    for (const [label, list, definition, checksLogin] of cases) {
+      await withTempDir(async (projectDir) => {
+        const runtime = createProjectRuntimeDiscovery(
+          normalizeSourceIntegrationPolicy({ allow: {} }),
+        );
+        definition.source = {
+          filePath: `${projectDir}/evals/target.eval.ts`,
+          exportName: "default",
+        };
+        runtime.evals.set(definition.id, definition);
+        const seen: unknown[] = [];
+        const expired = new Error("login expired");
+        const run = runEvalCommand(
+          { list, exporters: [], debug: false, candidateModels: [], projectDir },
+          {
+            discoverProjectAgentRuntime: () => Promise.resolve(runtime),
+            hydrateEvalRuntimeAuth: (_dir, _config, authOptions) => {
+              seen.push(authOptions);
+              return authOptions?.rejectExpiredLinkedLogin
+                ? Promise.reject(expired)
+                : Promise.resolve({});
+            },
+          },
+        );
+        if (checksLogin) assertEquals(await run.catch((error) => error), expired, label);
+        else await run.catch(() => {});
+        assertEquals(
+          seen,
+          checksLogin ? [undefined, { rejectExpiredLinkedLogin: true }] : [undefined],
+          label,
+        );
+      }, { prefix: "vf-eval-linked-login-" });
+    }
   });
 
   it("treats only dataset evals without metrics or checks as model-free", () => {

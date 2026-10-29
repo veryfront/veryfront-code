@@ -146,7 +146,9 @@ export async function hydrateStartRuntimeAuth(
   selectedProject: StartProjectSelection,
 ): Promise<string | undefined> {
   const linkedProjectSlug = await resolveLinkedProjectSlug(selectedProject.projectDir);
-  await applyQualifiedRuntimeAuth(selectedProject.projectDir, linkedProjectSlug);
+  await applyQualifiedRuntimeAuth(selectedProject.projectDir, linkedProjectSlug, {
+    rejectExpiredLinkedLogin: true,
+  });
   return linkedProjectSlug;
 }
 

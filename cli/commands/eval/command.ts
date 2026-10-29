@@ -47,7 +47,11 @@ import {
   runWithVeryfrontCloudContextAsync,
 } from "../../../src/provider/veryfront-cloud/context.ts";
 import { readRuntimeAmount } from "../../../src/provider/runtime-usage.ts";
-import { applyQualifiedRuntimeAuth, resolveLinkedProjectSlug } from "#cli/shared/runtime-auth";
+import {
+  applyQualifiedRuntimeAuth,
+  type QualifiedRuntimeAuthOptions,
+  resolveLinkedProjectSlug,
+} from "#cli/shared/runtime-auth";
 import { getEnv } from "#cli/process-env";
 import { brand, dim } from "#cli/ui";
 import { cliLogger, exitProcess, isQuiet, VERSION } from "#cli/utils";
@@ -686,6 +690,7 @@ function resolveEvalRuntimeProjectSlug(
 export async function hydrateEvalRuntimeAuth(
   projectDir: string,
   config: EvalRuntimeAuthConfig | null | undefined,
+  authOptions: QualifiedRuntimeAuthOptions = {},
 ) {
   return await applyQualifiedRuntimeAuth(
     projectDir,
@@ -693,6 +698,7 @@ export async function hydrateEvalRuntimeAuth(
       projectDir,
       resolveEvalRuntimeProjectSlug(config),
     ),
+    authOptions,
   );
 }
 
@@ -1535,16 +1541,17 @@ async function runEvalCommandWithProgress(
 ): Promise<number | undefined> {
   return await withProjectSourceContext(projectDir, async (context) => {
     const { adapter, config, configCacheKey } = context;
-    const runtimeAuth = await (dependencies.hydrateEvalRuntimeAuth ?? hydrateEvalRuntimeAuth)(
-      projectDir,
-      config,
-    );
-    // Emitted only once a run is certain and it can reach a model: listing,
+    const hydrateAuth = dependencies.hydrateEvalRuntimeAuth ?? hydrateEvalRuntimeAuth;
+    const runtimeAuth = await hydrateAuth(projectDir, config);
+    // Runs only once a run is certain and it can reach a model: listing,
     // usage errors, and model-free dataset evals never send a model request.
-    const warnIfNoProject = (definitions: readonly EvalDefinition[]) => {
+    const prepareModelRun = async (definitions: readonly EvalDefinition[]) => {
+      if (!evalRunMayCallModel(definitions)) return;
+      // A linked project's model calls go through Cloud: stop on an expired login.
+      await hydrateAuth(projectDir, config, { rejectExpiredLinkedLogin: true });
       // JSON output must stay machine-readable; the refusal itself still
       // arrives in the envelope if the run reaches the gateway.
-      if (isJsonMode() || !evalRunMayCallModel(definitions)) return;
+      if (isJsonMode()) return;
       const warning = formatMissingEvalProjectWarning(runtimeAuth);
       if (warning) cliLogger.warn(warning);
     };
@@ -1623,7 +1630,7 @@ async function runEvalCommandWithProgress(
         return 0;
       }
 
-      warnIfNoProject(evals.map((item) => item.definition));
+      await prepareModelRun(evals.map((item) => item.definition));
       const selectedExporterIds = resolveEvalExporterIds(options);
       const extensionSetup = await setupEvalCliExtensions(
         projectDir,
@@ -1745,7 +1752,7 @@ async function runEvalCommandWithProgress(
       if (toolId && !tool) {
         return await outputToolNotFound(toolId);
       }
-      warnIfNoProject([evalItem.definition]);
+      await prepareModelRun([evalItem.definition]);
 
       if (modelComparisonConfig) {
         return await runWithProjectAgentRuntime(

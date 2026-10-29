@@ -7,7 +7,8 @@ import {
 } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { deleteHostSecret, getHostEnv } from "#cli/process-env";
-import { saveToken } from "../../auth/token-store.ts";
+import { rememberAcceptedLogin, saveToken } from "../../auth/token-store.ts";
+import { getApiUrl } from "../../shared/constants.ts";
 import {
   _resetEnvironmentConfig,
   createTestEnvironmentConfig,
@@ -221,6 +222,8 @@ describe("commands/start/command", () => {
         `${projectDir}/veryfront.json`,
         JSON.stringify({ projectSlug: "linked-project" }),
       );
+      // A linked login is checked first; this one was accepted moments ago.
+      await rememberAcceptedLogin(getApiUrl(), "stored-token");
 
       const linkedProjectSlug = await hydrateStartRuntimeAuth({
         projectDir,

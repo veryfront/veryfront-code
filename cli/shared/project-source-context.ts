@@ -7,7 +7,11 @@ import {
 } from "veryfront/platform";
 import { captureHostApiEnvironment, getHostEnv } from "#cli/process-env";
 import { runtime } from "#cli/runtime-adapter";
-import { applyQualifiedRuntimeAuth, resolveLinkedProjectSlug } from "./runtime-auth.ts";
+import {
+  applyQualifiedRuntimeAuth,
+  type QualifiedRuntimeAuthOptions,
+  resolveLinkedProjectSlug,
+} from "./runtime-auth.ts";
 
 interface ProxyProjectSourceContext {
   projectSlug: string;
@@ -78,6 +82,7 @@ function getProjectSourceConfigCacheKey(
 export async function applyProjectSourceRuntimeAuth(
   projectDir: string,
   config: VeryfrontConfig,
+  authOptions: QualifiedRuntimeAuthOptions = {},
 ) {
   return await applyQualifiedRuntimeAuth(
     projectDir,
@@ -85,17 +90,19 @@ export async function applyProjectSourceRuntimeAuth(
       projectDir,
       config.projectSlug ?? config.fs?.veryfront?.projectSlug,
     ),
+    authOptions,
   );
 }
 
 export async function withProjectSourceContext<T>(
   projectDir: string,
   run: (context: ProjectSourceExecutionContext) => Promise<T>,
+  authOptions: QualifiedRuntimeAuthOptions = {},
 ): Promise<T> {
   captureHostApiEnvironment();
   const baseAdapter = await runtime.get();
   const initialConfig = await getConfig(projectDir, baseAdapter);
-  await applyProjectSourceRuntimeAuth(projectDir, initialConfig);
+  await applyProjectSourceRuntimeAuth(projectDir, initialConfig, authOptions);
   const adapter = await enhanceAdapterWithFS(baseAdapter, initialConfig as any, projectDir);
   const proxyContext = getProxyProjectSourceContext();
 

@@ -1,4 +1,5 @@
 import { deleteEnv, deleteHostSecret, getEnv, setEnv, setHostSecret } from "#cli/process-env";
+import { AUTHENTICATION_REQUIRED } from "veryfront/errors";
 import { readToken } from "#cli/auth/token-store";
 import { getEnvironmentConfig } from "veryfront/config";
 import { refreshEnvironmentConfig } from "#cli/environment-config";
@@ -152,9 +153,22 @@ export async function applyRuntimeAuthContext(
 }
 
 /** Resolve and apply one token together with the REST endpoint allowed to receive it. */
+export interface QualifiedRuntimeAuthOptions {
+  /**
+   * Fail with a re-login message when a linked project's stored login is
+   * rejected. A linked project runs through Cloud, so its runs would otherwise
+   * each fail with a bare 401 from the gateway.
+   */
+  rejectExpiredLinkedLogin?: boolean;
+}
+
+/** Shown when a linked project's stored login is rejected. */
+export const LINKED_LOGIN_EXPIRED_MESSAGE = "Your Veryfront login expired. Run `veryfront login`.";
+
 export async function applyQualifiedRuntimeAuth(
   projectDir: string,
   linkedProjectSlug?: string,
+  options: QualifiedRuntimeAuthOptions = {},
 ): Promise<RuntimeAuthContext> {
   const env = getEnvironmentConfig();
   const configPath = join(projectDir, "veryfront.json");
@@ -182,7 +196,11 @@ export async function applyQualifiedRuntimeAuth(
     await assertApiUrlAcceptsNewCredential(requestEnv, projectDir);
   }
   clearStaleRuntimeAuth(staleConfigBase, staleConfigToken);
-  const runtimeCandidate = await dropRejectedStoredLogin(candidate, linkedProjectSlug);
+  const runtimeCandidate = await dropRejectedStoredLogin(
+    candidate,
+    linkedProjectSlug,
+    options.rejectExpiredLinkedLogin === true,
+  );
   const candidateApiBaseUrl = runtimeApiBaseUrl(runtimeCandidate?.validationEnv.apiBaseUrl);
   const preservesImplicitDefault = candidateApiBaseUrl !== undefined &&
     isSameApiEndpoint(candidateApiBaseUrl, DEFAULT_API_URL) &&
@@ -232,26 +250,45 @@ const setAdd = Set.prototype.add;
  * checked, or was chosen explicitly (an exported token or service layer) is
  * kept, and so is any login when no key serves the default model or the
  * project is linked: a linked project runs through Cloud and must prompt a
- * fresh login.
+ * fresh login. With `rejectExpiredLinkedLogin`, a linked project's rejected
+ * login throws that prompt instead of being kept, unless the service layer is
+ * explicitly `local`, which keeps runs off Cloud.
  */
 async function dropRejectedStoredLogin(
   candidate: ApiCredentialCandidate | undefined,
   linkedProjectSlug: string | undefined,
+  rejectExpiredLinkedLogin: boolean,
 ): Promise<ApiCredentialCandidate | undefined> {
+  if (candidate?.apiTokenSource !== "token-store") return candidate;
   if (
-    candidate?.apiTokenSource !== "token-store" ||
     normalizeEnvValue(linkedProjectSlug) ||
-    normalizeEnvValue(getEnv("VERYFRONT_PROJECT_SLUG")) ||
+    normalizeEnvValue(getEnv("VERYFRONT_PROJECT_SLUG"))
+  ) {
+    if (
+      rejectExpiredLinkedLogin &&
+      normalizeEnvValue(getEnv("VERYFRONT_SERVICE_LAYER"))?.toLowerCase() !== "local" &&
+      await isStoredLoginRejected(candidate)
+    ) {
+      throw AUTHENTICATION_REQUIRED.create({ detail: LINKED_LOGIN_EXPIRED_MESSAGE });
+    }
+    return candidate;
+  }
+  if (
     normalizeEnvValue(getEnv("VERYFRONT_SERVICE_LAYER")) ||
     !normalizeEnvValue(getEnv(DEFAULT_MODEL_PROVIDER_KEY))
   ) {
     return candidate;
   }
+  return await isStoredLoginRejected(candidate) ? undefined : candidate;
+}
+
+/** Whether the API rejects a stored login. A login it cannot check is not rejected. */
+async function isStoredLoginRejected(candidate: ApiCredentialCandidate): Promise<boolean> {
   try {
     const apiUrl = getApiUrl(candidate.validationEnv);
     const loginKey = `${apiUrl}\n${candidate.apiToken}`;
-    if (applyIntrinsic(setHas, rejectedStoredLogins, [loginKey])) return undefined;
-    if (await wasLoginAcceptedRecently(apiUrl, candidate.apiToken)) return candidate;
+    if (applyIntrinsic(setHas, rejectedStoredLogins, [loginKey])) return true;
+    if (await wasLoginAcceptedRecently(apiUrl, candidate.apiToken)) return false;
     const transport = createVeryfrontApiOriginBoundOutboundFetch(apiUrl);
     const answer = await checkCredential(
       candidate.apiToken,
@@ -260,11 +297,11 @@ async function dropRejectedStoredLogin(
       STORED_LOGIN_CHECK_TIMEOUT_MS,
     );
     if (answer === "accepted") await rememberAcceptedLogin(apiUrl, candidate.apiToken);
-    if (answer !== "rejected") return candidate;
+    if (answer !== "rejected") return false;
     applyIntrinsic(setAdd, rejectedStoredLogins, [loginKey]);
-    return undefined;
+    return true;
   } catch {
-    return candidate;
+    return false;
   }
 }
 

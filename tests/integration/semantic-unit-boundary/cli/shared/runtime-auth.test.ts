@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { installMockFetch, restoreMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { deleteEnv, env, getEnv, setEnv } from "#veryfront/compat/process.ts";
@@ -16,6 +16,7 @@ import { __resetEnvLoaderForTests, getEnvSource, loadEnv } from "veryfront/utils
 import {
   applyQualifiedRuntimeAuth,
   applyRuntimeAuthContext,
+  LINKED_LOGIN_EXPIRED_MESSAGE,
   resolveLinkedProjectSlug,
   resolveRuntimeAuthContext,
 } from "#cli/shared/runtime-auth";
@@ -599,6 +600,66 @@ describe("cli/shared/runtime-auth", () => {
 
       assertEquals(context.apiToken, storedToken);
       assertEquals(paths, []);
+    });
+
+    it("asks a linked project to log in again when its login is rejected", async () => {
+      const projectDir = await storedLoginProject();
+      setEnv("OPENAI_API_KEY", "<API_KEY>");
+      const paths = installLoginCheck(401);
+
+      await assertRejects(
+        () =>
+          applyQualifiedRuntimeAuth(projectDir, "linked-project", {
+            rejectExpiredLinkedLogin: true,
+          }),
+        Error,
+        LINKED_LOGIN_EXPIRED_MESSAGE,
+      );
+
+      assertEquals(paths, ["/me"]);
+      assertEquals(getHostEnv("VERYFRONT_API_TOKEN"), undefined);
+      // The login stays stored; `veryfront login` replaces it.
+      assertEquals(await readToken(), storedToken);
+    });
+
+    it("asks a linked project to log in again without a provider key", async () => {
+      const projectDir = await storedLoginProject();
+      setEnv("VERYFRONT_PROJECT_SLUG", "env-linked-project");
+      installLoginCheck(401);
+
+      await assertRejects(
+        () => applyQualifiedRuntimeAuth(projectDir, undefined, { rejectExpiredLinkedLogin: true }),
+        Error,
+        LINKED_LOGIN_EXPIRED_MESSAGE,
+      );
+    });
+
+    it("keeps a linked project's login, unchecked, when the service layer is local", async () => {
+      const projectDir = await storedLoginProject();
+      setEnv("VERYFRONT_SERVICE_LAYER", "local");
+      const paths = installLoginCheck(401);
+
+      const context = await applyQualifiedRuntimeAuth(projectDir, "linked-project", {
+        rejectExpiredLinkedLogin: true,
+      });
+
+      assertEquals(context.apiToken, storedToken);
+      assertEquals(paths, []);
+    });
+
+    it("keeps a linked project's login the API accepts or cannot check", async () => {
+      for (const status of [200, 503]) {
+        const projectDir = await storedLoginProject();
+        installLoginCheck(status);
+
+        const context = await applyQualifiedRuntimeAuth(projectDir, "linked-project", {
+          rejectExpiredLinkedLogin: true,
+        });
+
+        assertEquals(context.apiToken, storedToken);
+        restoreMockFetch();
+        clearProcessAuth();
+      }
     });
 
     it("keeps a rejected login, unchecked, when no provider key can serve runs", async () => {
