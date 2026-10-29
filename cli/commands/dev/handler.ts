@@ -14,6 +14,8 @@ import { createArgParser, parseArgsOrThrow } from "#cli/shared/args";
 import { ensureCliBundlerContracts } from "#cli/shared/default-contracts";
 import { isValidPortEnv, parsePortEnv, resolveEnvironmentPort } from "#cli/shared/port-env";
 import type { ParsedArgs } from "#cli/shared/types";
+import { refreshEnvironmentConfig } from "#cli/environment-config";
+import { hasEnvLoadedFrom, loadEnv, supportsEnvFiles } from "veryfront/utils/env-loader";
 
 const getDevArgsSchema = defineSchema((v) =>
   v.object({
@@ -83,8 +85,28 @@ async function resolveProjectDir(projectArg: string | undefined): Promise<string
   return projectDir;
 }
 
+/**
+ * Resolve the project directory and load its env files when it is not the cwd.
+ *
+ * CLI startup loads the cwd's env files before the project is known, and
+ * server bootstrap skips loading once that happened. Runs before parsing, so
+ * project values such as `PORT` count as env defaults. Values already set, from
+ * the shell or the cwd, still win.
+ */
+export async function loadDevProjectEnv(args: ParsedArgs): Promise<string> {
+  const projectDir = await resolveProjectDir(
+    typeof args.project === "string" ? args.project : undefined,
+  );
+  if (supportsEnvFiles() && !hasEnvLoadedFrom(projectDir)) {
+    await loadEnv({ cwd: projectDir });
+    refreshEnvironmentConfig();
+  }
+  return projectDir;
+}
+
 export async function handleDevCommand(args: ParsedArgs): Promise<void> {
   const host = liveHostRuntime();
+  const projectDir = await loadDevProjectEnv(args);
   const opts = parseArgsOrThrow(parseDevArgs, "dev", args);
   showHeader();
 
@@ -112,7 +134,6 @@ export async function handleDevCommand(args: ParsedArgs): Promise<void> {
   }
 
   await ensureCliBundlerContracts();
-  const projectDir = await resolveProjectDir(opts.project);
 
   // Enable verbose logging when --debug flag is passed
   if (opts.debug) {
