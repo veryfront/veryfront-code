@@ -513,6 +513,32 @@ describe("NodeWebSocket EventTarget compatibility", () => {
 });
 
 describe("NodeWebSocket Deno idle timeout parity", () => {
+  it("closes an incompatible provider transport without terminate support", () => {
+    const events: string[] = [];
+    const socket = new NodeWebSocket(30);
+    const ws = createMockWs();
+    ws.close = (code) => events.push(`transport-close:${code}`);
+    socket.onerror = () => events.push("error");
+    socket.onclose = () => events.push("close");
+    socket._attachRealSocket(ws);
+    assertEquals(events, ["transport-close:1011", "error", "close"]);
+    assertEquals(socket.readyState, NodeWebSocket.CLOSED);
+  });
+
+  it("settles an incompatible provider even when its close callback fails", () => {
+    const socket = new NodeWebSocket(30);
+    const ws = createMockWs();
+    const failure = new Error("provider close failed");
+    let closed = false;
+    ws.close = () => {
+      throw failure;
+    };
+    socket.onclose = () => closed = true;
+    assertStrictEquals(assertThrows(() => socket._attachRealSocket(ws)), failure);
+    assertEquals(closed, true);
+    assertEquals(socket.readyState, NodeWebSocket.CLOSED);
+  });
+
   it("terminates the transport once when heartbeat ping throws", async () => {
     const socket = new NodeWebSocket(0.02);
     const ws = createMockWs();

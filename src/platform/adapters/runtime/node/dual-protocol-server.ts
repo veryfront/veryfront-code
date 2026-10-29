@@ -66,9 +66,15 @@ export class DualProtocolServer extends HttpServer {
     const cleanup = () => {
       clearTimeout(deadline);
       socket.off("data", data);
-      socket.off("end", cleanup);
+      socket.off("end", retireIncomplete);
       socket.off("close", cleanup);
       socket.off("error", cleanup);
+    };
+    const retireIncomplete = () => {
+      cleanup();
+      // The HTTP owner allows half-open sockets, but no protocol parser owns
+      // this connection yet. EOF must retire both sides rather than its timer.
+      socket.destroy();
     };
     const data = (chunk: Uint8Array) => {
       socket.pause();
@@ -95,7 +101,7 @@ export class DualProtocolServer extends HttpServer {
       socket.resume();
     };
     socket.on("data", data);
-    socket.once("end", cleanup);
+    socket.once("end", retireIncomplete);
     socket.once("close", cleanup);
     socket.once("error", cleanup);
   }

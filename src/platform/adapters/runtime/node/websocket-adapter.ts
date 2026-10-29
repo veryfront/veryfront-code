@@ -163,10 +163,14 @@ export class NodeWebSocket extends DeferredWebSocket {
     if (
       this.idleTimeout > 0 && (typeof ws.ping !== "function" || typeof ws.terminate !== "function")
     ) {
-      ws.terminate?.();
-      this.fail(
-        new Error("WebSocket provider does not support idle timeout heartbeat and termination"),
-      );
+      try {
+        if (typeof ws.terminate === "function") ws.terminate();
+        else ws.close(1011, "WebSocket provider does not support idle timeout");
+      } finally {
+        this.fail(
+          new Error("WebSocket provider does not support idle timeout heartbeat and termination"),
+        );
+      }
       return;
     }
     const resetIdleTimer = (): void => {

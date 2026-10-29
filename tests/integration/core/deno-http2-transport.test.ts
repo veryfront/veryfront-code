@@ -151,6 +151,32 @@ it("h2c reset after streamed body EOF aborts only its stream and shutdown owns s
   }
 });
 
+for (const prefix of ["", "PRI * HTTP/2.0\r\n"]) {
+  it(`closes a half-open connection ending during protocol detection (${prefix.length} bytes)`, async () => {
+    let requests = 0;
+    const server = new DualProtocolServer((_request, response) => {
+      requests++;
+      response.end("unexpected");
+    }, 50);
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    assert(address && typeof address !== "string");
+    const client = connectTcp({ host: "127.0.0.1", port: address.port });
+    const closed = new Promise<void>((resolve) => client.once("close", resolve));
+    client.on("error", () => {});
+    try {
+      await new Promise<void>((resolve) => client.once("connect", resolve));
+      client.end(prefix);
+      await bounded(closed);
+      assertEquals(requests, 0);
+    } finally {
+      client.destroy();
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+}
+
 it("dual protocol preface handles fragmentation, EOF, malformed input and timeout", async () => {
   const server = new DualProtocolServer((_request, response) => response.end("ok"), 500);
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
