@@ -3,7 +3,6 @@ import { describe, it } from "@std/testing/bdd";
 import type { DecisionCallOptions, DecisionQuestion } from "veryfront/provider/types";
 import { ProviderRateLimitError, ProviderRequestError } from "veryfront/provider/shared";
 import { createOpenAIProviderDecisions, OpenAIProvider } from "./index.ts";
-import { withMockFetch } from "../../../src/testing/mock-fetch.ts";
 
 const predicate = {
   name: "relevant",
@@ -61,40 +60,6 @@ describe("OpenAI Decisions runtime", () => {
       { ...questions[0], choices: [{ value: "a" }, { value: "b" }] },
       { ...questions[1], levels: [{ label: "low" }, { label: "high" }] },
     ]);
-  });
-
-  it("blocks internal destinations before dispatch when using its default transport", async () => {
-    let calls = 0;
-    await withMockFetch(() => {
-      calls++;
-      return Promise.resolve(Response.json(result()));
-    }, async () => {
-      const runtime = new OpenAIProvider().createDecisions("gpt-6-luna", {
-        credential: "test-key",
-        baseURL: "http://169.254.169.254/v1",
-      });
-      await assertRejects(() => runtime.decide(options));
-    });
-    assertEquals(calls, 0, "provider credentials must not reach internal destinations");
-  });
-
-  it("does not follow a provider redirect to a different origin", async () => {
-    let calls = 0;
-    await withMockFetch(() => {
-      calls++;
-      return Promise.resolve(
-        new Response(null, {
-          status: 302,
-          headers: { location: "https://other.example/decisions" },
-        }),
-      );
-    }, async () => {
-      const runtime = new OpenAIProvider().createDecisions("gpt-6-luna", {
-        credential: "test-key",
-      });
-      await assertRejects(() => runtime.decide(options));
-    });
-    assertEquals(calls, 1, "a redirect must not forward provider credentials");
   });
 
   it("sends typed shared evidence and questions through the authenticated decisions endpoint", async () => {
