@@ -55,6 +55,24 @@ Run one eval:
 veryfront eval deep-research
 ```
 
+Run independent cases concurrently:
+
+```bash
+veryfront eval deep-research --concurrency 4
+```
+
+`--concurrency` is a positive integer and defaults to `1`. It limits active cases
+within each eval, including target execution, metrics, and checks. Suites and
+model comparisons still run their evals and models sequentially. Results remain
+in dataset and repetition order; progress reports cases as they finish.
+Programmatic callers use `runEval(definition, { adapters, concurrency: 4 })`.
+
+Use concurrency only when your targets and grading callbacks can run independently.
+Return fresh mock tools from `mockTools` for each example when they keep mutable
+state. Start with a small limit that fits your provider's rate limits. A fatal
+model-access denial stops queued cases and aborts active ones. Adapters should
+honor their signal; the record timeout can abandon work that ignores cancellation.
+
 Write machine-readable reports:
 
 ```bash

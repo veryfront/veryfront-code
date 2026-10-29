@@ -14,6 +14,27 @@ import { cliLogger } from "#cli/utils";
 import { wireTracingShim } from "../../src/server/tracing-shim.ts";
 import { isJsonMode } from "./json-output.ts";
 
+/** Start the default local runtime for task and workflow execution. */
+export async function setupDefaultProjectCliExtensions(
+  options: Pick<Parameters<typeof orchestrateExtensions>[0], "projectDir" | "config" | "logger">,
+): Promise<ExtensionLoader> {
+  const { createBuiltinExtensions } = await import("../../src/extensions/builtin-extensions.ts");
+  const { createLLMProviderRegistry, LLMProviderRegistryName } = await import(
+    "veryfront/extensions/llm"
+  );
+  const { createEvalReportExporterRegistry, EvalReportExporterRegistryName } = await import(
+    "veryfront/extensions/eval"
+  );
+  return await setupProjectCliExtensions({
+    ...options,
+    primeContracts: {
+      [LLMProviderRegistryName]: createLLMProviderRegistry(),
+      [EvalReportExporterRegistryName]: createEvalReportExporterRegistry(),
+    },
+    builtinExtensions: createBuiltinExtensions(),
+  });
+}
+
 /**
  * Start the project's extensions and wire tracing into the core shim.
  *

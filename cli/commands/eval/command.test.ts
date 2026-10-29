@@ -73,6 +73,8 @@ import {
 } from "./command.ts";
 import { parseEvalArgs } from "./handler.ts";
 import { createEvalModelAccessDeniedError } from "../../../src/eval/model-access.ts";
+import { getLocalEvalIdentity } from "../../../src/runtime/local-eval-context.ts";
+import { isActiveEvalMockTool } from "../../../src/agent/runtime/eval-mock-tool-scope.ts";
 import { __installOutboundFetchTransportForTests } from "#cli/outbound-fetch";
 import { buildProviderError } from "../../../src/provider/runtime-loader/provider-http.ts";
 import { deleteHostSecret, getHostEnv } from "#cli/process-env";
@@ -463,6 +465,7 @@ describe("eval CLI command helpers", () => {
       "baseline-model": "anthropic/claude-opus-4-6",
       "candidate-model": ["moonshotai/kimi-k2.6"],
       "comparison-policy": "evals/model-comparison.policy.json",
+      concurrency: 4,
     });
 
     assertEquals(parsed.success, true);
@@ -485,7 +488,66 @@ describe("eval CLI command helpers", () => {
       assertEquals(parsed.data.baselineModel, "anthropic/claude-opus-4-6");
       assertEquals(parsed.data.candidateModels, ["moonshotai/kimi-k2.6"]);
       assertEquals(parsed.data.comparisonPolicy, "evals/model-comparison.policy.json");
+      assertEquals(parsed.data.concurrency, 4);
     }
+  });
+
+  it("rejects an invalid eval concurrency limit", () => {
+    for (const concurrency of [0, -1, 1.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1]) {
+      const parsed = parseEvalArgs({ _: ["eval"], concurrency });
+      assertEquals(parsed.success, false, `invalid concurrency: ${concurrency}`);
+    }
+  });
+
+  it("passes the CLI concurrency limit through to record execution", async () => {
+    await withTempDir(async (projectDir) => {
+      const bothStarted = Promise.withResolvers<void>();
+      let active = 0;
+      let maximum = 0;
+      const definition = evalDataset({
+        id: "eval:parallel-checks",
+        dataset: [{ id: "one", input: "one" }, { id: "two", input: "two" }],
+        async check({ expect }) {
+          maximum = Math.max(maximum, ++active);
+          if (active === 2) bothStarted.resolve();
+          try {
+            await bothStarted.promise;
+            expect.completed().gate();
+          } finally {
+            active--;
+          }
+        },
+      });
+      definition.source = {
+        filePath: `${projectDir}/evals/parallel.eval.ts`,
+        exportName: "default",
+      };
+      const runtime = createProjectRuntimeDiscovery(
+        normalizeSourceIntegrationPolicy({ allow: {} }),
+      );
+      runtime.evals.set(definition.id, definition);
+      setJsonMode(true);
+      try {
+        await captureConsoleOutput(async () => {
+          const exitCode = await runEvalCommand(
+            createEvalOptions({
+              id: definition.id,
+              projectDir,
+              concurrency: 2,
+              recordTimeout: 2,
+            }),
+            {
+              discoverProjectAgentRuntime: () => Promise.resolve(runtime),
+              hydrateEvalRuntimeAuth: () => Promise.resolve({ apiToken: "token" }),
+            },
+          );
+          assertEquals(exitCode, 0);
+        });
+        assertEquals(maximum, 2);
+      } finally {
+        bothStarted.resolve();
+      }
+    }, { prefix: "vf-eval-concurrency-" });
   });
 
   it("normalizes eval ids without requiring users to type the namespace", () => {
@@ -1108,6 +1170,45 @@ describe("eval CLI command helpers", () => {
 
     assertEquals(report.records.map((record) => record.completed), [true, true, true, true]);
     assertEquals(calls, ["q1:1", "q1:2", "q2:1", "q2:2"]);
+  });
+
+  it("isolates identities and mock tool authority across concurrent agent cases", async () => {
+    const bothStarted = Promise.withResolvers<void>();
+    const ids = new Map<string, string>();
+    const ownTools = new Map<string, Tool>();
+    const agent = makeAgentStub(async (input) => {
+      const caseId = input.input as string;
+      const ownTool = input.tools!.search_docs as Tool;
+      const identity = getLocalEvalIdentity()!;
+      ids.set(caseId, identity);
+      ownTools.set(caseId, ownTool);
+      if (ids.size === 2) bothStarted.resolve();
+      await bothStarted.promise;
+      assertEquals(getLocalEvalIdentity(), identity);
+      assertEquals(input.context?.runId, identity);
+      assertEquals(isActiveEvalMockTool("search_docs", ownTool), true);
+      const otherTool = ownTools.get(caseId === "one" ? "two" : "one");
+      assertEquals(isActiveEvalMockTool("search_docs", otherTool), false);
+      return completedAgentResponse("search_docs");
+    });
+    const definition = evalAgent({
+      id: "eval:isolated-cases",
+      target: "agent:assistant",
+      dataset: datasets.inline([{ id: "q1", input: "one" }, { id: "q2", input: "two" }]),
+      mockTools: ({ example }) => ({ search_docs: makeEvalTool("search_docs", example.id) }),
+    });
+    try {
+      const report = await runEval(definition, {
+        concurrency: 2,
+        recordTimeoutMs: 2_000,
+        adapters: { agent: createAgentAdapter(agent, createEvalOptions()) },
+      });
+      assertEquals(report.records.map((record) => record.completed), [true, true]);
+      assertEquals(new Set(ids.values()).size, 2);
+      assertEquals(getLocalEvalIdentity(), undefined);
+    } finally {
+      bothStarted.resolve();
+    }
   });
 
   it("starts no model request when a mock tool resolver returns after the record deadline", async () => {

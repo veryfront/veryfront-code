@@ -1458,6 +1458,7 @@ function createEvalReportCommandAdapters(input: {
                 : {},
               metadata: options.metadata,
               recordTimeoutMs: resolveEvalRecordTimeoutMs(input.options),
+              concurrency: input.options.concurrency,
               onProgress: (event) => progress.onEvent(event),
             }),
         );

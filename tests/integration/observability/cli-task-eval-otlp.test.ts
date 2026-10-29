@@ -14,6 +14,7 @@ async function writeProject(dir: string, requires: readonly string[]): Promise<v
   await Deno.mkdir(`${dir}/tasks`);
   await Deno.mkdir(`${dir}/tools`);
   await Deno.mkdir(`${dir}/evals`);
+  await Deno.mkdir(`${dir}/workflows`);
   await Deno.writeTextFile(
     `${dir}/veryfront.config.ts`,
     `import extOpenTelemetry from "${extensionUrl.href}";
@@ -83,13 +84,40 @@ export default evalTool({
 });
 `,
   );
+  await Deno.writeTextFile(
+    `${dir}/tools/failing.ts`,
+    `import { tool } from "veryfront/tool";
+import { defineSchema } from "veryfront/schemas";
+import { trace } from "veryfront/observability";
+export default tool({
+  description: "Fail after recording a span",
+  inputSchema: defineSchema((v) => v.object({ text: v.string() }))(),
+  execute: () => {
+    trace.getTracer("otlp-cli").startSpan("cli.workflow.failure").end();
+    throw new Error("expected workflow failure");
+  },
+});
+`,
+  );
+  for (const [name, target] of [["echo", "echo"], ["failing", "failing"]]) {
+    await Deno.writeTextFile(
+      `${dir}/workflows/${name}.ts`,
+      `import { step, workflow } from "veryfront/workflow";
+export default workflow({
+  id: "${name}",
+  steps: [step("start", { tool: "${target}", input: { text: "hello" } })],
+});
+`,
+    );
+  }
 }
 
 function cliEnv(endpoint: string): Record<string, string> {
   // Drop inherited telemetry routing so the fixture endpoint is the only one.
   const env = Object.fromEntries(
     Object.entries(Deno.env.toObject()).filter(([key]) =>
-      !key.startsWith("OTEL_") && !key.startsWith("DD_")
+      !key.startsWith("OTEL_") && !key.startsWith("DD_") &&
+      key !== "REDIS_URL"
     ),
   );
   return {
@@ -136,9 +164,16 @@ const CASES = [
   { label: "task", args: ["task", "traced"], span: "cli.task.span", exitCode: 0 },
   { label: "failing task", args: ["task", "failing"], span: "cli.failing-task.span", exitCode: 1 },
   { label: "eval", args: ["eval", "echo"], span: "cli.eval.span", exitCode: 0 },
+  { label: "workflow", args: ["workflow", "run", "echo"], span: "workflow.run", exitCode: 0 },
+  {
+    label: "failing workflow",
+    args: ["workflow", "run", "failing"],
+    span: "cli.workflow.failure",
+    exitCode: 1,
+  },
 ] as const;
 
-describe("CLI task and eval OTLP export", () => {
+describe("CLI task, eval and workflow OTLP export", () => {
   for (const { label, args, span, exitCode } of CASES) {
     for (const collectorStatus of [200, 400]) {
       const outcome = collectorStatus === 200 ? "flushes before exit" : "keeps its exit code";
@@ -158,7 +193,7 @@ describe("CLI task and eval OTLP export", () => {
         );
         const projectDir = await makeTempDirWithOptions({ prefix: "vf-otlp-cli-" });
         try {
-          await writeProject(projectDir, args[0] === "task" ? TASK_REQUIRES : EVAL_REQUIRES);
+          await writeProject(projectDir, args[0] === "eval" ? EVAL_REQUIRES : TASK_REQUIRES);
           const output = await runCli(
             projectDir,
             `http://127.0.0.1:${collector.addr.port}`,
