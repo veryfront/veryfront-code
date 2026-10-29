@@ -9,6 +9,10 @@ import { cliLogger } from "#cli/utils";
 import { exitProcess } from "#cli/utils";
 import { INVALID_ARGUMENT, RESOURCE_NOT_FOUND } from "veryfront/errors";
 import { withProjectSourceContext } from "#cli/shared/project-source-context";
+import {
+  releaseProjectCliExtensions,
+  setupProjectCliExtensions,
+} from "../../shared/project-extensions.ts";
 import { sanitizeRunOutputForLogging } from "../../utils/sanitize-run-output.ts";
 import { writeRunResultIfConfigured } from "../../utils/write-run-result.ts";
 import type { TaskArgs } from "./handler.ts";
@@ -64,6 +68,15 @@ export async function taskCommand(options: TaskOptions): Promise<void> {
   const { runTask } = await import(
     "../../../src/task/runner.ts"
   );
+  const { createBuiltinExtensions } = await import(
+    "../../../src/extensions/builtin-extensions.ts"
+  );
+  const { createLLMProviderRegistry, LLMProviderRegistryName } = await import(
+    "veryfront/extensions/llm"
+  );
+  const { createEvalReportExporterRegistry, EvalReportExporterRegistryName } = await import(
+    "veryfront/extensions/eval"
+  );
 
   const taskName = options.name;
   if (!taskName) {
@@ -116,16 +129,34 @@ export async function taskCommand(options: TaskOptions): Promise<void> {
       cliLogger.info(`Running task: ${task.name} (${task.id})`);
       cliLogger.info("");
 
-      const result = await runWithProjectAgentRuntime(
-        discovery,
-        () =>
-          runTask({
-            task,
-            config: taskConfig,
-            projectId,
-            debug: options.debug,
-          }),
-      );
+      const extensions = await setupProjectCliExtensions({
+        projectDir,
+        config,
+        logger: cliLogger.component("task-extensions"),
+        // The contracts and built-ins local server bootstrap uses, so any extension `dev`
+        // accepts also starts here.
+        primeContracts: {
+          [LLMProviderRegistryName]: createLLMProviderRegistry(),
+          [EvalReportExporterRegistryName]: createEvalReportExporterRegistry(),
+        },
+        builtinExtensions: createBuiltinExtensions(),
+      });
+      let result: Awaited<ReturnType<typeof runTask>>;
+      try {
+        result = await runWithProjectAgentRuntime(
+          discovery,
+          () =>
+            runTask({
+              task,
+              config: taskConfig,
+              projectId,
+              debug: options.debug,
+            }),
+        );
+      } finally {
+        // Teardown flushes pending spans, so it must finish before the process exits.
+        await releaseProjectCliExtensions(extensions);
+      }
 
       cliLogger.info("");
       if (result.success) {

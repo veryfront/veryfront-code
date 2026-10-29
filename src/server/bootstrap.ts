@@ -18,20 +18,11 @@ import {
 import { ensureBuiltinSchemaValidator } from "#veryfront/extensions/builtin-extensions.ts";
 import { MISSING_EXTENSION_ERROR } from "#veryfront/extensions/errors.ts";
 import { getRecommendation } from "#veryfront/extensions/recommendations.ts";
-import type { TracingExporter } from "#veryfront/extensions/observability/tracing-exporter.ts";
 import {
   type NodeWebSocketServerProvider,
   NodeWebSocketServerProviderName,
   snapshotNodeWebSocketServerProvider,
 } from "#veryfront/extensions/websocket";
-import {
-  propagation,
-  setGlobalActiveSpanAccessor,
-  setGlobalContextAccessor,
-  setGlobalMetricsAPI,
-  setGlobalTracerProvider,
-  type TextMapPropagator,
-} from "#veryfront/observability/tracing/api-shim.ts";
 import {
   getEnvironmentConfig,
   refreshEnvironmentConfig,
@@ -58,12 +49,15 @@ import {
 } from "#veryfront/observability";
 import { getLogBuffer } from "#veryfront/observability/log-buffer.ts";
 import { ReloadNotifier } from "./reload-notifier.ts";
+import { wireTracingShim } from "./tracing-shim.ts";
 import {
   createServerStyleCallbacks,
   createServerStyleInvalidationCallbacks,
 } from "./style-callbacks.ts";
 import { clearDomainCache } from "./utils/domain-lookup.ts";
 import { getMissingProjectEnvInternalCredentialDetail } from "./project-env/internal-authorization.ts";
+
+export { wireTracingShim };
 
 const bootstrapLog = logger.component("bootstrap");
 const bootstrapDevLog = logger.component("bootstrap-dev");
@@ -106,10 +100,6 @@ export interface BootstrapOptions {
 }
 
 /**
- * Wire the `TracingExporter` contract (if registered) into the core shim.
- * Must be called after `orchestrateExtensions()` completes.
- */
-/**
  * Fail-fast: ensure the `Bundler` contract has been registered. Core depends
  * on it for every JS/TS transform path. `ModuleLexer` is checked too, but
  * only as a warning (dev-only paths can degrade).
@@ -130,43 +120,6 @@ function assertRequiredContracts(): void {
         getRecommendation("ModuleLexer") ?? "@veryfront/ext-bundler-esbuild"
       }`,
     );
-  }
-}
-
-export function wireTracingShim(): void {
-  const tracing = tryResolve<TracingExporter>("TracingExporter");
-  if (tracing) {
-    setGlobalTracerProvider(
-      tracing.getProvider() as Parameters<typeof setGlobalTracerProvider>[0],
-    );
-    const metricsApi = tracing.getMetricsAPI();
-    if (metricsApi) {
-      setGlobalMetricsAPI(
-        metricsApi as Parameters<typeof setGlobalMetricsAPI>[0],
-      );
-    }
-    const traceApi = tracing.getTraceAPI?.();
-    if (traceApi) {
-      setGlobalActiveSpanAccessor(
-        traceApi as Parameters<typeof setGlobalActiveSpanAccessor>[0],
-      );
-    }
-    const contextApi = tracing.getContextAPI?.();
-    if (contextApi) {
-      setGlobalContextAccessor(
-        contextApi as Parameters<typeof setGlobalContextAccessor>[0],
-      );
-    }
-    propagation.setGlobalPropagator(
-      (tracing.getPropagator?.() ?? null) as TextMapPropagator | null,
-    );
-    const logRecordEmitter = tracing.getLogRecordEmitter?.();
-    __registerLogRecordEmitter(logRecordEmitter ?? null);
-    bootstrapLog.debug("[bootstrap] TracingExporter wired into shim");
-  } else {
-    propagation.setGlobalPropagator(null);
-    __registerLogRecordEmitter(null);
-    bootstrapLog.debug("[bootstrap] no TracingExporter extension — using no-op tracer");
   }
 }
 

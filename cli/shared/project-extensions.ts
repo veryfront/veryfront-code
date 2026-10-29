@@ -1,0 +1,45 @@
+/**
+ * Extension startup for one-shot commands that run project code.
+ *
+ * `dev` and `serve` start the extensions a project declares through server
+ * bootstrap, which also wires the tracing shim. `task` and `eval` run project
+ * code without a server, so they start the extensions here. Without the shim
+ * wiring, a declared OpenTelemetry extension starts but receives no spans.
+ *
+ * @module cli/shared/project-extensions
+ */
+
+import { type ExtensionLoader, orchestrateExtensions } from "veryfront/extensions";
+import { cliLogger } from "#cli/utils";
+import { wireTracingShim } from "../../src/server/tracing-shim.ts";
+import { isJsonMode } from "./json-output.ts";
+
+/**
+ * Start the project's extensions and wire tracing into the core shim.
+ *
+ * Release the returned loader with {@link releaseProjectCliExtensions} before
+ * the process exits: extension teardown flushes pending spans.
+ */
+export async function setupProjectCliExtensions(
+  options: Parameters<typeof orchestrateExtensions>[0],
+): Promise<ExtensionLoader> {
+  const loader = await orchestrateExtensions(options);
+  wireTracingShim();
+  return loader;
+}
+
+/**
+ * Tear down project extensions without replacing the command's outcome.
+ *
+ * Teardown flushes telemetry, so an unreachable or rejecting collector makes it
+ * fail. That must not turn a passing task or eval into a failed one.
+ */
+export async function releaseProjectCliExtensions(loader: ExtensionLoader): Promise<void> {
+  try {
+    await loader.teardownAll();
+  } catch {
+    if (!isJsonMode()) {
+      cliLogger.warn("Extension teardown failed; some telemetry may not have been exported");
+    }
+  }
+}

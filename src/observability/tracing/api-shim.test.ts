@@ -182,9 +182,10 @@ describe("observability/tracing/api-shim", () => {
           return callback(span);
         },
       } as Tracer;
-      setGlobalTracerProvider({ getTracer: () => providerTracer });
 
+      // Acquired before the provider is installed, as a module-scope tracer is.
       const publicTracer = publicTrace.getTracer("veryfront-http");
+      setGlobalTracerProvider({ getTracer: () => providerTracer });
       const publicSpan = publicTracer.startSpan("request");
 
       assertNotStrictEquals(publicTracer, providerTracer);
