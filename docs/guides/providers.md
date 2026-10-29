@@ -211,6 +211,13 @@ Set only the variables for the provider you use:
 - `MISTRAL_API_KEY` for direct Mistral requests. Without this key, hosted Mistral models route through Veryfront Cloud when cloud bootstrap is available.
 - `OPENAI_BASE_URL` for OpenAI-compatible services.
 
+An explicit `openai/<model>` or `anthropic/<model>` uses the matching environment
+key directly, even when Cloud context is available. Use a
+`veryfront-cloud/<provider>/<model>` name to select the AI Gateway explicitly.
+Direct provider usage reports token counters, not a settled platform charge.
+The AI Gateway ledger determines platform model charges; runtime-reported
+usage alone does not establish a charge or a billing exemption.
+
 ### Keeping keys out of the project
 
 Provider credentials are read from the environment. To avoid a plaintext key in the project, keep the reference in an ignored env file and resolve it with your secret manager when you run a command:
