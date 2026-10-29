@@ -1,4 +1,5 @@
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { it } from "#veryfront/testing/bdd.ts";
 import type { RemoteToolSource } from "#veryfront/tool";
 import {
   bindRemoteToolSourceToProject,
@@ -30,7 +31,7 @@ function createOwnedSources(dispose: () => Promise<void>) {
   })!;
 }
 
-Deno.test("MCP cleanup terminates owned sources through policy/platform/project wrappers", async () => {
+it("MCP cleanup terminates owned sources through policy/platform/project wrappers", async () => {
   let disposed = 0;
   {
     await using _cleanup = createRuntimeMcpSourceCleanup(createOwnedSources(async () => {
@@ -40,7 +41,7 @@ Deno.test("MCP cleanup terminates owned sources through policy/platform/project 
   assertEquals(disposed, 1);
 });
 
-Deno.test("MCP cleanup preserves failures while releasing owned sources", async () => {
+it("MCP cleanup preserves failures while releasing owned sources", async () => {
   let disposed = 0;
   await assertRejects(
     async () => {
@@ -56,7 +57,7 @@ Deno.test("MCP cleanup preserves failures while releasing owned sources", async 
   assertEquals(disposed, 1);
 });
 
-Deno.test("MCP cleanup leaves inherited and injected sources with their owner", async () => {
+it("MCP cleanup leaves inherited and injected sources with their owner", async () => {
   let disposed = 0;
   const parentSources = createOwnedSources(async () => {
     disposed++;
@@ -97,7 +98,7 @@ Deno.test("MCP cleanup leaves inherited and injected sources with their owner", 
   assertEquals(disposed, 1);
 });
 
-Deno.test("project-bound cleanup preserves the requested run scope", async () => {
+it("project-bound cleanup preserves the requested run scope", async () => {
   const active = new Set(["one", "two"]);
   let disposedProject: string | undefined;
   const bound = bindRemoteToolSourceToProject({

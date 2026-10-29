@@ -1249,6 +1249,7 @@ function createRemoteMCPToolSourceWithFetch(
       reflectApply(HeadersPrototypeSet, initHeaders, ["Mcp-Method", "initialize"]);
       reflectApply(HeadersPrototypeDelete, initHeaders, ["Mcp-Name"]);
       let sessionId: string | undefined;
+      let cleanupHeaders: Headers | undefined;
       const requestId = `${id}:initialize`;
       const payload = await postJsonRpc(
         endpoint,
@@ -1269,6 +1270,22 @@ function createRemoteMCPToolSourceWithFetch(
         (response) => {
           sessionId = reflectApply(HeadersPrototypeGet, response.headers, ["Mcp-Session-Id"]) ??
             undefined;
+          if (sessionId && /^[\x21-\x7e]+$/.test(sessionId) && sessionId.length <= 4096) {
+            // The server has minted a session even if parsing or validation fails.
+            cleanupHeaders = copyNativeHeaders(initHeaders);
+            reflectApply(HeadersPrototypeSet, cleanupHeaders, ["Mcp-Session-Id", sessionId]);
+            reflectApply(HeadersPrototypeSet, cleanupHeaders, [
+              "MCP-Protocol-Version",
+              LEGACY_MCP_VERSIONS[0],
+            ]);
+            cleanupRequests.set(++nextCleanupId, {
+              sourceKey: key,
+              endpoint,
+              headers: cleanupHeaders,
+              sessionId,
+              runId,
+            });
+          }
         },
       );
       const result = getJsonRpcResult(payload, requestId);
@@ -1285,17 +1302,14 @@ function createRemoteMCPToolSourceWithFetch(
       }
       const session = { version: result.protocolVersion, sessionId };
       reflectApply(HeadersPrototypeSet, initHeaders, ["MCP-Protocol-Version", session.version]);
+      if (cleanupHeaders) {
+        reflectApply(HeadersPrototypeSet, cleanupHeaders, [
+          "MCP-Protocol-Version",
+          session.version,
+        ]);
+      }
       if (sessionId) reflectApply(HeadersPrototypeSet, initHeaders, ["Mcp-Session-Id", sessionId]);
       reflectApply(HeadersPrototypeSet, initHeaders, ["Mcp-Method", "notifications/initialized"]);
-      if (sessionId) {
-        cleanupRequests.set(++nextCleanupId, {
-          sourceKey: key,
-          endpoint,
-          headers: copyNativeHeaders(initHeaders),
-          sessionId,
-          runId,
-        });
-      }
       await postJsonRpc(
         endpoint,
         initHeaders,
@@ -1325,6 +1339,7 @@ function createRemoteMCPToolSourceWithFetch(
     requestFetch: typeof fetch,
     signal: AbortSignal | undefined,
     maxBytes: number,
+    operation: "discovery" | "execution",
     runId?: string,
   ): Promise<unknown> {
     const snapshot = snapshotBoundedJsonValue(body, MAX_REMOTE_MCP_REQUEST_BYTES);
@@ -1376,7 +1391,7 @@ function createRemoteMCPToolSourceWithFetch(
         !(error instanceof RemoteMCPHttpError) ||
         error instanceof RemoteMCPOAuthExpiredHttpError || error.modernError
       ) throw error;
-      const fallback = !session && error.status === 400;
+      const fallback = operation === "discovery" && !session && error.status === 400;
       const expired = !!session?.sessionId && error.status === 404;
       if (!fallback && !expired) throw error;
       if (expired && sessions.get(key) === session) sessions.delete(key);
@@ -1463,6 +1478,7 @@ function createRemoteMCPToolSourceWithFetch(
           getRequestFetch(endpoint),
           context?.abortSignal,
           MAX_REMOTE_MCP_TOOL_LIST_RESPONSE_BYTES,
+          "discovery",
           context?.runId,
         );
 
@@ -1539,6 +1555,7 @@ function createRemoteMCPToolSourceWithFetch(
           getHostedToolCallAdmissionRequestFetch(endpoint) ?? getRequestFetch(endpoint),
           context?.abortSignal,
           MAX_REMOTE_MCP_CALL_RESPONSE_BYTES,
+          "execution",
           context?.runId,
         );
 

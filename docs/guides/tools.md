@@ -342,7 +342,7 @@ MCP 2026-07-28 tool discovery and calls. Schema-declared `x-mcp-header`
 parameters are mirrored into request headers. Names and values that require
 encoding use the protocol's Base64 format.
 
-For a legacy server that rejects a modern request with an unrecognized HTTP 400
+For a legacy server that rejects modern tool discovery with an unrecognized HTTP 400
 response, the client initializes a session and reuses its negotiated protocol
 version. Sessions are isolated by endpoint, credentials and run. An explicit
 session-expiry HTTP 404 triggers one initialization and retry. Other failures

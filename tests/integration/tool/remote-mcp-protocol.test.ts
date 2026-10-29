@@ -183,6 +183,31 @@ describe("remote MCP HTTP compatibility", () => {
     assertEquals(calls, 1);
   });
 
+  for (const discoverFirst of [false, true]) {
+    it(`does not negotiate or replay an ambiguous modern HTTP 400 call (discovery: ${discoverFirst})`, async () => {
+      const methods: string[] = [];
+      await withMockFetch(async (input, init) => {
+        const body = observe(input, init).body!;
+        methods.push(body.method);
+        if (body.method === "tools/list") return success(body);
+        if (body.method === "initialize") {
+          return Response.json({
+            jsonrpc: "2.0",
+            id: body.id,
+            result: { protocolVersion: "2025-11-25" },
+          });
+        }
+        if (body.method === "notifications/initialized") return new Response(null, { status: 202 });
+        return new Response("failure after applying the effect", { status: 400 });
+      }, async () => {
+        const source = createRemoteMCPToolSource({ endpoint: ENDPOINT });
+        if (discoverFirst) await source.listTools();
+        await assertRejects(() => source.executeTool("ping", {}), Error, "400");
+      });
+      assertEquals(methods, discoverFirst ? ["tools/list", "tools/call"] : ["tools/call"]);
+    });
+  }
+
   it("does not fall back on recognized modern errors", async () => {
     const methods: string[] = [];
     await withMockFetch(async (input, init) => {

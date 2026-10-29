@@ -2,7 +2,10 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { observeFetchRequestInit, withMockFetch } from "#veryfront/testing/mock-fetch.ts";
-import { createRemoteMCPToolSource } from "#veryfront/tool/remote-mcp.ts";
+import {
+  createRemoteMCPToolSource,
+  MAX_REMOTE_MCP_CALL_RESPONSE_BYTES,
+} from "#veryfront/tool/remote-mcp.ts";
 
 const ENDPOINT = "https://93.184.216.34/mcp";
 function fixture(failNotification = false) {
@@ -45,6 +48,57 @@ function fixture(failNotification = false) {
 }
 
 describe("remote MCP session security", () => {
+  for (const failure of ["malformed", "oversized", "interrupted", "unsupported-version"]) {
+    it(`retains the minted session when initialize is ${failure}`, async () => {
+      const deleted: string[] = [];
+      await withMockFetch(async (_input, init) => {
+        const request = observeFetchRequestInit(init);
+        const headers = new Headers(request.headers);
+        if (request.method === "DELETE") {
+          assertEquals(headers.get("authorization"), "Bearer original-credential");
+          deleted.push(headers.get("Mcp-Session-Id")!);
+          return new Response(null, { status: 204 });
+        }
+        const body = JSON.parse(String(request.body));
+        if (body.method !== "initialize") return new Response("initialize first", { status: 400 });
+        const responseHeaders = { "Mcp-Session-Id": "minted-before-parse" };
+        if (failure === "malformed") return new Response("{", { headers: responseHeaders });
+        if (failure === "oversized") {
+          return new Response("x".repeat(MAX_REMOTE_MCP_CALL_RESPONSE_BYTES + 1), {
+            headers: responseHeaders,
+          });
+        }
+        if (failure === "interrupted") {
+          return new Response(
+            new ReadableStream({
+              pull(controller) {
+                controller.error(new Error("initialize body interrupted"));
+              },
+            }),
+            { headers: responseHeaders },
+          );
+        }
+        return Response.json({
+          jsonrpc: "2.0",
+          id: body.id,
+          result: { protocolVersion: "unsupported" },
+        }, { headers: responseHeaders });
+      }, async () => {
+        const source = createRemoteMCPToolSource({
+          endpoint: ENDPOINT,
+          headers: { Authorization: "Bearer original-credential" },
+        });
+        await assertRejects(() => source.listTools({ runId: "owning-run" }));
+        await source.dispose?.({ runId: "other-run" });
+        assertEquals(deleted, []);
+        await source.dispose?.({ runId: "owning-run" });
+        assertEquals(deleted, ["minted-before-parse"]);
+        await source.dispose?.();
+        assertEquals(deleted.length, 1);
+      });
+    });
+  }
+
   it("keeps credential keys distinct when project code patches Array.from", async () => {
     const server = fixture();
     await withMockFetch(server.requestFetch, async () => {

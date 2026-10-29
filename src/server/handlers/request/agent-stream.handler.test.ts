@@ -3877,7 +3877,11 @@ describe("server/handlers/request/agent-stream.handler", () => {
             };
           };
           if (request.method === "tools/call") {
-            assertEquals(request.params?._meta, undefined);
+            assertEquals(
+              request.params?._meta?.["io.modelcontextprotocol/protocolVersion"],
+              "2026-07-28",
+            );
+            assertEquals(request.params?._meta?.tool_call_admission, undefined);
             assertEquals(request.params?.name, "veryfront__list_uploads");
             capturedToolArguments = request.params?.arguments;
             return Promise.resolve(
@@ -3887,7 +3891,11 @@ describe("server/handlers/request/agent-stream.handler", () => {
               ),
             );
           }
-          assertEquals(request.params?._meta, undefined);
+          assertEquals(
+            request.params?._meta?.["io.modelcontextprotocol/protocolVersion"],
+            "2026-07-28",
+          );
+          assertEquals(request.params?._meta?.tool_call_admission, undefined);
           return Promise.resolve(
             new Response(
               JSON.stringify({
