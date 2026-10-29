@@ -10,10 +10,13 @@
 
 const IntrinsicReflectApply = Reflect.apply;
 const IntrinsicDecodeURIComponent = decodeURIComponent;
+const IntrinsicError = Error;
+const IntrinsicString = String;
 const RegExpPrototypeExec = RegExp.prototype.exec;
 const StringPrototypeSlice = String.prototype.slice;
 
 const REDACTION_FAILED = "<redacted path>";
+const UNREADABLE_ERROR = "<unreadable error>";
 
 function slice(text: string, start: number, end = text.length): string {
   return IntrinsicReflectApply(StringPrototypeSlice, text, [start, end]) as string;
@@ -138,19 +141,45 @@ function fileUrlName(url: string): string {
   return lastPathSegment(name);
 }
 
-// One pass, three kinds of token, each running to the next whitespace or quote:
-// a `file:` URL, an `http(s)` URL, and an absolute path. A path may follow `:`
-// or a sentence's `.` (`error:/home/a.ts`, `end./home/a.ts`), but not a word,
-// another path character, or a relative `./` or `../`.
-const FREE_TEXT_PATTERN =
-  /(?<![\w-])(file:[^\s'"`]+)|(https?:\/\/[^\s'"`]+)|(?<![\w/\\])(?<!(?<![\w])\.)(?:[A-Za-z]:[\\/]|\\\\|\/)[^\s'"`]+/gi;
+// One pass, three kinds of token: a `file:` URL, an `http(s)` URL, and an
+// absolute path. A URL runs to the next whitespace or quote. A path may follow
+// `:` or a sentence's `.` (`error:/home/a.ts`, `end./home/a.ts`), but not a
+// word, another path character, or a relative `./` or `../`. A quoted path runs
+// to its closing quote on the same line; an unquoted one runs to the next
+// whitespace or quote. It runs on across whitespace only where the text cannot
+// be prose: its last segment is a bare name (no `.`) and the next word carries
+// a separator and ends in a file name with an extension (`/srv/some user/x.ts`,
+// not `/srv/a.ts: input/output error` or `/srv/cache read/write`). A path
+// never runs into a URL, so the URL is still cut to its origin. Its root is a
+// drive, a UNC `\\`, a `/`, or a single `\` followed by a segment and another
+// `\` that does not open escape text such as `\n` or `\u00e9`.
+const FILE_URL = String.raw`(?<![\w-])[Ff][Ii][Ll][Ee]:`;
+const WEB_URL = String.raw`[Hh][Tt][Tt][Pp][Ss]?:\/\/`;
+const PATH_ROOT = String
+  .raw`(?:[A-Za-z]:[\\/]|\\\\|\/|\\(?![bfnrtv0]|x[0-9A-Fa-f]{2}|u[0-9A-Fa-f{])(?=[^\s'"\x60\\/]+\\))`;
+/** One path character: not `excluded`, and not the start of a URL. */
+const pathChar = (excluded: string) => String.raw`(?:(?!${FILE_URL}|${WEB_URL})[^${excluded}])`;
+const WORD = pathChar(String.raw`\s'"\x60`);
+/** A last segment with an extension, then a boundary: `x.ts`, `x.ts:1:2`, `x.ts,`. */
+const FILE_NAME = String
+  .raw`${pathChar(String.raw`\s'"\x60\\/`)}*\.[A-Za-z0-9]+(?=[\s'"\x60.,;:)\]>]|$)`;
+const quotedPath = (quote: string) =>
+  String.raw`(?<=${quote})${PATH_ROOT}${pathChar(quote + String.raw`\n`)}*(?=${quote})`;
+const FREE_TEXT_PATTERN = new RegExp(
+  String.raw`(${FILE_URL}[^\s'"\x60]+)|(${WEB_URL}[^\s'"\x60]+)` +
+    `|${quotedPath("'")}|${quotedPath('"')}|${quotedPath(String.raw`\x60`)}` +
+    String.raw`|(?<![\w/\\])(?<!(?<![\w])\.)${PATH_ROOT}${WORD}+` +
+    String.raw`(?:(?<=[\\/][^\s'"\x60.\\/]*\w)[ \t]+(?![.\/\\]|[\w-]+:)${WORD}*[\\/]${FILE_NAME})*`,
+  "g",
+);
 
 /**
  * `text` with every absolute path and `file:` URL cut to its file name and
- * every `http(s)` URL cut to its origin. A path is taken through to the next
- * whitespace or quote, so a directory name is never left behind; an outside
- * path that itself contains whitespace is the accepted exception, since text
- * gives no way to tell where it ends. Never throws.
+ * every `http(s)` URL cut to its origin. A path is taken through its last
+ * separator, so a directory name is never left behind. An unquoted path whose
+ * whitespace is not followed by a word ending in a file name (`/srv/a b c/x`)
+ * is the remaining exception, since text gives no way to tell where it ends
+ * without swallowing the words after an ordinary path. Never throws.
  */
 export function redactFreeText(text: string): string {
   try {
@@ -161,5 +190,18 @@ export function redactFreeText(text: string): string {
     });
   } catch {
     return REDACTION_FAILED;
+  }
+}
+
+/**
+ * A caught value's message, redacted. Project code may have thrown it or
+ * replaced `String`, so reading it can throw; that yields a placeholder.
+ * Never throws.
+ */
+export function redactedErrorMessage(error: unknown): string {
+  try {
+    return redactFreeText(IntrinsicString(error instanceof IntrinsicError ? error.message : error));
+  } catch {
+    return UNREADABLE_ERROR;
   }
 }
