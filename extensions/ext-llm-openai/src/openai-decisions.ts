@@ -7,6 +7,7 @@ import type {
 } from "veryfront/provider/types";
 import {
   createOpenAIRequestInit,
+  createOriginBoundOutboundFetch,
   getOpenAIDecisionsUrl,
   ProviderRequestError,
   readRecord,
@@ -212,7 +213,7 @@ export function createOpenAIDecisionsRuntime(
   }
   const url = getOpenAIDecisionsUrl(config.baseURL);
   const apiKey = config.credential;
-  const fetchImpl = config.fetch ?? globalThis.fetch;
+  const fetchImpl = config.fetch ?? createOriginBoundOutboundFetch(url);
   const providerLabel = config.name ?? "openai";
   return {
     provider: providerLabel,
@@ -221,7 +222,7 @@ export function createOpenAIDecisionsRuntime(
       options.abortSignal?.throwIfAborted();
       const input = buildContent(snapshotProviderJsonValue(options.input));
       const { questions, wireQuestions } = buildQuestions(
-        snapshotProviderJsonValue(options.questions),
+        snapshotProviderJsonValue(options.questions, { dropUndefinedMembers: true }),
       );
       const promptCacheKey = options.promptCacheKey;
       if (promptCacheKey !== undefined) {

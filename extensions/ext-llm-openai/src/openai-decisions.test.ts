@@ -3,6 +3,7 @@ import { describe, it } from "@std/testing/bdd";
 import type { DecisionCallOptions, DecisionQuestion } from "veryfront/provider/types";
 import { ProviderRateLimitError, ProviderRequestError } from "veryfront/provider/shared";
 import { createOpenAIProviderDecisions, OpenAIProvider } from "./index.ts";
+import { withMockFetch } from "../../../src/testing/mock-fetch.ts";
 
 const predicate = {
   name: "relevant",
@@ -29,6 +30,73 @@ function runtimeWith(payload: unknown) {
 }
 
 describe("OpenAI Decisions runtime", () => {
+  it("omits undefined optional descriptions from valid choice and score questions", async () => {
+    const questions: DecisionQuestion[] = [
+      {
+        name: "category",
+        type: "choice",
+        instructions: "Choose one",
+        choices: [{ value: "a", description: undefined }, { value: "b" }],
+      },
+      {
+        name: "quality",
+        type: "score",
+        instructions: "Rate quality",
+        levels: [{ label: "low", description: undefined }, { label: "high" }],
+      },
+    ];
+    let body: Record<string, unknown> | undefined;
+    const runtime = new OpenAIProvider().createDecisions("gpt-6-luna", {
+      credential: "test-key",
+      fetch: (_url, init) => {
+        body = JSON.parse(init?.body as string);
+        return Promise.resolve(Response.json(result([
+          { name: "category", type: "refusal" },
+          { name: "quality", type: "refusal" },
+        ])));
+      },
+    });
+    await runtime.decide({ input: "fixture", questions });
+    assertEquals(body?.questions, [
+      { ...questions[0], choices: [{ value: "a" }, { value: "b" }] },
+      { ...questions[1], levels: [{ label: "low" }, { label: "high" }] },
+    ]);
+  });
+
+  it("blocks internal destinations before dispatch when using its default transport", async () => {
+    let calls = 0;
+    await withMockFetch(() => {
+      calls++;
+      return Promise.resolve(Response.json(result()));
+    }, async () => {
+      const runtime = new OpenAIProvider().createDecisions("gpt-6-luna", {
+        credential: "test-key",
+        baseURL: "http://169.254.169.254/v1",
+      });
+      await assertRejects(() => runtime.decide(options));
+    });
+    assertEquals(calls, 0, "provider credentials must not reach internal destinations");
+  });
+
+  it("does not follow a provider redirect to a different origin", async () => {
+    let calls = 0;
+    await withMockFetch(() => {
+      calls++;
+      return Promise.resolve(
+        new Response(null, {
+          status: 302,
+          headers: { location: "https://other.example/decisions" },
+        }),
+      );
+    }, async () => {
+      const runtime = new OpenAIProvider().createDecisions("gpt-6-luna", {
+        credential: "test-key",
+      });
+      await assertRejects(() => runtime.decide(options));
+    });
+    assertEquals(calls, 1, "a redirect must not forward provider credentials");
+  });
+
   it("sends typed shared evidence and questions through the authenticated decisions endpoint", async () => {
     let seenURL = "";
     let seenInit: RequestInit | undefined;
