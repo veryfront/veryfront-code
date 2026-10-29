@@ -2,11 +2,18 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  isDocumentPathnameCandidate,
   markdownPreviewOwnsDocumentPathname,
   ssrOwnsDocumentPathname,
 } from "./document-ownership.ts";
 
 describe("server/handlers/request/ssr/document-ownership", () => {
+  it("keeps dotted paths eligible for explicit page ownership", () => {
+    assertEquals(isDocumentPathnameCandidate("/items/record.v2"), true);
+    assertEquals(isDocumentPathnameCandidate("/items/photo.png"), true);
+    assertEquals(isDocumentPathnameCandidate("/_veryfront/app.js"), false);
+  });
+
   it("owns extensionless document paths", () => {
     assertEquals(ssrOwnsDocumentPathname("/"), true, "the root document is SSR's");
     assertEquals(ssrOwnsDocumentPathname("/review"), true, "page slugs are SSR's");

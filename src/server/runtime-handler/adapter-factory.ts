@@ -37,10 +37,7 @@ import {
   type PreviewSourceSnapshotMarker,
   previewSourceSnapshotMarkersEqual,
 } from "../handlers/request/source-snapshot-freshness.ts";
-import {
-  markdownPreviewOwnsDocumentPathname,
-  ssrOwnsDocumentPathname,
-} from "../handlers/request/ssr/document-ownership.ts";
+import { isDocumentPathnameCandidate } from "../handlers/request/ssr/document-ownership.ts";
 
 import { prepareControlPlaneExecuteIngress } from "#veryfront/internal-agents/control-plane-auth.ts";
 
@@ -278,13 +275,11 @@ async function resolvePreviewConfigFreshness(
   }
   const pathname = opts.pathname ?? new URL(opts.req.url).pathname;
   if (pathname === "/api" || pathname.startsWith("/api/")) return { freshness: "normal" };
-  // StaticHandler precedes API discovery and document rendering. Ordinary
-  // extension paths are already excluded by the document predicates; probe
-  // the default static candidates for extensionless and Markdown paths that
-  // would otherwise reach SSR or MarkdownPreviewHandler. A configured build
-  // root is discovered from one provisional config read below.
-  const documentCandidate = ssrOwnsDocumentPathname(pathname) ||
-    markdownPreviewOwnsDocumentPathname(pathname);
+  // StaticHandler precedes API discovery and document rendering. Any
+  // application pathname, including dotted page parameters, can reach those
+  // handlers after a static miss. A configured build root is discovered from
+  // one provisional config read below.
+  const documentCandidate = isDocumentPathnameCandidate(pathname);
   if (!documentCandidate) return { freshness: "normal" };
 
   // Renew the normal lease before classifying static ownership. Refreshing the
