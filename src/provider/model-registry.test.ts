@@ -1,7 +1,12 @@
 import { resolveRuntimeModel } from "#veryfront/agent/runtime/model-resolution.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { installMockFetch, restoreMockFetch } from "#veryfront/testing/mock-fetch.ts";
-import { assertEquals, assertStrictEquals, assertThrows } from "#veryfront/testing/assert.ts";
+import {
+  assert,
+  assertEquals,
+  assertStrictEquals,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { runWithCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
 import { deleteEnv, setEnv } from "#veryfront/compat/process.ts";
@@ -454,12 +459,14 @@ describe("provider/model-registry", () => {
         requests[0]?.headers.get(provider === "openai" ? "authorization" : "x-api-key"),
         provider === "openai" ? `Bearer ${secret}` : secret,
       );
-      assertEquals(result.usage?.inputTokens, 4);
-      assertEquals(result.usage?.outputTokens, 2);
+      const usage = result.usage;
+      assert(typeof usage === "object" && usage !== null);
+      assertEquals("inputTokens" in usage ? usage.inputTokens : undefined, 4);
+      assertEquals("outputTokens" in usage ? usage.outputTokens : undefined, 2);
       // Direct provider counters do not claim that platform billing has settled.
-      assertEquals(result.usage?.costCredits, undefined);
-      assertEquals(result.usage?.veryfrontChargeUsd, undefined);
-      assertEquals(result.usage?.costSource, undefined);
+      assertEquals("costCredits" in usage, false);
+      assertEquals("veryfrontChargeUsd" in usage, false);
+      assertEquals("costSource" in usage, false);
     });
   }
 
