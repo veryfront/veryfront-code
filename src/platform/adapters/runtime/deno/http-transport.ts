@@ -1,7 +1,6 @@
 import { getNativeDeno } from "../../../compat/http/native-response.ts";
 import { scopeRequestAsyncContext } from "../../../compat/http/request-async-scope.ts";
 import { getEnvOverlayStorage } from "../../../compat/process.ts";
-import { importFirstPartyExtensionModule } from "#veryfront/extensions/first-party-import.ts";
 import {
   type NodeWebSocketServerProvider,
   snapshotNodeWebSocketServerProvider,
@@ -31,8 +30,6 @@ export function scopeDenoNodeHttpHandler<T>(
 export async function resolveDefaultDenoNodeWebSocketProvider(): Promise<
   Readonly<NodeWebSocketServerProvider>
 > {
-  const extension = await importFirstPartyExtensionModule<{
-    WsNodeWebSocketServerProvider: Readonly<NodeWebSocketServerProvider>;
-  }>("ext-node-websocket-ws", "@veryfront/ext-node-websocket-ws");
-  return snapshotNodeWebSocketServerProvider(extension.WsNodeWebSocketServerProvider);
+  const extension = await import("@veryfront/ext-node-websocket-ws/portable");
+  return snapshotNodeWebSocketServerProvider(extension.PortableWsNodeWebSocketServerProvider);
 }

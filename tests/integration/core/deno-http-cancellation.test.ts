@@ -9,6 +9,45 @@ async function writeAll(connection: Deno.Conn, text: string): Promise<void> {
   while (offset < bytes.length) offset += await connection.write(bytes.subarray(offset));
 }
 
+for (const transport of ["native", "selected", "selected-upgrade"] as const) {
+  it(`handles TRACE deliberately through ${transport} HTTP`, async () => {
+    const runtime = new DenoAdapter();
+    let calls = 0;
+    const handler = (request: Request) => {
+      calls++;
+      assertEquals(request.method, "TRACE");
+      return new Response("Method Not Allowed", { status: 405 });
+    };
+    const options = { hostname: "127.0.0.1", port: 0, onListen() {} };
+    const native = transport === "native" ? Deno.serve(options, handler) : undefined;
+    const selected = native ? undefined : await runtime.serve(handler, options);
+    const connection = await Deno.connect({
+      hostname: "127.0.0.1",
+      port: (native?.addr ?? selected!.addr).port,
+    });
+    try {
+      const upgrade = transport === "selected-upgrade"
+        ? "Connection: Upgrade\r\nUpgrade: websocket\r\n"
+        : "Connection: close\r\n";
+      await writeAll(connection, `TRACE / HTTP/1.1\r\nHost: localhost\r\n${upgrade}\r\n`);
+      let response = "";
+      while (true) {
+        const buffer = new Uint8Array(4096);
+        const read = await connection.read(buffer);
+        if (read === null) break;
+        response += new TextDecoder().decode(buffer.subarray(0, read));
+      }
+      const expectedStatus = transport === "native" ? 405 : 501;
+      assertEquals(response.startsWith(`HTTP/1.1 ${expectedStatus}`), true, response);
+      assertEquals(calls, transport === "native" ? 1 : 0);
+    } finally {
+      connection.close();
+      await native?.shutdown();
+      await selected?.stop();
+    }
+  });
+}
+
 describe("Deno HTTP request cancellation", () => {
   for (const transport of ["compatibility", "runtime"] as const) {
     it(`observes disconnect after consuming a segmented body through ${transport}`, async () => {

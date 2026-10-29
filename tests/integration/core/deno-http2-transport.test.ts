@@ -432,6 +432,31 @@ it("Deno transport rejects malformed HTTP1 and h2 authorities before handlers", 
   }
 });
 
+it("Deno h2c rejects Fetch-forbidden methods before application dispatch", async () => {
+  const runtime = new DenoAdapter();
+  let calls = 0;
+  const server = await runtime.serve(() => {
+    calls++;
+    return new Response("unexpected");
+  }, { hostname: "127.0.0.1", port: 0, nodeWebSocketServerProvider: null });
+  const client = connect(`http://127.0.0.1:${server.addr.port}`);
+  try {
+    for (const method of ["TRACE", "trace", "TRACK", "track"]) {
+      const status = Promise.withResolvers<number>();
+      const request = client.request({ ":path": "/", ":method": method });
+      request.on("response", (headers) => status.resolve(Number(headers[":status"])));
+      request.on("error", status.reject);
+      request.resume();
+      request.end();
+      assertEquals(await bounded(status.promise), 501, method);
+    }
+    assertEquals(calls, 0);
+  } finally {
+    client.destroy();
+    await runtime.shutdown();
+  }
+});
+
 for (const code of ["EADDRINUSE", "ENOTFOUND"]) {
   it(`Deno onListen preserves callback ${code} error and releases listener`, async () => {
     const runtime = new DenoAdapter();

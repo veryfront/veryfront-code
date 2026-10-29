@@ -44,6 +44,13 @@ const pendingWebSocketUpgrades = new Map<
 >();
 const NODE_WEBSOCKET_UPGRADE_TIMEOUT_MS = 30_000;
 
+function isUnsupportedIncomingMethod(method: string): boolean {
+  // Fetch Request cannot represent these methods. Reject them explicitly before
+  // construction, rather than reporting a client request as a handler failure.
+  const normalized = method.toUpperCase();
+  return normalized === "TRACE" || normalized === "TRACK" || normalized === "CONNECT";
+}
+
 function isServerNotRunningError(error: Error): boolean {
   let current: object | null = error;
   while (current && current !== Error.prototype && current !== Object.prototype) {
@@ -509,6 +516,11 @@ export function createNodeRequestListener(
         return;
       }
       const method = _req.method ?? "GET";
+      if (isUnsupportedIncomingMethod(method)) {
+        _res.statusCode = 501;
+        _res.end("Not Implemented");
+        return;
+      }
       const body = method === "GET" || method === "HEAD" ? null : _req;
       const headers = new Headers();
       for (const [key, value] of Object.entries(_req.headers)) {
@@ -854,6 +866,13 @@ async function createNodeServerInternal(
           await denyUpgrade(
             new Response("Bad Request", { status: 400 }),
             new Error("Malformed WebSocket request authority"),
+          );
+          return;
+        }
+        if (isUnsupportedIncomingMethod(request.method ?? "GET")) {
+          await denyUpgrade(
+            new Response("Not Implemented", { status: 501 }),
+            new Error("Unsupported WebSocket request method"),
           );
           return;
         }
