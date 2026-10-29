@@ -102,6 +102,7 @@ describe("internal agent authored tool run binding", () => {
     assertEquals(body.includes(UNBOUND), false, `authored tool failed with ${UNBOUND}`);
     assertEquals(observed[0]?.runIdBindsToolAuthorization, true);
     assertEquals(observed[0]?.projectId, "project-1");
+    assertEquals(RUNTIME_CREDENTIAL_KEYS.filter((key) => key in (observed[0] ?? {})), []);
   });
 
   it("keeps runtime credentials out of a discovered project tool's context", async () => {

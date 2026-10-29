@@ -73,9 +73,9 @@ const RUNTIME_CREDENTIAL_CONTEXT_KEYS = [
   "sourceReadToken",
 ] as const;
 
-/** Project-authored tools are the project's registry entries; framework tools carry provenance. */
-function isProjectAuthoredTool(toolName: string, tool: Tool): boolean {
-  return !hasTrustedHostToolProvenance(tool) && toolRegistry.get(toolName) === tool;
+/** Framework tools carry host provenance; every other tool is project-authored. */
+function isProjectAuthoredTool(tool: Tool): boolean {
+  return !hasTrustedHostToolProvenance(tool);
 }
 
 /** Copy every property, symbols included, except the runtime credentials. */
@@ -152,7 +152,7 @@ async function executeLocalWrapper(
           enumerable: false,
           configurable: true,
         });
-        const toolContext = isProjectAuthoredTool(toolName, localTool)
+        const toolContext = isProjectAuthoredTool(localTool)
           ? withoutRuntimeCredentials(executionContext)
           : executionContext;
         return await dispatchWithTerminalRunControl(
