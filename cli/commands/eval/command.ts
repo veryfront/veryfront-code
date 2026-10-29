@@ -1405,6 +1405,19 @@ async function outputEvalUsageError(message: string): Promise<2> {
   return 2;
 }
 
+/**
+ * An agent with `memory` keeps one conversation across calls, so its cases
+ * would share history if they overlapped. Its evals run one case at a time.
+ */
+function evalTargetKeepsMemory(
+  runtime: ProjectAgentRuntimeDiscovery,
+  definition: EvalDefinition,
+): boolean {
+  if (definition.targetKind !== "agent") return false;
+  const memory = runtime.agents.get(resolveAgentTargetId(definition.target))?.config.memory;
+  return memory !== undefined && memory.enabled !== false;
+}
+
 function evalDisplayName(evalItem: DiscoveredEval): string {
   return (evalItem.name || evalItem.id).replace(/^eval:/, "");
 }
@@ -1458,7 +1471,9 @@ function createEvalReportCommandAdapters(input: {
                 : {},
               metadata: options.metadata,
               recordTimeoutMs: resolveEvalRecordTimeoutMs(input.options),
-              concurrency: input.options.concurrency,
+              concurrency: evalTargetKeepsMemory(input.projectRuntime, evalItem.definition)
+                ? 1
+                : input.options.concurrency,
               onProgress: (event) => progress.onEvent(event),
             }),
         );
@@ -1553,6 +1568,16 @@ async function runEvalCommandWithProgress(
       const warning = formatMissingEvalProjectWarning(runtimeAuth);
       if (warning) cliLogger.warn(warning);
     };
+    const warnIfMemoryRunsSequentially = (definitions: readonly EvalDefinition[]) => {
+      if (isJsonMode() || (options.concurrency ?? 1) <= 1) return;
+      for (const definition of definitions) {
+        if (!evalTargetKeepsMemory(projectRuntime, definition)) continue;
+        cliLogger.warn(
+          `Agent "${resolveAgentTargetId(definition.target)}" has memory, so ${definition.id} ` +
+            "runs its cases one at a time; --concurrency does not apply to it.",
+        );
+      }
+    };
 
     const projectRuntime = await discoverRuntime({
       projectDir,
@@ -1629,6 +1654,7 @@ async function runEvalCommandWithProgress(
       }
 
       warnIfNoProject(evals.map((item) => item.definition));
+      warnIfMemoryRunsSequentially(evals.map((item) => item.definition));
       const selectedExporterIds = resolveEvalExporterIds(options);
       const extensionSetup = await setupEvalCliExtensions(
         projectDir,
@@ -1751,6 +1777,7 @@ async function runEvalCommandWithProgress(
         return await outputToolNotFound(toolId);
       }
       warnIfNoProject([evalItem.definition]);
+      warnIfMemoryRunsSequentially([evalItem.definition]);
 
       if (modelComparisonConfig) {
         return await runWithProjectAgentRuntime(

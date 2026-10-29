@@ -1,7 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { datasets, evalAgent, type EvalProgressEvent, runEval } from "veryfront/eval";
+import {
+  notifyProviderRequestRetry,
+  runWithProviderRequestObserver,
+} from "../provider/runtime-loader/provider-request-observer.ts";
 import { createEvalModelAccessDeniedError } from "./model-access.ts";
 
 async function withinDeadline<T>(promise: Promise<T>): Promise<T> {
@@ -265,5 +269,92 @@ describe("eval record concurrency", () => {
     }
     assertEquals(await result, reason);
     assertEquals(started, ["first", "second"]);
+  });
+
+  it("pauses new record starts for a rate-limited retry's delay across concurrent cases", async () => {
+    const retried = Promise.withResolvers<void>();
+    const reasons: string[] = [];
+    let retriedAt = 0;
+    let thirdStartedAt = 0;
+    const report = await runWithProviderRequestObserver(
+      { onRetry: (event) => void reasons.push(event.reason) },
+      () =>
+        runEval(definition(), {
+          concurrency: 2,
+          adapters: {
+            agent: async ({ example }) => {
+              if (example.id === "first") {
+                retriedAt = Date.now();
+                notifyProviderRequestRetry({
+                  providerLabel: "test",
+                  reason: "429",
+                  attempt: 2,
+                  maxAttempts: 3,
+                  delayMs: 200,
+                });
+                retried.resolve();
+              }
+              if (example.id === "second") await retried.promise;
+              if (example.id === "third") thirdStartedAt = Date.now();
+              return example.id;
+            },
+          },
+        }),
+    );
+    assertEquals(report.records.map((record) => record.completed), [true, true, true]);
+    assert(
+      thirdStartedAt - retriedAt >= 180,
+      `queued record started ${thirdStartedAt - retriedAt}ms after the 429`,
+    );
+    assertEquals(reasons, ["429"], "the caller's observer still sees the retry");
+  });
+
+  it("frees a slot at the record deadline while an abort-ignoring target keeps running", async () => {
+    // Documents current behaviour: the limit bounds records, not abandoned
+    // targets, so targets that ignore their signal can outlive their slot.
+    let started = 0;
+    let startedAtFirstDeadline: number | undefined;
+    const report = await runEval(definition(), {
+      concurrency: 2,
+      recordTimeoutMs: 20,
+      onProgress: (event) => {
+        if (event.type === "record-finished") startedAtFirstDeadline ??= started;
+      },
+      adapters: {
+        agent: () => {
+          started++;
+          return new Promise<never>(() => {});
+        },
+      },
+    });
+    assertEquals(startedAtFirstDeadline, 2, "no record starts beyond the limit before a deadline");
+    assertEquals(started, 3, "abandoned targets do not hold a slot");
+    assertEquals(report.records.map((record) => record.completed), [false, false, false]);
+  });
+
+  it("surfaces a fail-fast error at the record deadline of an abort-ignoring sibling", async () => {
+    // Documents current behaviour: fail-fast waits for active records, and a
+    // target that ignores its signal is only released by its record deadline.
+    const denial = createEvalModelAccessDeniedError("eval:concurrent", {
+      kind: "forbidden",
+      code: "FORBIDDEN",
+      message: "Project access denied",
+    }, undefined);
+    const started: string[] = [];
+    const before = Date.now();
+    const error = await runEval(definition(), {
+      concurrency: 2,
+      recordTimeoutMs: 200,
+      adapters: {
+        agent: ({ example }) => {
+          started.push(example.id);
+          return example.id === "first" ? new Promise<never>(() => {}) : Promise.reject(denial);
+        },
+      },
+    }).catch((error) => error);
+    const elapsed = Date.now() - before;
+    assertEquals(error, denial);
+    assertEquals(started, ["first", "second"]);
+    assert(elapsed >= 180 && elapsed < 2_000, `fail-fast surfaced after ${elapsed}ms`);
   });
 });

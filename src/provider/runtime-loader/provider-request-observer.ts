@@ -37,6 +37,11 @@ export async function runWithProviderRequestObserver<T>(
   return await observerStorage.run(observer, fn);
 }
 
+/** The observer of the current async scope, so a nested scope can forward to it. */
+export function getProviderRequestObserver(): ProviderRequestObserver | undefined {
+  return observerStorage.getStore();
+}
+
 /**
  * Report a provider request retry to the debug log and to the active observer.
  * An observer that throws, or whose promise rejects, never affects the request.

@@ -69,9 +69,14 @@ Programmatic callers use `runEval(definition, { adapters, concurrency: 4 })`.
 
 Use concurrency only when your targets and grading callbacks can run independently.
 Return fresh mock tools from `mockTools` for each example when they keep mutable
-state. Start with a small limit that fits your provider's rate limits. A fatal
+state. Agents with `memory` share one conversation across calls, so the CLI runs
+their cases one at a time and warns that `--concurrency` does not apply. Start
+with a small limit that fits your provider's rate limits. A rate-limited (HTTP 429)
+model retry pauses new cases in that eval for the retry delay. A fatal
 model-access denial stops queued cases and aborts active ones. Adapters should
 honor their signal; the record timeout can abandon work that ignores cancellation.
+Abandoned work no longer holds a slot, and a fatal error is reported once such a
+case reaches its record timeout.
 
 Write machine-readable reports:
 

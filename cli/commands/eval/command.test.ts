@@ -550,6 +550,48 @@ describe("eval CLI command helpers", () => {
     }, { prefix: "vf-eval-concurrency-" });
   });
 
+  it("runs cases of an agent with memory sequentially and warns about the ignored limit", async () => {
+    await withTempDir(async (projectDir) => {
+      let active = 0;
+      let maximum = 0;
+      const agent = makeAgentStub(async () => {
+        maximum = Math.max(maximum, ++active);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        active--;
+        return completedAgentResponse();
+      }, { memory: { type: "conversation" } });
+      const definition = evalAgent({
+        id: "eval:remembering",
+        target: "agent:stub",
+        dataset: [{ id: "one", input: "one" }, { id: "two", input: "two" }],
+      });
+      definition.source = {
+        filePath: `${projectDir}/evals/remembering.eval.ts`,
+        exportName: "default",
+      };
+      const runtime = createProjectRuntimeDiscovery(
+        normalizeSourceIntegrationPolicy({ allow: {} }),
+      );
+      runtime.agents.set("stub", agent);
+      runtime.evals.set(definition.id, definition);
+      const output = await captureConsoleOutput(async () => {
+        const exitCode = await runEvalCommand(
+          createEvalOptions({ id: definition.id, projectDir, concurrency: 2 }),
+          {
+            discoverProjectAgentRuntime: () => Promise.resolve(runtime),
+            hydrateEvalRuntimeAuth: () => Promise.resolve({ apiToken: "token" }),
+          },
+        );
+        assertEquals(exitCode, 0);
+      });
+      assertEquals(maximum, 1);
+      assertStringIncludes(
+        output.stderr.join("\n"),
+        'Agent "stub" has memory, so eval:remembering runs its cases one at a time',
+      );
+    }, { prefix: "vf-eval-memory-concurrency-" });
+  });
+
   it("normalizes eval ids without requiring users to type the namespace", () => {
     assertEquals(normalizeEvalCliId("deep-research"), "eval:deep-research");
     assertEquals(normalizeEvalCliId("eval:deep-research"), "eval:deep-research");

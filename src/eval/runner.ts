@@ -12,6 +12,12 @@ import { cwd } from "#veryfront/platform/compat/process.ts";
 import { EVAL_RECORD_TIMEOUT } from "#veryfront/errors";
 import { throwIfAborted as throwIfEvalAborted } from "#veryfront/utils/abort.ts";
 import { normalizeTimerDurationMs } from "#veryfront/utils/timer.ts";
+import { sleep } from "#veryfront/utils/sleep.ts";
+import {
+  getProviderRequestObserver,
+  type ProviderRequestObserver,
+  runWithProviderRequestObserver,
+} from "#veryfront/provider/runtime-loader/provider-request-observer.ts";
 import {
   createEvalReportExporterRegistry,
   type EvalReportExportContext,
@@ -832,6 +838,16 @@ export async function runEval(
   let nextIndex = 0;
   let failed = false;
   let failure: unknown;
+  // A rate-limited retry pauses new record starts across all workers, so
+  // concurrent cases back off together instead of each hitting the limit.
+  let pausedUntil = 0;
+  const callerObserver = getProviderRequestObserver();
+  const observer: ProviderRequestObserver = {
+    onRetry: (event) => {
+      if (event.reason === "429") pausedUntil = Math.max(pausedUntil, Date.now() + event.delayMs);
+      return callerObserver?.onRetry?.(event);
+    },
+  };
 
   const runJob = async (index: number): Promise<void> => {
     const { example, repetition } = jobs[index]!;
@@ -872,7 +888,10 @@ export async function runEval(
     try {
       while (!failed && nextIndex < total) {
         throwIfEvalAborted(signal);
-        await runJob(nextIndex++);
+        while (pausedUntil > Date.now()) await sleep(pausedUntil - Date.now(), signal);
+        if (failed || nextIndex >= total) break;
+        const index = nextIndex++;
+        await runWithProviderRequestObserver(observer, () => runJob(index));
       }
     } catch (error) {
       if (!failed) {
