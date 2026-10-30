@@ -63,7 +63,7 @@ refusals, without generated text or tool execution.
 import { OpenAIProvider } from "@veryfront/ext-llm-openai";
 
 const decisions = new OpenAIProvider().createDecisions("gpt-6-luna", {
-  credential: openaiApiKey,
+  credential: "<API_KEY>",
 });
 const result = await decisions.decide({
   input: "The export button fails after selecting a date range.",
@@ -95,8 +95,8 @@ conversation history, files, audio, explicit cache breakpoints, or tool calls.
 `promptCacheKey` partitions automatic shared-input caching. Results retain
 input, output, total, cached-input and cache-write token counts.
 
-Use 1–400 uniquely named questions. Choices accept 2–255 distinct string or
-boolean values; scores accept 2–10 ordered `{ label, description? }` levels and
+Use 1-400 uniquely named questions. Choices accept 2-255 distinct string or
+boolean values; scores accept 2-10 ordered `{ label, description? }` levels and
 return a score on their zero-based index scale. Answers retain request order.
 Always handle `type: "refusal"` independently from a false predicate or low score.
 Malformed responses reject the call, and HTTP failures are not automatically

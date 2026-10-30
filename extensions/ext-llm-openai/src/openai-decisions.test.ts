@@ -323,8 +323,9 @@ describe("OpenAI Decisions runtime", () => {
         return Promise.resolve(Response.json(result()));
       },
     });
-    await runtime.decide({ input: "x".repeat(9_000_000), questions: [predicate] });
-    assertEquals(calls, 1);
+    await runtime.decide({ input: "x".repeat(10_485_760), questions: [predicate] });
+    await runtime.decide({ input: "😀".repeat(5_000_000), questions: [predicate] });
+    assertEquals(calls, 2);
   });
 
   it("accepts the documented maximum choice-question shape", async () => {

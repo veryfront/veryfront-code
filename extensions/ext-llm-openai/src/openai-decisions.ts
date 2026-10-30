@@ -16,6 +16,10 @@ import {
 } from "veryfront/provider/shared";
 
 const DECISION_QUESTION_MAX_NODES = 1_000_000;
+const DECISION_INPUT_MAX_SNAPSHOT_BYTES = 64 * 1024 * 1024;
+const DECISION_QUESTIONS_MAX_SNAPSHOT_BYTES = 512 * 1024 * 1024;
+const DECISION_INPUT_MAX_TEXT_CHARACTERS = 10_485_760;
+const DECISION_QUESTION_MAX_TEXT_CHARACTERS = 1_048_576;
 
 function requireString(value: unknown, field: string): asserts value is string {
   if (typeof value !== "string") throw new TypeError(`${field} must be a string`);
@@ -30,13 +34,25 @@ function requireArray(value: unknown, field: string, min: number, max: number): 
 
 function buildContent(
   value: unknown,
-  { minItems = 0, maxBytes = 262_144 }: { minItems?: number; maxBytes?: number } = {},
+  {
+    minItems = 0,
+    maxBytes = 262_144,
+    maxTextCharacters = DECISION_QUESTION_MAX_TEXT_CHARACTERS,
+  }: { minItems?: number; maxBytes?: number; maxTextCharacters?: number } = {},
 ): string | Record<string, unknown>[] {
-  if (typeof value === "string") return value;
+  if (typeof value === "string") {
+    if (value.length > maxTextCharacters) {
+      throw new TypeError(`Decision text exceeds ${maxTextCharacters} characters`);
+    }
+    return value;
+  }
   return requireArray(value, "Decision content", minItems, 16384).map((part) => {
     const item = readRecord(part);
     if (item?.type === "text") {
       requireString(item.text, "Decision text");
+      if (item.text.length > maxTextCharacters) {
+        throw new TypeError(`Decision text exceeds ${maxTextCharacters} characters`);
+      }
       return { type: "input_text", text: item.text };
     }
     if (item?.type === "image") {
@@ -227,13 +243,16 @@ export function createOpenAIDecisionsRuntime(
     async decide(options) {
       options.abortSignal?.throwIfAborted();
       const input = buildContent(
-        snapshotProviderJsonValue(options.input, { maxBytes: 10_485_760 }),
-        { maxBytes: 262_144 },
+        snapshotProviderJsonValue(options.input, {
+          maxBytes: DECISION_INPUT_MAX_SNAPSHOT_BYTES,
+        }),
+        { maxBytes: 262_144, maxTextCharacters: DECISION_INPUT_MAX_TEXT_CHARACTERS },
       );
       const { questions, wireQuestions } = buildQuestions(
         snapshotProviderJsonValue(options.questions, {
           dropUndefinedMembers: true,
           maxNodes: DECISION_QUESTION_MAX_NODES,
+          maxBytes: DECISION_QUESTIONS_MAX_SNAPSHOT_BYTES,
         }),
       );
       const promptCacheKey = options.promptCacheKey;
