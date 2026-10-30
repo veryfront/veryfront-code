@@ -12,12 +12,29 @@ import {
   captureNodeWebSocketServer,
   NODE_WEBSOCKET_SERVER_PROVIDER_MISSING_MESSAGE,
   type NodeWebSocketServerOptions,
+  type NodeWebSocketServerProvider,
   snapshotNodeWebSocketServerProvider,
 } from "#veryfront/extensions/websocket";
 import {
   recordRequestPeerFromTransport,
   recordRequestTransportLifetime,
 } from "../shared/request-peer.ts";
+
+import {
+  getWebSocketUpgradeIdleTimeout,
+  isDenoWebSocketResponse,
+  recordNodeWebSocketUpgradeRequest,
+  recordWebSocketBufferedAmount,
+  revokeNodeWebSocketUpgradeRequest,
+} from "../shared/http-upgrade-provenance.ts";
+
+type NativeListener = import("node:net").Server & { closeAllConnections?(): void };
+type IncomingRequest =
+  | import("node:http").IncomingMessage
+  | import("node:http2").Http2ServerRequest;
+type OutgoingResponse =
+  | import("node:http").ServerResponse
+  | import("node:http2").Http2ServerResponse;
 
 const NodeTransportWithResolvers = Promise.withResolvers.bind(Promise);
 
@@ -266,7 +283,7 @@ function reportNodeRuntimeError(
 }
 
 function retireLateNodeListener(
-  server: import("node:http").Server,
+  server: NativeListener,
   onSettled: () => void,
 ): void {
   let settled = false;
@@ -307,19 +324,19 @@ function retireLateNodeListener(
 }
 
 function absorbCanceledNodeListenError(
-  this: import("node:http").Server,
+  this: NativeListener,
 ): void {
   this.off("listening", retireCanceledNodeListener);
 }
 
 function retireCanceledNodeListener(
-  this: import("node:http").Server,
+  this: NativeListener,
 ): void {
   this.off("error", absorbCanceledNodeListenError);
   retireLateNodeListener(this, () => undefined);
 }
 
-function armCanceledNodeListenGuards(server: import("node:http").Server): void {
+function armCanceledNodeListenGuards(server: NativeListener): void {
   // Some Node resolver paths may still bind or emit a bind error after close()
   // reports that a pending hostname listen is closed. Shared one-shot guards
   // own either late outcome without retaining application/startup closures.
@@ -328,7 +345,7 @@ function armCanceledNodeListenGuards(server: import("node:http").Server): void {
 }
 
 function waitForResponseDrain(
-  response: import("node:http").ServerResponse,
+  response: OutgoingResponse,
   signal: AbortSignal,
 ): Promise<void> {
   if (signal.aborted) return Promise.reject(signal.reason ?? clientDisconnectedError());
@@ -445,9 +462,10 @@ export type NodeRequestHandler = (
 export function createNodeRequestListener(
   handler: NodeRequestHandler,
   fallbackHostname = "localhost",
+  flushResponseHeaders = false,
 ): (
-  request: import("node:http").IncomingMessage,
-  response: import("node:http").ServerResponse,
+  request: IncomingRequest,
+  response: OutgoingResponse,
 ) => Promise<void> {
   return async (_req, _res) => {
     const requestAbort = new AbortController();
@@ -477,16 +495,31 @@ export function createNodeRequestListener(
     _res.once("close", abortForPrematureResponseClose);
 
     try {
-      const url = new URL(_req.url ?? "/", `http://${_req.headers.host ?? fallbackHostname}`);
+      const http2 = _req.httpVersionMajor === 2;
+      const authority = http2 ? _req.headers[":authority"] : _req.headers.host;
+      const scheme = http2 && _req.headers[":scheme"] === "https" ? "https" : "http";
+      let url: URL;
+      try {
+        url = new URL(_req.url ?? "/", `${scheme}://${authority ?? fallbackHostname}`);
+      } catch {
+        // Reject malformed transport authority without logging private input or
+        // turning a client parse failure into an application handler error.
+        _res.statusCode = 400;
+        _res.end("Bad Request");
+        return;
+      }
       const method = _req.method ?? "GET";
       const body = method === "GET" || method === "HEAD" ? null : _req;
       const headers = new Headers();
       for (const [key, value] of Object.entries(_req.headers)) {
+        if (key.startsWith(":")) continue;
         if (typeof value === "string") headers.append(key, value);
         else if (Array.isArray(value)) {
           for (const entry of value) headers.append(key, entry);
         }
       }
+
+      if (http2 && typeof authority === "string") headers.set("host", authority);
 
       const requestInit: RequestInit & { duplex?: string } = {
         method,
@@ -522,27 +555,65 @@ export function createNodeRequestListener(
       }
 
       _res.statusCode = response.status;
-      _res.statusMessage = response.statusText;
+      if (!http2) _res.statusMessage = response.statusText;
 
       const responseHeaders = response.headers as Headers & {
         getSetCookie?: () => string[];
       };
       const setCookies = responseHeaders.getSetCookie?.() ?? [];
+      const connectionHeaders = http2
+        ? new Set(
+          (response.headers.get("connection") ?? "").split(",").map((value) =>
+            value.trim().toLowerCase()
+          ),
+        )
+        : undefined;
       for (const [key, value] of response.headers) {
+        if (
+          http2 && (connectionHeaders?.has(key.toLowerCase()) ||
+            [
+              "connection",
+              "http2-settings",
+              "keep-alive",
+              "proxy-connection",
+              "te",
+              "transfer-encoding",
+              "upgrade",
+            ]
+              .includes(key.toLowerCase()))
+        ) continue;
         if (key.toLowerCase() === "set-cookie" && setCookies.length > 0) continue;
         _res.setHeader(key, value);
       }
-      if (setCookies.length > 0) _res.setHeader("set-cookie", setCookies);
+      if (setCookies.length > 0 && !connectionHeaders?.has("set-cookie")) {
+        _res.setHeader("set-cookie", setCookies);
+      }
+
+      if (flushResponseHeaders && method === "HEAD") {
+        // Native Deno suppresses and cancels HEAD bodies rather than consuming them.
+        void response.body?.cancel().catch(() => undefined);
+        _res.end();
+        return;
+      }
 
       if (response.body) {
         responseReader = response.body.getReader();
+        // Deno commits response headers independently of the first body chunk.
+        // Preserve that contract for its selected transport without changing Node.
+        if (flushResponseHeaders) {
+          if ("flushHeaders" in _res) _res.flushHeaders();
+          else _res.writeHead(response.status);
+        }
+        // Both protocols accept byte chunks despite incompatible overloaded signatures.
+        const writer: { write(chunk: Uint8Array): boolean } = _res;
         while (true) {
           const { done, value } = await responseReader.read();
           if (done) break;
           if (requestAbort.signal.aborted || _res.destroyed) {
             throw requestAbort.signal.reason ?? clientDisconnectedError();
           }
-          if (!_res.write(value)) {
+          const writable = writer.write(value);
+          if (!writable) {
             await waitForResponseDrain(_res, requestAbort.signal);
           }
         }
@@ -588,10 +659,22 @@ export function createNodeServerWithStartupOwner(
   return createNodeServerInternal(handler, options, ownStartupServer);
 }
 
+/** @internal Affected Deno listeners retain their native cleartext HTTP/2 contract. */
+export function createDenoNodeServerWithStartupOwner(
+  handler: NodeRequestHandler,
+  options: ServeOptions,
+  owner?: (server: NodeServer) => void,
+  resolveDefaultProvider?: () => Promise<Readonly<NodeWebSocketServerProvider>>,
+): Promise<NodeServer> {
+  return createNodeServerInternal(handler, options, owner, true, resolveDefaultProvider);
+}
+
 async function createNodeServerInternal(
   handler: NodeRequestHandler,
   options: ServeOptions,
   ownStartupServer?: (server: NodeServer) => void,
+  dualProtocol = false,
+  resolveDefaultProvider?: () => Promise<Readonly<NodeWebSocketServerProvider>>,
 ): Promise<NodeServer> {
   const {
     port = DEFAULT_PORT,
@@ -600,9 +683,11 @@ async function createNodeServerInternal(
     onRuntimeError,
     signal,
   } = options;
-  const nodeWebSocketServerProvider = options.nodeWebSocketServerProvider === undefined
+  let nodeWebSocketServerProvider = options.nodeWebSocketServerProvider == null
     ? undefined
     : snapshotNodeWebSocketServerProvider(options.nodeWebSocketServerProvider);
+  const allowDefaultProvider = options.nodeWebSocketServerProvider === undefined;
+  let defaultProvider: Promise<Readonly<NodeWebSocketServerProvider>> | undefined;
   if (onRuntimeError !== undefined && typeof onRuntimeError !== "function") {
     throw new TypeError("Node server runtime error callback must be a function");
   }
@@ -692,7 +777,10 @@ async function createNodeServerInternal(
     return attempt;
   };
 
-  const server = createServer(createNodeRequestListener(handler, hostname));
+  const listener = createNodeRequestListener(handler, hostname, dualProtocol);
+  const server = dualProtocol
+    ? new (await import("./dual-protocol-server.ts")).DualProtocolServer(listener)
+    : createServer(listener);
 
   const upgradeListener = (
     request: import("node:http").IncomingMessage,
@@ -706,8 +794,10 @@ async function createNodeServerInternal(
       const requestAbort = new AbortController();
       upgradeAbortControllers.set(requestId, requestAbort);
       let transportSettled = false;
+      let webRequest: Request | undefined;
 
       const clearTransportState = (): void => {
+        if (webRequest) revokeNodeWebSocketUpgradeRequest(webRequest);
         activeRequestIds.delete(requestId);
         upgradeAbortControllers.delete(requestId);
         handshakeController.release(request);
@@ -726,6 +816,28 @@ async function createNodeServerInternal(
         failUpgrade(new DOMException("WebSocket client disconnected", "AbortError"));
       };
       socket.once("close", onSocketClose);
+      const denyUpgrade = async (response: Response, denied: Error): Promise<void> => {
+        rejectWebSocketUpgrade(requestId, denied);
+        const { ServerResponse } = await import("node:http");
+        const denial = new ServerResponse(request);
+        denial.once("error", (error) => {
+          failUpgrade(error);
+          socket.destroy();
+        });
+        denial.shouldKeepAlive = false;
+        denial.assignSocket(socket as import("node:net").Socket);
+        denial.once("finish", () => socket.end());
+        await createNodeRequestListener(() => response, hostname, dualProtocol)(request, denial);
+        transportSettled = true;
+        if (!requestAbort.signal.aborted) requestAbort.abort(denied);
+        clearTransportState();
+        // A peer may leave a denial unread. Keep ownership until its socket
+        // actually closes so stop() can force-close this half-closed stream.
+        if (!socket.destroyed) {
+          rawUpgradeSockets.add(socket);
+          socket.once("close", () => rawUpgradeSockets.delete(socket));
+        }
+      };
 
       try {
         if (upgradesDisposed) {
@@ -735,7 +847,16 @@ async function createNodeServerInternal(
 
         // On Node.js, upgrade events bypass the normal request callback. Run a
         // synthetic request through the handler as the authorization boundary.
-        const url = new URL(request.url ?? "/", `http://${request.headers.host ?? hostname}`);
+        let url: URL;
+        try {
+          url = new URL(request.url ?? "/", `http://${request.headers.host ?? hostname}`);
+        } catch {
+          await denyUpgrade(
+            new Response("Bad Request", { status: 400 }),
+            new Error("Malformed WebSocket request authority"),
+          );
+          return;
+        }
         const headersRecord: Record<string, string> = {};
         for (const [key, value] of Object.entries(request.headers)) {
           if (typeof value === "string") headersRecord[key] = value;
@@ -743,7 +864,7 @@ async function createNodeServerInternal(
         }
         headersRecord[NODE_WEBSOCKET_UPGRADE_ID_HEADER] = requestId;
 
-        const webRequest = new Request(url.toString(), {
+        webRequest = new Request(url.toString(), {
           method: request.method ?? "GET",
           headers: headersRecord,
           signal: requestAbort.signal,
@@ -755,8 +876,17 @@ async function createNodeServerInternal(
             hostname: request.socket.remoteAddress,
           });
         }
+        recordNodeWebSocketUpgradeRequest(webRequest, requestId);
         const response = await handler(webRequest);
+        revokeNodeWebSocketUpgradeRequest(webRequest);
 
+        if (!upgradesDisposed && !isWebSocketUpgradeResponse(response)) {
+          // Upgrade denials are ordinary HTTP responses. Reuse the same writer
+          // as regular requests so status, cookies and streamed bodies survive.
+          const denied = new Error("Request handler did not authorize a WebSocket upgrade");
+          await denyUpgrade(response, denied);
+          return;
+        }
         if (upgradesDisposed || !isWebSocketUpgradeResponse(response)) {
           failUpgrade(
             new Error(
@@ -780,13 +910,36 @@ async function createNodeServerInternal(
           failUpgrade(new Error("Node server stopped before WebSocket upgrade completed"));
           return;
         }
+        if (
+          nodeWebSocketServerProvider === undefined &&
+          allowDefaultProvider && resolveDefaultProvider
+        ) {
+          defaultProvider ??= resolveDefaultProvider().then(snapshotNodeWebSocketServerProvider);
+          nodeWebSocketServerProvider = await defaultProvider;
+          if (upgradesDisposed || transportSettled || requestAbort.signal.aborted) {
+            failUpgrade(new Error("Node server stopped before WebSocket provider resolved"));
+            return;
+          }
+        }
         if (nodeWebSocketServerProvider === undefined) {
           failUpgrade(new Error(NODE_WEBSOCKET_SERVER_PROVIDER_MISSING_MESSAGE));
           return;
         }
+        const provider = nodeWebSocketServerProvider;
+        const idleTimeout = getWebSocketUpgradeIdleTimeout(response) ?? 0;
+        if (idleTimeout > 0 && !provider.supportsIdleTimeout) {
+          failUpgrade(new Error("WebSocket provider does not support the requested idle timeout"));
+          return;
+        }
+        if (isDenoWebSocketResponse(response) && !provider.getBufferedAmount) {
+          failUpgrade(
+            new Error("Deno WebSocket provider must expose its transport buffered amount"),
+          );
+          return;
+        }
         if (!wsServer) {
           const candidate = captureNodeWebSocketServer(
-            nodeWebSocketServerProvider.createServer(
+            provider.createServer(
               handshakeController.serverOptions,
             ),
           );
@@ -816,6 +969,10 @@ async function createNodeServerInternal(
           }
           transportSettled = true;
           clearTransportState();
+          const getBufferedAmount = provider.getBufferedAmount;
+          if (getBufferedAmount) {
+            recordWebSocketBufferedAmount(ws, () => getBufferedAmount(ws));
+          }
           if (!resolveWebSocketUpgrade(requestId, ws)) {
             if (ws.terminate) ws.terminate();
             else ws.close();

@@ -242,8 +242,8 @@ export function startProductionServerWithDependencies(
 ): Promise<ServerHandle> {
   const suppliedBootstrap = options.bootstrapResult;
   const suppliedProviderSource = suppliedBootstrap?.nodeWebSocketServerProvider;
-  const suppliedNodeWebSocketServerProvider = suppliedProviderSource === undefined
-    ? undefined
+  const suppliedNodeWebSocketServerProvider = suppliedProviderSource == null
+    ? null
     : snapshotNodeWebSocketServerProvider(suppliedProviderSource);
   let ownedBootstrap: BootstrapResult | undefined;
   let ownedBootstrapDisposal: Promise<void> | undefined;
@@ -501,7 +501,7 @@ export function startProductionServerWithDependencies(
           port,
           hostname: bindAddress, // Deno uses "hostname" for bind address
           signal,
-          nodeWebSocketServerProvider,
+          nodeWebSocketServerProvider: nodeWebSocketServerProvider ?? null,
           onListen: (params) => {
             resolveListenReady?.();
             logger.info("Production server listening", params);

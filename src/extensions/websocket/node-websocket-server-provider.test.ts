@@ -174,7 +174,7 @@ Deno.test("Node WebSocket provider rejects accessors, proxies, and extra fields"
     assertThrows(
       () => snapshotNodeWebSocketServerProvider(value),
       TypeError,
-      "one enumerable createServer data property",
+      "an enumerable createServer data function and optional supportsIdleTimeout: true",
     );
   }
   assertEquals(accessorCalls, 0);
@@ -203,4 +203,47 @@ Deno.test("Node WebSocket provider helper and missing-contract diagnostic are ac
     NODE_WEBSOCKET_SERVER_PROVIDER_MISSING_MESSAGE,
     "install it or remove the extension disable directive",
   );
+});
+
+Deno.test("heartbeat capability is immutable captured registration metadata", () => {
+  const source = { createServer: () => SERVER, supportsIdleTimeout: true as const };
+  const captured = snapshotNodeWebSocketServerProvider(source);
+  Object.defineProperty(source, "supportsIdleTimeout", { value: false });
+  assertEquals(captured.supportsIdleTimeout, true);
+  assertEquals(Object.isFrozen(captured), true);
+  assertThrows(() =>
+    snapshotNodeWebSocketServerProvider({ createServer: () => SERVER, supportsIdleTimeout: false })
+  );
+  assertThrows(() =>
+    snapshotNodeWebSocketServerProvider({
+      createServer: () => SERVER,
+      get supportsIdleTimeout() {
+        throw new Error("must not read");
+      },
+    })
+  );
+});
+
+Deno.test("buffered amount accessor is captured without invoking registration getters", () => {
+  const provider = {
+    createServer: () => SERVER,
+    getBufferedAmount: () => 17,
+  };
+  const snapshot = snapshotNodeWebSocketServerProvider(provider);
+  provider.getBufferedAmount = () => 99;
+  assertEquals(snapshot.getBufferedAmount?.({} as NodeWebSocketConnection), 17);
+  let reads = 0;
+  const capabilities = Object.defineProperty(
+    { supportsIdleTimeout: true as const },
+    "getBufferedAmount",
+    {
+      enumerable: true,
+      get() {
+        reads++;
+        return () => 0;
+      },
+    },
+  );
+  assertThrows(() => createNodeWebSocketServerProvider(() => SERVER, capabilities), TypeError);
+  assertEquals(reads, 0);
 });

@@ -8,7 +8,12 @@ import {
   assertStringIncludes,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { createServer, request as nodeRequest, Server as NativeHttpServer } from "node:http";
+import {
+  createServer,
+  request as nodeRequest,
+  Server as NativeHttpServer,
+  ServerResponse,
+} from "node:http";
 import { createConnection } from "node:net";
 import { isNode } from "#veryfront/platform/compat/runtime.ts";
 import { createWebSocketUpgradeResponse } from "../../base.ts";
@@ -798,7 +803,94 @@ describe("NodeServer lifecycle", () => {
     }
   });
 
-  it("destroys an upgrade that the request handler did not authorize", async () => {
+  it("contains asynchronous upgrade-denial response errors", async () => {
+    if (!isNode) return;
+    const original = ServerResponse.prototype.assignSocket;
+    let injected = 0;
+    const server = await createNodeServer(() => new Response("forbidden", { status: 403 }), {
+      hostname: "127.0.0.1",
+      port: 0,
+    });
+    const socket = createConnection({ host: "127.0.0.1", port: server.addr.port });
+    try {
+      await new Promise<void>((resolve, reject) => {
+        socket.once("connect", resolve);
+        socket.once("error", reject);
+      });
+      ServerResponse.prototype.assignSocket = function (connection) {
+        original.call(this, connection);
+        queueMicrotask(() => {
+          injected++;
+          this.emit("error", new Error("injected asynchronous denial error"));
+        });
+      };
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const closed = new Promise<void>((resolve, reject) => {
+        timer = setTimeout(() => reject(new Error("Failed denial transport did not close")), 1000);
+        socket.once("close", resolve);
+        socket.on("error", () => {});
+      });
+      socket.resume();
+      socket.write(
+        "GET / HTTP/1.1\r\nHost: localhost\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n",
+      );
+      try {
+        await closed;
+      } finally {
+        clearTimeout(timer);
+      }
+      assertEquals(injected, 1);
+    } finally {
+      ServerResponse.prototype.assignSocket = original;
+      socket.destroy();
+      await server.stop();
+    }
+  });
+
+  it("stops while a peer leaves an upgrade denial unread", async () => {
+    if (!isNode) return;
+    const server = await createNodeServer(() => new Response("forbidden", { status: 403 }), {
+      hostname: "127.0.0.1",
+      port: 0,
+    });
+    const transport = Promise.withResolvers<import("node:stream").Duplex>();
+    rawHttpTransport(server).once("upgrade", (_request, socket) => transport.resolve(socket));
+    const socket = createConnection({ host: "127.0.0.1", port: server.addr.port });
+    try {
+      await new Promise<void>((resolve, reject) => {
+        socket.once("connect", resolve);
+        socket.once("error", reject);
+      });
+      socket.write(
+        "GET / HTTP/1.1\r\nHost: localhost\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n",
+      );
+      const raw = await transport.promise;
+      const deadline = performance.now() + 1000;
+      while (!raw.writableEnded && performance.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 1));
+      }
+      assertEquals(raw.writableEnded, true);
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await Promise.race([
+          server.stop(),
+          new Promise<never>((_, reject) => {
+            timer = setTimeout(
+              () => reject(new Error("Unread denial escaped server teardown")),
+              1000,
+            );
+          }),
+        ]);
+      } finally {
+        clearTimeout(timer);
+      }
+    } finally {
+      socket.destroy();
+      await server.stop();
+    }
+  });
+
+  it("returns the denial response for an upgrade that the handler did not authorize", async () => {
     if (!isNode) return;
     let handlerCalls = 0;
     const server = await createNodeServer(() => {
@@ -816,6 +908,9 @@ describe("NodeServer lifecycle", () => {
         socket.once("connect", resolve);
         socket.once("error", reject);
       });
+      let denial = "";
+      socket.setEncoding("utf8");
+      socket.on("data", (chunk) => denial += chunk);
       socket.write(
         "GET /_ws HTTP/1.1\r\n" +
           "Host: 127.0.0.1\r\n" +
@@ -839,6 +934,8 @@ describe("NodeServer lifecycle", () => {
         });
       });
       assertEquals(handlerCalls, 1);
+      assertStringIncludes(denial, "HTTP/1.1 403");
+      assertStringIncludes(denial, "forbidden");
     } finally {
       await server.stop();
     }

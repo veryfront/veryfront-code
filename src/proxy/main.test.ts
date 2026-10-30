@@ -54,9 +54,12 @@ describe("proxy main request URL parsing", () => {
     // An absolute-form target with an empty Host header parses as a URL but
     // fails Host validation downstream, so the guard on the parse alone would
     // only move the crash (veryfront-issue-inbox#828).
-    const catchIndex = source.indexOf("proxyRequestDrainTracker.complete(requestId);");
-    assertEquals(catchIndex >= 0, true);
-    const routerCatch = source.slice(catchIndex, catchIndex + 700);
+    const hostErrorIndex = source.indexOf("if (error instanceof ProxyRequestHostError)");
+    const catchIndex = source.lastIndexOf("} catch (error) {", hostErrorIndex);
+    const rethrowIndex = source.indexOf("throw error;", hostErrorIndex);
+    assertEquals(hostErrorIndex >= 0 && catchIndex >= 0 && rethrowIndex > hostErrorIndex, true);
+    const routerCatch = source.slice(catchIndex, rethrowIndex);
+    assertStringIncludes(routerCatch, "proxyRequestDrainTracker.complete(requestId);");
     assertStringIncludes(routerCatch, "error instanceof ProxyRequestHostError");
     assertStringIncludes(
       routerCatch,

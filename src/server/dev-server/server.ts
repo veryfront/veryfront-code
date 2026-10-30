@@ -84,7 +84,7 @@ export class DevServer {
   private adapter!: RuntimeAdapter;
   private server?: Server;
   private appConfig: VeryfrontConfig | undefined;
-  private _nodeWebSocketServerProvider?: Readonly<NodeWebSocketServerProvider>;
+  private _nodeWebSocketServerProvider?: Readonly<NodeWebSocketServerProvider> | null;
   private requestHandler?: RequestHandler;
   private _handler?: DevServerHandler;
   readonly ready: Promise<void>;
@@ -317,7 +317,7 @@ export class DevServer {
       port: this.options.port,
       hostname: this.options.bindAddress ?? LOCALHOST.IPV4,
       signal: this.options.signal,
-      nodeWebSocketServerProvider: this._nodeWebSocketServerProvider,
+      nodeWebSocketServerProvider: this._nodeWebSocketServerProvider ?? null,
       onListen: ({ port }: { hostname: string; port: number }) => {
         const url = buildLocalhostUrl(port);
         logger.debug(`Dev server running at ${url}`);
@@ -349,7 +349,7 @@ export class DevServer {
   }
 
   /** Extension-provided Node WebSocket implementation captured with this bootstrap generation. */
-  get nodeWebSocketServerProvider(): Readonly<NodeWebSocketServerProvider> | undefined {
+  get nodeWebSocketServerProvider(): Readonly<NodeWebSocketServerProvider> | null | undefined {
     return this._nodeWebSocketServerProvider;
   }
 

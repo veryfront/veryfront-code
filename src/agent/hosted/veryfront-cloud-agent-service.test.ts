@@ -358,6 +358,9 @@ async function withMockDenoServiceServer(
 ): Promise<void> {
   const denoRuntime = Deno as unknown as TestDenoRuntime;
   const originalServe = denoRuntime.serve;
+  const originalVersion = Deno.version;
+  // These fixtures intentionally exercise the native Deno.serve seam.
+  Object.defineProperty(Deno, "version", { value: { ...originalVersion, deno: "2.7.12" } });
   const originalAddSignalListener = denoRuntime.addSignalListener;
   const originalRemoveSignalListener = denoRuntime.removeSignalListener;
   const originalExit = denoRuntime.exit;
@@ -396,6 +399,7 @@ async function withMockDenoServiceServer(
     });
   } finally {
     denoRuntime.serve = originalServe;
+    Object.defineProperty(Deno, "version", { value: originalVersion });
     denoRuntime.addSignalListener = originalAddSignalListener;
     denoRuntime.removeSignalListener = originalRemoveSignalListener;
     denoRuntime.exit = originalExit;
@@ -1056,6 +1060,9 @@ Deno.test("startAgentService captures, flushes, and resets terminal startup fail
     try {
       const denoRuntime = Deno as unknown as TestDenoRuntime;
       const originalServe = denoRuntime.serve;
+      const originalVersion = Deno.version;
+      // These fixtures intentionally exercise the native Deno.serve seam.
+      Object.defineProperty(Deno, "version", { value: { ...originalVersion, deno: "2.7.12" } });
       denoRuntime.serve = (() => {
         throw startupError;
       }) as typeof Deno.serve;
@@ -1083,6 +1090,7 @@ Deno.test("startAgentService captures, flushes, and resets terminal startup fail
         });
       } finally {
         denoRuntime.serve = originalServe;
+        Object.defineProperty(Deno, "version", { value: originalVersion });
       }
 
       assertEquals(events, ["capture-startup", "flush:default", "reset"]);
@@ -1124,6 +1132,9 @@ Deno.test("startAgentService resets and exits when startup error flush rejects",
     try {
       const denoRuntime = Deno as unknown as TestDenoRuntime;
       const originalServe = denoRuntime.serve;
+      const originalVersion = Deno.version;
+      // These fixtures intentionally exercise the native Deno.serve seam.
+      Object.defineProperty(Deno, "version", { value: { ...originalVersion, deno: "2.7.12" } });
       denoRuntime.serve = (() => {
         throw startupError;
       }) as typeof Deno.serve;
@@ -1151,6 +1162,7 @@ Deno.test("startAgentService resets and exits when startup error flush rejects",
         });
       } finally {
         denoRuntime.serve = originalServe;
+        Object.defineProperty(Deno, "version", { value: originalVersion });
       }
 
       assertEquals(events, ["capture-startup", "flush", "reset"]);
