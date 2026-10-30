@@ -30,8 +30,14 @@ const mapForEach = Map.prototype.forEach;
 const mapGet = Map.prototype.get;
 const mapSet = Map.prototype.set;
 const mapClear = Map.prototype.clear;
+const setAdd = Set.prototype.add;
+const setClear = Set.prototype.clear;
+const setHas = Set.prototype.has;
 const stringToLowerCase = String.prototype.toLowerCase;
 let envLoaded = false;
+// Directories whose env files were read. The CLI loads the cwd before a
+// command knows its project; `--project <dir>` then loads that directory too.
+const loadedEnvDirs = new Set<string>();
 let osTypeOverride: string | undefined;
 
 function envLoaderOsType(): string {
@@ -46,8 +52,9 @@ export async function loadEnv(
     debug?: boolean;
   } = {},
 ): Promise<void> {
-  if (envLoaded) return;
   const { cwd = getCwd(), override = false, debug = false } = options;
+  if (applyIntrinsic(setHas, loadedEnvDirs, [cwd])) return;
+  applyIntrinsic(setAdd, loadedEnvDirs, [cwd]);
 
   const env = getEnv("NODE_ENV") ?? getEnv("DENO_ENV") ?? "development";
   const envFiles = [`${cwd}/.env`, `${cwd}/.env.${env}`, `${cwd}/.env.local`];
@@ -259,6 +266,11 @@ export function markEnvLoaded(): void {
   envLoaded = true;
 }
 
+/** Check whether `.env` files in `dir` have already been loaded. */
+export function hasEnvLoadedFrom(dir: string): boolean {
+  return applyIntrinsic(setHas, loadedEnvDirs, [dir]) as boolean;
+}
+
 /** Check whether environment variables have already been loaded from `.env` files. */
 export function hasEnvLoaded(): boolean {
   return envLoaded;
@@ -376,6 +388,7 @@ export function markEnvFileSource(
 
 export function __resetEnvLoaderForTests(): void {
   envLoaded = false;
+  applyIntrinsic(setClear, loadedEnvDirs, []);
   applyIntrinsic(mapClear, envSources, []);
   clearEnvFileValueSources();
   osTypeOverride = undefined;

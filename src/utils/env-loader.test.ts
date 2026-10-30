@@ -7,6 +7,7 @@ import {
   __resetEnvLoaderForTests,
   __setEnvLoaderOsTypeForTests,
   getEnvSource,
+  hasEnvLoadedFrom,
   loadEnv,
   markConfigFileSource,
   markProcessEnvSource,
@@ -230,6 +231,29 @@ describe("env-loader", () => {
       assertEquals(getEnv(key), "new");
 
       cleanupKeys(key);
+    });
+
+    it("should load a second directory's files without overriding the first", async () => {
+      // `veryfront dev --project <dir>` loads the cwd first, then the project.
+      const shared = createKey("SHARED");
+      const projectOnly = createKey("PROJECT_ONLY");
+      const projectDir = await makeTempDir({ prefix: "env-loader-project-" });
+      try {
+        await writeEnvFile(".env", `${shared}=cwd`);
+        await writeTextFile(`${projectDir}/.env`, `${shared}=project\n${projectOnly}=project`);
+
+        await loadEnv({ cwd: tempDir });
+        assertEquals(hasEnvLoadedFrom(projectDir), false);
+        await loadEnv({ cwd: projectDir });
+
+        assertEquals(hasEnvLoadedFrom(projectDir), true);
+        assertEquals(getEnv(shared), "cwd");
+        assertEquals(getEnv(projectOnly), "project");
+        assertEquals(getEnvSource(projectOnly)?.source, "env-file");
+      } finally {
+        cleanupKeys(shared, projectOnly);
+        await remove(projectDir, { recursive: true });
+      }
     });
 
     it("should handle multiline values in double quotes", async () => {
