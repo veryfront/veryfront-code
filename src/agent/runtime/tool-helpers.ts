@@ -329,6 +329,42 @@ function throwUnknownConfiguredToolsError(
   );
 }
 
+/**
+ * Discovery lists only the tools of connected integrations, so a declared tool of a catalog
+ * integration the project has not connected is missing, not unknown. Return the connect
+ * instruction when every unresolved name is such a tool; any other name keeps the unknown-tool
+ * diagnostic, as does a failed lookup or an unknown project.
+ */
+async function describeUnconnectedIntegrations(
+  unresolvedToolNames: string[],
+  discoveredToolNames: Iterable<string>,
+  discovery: RemoteIntegrationToolDiscoveryResult | undefined,
+  remoteToolContext: ToolExecutionContext | undefined,
+): Promise<string | undefined> {
+  if (discovery?.status !== "ok") return undefined;
+  try {
+    const { getRemoteIntegrationProjectTarget } = await import(
+      "#veryfront/integrations/remote-tools.ts"
+    );
+    const target = getRemoteIntegrationProjectTarget(remoteToolContext);
+    if (!target) return undefined;
+
+    const { findUnconnectedIntegrations, formatUnconnectedIntegrationMessage } = await import(
+      "#veryfront/integrations/unconnected.ts"
+    );
+    const { integrations, unknownToolNames } = findUnconnectedIntegrations(
+      unresolvedToolNames,
+      [...discoveredToolNames],
+    );
+    if (integrations.length === 0 || unknownToolNames.length > 0) return undefined;
+    return integrations.map((integration) =>
+      formatUnconnectedIntegrationMessage(integration, target)
+    ).join("\n\n");
+  } catch {
+    return undefined;
+  }
+}
+
 async function getRemoteToolDefinitions(options?: {
   includeIntegrationTools?: boolean;
   allowedRemoteToolNames?: string[];
@@ -784,7 +820,17 @@ export async function getAvailableTools(
   }
 
   const tools: ToolDefinition[] = [];
-  const remoteDefs = strictConfiguredToolsOnly ? [] : await getRemoteToolDefinitions(options);
+  let integrationDiscovery: RemoteIntegrationToolDiscoveryResult | undefined;
+  const remoteDefs = strictConfiguredToolsOnly ? [] : await getRemoteToolDefinitions({
+    includeIntegrationTools: options?.includeIntegrationTools,
+    allowedRemoteToolNames: options?.allowedRemoteToolNames,
+    remoteToolSources: options?.remoteToolSources,
+    remoteToolContext: options?.remoteToolContext,
+    onIntegrationToolDiscovery: (result) => {
+      integrationDiscovery = result;
+      options?.onIntegrationToolDiscovery?.(result);
+    },
+  });
   if (!strictConfiguredToolsOnly) {
     appendForwardedToolDefinitions(
       remoteDefs,
@@ -911,6 +957,15 @@ export async function getAvailableTools(
     const visibleLocalToolNames = Array.from(toolRegistry.getAll().entries())
       .filter(([, tool]) => isToolVisibleTo(tool, { agentId: options?.callerAgentId }))
       .map(([name]) => name);
+    const unconnectedMessage = await describeUnconnectedIntegrations(
+      unresolvedConfiguredToolNames,
+      remoteToolNames,
+      integrationDiscovery,
+      options?.remoteToolContext,
+    );
+    if (unconnectedMessage !== undefined) {
+      throw toError(createError({ type: "agent", message: unconnectedMessage }));
+    }
     throwUnknownConfiguredToolsError(
       unresolvedConfiguredToolNames,
       visibleLocalToolNames,
