@@ -108,6 +108,19 @@ describe("OpenAI Decisions runtime", () => {
     });
   });
 
+  it("accepts empty structured input", async () => {
+    let sent: Record<string, unknown> | undefined;
+    const runtime = new OpenAIProvider().createDecisions("gpt-6-luna", {
+      credential: "test-key",
+      fetch: (_url, init) => {
+        sent = JSON.parse(init?.body as string);
+        return Promise.resolve(Response.json(result()));
+      },
+    });
+    await runtime.decide({ input: [], questions: [predicate] });
+    assertEquals(sent?.input, [{ role: "user", content: [] }]);
+  });
+
   it("preserves typed choices, ordered scores, and refusals independently", async () => {
     const questions: DecisionQuestion[] = [
       {
@@ -263,6 +276,55 @@ describe("OpenAI Decisions runtime", () => {
         ProviderRequestError,
       );
     }
+  });
+
+  it("accepts sparse choice and score probability arrays", async () => {
+    const choice = {
+      ...predicate,
+      name: "choice",
+      type: "choice",
+      choices: [{ value: "a" }, { value: "b" }],
+    } as const;
+    const score = {
+      ...predicate,
+      name: "score",
+      type: "score",
+      levels: [{ label: "low" }, { label: "high" }],
+    } as const;
+    const payload = result([
+      {
+        name: choice.name,
+        type: "choice",
+        choice: "a",
+        confidence: 0.9,
+        probabilities: [],
+      },
+      {
+        name: score.name,
+        type: "score",
+        score: 0.5,
+        confidence: 0.9,
+        probabilities: [{ value: 1, label: "high", probability: 0.5 }],
+      },
+    ]);
+    const output = await runtimeWith(payload).decide({
+      ...options,
+      questions: [choice, score],
+    });
+    assertEquals(output.answers.length, 2);
+  });
+
+  it("accepts documented ten megabyte text input", async () => {
+    let calls = 0;
+    const runtime = new OpenAIProvider().createDecisions("gpt-6-luna", {
+      credential: "test-key",
+      fetch: () => {
+        calls++;
+        return Promise.resolve(Response.json(result()));
+      },
+    });
+    await runtime.decide({ input: "x".repeat(9_000_000), questions: [predicate] });
+    assertEquals(calls, 1);
   });
 
   it("rejects score distributions that do not identify the requested levels", async () => {

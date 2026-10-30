@@ -26,9 +26,12 @@ function requireArray(value: unknown, field: string, min: number, max: number): 
   return value;
 }
 
-function buildContent(value: unknown): string | Record<string, unknown>[] {
+function buildContent(
+  value: unknown,
+  { minItems = 0, maxBytes = 262_144 }: { minItems?: number; maxBytes?: number } = {},
+): string | Record<string, unknown>[] {
   if (typeof value === "string") return value;
-  return requireArray(value, "Decision content", 1, 16384).map((part) => {
+  return requireArray(value, "Decision content", minItems, 16384).map((part) => {
     const item = readRecord(part);
     if (item?.type === "text") {
       requireString(item.text, "Decision text");
@@ -48,7 +51,7 @@ function buildContent(value: unknown): string | Record<string, unknown>[] {
       }
       return {
         type: "input_json",
-        data: snapshotProviderJsonValue(data, { maxDepth: 32, maxNodes: 10000, maxBytes: 262144 }),
+        data: snapshotProviderJsonValue(data, { maxDepth: 32, maxNodes: 10000, maxBytes }),
       };
     }
     throw new TypeError("Unsupported decision content type");
@@ -87,7 +90,10 @@ function buildQuestions(value: unknown): {
       throw new TypeError("Decision question names must be non-empty and unique");
     }
     names.add(item.name);
-    const common = { name: item.name, instructions: buildContent(item.instructions) };
+    const common = {
+      name: item.name,
+      instructions: buildContent(item.instructions, { minItems: 1 }),
+    };
     if (item.type === "predicate") return { ...common, type: "predicate" };
     if (item.type === "choice") {
       validateOptions(item.choices, "choice");
@@ -131,7 +137,6 @@ function readAnswer(value: unknown, question: DecisionQuestion): DecisionAnswer 
   if (question.type === "choice") {
     const expected = new Set(question.choices.map((option) => option.value));
     if (!expected.has(answer.choice as string | boolean)) throw invalidResponse();
-    if (answer.probabilities.length !== expected.size) throw invalidResponse();
     const probabilities = answer.probabilities.map((entry) => {
       const item = readRecord(entry);
       if (
@@ -151,8 +156,7 @@ function readAnswer(value: unknown, question: DecisionQuestion): DecisionAnswer 
   }
   if (
     typeof answer.score !== "number" || !Number.isFinite(answer.score) || answer.score < 0 ||
-    answer.score > question.levels.length - 1 ||
-    answer.probabilities.length !== question.levels.length
+    answer.score > question.levels.length - 1
   ) throw invalidResponse();
   const expected = new Set(question.levels.map((_, index) => index));
   const probabilities = answer.probabilities.map((entry) => {
@@ -220,7 +224,10 @@ export function createOpenAIDecisionsRuntime(
     modelId,
     async decide(options) {
       options.abortSignal?.throwIfAborted();
-      const input = buildContent(snapshotProviderJsonValue(options.input));
+      const input = buildContent(
+        snapshotProviderJsonValue(options.input, { maxBytes: 10_485_760 }),
+        { maxBytes: 262_144 },
+      );
       const { questions, wireQuestions } = buildQuestions(
         snapshotProviderJsonValue(options.questions, { dropUndefinedMembers: true }),
       );
