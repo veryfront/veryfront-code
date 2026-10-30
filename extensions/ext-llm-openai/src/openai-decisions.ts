@@ -157,7 +157,7 @@ function invalidResponse(provider: string): ProviderRequestError {
 
 function readAnswer(value: unknown, question: DecisionQuestion, provider: string): DecisionAnswer {
   const answer = readRecord(value);
-  if (!answer || answer.name !== question.name) throw invalidResponse(provider);
+  if (answer?.name !== question.name) throw invalidResponse(provider);
   const name = question.name;
   if (answer.type === "refusal") return { type: "refusal", name };
   if (answer.type !== question.type) throw invalidResponse(provider);

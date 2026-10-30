@@ -73,7 +73,12 @@ export type DecisionAnswer =
     }
   );
 
-/** Evidence, questions, and execution controls for a decision call. */
+/**
+ * Evidence, questions, and execution controls for a decision call.
+ * Provider adapters enforce their documented payload and response limits in
+ * addition to these structural types; an upstream-valid request may exceed an
+ * adapter's aggregate memory budget.
+ */
 export interface DecisionCallOptions {
   readonly input: DecisionContent;
   readonly questions: readonly DecisionQuestion[];

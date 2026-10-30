@@ -95,12 +95,34 @@ conversation history, files, audio, explicit cache breakpoints, or tool calls.
 `promptCacheKey` partitions automatic shared-input caching. Results retain
 input, output, total, cached-input and cache-write token counts.
 
-Use 1-400 uniquely named questions. Choices accept 2-255 distinct string or
+Within the runtime limits below, use 1-400 uniquely named questions. Choices accept 2-255 distinct string or
 boolean values; scores accept 2-10 ordered `{ label, description? }` levels and
 return a score on their zero-based index scale. Answers retain request order.
 Always handle `type: "refusal"` independently from a false predicate or low score.
 Malformed responses reject the call, and HTTP failures are not automatically
 retried. Set `timeoutMs` or `abortSignal` to bound a call.
+
+This adapter supports a bounded subset of the endpoint's payload sizes. All
+limits apply together; the per-field maxima do not guarantee that their largest
+combinations fit in one call. Split large question sets into separate calls and
+use an HTTP(S) image URL when inline image data exceeds the input budget.
+
+| Scope                                 | Runtime limit                                                    |
+| ------------------------------------- | ---------------------------------------------------------------- |
+| Shared `input` snapshot               | 64 MiB of canonical JSON UTF-8, 65,536 JSON values, depth 64     |
+| Entire `questions` snapshot           | 512 MiB of canonical JSON UTF-8, 1,000,000 JSON values, depth 64 |
+| Each JSON part's `data`               | 256 KiB of canonical JSON UTF-8, 10,000 JSON values, depth 32    |
+| Shared string input or each text part | 10,485,760 Unicode code points                                   |
+| String question instructions          | 1,048,576 Unicode code points                                    |
+| Content array                         | At most 16,384 parts; question instructions require at least one |
+| `promptCacheKey`                      | 64 Unicode code points                                           |
+| Response body                         | 256 MiB                                                          |
+
+Snapshot byte counts include JSON quotes and escapes. JSON value counts include
+containers and primitive values, with the root at depth zero. Oversized requests
+reject with `TypeError` before dispatch; oversized responses reject with
+`ProviderRequestError`. These memory bounds intentionally exclude some payloads
+accepted by the upstream endpoint, including very large inline images.
 
 OpenAI currently supports `gpt-6-luna` on this endpoint. The capability is
 available as optional `LLMProvider.createDecisions`, returning `DecisionRuntime`
