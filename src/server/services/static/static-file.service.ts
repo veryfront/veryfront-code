@@ -442,7 +442,8 @@ export class StaticFileService {
       pathname.startsWith("/_vf/assets/");
   }
 
-  private shouldProbeIndexPage(pathname: string): boolean {
+  /** Whether a request path gets the clean-route `/index.html` candidate. */
+  shouldProbeIndexPage(pathname: string): boolean {
     if (pathname === "/index.html") return false;
     if (pathname.startsWith("/_veryfront/") || pathname.startsWith("/_vf/assets/")) return false;
     if (!this.isAssetRequest(pathname)) return true;

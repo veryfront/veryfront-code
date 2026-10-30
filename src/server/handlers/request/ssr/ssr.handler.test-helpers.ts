@@ -15,10 +15,13 @@ export function createMockAdapter(): RuntimeAdapter {
       workers: false,
     },
     fs: {
+      symlinkSemantics: "none" as const,
       exists: () => Promise.resolve(false),
       readFile: () => Promise.resolve(""),
+      readFileBytesWithinLimit: () =>
+        Promise.reject(Object.assign(new Error("No test file"), { code: "ENOENT" })),
       writeFile: () => Promise.resolve(),
-      readDir: () => Promise.resolve([]),
+      readDir: async function* () {},
       mkdir: () => Promise.resolve(),
       remove: () => Promise.resolve(),
       stat: () => Promise.resolve({ isFile: false, isDirectory: false, size: 0, mtime: null }),

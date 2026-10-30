@@ -678,6 +678,13 @@ describe("server/services/static/static-file.service", () => {
       }
     });
 
+    it("does not probe index candidates for known asset extensions", () => {
+      const service = new StaticFileService();
+      assertEquals(service.shouldProbeIndexPage("/items/photo.png"), false);
+      assertEquals(service.shouldProbeIndexPage("/items/data.json"), false);
+      assertEquals(service.shouldProbeIndexPage("/items/blog.post"), true);
+    });
+
     it("should resolve file from public directory", async () => {
       __injectDepsForTests({
         manifestCache: new Map(),

@@ -61,7 +61,8 @@ import {
   type PreviewDocumentSnapshotReclassifier,
   reclassifyPreviewDocumentSourceSnapshotIfChanged,
 } from "../source-snapshot-freshness.ts";
-import { ssrOwnsDocumentPathname } from "./document-ownership.ts";
+import { isDocumentPathnameCandidate, ssrOwnsDocumentPathname } from "./document-ownership.ts";
+import { PageResolver } from "#veryfront/rendering/page-resolution/page-resolver.ts";
 
 const logger = serverLogger.component("ssr");
 const MAX_DOCUMENT_OWNERSHIP_RECLASSIFICATIONS = 3;
@@ -96,10 +97,9 @@ export class SSRHandler extends BaseHandler {
     const url = new URL(req.url);
     const pathname = url.pathname;
 
-    // The chain's route pattern already excludes /_ paths; the shared
-    // predicate keeps direct calls and the API/page classifier's
-    // pressure-deferral decision aligned with what this handler renders.
-    if (!ssrOwnsDocumentPathname(pathname)) {
+    // The chain's route pattern excludes /_ infrastructure paths. Dotted
+    // candidates are resolved against page metadata inside request context.
+    if (!isDocumentPathnameCandidate(pathname)) {
       return Promise.resolve(this.continue());
     }
 
@@ -263,6 +263,28 @@ export class SSRHandler extends BaseHandler {
     return withSpan(
       "ssr.handleWithContext",
       async () => {
+        if (!ssrOwnsDocumentPathname(url.pathname)) {
+          // StaticHandler has already served any existing file. Only a
+          // declared page can claim the remaining dotted path; deciding this
+          // reads metadata, never executes a page or starts its renderer.
+          const reclassified = await this.reclassifyPreviewDocumentUntilStable(
+            ctx,
+            requestId,
+            () => ensurePreviewDocumentSourceSnapshot(ctx),
+          );
+          if (reclassified) return reclassified;
+          const resolver = new PageResolver({
+            projectDir: ctx.projectDir,
+            projectId: ctx.projectId,
+            config: ctx.config ?? {},
+            adapter: ctx.adapter,
+          });
+          if (!await resolver.pageExists(slug, { signal: req.signal })) {
+            endRequest(requestId);
+            return this.continue();
+          }
+        }
+
         const memoryStatus = this.ssrService.checkMemoryPressure();
         const dependencySource = createHandlerDependencyPinningSource(ctx);
         if (memoryStatus.shouldReject) {
