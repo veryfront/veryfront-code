@@ -791,6 +791,10 @@ export async function runEval(
   if (!isEvalDefinition(definition)) {
     throw createEvalValidationError("runEval requires a valid eval definition");
   }
+  const concurrency = options.concurrency ?? 1;
+  if (!Number.isSafeInteger(concurrency) || concurrency < 1) {
+    throw createEvalValidationError("Eval concurrency must be a positive safe integer");
+  }
   const startedAt = options.now?.() ?? new Date();
   if (!(startedAt instanceof Date) || !Number.isFinite(startedAt.getTime())) {
     throw createEvalValidationError("Eval start time must be a valid Date");
@@ -818,8 +822,19 @@ export async function runEval(
   const records: EvalRecord[] = [];
   notifyEvalProgress(options, { type: "eval-started", evalId: definition.id, total });
 
-  for (const [index, { example, repetition }] of jobs.entries()) {
-    throwIfEvalAborted(options.signal);
+  // Stop scheduling after a fatal error and propagate it to active adapters.
+  // Workers settle before the caller can tear down extensions or finalize usage.
+  const controller = new AbortController();
+  const signal = options.signal
+    ? AbortSignal.any([options.signal, controller.signal])
+    : controller.signal;
+  const recordOptions = concurrency === 1 ? options : { ...options, signal };
+  let nextIndex = 0;
+  let failed = false;
+  let failure: unknown;
+
+  const runJob = async (index: number): Promise<void> => {
+    const { example, repetition } = jobs[index]!;
     const progress = {
       evalId: definition.id,
       recordId: `${example.id}:${repetition}`,
@@ -829,20 +844,21 @@ export async function runEval(
       total,
     };
     notifyEvalProgress(options, { type: "record-started", ...progress });
+    throwIfEvalAborted(signal);
     // The record's own `durationMs` can come from the adapter, which measures
     // target execution alone. Progress reports the whole case, grading
     // included, because that is the wait a reader is watching.
     const startedAt = Date.now();
     const record = await runRecordWithinTimeout(
       definition,
-      options,
+      recordOptions,
       example,
       repetition,
       runId,
       recordTimeoutMs,
     );
-    throwIfEvalAborted(options.signal);
-    records.push(record);
+    throwIfEvalAborted(signal);
+    records[index] = record;
     notifyEvalProgress(options, {
       type: "record-finished",
       ...progress,
@@ -850,7 +866,25 @@ export async function runEval(
       completed: evalRecordPassed(record),
       durationMs: Date.now() - startedAt,
     });
-  }
+  };
+
+  const worker = async (): Promise<void> => {
+    try {
+      while (!failed && nextIndex < total) {
+        throwIfEvalAborted(signal);
+        await runJob(nextIndex++);
+      }
+    } catch (error) {
+      if (!failed) {
+        failed = true;
+        failure = error;
+        controller.abort(error);
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(concurrency, total) }, worker));
+  if (failed) throw failure;
+  throwIfEvalAborted(signal);
 
   const endedAt = options.now?.() ?? new Date();
   if (!(endedAt instanceof Date) || !Number.isFinite(endedAt.getTime())) {

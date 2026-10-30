@@ -927,6 +927,19 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "Do not expose arbitrary raw metric writes over MCP",
     ],
   },
+  "guides/runtime-dashboards.md": {
+    references: ["./project-metrics.md", "./eval-reporting.md"],
+    snippets: [
+      "OTEL_TRACES_ENABLED=true",
+      "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
+      "workflow.run_id",
+      "quantile_over_time(duration, .95)",
+      "setActiveSpanAttributes",
+      "vf_work_item_total",
+      "Langfuse",
+    ],
+    verificationHeading: "## Verify the dashboard",
+  },
   "getting-started/installation.md": {
     references: [],
     snippets: [

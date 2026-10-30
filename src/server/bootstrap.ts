@@ -18,20 +18,11 @@ import {
 import { ensureBuiltinSchemaValidator } from "#veryfront/extensions/builtin-extensions.ts";
 import { MISSING_EXTENSION_ERROR } from "#veryfront/extensions/errors.ts";
 import { getRecommendation } from "#veryfront/extensions/recommendations.ts";
-import type { TracingExporter } from "#veryfront/extensions/observability/tracing-exporter.ts";
 import {
   type NodeWebSocketServerProvider,
   NodeWebSocketServerProviderName,
   snapshotNodeWebSocketServerProvider,
 } from "#veryfront/extensions/websocket";
-import {
-  propagation,
-  setGlobalActiveSpanAccessor,
-  setGlobalContextAccessor,
-  setGlobalMetricsAPI,
-  setGlobalTracerProvider,
-  type TextMapPropagator,
-} from "#veryfront/observability/tracing/api-shim.ts";
 import {
   getEnvironmentConfig,
   refreshEnvironmentConfig,
@@ -42,7 +33,7 @@ import { isExtendedFSAdapter } from "#veryfront/platform/adapters/fs/wrapper.ts"
 import { captureHostApiOrigin, getEnv, getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { isProxyTopologyTrusted } from "#veryfront/platform/compat/proxy-topology.ts";
 import { initializeEsbuild } from "#veryfront/platform/compat/esbuild.ts";
-import { __registerLogRecordEmitter, logger } from "#veryfront/utils/logger/logger.ts";
+import { logger } from "#veryfront/utils/logger/logger.ts";
 import { isDebugEnabled } from "#veryfront/utils/constants/env.ts";
 import {
   getEnvSource,
@@ -58,12 +49,15 @@ import {
 } from "#veryfront/observability";
 import { getLogBuffer } from "#veryfront/observability/log-buffer.ts";
 import { ReloadNotifier } from "./reload-notifier.ts";
+import { wireTracingShim } from "./tracing-shim.ts";
 import {
   createServerStyleCallbacks,
   createServerStyleInvalidationCallbacks,
 } from "./style-callbacks.ts";
 import { clearDomainCache } from "./utils/domain-lookup.ts";
 import { getMissingProjectEnvInternalCredentialDetail } from "./project-env/internal-authorization.ts";
+
+export { wireTracingShim };
 
 const bootstrapLog = logger.component("bootstrap");
 const bootstrapDevLog = logger.component("bootstrap-dev");
@@ -106,10 +100,6 @@ export interface BootstrapOptions {
 }
 
 /**
- * Wire the `TracingExporter` contract (if registered) into the core shim.
- * Must be called after `orchestrateExtensions()` completes.
- */
-/**
  * Fail-fast: ensure the `Bundler` contract has been registered. Core depends
  * on it for every JS/TS transform path. `ModuleLexer` is checked too, but
  * only as a warning (dev-only paths can degrade).
@@ -130,43 +120,6 @@ function assertRequiredContracts(): void {
         getRecommendation("ModuleLexer") ?? "@veryfront/ext-bundler-esbuild"
       }`,
     );
-  }
-}
-
-export function wireTracingShim(): void {
-  const tracing = tryResolve<TracingExporter>("TracingExporter");
-  if (tracing) {
-    setGlobalTracerProvider(
-      tracing.getProvider() as Parameters<typeof setGlobalTracerProvider>[0],
-    );
-    const metricsApi = tracing.getMetricsAPI();
-    if (metricsApi) {
-      setGlobalMetricsAPI(
-        metricsApi as Parameters<typeof setGlobalMetricsAPI>[0],
-      );
-    }
-    const traceApi = tracing.getTraceAPI?.();
-    if (traceApi) {
-      setGlobalActiveSpanAccessor(
-        traceApi as Parameters<typeof setGlobalActiveSpanAccessor>[0],
-      );
-    }
-    const contextApi = tracing.getContextAPI?.();
-    if (contextApi) {
-      setGlobalContextAccessor(
-        contextApi as Parameters<typeof setGlobalContextAccessor>[0],
-      );
-    }
-    propagation.setGlobalPropagator(
-      (tracing.getPropagator?.() ?? null) as TextMapPropagator | null,
-    );
-    const logRecordEmitter = tracing.getLogRecordEmitter?.();
-    __registerLogRecordEmitter(logRecordEmitter ?? null);
-    bootstrapLog.debug("[bootstrap] TracingExporter wired into shim");
-  } else {
-    propagation.setGlobalPropagator(null);
-    __registerLogRecordEmitter(null);
-    bootstrapLog.debug("[bootstrap] no TracingExporter extension — using no-op tracer");
   }
 }
 
@@ -245,6 +198,7 @@ function combineDispose(
   extensionLoader: ExtensionLoader,
   fsDispose?: () => void,
   fileLogHandle?: FileLogHandle | null,
+  telemetryDispose?: () => boolean,
 ): () => Promise<void> {
   return async () => {
     try {
@@ -254,13 +208,51 @@ function combineDispose(
         await teardownFileLog(fileLogHandle ?? null);
       } finally {
         try {
-          __registerLogRecordEmitter(null);
+          telemetryDispose?.();
         } finally {
           if (fsDispose) fsDispose();
         }
       }
     }
   };
+}
+
+/** Wire telemetry and roll back all initialized resources when startup fails. */
+async function wireTracingOrDispose(
+  extensionLoader: ExtensionLoader,
+  fsDispose?: () => void,
+): Promise<() => boolean> {
+  let telemetryDispose: (() => boolean) | undefined;
+  try {
+    telemetryDispose = wireTracingShim();
+    assertRequiredContracts();
+    return telemetryDispose;
+  } catch (error) {
+    telemetryDispose?.();
+    try {
+      await extensionLoader.teardownAll();
+    } catch (cleanupError) {
+      bootstrapLog.warn(
+        "[bootstrap] Failed to tear down extensions after telemetry wiring failed",
+        {
+          error: getErrorMessage(cleanupError),
+        },
+      );
+    }
+    if (fsDispose) {
+      try {
+        fsDispose();
+      } catch (cleanupError) {
+        bootstrapLog.warn(
+          "[bootstrap] Failed to dispose the FS adapter after telemetry wiring failed",
+          {
+            error: getErrorMessage(cleanupError),
+          },
+        );
+      }
+    }
+    throw error;
+  }
 }
 
 /**
@@ -387,8 +379,7 @@ export async function bootstrap(
         builtinExtensions: createServerBuiltinExtensions(),
         setupTimeoutMs: getEnvironmentConfig().extensionSetupTimeoutMs,
       });
-      wireTracingShim();
-      assertRequiredContracts();
+      const telemetryDispose = await wireTracingOrDispose(extensionLoader);
       const nodeWebSocketServerProvider = resolveNodeWebSocketServerProviderForBootstrap();
       return {
         adapter,
@@ -396,7 +387,7 @@ export async function bootstrap(
         usingFSAdapter: false,
         extensionLoader,
         ...(nodeWebSocketServerProvider === undefined ? {} : { nodeWebSocketServerProvider }),
-        dispose: combineDispose(extensionLoader, undefined, fileLog),
+        dispose: combineDispose(extensionLoader, undefined, fileLog, telemetryDispose),
       };
     }
 
@@ -441,8 +432,7 @@ export async function bootstrap(
         builtinExtensions: createServerBuiltinExtensions(),
         setupTimeoutMs: getEnvironmentConfig().extensionSetupTimeoutMs,
       });
-      wireTracingShim();
-      assertRequiredContracts();
+      const telemetryDispose = await wireTracingOrDispose(extensionLoader);
       const nodeWebSocketServerProvider = resolveNodeWebSocketServerProviderForBootstrap();
       return {
         adapter,
@@ -450,7 +440,7 @@ export async function bootstrap(
         usingFSAdapter: false,
         extensionLoader,
         ...(nodeWebSocketServerProvider === undefined ? {} : { nodeWebSocketServerProvider }),
-        dispose: combineDispose(extensionLoader, undefined, fileLog),
+        dispose: combineDispose(extensionLoader, undefined, fileLog, telemetryDispose),
       };
     }
 
@@ -525,8 +515,7 @@ export async function bootstrap(
         }),
       fsDispose,
     );
-    wireTracingShim();
-    assertRequiredContracts();
+    const telemetryDispose = await wireTracingOrDispose(extensionLoader, fsDispose);
     const nodeWebSocketServerProvider = resolveNodeWebSocketServerProviderForBootstrap();
 
     return {
@@ -536,7 +525,7 @@ export async function bootstrap(
       fsAdapterType: fsType,
       extensionLoader,
       ...(nodeWebSocketServerProvider === undefined ? {} : { nodeWebSocketServerProvider }),
-      dispose: combineDispose(extensionLoader, fsDispose, fileLog),
+      dispose: combineDispose(extensionLoader, fsDispose, fileLog, telemetryDispose),
     };
   } catch (err) {
     await teardownFileLog(fileLog);

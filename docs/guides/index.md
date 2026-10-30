@@ -42,6 +42,7 @@ details, see [API reference](../api-reference/index.md).
 | Give an agent a typed capability                  | [Tools](./tools.md)                                 |
 | Measure agent behavior with evals                 | [Evals](./evals.md)                                 |
 | Emit app and eval dashboard metrics               | [Project metrics](./project-metrics.md)             |
+| Investigate workflows and model calls | [Runtime dashboards](./runtime-dashboards.md) |
 | Add memory or streamed responses                  | [Memory and streaming](./memory-and-streaming.md)   |
 | Parse Agent Events Protocol frames                | [Agent Events Protocol](./agent-events.md)          |
 | Build document Q&A with RAG                       | [Build a RAG app](./build-a-rag-app.md)             |

@@ -817,10 +817,22 @@ export const publicTrace: Readonly<
   Pick<typeof trace, "getActiveSpan" | "getSpan" | "getTracer" | "setSpan">
 > = IntrinsicObjectFreeze({
   getTracer(name: string, version?: string): Tracer {
-    const platformTracer = telemetryState.tracerProvider.getTracer(name, version);
+    let platformRevision = telemetryState.tracerProviderRevision;
+    let platformTracer = telemetryState.tracerProvider.getTracer(name, version);
+    // Follow a provider installed after this tracer was acquired, as an
+    // OpenTelemetry proxy tracer does. `task` and `eval` load project modules,
+    // which may acquire tracers at module scope, before they wire tracing.
+    const getPlatformTracer = (): Tracer => {
+      const current = telemetryState;
+      if (current.tracerProviderRevision !== platformRevision) {
+        platformTracer = current.tracerProvider.getTracer(name, version);
+        platformRevision = current.tracerProviderRevision;
+      }
+      return platformTracer;
+    };
     const selectTracer = (): Tracer =>
       (getProjectTraceProvider()?.getProvider().getTracer(name, version) as Tracer | undefined) ??
-        platformTracer;
+        getPlatformTracer();
     const startActiveSpan = ((
       spanName: string,
       second: unknown,

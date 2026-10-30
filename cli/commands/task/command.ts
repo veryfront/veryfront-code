@@ -9,6 +9,10 @@ import { cliLogger } from "#cli/utils";
 import { exitProcess } from "#cli/utils";
 import { INVALID_ARGUMENT, RESOURCE_NOT_FOUND } from "veryfront/errors";
 import { withProjectSourceContext } from "#cli/shared/project-source-context";
+import {
+  releaseProjectCliExtensions,
+  setupDefaultProjectCliExtensions,
+} from "../../shared/project-extensions.ts";
 import { sanitizeRunOutputForLogging } from "../../utils/sanitize-run-output.ts";
 import { writeRunResultIfConfigured } from "../../utils/write-run-result.ts";
 import type { TaskArgs } from "./handler.ts";
@@ -116,16 +120,27 @@ export async function taskCommand(options: TaskOptions): Promise<void> {
       cliLogger.info(`Running task: ${task.name} (${task.id})`);
       cliLogger.info("");
 
-      const result = await runWithProjectAgentRuntime(
-        discovery,
-        () =>
-          runTask({
-            task,
-            config: taskConfig,
-            projectId,
-            debug: options.debug,
-          }),
-      );
+      const extensions = await setupDefaultProjectCliExtensions({
+        projectDir,
+        config,
+        logger: cliLogger.component("task-extensions"),
+      });
+      let result: Awaited<ReturnType<typeof runTask>>;
+      try {
+        result = await runWithProjectAgentRuntime(
+          discovery,
+          () =>
+            runTask({
+              task,
+              config: taskConfig,
+              projectId,
+              debug: options.debug,
+            }),
+        );
+      } finally {
+        // Teardown flushes pending spans, so it must finish before the process exits.
+        await releaseProjectCliExtensions(extensions);
+      }
 
       cliLogger.info("");
       if (result.success) {

@@ -69,6 +69,10 @@ by your collector.
 
 For managed hosting, use the project settings described below.
 
+For workflow, model-usage, and application-outcome panels in Grafana or Langfuse, see
+[Runtime dashboards](../../docs/guides/runtime-dashboards.md). The `task`, `eval`, and
+`workflow run` commands also start declared extensions and flush them before exit.
+
 ## Environment variables
 
 The extension reads the standard OpenTelemetry env vars at setup time:

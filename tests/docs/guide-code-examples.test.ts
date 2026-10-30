@@ -43,6 +43,8 @@ import {
 import { buildCSP } from "../../src/security/http/response/security-handler.ts";
 import { datasets, evalAgent, evalDataset, metrics, runEval } from "../../src/eval/index.ts";
 import { metrics as projectMetrics } from "../../src/metrics/index.ts";
+import { setActiveSpanAttributes } from "../../src/observability/index.ts";
+import extOpenTelemetry from "../../extensions/ext-observability-opentelemetry/src/index.ts";
 import {
   type ExtensionFactory,
   ExtensionLoader,
@@ -146,6 +148,7 @@ const THIS_GUIDE_EXAMPLE_SUITE = [
   "project-knowledge.md",
   "project-structure.md",
   "project-metrics.md",
+  "runtime-dashboards.md",
   "quickstart.md",
   "run-input-output.md",
   "sandbox.md",
@@ -833,6 +836,21 @@ describe("Guide: project-metrics.md", () => {
     assertEquals(typeof projectMetrics.histogram, "function");
     assertEquals(typeof projectMetrics.gauge, "function");
     assertStringIncludes(guide, 'import { metrics } from "veryfront/metrics"');
+  });
+});
+
+describe("Guide: runtime-dashboards.md", () => {
+  it("declares the telemetry extension and uses public outcome instrumentation", async () => {
+    const guide = await readGuide("runtime-dashboards.md");
+    const config = defineConfig({ extensions: [extOpenTelemetry()] });
+    assertEquals(config.extensions?.length, 1);
+    assertEquals(typeof setActiveSpanAttributes, "function");
+    assertEquals(typeof projectMetrics.counter, "function");
+    assertStringIncludes(
+      guide,
+      'import { setActiveSpanAttributes } from "veryfront/observability"',
+    );
+    assertStringIncludes(guide, 'metrics.counter("vf_work_item_total", 1, { outcome })');
   });
 });
 

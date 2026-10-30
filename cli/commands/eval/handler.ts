@@ -27,6 +27,7 @@ const getEvalArgsSchema = defineSchema((v) =>
     comparisonPolicy: v.string().optional(),
     maxOutputTokens: v.number().int().positive().optional(),
     recordTimeout: v.number().min(0).optional(),
+    concurrency: v.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
   })
 );
 
@@ -63,6 +64,7 @@ export const parseEvalArgs = createArgParser(EvalArgsSchema, {
   comparisonPolicy: { keys: ["comparison-policy"], type: "string" },
   maxOutputTokens: { keys: ["max-output-tokens"], type: "number" },
   recordTimeout: { keys: ["record-timeout"], type: "number" },
+  concurrency: { keys: ["concurrency"], type: "number" },
 });
 
 export async function handleEvalCommand(args: ParsedArgs): Promise<void> {
