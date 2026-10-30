@@ -185,6 +185,7 @@ export async function runWorkflowCommand(
       fsAdapter: adapter.fs,
       cacheKey: configCacheKey,
       verbose: options.debug,
+      allowHostProjectCodeExecution: true,
     });
 
     const workflows = [...discovery.workflows.values()];

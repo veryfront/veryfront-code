@@ -565,6 +565,7 @@ already admitted.
 | `cli/commands/task/command.ts`                         | `veryfront task` on a local project                                     | Trusted local execution             | 1      |
 | `cli/commands/webhook/handler.ts`                      | `veryfront webhook` on a local project                                  | Trusted local execution             | 2      |
 | `cli/commands/webhooks/handler.ts`                     | `veryfront webhooks` on a local project                                 | Trusted local execution             | 1      |
+| `cli/commands/workflow/command.ts`                     | `veryfront workflow run` on a local project                             | Trusted local execution             | 1      |
 
 ## Internal-only files
 
