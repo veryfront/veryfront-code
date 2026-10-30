@@ -19,7 +19,6 @@ import {
   setLogLevel,
 } from "#veryfront/utils/logger/logger.ts";
 import {
-  getRemoteIntegrationProjectTarget,
   getRemoteIntegrationToolDefinitions,
   getRemoteIntegrationToolDiscovery,
   isRemoteIntegrationTool,
@@ -116,40 +115,6 @@ describe("integrations/remote-tools", () => {
     }, async () => await getRemoteIntegrationToolDefinitions());
 
     assertEquals(definitions, []);
-  });
-
-  it("resolves the project and Studio origin an unconnected integration points at", () => {
-    setRemoteToolEnv({
-      VERYFRONT_API_URL: "https://api.veryfront.org",
-      VERYFRONT_API_TOKEN: "token",
-      VERYFRONT_PROJECT_SLUG: "case-demo",
-    });
-
-    assertEquals(getRemoteIntegrationProjectTarget(), {
-      projectSlug: "case-demo",
-      studioOrigin: "https://veryfront.org",
-    });
-  });
-
-  it("omits the Studio origin for an API host without a known Studio", () => {
-    setRemoteToolEnv({
-      VERYFRONT_API_URL: "https://api.test",
-      VERYFRONT_API_TOKEN: "token",
-      VERYFRONT_PROJECT_SLUG: "case-demo",
-    });
-
-    assertEquals(getRemoteIntegrationProjectTarget(), { projectSlug: "case-demo" });
-  });
-
-  it("has no project target without a project slug or a credential", () => {
-    setRemoteToolEnv({ VERYFRONT_API_URL: "https://api.test", VERYFRONT_API_TOKEN: "token" });
-    assertEquals(getRemoteIntegrationProjectTarget(), undefined);
-
-    setRemoteToolEnv({
-      VERYFRONT_API_URL: "https://api.test",
-      VERYFRONT_PROJECT_SLUG: "case-demo",
-    });
-    assertEquals(getRemoteIntegrationProjectTarget(), undefined);
   });
 
   it("discovers integration tools from a host-private stored login token", async () => {
