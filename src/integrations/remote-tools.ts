@@ -33,6 +33,7 @@ import {
   snapshotBoundedParsedJsonValue,
 } from "#veryfront/schemas/json-value.ts";
 import { logger } from "#veryfront/utils";
+import { resolveStudioOrigin } from "./studio-origin.ts";
 import {
   hasProjectIdentityControlCharacters,
   isCanonicalProjectSlug,
@@ -299,6 +300,18 @@ function resolveRequestProjectSlug(
     return normalizeProjectSlug(requestContext.projectSlug);
   }
   return normalizeProjectSlug(getEnvironmentConfig().projectSlug);
+}
+
+/** Project slug and Studio origin of the request, when both the project and a credential are known. */
+export function getRemoteIntegrationProjectTarget(
+  context?: ToolExecutionContext,
+): { projectSlug: string; studioOrigin?: string } | undefined {
+  const requestContext = snapshotToolExecutionContext(context, false);
+  const { baseUrl, token } = resolveRequestAuth(requestContext);
+  const projectSlug = resolveRequestProjectSlug(requestContext);
+  if (!baseUrl || !token || !projectSlug) return undefined;
+  const studioOrigin = resolveStudioOrigin(baseUrl, getHostEnv("STUDIO_URL"));
+  return studioOrigin ? { projectSlug, studioOrigin } : { projectSlug };
 }
 
 // ---------------------------------------------------------------------------

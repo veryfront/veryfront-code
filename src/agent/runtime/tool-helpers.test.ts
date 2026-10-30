@@ -1011,10 +1011,73 @@ describe("tool-helpers", () => {
       }
     });
 
-    it("fails loudly when an explicit integration tool has no discovered tools", async () => {
+    it("reports an unconnected integration instead of an unknown tool", async () => {
       toolRegistryInternal.clearAll();
+      const originalSlug = Deno.env.get("VERYFRONT_PROJECT_SLUG");
+      const originalApiUrl = Deno.env.get("VERYFRONT_API_URL");
 
       try {
+        Deno.env.set("VERYFRONT_PROJECT_SLUG", "case-demo");
+        await assertRejects(
+          () =>
+            withMockRemoteIntegrationTools([], () => {
+              Deno.env.set("VERYFRONT_API_URL", "https://api.veryfront.org");
+              return getAvailableTools({
+                "salesforce__get_case": true,
+                "salesforce__update_case": true,
+              });
+            }),
+          Error,
+          [
+            "Salesforce isn't connected to project case-demo.",
+            "Connect it: npx veryfront integration connect salesforce",
+            "Or in Studio: https://veryfront.org/projects/case-demo/integrations",
+          ].join("\n"),
+        );
+      } finally {
+        if (originalSlug === undefined) Deno.env.delete("VERYFRONT_PROJECT_SLUG");
+        else Deno.env.set("VERYFRONT_PROJECT_SLUG", originalSlug);
+        if (originalApiUrl === undefined) Deno.env.delete("VERYFRONT_API_URL");
+        else Deno.env.set("VERYFRONT_API_URL", originalApiUrl);
+        toolRegistryInternal.clearAll();
+      }
+    });
+
+    it("names every unconnected integration and omits Studio when its origin is unknown", async () => {
+      toolRegistryInternal.clearAll();
+      const originalSlug = Deno.env.get("VERYFRONT_PROJECT_SLUG");
+
+      try {
+        Deno.env.set("VERYFRONT_PROJECT_SLUG", "case-demo");
+        await assertRejects(
+          () =>
+            withMockRemoteIntegrationTools([], () =>
+              getAvailableTools({
+                "github__get_pr_diff": true,
+                "salesforce__get_case": true,
+              })),
+          Error,
+          [
+            "GitHub isn't connected to project case-demo.",
+            "Connect it: npx veryfront integration connect github",
+            "",
+            "Salesforce isn't connected to project case-demo.",
+            "Connect it: npx veryfront integration connect salesforce",
+          ].join("\n"),
+        );
+      } finally {
+        if (originalSlug === undefined) Deno.env.delete("VERYFRONT_PROJECT_SLUG");
+        else Deno.env.set("VERYFRONT_PROJECT_SLUG", originalSlug);
+        toolRegistryInternal.clearAll();
+      }
+    });
+
+    it("keeps Unknown tool reference when the project is unknown", async () => {
+      toolRegistryInternal.clearAll();
+      const originalSlug = Deno.env.get("VERYFRONT_PROJECT_SLUG");
+
+      try {
+        Deno.env.delete("VERYFRONT_PROJECT_SLUG");
         await assertRejects(
           () =>
             withMockRemoteIntegrationTools([], () =>
@@ -1025,6 +1088,52 @@ describe("tool-helpers", () => {
           'Unknown tool reference: github__get_pr_diff. Tool names must exactly match tool({ id: "..." }). Available tools: (none)',
         );
       } finally {
+        if (originalSlug === undefined) Deno.env.delete("VERYFRONT_PROJECT_SLUG");
+        else Deno.env.set("VERYFRONT_PROJECT_SLUG", originalSlug);
+        toolRegistryInternal.clearAll();
+      }
+    });
+
+    it("keeps Unknown tool reference for a misspelled tool of a connected integration", async () => {
+      toolRegistryInternal.clearAll();
+      const originalSlug = Deno.env.get("VERYFRONT_PROJECT_SLUG");
+
+      try {
+        Deno.env.set("VERYFRONT_PROJECT_SLUG", "case-demo");
+        await assertRejects(
+          () =>
+            withMockRemoteIntegrationTools(
+              ["salesforce__get_case"],
+              () => getAvailableTools({ "salesforce__get_cse": true }),
+            ),
+          Error,
+          "Unknown tool reference: salesforce__get_cse.",
+        );
+      } finally {
+        if (originalSlug === undefined) Deno.env.delete("VERYFRONT_PROJECT_SLUG");
+        else Deno.env.set("VERYFRONT_PROJECT_SLUG", originalSlug);
+        toolRegistryInternal.clearAll();
+      }
+    });
+
+    it("keeps Unknown tool reference for a name that matches no integration", async () => {
+      toolRegistryInternal.clearAll();
+      const originalSlug = Deno.env.get("VERYFRONT_PROJECT_SLUG");
+
+      try {
+        Deno.env.set("VERYFRONT_PROJECT_SLUG", "case-demo");
+        await assertRejects(
+          () =>
+            withMockRemoteIntegrationTools(
+              [],
+              () => getAvailableTools({ "salesforc__get_case": true }),
+            ),
+          Error,
+          "Unknown tool reference: salesforc__get_case.",
+        );
+      } finally {
+        if (originalSlug === undefined) Deno.env.delete("VERYFRONT_PROJECT_SLUG");
+        else Deno.env.set("VERYFRONT_PROJECT_SLUG", originalSlug);
         toolRegistryInternal.clearAll();
       }
     });
