@@ -238,6 +238,70 @@ describe("OpenAI Decisions runtime", () => {
     assertEquals(reads, 0);
   });
 
+  it("rejects oversized metadata before dispatch across every question variant", async () => {
+    const oversized = "😀".repeat(1_048_577);
+    const choice = { ...predicate, type: "choice" as const };
+    const score = { ...predicate, type: "score" as const };
+    const questions: DecisionQuestion[] = [
+      { ...predicate, name: oversized },
+      { ...choice, choices: [{ value: oversized }, { value: true }] },
+      { ...choice, choices: [{ value: "a", description: oversized }, { value: "b" }] },
+      { ...score, levels: [{ label: oversized }, { label: "high" }] },
+      { ...score, levels: [{ label: "low", description: oversized }, { label: "high" }] },
+    ];
+    let calls = 0;
+    const runtime = new OpenAIProvider().createDecisions("gpt-6-luna", {
+      credential: "test-key",
+      fetch: (_url, init) => {
+        calls++;
+        const body = JSON.parse(init?.body as string);
+        return Promise.resolve(Response.json(result([
+          { name: body.questions[0].name, type: "refusal" },
+        ])));
+      },
+    });
+    for (const question of questions) {
+      await assertRejects(
+        () => runtime.decide({ input: "fixture", questions: [question] }),
+        TypeError,
+        "1048576 characters",
+      );
+    }
+    assertEquals(calls, 0);
+    assertThrows(
+      () => new OpenAIProvider().createDecisions(oversized, { credential: "test-key" }),
+      TypeError,
+      "1048576 characters",
+    );
+  });
+
+  it("accepts metadata at the Unicode character limit", async () => {
+    const text = "😀".repeat(1_048_576);
+    const questions: DecisionQuestion[] = [
+      {
+        ...predicate,
+        name: text,
+        type: "choice",
+        choices: [{ value: text, description: text }, { value: true }],
+      },
+      {
+        ...predicate,
+        name: "score",
+        type: "score",
+        levels: [{ label: text, description: text }, { label: "high" }],
+      },
+    ];
+    const runtime = new OpenAIProvider().createDecisions(text, {
+      credential: "test-key",
+      fetch: () =>
+        Promise.resolve(Response.json(result(
+          questions.map(({ name }) => ({ name, type: "refusal" })),
+        ))),
+    });
+    const output = await runtime.decide({ input: "fixture", questions });
+    assertEquals(output.answers.map(({ name }) => name), questions.map(({ name }) => name));
+  });
+
   it("rejects missing, duplicate, mismatched, or out-of-range answers", async () => {
     const invalid = [
       result([]),

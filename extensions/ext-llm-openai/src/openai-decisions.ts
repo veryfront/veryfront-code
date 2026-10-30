@@ -20,6 +20,7 @@ const DECISION_INPUT_MAX_SNAPSHOT_BYTES = 64 * 1024 * 1024;
 const DECISION_QUESTIONS_MAX_SNAPSHOT_BYTES = 512 * 1024 * 1024;
 const DECISION_INPUT_MAX_TEXT_CHARACTERS = 10_485_760;
 const DECISION_QUESTION_MAX_TEXT_CHARACTERS = 1_048_576;
+const DECISION_METADATA_MAX_CHARACTERS = 1_048_576;
 const DECISION_RESPONSE_MAX_BYTES = 256 * 1024 * 1024;
 
 function characterCount(value: string): number {
@@ -28,8 +29,15 @@ function characterCount(value: string): number {
   return count;
 }
 
-function requireString(value: unknown, field: string): asserts value is string {
+function requireString(
+  value: unknown,
+  field: string,
+  maxCharacters?: number,
+): asserts value is string {
   if (typeof value !== "string") throw new TypeError(`${field} must be a string`);
+  if (maxCharacters !== undefined && characterCount(value) > maxCharacters) {
+    throw new TypeError(`${field} exceeds ${maxCharacters} characters`);
+  }
 }
 
 function requireArray(value: unknown, field: string, min: number, max: number): unknown[] {
@@ -98,12 +106,19 @@ function validateOptions(value: unknown, kind: "choice" | "score"): void {
     if (typeof label !== "string" && !(kind === "choice" && typeof label === "boolean")) {
       throw new TypeError(`Invalid decision ${kind} option`);
     }
+    if (typeof label === "string") {
+      requireString(label, `Decision ${kind} option`, DECISION_METADATA_MAX_CHARACTERS);
+    }
     if (kind === "choice" && values.has(label)) {
       throw new TypeError("Decision choice values must be unique");
     }
     values.add(label);
     if (item?.description !== undefined) {
-      requireString(item.description, "Decision option description");
+      requireString(
+        item.description,
+        "Decision option description",
+        DECISION_METADATA_MAX_CHARACTERS,
+      );
     }
   }
 }
@@ -116,7 +131,7 @@ function buildQuestions(value: unknown): {
   const names = new Set<string>();
   const wireQuestions = questions.map((value) => {
     const item = readRecord(value);
-    requireString(item?.name, "Decision question name");
+    requireString(item?.name, "Decision question name", DECISION_METADATA_MAX_CHARACTERS);
     if (!item.name.trim() || names.has(item.name)) {
       throw new TypeError("Decision question names must be non-empty and unique");
     }
@@ -253,6 +268,7 @@ export function createOpenAIDecisionsRuntime(
   if (typeof modelId !== "string" || !modelId.trim() || modelId !== modelId.trim()) {
     throw new TypeError("Decision model ID must be a non-empty trimmed string");
   }
+  requireString(modelId, "Decision model ID", DECISION_METADATA_MAX_CHARACTERS);
   const url = getOpenAIDecisionsUrl(config.baseURL);
   const apiKey = config.credential;
   const fetchImpl = config.fetch ?? createOriginBoundOutboundFetch(url);
