@@ -165,6 +165,23 @@ describe("runtime stream Provider Adapter", () => {
     );
   });
 
+  it("flags configured dynamic tools that the project registry does not know", () => {
+    const part = { type: "tool-input-start", id: "call-1", toolName: "create_file" };
+    const event = {
+      type: "tool_input_start" as const,
+      toolCallId: "call-1",
+      toolName: "create_file",
+    };
+    assertEquals(decodeRuntimeStreamPart(part, snapshot, options), [{ kind: "protocol", event }]);
+    assertEquals(
+      decodeRuntimeStreamPart(part, snapshot, {
+        ...options,
+        dynamicToolNames: new Set(["create_file"]),
+      }),
+      [{ kind: "protocol", event: { ...event, dynamic: true } }],
+    );
+  });
+
   it("rejects unavailable tools before handoff", () => {
     assertEquals(
       decodeRuntimeStreamPart(

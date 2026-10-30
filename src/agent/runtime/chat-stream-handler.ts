@@ -385,12 +385,13 @@ export function announceStreamedToolCallInput(
   controller: ReadableStreamDefaultController,
   encoder: TextEncoder,
   toolCall: StreamingToolCall,
+  isDynamic: (toolName: string) => boolean = isDynamicTool,
 ): void {
   if (toolCall.inputAnnounced === true) {
     return;
   }
 
-  const dynamic = toolCall.dynamic ?? isDynamicTool(toolCall.name);
+  const dynamic = toolCall.dynamic ?? isDynamic(toolCall.name);
   const occurrenceId = introduceToolCallOccurrence(toolCall);
   sendSSE(controller, encoder, {
     type: "tool-input-start",
@@ -484,6 +485,8 @@ export interface ChatStreamCallbacks {
   }) => void;
   providerExecutedToolNames?: readonly string[];
   availableToolNames?: readonly string[];
+  /** Configured tools to flag as dynamic beyond the project registry. */
+  dynamicToolNames?: readonly string[];
   localToolInputIdleTimeoutMs?: number;
   localToolCommitGraceMs?: number;
   requireProviderFinish?: boolean;
@@ -836,6 +839,7 @@ async function processActiveStream(
       providerExecutedToolNames: createPrivateSet(
         callbacks?.providerExecutedToolNames ?? [],
       ),
+      dynamicToolNames: createPrivateSet(callbacks?.dynamicToolNames ?? []),
     },
   });
   const adapter: typeof baseAdapter = {
@@ -1029,6 +1033,7 @@ export function processStreamInternal(
       ? internals.createShadow({
         availableToolNames: callbacks?.availableToolNames ?? null,
         providerExecutedToolNames: callbacks?.providerExecutedToolNames ?? [],
+        dynamicToolNames: callbacks?.dynamicToolNames ?? [],
       })
       : null;
     let shadowLifecycleFailed = false;
@@ -1041,6 +1046,9 @@ export function processStreamInternal(
     let sawProviderFinishPart = false;
     let hasActiveLocalToolInput = false;
     const providerExecutedToolNames = createPrivateSet(callbacks?.providerExecutedToolNames ?? []);
+    const dynamicToolNames = createPrivateSet(callbacks?.dynamicToolNames ?? []);
+    const isDynamic = (toolName: string) =>
+      dynamicToolNames.has(toolName) || isDynamicTool(toolName);
     const availableToolNames = callbacks?.availableToolNames
       ? createPrivateSet(callbacks.availableToolNames)
       : null;
@@ -1241,7 +1249,7 @@ export function processStreamInternal(
           continue;
         }
         tc.inputAvailable = true;
-        const dynamic = tc.dynamic ?? isDynamicTool(tc.name);
+        const dynamic = tc.dynamic ?? isDynamic(tc.name);
         if (dynamic) {
           tc.dynamic = true;
         }
@@ -1259,7 +1267,7 @@ export function processStreamInternal(
     };
 
     const announceToolInputStart = (toolCall: StreamingToolCall) => {
-      announceStreamedToolCallInput(controller, encoder, toolCall);
+      announceStreamedToolCallInput(controller, encoder, toolCall, isDynamic);
     };
 
     const ensureToolLifecycle = (part: {
@@ -1269,7 +1277,7 @@ export function processStreamInternal(
       providerExecuted?: boolean;
       dynamic?: boolean;
     }) => {
-      const dynamic = part.dynamic ?? isDynamicTool(part.toolName);
+      const dynamic = part.dynamic ?? isDynamic(part.toolName);
       const providerExecuted = resolveProviderExecuted(part.toolName, part.providerExecuted);
       const existing = state.toolCalls.get(part.toolCallId);
 
@@ -1657,7 +1665,7 @@ export function processStreamInternal(
             tc.inputAvailable = true;
             trackProviderExecutedToolCall(toolId, tc.providerExecuted);
             hasActiveLocalToolInput = false;
-            const dynamic = tc.dynamic ?? isDynamicTool(tc.name);
+            const dynamic = tc.dynamic ?? isDynamic(tc.name);
             if (dynamic) {
               tc.dynamic = true;
             }
@@ -1704,7 +1712,7 @@ export function processStreamInternal(
             if (!wasInputAvailable || resolvedArguments !== previousArguments) {
               noteToolProgress();
             }
-            const dynamic = typedPart.dynamic ?? isDynamicTool(typedPart.toolName);
+            const dynamic = typedPart.dynamic ?? isDynamic(typedPart.toolName);
             const toolCall: StreamingToolCall = {
               id: toolId,
               name: typedPart.toolName,
@@ -1773,7 +1781,7 @@ export function processStreamInternal(
             retainToolCallOccurrence(previous, toolCall);
             state.toolCalls.set(toolId, toolCall);
 
-            const dynamic = isDynamicTool(typedPart.toolName);
+            const dynamic = isDynamic(typedPart.toolName);
             const inputObj = parseToolInputObject(typedPart.input);
             announceToolInputStart(toolCall);
             if (!wasInputAvailable) {

@@ -10,6 +10,7 @@ import { defineSchema } from "#veryfront/schemas/index.ts";
 import {
   createRemoteMCPToolSource,
   createToolsFromRemoteDefinitions,
+  dynamicTool,
   type RemoteToolSource,
   tool,
   toolRegistry,
@@ -18,6 +19,7 @@ import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import {
   executeConfiguredTool,
   getAvailableTools,
+  isDynamicTool,
   parseToolArgs,
   resolveConfiguredTool,
 } from "./tool-helpers.ts";
@@ -206,6 +208,31 @@ describe("tool-helpers", () => {
       );
 
       assertEquals(resolvedTool, sharedTool);
+      toolRegistryInternal.clearAll();
+    });
+  });
+
+  describe("isDynamicTool", () => {
+    it("flags a tool when either the agent config or the project registry marks it dynamic", () => {
+      toolRegistryInternal.clearAll();
+      const dynamicSearch = dynamicTool({
+        id: "search",
+        description: "Search",
+        inputSchema: {},
+        execute: () => ({}),
+      });
+      const localSearch = tool({
+        id: "search",
+        description: "Search",
+        inputSchema: defineSchema((v) => v.object({}))(),
+        execute: async () => ({}),
+      });
+
+      assertEquals(isDynamicTool("search", { search: dynamicSearch }), true);
+      assertEquals(isDynamicTool("search", { search: localSearch }), false);
+      toolRegistry.register("search", dynamicSearch);
+      assertEquals(isDynamicTool("search", { search: localSearch }), true);
+      assertEquals(isDynamicTool("search"), true);
       toolRegistryInternal.clearAll();
     });
   });
