@@ -38,7 +38,13 @@ function buildContent(
     minItems = 0,
     maxBytes = 262_144,
     maxTextCharacters = DECISION_QUESTION_MAX_TEXT_CHARACTERS,
-  }: { minItems?: number; maxBytes?: number; maxTextCharacters?: number } = {},
+    maxTextPartCharacters = maxTextCharacters,
+  }: {
+    minItems?: number;
+    maxBytes?: number;
+    maxTextCharacters?: number;
+    maxTextPartCharacters?: number;
+  } = {},
 ): string | Record<string, unknown>[] {
   if (typeof value === "string") {
     if (value.length > maxTextCharacters) {
@@ -50,8 +56,8 @@ function buildContent(
     const item = readRecord(part);
     if (item?.type === "text") {
       requireString(item.text, "Decision text");
-      if (item.text.length > maxTextCharacters) {
-        throw new TypeError(`Decision text exceeds ${maxTextCharacters} characters`);
+      if (item.text.length > maxTextPartCharacters) {
+        throw new TypeError(`Decision text exceeds ${maxTextPartCharacters} characters`);
       }
       return { type: "input_text", text: item.text };
     }
@@ -110,7 +116,10 @@ function buildQuestions(value: unknown): {
     names.add(item.name);
     const common = {
       name: item.name,
-      instructions: buildContent(item.instructions, { minItems: 1 }),
+      instructions: buildContent(item.instructions, {
+        minItems: 1,
+        maxTextPartCharacters: DECISION_INPUT_MAX_TEXT_CHARACTERS,
+      }),
     };
     if (item.type === "predicate") return { ...common, type: "predicate" };
     if (item.type === "choice") {
@@ -130,37 +139,37 @@ function probability(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1;
 }
 
-function invalidResponse(): ProviderRequestError {
+function invalidResponse(provider: string): ProviderRequestError {
   return new ProviderRequestError({
-    provider: "openai",
+    provider,
     status: 200,
     retryable: false,
-    message: "OpenAI decisions returned an invalid successful response",
+    message: `${provider} decisions returned an invalid successful response`,
   });
 }
 
-function readAnswer(value: unknown, question: DecisionQuestion): DecisionAnswer {
+function readAnswer(value: unknown, question: DecisionQuestion, provider: string): DecisionAnswer {
   const answer = readRecord(value);
-  if (!answer || answer.name !== question.name) throw invalidResponse();
+  if (!answer || answer.name !== question.name) throw invalidResponse(provider);
   const name = question.name;
   if (answer.type === "refusal") return { type: "refusal", name };
-  if (answer.type !== question.type) throw invalidResponse();
+  if (answer.type !== question.type) throw invalidResponse(provider);
   if (question.type === "predicate") {
-    if (!probability(answer.probability)) throw invalidResponse();
+    if (!probability(answer.probability)) throw invalidResponse(provider);
     return { type: "predicate", name, probability: answer.probability };
   }
   if (!probability(answer.confidence) || !Array.isArray(answer.probabilities)) {
-    throw invalidResponse();
+    throw invalidResponse(provider);
   }
   if (question.type === "choice") {
     const expected = new Set(question.choices.map((option) => option.value));
-    if (!expected.has(answer.choice as string | boolean)) throw invalidResponse();
+    if (!expected.has(answer.choice as string | boolean)) throw invalidResponse(provider);
     const probabilities = answer.probabilities.map((entry) => {
       const item = readRecord(entry);
       if (
         !item || !expected.delete(item.value as string | boolean) || !probability(item.probability)
       ) {
-        throw invalidResponse();
+        throw invalidResponse(provider);
       }
       return { value: item.value as string | boolean, probability: item.probability };
     });
@@ -175,14 +184,14 @@ function readAnswer(value: unknown, question: DecisionQuestion): DecisionAnswer 
   if (
     typeof answer.score !== "number" || !Number.isFinite(answer.score) || answer.score < 0 ||
     answer.score > question.levels.length - 1
-  ) throw invalidResponse();
+  ) throw invalidResponse(provider);
   const expected = new Set(question.levels.map((_, index) => index));
   const probabilities = answer.probabilities.map((entry) => {
     const item = readRecord(entry);
     if (
       !item || !expected.delete(item.value as number) || !probability(item.probability) ||
       item.label !== question.levels[item.value as number]?.label
-    ) throw invalidResponse();
+    ) throw invalidResponse(provider);
     return {
       value: item.value as number,
       label: item.label as string,
@@ -192,35 +201,39 @@ function readAnswer(value: unknown, question: DecisionQuestion): DecisionAnswer 
   return { type: "score", name, score: answer.score, confidence: answer.confidence, probabilities };
 }
 
-function tokenCount(value: unknown): number {
+function tokenCount(value: unknown, provider: string): number {
   if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
-    throw invalidResponse();
+    throw invalidResponse(provider);
   }
   return value;
 }
 
-function readResult(payload: unknown, questions: readonly DecisionQuestion[]): DecisionResult {
+function readResult(
+  payload: unknown,
+  questions: readonly DecisionQuestion[],
+  provider: string,
+): DecisionResult {
   const body = readRecord(payload);
   const usage = readRecord(body?.usage);
   if (
     !body || typeof body.model !== "string" || !body.model || !usage ||
     !Array.isArray(body.answers) || body.answers.length !== questions.length
-  ) throw invalidResponse();
+  ) throw invalidResponse(provider);
   const details = readRecord(usage.input_tokens_details);
   const answers = body.answers;
   return {
     model: body.model,
-    answers: questions.map((question, index) => readAnswer(answers[index], question)),
+    answers: questions.map((question, index) => readAnswer(answers[index], question, provider)),
     usage: {
-      inputTokens: tokenCount(usage.input_tokens),
-      outputTokens: tokenCount(usage.output_tokens),
-      totalTokens: tokenCount(usage.total_tokens),
+      inputTokens: tokenCount(usage.input_tokens, provider),
+      outputTokens: tokenCount(usage.output_tokens, provider),
+      totalTokens: tokenCount(usage.total_tokens, provider),
       ...(details?.cached_tokens === undefined
         ? {}
-        : { cachedInputTokens: tokenCount(details.cached_tokens) }),
+        : { cachedInputTokens: tokenCount(details.cached_tokens, provider) }),
       ...(details?.cache_write_tokens === undefined
         ? {}
-        : { cacheCreationInputTokens: tokenCount(details.cache_write_tokens) }),
+        : { cacheCreationInputTokens: tokenCount(details.cache_write_tokens, provider) }),
     },
   };
 }
@@ -236,7 +249,9 @@ export function createOpenAIDecisionsRuntime(
   const url = getOpenAIDecisionsUrl(config.baseURL);
   const apiKey = config.credential;
   const fetchImpl = config.fetch ?? createOriginBoundOutboundFetch(url);
-  const providerLabel = config.name ?? "openai";
+  const providerLabel = typeof config.name === "string" && config.name.trim()
+    ? config.name.trim()
+    : "openai";
   return {
     provider: providerLabel,
     modelId,
@@ -280,7 +295,7 @@ export function createOpenAIDecisionsRuntime(
           }),
         }),
       });
-      return readResult(payload, questions);
+      return readResult(payload, questions, providerLabel);
     },
   };
 }

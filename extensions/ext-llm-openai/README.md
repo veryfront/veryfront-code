@@ -83,7 +83,7 @@ if (answer.type === "choice") {
 }
 ```
 
-Supply the application's OpenAI key as `openaiApiKey`. The runtime also accepts
+Supply the application's OpenAI key as `credential`. The runtime also accepts
 the provider's `baseURL` and `fetch` settings and uses the normal guarded provider
 HTTP transport. This is direct-provider support; `ai.chat`, agent model strings,
 and Veryfront Cloud gateway routing do not invoke Decisions.

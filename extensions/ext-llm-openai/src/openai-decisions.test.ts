@@ -328,6 +328,34 @@ describe("OpenAI Decisions runtime", () => {
     assertEquals(calls, 2);
   });
 
+  it("accepts a ten megabyte structured text instruction part", async () => {
+    const runtime = new OpenAIProvider().createDecisions("gpt-6-luna", {
+      credential: "test-key",
+      fetch: () => Promise.resolve(Response.json(result())),
+    });
+    await runtime.decide({
+      input: "fixture",
+      questions: [{
+        ...predicate,
+        instructions: [{ type: "text", text: "x".repeat(10_485_760) }],
+      }],
+    });
+  });
+
+  it("preserves the configured provider label for malformed responses", async () => {
+    const runtime = new OpenAIProvider().createDecisions("gpt-6-luna", {
+      credential: "test-key",
+      name: "custom-openai",
+      fetch: () => Promise.resolve(Response.json({})),
+    });
+    const error = await assertRejects(
+      () => runtime.decide(options),
+      ProviderRequestError,
+      "custom-openai decisions returned an invalid successful response",
+    );
+    assertEquals(error.provider, "custom-openai");
+  });
+
   it("accepts the documented maximum choice-question shape", async () => {
     let calls = 0;
     const questions = Array.from({ length: 400 }, (_, questionIndex) => ({
