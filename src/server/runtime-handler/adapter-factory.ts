@@ -13,6 +13,7 @@ import { createSourceSnapshotChangedError } from "#veryfront/errors/source-snaps
 import { runtime } from "#veryfront/platform/adapters/detect.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { isExtendedFSAdapter } from "#veryfront/platform/adapters/fs/wrapper.ts";
+import { StaticFileService } from "../services/static/static-file.service.ts";
 import { resolve } from "#veryfront/platform/compat/path/index.ts";
 import {
   getConfig,
@@ -206,9 +207,12 @@ async function hasPublishedStaticFile(
   }
   roots.add(joinPath(projectRoot, "public"));
   const relativePath = pathname.replace(/^\/+/, "");
-  const candidates = relativePath.length === 0
-    ? ["index.html"]
-    : [relativePath, `${relativePath.replace(/\/$/, "")}/index.html`];
+  const candidates = relativePath.length === 0 ? ["index.html"] : [
+    relativePath,
+    ...(new StaticFileService().shouldProbeIndexPage(pathname)
+      ? [`${relativePath.replace(/\/$/, "")}/index.html`]
+      : []),
+  ];
 
   for (const root of roots) {
     for (const candidate of candidates) {

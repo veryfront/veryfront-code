@@ -6,6 +6,7 @@ import { getAdapter } from "#veryfront/platform/adapters/detect.ts";
 import { mkdir, writeTextFile } from "#veryfront/platform/compat/fs.ts";
 import type { HandlerContext } from "#veryfront/types";
 import { StaticHandler } from "#veryfront/server/handlers/request/static.handler.ts";
+import { MarkdownPreviewHandler } from "#veryfront/server/handlers/preview/markdown-preview.handler.ts";
 import { SSRHandler } from "#veryfront/server/handlers/request/ssr/ssr.handler.ts";
 import { createMockSSRService } from "#veryfront/server/handlers/request/ssr/ssr.handler.test-helpers.ts";
 
@@ -15,6 +16,10 @@ async function withProject(run: (context: HandlerContext) => Promise<void>): Pro
     await writeTextFile(
       `${projectDir}/app/items/[id]/page.tsx`,
       "export default function Page() { return <p>Item</p>; }",
+    );
+    await writeTextFile(
+      `${projectDir}/app/not-found.tsx`,
+      "export default function NotFound() { return <p>Missing</p>; }",
     );
     await mkdir(`${projectDir}/public/items`, { recursive: true });
     await writeTextFile(`${projectDir}/public/items/logo.svg`, "<svg></svg>");
@@ -93,6 +98,17 @@ describe("dotted application routes", () => {
         ctx,
       );
       assertEquals(result.continue, true, "a dot must not preempt API route discovery");
+    });
+  });
+
+  it("defers a missing dotted Markdown path to a declared page before custom 404", async () => {
+    await withProject(async (ctx) => {
+      const result = await new MarkdownPreviewHandler().handle(
+        new Request("http://localhost/items/readme.md"),
+        ctx,
+      );
+      assertEquals(result.continue, true, "declared dotted pages must reach SSR");
+      assertEquals(result.response, undefined, "Markdown must not emit the custom 404");
     });
   });
 });
