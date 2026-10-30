@@ -10,6 +10,7 @@
  */
 
 import { type ExtensionLoader, orchestrateExtensions } from "veryfront/extensions";
+import { getEnvironmentConfig } from "#veryfront/config/environment-config.ts";
 import { cliLogger } from "#cli/utils";
 import { wireTracingShim } from "../../src/server/tracing-shim.ts";
 import { isJsonMode } from "./json-output.ts";
@@ -29,6 +30,7 @@ export async function setupDefaultProjectCliExtensions(
   );
   return await setupProjectCliExtensions({
     ...options,
+    setupTimeoutMs: getEnvironmentConfig().extensionSetupTimeoutMs,
     primeContracts: {
       [LLMProviderRegistryName]: createLLMProviderRegistry(),
       [EvalReportExporterRegistryName]: createEvalReportExporterRegistry(),
@@ -46,7 +48,10 @@ export async function setupDefaultProjectCliExtensions(
 export async function setupProjectCliExtensions(
   options: Parameters<typeof orchestrateExtensions>[0],
 ): Promise<ExtensionLoader> {
-  const loader = await orchestrateExtensions(options);
+  const loader = await orchestrateExtensions({
+    ...options,
+    setupTimeoutMs: options.setupTimeoutMs ?? getEnvironmentConfig().extensionSetupTimeoutMs,
+  });
   try {
     telemetryDisposals.set(loader, wireTracingShim());
   } catch (error) {

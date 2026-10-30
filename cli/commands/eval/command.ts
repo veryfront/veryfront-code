@@ -82,6 +82,7 @@ import {
 } from "#cli/outbound-fetch";
 import { runWithProviderRequestObserver } from "../../../src/provider/runtime-loader/provider-request-observer.ts";
 import { createEvalProgressReporter, type EvalProgressReporter } from "./progress.ts";
+import { getEnvironmentConfig } from "#veryfront/config/environment-config.ts";
 
 export interface EvalOptions extends EvalArgs {
   projectDir?: string;
@@ -1305,6 +1306,7 @@ async function setupEvalCliExtensions(
     logger: cliLogger.component("eval-extensions"),
     primeContracts: primeContracts.contracts,
     builtinExtensions: createEvalCliBuiltinExtensions(exporterIds),
+    setupTimeoutMs: getEnvironmentConfig().extensionSetupTimeoutMs,
   });
   return { loader, exporterRegistry: primeContracts.exporterRegistry };
 }
