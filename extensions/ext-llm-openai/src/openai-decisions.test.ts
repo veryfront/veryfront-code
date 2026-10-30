@@ -1,5 +1,5 @@
-import { assert, assertEquals, assertRejects, assertThrows } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
+import { assert, assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { DecisionCallOptions, DecisionQuestion } from "veryfront/provider/types";
 import { ProviderRateLimitError, ProviderRequestError } from "veryfront/provider/shared";
 import { createOpenAIProviderDecisions, OpenAIProvider } from "./index.ts";
@@ -324,7 +324,7 @@ describe("OpenAI Decisions runtime", () => {
       },
     });
     await runtime.decide({ input: "x".repeat(10_485_760), questions: [predicate] });
-    await runtime.decide({ input: "😀".repeat(5_000_000), questions: [predicate] });
+    await runtime.decide({ input: "😀".repeat(5_242_881), questions: [predicate] });
     assertEquals(calls, 2);
   });
 
@@ -380,6 +380,19 @@ describe("OpenAI Decisions runtime", () => {
     const output = await runtime.decide({ input: "fixture", questions });
     assertEquals(output.answers.length, 400);
     assertEquals(calls, 1);
+  });
+
+  it("accepts a valid response larger than the shared provider default", async () => {
+    const runtime = new OpenAIProvider().createDecisions("gpt-6-luna", {
+      credential: "test-key",
+      fetch: () =>
+        Promise.resolve(Response.json({
+          ...result(),
+          padding: "x".repeat(33 * 1024 * 1024),
+        })),
+    });
+    const output = await runtime.decide(options);
+    assertEquals(output.answers.length, 1);
   });
 
   it("rejects score distributions that do not identify the requested levels", async () => {

@@ -20,6 +20,13 @@ const DECISION_INPUT_MAX_SNAPSHOT_BYTES = 64 * 1024 * 1024;
 const DECISION_QUESTIONS_MAX_SNAPSHOT_BYTES = 512 * 1024 * 1024;
 const DECISION_INPUT_MAX_TEXT_CHARACTERS = 10_485_760;
 const DECISION_QUESTION_MAX_TEXT_CHARACTERS = 1_048_576;
+const DECISION_RESPONSE_MAX_BYTES = 256 * 1024 * 1024;
+
+function characterCount(value: string): number {
+  let count = 0;
+  for (const _character of value) count++;
+  return count;
+}
 
 function requireString(value: unknown, field: string): asserts value is string {
   if (typeof value !== "string") throw new TypeError(`${field} must be a string`);
@@ -47,7 +54,7 @@ function buildContent(
   } = {},
 ): string | Record<string, unknown>[] {
   if (typeof value === "string") {
-    if (value.length > maxTextCharacters) {
+    if (characterCount(value) > maxTextCharacters) {
       throw new TypeError(`Decision text exceeds ${maxTextCharacters} characters`);
     }
     return value;
@@ -56,7 +63,7 @@ function buildContent(
     const item = readRecord(part);
     if (item?.type === "text") {
       requireString(item.text, "Decision text");
-      if (item.text.length > maxTextPartCharacters) {
+      if (characterCount(item.text) > maxTextPartCharacters) {
         throw new TypeError(`Decision text exceeds ${maxTextPartCharacters} characters`);
       }
       return { type: "input_text", text: item.text };
@@ -273,7 +280,7 @@ export function createOpenAIDecisionsRuntime(
       const promptCacheKey = options.promptCacheKey;
       if (promptCacheKey !== undefined) {
         requireString(promptCacheKey, "Decision prompt cache key");
-        if (promptCacheKey.length > 64) {
+        if (characterCount(promptCacheKey) > 64) {
           throw new TypeError("Decision prompt cache key exceeds 64 characters");
         }
       }
@@ -284,6 +291,7 @@ export function createOpenAIDecisionsRuntime(
         providerKind: "openai",
         modelId,
         timeoutMs: options.timeoutMs,
+        maxResponseBytes: DECISION_RESPONSE_MAX_BYTES,
         init: createOpenAIRequestInit({
           apiKey,
           signal: options.abortSignal,
