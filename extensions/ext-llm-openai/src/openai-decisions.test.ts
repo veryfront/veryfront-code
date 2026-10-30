@@ -327,6 +327,32 @@ describe("OpenAI Decisions runtime", () => {
     assertEquals(calls, 1);
   });
 
+  it("accepts the documented maximum choice-question shape", async () => {
+    let calls = 0;
+    const questions = Array.from({ length: 400 }, (_, questionIndex) => ({
+      name: `question-${questionIndex}`,
+      type: "choice" as const,
+      instructions: "Choose one.",
+      choices: Array.from({ length: 255 }, (_, choiceIndex) => ({
+        value: `choice-${choiceIndex}`,
+      })),
+    }));
+    const runtime = new OpenAIProvider().createDecisions("gpt-6-luna", {
+      credential: "test-key",
+      fetch: () => {
+        calls++;
+        return Promise.resolve(Response.json({
+          model: "gpt-6-luna",
+          answers: questions.map((question) => ({ name: question.name, type: "refusal" })),
+          usage: { input_tokens: 1, output_tokens: 0, total_tokens: 1 },
+        }));
+      },
+    });
+    const output = await runtime.decide({ input: "fixture", questions });
+    assertEquals(output.answers.length, 400);
+    assertEquals(calls, 1);
+  });
+
   it("rejects score distributions that do not identify the requested levels", async () => {
     const question = {
       ...predicate,

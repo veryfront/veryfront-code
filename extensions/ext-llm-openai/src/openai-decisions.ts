@@ -15,6 +15,8 @@ import {
   snapshotProviderJsonValue,
 } from "veryfront/provider/shared";
 
+const DECISION_QUESTION_MAX_NODES = 1_000_000;
+
 function requireString(value: unknown, field: string): asserts value is string {
   if (typeof value !== "string") throw new TypeError(`${field} must be a string`);
 }
@@ -229,7 +231,10 @@ export function createOpenAIDecisionsRuntime(
         { maxBytes: 262_144 },
       );
       const { questions, wireQuestions } = buildQuestions(
-        snapshotProviderJsonValue(options.questions, { dropUndefinedMembers: true }),
+        snapshotProviderJsonValue(options.questions, {
+          dropUndefinedMembers: true,
+          maxNodes: DECISION_QUESTION_MAX_NODES,
+        }),
       );
       const promptCacheKey = options.promptCacheKey;
       if (promptCacheKey !== undefined) {
