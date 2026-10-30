@@ -15,11 +15,13 @@ export {
   getGoogleGenerateContentUrl,
   getGoogleStreamGenerateContentUrl,
   getOpenAIChatCompletionsUrl,
+  getOpenAIDecisionsUrl,
   getOpenAIEmbeddingUrl,
   getOpenAIResponsesUrl,
 } from "../runtime-loader/provider-endpoints.ts";
 
 // Request init builders
+export { createOriginBoundOutboundFetch } from "../../security/http/outbound-fetch.ts";
 export {
   createAnthropicRequestInit,
   createGoogleRequestInit,

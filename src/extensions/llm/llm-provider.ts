@@ -10,7 +10,7 @@
  * @module extensions/llm/llm-provider
  */
 
-import type { EmbeddingRuntime, ModelRuntime } from "#veryfront/provider/types.ts";
+import type { DecisionRuntime, EmbeddingRuntime, ModelRuntime } from "#veryfront/provider/types.ts";
 
 /** Config passed to any provider's create* method. */
 export interface LLMProviderConfig {
@@ -29,7 +29,7 @@ export interface LLMProviderConfig {
 /**
  * An LLM provider implementation. Extensions register one of these with the
  * {@link LLMProviderRegistry} during setup(). `createModel` is required;
- * `createEmbedding` and `createResponses` are optional and absent on
+ * `createEmbedding`, `createResponses`, and `createDecisions` are optional and absent on
  * providers that don't support them.
  */
 export interface LLMProvider {
@@ -38,6 +38,8 @@ export interface LLMProvider {
   createModel(modelId: string, config: LLMProviderConfig): ModelRuntime;
   createEmbedding?(modelId: string, config: LLMProviderConfig): EmbeddingRuntime;
   createResponses?(modelId: string, config: LLMProviderConfig): ModelRuntime;
+  /** Typed classification and scoring; independent of text-generation support. */
+  createDecisions?(modelId: string, config: LLMProviderConfig): DecisionRuntime;
 }
 
 /** Registry contract. Single impl created at bootstrap. */

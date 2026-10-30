@@ -53,6 +53,88 @@ const response = await ai.responses("openai/gpt-4.1", {
 });
 ```
 
+### Decisions API
+
+For classification and scoring, use a typed decision runtime. This is separate
+from chat and Responses: answers are predicates, choices, scores, or explicit
+refusals, without generated text or tool execution.
+
+```ts
+import { OpenAIProvider } from "@veryfront/ext-llm-openai";
+
+const decisions = new OpenAIProvider().createDecisions("gpt-6-luna", {
+  credential: "<API_KEY>",
+});
+const result = await decisions.decide({
+  input: "The export button fails after selecting a date range.",
+  questions: [{
+    name: "category",
+    type: "choice",
+    instructions: "Select the best category for this report.",
+    choices: [{ value: "bug" }, { value: "question" }],
+  }],
+  abortSignal: AbortSignal.timeout(10_000),
+});
+const answer = result.answers[0];
+if (answer.type === "choice") {
+  console.log(answer.choice, answer.confidence, answer.probabilities);
+} else if (answer.type === "refusal") {
+  console.log("Review this report manually.");
+}
+```
+
+Supply the application's OpenAI key as `credential`. The runtime also accepts
+the provider's `baseURL` and `fetch` settings and uses the normal guarded provider
+HTTP transport. This is direct-provider support; `ai.chat`, agent model strings,
+and Veryfront Cloud gateway routing do not invoke Decisions.
+
+`input` and question `instructions` accept text or an array of `{ type: "text",
+text }`, `{ type: "image", url }`, and `{ type: "json", data }` parts. JSON data
+must be an object or an array of objects. This initial surface does not accept
+conversation history, files, audio, explicit cache breakpoints, or tool calls.
+`promptCacheKey` partitions automatic shared-input caching. Results retain
+input, output, total, cached-input and cache-write token counts.
+
+Within the runtime limits below, use 1-400 uniquely named questions. Choices accept 2-255 distinct string or
+boolean values; scores accept 2-10 ordered `{ label, description? }` levels and
+return a score on their zero-based index scale. Answers retain request order.
+Always handle `type: "refusal"` independently from a false predicate or low score.
+Malformed responses reject the call, and HTTP failures are not automatically
+retried. Set `timeoutMs` or `abortSignal` to bound a call.
+
+This adapter supports a bounded subset of the endpoint's payload sizes. All
+limits apply together; the per-field maxima do not guarantee that their largest
+combinations fit in one call. Split large question sets into separate calls and
+use an HTTP(S) image URL when inline image data exceeds the input budget.
+
+| Scope                                                                            | Runtime limit                                                    |
+| -------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| Shared `input` snapshot                                                          | 64 MiB of canonical JSON UTF-8, 65,536 JSON values, depth 64     |
+| Entire `questions` snapshot                                                      | 512 MiB of canonical JSON UTF-8, 1,000,000 JSON values, depth 64 |
+| Each JSON part's `data`                                                          | 256 KiB of canonical JSON UTF-8, 10,000 JSON values, depth 32    |
+| Shared string input or each text part                                            | 10,485,760 Unicode code points                                   |
+| String question instructions                                                     | 1,048,576 Unicode code points                                    |
+| Model ID, question name, string choice value, score label, or option description | 1,048,576 Unicode code points                                    |
+| Content array                                                                    | At most 16,384 parts; question instructions require at least one |
+| `promptCacheKey`                                                                 | 64 Unicode code points                                           |
+| Response body                                                                    | 256 MiB                                                          |
+
+Snapshot byte counts include JSON quotes and escapes. JSON value counts include
+containers and primitive values, with the root at depth zero. Oversized requests
+reject with `TypeError` before dispatch; oversized responses reject with
+`ProviderRequestError`. These memory bounds intentionally exclude some payloads
+accepted by the upstream endpoint, including very large inline images.
+
+OpenAI currently supports `gpt-6-luna` on this endpoint. The capability is
+available as optional `LLMProvider.createDecisions`, returning `DecisionRuntime`
+from `veryfront/provider/types`. OpenAI Decisions and TypeSafe's Jev System One
+API require separate adapters: their endpoints, input fields, question maps,
+and predicate representations differ.
+
+Sources: [OpenAI Decisions](https://developers.openai.com/api/docs/guides/decisions),
+[OpenAI request/response reference](https://developers.openai.com/api/reference/resources/decisions/methods/create),
+[TypeSafe System One reference](https://docs.typesafe.ai/api/system-one).
+
 ### Hosted Web Search
 
 The agent-facing tool name is `web_search`. It resolves to the current
