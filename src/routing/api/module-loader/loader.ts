@@ -12,6 +12,7 @@ import type { VeryfrontConfig } from "#veryfront/config";
 import { createHTTPPlugin } from "./esbuild-plugin.ts";
 import {
   isSeparator,
+  redactedErrorMessage,
   redactFreeText,
   remoteOrigin,
   replaceMatches,
@@ -128,9 +129,7 @@ export function loadHandlerModule(options: LoadHostModuleOptions): Promise<APIRo
         });
         return extractAPIRouteHandlers(module);
       } catch (error: unknown) {
-        const errorMsg = redactFreeText(
-          error instanceof Error ? error.message : String(error),
-        );
+        const errorMsg = redactedErrorMessage(error);
         // The reason, not the error: its stack names host-absolute paths.
         logger.error(
           `Failed to load API handler ${projectModuleLabel(modulePath, projectDir)}:`,
@@ -188,9 +187,7 @@ export function prepareHandlerModule(options: LoadModuleOptions): Promise<Prepar
           sha256: await computeHash(source),
         });
       } catch (error: unknown) {
-        const errorMsg = redactFreeText(
-          error instanceof Error ? error.message : String(error),
-        );
+        const errorMsg = redactedErrorMessage(error);
         logger.error(
           `Failed to prepare isolated API handler ${projectModuleLabel(modulePath, projectDir)}:`,
           { reason: errorMsg },
@@ -329,9 +326,7 @@ async function loadModule(args: {
 
       logger.debug("Direct import could not resolve a specifier, bundling instead", {
         modulePath: projectModuleLabel(modulePath, projectDir),
-        error: redactFreeText(
-          error instanceof Error ? error.message : String(error),
-        ),
+        error: redactedErrorMessage(error),
       });
       return loadAndTranspileModule(
         modulePath,
@@ -1493,9 +1488,7 @@ function createNamespaceOnLoadHandler(options: {
         resolveDir: pathHelper.dirname(filePath),
       };
     } catch (error) {
-      const msg = redactFreeText(
-        error instanceof Error ? error.message : String(error),
-      );
+      const msg = redactedErrorMessage(error);
       logger.error(
         `Failed to load ${errorLabel}: ${projectModuleLabel(args.path, projectDir)}`,
         { reason: msg },
@@ -2418,8 +2411,7 @@ async function importModuleFromCode(
     return await import(`file://${tempFile}?v=${Date.now()}`);
   } catch (e: unknown) {
     // The message, not the stack: its frames name host-absolute paths.
-    const errorMessage = e instanceof Error ? e.message : String(e);
-    logger.error(`dynamic import failed: ${redactFreeText(errorMessage)}`);
+    logger.error(`dynamic import failed: ${redactedErrorMessage(e)}`);
     throw e;
   } finally {
     await fs.remove(tempDir, { recursive: true });

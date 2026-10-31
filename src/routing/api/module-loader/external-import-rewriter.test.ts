@@ -465,6 +465,36 @@ describe("external-import-rewriter", () => {
       assertEquals(out.includes(`"veryfront/knowledge"`), false);
     });
 
+    it("still falls back when the running package throws an unprintable value", async () => {
+      // The warning converts what was thrown to text; a value that cannot be
+      // converted must not abort the fallback.
+      const runningPackage = {
+        packageUrl: new URL("file:///opt/cli/node_modules/veryfront/package.json"),
+        get exports(): Record<string, unknown> {
+          throw {
+            toString() {
+              throw new Error("unprintable");
+            },
+          };
+        },
+      };
+      const fs = createFakeFileSystem({
+        "/srv/app/node_modules/veryfront/package.json": JSON.stringify({
+          exports: { "./tool": { import: "./esm/src/tool/index.js" } },
+        }),
+      });
+
+      const out = await rewriteNodeExternalImports(
+        `import { toolRegistry } from "veryfront/tool";`,
+        "/srv/app",
+        fs,
+        new Map(),
+        { loadRunningPackage: () => Promise.resolve(runningPackage) },
+      );
+
+      assertStringIncludes(out, "/srv/app/node_modules/veryfront/esm/src/tool/index.js");
+    });
+
     it("falls back to the project copy when no running package is discoverable", async () => {
       const fs = createFakeFileSystem({
         "/srv/app/node_modules/veryfront/package.json": JSON.stringify({
