@@ -15017,8 +15017,8 @@ describe("server/handlers/request/project-run-execute.handler cancellation", () 
     let polls = 0;
     const defaults = createDeps();
     const handler = new ProjectRunExecuteHandler(createDeps({
-      createWorkflowClient: async (config) => ({
-        ...await defaults.createWorkflowClient(config),
+      createWorkflowClient: async (config, options) => ({
+        ...await defaults.createWorkflowClient(config, options),
         cancel: async () => {
           cancellations++;
         },
