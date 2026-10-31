@@ -2013,18 +2013,21 @@ import {
 
 #### Types
 
-| Name                                     | Description | Source                                                                                          |
-| ---------------------------------------- | ----------- | ----------------------------------------------------------------------------------------------- |
-| `AgentCatalogAction`                     |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/identity-contracts.ts) |
-| `AgentCatalogKind`                       |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/identity-contracts.ts) |
-| `InstalledProjectAgentExecutionIdentity` |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/identity-contracts.ts) |
-| `InstalledProjectAgentRunSnapshot`       |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/identity-contracts.ts) |
-| `ProjectAgentExecutionIdentity`          |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/identity-contracts.ts) |
-| `ProjectAgentExecutionKind`              |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/identity-contracts.ts) |
-| `ProjectAgentKind`                       |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/identity-contracts.ts) |
-| `ProjectAgentRunSnapshot`                |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/identity-contracts.ts) |
-| `SourceProjectAgentExecutionIdentity`    |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/identity-contracts.ts) |
-| `SourceProjectAgentRunSnapshot`          |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/identity-contracts.ts) |
+| Name                                     | Description                                                                   | Source                                                                                          |
+| ---------------------------------------- | ----------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `AgentCatalogAction`                     |                                                                               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/identity-contracts.ts) |
+| `AgentCatalogKind`                       |                                                                               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/identity-contracts.ts) |
+| `AgentManagementError`                   | A source problem belongs to its agent resource, including never-valid files.  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/identity-contracts.ts) |
+| `AgentManagementItem`                    | Management metadata. Execution protocol cards retain their separate contract. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/identity-contracts.ts) |
+| `AgentManagementList`                    | Shared management list response from REST and platform tools.                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/identity-contracts.ts) |
+| `InstalledProjectAgentExecutionIdentity` |                                                                               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/identity-contracts.ts) |
+| `InstalledProjectAgentRunSnapshot`       |                                                                               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/identity-contracts.ts) |
+| `ProjectAgentExecutionIdentity`          |                                                                               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/identity-contracts.ts) |
+| `ProjectAgentExecutionKind`              |                                                                               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/identity-contracts.ts) |
+| `ProjectAgentKind`                       |                                                                               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/identity-contracts.ts) |
+| `ProjectAgentRunSnapshot`                |                                                                               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/identity-contracts.ts) |
+| `SourceProjectAgentExecutionIdentity`    |                                                                               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/identity-contracts.ts) |
+| `SourceProjectAgentRunSnapshot`          |                                                                               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/identity-contracts.ts) |
 
 ### `veryfront/agent/managed-broker`
 

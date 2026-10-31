@@ -88,3 +88,30 @@ export function isProjectAgentExecutionKind(
     value as ProjectAgentExecutionKind,
   );
 }
+
+/** A source problem belongs to its agent resource, including never-valid files. */
+export interface AgentManagementError {
+  code: string;
+  message: string;
+  line: number | null;
+  column: number | null;
+}
+
+/** Management metadata. Execution protocol cards retain their separate contract. */
+export interface AgentManagementItem {
+  id: string;
+  name: string;
+  description: string | null;
+  model: string | null;
+  avatar_url: string | null;
+  source_type: "project" | "catalog_install";
+  source_path: string | null;
+  edit_mode: "structured" | "source_only" | null;
+  can_run: boolean;
+  errors: AgentManagementError[];
+}
+
+/** Shared management list response from REST and platform tools. */
+export interface AgentManagementList {
+  data: AgentManagementItem[];
+}
