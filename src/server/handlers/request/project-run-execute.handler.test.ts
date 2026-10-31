@@ -15011,6 +15011,173 @@ describe("server/handlers/request/project-run-execute.handler cancellation", () 
     });
   });
 
+  for (const mode of ["initial", "timed-out resume", "settled resume"] as const) {
+    const resume = mode !== "initial";
+    it(`keeps the workflow backend live when cancellation arrives after its result boundary (${mode})`, async () => {
+      const decisionEntered = Promise.withResolvers<void>();
+      const releaseDecision = Promise.withResolvers<void>();
+      const evidenceRequested = Promise.withResolvers<void>();
+      const rawStopped = Promise.withResolvers<boolean>();
+      const statusResponse = Promise.withResolvers<Response>();
+      const cancelled = Promise.withResolvers<void>();
+      const destroyed = Promise.withResolvers<void>();
+      const acknowledged = Promise.withResolvers<void>();
+      let clock = 0;
+      let resumed = false;
+      let backendDestroyed = false;
+      let cancelledDestroyedBackend = false;
+      let acknowledgements = 0;
+      const handler = new ProjectRunExecuteHandler(createDeps({
+        now: () => clock,
+        sleep: async () => {
+          if (resume) clock += 15 * 60 * 1_000 + 1;
+        },
+        workflowResumeTimeoutMs: 5,
+        createWorkflowClient: () => ({
+          statePersistence: "durable",
+          register: () => {},
+          start: async () => ({ runId: "run_late_boundary_stop", settled: async () => {} }),
+          getRun: async () =>
+            !resume || !resumed
+              ? { status: "waiting", pendingApprovals: [{ id: "approval", nodeId: "review" }] }
+              : { status: "running" },
+          getPendingEventWaits: async () => [],
+          approve: async () => {
+            decisionEntered.resolve();
+            await releaseDecision.promise;
+            resumed = true;
+          },
+          cancel: async () => {
+            cancelledDestroyedBackend = backendDestroyed;
+            cancelled.resolve();
+          },
+          waitForExecutionStopped: () => {
+            evidenceRequested.resolve();
+            return rawStopped.promise;
+          },
+          destroy: async () => {
+            backendDestroyed = true;
+            destroyed.resolve();
+          },
+        }),
+      }));
+      const token = `header.${
+        btoa(JSON.stringify({ exp: Math.floor(Date.now() / 1_000) + 60 }))
+      }.signature`;
+      const signed = await signedRequest("/api/control-plane/runs/run_late_boundary_stop/execute", {
+        runId: "run_late_boundary_stop",
+        kind: "workflow",
+        target: "workflow:publish",
+        projectId: "proj-1",
+        ...(resume
+          ? { resume: { type: "approval", node_id: "review", approved: true, approver: "user:u1" } }
+          : {}),
+      }, { "x-veryfront-run-stop-token": token });
+      await withMockFetch(async (url) => {
+        if (String(url).endsWith("/cancellation-status")) return await statusResponse.promise;
+        acknowledgements++;
+        acknowledged.resolve();
+        return Response.json({ acknowledged: true });
+      }, async () => {
+        try {
+          if (mode === "settled resume") releaseDecision.resolve();
+          const pending = handler.handle(signed.request, createCtx(signed.publicKeyPem));
+          if (resume) await waitForBarrier(decisionEntered.promise, "resume decision not entered");
+          const result = await waitForBarrier(pending, "result boundary blocked the HTTP response");
+          assertExists(result.response);
+          const body = await result.response.json();
+          if (mode === "settled resume") assertEquals(body.success, false);
+          else assertEquals(body.status, "waiting");
+          releaseDecision.resolve();
+          await waitForBarrier(evidenceRequested.promise, "raw stop evidence not captured");
+          // Resume/result settlement precedes the affirmative poll. Actual raw
+          // work is still held, so cleanup cannot invalidate its cancel backend.
+          await delay(0);
+          statusResponse.resolve(Response.json({ stop_requested: true }));
+          await waitForBarrier(cancelled.promise, "late canonical cancellation was not delivered");
+          assertEquals(
+            cancelledDestroyedBackend,
+            false,
+            "cancellation used an already destroyed backend",
+          );
+          assertEquals(backendDestroyed, false);
+          assertEquals(acknowledgements, 0);
+          rawStopped.resolve(true);
+          await waitForBarrier(destroyed.promise, "actually stopped backend was not destroyed");
+          await waitForBarrier(acknowledged.promise, "actual stop was not acknowledged");
+          assertEquals(acknowledgements, 1);
+        } finally {
+          releaseDecision.resolve();
+          rawStopped.resolve(true);
+          statusResponse.resolve(Response.json({ stop_requested: false }));
+          await destroyed.promise;
+        }
+      });
+    });
+  }
+
+  for (const retired of ["missing endpoint", "expired capability"] as const) {
+    it(`cleans up once without restarting a cancellation observer after ${retired}`, async () => {
+      const rawStopped = Promise.withResolvers<boolean>();
+      const destroyed = Promise.withResolvers<void>();
+      let polls = 0;
+      let destroys = 0;
+      let acknowledgements = 0;
+      let cancellations = 0;
+      const handler = new ProjectRunExecuteHandler(createDeps({
+        createWorkflowClient: () => ({
+          register: () => {},
+          start: async () => ({ runId: "run_retired_observer", settled: async () => {} }),
+          getRun: async () => ({ status: "completed" }),
+          cancel: async () => {
+            cancellations++;
+          },
+          waitForExecutionStopped: () => rawStopped.promise,
+          destroy: async () => {
+            destroys++;
+            destroyed.resolve();
+          },
+        }),
+      }));
+      const exp = Math.floor(Date.now() / 1_000) + (retired === "expired capability" ? -60 : 60);
+      const token = `header.${btoa(JSON.stringify({ exp }))}.signature`;
+      const signed = await signedRequest("/api/control-plane/runs/run_retired_observer/execute", {
+        runId: "run_retired_observer",
+        kind: "workflow",
+        target: "workflow:publish",
+        projectId: "proj-1",
+      }, { "x-veryfront-run-stop-token": token });
+      await withMockFetch(async (url) => {
+        if (String(url).endsWith("/cancellation-status")) {
+          polls++;
+          return new Response(null, { status: 404 });
+        }
+        acknowledgements++;
+        return Response.json({ acknowledged: true });
+      }, async () => {
+        try {
+          const result = await waitForBarrier(
+            handler.handle(signed.request, createCtx(signed.publicKeyPem)),
+            "retired observer delayed the completed response",
+          );
+          assertExists(result.response);
+          assertEquals((await result.response.json()).success, true);
+          assertEquals(destroys, retired === "expired capability" ? 1 : 0);
+          rawStopped.resolve(true);
+          await waitForBarrier(destroyed.promise, "stopped client was not destroyed");
+          await delay(20);
+          assertEquals(destroys, 1);
+          assertEquals(polls, retired === "missing endpoint" ? 1 : 0);
+          assertEquals(cancellations, 0);
+          assertEquals(acknowledgements, 0);
+        } finally {
+          rawStopped.resolve(true);
+          await destroyed.promise;
+        }
+      });
+    });
+  }
+
   it("retires a completed workflow before a late poll can cancel its owner client", async () => {
     const statusResponse = Promise.withResolvers<Response>();
     let cancellations = 0;

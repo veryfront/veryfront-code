@@ -2124,6 +2124,7 @@ async function executeWorkflowRun(
   onExecutionOwned?: () => void,
   captureSchemas?: HostSchemaCapture,
   ownerStopSignal?: AbortSignal,
+  retainCancellationClient = false,
 ): Promise<ProjectRunExecuteResponse> {
   let executionEntered = false;
   try {
@@ -2186,6 +2187,7 @@ async function executeWorkflowRun(
         onCompleted,
         onExecutionOwned,
         ownerStopSignal,
+        retainCancellationClient,
       );
     } catch (error) {
       // A failure after discovery still ran against the declared schemas; keep their identity.
@@ -2221,6 +2223,7 @@ async function runDiscoveredWorkflow(
   onCompleted?: () => void,
   onExecutionOwned?: () => void,
   ownerStopSignal?: AbortSignal,
+  retainCancellationClient = false,
 ): Promise<ProjectRunExecuteResponse> {
   // Only a durable run can pause: an ephemeral one has nothing to resume from.
   let pauseChecksEnabled = false;
@@ -2263,7 +2266,7 @@ async function runDiscoveredWorkflow(
   }
   pauseChecksEnabled = client.statePersistence === "durable";
   let executionStarted = false;
-  let preserveClientUntilStopped = false;
+  let preserveClientUntilStopped = retainCancellationClient;
   let activeResume: Promise<unknown> | undefined;
   let stopped: Promise<boolean> | undefined;
   let stopAcknowledgement: Promise<void> | undefined;
@@ -2467,11 +2470,11 @@ async function runDiscoveredWorkflow(
             cancelFromPolling,
           );
       }
-      // Canonical cancellation can establish a terminal boundary while a raw
-      // callback still runs. Preserve its backend until actual stop evidence;
-      // ordinary completed/waiting boundaries retain existing cleanup semantics.
-      preserveClientUntilStopped = ownerStopSignal !== undefined &&
-        isAbortSignalAborted(ownerStopSignal);
+      // An eligible observer may deliver cancellation after this result boundary.
+      // Keep its backend live until stop evidence settles, rather than taking
+      // a one-time snapshot of whether cancellation has already arrived.
+      preserveClientUntilStopped = retainCancellationClient ||
+        (ownerStopSignal !== undefined && isAbortSignalAborted(ownerStopSignal));
     }
     const durationMs = Math.max(0, deps.now() - startedAt);
 
@@ -2587,9 +2590,13 @@ async function runDiscoveredWorkflow(
       // Do not join this continuation to the timeout response.
       const finishResume = async () => {
         const evidence = captureStopped();
-        // Canonical owner cancellation can finish the resume before a raw tool
-        // settles; its backend must remain available through actual stop.
-        if (ownerStopSignal && isAbortSignalAborted(ownerStopSignal)) await evidence;
+        // A resumed result can settle before raw work. A retained observer may
+        // still affirm cancellation, so its backend must remain available.
+        if (
+          retainCancellationClient || (ownerStopSignal && isAbortSignalAborted(ownerStopSignal))
+        ) {
+          await evidence;
+        }
         await destroyWorkflowClient(
           client,
           request.runId,
@@ -3423,6 +3430,8 @@ async function cancelAcknowledgementBody(response: Response): Promise<void> {
   if (body) await ReflectApply(ReadableStreamCancel, body, []);
 }
 
+const RunStopObserverNow = Date.now;
+
 /** Independent evidence of a settled execution, never evidence from abort alone. */
 function createRunStopAcknowledger(
   req: Request,
@@ -3432,7 +3441,7 @@ function createRunStopAcknowledger(
   onCancellationRequested?: () => void,
 ): {
   acknowledge: () => Promise<void>;
-  startObserver: () => void;
+  startObserver: () => boolean;
   disposeObserver: () => void;
 } | undefined {
   const rawToken = readIngressCredential(req, INGRESS_RUN_STOP_TOKEN_HEADER);
@@ -3461,9 +3470,9 @@ function createRunStopAcknowledger(
     stopObservation();
   };
   const startObserver = () => {
-    if (observerStarted || observerDisposed) return;
+    if (observerStarted || observerDisposed) return false;
     observerStarted = true;
-    if (onCancellationRequested && expiresAt !== undefined) {
+    if (onCancellationRequested && expiresAt !== undefined && expiresAt > RunStopObserverNow()) {
       stopObservation = observeProjectRunCancellation({
         fetch: transport,
         url: cancellationStatusUrl,
@@ -3476,7 +3485,9 @@ function createRunStopAcknowledger(
           onCancellationRequested();
         },
       });
+      return true;
     }
+    return false;
   };
   const lifetime = getRequestTransportLifetime(req);
   const signal = executionSignal ?? lifetime?.signal ??
@@ -5910,6 +5921,7 @@ async function executeProjectRun(
   onExecutionOwned?: () => void,
   captureSchemas?: HostSchemaCapture,
   ownerStopSignal?: AbortSignal,
+  retainCancellationClient = false,
 ): Promise<ProjectRunExecuteResponse> {
   if (
     captureSchemas && request.kind === "task" &&
@@ -6042,6 +6054,7 @@ async function executeProjectRun(
       onExecutionOwned,
       captureSchemas,
       ownerStopSignal,
+      retainCancellationClient,
     );
   };
   try {
@@ -6321,7 +6334,7 @@ export class ProjectRunExecuteHandler extends BaseHandler {
             let executionOwned = false;
             try {
               // All handler setup has completed; no observer survives failed admission setup.
-              stopCallbacks?.startObserver();
+              const retainCancellationClient = stopCallbacks?.startObserver() ?? false;
               const execute = async () => {
                 await runtimeOwnershipProbeSession?.beforeExecute();
                 if (inferenceToken !== undefined && shouldObserveProjectRunRuntime(request)) {
@@ -6356,6 +6369,7 @@ export class ProjectRunExecuteHandler extends BaseHandler {
                   },
                   captureSchemas,
                   stopController.signal,
+                  retainCancellationClient,
                 );
               };
               const limited = enforceRunOutputLimit(
