@@ -353,15 +353,7 @@ export async function mirrorDefaultResearchRunArtifact(input: {
     ? privateText.replace(input.toolInput.path, /^\/+/, "")
     : null;
   const resultPath = extractToolResultPath(input.toolResult);
-  const contextArtifacts = input.taskContext.defaultResearchArtifacts;
-  const resultArtifacts = buildDefaultArtifactsFromResultPath({
-    resultPath,
-    parentRunId: input.taskContext.parentRunId,
-  });
-  const defaultArtifacts = resultArtifacts &&
-      !currentReportPathMatches(contextArtifacts, resultPath)
-    ? resultArtifacts
-    : contextArtifacts ?? resultArtifacts;
+  const defaultArtifacts = resolveResearchMirrorArtifacts(input, resultPath);
   if (!defaultArtifacts) {
     return;
   }
@@ -398,6 +390,21 @@ export async function mirrorDefaultResearchRunArtifact(input: {
     }
     throw error;
   }
+}
+
+function resolveResearchMirrorArtifacts(
+  input: { taskContext: DefaultResearchArtifactContext },
+  resultPath: string | null,
+) {
+  const contextArtifacts = input.taskContext.defaultResearchArtifacts;
+  const resultArtifacts = buildDefaultArtifactsFromResultPath({
+    resultPath,
+    parentRunId: input.taskContext.parentRunId,
+  });
+  return resultArtifacts &&
+      !currentReportPathMatches(contextArtifacts, resultPath)
+    ? resultArtifacts
+    : contextArtifacts ?? resultArtifacts;
 }
 
 /** Handler for create default research run artifact mirror. */
