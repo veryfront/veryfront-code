@@ -2467,9 +2467,11 @@ async function runDiscoveredWorkflow(
             cancelFromPolling,
           );
       }
-      // An established terminal/pause boundary retains existing cleanup semantics.
-      // Only an unfinished dispatch keeps its owner backend after the HTTP response.
-      preserveClientUntilStopped = false;
+      // Canonical cancellation can establish a terminal boundary while a raw
+      // callback still runs. Preserve its backend until actual stop evidence;
+      // ordinary completed/waiting boundaries retain existing cleanup semantics.
+      preserveClientUntilStopped = ownerStopSignal !== undefined &&
+        isAbortSignalAborted(ownerStopSignal);
     }
     const durationMs = Math.max(0, deps.now() - startedAt);
 

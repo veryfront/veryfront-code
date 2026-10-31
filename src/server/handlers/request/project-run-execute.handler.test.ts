@@ -15056,112 +15056,138 @@ describe("server/handlers/request/project-run-execute.handler cancellation", () 
     });
   });
 
-  it("keeps cancellation delivery after a workflow HTTP timeout until owned work actually settles", async () => {
-    let clock = 0;
-    let stopRequested = false;
-    let cancellations = 0;
-    let acknowledgements = 0;
-    const entered = Promise.withResolvers<void>();
-    const release = Promise.withResolvers<unknown>();
-    const cancelled = Promise.withResolvers<void>();
-    const acknowledged = Promise.withResolvers<void>();
-    const destroyed = Promise.withResolvers<void>();
-    let toolSettled = false;
-    class ObservedBackend extends MemoryBackend {
-      override async destroy(): Promise<void> {
-        await super.destroy();
-        destroyed.resolve();
+  for (const activePolling of [false, true]) {
+    it(`retains the actual workflow backend through canonical cancellation (active polling: ${activePolling})`, async () => {
+      let clock = 0;
+      let stopRequested = false;
+      let cancellations = 0;
+      let acknowledgements = 0;
+      const entered = Promise.withResolvers<void>();
+      const release = Promise.withResolvers<unknown>();
+      const cancelled = Promise.withResolvers<void>();
+      const acknowledged = Promise.withResolvers<void>();
+      const destroyed = Promise.withResolvers<void>();
+      let toolSettled = false;
+      let backendDestroyed = false;
+      class ObservedBackend extends MemoryBackend {
+        override async destroy(): Promise<void> {
+          backendDestroyed = true;
+          await super.destroy();
+          destroyed.resolve();
+        }
       }
-    }
-    const backend = new ObservedBackend();
-    const definition = workflow({
-      id: "publish",
-      steps: [step("hold", {
-        tool: tool({
-          id: "hold",
-          description: "Hold the actual workflow operation through the HTTP timeout",
-          inputSchema: defineSchema((v) => v.object({}).passthrough())(),
-          execute: async (_input, context) => {
-            context?.abortSignal?.addEventListener("abort", () => {
-              cancellations++;
-              cancelled.resolve();
-            }, { once: true });
-            entered.resolve();
-            const result = await release.promise;
-            toolSettled = true;
-            return result;
-          },
-        }),
-      })],
-    }).definition as unknown as WorkflowDefinition;
-    const handler = new ProjectRunExecuteHandler(createDeps({
-      now: () => clock,
-      sleep: async () => {
-        await entered.promise;
-        clock += 15 * 60 * 1_000 + 1;
-      },
-      findWorkflowById: async () => ({
+      const backend = new ObservedBackend();
+      const definition = workflow({
         id: "publish",
-        filePath: "workflows/publish.ts",
-        exportName: "default",
-        definition,
-      }),
-      createWorkflowClient: (config) =>
-        createWorkflowClient({
-          ...config,
-          backend,
-          executor: { ...config?.executor, cancellationGracePeriod: 0 },
+        steps: [step("hold", {
+          tool: tool({
+            id: "hold",
+            description: "Hold the actual workflow operation through the HTTP timeout",
+            inputSchema: defineSchema((v) => v.object({}).passthrough())(),
+            execute: async (_input, context) => {
+              context?.abortSignal?.addEventListener("abort", () => {
+                cancellations++;
+                cancelled.resolve();
+              }, { once: true });
+              entered.resolve();
+              const result = await release.promise;
+              toolSettled = true;
+              return result;
+            },
+          }),
+        })],
+      }).definition as unknown as WorkflowDefinition;
+      const handler = new ProjectRunExecuteHandler(createDeps({
+        now: () => clock,
+        sleep: async () => {
+          await entered.promise;
+          if (activePolling) await delay(10);
+          else clock += 15 * 60 * 1_000 + 1;
+        },
+        findWorkflowById: async () => ({
+          id: "publish",
+          filePath: "workflows/publish.ts",
+          exportName: "default",
+          definition,
         }),
-    }));
-    const token = `header.${
-      btoa(JSON.stringify({ exp: Math.floor(Date.now() / 1_000) + 60 }))
-    }.signature`;
-    const signed = await signedRequest(
-      "/api/control-plane/runs/run_observer_workflow_timeout/execute",
-      {
-        runId: "run_observer_workflow_timeout",
-        kind: "workflow",
-        target: "workflow:publish",
-        projectId: "proj-1",
-      },
-      { "x-veryfront-run-stop-token": token },
-    );
-    await withMockFetch(async (url) => {
-      if (String(url).endsWith("/cancellation-status")) {
-        return Response.json({ stop_requested: stopRequested });
-      }
-      assertEquals(toolSettled, true);
-      acknowledgements++;
-      acknowledged.resolve();
-      return Response.json({ acknowledged: true });
-    }, async () => {
-      try {
-        const result = await handler.handle(signed.request, createCtx(signed.publicKeyPem));
-        assertExists(result.response);
-        assertEquals((await result.response.json()).success, false);
-        assertEquals(acknowledgements, 0);
-        stopRequested = true;
-        await waitForBarrier(
-          cancelled.promise,
-          "timed-out workflow lost its owner cancellation delivery",
-          5_000,
-        );
-        assertEquals(signed.request.signal.aborted, false);
-        assertEquals(cancellations, 1);
-        assertEquals(acknowledgements, 0);
-        release.resolve({ ok: true });
-        await waitForBarrier(
-          acknowledged.promise,
-          "settled workflow cancellation was not acknowledged",
-          5_000,
-        );
-        assertEquals(acknowledgements, 1);
-        await waitForBarrier(destroyed.promise, "settled workflow client was not destroyed");
-      } finally {
-        release.resolve({ ok: true });
-      }
+        createWorkflowClient: (config) =>
+          createWorkflowClient({
+            ...config,
+            backend,
+            executor: { ...config?.executor, cancellationGracePeriod: 0 },
+          }),
+      }));
+      const token = `header.${
+        btoa(JSON.stringify({ exp: Math.floor(Date.now() / 1_000) + 60 }))
+      }.signature`;
+      const signed = await signedRequest(
+        "/api/control-plane/runs/run_observer_workflow_timeout/execute",
+        {
+          runId: "run_observer_workflow_timeout",
+          kind: "workflow",
+          target: "workflow:publish",
+          projectId: "proj-1",
+        },
+        { "x-veryfront-run-stop-token": token },
+      );
+      await withMockFetch(async (url) => {
+        if (String(url).endsWith("/cancellation-status")) {
+          return Response.json({ stop_requested: stopRequested });
+        }
+        assertEquals(toolSettled, true);
+        acknowledgements++;
+        acknowledged.resolve();
+        return Response.json({ acknowledged: true });
+      }, async () => {
+        try {
+          const pending = handler.handle(signed.request, createCtx(signed.publicKeyPem));
+          await waitForBarrier(entered.promise, "real workflow tool was not admitted");
+          if (activePolling) {
+            stopRequested = true;
+            await waitForBarrier(
+              cancelled.promise,
+              "active workflow tool did not observe cancellation",
+              5_000,
+            );
+            await delay(20);
+            assertEquals(
+              backendDestroyed,
+              false,
+              "backend destroyed before raw tool actually stopped",
+            );
+          }
+          const result = await waitForBarrier(pending, "workflow did not answer", 5_000);
+          assertExists(result.response);
+          assertEquals((await result.response.json()).success, false);
+          assertEquals(acknowledgements, 0);
+          stopRequested = true;
+          await waitForBarrier(
+            cancelled.promise,
+            "timed-out workflow lost its owner cancellation delivery",
+            5_000,
+          );
+          assertEquals(signed.request.signal.aborted, false);
+          assertEquals(cancellations, 1);
+          assertEquals(acknowledgements, 0);
+          assertEquals(
+            backendDestroyed,
+            false,
+            "backend destroyed before raw tool actually stopped",
+          );
+          release.resolve({ ok: true });
+          await waitForBarrier(
+            acknowledged.promise,
+            "settled workflow cancellation was not acknowledged",
+            5_000,
+          );
+          assertEquals(acknowledgements, 1);
+          await waitForBarrier(destroyed.promise, "settled workflow client was not destroyed");
+        } finally {
+          release.resolve({ ok: true });
+        }
+      });
     });
-  });
+  }
 
   it("retires a successful attempt before a late cancellation response can affect it or a successor", async () => {
     const statusResponse = Promise.withResolvers<Response>();
