@@ -2263,6 +2263,7 @@ async function runDiscoveredWorkflow(
   }
   pauseChecksEnabled = client.statePersistence === "durable";
   let executionStarted = false;
+  let preserveClientUntilStopped = false;
   let activeResume: Promise<unknown> | undefined;
   let stopped: Promise<boolean> | undefined;
   let stopAcknowledgement: Promise<void> | undefined;
@@ -2413,6 +2414,7 @@ async function runDiscoveredWorkflow(
         }
         throw error;
       }
+      preserveClientUntilStopped = true;
       let cancellation: Promise<void> | undefined;
       const cancelLocalRun = () =>
         cancellation ??= (async () => {
@@ -2465,6 +2467,9 @@ async function runDiscoveredWorkflow(
             cancelFromPolling,
           );
       }
+      // An established terminal/pause boundary retains existing cleanup semantics.
+      // Only an unfinished dispatch keeps its owner backend after the HTTP response.
+      preserveClientUntilStopped = false;
     }
     const durationMs = Math.max(0, deps.now() - startedAt);
 
@@ -2578,32 +2583,45 @@ async function runDiscoveredWorkflow(
     if (activeResume !== undefined) {
       // Capture ownership after resume admission, before cleanup can retire it.
       // Do not join this continuation to the timeout response.
-      const finishResume = () => {
+      const finishResume = async () => {
         const evidence = captureStopped();
-        void primordialPromiseCatch(
-          primordialPromiseThen(primordialPromiseResolve(undefined), () => client.destroy()),
-          (error) => {
-            serverLogger.warn("[project-run-execute] Failed to destroy workflow client", {
-              runId: request.runId,
-              errorName: error instanceof Error ? error.name : "unknown",
-            });
-          },
+        // Canonical owner cancellation can finish the resume before a raw tool
+        // settles; its backend must remain available through actual stop.
+        if (ownerStopSignal && isAbortSignalAborted(ownerStopSignal)) await evidence;
+        await destroyWorkflowClient(
+          client,
+          request.runId,
+          deps.workflowClientDestroyTimeoutMs ?? DEFAULT_WORKFLOW_CLIENT_DESTROY_TIMEOUT_MS,
         );
-        return evidence;
+        return await evidence;
       };
       stopped = primordialPromiseThen(activeResume, finishResume, finishResume);
       acknowledgeSettledStop();
     } else {
       stopped = captureStopped();
       acknowledgeSettledStop();
-      try {
-        await destroyWorkflowClient(
-          client,
-          request.runId,
-          deps.workflowClientDestroyTimeoutMs ?? DEFAULT_WORKFLOW_CLIENT_DESTROY_TIMEOUT_MS,
+      if (preserveClientUntilStopped) {
+        // Retained owner cancellation needs a live backend until the actual
+        // operation stops. Do not join cleanup to the timeout HTTP response.
+        void primordialPromiseCatch(
+          primordialPromiseThen(stopped, () =>
+            destroyWorkflowClient(
+              client,
+              request.runId,
+              deps.workflowClientDestroyTimeoutMs ?? DEFAULT_WORKFLOW_CLIENT_DESTROY_TIMEOUT_MS,
+            )),
+          () => {},
         );
-      } finally {
-        if (isAbortSignalAborted(signal)) await stopAcknowledgement;
+      } else {
+        try {
+          await destroyWorkflowClient(
+            client,
+            request.runId,
+            deps.workflowClientDestroyTimeoutMs ?? DEFAULT_WORKFLOW_CLIENT_DESTROY_TIMEOUT_MS,
+          );
+        } finally {
+          if (isAbortSignalAborted(signal)) await stopAcknowledgement;
+        }
       }
     }
   }

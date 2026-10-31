@@ -14912,6 +14912,8 @@ describe("server/handlers/request/project-run-execute.handler cancellation", () 
     const cancelled = Promise.withResolvers<void>();
     const acknowledged = Promise.withResolvers<void>();
     const completed = Promise.withResolvers<void>();
+    const rawStopped = Promise.withResolvers<boolean>();
+    let destroyed = false;
     let resumed = false;
     let stopRequested = false;
     let cancellations = 0;
@@ -14941,9 +14943,11 @@ describe("server/handlers/request/project-run-execute.handler cancellation", () 
         },
         waitForExecutionStopped: async () => {
           assertEquals(resumed, true);
-          return true;
+          return await rawStopped.promise;
         },
-        destroy: async () => {},
+        destroy: async () => {
+          destroyed = true;
+        },
       }),
     }));
     const token = `header.${
@@ -14986,11 +14990,21 @@ describe("server/handlers/request/project-run-execute.handler cancellation", () 
         assertEquals(acknowledgements, 0);
         assertEquals(cancellations, 1);
         release.resolve();
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        assertEquals(
+          destroyed,
+          false,
+          "canonical resume cancellation must retain its backend until raw stop",
+        );
+        assertEquals(acknowledgements, 0);
+        rawStopped.resolve(true);
         await waitForBarrier(acknowledged.promise, "settled resume did not acknowledge", 5_000);
         assertEquals(acknowledgements, 1);
         assertEquals(cancellations, 1);
+        assertEquals(destroyed, true);
       } finally {
         release.resolve();
+        rawStopped.resolve(true);
       }
     });
   });
@@ -15045,25 +15059,57 @@ describe("server/handlers/request/project-run-execute.handler cancellation", () 
     let stopRequested = false;
     let cancellations = 0;
     let acknowledgements = 0;
-    const stopped = Promise.withResolvers<boolean>();
+    const entered = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<unknown>();
     const cancelled = Promise.withResolvers<void>();
     const acknowledged = Promise.withResolvers<void>();
-    const defaults = createDeps();
+    const destroyed = Promise.withResolvers<void>();
+    let toolSettled = false;
+    class ObservedBackend extends MemoryBackend {
+      override async destroy(): Promise<void> {
+        await super.destroy();
+        destroyed.resolve();
+      }
+    }
+    const backend = new ObservedBackend();
+    const definition = workflow({
+      id: "publish",
+      steps: [step("hold", {
+        tool: tool({
+          id: "hold",
+          description: "Hold the actual workflow operation through the HTTP timeout",
+          inputSchema: defineSchema((v) => v.object({}).passthrough())(),
+          execute: async (_input, context) => {
+            context?.abortSignal?.addEventListener("abort", () => {
+              cancellations++;
+              cancelled.resolve();
+            }, { once: true });
+            entered.resolve();
+            const result = await release.promise;
+            toolSettled = true;
+            return result;
+          },
+        }),
+      })],
+    }).definition as unknown as WorkflowDefinition;
     const handler = new ProjectRunExecuteHandler(createDeps({
       now: () => clock,
       sleep: async () => {
+        await entered.promise;
         clock += 15 * 60 * 1_000 + 1;
       },
-      createWorkflowClient: async (config) => ({
-        ...await defaults.createWorkflowClient(config),
-        getRun: async () => ({ status: "running" }),
-        cancel: async () => {
-          cancellations++;
-          cancelled.resolve();
-        },
-        waitForExecutionStopped: async () => await stopped.promise,
-        destroy: async () => {},
+      findWorkflowById: async () => ({
+        id: "publish",
+        filePath: "workflows/publish.ts",
+        exportName: "default",
+        definition,
       }),
+      createWorkflowClient: (config) =>
+        createWorkflowClient({
+          ...config,
+          backend,
+          executor: { ...config?.executor, cancellationGracePeriod: 0 },
+        }),
     }));
     const token = `header.${
       btoa(JSON.stringify({ exp: Math.floor(Date.now() / 1_000) + 60 }))
@@ -15080,6 +15126,7 @@ describe("server/handlers/request/project-run-execute.handler cancellation", () 
     );
     await withMockFetch(async (url) => {
       if (String(url).endsWith("/cancellation-status")) return Response.json({ stopRequested });
+      assertEquals(toolSettled, true);
       acknowledgements++;
       acknowledged.resolve();
       return Response.json({ acknowledged: true });
@@ -15098,15 +15145,16 @@ describe("server/handlers/request/project-run-execute.handler cancellation", () 
         assertEquals(signed.request.signal.aborted, false);
         assertEquals(cancellations, 1);
         assertEquals(acknowledgements, 0);
-        stopped.resolve(true);
+        release.resolve({ ok: true });
         await waitForBarrier(
           acknowledged.promise,
           "settled workflow cancellation was not acknowledged",
           5_000,
         );
         assertEquals(acknowledgements, 1);
+        await waitForBarrier(destroyed.promise, "settled workflow client was not destroyed");
       } finally {
-        stopped.resolve(true);
+        release.resolve({ ok: true });
       }
     });
   });
