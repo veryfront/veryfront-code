@@ -109,6 +109,8 @@ export class RedisTokenCacheStore implements TokenCacheStore {
   private hits = 0;
   private misses = 0;
   private connected = false;
+  private connecting: Promise<RedisClientType> | null = null;
+  private closed = false;
 
   constructor(
     options: RedisTokenCacheStoreOptions,
@@ -132,8 +134,9 @@ export class RedisTokenCacheStore implements TokenCacheStore {
   }
 
   async get(key: string): Promise<TokenCacheEntry | null> {
+    let client: RedisClientType | null = null;
     try {
-      const client = await this.getConnectedClient();
+      client = await this.getConnectedClient();
       const data = await client.get(this.key(key));
 
       if (!data) {
@@ -155,43 +158,58 @@ export class RedisTokenCacheStore implements TokenCacheStore {
       this.logger.error("[RedisCache] Get error", {
         error: error instanceof Error ? error.message : String(error),
       });
-      this.connected = false;
+      this.invalidate(client);
       this.misses++;
       throw error;
     }
   }
 
   async set(key: string, entry: TokenCacheEntry): Promise<void> {
-    try {
-      const client = await this.getConnectedClient();
-      const ttlMs = entry.expiresAt - Date.now();
-      const ttlSeconds = Math.max(1, Math.floor(ttlMs / 1000));
-      await client.setEx(this.key(key), ttlSeconds, JSON.stringify(entry));
-    } catch (error) {
-      this.logger.error("[RedisCache] Set error", {
-        error: error instanceof Error ? error.message : String(error),
-      });
-      this.connected = false;
-      throw error;
+    // Reuse the already minted token: only an explicit replica refusal proves
+    // that retrying this SET cannot duplicate an ambiguously accepted write.
+    const value = JSON.stringify(entry);
+    const expiresAt = entry.expiresAt;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      let client: RedisClientType | null = null;
+      try {
+        client = await this.getConnectedClient();
+        const ttlMs = expiresAt - Date.now();
+        if (attempt > 0 && ttlMs <= 0) {
+          throw new Error("Redis token-cache entry expired during replica recovery");
+        }
+        const ttlSeconds = Math.max(1, Math.floor(ttlMs / 1000));
+        await client.setEx(this.key(key), ttlSeconds, value);
+        return;
+      } catch (error) {
+        this.logger.error("[RedisCache] Set error", { error: getErrorMessage(error) });
+        this.invalidate(client);
+        if (
+          attempt === 0 && client !== null && error instanceof Error &&
+          error.message === "READONLY You can't write against a read only replica."
+        ) continue;
+        throw error;
+      }
     }
   }
 
   async delete(key: string): Promise<void> {
+    let client: RedisClientType | null = null;
     try {
-      const client = await this.getConnectedClient();
+      client = await this.getConnectedClient();
       await client.del(this.key(key));
     } catch (error) {
       this.logger.error("[RedisCache] Delete error", {
         error: error instanceof Error ? error.message : String(error),
       });
-      this.connected = false;
+      this.invalidate(client);
       throw error;
     }
   }
 
   async clear(): Promise<void> {
+    let client: RedisClientType | null = null;
     try {
-      const client = await this.getConnectedClient();
+      client = await this.getConnectedClient();
 
       const pattern = `${this.prefix}*`;
       // redis v5: scan cursor is string-based to prevent Number.MAX_SAFE_INTEGER overflow
@@ -222,32 +240,34 @@ export class RedisTokenCacheStore implements TokenCacheStore {
       this.logger.error("[RedisCache] Clear error", {
         error: error instanceof Error ? error.message : String(error),
       });
-      this.connected = false;
+      this.invalidate(client);
       throw error;
     }
   }
 
   async has(key: string): Promise<boolean> {
+    let client: RedisClientType | null = null;
     try {
-      const client = await this.getConnectedClient();
+      client = await this.getConnectedClient();
       return (await client.exists(this.key(key))) === 1;
     } catch (error) {
       this.logger.error("[RedisCache] Has error", {
         error: error instanceof Error ? error.message : String(error),
       });
-      this.connected = false;
+      this.invalidate(client);
       throw error;
     }
   }
 
   async stats(): Promise<TokenCacheStats> {
     let size = 0;
+    let client: RedisClientType | null = null;
 
     try {
-      const client = await this.getConnectedClient();
+      client = await this.getConnectedClient();
       size = await client.dbSize();
     } catch (error) {
-      this.connected = false;
+      this.invalidate(client);
       this.logger.error("[RedisCache] Stats error", {
         error: error instanceof Error ? error.message : String(error),
       });
@@ -257,33 +277,35 @@ export class RedisTokenCacheStore implements TokenCacheStore {
   }
 
   async close(): Promise<void> {
-    const client = this.client;
-    if (!client) {
-      this.connected = false;
-      return;
-    }
+    this.closed = true;
+    this.invalidate(this.client);
+  }
 
+  /** Detach before destruction so late socket errors cannot affect its successor. */
+  private invalidate(client: RedisClientType | null): void {
+    if (!client || this.client !== client) return;
+    this.client = null;
+    this.connected = false;
     try {
-      await client.close();
-    } catch (_) {
-      // expected: close errors are non-critical
-    } finally {
-      this.client = null;
-      this.connected = false;
+      client.destroy();
+    } catch {
+      // Already-closed clients need no further cleanup.
     }
   }
 
-  private async getConnectedClient(): Promise<RedisClientType> {
-    await this.ensureConnected();
-    if (!this.client) {
-      throw new Error("Redis client not available after connect");
-    }
-    return this.client;
+  private getConnectedClient(): Promise<RedisClientType> {
+    if (this.closed) return Promise.reject(new Error("Redis token-cache store is closed"));
+    if (this.connected && this.client) return Promise.resolve(this.client);
+    if (this.connecting) return this.connecting;
+    const connecting = this.connectClient();
+    this.connecting = connecting;
+    void connecting.finally(() => {
+      if (this.connecting === connecting) this.connecting = null;
+    }).catch(() => {});
+    return connecting;
   }
 
-  private async ensureConnected(): Promise<void> {
-    if (this.connected && this.client) return;
-
+  private async connectClient(): Promise<RedisClientType> {
     // deno-lint-ignore no-explicit-any
     const clientOpts: Record<string, any> = {
       url: this.url,
@@ -303,9 +325,11 @@ export class RedisTokenCacheStore implements TokenCacheStore {
 
     const client = this.clientFactory(clientOpts);
 
-    // deno-lint-ignore no-explicit-any
-    (client as any).on?.("error", (err: unknown) => {
-      this.connected = false;
+    client.on("error", (err: unknown) => {
+      if (this.client !== client) return;
+      // Let connect() own its bounded startup reconnect policy. Once ready,
+      // discard a failed socket so the next operation resolves the writer anew.
+      if (this.connected) this.invalidate(client);
       const error = getErrorMessage(err);
       if (isExpectedDisconnect(err)) {
         this.logger.info("[RedisCache] Client disconnected", { error });
@@ -315,8 +339,16 @@ export class RedisTokenCacheStore implements TokenCacheStore {
     });
 
     this.client = client;
-    await client.connect();
-    this.connected = true;
-    this.logger.info("[RedisCache] Connected");
+    try {
+      await client.connect();
+      if (this.closed) throw new Error("Redis token-cache store is closed");
+      if (this.client !== client) throw new Error("Redis client disconnected during connect");
+      this.connected = true;
+      this.logger.info("[RedisCache] Connected");
+      return client;
+    } catch (error) {
+      this.invalidate(client);
+      throw error;
+    }
   }
 }
