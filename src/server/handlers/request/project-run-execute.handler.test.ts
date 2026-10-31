@@ -14862,6 +14862,451 @@ describe("project run inference credential header", () => {
 // veryfront-issue-inbox#2086: a cancelled project run must reach the running
 // task or workflow, not only the control-plane row.
 describe("server/handlers/request/project-run-execute.handler cancellation", () => {
+  it("does not start cancellation polling when execution setup rejects registration", async () => {
+    class RejectingRegistry extends RunStopRegistry {
+      override register(): ReturnType<RunStopRegistry["register"]> {
+        throw new Error("execution registration unavailable");
+      }
+    }
+    let requests = 0;
+    let executions = 0;
+    const handler = new ProjectRunExecuteHandler(
+      createDeps({
+        runTask: async () => {
+          executions++;
+          return { success: true, result: "unexpected", durationMs: 1 };
+        },
+      }),
+      undefined,
+      new RejectingRegistry(),
+    );
+    const token = `header.${
+      btoa(JSON.stringify({ exp: Math.floor(Date.now() / 1_000) + 60 }))
+    }.signature`;
+    const signed = await signedRequest("/api/control-plane/runs/run_setup_failure/execute", {
+      runId: "run_setup_failure",
+      kind: "task",
+      target: "task:sync-calendar-events",
+      projectId: "proj-1",
+    }, { "x-veryfront-run-stop-token": token });
+    await withMockFetch(async () => {
+      requests++;
+      return Response.json({ stopRequested: false });
+    }, async () => {
+      const result = await handler.handle(signed.request, createCtx(signed.publicKeyPem));
+      assertExists(result.response);
+      assertEquals(result.response.status, 400);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+    assertEquals(executions, 0);
+    assertEquals(
+      requests,
+      0,
+      "failed setup must not send credentials or create a polling lifetime",
+    );
+  });
+
+  it("delivers an affirmed cancellation to an active resume after its HTTP response without early acknowledgement", async () => {
+    const entered = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const cancelled = Promise.withResolvers<void>();
+    const acknowledged = Promise.withResolvers<void>();
+    const completed = Promise.withResolvers<void>();
+    let resumed = false;
+    let stopRequested = false;
+    let cancellations = 0;
+    let acknowledgements = 0;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      workflowResumeTimeoutMs: 5,
+      createWorkflowClient: () => ({
+        statePersistence: "durable",
+        register: () => {},
+        start: async () => {
+          throw new Error("resume must not start another execution");
+        },
+        getRun: async () =>
+          resumed ? { status: "completed" } : {
+            status: "waiting",
+            pendingApprovals: [{ id: "approval", nodeId: "review" }],
+          },
+        getPendingEventWaits: async () => [],
+        approve: async () => {
+          entered.resolve();
+          await release.promise;
+          resumed = true;
+        },
+        cancel: async () => {
+          cancellations++;
+          cancelled.resolve();
+        },
+        waitForExecutionStopped: async () => {
+          assertEquals(resumed, true);
+          return true;
+        },
+        destroy: async () => {},
+      }),
+    }));
+    const token = `header.${
+      btoa(JSON.stringify({ exp: Math.floor(Date.now() / 1_000) + 60 }))
+    }.signature`;
+    const signed = await signedRequest(
+      "/api/control-plane/runs/run_observer_active_resume/execute",
+      {
+        runId: "run_observer_active_resume",
+        kind: "workflow",
+        target: "workflow:publish",
+        projectId: "proj-1",
+        resume: { type: "approval", node_id: "review", approved: true, approver: "user:u1" },
+      },
+      { "x-veryfront-run-stop-token": token },
+    );
+    recordRequestTransportLifetime(signed.request, completed.promise);
+    await withMockFetch(async (url) => {
+      if (String(url).endsWith("/cancellation-status")) return Response.json({ stopRequested });
+      assertEquals(resumed, true);
+      acknowledgements++;
+      acknowledged.resolve();
+      return Response.json({ acknowledged: true });
+    }, async () => {
+      try {
+        const pending = handler.handle(signed.request, createCtx(signed.publicKeyPem));
+        await waitForBarrier(entered.promise, "resume was not admitted");
+        const result = await waitForBarrier(pending, "HTTP timeout did not answer");
+        assertExists(result.response);
+        assertEquals((await result.response.json()).status, "waiting");
+        completed.resolve();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        stopRequested = true;
+        await waitForBarrier(
+          cancelled.promise,
+          "active resume lost cancellation after HTTP timeout",
+          5_000,
+        );
+        assertEquals(signed.request.signal.aborted, false);
+        assertEquals(acknowledgements, 0);
+        assertEquals(cancellations, 1);
+        release.resolve();
+        await waitForBarrier(acknowledged.promise, "settled resume did not acknowledge", 5_000);
+        assertEquals(acknowledgements, 1);
+        assertEquals(cancellations, 1);
+      } finally {
+        release.resolve();
+      }
+    });
+  });
+
+  it("retires a completed workflow before a late poll can cancel its owner client", async () => {
+    const statusResponse = Promise.withResolvers<Response>();
+    let cancellations = 0;
+    let polls = 0;
+    const defaults = createDeps();
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      createWorkflowClient: async (config) => ({
+        ...await defaults.createWorkflowClient(config),
+        cancel: async () => {
+          cancellations++;
+        },
+        waitForExecutionStopped: async () => true,
+      }),
+    }));
+    const token = `header.${
+      btoa(JSON.stringify({ exp: Math.floor(Date.now() / 1_000) + 60 }))
+    }.signature`;
+    const signed = await signedRequest(
+      "/api/control-plane/runs/run_observer_workflow_success/execute",
+      {
+        runId: "run_observer_workflow_success",
+        kind: "workflow",
+        target: "workflow:publish",
+        projectId: "proj-1",
+      },
+      { "x-veryfront-run-stop-token": token },
+    );
+    await withMockFetch(async () => {
+      polls++;
+      return await statusResponse.promise;
+    }, async () => {
+      try {
+        const result = await handler.handle(signed.request, createCtx(signed.publicKeyPem));
+        assertExists(result.response);
+        assertEquals((await result.response.json()).success, true);
+        statusResponse.resolve(Response.json({ stopRequested: true }));
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        assertEquals(cancellations, 0);
+        assertEquals(polls, 1);
+      } finally {
+        statusResponse.resolve(Response.json({ stopRequested: false }));
+      }
+    });
+  });
+
+  it("keeps cancellation delivery after a workflow HTTP timeout until owned work actually settles", async () => {
+    let clock = 0;
+    let stopRequested = false;
+    let cancellations = 0;
+    let acknowledgements = 0;
+    const stopped = Promise.withResolvers<boolean>();
+    const cancelled = Promise.withResolvers<void>();
+    const acknowledged = Promise.withResolvers<void>();
+    const defaults = createDeps();
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      now: () => clock,
+      sleep: async () => {
+        clock += 15 * 60 * 1_000 + 1;
+      },
+      createWorkflowClient: async (config) => ({
+        ...await defaults.createWorkflowClient(config),
+        getRun: async () => ({ status: "running" }),
+        cancel: async () => {
+          cancellations++;
+          cancelled.resolve();
+        },
+        waitForExecutionStopped: async () => await stopped.promise,
+        destroy: async () => {},
+      }),
+    }));
+    const token = `header.${
+      btoa(JSON.stringify({ exp: Math.floor(Date.now() / 1_000) + 60 }))
+    }.signature`;
+    const signed = await signedRequest(
+      "/api/control-plane/runs/run_observer_workflow_timeout/execute",
+      {
+        runId: "run_observer_workflow_timeout",
+        kind: "workflow",
+        target: "workflow:publish",
+        projectId: "proj-1",
+      },
+      { "x-veryfront-run-stop-token": token },
+    );
+    await withMockFetch(async (url) => {
+      if (String(url).endsWith("/cancellation-status")) return Response.json({ stopRequested });
+      acknowledgements++;
+      acknowledged.resolve();
+      return Response.json({ acknowledged: true });
+    }, async () => {
+      try {
+        const result = await handler.handle(signed.request, createCtx(signed.publicKeyPem));
+        assertExists(result.response);
+        assertEquals((await result.response.json()).success, false);
+        assertEquals(acknowledgements, 0);
+        stopRequested = true;
+        await waitForBarrier(
+          cancelled.promise,
+          "timed-out workflow lost its owner cancellation delivery",
+          5_000,
+        );
+        assertEquals(signed.request.signal.aborted, false);
+        assertEquals(cancellations, 1);
+        assertEquals(acknowledgements, 0);
+        stopped.resolve(true);
+        await waitForBarrier(
+          acknowledged.promise,
+          "settled workflow cancellation was not acknowledged",
+          5_000,
+        );
+        assertEquals(acknowledgements, 1);
+      } finally {
+        stopped.resolve(true);
+      }
+    });
+  });
+
+  it("retires a successful attempt before a late cancellation response can affect it or a successor", async () => {
+    const statusResponse = Promise.withResolvers<Response>();
+    let firstSignal: AbortSignal | undefined;
+    let secondSignal: AbortSignal | undefined;
+    let polls = 0;
+    let acknowledgements = 0;
+    const registry = new RunStopRegistry();
+    let attempts = 0;
+    const handler = new ProjectRunExecuteHandler(
+      createDeps({
+        runTask: async (options) => {
+          if (++attempts === 1) firstSignal = options.signal;
+          else secondSignal = options.signal;
+          return { success: true, result: "done", durationMs: 1 };
+        },
+      }),
+      undefined,
+      registry,
+    );
+    const token = `header.${
+      btoa(JSON.stringify({ exp: Math.floor(Date.now() / 1_000) + 60 }))
+    }.signature`;
+    const signed = await signedRequest("/api/control-plane/runs/run_observer_success/execute", {
+      runId: "run_observer_success",
+      kind: "task",
+      target: "task:sync-calendar-events",
+      projectId: "proj-1",
+    }, { "x-veryfront-run-stop-token": token });
+    await withMockFetch(async (url) => {
+      if (String(url).endsWith("/cancellation-status")) {
+        polls++;
+        return await statusResponse.promise;
+      }
+      acknowledgements++;
+      return Response.json({ acknowledged: true });
+    }, async () => {
+      try {
+        const first = await handler.handle(signed.request, createCtx(signed.publicKeyPem));
+        assertExists(first.response);
+        assertEquals((await first.response.json()).success, true);
+        statusResponse.resolve(Response.json({ stopRequested: true }));
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        assertEquals(firstSignal?.aborted, false);
+        const successor = await signedRequest(
+          "/api/control-plane/runs/run_observer_success/execute",
+          {
+            runId: "run_observer_success",
+            kind: "task",
+            target: "task:sync-calendar-events",
+            projectId: "proj-1",
+          },
+        );
+        const result = await handler.handle(successor.request, createCtx(successor.publicKeyPem));
+        assertExists(result.response);
+        assertEquals((await result.response.json()).success, true);
+        assertEquals(secondSignal?.aborted, false);
+        assertEquals(polls, 1);
+        assertEquals(acknowledgements, 0);
+      } finally {
+        statusResponse.resolve(Response.json({ stopRequested: false }));
+      }
+    });
+  });
+
+  for (
+    const stopToken of [
+      undefined,
+      "opaque-legacy",
+      `header.${btoa(JSON.stringify({ exp: 1 }))}.signature`,
+    ]
+  ) {
+    it(`keeps legacy ingress cancellation without polling for missing or expired observer expiry (${stopToken === undefined ? "missing" : stopToken === "opaque-legacy" ? "opaque" : "expired"})`, async () => {
+      let polls = 0;
+      const handler = new ProjectRunExecuteHandler(createDeps());
+      const signed = await signedRequest("/api/control-plane/runs/run_legacy_observer/execute", {
+        runId: "run_legacy_observer",
+        kind: "task",
+        target: "task:sync-calendar-events",
+        projectId: "proj-1",
+      }, stopToken === undefined ? {} : { "x-veryfront-run-stop-token": stopToken });
+      await withMockFetch(async () => {
+        polls++;
+        return Response.json({ stopRequested: true });
+      }, async () => {
+        const result = await handler.handle(signed.request, createCtx(signed.publicKeyPem));
+        assertExists(result.response);
+        assertEquals((await result.response.json()).success, true);
+      });
+      assertEquals(polls, 0);
+    });
+  }
+
+  it("observes canonical cancellation with open ingress and acknowledges only actual task settlement", async () => {
+    const nativeFetch = globalThis.fetch;
+    const entered = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const aborted = Promise.withResolvers<void>();
+    const acknowledged = Promise.withResolvers<void>();
+    let taskSignal: AbortSignal | undefined;
+    let ingressSignal: AbortSignal | undefined;
+    let stopRequested = false;
+    let taskSettled = false;
+    let acknowledgements = 0;
+    const registry = new RunStopRegistry();
+    const handler = new ProjectRunExecuteHandler(
+      createDeps({
+        runTask: (options) => runTask(options, createInMemoryHostRuntime()),
+        ensureProjectDiscovery: async () => {
+          const discovery = createEmptyDiscoveryResult();
+          discovery.tasks.set("sync-calendar-events", {
+            name: "Held cancellation fixture",
+            run: async (ctx) => {
+              taskSignal = ctx.signal;
+              ctx.signal?.addEventListener("abort", () => aborted.resolve(), { once: true });
+              entered.resolve();
+              await release.promise;
+              taskSettled = true;
+              return "settled";
+            },
+          });
+          return discovery;
+        },
+      }),
+      undefined,
+      registry,
+    );
+    const stopToken = `header.${
+      btoa(JSON.stringify({ exp: Math.floor(Date.now() / 1_000) + 60 }))
+    }.signature`;
+    const signed = await signedRequest("/api/control-plane/runs/run_observed_cancel/execute", {
+      runId: "run_observed_cancel",
+      kind: "task",
+      target: "task:sync-calendar-events",
+      projectId: "proj-1",
+    }, { "x-veryfront-run-stop-token": stopToken });
+    const body = await signed.request.arrayBuffer();
+    const server = await createDenoServer(async (request) => {
+      ingressSignal = request.signal;
+      const result = await handler.handle(request, createCtx(signed.publicKeyPem));
+      assertExists(result.response);
+      return result.response;
+    }, { hostname: "127.0.0.1", port: 0 });
+    try {
+      await withMockFetch(async (url, init) => {
+        assertEquals(new Headers(init?.headers).get("authorization"), `Bearer ${stopToken}`);
+        if (String(url).endsWith("/cancellation-status")) {
+          assertEquals(init?.method, "GET");
+          return Response.json({ stopRequested });
+        }
+        assertEquals(String(url).endsWith("/cancellation-ack"), true);
+        assertEquals(taskSettled, true, "a signal is not evidence that user task work stopped");
+        acknowledgements++;
+        acknowledged.resolve();
+        return Response.json({ acknowledged: true });
+      }, async () => {
+        const pending = nativeFetch(
+          `http://127.0.0.1:${server.addr.port}/api/control-plane/runs/run_observed_cancel/execute`,
+          {
+            method: "POST",
+            headers: signed.request.headers,
+            body,
+          },
+        );
+        void pending.catch(() => undefined);
+        try {
+          await waitForBarrier(entered.promise, "task did not start", 5_000);
+          assertEquals(taskSignal?.aborted, false);
+          stopRequested = true;
+          await waitForBarrier(
+            aborted.promise,
+            "canonical cancellation did not reach the owner task",
+            5_000,
+          );
+          assertEquals(ingressSignal?.aborted, false);
+          assertEquals(taskSignal?.aborted, true);
+          assertEquals(acknowledgements, 0);
+          // An attempt-local observation must not create a run-ID tombstone.
+          const successor = registry.register("run_observed_cancel", () => {});
+          successor("abandoned");
+          release.resolve();
+          await waitForBarrier(acknowledged.promise, "settled task was not acknowledged", 5_000);
+          const response = await pending;
+          await response.arrayBuffer();
+          assertEquals(acknowledgements, 1);
+        } finally {
+          release.resolve();
+          const response = await pending.catch(() => undefined);
+          await response?.body?.cancel().catch(() => undefined);
+        }
+      });
+    } finally {
+      release.resolve();
+      await server.stop();
+    }
+  });
+
   it("refuses invalid stop setup without retaining a phantom execution on retry", async () => {
     const registry = new RunStopRegistry();
     let calls = 0;
@@ -16127,6 +16572,87 @@ describe("server/handlers/request/project-run-execute.handler cancellation", () 
       assertEquals(callbacks, []);
 
       controller.abort(new Error("Run cancelled after deadline response"));
+      assertEquals(callbacks, [], "deadline response is not callback settlement evidence");
+      settle.resolve();
+      await waitForBarrier(
+        acknowledged.promise,
+        "settled timed-out task did not acknowledge observed cancellation",
+      );
+    });
+
+    assertEquals(callbacks.length, 1);
+    const callback = callbacks[0];
+    assertExists(callback);
+    assertEquals(
+      new URL(callback.url).pathname,
+      "/runs/run_deadline_late_stop/cancellation-ack",
+    );
+    assertEquals(callback.init.signal?.aborted, false);
+  });
+
+  it("observes canonical task cancellation after completed timeout transport until actual settlement", async () => {
+    const clock = manualTaskDeadlineClock();
+    const completed = Promise.withResolvers<void>();
+    let stopRequested = false;
+    const started = Promise.withResolvers<void>();
+    const settle = Promise.withResolvers<void>();
+    const acknowledged = Promise.withResolvers<void>();
+    const callbacks: Array<{ url: string; init: ReturnType<typeof observeFetchRequestInit> }> = [];
+    const handler = new ProjectRunExecuteHandler(
+      createDeps({
+        runTask: async () => {
+          started.resolve();
+          await settle.promise;
+          return { success: true, result: "late", durationMs: 1 };
+        },
+      }),
+      clock,
+    );
+    const signed = await signedRequest(
+      "/api/control-plane/runs/run_deadline_late_stop/execute",
+      {
+        runId: "run_deadline_late_stop",
+        kind: "task",
+        target: "task:sync-calendar-events",
+        projectId: "proj-1",
+        deadlineAt: new Date(clock.now() + 25).toISOString(),
+      },
+      {
+        "x-veryfront-run-stop-token": `header.${
+          btoa(JSON.stringify({ exp: Math.floor(Date.now() / 1_000) + 60 }))
+        }.signature`,
+      },
+    );
+
+    // Signing and dispatch can outlast the deadline on a busy host.
+    // The deadline clock advances only after task admission.
+
+    recordRequestTransportLifetime(signed.request, completed.promise);
+    await withMockFetch(async (input, init) => {
+      if (String(input).endsWith("/cancellation-status")) return Response.json({ stopRequested });
+      callbacks.push({ url: String(input), init: observeFetchRequestInit(init) });
+      acknowledged.resolve();
+      return Response.json({ acknowledged: true });
+    }, async () => {
+      const pending = handler.handle(
+        signed.request,
+        createCtx(signed.publicKeyPem),
+      );
+      await started.promise;
+      clock.advance(25);
+      const result = await waitForBarrier(
+        pending,
+        "deadline response remained blocked by the task callback",
+      );
+      assertExists(result.response);
+      const body = await result.response.json();
+      assertEquals(body.error_code, "RUN_TIMEOUT");
+      assertEquals(callbacks, []);
+
+      completed.resolve();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      stopRequested = true;
+      await new Promise((resolve) => setTimeout(resolve, 1_100));
       assertEquals(callbacks, [], "deadline response is not callback settlement evidence");
       settle.resolve();
       await waitForBarrier(
