@@ -12,6 +12,7 @@ import {
 } from "veryfront/integrations";
 import { defineError, INVALID_ARGUMENT } from "veryfront/errors";
 import { exitProcess, registerTerminationSignals } from "#cli/utils";
+import { trustOperatorConfiguredVeryfrontApiOrigins } from "#cli/outbound-fetch";
 import {
   createSuccessEnvelope,
   getOutputPath,
@@ -43,6 +44,9 @@ export async function handleIntegrationCommand(
   args: ParsedArgs,
   dependencies: IntegrationCommandDependencies = {},
 ): Promise<void> {
+  // A local command: trust the shell-exported Veryfront API origin, such as a
+  // staging API that resolves to a private address.
+  trustOperatorConfiguredVeryfrontApiOrigins();
   const options = parseArgsOrThrow(parseIntegrationArgs, "integration", args);
   if (args._.length > (options.subcommand === "list" ? 2 : 3)) {
     throw INVALID_ARGUMENT.create({

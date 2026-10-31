@@ -6,6 +6,7 @@ import {
   getErrorBySlug,
   VeryfrontError,
 } from "#veryfront/errors";
+import { OutboundRequestBlockedError } from "#veryfront/security/http/outbound-fetch.ts";
 import { createVeryfrontApiRequestUrlResolver } from "#veryfront/platform/adapters/veryfront-api-url.ts";
 import { requireHostPrivateApiHttps } from "#veryfront/config/host-api-base.ts";
 import {
@@ -74,6 +75,7 @@ export class IntegrationApiError extends VeryfrontError {
     readonly kind:
       | "http"
       | "transport"
+      | "egress_blocked"
       | "invalid_response"
       | "project_binding"
       | "unsupported_precondition",
@@ -131,6 +133,9 @@ function integrationFailureMessage(
     return "The API did not confirm connection-generation precondition support";
   }
   if (kind === "http") return `Integration API request failed (${httpStatus})`;
+  if (kind === "egress_blocked") {
+    return "Integration API request was blocked by the outbound egress policy";
+  }
   return `Integration API ${kind.replaceAll("_", " ")} failure`;
 }
 
@@ -305,6 +310,10 @@ function throwIntegrationRequestError(
   outcomeUnknown: boolean,
 ): never {
   if (error instanceof IntegrationApiError) throw error;
+  // Keep the egress policy refusal and dispatch uncertainty distinct.
+  if (error instanceof OutboundRequestBlockedError) {
+    throw new IntegrationApiError("egress_blocked", undefined, outcomeUnknown);
+  }
   if (signal.aborted) {
     if (!outcomeUnknown) throw signal.reason;
     throw new IntegrationApiError("transport", response?.status, true);
