@@ -1335,6 +1335,11 @@ async function executeTaskRun(
   }
 }
 
+type TaskExecutionLifecycle = {
+  started(): Promise<void>;
+  finished(success: boolean): Promise<void>;
+};
+
 async function executeDiscoveredTaskRun(
   request: ProjectRunExecuteRequest,
   ctx: HandlerContext,
@@ -1345,6 +1350,7 @@ async function executeDiscoveredTaskRun(
   onCompleted?: () => void,
   onExecutionOwned?: () => void,
   captureSchemas?: HostSchemaCapture,
+  lifecycle?: TaskExecutionLifecycle,
 ): Promise<ProjectRunExecuteResponse> {
   const taskId = stripTargetPrefix(request.target, "task:");
   if (taskId === "knowledge-ingest") {
@@ -1382,8 +1388,28 @@ async function executeDiscoveredTaskRun(
       outputSchema: pinOutput!(schemas.output),
     }
     : definition;
+  const run = executionDefinition.run;
+  const observedDefinition = lifecycle
+    ? {
+      ...executionDefinition,
+      run: async (...args: Parameters<typeof run>) => {
+        await lifecycle.started();
+        // Persistence awaited before entry; cancellation during it must not enter project code.
+        if (isAbortSignalAborted(taskSignal)) throw getProjectRunObservationAbortReason(taskSignal);
+        let success = false;
+        try {
+          const value = await IntrinsicReflectApply(run, executionDefinition, args);
+          success = true;
+          return value;
+        } finally {
+          // An abort is not settlement evidence and terminal runs reject new observations.
+          if (!isAbortSignalAborted(taskSignal)) await lifecycle.finished(success);
+        }
+      },
+    }
+    : executionDefinition;
   const result = await deps.runTask({
-    task: { id: task.id, name: task.name, definition: executionDefinition },
+    task: { id: task.id, name: task.name, definition: observedDefinition },
     onExecutionStarted: onExecutionOwned,
     ...(runChild === undefined ? {} : { runChild }),
     ...(request.attempt === undefined ? {} : { attempt: request.attempt }),
@@ -2857,7 +2883,10 @@ function createProjectRunObservationMirror(input: {
   fetch: typeof globalThis.fetch;
   abortSignal: AbortSignal;
   timeoutMs?: number;
-}): ConversationRunChunkMirror & { appendExecutionEntry(): Promise<void> } {
+}): ConversationRunChunkMirror & {
+  appendExecutionEntry(): Promise<void>;
+  appendTaskStep(started: boolean, success?: boolean): Promise<void>;
+} {
   let latestEventId = 0;
   let disabled = false;
   let appendOrdinal = 0;
@@ -2874,6 +2903,7 @@ function createProjectRunObservationMirror(input: {
   const append = async (
     events: Record<string, unknown>[],
     executionEntryOccurrenceId?: string,
+    stepObservation?: { kind: "step_started" | "step_ended"; step_id: string; event_index: number },
   ) => {
     if (disabled || events.length === 0) return;
     const ordinal = ++appendOrdinal;
@@ -2888,11 +2918,11 @@ function createProjectRunObservationMirror(input: {
     try {
       const logicalPayload = {
         events,
-        ...(executionEntryOccurrenceId
+        ...(executionEntryOccurrenceId || stepObservation
           ? {
             runtime_observations: {
               version: 1,
-              observations: [{
+              observations: stepObservation ? [stepObservation] : [{
                 kind: "execution_entry",
                 occurrence_id: executionEntryOccurrenceId,
                 event_index: 0,
@@ -3083,6 +3113,39 @@ function createProjectRunObservationMirror(input: {
       }
       if (appendFailure !== undefined) throw appendFailure;
     },
+    appendTaskStep: async (started, success) => {
+      if (disabled) {
+        throw new DurableRunEventPersistenceError("Project run observation sink is disabled");
+      }
+      // Same signed attempt replays the same source identity; retries have distinct attempt IDs.
+      const hash = await computeObservationHash(privateJsonStringify([
+        "project-task-step-v1",
+        input.runId,
+        input.canonicalRunId,
+        input.attemptId,
+      ]));
+      const segment = (start: number, end: number) =>
+        IntrinsicReflectApply(StringSlice, hash, [start, end]) as string;
+      const stepId = `${segment(0, 8)}-${segment(8, 12)}-8${segment(13, 16)}-8${segment(17, 20)}-${
+        segment(20, 32)
+      }`;
+      await append(
+        [{
+          type: started ? "STEP_STARTED" : "STEP_FINISHED",
+          stepId,
+          stepName: "task",
+          ...(!started
+            ? {
+              status: success ? "completed" : "failed",
+              exitCode: success ? 0 : 1,
+              errorMessage: success ? null : "Task execution failed",
+            }
+            : {}),
+        }],
+        undefined,
+        { kind: started ? "step_started" : "step_ended", step_id: stepId, event_index: 0 },
+      );
+    },
     appendExecutionEntry: async () => {
       // A redelivered trusted attempt records the same logical entry and exact payload.
       const hash = await computeObservationHash(privateJsonStringify([
@@ -3227,7 +3290,7 @@ async function withProjectRunRuntimeObservations<T>(
     apiUrl: string;
     eventToken: string | undefined;
     fetch: typeof globalThis.fetch;
-    operation: () => Promise<T>;
+    operation: (lifecycle?: TaskExecutionLifecycle) => Promise<T>;
   },
 ): Promise<T> {
   const parent = requireProjectRunObservationParent(input.request, input.eventToken);
@@ -3317,7 +3380,17 @@ async function withProjectRunRuntimeObservations<T>(
       () =>
         withLocalChildExecution(
           executeChild,
-          input.operation,
+          () =>
+            input.operation({
+              started: async () => {
+                await mirror.flush({ abortSignal: input.abortSignal, throwOnTimeoutRetry: true });
+                await mirror.appendTaskStep(true);
+              },
+              finished: async (success) => {
+                await mirror.flush({ abortSignal: input.abortSignal, throwOnTimeoutRetry: true });
+                await mirror.appendTaskStep(false, success);
+              },
+            }),
           undefined,
           undefined,
           createObserver,
@@ -5796,7 +5869,7 @@ async function executeProjectRun(
   releaseStop?: () => void,
   retainedEventToken?: string,
   observeExecution?: (
-    operation: () => Promise<ProjectRunExecuteResponse>,
+    operation: (lifecycle?: TaskExecutionLifecycle) => Promise<ProjectRunExecuteResponse>,
     signal: AbortSignal,
   ) => Promise<ProjectRunExecuteResponse>,
   onCompleted?: () => void,
@@ -5820,7 +5893,9 @@ async function executeProjectRun(
           const signal = control
             ? ReflectApply(TaskAbortSignalAny, AbortSignal, [[req.signal, control.signal]])
             : req.signal;
-          const execute = async (): Promise<ProjectRunExecuteResponse> => {
+          const execute = async (
+            lifecycle?: TaskExecutionLifecycle,
+          ): Promise<ProjectRunExecuteResponse> => {
             switch (request.target) {
               case "task:eval":
                 return await executeEvalTaskRun(
@@ -5889,6 +5964,7 @@ async function executeProjectRun(
                   onCompleted,
                   onExecutionOwned,
                   captureSchemas,
+                  lifecycle,
                 );
             }
           };
