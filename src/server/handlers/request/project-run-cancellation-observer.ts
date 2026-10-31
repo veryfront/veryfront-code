@@ -131,7 +131,7 @@ export function observeProjectRunCancellation(input: {
             .decode(privateByteSubarray(bytes, 0, length)),
         );
         if (result === null || typeof result !== "object" || keys(result).length !== 1) return;
-        if (ownDescriptor(result, "stopRequested")?.value === true && live() && !expired) {
+        if (ownDescriptor(result, "stop_requested")?.value === true && live() && !expired) {
           // End observation before invoking local cancellation. No run-id tombstone or ACK.
           dispose();
           onStopRequested();

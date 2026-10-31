@@ -46,7 +46,7 @@ describe("project run cancellation observer", () => {
     const dispose = observeProjectRunCancellation({
       fetch: async () => {
         calls++;
-        return Response.json({ stopRequested: true });
+        return Response.json({ stop_requested: true });
       },
       url: "https://api.example.test/runs/run-1/cancellation-status",
       token: "expired",
@@ -76,7 +76,7 @@ describe("project run cancellation observer", () => {
       requestTimeoutMs: 500,
     });
     await sleep(60);
-    pending.resolve(Response.json({ stopRequested: true }));
+    pending.resolve(Response.json({ stop_requested: true }));
     await sleep(20);
     dispose();
     assertEquals(calls, 1);
@@ -92,7 +92,7 @@ describe("project run cancellation observer", () => {
       assertEquals(init?.method, "GET");
       assertEquals(init?.redirect, "error");
       assertEquals(new Headers(init?.headers).get("authorization"), "Bearer attempt-stop-token");
-      return Response.json({ stopRequested: calls > 1 });
+      return Response.json({ stop_requested: calls > 1 });
     }, () => stops++);
     try {
       await until(() => stops === 1);
@@ -106,14 +106,15 @@ describe("project run cancellation observer", () => {
 
   for (
     const response of [
-      () => Response.json({ stopRequested: true }, { status: 401 }),
-      () => Response.json({ stopRequested: true }, { status: 403 }),
-      () => Response.json({ stopRequested: true }, { status: 500 }),
+      () => Response.json({ stop_requested: true }, { status: 401 }),
+      () => Response.json({ stop_requested: true }, { status: 403 }),
+      () => Response.json({ stop_requested: true }, { status: 500 }),
       () => new Response("not JSON"),
-      () => Response.json({ stopRequested: "true" }),
-      () => Response.json({ stopRequested: true, extra: true }),
+      () => Response.json({ stop_requested: "true" }),
+      () => Response.json({ stopRequested: true }),
+      () => Response.json({ stop_requested: true, extra: true }),
       () => Response.json({}),
-      () => new Response(" ".repeat(300) + '{"stopRequested":true}'),
+      () => new Response(" ".repeat(300) + '{"stop_requested":true}'),
       () => {
         throw new Error("network unavailable");
       },
@@ -123,7 +124,7 @@ describe("project run cancellation observer", () => {
       let calls = 0;
       let stops = 0;
       const dispose = watch(
-        async () => ++calls === 1 ? response() : Response.json({ stopRequested: true }),
+        async () => ++calls === 1 ? response() : Response.json({ stop_requested: true }),
         () => stops++,
       );
       try {
@@ -162,7 +163,7 @@ describe("project run cancellation observer", () => {
       async (_url, init) => {
         calls++;
         signal = init?.signal;
-        return calls === 1 ? await pending.promise : Response.json({ stopRequested: false });
+        return calls === 1 ? await pending.promise : Response.json({ stop_requested: false });
       },
       () => stops++,
       30,
@@ -173,11 +174,11 @@ describe("project run cancellation observer", () => {
       assertExists(signal);
       assertEquals(signal.aborted, true);
       assertEquals(calls, 1);
-      pending.resolve(Response.json({ stopRequested: true }));
+      pending.resolve(Response.json({ stop_requested: true }));
       await until(() => calls >= 2);
       assertEquals(stops, 0);
     } finally {
-      pending.resolve(Response.json({ stopRequested: false }));
+      pending.resolve(Response.json({ stop_requested: false }));
       dispose();
     }
   });
@@ -192,7 +193,7 @@ describe("project run cancellation observer", () => {
     }, () => stops++);
     await until(() => calls === 1);
     dispose();
-    pending.resolve(Response.json({ stopRequested: true }));
+    pending.resolve(Response.json({ stop_requested: true }));
     await sleep(40);
     assertEquals(stops, 0);
     assertEquals(calls, 1);
@@ -209,14 +210,14 @@ describe("project run cancellation observer", () => {
           ? new Response(
             new ReadableStream({
               start(controller) {
-                controller.enqueue(new TextEncoder().encode('{"stopRequested":'));
+                controller.enqueue(new TextEncoder().encode('{"stop_requested":'));
               },
               cancel() {
                 cancelled = true;
               },
             }),
           )
-          : Response.json({ stopRequested: false });
+          : Response.json({ stop_requested: false });
       },
       () => stops++,
       30,

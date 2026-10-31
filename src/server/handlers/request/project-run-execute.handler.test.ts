@@ -14891,7 +14891,7 @@ describe("server/handlers/request/project-run-execute.handler cancellation", () 
     }, { "x-veryfront-run-stop-token": token });
     await withMockFetch(async () => {
       requests++;
-      return Response.json({ stopRequested: false });
+      return Response.json({ stop_requested: false });
     }, async () => {
       const result = await handler.handle(signed.request, createCtx(signed.publicKeyPem));
       assertExists(result.response);
@@ -14966,7 +14966,9 @@ describe("server/handlers/request/project-run-execute.handler cancellation", () 
     );
     recordRequestTransportLifetime(signed.request, completed.promise);
     await withMockFetch(async (url) => {
-      if (String(url).endsWith("/cancellation-status")) return Response.json({ stopRequested });
+      if (String(url).endsWith("/cancellation-status")) {
+        return Response.json({ stop_requested: stopRequested });
+      }
       assertEquals(resumed, true);
       acknowledgements++;
       acknowledged.resolve();
@@ -15044,12 +15046,12 @@ describe("server/handlers/request/project-run-execute.handler cancellation", () 
         const result = await handler.handle(signed.request, createCtx(signed.publicKeyPem));
         assertExists(result.response);
         assertEquals((await result.response.json()).success, true);
-        statusResponse.resolve(Response.json({ stopRequested: true }));
+        statusResponse.resolve(Response.json({ stop_requested: true }));
         await new Promise((resolve) => setTimeout(resolve, 20));
         assertEquals(cancellations, 0);
         assertEquals(polls, 1);
       } finally {
-        statusResponse.resolve(Response.json({ stopRequested: false }));
+        statusResponse.resolve(Response.json({ stop_requested: false }));
       }
     });
   });
@@ -15125,7 +15127,9 @@ describe("server/handlers/request/project-run-execute.handler cancellation", () 
       { "x-veryfront-run-stop-token": token },
     );
     await withMockFetch(async (url) => {
-      if (String(url).endsWith("/cancellation-status")) return Response.json({ stopRequested });
+      if (String(url).endsWith("/cancellation-status")) {
+        return Response.json({ stop_requested: stopRequested });
+      }
       assertEquals(toolSettled, true);
       acknowledgements++;
       acknowledged.resolve();
@@ -15199,7 +15203,7 @@ describe("server/handlers/request/project-run-execute.handler cancellation", () 
         const first = await handler.handle(signed.request, createCtx(signed.publicKeyPem));
         assertExists(first.response);
         assertEquals((await first.response.json()).success, true);
-        statusResponse.resolve(Response.json({ stopRequested: true }));
+        statusResponse.resolve(Response.json({ stop_requested: true }));
         await new Promise((resolve) => setTimeout(resolve, 20));
         assertEquals(firstSignal?.aborted, false);
         const successor = await signedRequest(
@@ -15218,7 +15222,7 @@ describe("server/handlers/request/project-run-execute.handler cancellation", () 
         assertEquals(polls, 1);
         assertEquals(acknowledgements, 0);
       } finally {
-        statusResponse.resolve(Response.json({ stopRequested: false }));
+        statusResponse.resolve(Response.json({ stop_requested: false }));
       }
     });
   });
@@ -15241,7 +15245,7 @@ describe("server/handlers/request/project-run-execute.handler cancellation", () 
       }, stopToken === undefined ? {} : { "x-veryfront-run-stop-token": stopToken });
       await withMockFetch(async () => {
         polls++;
-        return Response.json({ stopRequested: true });
+        return Response.json({ stop_requested: true });
       }, async () => {
         const result = await handler.handle(signed.request, createCtx(signed.publicKeyPem));
         assertExists(result.response);
@@ -15306,7 +15310,7 @@ describe("server/handlers/request/project-run-execute.handler cancellation", () 
         assertEquals(new Headers(init?.headers).get("authorization"), `Bearer ${stopToken}`);
         if (String(url).endsWith("/cancellation-status")) {
           assertEquals(init?.method, "GET");
-          return Response.json({ stopRequested });
+          return Response.json({ stop_requested: stopRequested });
         }
         assertEquals(String(url).endsWith("/cancellation-ack"), true);
         assertEquals(taskSettled, true, "a signal is not evidence that user task work stopped");
@@ -16677,7 +16681,9 @@ describe("server/handlers/request/project-run-execute.handler cancellation", () 
 
     recordRequestTransportLifetime(signed.request, completed.promise);
     await withMockFetch(async (input, init) => {
-      if (String(input).endsWith("/cancellation-status")) return Response.json({ stopRequested });
+      if (String(input).endsWith("/cancellation-status")) {
+        return Response.json({ stop_requested: stopRequested });
+      }
       callbacks.push({ url: String(input), init: observeFetchRequestInit(init) });
       acknowledged.resolve();
       return Response.json({ acknowledged: true });
