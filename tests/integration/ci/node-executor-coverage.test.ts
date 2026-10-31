@@ -54,23 +54,24 @@ describe("native executor source coverage", () => {
       "export function positiveOnly() {\n  return 1;\n}\nexport function negativeOnly() {\n  return 0;\n}\nexport function target(value: number) {\n  if (value > 0) return positiveOnly();\n  return negativeOnly();\n}\n",
     );
     try {
-      const groups = [];
       for (const [index, value] of [1, -1].entries()) {
         const file = `${directory}/${index}.test.mjs`;
         await Deno.writeTextFile(
           file,
           `import { test } from "node:test"; import { target } from "./source.ts"; test("owned", () => { target(${value}); });`,
         );
-        groups.push({ testFiles: [file], pattern: "", expectedTests: 1 });
       }
       const wrapper = `${directory}/wrapper.test.mjs`;
       await Deno.writeTextFile(
         wrapper,
-        `import { test } from "node:test"; import { runNativeCoverageGroups } from ${
-          JSON.stringify(`${root}/scripts/test/coverage-node-executor.mjs`)
-        }; test("collect", async () => { await runNativeCoverageGroups(${JSON.stringify(root)}, ${
-          JSON.stringify(groups)
-        }); });`,
+        [
+          'import { test } from "node:test";',
+          'import { fileURLToPath } from "node:url";',
+          'import { runNativeCoverageGroups } from "../../scripts/test/coverage-node-executor.mjs";',
+          'const root = fileURLToPath(new URL("../../", import.meta.url));',
+          'const groups = [0, 1].map((index) => ({ testFiles: [fileURLToPath(new URL(`./${index}.test.mjs`, import.meta.url))], pattern: "", expectedTests: 1 }));',
+          'test("collect", async () => { await runNativeCoverageGroups(root, groups); });',
+        ].join("\n"),
       );
       const output = await new Deno.Command("node", {
         args: buildNativeCoverageArgs({
@@ -133,10 +134,11 @@ describe("native executor source coverage", () => {
         'import { spawnSync } from "node:child_process";',
         'import process from "node:process";',
         'import assert from "node:assert/strict";',
+        'import { fileURLToPath } from "node:url";',
         'test("executes child source", () => {',
-        `  const result = spawnSync(process.execPath, ["--enable-source-maps", "--import", ${
-          JSON.stringify(`${root}/tests/node/resolver.mjs`)
-        }, ${JSON.stringify(child)}], {`,
+        '  const resolver = fileURLToPath(new URL("../../tests/node/resolver.mjs", import.meta.url));',
+        '  const child = fileURLToPath(new URL("./child.ts", import.meta.url));',
+        '  const result = spawnSync(process.execPath, ["--enable-source-maps", "--import", resolver, child], {',
         '    env: { NODE_V8_COVERAGE: process.env.NODE_V8_COVERAGE }, encoding: "utf8",',
         "  });",
         "  assert.equal(result.status, 0, result.stderr);",
