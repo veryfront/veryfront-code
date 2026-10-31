@@ -34,6 +34,7 @@ import { createProjectSelector } from "./project-selector.ts";
 import { createDevLogController } from "./log-controller.ts";
 import { findAvailablePort, isPortAvailable, isPortInUseError } from "./port-fallback.ts";
 import { advertisesCloudGateway, listInferenceOptions } from "./inference-status.ts";
+import { findUnconnectedIntegrationLines } from "./unconnected-integrations.ts";
 import { captureHostApiEnvironment } from "#cli/process-env";
 import { resolveApiCredentialCandidatesForAuth, resolveApiUrlTrust } from "#cli/shared/config";
 import { captureDevDisplayOptions } from "./display-options.ts";
@@ -626,6 +627,16 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
             } Veryfront Cloud session is not valid; gateway inference will fail. ` +
               `Run ${brand("veryfront login")} to renew it.`,
           );
+        });
+      }
+      // Discovery lists only connected integrations. Report the ones the agents declare but the
+      // project lacks after Ready, so the banner does not wait on the network.
+      if (runtimeAuth.apiToken && runtimeAuth.projectSlug) {
+        void findUnconnectedIntegrationLines(projectDir).then((lines) => {
+          for (let index = 0; index < lines.length; index += 2) {
+            console.log(`  ${warning("!")} ${lines[index]}`);
+            console.log(`    ${lines[index + 1]!.trim()}`);
+          }
         });
       }
       if (mcpServer && isVerbose()) {
