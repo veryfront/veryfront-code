@@ -301,6 +301,8 @@ export interface DynamicToolConfig {
   discovery?: ToolDiscoveryMetadata;
   inputSchema: unknown;
   inputSchemaJson?: JsonSchema;
+  /** Declared result contract; metadata only, without local result validation. */
+  outputSchemaJson?: JsonSchema;
   execute: (input: unknown, context?: ToolExecutionContext) => Promise<unknown> | unknown;
   toModelOutput?: (output: unknown) => unknown;
   mcp?: ToolConfig["mcp"];
@@ -327,6 +329,12 @@ export function dynamicTool(config: DynamicToolConfig): Tool<unknown, unknown> {
   if (!inputSchemaJson) {
     schemaError(id, "inputSchemaJson must be a bounded JSON Schema object");
   }
+  const outputSchemaJson = config.outputSchemaJson === undefined
+    ? undefined
+    : snapshotJsonSchemaObject(config.outputSchemaJson);
+  if (config.outputSchemaJson !== undefined && !outputSchemaJson) {
+    schemaError(id, "outputSchemaJson must be a bounded JSON Schema object");
+  }
   const mcp = snapshotMcpConfig(config.mcp, id);
   const discovery = readToolDiscoveryMetadata(config);
 
@@ -342,6 +350,7 @@ export function dynamicTool(config: DynamicToolConfig): Tool<unknown, unknown> {
     ...(discovery ? { discovery } : {}),
     inputSchema: inputSchema as Schema<unknown>,
     inputSchemaJson,
+    ...(outputSchemaJson ? { outputSchemaJson } : {}),
     execute: async (input: unknown, context?: ToolExecutionContext) => {
       if (parseInput) {
         input = parseInput(input);

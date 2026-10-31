@@ -249,6 +249,8 @@ export interface ToolDefinition {
   name: string;
   description: string;
   parameters: JsonSchema;
+  /** Declared tool result contract, when the source provides one. */
+  outputSchema?: JsonSchema;
   /** Catalog navigation hints, without execution authority. */
   discovery?: ToolDiscoveryMetadata;
   title?: string;
