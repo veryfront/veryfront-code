@@ -10556,6 +10556,161 @@ describe("project run inference credential header", () => {
     }, operation);
   }
 
+  for (
+    const outcome of [
+      "success",
+      "failure",
+      "rejected",
+      "cancelled",
+      "start401",
+      "start404",
+      "start409",
+      "end500",
+      "disabled",
+    ] as const
+  ) {
+    const fails = outcome === "failure" || outcome === "end500";
+    it(`persists actual task lifecycle for ${outcome}`, async () => {
+      const runId = `run_task_durable_lifecycle_${outcome}`;
+      const canonicalRunId = "11111111-1111-4111-8111-111111111111";
+      const projectId = "22222222-2222-4222-8222-222222222222";
+      const batches: Record<string, unknown>[] = [];
+      const events: Record<string, unknown>[] = [];
+      const abort = new AbortController();
+      let entered = false;
+      const handler = new ProjectRunExecuteHandler(createDeps({
+        runTask: (options, schemas) => runTask(options, undefined, undefined, schemas),
+        ensureProjectDiscovery: async () => {
+          if (outcome === "disabled") {
+            try {
+              await executeLocalChild({
+                agentId: "invalid-observation-during-discovery",
+                input: "test",
+                toolName: "invoke_agent",
+                toolInput: {},
+                execute: async (control) => {
+                  assertExists(control?.onEvent);
+                  await control.onEvent({
+                    type: "text-delta",
+                    id: "bad",
+                    get delta(): string {
+                      throw new Error("Invalid project observation");
+                    },
+                  });
+                  return { text: "unreachable", status: "completed" };
+                },
+              });
+            } catch { /* Project code can catch an encoding error; the sink remains disabled. */ }
+          }
+          const discovery = createEmptyDiscoveryResult();
+          discovery.tasks.set("sync-calendar-events", {
+            name: "Sync calendar events",
+            ...(outcome === "rejected"
+              ? {
+                inputSchema: {
+                  type: "object",
+                  properties: { missing: { type: "string" } },
+                  required: ["missing"],
+                },
+              }
+              : {}),
+            run: (taskContext) => {
+              entered = true;
+              assert(outcome !== "rejected", "invalid input must not enter task code");
+              assertEquals(events.filter((event) => event.type === "STEP_STARTED").length, 1);
+              assertEquals(events.some((event) => event.type === "STEP_FINISHED"), false);
+              if (fails) throw new Error("Failed after 2 lines");
+              if (outcome === "cancelled") {
+                abort.abort();
+                taskContext.signal?.throwIfAborted();
+              }
+              return { ok: true };
+            },
+          });
+          return discovery;
+        },
+      }));
+      const { request, publicKeyPem } = await signedRequest(
+        `/api/control-plane/runs/${runId}/execute`,
+        { ...taskBody, runId, canonicalRunId, projectId, input: {} },
+        {
+          "X-Veryfront-Inference-Token": INFERENCE_TOKEN,
+          "x-veryfront-run-event-token": createProjectRunEventToken({
+            runId,
+            projectId,
+            canonicalRunId,
+          }),
+        },
+      );
+      const ctx = createCtx(publicKeyPem);
+      ctx.projectId = projectId;
+      const result = await withEnv(
+        { VERYFRONT_API_BASE_URL: "https://api.veryfront.com" },
+        () =>
+          withMockFetch((_input, init) => {
+            const batch = requestJsonBody(init);
+            assertExists(batch);
+            batches.push(batch);
+            assert(Array.isArray(batch.events));
+            events.push(...batch.events);
+            const start = batch.events.some((event) => event.type === "STEP_STARTED");
+            const finish = batch.events.some((event) => event.type === "STEP_FINISHED");
+            if (
+              start && (outcome === "start401" || outcome === "start404" || outcome === "start409")
+            ) {
+              return Promise.resolve(new Response(null, { status: Number(outcome.slice(5)) }));
+            }
+            if (finish && outcome === "end500") {
+              return Promise.resolve(new Response(null, { status: 500 }));
+            }
+            return Promise.resolve(Response.json({
+              run_id: canonicalRunId,
+              latest_event_id: events.length + 1,
+              appended_count: batch.events.length,
+            }));
+          }, () => handler.handle(new Request(request, { signal: abort.signal }), ctx)),
+      );
+      assertExists(result.response);
+      const responseBody = await result.response.json();
+      assertEquals(responseBody.success, outcome === "success");
+      if (
+        outcome === "disabled" || outcome === "start401" || outcome === "start404" ||
+        outcome === "start409"
+      ) {
+        assertEquals(entered, false);
+        assertStringIncludes(responseBody.error, "Project run observation");
+        assertEquals(events.some((event) => event.type === "STEP_FINISHED"), false);
+        return;
+      }
+      if (outcome === "end500") {
+        assertEquals(entered, true);
+        // Mandatory evidence failure takes precedence over the business error it could not persist.
+        assertStringIncludes(responseBody.error, "Project run observation append failed (500)");
+        assertEquals(String(responseBody.error).includes("Failed after 2 lines"), false);
+        return;
+      }
+      const steps = events.filter((event) =>
+        event.type === "STEP_STARTED" || event.type === "STEP_FINISHED"
+      );
+      if (outcome === "rejected") {
+        assertEquals(steps, []);
+        return;
+      }
+      if (outcome === "cancelled") {
+        assertEquals(steps.map((event) => event.type), ["STEP_STARTED"]);
+        return;
+      }
+      assertEquals(steps.map((event) => event.type), ["STEP_STARTED", "STEP_FINISHED"]);
+      assertEquals(steps[0]?.stepId, steps[1]?.stepId);
+      assertEquals(steps[1]?.status, fails ? "failed" : "completed");
+      assertEquals(steps[1]?.exitCode, fails ? 1 : 0);
+      assertEquals(events.some((event) => event.type === "RUN_ERROR"), false);
+      for (const kind of ["step_started", "step_ended"]) {
+        assert(batches.some((batch) => JSON.stringify(batch.runtime_observations).includes(kind)));
+      }
+    });
+  }
+
   it("replays the full execution entry after a lost receipt without duplicating the attempt", async () => {
     const runId = "run_entry_receipt_redelivery";
     const canonicalRunId = "12121212-1212-4121-8121-121212121212";
@@ -11349,6 +11504,16 @@ describe("project run inference credential header", () => {
             assertMatch(JSON.stringify(payload?.runtime_observations), /"kind":"execution_entry"/);
             assertMatch(JSON.stringify(payload?.runtime_observations), /"event_index":0/);
             assertEquals(payload?.expected_previous_event_id, undefined);
+          } else if (
+            events.some((event) =>
+              event.stepName === "task" &&
+              (event.type === "STEP_STARTED" || event.type === "STEP_FINISHED")
+            )
+          ) {
+            assertMatch(
+              JSON.stringify(payload?.runtime_observations),
+              /"kind":"step_(started|ended)"/,
+            );
           } else {
             assertEquals(payload?.runtime_observations, undefined);
           }
@@ -12594,6 +12759,16 @@ describe("project run inference credential header", () => {
               assertMatch(
                 JSON.stringify(payload?.runtime_observations),
                 /"kind":"execution_entry"/,
+              );
+            } else if (
+              events.some((event) =>
+                event.stepName === "task" &&
+                (event.type === "STEP_STARTED" || event.type === "STEP_FINISHED")
+              )
+            ) {
+              assertMatch(
+                JSON.stringify(payload?.runtime_observations),
+                /"kind":"step_(started|ended)"/,
               );
             } else {
               assertEquals(payload?.runtime_observations, undefined);
