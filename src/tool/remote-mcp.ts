@@ -1,3 +1,4 @@
+import { VERSION } from "#veryfront/utils/version-constant.ts";
 import { defineOwnDataProperty } from "#veryfront/security/own-data-property.ts";
 import { NETWORK_ERROR, TIMEOUT_ERROR } from "#veryfront/errors";
 import { readMcpToolDiscoveryMetadata } from "./discovery-metadata.ts";
@@ -47,6 +48,20 @@ const NativeURL = URL;
 // The resolved headers can carry a bearer (the platform source's run token, a
 // user source's OAuth token), so they are only touched through members
 // captured before project code loaded.
+const NativeMap = Map;
+const NativeUint8Array = Uint8Array;
+const MapPrototypeGet = Map.prototype.get;
+const MapPrototypeSet = Map.prototype.set;
+const MapPrototypeHas = Map.prototype.has;
+const MapPrototypeDelete = Map.prototype.delete;
+const MapPrototypeClear = Map.prototype.clear;
+const MapPrototypeValues = Map.prototype.values;
+const MapPrototypeIterator = Map.prototype[Symbol.iterator];
+const MapIteratorNext = Object.getPrototypeOf(new Map().entries()).next;
+const HeadersPrototypeForEach = Headers.prototype.forEach;
+const digest = crypto.subtle.digest.bind(crypto.subtle);
+const encodeUtf8 = TextEncoder.prototype.encode.bind(UTF8_ENCODER);
+const nativeBtoa = btoa;
 const HeadersPrototypeSet = Headers.prototype.set;
 const HeadersPrototypeGet = Headers.prototype.get;
 const HeadersPrototypeDelete = Headers.prototype.delete;
@@ -86,7 +101,7 @@ const urlPathnameGetter = Object.getOwnPropertyDescriptor(
 )?.get;
 
 class RemoteMCPHttpError extends Error {
-  constructor(status: number) {
+  constructor(readonly status: number, readonly modernError = false) {
     super(`Remote MCP request failed (${status})`);
     this.name = "RemoteMCPHttpError";
   }
@@ -838,9 +853,10 @@ async function postJsonRpc(
   requestFetch: typeof fetch,
   callerSignal: AbortSignal | undefined,
   maxResponseBytes: number,
+  onResponse?: (response: Response) => void,
 ): Promise<unknown> {
   const expectedId = body.id;
-  if (typeof expectedId !== "string" || expectedId.length === 0) {
+  if (expectedId !== undefined && (typeof expectedId !== "string" || expectedId.length === 0)) {
     throw new TypeError("Remote MCP JSON-RPC request id must be a non-empty string");
   }
   const serializedBody = serializeJsonRpcRequest(body);
@@ -871,12 +887,24 @@ async function postJsonRpc(
       if (isOauthExpiredMessage(detail)) {
         throw new RemoteMCPOAuthExpiredHttpError(response.status);
       }
-      throw new RemoteMCPHttpError(response.status);
+      let modernError = false;
+      try {
+        const payload = JSON.parse(text);
+        modernError = isRecord(payload) && isRecord(payload.error) &&
+          (payload.error.code === -32020 || payload.error.code === -32021 ||
+            payload.error.code === -32022 || payload.error.code === -32601);
+      } catch { /* Legacy servers can return plain text errors. */ }
+      throw new RemoteMCPHttpError(response.status, modernError);
     }
 
+    onResponse?.(response);
+    if (expectedId === undefined) {
+      discardResponseBody(response);
+      return undefined;
+    }
     return await parseJsonRpcResponse(
       response,
-      expectedId,
+      expectedId as string,
       maxResponseBytes,
       requestScope.signal,
     );
@@ -1047,6 +1075,144 @@ function buildRunContextMeta(
   return Object.keys(meta).length > 0 ? meta : undefined;
 }
 
+const MODERN_MCP_VERSION = "2026-07-28";
+const LEGACY_MCP_VERSIONS = ["2025-11-25", "2025-06-18", "2025-03-26"];
+const MCP_CLIENT_INFO = { name: "veryfront", version: VERSION };
+interface RemoteMcpSession {
+  version: string;
+  sessionId?: string;
+}
+
+function encodeMcpHeader(value: string): string {
+  if (
+    /^[\x20-\x7e]*$/.test(value) && value.trim() === value &&
+    !(value.startsWith("=?base64?") && value.endsWith("?="))
+  ) return value;
+  const bytes = UTF8_ENCODER.encode(value);
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return `=?base64?${nativeBtoa(binary)}?=`;
+}
+
+interface McpParameterHeader {
+  path: string[];
+  name: string;
+  type: "string" | "integer" | "boolean";
+}
+
+/** Inspect only bounded, normalized JSON schemas, never application objects. */
+function readMcpParameterHeaders(schema: JsonSchema): McpParameterHeader[] | undefined {
+  const result: McpParameterHeader[] = [];
+  const names = new Set<string>();
+  let valid = true;
+  function visit(value: unknown, path: string[], reachable: boolean) {
+    if (Array.isArray(value)) {
+      for (const item of value) visit(item, path, false);
+      return;
+    }
+    if (!isRecord(value)) return;
+    if (Object.hasOwn(value, "x-mcp-header")) {
+      const name = value["x-mcp-header"];
+      if (
+        !reachable || typeof name !== "string" || !/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(name) ||
+        names.has(name.toLowerCase()) ||
+        (value.type !== "string" && value.type !== "integer" && value.type !== "boolean")
+      ) {
+        valid = false;
+      } else {
+        names.add(name.toLowerCase());
+        result.push({ path, name, type: value.type });
+      }
+    }
+    for (const [key, child] of Object.entries(value)) {
+      if (key === "properties" && isRecord(child)) {
+        for (const [name, property] of Object.entries(child)) {
+          visit(property, [...path, name], reachable);
+        }
+      } else if (key !== "x-mcp-header") {
+        visit(child, path, false);
+      }
+    }
+  }
+  if (Object.hasOwn(schema, "x-mcp-header")) return undefined;
+  // The root is an object container. Only its properties can carry annotations.
+  if (isRecord(schema.properties)) {
+    for (const [name, property] of Object.entries(schema.properties)) visit(property, [name], true);
+    for (const [name, value] of Object.entries(schema)) {
+      if (name !== "properties") visit(value, [], false);
+    }
+  } else {
+    for (const value of Object.values(schema)) visit(value, [], false);
+  }
+  return valid ? result : undefined;
+}
+
+function addMcpParameterHeaders(
+  headers: Headers,
+  annotations: McpParameterHeader[],
+  args: Record<string, unknown>,
+): void {
+  for (const annotation of annotations) {
+    let value: unknown = args;
+    for (const segment of annotation.path) {
+      value = isRecord(value) && Object.hasOwn(value, segment) ? value[segment] : undefined;
+    }
+    if (value === undefined || value === null) continue;
+    if (
+      (annotation.type === "integer" && !Number.isSafeInteger(value)) ||
+      (annotation.type !== "integer" && typeof value !== annotation.type)
+    ) {
+      throw protocolError("Remote MCP tool header parameter has an invalid type");
+    }
+    reflectApply(HeadersPrototypeSet, headers, [
+      `Mcp-Param-${annotation.name}`,
+      encodeMcpHeader(String(value)),
+    ]);
+  }
+}
+
+async function remoteMcpSessionKey(
+  endpoint: string,
+  headers: Headers,
+  runId?: string,
+): Promise<string> {
+  // Native Headers iteration is sorted. Length prefixes prevent collisions;
+  // raw credentials never enter mutable Array/JSON hooks or cache keys.
+  let identity = `${endpoint.length}:${endpoint}${runId?.length ?? 0}:${runId ?? ""}`;
+  reflectApply(HeadersPrototypeForEach, headers, [(value: string, name: string) => {
+    identity += `${name.length}:${name}${value.length}:${value}`;
+  }]);
+  const hash = await digest("SHA-256", encodeUtf8(identity));
+  const bytes = new NativeUint8Array(hash);
+  const hex = "0123456789abcdef";
+  let key = "";
+  for (let index = 0; index < 32; index++) {
+    const byte = bytes[index]!;
+    key += hex[byte >>> 4]! + hex[byte & 15]!;
+  }
+  return key;
+}
+
+/** Keep retained session credentials away from project-patched Map methods. */
+function createPrivateMcpMap<K, V>(): Map<K, V> {
+  const map = new NativeMap<K, V>();
+  defineOwnDataProperty(map, "get", (key: K) => reflectApply(MapPrototypeGet, map, [key]));
+  defineOwnDataProperty(
+    map,
+    "set",
+    (key: K, value: V) => reflectApply(MapPrototypeSet, map, [key, value]),
+  );
+  defineOwnDataProperty(map, "has", (key: K) => reflectApply(MapPrototypeHas, map, [key]));
+  defineOwnDataProperty(map, "delete", (key: K) => reflectApply(MapPrototypeDelete, map, [key]));
+  defineOwnDataProperty(map, "clear", () => reflectApply(MapPrototypeClear, map, []));
+  defineOwnDataProperty(map, "values", () => reflectApply(MapPrototypeValues, map, []));
+  defineOwnDataProperty(map, Symbol.iterator, () => {
+    const iterator = reflectApply(MapPrototypeIterator, map, []);
+    return { next: () => reflectApply(MapIteratorNext, iterator, []) };
+  });
+  return map;
+}
+
 function createRemoteMCPToolSourceWithFetch(
   config: RemoteMCPToolSourceConfig,
   getRequestFetch: (endpoint: string) => typeof fetch,
@@ -1054,9 +1220,216 @@ function createRemoteMCPToolSourceWithFetch(
   const id = config.id ?? "remote-mcp";
   const listMethod = config.listMethod ?? "tools/list";
   const callMethod = config.callMethod ?? "tools/call";
+  const sessions = createPrivateMcpMap<string, RemoteMcpSession>();
+  let nextCleanupId = 0;
+  const cleanupRequests = createPrivateMcpMap<number, {
+    sourceKey: string;
+    endpoint: string;
+    headers: Headers;
+    sessionId: string;
+    runId?: string;
+  }>();
+  const initializing = createPrivateMcpMap<string, Promise<RemoteMcpSession>>();
+  const parameterHeaders = new Map<string, Map<string, McpParameterHeader[]>>();
+
+  async function initialize(
+    key: string,
+    endpoint: string,
+    headers: Headers,
+    requestFetch: typeof fetch,
+    signal?: AbortSignal,
+    runId?: string,
+  ): Promise<RemoteMcpSession> {
+    const pending = initializing.get(key);
+    if (pending) return await pending;
+    const promise = (async () => {
+      const initHeaders = copyNativeHeaders(headers);
+      reflectApply(HeadersPrototypeDelete, initHeaders, ["Mcp-Session-Id"]);
+      reflectApply(HeadersPrototypeDelete, initHeaders, ["MCP-Protocol-Version"]);
+      reflectApply(HeadersPrototypeSet, initHeaders, ["Mcp-Method", "initialize"]);
+      reflectApply(HeadersPrototypeDelete, initHeaders, ["Mcp-Name"]);
+      let sessionId: string | undefined;
+      const requestId = `${id}:initialize`;
+      const payload = await postJsonRpc(
+        endpoint,
+        initHeaders,
+        {
+          jsonrpc: "2.0",
+          id: requestId,
+          method: "initialize",
+          params: {
+            protocolVersion: LEGACY_MCP_VERSIONS[0],
+            capabilities: {},
+            clientInfo: MCP_CLIENT_INFO,
+          },
+        },
+        requestFetch,
+        signal,
+        MAX_REMOTE_MCP_CALL_RESPONSE_BYTES,
+        (response) => {
+          sessionId = reflectApply(HeadersPrototypeGet, response.headers, ["Mcp-Session-Id"]) ??
+            undefined;
+        },
+      );
+      const result = getJsonRpcResult(payload, requestId);
+      if (
+        !isRecord(result) || typeof result.protocolVersion !== "string" ||
+        !LEGACY_MCP_VERSIONS.includes(result.protocolVersion)
+      ) {
+        throw protocolError("Remote MCP initialize returned an unsupported protocol version");
+      }
+      if (
+        sessionId !== undefined && (!/^[\x21-\x7e]+$/.test(sessionId) || sessionId.length > 4096)
+      ) {
+        throw protocolError("Remote MCP initialize returned an invalid session identifier");
+      }
+      const session = { version: result.protocolVersion, sessionId };
+      reflectApply(HeadersPrototypeSet, initHeaders, ["MCP-Protocol-Version", session.version]);
+      if (sessionId) reflectApply(HeadersPrototypeSet, initHeaders, ["Mcp-Session-Id", sessionId]);
+      reflectApply(HeadersPrototypeSet, initHeaders, ["Mcp-Method", "notifications/initialized"]);
+      if (sessionId) {
+        cleanupRequests.set(++nextCleanupId, {
+          sourceKey: key,
+          endpoint,
+          headers: copyNativeHeaders(initHeaders),
+          sessionId,
+          runId,
+        });
+      }
+      await postJsonRpc(
+        endpoint,
+        initHeaders,
+        {
+          jsonrpc: "2.0",
+          method: "notifications/initialized",
+        },
+        requestFetch,
+        signal,
+        MAX_REMOTE_MCP_CALL_RESPONSE_BYTES,
+      );
+      sessions.set(key, session);
+      return session;
+    })();
+    initializing.set(key, promise);
+    try {
+      return await promise;
+    } finally {
+      initializing.delete(key);
+    }
+  }
+
+  async function request(
+    endpoint: string,
+    headers: Headers,
+    body: Record<string, unknown>,
+    requestFetch: typeof fetch,
+    signal: AbortSignal | undefined,
+    maxBytes: number,
+    runId?: string,
+  ): Promise<unknown> {
+    const snapshot = snapshotBoundedJsonValue(body, MAX_REMOTE_MCP_REQUEST_BYTES);
+    if (!snapshot.success || !isRecord(snapshot.value)) {
+      throw new TypeError("Remote MCP JSON-RPC request must be a bounded JSON object");
+    }
+    body = snapshot.value;
+    const key = await remoteMcpSessionKey(endpoint, headers, runId);
+    if (initializing.has(key)) await initializing.get(key);
+    const send = (session?: RemoteMcpSession) => {
+      const finalHeaders = copyNativeHeaders(headers);
+      const version = session?.version ?? MODERN_MCP_VERSION;
+      reflectApply(HeadersPrototypeSet, finalHeaders, ["MCP-Protocol-Version", version]);
+      reflectApply(HeadersPrototypeSet, finalHeaders, ["Mcp-Method", body.method]);
+      const params = isRecord(body.params) ? body.params : {};
+      reflectApply(HeadersPrototypeDelete, finalHeaders, ["Mcp-Name"]);
+      if (!session && typeof params.name === "string" && isRecord(params.arguments)) {
+        addMcpParameterHeaders(
+          finalHeaders,
+          parameterHeaders.get(key)?.get(params.name) ?? [],
+          params.arguments,
+        );
+      }
+      if (typeof params.name === "string") {
+        reflectApply(HeadersPrototypeSet, finalHeaders, ["Mcp-Name", encodeMcpHeader(params.name)]);
+      }
+      if (session?.sessionId) {
+        reflectApply(HeadersPrototypeSet, finalHeaders, ["Mcp-Session-Id", session.sessionId]);
+      }
+      const finalBody = session ? body : {
+        ...body,
+        params: {
+          ...params,
+          _meta: {
+            ...(isRecord(params._meta) ? params._meta : {}),
+            "io.modelcontextprotocol/protocolVersion": version,
+            "io.modelcontextprotocol/clientInfo": MCP_CLIENT_INFO,
+            "io.modelcontextprotocol/clientCapabilities": {},
+          },
+        },
+      };
+      return postJsonRpc(endpoint, finalHeaders, finalBody, requestFetch, signal, maxBytes);
+    };
+    const session = sessions.get(key);
+    try {
+      return await send(session);
+    } catch (error) {
+      if (
+        !(error instanceof RemoteMCPHttpError) ||
+        error instanceof RemoteMCPOAuthExpiredHttpError || error.modernError
+      ) throw error;
+      const fallback = !session && error.status === 400;
+      const expired = !!session?.sessionId && error.status === 404;
+      if (!fallback && !expired) throw error;
+      if (expired && sessions.get(key) === session) sessions.delete(key);
+      const renewed = sessions.get(key) ??
+        await initialize(key, endpoint, headers, requestFetch, signal, runId);
+      return await send(renewed);
+    }
+  }
 
   return {
     id,
+    async dispose(context) {
+      // Await handshakes before terminating the sessions they create.
+      await Promise.allSettled(initializing.values());
+      let firstError: unknown;
+      // Native iterator entries are indexed directly. Destructuring would call
+      // a project-patched Array iterator with the retained session credentials.
+      for (const entry of cleanupRequests) {
+        const key = entry[0];
+        const cleanup = entry[1];
+        if (context && cleanup.runId !== context.runId) continue;
+        sessions.delete(cleanup.sourceKey);
+        parameterHeaders.delete(cleanup.sourceKey);
+        cleanupRequests.delete(key);
+        const scope = createRequestSignalScope(undefined);
+        try {
+          const headers = copyNativeHeaders(cleanup.headers);
+          reflectApply(HeadersPrototypeDelete, headers, ["Mcp-Method"]);
+          const response = await getRequestFetch(cleanup.endpoint)(
+            cleanup.endpoint,
+            createNativeRequestInit(undefined, {
+              method: "DELETE",
+              headers,
+              signal: scope.signal,
+              redirect: "error",
+            }),
+          );
+          discardResponseBody(response);
+          if (!response.ok && response.status !== 404 && response.status !== 405) {
+            throw new RemoteMCPHttpError(response.status);
+          }
+        } catch (error) {
+          firstError ??= error;
+        } finally {
+          scope.dispose();
+        }
+      }
+      if (!context) {
+        sessions.clear();
+        parameterHeaders.clear();
+      }
+      if (firstError !== undefined) throw firstError;
+    },
     async listTools(context) {
       const endpoint = validateEndpoint(await resolveValue(config.endpoint, context));
       const headers = await resolveHeaders(config.headers, context);
@@ -1064,13 +1437,14 @@ function createRemoteMCPToolSourceWithFetch(
         Object.entries(config.listMeta).filter(([key]) => key !== "tool_call_admission"),
       );
 
+      const headerDefinitions = new Map<string, McpParameterHeader[]>();
       const definitions: ToolDefinition[] = [];
       const definitionNames = new Set<string>();
       const seenCursors = new Set<string>();
       let cursor: string | undefined;
       for (let page = 0; page < MAX_REMOTE_MCP_TOOL_LIST_PAGES; page += 1) {
         const requestId = `${id}:tools:list`;
-        const payload = await postJsonRpc(
+        const payload = await request(
           endpoint,
           headers,
           {
@@ -1089,6 +1463,7 @@ function createRemoteMCPToolSourceWithFetch(
           getRequestFetch(endpoint),
           context?.abortSignal,
           MAX_REMOTE_MCP_TOOL_LIST_RESPONSE_BYTES,
+          context?.runId,
         );
 
         const result = getJsonRpcResult(payload, requestId);
@@ -1108,10 +1483,17 @@ function createRemoteMCPToolSourceWithFetch(
             );
           }
           definitionNames.add(definition.name);
+          const annotations = readMcpParameterHeaders(definition.parameters);
+          if (!annotations) continue;
+          headerDefinitions.set(definition.name, annotations);
           definitions.push(definition);
         }
 
         if (nextCursor === undefined) {
+          parameterHeaders.set(
+            await remoteMcpSessionKey(endpoint, headers, context?.runId),
+            headerDefinitions,
+          );
           return definitions;
         }
         if (seenCursors.has(nextCursor)) {
@@ -1141,7 +1523,7 @@ function createRemoteMCPToolSourceWithFetch(
       const requestId = `${id}:tools:call:${toolName}`;
 
       try {
-        const payload = await postJsonRpc(
+        const payload = await request(
           endpoint,
           headers,
           {
@@ -1157,6 +1539,7 @@ function createRemoteMCPToolSourceWithFetch(
           getHostedToolCallAdmissionRequestFetch(endpoint) ?? getRequestFetch(endpoint),
           context?.abortSignal,
           MAX_REMOTE_MCP_CALL_RESPONSE_BYTES,
+          context?.runId,
         );
 
         const result = getJsonRpcResult(payload, requestId, true);
