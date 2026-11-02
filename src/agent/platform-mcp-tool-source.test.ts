@@ -361,3 +361,36 @@ it("a verified run-scoped live source binds discovery and dispatch without calle
   });
   assertEquals(calls, [{ run_id: runId }, { run_id: runId }]);
 });
+
+it("agent management errors stay on items through platform tool aliases", async () => {
+  const payload: import("./identity-contracts.ts").AgentManagementList = {
+    data: [{
+      id: "source_abc",
+      name: "broken",
+      description: null,
+      model: null,
+      avatar_url: null,
+      source_type: "project",
+      source_path: "agents/broken.ts",
+      edit_mode: "source_only",
+      can_run: false,
+      errors: [{ code: "parse_error", message: "Missing initializer", line: 3, column: 11 }],
+    }],
+  };
+  const calls: unknown[] = [];
+  const source = createLivePlatformMcpSource({
+    id: "api",
+    listTools: async () => [{
+      name: "list_agents",
+      description: "List agents",
+      parameters: { type: "object", properties: {} },
+    }],
+    executeTool: async (name, args) => {
+      calls.push({ name, args });
+      return { content: [], structuredContent: payload };
+    },
+  });
+  const result = await source.executeTool("veryfront__list_agents", { project_reference: "demo" });
+  assertEquals(result, { content: [], structuredContent: payload });
+  assertEquals(calls, [{ name: "list_agents", args: { project_reference: "demo" } }]);
+});
