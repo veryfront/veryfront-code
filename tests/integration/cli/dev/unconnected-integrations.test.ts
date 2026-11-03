@@ -1,11 +1,12 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
+import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { readAgentSources } from "../../../../cli/commands/dev/unconnected-integrations.ts";
 
 describe("dev integration source discovery", () => {
   it("reads agent sources from flat files and agent directories", async () => {
-    const dir = await Deno.makeTempDir();
+    const dir = await makeTempDir();
     try {
       await Deno.mkdir(`${dir}/agents/case-dispose/tools`, { recursive: true });
       await Deno.writeTextFile(`${dir}/agents/case-ingest.ts`, "salesforce__get_case");
