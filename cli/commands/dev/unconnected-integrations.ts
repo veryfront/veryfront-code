@@ -3,7 +3,10 @@ import { join } from "#veryfront/compat/path";
 import { connectors } from "../../../src/integrations/_data.ts";
 import { isDeclaredIntegration } from "../../../src/integrations/feature-flags.ts";
 import { parseIntegrationToolIdentity } from "../../../src/integrations/source-policy.ts";
-import { getRemoteIntegrationToolDiscovery } from "../../../src/integrations/remote-tools.ts";
+import {
+  getRemoteIntegrationProjectTarget,
+  getRemoteIntegrationToolDiscovery,
+} from "../../../src/integrations/remote-tools.ts";
 
 export interface AgentSource {
   /** Agent id: the file name, or the directory name of `agents/<id>/…`. */
@@ -50,6 +53,7 @@ function displayName(integration: string): string {
 export function unconnectedIntegrationLines(
   declared: readonly DeclaredIntegration[],
   connectedToolNames: readonly string[],
+  projectSlug: string,
 ): string[] {
   const connected = new Set<string>();
   for (const name of connectedToolNames) {
@@ -63,7 +67,7 @@ export function unconnectedIntegrationLines(
       `${displayName(integration)} isn't connected. ` +
       `${agentIds.length === 1 ? "Agent" : "Agents"} ${joinNames(agentIds)} ` +
       `${agentIds.length === 1 ? "needs" : "need"} it.`,
-      `  Connect: npx veryfront integration connect ${integration}`,
+      `  Connect: npx veryfront integration connect ${integration} --project ${projectSlug}`,
     ]);
 }
 
@@ -102,9 +106,15 @@ export async function findUnconnectedIntegrationLines(projectDir: string): Promi
   try {
     const declared = collectDeclaredIntegrations(await readAgentSources(projectDir));
     if (declared.length === 0) return [];
+    const target = getRemoteIntegrationProjectTarget();
+    if (!target) return [];
     const discovery = await getRemoteIntegrationToolDiscovery();
     if (discovery.status !== "ok") return [];
-    return unconnectedIntegrationLines(declared, discovery.tools.map((tool) => tool.name));
+    return unconnectedIntegrationLines(
+      declared,
+      discovery.tools.map((tool) => tool.name),
+      target.projectSlug,
+    );
   } catch {
     return [];
   }

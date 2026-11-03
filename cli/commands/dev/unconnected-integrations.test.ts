@@ -36,20 +36,21 @@ describe("commands/dev/unconnected-integrations", () => {
       unconnectedIntegrationLines(
         collectDeclaredIntegrations([caseIngest, caseDispose]),
         ["gmail__list_emails"],
+        "case-demo",
       ),
       [
         "Salesforce isn't connected. Agents case-dispose and case-ingest need it.",
-        "  Connect: npx veryfront integration connect salesforce",
+        "  Connect: npx veryfront integration connect salesforce --project case-demo",
       ],
     );
   });
 
   it("uses the singular for one agent", () => {
     assertEquals(
-      unconnectedIntegrationLines(collectDeclaredIntegrations([caseDispose]), []),
+      unconnectedIntegrationLines(collectDeclaredIntegrations([caseDispose]), [], "case-demo"),
       [
         "Salesforce isn't connected. Agent case-dispose needs it.",
-        "  Connect: npx veryfront integration connect salesforce",
+        "  Connect: npx veryfront integration connect salesforce --project case-demo",
       ],
     );
   });
@@ -59,6 +60,7 @@ describe("commands/dev/unconnected-integrations", () => {
       unconnectedIntegrationLines(
         collectDeclaredIntegrations([caseIngest, caseDispose]),
         ["gmail__list_emails", "salesforce__get_case"],
+        "case-demo",
       ),
       [],
     );

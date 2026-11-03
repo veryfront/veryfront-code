@@ -52,7 +52,7 @@ export function formatUnconnectedIntegrationMessage(
 ): string {
   const lines = [
     `${integrationDisplayName(integration)} isn't connected to project ${target.projectSlug}.`,
-    `Connect it: npx veryfront integration connect ${integration}`,
+    `Connect it: npx veryfront integration connect ${integration} --project ${target.projectSlug}`,
   ];
   if (target.studioOrigin) {
     lines.push(

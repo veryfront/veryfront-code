@@ -371,12 +371,14 @@ async function getRemoteToolDefinitions(options?: {
   remoteToolSources?: RemoteToolSource[];
   remoteToolContext?: ToolExecutionContext;
   onIntegrationToolDiscovery?: (result: RemoteIntegrationToolDiscoveryResult) => void;
+  discoveredToolNames?: Set<string>;
 }): Promise<ToolDefinition[]> {
   const remoteToolContext = options?.remoteToolContext;
   const definitions: ToolDefinition[] = [];
   const seenToolNames = createPrivateSet<string>();
 
   const addDefinition = (definition: ToolDefinition, trustedPlatform = false): void => {
+    options?.discoveredToolNames?.add(definition.name);
     if (seenToolNames.has(definition.name)) {
       return;
     }
@@ -820,8 +822,13 @@ export async function getAvailableTools(
   }
 
   const tools: ToolDefinition[] = [];
+  // Connection diagnostics use the full discovery, independently of tool availability.
+  const discoveredRemoteToolNames = createPrivateSet(
+    mapPrivateArray(options?.forwardedRemoteToolDefinitions ?? [], (def) => def.name),
+  );
   let integrationDiscovery: RemoteIntegrationToolDiscoveryResult | undefined;
   const remoteDefs = strictConfiguredToolsOnly ? [] : await getRemoteToolDefinitions({
+    discoveredToolNames: discoveredRemoteToolNames,
     includeIntegrationTools: options?.includeIntegrationTools,
     allowedRemoteToolNames: options?.allowedRemoteToolNames,
     remoteToolSources: options?.remoteToolSources,
@@ -959,7 +966,7 @@ export async function getAvailableTools(
       .map(([name]) => name);
     const unconnectedMessage = await describeUnconnectedIntegrations(
       unresolvedConfiguredToolNames,
-      remoteToolNames,
+      discoveredRemoteToolNames,
       integrationDiscovery,
       options?.remoteToolContext,
     );

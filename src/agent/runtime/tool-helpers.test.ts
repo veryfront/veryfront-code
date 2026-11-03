@@ -12,6 +12,7 @@ import {
   createToolsFromRemoteDefinitions,
   type RemoteToolSource,
   tool,
+  type ToolDefinition,
   toolRegistry,
 } from "#veryfront/tool";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
@@ -1030,7 +1031,7 @@ describe("tool-helpers", () => {
           Error,
           [
             "Salesforce isn't connected to project case-demo.",
-            "Connect it: npx veryfront integration connect salesforce",
+            "Connect it: npx veryfront integration connect salesforce --project case-demo",
             "Or in Studio: https://veryfront.org/projects/case-demo/integrations",
           ].join("\n"),
         );
@@ -1059,10 +1060,10 @@ describe("tool-helpers", () => {
           Error,
           [
             "GitHub isn't connected to project case-demo.",
-            "Connect it: npx veryfront integration connect github",
+            "Connect it: npx veryfront integration connect github --project case-demo",
             "",
             "Salesforce isn't connected to project case-demo.",
-            "Connect it: npx veryfront integration connect salesforce",
+            "Connect it: npx veryfront integration connect salesforce --project case-demo",
           ].join("\n"),
         );
       } finally {
@@ -1115,6 +1116,41 @@ describe("tool-helpers", () => {
         toolRegistryInternal.clearAll();
       }
     });
+
+    for (const source of ["discovery", "custom", "forwarded"] as const) {
+      it(`keeps Unknown tool reference when the allowlist hides connected ${source} tools`, async () => {
+        toolRegistryInternal.clearAll();
+        const definition: ToolDefinition = {
+          name: "gmail__list_emails",
+          description: "List emails",
+          parameters: { type: "object", properties: {} },
+        };
+        const remoteSource: RemoteToolSource = {
+          id: "gmail",
+          listTools: () => Promise.resolve([definition]),
+          executeTool: () => Promise.resolve(undefined),
+        };
+        try {
+          await assertRejects(
+            () =>
+              withMockRemoteIntegrationTools(
+                source === "discovery" ? ["gmail__list_emails"] : [],
+                () =>
+                  getAvailableTools({ "gmail__list_messages": true }, {
+                    allowedRemoteToolNames: ["gmail__list_messages"],
+                    remoteToolContext: { projectSlug: "case-demo", authToken: "token" },
+                    remoteToolSources: source === "custom" ? [remoteSource] : [],
+                    forwardedRemoteToolDefinitions: source === "forwarded" ? [definition] : [],
+                  }),
+              ),
+            Error,
+            "Unknown tool reference: gmail__list_messages.",
+          );
+        } finally {
+          toolRegistryInternal.clearAll();
+        }
+      });
+    }
 
     it("keeps Unknown tool reference for a name that matches no integration", async () => {
       toolRegistryInternal.clearAll();
