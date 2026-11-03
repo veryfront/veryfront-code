@@ -30,23 +30,6 @@ describe("commands/dev/unconnected-integrations", () => {
     );
   });
 
-  it("collects enabled tools without using replaceable array iterators", () => {
-    const descriptor = Object.getOwnPropertyDescriptor(Array.prototype, Symbol.iterator)!;
-    let result: unknown;
-    try {
-      Object.defineProperty(Array.prototype, Symbol.iterator, {
-        value: () => {
-          throw new Error("project iterator");
-        },
-        configurable: true,
-      });
-      result = collectDeclaredIntegrations([caseDispose]);
-    } finally {
-      Object.defineProperty(Array.prototype, Symbol.iterator, descriptor);
-    }
-    assertEquals(result, [{ integration: "salesforce", agentIds: ["case-dispose"] }]);
-  });
-
   it("ignores names that are not catalog integrations", () => {
     assertEquals(
       collectDeclaredIntegrations([{ agentId: "a", tools: { my_helper__run: true } }]),

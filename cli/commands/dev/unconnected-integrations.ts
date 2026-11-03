@@ -3,14 +3,25 @@ import type { VeryfrontConfig } from "veryfront/config";
 import type { Agent, AgentConfig } from "#veryfront/agent/types.ts";
 import { agentRegistry } from "#veryfront/agent/composition/index.ts";
 import { createProjectDiscoveryConfig } from "#veryfront/discovery/project-discovery-config.ts";
-import { forEachPrivateArray, pushPrivateArray } from "#veryfront/security/private-array.ts";
+import {
+  forEachPrivateArray,
+  joinPrivateArray,
+  pushPrivateArray,
+  slicePrivateArray,
+} from "#veryfront/security/private-array.ts";
 import { createPrivateMap } from "#veryfront/security/private-map.ts";
 import { createPrivateSet } from "#veryfront/security/private-set.ts";
 import { getRemoteToolProvenance } from "#veryfront/tool/remote-tool-provenance.ts";
 import { compareStrings } from "#veryfront/utils/compare.ts";
 import { connectors } from "../../../src/integrations/_data.ts";
 import { findUnconnectedIntegrations } from "../../../src/integrations/unconnected.ts";
-import { parseIntegrationToolIdentity } from "../../../src/integrations/source-policy.ts";
+import {
+  isIntegrationToolAllowedBySourcePolicy,
+  normalizeSourceIntegrationPolicy,
+  parseIntegrationToolIdentity,
+  type SourceIntegrationPolicyManifest,
+} from "../../../src/integrations/source-policy.ts";
+import { serverLogger } from "veryfront/utils";
 import {
   getRemoteIntegrationProjectTarget,
   getRemoteIntegrationToolDiscovery,
@@ -32,14 +43,20 @@ export interface DeclaredIntegration {
 }
 
 /** Integrations explicitly enabled by the agents the runtime has loaded. */
-export function collectDeclaredIntegrations(agents: readonly AgentTools[]): DeclaredIntegration[] {
+export function collectDeclaredIntegrations(
+  agents: readonly AgentTools[],
+  sourcePolicy?: SourceIntegrationPolicyManifest,
+): DeclaredIntegration[] {
   const byIntegration = createPrivateMap<string, Set<string>>();
   forEachPrivateArray(agents, ({ agentId, tools }) => {
     if (!tools || tools === true) return;
     const names: string[] = [];
     forEachPrivateArray(objectEntries(tools), (entry) => {
       const name = entry[1] === true ? entry[0] : getRemoteToolProvenance(entry[1]);
-      if (name) pushPrivateArray(names, name);
+      if (
+        name &&
+        (sourcePolicy === undefined || isIntegrationToolAllowedBySourcePolicy(name, sourcePolicy))
+      ) pushPrivateArray(names, name);
     });
     forEachPrivateArray(findUnconnectedIntegrations(names, []).integrations, (integration) => {
       const agentIds = byIntegration.get(integration) ?? createPrivateSet<string>();
@@ -61,8 +78,10 @@ export function collectDeclaredIntegrations(agents: readonly AgentTools[]): Decl
 }
 
 function joinNames(names: readonly string[]): string {
-  if (names.length <= 1) return names.join("");
-  return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+  if (names.length <= 1) return joinPrivateArray(names, "");
+  return `${joinPrivateArray(slicePrivateArray(names, 0, -1), ", ")} and ${
+    names[names.length - 1]
+  }`;
 }
 
 function displayName(integration: string): string {
@@ -114,7 +133,10 @@ export async function findUnconnectedIntegrationLines(
     apply(mapForEach, agentRegistry.getAll(), [(agent: Agent, agentId: string) => {
       pushPrivateArray(agents, { agentId, tools: agent.config.tools });
     }]);
-    const declared = collectDeclaredIntegrations(agents);
+    const declared = collectDeclaredIntegrations(
+      agents,
+      normalizeSourceIntegrationPolicy(config?.integrations),
+    );
     if (declared.length === 0) return [];
     const target = getRemoteIntegrationProjectTarget();
     if (!target) return [];
@@ -124,7 +146,8 @@ export async function findUnconnectedIntegrationLines(
     });
     if (discovery.status !== "ok") return [];
     return unconnectedIntegrationLines(declared, connectedNames, target.projectSlug);
-  } catch {
+  } catch (error) {
+    serverLogger.debug("Integration connection check failed", { error });
     return [];
   }
 }

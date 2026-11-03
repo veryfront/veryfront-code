@@ -7,11 +7,48 @@ import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { discoverAll } from "#veryfront/discovery/index.ts";
 import { createProjectDiscoveryConfig } from "#veryfront/discovery/project-discovery-config.ts";
 import { agentRegistry } from "#veryfront/agent/composition/index.ts";
-import { findUnconnectedIntegrationLines } from "../../../../cli/commands/dev/unconnected-integrations.ts";
+import {
+  collectDeclaredIntegrations,
+  findUnconnectedIntegrationLines,
+  unconnectedIntegrationLines,
+} from "../../../../cli/commands/dev/unconnected-integrations.ts";
 
 const config = { ai: { agents: { discovery: { paths: ["crew"] } } } };
 
 describe("dev integration source discovery", () => {
+  it("formats enabled tool warnings without replaceable array methods", () => {
+    const iterator = Object.getOwnPropertyDescriptor(Array.prototype, Symbol.iterator)!;
+    const join = Array.prototype.join;
+    const slice = Array.prototype.slice;
+    let lines: string[] | undefined;
+    try {
+      Object.defineProperty(Array.prototype, Symbol.iterator, {
+        value: () => {
+          throw new Error("project iterator");
+        },
+        configurable: true,
+      });
+      Array.prototype.join = () => {
+        throw new Error("project join");
+      };
+      Array.prototype.slice = () => {
+        throw new Error("project slice");
+      };
+      const declared = collectDeclaredIntegrations([
+        { agentId: "b", tools: { salesforce__get_case: true } },
+        { agentId: "a", tools: { salesforce__update_case: true, gmail__delete_email: false } },
+      ]);
+      lines = unconnectedIntegrationLines(declared, [], "case-demo");
+    } finally {
+      Object.defineProperty(Array.prototype, Symbol.iterator, iterator);
+      Array.prototype.join = join;
+      Array.prototype.slice = slice;
+    }
+    assertEquals(lines, [
+      "Salesforce isn't connected. Agents a and b need it.",
+      "  Connect: npx veryfront integration connect salesforce --project case-demo",
+    ]);
+  });
   it("warns from custom-root agents and ignores stale default-root sources and disabled discovery", async () => {
     const env = {
       VERYFRONT_API_URL: "https://api.test",
@@ -56,6 +93,20 @@ describe("dev integration source discovery", () => {
             "Salesforce isn't connected. Agent crew-agent needs it.",
             "  Connect: npx veryfront integration connect salesforce --project case-demo",
           ]);
+          assertEquals(
+            await findUnconnectedIntegrationLines(dir, {
+              ...config,
+              integrations: { allow: { gmail: {} } },
+            }),
+            [],
+          );
+          assertEquals(
+            await findUnconnectedIntegrationLines(dir, {
+              ...config,
+              integrations: { allow: { salesforce: { allowedTools: ["update_case"] } } },
+            }),
+            [],
+          );
           assertEquals(
             await findUnconnectedIntegrationLines(dir, {
               ai: { agents: { discovery: { enabled: false, paths: ["crew"] } } },
