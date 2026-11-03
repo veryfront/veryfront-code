@@ -1,7 +1,11 @@
 import { connectors } from "./_data.ts";
 import { ALL_INTEGRATION_NAMES } from "./schema.ts";
 import { createPrivateSet } from "#veryfront/security/private-set.ts";
-import { joinPrivateArray, pushPrivateArray } from "#veryfront/security/private-array.ts";
+import {
+  forEachPrivateArray,
+  joinPrivateArray,
+  pushPrivateArray,
+} from "#veryfront/security/private-array.ts";
 
 import { parseIntegrationToolIdentity } from "./source-policy.ts";
 
@@ -24,14 +28,14 @@ export function findUnconnectedIntegrations(
   discoveredToolNames: readonly string[],
 ): { integrations: string[]; unknownToolNames: string[] } {
   const discovered = createPrivateSet<string>();
-  for (const name of discoveredToolNames) {
+  forEachPrivateArray(discoveredToolNames, (name) => {
     const identity = parseIntegrationToolIdentity(name);
     if (identity) discovered.add(identity.integration);
-  }
+  });
 
   const integrations = createPrivateSet<string>();
   const unknownToolNames: string[] = [];
-  for (const name of configuredToolNames) {
+  forEachPrivateArray(configuredToolNames, (name) => {
     const identity = parseIntegrationToolIdentity(name);
     if (
       identity && declaredIntegrations.has(identity.integration) &&
@@ -41,7 +45,7 @@ export function findUnconnectedIntegrations(
     } else {
       pushPrivateArray(unknownToolNames, name);
     }
-  }
+  });
   return { integrations: [...integrations], unknownToolNames };
 }
 

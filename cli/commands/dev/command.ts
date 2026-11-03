@@ -632,7 +632,7 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
       // Discovery lists only connected integrations. Report the ones the agents declare but the
       // project lacks after Ready, so the banner does not wait on the network.
       if (runtimeAuth.apiToken && runtimeAuth.projectSlug) {
-        void findUnconnectedIntegrationLines(projectDir).then((lines) => {
+        void findUnconnectedIntegrationLines(projectDir, config).then((lines) => {
           for (let index = 0; index < lines.length; index += 2) {
             console.log(`  ${warning("!")} ${lines[index]}`);
             console.log(`    ${lines[index + 1]!.trim()}`);

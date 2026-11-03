@@ -8,11 +8,11 @@ import {
 
 const caseIngest = {
   agentId: "case-ingest",
-  source: `tools: { salesforce__get_case: true, gmail__list_emails: true }`,
+  tools: { salesforce__get_case: true, gmail__list_emails: true },
 };
 const caseDispose = {
   agentId: "case-dispose",
-  source: `tools: { salesforce__update_case: true }`,
+  tools: { salesforce__update_case: true },
 };
 
 describe("commands/dev/unconnected-integrations", () => {
@@ -23,9 +23,33 @@ describe("commands/dev/unconnected-integrations", () => {
     ]);
   });
 
+  it("ignores explicitly disabled integration tools", () => {
+    assertEquals(
+      collectDeclaredIntegrations([{ agentId: "a", tools: { gmail__delete_email: false } }]),
+      [],
+    );
+  });
+
+  it("collects enabled tools without using replaceable array iterators", () => {
+    const descriptor = Object.getOwnPropertyDescriptor(Array.prototype, Symbol.iterator)!;
+    let result: unknown;
+    try {
+      Object.defineProperty(Array.prototype, Symbol.iterator, {
+        value: () => {
+          throw new Error("project iterator");
+        },
+        configurable: true,
+      });
+      result = collectDeclaredIntegrations([caseDispose]);
+    } finally {
+      Object.defineProperty(Array.prototype, Symbol.iterator, descriptor);
+    }
+    assertEquals(result, [{ integration: "salesforce", agentIds: ["case-dispose"] }]);
+  });
+
   it("ignores names that are not catalog integrations", () => {
     assertEquals(
-      collectDeclaredIntegrations([{ agentId: "a", source: "tools: { my_helper__run: true }" }]),
+      collectDeclaredIntegrations([{ agentId: "a", tools: { my_helper__run: true } }]),
       [],
     );
   });

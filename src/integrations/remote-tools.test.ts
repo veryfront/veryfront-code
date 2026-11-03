@@ -937,6 +937,41 @@ describe("integrations/remote-tools", () => {
     assertEquals(bodyCancelled, true);
   });
 
+  it("retains cached connection evidence without replaceable array iterators", async () => {
+    setRemoteToolEnv({ VERYFRONT_API_URL: "https://api.test", VERYFRONT_API_TOKEN: "token" });
+    await withMockFetch(() =>
+      Promise.resolve(Response.json({
+        tools: [{
+          name: "gmail__list_emails",
+          description: "List emails",
+          inputSchema: { type: "object" },
+        }],
+      })), () =>
+      runWithRemoteIntegrationToolDiscoveryScope(async () => {
+        await getRemoteIntegrationToolDiscovery();
+        const descriptor = Object.getOwnPropertyDescriptor(Array.prototype, Symbol.iterator)!;
+        const seen: string[] = [];
+        let result: RemoteIntegrationToolDiscoveryResult | undefined;
+        try {
+          Object.defineProperty(Array.prototype, Symbol.iterator, {
+            value: () => {
+              throw new Error("project iterator");
+            },
+            configurable: true,
+          });
+          result = await getRemoteIntegrationToolDiscovery(undefined, {
+            onDiscoveredToolName: (name) => {
+              seen[seen.length] = name;
+            },
+          });
+        } finally {
+          Object.defineProperty(Array.prototype, Symbol.iterator, descriptor);
+        }
+        assertEquals(result?.status, "ok");
+        assertEquals(seen, ["gmail__list_emails"]);
+      }));
+  });
+
   it("filters remote tool discovery through the active source integration policy", async () => {
     setRemoteToolEnv({
       VERYFRONT_API_BASE_URL: "https://api.test",

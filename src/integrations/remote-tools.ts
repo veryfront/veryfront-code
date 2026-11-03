@@ -1,3 +1,4 @@
+import { forEachPrivateArray } from "#veryfront/security/private-array.ts";
 /**
  * Remote Integration Tools
  *
@@ -820,7 +821,7 @@ export async function getRemoteIntegrationToolDiscovery(
     if (catalog.status === "unavailable") return catalog;
 
     // Keep connection evidence before source policy narrows the available tools.
-    for (const tool of catalog.tools) options?.onDiscoveredToolName?.(tool.name);
+    forEachPrivateArray(catalog.tools, (tool) => options?.onDiscoveredToolName?.(tool.name));
     const sourceIntegrationPolicy = getActiveSourceIntegrationPolicy();
     return {
       status: "ok",

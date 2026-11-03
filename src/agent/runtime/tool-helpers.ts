@@ -21,7 +21,11 @@ import {
   getActivePlatformToolDependencies,
 } from "#veryfront/agent/service/auth.ts";
 import { AsyncLocalStorage } from "node:async_hooks";
-import { joinPrivateArray, mapPrivateArray } from "#veryfront/security/private-array.ts";
+import {
+  forEachPrivateArray,
+  joinPrivateArray,
+  mapPrivateArray,
+} from "#veryfront/security/private-array.ts";
 import { stripLeadingEmptyObjectPlaceholder } from "../streaming/tool-input.ts";
 /**
  * Tool Helpers
@@ -434,9 +438,7 @@ async function getRemoteToolDefinitions(options?: {
     });
     options?.onIntegrationToolDiscovery?.(discovery);
     if (discovery.status === "ok") {
-      for (const def of discovery.tools) {
-        addDefinition(def);
-      }
+      forEachPrivateArray(discovery.tools, (def) => addDefinition(def));
     }
   } catch {
     return definitions;
