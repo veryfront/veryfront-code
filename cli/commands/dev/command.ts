@@ -35,6 +35,7 @@ import { createDevLogController } from "./log-controller.ts";
 import { findAvailablePort, isPortAvailable, isPortInUseError } from "./port-fallback.ts";
 import { advertisesCloudGateway, listInferenceOptions } from "./inference-status.ts";
 import { findUnconnectedIntegrationLines } from "./unconnected-integrations.ts";
+import { normalizeSourceIntegrationPolicy } from "../../../src/integrations/source-policy.ts";
 import { captureHostApiEnvironment } from "#cli/process-env";
 import { resolveApiCredentialCandidatesForAuth, resolveApiUrlTrust } from "#cli/shared/config";
 import { captureDevDisplayOptions } from "./display-options.ts";
@@ -439,6 +440,8 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
         }
       }
 
+      // Agents run when the dev server starts and may replace built-ins, so normalize first.
+      const integrationPolicy = normalizeSourceIntegrationPolicy(config?.integrations);
       const shutdownController = new AbortController();
       let devServer: Awaited<ReturnType<typeof startDevServer>> | null = null;
       let mcpServer: MCPDevServer | null = null;
@@ -632,12 +635,14 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
       // Discovery lists only connected integrations. Report the ones the agents declare but the
       // project lacks after Ready, so the banner does not wait on the network.
       if (runtimeAuth.apiToken && runtimeAuth.projectSlug) {
-        void findUnconnectedIntegrationLines(projectDir, config).then((lines) => {
-          for (let index = 0; index < lines.length; index += 2) {
-            console.log(`  ${warning("!")} ${lines[index]}`);
-            console.log(`    ${lines[index + 1]!.trim()}`);
-          }
-        });
+        void findUnconnectedIntegrationLines(projectDir, config, integrationPolicy).then(
+          (lines) => {
+            for (let index = 0; index < lines.length; index += 2) {
+              console.log(`  ${warning("!")} ${lines[index]}`);
+              console.log(`    ${lines[index + 1]!.trim()}`);
+            }
+          },
+        );
       }
       if (mcpServer && isVerbose()) {
         console.log(`  ${dim("MCP")} ${brand(`http://localhost:${mcpPort}/mcp`)}`);

@@ -7,6 +7,7 @@ import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { discoverAll } from "#veryfront/discovery/index.ts";
 import { createProjectDiscoveryConfig } from "#veryfront/discovery/project-discovery-config.ts";
 import { agentRegistry } from "#veryfront/agent/composition/index.ts";
+import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 import {
   collectDeclaredIntegrations,
   findUnconnectedIntegrationLines,
@@ -105,6 +106,15 @@ describe("dev integration source discovery", () => {
               ...config,
               integrations: { allow: { salesforce: { allowedTools: ["update_case"] } } },
             }),
+            [],
+          );
+          // The caller normalizes the policy before agents run; the check uses it as given.
+          assertEquals(
+            await findUnconnectedIntegrationLines(
+              dir,
+              config,
+              normalizeSourceIntegrationPolicy({ allow: { gmail: {} } }),
+            ),
             [],
           );
           assertEquals(

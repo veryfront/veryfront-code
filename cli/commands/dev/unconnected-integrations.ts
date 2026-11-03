@@ -122,10 +122,18 @@ export function unconnectedIntegrationLines(
   return lines;
 }
 
-/** Warn from runtime-registered agents; failed or disabled discovery produces no advice. */
+/**
+ * Warn from runtime-registered agents; failed or disabled discovery produces no advice.
+ *
+ * Agents have run by the time this is called, so the caller normalizes the integration policy
+ * before they load and passes it in.
+ */
 export async function findUnconnectedIntegrationLines(
   projectDir: string,
   config?: VeryfrontConfig | null,
+  integrationPolicy: SourceIntegrationPolicyManifest = normalizeSourceIntegrationPolicy(
+    config?.integrations,
+  ),
 ): Promise<string[]> {
   try {
     if (createProjectDiscoveryConfig({ projectDir, config }).agentDirs.length === 0) return [];
@@ -133,10 +141,7 @@ export async function findUnconnectedIntegrationLines(
     apply(mapForEach, agentRegistry.getAll(), [(agent: Agent, agentId: string) => {
       pushPrivateArray(agents, { agentId, tools: agent.config.tools });
     }]);
-    const declared = collectDeclaredIntegrations(
-      agents,
-      normalizeSourceIntegrationPolicy(config?.integrations),
-    );
+    const declared = collectDeclaredIntegrations(agents, integrationPolicy);
     if (declared.length === 0) return [];
     const target = getRemoteIntegrationProjectTarget();
     if (!target) return [];
