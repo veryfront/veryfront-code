@@ -3248,6 +3248,42 @@ describe("stream lifecycle shadow mode", () => {
     assertEquals(state.toolResults.map((result) => result.dynamic), [true, true]);
   });
 
+  it("honors an explicit dynamic false on a configured dynamic tool call", async () => {
+    const { events, controller, encoder } = createSSECollector();
+    const state = createStreamState();
+
+    await processStream(
+      createMockResult([
+        {
+          type: "tool-call",
+          toolCallId: "remote-call",
+          toolName: "outlook__list_emails",
+          input: {},
+          dynamic: false,
+        },
+        { type: "finish", finishReason: "tool-calls", totalUsage: null },
+      ]),
+      state,
+      controller,
+      encoder,
+      "text-1",
+      {
+        streamLifecycleMode: "legacy",
+        dynamicToolNames: ["outlook__list_emails"],
+      },
+      undefined,
+    );
+
+    const toolEvents = events.filter((event) =>
+      typeof event.type === "string" && event.type.startsWith("tool-")
+    );
+    assertEquals(
+      toolEvents.some((event) => event.type === "tool-input-available"),
+      true,
+    );
+    assertEquals(toolEvents.some((event) => event.dynamic === true), false);
+  });
+
   it("does not build a shadow or report in legacy mode", async () => {
     const legacy = await runTextFixture({ mode: "legacy" });
     assertEquals(legacy.report, undefined);

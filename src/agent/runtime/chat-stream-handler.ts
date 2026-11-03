@@ -1781,7 +1781,7 @@ export function processStreamInternal(
             retainToolCallOccurrence(previous, toolCall);
             state.toolCalls.set(toolId, toolCall);
 
-            const dynamic = isDynamic(typedPart.toolName);
+            const dynamic = typedPart.dynamic ?? isDynamic(typedPart.toolName);
             const inputObj = parseToolInputObject(typedPart.input);
             announceToolInputStart(toolCall);
             if (!wasInputAvailable) {
