@@ -2,7 +2,7 @@ import { sanitizeTerminalDiagnosticText } from "veryfront/errors";
 import type { VeryfrontConfig } from "veryfront/config";
 import type { Agent, AgentConfig } from "#veryfront/agent/types.ts";
 import { agentRegistry } from "#veryfront/agent/composition/index.ts";
-import { createProjectDiscoveryConfig } from "#veryfront/discovery/project-discovery-config.ts";
+import { resolveDevAgentDirs } from "#veryfront/discovery/project-discovery-config.ts";
 import {
   forEachPrivateArray,
   joinPrivateArray,
@@ -124,25 +124,42 @@ export function unconnectedIntegrationLines(
 }
 
 /**
- * Warn from runtime-registered agents; failed or disabled discovery produces no advice.
+ * Normalize the integration policy for the connection check, or null when that fails. The config
+ * is executable and shares this realm, so a diagnostic must never abort `veryfront dev`.
+ */
+export function normalizeIntegrationPolicyForDiagnostics(
+  integrations: VeryfrontConfig["integrations"],
+): SourceIntegrationPolicyManifest | null {
+  try {
+    return normalizeSourceIntegrationPolicy(integrations);
+  } catch (error) {
+    serverLogger.debug("Integration policy could not be normalized", { error });
+    return null;
+  }
+}
+
+/**
+ * Warn from runtime-registered agents; failed discovery or an unusable policy produces no advice.
  *
  * Agents have run by the time this is called, so the caller normalizes the integration policy
- * before they load and passes it in.
+ * before they load and passes it in (`null` when that failed).
  */
 export async function findUnconnectedIntegrationLines(
-  projectDir: string,
   config?: VeryfrontConfig | null,
-  integrationPolicy: SourceIntegrationPolicyManifest = normalizeSourceIntegrationPolicy(
-    config?.integrations,
-  ),
+  integrationPolicy?: SourceIntegrationPolicyManifest | null,
 ): Promise<string[]> {
   try {
-    if (createProjectDiscoveryConfig({ projectDir, config }).agentDirs.length === 0) return [];
+    if (integrationPolicy === null) return [];
+    // Mirror the roots the dev server discovers, not the project-wide discovery settings.
+    if (resolveDevAgentDirs(config).length === 0) return [];
     const agents: AgentTools[] = [];
     apply(mapForEach, agentRegistry.getAll(), [(agent: Agent, agentId: string) => {
       pushPrivateArray(agents, { agentId, tools: agent.config.tools });
     }]);
-    const declared = collectDeclaredIntegrations(agents, integrationPolicy);
+    const declared = collectDeclaredIntegrations(
+      agents,
+      integrationPolicy ?? normalizeSourceIntegrationPolicy(config?.integrations),
+    );
     if (declared.length === 0) return [];
     const target = getRemoteIntegrationProjectTarget();
     if (!target) return [];

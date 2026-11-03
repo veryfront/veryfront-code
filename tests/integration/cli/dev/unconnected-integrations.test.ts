@@ -12,6 +12,7 @@ import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source
 import {
   collectDeclaredIntegrations,
   findUnconnectedIntegrationLines,
+  normalizeIntegrationPolicyForDiagnostics,
   unconnectedIntegrationLines,
 } from "../../../../cli/commands/dev/unconnected-integrations.ts";
 
@@ -51,6 +52,26 @@ describe("dev integration source discovery", () => {
       "  Connect: npx veryfront integration connect salesforce --project case-demo",
     ]);
   });
+  it("does not let a config that replaces built-ins abort policy normalization", () => {
+    const sort = Array.prototype.sort;
+    let policy: ReturnType<typeof normalizeIntegrationPolicyForDiagnostics>;
+    try {
+      Array.prototype.sort = () => {
+        throw new Error("project sort");
+      };
+      policy = normalizeIntegrationPolicyForDiagnostics({
+        allow: { gmail: {}, salesforce: {} },
+      });
+    } finally {
+      Array.prototype.sort = sort;
+    }
+    assertEquals(policy, null);
+    assertEquals(
+      normalizeIntegrationPolicyForDiagnostics({ allow: { gmail: {} } })?.mode,
+      "allowlist",
+    );
+  });
+
   it("ignores tools a source already materialized", async () => {
     // A local service-account source executes without a Veryfront connection, and a tool exists
     // only because its source listed it, so none of them can be a missing connection.
@@ -115,19 +136,19 @@ describe("dev integration source discovery", () => {
         assertEquals(discovery.errors, []);
         assertEquals([...discovery.agents.keys()], ["crew-agent"]);
         await withMockFetch(() => Promise.resolve(Response.json({ tools: [] })), async () => {
-          assertEquals(await findUnconnectedIntegrationLines(dir, config), [
+          assertEquals(await findUnconnectedIntegrationLines(config), [
             "Salesforce isn't connected. Agent crew-agent needs it.",
             "  Connect: npx veryfront integration connect salesforce --project case-demo",
           ]);
           assertEquals(
-            await findUnconnectedIntegrationLines(dir, {
+            await findUnconnectedIntegrationLines({
               ...config,
               integrations: { allow: { gmail: {} } },
             }),
             [],
           );
           assertEquals(
-            await findUnconnectedIntegrationLines(dir, {
+            await findUnconnectedIntegrationLines({
               ...config,
               integrations: { allow: { salesforce: { allowedTools: ["update_case"] } } },
             }),
@@ -136,20 +157,24 @@ describe("dev integration source discovery", () => {
           // The caller normalizes the policy before agents run; the check uses it as given.
           assertEquals(
             await findUnconnectedIntegrationLines(
-              dir,
               config,
               normalizeSourceIntegrationPolicy({ allow: { gmail: {} } }),
             ),
             [],
           );
+          // The dev server honors `enabled` only for skills; it still discovers the agent roots.
           assertEquals(
-            await findUnconnectedIntegrationLines(dir, {
+            await findUnconnectedIntegrationLines({
               ai: { agents: { discovery: { enabled: false, paths: ["crew"] } } },
             }),
-            [],
+            [
+              "Salesforce isn't connected. Agent crew-agent needs it.",
+              "  Connect: npx veryfront integration connect salesforce --project case-demo",
+            ],
           );
+          assertEquals(await findUnconnectedIntegrationLines(config, null), []);
           assertEquals(
-            await findUnconnectedIntegrationLines(dir, {
+            await findUnconnectedIntegrationLines({
               ai: { agents: { discovery: { paths: [] } } },
             }),
             [],
