@@ -7,7 +7,10 @@ export function resolveStudioOrigin(apiBaseUrl: string, studioUrl?: string): str
   } catch {
     return undefined;
   }
-  if (["localhost", "127.0.0.1", "[::1]"].includes(hostname)) return "http://localhost:3000";
+  // Compared directly: agent code may replace the built-ins a lookup table would dispatch through.
+  if (hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]") {
+    return "http://localhost:3000";
+  }
   if (hostname === "api.veryfront.com") return "https://veryfront.com";
   if (hostname === "api.veryfront.org") return "https://veryfront.org";
   return undefined;
