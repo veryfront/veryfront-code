@@ -1838,6 +1838,7 @@ export function processStreamInternal(
               providerExecuted,
               dynamic: typedPart.dynamic,
             });
+            const dynamic = typedPart.dynamic ?? isDynamic(typedPart.toolName);
             const toolResultOutput = resolveToolResultOutput(typedPart);
             const inferredToolError = getToolResultError(toolResultOutput);
             const isExplicitError = (typedPart.isError === true ||
@@ -1868,14 +1869,14 @@ export function processStreamInternal(
                 toolName: typedPart.toolName,
                 error: toolResultError,
                 ...(providerExecuted !== undefined ? { providerExecuted } : {}),
-                ...(typedPart.dynamic ? { dynamic: true } : {}),
+                ...(dynamic ? { dynamic: true } : {}),
               });
               sendSSE(controller, encoder, {
                 type: "tool-output-error",
                 toolCallId: typedPart.toolCallId,
                 errorText: stringifyToolError(toolResultError),
                 ...(providerExecuted !== undefined ? { providerExecuted } : {}),
-                ...(typedPart.dynamic ? { dynamic: true } : {}),
+                ...(dynamic ? { dynamic: true } : {}),
               });
               break;
             }
@@ -1885,7 +1886,7 @@ export function processStreamInternal(
               toolName: typedPart.toolName,
               output: toolResultOutput,
               ...(providerExecuted !== undefined ? { providerExecuted } : {}),
-              ...(typedPart.dynamic ? { dynamic: true } : {}),
+              ...(dynamic ? { dynamic: true } : {}),
               ...(typedPart.preliminary !== undefined
                 ? { preliminary: typedPart.preliminary }
                 : {}),
@@ -1895,7 +1896,7 @@ export function processStreamInternal(
               toolCallId: typedPart.toolCallId,
               output: toolResultOutput,
               ...(providerExecuted !== undefined ? { providerExecuted } : {}),
-              ...(typedPart.dynamic ? { dynamic: true } : {}),
+              ...(dynamic ? { dynamic: true } : {}),
               ...(typedPart.preliminary !== undefined
                 ? { preliminary: typedPart.preliminary }
                 : {}),
@@ -1928,6 +1929,7 @@ export function processStreamInternal(
               providerExecuted,
               dynamic: typedPart.dynamic,
             });
+            const dynamic = typedPart.dynamic ?? isDynamic(typedPart.toolName);
             noteToolProgress();
             logProviderToolPart("tool-error", {
               toolCallId: typedPart.toolCallId,
@@ -1942,14 +1944,14 @@ export function processStreamInternal(
               toolName: typedPart.toolName,
               error: typedPart.error,
               ...(providerExecuted !== undefined ? { providerExecuted } : {}),
-              ...(typedPart.dynamic ? { dynamic: true } : {}),
+              ...(dynamic ? { dynamic: true } : {}),
             });
             sendSSE(controller, encoder, {
               type: "tool-output-error",
               toolCallId: typedPart.toolCallId,
               errorText: stringifyToolError(typedPart.error),
               ...(providerExecuted !== undefined ? { providerExecuted } : {}),
-              ...(typedPart.dynamic ? { dynamic: true } : {}),
+              ...(dynamic ? { dynamic: true } : {}),
             });
             break;
           }

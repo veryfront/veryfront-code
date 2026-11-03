@@ -3198,6 +3198,56 @@ describe("stream lifecycle shadow mode", () => {
     assertEquals(report, { count: 0, categories: [] });
   });
 
+  it("flags configured dynamic tools on provider result and error events", async () => {
+    const { events, controller, encoder } = createSSECollector();
+    const state = createStreamState();
+
+    await processStream(
+      createMockResult([
+        {
+          type: "tool-result",
+          toolCallId: "remote-ok",
+          toolName: "outlook__list_emails",
+          input: {},
+          output: { ok: true },
+          providerExecuted: true,
+        },
+        {
+          type: "tool-error",
+          toolCallId: "remote-err",
+          toolName: "outlook__list_emails",
+          input: {},
+          error: "boom",
+          providerExecuted: true,
+        },
+        { type: "finish", finishReason: "stop", totalUsage: null },
+      ]),
+      state,
+      controller,
+      encoder,
+      "text-1",
+      {
+        streamLifecycleMode: "legacy",
+        dynamicToolNames: ["outlook__list_emails"],
+      },
+      undefined,
+    );
+
+    const toolEvents = events.filter((event) =>
+      typeof event.type === "string" && event.type.startsWith("tool-")
+    );
+    assertEquals(
+      toolEvents.map((event) => [event.type, event.dynamic]),
+      toolEvents.map((event) => [event.type, true]),
+    );
+    assertEquals(
+      toolEvents.some((event) => event.type === "tool-output-available"),
+      true,
+    );
+    assertEquals(toolEvents.some((event) => event.type === "tool-output-error"), true);
+    assertEquals(state.toolResults.map((result) => result.dynamic), [true, true]);
+  });
+
   it("does not build a shadow or report in legacy mode", async () => {
     const legacy = await runTextFixture({ mode: "legacy" });
     assertEquals(legacy.report, undefined);
