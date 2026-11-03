@@ -7,12 +7,14 @@ import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { discoverAll } from "#veryfront/discovery/index.ts";
 import { createProjectDiscoveryConfig } from "#veryfront/discovery/project-discovery-config.ts";
 import { agentRegistry } from "#veryfront/agent/composition/index.ts";
+import type { AgentConfig } from "#veryfront/agent/types.ts";
 import { createToolsFromRemoteDefinitions } from "#veryfront/tool/remote-source-tools.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 import {
   collectDeclaredIntegrations,
   findUnconnectedIntegrationLines,
   normalizeIntegrationPolicyForDiagnostics,
+  suppliesToolsFromSources,
   unconnectedIntegrationLines,
 } from "../../../../cli/commands/dev/unconnected-integrations.ts";
 
@@ -69,6 +71,24 @@ describe("dev integration source discovery", () => {
     assertEquals(
       normalizeIntegrationPolicyForDiagnostics({ allow: { gmail: {} } })?.mode,
       "allowlist",
+    );
+  });
+
+  it("cannot tell what an agent's own tool sources supply, so it does not warn for them", () => {
+    const agentConfig = (extra: Record<string, unknown> = {}) =>
+      ({ id: "a", system: "", ...extra }) as unknown as AgentConfig;
+    assertEquals(suppliesToolsFromSources(agentConfig()), false);
+    assertEquals(suppliesToolsFromSources(agentConfig({ mcpServers: [] })), false);
+    assertEquals(
+      suppliesToolsFromSources(agentConfig({ mcpServers: [{ kind: "veryfront-api" }] })),
+      true,
+    );
+    assertEquals(
+      collectDeclaredIntegrations([
+        { agentId: "mcp-agent", tools: { salesforce__get_case: true }, hasToolSources: true },
+        { agentId: "plain-agent", tools: { salesforce__get_case: true } },
+      ]),
+      [{ integration: "salesforce", agentIds: ["plain-agent"] }],
     );
   });
 

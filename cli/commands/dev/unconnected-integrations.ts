@@ -34,6 +34,15 @@ const mapForEach = Map.prototype.forEach;
 export interface AgentTools {
   agentId: string;
   tools?: AgentConfig["tools"];
+  /** The agent has tool sources of its own, which can supply tools the Cloud catalog lacks. */
+  hasToolSources?: boolean;
+}
+
+/** Whether the agent configures MCP or injected tool sources that the startup check cannot list. */
+export function suppliesToolsFromSources(config: AgentConfig): boolean {
+  const injected = (config as AgentConfig & { __vfRemoteToolSources?: readonly unknown[] })
+    .__vfRemoteToolSources;
+  return (config.mcpServers?.length ?? 0) > 0 || (injected?.length ?? 0) > 0;
 }
 
 export interface DeclaredIntegration {
@@ -47,8 +56,8 @@ export function collectDeclaredIntegrations(
   sourcePolicy?: SourceIntegrationPolicyManifest,
 ): DeclaredIntegration[] {
   const byIntegration = createPrivateMap<string, Set<string>>();
-  forEachPrivateArray(agents, ({ agentId, tools }) => {
-    if (!tools || tools === true) return;
+  forEachPrivateArray(agents, ({ agentId, tools, hasToolSources }) => {
+    if (!tools || tools === true || hasToolSources) return;
     const names: string[] = [];
     forEachPrivateArray(objectEntries(tools), (entry) => {
       // A tool a source already materialized exists because that source listed it, whether or
@@ -154,7 +163,11 @@ export async function findUnconnectedIntegrationLines(
     if (resolveDevAgentDirs(config).length === 0) return [];
     const agents: AgentTools[] = [];
     apply(mapForEach, agentRegistry.getAll(), [(agent: Agent, agentId: string) => {
-      pushPrivateArray(agents, { agentId, tools: agent.config.tools });
+      pushPrivateArray(agents, {
+        agentId,
+        tools: agent.config.tools,
+        hasToolSources: suppliesToolsFromSources(agent.config),
+      });
     }]);
     const declared = collectDeclaredIntegrations(
       agents,

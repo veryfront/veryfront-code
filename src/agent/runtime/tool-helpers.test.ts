@@ -1118,6 +1118,24 @@ describe("tool-helpers", () => {
       }
     });
 
+    it("keeps Unknown tool reference when a configured source failed to list its tools", async () => {
+      await withMockRemoteIntegrationTools([], async () => {
+        await assertRejects(
+          () =>
+            getAvailableTools({ salesforce__get_case: true }, {
+              remoteToolContext: { projectSlug: "case-demo", authToken: "token" },
+              remoteToolSources: [{
+                id: "salesforce-mcp",
+                listTools: () => Promise.reject(new Error("mcp server unreachable")),
+                executeTool: () => Promise.resolve({}),
+              }],
+            }),
+          Error,
+          "Unknown tool reference: salesforce__get_case.",
+        );
+      });
+    });
+
     it("keeps connection advice when project code replaces collection methods", async () => {
       await withMockRemoteIntegrationTools([], async () => {
         const originalFind = Array.prototype.find;

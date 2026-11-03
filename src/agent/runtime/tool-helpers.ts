@@ -372,6 +372,7 @@ async function describeUnconnectedIntegrations(
 }
 
 async function getRemoteToolDefinitions(options?: {
+  onSourceListFailure?: () => void;
   includeIntegrationTools?: boolean;
   allowedRemoteToolNames?: string[];
   remoteToolSources?: RemoteToolSource[];
@@ -418,6 +419,7 @@ async function getRemoteToolDefinitions(options?: {
         }
       }
     } catch (error) {
+      options?.onSourceListFailure?.();
       logger.warn("Failed to fetch remote tool definitions from source", {
         sourceId: source.id,
         error: error instanceof Error ? error.message : String(error),
@@ -833,7 +835,11 @@ export async function getAvailableTools(
     mapPrivateArray(options?.forwardedRemoteToolDefinitions ?? [], (def) => def.name),
   );
   let integrationDiscovery: RemoteIntegrationToolDiscoveryResult | undefined;
+  let sourceListFailed = false;
   const remoteDefs = strictConfiguredToolsOnly ? [] : await getRemoteToolDefinitions({
+    onSourceListFailure: () => {
+      sourceListFailed = true;
+    },
     discoveredToolNames: discoveredRemoteToolNames,
     includeIntegrationTools: options?.includeIntegrationTools,
     allowedRemoteToolNames: options?.allowedRemoteToolNames,
@@ -970,7 +976,9 @@ export async function getAvailableTools(
     const visibleLocalToolNames = Array.from(toolRegistry.getAll().entries())
       .filter(([, tool]) => isToolVisibleTo(tool, { agentId: options?.callerAgentId }))
       .map(([name]) => name);
-    const unconnectedMessage = await describeUnconnectedIntegrations(
+    // A configured source that failed to list may be the one that supplies the tool, so a
+    // missing Cloud connection is not the explanation.
+    const unconnectedMessage = sourceListFailed ? undefined : await describeUnconnectedIntegrations(
       unresolvedConfiguredToolNames,
       discoveredRemoteToolNames,
       integrationDiscovery,
