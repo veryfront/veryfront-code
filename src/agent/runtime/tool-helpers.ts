@@ -21,7 +21,7 @@ import {
   getActivePlatformToolDependencies,
 } from "#veryfront/agent/service/auth.ts";
 import { AsyncLocalStorage } from "node:async_hooks";
-import { mapPrivateArray } from "#veryfront/security/private-array.ts";
+import { joinPrivateArray, mapPrivateArray } from "#veryfront/security/private-array.ts";
 import { stripLeadingEmptyObjectPlaceholder } from "../streaming/tool-input.ts";
 /**
  * Tool Helpers
@@ -182,6 +182,7 @@ const intrinsicObjectEntries = Object.entries;
 const intrinsicHasOwn = Object.hasOwn;
 const intrinsicIsArray = Array.isArray;
 const intrinsicArrayPush = Array.prototype.push;
+const intrinsicArraySort = Array.prototype.sort;
 const intrinsicArrayIncludes = Array.prototype.includes;
 const intrinsicStringStartsWith = String.prototype.startsWith;
 
@@ -356,8 +357,14 @@ async function describeUnconnectedIntegrations(
     [...discoveredToolNames],
   );
   if (integrations.length === 0 || unknownToolNames.length > 0) return undefined;
-  return integrations.map((integration) => formatUnconnectedIntegrationMessage(integration, target))
-    .join("\n\n");
+  intrinsicReflectApply(intrinsicArraySort, integrations, [compareStrings]);
+  return joinPrivateArray(
+    mapPrivateArray(
+      integrations,
+      (integration) => formatUnconnectedIntegrationMessage(integration, target),
+    ),
+    "\n\n",
+  );
 }
 
 async function getRemoteToolDefinitions(options?: {

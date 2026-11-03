@@ -1,6 +1,11 @@
 import { connectors } from "./_data.ts";
-import { isDeclaredIntegration } from "./feature-flags.ts";
+import { ALL_INTEGRATION_NAMES } from "./schema.ts";
+import { createPrivateSet } from "#veryfront/security/private-set.ts";
+import { joinPrivateArray, pushPrivateArray } from "#veryfront/security/private-array.ts";
+
 import { parseIntegrationToolIdentity } from "./source-policy.ts";
+
+const declaredIntegrations = createPrivateSet<string>(ALL_INTEGRATION_NAMES);
 
 export interface UnconnectedIntegrationTarget {
   readonly projectSlug: string;
@@ -18,31 +23,34 @@ export function findUnconnectedIntegrations(
   configuredToolNames: readonly string[],
   discoveredToolNames: readonly string[],
 ): { integrations: string[]; unknownToolNames: string[] } {
-  const discovered = new Set<string>();
+  const discovered = createPrivateSet<string>();
   for (const name of discoveredToolNames) {
     const identity = parseIntegrationToolIdentity(name);
     if (identity) discovered.add(identity.integration);
   }
 
-  const integrations = new Set<string>();
+  const integrations = createPrivateSet<string>();
   const unknownToolNames: string[] = [];
   for (const name of configuredToolNames) {
     const identity = parseIntegrationToolIdentity(name);
     if (
-      identity && isDeclaredIntegration(identity.integration) &&
+      identity && declaredIntegrations.has(identity.integration) &&
       !discovered.has(identity.integration)
     ) {
       integrations.add(identity.integration);
     } else {
-      unknownToolNames.push(name);
+      pushPrivateArray(unknownToolNames, name);
     }
   }
-  return { integrations: [...integrations].sort(), unknownToolNames };
+  return { integrations: [...integrations], unknownToolNames };
 }
 
 function integrationDisplayName(integration: string): string {
-  return connectors.find((connector) => connector.name === integration)?.displayName ??
-    integration;
+  for (let index = 0; index < connectors.length; index++) {
+    const connector = connectors[index]!;
+    if (connector.name === integration) return connector.displayName;
+  }
+  return integration;
 }
 
 /** Name the missing connection and the exact command that fixes it. */
@@ -55,11 +63,12 @@ export function formatUnconnectedIntegrationMessage(
     `Connect it: npx veryfront integration connect ${integration} --project ${target.projectSlug}`,
   ];
   if (target.studioOrigin) {
-    lines.push(
+    pushPrivateArray(
+      lines,
       `Or in Studio: ${target.studioOrigin.replace(/\/$/, "")}/projects/${
         encodeURIComponent(target.projectSlug)
       }/integrations`,
     );
   }
-  return lines.join("\n");
+  return joinPrivateArray(lines, "\n");
 }

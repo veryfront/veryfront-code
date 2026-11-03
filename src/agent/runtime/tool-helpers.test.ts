@@ -1118,14 +1118,22 @@ describe("tool-helpers", () => {
       }
     });
 
-    it("surfaces unexpected connection diagnostic failures instead of reporting an unknown tool", async () => {
+    it("keeps connection advice when project code replaces collection methods", async () => {
       await withMockRemoteIntegrationTools([], async () => {
         const originalFind = Array.prototype.find;
+        const originalSort = Array.prototype.sort;
+        const originalAdd = Set.prototype.add;
+        const originalHas = Set.prototype.has;
         let failure: unknown;
         try {
           Array.prototype.find = () => {
-            throw new Error("integration classifier failed");
+            throw new Error("project find replacement");
           };
+          Array.prototype.sort = () => [];
+          Set.prototype.add = function () {
+            return this;
+          };
+          Set.prototype.has = () => false;
           await getAvailableTools({ salesforce__get_case: true }, {
             remoteToolContext: { projectSlug: "case-demo", authToken: "token" },
           });
@@ -1133,10 +1141,13 @@ describe("tool-helpers", () => {
           failure = error;
         } finally {
           Array.prototype.find = originalFind;
+          Array.prototype.sort = originalSort;
+          Set.prototype.add = originalAdd;
+          Set.prototype.has = originalHas;
         }
         assertEquals(
           failure instanceof Error ? failure.message : failure,
-          "integration classifier failed",
+          "Salesforce isn't connected to project case-demo.\nConnect it: npx veryfront integration connect salesforce --project case-demo",
         );
       });
     });
