@@ -430,10 +430,10 @@ async function getRemoteToolDefinitions(options?: {
   }
 
   try {
-    const { getRemoteIntegrationToolDiscovery } = await import(
+    const { getRemoteIntegrationToolDiscoveryWithEvidence } = await import(
       "#veryfront/integrations/remote-tools.ts"
     );
-    const discovery = await getRemoteIntegrationToolDiscovery(remoteToolContext, {
+    const discovery = await getRemoteIntegrationToolDiscoveryWithEvidence(remoteToolContext, {
       onDiscoveredToolName: (name) => options?.discoveredToolNames?.add(name),
     });
     options?.onIntegrationToolDiscovery?.(discovery);

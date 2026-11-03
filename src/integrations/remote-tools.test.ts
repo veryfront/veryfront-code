@@ -22,6 +22,7 @@ import {
   getRemoteIntegrationProjectTarget,
   getRemoteIntegrationToolDefinitions,
   getRemoteIntegrationToolDiscovery,
+  getRemoteIntegrationToolDiscoveryWithEvidence,
   isRemoteIntegrationTool,
   type RemoteIntegrationToolDiscoveryResult,
   runRemoteIntegrationTool,
@@ -959,7 +960,7 @@ describe("integrations/remote-tools", () => {
             },
             configurable: true,
           });
-          result = await getRemoteIntegrationToolDiscovery(undefined, {
+          result = await getRemoteIntegrationToolDiscoveryWithEvidence(undefined, {
             onDiscoveredToolName: (name) => {
               seen[seen.length] = name;
             },
@@ -970,6 +971,36 @@ describe("integrations/remote-tools", () => {
         assertEquals(result?.status, "ok");
         assertEquals(seen, ["gmail__list_emails"]);
       }));
+  });
+
+  it("keeps pre-policy discovery evidence off the public discovery API", async () => {
+    setRemoteToolEnv({
+      VERYFRONT_API_BASE_URL: "https://api.test",
+      VERYFRONT_API_TOKEN: "env-token",
+    });
+    const policy = normalizeSourceIntegrationPolicy({ allow: { github: {} } });
+    const seen: string[] = [];
+
+    const result = await runWithExactSourceIntegrationPolicy(policy, () =>
+      withMockFetch(
+        async () =>
+          Response.json({
+            tools: [{ name: "gmail__list_emails", description: "List", inputSchema: {} }],
+          }),
+        // A restricted source passing its own hook must not learn which integrations are connected.
+        () =>
+          (getRemoteIntegrationToolDiscovery as (
+            context?: undefined,
+            options?: { onDiscoveredToolName?: (name: string) => void },
+          ) => Promise<RemoteIntegrationToolDiscoveryResult>)(undefined, {
+            onDiscoveredToolName: (name) => {
+              seen[seen.length] = name;
+            },
+          }),
+      ));
+
+    assertEquals(result, { status: "ok", tools: [] });
+    assertEquals(seen, []);
   });
 
   it("filters remote tool discovery through the active source integration policy", async () => {

@@ -7,6 +7,7 @@ import {
   pushPrivateArray,
 } from "#veryfront/security/private-array.ts";
 
+import { privateTextEndsWith, privateTextSlice } from "#veryfront/security/private-text.ts";
 import { parseIntegrationToolIdentity } from "./source-policy.ts";
 
 const declaredIntegrations = createPrivateSet<string>(ALL_INTEGRATION_NAMES);
@@ -49,6 +50,10 @@ export function findUnconnectedIntegrations(
   return { integrations: [...integrations], unknownToolNames };
 }
 
+function trimTrailingSlash(origin: string): string {
+  return privateTextEndsWith(origin, "/") ? privateTextSlice(origin, 0, origin.length - 1) : origin;
+}
+
 function integrationDisplayName(integration: string): string {
   for (let index = 0; index < connectors.length; index++) {
     const connector = connectors[index]!;
@@ -69,7 +74,7 @@ export function formatUnconnectedIntegrationMessage(
   if (target.studioOrigin) {
     pushPrivateArray(
       lines,
-      `Or in Studio: ${target.studioOrigin.replace(/\/$/, "")}/projects/${
+      `Or in Studio: ${trimTrailingSlash(target.studioOrigin)}/projects/${
         encodeURIComponent(target.projectSlug)
       }/integrations`,
     );

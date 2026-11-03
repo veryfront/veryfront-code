@@ -7,6 +7,7 @@ import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { discoverAll } from "#veryfront/discovery/index.ts";
 import { createProjectDiscoveryConfig } from "#veryfront/discovery/project-discovery-config.ts";
 import { agentRegistry } from "#veryfront/agent/composition/index.ts";
+import { createToolsFromRemoteDefinitions } from "#veryfront/tool/remote-source-tools.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 import {
   collectDeclaredIntegrations,
@@ -49,6 +50,30 @@ describe("dev integration source discovery", () => {
       "Salesforce isn't connected. Agents a and b need it.",
       "  Connect: npx veryfront integration connect salesforce --project case-demo",
     ]);
+  });
+  it("ignores tools a source already materialized", async () => {
+    // A local service-account source executes without a Veryfront connection, and a tool exists
+    // only because its source listed it, so none of them can be a missing connection.
+    const tools = createToolsFromRemoteDefinitions(
+      {
+        id: "salesforce-service-account",
+        listTools: () => Promise.resolve([]),
+        executeTool: () => Promise.resolve({}),
+      },
+      [{
+        name: "salesforce__get_case",
+        description: "Get a case",
+        parameters: { type: "object", properties: {} },
+      }],
+    );
+
+    assertEquals(
+      collectDeclaredIntegrations([
+        { agentId: "case-ingest", tools },
+        { agentId: "case-dispose", tools: { salesforce__update_case: true } },
+      ]),
+      [{ integration: "salesforce", agentIds: ["case-dispose"] }],
+    );
   });
   it("warns from custom-root agents and ignores stale default-root sources and disabled discovery", async () => {
     const env = {

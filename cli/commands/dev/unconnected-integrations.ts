@@ -11,7 +11,6 @@ import {
 } from "#veryfront/security/private-array.ts";
 import { createPrivateMap } from "#veryfront/security/private-map.ts";
 import { createPrivateSet } from "#veryfront/security/private-set.ts";
-import { getRemoteToolProvenance } from "#veryfront/tool/remote-tool-provenance.ts";
 import { compareStrings } from "#veryfront/utils/compare.ts";
 import { connectors } from "../../../src/integrations/_data.ts";
 import { findUnconnectedIntegrations } from "../../../src/integrations/unconnected.ts";
@@ -24,7 +23,7 @@ import {
 import { serverLogger } from "veryfront/utils";
 import {
   getRemoteIntegrationProjectTarget,
-  getRemoteIntegrationToolDiscovery,
+  getRemoteIntegrationToolDiscoveryWithEvidence,
 } from "../../../src/integrations/remote-tools.ts";
 
 const apply = Reflect.apply;
@@ -52,7 +51,9 @@ export function collectDeclaredIntegrations(
     if (!tools || tools === true) return;
     const names: string[] = [];
     forEachPrivateArray(objectEntries(tools), (entry) => {
-      const name = entry[1] === true ? entry[0] : getRemoteToolProvenance(entry[1]);
+      // A tool a source already materialized exists because that source listed it, whether or
+      // not Veryfront holds a connection, so only tools enabled by name can be missing one.
+      const name = entry[1] === true ? entry[0] : undefined;
       if (
         name &&
         (sourcePolicy === undefined || isIntegrationToolAllowedBySourcePolicy(name, sourcePolicy))
@@ -146,7 +147,7 @@ export async function findUnconnectedIntegrationLines(
     const target = getRemoteIntegrationProjectTarget();
     if (!target) return [];
     const connectedNames: string[] = [];
-    const discovery = await getRemoteIntegrationToolDiscovery(undefined, {
+    const discovery = await getRemoteIntegrationToolDiscoveryWithEvidence(undefined, {
       onDiscoveredToolName: (name) => pushPrivateArray(connectedNames, name),
     });
     if (discovery.status !== "ok") return [];

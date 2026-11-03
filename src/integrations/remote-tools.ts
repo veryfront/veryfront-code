@@ -799,7 +799,20 @@ async function callRemoteTool(
  * memoizes both outcomes for the current run. Direct callers inside a
  * Veryfront request receive the same request-scoped behavior.
  */
-export async function getRemoteIntegrationToolDiscovery(
+export function getRemoteIntegrationToolDiscovery(
+  context?: ToolExecutionContext,
+): Promise<RemoteIntegrationToolDiscoveryResult> {
+  return getRemoteIntegrationToolDiscoveryWithEvidence(context);
+}
+
+/**
+ * Discovery that also reports every tool name the API listed, before the active source policy
+ * narrows the result. Connection diagnostics need that evidence; it names integrations a
+ * restricted source may not see, so it stays out of the public `veryfront/integrations` API.
+ *
+ * @internal
+ */
+export async function getRemoteIntegrationToolDiscoveryWithEvidence(
   context?: ToolExecutionContext,
   options?: { onDiscoveredToolName?: (name: string) => void },
 ): Promise<RemoteIntegrationToolDiscoveryResult> {

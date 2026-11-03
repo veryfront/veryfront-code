@@ -9,6 +9,8 @@
 
 import type { IntegrationName } from "./schema.ts";
 import { compareStrings } from "#veryfront/utils/compare.ts";
+import { somePrivateArray } from "#veryfront/security/private-array.ts";
+import { privateTextIncludes } from "#veryfront/security/private-text.ts";
 
 const apply = Reflect.apply;
 const stringCharCodeAt = String.prototype.charCodeAt;
@@ -294,12 +296,12 @@ export function isIntegrationToolAllowedBySourcePolicy(
   if (policy.mode === "unrestricted") return true;
 
   const identity = parseIntegrationToolIdentity(toolName);
-  if (!identity) return !toolName.includes("__");
+  if (!identity) return !privateTextIncludes(toolName, "__");
 
   const restriction = policy.integrations[identity.integration];
   if (!restriction) return false;
   return restriction.allowedToolIds === null ||
-    restriction.allowedToolIds.includes(identity.toolId);
+    somePrivateArray(restriction.allowedToolIds, (id) => id === identity.toolId);
 }
 
 /** Filter canonical tool names while leaving non-integration tools untouched. */
