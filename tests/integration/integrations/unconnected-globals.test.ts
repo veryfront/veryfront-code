@@ -1,9 +1,9 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { isIntegrationToolAllowedBySourcePolicy } from "./source-policy.ts";
-import { resolveStudioOrigin } from "./studio-origin.ts";
-import { formatUnconnectedIntegrationMessage } from "./unconnected.ts";
+import { isIntegrationToolAllowedBySourcePolicy } from "#veryfront/integrations/source-policy.ts";
+import { resolveStudioOrigin } from "#veryfront/integrations/studio-origin.ts";
+import { formatUnconnectedIntegrationMessage } from "#veryfront/integrations/unconnected.ts";
 
 describe("integrations/connection diagnostics", () => {
   it("does not dispatch through built-ins that project code replaced", () => {
