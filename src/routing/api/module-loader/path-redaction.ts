@@ -152,11 +152,17 @@ function fileUrlName(url: string): string {
 // not `/srv/a.ts: input/output error` or `/srv/cache read/write`). A path
 // never runs into a URL, so the URL is still cut to its origin. Its root is a
 // drive, a UNC `\\`, a `/`, or a single `\` followed by a segment and another
-// `\` that does not open escape text such as `\n` or `\u00e9`.
+// `\`. A single-`\` token made only of escape sequences (`\n\t`,
+// `\u00e9\x41\0`) is escape text, not a path. Any other text after the escape
+// letter makes it a path (`\temp\alice\x.ts`, `\nfoo\tbar`): over-redacting
+// escape text is safe, leaking a root-relative path is not. Every escape ends
+// in a word character, so a run never starts a second match and stays linear.
+const ESCAPE = String.raw`(?:[bfnrtv0]|x[0-9A-Fa-f]{2}|u[0-9A-Fa-f]{4})`;
+const ESCAPES_ONLY = String.raw`${ESCAPE}(?:\\${ESCAPE})*(?![^\s'"\x60])`;
 const FILE_URL = String.raw`(?<![\w-])[Ff][Ii][Ll][Ee]:`;
 const WEB_URL = String.raw`[Hh][Tt][Tt][Pp][Ss]?:\/\/`;
 const PATH_ROOT = String
-  .raw`(?:[A-Za-z]:[\\/]|\\\\|\/|\\(?![bfnrtv0]|x[0-9A-Fa-f]{2}|u[0-9A-Fa-f{])(?=[^\s'"\x60\\/]+\\))`;
+  .raw`(?:[A-Za-z]:[\\/]|\\\\|\/|\\(?!${ESCAPES_ONLY})(?=[^\s'"\x60\\/]+\\))`;
 /** One path character: not `excluded`, and not the start of a URL. */
 const pathChar = (excluded: string) => String.raw`(?:(?!${FILE_URL}|${WEB_URL})[^${excluded}])`;
 const WORD = pathChar(String.raw`\s'"\x60`);

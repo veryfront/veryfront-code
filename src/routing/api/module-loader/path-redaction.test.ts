@@ -59,10 +59,31 @@ describe("redactFreeText", () => {
     }
   });
 
+  it("redacts a root-relative path whose first segment starts with an escape letter", () => {
+    const cases: Array<[string, string]> = [
+      ["At \\temp\\alice\\secret.ts", "At secret.ts"],
+      ["At \\bin\\alice\\x.ts:1:2", "At x.ts:1:2"],
+      ["Open \\var\\alice\\cache failed", "Open cache failed"],
+      ["Open \\node\\alice\\x.ts", "Open x.ts"],
+      ["See '\\root\\alice\\some user\\x.ts'", "See 'x.ts'"],
+      ["At \\u00e9tude\\alice\\x.ts", "At x.ts"],
+      ["At \\x41b\\alice\\x.ts", "At x.ts"],
+      ["At \\0data\\alice\\x.ts", "At x.ts"],
+      // Escape text followed by more text cannot be told from a path: redact.
+      ["Unexpected \\nfoo\\tbar in string", "Unexpected tbar in string"],
+    ];
+    for (const [text, expected] of cases) {
+      const output = redactFreeText(text);
+      assertEquals(output, expected, text);
+      assertEquals(HOST_PARTS.test(output), false, text);
+    }
+  });
+
   it("leaves ordinary messages, escape text and relative paths alone", () => {
     for (
       const text of [
-        "Unexpected \\nfoo\\tbar in string",
+        "Unexpected \\n\\t in string",
+        "Unexpected '\\r\\n' in string",
         "Bad escape \\u00e9\\x41\\0 in string",
         "Cannot find './x.ts' or '../lib/y.ts'",
         "x /srv/a.ts and ./lib/y.ts",
@@ -82,7 +103,8 @@ describe("redactFreeText", () => {
 
   it("stays linear on crafted input", () => {
     const crafted = "'/x" + " a/".repeat(20_000) + " \\B\\".repeat(20_000) + " /a b" +
-      "/b.".repeat(20_000) + " /c" + "/".repeat(20_000);
+      "/b.".repeat(20_000) + " /c" + "/".repeat(20_000) + " " + "\\n".repeat(20_000) +
+      " \\u00e9".repeat(20_000);
     const started = performance.now();
     redactFreeText(crafted);
     assertEquals(performance.now() - started < 1_000, true);
