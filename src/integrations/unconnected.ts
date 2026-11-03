@@ -9,8 +9,31 @@ import {
 
 import { privateTextEndsWith, privateTextSlice } from "#veryfront/security/private-text.ts";
 import { parseIntegrationToolIdentity } from "./source-policy.ts";
+import type { IntegrationToolMeta } from "./schema.ts";
 
 const declaredIntegrations = createPrivateSet<string>(ALL_INTEGRATION_NAMES);
+
+/**
+ * The catalog entry for an exact `integration__tool` name, or undefined when the catalog has none.
+ *
+ * Indexed loops, not `Array.prototype.find`: agent and config code share this realm and may have
+ * replaced the built-ins by the time a run resolves its tools.
+ */
+export function findCatalogIntegrationTool(toolName: string): IntegrationToolMeta | undefined {
+  const identity = parseIntegrationToolIdentity(toolName);
+  if (!identity) return undefined;
+  for (let index = 0; index < connectors.length; index++) {
+    const connector = connectors[index]!;
+    if (connector.name !== identity.integration) continue;
+    const tools = connector.tools;
+    for (let toolIndex = 0; toolIndex < tools.length; toolIndex++) {
+      const tool = tools[toolIndex]!;
+      if ((tool.id ?? tool.name) === toolName) return tool;
+    }
+    return undefined;
+  }
+  return undefined;
+}
 
 export interface UnconnectedIntegrationTarget {
   readonly projectSlug: string;
@@ -20,9 +43,9 @@ export interface UnconnectedIntegrationTarget {
 /**
  * Integrations that the configured tool names declare but the project has not connected.
  *
- * A name qualifies only when it is a canonical `integration__tool` name for a catalog
- * integration and discovery returned no tool for that integration. A name whose integration
- * has discovered tools is a misspelling, not a missing connection.
+ * A name qualifies only when it is an exact catalog tool and discovery returned no tool for its
+ * integration. A name the catalog lacks, or whose integration has discovered tools, is a
+ * misspelling, not a missing connection: connecting cannot fix it.
  */
 export function findUnconnectedIntegrations(
   configuredToolNames: readonly string[],
@@ -40,7 +63,7 @@ export function findUnconnectedIntegrations(
     const identity = parseIntegrationToolIdentity(name);
     if (
       identity && declaredIntegrations.has(identity.integration) &&
-      !discovered.has(identity.integration)
+      !discovered.has(identity.integration) && findCatalogIntegrationTool(name) !== undefined
     ) {
       integrations.add(identity.integration);
     } else {

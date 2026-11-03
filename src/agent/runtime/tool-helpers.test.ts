@@ -1013,7 +1013,7 @@ describe("tool-helpers", () => {
       }
     });
 
-    it("reports an unconnected integration instead of an unknown tool", async () => {
+    it("reports an unconnected integration whose tools the catalog cannot describe", async () => {
       toolRegistryInternal.clearAll();
       const originalSlug = Deno.env.get("VERYFRONT_PROJECT_SLUG");
       const originalApiUrl = Deno.env.get("VERYFRONT_API_URL");
@@ -1025,14 +1025,14 @@ describe("tool-helpers", () => {
             withMockRemoteIntegrationTools([], () => {
               Deno.env.set("VERYFRONT_API_URL", "https://api.veryfront.org");
               return getAvailableTools({
-                "salesforce__get_case": true,
-                "salesforce__update_case": true,
+                "shopify__list_products": true,
+                "shopify__get_order": true,
               });
             }),
           Error,
           [
-            "Salesforce isn't connected to project case-demo.",
-            "Connect it: npx veryfront integration connect salesforce --project case-demo",
+            "Shopify isn't connected to project case-demo.",
+            "Connect it: npx veryfront integration connect shopify --project case-demo",
             "Or in Studio: https://veryfront.org/projects/case-demo/integrations",
           ].join("\n"),
         );
@@ -1055,16 +1055,16 @@ describe("tool-helpers", () => {
           () =>
             withMockRemoteIntegrationTools([], () =>
               getAvailableTools({
-                "github__get_pr_diff": true,
-                "salesforce__get_case": true,
+                "trello__list_boards": true,
+                "shopify__list_products": true,
               })),
           Error,
           [
-            "GitHub isn't connected to project case-demo.",
-            "Connect it: npx veryfront integration connect github --project case-demo",
+            "Shopify isn't connected to project case-demo.",
+            "Connect it: npx veryfront integration connect shopify --project case-demo",
             "",
-            "Salesforce isn't connected to project case-demo.",
-            "Connect it: npx veryfront integration connect salesforce --project case-demo",
+            "Trello isn't connected to project case-demo.",
+            "Connect it: npx veryfront integration connect trello --project case-demo",
           ].join("\n"),
         );
       } finally {
@@ -1152,7 +1152,7 @@ describe("tool-helpers", () => {
             return this;
           };
           Set.prototype.has = () => false;
-          await getAvailableTools({ salesforce__get_case: true }, {
+          await getAvailableTools({ shopify__list_products: true }, {
             remoteToolContext: { projectSlug: "case-demo", authToken: "token" },
           });
         } catch (error) {
@@ -1165,7 +1165,7 @@ describe("tool-helpers", () => {
         }
         assertEquals(
           failure instanceof Error ? failure.message : failure,
-          "Salesforce isn't connected to project case-demo.\nConnect it: npx veryfront integration connect salesforce --project case-demo",
+          "Shopify isn't connected to project case-demo.\nConnect it: npx veryfront integration connect shopify --project case-demo",
         );
       });
     });
@@ -1245,6 +1245,200 @@ describe("tool-helpers", () => {
       } finally {
         if (originalSlug === undefined) Deno.env.delete("VERYFRONT_PROJECT_SLUG");
         else Deno.env.set("VERYFRONT_PROJECT_SLUG", originalSlug);
+        toolRegistryInternal.clearAll();
+      }
+    });
+
+    const caseDemoContext = { projectSlug: "case-demo", authToken: "token" };
+
+    it("exposes a declared tool of an unconnected integration from the catalog", async () => {
+      toolRegistryInternal.clearAll();
+      try {
+        const defs = await withMockRemoteIntegrationTools(
+          [],
+          () =>
+            getAvailableTools({ "salesforce__get_case": true }, {
+              remoteToolContext: caseDemoContext,
+            }),
+        );
+
+        assertEquals(defs.map((def) => def.name), ["salesforce__get_case"]);
+        assertEquals((defs[0]!.parameters as { required?: string[] }).required, ["caseId"]);
+      } finally {
+        toolRegistryInternal.clearAll();
+      }
+    });
+
+    it("exposes the catalog tool when project code replaces collection methods", async () => {
+      toolRegistryInternal.clearAll();
+      const originalFind = Array.prototype.find;
+      const originalSome = Array.prototype.some;
+      try {
+        const defs = await withMockRemoteIntegrationTools([], async () => {
+          try {
+            Array.prototype.find = () => {
+              throw new Error("project find replacement");
+            };
+            Array.prototype.some = () => {
+              throw new Error("project some replacement");
+            };
+            return await getAvailableTools({ "salesforce__get_case": true }, {
+              remoteToolContext: caseDemoContext,
+            });
+          } finally {
+            Array.prototype.find = originalFind;
+            Array.prototype.some = originalSome;
+          }
+        });
+
+        assertEquals(defs.map((def) => def.name), ["salesforce__get_case"]);
+      } finally {
+        toolRegistryInternal.clearAll();
+      }
+    });
+
+    it("lets the API answer the call to an unconnected integration tool", async () => {
+      toolRegistryInternal.clearAll();
+      const originalApiBaseUrl = Deno.env.get("VERYFRONT_API_URL");
+      const originalApiToken = Deno.env.get("VERYFRONT_API_TOKEN");
+      const authenticationRequired = {
+        content: [],
+        structuredContent: {
+          error: "authentication_required",
+          integration: "salesforce",
+          connectUrl: "https://api.test/oauth/connect/salesforce?project_reference=p",
+          message: "Authentication required for Salesforce.",
+        },
+        isError: true,
+      };
+      let ranPath: string | undefined;
+
+      try {
+        Deno.env.set("VERYFRONT_API_URL", "https://api.test");
+        Deno.env.set("VERYFRONT_API_TOKEN", "token");
+        const toolsConfig = { "salesforce__get_case": true } as const;
+        const result = await withMockFetch((input) => {
+          const url = new URL(input instanceof Request ? input.url : String(input));
+          if (url.pathname.endsWith("/run")) {
+            ranPath = url.pathname;
+            return Promise.resolve(Response.json(authenticationRequired));
+          }
+          return Promise.resolve(Response.json({ tools: [] }));
+        }, async () => {
+          const defs = await getAvailableTools(toolsConfig, { remoteToolContext: caseDemoContext });
+          assertEquals(defs.map((def) => def.name), ["salesforce__get_case"]);
+          return executeConfiguredTool(
+            "salesforce__get_case",
+            { caseId: "500" },
+            toolsConfig,
+            caseDemoContext,
+          );
+        });
+
+        assertEquals(ranPath, "/integration-tools/salesforce__get_case/run");
+        assertEquals(JSON.stringify(result).includes("authentication_required"), true);
+        assertEquals(JSON.stringify(result).includes("connectUrl"), true);
+      } finally {
+        if (originalApiBaseUrl === undefined) Deno.env.delete("VERYFRONT_API_URL");
+        else Deno.env.set("VERYFRONT_API_URL", originalApiBaseUrl);
+        if (originalApiToken === undefined) Deno.env.delete("VERYFRONT_API_TOKEN");
+        else Deno.env.set("VERYFRONT_API_TOKEN", originalApiToken);
+        toolRegistryInternal.clearAll();
+      }
+    });
+
+    it("keeps Unknown tool reference for a misspelled tool of an unconnected integration", async () => {
+      toolRegistryInternal.clearAll();
+      try {
+        await assertRejects(
+          () =>
+            withMockRemoteIntegrationTools(
+              [],
+              () =>
+                getAvailableTools({ "salesforce__get_cse": true }, {
+                  remoteToolContext: caseDemoContext,
+                }),
+            ),
+          Error,
+          "Unknown tool reference: salesforce__get_cse.",
+        );
+      } finally {
+        toolRegistryInternal.clearAll();
+      }
+    });
+
+    it("does not expose an unconnected tool the run does not allow", async () => {
+      toolRegistryInternal.clearAll();
+      try {
+        await assertRejects(
+          () =>
+            withMockRemoteIntegrationTools([], () =>
+              getAvailableTools(
+                { "salesforce__get_case": true },
+                {
+                  allowedRemoteToolNames: ["gmail__list_emails"],
+                  remoteToolContext: caseDemoContext,
+                },
+              )),
+          Error,
+          "Salesforce isn't connected to project case-demo.",
+        );
+      } finally {
+        toolRegistryInternal.clearAll();
+      }
+    });
+
+    it("does not expose an unconnected tool the active source policy denies", async () => {
+      toolRegistryInternal.clearAll();
+      const policy: SourceIntegrationPolicyManifest = {
+        schemaVersion: 1,
+        mode: "allowlist",
+        integrations: { gmail: { allowedToolIds: ["list_emails"] } },
+      };
+      try {
+        await assertRejects(
+          () =>
+            withMockRemoteIntegrationTools(
+              [],
+              () =>
+                runWithExactSourceIntegrationPolicy(policy, () =>
+                  getAvailableTools({ "salesforce__get_case": true }, {
+                    remoteToolContext: caseDemoContext,
+                  })),
+            ),
+          Error,
+          "Salesforce isn't connected to project case-demo.",
+        );
+      } finally {
+        toolRegistryInternal.clearAll();
+      }
+    });
+
+    it("keeps Unknown tool reference when discovery failed", async () => {
+      toolRegistryInternal.clearAll();
+      const originalApiBaseUrl = Deno.env.get("VERYFRONT_API_URL");
+      const originalApiToken = Deno.env.get("VERYFRONT_API_TOKEN");
+
+      try {
+        Deno.env.set("VERYFRONT_API_URL", "https://api.test");
+        Deno.env.set("VERYFRONT_API_TOKEN", "token");
+        await assertRejects(
+          () =>
+            withMockFetch(
+              () => Promise.resolve(new Response("down", { status: 500 })),
+              () =>
+                getAvailableTools({ "salesforce__get_case": true }, {
+                  remoteToolContext: caseDemoContext,
+                }),
+            ),
+          Error,
+          "Unknown tool reference: salesforce__get_case.",
+        );
+      } finally {
+        if (originalApiBaseUrl === undefined) Deno.env.delete("VERYFRONT_API_URL");
+        else Deno.env.set("VERYFRONT_API_URL", originalApiBaseUrl);
+        if (originalApiToken === undefined) Deno.env.delete("VERYFRONT_API_TOKEN");
+        else Deno.env.set("VERYFRONT_API_TOKEN", originalApiToken);
         toolRegistryInternal.clearAll();
       }
     });

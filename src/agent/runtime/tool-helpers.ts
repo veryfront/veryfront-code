@@ -45,14 +45,17 @@ import { isSkillInfrastructureToolId } from "#veryfront/skill/types.ts";
 import { serverLogger } from "#veryfront/utils";
 import { createError, PERMISSION_DENIED, toError } from "#veryfront/errors";
 import {
+  getRemoteIntegrationProjectTarget,
   isRemoteIntegrationTool,
   runRemoteIntegrationTool,
 } from "#veryfront/integrations/remote-tools.ts";
 import type { RemoteIntegrationToolDiscoveryResult } from "#veryfront/integrations/remote-tools.ts";
 import {
   isIntegrationToolAllowedBySourcePolicy,
+  parseIntegrationToolIdentity,
   type SourceIntegrationPolicyManifest,
 } from "#veryfront/integrations/source-policy.ts";
+import { getActiveSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
 import { compareStrings } from "#veryfront/utils/compare.ts";
 
 const trustedPlatformDefinitions = createPrivateWeakStore<object, true>();
@@ -369,6 +372,52 @@ async function describeUnconnectedIntegrations(
     ),
     "\n\n",
   );
+}
+
+/**
+ * Discovery lists only connected integrations. Studio and hosted runs resolve declared tools on the
+ * server, so a declared catalog tool of an unconnected integration is exposed here too and its call
+ * returns the API's `authentication_required` result with a `connectUrl`.
+ *
+ * Nothing is exposed when any tool of the integration was listed (discovery before source policy,
+ * a run's own source, or a forwarded definition: the name is then a misspelling, or that source
+ * supplies the integration), when discovery failed, a configured source failed to list (it may
+ * supply the tool), the project or credential is unknown, the run or the active source policy
+ * does not allow the tool, or the catalog has no endpoint for it. Those keep the connection or
+ * unknown-tool diagnostic.
+ */
+async function getUnconnectedIntegrationToolDefinition(
+  toolName: string,
+  discoveredToolNames: Iterable<string>,
+  discovery: RemoteIntegrationToolDiscoveryResult | undefined,
+  sourceListFailed: boolean,
+  allowedRemoteToolNames: string[] | undefined,
+  remoteToolContext: ToolExecutionContext | undefined,
+): Promise<ToolDefinition | undefined> {
+  if (
+    sourceListFailed || discovery?.status !== "ok" ||
+    !isRemoteToolAllowed(toolName, allowedRemoteToolNames)
+  ) {
+    return undefined;
+  }
+  try {
+    const activePolicy = getActiveSourceIntegrationPolicy();
+    if (activePolicy && !isIntegrationToolAllowedBySourcePolicy(toolName, activePolicy)) {
+      return undefined;
+    }
+    const integration = parseIntegrationToolIdentity(toolName)?.integration;
+    if (integration === undefined) return undefined;
+    if (!getRemoteIntegrationProjectTarget(remoteToolContext)) return undefined;
+    for (const discovered of discoveredToolNames) {
+      if (parseIntegrationToolIdentity(discovered)?.integration === integration) return undefined;
+    }
+    const { getCatalogToolDefinition } = await import(
+      "#veryfront/integrations/catalog-tool-definition.ts"
+    );
+    return getCatalogToolDefinition(toolName);
+  } catch {
+    return undefined;
+  }
 }
 
 async function getRemoteToolDefinitions(options?: {
@@ -913,6 +962,22 @@ export async function getAvailableTools(
           options?.unavailableOptionalRemoteToolPrefixes,
         )
       ) {
+        continue;
+      }
+
+      const unconnectedToolDefinition = await getUnconnectedIntegrationToolDefinition(
+        name,
+        discoveredRemoteToolNames,
+        integrationDiscovery,
+        sourceListFailed,
+        options?.allowedRemoteToolNames,
+        options?.remoteToolContext,
+      );
+      if (unconnectedToolDefinition) {
+        if (!hasToolDefinitionName(tools, name)) {
+          logToolDefinition(name, unconnectedToolDefinition);
+          intrinsicReflectApply(intrinsicArrayPush, tools, [unconnectedToolDefinition]);
+        }
         continue;
       }
 

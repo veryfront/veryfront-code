@@ -37,6 +37,13 @@ describe("commands/dev/unconnected-integrations", () => {
     );
   });
 
+  it("ignores a misspelled tool of a catalog integration, which connecting cannot fix", () => {
+    assertEquals(
+      collectDeclaredIntegrations([{ agentId: "a", tools: { salesforce__get_cse: true } }]),
+      [],
+    );
+  });
+
   it("prints a line for every integration without a connected tool", () => {
     assertEquals(
       unconnectedIntegrationLines(
