@@ -1,3 +1,4 @@
+import { sanitizeTerminalDiagnosticText } from "veryfront/errors";
 import { exists, readDir, readTextFile } from "#veryfront/platform/compat/fs.ts";
 import { join } from "#veryfront/compat/path";
 import { connectors } from "../../../src/integrations/_data.ts";
@@ -65,7 +66,9 @@ export function unconnectedIntegrationLines(
     .filter(({ integration }) => !connected.has(integration))
     .flatMap(({ integration, agentIds }) => [
       `${displayName(integration)} isn't connected. ` +
-      `${agentIds.length === 1 ? "Agent" : "Agents"} ${joinNames(agentIds)} ` +
+      `${agentIds.length === 1 ? "Agent" : "Agents"} ${
+        sanitizeTerminalDiagnosticText(joinNames(agentIds))
+      } ` +
       `${agentIds.length === 1 ? "needs" : "need"} it.`,
       `  Connect: npx veryfront integration connect ${integration} --project ${projectSlug}`,
     ]);

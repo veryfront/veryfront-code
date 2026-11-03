@@ -800,6 +800,7 @@ async function callRemoteTool(
  */
 export async function getRemoteIntegrationToolDiscovery(
   context?: ToolExecutionContext,
+  options?: { onDiscoveredToolName?: (name: string) => void },
 ): Promise<RemoteIntegrationToolDiscoveryResult> {
   const requestContext = snapshotToolExecutionContext(context, false);
   requestContext.abortSignal?.throwIfAborted();
@@ -818,6 +819,8 @@ export async function getRemoteIntegrationToolDiscovery(
     );
     if (catalog.status === "unavailable") return catalog;
 
+    // Keep connection evidence before source policy narrows the available tools.
+    for (const tool of catalog.tools) options?.onDiscoveredToolName?.(tool.name);
     const sourceIntegrationPolicy = getActiveSourceIntegrationPolicy();
     return {
       status: "ok",

@@ -55,6 +55,26 @@ describe("commands/dev/unconnected-integrations", () => {
     );
   });
 
+  it("sanitizes and bounds agent names without hiding the connect command", () => {
+    const lines = unconnectedIntegrationLines(
+      [
+        {
+          integration: "salesforce",
+          agentIds: ["\u001b]52;c;Y2xpcGJvYXJk\u0007spoof", "a".repeat(3000)],
+        },
+      ],
+      [],
+      "case-demo",
+    );
+    // deno-lint-ignore no-control-regex
+    assertEquals(/[\u0000-\u001f\u007f-\u009f]/.test(lines[0]!), false);
+    assertEquals(lines[0]!.length < 2200, true);
+    assertEquals(
+      lines[1],
+      "  Connect: npx veryfront integration connect salesforce --project case-demo",
+    );
+  });
+
   it("prints nothing when every declared integration is connected", () => {
     assertEquals(
       unconnectedIntegrationLines(

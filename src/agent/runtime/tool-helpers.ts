@@ -342,27 +342,22 @@ async function describeUnconnectedIntegrations(
   remoteToolContext: ToolExecutionContext | undefined,
 ): Promise<string | undefined> {
   if (discovery?.status !== "ok") return undefined;
-  try {
-    const { getRemoteIntegrationProjectTarget } = await import(
-      "#veryfront/integrations/remote-tools.ts"
-    );
-    const target = getRemoteIntegrationProjectTarget(remoteToolContext);
-    if (!target) return undefined;
+  const { getRemoteIntegrationProjectTarget } = await import(
+    "#veryfront/integrations/remote-tools.ts"
+  );
+  const target = getRemoteIntegrationProjectTarget(remoteToolContext);
+  if (!target) return undefined;
 
-    const { findUnconnectedIntegrations, formatUnconnectedIntegrationMessage } = await import(
-      "#veryfront/integrations/unconnected.ts"
-    );
-    const { integrations, unknownToolNames } = findUnconnectedIntegrations(
-      unresolvedToolNames,
-      [...discoveredToolNames],
-    );
-    if (integrations.length === 0 || unknownToolNames.length > 0) return undefined;
-    return integrations.map((integration) =>
-      formatUnconnectedIntegrationMessage(integration, target)
-    ).join("\n\n");
-  } catch {
-    return undefined;
-  }
+  const { findUnconnectedIntegrations, formatUnconnectedIntegrationMessage } = await import(
+    "#veryfront/integrations/unconnected.ts"
+  );
+  const { integrations, unknownToolNames } = findUnconnectedIntegrations(
+    unresolvedToolNames,
+    [...discoveredToolNames],
+  );
+  if (integrations.length === 0 || unknownToolNames.length > 0) return undefined;
+  return integrations.map((integration) => formatUnconnectedIntegrationMessage(integration, target))
+    .join("\n\n");
 }
 
 async function getRemoteToolDefinitions(options?: {
@@ -427,7 +422,9 @@ async function getRemoteToolDefinitions(options?: {
     const { getRemoteIntegrationToolDiscovery } = await import(
       "#veryfront/integrations/remote-tools.ts"
     );
-    const discovery = await getRemoteIntegrationToolDiscovery(remoteToolContext);
+    const discovery = await getRemoteIntegrationToolDiscovery(remoteToolContext, {
+      onDiscoveredToolName: (name) => options?.discoveredToolNames?.add(name),
+    });
     options?.onIntegrationToolDiscovery?.(discovery);
     if (discovery.status === "ok") {
       for (const def of discovery.tools) {

@@ -1,3 +1,4 @@
+import { runWithExactSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
 import type { SourceIntegrationPolicyManifest } from "#veryfront/integrations/source-policy.ts";
 import { markTrustedHostToolProvenance } from "#veryfront/tool/host-tool-provenance.ts";
 import { markTrustedPlatformSource } from "#veryfront/tool/platform-source-provenance.ts";
@@ -1115,6 +1116,51 @@ describe("tool-helpers", () => {
         else Deno.env.set("VERYFRONT_PROJECT_SLUG", originalSlug);
         toolRegistryInternal.clearAll();
       }
+    });
+
+    it("surfaces unexpected connection diagnostic failures instead of reporting an unknown tool", async () => {
+      await withMockRemoteIntegrationTools([], async () => {
+        const originalFind = Array.prototype.find;
+        let failure: unknown;
+        try {
+          Array.prototype.find = () => {
+            throw new Error("integration classifier failed");
+          };
+          await getAvailableTools({ salesforce__get_case: true }, {
+            remoteToolContext: { projectSlug: "case-demo", authToken: "token" },
+          });
+        } catch (error) {
+          failure = error;
+        } finally {
+          Array.prototype.find = originalFind;
+        }
+        assertEquals(
+          failure instanceof Error ? failure.message : failure,
+          "integration classifier failed",
+        );
+      });
+    });
+
+    it("keeps Unknown tool reference when source policy hides the connected integration's tools", async () => {
+      const policy: SourceIntegrationPolicyManifest = {
+        schemaVersion: 1,
+        mode: "allowlist",
+        integrations: { gmail: { allowedToolIds: ["list_messages"] } },
+      };
+      await assertRejects(
+        () =>
+          withMockRemoteIntegrationTools(
+            ["gmail__list_emails"],
+            () =>
+              runWithExactSourceIntegrationPolicy(policy, () =>
+                getAvailableTools({ gmail__list_messages: true }, {
+                  sourceIntegrationPolicy: policy,
+                  remoteToolContext: { projectSlug: "case-demo", authToken: "token" },
+                })),
+          ),
+        Error,
+        "Unknown tool reference: gmail__list_messages.",
+      );
     });
 
     for (const source of ["discovery", "custom", "forwarded"] as const) {
