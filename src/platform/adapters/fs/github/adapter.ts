@@ -4,7 +4,7 @@ import { getEnv } from "#veryfront/platform/compat/process.ts";
 import type { ResolveFileOptions } from "../../base.ts";
 import { FileCache } from "../cache/file-cache.ts";
 import type { FSAdapter, FSAdapterConfig } from "../veryfront/types.ts";
-import { GitHubApiClient } from "./github-api-client.ts";
+import { GitHubApiClient, type GitHubRequestOptions } from "./github-api-client.ts";
 import { GitHubDirectoryOperations } from "./directory-operations.ts";
 import { GitHubReadOperations } from "./read-operations.ts";
 import { GitHubStatOperations } from "./stat-operations.ts";
@@ -17,6 +17,29 @@ import {
 } from "./types.ts";
 
 const LOG_PREFIX = "[GitHubFSAdapter]";
+
+/**
+ * Stop waiting on shared work (the repository index build other readers also await) when this
+ * caller's signal aborts, without cancelling the shared work itself.
+ */
+function waitUnlessAborted<T>(work: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
+  if (!signal) return work;
+  signal.throwIfAborted();
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(signal.reason);
+    signal.addEventListener("abort", onAbort, { once: true });
+    work.then(
+      (value) => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(value);
+      },
+      (error) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(error);
+      },
+    );
+  });
+}
 
 export class GitHubFSAdapter implements FSAdapter {
   /** Git tree symlink blobs are excluded from the adapter's readable index. */
@@ -93,9 +116,9 @@ export class GitHubFSAdapter implements FSAdapter {
     return this.readOps.readFile(path);
   }
 
-  async readTextFile(path: string): Promise<string> {
-    await this.ensureInitialized();
-    return this.readOps.readTextFile(path);
+  async readTextFile(path: string, options: GitHubRequestOptions = {}): Promise<string> {
+    await waitUnlessAborted(this.ensureInitialized(), options.signal);
+    return this.readOps.readTextFile(path, options);
   }
 
   async readFileBytesWithinLimit(path: string, byteLimit: number): Promise<Uint8Array> {

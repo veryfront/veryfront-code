@@ -2034,6 +2034,41 @@ describe("executor runtime preparation review regressions", () => {
     }
   });
 
+  it("keeps a closed selector's provider web fetch off the local host fallback", async () => {
+    let visible: Array<{ name?: string; type?: string }> = [];
+    const f = fixture({
+      config: { tools: false, providerTools: ["web_fetch"] },
+      grant: {
+        ...grant,
+        allowedToolNames: ["web_fetch"],
+        hostToolFacadeIds: ["local"],
+        models: new Map([[
+          modelId,
+          { maxOutputTokens: 200, providerToolNames: ["web_fetch"] },
+        ]]),
+      },
+      facades: {
+        hostTools: new Map([["local", { web_fetch: syntheticHostTool() }]]),
+        resolveModelRuntime: () => ({
+          ...model,
+          doStream(options) {
+            visible = ((options as ModelRuntimeCallOptions).tools ?? []).map((tool) => ({
+              name: tool.name,
+              type: tool.type,
+            }));
+            return finishStream();
+          },
+        }),
+      },
+    });
+    try {
+      await Array.fromAsync(await preparedStream(f));
+      assertEquals(visible.filter((tool) => tool.type === "function"), []);
+    } finally {
+      await f.owner.close();
+    }
+  });
+
   it("preserves a granted provider-selected local web fetch fallback", async () => {
     let visible: string[] = [];
     const f = fixture({

@@ -1092,6 +1092,7 @@ export function createRuntimePreparationCore(input: RuntimePreparationCoreOption
         allowedToolNames,
         deniedToolNames,
         allowedProviderToolNames: providerToolNames,
+        ...(definition.tools === false ? { closedToolSelector: true } : {}),
         toolLoading: definition.toolLoading,
         bootstrapTools: definition.bootstrapTools,
         optionalBootstrapTools: definition.optionalBootstrapTools,

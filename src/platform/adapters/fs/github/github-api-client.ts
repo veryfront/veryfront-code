@@ -100,6 +100,11 @@ interface RateLimitInfo {
 
 type APIError = Error & { statusCode?: number; endpoint?: string; repo?: string };
 
+/** Per-call options for GitHub API reads; `signal` cancels the request and its retries. */
+export interface GitHubRequestOptions {
+  signal?: AbortSignal;
+}
+
 export class GitHubApiClient {
   private readonly baseUrl = "https://api.github.com";
   private readonly repositoryEndpoint: string;
@@ -146,6 +151,7 @@ export class GitHubApiClient {
   async getContents(
     path: string,
     ref?: string,
+    options: GitHubRequestOptions = {},
   ): Promise<GitHubContentItem | GitHubContentItem[]> {
     const contentRef = ref ?? this.config.ref;
     const { normalized, encoded } = encodeContentsPath(path);
@@ -155,16 +161,16 @@ export class GitHubApiClient {
 
     logger.debug(`${LOG_PREFIX} Fetching contents`, { path: normalized });
 
-    const raw = await this.request(endpoint);
+    const raw = await this.request(endpoint, options.signal);
     return getGitHubContentsResponseSchema().parse(raw);
   }
 
-  async getBlob(sha: string): Promise<GitHubBlobResponse> {
+  async getBlob(sha: string, options: GitHubRequestOptions = {}): Promise<GitHubBlobResponse> {
     const endpoint = `${this.repositoryEndpoint}/git/blobs/${encodeEndpointValue(sha, "blob SHA")}`;
 
     logger.debug(`${LOG_PREFIX} Fetching blob`, { sha });
 
-    const raw = await this.request(endpoint);
+    const raw = await this.request(endpoint, options.signal);
     return getGitHubBlobResponseSchema().parse(raw);
   }
 
@@ -221,13 +227,14 @@ export class GitHubApiClient {
     return this.rateLimitInfo;
   }
 
-  private request(endpoint: string): Promise<unknown> {
+  private request(endpoint: string, signal?: AbortSignal): Promise<unknown> {
     const url = `${this.baseUrl}${endpoint}`;
 
     return retryWithBackoff(
-      async () => {
+      async (attemptSignal) => {
         const response = await fetch(url, {
           headers: this.requestHeaders("application/vnd.github.v3+json"),
+          ...(attemptSignal ? { signal: attemptSignal } : {}),
         });
 
         this.updateRateLimitInfo(response);
@@ -246,6 +253,7 @@ export class GitHubApiClient {
         maxAttempts: this.config.retry.maxRetries,
         initialDelay: this.config.retry.initialDelay,
         maxDelay: this.config.retry.maxDelay,
+        ...(signal ? { abortSignal: signal } : {}),
         shouldRetry: (error) => {
           const err = error instanceof Error ? error : new Error(String(error));
           return !(this.isClientError(err) && !this.isRateLimitError(err));

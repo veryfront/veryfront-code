@@ -289,6 +289,11 @@ export type PrepareHostedChatRuntimeToolAssemblyInput<
    * Non-empty selectors remain restrictive.
    */
   includeRuntimeEssentialToolsWhenEmpty?: boolean;
+  /**
+   * The agent declared `tools: false`. Provider-native tools stay
+   * provider-native: no host fallback (such as the local `web_fetch`) is added.
+   */
+  closedToolSelector?: boolean;
   sourceProviderToolNames?: readonly string[];
   /** Authored tool schema loading mode, resolved before legacy selector defaults. */
   toolLoading?: RuntimeToolLoadingMode;
@@ -945,6 +950,7 @@ async function prepareHostedChatRuntimeToolAssemblyInternal<
     (entry) => isToolAllowedBySourcePolicy(entry[0], input.sourceIntegrationPolicy, entry[1]),
   );
   if (
+    input.closedToolSelector !== true &&
     !hasOwn(selectedLocalTools, "web_fetch") &&
     shouldIncludeHostedWebFetchFallback({
       localTools: postFormInputLocalTools,

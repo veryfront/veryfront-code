@@ -342,6 +342,7 @@ async function buildToolAssembly(
     toolSchemaTarget: input.toolSchemaTarget,
     reservedToolSlots: getToolResultReaderReservedToolSlots(input.options.toolResultContext),
     includeRuntimeEssentialToolsWhenEmpty: input.options.includeRuntimeEssentialToolsWhenEmpty,
+    ...(input.options.closedToolSelector === true ? { closedToolSelector: true } : {}),
     sourceProviderToolNames: input.options.liveProjectSteering?.agent.providerTools,
     projectScopedRemoteToolOptions: input.projectScopedRemoteToolOptions,
     createRemoteToolSource: input.createRemoteToolSource,

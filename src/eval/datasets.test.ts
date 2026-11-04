@@ -73,6 +73,73 @@ describe("eval/datasets", () => {
     }
   });
 
+  it("reads JSON and JSONL datasets through the provided project file reader", async () => {
+    const files: Record<string, string> = {
+      "datasets/cases.json": JSON.stringify([{ id: "json-1", input: "alpha" }]),
+      "datasets/cases.jsonl": `${JSON.stringify({ id: "jsonl-1", input: "gamma" })}\n`,
+    };
+    const requested: string[] = [];
+    const context = {
+      baseDir: "/missing-on-disk",
+      readTextFile: (path: string) => {
+        requested.push(path);
+        return Promise.resolve(files[path]!);
+      },
+    };
+
+    assertEquals(await datasets.json("datasets/cases.json").load(context), [{
+      id: "json-1",
+      input: "alpha",
+    }]);
+    assertEquals(await datasets.jsonl("datasets/cases.jsonl").load(context), [{
+      id: "jsonl-1",
+      input: "gamma",
+    }]);
+    assertEquals(requested, ["datasets/cases.json", "datasets/cases.jsonl"]);
+  });
+
+  it("rejects absolute and parent-traversal paths instead of reading host disk when a project file reader is provided", async () => {
+    const root = await makeTempDir({ prefix: "vf-eval-dataset-host-disk-" });
+    try {
+      const hostPath = `${root}/host-secret.json`;
+      await Deno.writeTextFile(hostPath, JSON.stringify([{ id: "host", input: "secret" }]));
+      const requested: string[] = [];
+      const context = {
+        baseDir: root,
+        readTextFile: (path: string) => {
+          requested.push(path);
+          return Promise.resolve("[]");
+        },
+      };
+
+      for (
+        const path of [
+          hostPath,
+          "/datasets/cases.json",
+          "\\datasets\\cases.json",
+          "C:/datasets/cases.json",
+          "../host-secret.json",
+          "datasets/../../host-secret.json",
+          "datasets\\..\\..\\host-secret.json",
+        ]
+      ) {
+        for (const dataset of [datasets.json(path), datasets.jsonl(path)]) {
+          const error = await assertRejects(
+            () => dataset.load(context),
+            Error,
+            "Dataset path",
+          ) as Error;
+          // Validation errors reach run failures; they must not echo host paths.
+          assertEquals(error.message.includes(root), false);
+          assertEquals(error.message.includes(path), false);
+        }
+      }
+      assertEquals(requested, []);
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
+  });
+
   it("grades a labelled JSONL corpus through a target-free dataset eval", async () => {
     const root = await makeTempDir({ prefix: "vf-eval-dataset-corpus-" });
     try {

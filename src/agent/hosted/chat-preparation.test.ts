@@ -1174,6 +1174,7 @@ Deno.test("prepareHostedChatExecution keeps the closed tools selector through ru
       bootstrapSkill?: unknown;
       bootstrapTools?: unknown;
       optionalBootstrapTools?: unknown;
+      closedToolSelector?: boolean;
     }
     | undefined;
 
@@ -1234,6 +1235,8 @@ Deno.test("prepareHostedChatExecution keeps the closed tools selector through ru
   assertEquals(recordedOptions?.bootstrapSkill, undefined);
   assertEquals(recordedOptions?.bootstrapTools, undefined);
   assertEquals(recordedOptions?.optionalBootstrapTools, undefined);
+  // Assembly must not add host fallbacks for provider tools (e.g. local web_fetch).
+  assertEquals(recordedOptions?.closedToolSelector, true);
 });
 
 describe("provider replay bootstrap", () => {

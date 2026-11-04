@@ -671,6 +671,7 @@ export async function prepareHostedChatRuntimeCreationOptions<
       ...createAgentToolOptions(),
       allowedProviderTools: runtimeConfig.requestedAllowedProviderTools,
       includeRuntimeEssentialToolsWhenEmpty: runtimeConfig.includeRuntimeEssentialToolsWhenEmpty,
+      ...(input.agentConfig.tools === false ? { closedToolSelector: true } : {}),
       ...createReplayAndRunOptions(),
       agentId: input.agentConfig.id,
       ...(input.rootRunContext?.effectiveParentRunId

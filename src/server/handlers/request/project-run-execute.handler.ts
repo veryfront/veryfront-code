@@ -92,6 +92,10 @@ import {
 } from "#veryfront/agent/conversation/run-event-limits.ts";
 import { getRequestTransportLifetime } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
 import {
+  isExtendedFSAdapter,
+  isVirtualFilesystem,
+} from "#veryfront/platform/adapters/fs/wrapper.ts";
+import {
   createNativeRequestInit,
   readOwnInitField,
 } from "#veryfront/platform/compat/http/native-request-init.ts";
@@ -5242,6 +5246,7 @@ async function executeEvalRun(
     };
   }
 
+  const projectFs = ctx.adapter.fs;
   const runOptions: RunEvalOptions = {
     adapters: evalItem.definition.targetKind === "agent"
       ? {
@@ -5251,6 +5256,19 @@ async function executeEvalRun(
       }
       : {},
     baseDir: ctx.projectDir,
+    // Virtual-filesystem project files live behind the adapter, not on this host's disk.
+    // A disk adapter keeps resolving dataset paths against `baseDir`.
+    // `readOptionalTextFile` reads the exact path (no module extension resolution or
+    // framework-module guard) and forwards cancellation to the remote fetch.
+    ...(isExtendedFSAdapter(projectFs) && isVirtualFilesystem(projectFs)
+      ? {
+        readTextFile: (path: string) =>
+          projectFs.readOptionalTextFile(
+            path,
+            options.signal ? { signal: options.signal } : {},
+          ),
+      }
+      : {}),
     runId: request.runId,
     ...createEvalProgressOptions(),
   };

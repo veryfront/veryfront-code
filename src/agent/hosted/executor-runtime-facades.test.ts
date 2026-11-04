@@ -9,6 +9,8 @@ import type { ToolExecutionContext } from "#veryfront/tool/types.ts";
 import { createExecutorChannel } from "../executor/channel.ts";
 import type { ExecutorRuntimeInstall } from "./executor-runtime-install-schema.ts";
 import { createExecutorRuntimeFacades } from "./executor-runtime-facades.ts";
+import { createToolsFromHostDefinitions } from "#veryfront/tool/host-tools.ts";
+import { toolToProviderDefinition } from "#veryfront/tool/registry.ts";
 import { createExecutorPersistenceBroker } from "./executor-persistence-bridge.ts";
 import type { ProviderReplayCheckpoint } from "../runtime/provider-replay.ts";
 import { peekVeryfrontCloudCatalog } from "#veryfront/provider/veryfront-cloud/catalog-client.ts";
@@ -20,6 +22,11 @@ const binding = {
   generation: 1,
 };
 const modelId = "veryfront-cloud/openai/synthetic-model";
+const syntheticOutputSchema = {
+  type: "object",
+  properties: { value: { type: "string" } },
+  required: ["value"],
+};
 function installation(): ExecutorRuntimeInstall {
   return {
     version: 1,
@@ -92,6 +99,7 @@ function channels(
             description: "Read a synthetic value",
             discovery: { version: 1, type: "platform", domain: "files", resource: "Files" },
             parameters: { type: "object", properties: {} },
+            outputSchema: syntheticOutputSchema,
           },
         };
         yield { type: "complete" };
@@ -148,6 +156,12 @@ it("constructs model and host/remote tool facades only for the installed IDs", a
     assertEquals([...facades.remoteToolSources.keys()], ["remote"]);
     const read = facades.hostTools.get("host")!.read!;
     assertEquals(read.inputSchemaJson, { type: "object", properties: {} });
+    assertEquals<unknown>(read.outputSchemaJson, syntheticOutputSchema);
+    const materialized = createToolsFromHostDefinitions(facades.hostTools.get("host")!).read!;
+    assertEquals<unknown>(
+      toolToProviderDefinition(materialized).outputSchema,
+      syntheticOutputSchema,
+    );
     assertEquals(await read.execute!({}, { toolCallId: "call-1" }), "synthetic-result");
     assertEquals(pair.executions, 1);
     const remote = facades.remoteToolSources.get("remote")!;

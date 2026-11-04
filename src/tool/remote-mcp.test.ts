@@ -22,6 +22,9 @@ import {
   MAX_REMOTE_MCP_TOOL_LIST_RESPONSE_BYTES,
 } from "./remote-mcp.ts";
 import { getToolResultError } from "./result.ts";
+import { createToolsFromRemoteDefinitions } from "./remote-source-tools.ts";
+import { toolToProviderDefinition } from "./registry.ts";
+import { readToolExposureContract } from "../agent/runtime/tool-exposure.ts";
 
 function ownHeaderValue(headers: HeadersInit | undefined, name: string): string | undefined {
   if (
@@ -34,6 +37,51 @@ function ownHeaderValue(headers: HeadersInit | undefined, name: string): string 
 }
 
 describe("tool/remote-mcp", () => {
+  it("preserves MCP output contracts through materialization and exact discovery", async () => {
+    const source = createRemoteMCPToolSource({
+      id: "contracts",
+      endpoint: "https://93.184.216.34/mcp",
+    });
+    const outputSchema = {
+      type: "object",
+      properties: { path: { type: "string" } },
+      required: ["path"],
+    };
+    await withMockFetch(async (_url, init) => {
+      const body = JSON.parse(String(observeFetchRequestInit(init).body));
+      return Response.json({
+        jsonrpc: "2.0",
+        id: body.id,
+        result: {
+          tools: [
+            {
+              name: "create_file",
+              description: "Create file",
+              inputSchema: { type: "object", properties: { path: { type: "string" } } },
+              outputSchema,
+            },
+            { name: "bash", description: "Run command", inputSchema: { type: "object" } },
+          ],
+        },
+      });
+    }, async () => {
+      const definitions = await source.listTools();
+      const tools = createToolsFromRemoteDefinitions(source, definitions);
+      const authorized = Object.values(tools).map(toolToProviderDefinition);
+      assertEquals(readToolExposureContract({ name: "create_file", authorized }), {
+        name: "create_file",
+        description: "Create file",
+        inputSchema: { type: "object", properties: { path: { type: "string" } } },
+        outputSchema,
+      });
+      assertEquals(readToolExposureContract({ name: "bash", authorized }), {
+        name: "bash",
+        description: "Run command",
+        inputSchema: { type: "object" },
+        outputSchema: null,
+      });
+    });
+  });
   it("preserves discovery metadata on every page without adding it to calls", async () => {
     const config = {
       id: "naming",

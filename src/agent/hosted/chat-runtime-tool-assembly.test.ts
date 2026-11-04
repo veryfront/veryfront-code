@@ -6,6 +6,7 @@ import {
 } from "#veryfront/tool/host-tool-provenance.ts";
 import { toolToProviderDefinition } from "#veryfront/tool/registry.ts";
 import "#veryfront/schemas/_test-setup.ts";
+import { getProviderNativeToolNames } from "#veryfront/agent/runtime/provider-native-tool-inventory.ts";
 import {
   assertEquals,
   assertExists,
@@ -3431,3 +3432,39 @@ it("optional startup hints cannot recover tools removed by an empty execution gr
   assertEquals(assembly.availableToolNames, []);
   assertEquals(Object.keys(assembly.runtimeTools), []);
 });
+
+for (const model of ["openai/gpt-5.4-nano", "anthropic/claude-sonnet-4-6"]) {
+  Deno.test(`prepareHostedChatRuntimeToolAssembly never adds the local web_fetch fallback for a closed selector on ${model}`, async () => {
+    const assemble = (closedToolSelector: boolean) => {
+      const taskContext: HostedChatRuntimeToolAssemblyContext = {
+        authToken: "token",
+        projectId: "project-1",
+        model,
+      };
+      return prepareHostedChatRuntimeToolAssembly({
+        sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+        taskContext,
+        instructions: "Base instructions",
+        localTools: {
+          sleep: localTool("Sleep"),
+          web_fetch: localTool("Fetch a URL"),
+        },
+        apiUrl: "https://api.example.com",
+        apiMcpUrl: "https://api.example.com/mcp",
+        allowedToolNames: [],
+        allowedProviderToolNames: ["web_fetch"],
+        sourceProviderToolNames: ["web_fetch"],
+        ...(closedToolSelector ? { closedToolSelector: true } : {}),
+        createRemoteToolSource: remoteSourceFromConfig,
+        preloadLatestConversationUserText: false,
+      });
+    };
+
+    const closed = await assemble(true);
+    assertEquals(closed.localToolNames, []);
+    assertEquals(closed.runtimeTools.web_fetch, undefined);
+    // Provider-native web_fetch stays available wherever the model offers it.
+    const providerNative = getProviderNativeToolNames({ model }).includes("web_fetch");
+    assertEquals(closed.providerToolNames, providerNative ? ["web_fetch"] : []);
+  });
+}
