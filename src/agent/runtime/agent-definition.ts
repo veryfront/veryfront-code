@@ -350,6 +350,34 @@ export function parseRuntimeAgentMarkdownDefinition(
   return getRuntimeAgentMarkdownDefinitionSchema().parse(definition);
 }
 
+/**
+ * Apply the closed `tools: false` selector to a serialized agent definition,
+ * mirroring the factory: no startup tools or skill, no knowledge, delegates,
+ * skills or MCP servers, no tool-result reader, and eager loading (deferred
+ * loading would synthesize a callable `tool_search`). Any other selector is
+ * returned unchanged. Hosted construction paths that do not go through the
+ * factory must apply this before reading those fields.
+ */
+export function applyClosedRuntimeToolSelector<T extends { tools?: unknown }>(definition: T): T {
+  if (definition.tools !== false) return definition;
+  const {
+    bootstrapTools: _bootstrapTools,
+    optionalBootstrapTools: _optionalBootstrapTools,
+    bootstrapSkill: _bootstrapSkill,
+    knowledge: _knowledge,
+    delegates: _delegates,
+    ...rest
+  } = definition as T & Record<string, unknown>;
+  return {
+    ...rest,
+    tools: false,
+    skills: false,
+    mcpServers: [],
+    toolResultContext: false,
+    toolLoading: "eager",
+  } as unknown as T;
+}
+
 const reflectApply = Reflect.apply;
 const arrayIncludes = Array.prototype.includes;
 

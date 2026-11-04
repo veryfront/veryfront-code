@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertStringIncludes, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  applyClosedRuntimeToolSelector,
   createRuntimeAgentSystemMessages,
   getRuntimeAgentMarkdownDefinitionSchema,
   parseRuntimeAgentMarkdownDefinition,
@@ -550,4 +551,44 @@ it("runtime definitions reject excessive or malformed startup schema selections"
       getRuntimeAgentMarkdownDefinitionSchema().parse({ ...base, bootstrapTools })
     );
   }
+});
+
+it("applyClosedRuntimeToolSelector strips every helper source for tools false", () => {
+  const definition = getRuntimeAgentMarkdownDefinitionSchema().parse({
+    id: "text-only",
+    name: "Text only",
+    description: "",
+    instructions: "Answer directly.",
+    tools: false,
+    providerTools: ["web_search"],
+    deniedTools: ["web_fetch"],
+    skills: ["support"],
+    toolLoading: "deferred",
+    bootstrapTools: ["load_skill"],
+    optionalBootstrapTools: ["tool_search"],
+    bootstrapSkill: "support",
+    toolResultContext: true,
+    knowledge: true,
+    delegates: ["helper"],
+    mcpServers: [{ kind: "veryfront-api" }],
+  });
+  const closed = applyClosedRuntimeToolSelector(definition);
+  assertEquals(closed, {
+    id: "text-only",
+    name: "Text only",
+    description: "",
+    instructions: "Answer directly.",
+    tools: false,
+    providerTools: ["web_search"],
+    deniedTools: ["web_fetch"],
+    skills: false,
+    toolLoading: "eager",
+    toolResultContext: false,
+    mcpServers: [],
+  });
+  // The closed definition still validates against the shared schema.
+  getRuntimeAgentMarkdownDefinitionSchema().parse(closed);
+
+  const open = { ...definition, tools: ["lookup"] };
+  assertEquals(applyClosedRuntimeToolSelector(open), open);
 });

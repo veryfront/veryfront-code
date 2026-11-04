@@ -484,6 +484,17 @@ export const getRuntimeAgentRunInvocationSchema = defineSchema((v) =>
         path: ["agentConfig", "id"],
       });
     }
+    // The shared definition schema accepts the closed selector, but an
+    // invocation must carry it in the normalized deny-all wire shape produced
+    // by parseRuntimeAgentRunInvocationValue (tools: [] plus generated
+    // allowlists). A raw `tools: false` would skip those safeguards.
+    if (input.agentConfig?.tools === false) {
+      ctx.addIssue({
+        code: "custom",
+        message: "agentConfig.tools: false must be parsed with parseRuntimeAgentRunInvocationValue",
+        path: ["agentConfig", "tools"],
+      });
+    }
 
     validateRuntimeAgentSourceTargetBinding(
       {

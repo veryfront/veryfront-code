@@ -37,7 +37,10 @@ import {
   type RuntimeSkillDefinition,
 } from "../runtime/skill-metadata.ts";
 import type { ResolvedSkillSelectorSnapshot } from "#veryfront/skill/selector.ts";
-import type { RuntimeAgentMarkdownDefinition } from "../runtime/agent-definition.ts";
+import {
+  applyClosedRuntimeToolSelector,
+  type RuntimeAgentMarkdownDefinition,
+} from "../runtime/agent-definition.ts";
 import { buildAgentDelegateTools } from "../runtime/agent-delegation.ts";
 import {
   CANONICAL_FORM_INPUT_TOOL_ID,
@@ -154,8 +157,10 @@ export function resolveMcpServers(
     mcpServers?: readonly AgentServiceMcpServerConfig[];
     createRemoteToolSource?: (config: RemoteMCPToolSourceConfig) => RemoteToolSource;
   },
-  agentConfig?: Pick<RuntimeAgentMarkdownDefinition, "mcpServers">,
+  agentConfig?: Pick<RuntimeAgentMarkdownDefinition, "mcpServers" | "tools">,
 ): readonly AgentServiceMcpServerConfig[] {
+  // MCP servers are callable tool sources; the closed selector connects none.
+  if (agentConfig?.tools === false) return [];
   // A deployment-owned transport is a privileged capability. When present,
   // omitting mcpServers locks the service to first-party defaults as its
   // authority ceiling, so tenant configuration cannot bind that transport to
@@ -504,6 +509,8 @@ export async function resolveHostedChildAgentExecutionConfig(
       abortSignal,
     });
   }
+  // Mirror the factory for the closed selector before any field is read.
+  agentConfig = applyClosedRuntimeToolSelector(agentConfig);
   const steering = await raceHostedChildAbort(
     fetchProjectSteering(context, {
       projectId: projectId || null,

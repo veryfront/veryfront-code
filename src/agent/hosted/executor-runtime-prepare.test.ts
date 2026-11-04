@@ -1397,6 +1397,37 @@ describe("executor runtime preparation", () => {
     }
   });
 
+  it("connects no granted remote tool source for a tools false agent", async () => {
+    let listCalls = 0;
+    const f = fixture({
+      config: {
+        tools: false,
+        mcpServers: [{ kind: "veryfront-studio", required: false }],
+      },
+      grant: { ...grant, remoteToolSourceIds: ["custom"] },
+      facades: {
+        remoteToolSources: new Map([[
+          "custom",
+          {
+            id: "custom",
+            listTools: () => {
+              listCalls++;
+              return Promise.reject(new Error("Synthetic listing failure"));
+            },
+            executeTool: () => Promise.reject(new Error("Unused")),
+          },
+        ]]),
+      },
+    });
+    try {
+      const result = await prepare(f.owner);
+      assert(result && typeof result === "object" && !Array.isArray(result) && result.ok === true);
+      assertEquals(listCalls, 0);
+    } finally {
+      await f.owner.close();
+    }
+  });
+
   it("cleans facades when optional Studio remote discovery fails", async () => {
     const f = fixture({
       config: {

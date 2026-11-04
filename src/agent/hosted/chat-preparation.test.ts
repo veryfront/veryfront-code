@@ -1106,8 +1106,6 @@ Deno.test("prepareHostedChatExecution prepares root run, runtime, and final mess
 Deno.test("prepareHostedChatExecution forwards trusted authored runtime context settings", async () => {
   let recordedOptions:
     | {
-      allowedTools?: string[];
-      includeRuntimeEssentialToolsWhenEmpty?: boolean;
       toolLoading?: unknown;
       toolResultContext?: unknown;
       knowledge?: unknown;
@@ -1131,7 +1129,75 @@ Deno.test("prepareHostedChatExecution forwards trusted authored runtime context 
     agentConfig: {
       id: "agent-1",
       model: "configured-model",
+      toolLoading: "deferred",
+      toolResultContext: { maxInlineBytes: 32, previewBytes: 16 },
+      knowledge: { "knowledge/public/**": true, "knowledge/private/**": false },
+    },
+    apiUrl: "https://api.example.com",
+    abortSignal: new AbortController().signal,
+    resolveModelId: (modelId) => modelId,
+    fetchSteering: () => Promise.resolve({ instructions: "", skills: [] }),
+    buildInstructions: () => "Agent instructions",
+    createRuntime: (options) => {
+      recordedOptions = options;
+      return Promise.resolve({
+        runtimeKind: "framework",
+        modelId: options.model ?? "configured-model",
+        cleanup: () => Promise.resolve(),
+        agent: {
+          stream: () =>
+            Promise.resolve({
+              steps: Promise.resolve([]),
+              toUIMessageStream: async function* () {},
+            }),
+        },
+      });
+    },
+  });
+
+  assertEquals(recordedOptions?.toolLoading, "deferred");
+  assertEquals(recordedOptions?.toolResultContext, { maxInlineBytes: 32, previewBytes: 16 });
+  assertEquals(recordedOptions?.knowledge, {
+    "knowledge/public/**": true,
+    "knowledge/private/**": false,
+  });
+});
+
+Deno.test("prepareHostedChatExecution keeps the closed tools selector through runtime construction", async () => {
+  let recordedOptions:
+    | {
+      allowedTools?: string[];
+      includeRuntimeEssentialToolsWhenEmpty?: boolean;
+      toolLoading?: unknown;
+      toolResultContext?: unknown;
+      knowledge?: unknown;
+      bootstrapSkill?: unknown;
+      bootstrapTools?: unknown;
+      optionalBootstrapTools?: unknown;
+    }
+    | undefined;
+
+  await prepareHostedChatExecution({
+    request: createParsedHostedChatRequest({
+      conversationId: "conversation-1",
+      projectId: "project-1",
+      durableRootRun: {
+        runId: "10000000-0000-4000-8000-000000000006",
+        messageId: "message-1",
+        latestEventId: 3,
+        latestExternalEventSequence: 2,
+      },
+      forwardedProps: {
+        runtimeOverrides: { toolLoading: "eager" },
+      },
+    }),
+    agentConfig: {
+      id: "agent-1",
+      model: "configured-model",
       tools: false,
+      bootstrapSkill: "agent-1--startup",
+      bootstrapTools: ["veryfront__search_knowledge"],
+      optionalBootstrapTools: ["tool_search"],
       toolLoading: "deferred",
       toolResultContext: { maxInlineBytes: 32, previewBytes: 16 },
       knowledge: { "knowledge/public/**": true, "knowledge/private/**": false },
@@ -1160,12 +1226,14 @@ Deno.test("prepareHostedChatExecution forwards trusted authored runtime context 
 
   assertEquals(recordedOptions?.allowedTools, []);
   assertEquals(recordedOptions?.includeRuntimeEssentialToolsWhenEmpty, false);
-  assertEquals(recordedOptions?.toolLoading, "deferred");
-  assertEquals(recordedOptions?.toolResultContext, { maxInlineBytes: 32, previewBytes: 16 });
-  assertEquals(recordedOptions?.knowledge, {
-    "knowledge/public/**": true,
-    "knowledge/private/**": false,
-  });
+  // A deny-all agent must not regain the tool-result reader, deferred
+  // tool_search, knowledge search or startup tools through runtime options.
+  assertEquals(recordedOptions?.toolLoading, "eager");
+  assertEquals(recordedOptions?.toolResultContext, false);
+  assertEquals(recordedOptions?.knowledge, undefined);
+  assertEquals(recordedOptions?.bootstrapSkill, undefined);
+  assertEquals(recordedOptions?.bootstrapTools, undefined);
+  assertEquals(recordedOptions?.optionalBootstrapTools, undefined);
 });
 
 describe("provider replay bootstrap", () => {

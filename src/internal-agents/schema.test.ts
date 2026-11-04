@@ -54,6 +54,31 @@ describe("internal-agents/schema", () => {
     ) assertThrows(() => getInternalAgentStreamRequestSchema().parse({ ...base, ...malformed }));
   });
 
+  it("rejects an unnormalized deny-all agent config on control-plane streams", () => {
+    const request = {
+      agentId: "agent_1",
+      threadId: "10000000-1000-4000-8000-100000000001",
+      runId: "run_1",
+      ...MAIN_BRANCH_TARGET,
+      agentSource: { type: "release", releaseId: "release-1" },
+      messages: [],
+      agentConfig: {
+        id: "agent_1",
+        name: "Agent",
+        description: "",
+        instructions: "Answer directly.",
+        tools: [],
+      },
+    };
+    getInternalAgentStreamRequestSchema().parse(request);
+    assertThrows(() =>
+      getInternalAgentStreamRequestSchema().parse({
+        ...request,
+        agentConfig: { ...request.agentConfig, tools: false },
+      })
+    );
+  });
+
   it("applies defaults for optional runtime collections", () => {
     const parsed = getRuntimeRunAgentInputSchema().parse({
       threadId: crypto.randomUUID(),

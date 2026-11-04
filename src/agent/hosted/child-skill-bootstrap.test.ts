@@ -1,6 +1,9 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
-import { resolveHostedChildAgentExecutionConfig } from "./cloud-agent-child-tools.ts";
+import {
+  resolveHostedChildAgentExecutionConfig,
+  resolveMcpServers,
+} from "./cloud-agent-child-tools.ts";
 
 function childContext(
   bootstrapSkill?: string,
@@ -116,4 +119,29 @@ Deno.test("a no-tools child omits its startup skill and exposes no tools", async
     );
     assertEquals(config && "toolNames" in config ? config.toolNames : undefined, []);
   }
+});
+
+Deno.test("a no-tools child connects no MCP servers", async () => {
+  const context = childContext(undefined, ["ingest-message"], false) as unknown as Record<
+    string,
+    unknown
+  >;
+  const config = await resolveHostedChildAgentExecutionConfig(
+    {
+      ...context,
+      options: { mcpServers: [{ kind: "veryfront-api" }, { kind: "veryfront-studio" }] },
+    } as never,
+    parent,
+    "ingestion-agent",
+    "test-project",
+  );
+  assertEquals(config?.mcpServers, []);
+  assertEquals(
+    resolveMcpServers({ mcpServers: [{ kind: "veryfront-api" }] }, {
+      tools: false,
+      mcpServers: [{ kind: "veryfront-api" }],
+    }),
+    [],
+  );
+  assertEquals(resolveMcpServers({}, { tools: false }), []);
 });

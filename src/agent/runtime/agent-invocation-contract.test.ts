@@ -770,6 +770,25 @@ describe("agent/runtime-agent-invocation-contract", () => {
     });
   });
 
+  it("rejects a raw deny-all selector in the exported invocation schema", () => {
+    const parsed = RuntimeAgentRunInvocationSchema.safeParse(createInvocation({
+      agentConfig: {
+        id: "builder",
+        name: "Builder",
+        description: "Runs without host tools.",
+        instructions: "Answer directly.",
+        tools: false,
+        mcpServers: [{ kind: "veryfront-api" }],
+        toolResultContext: true,
+      },
+      forwardedProps: undefined,
+    }));
+
+    assertEquals(parsed.success, false);
+    if (parsed.success) return;
+    assertStringIncludes(String(parsed.error), "parseRuntimeAgentRunInvocationValue");
+  });
+
   function denyAllConfig(extra: Record<string, unknown> = {}) {
     return {
       id: "builder",
