@@ -3130,13 +3130,18 @@ describe("server/handlers/request/agent-stream.handler", () => {
     installMockFetch((_url, init) => {
       requestCount += 1;
       const requestId = JSON.parse(String(observeFetchRequestInit(init).body)).id as string;
+      // Each server answers with its own tool. Session-key hashing is async, so
+      // the two discoveries may reach the transport in either order.
+      const toolName = requestId.startsWith("studio-first:")
+        ? "studio_todo_write"
+        : "studio_panel_control";
       if (requestCount === 1) {
         return new Promise<Response>((resolve) => {
-          resolveFirstRequest = () => resolve(toolResponse("studio_todo_write", requestId));
+          resolveFirstRequest = () => resolve(toolResponse(toolName, requestId));
         });
       }
       resolveFirstRequest?.();
-      return Promise.resolve(toolResponse("studio_panel_control", requestId));
+      return Promise.resolve(toolResponse(toolName, requestId));
     });
 
     try {
