@@ -18,6 +18,7 @@ import {
   cachedCodeUsesResolvedDependencies,
   SSRDependencyValidator,
 } from "./ssr-dependency-validator.ts";
+import { MAX_TRANSFORM_DEPTH } from "./constants.ts";
 import { getCSSImportReferences, runWithCSSCollector } from "../css-import-collector.ts";
 
 describe("SSRDependencyValidator", () => {
@@ -752,6 +753,35 @@ describe("SSRDependencyValidator", () => {
       releaseSibling.resolve();
       await remove(tempDir, { recursive: true });
     }
+  });
+
+  it("fails a cached module whose import chain passes the safety bound", async () => {
+    // Returning no dependencies here once let a cached module skip validation
+    // of everything below the bound.
+    let transforms = 0;
+    const validator = new SSRDependencyValidator(
+      () => {
+        transforms++;
+        return Promise.resolve({ tempPath: "/tmp/unused.mjs", contentHash: "unused" });
+      },
+      () => Promise.resolve("/tmp/unused.mjs"),
+      denoAdapter,
+      "/project",
+    );
+
+    await assertRejects(
+      () =>
+        validator.ensureDependenciesExist(
+          'import "./child.ts";',
+          "/project/deep.ts",
+          MAX_TRANSFORM_DEPTH + 1,
+          undefined,
+          ["/project/page.tsx", "/project/deep.ts"],
+        ),
+      Error,
+      "Import chain: /project/page.tsx -> /project/deep.ts",
+    );
+    assertEquals(transforms, 0);
   });
 
   it("preserves terminal HTTP fetch failures from cross-project imports", async () => {

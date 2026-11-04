@@ -65,6 +65,8 @@ import { SSRCircuitBreaker } from "./ssr-circuit-breaker.ts";
 import {
   cachedCodeUsesResolvedDependencies,
   type DependencyTransformCacheOptions,
+  type ImportChain,
+  importChainTooLongError,
   SSRDependencyValidator,
 } from "./ssr-dependency-validator.ts";
 import { preflightLocalImports } from "./preflight-imports.ts";
@@ -423,7 +425,7 @@ export class SSRModuleLoader {
   constructor(private options: SSRModuleLoaderOptions) {
     this.cache = new SSRCacheManager(options);
     this.depValidator = new SSRDependencyValidator(
-      (filePath, source, depth, dependencyHashCache, signal, cacheOptions) =>
+      (filePath, source, depth, dependencyHashCache, signal, cacheOptions, importChain) =>
         this.transformWithDependencies(
           filePath,
           source,
@@ -431,6 +433,7 @@ export class SSRModuleLoader {
           dependencyHashCache,
           signal,
           cacheOptions,
+          importChain,
         ),
       (crossImport, signal) => this.transformCrossProjectImport(crossImport, signal),
       options.adapter,
@@ -803,6 +806,7 @@ export class SSRModuleLoader {
     dependencyHashCache: DependencyHashCache = createDependencyHashCache(),
     signal?: AbortSignal,
     options?: DependencyTransformCacheOptions,
+    importChain: ImportChain = [filePath],
   ): Promise<ModuleCacheEntry> {
     const fileName = filePath.split("/").pop() || filePath;
 
@@ -816,6 +820,7 @@ export class SSRModuleLoader {
           dependencyHashCache,
           signal,
           options,
+          importChain,
         ),
       {
         "ssr.file": fileName,
@@ -831,6 +836,7 @@ export class SSRModuleLoader {
     dependencyHashCache: DependencyHashCache = createDependencyHashCache(),
     observerSignal?: AbortSignal,
     options?: DependencyTransformCacheOptions,
+    importChain: ImportChain = [filePath],
   ): Promise<ModuleCacheEntry> {
     throwIfAborted(observerSignal);
     if (depth > MAX_TRANSFORM_DEPTH) {
@@ -839,14 +845,7 @@ export class SSRModuleLoader {
         depth,
         maxDepth: MAX_TRANSFORM_DEPTH,
       });
-      throw toError(
-        createError({
-          type: "build",
-          message:
-            `Max transform depth exceeded (${MAX_TRANSFORM_DEPTH}, depth=${depth}) for ${filePath}. Check for circular dependencies.`,
-          context: { file: filePath, phase: "transform" },
-        }),
-      );
+      throw importChainTooLongError(filePath, depth, importChain);
     }
 
     let code = source ?? (await this.options.adapter.fs.readFile(filePath));
@@ -878,7 +877,13 @@ export class SSRModuleLoader {
         )
       ) {
         globalModuleCache.set(filePathCacheKey, cachedEntry);
-        await this.depValidator.ensureDependenciesExist(code, filePath, depth, observerSignal);
+        await this.depValidator.ensureDependenciesExist(
+          code,
+          filePath,
+          depth,
+          observerSignal,
+          importChain,
+        );
         return cachedEntry;
       }
     }
@@ -901,6 +906,7 @@ export class SSRModuleLoader {
             filePath,
             depth,
             observerSignal,
+            importChain,
           );
           if (!await cachedCodeUsesResolvedDependencies(redisCode, resolvedDependencies)) {
             logger.debug("Distributed cache has stale dependency outputs, re-transforming", {
@@ -961,7 +967,13 @@ export class SSRModuleLoader {
           cachedPath: mdxCacheResult.path.slice(-60),
         });
 
-        await this.depValidator.ensureDependenciesExist(code, filePath, depth, observerSignal);
+        await this.depValidator.ensureDependenciesExist(
+          code,
+          filePath,
+          depth,
+          observerSignal,
+          importChain,
+        );
         return entry;
       }
 
@@ -1114,6 +1126,7 @@ export class SSRModuleLoader {
             dependencyHashCache,
             sharedSignal,
             options,
+            importChain,
           );
           const crossProjectPaths = await this.depValidator.processCrossProjectImports(
             parseResult.crossProjectImports,

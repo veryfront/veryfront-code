@@ -87,6 +87,53 @@ function joinStringArray(values: readonly string[], separator: string): string {
   return reflectApply(arrayJoin, values, [separator]) as string;
 }
 
+/** Files from the render root to the current module, in import order. */
+export type ImportChain = readonly string[];
+
+function extendImportChain(chain: ImportChain, path: string): string[] {
+  const extended: string[] = [];
+  for (let index = 0; index < chain.length; index++) extended[index] = chain[index]!;
+  extended[chain.length] = path;
+  return extended;
+}
+
+function importChainIncludes(chain: ImportChain, path: string): boolean {
+  for (let index = 0; index < chain.length; index++) {
+    if (chain[index] === path) return true;
+  }
+  return false;
+}
+
+function formatImportChain(chain: ImportChain): string {
+  return joinStringArray(chain, " -> ");
+}
+
+function circularImportError(chain: ImportChain): Error {
+  return toError(
+    createError({
+      type: "build",
+      message: `Circular import is not supported in SSR: ${formatImportChain(chain)}`,
+      context: { file: chain[chain.length - 1], phase: "dependency-resolution" },
+    }),
+  );
+}
+
+/** @internal exported for the loader */
+export function importChainTooLongError(
+  filePath: string,
+  depth: number,
+  chain: ImportChain,
+): Error {
+  return toError(
+    createError({
+      type: "build",
+      message: `Max transform depth exceeded (${MAX_TRANSFORM_DEPTH}, depth=${depth}) for ` +
+        `${filePath}. Import chain: ${formatImportChain(chain)}`,
+      context: { file: filePath, phase: "transform" },
+    }),
+  );
+}
+
 function mapBatch<T, U>(
   values: readonly T[],
   start: number,
@@ -286,6 +333,7 @@ export class SSRDependencyValidator {
       dependencyHashCache: DependencyHashCache,
       signal?: AbortSignal,
       options?: DependencyTransformCacheOptions,
+      importChain?: ImportChain,
     ) => Promise<ModuleCacheEntry>,
     private transformCrossProjectImport: (
       crossProjectImport: CrossProjectImport,
@@ -358,11 +406,12 @@ export class SSRDependencyValidator {
     filePath: string,
     depth: number = 0,
     signal?: AbortSignal,
+    importChain: ImportChain = [filePath],
   ): Promise<ResolvedCachedDependencies> {
     throwIfAborted(signal);
-    if (depth > MAX_TRANSFORM_DEPTH) {
-      return { localImportPaths: createStringMap(), crossProjectPaths: createStringMap() };
-    }
+    // Returning no dependencies here would let a cached module pass
+    // validation with an unchecked import tree.
+    if (depth > MAX_TRANSFORM_DEPTH) throw importChainTooLongError(filePath, depth, importChain);
 
     const parseResult = await parseLocalImports(
       code,
@@ -390,6 +439,8 @@ export class SSRDependencyValidator {
       localFs,
       createDependencyHashCache(),
       signal,
+      undefined,
+      importChain,
     );
 
     const crossProjectPaths = await this.processCrossProjectImports(
@@ -458,6 +509,7 @@ export class SSRDependencyValidator {
     dependencyHashCache: DependencyHashCache,
     signal?: AbortSignal,
     options?: DependencyTransformCacheOptions,
+    importChain: ImportChain = [fromFilePath],
   ): Promise<Map<string, string>> {
     throwIfAborted(signal);
     const importPathMap = createStringMap();
@@ -466,17 +518,23 @@ export class SSRDependencyValidator {
       const results = await allSettled(
         mapBatch(imports, i, i + TRANSFORM_BATCH_SIZE, async (imp) => {
           try {
-            const depSource = await this.readLocalImportSource(imp, localFs);
             const resolvedPath = ownStringValue(imp, "resolvedPath");
             const requestedPath = ownStringValue(imp, "requestedPath");
+            const depPath = resolvedPath ?? requestedPath ?? imp.absolutePath;
+            const depChain = extendImportChain(importChain, depPath);
+            // A module's output path is derived from its dependencies' output
+            // paths, so a module on its own import chain would wait on itself.
+            if (importChainIncludes(importChain, depPath)) throw circularImportError(depChain);
 
+            const depSource = await this.readLocalImportSource(imp, localFs);
             const depEntry = await this.transformWithDependencies(
-              resolvedPath ?? requestedPath ?? imp.absolutePath,
+              depPath,
               depSource,
               depth + 1,
               dependencyHashCache,
               signal,
               options,
+              depChain,
             );
 
             setMapValue(
