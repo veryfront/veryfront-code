@@ -67,6 +67,7 @@ import {
   type DependencyTransformCacheOptions,
   type ImportChain,
   importChainTooLongError,
+  importGraphNode,
   SSRDependencyValidator,
 } from "./ssr-dependency-validator.ts";
 import { preflightLocalImports } from "./preflight-imports.ts";
@@ -851,6 +852,8 @@ export class SSRModuleLoader {
     }
 
     let code = source ?? (await this.options.adapter.fs.readFile(filePath));
+    // Before node position injection: dependents key this module by its source.
+    const importNode = importGraphNode(filePath, code);
 
     // Inject node positions for JSX files in dev or preview mode
     const shouldInjectPositions = this.options.dev || this.options.mode === "preview";
@@ -885,6 +888,7 @@ export class SSRModuleLoader {
           depth,
           observerSignal,
           importChain,
+          importNode,
         );
         return cachedEntry;
       }
@@ -909,6 +913,7 @@ export class SSRModuleLoader {
             depth,
             observerSignal,
             importChain,
+            importNode,
           );
           if (!await cachedCodeUsesResolvedDependencies(redisCode, resolvedDependencies)) {
             logger.debug("Distributed cache has stale dependency outputs, re-transforming", {
@@ -975,6 +980,7 @@ export class SSRModuleLoader {
           depth,
           observerSignal,
           importChain,
+          importNode,
         );
         return entry;
       }
@@ -1129,6 +1135,7 @@ export class SSRModuleLoader {
             sharedSignal,
             options,
             importChain,
+            importNode,
           );
           const crossProjectPaths = await this.depValidator.processCrossProjectImports(
             parseResult.crossProjectImports,

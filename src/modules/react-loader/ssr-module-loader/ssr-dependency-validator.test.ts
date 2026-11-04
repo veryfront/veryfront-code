@@ -16,6 +16,7 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { makeTempDir, mkdir, remove, writeTextFile } from "#veryfront/testing/deno-compat.ts";
 import {
   cachedCodeUsesResolvedDependencies,
+  importGraphNode,
   SSRDependencyValidator,
 } from "./ssr-dependency-validator.ts";
 import { MAX_TRANSFORM_DEPTH } from "./constants.ts";
@@ -754,6 +755,75 @@ describe("SSRDependencyValidator", () => {
       await remove(tempDir, { recursive: true });
     }
   });
+
+  for (
+    const [name, aImporterSource, expectCycle] of [
+      ["does not treat a hot edit that reverses an import as a cycle", "old a.ts", false],
+      ["reports a pending import loop between two transforms", "new a.ts", true],
+    ] as const
+  ) {
+    it(name, async () => {
+      // A transform of a.ts is still waiting on b.ts while another transform
+      // of b.ts imports a.ts. That is a cycle only if both see the same a.ts.
+      const projectDir = await makeTempDir({ prefix: "vf-ssr-graph-version-" });
+      const aPath = join(projectDir, "a.ts");
+      const bPath = join(projectDir, "b.ts");
+      const bTransformStarted = Promise.withResolvers<void>();
+      const releaseB = Promise.withResolvers<void>();
+      const validator = new SSRDependencyValidator(
+        async (filePath) => {
+          if (filePath === bPath) {
+            bTransformStarted.resolve();
+            await releaseB.promise;
+          }
+          return { tempPath: `${filePath}.mjs`, contentHash: "hash" };
+        },
+        () => Promise.resolve(""),
+        denoAdapter,
+        projectDir,
+      );
+      try {
+        await writeTextFile(aPath, "new a.ts");
+        await writeTextFile(bPath, "b.ts");
+
+        const aImportsB = validator.processLocalImports(
+          [{ absolutePath: bPath, specifier: "./b.ts" }],
+          aPath,
+          0,
+          createFileSystem(),
+          createDependencyHashCache(),
+          undefined,
+          undefined,
+          [aPath],
+          importGraphNode(aPath, aImporterSource),
+        );
+        await bTransformStarted.promise;
+        await validator.processLocalImports(
+          [{ absolutePath: aPath, specifier: "./a.ts" }],
+          bPath,
+          0,
+          createFileSystem(),
+          createDependencyHashCache(),
+          undefined,
+          undefined,
+          [bPath],
+          importGraphNode(bPath, "b.ts"),
+        );
+        releaseB.resolve();
+        await aImportsB;
+
+        const reasons = validator.missingDependencies.map((missing) => missing.reason);
+        assertEquals(
+          reasons.some((reason) => reason.includes("Circular import is not supported in SSR")),
+          expectCycle,
+          `missing dependencies: ${JSON.stringify(reasons)}`,
+        );
+      } finally {
+        releaseB.resolve();
+        await remove(projectDir, { recursive: true });
+      }
+    });
+  }
 
   it("fails a cached module whose import chain passes the safety bound", async () => {
     // Returning no dependencies here once let a cached module skip validation

@@ -20,6 +20,7 @@ import { isAbsolute } from "#veryfront/platform/compat/path/index.ts";
 import { BUILD_FAILED, createError, toError, VeryfrontError } from "#veryfront/errors";
 import { rendererLogger, throwIfAborted } from "#veryfront/utils";
 import { sanitizePathForDisplay } from "#veryfront/security";
+import { fnv1aHash } from "#veryfront/utils/hash-utils.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import {
   type CapturedSnapshotReader,
@@ -56,6 +57,7 @@ const setConstructor = Set;
 const setAdd = Set.prototype.add;
 const setForEach = Set.prototype.forEach;
 const setHas = Set.prototype.has;
+const stringIndexOf = String.prototype.indexOf;
 const stringSlice = String.prototype.slice;
 const stringStartsWith = String.prototype.startsWith;
 // Match ordinary adapter text reads: malformed UTF-8 is replaced rather than
@@ -151,8 +153,24 @@ export function importChainTooLongError(
  * scope share in-progress work, so a cycle can span two transforms whose own
  * import chains each look acyclic: A waits on B's transform while B waits on
  * A's. An import that would close a loop in this graph is such a cycle.
+ * Nodes are module versions, not paths: during a hot edit an old `A -> B`
+ * transform and a new `B -> A` transform are separate work, not a cycle.
  */
 const activeImportEdges = new mapConstructor<string, Map<string, Map<string, number>>>();
+
+/**
+ * One version of one module in the pending-import graph.
+ *
+ * @internal exported for the loader
+ */
+export function importGraphNode(path: string, source: string): string {
+  return `${path}\0${source.length}:${fnv1aHash(source)}`;
+}
+
+function importGraphNodePath(node: string): string {
+  const end = reflectApply(stringIndexOf, node, ["\0"]) as number;
+  return end < 0 ? node : sliceString(node, 0, end);
+}
 
 function scopeEdges(scope: string): Map<string, Map<string, number>> {
   let edges = reflectApply(mapGet, activeImportEdges, [scope]) as
@@ -489,6 +507,7 @@ export class SSRDependencyValidator {
     depth: number = 0,
     signal?: AbortSignal,
     importChain: ImportChain = [filePath],
+    importerNode: string = importGraphNode(filePath, code),
   ): Promise<ResolvedCachedDependencies> {
     throwIfAborted(signal);
     // Returning no dependencies here would let a cached module pass
@@ -525,6 +544,7 @@ export class SSRDependencyValidator {
       signal,
       undefined,
       importChain,
+      importerNode,
     );
 
     const crossProjectPaths = await this.processCrossProjectImports(
@@ -594,6 +614,7 @@ export class SSRDependencyValidator {
     signal?: AbortSignal,
     options?: DependencyTransformCacheOptions,
     importChain: ImportChain = [fromFilePath],
+    importerNode: string = fromFilePath,
   ): Promise<Map<string, string>> {
     throwIfAborted(signal);
     const importPathMap = createStringMap();
@@ -611,25 +632,26 @@ export class SSRDependencyValidator {
             if (importChainIncludes(importChain, depPath)) {
               throw circularImportError(depChain, this.projectDir);
             }
+            const depSource = await this.readLocalImportSource(imp, localFs);
+            const depNode = importGraphNode(depPath, depSource);
             // Check and register in one synchronous step, so two transforms
             // closing the same loop cannot both pass the check.
-            const pendingLoop = findActiveImportPath(this.importGraphScope, depPath, fromFilePath);
+            const pendingLoop = findActiveImportPath(this.importGraphScope, depNode, importerNode);
             if (pendingLoop) {
               let cycle: string[] = [fromFilePath];
               for (let index = 0; index < pendingLoop.length; index++) {
-                cycle = extendImportChain(cycle, pendingLoop[index]!);
+                cycle = extendImportChain(cycle, importGraphNodePath(pendingLoop[index]!));
               }
               throw circularImportError(cycle, this.projectDir);
             }
             const releaseImportEdge = addActiveImportEdge(
               this.importGraphScope,
-              fromFilePath,
-              depPath,
+              importerNode,
+              depNode,
             );
 
             let depEntry: ModuleCacheEntry;
             try {
-              const depSource = await this.readLocalImportSource(imp, localFs);
               depEntry = await this.transformWithDependencies(
                 depPath,
                 depSource,
