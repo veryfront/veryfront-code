@@ -644,6 +644,7 @@ for (const mode of ["generate", "stream"] as const) {
           id: "read_release_marker",
           description: "Read the release marker",
           inputSchema: defineSchema((v) => v.object({}))(),
+          outputSchema: defineSchema((v) => v.object({ marker: v.string() }))(),
           execute: () => {
             executions++;
             return { marker: "verified" };
@@ -665,6 +666,7 @@ for (const mode of ["generate", "stream"] as const) {
     assert(searchContext.includes("read_release_marker"));
     assertEquals(model.toolNames(4), ["veryfront__tool_search"]);
     assert(JSON.stringify(model.calls[5]).includes("inputSchema"));
+    assert(JSON.stringify(model.calls[5]).includes("outputSchema"));
     assertEquals(model.toolNames(5), ["read_release_marker"]);
     assertEquals(executions, 1);
     assert(resultText.includes("Verified marker"));

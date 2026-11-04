@@ -94,6 +94,7 @@ export type RuntimeToolFilterConfig = AgentConfig & {
       name: string;
       description: string;
       parameters: Record<string, unknown>;
+      outputSchema?: Record<string, unknown>;
       discovery?: ToolDiscoveryMetadata;
     }
   >;
@@ -425,6 +426,10 @@ export function getRuntimeForwardedIntegrationToolDefs(
             !Array.isArray(def.parameters)
           ? def.parameters
           : { type: "object", properties: {} },
+        ...(def.outputSchema && typeof def.outputSchema === "object" &&
+            !Array.isArray(def.outputSchema)
+          ? { outputSchema: def.outputSchema }
+          : {}),
       };
       copyToolDiscoveryMetadata(def, definition);
       return definition;
