@@ -776,6 +776,11 @@ export async function* streamOpenAIResponsesParts(
       throw invalidOpenAIResponsesStream(context, "event type was missing");
     }
 
+    if (type === "keepalive") {
+      // Azure OpenAI interleaves these during quiet reasoning spans; they carry no output.
+      return;
+    }
+
     if (type === "error") {
       // The service also emits a nested error object after accepting HTTP 200.
       // An explicitly malformed nested envelope must not fall back to flat fields.
