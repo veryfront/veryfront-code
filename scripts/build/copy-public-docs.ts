@@ -16,6 +16,86 @@ interface PublicPage {
   description: string;
 }
 
+function publicPageMetadata(text: string, file: string) {
+  const header = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text);
+  if (!header) {
+    throw new Error(`Missing public documentation metadata: ${file}`);
+  }
+  const metadata = parse(header[1]);
+  if (
+    !metadata || typeof metadata !== "object" || Array.isArray(metadata)
+  ) {
+    throw new Error(`Invalid public documentation metadata: ${file}`);
+  }
+  const fields = metadata as Record<string, unknown>;
+  if (
+    fields.draft === true || fields.internal === true ||
+    fields.status === "draft"
+  ) return undefined;
+  if (typeof fields.title !== "string" || !fields.title.trim()) {
+    throw new Error(`Missing public documentation title: ${file}`);
+  }
+  return fields as Record<string, unknown> & { title: string };
+}
+
+async function assertSourceSnapshot(repositoryRoot: string, revision: string) {
+  const head = await new Deno.Command("git", {
+    args: ["-C", repositoryRoot, "rev-parse", "HEAD"],
+    stdout: "piped",
+    stderr: "piped",
+  }).output();
+  const changes = await new Deno.Command("git", {
+    args: [
+      "-C",
+      repositoryRoot,
+      "diff",
+      "--quiet",
+      revision,
+      "--",
+      "docs",
+      "assets/product-covers",
+    ],
+    stdout: "piped",
+    stderr: "piped",
+  }).output();
+  if (
+    !head.success ||
+    new TextDecoder().decode(head.stdout).trim() !== revision ||
+    !changes.success
+  ) {
+    throw new Error("Documentation source snapshot changed after pinning");
+  }
+}
+
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await Deno.lstat(path);
+    return true;
+  } catch (error) {
+    if (!(error instanceof Deno.errors.NotFound)) throw error;
+    return false;
+  }
+}
+
+async function removeIfExists(path: string): Promise<void> {
+  try {
+    await Deno.remove(path, { recursive: true });
+  } catch (error) {
+    if (!(error instanceof Deno.errors.NotFound)) throw error;
+  }
+}
+
+async function removeStaging(staging: string): Promise<void> {
+  try {
+    await removeIfExists(staging);
+  } catch (error) {
+    console.error(
+      `Unable to remove documentation staging directory: ${staging}`,
+      error,
+    );
+  }
+}
+
 /** Package only public Markdown. The maintainer docs index and internal roots never enter npm. */
 export async function copyPublicDocs(
   repositoryRoot: string,
@@ -65,24 +145,8 @@ export async function copyPublicDocs(
         const bytes = await Deno.readFile(file);
         assertReleaseInput?.(file, bytes);
         const text = new TextDecoder().decode(bytes);
-        const header = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text);
-        if (!header) {
-          throw new Error(`Missing public documentation metadata: ${file}`);
-        }
-        const metadata = parse(header[1]);
-        if (
-          !metadata || typeof metadata !== "object" || Array.isArray(metadata)
-        ) {
-          throw new Error(`Invalid public documentation metadata: ${file}`);
-        }
-        const fields = metadata as Record<string, unknown>;
-        if (
-          fields.draft === true || fields.internal === true ||
-          fields.status === "draft"
-        ) continue;
-        if (typeof fields.title !== "string" || !fields.title.trim()) {
-          throw new Error(`Missing public documentation title: ${file}`);
-        }
+        const fields = publicPageMetadata(text, file);
+        if (!fields) continue;
         const publicPath = relative(sourceRoot, file).replaceAll("\\", "/");
         const target = join(staging, publicPath);
         await Deno.mkdir(join(target, ".."), { recursive: true });
@@ -105,7 +169,7 @@ export async function copyPublicDocs(
     }
     pages.sort((a, b) => a.path.localeCompare(b.path));
     const escapeLabel = (value: string) =>
-      value.replace(/[\[\]\\]/g, "\\$&").replace(/[\r\n]+/g, " ");
+      value.replace(/[[\]\\]/g, String.raw`\$&`).replace(/[\r\n]+/g, " ");
     const sections = PUBLIC_DOC_ROOTS.map((section) => {
       const entries = pages.filter((page) =>
         page.path.startsWith(`${section}/`)
@@ -131,7 +195,7 @@ export async function copyPublicDocs(
       await Deno.realPath(repositoryRoot),
       "assets/product-covers",
     );
-    async function copyAssets(from: string, to: string) {
+    const copyAssets = async (from: string, to: string) => {
       if (await Deno.realPath(from) !== resolve(from)) {
         throw new Error("Public docs assets cannot use symlinks");
       }
@@ -151,15 +215,9 @@ export async function copyPublicDocs(
           await Deno.writeFile(join(to, entry.name), bytes);
         }
       }
-    }
+    };
     await Deno.mkdir(join(staging, "assets"), { recursive: true });
-    let hasAssets = false;
-    try {
-      await Deno.lstat(assetSource);
-      hasAssets = true;
-    } catch (error) {
-      if (!(error instanceof Deno.errors.NotFound)) throw error;
-    }
+    const hasAssets = await pathExists(assetSource);
     if (hasAssets) {
       await copyAssets(assetSource, join(staging, "assets/product-covers"));
     }
@@ -187,7 +245,7 @@ export async function copyPublicDocs(
       ) + "\n",
     );
     const files: { path: string; sha256: string }[] = [];
-    async function fingerprint(directory: string) {
+    const fingerprint = async (directory: string) => {
       for await (const entry of Deno.readDir(directory)) {
         const file = join(directory, entry.name);
         if (entry.isDirectory) await fingerprint(file);
@@ -197,7 +255,7 @@ export async function copyPublicDocs(
               .digest("hex"),
           });}
       }
-    }
+    };
     await fingerprint(staging);
     await Deno.writeTextFile(
       join(staging, "manifest.json"),
@@ -218,50 +276,12 @@ export async function copyPublicDocs(
       ) + "\n",
     );
     if (identity && !identity.dirty) {
-      const head = await new Deno.Command("git", {
-        args: ["-C", repositoryRoot, "rev-parse", "HEAD"],
-        stdout: "piped",
-        stderr: "piped",
-      }).output();
-      const changes = await new Deno.Command("git", {
-        args: [
-          "-C",
-          repositoryRoot,
-          "diff",
-          "--quiet",
-          identity.revision,
-          "--",
-          "docs",
-          "assets/product-covers",
-        ],
-        stdout: "piped",
-        stderr: "piped",
-      }).output();
-      if (
-        !head.success ||
-        new TextDecoder().decode(head.stdout).trim() !== identity.revision ||
-        !changes.success
-      ) {
-        throw new Error("Documentation source snapshot changed after pinning");
-      }
+      await assertSourceSnapshot(repositoryRoot, identity.revision);
     }
-    try {
-      await Deno.remove(destination, { recursive: true });
-    } catch (error) {
-      if (!(error instanceof Deno.errors.NotFound)) throw error;
-    }
+    await removeIfExists(destination);
     await Deno.rename(staging, destination);
     return pages;
   } finally {
-    try {
-      await Deno.remove(staging, { recursive: true });
-    } catch (error) {
-      if (!(error instanceof Deno.errors.NotFound)) {
-        console.error(
-          `Unable to remove documentation staging directory: ${staging}`,
-          error,
-        );
-      }
-    }
+    await removeStaging(staging);
   }
 }

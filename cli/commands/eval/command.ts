@@ -32,7 +32,7 @@ import type {
 } from "veryfront/eval";
 import { runWithLocalEvalIdentity } from "../../../src/runtime/local-eval-context.ts";
 import { RECORD_INCOMPLETE_EXPLANATION } from "../../../src/eval/report.ts";
-import { orchestrateExtensions } from "veryfront/extensions";
+import type { ExtensionLoader } from "veryfront/extensions";
 import {
   createEvalReportExporterRegistry,
   type EvalReportExporterRegistry,
@@ -69,6 +69,10 @@ import {
   outputJson,
 } from "../../shared/json-output.ts";
 import { withProjectSourceContext } from "../../shared/project-source-context.ts";
+import {
+  releaseProjectCliExtensions,
+  setupProjectCliExtensions,
+} from "../../shared/project-extensions.ts";
 import { createEvalCliBuiltinExtensions } from "../../../src/extensions/builtin-extensions.ts";
 import type { EvalArgs } from "./handler.ts";
 import {
@@ -78,6 +82,7 @@ import {
 } from "#cli/outbound-fetch";
 import { runWithProviderRequestObserver } from "../../../src/provider/runtime-loader/provider-request-observer.ts";
 import { createEvalProgressReporter, type EvalProgressReporter } from "./progress.ts";
+import { getEnvironmentConfig } from "#veryfront/config/environment-config.ts";
 
 export interface EvalOptions extends EvalArgs {
   projectDir?: string;
@@ -1271,7 +1276,7 @@ export function resolveEvalExportRedactionFromEnv(): EvalReportExportRedaction {
 }
 
 type EvalCliExtensionSetup = {
-  loader: Awaited<ReturnType<typeof orchestrateExtensions>>;
+  loader: ExtensionLoader;
   exporterRegistry: EvalReportExporterRegistry;
 };
 
@@ -1295,12 +1300,13 @@ async function setupEvalCliExtensions(
   exporterIds: string[],
 ): Promise<EvalCliExtensionSetup> {
   const primeContracts = createEvalCliPrimeContracts();
-  const loader = await orchestrateExtensions({
+  const loader = await setupProjectCliExtensions({
     projectDir,
     config,
     logger: cliLogger.component("eval-extensions"),
     primeContracts: primeContracts.contracts,
     builtinExtensions: createEvalCliBuiltinExtensions(exporterIds),
+    setupTimeoutMs: getEnvironmentConfig().extensionSetupTimeoutMs,
   });
   return { loader, exporterRegistry: primeContracts.exporterRegistry };
 }
@@ -1454,6 +1460,7 @@ function createEvalReportCommandAdapters(input: {
                 : {},
               metadata: options.metadata,
               recordTimeoutMs: resolveEvalRecordTimeoutMs(input.options),
+              concurrency: input.options.concurrency,
               onProgress: (event) => progress.onEvent(event),
             }),
         );
@@ -1689,7 +1696,7 @@ async function runEvalCommandWithProgress(
           },
         );
       } finally {
-        await extensionSetup.loader.teardownAll();
+        await releaseProjectCliExtensions(extensionSetup.loader);
       }
     }
 
@@ -1903,7 +1910,7 @@ async function runEvalCommandWithProgress(
 
       return outcome.exitCode;
     } finally {
-      await extensionSetup.loader.teardownAll();
+      await releaseProjectCliExtensions(extensionSetup.loader);
     }
   });
 }

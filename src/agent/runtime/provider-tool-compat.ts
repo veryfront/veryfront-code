@@ -72,19 +72,6 @@ function createPermissiveToolInputSchema(): JsonSchema {
 
 const PROVIDER_TOOL_PROPERTY_KEY_PATTERN = /^[a-zA-Z0-9_.-]{1,64}$/;
 
-const GOOGLE_UNSUPPORTED_SCHEMA_KEYS = new Set([
-  "$id",
-  "$ref",
-  "$schema",
-  "additionalProperties",
-  "allOf",
-  "default",
-  "exclusiveMaximum",
-  "exclusiveMinimum",
-  "oneOf",
-  "prefixItems",
-]);
-
 function normalizeModel(model?: string): string {
   return model?.trim().toLowerCase() ?? "";
 }
@@ -274,66 +261,6 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-function getLiteralType(value: unknown): JsonSchema["type"] | undefined {
-  switch (typeof value) {
-    case "string":
-      return "string";
-    case "number":
-      return Number.isInteger(value) ? "integer" : "number";
-    case "boolean":
-      return "boolean";
-    default:
-      return value === null ? "null" : undefined;
-  }
-}
-
-function getEnumValuesFromAnyOf(anyOf: unknown): unknown[] | undefined {
-  if (!Array.isArray(anyOf)) return undefined;
-
-  const values: unknown[] = [];
-  for (const option of anyOf) {
-    if (!isPlainRecord(option)) return undefined;
-    if ("const" in option) {
-      values.push(option.const);
-      continue;
-    }
-    if (Array.isArray(option.enum) && option.enum.length > 0) {
-      values.push(...option.enum);
-      continue;
-    }
-    return undefined;
-  }
-
-  return values.length > 0 ? uniqueUnknownValues(values) : undefined;
-}
-
-function uniqueUnknownValues(values: unknown[]): unknown[] {
-  const result: unknown[] = [];
-  for (const value of values) {
-    if (result.some((existing) => Object.is(existing, value))) continue;
-    result.push(value);
-  }
-  return result;
-}
-
-function getSharedLiteralType(values: readonly unknown[]): JsonSchema["type"] | undefined {
-  const literalTypes = values.map((value) => getLiteralType(value));
-  const firstType = literalTypes[0];
-
-  if (!firstType || literalTypes.some((literalType) => literalType !== firstType)) {
-    return undefined;
-  }
-
-  return firstType;
-}
-
-function getGoogleCompatibleSchemaType(type: unknown): unknown {
-  if (!Array.isArray(type)) return type;
-
-  const nonNullTypes = type.filter((value) => value !== "null");
-  return nonNullTypes.length === 1 ? nonNullTypes[0] : undefined;
-}
-
 function sanitizeNamedSchemaProperties(
   rawProperties: Record<string, unknown>,
   retainedPropertyNames: ReadonlySet<string> | undefined,
@@ -378,86 +305,6 @@ function sanitizeProviderSchemaPropertyKeys(value: unknown): unknown {
     }
 
     sanitized[key] = sanitizeProviderSchemaPropertyKeys(child);
-  }
-
-  return sanitized;
-}
-
-function sanitizeGoogleSchemaProperty(
-  sanitized: Record<string, unknown>,
-  key: string,
-  child: unknown,
-): void {
-  if (key === "const" || key === "anyOf" || GOOGLE_UNSUPPORTED_SCHEMA_KEYS.has(key)) {
-    return;
-  }
-
-  if (key === "type") {
-    const compatibleType = getGoogleCompatibleSchemaType(child);
-    if (compatibleType !== undefined) sanitized.type = compatibleType;
-    return;
-  }
-
-  if (key === "properties" && isPlainRecord(child)) {
-    sanitized.properties = Object.fromEntries(
-      Object.entries(child).map(([propertyName, propertySchema]) => [
-        propertyName,
-        sanitizeGoogleSchemaValue(propertySchema),
-      ]),
-    );
-    return;
-  }
-
-  if (key === "items") {
-    sanitized.items = sanitizeGoogleSchemaValue(child);
-    return;
-  }
-
-  sanitized[key] = sanitizeGoogleSchemaValue(child);
-}
-
-function applyGoogleLiteralConstraint(
-  sanitized: Record<string, unknown>,
-  value: Record<string, unknown>,
-  enumFromAnyOf: unknown[] | undefined,
-  constValue: unknown,
-): void {
-  if (enumFromAnyOf) {
-    sanitized.enum = enumFromAnyOf;
-    if (!sanitized.type) {
-      const sharedType = getSharedLiteralType(enumFromAnyOf);
-      if (sharedType) sanitized.type = sharedType;
-    }
-  } else if ("const" in value) {
-    sanitized.enum = [constValue];
-    if (!sanitized.type) {
-      const literalType = getLiteralType(constValue);
-      if (literalType) sanitized.type = literalType;
-    }
-  }
-}
-
-function sanitizeGoogleSchemaValue(value: unknown): unknown {
-  if (Array.isArray(value)) {
-    return value.map((item) => sanitizeGoogleSchemaValue(item));
-  }
-
-  if (!isPlainRecord(value)) {
-    return value;
-  }
-
-  const sanitized: Record<string, unknown> = {};
-  const enumFromAnyOf = getEnumValuesFromAnyOf(value.anyOf);
-  const constValue = value.const;
-
-  for (const [key, child] of Object.entries(value)) {
-    sanitizeGoogleSchemaProperty(sanitized, key, child);
-  }
-
-  applyGoogleLiteralConstraint(sanitized, value, enumFromAnyOf, constValue);
-
-  if (sanitized.type === "array" && !Object.hasOwn(sanitized, "items")) {
-    sanitized.items = {};
   }
 
   return sanitized;
@@ -1252,7 +1099,8 @@ export function sanitizeProviderToolSchema(
   const propertyKeySafeSchema = sanitizeProviderSchemaPropertyKeys(schema);
 
   if (profile.provider === "google") {
-    return sanitizeGoogleSchemaValue(propertyKeySafeSchema) as JsonSchema;
+    // Native Google requests use parametersJsonSchema, not the OpenAPI Schema field.
+    return propertyKeySafeSchema as JsonSchema;
   }
 
   if (profile.provider === "moonshot") {

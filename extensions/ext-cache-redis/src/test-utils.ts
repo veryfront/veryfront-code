@@ -16,6 +16,7 @@
 export interface InMemoryRedisClient {
   connect(): Promise<void>;
   close(): Promise<void>;
+  destroy(): void;
   get(key: string): Promise<string | null>;
   set(key: string, value: string): Promise<"OK">;
   setEx(key: string, ttlSeconds: number, value: string): Promise<"OK">;
@@ -73,6 +74,7 @@ export function createInMemoryRedisStub(): InMemoryRedisClient {
     async close() {
       store.clear();
     },
+    destroy() {},
     async get(key) {
       pruneExpired(key);
       const entry = store.get(key);

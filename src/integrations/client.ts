@@ -662,7 +662,8 @@ export async function createIntegrationClient(
         "tools",
         {
           integration: integrationName(integration),
-          order: options.order ?? "asc",
+          sort_by: "name",
+          sort_order: options.order ?? "asc",
           ...(options.name ? { name: options.name } : {}),
         },
         (item) =>

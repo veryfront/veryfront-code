@@ -36,6 +36,8 @@ function isRetryableProviderError(error: unknown): boolean {
 export interface RuntimeStreamProviderOptions {
   availableToolNames: ReadonlySet<string> | null;
   providerExecutedToolNames: ReadonlySet<string>;
+  /** Configured tools to flag as dynamic beyond the project registry. */
+  dynamicToolNames?: ReadonlySet<string>;
 }
 
 export function decodeRuntimeStreamPart(
@@ -218,9 +220,10 @@ function resolveProviderExecuted(
 function resolveDynamic(
   explicit: boolean | undefined,
   toolName: string,
+  options: RuntimeStreamProviderOptions,
 ): boolean | undefined {
   if (explicit !== undefined) return explicit;
-  return isDynamicTool(toolName) ? true : undefined;
+  return options.dynamicToolNames?.has(toolName) || isDynamicTool(toolName) ? true : undefined;
 }
 
 function toolStartSignal(
@@ -243,7 +246,7 @@ function toolStartSignal(
     typed.toolName,
     options,
   );
-  const dynamic = resolveDynamic(typed.dynamic, typed.toolName);
+  const dynamic = resolveDynamic(typed.dynamic, typed.toolName, options);
   return {
     kind: "protocol",
     event: {
@@ -348,7 +351,7 @@ function toolReadySignals(
     typed.toolName,
     options,
   );
-  const dynamic = resolveDynamic(typed.dynamic, typed.toolName);
+  const dynamic = resolveDynamic(typed.dynamic, typed.toolName, options);
   if (!parsed.ok) {
     return [{
       kind: "protocol",
@@ -390,7 +393,7 @@ function providerToolTerminalSignals(
   ) {
     return [];
   }
-  const dynamic = resolveDynamic(typed.dynamic, typed.toolName);
+  const dynamic = resolveDynamic(typed.dynamic, typed.toolName, options);
   const rawOutput = typed.type === "tool-error"
     ? typed.error
     : (typed.isError ?? typed.error !== undefined)

@@ -74,11 +74,11 @@ GOOGLE_CLIENT_SECRET=your-client-secret
 
 | Service  | Scopes                                                                                                                           |
 | -------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| Gmail    | `gmail.readonly`, `gmail.send`, `gmail.modify`, `gmail.labels`, `gmail.compose`, `https://mail.google.com/` for permanent delete |
+| Gmail    | `gmail.modify` (read, drafts, send, labels, and reversible Trash) |
 | Calendar | `calendar.readonly`, `calendar.events`                                                                                           |
 | Drive    | `drive.readonly`, `drive.file`                                                                                                   |
 | Docs     | `documents`, `drive.readonly`                                                                                                    |
-| Sheets   | `spreadsheets.readonly`, `spreadsheets`                                                                                          |
+| Sheets   | `spreadsheets`, `drive.readonly`, `drive.file` |
 
 ---
 

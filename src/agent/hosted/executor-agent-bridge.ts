@@ -36,6 +36,27 @@ const MapConstructor = Map;
 const mapSet = Map.prototype.set;
 const apply = Reflect.apply;
 
+function executorOperationFailureCode(
+  error: unknown,
+  phase: "setup" | "stream",
+  signal: AbortSignal,
+): ConstructorParameters<typeof ExecutorAgentError>[0] {
+  if (signal.aborted) return "ABORTED";
+  return executorAgentFailureCode(
+    error,
+    phase === "setup" ? "EXECUTOR_AGENT_SETUP_FAILED" : "EXECUTOR_AGENT_STREAM_FAILED",
+  );
+}
+
+function normalizeExecutorStreamError(
+  error: unknown,
+  input: Pick<HostedChatRuntimeStreamInput, "abortSignal">,
+  fallback: "EXECUTOR_AGENT_SETUP_FAILED" | "EXECUTOR_AGENT_STREAM_FAILED",
+): ExecutorAgentError {
+  if (error instanceof ExecutorAgentError) return error;
+  return new ExecutorAgentError(input.abortSignal.aborted ? "ABORTED" : fallback);
+}
+
 /** @internal Encode a validated broker event for the downstream SSE boundary. */
 export function encodeExecutorBrokerEvent(
   event: Parameters<typeof structuredAgentOutputForWire>[0],
@@ -120,10 +141,7 @@ export function createExecutorAgentOperations(options: {
         failure = {
           type: "failure",
           phase,
-          code: context.signal.aborted ? "ABORTED" : executorAgentFailureCode(
-            error,
-            phase === "setup" ? "EXECUTOR_AGENT_SETUP_FAILED" : "EXECUTOR_AGENT_STREAM_FAILED",
-          ),
+          code: executorOperationFailureCode(error, phase, context.signal),
         };
       } finally {
         // A return while suspended at ready can precede acquisition of the
@@ -208,9 +226,7 @@ export function createExecutorHostedChatRuntimeAgent(options: {
         } else {
           await release?.catch(() => {});
         }
-        throw error instanceof ExecutorAgentError ? error : new ExecutorAgentError(
-          input.abortSignal.aborted ? "ABORTED" : "EXECUTOR_AGENT_SETUP_FAILED",
-        );
+        throw normalizeExecutorStreamError(error, input, "EXECUTOR_AGENT_SETUP_FAILED");
       }
       const iterator = opening;
       let consumed = false;
@@ -246,9 +262,7 @@ export function createExecutorHostedChatRuntimeAgent(options: {
               } catch (error) {
                 await iterator.return?.().catch(() => {});
                 controller.error(
-                  error instanceof ExecutorAgentError ? error : new ExecutorAgentError(
-                    input.abortSignal.aborted ? "ABORTED" : "EXECUTOR_AGENT_STREAM_FAILED",
-                  ),
+                  normalizeExecutorStreamError(error, input, "EXECUTOR_AGENT_STREAM_FAILED"),
                 );
               }
             },

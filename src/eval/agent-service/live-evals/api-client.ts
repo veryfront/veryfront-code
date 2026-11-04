@@ -369,6 +369,20 @@ function wait(input: { ms: number; signal?: AbortSignal }): Promise<void> {
   return sleep(input.ms, input.signal);
 }
 
+// Five tries over about ten seconds while the run's event identity settles.
+const INPUT_RESPONSE_PENDING_RETRY_DELAYS_MS = [1_000, 2_000, 3_000, 4_000] as const;
+
+async function isRunEventIdentityPending(response: Response): Promise<boolean> {
+  if (response.status !== 503) return false;
+  try {
+    const problem: unknown = JSON.parse(await getResponseText(response.clone()));
+    return typeof problem === "object" && problem !== null &&
+      (problem as { code?: unknown }).code === "RUN_EVENT_IDENTITY_PENDING";
+  } catch {
+    return false;
+  }
+}
+
 async function throwLiveEvalApiError(prefix: string, response: Response): Promise<never> {
   throw API_CLIENT_ERROR.create({
     detail: `${prefix}: ${response.status} ${await getResponseText(response)}`,
@@ -794,22 +808,29 @@ export async function submitLiveEvalInputResponse(
     "Live eval input request id",
   );
   const headers = createLiveEvalJsonHeaders(context);
+  // Retries reuse the key, so a response the API already accepted is not submitted twice.
   headers.set("Idempotency-Key", crypto.randomUUID());
-  const response = await createFetch(context)(
-    createApiUrl(
-      context,
-      `/input-requests/${inputRequestId}/responses`,
-    ),
-    {
-      method: "POST",
-      headers,
-      body: JSON.stringify({ values: input.values }),
-      signal: createRequestSignal(input.requestTimeoutMs),
-    },
-  );
-
-  if (!response.ok) {
-    await throwLiveEvalApiError("Failed to submit eval input response", response);
+  // Serialized once: a reused key with a changed payload is a 409, not a retry.
+  const body = JSON.stringify({ values: input.values });
+  for (const retryDelayMs of [...INPUT_RESPONSE_PENDING_RETRY_DELAYS_MS, undefined]) {
+    const response = await createFetch(context)(
+      createApiUrl(
+        context,
+        `/input-requests/${inputRequestId}/responses`,
+      ),
+      {
+        method: "POST",
+        headers,
+        body,
+        signal: createRequestSignal(input.requestTimeoutMs),
+      },
+    );
+    if (response.ok) return;
+    if (retryDelayMs === undefined || !(await isRunEventIdentityPending(response))) {
+      await throwLiveEvalApiError("Failed to submit eval input response", response);
+    }
+    await response.body?.cancel();
+    await wait({ ms: retryDelayMs! });
   }
 }
 

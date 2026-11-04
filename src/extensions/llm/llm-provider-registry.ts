@@ -30,6 +30,7 @@ class LLMProviderRegistryImpl implements LLMProviderRegistry {
       "LLMProvider",
       "createResponses",
     );
+    assertOptionalRegistrationMethod(provider, "LLMProvider", "createDecisions");
     if (this.providers.has(providerId)) {
       return;
     }

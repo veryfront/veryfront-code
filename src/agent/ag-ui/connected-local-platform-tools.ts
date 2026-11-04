@@ -1,3 +1,4 @@
+import { Buffer } from "node:buffer";
 import { createAgentServiceSandboxTools } from "#veryfront/sandbox";
 import { importFirstPartyExtensionModule } from "#veryfront/extensions/first-party-import.ts";
 import { canonicalPlatformHostTools } from "../platform-host-tools.ts";

@@ -280,6 +280,8 @@ export interface RuntimeAgentStreamExecutionDeps {
     projectId?: string | null;
     sandboxEndpoint?: string;
   };
+  /** Set by the host only after it verified this run's terminal capability for the sandbox project. */
+  runIdBindsToolAuthorization?: boolean;
   createBashTool?: AgentServiceSandboxToolsOptions["createBashTool"];
   createAgentServiceSandboxTools?: (
     input: AgentServiceSandboxToolsOptions,
@@ -637,6 +639,9 @@ export function buildMergedTools(
       ) {
         merged[toolName] = availableLocalTools?.[toolName] ?? serverResolvedProjectTool ??
           (visibleRegistryTool?.ownerAgentId ? visibleRegistryTool : true);
+      } else if (sourceAllowedRemoteToolNames.includes(`veryfront__${toolName}`)) {
+        // Platform discovery publishes canonical names for legacy boolean selectors.
+        merged[`veryfront__${toolName}`] = true;
       }
       continue;
     }
@@ -1544,7 +1549,21 @@ export async function createRuntimeAgentStreamResponse(
         sourceAllowedRemoteToolNames,
         forwardedAllowedRemoteToolNames,
       );
-    const runtimeToolAllowlist = getRuntimeToolAllowlist(input.forwardedProps);
+    const requestedToolAllowlist = getRuntimeToolAllowlist(input.forwardedProps);
+    const runtimeToolAllowlist = requestedToolAllowlist === null
+      ? null
+      : new Set(requestedToolAllowlist);
+    if (runtimeToolAllowlist && agent.config.tools && agent.config.tools !== true) {
+      for (const [name, entry] of Object.entries(agent.config.tools)) {
+        const canonical = `veryfront__${name}`;
+        if (
+          entry === true && runtimeToolAllowlist.has(name) &&
+          sourceAllowedRemoteToolNames.includes(canonical)
+        ) {
+          runtimeToolAllowlist.add(canonical);
+        }
+      }
+    }
     if (runtimeToolAllowlist === null && forwardedAllowedRemoteToolNames !== undefined) {
       logger.debug(
         "runtimeOverrides.allowedTools is additive on internal runs; use runtimeOverrides.toolAllowlist to restrict the run tool surface",
@@ -1669,6 +1688,9 @@ export async function createRuntimeAgentStreamResponse(
       runId: input.runId,
       ...(deps.projectAgentSandbox?.projectId
         ? { projectId: deps.projectAgentSandbox.projectId }
+        : {}),
+      ...(deps.runIdBindsToolAuthorization === true && deps.projectAgentSandbox?.projectId
+        ? { runIdBindsToolAuthorization: true }
         : {}),
       ...(deps.projectAgentSandbox?.authToken
         ? { authToken: deps.projectAgentSandbox.authToken }

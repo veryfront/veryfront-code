@@ -7,9 +7,8 @@ order: 23
 A workflow owns multi-step coordination. It can run ordered, branching, or
 parallel steps and keep progress visible.
 
-Workflows exist because multi-step work needs structure outside a prompt. A
-workflow makes the process visible: which step runs first, which branches exist,
-what can retry, and where approval can happen.
+A workflow defines the order of work, branches, retries and approval points
+outside the agent's prompt.
 
 ## Characteristics
 

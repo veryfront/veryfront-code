@@ -1,3 +1,5 @@
+import { bindHostedToolRunAuthorization } from "./terminal-credential.ts";
+import { hasHostedToolRunAuthorization } from "./tool-run-authorization.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import {
   createHostedConversationRunChunkMirrorFromCapability,
@@ -1044,4 +1046,42 @@ it("reads the current exact-owner bearer for existing first-party MCP sources", 
   const thirdParty = factory(config);
   await thirdParty.executeTool("ordinary", {}, rootContext());
   assertEquals(sent.at(-1), "Bearer stale");
+});
+
+it("tool authorization rejects public identifiers, invalid terminal authority, and mutated identities", () => {
+  const runId = "11111111-1111-4111-8111-111111111111";
+  for (
+    const variant of [
+      "canonical",
+      "unbound",
+      "invalid-token",
+      "project-mismatch",
+      "run-mismatch",
+    ] as const
+  ) {
+    const value = request();
+    value.durableRootRun = { runId, messageId: "message-1" };
+    if (variant !== "unbound") {
+      registerHostedTerminalCredential(
+        value,
+        variant === "invalid-token" ? "invalid" : `header.${
+          btoa(JSON.stringify({
+            runId,
+            canonicalRunId: runId,
+            tokenUse: "run_event_writer",
+            writerPurpose: "current_run_terminal",
+            dispatchNonce: "fixture-generation",
+          }))
+        }.signature`,
+      );
+    }
+    const target = {
+      projectId: variant === "project-mismatch" ? "other-project" : "project-1",
+      runId: variant === "run-mismatch" ? "other-run" : runId,
+    };
+    bindHostedToolRunAuthorization(target, value);
+    assertEquals(hasHostedToolRunAuthorization(target, target), variant === "canonical");
+    const spoofed = { ...target, runIdBindsToolAuthorization: true };
+    assertEquals(hasHostedToolRunAuthorization(spoofed, target), false);
+  }
 });

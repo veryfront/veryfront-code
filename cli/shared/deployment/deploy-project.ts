@@ -283,6 +283,9 @@ const MAX_RELEASE_SOURCE_VERIFICATION_ATTEMPTS = 20;
 const MAX_RELEASE_SOURCE_VERIFICATION_DELAY_MS = 500;
 const DEFAULT_ENVIRONMENT_POLL_INTERVAL_MS = 2_000;
 const DEFAULT_ENVIRONMENT_TIMEOUT_MS = 120_000;
+// A hosted asset build of a large project can need more than two minutes.
+// Waiting less reports a timeout for a build that may still succeed.
+export const DEFAULT_RELEASE_ASSET_MANIFEST_TIMEOUT_MS = 600_000;
 
 async function emit(
   observer: DeployObserver | undefined,
@@ -1080,6 +1083,9 @@ function releaseAssetPollingTimeoutError(options: {
     }). ${
       neverStarted
         ? RELEASE_ASSET_BUILD_NEVER_STARTED_HINT
+        : lastState === "queued" || lastState === "building"
+        ? "This timeout does not mean the build failed; it may still finish. Check the release asset state " +
+          "before you run deploy again; a new deploy starts a new release."
         : "Check the release asset build and run deploy again."
     }`,
   );
@@ -1124,7 +1130,10 @@ export async function waitForReleaseAssetManifest(
   } = {},
 ): Promise<ReadyReleaseAssetManifestResponse> {
   const pollIntervalMs = Math.max(100, options.pollIntervalMs ?? 2_000);
-  const timeoutMs = Math.max(pollIntervalMs, options.timeoutMs ?? 120_000);
+  const timeoutMs = Math.max(
+    pollIntervalMs,
+    options.timeoutMs ?? DEFAULT_RELEASE_ASSET_MANIFEST_TIMEOUT_MS,
+  );
   const expectedRoutes = options.expectedRoutes ?? [];
   const deadline = Date.now() + timeoutMs;
   let lastState = "missing";

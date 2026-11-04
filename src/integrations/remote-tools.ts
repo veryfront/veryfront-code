@@ -1,3 +1,5 @@
+import { forEachPrivateArray } from "#veryfront/security/private-array.ts";
+import { privateTextTrim } from "#veryfront/security/private-text.ts";
 /**
  * Remote Integration Tools
  *
@@ -25,7 +27,11 @@ import {
   parseIntegrationToolIdentity,
 } from "#veryfront/integrations/source-policy.ts";
 import { getRuntimeRequestContext } from "#veryfront/platform/runtime-request-context.ts";
-import { getHostEnv, getHostSecret } from "#veryfront/platform/compat/process/env.ts";
+import {
+  getHostBootEnv,
+  getHostEnv,
+  getHostSecret,
+} from "#veryfront/platform/compat/process/env.ts";
 import { createVeryfrontApiRequestUrlResolver } from "#veryfront/platform/adapters/veryfront-api-url.ts";
 import {
   type BoundedJsonValue,
@@ -33,6 +39,7 @@ import {
   snapshotBoundedParsedJsonValue,
 } from "#veryfront/schemas/json-value.ts";
 import { logger } from "#veryfront/utils";
+import { resolveStudioOrigin } from "./studio-origin.ts";
 import {
   hasProjectIdentityControlCharacters,
   isCanonicalProjectSlug,
@@ -279,7 +286,7 @@ function normalizeProjectSlug(projectSlug: unknown): string | undefined {
   if (typeof projectSlug !== "string") {
     throw new TypeError("Integration project slug must be a string");
   }
-  const normalized = projectSlug.trim();
+  const normalized = privateTextTrim(projectSlug);
   if (normalized.length === 0) return undefined;
   if (!isCanonicalProjectSlug(normalized)) {
     throw new TypeError("Integration project slug must be canonical");
@@ -299,6 +306,18 @@ function resolveRequestProjectSlug(
     return normalizeProjectSlug(requestContext.projectSlug);
   }
   return normalizeProjectSlug(getEnvironmentConfig().projectSlug);
+}
+
+/** Project slug and Studio origin of the request, when both the project and a credential are known. */
+export function getRemoteIntegrationProjectTarget(
+  context?: ToolExecutionContext,
+): { projectSlug: string; studioOrigin?: string } | undefined {
+  const requestContext = snapshotToolExecutionContext(context, false);
+  const { baseUrl, token } = resolveRequestAuth(requestContext);
+  const projectSlug = resolveRequestProjectSlug(requestContext);
+  if (!baseUrl || !token || !projectSlug) return undefined;
+  const studioOrigin = resolveStudioOrigin(baseUrl, getHostBootEnv("STUDIO_URL"));
+  return studioOrigin ? { projectSlug, studioOrigin } : { projectSlug };
 }
 
 // ---------------------------------------------------------------------------
@@ -346,7 +365,8 @@ function applyRemoteFailureCondition(
 
   let message = text;
   if (
-    isRecord(payload) && typeof payload.message === "string" && payload.message.trim().length > 0
+    isRecord(payload) && typeof payload.message === "string" &&
+    privateTextTrim(payload.message).length > 0
   ) {
     message = payload.message;
   }
@@ -473,7 +493,7 @@ function serializeCallRequest(
     }
     if (
       value.length === 0 ||
-      value !== value.trim() ||
+      value !== privateTextTrim(value) ||
       hasProjectIdentityControlCharacters(value)
     ) {
       throw new TypeError(`Integration tool call ${label} must be a canonical identifier`);
@@ -513,7 +533,9 @@ async function fetchToolListAttempt(
     // available" (which returns an empty tools array with status 200).
     discardResponseBody(response);
     throw INTEGRATION_TOOL_LIST_REQUEST_FAILED.create({
-      message: `Integration tools API returned ${response.status} ${response.statusText}`.trim(),
+      message: privateTextTrim(
+        `Integration tools API returned ${response.status} ${response.statusText}`,
+      ),
       status: response.status,
     });
   }
@@ -785,8 +807,26 @@ async function callRemoteTool(
  * memoizes both outcomes for the current run. Direct callers inside a
  * Veryfront request receive the same request-scoped behavior.
  */
-export async function getRemoteIntegrationToolDiscovery(
+export function getRemoteIntegrationToolDiscovery(
   context?: ToolExecutionContext,
+): Promise<RemoteIntegrationToolDiscoveryResult> {
+  return getRemoteIntegrationToolDiscoveryWithEvidence(context);
+}
+
+/**
+ * Discovery that also reports every tool name the API listed, before the active source policy
+ * narrows the result. Connection diagnostics need that evidence; it names integrations a
+ * restricted source may not see, so it stays out of the public `veryfront/integrations` API.
+ *
+ * @internal
+ */
+export async function getRemoteIntegrationToolDiscoveryWithEvidence(
+  context?: ToolExecutionContext,
+  options?: {
+    onDiscoveredToolName?: (name: string) => void;
+    /** Called only after credential-backed API discovery succeeds, including an empty catalog. */
+    onCatalogDiscovered?: () => void;
+  },
 ): Promise<RemoteIntegrationToolDiscoveryResult> {
   const requestContext = snapshotToolExecutionContext(context, false);
   requestContext.abortSignal?.throwIfAborted();
@@ -804,7 +844,10 @@ export async function getRemoteIntegrationToolDiscovery(
       requestContext,
     );
     if (catalog.status === "unavailable") return catalog;
+    options?.onCatalogDiscovered?.();
 
+    // Keep connection evidence before source policy narrows the available tools.
+    forEachPrivateArray(catalog.tools, (tool) => options?.onDiscoveredToolName?.(tool.name));
     const sourceIntegrationPolicy = getActiveSourceIntegrationPolicy();
     return {
       status: "ok",

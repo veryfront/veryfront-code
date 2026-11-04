@@ -22,6 +22,12 @@
 
 import { defineOwnDataProperty } from "#veryfront/security/own-data-property.ts";
 import {
+  privateTextEndsWith,
+  privateTextSlice,
+  privateTextToLowerCase,
+  privateTextTrim,
+} from "#veryfront/security/private-text.ts";
+import {
   addAbortSignalListenerOnce,
   getAbortSignalReason,
   isAbortSignalAborted,
@@ -328,7 +334,7 @@ function parseIpv4(value: string): number[] | null {
 }
 
 function parseIpv6(value: string): number[] | null {
-  let normalized = stripIpv6Zone(stripIpv6Brackets(value)).toLowerCase();
+  let normalized = privateTextToLowerCase(stripIpv6Zone(stripIpv6Brackets(value)));
 
   const lastColon = normalized.lastIndexOf(":");
   const dottedSuffix = lastColon === -1 ? "" : normalized.slice(lastColon + 1);
@@ -433,24 +439,24 @@ function isInternalIpv6(value: string): boolean {
 }
 
 export function isInternalEgressIp(address: string): boolean {
-  const host = stripIpv6Zone(stripIpv6Brackets(address.trim().toLowerCase()));
+  const host = stripIpv6Zone(stripIpv6Brackets(privateTextToLowerCase(privateTextTrim(address))));
   const ipv4 = parseIpv4(host);
   if (ipv4) return isPrivateIpv4(ipv4);
   return host.includes(":") && isInternalIpv6(host);
 }
 
 function isIpLiteral(address: string): boolean {
-  const host = stripIpv6Zone(stripIpv6Brackets(address.trim().toLowerCase()));
+  const host = stripIpv6Zone(stripIpv6Brackets(privateTextToLowerCase(privateTextTrim(address))));
   return parseIpv4(host) !== null || parseIpv6(host) !== null;
 }
 
 function isLocalhostName(hostname: string): boolean {
-  const normalized = hostname.trim().toLowerCase();
+  const normalized = privateTextToLowerCase(privateTextTrim(hostname));
   return normalized === "localhost" || normalized.endsWith(".localhost");
 }
 
 function normalizeInternalHost(hostname: string): string {
-  return stripIpv6Brackets(hostname.trim().toLowerCase());
+  return stripIpv6Brackets(privateTextToLowerCase(privateTextTrim(hostname)));
 }
 
 function parseAllowedInternalHosts(value: string | undefined): string[] {
@@ -526,7 +532,7 @@ async function resolveWorkerHostEgressAddresses(
 ): Promise<string[]> {
   const allowInternalEgress = options.allowInternalEgress === true;
 
-  const host = stripIpv6Brackets(hostname.trim().toLowerCase());
+  const host = stripIpv6Brackets(privateTextToLowerCase(privateTextTrim(hostname)));
   const allowedInternalHost = isAllowedInternalHost(host, options);
   if (
     !allowInternalEgress && !allowedInternalHost &&
@@ -565,7 +571,9 @@ async function resolveWorkerHostEgressAddresses(
 
   const normalizedAddresses: string[] = [];
   for (const address of addresses) {
-    const normalizedAddress = stripIpv6Zone(stripIpv6Brackets(address.trim().toLowerCase()));
+    const normalizedAddress = stripIpv6Zone(
+      stripIpv6Brackets(privateTextToLowerCase(privateTextTrim(address))),
+    );
     if (!isIpLiteral(normalizedAddress)) {
       throw new WorkerEgressBlockedError(
         `Worker network egress blocked: resolver returned an invalid address for host ${hostname}`,
@@ -751,7 +759,10 @@ function hostsMatch(left: string, right: string): boolean {
       leftV6.every((value, index) => value === rightV6[index]);
   }
 
-  const normalizeName = (value: string) => value.trim().toLowerCase().replace(/\.$/, "");
+  const normalizeName = (value: string) => {
+    const normalized = privateTextToLowerCase(privateTextTrim(value));
+    return privateTextEndsWith(normalized, ".") ? privateTextSlice(normalized, 0, -1) : normalized;
+  };
   return normalizeName(left) === normalizeName(right);
 }
 

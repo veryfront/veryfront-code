@@ -42,9 +42,8 @@ function snapshotParserOptions(
   const snapshot = Object.create(null) as Record<string, unknown>;
   for (const key of keys) {
     if (typeof key !== "string" || !allowedKeys.has(key)) {
-      throw new TypeError(
-        `${label} contains an unsupported ${typeof key === "string" ? `option: ${key}` : "symbol"}`,
-      );
+      const unsupported = typeof key === "string" ? `option: ${key}` : "symbol";
+      throw new TypeError(`${label} contains an unsupported ${unsupported}`);
     }
     let descriptor: PropertyDescriptor | undefined;
     try {

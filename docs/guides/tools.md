@@ -274,6 +274,7 @@ For `veryfront-cloud/*` models, the served catalogue for your project and
 credential determines which provider tools are available. Configuring a tool
 cannot grant it when the selected deployment omits it. Before the catalogue
 loads, or when its tool declaration is missing, no provider tools are offered.
+
 The gateway remains responsible for enforcing policy before dispatch. Read its
 served web-tool data-flow facts for processing recipients and boundary coverage;
 inference residency alone does not approve web search or fetch.

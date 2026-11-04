@@ -1632,6 +1632,28 @@ describe("VeryfrontAPIOperations", () => {
       assertEquals((body as { error: string }).error, "boom");
     });
 
+    it("fences a failed state report to its manifest version", async () => {
+      let body: unknown;
+      const signal = new AbortController().signal;
+      stubJsonFetch((_url, init) => {
+        body = init?.body ? JSON.parse(String(init.body)) : undefined;
+        assertExists(init?.signal);
+        assertEquals(init.signal.aborted, false);
+        return { state: "failed", manifest_version: 7 };
+      });
+
+      await createOps().updateReleaseAssetManifestState(
+        "project-slug",
+        "rel-1",
+        "failed",
+        "Build stopped",
+        signal,
+        7,
+      );
+
+      assertEquals(body, { state: "failed", error: "Build stopped", manifest_version: 7 });
+    });
+
     it("keeps the previous release asset method names as aliases with identical requests", async () => {
       const requests: Array<{ method: string; url: string; headers: unknown; body: unknown }> = [];
       installMockFetch(

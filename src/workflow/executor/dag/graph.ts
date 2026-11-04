@@ -16,6 +16,28 @@ export function buildGraph(nodes: WorkflowNode[]): DAGGraph {
   const inDegree = new Map<string, number>();
   const nodeMap = new Map<string, WorkflowNode>();
 
+  const addExplicitDependencies = () => {
+    for (const node of nodes) {
+      const dependencies = new Set<string>();
+      for (const dep of node.dependsOn ?? []) {
+        if (dependencies.has(dep)) {
+          throw INVALID_ARGUMENT.create({
+            detail: `Workflow graph node "${node.id}" contains duplicate dependency "${dep}"`,
+          });
+        }
+        dependencies.add(dep);
+        const dependents = adjList.get(dep);
+        if (!dependents) {
+          throw INVALID_ARGUMENT.create({
+            detail: `Node "${node.id}" depends on unknown node "${dep}"`,
+          });
+        }
+        dependents.push(node.id);
+        inDegree.set(node.id, (inDegree.get(node.id) ?? 0) + 1);
+      }
+    }
+  };
+
   for (const node of nodes) {
     if (nodeMap.has(node.id)) {
       throw INVALID_ARGUMENT.create({
@@ -27,25 +49,7 @@ export function buildGraph(nodes: WorkflowNode[]): DAGGraph {
     nodeMap.set(node.id, node);
   }
 
-  for (const node of nodes) {
-    const dependencies = new Set<string>();
-    for (const dep of node.dependsOn ?? []) {
-      if (dependencies.has(dep)) {
-        throw INVALID_ARGUMENT.create({
-          detail: `Workflow graph node "${node.id}" contains duplicate dependency "${dep}"`,
-        });
-      }
-      dependencies.add(dep);
-      const dependents = adjList.get(dep);
-      if (!dependents) {
-        throw INVALID_ARGUMENT.create({
-          detail: `Node "${node.id}" depends on unknown node "${dep}"`,
-        });
-      }
-      dependents.push(node.id);
-      inDegree.set(node.id, (inDegree.get(node.id) ?? 0) + 1);
-    }
-  }
+  addExplicitDependencies();
 
   // Also handle implicit sequential dependencies (nodes without explicit deps)
   // If no dependencies specified (undefined), assume sequential order
