@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertNotEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { deleteEnv, getEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { makeTempDir, remove, writeTextFile } from "#veryfront/testing/deno-compat.ts";
@@ -308,6 +308,88 @@ describe("env-loader", () => {
       } finally {
         cleanupKeys(key, lowerKey);
       }
+    });
+
+    describe("when a later file replaces a differently-cased key on Windows", () => {
+      let previousNodeEnv: string | undefined;
+
+      beforeEach(() => {
+        previousNodeEnv = getEnv("NODE_ENV");
+        setEnv("NODE_ENV", "production");
+        // Windows reads the environment case-insensitively.
+        __setEnvLoaderExistingEnvReaderForTests((name) =>
+          getEnv(name) ?? getEnv(name.toUpperCase())
+        );
+      });
+
+      afterEach(() => {
+        if (previousNodeEnv === undefined) deleteEnv("NODE_ENV");
+        else setEnv("NODE_ENV", previousNodeEnv);
+      });
+
+      it("should drop the earlier spelling's provenance", async () => {
+        const key = createKey("ALIAS_SOURCE");
+        const lowerKey = key.toLowerCase();
+        const shellKey = createKey("ALIAS_SHELL");
+        setEnv(shellKey, "shell-secret");
+        await writeEnvFile(".env", `${key}=repository-literal`);
+        await writeEnvFile(".env.local", `${lowerKey}=\${${shellKey}}`);
+        try {
+          await withOsTypeAsync("windows", () => loadEnv({ cwd: tempDir }));
+
+          assertEquals(getEnvSource(lowerKey), {
+            source: "env-file",
+            file: `${tempDir}/.env.local`,
+            expandedFromProcessEnv: true,
+          });
+          assertNotEquals(
+            withOsType("windows", () => getEnvSource(key)),
+            { source: "env-file", file: `${tempDir}/.env`, expandedFromProcessEnv: false },
+            "the replaced .env record must not describe the live value",
+          );
+        } finally {
+          cleanupKeys(key, lowerKey, shellKey);
+        }
+      });
+
+      it("should clear the earlier spelling's expansion taint", async () => {
+        const key = createKey("ALIAS_TAINT");
+        const lowerKey = key.toLowerCase();
+        const shellKey = createKey("ALIAS_TAINT_SHELL");
+        const dependent = createKey("ALIAS_TAINT_DEPENDENT");
+        setEnv(shellKey, "shell-secret");
+        await writeEnvFile(".env", `${key}=\${${shellKey}}`);
+        await writeEnvFile(".env.production", `${lowerKey}=repository-literal`);
+        await writeEnvFile(".env.local", `${dependent}=\${${key}}`);
+        try {
+          await withOsTypeAsync("windows", () => loadEnv({ cwd: tempDir }));
+
+          assertEquals(getEnv(dependent), "repository-literal");
+          assertEquals(getEnvSource(dependent), {
+            source: "env-file",
+            file: `${tempDir}/.env.local`,
+            expandedFromProcessEnv: false,
+          });
+        } finally {
+          cleanupKeys(key, lowerKey, shellKey, dependent);
+        }
+      });
+
+      it("should expand later references to the winning value", async () => {
+        const key = createKey("ALIAS_VALUE");
+        const lowerKey = key.toLowerCase();
+        const dependent = createKey("ALIAS_VALUE_DEPENDENT");
+        await writeEnvFile(".env", `${key}=first\n${lowerKey}=second`);
+        await writeEnvFile(".env.production", `${key}=winner`);
+        await writeEnvFile(".env.local", `${dependent}=\${${key}}`);
+        try {
+          await withOsTypeAsync("windows", () => loadEnv({ cwd: tempDir }));
+
+          assertEquals(getEnv(dependent), "winner");
+        } finally {
+          cleanupKeys(key, lowerKey, dependent);
+        }
+      });
     });
 
     it("should read an additional directory only once", async () => {

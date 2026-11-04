@@ -118,13 +118,15 @@ async function readEnvDirFiles(cwd: string, options: EnvDirLoadOptions): Promise
   const { debug } = options;
   const env = getEnv("NODE_ENV") ?? getEnv("DENO_ENV") ?? "development";
   const envFiles = [`${cwd}/.env`, `${cwd}/.env.${env}`, `${cwd}/.env.local`];
-  const loadedVars: Record<string, string> = {};
-  const taintedLoadedVars = new Set<string>();
-  // Keys this load wrote, case-folded where the environment ignores case, so a
-  // later file's `api_url` still outranks an earlier file's `API_URL` there.
+  // Everything this load tracks per key is keyed by the case-folded name where
+  // the environment ignores case (Windows). A later file's `api_url` then
+  // replaces an earlier file's `API_URL` in the precedence check, in the
+  // values later `$NAME` references see, and in their expansion taint.
   const caseInsensitive = envLoaderOsType() === "windows";
   const foldKey = (key: string): string =>
     caseInsensitive ? applyIntrinsic(stringToLowerCase, key, []) as string : key;
+  const loadedVars: Record<string, string> = {};
+  const taintedLoadedVars = new Set<string>();
   const keysSetByThisLoad = new Set<string>();
 
   let loadedCount = 0;
@@ -143,13 +145,16 @@ async function readEnvDirFiles(cwd: string, options: EnvDirLoadOptions): Promise
         setEnv(key, value);
         keysSetByThisLoad.add(foldedKey);
         markEnvFileValue(key);
+        // Drop provenance recorded under another spelling of this variable, so
+        // no stale record outlives the value that replaced it.
+        clearEnvSourceAliases(key);
         applyIntrinsic(mapSet, envSources, [
           key,
           { file, source: "env-file", expandedFromProcessEnv },
         ]);
-        loadedVars[key] = value;
-        if (expandedFromProcessEnv) taintedLoadedVars.add(key);
-        else taintedLoadedVars.delete(key);
+        loadedVars[foldedKey] = value;
+        if (expandedFromProcessEnv) taintedLoadedVars.add(foldedKey);
+        else taintedLoadedVars.delete(foldedKey);
         totalVars++;
 
         // Log only the key name and value length — never any part of the value.
