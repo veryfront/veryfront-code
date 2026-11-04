@@ -15,6 +15,9 @@ const IntrinsicString = String;
 const RegExpPrototypeExec = RegExp.prototype.exec;
 const StringPrototypeSlice = String.prototype.slice;
 
+// Error summaries are bounded to 16 Ki UTF-16 code units. Oversized text is
+// replaced in full so native RegExp resource limits cannot bypass redaction.
+const MAX_FREE_TEXT_LENGTH = 16_384;
 const REDACTION_FAILED = "<redacted path>";
 const UNREADABLE_ERROR = "<unreadable error>";
 
@@ -189,6 +192,7 @@ const FREE_TEXT_PATTERN = new RegExp(
  */
 export function redactFreeText(text: string): string {
   try {
+    if (text.length > MAX_FREE_TEXT_LENGTH) return REDACTION_FAILED;
     return replaceMatches(text, FREE_TEXT_PATTERN, (match) => {
       if (match[1] !== undefined) return fileUrlName(match[1]);
       if (match[2] !== undefined) return remoteOrigin(match[2]);

@@ -101,6 +101,24 @@ describe("redactFreeText", () => {
     }
   });
 
+  it("preserves ordinary redaction through the free-text size boundary", () => {
+    const maximumLength = 16_384;
+    const message = " https://example.test/private?token=hidden /srv/alice/x.ts";
+    const padding = "x".repeat(maximumLength - message.length);
+    assertEquals(
+      redactFreeText(padding + message),
+      padding + " https://example.test x.ts",
+    );
+    assertEquals(redactFreeText("x".repeat(maximumLength)), "x".repeat(maximumLength));
+    assertEquals(redactFreeText("x".repeat(maximumLength + 1)), "<redacted path>");
+  });
+
+  it("fails closed for oversized error text containing host paths", () => {
+    const message = "open /srv/alice/" + "directory/".repeat(2_000) + "source.ts";
+    assertEquals(redactFreeText(message), "<redacted path>");
+    assertEquals(redactedErrorMessage(new Error(message)), "<redacted path>");
+  });
+
   it("stays linear on crafted input", () => {
     const crafted = "'/x" + " a/".repeat(20_000) + " \\B\\".repeat(20_000) + " /a b" +
       "/b.".repeat(20_000) + " /c" + "/".repeat(20_000) + " " + "\\n".repeat(20_000) +
