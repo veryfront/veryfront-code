@@ -779,7 +779,7 @@ describe("SSRDependencyValidator", () => {
           ["/project/page.tsx", "/project/deep.ts"],
         ),
       Error,
-      "Import chain: /project/page.tsx -> /project/deep.ts",
+      "Import chain: page.tsx -> deep.ts",
     );
     assertEquals(transforms, 0);
   });

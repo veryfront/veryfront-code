@@ -19,6 +19,7 @@ import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { isAbsolute } from "#veryfront/platform/compat/path/index.ts";
 import { BUILD_FAILED, createError, toError, VeryfrontError } from "#veryfront/errors";
 import { rendererLogger, throwIfAborted } from "#veryfront/utils";
+import { sanitizePathForDisplay } from "#veryfront/security";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import {
   type CapturedSnapshotReader,
@@ -47,6 +48,9 @@ const arrayJoin = Array.prototype.join;
 const arrayPush = Array.prototype.push;
 const mapConstructor = Map;
 const mapForEach = Map.prototype.forEach;
+const mapDelete = Map.prototype.delete;
+const mapGet = Map.prototype.get;
+const mapSize = Object.getOwnPropertyDescriptor(Map.prototype, "size")!.get!;
 const mapSet = Map.prototype.set;
 const setConstructor = Set;
 const setAdd = Set.prototype.add;
@@ -104,15 +108,20 @@ function importChainIncludes(chain: ImportChain, path: string): boolean {
   return false;
 }
 
-function formatImportChain(chain: ImportChain): string {
-  return joinStringArray(chain, " -> ");
+/** Project-relative so build errors never show machine paths. */
+function formatImportChain(chain: ImportChain, projectDir: string): string {
+  const displayed: string[] = [];
+  for (let index = 0; index < chain.length; index++) {
+    displayed[index] = sanitizePathForDisplay(chain[index]!, projectDir);
+  }
+  return joinStringArray(displayed, " -> ");
 }
 
-function circularImportError(chain: ImportChain): Error {
+function circularImportError(chain: ImportChain, projectDir: string): Error {
   return toError(
     createError({
       type: "build",
-      message: `Circular import is not supported in SSR: ${formatImportChain(chain)}`,
+      message: `Circular import is not supported in SSR: ${formatImportChain(chain, projectDir)}`,
       context: { file: chain[chain.length - 1], phase: "dependency-resolution" },
     }),
   );
@@ -123,15 +132,86 @@ export function importChainTooLongError(
   filePath: string,
   depth: number,
   chain: ImportChain,
+  projectDir: string,
 ): Error {
   return toError(
     createError({
       type: "build",
       message: `Max transform depth exceeded (${MAX_TRANSFORM_DEPTH}, depth=${depth}) for ` +
-        `${filePath}. Import chain: ${formatImportChain(chain)}`,
+        `${sanitizePathForDisplay(filePath, projectDir)}. ` +
+        `Import chain: ${formatImportChain(chain, projectDir)}`,
       context: { file: filePath, phase: "transform" },
     }),
   );
+}
+
+/**
+ * Imports whose dependency transform is still pending, as importer ->
+ * dependency -> count, per import graph scope. Concurrent transforms of one
+ * scope share in-progress work, so a cycle can span two transforms whose own
+ * import chains each look acyclic: A waits on B's transform while B waits on
+ * A's. An import that would close a loop in this graph is such a cycle.
+ */
+const activeImportEdges = new mapConstructor<string, Map<string, Map<string, number>>>();
+
+function scopeEdges(scope: string): Map<string, Map<string, number>> {
+  let edges = reflectApply(mapGet, activeImportEdges, [scope]) as
+    | Map<string, Map<string, number>>
+    | undefined;
+  if (!edges) {
+    edges = new mapConstructor<string, Map<string, number>>();
+    reflectApply(mapSet, activeImportEdges, [scope, edges]);
+  }
+  return edges;
+}
+
+/** The pending import path from `from` to `to`, or undefined. */
+function findActiveImportPath(scope: string, from: string, to: string): string[] | undefined {
+  const edges = reflectApply(mapGet, activeImportEdges, [scope]) as
+    | Map<string, Map<string, number>>
+    | undefined;
+  if (!edges) return undefined;
+  const visited = new setConstructor<string>();
+  const search = (node: string, path: string[]): string[] | undefined => {
+    if (node === to) return path;
+    if (reflectApply(setHas, visited, [node])) return undefined;
+    reflectApply(setAdd, visited, [node]);
+    const next = reflectApply(mapGet, edges, [node]) as Map<string, number> | undefined;
+    if (!next) return undefined;
+    let found: string[] | undefined;
+    reflectApply(mapForEach, next, [(_count: number, dependency: string) => {
+      if (!found) found = search(dependency, extendImportChain(path, dependency));
+    }]);
+    return found;
+  };
+  return search(from, [from]);
+}
+
+function addActiveImportEdge(scope: string, importer: string, dependency: string): () => void {
+  const edges = scopeEdges(scope);
+  let dependencies = reflectApply(mapGet, edges, [importer]) as Map<string, number> | undefined;
+  if (!dependencies) {
+    dependencies = new mapConstructor<string, number>();
+    reflectApply(mapSet, edges, [importer, dependencies]);
+  }
+  const count = (reflectApply(mapGet, dependencies, [dependency]) as number | undefined) ?? 0;
+  reflectApply(mapSet, dependencies, [dependency, count + 1]);
+  const pending = dependencies;
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    const remaining = (reflectApply(mapGet, pending, [dependency]) as number) - 1;
+    if (remaining > 0) {
+      reflectApply(mapSet, pending, [dependency, remaining]);
+      return;
+    }
+    reflectApply(mapDelete, pending, [dependency]);
+    if (reflectApply(mapSize, pending, []) === 0) reflectApply(mapDelete, edges, [importer]);
+    if (reflectApply(mapSize, edges, []) === 0) {
+      reflectApply(mapDelete, activeImportEdges, [scope]);
+    }
+  };
 }
 
 function mapBatch<T, U>(
@@ -341,6 +421,8 @@ export class SSRDependencyValidator {
     ) => Promise<string>,
     private adapter: RuntimeAdapter,
     private projectDir: string,
+    /** Modules that share in-progress transforms share a scope. */
+    private importGraphScope: string = projectDir,
   ) {
     // Symlink-free semantics are authority, so only an own data property
     // counts, exactly as FSAdapterWrapper captures it: an inherited value
@@ -411,7 +493,9 @@ export class SSRDependencyValidator {
     throwIfAborted(signal);
     // Returning no dependencies here would let a cached module pass
     // validation with an unchecked import tree.
-    if (depth > MAX_TRANSFORM_DEPTH) throw importChainTooLongError(filePath, depth, importChain);
+    if (depth > MAX_TRANSFORM_DEPTH) {
+      throw importChainTooLongError(filePath, depth, importChain, this.projectDir);
+    }
 
     const parseResult = await parseLocalImports(
       code,
@@ -524,18 +608,40 @@ export class SSRDependencyValidator {
             const depChain = extendImportChain(importChain, depPath);
             // A module's output path is derived from its dependencies' output
             // paths, so a module on its own import chain would wait on itself.
-            if (importChainIncludes(importChain, depPath)) throw circularImportError(depChain);
-
-            const depSource = await this.readLocalImportSource(imp, localFs);
-            const depEntry = await this.transformWithDependencies(
+            if (importChainIncludes(importChain, depPath)) {
+              throw circularImportError(depChain, this.projectDir);
+            }
+            // Check and register in one synchronous step, so two transforms
+            // closing the same loop cannot both pass the check.
+            const pendingLoop = findActiveImportPath(this.importGraphScope, depPath, fromFilePath);
+            if (pendingLoop) {
+              let cycle: string[] = [fromFilePath];
+              for (let index = 0; index < pendingLoop.length; index++) {
+                cycle = extendImportChain(cycle, pendingLoop[index]!);
+              }
+              throw circularImportError(cycle, this.projectDir);
+            }
+            const releaseImportEdge = addActiveImportEdge(
+              this.importGraphScope,
+              fromFilePath,
               depPath,
-              depSource,
-              depth + 1,
-              dependencyHashCache,
-              signal,
-              options,
-              depChain,
             );
+
+            let depEntry: ModuleCacheEntry;
+            try {
+              const depSource = await this.readLocalImportSource(imp, localFs);
+              depEntry = await this.transformWithDependencies(
+                depPath,
+                depSource,
+                depth + 1,
+                dependencyHashCache,
+                signal,
+                options,
+                depChain,
+              );
+            } finally {
+              releaseImportEdge();
+            }
 
             setMapValue(
               importPathMap,

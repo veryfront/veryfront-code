@@ -438,6 +438,8 @@ export class SSRModuleLoader {
       (crossImport, signal) => this.transformCrossProjectImport(crossImport, signal),
       options.adapter,
       options.projectDir,
+      // In-progress transforms are shared per project and content source.
+      `${options.projectId ?? ""}\0${options.contentSourceId ?? ""}\0${options.projectDir}`,
     );
   }
 
@@ -845,7 +847,7 @@ export class SSRModuleLoader {
         depth,
         maxDepth: MAX_TRANSFORM_DEPTH,
       });
-      throw importChainTooLongError(filePath, depth, importChain);
+      throw importChainTooLongError(filePath, depth, importChain, this.options.projectDir);
     }
 
     let code = source ?? (await this.options.adapter.fs.readFile(filePath));
