@@ -29,8 +29,11 @@ it("settles startup integration discovery before dev command stop and done compl
       });
       setLogLevel(LogLevel.DEBUG);
       const printed = [];
+      const warningPrinted = Promise.withResolvers();
+      const warningResponse = Promise.withResolvers();
+      let exerciseWarning = false;
       const originalLog = console.log;
-      console.log = (...args) => { printed.push(args.join(" ")); originalLog(...args); };
+      console.log = (...args) => { const line = args.join(" "); printed.push(line); if (line.includes("integration connect")) warningPrinted.resolve(); originalLog(...args); };
       const unexpectedRequests = [];
       let requests = 0;
       let transportAborted = false;
@@ -60,6 +63,7 @@ it("settles startup integration discovery before dev command stop and done compl
             assertEquals(new Headers(init?.headers).get("x-veryfront-project-slug"), project.slug);
             requests++;
             started.resolve();
+            if (exerciseWarning) return warningResponse.promise;
             return new Promise((resolve, reject) => {
               // Bound a broken shutdown so the regression fails instead of hanging.
               const timeout = setTimeout(() => resolve(Response.json({ tools: [] })), 1500);
@@ -117,6 +121,26 @@ it("settles startup integration discovery before dev command stop and done compl
             await server.stop();
           }
           }
+          exerciseWarning = true;
+          started = Promise.withResolvers();
+          const warningServer = await devCommand({ projectDir: context.projectDir, port: 0, demoMode: true, hmr: false });
+          const originalTrim = String.prototype.trim;
+          let warningTimeout;
+          try {
+            const diagnosticWindow = new Promise((_, reject) => {
+              warningTimeout = setTimeout(() => reject(new Error("Connection command was not printed")), 5000);
+            });
+            await Promise.race([started.promise, diagnosticWindow]);
+            const response = new Response('{"tools":[]}', { headers: { "content-length": "12" } });
+            String.prototype.trim = () => { throw new Error("project trim replacement"); };
+            warningResponse.resolve(response);
+            await Promise.race([warningPrinted.promise, diagnosticWindow]);
+          } finally {
+            String.prototype.trim = originalTrim;
+            clearTimeout(warningTimeout);
+            await warningServer.stop();
+          }
+          assertEquals(printed.some(line => line.includes("integration connect salesforce --project shutdown-demo")), true);
         });
       });
       unsubscribe();
