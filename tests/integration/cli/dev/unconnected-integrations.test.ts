@@ -262,9 +262,11 @@ describe("dev integration source discovery", () => {
       const response = new Response('{"tools":[]}', { headers: { "content-length": "12" } });
       const envKey = "VERYFRONT_API_URL";
       const previousUrl = Deno.env.get(envKey);
+      const previousCi = Deno.env.get("CI");
       let lines: string[] = [];
       try {
         Deno.env.set(envKey, "https://api.test");
+        Deno.env.set("CI", "true");
         getEnvironmentConfig();
         agentRegistry.register("trim-agent", {
           id: "trim-agent",
@@ -283,6 +285,8 @@ describe("dev integration source discovery", () => {
         agentRegistry.delete("trim-agent");
         if (previousUrl === undefined) Deno.env.delete(envKey);
         else Deno.env.set(envKey, previousUrl);
+        if (previousCi === undefined) Deno.env.delete("CI");
+        else Deno.env.set("CI", previousCi);
       }
       assertEquals(lines, [
         "Salesforce isn't connected. Agent trim-agent needs it.",
