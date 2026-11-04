@@ -5,6 +5,7 @@ import {
   resolvePrivatePromise,
 } from "#veryfront/security/private-promise.ts";
 import { defineOwnDataProperty } from "#veryfront/security/own-data-property.ts";
+import { mapPrivateArray } from "#veryfront/security/private-array.ts";
 import { serverLogger } from "#veryfront/utils";
 import type { RemoteToolSource, ToolExecutionContext } from "./types.ts";
 
@@ -20,26 +21,23 @@ export async function disposeRemoteToolSources(
   context?: ToolExecutionContext,
 ): Promise<void> {
   const seen = createPrivateSet<RemoteToolSource>();
-  const pending: Promise<DisposeOutcome>[] = [];
+  const distinct: RemoteToolSource[] = [];
   for (const source of sources) {
     if (seen.has(source)) continue;
     seen.add(source);
-    // Start every disposal before awaiting any, including through a source whose
-    // dispose throws synchronously.
-    const disposal = chainPrivatePromise(resolvePrivatePromise(), () => source.dispose?.(context));
-    defineOwnDataProperty(
-      pending,
-      pending.length,
+    defineOwnDataProperty(distinct, distinct.length, source);
+  }
+  // Start every disposal before awaiting any, including through a source whose
+  // dispose throws synchronously.
+  const outcomes = await allPrivatePromises(
+    mapPrivateArray(distinct, (source) =>
       chainPrivatePromise<void, DisposeOutcome>(
-        disposal,
+        chainPrivatePromise(resolvePrivatePromise(), () => source.dispose?.(context)),
         () => ({ failed: false }),
         (error) => ({ failed: true, error }),
-      ),
-    );
-  }
-  const outcomes = await allPrivatePromises(pending);
-  for (let index = 0; index < outcomes.length; index++) {
-    const outcome = outcomes[index]!;
+      )),
+  );
+  for (const outcome of outcomes) {
     if (outcome.failed) throw outcome.error;
   }
 }

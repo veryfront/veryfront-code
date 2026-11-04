@@ -1311,8 +1311,8 @@ async function terminateMcpSessions(
   } finally {
     clearTimeout(timer);
   }
-  for (let index = 0; index < outcomes.length; index++) {
-    if (outcomes[index] !== undefined) return outcomes[index];
+  for (const outcome of outcomes) {
+    if (outcome !== undefined) return outcome;
   }
   return undefined;
 }
@@ -1745,15 +1745,16 @@ function createRemoteMCPToolSourceWithFetch(
       for (const lease of leases) {
         if (!context || lease.runId === context.runId) lease.closed = true;
       }
-      const handshakes: Promise<unknown>[] = [];
+      const handshakes: Array<{ settled: Promise<RemoteMcpSession> }> = [];
       for (const entry of initializing) {
-        defineOwnDataProperty(
-          handshakes,
-          handshakes.length,
-          chainPrivatePromise(entry[1], () => undefined, () => undefined),
-        );
+        defineOwnDataProperty(handshakes, handshakes.length, { settled: entry[1] });
       }
-      await allPrivatePromises(handshakes);
+      await allPrivatePromises(
+        mapPrivateArray(
+          handshakes,
+          (handshake) => chainPrivatePromise(handshake.settled, () => undefined, () => undefined),
+        ),
+      );
       const selected: Array<{ endpoint: string; headers: Headers }> = [];
       // Native iterator entries are indexed directly. Destructuring would call
       // a project-patched Array iterator with the retained session credentials.
