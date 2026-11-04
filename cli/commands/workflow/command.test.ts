@@ -1,10 +1,13 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
-import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { ensureBuiltinSchemaValidator } from "#veryfront/extensions/builtin-schema-validator.ts";
 import { defineSchema } from "#veryfront/schemas";
 import { tool } from "#veryfront/tool";
 import { toolRegistry } from "#veryfront/tool/registry.ts";
 import { step, workflow } from "#veryfront/workflow";
+import { stop as stopEsbuild } from "veryfront/extensions/bundler";
+import { withTempDir } from "#veryfront/testing/deno-compat.ts";
 import {
   clearProjectAgentRuntimeRegistries,
   type ProjectAgentRuntimeDiscovery,
@@ -84,6 +87,9 @@ function createEmptyDiscoveryResult(
 }
 
 describe("workflow command", () => {
+  // Each command owns and tears down its extensions, as a fresh CLI process would.
+  beforeEach(() => ensureBuiltinSchemaValidator());
+
   afterEach(() => {
     restoreEnv();
     clearProjectAgentRuntimeRegistries();
@@ -178,6 +184,57 @@ describe("workflow command", () => {
     } finally {
       await Deno.remove(projectDir, { recursive: true });
     }
+  });
+
+  it("runs a workflow discovered from local project files", async () => {
+    await withTempDir(async (projectDir) => {
+      const resultPath = `${projectDir}/.veryfront/result.json`;
+
+      try {
+        await Deno.mkdir(`${projectDir}/tools`);
+        await Deno.mkdir(`${projectDir}/workflows`);
+        await Deno.writeTextFile(
+          `${projectDir}/tools/pong.ts`,
+          [
+            'import { tool } from "veryfront/tool";',
+            'import { defineSchema } from "veryfront/schemas";',
+            "export default tool({",
+            '  id: "pong",',
+            '  description: "Reply to a ping.",',
+            "  inputSchema: defineSchema((v) => v.object({}))(),",
+            '  execute: () => ({ reply: "pong" }),',
+            "});",
+          ].join("\n"),
+        );
+        await Deno.writeTextFile(
+          `${projectDir}/workflows/ping.ts`,
+          [
+            'import { step, workflow } from "veryfront/workflow";',
+            "export default workflow({",
+            '  id: "ping",',
+            '  description: "Ping workflow",',
+            '  steps: [step("start", { tool: "pong", input: {} })],',
+            "});",
+          ].join("\n"),
+        );
+        Deno.env.delete("REDIS_URL");
+        Deno.env.set("VERYFRONT_RUN_RESULT_PATH", resultPath);
+
+        await runWorkflowCommand({
+          action: "run",
+          name: "ping",
+          input: undefined,
+          debug: false,
+          projectDir,
+        });
+
+        assertEquals(JSON.parse(await Deno.readTextFile(resultPath)), {
+          start: { reply: "pong" },
+        });
+      } finally {
+        await stopEsbuild();
+      }
+    }, { prefix: "vf-workflow-command-" });
   });
 
   it("hydrates runtime auth from the stored login token and project config", async () => {

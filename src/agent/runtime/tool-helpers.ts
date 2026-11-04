@@ -1,3 +1,4 @@
+import { getCatalogToolDefinition } from "#veryfront/integrations/catalog-tool-definition.ts";
 import {
   applyRecoveryToolExecutionPolicy,
   assertExecutionOwnership,
@@ -21,7 +22,7 @@ import {
   getActivePlatformToolDependencies,
 } from "#veryfront/agent/service/auth.ts";
 import { AsyncLocalStorage } from "node:async_hooks";
-import { mapPrivateArray } from "#veryfront/security/private-array.ts";
+import { forEachPrivateArray, mapPrivateArray } from "#veryfront/security/private-array.ts";
 import { stripLeadingEmptyObjectPlaceholder } from "../streaming/tool-input.ts";
 /**
  * Tool Helpers
@@ -47,6 +48,7 @@ import {
 import type { RemoteIntegrationToolDiscoveryResult } from "#veryfront/integrations/remote-tools.ts";
 import {
   isIntegrationToolAllowedBySourcePolicy,
+  parseIntegrationToolIdentity,
   type SourceIntegrationPolicyManifest,
 } from "#veryfront/integrations/source-policy.ts";
 import { compareStrings } from "#veryfront/utils/compare.ts";
@@ -248,10 +250,19 @@ export function parseToolArgs(
 }
 
 /**
- * Check if a tool is dynamic (for SSE event formatting).
+ * Check if a tool is dynamic (for SSE event formatting): the tool object in the
+ * agent config or the project registry entry says so. Remote-source tools under
+ * a canonical integration name live only in the agent config.
  */
-export function isDynamicTool(name: string): boolean {
-  return toolRegistry.get(name)?.type === "dynamic";
+export function isDynamicTool(
+  name: string,
+  toolsConfig?: true | Record<string, ToolConfigEntry>,
+): boolean {
+  const entry = typeof toolsConfig === "object" && intrinsicHasOwn(toolsConfig, name)
+    ? toolsConfig[name]
+    : undefined;
+  return (typeof entry === "object" && entry.type === "dynamic") ||
+    toolRegistry.get(name)?.type === "dynamic";
 }
 
 /**
@@ -329,12 +340,36 @@ function throwUnknownConfiguredToolsError(
   );
 }
 
+async function getUnconnectedIntegrationToolDefinition(
+  toolName: string,
+  discoveredToolNames: Iterable<string>,
+  discovery: RemoteIntegrationToolDiscoveryResult | undefined,
+  catalogDiscovered: boolean,
+  allowedRemoteToolNames: string[] | undefined,
+): Promise<ToolDefinition | undefined> {
+  if (
+    !catalogDiscovered || discovery?.status !== "ok" ||
+    !isRemoteToolAllowed(toolName, allowedRemoteToolNames)
+  ) {
+    return undefined;
+  }
+  const integration = parseIntegrationToolIdentity(toolName)?.integration;
+  if (integration === undefined) return undefined;
+  for (const discovered of discoveredToolNames) {
+    if (parseIntegrationToolIdentity(discovered)?.integration === integration) return undefined;
+  }
+  return getCatalogToolDefinition(toolName);
+}
+
 async function getRemoteToolDefinitions(options?: {
+  onSourceListFailure?: () => void;
   includeIntegrationTools?: boolean;
   allowedRemoteToolNames?: string[];
   remoteToolSources?: RemoteToolSource[];
   remoteToolContext?: ToolExecutionContext;
   onIntegrationToolDiscovery?: (result: RemoteIntegrationToolDiscoveryResult) => void;
+  onIntegrationCatalogDiscovered?: () => void;
+  discoveredIntegrationToolNames?: Set<string>;
 }): Promise<ToolDefinition[]> {
   const remoteToolContext = options?.remoteToolContext;
   const definitions: ToolDefinition[] = [];
@@ -374,6 +409,7 @@ async function getRemoteToolDefinitions(options?: {
         }
       }
     } catch (error) {
+      options?.onSourceListFailure?.();
       logger.warn("Failed to fetch remote tool definitions from source", {
         sourceId: source.id,
         error: error instanceof Error ? error.message : String(error),
@@ -386,15 +422,16 @@ async function getRemoteToolDefinitions(options?: {
   }
 
   try {
-    const { getRemoteIntegrationToolDiscovery } = await import(
+    const { getRemoteIntegrationToolDiscoveryWithEvidence } = await import(
       "#veryfront/integrations/remote-tools.ts"
     );
-    const discovery = await getRemoteIntegrationToolDiscovery(remoteToolContext);
+    const discovery = await getRemoteIntegrationToolDiscoveryWithEvidence(remoteToolContext, {
+      onDiscoveredToolName: (name) => options?.discoveredIntegrationToolNames?.add(name),
+      onCatalogDiscovered: options?.onIntegrationCatalogDiscovered,
+    });
     options?.onIntegrationToolDiscovery?.(discovery);
     if (discovery.status === "ok") {
-      for (const def of discovery.tools) {
-        addDefinition(def);
-      }
+      forEachPrivateArray(discovery.tools, (def) => addDefinition(def));
     }
   } catch {
     return definitions;
@@ -784,7 +821,28 @@ export async function getAvailableTools(
   }
 
   const tools: ToolDefinition[] = [];
-  const remoteDefs = strictConfiguredToolsOnly ? [] : await getRemoteToolDefinitions(options);
+  // Only raw platform discovery proves that a platform integration is connected.
+  const discoveredIntegrationToolNames = createPrivateSet<string>();
+  let integrationDiscovery: RemoteIntegrationToolDiscoveryResult | undefined;
+  let integrationCatalogDiscovered = false;
+  let sourceListFailed = false;
+  const remoteDefs = strictConfiguredToolsOnly ? [] : await getRemoteToolDefinitions({
+    onSourceListFailure: () => {
+      sourceListFailed = true;
+    },
+    discoveredIntegrationToolNames,
+    onIntegrationCatalogDiscovered: () => {
+      integrationCatalogDiscovered = true;
+    },
+    includeIntegrationTools: options?.includeIntegrationTools,
+    allowedRemoteToolNames: options?.allowedRemoteToolNames,
+    remoteToolSources: options?.remoteToolSources,
+    remoteToolContext: options?.remoteToolContext,
+    onIntegrationToolDiscovery: (result) => {
+      integrationDiscovery = result;
+      options?.onIntegrationToolDiscovery?.(result);
+    },
+  });
   if (!strictConfiguredToolsOnly) {
     appendForwardedToolDefinitions(
       remoteDefs,
@@ -848,6 +906,25 @@ export async function getAvailableTools(
           options?.unavailableOptionalRemoteToolPrefixes,
         )
       ) {
+        continue;
+      }
+
+      // Discovery lists only connected integrations. A declared catalog tool of an
+      // unconnected one is exposed so the call returns the API's connect result.
+      const unconnectedToolDefinition = sourceListFailed
+        ? undefined
+        : await getUnconnectedIntegrationToolDefinition(
+          name,
+          discoveredIntegrationToolNames,
+          integrationDiscovery,
+          integrationCatalogDiscovered,
+          options?.allowedRemoteToolNames,
+        );
+      if (unconnectedToolDefinition) {
+        if (!hasToolDefinitionName(tools, name)) {
+          logToolDefinition(name, unconnectedToolDefinition);
+          intrinsicReflectApply(intrinsicArrayPush, tools, [unconnectedToolDefinition]);
+        }
         continue;
       }
 

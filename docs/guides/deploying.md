@@ -109,6 +109,11 @@ Deploy uses the last verified Push receipt, confirms the release source digest,
 and prints the environment URL. If the receipt is missing, Deploy first runs a
 quiet Push.
 
+By default, Deploy waits up to ten minutes for the release's browser assets to
+be ready. A timeout does not establish build failure. Check the existing
+release's build state before you run Deploy again, because another Deploy
+creates a new release.
+
 For a named nonproduction environment:
 
 ```bash
