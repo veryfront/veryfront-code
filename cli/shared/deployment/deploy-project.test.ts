@@ -40,6 +40,7 @@ import {
 import {
   assertProjectOwnership,
   createDeployProject,
+  DEFAULT_RELEASE_ASSET_MANIFEST_TIMEOUT_MS,
   type DeployEvent,
   type DeployProjectRequest,
   type DeployStepName,
@@ -3135,6 +3136,84 @@ describe("release asset manifest", () => {
     await time.tickAsync(50);
 
     await rejection;
+    assertEquals(reads, 3);
+  });
+
+  it("waits by default for a hosted build that takes longer than two minutes", async () => {
+    // A two-minute default reported a slow but successful build as timed out.
+    using time = new FakeTime();
+    const readyAtMs = 130_000;
+    const controlPlane = helperControlPlane({
+      getReleaseAssetManifest: () =>
+        Promise.resolve(time.now >= readyAtMs ? readyManifest() : { state: "building" }),
+    });
+
+    const pending = waitForReleaseAssetManifest(controlPlane, PROJECT_SLUG, "release-1", {
+      expectedRoutes: ["/"],
+      pollIntervalMs: 10_000,
+    });
+    for (let elapsed = 0; elapsed <= readyAtMs; elapsed += 10_000) {
+      await time.tickAsync(10_000);
+    }
+
+    const result = await pending;
+    assertEquals(result.state, "ready");
+    assertEquals(DEFAULT_RELEASE_ASSET_MANIFEST_TIMEOUT_MS >= 300_000, true);
+  });
+
+  it("distinguishes the polling deadline from a build failure", async () => {
+    using time = new FakeTime();
+    const controlPlane = helperControlPlane({
+      getReleaseAssetManifest: () => Promise.resolve({ state: "building" }),
+    });
+
+    const rejection = assertRejects(
+      () =>
+        waitForReleaseAssetManifest(controlPlane, PROJECT_SLUG, "release-1", {
+          ...polling,
+          timeoutMs: 250,
+        }),
+      Error,
+      "This timeout does not mean the build failed",
+    );
+    await time.tickAsync(0);
+    await time.tickAsync(100);
+    await time.tickAsync(100);
+    await time.tickAsync(50);
+
+    await rejection;
+  });
+
+  it("keeps the build outcome uncertain after manifest reads fail", async () => {
+    using time = new FakeTime();
+    let reads = 0;
+    const unavailable = Object.assign(new Error("service unavailable"), { status: 503 });
+    const controlPlane = helperControlPlane({
+      getReleaseAssetManifest: () => {
+        reads++;
+        return reads === 1 ? Promise.resolve({ state: "building" }) : Promise.reject(unavailable);
+      },
+    });
+
+    const rejection = assertRejects(
+      () =>
+        waitForReleaseAssetManifest(controlPlane, PROJECT_SLUG, "release-1", {
+          ...polling,
+          timeoutMs: 250,
+        }),
+      Error,
+      "This timeout does not mean the build failed",
+    );
+    await time.tickAsync(0);
+    await time.tickAsync(100);
+    await time.tickAsync(100);
+    await time.tickAsync(50);
+
+    const error = await rejection;
+    assertInstanceOf(error, Error);
+    assertEquals(error.message.includes("last state: building"), true);
+    assertEquals(error.message.includes("last control-plane failure: HTTP 503"), true);
+    assertEquals(error.message.includes("The build has not failed"), false);
     assertEquals(reads, 3);
   });
 
