@@ -252,6 +252,7 @@ const WORKFLOW_PAUSE_CHECK_BACKOFF_MS = 30_000;
 /** Overall decision deadline; unknown authority leaves a resumable hold. */
 const DEFAULT_WORKFLOW_PAUSE_DECISION_TIMEOUT_MS = 60_000;
 const PROJECT_RUN_OBSERVATION_APPEND_TIMEOUT_MS = 30_000;
+const RELEASE_ASSET_FAILURE_REPORT_TIMEOUT_MS = 5_000;
 const PROJECT_RUN_OBSERVATION_APPEND_BATCH_EVENT_COUNT = 100;
 const PROJECT_RUN_OBSERVATION_FLUSH_DELAY_MS = 50;
 const PROJECT_RUN_OBSERVATION_MAX_QUEUED_EVENT_COUNT = 300;
@@ -5500,17 +5501,14 @@ async function executeReleaseAssetBuildRun(input: {
             input.signal,
             () => apiClient.writeReleaseAssetManifest(version, manifest, undefined, input.signal),
           ),
-        reportReleaseAssetManifestState: (version, state, error) =>
-          runWhileActive(
-            input.signal,
-            () =>
-              apiClient.updateReleaseAssetManifestState(
-                version,
-                state,
-                error,
-                undefined,
-                input.signal,
-              ),
+        reportReleaseAssetManifestState: (version, state, error, manifestVersion) =>
+          apiClient.updateReleaseAssetManifestState(
+            version,
+            state,
+            error,
+            undefined,
+            ReflectApply(RunStopTimeout, AbortSignal, [RELEASE_ASSET_FAILURE_REPORT_TIMEOUT_MS]),
+            manifestVersion,
           ),
         compileProjectCss: (...args) =>
           runWhileActive(input.signal, () => compileProjectCss(...args)),
