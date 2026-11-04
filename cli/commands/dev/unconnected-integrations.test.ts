@@ -23,7 +23,7 @@ describe("commands/dev/unconnected-integrations", () => {
     ]);
   });
 
-  it("recognizes all catalog tools that use connector-local names", () => {
+  it("does not promise Cloud connections for deployment-dependent catalog tools", () => {
     for (
       const name of [
         "aws__list-s3-buckets",
@@ -35,13 +35,23 @@ describe("commands/dev/unconnected-integrations", () => {
     ) {
       assertEquals(
         collectDeclaredIntegrations([{ agentId: "aws-agent", tools: { [name]: true } }]),
-        [
-          { integration: "aws", agentIds: ["aws-agent"] },
-        ],
+        [],
       );
     }
     assertEquals(
       collectDeclaredIntegrations([{ agentId: "typo", tools: { "aws__list-s3-bukets": true } }]),
+      [],
+    );
+  });
+
+  it("does not advise connection for adapter-only connectors the Cloud API does not publish", () => {
+    assertEquals(
+      collectDeclaredIntegrations([
+        {
+          agentId: "adapter-agent",
+          tools: { pipedrive__list_deals: true, shopify__list_products: true },
+        },
+      ]),
       [],
     );
   });

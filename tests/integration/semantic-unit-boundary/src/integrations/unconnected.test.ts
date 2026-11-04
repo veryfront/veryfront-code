@@ -6,6 +6,31 @@ import { resolveStudioOrigin } from "#veryfront/integrations/studio-origin.ts";
 import { formatUnconnectedIntegrationMessage } from "#veryfront/integrations/unconnected.ts";
 
 describe("integrations/connection diagnostics", () => {
+  it("does not infer a Studio from a project-replaced URL parser", () => {
+    const OriginalURL = globalThis.URL;
+    const hostname = Object.getOwnPropertyDescriptor(OriginalURL.prototype, "hostname")!;
+    let unknown: string | undefined;
+    let known: string | undefined;
+    try {
+      Object.defineProperty(OriginalURL.prototype, "hostname", {
+        configurable: true,
+        get: () => "api.veryfront.org",
+      });
+      globalThis.URL = class extends OriginalURL {
+        constructor(_input: string | URL, _base?: string | URL) {
+          super("https://api.veryfront.org");
+        }
+      };
+      unknown = resolveStudioOrigin("https://custom-api.example");
+      known = resolveStudioOrigin("https://api.veryfront.com");
+    } finally {
+      globalThis.URL = OriginalURL;
+      Object.defineProperty(OriginalURL.prototype, "hostname", hostname);
+    }
+    assertEquals(unknown, undefined);
+    assertEquals(known, "https://veryfront.com");
+  });
+
   it("does not dispatch through built-ins that project code replaced", () => {
     const arrayIncludes = Array.prototype.includes;
     const stringIncludes = String.prototype.includes;

@@ -1,4 +1,5 @@
 import { connectors } from "./_data.ts";
+import { SUPPORTED_INTEGRATION_NAMES } from "./feature-flags.ts";
 import { createPrivateSet } from "#veryfront/security/private-set.ts";
 import {
   forEachPrivateArray,
@@ -13,8 +14,22 @@ import {
 } from "#veryfront/security/private-text.ts";
 import { parseIntegrationToolIdentity } from "./source-policy.ts";
 
+// Cloud publishes the framework defaults plus these API-promoted connectors. Local
+// feature flags cannot prove that a remote deployment publishes any other connector.
+const cloudConnectionIntegrations = createPrivateSet<string>();
+forEachPrivateArray(SUPPORTED_INTEGRATION_NAMES, (name) => cloudConnectionIntegrations.add(name));
+forEachPrivateArray([
+  "activecampaign",
+  "persona",
+  "sap",
+  "salesforce",
+  "servicenow",
+  "zendesk",
+], (name) => cloudConnectionIntegrations.add(name));
+
 const catalogToolNames = createPrivateSet<string>();
 forEachPrivateArray(connectors, (connector) => {
+  if (!cloudConnectionIntegrations.has(connector.name)) return;
   forEachPrivateArray(connector.tools, (tool) => {
     const catalogId = tool.id ?? tool.name;
     catalogToolNames.add(
@@ -31,7 +46,7 @@ export interface UnconnectedIntegrationTarget {
 /**
  * Integrations that the configured tool names declare but the project has not connected.
  *
- * A name qualifies only when it is a canonical `integration__tool` name present in the catalog
+ * A name qualifies only when it is a canonical `integration__tool` name in the default Cloud catalog
  * and discovery returned no tool for that integration. A name whose integration
  * has discovered tools is a misspelling, not a missing connection.
  */

@@ -26,7 +26,11 @@ import {
   parseIntegrationToolIdentity,
 } from "#veryfront/integrations/source-policy.ts";
 import { getRuntimeRequestContext } from "#veryfront/platform/runtime-request-context.ts";
-import { getHostEnv, getHostSecret } from "#veryfront/platform/compat/process/env.ts";
+import {
+  getHostBootEnv,
+  getHostEnv,
+  getHostSecret,
+} from "#veryfront/platform/compat/process/env.ts";
 import { createVeryfrontApiRequestUrlResolver } from "#veryfront/platform/adapters/veryfront-api-url.ts";
 import {
   type BoundedJsonValue,
@@ -311,7 +315,7 @@ export function getRemoteIntegrationProjectTarget(
   const { baseUrl, token } = resolveRequestAuth(requestContext);
   const projectSlug = resolveRequestProjectSlug(requestContext);
   if (!baseUrl || !token || !projectSlug) return undefined;
-  const studioOrigin = resolveStudioOrigin(baseUrl, getHostEnv("STUDIO_URL"));
+  const studioOrigin = resolveStudioOrigin(baseUrl, getHostBootEnv("STUDIO_URL"));
   return studioOrigin ? { projectSlug, studioOrigin } : { projectSlug };
 }
 

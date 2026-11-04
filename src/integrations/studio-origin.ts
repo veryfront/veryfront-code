@@ -1,9 +1,13 @@
+const NativeURL = URL;
+const urlHostname = Object.getOwnPropertyDescriptor(NativeURL.prototype, "hostname")!.get!;
+const apply = Reflect.apply;
+
 /** Resolve the Studio origin that pairs with a Veryfront API base URL, or undefined when unknown. */
 export function resolveStudioOrigin(apiBaseUrl: string, studioUrl?: string): string | undefined {
   if (studioUrl) return studioUrl;
   let hostname: string;
   try {
-    hostname = new URL(apiBaseUrl).hostname;
+    hostname = apply(urlHostname, new NativeURL(apiBaseUrl), []) as string;
   } catch {
     return undefined;
   }
