@@ -5256,8 +5256,14 @@ async function executeEvalRun(
     // A disk adapter keeps resolving dataset paths against `baseDir`.
     ...(isVirtualFilesystem(ctx.adapter.fs)
       ? {
+        // Forward cancellation so an aborted eval stops a pending remote dataset fetch.
         readTextFile: async (path: string) =>
-          textFromFileContent(await ctx.adapter.fs.readFile(path)),
+          textFromFileContent(
+            await ctx.adapter.fs.readFile(
+              path,
+              options.signal ? { signal: options.signal } : undefined,
+            ),
+          ),
       }
       : {}),
     runId: request.runId,

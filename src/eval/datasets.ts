@@ -10,8 +10,29 @@ function resolveDatasetPath(baseDir: string, filePath: string): string {
   return isAbsolute(filePath) ? filePath : join(baseDir, filePath);
 }
 
+/**
+ * A project file reader serves files relative to the project root only. Absolute paths would
+ * otherwise fall back to this host's disk, and `..` segments would escape the project, so both
+ * are rejected instead of being read from anywhere.
+ */
+function assertProjectRelativeDatasetPath(filePath: string): void {
+  if (isAbsolute(filePath) || /^[\\/]/.test(filePath) || /^[A-Za-z]:/.test(filePath)) {
+    throw createEvalValidationError(
+      `Dataset path ${filePath} must be relative to the project when read through the project files`,
+    );
+  }
+  if (filePath.split(/[\\/]/).includes("..")) {
+    throw createEvalValidationError(
+      `Dataset path ${filePath} must not contain '..' segments when read through the project files`,
+    );
+  }
+}
+
 function readDatasetText(context: EvalDatasetLoadContext, filePath: string): Promise<string> {
-  if (context.readTextFile && !isAbsolute(filePath)) return context.readTextFile(filePath);
+  if (context.readTextFile) {
+    assertProjectRelativeDatasetPath(filePath);
+    return context.readTextFile(filePath);
+  }
   return Deno.readTextFile(resolveDatasetPath(context.baseDir, filePath));
 }
 

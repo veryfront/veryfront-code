@@ -6325,6 +6325,101 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertEquals(receivedBranchName, "main");
   });
 
+  describe("eval dataset project file reader wiring", () => {
+    const datasetReport: EvalReport = {
+      kind: "eval-report",
+      runId: "run_eval_dataset_reader",
+      definitionId: "eval:deep-research",
+      targetKind: "agent",
+      target: "agent:researcher",
+      startedAt: "2026-06-20T10:00:00.000Z",
+      endedAt: "2026-06-20T10:00:01.000Z",
+      summary: { records: 0, passed: 0, failed: 0, passRate: 1, metrics: [] },
+      records: [],
+    };
+
+    async function runEvalWithFs(fs: Record<string, unknown>) {
+      let receivedOptions: Parameters<ProjectRunExecuteHandlerDeps["runEval"]>[1] | undefined;
+      let datasetText: string | undefined;
+      const handler = new ProjectRunExecuteHandler(createDeps({
+        runTask: runTaskDefinition,
+        runEval: async (_definition, options) => {
+          receivedOptions = options;
+          if (options.readTextFile) {
+            datasetText = await options.readTextFile("datasets/cases.jsonl");
+          }
+          return datasetReport;
+        },
+      }));
+      const { request, publicKeyPem } = await signedRequest(
+        "/api/control-plane/runs/run_eval_dataset_reader/execute",
+        {
+          runId: "run_eval_dataset_reader",
+          kind: "task",
+          target: "task:eval",
+          projectId: "proj-1",
+          config: { eval_id: "eval:deep-research" },
+          deadlineAt: new Date(Date.now() + 60_000).toISOString(),
+        },
+        { "x-token": "runtime-token" },
+      );
+      const baseCtx = createCtx(publicKeyPem);
+      const ctx = {
+        ...baseCtx,
+        adapter: { ...baseCtx.adapter, fs },
+      } as unknown as HandlerContext;
+      const result = await handler.handle(request, ctx);
+      assertExists(result.response);
+      assertEquals(result.response.status, 200);
+      return { receivedOptions, datasetText };
+    }
+
+    it("reads datasets through a virtual filesystem adapter and forwards the eval signal", async () => {
+      const reads: Array<{ path: string; signal: AbortSignal | undefined }> = [];
+      const virtualFs = {
+        isVeryfrontAdapter: () => true,
+        getUnderlyingAdapter: () => ({}),
+        isMultiProjectMode: () => false,
+        getAdapterType: () => "VeryfrontFSAdapter",
+        readFile: (path: string, readOptions?: { signal?: AbortSignal }) => {
+          reads.push({ path, signal: readOptions?.signal });
+          return Promise.resolve('{"id":"case-1","input":"hello"}\n');
+        },
+      };
+
+      const { receivedOptions, datasetText } = await runEvalWithFs(virtualFs);
+
+      assertExists(receivedOptions?.readTextFile);
+      assertEquals(datasetText, '{"id":"case-1","input":"hello"}\n');
+      assertEquals(reads.length, 1);
+      assertEquals(reads[0]!.path, "datasets/cases.jsonl");
+      assertExists(receivedOptions.signal);
+      assertExists(reads[0]!.signal);
+      assert(reads[0]!.signal === receivedOptions.signal);
+    });
+
+    it("omits the project file reader for a disk adapter so datasets resolve against baseDir", async () => {
+      let read = false;
+      const diskFs = {
+        isVeryfrontAdapter: () => false,
+        getUnderlyingAdapter: () => ({}),
+        isMultiProjectMode: () => false,
+        getAdapterType: () => "DenoFSAdapter",
+        readFile: () => {
+          read = true;
+          return Promise.resolve("");
+        },
+      };
+
+      const { receivedOptions } = await runEvalWithFs(diskFs);
+
+      assertExists(receivedOptions);
+      assertEquals("readTextFile" in receivedOptions, false);
+      assertEquals(receivedOptions.baseDir, "/project");
+      assertEquals(read, false);
+    });
+  });
+
   it("rejects schema-invalid eval input before the eval executes", async () => {
     let executed = false;
     const handler = new ProjectRunExecuteHandler(createDeps({

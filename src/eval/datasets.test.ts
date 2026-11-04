@@ -98,6 +98,40 @@ describe("eval/datasets", () => {
     assertEquals(requested, ["datasets/cases.json", "datasets/cases.jsonl"]);
   });
 
+  it("rejects absolute and parent-traversal paths instead of reading host disk when a project file reader is provided", async () => {
+    const root = await makeTempDir({ prefix: "vf-eval-dataset-host-disk-" });
+    try {
+      const hostPath = `${root}/host-secret.json`;
+      await Deno.writeTextFile(hostPath, JSON.stringify([{ id: "host", input: "secret" }]));
+      const requested: string[] = [];
+      const context = {
+        baseDir: root,
+        readTextFile: (path: string) => {
+          requested.push(path);
+          return Promise.resolve("[]");
+        },
+      };
+
+      for (
+        const path of [
+          hostPath,
+          "/datasets/cases.json",
+          "\\datasets\\cases.json",
+          "C:/datasets/cases.json",
+          "../host-secret.json",
+          "datasets/../../host-secret.json",
+          "datasets\\..\\..\\host-secret.json",
+        ]
+      ) {
+        await assertRejects(() => datasets.json(path).load(context), Error, "Dataset path");
+        await assertRejects(() => datasets.jsonl(path).load(context), Error, "Dataset path");
+      }
+      assertEquals(requested, []);
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
+  });
+
   it("grades a labelled JSONL corpus through a target-free dataset eval", async () => {
     const root = await makeTempDir({ prefix: "vf-eval-dataset-corpus-" });
     try {
