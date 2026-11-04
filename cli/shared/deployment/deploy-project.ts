@@ -283,9 +283,8 @@ const MAX_RELEASE_SOURCE_VERIFICATION_ATTEMPTS = 20;
 const MAX_RELEASE_SOURCE_VERIFICATION_DELAY_MS = 500;
 const DEFAULT_ENVIRONMENT_POLL_INTERVAL_MS = 2_000;
 const DEFAULT_ENVIRONMENT_TIMEOUT_MS = 120_000;
-// A hosted asset build of a large project routinely needs more than two
-// minutes, and the hosted run itself may last about five. Waiting less reports
-// a timeout for a build that is still running and will later succeed.
+// A hosted asset build of a large project can need more than two minutes.
+// Waiting less reports a timeout for a build that may still succeed.
 export const DEFAULT_RELEASE_ASSET_MANIFEST_TIMEOUT_MS = 600_000;
 
 async function emit(

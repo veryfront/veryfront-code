@@ -3140,8 +3140,7 @@ describe("release asset manifest", () => {
   });
 
   it("waits by default for a hosted build that takes longer than two minutes", async () => {
-    // Hosted builds of large projects took 65 to 134 s on 2026-11-03 and
-    // succeeded; a two-minute default reported those deploys as timed out.
+    // A two-minute default reported a slow but successful build as timed out.
     using time = new FakeTime();
     const readyAtMs = 130_000;
     const controlPlane = helperControlPlane({
