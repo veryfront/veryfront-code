@@ -1,5 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertStrictEquals,
+} from "#veryfront/testing/assert.ts";
 import { VeryfrontError } from "#veryfront/errors";
 import { getVeryfrontCloudBootstrap } from "#veryfront/platform/cloud/resolver.ts";
 import {
@@ -885,7 +890,9 @@ describe("eval/runner", () => {
 
   it("stops before loading a cancelled eval", async () => {
     const controller = new AbortController();
-    controller.abort(new Error("run cancelled"));
+    // Keep the expected reason rooted across Bun's AbortSignal garbage collection.
+    const reason = new Error("run cancelled");
+    controller.abort(reason);
     let loaded = false;
     const dataset = datasets.inline([{ id: "q1", input: "First" }]);
     dataset.load = async () => {
@@ -903,11 +910,12 @@ describe("eval/runner", () => {
         throw undefined;
       },
     });
-    await assertRejects(
+    const error = await assertRejects(
       () => runEval(definition, { signal: controller.signal, adapters: {} }),
       Error,
       "run cancelled",
     );
+    assertStrictEquals(error, reason);
     assertEquals(loaded, false);
   });
 

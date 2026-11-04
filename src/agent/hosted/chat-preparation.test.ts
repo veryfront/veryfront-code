@@ -1830,24 +1830,13 @@ Deno.test("prepareHostedChatExecution preserves allowed remote tool history", as
       }),
   });
 
-  assertEquals(
-    result.finalMessages.some((message) =>
-      message.parts.some((part) =>
-        part.type === "tool-result" &&
-        part.toolName === "harvest__list_accounts" &&
-        "result" in part &&
-        typeof part.result === "object" &&
-        part.result !== null &&
-        "type" in part.result &&
-        part.result.type === "json" &&
-        "value" in part.result &&
-        typeof part.result.value === "object" &&
-        part.result.value !== null &&
-        "accounts" in part.result.value
-      )
-    ),
-    true,
+  const accountResult = result.finalMessages.flatMap((message) => message.parts).find((part) =>
+    part.type === "tool-result" && part.toolName === "harvest__list_accounts"
   );
+  assertEquals(accountResult && "result" in accountResult ? accountResult.result : undefined, {
+    accounts: [{ id: "acct-1", name: "Test Account", product: "harvest" }],
+    summary: { count: 1 },
+  });
 });
 
 Deno.test("prepareHostedChatExecution compacts oversized context and appends a durable event", async () => {
@@ -3059,10 +3048,7 @@ Deno.test(
           type: "tool-result",
           toolCallId: "srvtool-web-search",
           toolName: "web_search",
-          result: {
-            type: "json",
-            value: [],
-          },
+          result: [],
         },
       ],
       "checkpointed provider call and result remain available for replay validation",

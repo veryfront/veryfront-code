@@ -7,9 +7,8 @@ order: 27
 A prompt owns reusable instruction text. It can include template variables and
 can be exposed through MCP.
 
-Prompts exist because assistants often need named instructions that are not
-tools. A prompt tells an assistant what to do or how to frame a task. It does not
-execute code and does not own state.
+A prompt tells an assistant what to do or how to approach a task. It does not
+execute code or own state.
 
 ## Characteristics
 
@@ -23,8 +22,6 @@ execute code and does not own state.
 A prompt is read and applied by a caller. An agent or MCP client decides when to
 use it. A tool owns an action. A resource owns readable data. A prompt owns
 instructions.
-
-This keeps instruction templates separate from executable capabilities.
 
 ## Wrong fit
 

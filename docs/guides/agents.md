@@ -8,9 +8,8 @@ An agent is a file in `agents/` that exports a system prompt, optional tools,
 optional memory, and optional skills. The runtime auto-discovers it on startup
 and exposes it via `getAgent(id)` or a route created with `createAgUiHandler()`.
 
-For the normal path, omit `model` and let runtime conventions choose: local
-inference by default, Veryfront Cloud when `VERYFRONT_API_TOKEN` plus project
-context are set.
+Omit `model` to use the default for your configured inference path. With
+`VERYFRONT_API_TOKEN` and project context, the default uses Veryfront Cloud.
 
 ## Prerequisites
 
@@ -512,9 +511,6 @@ Skill scripts run in one of two modes, selected automatically:
   request-scoped Veryfront credentials are available, scripts are uploaded to
   and executed inside a remote sandbox session.
 
-Local development does not require sandbox infrastructure. Scripts run as direct
-subprocesses.
-
 ## Skill safety model
 
 - `allowed-tools` in `SKILL.md` is **not** enforced. The Agent Skills
@@ -546,10 +542,8 @@ its `id` matches the value passed to `createAgUiHandler()`.
 
 ## Non-streaming response
 
-For server-side generation (e.g., in `getServerData`), use `generate()`.
-`getAgent()` returns `Agent | undefined`, so narrow the result before calling
-it. Without the guard, the sample fails typecheck under the `"strict": true`
-tsconfig that `veryfront init` writes.
+Use `generate()` for server-side generation, such as in `getServerData`.
+`getAgent()` can return `undefined`; ensure the agent exists before calling it.
 
 ```ts
 import { getAgent } from "veryfront/agent";
@@ -590,10 +584,8 @@ such as email addresses in its output by default. Pass `security: false` to
 keep those values, for example when you extract contact details. This turns off
 both protections, so only use it on input you trust.
 
-Reach for an agent instead when you need the thing itself rather than the
-answer: a registered id other code resolves, tools, memory across turns, or a
-system prompt built at request time. To hold such an agent to a single
-tool-free turn, say so:
+Use an agent when you need a registered ID, tools, memory across turns or a
+dynamic system prompt. To restrict it to one tool-free turn:
 
 ```ts
 const extractor = agent({
@@ -605,10 +597,8 @@ const extractor = agent({
 });
 ```
 
-`maxSteps: 1` stops the runtime from taking a second turn it has no use for.
-`skills: false` removes the `veryfront__load_skill` family from the request in a project
-that does have skills - an agent with one job should not be offered a catalog
-it will never open.
+`maxSteps: 1` limits execution to one step. `skills: false` removes the
+`veryfront__load_skill` tools, even when the project has skills.
 
 ## Structured output
 
@@ -673,14 +663,20 @@ while a parse or validation failure sets
 `response.metadata.outputSchemaError` next to the max-steps warning so the
 failure stays visible.
 
-When the hosted runtime runs an agent, its AG-UI stream reports a JSON snapshot
+When the hosted runtime runs an agent, its SDK AG-UI SSE stream reports a JSON snapshot
 of the parsed value as `result` on the `RunFinished` event, and the Runs API
 stores that snapshot in the new run's `output.data`, alongside `output.text`
 when accepted final text is present. Historical records retain their stored
-output shapes. The event has no `result` when the
+output shapes.
+
+The event has no `result` when the
 agent declares no `outputSchema`, when the output did not parse, or when the run
 failed or was cancelled. See [Run input and output](./run-input-output.md) for
 what an agent run stores as input and output.
+
+This `RunFinished` frame belongs to the SDK runtime stream. The canonical REST
+run-event payload named `RUN_FINISHED` does not declare `result`. Read the
+structured result from the run's `output.data` when consuming canonical REST events.
 
 `response.data` in your own code is always the parsed value; `response.object`
 contains the same value for compatibility. The snapshot
@@ -884,9 +880,7 @@ For hosted replay, set `serverResolvedTrustedHostedHistoryMessageIds` only after
 matching the replayed platform result contents against immutable canonical run or
 input-response evidence, or an original host-authored content digest retained
 before edits. Mutable row IDs, roles, senders, tool names and editable parts alone
-do not prove origin. Edited replacements lose the grant. Deploy compatible API
-and Studio support and qualify replay against that deployed combination before
-claiming trusted replay acceptance.
+do not prove origin. Edited replacements lose the grant. Ensure trusted replay works with the deployed API, runtime and Studio versions.
 
 ## Verify it worked
 

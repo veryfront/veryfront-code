@@ -20,6 +20,16 @@ const baseLogger = getBaseLogger("SERVER");
 
 const logger = baseLogger.component("runtime-handler");
 
+function isControlPlaneExecuteIngressError(
+  error: unknown,
+  pathname: string,
+  method: string,
+): error is ControlPlaneRequestError | InternalAgentRequestBodyTooLargeError {
+  return method === "POST" && /^\/api\/control-plane\/runs\/[^/]+\/execute$/.test(pathname) &&
+    (error instanceof ControlPlaneRequestError ||
+      error instanceof InternalAgentRequestBodyTooLargeError);
+}
+
 interface RequestTimeoutOptions {
   /** Preserve cancellation from the inbound request while adding the timeout. */
   signal?: AbortSignal;
@@ -130,10 +140,7 @@ export async function withRequestTimeout(
       return { response: new Response(null, { status: 499 }), settled };
     }
 
-    if (
-      method === "POST" && /^\/api\/control-plane\/runs\/[^/]+\/execute$/.test(pathname) &&
-      (e instanceof ControlPlaneRequestError || e instanceof InternalAgentRequestBodyTooLargeError)
-    ) {
+    if (isControlPlaneExecuteIngressError(e, pathname, method)) {
       return {
         response: Response.json({ error: e.message }, { status: e.status }),
         settled,

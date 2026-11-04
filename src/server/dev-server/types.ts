@@ -1,3 +1,5 @@
+import type { VeryfrontConfig } from "#veryfront/config";
+
 /** Public handler returned by a handler-only dev server. */
 export type DevServerHandler = (request: Request, nativeContext?: unknown) => Promise<Response>;
 
@@ -18,6 +20,8 @@ export interface DevServerOptions {
   enableFastRefresh?: boolean;
   fileWatcherDebounceMs?: number;
   signal?: AbortSignal;
+  /** Observe the effective bootstrap configuration before project agents execute. */
+  onConfigResolved?: (config: VeryfrontConfig | undefined) => void;
   /**
    * Optional request interceptor for combined mode.
    * Transforms requests before they're processed by the dev server.

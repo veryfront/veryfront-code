@@ -42,7 +42,9 @@ export function escapePointerSegment(segment: string | number): string {
   let escaped = "";
   for (let index = 0; index < text.length; index++) {
     const char = text[index]!;
-    escaped += char === "~" ? "~0" : char === "/" ? "~1" : char;
+    if (char === "~") escaped += "~0";
+    else if (char === "/") escaped += "~1";
+    else escaped += char;
   }
   return escaped;
 }

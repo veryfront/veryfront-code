@@ -7,6 +7,7 @@ import {
   getGoogleGenerateContentUrl,
   getGoogleStreamGenerateContentUrl,
   getOpenAIChatCompletionsUrl,
+  getOpenAIDecisionsUrl,
   getOpenAIEmbeddingUrl,
   getOpenAIResponsesUrl,
 } from "./provider-endpoints.ts";
@@ -20,6 +21,7 @@ describe("provider/runtime-loader/provider-endpoints", () => {
       "https://api.openai.com/v1/chat/completions",
     );
     assertEquals(getOpenAIResponsesUrl(), "https://api.openai.com/v1/responses");
+    assertEquals(getOpenAIDecisionsUrl(), "https://api.openai.com/v1/decisions");
     assertEquals(
       getGoogleGenerateContentUrl(undefined, "gemini-2.5-flash"),
       "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",

@@ -9,8 +9,21 @@
 
 import type { IntegrationName } from "./schema.ts";
 import { compareStrings } from "#veryfront/utils/compare.ts";
+import {
+  forEachPrivateArray,
+  pushPrivateArray,
+  somePrivateArray,
+} from "#veryfront/security/private-array.ts";
+import { privateTextIncludes } from "#veryfront/security/private-text.ts";
+
+import { defineOwnDataProperty } from "#veryfront/security/own-data-property.ts";
+import { createPrivateSet } from "#veryfront/security/private-set.ts";
 
 const apply = Reflect.apply;
+const arraySort = Array.prototype.sort;
+const objectKeys = Object.keys;
+const objectHasOwn = Object.hasOwn;
+const freeze = Object.freeze;
 const stringCharCodeAt = String.prototype.charCodeAt;
 const stringIndexOf = String.prototype.indexOf;
 const stringLastIndexOf = String.prototype.lastIndexOf;
@@ -120,19 +133,24 @@ function canonicalizeSourceIntegrationPolicyManifest(
     string,
     { allowedToolIds: readonly string[] | null }
   > = {};
-  for (const integration of Object.keys(manifest.integrations).sort(compareStrings)) {
+  const names = objectKeys(manifest.integrations);
+  apply(arraySort, names, [compareStrings]);
+  forEachPrivateArray(names, (integration) => {
+    if (!objectHasOwn(manifest.integrations, integration)) return;
     const restriction = manifest.integrations[integration];
-    if (!restriction) continue;
+    if (!restriction) return;
     const allowedToolIds = restriction.allowedToolIds === null
       ? null
-      : Object.freeze([...restriction.allowedToolIds].sort(compareStrings));
-    integrations[integration] = Object.freeze({ allowedToolIds });
-  }
+      : freeze(uniqueSorted(restriction.allowedToolIds));
+    defineOwnDataProperty(integrations, integration, freeze({ allowedToolIds }), {
+      enumerable: true,
+    });
+  });
 
-  return Object.freeze({
+  return freeze({
     schemaVersion: 1,
     mode: "allowlist",
-    integrations: Object.freeze(integrations),
+    integrations: freeze(integrations),
   });
 }
 
@@ -157,7 +175,15 @@ export function resolveSourceIntegrationPolicyManifest(
 }
 
 function uniqueSorted(values: readonly string[]): string[] {
-  return [...new Set(values)].sort(compareStrings);
+  const unique = createPrivateSet<string>();
+  const result: string[] = [];
+  forEachPrivateArray(values, (value) => {
+    if (unique.has(value)) return;
+    unique.add(value);
+    pushPrivateArray(result, value);
+  });
+  apply(arraySort, result, [compareStrings]);
+  return result;
 }
 
 /** Build a deterministic manifest from validated `veryfront.config.ts` input. */
@@ -170,18 +196,16 @@ export function normalizeSourceIntegrationPolicy(
     string,
     { allowedToolIds: readonly string[] | null }
   > = {};
-  for (
-    const [integration, restriction] of Object.entries(config.allow).sort(([a], [b]) =>
-      a.localeCompare(b)
-    )
-  ) {
-    if (!restriction) continue;
-    integrations[integration] = {
+  forEachPrivateArray(objectKeys(config.allow), (integration) => {
+    if (!objectHasOwn(config.allow, integration)) return;
+    const restriction = config.allow[integration as IntegrationName];
+    if (!restriction) return;
+    defineOwnDataProperty(integrations, integration, {
       allowedToolIds: restriction.allowedTools === undefined
         ? null
         : uniqueSorted(restriction.allowedTools),
-    };
-  }
+    }, { enumerable: true });
+  });
 
   return canonicalizeSourceIntegrationPolicyManifest({
     schemaVersion: 1,
@@ -214,15 +238,19 @@ export function intersectSourceIntegrationPolicies(
     { allowedToolIds: readonly string[] | null }
   > = {};
   for (const integration of Object.keys(left.integrations).sort(compareStrings)) {
+    if (
+      !objectHasOwn(left.integrations, integration) ||
+      !objectHasOwn(right.integrations, integration)
+    ) continue;
     const leftRestriction = left.integrations[integration];
     const rightRestriction = right.integrations[integration];
     if (!leftRestriction || !rightRestriction) continue;
-    integrations[integration] = {
+    defineOwnDataProperty(integrations, integration, {
       allowedToolIds: intersectAllowedToolIds(
         leftRestriction.allowedToolIds,
         rightRestriction.allowedToolIds,
       ),
-    };
+    }, { enumerable: true });
   }
 
   return canonicalizeSourceIntegrationPolicyManifest({
@@ -294,12 +322,13 @@ export function isIntegrationToolAllowedBySourcePolicy(
   if (policy.mode === "unrestricted") return true;
 
   const identity = parseIntegrationToolIdentity(toolName);
-  if (!identity) return !toolName.includes("__");
+  if (!identity) return !privateTextIncludes(toolName, "__");
 
+  if (!objectHasOwn(policy.integrations, identity.integration)) return false;
   const restriction = policy.integrations[identity.integration];
   if (!restriction) return false;
   return restriction.allowedToolIds === null ||
-    restriction.allowedToolIds.includes(identity.toolId);
+    somePrivateArray(restriction.allowedToolIds, (id) => id === identity.toolId);
 }
 
 /** Filter canonical tool names while leaving non-integration tools untouched. */

@@ -7,6 +7,7 @@ import { createHttpDeployControlPlane } from "../../shared/deployment/control-pl
 import { createApiClient, type ResolvedConfig } from "#cli/shared/config";
 import { createCloudOnboardingTransport } from "../../shared/cloud-onboarding-transport.ts";
 import { DEFAULT_API_URL } from "../../shared/constants.ts";
+import { resolveStudioOrigin } from "../../../src/integrations/studio-origin.ts";
 
 const CONNECTED_DEV_SHUTDOWN_TIMEOUT_MS = 75_000;
 /** Admission preflight for a directory that explicitly names a Cloud project. */
@@ -85,13 +86,8 @@ export function createConnectedDevControlPlane(
 
 /** Keep the local runtime and readiness link on the connected API's Studio. */
 export function connectedDevStudioBaseUrl(apiBaseUrl: string, studioUrl?: string): string {
-  if (studioUrl) return studioUrl;
-  const hostname = new URL(apiBaseUrl).hostname;
-  if (["localhost", "127.0.0.1", "[::1]"].includes(hostname)) {
-    return "http://localhost:3000";
-  }
-  if (hostname === "api.veryfront.com") return "https://veryfront.com";
-  if (hostname === "api.veryfront.org") return "https://veryfront.org";
+  const origin = resolveStudioOrigin(apiBaseUrl, studioUrl);
+  if (origin) return origin;
   throw new Error(
     `Cannot determine Studio for connected API "${apiBaseUrl}". Set STUDIO_URL to your Studio origin and run npm run dev again.`,
   );

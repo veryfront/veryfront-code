@@ -57,6 +57,7 @@ export interface StreamLifecycleShadow {
 export function createStreamLifecycleShadow(options: {
   availableToolNames: readonly string[] | null;
   providerExecutedToolNames: readonly string[];
+  dynamicToolNames?: readonly string[];
 }): StreamLifecycleShadow {
   let reducer = createInitialReducerState();
   let failed = false;
@@ -65,6 +66,7 @@ export function createStreamLifecycleShadow(options: {
       ? null
       : createPrivateSet(options.availableToolNames),
     providerExecutedToolNames: createPrivateSet(options.providerExecutedToolNames),
+    dynamicToolNames: createPrivateSet(options.dynamicToolNames ?? []),
   };
   return {
     observePart(part: unknown) {

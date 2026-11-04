@@ -10,11 +10,6 @@ and transport surfaces.
 
 ## The four parts
 
-Tool summaries use an action and resource name in at most six words, such as
-"List messages". Define them in `templates/integrations/*/connector.json`, then
-run `deno run -A scripts/build/generate-integrations-module.ts` to refresh the
-runtime catalog. Keep parameter requirements in each tool's input schema.
-
 - **Catalog:** Provider metadata, setup requirements, available tools, input
   schemas, and side-effect information.
 - **Connection:** The authenticated provider account used by managed execution.
@@ -36,6 +31,27 @@ policy setup is required. Every surface can select an exact connection when a
 project has multiple accessible accounts. Framework tool calls inside an agent
 run use the connection selected by the hosted runtime, and a `connection_id`
 passed inside tool arguments is provider input rather than an account selector.
+
+## Google permissions
+
+Gmail requests `gmail.modify` for reading, drafts, sending, labels, and reversible
+Trash. Permanent message and thread deletion is not exposed. Existing broader
+grants remain active until the user revokes access and reconnects. Update the
+Google Cloud consent configuration to match the runtime scopes before recording
+verification evidence.
+
+## Calendar result pages
+
+The endpoints for `calendar__list_events` and `calendar__list_calendars` return
+a provider page object with an `items` array. If `nextPageToken` is present, pass it as
+`pageToken` on the next call with the other query arguments unchanged. An empty
+page can still have a continuation token. Stop when the token is absent.
+
+Earlier versions returned only the item array. Read `items` on the page object
+instead. The number of items is the current page size, not a total count.
+Page-size defaults are unchanged, and free/busy results are unchanged.
+
+The hosted tool layer may compact Calendar pages to `events` or `calendars`, with the continuation token under `pagination.nextPageToken`. Both the native page and this compact result retain their cursor in chat history.
 
 ## Make your first call
 
@@ -710,6 +726,19 @@ A declared connector is enabled in one of three ways:
 | OAuth authorization code                                    | Per-user or project connection; a managed OAuth app where Veryfront provides one, otherwise your own client | Not supported by the local source; use managed execution                                                    |
 | OAuth client credentials, API key, Basic                    | Project environment variables, resolved at execution                                                        | [Local integration tools](#run-account-free-local-integration-tools) with a host-approved credential source |
 
+### Connection advice
+
+Connection advice covers connectors published by default in the hosted API,
+including Salesforce. A catalog entry alone does not prove that your deployment
+publishes an experimental or host-adapter connector, so those entries do not
+produce startup connection advice. This does not change which catalog tool
+definitions are available to agents. Catalog fallback requires successful
+authenticated API tool discovery. Skipped discovery does not advertise tools.
+
+Studio links use the known Studio origin for the API or `STUDIO_URL` exported
+before the process starts. Project `.env` values and later environment changes
+do not change those links.
+
 ### Qualification record
 
 Unit tests exercise the header, Basic, and client-credential wiring against
@@ -729,10 +758,9 @@ representative read has run against the real provider on a recorded release.
 Every other connector is package-declared and, where enabled, environment-enabled,
 but not operationally qualified.
 
-Use the generated integration metadata reference when you need exact exported
-names or icon metadata:
+## Text exports
 
-- [`veryfront/integrations`](../api-reference/veryfront/integrations.md)
+Drive document exports return readable UTF-8 text with its content type. Use `text/plain` for Docs or `text/csv` for Sheets. The `drive__download_file` tool uses a separate byte-safe binary response contract and is not enabled in the Drive catalog agent.
 
 ## Verify it worked
 
@@ -747,9 +775,6 @@ names or icon metadata:
 
 - [Recover integration connections](./integrations/recovery.md)
 - [Integration credentials and scopes](./integrations/credentials.md)
-- [Set up GitHub](./integrations/github.md)
-- [Set up Jira](./integrations/jira.md)
-- [Set up Salesforce](./integrations/salesforce.md)
 
 ## Related
 

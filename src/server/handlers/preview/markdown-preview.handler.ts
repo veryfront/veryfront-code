@@ -27,6 +27,7 @@ import {
   ensurePreviewDocumentSourceSnapshot,
   finishPreviewDocumentSourceSnapshot,
 } from "../request/source-snapshot-freshness.ts";
+import { PageResolver } from "#veryfront/rendering/page-resolution/page-resolver.ts";
 
 const logger = serverLogger.component("markdown-preview-handler");
 
@@ -162,6 +163,19 @@ export class MarkdownPreviewHandler extends BaseHandler {
       } catch (_) {
         /* expected: markdown file may not exist */
         logger.debug("File not found", { filePath, resolvedPath });
+
+        // A dotted pathname can still be a declared dynamic page (for
+        // example /items/readme.md). Let SSR resolve that page before this
+        // handler emits a custom 404 fallback.
+        const pageResolver = new PageResolver({
+          projectDir: ctx.projectDir,
+          projectId: ctx.projectId,
+          config: ctx.config ?? {},
+          adapter: ctx.adapter,
+        });
+        if (await pageResolver.pageExists(filePath, { signal: req.signal })) {
+          return this.continue();
+        }
 
         const builder = this.createResponseBuilder(ctx);
         const notFoundResponse = await tryNotFoundFallback(req, filePath, ctx, builder);
