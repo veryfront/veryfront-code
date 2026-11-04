@@ -19,6 +19,9 @@ describe("environment snapshots after project execution", () => {
       { prototype: String.prototype, method: "toLowerCase" },
       { prototype: String.prototype, method: "replace" },
       { prototype: RegExp.prototype, method: "test" },
+      { prototype: Object, method: "freeze" },
+      { prototype: globalThis, method: "Number" },
+      { prototype: Number, method: "isSafeInteger" },
     ]
   ) {
     it(`preserves CI flags, integer settings and API routing after replacing ${method}`, async () => {

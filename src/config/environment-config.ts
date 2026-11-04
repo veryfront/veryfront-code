@@ -9,6 +9,11 @@ import { logger } from "#veryfront/utils/logger/logger.ts";
 import { hasEnvLoaded } from "#veryfront/utils/env-loader.ts";
 import { readVeryfrontApiTokenFile } from "#veryfront/platform/cloud/credential-file.ts";
 
+const freeze = Object.freeze;
+const NativeNumber = Number;
+const isSafeInteger = Number.isSafeInteger;
+const MAX_SAFE_INTEGER = Number.MAX_SAFE_INTEGER;
+
 export interface EnvironmentConfig {
   nodeEnv: "development" | "production" | "test" | string;
   veryfrontEnv: string;
@@ -108,22 +113,22 @@ let warnedEarlyEnvConfig = false;
 function parseBoundedIntegerValue(
   value: string | undefined,
   min: number,
-  max = Number.MAX_SAFE_INTEGER,
+  max = MAX_SAFE_INTEGER,
 ): number | undefined {
   if (value === undefined) return undefined;
 
   const normalized = privateTextTrim(value);
   if (!testPrivateRegExp(/^\d+$/, normalized)) return undefined;
 
-  const parsed = Number(normalized);
-  return Number.isSafeInteger(parsed) && parsed >= min && parsed <= max ? parsed : undefined;
+  const parsed = NativeNumber(normalized);
+  return isSafeInteger(parsed) && parsed >= min && parsed <= max ? parsed : undefined;
 }
 
 function parseBoundedInteger(
   value: string | undefined,
   defaultVal: number,
   min: number,
-  max = Number.MAX_SAFE_INTEGER,
+  max = MAX_SAFE_INTEGER,
 ): number {
   return parseBoundedIntegerValue(value, min, max) ?? defaultVal;
 }
@@ -256,15 +261,15 @@ export function initEnvironmentConfig(): EnvironmentConfig {
   if (_environmentConfig) return _environmentConfig;
 
   if (!hasEnvLoaded()) {
-    return Object.freeze(readEnvSnapshot());
+    return freeze(readEnvSnapshot());
   }
 
-  _environmentConfig = Object.freeze(readEnvSnapshot());
+  _environmentConfig = freeze(readEnvSnapshot());
   return _environmentConfig;
 }
 
 export function refreshEnvironmentConfig(): EnvironmentConfig {
-  _environmentConfig = Object.freeze(readEnvSnapshot());
+  _environmentConfig = freeze(readEnvSnapshot());
   return _environmentConfig;
 }
 
@@ -302,7 +307,7 @@ export function getEnvironmentConfig(): EnvironmentConfig {
   // Env not loaded yet - return uncached snapshot, recording the ordering diagnostic
   if (!hasEnvLoaded()) {
     warnEarlyAccess();
-    return Object.freeze(readEnvSnapshot());
+    return freeze(readEnvSnapshot());
   }
 
   return initEnvironmentConfig();
@@ -336,7 +341,7 @@ export function _setEnvironmentConfigForTesting(env: Partial<EnvironmentConfig>)
     readEnvSnapshot(readEmptyEnv, readEmptyEnv, readEmptyEnv);
   const portSource = env.portSource ??
     (Object.hasOwn(env, "port") ? "environment" : base.portSource);
-  _environmentConfig = Object.freeze({ ...base, ...env, portSource });
+  _environmentConfig = freeze({ ...base, ...env, portSource });
 }
 
 export function _resetEnvironmentConfig(): void {
