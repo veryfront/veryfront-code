@@ -16,11 +16,13 @@ import {
 } from "#veryfront/security/private-array.ts";
 import { privateTextIncludes } from "#veryfront/security/private-text.ts";
 
+import { defineOwnDataProperty } from "#veryfront/security/own-data-property.ts";
 import { createPrivateSet } from "#veryfront/security/private-set.ts";
 
 const apply = Reflect.apply;
 const arraySort = Array.prototype.sort;
 const objectKeys = Object.keys;
+const objectHasOwn = Object.hasOwn;
 const freeze = Object.freeze;
 const stringCharCodeAt = String.prototype.charCodeAt;
 const stringIndexOf = String.prototype.indexOf;
@@ -134,12 +136,15 @@ function canonicalizeSourceIntegrationPolicyManifest(
   const names = objectKeys(manifest.integrations);
   apply(arraySort, names, [compareStrings]);
   forEachPrivateArray(names, (integration) => {
+    if (!objectHasOwn(manifest.integrations, integration)) return;
     const restriction = manifest.integrations[integration];
     if (!restriction) return;
     const allowedToolIds = restriction.allowedToolIds === null
       ? null
       : freeze(uniqueSorted(restriction.allowedToolIds));
-    integrations[integration] = freeze({ allowedToolIds });
+    defineOwnDataProperty(integrations, integration, freeze({ allowedToolIds }), {
+      enumerable: true,
+    });
   });
 
   return freeze({
@@ -192,13 +197,14 @@ export function normalizeSourceIntegrationPolicy(
     { allowedToolIds: readonly string[] | null }
   > = {};
   forEachPrivateArray(objectKeys(config.allow), (integration) => {
+    if (!objectHasOwn(config.allow, integration)) return;
     const restriction = config.allow[integration as IntegrationName];
     if (!restriction) return;
-    integrations[integration] = {
+    defineOwnDataProperty(integrations, integration, {
       allowedToolIds: restriction.allowedTools === undefined
         ? null
         : uniqueSorted(restriction.allowedTools),
-    };
+    }, { enumerable: true });
   });
 
   return canonicalizeSourceIntegrationPolicyManifest({
@@ -232,15 +238,19 @@ export function intersectSourceIntegrationPolicies(
     { allowedToolIds: readonly string[] | null }
   > = {};
   for (const integration of Object.keys(left.integrations).sort(compareStrings)) {
+    if (
+      !objectHasOwn(left.integrations, integration) ||
+      !objectHasOwn(right.integrations, integration)
+    ) continue;
     const leftRestriction = left.integrations[integration];
     const rightRestriction = right.integrations[integration];
     if (!leftRestriction || !rightRestriction) continue;
-    integrations[integration] = {
+    defineOwnDataProperty(integrations, integration, {
       allowedToolIds: intersectAllowedToolIds(
         leftRestriction.allowedToolIds,
         rightRestriction.allowedToolIds,
       ),
-    };
+    }, { enumerable: true });
   }
 
   return canonicalizeSourceIntegrationPolicyManifest({
@@ -314,6 +324,7 @@ export function isIntegrationToolAllowedBySourcePolicy(
   const identity = parseIntegrationToolIdentity(toolName);
   if (!identity) return !privateTextIncludes(toolName, "__");
 
+  if (!objectHasOwn(policy.integrations, identity.integration)) return false;
   const restriction = policy.integrations[identity.integration];
   if (!restriction) return false;
   return restriction.allowedToolIds === null ||

@@ -9,7 +9,12 @@ import { createProjectDiscoveryConfig } from "#veryfront/discovery/project-disco
 import { agentRegistry } from "#veryfront/agent/composition/index.ts";
 import type { AgentConfig } from "#veryfront/agent/types.ts";
 import { createToolsFromRemoteDefinitions } from "#veryfront/tool/remote-source-tools.ts";
-import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
+import {
+  intersectSourceIntegrationPolicies,
+  isIntegrationToolAllowedBySourcePolicy,
+  normalizeSourceIntegrationPolicy,
+  parseSourceIntegrationPolicyManifest,
+} from "#veryfront/integrations/source-policy.ts";
 import {
   collectDeclaredIntegrations,
   findUnconnectedIntegrationLines,
@@ -95,6 +100,80 @@ describe("dev integration source discovery", () => {
       "  Connect: npx veryfront integration connect salesforce --project case-demo",
     ]);
   });
+
+  it("keeps policy entries and warnings when inherited integration setters throw", () => {
+    const original = Object.getOwnPropertyDescriptor(Object.prototype, "gmail");
+    let policy: ReturnType<typeof normalizeIntegrationPolicyForDiagnostics>;
+    let parsed: ReturnType<typeof parseSourceIntegrationPolicyManifest>;
+    let intersected: ReturnType<typeof intersectSourceIntegrationPolicies>;
+    let lines: string[] | undefined;
+    try {
+      Object.defineProperty(Object.prototype, "gmail", {
+        configurable: true,
+        set() {
+          throw new Error("project integration setter");
+        },
+      });
+      policy = normalizeIntegrationPolicyForDiagnostics({ allow: { gmail: {} } });
+      parsed = parseSourceIntegrationPolicyManifest({
+        schemaVersion: 1,
+        mode: "allowlist",
+        integrations: { gmail: { allowedToolIds: null } },
+      });
+      intersected = intersectSourceIntegrationPolicies(policy, parsed);
+      lines = unconnectedIntegrationLines(
+        collectDeclaredIntegrations([
+          { agentId: "mail-agent", tools: { gmail__list_emails: true } },
+        ], intersected),
+        [],
+        "mail-demo",
+      );
+    } finally {
+      if (original) Object.defineProperty(Object.prototype, "gmail", original);
+      else Reflect.deleteProperty(Object.prototype, "gmail");
+    }
+    const expected = {
+      schemaVersion: 1,
+      mode: "allowlist",
+      integrations: { gmail: { allowedToolIds: null } },
+    } as const;
+    assertEquals(policy, expected);
+    assertEquals(parsed, expected);
+    assertEquals(intersected, expected);
+    assertEquals(lines, [
+      "Gmail isn't connected. Agent mail-agent needs it.",
+      "  Connect: npx veryfront integration connect gmail --project mail-demo",
+    ]);
+  });
+
+  for (const throws of [false, true]) {
+    it(`ignores inherited integration getters that ${throws ? "throw" : "fabricate grants"}`, () => {
+      const policy = normalizeSourceIntegrationPolicy({ allow: { gmail: {} } });
+      const other = normalizeSourceIntegrationPolicy({ allow: { salesforce: {} } });
+      const original = Object.getOwnPropertyDescriptor(Object.prototype, "salesforce");
+      let allowed: boolean | undefined;
+      let intersected: ReturnType<typeof intersectSourceIntegrationPolicies> | undefined;
+      let getterCalls = 0;
+      try {
+        Object.defineProperty(Object.prototype, "salesforce", {
+          configurable: true,
+          get() {
+            getterCalls++;
+            if (throws) throw new Error("project integration getter");
+            return { allowedToolIds: null };
+          },
+        });
+        allowed = isIntegrationToolAllowedBySourcePolicy("salesforce__get_case", policy);
+        intersected = intersectSourceIntegrationPolicies(other, policy);
+      } finally {
+        if (original) Object.defineProperty(Object.prototype, "salesforce", original);
+        else Reflect.deleteProperty(Object.prototype, "salesforce");
+      }
+      assertEquals(allowed, false);
+      assertEquals(intersected, { schemaVersion: 1, mode: "allowlist", integrations: {} });
+      assertEquals(getterCalls, 0);
+    });
+  }
 
   it("cannot tell what an agent's own tool sources supply, so it does not warn for them", () => {
     const agentConfig = (extra: Record<string, unknown> = {}) =>
