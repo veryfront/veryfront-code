@@ -102,9 +102,11 @@ function keepsExistingValue(
   options: EnvDirLoadOptions,
 ): boolean {
   if (options.override) return false;
-  if (existing) return true;
+  // An earlier file of this same load set it: later files rank higher.
+  if (hasOwn(loadedVars, key)) return false;
   // An empty value set before this load counts as set for an additional load.
-  return options.keepDefined && existing !== undefined && !hasOwn(loadedVars, key);
+  if (options.keepDefined) return existing !== undefined;
+  return Boolean(existing);
 }
 
 async function readEnvDirFiles(cwd: string, options: EnvDirLoadOptions): Promise<void> {

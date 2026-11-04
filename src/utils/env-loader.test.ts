@@ -273,6 +273,26 @@ describe("env-loader", () => {
       }
     });
 
+    it("should let a later file of one load outrank an earlier one", async () => {
+      const key = createKey("LATER_FILE");
+      const projectDir = await makeTempDir({ prefix: "env-loader-project-" });
+      try {
+        await writeEnvFile(".env", `${key}=base`);
+        await writeEnvFile(".env.local", `${key}=local`);
+        await loadEnv({ cwd: tempDir });
+        assertEquals(getEnv(key), "local", "primary load");
+
+        deleteEnv(key);
+        await writeTextFile(`${projectDir}/.env`, `${key}=project-base`);
+        await writeTextFile(`${projectDir}/.env.local`, `${key}=project-local`);
+        await loadAdditionalEnv({ cwd: projectDir });
+        assertEquals(getEnv(key), "project-local", "additional load");
+      } finally {
+        cleanupKeys(key);
+        await remove(projectDir, { recursive: true });
+      }
+    });
+
     it("should read an additional directory only once", async () => {
       const key = createKey("ADDITIONAL_ONCE");
       await writeEnvFile(".env", `${key}=first`);
