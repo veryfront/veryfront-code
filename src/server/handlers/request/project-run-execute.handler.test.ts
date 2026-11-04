@@ -4601,6 +4601,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     const uploadStarted = Promise.withResolvers<void>();
     let uploadSignal: AbortSignal | undefined;
     let manifestPuts = 0;
+    let failureReports = 0;
     const body = {
       runId: "run_release_asset_cancel_upload",
       kind: "task",
@@ -4620,6 +4621,12 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     const pending = withMockFetch(
       ((input, init) => {
         const url = String(input);
+        if (url.endsWith("/asset-manifest/state")) {
+          failureReports++;
+          return Promise.resolve(
+            new Response(JSON.stringify({ state: "failed" }), { status: 200 }),
+          );
+        }
         if (url.endsWith("/asset-manifest/builds")) {
           return Promise.resolve(
             new Response(
@@ -4676,7 +4683,117 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertEquals((await result.response.json()).success, false);
     assertEquals(uploadSignal?.aborted, true);
     assertEquals(manifestPuts, 0);
+    assertEquals(failureReports, 1);
   });
+
+  for (const reportOutcome of ["acknowledged", "deadline"] as const) {
+    it(`bounds a timed-out build's ${reportOutcome} failure report`, async () => {
+      const controller = new AbortController();
+      const uploadStarted = Promise.withResolvers<void>();
+      let uploadSignal: AbortSignal | undefined;
+      let manifestPuts = 0;
+      let failureReports = 0;
+      let reportSignal: AbortSignal | undefined;
+      let reportVersion: number | undefined;
+      const body = {
+        runId: "run_release_asset_upload_deadline",
+        kind: "task",
+        target: "task:release-asset-build",
+        projectId: "proj-1",
+        config: { release_id: "release-1", release_version: 1 },
+      };
+      const signed = await signedRequest(
+        "/api/control-plane/runs/run_release_asset_upload_deadline/execute",
+        body,
+        { "x-token": "test-token" },
+      );
+      const request = new Request(signed.request, { signal: controller.signal });
+      const ctx = createCtx(signed.publicKeyPem);
+      ctx.config = {};
+
+      const pending = withMockFetch(
+        ((input, init) => {
+          const url = String(input);
+          if (url.endsWith("/asset-manifest/state")) {
+            failureReports++;
+            const requestInit = observeFetchRequestInit(init);
+            reportSignal = requestInit.signal ?? undefined;
+            reportVersion = JSON.parse(String(requestInit.body)).manifest_version;
+            if (reportOutcome === "deadline") {
+              const signal = reportSignal;
+              if (!signal) return Promise.reject(new Error("Missing report deadline"));
+              return new Promise<Response>((_resolve, reject) => {
+                if (signal.aborted) reject(signal.reason);
+                else signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+              });
+            }
+            return Promise.resolve(
+              new Response(JSON.stringify({ state: "failed" }), { status: 200 }),
+            );
+          }
+          if (url.endsWith("/asset-manifest/builds")) {
+            return Promise.resolve(
+              new Response(
+                JSON.stringify({ id: "build-1", manifest_version: 1, state: "building" }),
+                { status: 200, headers: { "Content-Type": "application/json" } },
+              ),
+            );
+          }
+          if (url.includes("/releases/release-1/files?")) {
+            return Promise.resolve(
+              new Response(
+                JSON.stringify({
+                  data: [{
+                    id: "file-1",
+                    version_id: "version-1",
+                    path: "pages/index.tsx",
+                    content: "export default function Page() { return null; }",
+                    type: "page",
+                    size: 49,
+                    updated_at: "2026-09-30T00:00:00.000Z",
+                  }],
+                  page_info: { self: null, first: null, next: null, prev: null },
+                  release_id: "release-1",
+                  release_version: "1",
+                }),
+                { status: 200, headers: { "Content-Type": "application/json" } },
+              ),
+            );
+          }
+          if (url.endsWith("/asset-manifest/assets")) {
+            const signal = observeFetchRequestInit(init).signal ?? undefined;
+            uploadSignal = signal;
+            uploadStarted.resolve();
+            if (!signal) return Promise.reject(new Error("missing abort signal"));
+            return new Promise<Response>((_resolve, reject) =>
+              signal.addEventListener("abort", () => reject(signal.reason), {
+                once: true,
+              })
+            );
+          }
+          if (
+            url.endsWith("/asset-manifest") && observeFetchRequestInit(init).method === "PUT"
+          ) manifestPuts++;
+          return Promise.resolve(new Response("Not found", { status: 404 }));
+        }) as typeof fetch,
+        async () => await new ProjectRunExecuteHandler().handle(request, ctx),
+      );
+
+      await uploadStarted.promise;
+      controller.abort(new DOMException("Run deadline exceeded", "TimeoutError"));
+      const result = await pending;
+
+      assertExists(result.response);
+      assertEquals((await result.response.json()).success, false);
+      assertEquals(uploadSignal?.aborted, true);
+      assertEquals(manifestPuts, 0);
+      assertEquals(failureReports, 1, "Timed-out build must report a terminal manifest state");
+      assertExists(reportSignal);
+      assertNotEquals(reportSignal, uploadSignal);
+      assertEquals(reportSignal.aborted, reportOutcome === "deadline");
+      assertEquals(reportVersion, 1);
+    });
+  }
 
   it("builds style artifacts from adapter source files and adapter stylesheet reads", async () => {
     const body = {
