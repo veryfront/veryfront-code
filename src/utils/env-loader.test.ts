@@ -5,6 +5,7 @@ import { deleteEnv, getEnv, setEnv } from "#veryfront/platform/compat/process.ts
 import { makeTempDir, remove, writeTextFile } from "#veryfront/testing/deno-compat.ts";
 import {
   __resetEnvLoaderForTests,
+  __setEnvLoaderExistingEnvReaderForTests,
   __setEnvLoaderOsTypeForTests,
   getEnvSource,
   loadAdditionalEnv,
@@ -290,6 +291,22 @@ describe("env-loader", () => {
       } finally {
         cleanupKeys(key);
         await remove(projectDir, { recursive: true });
+      }
+    });
+
+    it("should let a later file outrank a differently-cased key on Windows", async () => {
+      const key = createKey("LATER_FILE_CASE");
+      const lowerKey = key.toLowerCase();
+      await writeEnvFile(".env", `${key}=base`);
+      await writeEnvFile(".env.local", `${lowerKey}=local`);
+      // Windows reads the environment case-insensitively.
+      __setEnvLoaderExistingEnvReaderForTests((name) => getEnv(name) ?? getEnv(name.toUpperCase()));
+      try {
+        await withOsTypeAsync("windows", () => loadAdditionalEnv({ cwd: tempDir }));
+
+        assertEquals(getEnv(lowerKey), "local");
+      } finally {
+        cleanupKeys(key, lowerKey);
       }
     });
 

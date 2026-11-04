@@ -31,16 +31,22 @@ const mapGet = Map.prototype.get;
 const mapSet = Map.prototype.set;
 const mapClear = Map.prototype.clear;
 const stringToLowerCase = String.prototype.toLowerCase;
-const hasOwn = Object.hasOwn;
 let envLoaded = false;
 // One load per directory, kept while it runs so concurrent callers await the
 // same read. The CLI loads the cwd before a command knows its project, and
 // `--project <dir>` then loads that directory too.
 const envDirLoads = new Map<string, Promise<void>>();
 let osTypeOverride: string | undefined;
+// Test seam: a case-sensitive host can stand in for Windows' case-insensitive
+// environment when the precedence check reads an existing value.
+let existingEnvReaderOverride: ((key: string) => string | undefined) | undefined;
 
 function envLoaderOsType(): string {
   return osTypeOverride ?? getOsType();
+}
+
+function readExistingEnv(key: string): string | undefined {
+  return existingEnvReaderOverride ? existingEnvReaderOverride(key) : getEnv(key);
 }
 
 interface EnvDirLoadOptions {
@@ -96,14 +102,13 @@ function startEnvDirLoad(cwd: string, options: EnvDirLoadOptions): Promise<void>
 
 /** Whether a value already in the environment must stay, given the load mode. */
 function keepsExistingValue(
-  key: string,
   existing: string | undefined,
-  loadedVars: Readonly<Record<string, string>>,
+  setByThisLoad: boolean,
   options: EnvDirLoadOptions,
 ): boolean {
   if (options.override) return false;
   // An earlier file of this same load set it: later files rank higher.
-  if (hasOwn(loadedVars, key)) return false;
+  if (setByThisLoad) return false;
   // An empty value set before this load counts as set for an additional load.
   if (options.keepDefined) return existing !== undefined;
   return Boolean(existing);
@@ -115,6 +120,12 @@ async function readEnvDirFiles(cwd: string, options: EnvDirLoadOptions): Promise
   const envFiles = [`${cwd}/.env`, `${cwd}/.env.${env}`, `${cwd}/.env.local`];
   const loadedVars: Record<string, string> = {};
   const taintedLoadedVars = new Set<string>();
+  // Keys this load wrote, case-folded where the environment ignores case, so a
+  // later file's `api_url` still outranks an earlier file's `API_URL` there.
+  const caseInsensitive = envLoaderOsType() === "windows";
+  const foldKey = (key: string): string =>
+    caseInsensitive ? applyIntrinsic(stringToLowerCase, key, []) as string : key;
+  const keysSetByThisLoad = new Set<string>();
 
   let loadedCount = 0;
   let totalVars = 0;
@@ -125,9 +136,12 @@ async function readEnvDirFiles(cwd: string, options: EnvDirLoadOptions): Promise
       const vars = parseEnvFile(content, loadedVars, taintedLoadedVars);
 
       for (const [key, { value, expandedFromProcessEnv }] of Object.entries(vars)) {
-        if (keepsExistingValue(key, getEnv(key), loadedVars, options)) continue;
+        const foldedKey = foldKey(key);
+        const setByThisLoad = keysSetByThisLoad.has(foldedKey);
+        if (keepsExistingValue(readExistingEnv(key), setByThisLoad, options)) continue;
 
         setEnv(key, value);
+        keysSetByThisLoad.add(foldedKey);
         markEnvFileValue(key);
         applyIntrinsic(mapSet, envSources, [
           key,
@@ -441,8 +455,15 @@ export function __resetEnvLoaderForTests(): void {
   applyIntrinsic(mapClear, envSources, []);
   clearEnvFileValueSources();
   osTypeOverride = undefined;
+  existingEnvReaderOverride = undefined;
 }
 
 export function __setEnvLoaderOsTypeForTests(os: string | undefined): void {
   osTypeOverride = os;
+}
+
+export function __setEnvLoaderExistingEnvReaderForTests(
+  reader: ((key: string) => string | undefined) | undefined,
+): void {
+  existingEnvReaderOverride = reader;
 }
