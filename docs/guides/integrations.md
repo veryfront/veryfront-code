@@ -726,6 +726,19 @@ A declared connector is enabled in one of three ways:
 | OAuth authorization code                                    | Per-user or project connection; a managed OAuth app where Veryfront provides one, otherwise your own client | Not supported by the local source; use managed execution                                                    |
 | OAuth client credentials, API key, Basic                    | Project environment variables, resolved at execution                                                        | [Local integration tools](#run-account-free-local-integration-tools) with a host-approved credential source |
 
+### Connection advice
+
+Connection advice covers connectors published by default in the hosted API,
+including Salesforce. A catalog entry alone does not prove that your deployment
+publishes an experimental or host-adapter connector, so those entries do not
+produce startup connection advice. This does not change which catalog tool
+definitions are available to agents. Catalog fallback requires successful
+authenticated API tool discovery. Skipped discovery does not advertise tools.
+
+Studio links use the known Studio origin for the API or `STUDIO_URL` exported
+before the process starts. Project `.env` values and later environment changes
+do not change those links.
+
 ### Qualification record
 
 Unit tests exercise the header, Basic, and client-credential wiring against

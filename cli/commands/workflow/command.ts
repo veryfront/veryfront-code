@@ -1,6 +1,10 @@
 import { cliLogger } from "#cli/utils";
 import { INVALID_ARGUMENT, RESOURCE_NOT_FOUND } from "veryfront/errors";
 import { withProjectSourceContext } from "#cli/shared/project-source-context";
+import {
+  releaseProjectCliExtensions,
+  setupDefaultProjectCliExtensions,
+} from "../../shared/project-extensions.ts";
 import { agentRegistry } from "../../../src/agent/composition/index.ts";
 import {
   discoverProjectAgentRuntime,
@@ -216,19 +220,28 @@ export async function runWorkflowCommand(
       throw RESOURCE_NOT_FOUND.create({ detail: `Workflow "${workflowId}" not found.` });
     }
 
-    await runWithProjectAgentRuntime(discovery, async () => {
-      const client = await createWorkflowClient({ debug: options.debug });
-
-      try {
-        client.register(workflow.definition);
-        cliLogger.info(`Running workflow: ${workflow.id}`);
-        cliLogger.info("");
-
-        const handle = await client.start(workflow.id, input);
-        await waitForWorkflowExit(client, handle.runId);
-      } finally {
-        await client.destroy();
-      }
+    const extensions = await setupDefaultProjectCliExtensions({
+      projectDir,
+      config,
+      logger: cliLogger.component("workflow-extensions"),
     });
+    try {
+      await runWithProjectAgentRuntime(discovery, async () => {
+        const client = await createWorkflowClient({ debug: options.debug });
+
+        try {
+          client.register(workflow.definition);
+          cliLogger.info(`Running workflow: ${workflow.id}`);
+          cliLogger.info("");
+
+          const handle = await client.start(workflow.id, input);
+          await waitForWorkflowExit(client, handle.runId);
+        } finally {
+          await client.destroy();
+        }
+      });
+    } finally {
+      await releaseProjectCliExtensions(extensions);
+    }
   });
 }

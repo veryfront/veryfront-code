@@ -342,6 +342,7 @@ function readHostProcessEnv(key: string): string | undefined {
 // Captured while this module loads, before a project env file is loaded or
 // project code runs, so neither can replace operator identity or credential routing.
 const HOST_BOOT_ENV_KEYS = [
+  "STUDIO_URL",
   "VERYFRONT_MANAGED_RECOVERY_ENABLED",
   "VERYFRONT_MANAGED_RECOVERY_DIRECTORY",
   "VERYFRONT_MANAGED_RECOVERY_SOURCE_PROJECT_ID",

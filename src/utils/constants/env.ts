@@ -1,3 +1,5 @@
+import { privateTextToLowerCase, privateTextTrim } from "#veryfront/security/private-text.ts";
+
 export const ENV_VARS = {
   DEBUG: "VERYFRONT_DEBUG",
   DEEP_INSPECT: "VERYFRONT_DEEP_INSPECT",
@@ -9,7 +11,9 @@ export const ENV_VARS = {
 type EnvAccessor = { get(key: string): string | undefined };
 
 export function isTruthyEnvValue(value: string | undefined): boolean {
-  const normalized = value?.toLowerCase().trim();
+  const normalized = value === undefined
+    ? undefined
+    : privateTextTrim(privateTextToLowerCase(value));
   return normalized === "1" || normalized === "true" || normalized === "yes";
 }
 

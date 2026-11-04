@@ -130,3 +130,12 @@ export function getAgentRuntimeMarkdownDiscoveryPaths(config?: VeryfrontConfig |
     skillMarkdownPaths: discovery.skillDirs,
   };
 }
+
+/**
+ * The agent roots `veryfront dev` discovers. The dev server honors `enabled` only for skills, so
+ * a switched-off agents setting still discovers its roots; code that reads what dev registered
+ * must resolve the roots the same way.
+ */
+export function resolveDevAgentDirs(config: VeryfrontConfig | null | undefined): string[] {
+  return config?.ai?.agents?.discovery?.paths ?? ["agents"];
+}

@@ -13,6 +13,7 @@ import { createSourceSnapshotChangedError } from "#veryfront/errors/source-snaps
 import { runtime } from "#veryfront/platform/adapters/detect.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { isExtendedFSAdapter } from "#veryfront/platform/adapters/fs/wrapper.ts";
+import { StaticFileService } from "../services/static/static-file.service.ts";
 import { resolve } from "#veryfront/platform/compat/path/index.ts";
 import {
   getConfig,
@@ -37,10 +38,7 @@ import {
   type PreviewSourceSnapshotMarker,
   previewSourceSnapshotMarkersEqual,
 } from "../handlers/request/source-snapshot-freshness.ts";
-import {
-  markdownPreviewOwnsDocumentPathname,
-  ssrOwnsDocumentPathname,
-} from "../handlers/request/ssr/document-ownership.ts";
+import { isDocumentPathnameCandidate } from "../handlers/request/ssr/document-ownership.ts";
 
 import { prepareControlPlaneExecuteIngress } from "#veryfront/internal-agents/control-plane-auth.ts";
 
@@ -209,9 +207,12 @@ async function hasPublishedStaticFile(
   }
   roots.add(joinPath(projectRoot, "public"));
   const relativePath = pathname.replace(/^\/+/, "");
-  const candidates = relativePath.length === 0
-    ? ["index.html"]
-    : [relativePath, `${relativePath.replace(/\/$/, "")}/index.html`];
+  const candidates = relativePath.length === 0 ? ["index.html"] : [
+    relativePath,
+    ...(new StaticFileService().shouldProbeIndexPage(pathname)
+      ? [`${relativePath.replace(/\/$/, "")}/index.html`]
+      : []),
+  ];
 
   for (const root of roots) {
     for (const candidate of candidates) {
@@ -278,13 +279,11 @@ async function resolvePreviewConfigFreshness(
   }
   const pathname = opts.pathname ?? new URL(opts.req.url).pathname;
   if (pathname === "/api" || pathname.startsWith("/api/")) return { freshness: "normal" };
-  // StaticHandler precedes API discovery and document rendering. Ordinary
-  // extension paths are already excluded by the document predicates; probe
-  // the default static candidates for extensionless and Markdown paths that
-  // would otherwise reach SSR or MarkdownPreviewHandler. A configured build
-  // root is discovered from one provisional config read below.
-  const documentCandidate = ssrOwnsDocumentPathname(pathname) ||
-    markdownPreviewOwnsDocumentPathname(pathname);
+  // StaticHandler precedes API discovery and document rendering. Any
+  // application pathname, including dotted page parameters, can reach those
+  // handlers after a static miss. A configured build root is discovered from
+  // one provisional config read below.
+  const documentCandidate = isDocumentPathnameCandidate(pathname);
   if (!documentCandidate) return { freshness: "normal" };
 
   // Renew the normal lease before classifying static ownership. Refreshing the

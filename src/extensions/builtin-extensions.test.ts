@@ -407,7 +407,7 @@ describe("createBuiltinExtensions", () => {
     assertEquals(mlflow?.availability, "root-bundled");
   });
 
-  it("builds a minimal eval CLI builtin set for selected eval exporters", () => {
+  it("builds the eval CLI builtin set with the selected eval exporters", () => {
     const names = createEvalCliBuiltinExtensions(["http", "mlflow"]).map((entry) =>
       entry.extension.name
     );
@@ -415,16 +415,19 @@ describe("createBuiltinExtensions", () => {
     assertEquals(names.includes("ext-schema-zod"), true);
     assertEquals(names.includes("ext-eval-report-http"), true);
     assertEquals(names.includes("ext-eval-report-mlflow"), true);
-    assertEquals(names.includes("ext-auth-jwt"), false);
-    assertEquals(names.includes("ext-observability-opentelemetry"), false);
   });
 
-  it("does not load deferred eval exporter builtins when no exporters are selected", () => {
+  it("starts every default builtin except unselected eval exporters (#4022)", () => {
     const names = createEvalCliBuiltinExtensions([]).map((entry) => entry.extension.name);
+    const defaults = createBuiltinExtensions().map((entry) => entry.extension.name);
 
     assertEquals(names.includes("ext-eval-report-http"), false);
     assertEquals(names.includes("ext-eval-report-mlflow"), false);
-    assertEquals(names.includes("ext-auth-jwt"), false);
+    assertEquals(names.includes("ext-bundler-esbuild"), true);
+    for (const name of defaults) {
+      if (name.startsWith("ext-eval-report-")) continue;
+      assertEquals(names.includes(name), true, `eval CLI builtins omit ${name}`);
+    }
   });
 
   it("loads the configurable HTTP exporter for custom selected ids", () => {

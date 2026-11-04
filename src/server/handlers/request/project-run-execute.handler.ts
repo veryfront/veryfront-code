@@ -1,3 +1,7 @@
+import {
+  observeProjectRunCancellation,
+  readRunStopObserverExpiry,
+} from "./project-run-cancellation-observer.ts";
 import { captureTaskDefinition } from "#veryfront/task/definition-snapshot.ts";
 import { captureWorkflowDefinition } from "#veryfront/workflow/executor/workflow-definition-snapshot.ts";
 import {
@@ -248,6 +252,7 @@ const WORKFLOW_PAUSE_CHECK_BACKOFF_MS = 30_000;
 /** Overall decision deadline; unknown authority leaves a resumable hold. */
 const DEFAULT_WORKFLOW_PAUSE_DECISION_TIMEOUT_MS = 60_000;
 const PROJECT_RUN_OBSERVATION_APPEND_TIMEOUT_MS = 30_000;
+const RELEASE_ASSET_FAILURE_REPORT_TIMEOUT_MS = 5_000;
 const PROJECT_RUN_OBSERVATION_APPEND_BATCH_EVENT_COUNT = 100;
 const PROJECT_RUN_OBSERVATION_FLUSH_DELAY_MS = 50;
 const PROJECT_RUN_OBSERVATION_MAX_QUEUED_EVENT_COUNT = 300;
@@ -1335,6 +1340,11 @@ async function executeTaskRun(
   }
 }
 
+type TaskExecutionLifecycle = {
+  started(): Promise<void>;
+  finished(success: boolean): Promise<void>;
+};
+
 async function executeDiscoveredTaskRun(
   request: ProjectRunExecuteRequest,
   ctx: HandlerContext,
@@ -1345,6 +1355,7 @@ async function executeDiscoveredTaskRun(
   onCompleted?: () => void,
   onExecutionOwned?: () => void,
   captureSchemas?: HostSchemaCapture,
+  lifecycle?: TaskExecutionLifecycle,
 ): Promise<ProjectRunExecuteResponse> {
   const taskId = stripTargetPrefix(request.target, "task:");
   if (taskId === "knowledge-ingest") {
@@ -1382,8 +1393,28 @@ async function executeDiscoveredTaskRun(
       outputSchema: pinOutput!(schemas.output),
     }
     : definition;
+  const run = executionDefinition.run;
+  const observedDefinition = lifecycle
+    ? {
+      ...executionDefinition,
+      run: async (...args: Parameters<typeof run>) => {
+        await lifecycle.started();
+        // Persistence awaited before entry; cancellation during it must not enter project code.
+        if (isAbortSignalAborted(taskSignal)) throw getProjectRunObservationAbortReason(taskSignal);
+        let success = false;
+        try {
+          const value = await IntrinsicReflectApply(run, executionDefinition, args);
+          success = true;
+          return value;
+        } finally {
+          // An abort is not settlement evidence and terminal runs reject new observations.
+          if (!isAbortSignalAborted(taskSignal)) await lifecycle.finished(success);
+        }
+      },
+    }
+    : executionDefinition;
   const result = await deps.runTask({
-    task: { id: task.id, name: task.name, definition: executionDefinition },
+    task: { id: task.id, name: task.name, definition: observedDefinition },
     onExecutionStarted: onExecutionOwned,
     ...(runChild === undefined ? {} : { runChild }),
     ...(request.attempt === undefined ? {} : { attempt: request.attempt }),
@@ -2119,6 +2150,8 @@ async function executeWorkflowRun(
   onCompleted?: () => void,
   onExecutionOwned?: () => void,
   captureSchemas?: HostSchemaCapture,
+  ownerStopSignal?: AbortSignal,
+  retainCancellationClient = false,
 ): Promise<ProjectRunExecuteResponse> {
   let executionEntered = false;
   try {
@@ -2180,6 +2213,8 @@ async function executeWorkflowRun(
         runAgentNode,
         onCompleted,
         onExecutionOwned,
+        ownerStopSignal,
+        retainCancellationClient,
       );
     } catch (error) {
       // A failure after discovery still ran against the declared schemas; keep their identity.
@@ -2214,6 +2249,8 @@ async function runDiscoveredWorkflow(
   runAgentNode?: ReturnType<typeof createWorkflowAgentNodeRunner>,
   onCompleted?: () => void,
   onExecutionOwned?: () => void,
+  ownerStopSignal?: AbortSignal,
+  retainCancellationClient = false,
 ): Promise<ProjectRunExecuteResponse> {
   // Only a durable run can pause: an ephemeral one has nothing to resume from.
   let pauseChecksEnabled = false;
@@ -2256,12 +2293,15 @@ async function runDiscoveredWorkflow(
   }
   pauseChecksEnabled = client.statePersistence === "durable";
   let executionStarted = false;
+  let preserveClientUntilStopped = retainCancellationClient;
   let activeResume: Promise<unknown> | undefined;
   let stopped: Promise<boolean> | undefined;
   let stopAcknowledgement: Promise<void> | undefined;
+  let releaseCancellationDelivery = () => {};
   const acknowledgeSettledStop = () => {
     if (stopped === undefined || stopAcknowledgement !== undefined) return;
     stopAcknowledgement = primordialPromiseThen(stopped, async (confirmed) => {
+      releaseCancellationDelivery();
       // Without ownership evidence this pod never ran the execution: retire, never acknowledge.
       if (confirmed) await acknowledgeStop?.();
       else releaseStop?.();
@@ -2311,6 +2351,11 @@ async function runDiscoveredWorkflow(
         void cancelRun().catch(() => {});
       };
       signal.addEventListener("abort", forwardCancellation, { once: true });
+      if (ownerStopSignal) {
+        addAbortSignalListenerOnce(ownerStopSignal, forwardCancellation);
+        releaseCancellationDelivery = () =>
+          removeAbortSignalListener(ownerStopSignal, forwardCancellation);
+      }
       if (isAbortSignalAborted(signal)) forwardCancellation();
       const operation = resumeWaitingWorkflowRun(
         client,
@@ -2399,7 +2444,36 @@ async function runDiscoveredWorkflow(
         }
         throw error;
       }
-      run = await waitForWorkflowResult(client, handle.runId, signal, deps);
+      preserveClientUntilStopped = true;
+      let cancellation: Promise<void> | undefined;
+      const cancelLocalRun = () =>
+        cancellation ??= (async () => {
+          const current = await client.getRun(handle.runId);
+          if (current && isTerminalWorkflowStatus(current.status)) return;
+          await client.cancel(handle.runId);
+        })();
+      const forwardCancellation = () => {
+        void primordialPromiseCatch(cancelLocalRun(), () => {});
+      };
+      if (ownerStopSignal) {
+        addAbortSignalListenerOnce(ownerStopSignal, forwardCancellation);
+        releaseCancellationDelivery = () =>
+          removeAbortSignalListener(ownerStopSignal, forwardCancellation);
+        if (isAbortSignalAborted(ownerStopSignal)) forwardCancellation();
+      }
+      const cancelFromPolling = () =>
+        ownerStopSignal && isAbortSignalAborted(ownerStopSignal)
+          ? cancelLocalRun()
+          : client.cancel(handle.runId);
+      run = await waitForWorkflowResult(
+        client,
+        handle.runId,
+        signal,
+        deps,
+        undefined,
+        undefined,
+        cancelFromPolling,
+      );
       const pausedOn = run.status === "waiting"
         ? waitKeys(await readPendingWaits(client, handle.runId, run))
         : undefined;
@@ -2413,8 +2487,21 @@ async function runDiscoveredWorkflow(
             (refreshed.status === "waiting" &&
               sameKeys(waitKeys(await readPendingWaits(client, handle.runId, refreshed)), pausedOn))
           ? refreshed
-          : await waitForWorkflowResult(client, handle.runId, signal, deps);
+          : await waitForWorkflowResult(
+            client,
+            handle.runId,
+            signal,
+            deps,
+            undefined,
+            undefined,
+            cancelFromPolling,
+          );
       }
+      // An eligible observer may deliver cancellation after this result boundary.
+      // Keep its backend live until stop evidence settles, rather than taking
+      // a one-time snapshot of whether cancellation has already arrived.
+      preserveClientUntilStopped = retainCancellationClient ||
+        (ownerStopSignal !== undefined && isAbortSignalAborted(ownerStopSignal));
     }
     const durationMs = Math.max(0, deps.now() - startedAt);
 
@@ -2528,32 +2615,49 @@ async function runDiscoveredWorkflow(
     if (activeResume !== undefined) {
       // Capture ownership after resume admission, before cleanup can retire it.
       // Do not join this continuation to the timeout response.
-      const finishResume = () => {
+      const finishResume = async () => {
         const evidence = captureStopped();
-        void primordialPromiseCatch(
-          primordialPromiseThen(primordialPromiseResolve(undefined), () => client.destroy()),
-          (error) => {
-            serverLogger.warn("[project-run-execute] Failed to destroy workflow client", {
-              runId: request.runId,
-              errorName: error instanceof Error ? error.name : "unknown",
-            });
-          },
+        // A resumed result can settle before raw work. A retained observer may
+        // still affirm cancellation, so its backend must remain available.
+        if (
+          retainCancellationClient || (ownerStopSignal && isAbortSignalAborted(ownerStopSignal))
+        ) {
+          await evidence;
+        }
+        await destroyWorkflowClient(
+          client,
+          request.runId,
+          deps.workflowClientDestroyTimeoutMs ?? DEFAULT_WORKFLOW_CLIENT_DESTROY_TIMEOUT_MS,
         );
-        return evidence;
+        return await evidence;
       };
       stopped = primordialPromiseThen(activeResume, finishResume, finishResume);
       acknowledgeSettledStop();
     } else {
       stopped = captureStopped();
       acknowledgeSettledStop();
-      try {
-        await destroyWorkflowClient(
-          client,
-          request.runId,
-          deps.workflowClientDestroyTimeoutMs ?? DEFAULT_WORKFLOW_CLIENT_DESTROY_TIMEOUT_MS,
+      if (preserveClientUntilStopped) {
+        // Retained owner cancellation needs a live backend until the actual
+        // operation stops. Do not join cleanup to the timeout HTTP response.
+        void primordialPromiseCatch(
+          primordialPromiseThen(stopped, () =>
+            destroyWorkflowClient(
+              client,
+              request.runId,
+              deps.workflowClientDestroyTimeoutMs ?? DEFAULT_WORKFLOW_CLIENT_DESTROY_TIMEOUT_MS,
+            )),
+          () => {},
         );
-      } finally {
-        if (isAbortSignalAborted(signal)) await stopAcknowledgement;
+      } else {
+        try {
+          await destroyWorkflowClient(
+            client,
+            request.runId,
+            deps.workflowClientDestroyTimeoutMs ?? DEFAULT_WORKFLOW_CLIENT_DESTROY_TIMEOUT_MS,
+          );
+        } finally {
+          if (isAbortSignalAborted(signal)) await stopAcknowledgement;
+        }
       }
     }
   }
@@ -2857,7 +2961,10 @@ function createProjectRunObservationMirror(input: {
   fetch: typeof globalThis.fetch;
   abortSignal: AbortSignal;
   timeoutMs?: number;
-}): ConversationRunChunkMirror & { appendExecutionEntry(): Promise<void> } {
+}): ConversationRunChunkMirror & {
+  appendExecutionEntry(): Promise<void>;
+  appendTaskStep(started: boolean, success?: boolean): Promise<void>;
+} {
   let latestEventId = 0;
   let disabled = false;
   let appendOrdinal = 0;
@@ -2874,6 +2981,7 @@ function createProjectRunObservationMirror(input: {
   const append = async (
     events: Record<string, unknown>[],
     executionEntryOccurrenceId?: string,
+    stepObservation?: { kind: "step_started" | "step_ended"; step_id: string; event_index: number },
   ) => {
     if (disabled || events.length === 0) return;
     const ordinal = ++appendOrdinal;
@@ -2888,11 +2996,11 @@ function createProjectRunObservationMirror(input: {
     try {
       const logicalPayload = {
         events,
-        ...(executionEntryOccurrenceId
+        ...(executionEntryOccurrenceId || stepObservation
           ? {
             runtime_observations: {
               version: 1,
-              observations: [{
+              observations: stepObservation ? [stepObservation] : [{
                 kind: "execution_entry",
                 occurrence_id: executionEntryOccurrenceId,
                 event_index: 0,
@@ -3083,6 +3191,39 @@ function createProjectRunObservationMirror(input: {
       }
       if (appendFailure !== undefined) throw appendFailure;
     },
+    appendTaskStep: async (started, success) => {
+      if (disabled) {
+        throw new DurableRunEventPersistenceError("Project run observation sink is disabled");
+      }
+      // Same signed attempt replays the same source identity; retries have distinct attempt IDs.
+      const hash = await computeObservationHash(privateJsonStringify([
+        "project-task-step-v1",
+        input.runId,
+        input.canonicalRunId,
+        input.attemptId,
+      ]));
+      const segment = (start: number, end: number) =>
+        IntrinsicReflectApply(StringSlice, hash, [start, end]) as string;
+      const stepId = `${segment(0, 8)}-${segment(8, 12)}-8${segment(13, 16)}-8${segment(17, 20)}-${
+        segment(20, 32)
+      }`;
+      await append(
+        [{
+          type: started ? "STEP_STARTED" : "STEP_FINISHED",
+          stepId,
+          stepName: "task",
+          ...(!started
+            ? {
+              status: success ? "completed" : "failed",
+              exitCode: success ? 0 : 1,
+              errorMessage: success ? null : "Task execution failed",
+            }
+            : {}),
+        }],
+        undefined,
+        { kind: started ? "step_started" : "step_ended", step_id: stepId, event_index: 0 },
+      );
+    },
     appendExecutionEntry: async () => {
       // A redelivered trusted attempt records the same logical entry and exact payload.
       const hash = await computeObservationHash(privateJsonStringify([
@@ -3227,7 +3368,7 @@ async function withProjectRunRuntimeObservations<T>(
     apiUrl: string;
     eventToken: string | undefined;
     fetch: typeof globalThis.fetch;
-    operation: () => Promise<T>;
+    operation: (lifecycle?: TaskExecutionLifecycle) => Promise<T>;
   },
 ): Promise<T> {
   const parent = requireProjectRunObservationParent(input.request, input.eventToken);
@@ -3317,7 +3458,17 @@ async function withProjectRunRuntimeObservations<T>(
       () =>
         withLocalChildExecution(
           executeChild,
-          input.operation,
+          () =>
+            input.operation({
+              started: async () => {
+                await mirror.flush({ abortSignal: input.abortSignal, throwOnTimeoutRetry: true });
+                await mirror.appendTaskStep(true);
+              },
+              finished: async (success) => {
+                await mirror.flush({ abortSignal: input.abortSignal, throwOnTimeoutRetry: true });
+                await mirror.appendTaskStep(false, success);
+              },
+            }),
           undefined,
           undefined,
           createObserver,
@@ -3353,21 +3504,30 @@ async function cancelAcknowledgementBody(response: Response): Promise<void> {
   if (body) await ReflectApply(ReadableStreamCancel, body, []);
 }
 
+const RunStopObserverNow = Date.now;
+
 /** Independent evidence of a settled execution, never evidence from abort alone. */
 function createRunStopAcknowledger(
   req: Request,
   runId: string,
   executionSignal?: AbortSignal,
   afterAcknowledged?: () => Promise<void>,
-): (() => Promise<void>) | undefined {
+  onCancellationRequested?: () => void,
+): {
+  acknowledge: () => Promise<void>;
+  startObserver: () => boolean;
+  disposeObserver: () => void;
+} | undefined {
   const rawToken = readIngressCredential(req, INGRESS_RUN_STOP_TOKEN_HEADER);
   if (rawToken === null) return undefined;
   const token = requireInferenceProviderCredential(rawToken, "Run stop token header");
   let url: string;
+  let cancellationStatusUrl: string;
   let transport: typeof fetch;
   try {
     const apiUrl = requireHostPrivateApiHttps(resolveHostOwnedSourceApiBaseUrl());
     url = `${apiUrl}/runs/${encodeURIComponent(runId)}/cancellation-ack`;
+    cancellationStatusUrl = `${apiUrl}/runs/${encodeURIComponent(runId)}/cancellation-status`;
     transport = createVeryfrontApiOriginBoundOutboundFetch(apiUrl);
   } catch {
     serverLogger.warn("[project-run-execute] Stop acknowledgement transport is unavailable", {
@@ -3375,6 +3535,34 @@ function createRunStopAcknowledger(
     });
     return undefined;
   }
+  const expiresAt = readRunStopObserverExpiry(token);
+  let observerStarted = false;
+  let observerDisposed = false;
+  let stopObservation = () => {};
+  const disposeObserver = () => {
+    observerDisposed = true;
+    stopObservation();
+  };
+  const startObserver = () => {
+    if (observerStarted || observerDisposed) return false;
+    observerStarted = true;
+    if (onCancellationRequested && expiresAt !== undefined && expiresAt > RunStopObserverNow()) {
+      stopObservation = observeProjectRunCancellation({
+        fetch: transport,
+        url: cancellationStatusUrl,
+        token,
+        expiresAt,
+        onStopRequested: () => {
+          // Canonical cancellation survives completed HTTP transport. It is still not
+          // settlement evidence: acknowledge() must follow the actual callback stop.
+          cancellationObserved = true;
+          onCancellationRequested();
+        },
+      });
+      return true;
+    }
+    return false;
+  };
   const lifetime = getRequestTransportLifetime(req);
   const signal = executionSignal ?? lifetime?.signal ??
     IntrinsicReflectApply(RequestSignalGetter, req, []) as AbortSignal;
@@ -3431,9 +3619,13 @@ function createRunStopAcknowledger(
       serverLogger.warn("[project-run-execute] Could not acknowledge stopped execution", { runId });
     }
   }
-  return () => {
-    stopped = true;
-    return reconcile();
+  return {
+    startObserver,
+    disposeObserver,
+    acknowledge: () => {
+      stopped = true;
+      return reconcile();
+    },
   };
 }
 
@@ -5309,17 +5501,14 @@ async function executeReleaseAssetBuildRun(input: {
             input.signal,
             () => apiClient.writeReleaseAssetManifest(version, manifest, undefined, input.signal),
           ),
-        reportReleaseAssetManifestState: (version, state, error) =>
-          runWhileActive(
-            input.signal,
-            () =>
-              apiClient.updateReleaseAssetManifestState(
-                version,
-                state,
-                error,
-                undefined,
-                input.signal,
-              ),
+        reportReleaseAssetManifestState: (version, state, error, manifestVersion) =>
+          apiClient.updateReleaseAssetManifestState(
+            version,
+            state,
+            error,
+            undefined,
+            ReflectApply(RunStopTimeout, AbortSignal, [RELEASE_ASSET_FAILURE_REPORT_TIMEOUT_MS]),
+            manifestVersion,
           ),
         compileProjectCss: (...args) =>
           runWhileActive(input.signal, () => compileProjectCss(...args)),
@@ -5796,12 +5985,14 @@ async function executeProjectRun(
   releaseStop?: () => void,
   retainedEventToken?: string,
   observeExecution?: (
-    operation: () => Promise<ProjectRunExecuteResponse>,
+    operation: (lifecycle?: TaskExecutionLifecycle) => Promise<ProjectRunExecuteResponse>,
     signal: AbortSignal,
   ) => Promise<ProjectRunExecuteResponse>,
   onCompleted?: () => void,
   onExecutionOwned?: () => void,
   captureSchemas?: HostSchemaCapture,
+  ownerStopSignal?: AbortSignal,
+  retainCancellationClient = false,
 ): Promise<ProjectRunExecuteResponse> {
   if (
     captureSchemas && request.kind === "task" &&
@@ -5820,7 +6011,9 @@ async function executeProjectRun(
           const signal = control
             ? ReflectApply(TaskAbortSignalAny, AbortSignal, [[req.signal, control.signal]])
             : req.signal;
-          const execute = async (): Promise<ProjectRunExecuteResponse> => {
+          const execute = async (
+            lifecycle?: TaskExecutionLifecycle,
+          ): Promise<ProjectRunExecuteResponse> => {
             switch (request.target) {
               case "task:eval":
                 return await executeEvalTaskRun(
@@ -5889,6 +6082,7 @@ async function executeProjectRun(
                   onCompleted,
                   onExecutionOwned,
                   captureSchemas,
+                  lifecycle,
                 );
             }
           };
@@ -5933,6 +6127,8 @@ async function executeProjectRun(
       onCompleted,
       onExecutionOwned,
       captureSchemas,
+      ownerStopSignal,
+      retainCancellationClient,
     );
   };
   try {
@@ -6150,13 +6346,14 @@ export class ProjectRunExecuteHandler extends BaseHandler {
             });
         };
         const runtimeOwnershipProbeSession = createOwnershipProbeSession();
-        const callback = createRunStopAcknowledger(
+        const stopCallbacks = createRunStopAcknowledger(
           req,
           request.runId,
           executionSignal,
           () =>
             runtimeOwnershipProbeSession?.afterStopAcknowledged() ??
               primordialPromiseResolve(undefined),
+          () => ReflectApply(TaskAbort, stopController, [new TaskError("Run cancelled")]),
         );
         const acknowledgePause = request.kind === "workflow"
           ? createRunPauseAcknowledger(
@@ -6169,14 +6366,25 @@ export class ProjectRunExecuteHandler extends BaseHandler {
           )
           : undefined;
         const executionRequest = withoutProjectRunInferenceToken(req, executionSignal);
-        const settledStop = this.stopRegistry.register(request.runId, () => {
-          ReflectApply(TaskAbort, stopController, [new Error("Run cancelled")]);
-        });
+        let settledStop: ReturnType<RunStopRegistry["register"]>;
+        try {
+          settledStop = this.stopRegistry.register(request.runId, () => {
+            ReflectApply(TaskAbort, stopController, [new Error("Run cancelled")]);
+          });
+        } catch (error) {
+          stopCallbacks?.disposeObserver();
+          throw error;
+        }
         const acknowledgeStop = async () => {
+          // This callback follows actual task/workflow settlement, even after an HTTP timeout.
+          stopCallbacks?.disposeObserver();
           settledStop();
-          await callback?.();
+          await stopCallbacks?.acknowledge();
         };
-        const releaseStop = () => settledStop("abandoned");
+        const releaseStop = () => {
+          stopCallbacks?.disposeObserver();
+          settledStop("abandoned");
+        };
 
         const runtimeIdentity = getServiceRuntimeIdentity();
         const runtimeNameHeader = RuntimeEncodeURIComponent(runtimeIdentity.name);
@@ -6199,6 +6407,8 @@ export class ProjectRunExecuteHandler extends BaseHandler {
             };
             let executionOwned = false;
             try {
+              // All handler setup has completed; no observer survives failed admission setup.
+              const retainCancellationClient = stopCallbacks?.startObserver() ?? false;
               const execute = async () => {
                 await runtimeOwnershipProbeSession?.beforeExecute();
                 if (inferenceToken !== undefined && shouldObserveProjectRunRuntime(request)) {
@@ -6232,6 +6442,8 @@ export class ProjectRunExecuteHandler extends BaseHandler {
                     executionOwned = true;
                   },
                   captureSchemas,
+                  stopController.signal,
+                  retainCancellationClient,
                 );
               };
               const limited = enforceRunOutputLimit(
