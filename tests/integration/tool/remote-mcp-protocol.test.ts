@@ -183,6 +183,24 @@ describe("remote MCP HTTP compatibility", () => {
     assertEquals(calls, 1);
   });
 
+  it("initializes a legacy session before the first call of a run discovered elsewhere", async () => {
+    const server = legacyFixture();
+    await withMockFetch(server.fetch, async () => {
+      const source = createRemoteMCPToolSource({ endpoint: ENDPOINT });
+      await source.listTools();
+      assertEquals(await source.executeTool("ping", {}, { runId: "run-b" }), "pong");
+    });
+    assertEquals(server.requests.map((r) => r.body?.method ?? r.method), [
+      "tools/list",
+      "initialize",
+      "notifications/initialized",
+      "tools/list",
+      "initialize",
+      "notifications/initialized",
+      "tools/call",
+    ]);
+  });
+
   for (const discoverFirst of [false, true]) {
     it(`does not negotiate or replay an ambiguous modern HTTP 400 call (discovery: ${discoverFirst})`, async () => {
       const methods: string[] = [];

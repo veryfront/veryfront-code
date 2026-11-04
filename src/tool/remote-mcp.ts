@@ -1231,6 +1231,10 @@ function createRemoteMCPToolSourceWithFetch(
   }>();
   const initializing = createPrivateMcpMap<string, Promise<RemoteMcpSession>>();
   const parameterHeaders = new Map<string, Map<string, McpParameterHeader[]>>();
+  // Endpoints whose discovery negotiated a legacy session. A tool call for a
+  // new identity on such an endpoint initializes first instead of probing with
+  // a modern request, because an ambiguous call failure is never replayed.
+  const legacyEndpoints = createPrivateMcpMap<string, true>();
 
   async function initialize(
     key: string,
@@ -1322,6 +1326,7 @@ function createRemoteMCPToolSourceWithFetch(
         MAX_REMOTE_MCP_CALL_RESPONSE_BYTES,
       );
       sessions.set(key, session);
+      legacyEndpoints.set(endpoint, true);
       return session;
     })();
     initializing.set(key, promise);
@@ -1383,7 +1388,12 @@ function createRemoteMCPToolSourceWithFetch(
       };
       return postJsonRpc(endpoint, finalHeaders, finalBody, requestFetch, signal, maxBytes);
     };
-    const session = sessions.get(key);
+    let session = sessions.get(key);
+    if (!session && operation === "execution" && legacyEndpoints.has(endpoint)) {
+      // Initialization happens before the call is sent, so a failure here never
+      // leaves a side-effecting request to replay.
+      session = await initialize(key, endpoint, headers, requestFetch, signal, runId);
+    }
     try {
       return await send(session);
     } catch (error) {

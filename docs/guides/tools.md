@@ -345,7 +345,8 @@ encoding use the protocol's Base64 format.
 
 For a legacy server that rejects modern tool discovery with an unrecognized HTTP 400
 response, the client initializes a session and reuses its negotiated protocol
-version. Sessions are isolated by endpoint, credentials and run. An explicit
+version. Sessions are isolated by endpoint, credentials and run. A tool call for
+a new run on such an endpoint initializes its session before the call is sent. An explicit
 session-expiry HTTP 404 triggers one initialization and retry. Other failures
 do not replay tool calls.
 
