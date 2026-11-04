@@ -161,6 +161,8 @@ export class DevServer {
       };
     }
 
+    this.options.onConfigResolved?.(this.appConfig);
+
     if (bootstrap.usingFSAdapter) {
       fsAdapterLog.debug(`Using ${bootstrap.fsAdapterType} backend`);
     }

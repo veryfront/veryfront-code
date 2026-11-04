@@ -36,7 +36,8 @@ import { findAvailablePort, isPortAvailable, isPortInUseError } from "./port-fal
 import { advertisesCloudGateway, listInferenceOptions } from "./inference-status.ts";
 import {
   findUnconnectedIntegrationLines,
-  normalizeIntegrationPolicyForDiagnostics,
+  type IntegrationDiagnosticSnapshot,
+  snapshotIntegrationDiagnostics,
 } from "./unconnected-integrations.ts";
 import { captureHostApiEnvironment } from "#cli/process-env";
 import { resolveApiCredentialCandidatesForAuth, resolveApiUrlTrust } from "#cli/shared/config";
@@ -442,9 +443,9 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
         }
       }
 
-      // Agents run when the dev server starts and may replace built-ins, so normalize first.
-      const integrationPolicy = normalizeIntegrationPolicyForDiagnostics(config?.integrations);
       const shutdownController = new AbortController();
+      let integrationDiagnostics: IntegrationDiagnosticSnapshot | undefined;
+      let integrationDiagnosticsDone: Promise<void> = Promise.resolve();
       let devServer: Awaited<ReturnType<typeof startDevServer>> | null = null;
       let mcpServer: MCPDevServer | null = null;
 
@@ -462,6 +463,9 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
             enableHMR,
             enableFastRefresh: true,
             signal: shutdownController.signal,
+            onConfigResolved: (effectiveConfig) => {
+              integrationDiagnostics = snapshotIntegrationDiagnostics(effectiveConfig);
+            },
           }));
       } catch (error) {
         await disposeConnectedRuntime?.();
@@ -520,6 +524,7 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
             console.log("  ! Stopping immediately. Run cancellation may not have been saved.");
             exitProcess(1);
           }
+          await done;
           return;
         }
         shuttingDown = true;
@@ -530,6 +535,7 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
           shutdownController.abort();
           await stopDevServices(
             [
+              () => integrationDiagnosticsDone,
               () => disposeConnectedRuntime?.(),
               () => mcpServer?.stop(),
               () => devServer?.stop(),
@@ -636,9 +642,13 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
       }
       // Discovery lists only connected integrations. Report the ones the agents declare but the
       // project lacks after Ready, so the banner does not wait on the network.
-      if (runtimeAuth.apiToken && runtimeAuth.projectSlug) {
-        void findUnconnectedIntegrationLines(config, integrationPolicy).then(
+      if (runtimeAuth.apiToken && runtimeAuth.projectSlug && integrationDiagnostics) {
+        integrationDiagnosticsDone = findUnconnectedIntegrationLines(
+          integrationDiagnostics,
+          shutdownController.signal,
+        ).then(
           (lines) => {
+            if (shutdownController.signal.aborted) return;
             for (let index = 0; index < lines.length; index += 2) {
               console.log(`  ${warning("!")} ${lines[index]}`);
               console.log(`    ${lines[index + 1]!.trim()}`);

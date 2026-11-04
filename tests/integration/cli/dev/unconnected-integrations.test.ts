@@ -6,8 +6,9 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { discoverAll } from "#veryfront/discovery/index.ts";
 import { createProjectDiscoveryConfig } from "#veryfront/discovery/project-discovery-config.ts";
+import { getEnvironmentConfig } from "#veryfront/config/environment-config.ts";
 import { agentRegistry } from "#veryfront/agent/composition/index.ts";
-import type { AgentConfig } from "#veryfront/agent/types.ts";
+import type { Agent, AgentConfig } from "#veryfront/agent/types.ts";
 import { createToolsFromRemoteDefinitions } from "#veryfront/tool/remote-source-tools.ts";
 import {
   intersectSourceIntegrationPolicies,
@@ -19,9 +20,17 @@ import {
   collectDeclaredIntegrations,
   findUnconnectedIntegrationLines,
   normalizeIntegrationPolicyForDiagnostics,
+  snapshotIntegrationDiagnostics,
   suppliesToolsFromSources,
   unconnectedIntegrationLines,
 } from "../../../../cli/commands/dev/unconnected-integrations.ts";
+
+import {
+  __resetLoggerConfigForTests,
+  __subscribeLogRecordEmitter,
+  LogLevel,
+  setLogLevel,
+} from "#veryfront/utils/logger/logger.ts";
 
 const config = { ai: { agents: { discovery: { paths: ["crew"] } } } };
 
@@ -257,46 +266,60 @@ describe("dev integration source discovery", () => {
         assertEquals(discovery.errors, []);
         assertEquals([...discovery.agents.keys()], ["crew-agent"]);
         await withMockFetch(() => Promise.resolve(Response.json({ tools: [] })), async () => {
-          assertEquals(await findUnconnectedIntegrationLines(config), [
+          const mutableConfig = {
+            ai: { agents: { discovery: { paths: ["crew"] } } },
+            integrations: { allow: { salesforce: { allowedTools: ["get_case"] } } },
+          };
+          const snapshot = snapshotIntegrationDiagnostics(mutableConfig);
+          mutableConfig.ai.agents.discovery.paths.length = 0;
+          mutableConfig.integrations.allow.salesforce.allowedTools.length = 0;
+          assertEquals(Object.isFrozen(snapshot), true);
+          assertEquals(await findUnconnectedIntegrationLines(snapshot), [
             "Salesforce isn't connected. Agent crew-agent needs it.",
             "  Connect: npx veryfront integration connect salesforce --project case-demo",
           ]);
           assertEquals(
-            await findUnconnectedIntegrationLines({
-              ...config,
-              integrations: { allow: { gmail: {} } },
-            }),
-            [],
-          );
-          assertEquals(
-            await findUnconnectedIntegrationLines({
-              ...config,
-              integrations: { allow: { salesforce: { allowedTools: ["update_case"] } } },
-            }),
-            [],
-          );
-          // The caller normalizes the policy before agents run; the check uses it as given.
-          assertEquals(
-            await findUnconnectedIntegrationLines(
-              config,
-              normalizeSourceIntegrationPolicy({ allow: { gmail: {} } }),
-            ),
-            [],
-          );
-          // The dev server honors `enabled` only for skills; it still discovers the agent roots.
-          assertEquals(
-            await findUnconnectedIntegrationLines({
-              ai: { agents: { discovery: { enabled: false, paths: ["crew"] } } },
-            }),
+            await findUnconnectedIntegrationLines(snapshotIntegrationDiagnostics(config)),
             [
               "Salesforce isn't connected. Agent crew-agent needs it.",
               "  Connect: npx veryfront integration connect salesforce --project case-demo",
             ],
           );
           assertEquals(
-            await findUnconnectedIntegrationLines({
+            await findUnconnectedIntegrationLines(snapshotIntegrationDiagnostics({
+              ...config,
+              integrations: { allow: { gmail: {} } },
+            })),
+            [],
+          );
+          assertEquals(
+            await findUnconnectedIntegrationLines(snapshotIntegrationDiagnostics({
+              ...config,
+              integrations: { allow: { salesforce: { allowedTools: ["update_case"] } } },
+            })),
+            [],
+          );
+          // The caller normalizes the policy before agents run; the check uses it as given.
+          assertEquals(
+            await findUnconnectedIntegrationLines(
+              snapshotIntegrationDiagnostics({ ...config, integrations: { allow: { gmail: {} } } }),
+            ),
+            [],
+          );
+          // The dev server honors `enabled` only for skills; it still discovers the agent roots.
+          assertEquals(
+            await findUnconnectedIntegrationLines(snapshotIntegrationDiagnostics({
+              ai: { agents: { discovery: { enabled: false, paths: ["crew"] } } },
+            })),
+            [
+              "Salesforce isn't connected. Agent crew-agent needs it.",
+              "  Connect: npx veryfront integration connect salesforce --project case-demo",
+            ],
+          );
+          assertEquals(
+            await findUnconnectedIntegrationLines(snapshotIntegrationDiagnostics({
               ai: { agents: { discovery: { paths: [] } } },
-            }),
+            })),
             [],
           );
         });
@@ -310,4 +333,75 @@ describe("dev integration source discovery", () => {
       }
     }
   });
+});
+
+describe("dev integration diagnostic shutdown", () => {
+  for (const phase of ["before discovery", "during transport", "after response"] as const) {
+    it(`silences shutdown ${phase} without later requests`, async () => {
+      const controller = new AbortController();
+      const env = {
+        VERYFRONT_API_URL: "https://api.test",
+        VERYFRONT_API_TOKEN: "token",
+        VERYFRONT_PROJECT_SLUG: "abort-demo",
+      };
+      const previous = new Map(Object.keys(env).map((name) => [name, Deno.env.get(name)]));
+      const output: unknown[] = [];
+      const unsubscribe = __subscribeLogRecordEmitter((entry) => output.push(entry));
+      setLogLevel(LogLevel.DEBUG);
+      let requests = 0;
+      let transportAborted = false;
+      try {
+        for (const [name, value] of Object.entries(env)) Deno.env.set(name, value);
+        agentRegistry.register("abort-agent", {
+          id: "abort-agent",
+          config: { id: "abort-agent", tools: { salesforce__get_case: true } },
+          generate: () => Promise.resolve({ text: "" }),
+        } as unknown as Agent);
+        // Initialize environment diagnostics before observing the connection check itself.
+        getEnvironmentConfig();
+        output.length = 0;
+        if (phase === "before discovery") controller.abort();
+        await withMockFetch((_input, init) => {
+          requests++;
+          if (phase === "after response") {
+            return Promise.resolve(
+              new Response(
+                new ReadableStream({
+                  pull(stream) {
+                    stream.enqueue(new TextEncoder().encode('{"tools":[]}'));
+                    stream.close();
+                    controller.abort();
+                    transportAborted = init?.signal?.aborted === true;
+                  },
+                }),
+                { headers: { "content-type": "application/json" } },
+              ),
+            );
+          }
+          controller.abort();
+          transportAborted = init?.signal?.aborted === true;
+          return Promise.reject(new TypeError("transport interrupted"));
+        }, async () => {
+          assertEquals(
+            await findUnconnectedIntegrationLines(
+              snapshotIntegrationDiagnostics(config),
+              controller.signal,
+            ),
+            [],
+          );
+        });
+      } finally {
+        unsubscribe();
+        __resetLoggerConfigForTests();
+        agentRegistry.delete("abort-agent");
+        for (const [name, value] of previous) {
+          if (value === undefined) Deno.env.delete(name);
+          else Deno.env.set(name, value);
+        }
+      }
+      assertEquals(transportAborted, phase !== "before discovery");
+      assertEquals(requests, phase === "before discovery" ? 0 : 1);
+      assertEquals(output, []);
+    });
+  }
 });

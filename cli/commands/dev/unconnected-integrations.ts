@@ -30,6 +30,7 @@ const apply = Reflect.apply;
 const objectEntries = Object.entries;
 const arraySort = Array.prototype.sort;
 const mapForEach = Map.prototype.forEach;
+const freeze = Object.freeze;
 
 export interface AgentTools {
   agentId: string;
@@ -139,14 +140,28 @@ export function normalizeIntegrationPolicyForDiagnostics(
   return normalizeSourceIntegrationPolicy(integrations);
 }
 
+export interface IntegrationDiagnosticSnapshot {
+  readonly agentDiscoveryEnabled: boolean;
+  readonly integrationPolicy: SourceIntegrationPolicyManifest;
+}
+
+/** Capture effective discovery and source restrictions before project agents execute. */
+export function snapshotIntegrationDiagnostics(
+  config?: VeryfrontConfig | null,
+): IntegrationDiagnosticSnapshot {
+  return freeze({
+    agentDiscoveryEnabled: resolveDevAgentDirs(config).length > 0,
+    integrationPolicy: normalizeIntegrationPolicyForDiagnostics(config?.integrations),
+  });
+}
+
 /** Warn from runtime-registered agents when platform discovery succeeds. */
 export async function findUnconnectedIntegrationLines(
-  config?: VeryfrontConfig | null,
-  integrationPolicy?: SourceIntegrationPolicyManifest,
+  snapshot: IntegrationDiagnosticSnapshot,
+  signal?: AbortSignal,
 ): Promise<string[]> {
   try {
-    // Mirror the roots the dev server discovers, not the project-wide discovery settings.
-    if (resolveDevAgentDirs(config).length === 0) return [];
+    if (signal?.aborted || !snapshot.agentDiscoveryEnabled) return [];
     const agents: AgentTools[] = [];
     apply(mapForEach, agentRegistry.getAll(), [(agent: Agent, agentId: string) => {
       pushPrivateArray(agents, {
@@ -157,19 +172,19 @@ export async function findUnconnectedIntegrationLines(
     }]);
     const declared = collectDeclaredIntegrations(
       agents,
-      integrationPolicy ?? normalizeSourceIntegrationPolicy(config?.integrations),
+      snapshot.integrationPolicy,
     );
     if (declared.length === 0) return [];
     const target = getRemoteIntegrationProjectTarget();
     if (!target) return [];
     const connectedNames: string[] = [];
-    const discovery = await getRemoteIntegrationToolDiscoveryWithEvidence(undefined, {
+    const discovery = await getRemoteIntegrationToolDiscoveryWithEvidence({ abortSignal: signal }, {
       onDiscoveredToolName: (name) => pushPrivateArray(connectedNames, name),
     });
-    if (discovery.status !== "ok") return [];
+    if (signal?.aborted || discovery.status !== "ok") return [];
     return unconnectedIntegrationLines(declared, connectedNames, target.projectSlug);
   } catch (error) {
-    serverLogger.debug("Integration connection check failed", { error });
+    if (!signal?.aborted) serverLogger.debug("Integration connection check failed", { error });
     return [];
   }
 }
