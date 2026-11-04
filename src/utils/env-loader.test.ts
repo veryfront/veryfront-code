@@ -7,9 +7,10 @@ import {
   __resetEnvLoaderForTests,
   __setEnvLoaderOsTypeForTests,
   getEnvSource,
-  hasEnvLoadedFrom,
+  loadAdditionalEnv,
   loadEnv,
   markConfigFileSource,
+  markEnvLoaded,
   markProcessEnvSource,
   supportsEnvFiles,
 } from "./env-loader.ts";
@@ -243,16 +244,73 @@ describe("env-loader", () => {
         await writeTextFile(`${projectDir}/.env`, `${shared}=project\n${projectOnly}=project`);
 
         await loadEnv({ cwd: tempDir });
-        assertEquals(hasEnvLoadedFrom(projectDir), false);
-        await loadEnv({ cwd: projectDir });
+        markEnvLoaded();
+        await loadAdditionalEnv({ cwd: projectDir });
 
-        assertEquals(hasEnvLoadedFrom(projectDir), true);
         assertEquals(getEnv(shared), "cwd");
         assertEquals(getEnv(projectOnly), "project");
         assertEquals(getEnvSource(projectOnly)?.source, "env-file");
       } finally {
         cleanupKeys(shared, projectOnly);
         await remove(projectDir, { recursive: true });
+      }
+    });
+
+    it("should keep a value the first directory set to empty", async () => {
+      const shared = createKey("EMPTY_SHARED");
+      const projectDir = await makeTempDir({ prefix: "env-loader-project-" });
+      try {
+        await writeEnvFile(".env", `${shared}=`);
+        await writeTextFile(`${projectDir}/.env`, `${shared}=project`);
+
+        await loadEnv({ cwd: tempDir });
+        await loadAdditionalEnv({ cwd: projectDir });
+
+        assertEquals(getEnv(shared), "");
+      } finally {
+        cleanupKeys(shared);
+        await remove(projectDir, { recursive: true });
+      }
+    });
+
+    it("should read an additional directory only once", async () => {
+      const key = createKey("ADDITIONAL_ONCE");
+      await writeEnvFile(".env", `${key}=first`);
+      try {
+        await loadAdditionalEnv({ cwd: tempDir });
+        deleteEnv(key);
+        await loadAdditionalEnv({ cwd: tempDir });
+
+        assertEquals(getEnv(key), undefined);
+      } finally {
+        cleanupKeys(key);
+      }
+    });
+
+    it("should skip loading once markEnvLoaded was called", async () => {
+      const key = createKey("MARKED");
+      await writeEnvFile(".env", `${key}=from-file`);
+      try {
+        markEnvLoaded();
+        await loadEnv({ cwd: tempDir, override: true });
+
+        assertEquals(getEnv(key), undefined);
+      } finally {
+        cleanupKeys(key);
+      }
+    });
+
+    it("should make a concurrent caller await the in-flight load", async () => {
+      const key = createKey("CONCURRENT");
+      await writeEnvFile(".env", `${key}=loaded`);
+      try {
+        const first = loadEnv({ cwd: tempDir });
+        await loadEnv({ cwd: tempDir });
+
+        assertEquals(getEnv(key), "loaded");
+        await first;
+      } finally {
+        cleanupKeys(key);
       }
     });
 

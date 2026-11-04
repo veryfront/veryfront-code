@@ -15,7 +15,8 @@ import { ensureCliBundlerContracts } from "#cli/shared/default-contracts";
 import { isValidPortEnv, parsePortEnv, resolveEnvironmentPort } from "#cli/shared/port-env";
 import type { ParsedArgs } from "#cli/shared/types";
 import { refreshEnvironmentConfig } from "#cli/environment-config";
-import { hasEnvLoadedFrom, loadEnv, supportsEnvFiles } from "veryfront/utils/env-loader";
+import { loadAdditionalEnv, supportsEnvFiles } from "veryfront/utils/env-loader";
+import { INVALID_ARGUMENT } from "veryfront/errors";
 
 const getDevArgsSchema = defineSchema((v) =>
   v.object({
@@ -85,21 +86,46 @@ async function resolveProjectDir(projectArg: string | undefined): Promise<string
   return projectDir;
 }
 
+/** Read `--project`, rejecting a flag given without a directory. */
+function devProjectArg(args: ParsedArgs): string | undefined {
+  const project = args.project;
+  if (project === undefined) return undefined;
+  if (typeof project === "string" && project.trim() !== "") return project;
+  throw INVALID_ARGUMENT.create({
+    detail: "Invalid dev arguments: --project requires a directory",
+    context: { command: "dev", issues: [] },
+  });
+}
+
+/** Env loading steps, replaceable in tests. */
+export interface DevProjectEnvDeps {
+  supportsEnvFiles: () => boolean;
+  loadAdditionalEnv: (options: { cwd: string }) => Promise<void>;
+  refreshEnvironmentConfig: () => void;
+}
+
+const liveDevProjectEnvDeps: DevProjectEnvDeps = {
+  supportsEnvFiles,
+  loadAdditionalEnv,
+  refreshEnvironmentConfig,
+};
+
 /**
  * Resolve the project directory and load its env files when it is not the cwd.
  *
  * CLI startup loads the cwd's env files before the project is known, and
  * server bootstrap skips loading once that happened. Runs before parsing, so
  * project values such as `PORT` count as env defaults. Values already set, from
- * the shell or the cwd, still win.
+ * the shell or the cwd, still win. The cwd itself is never read twice.
  */
-export async function loadDevProjectEnv(args: ParsedArgs): Promise<string> {
-  const projectDir = await resolveProjectDir(
-    typeof args.project === "string" ? args.project : undefined,
-  );
-  if (supportsEnvFiles() && !hasEnvLoadedFrom(projectDir)) {
-    await loadEnv({ cwd: projectDir });
-    refreshEnvironmentConfig();
+export async function loadDevProjectEnv(
+  args: ParsedArgs,
+  deps: DevProjectEnvDeps = liveDevProjectEnvDeps,
+): Promise<string> {
+  const projectDir = await resolveProjectDir(devProjectArg(args));
+  if (deps.supportsEnvFiles()) {
+    await deps.loadAdditionalEnv({ cwd: projectDir });
+    deps.refreshEnvironmentConfig();
   }
   return projectDir;
 }

@@ -30,21 +30,32 @@ const mapForEach = Map.prototype.forEach;
 const mapGet = Map.prototype.get;
 const mapSet = Map.prototype.set;
 const mapClear = Map.prototype.clear;
-const setAdd = Set.prototype.add;
-const setClear = Set.prototype.clear;
-const setHas = Set.prototype.has;
 const stringToLowerCase = String.prototype.toLowerCase;
+const hasOwn = Object.hasOwn;
 let envLoaded = false;
-// Directories whose env files were read. The CLI loads the cwd before a
-// command knows its project; `--project <dir>` then loads that directory too.
-const loadedEnvDirs = new Set<string>();
+// One load per directory, kept while it runs so concurrent callers await the
+// same read. The CLI loads the cwd before a command knows its project, and
+// `--project <dir>` then loads that directory too.
+const envDirLoads = new Map<string, Promise<void>>();
 let osTypeOverride: string | undefined;
 
 function envLoaderOsType(): string {
   return osTypeOverride ?? getOsType();
 }
 
-/** Load environment variables from `.env` files (`.env`, `.env.{NODE_ENV|DENO_ENV}`, `.env.local`). */
+interface EnvDirLoadOptions {
+  override: boolean;
+  debug: boolean;
+  /** Keep every value defined before this load, even an empty one. */
+  keepDefined: boolean;
+}
+
+/**
+ * Load environment variables from `.env` files (`.env`, `.env.{NODE_ENV|DENO_ENV}`, `.env.local`).
+ *
+ * Skipped once a load finished or `markEnvLoaded()` was called. A caller that
+ * arrives while the same directory is still loading awaits that load.
+ */
 export async function loadEnv(
   options: {
     cwd?: string;
@@ -53,9 +64,51 @@ export async function loadEnv(
   } = {},
 ): Promise<void> {
   const { cwd = getCwd(), override = false, debug = false } = options;
-  if (applyIntrinsic(setHas, loadedEnvDirs, [cwd])) return;
-  applyIntrinsic(setAdd, loadedEnvDirs, [cwd]);
+  const pending = applyIntrinsic(mapGet, envDirLoads, [cwd]) as Promise<void> | undefined;
+  if (pending) return await pending;
+  if (envLoaded) return;
+  await startEnvDirLoad(cwd, { override, debug, keepDefined: false });
+}
 
+/**
+ * Load a second directory's `.env` files after the primary load.
+ *
+ * For `veryfront dev --project <dir>`: CLI startup loads the cwd and marks the
+ * environment loaded before the project is known. This ignores that marker,
+ * reads each directory at most once, and never replaces a value that was
+ * defined before it started, empty values included, so the shell and the cwd
+ * keep precedence.
+ */
+export async function loadAdditionalEnv(
+  options: { cwd: string; debug?: boolean },
+): Promise<void> {
+  const { cwd, debug = false } = options;
+  const pending = applyIntrinsic(mapGet, envDirLoads, [cwd]) as Promise<void> | undefined;
+  if (pending) return await pending;
+  await startEnvDirLoad(cwd, { override: false, debug, keepDefined: true });
+}
+
+function startEnvDirLoad(cwd: string, options: EnvDirLoadOptions): Promise<void> {
+  const load = readEnvDirFiles(cwd, options);
+  applyIntrinsic(mapSet, envDirLoads, [cwd, load]);
+  return load;
+}
+
+/** Whether a value already in the environment must stay, given the load mode. */
+function keepsExistingValue(
+  key: string,
+  existing: string | undefined,
+  loadedVars: Readonly<Record<string, string>>,
+  options: EnvDirLoadOptions,
+): boolean {
+  if (options.override) return false;
+  if (existing) return true;
+  // An empty value set before this load counts as set for an additional load.
+  return options.keepDefined && existing !== undefined && !hasOwn(loadedVars, key);
+}
+
+async function readEnvDirFiles(cwd: string, options: EnvDirLoadOptions): Promise<void> {
+  const { debug } = options;
   const env = getEnv("NODE_ENV") ?? getEnv("DENO_ENV") ?? "development";
   const envFiles = [`${cwd}/.env`, `${cwd}/.env.${env}`, `${cwd}/.env.local`];
   const loadedVars: Record<string, string> = {};
@@ -70,8 +123,7 @@ export async function loadEnv(
       const vars = parseEnvFile(content, loadedVars, taintedLoadedVars);
 
       for (const [key, { value, expandedFromProcessEnv }] of Object.entries(vars)) {
-        const existing = getEnv(key);
-        if (existing && !override) continue;
+        if (keepsExistingValue(key, getEnv(key), loadedVars, options)) continue;
 
         setEnv(key, value);
         markEnvFileValue(key);
@@ -266,11 +318,6 @@ export function markEnvLoaded(): void {
   envLoaded = true;
 }
 
-/** Check whether `.env` files in `dir` have already been loaded. */
-export function hasEnvLoadedFrom(dir: string): boolean {
-  return applyIntrinsic(setHas, loadedEnvDirs, [dir]) as boolean;
-}
-
 /** Check whether environment variables have already been loaded from `.env` files. */
 export function hasEnvLoaded(): boolean {
   return envLoaded;
@@ -388,7 +435,7 @@ export function markEnvFileSource(
 
 export function __resetEnvLoaderForTests(): void {
   envLoaded = false;
-  applyIntrinsic(setClear, loadedEnvDirs, []);
+  applyIntrinsic(mapClear, envDirLoads, []);
   applyIntrinsic(mapClear, envSources, []);
   clearEnvFileValueSources();
   osTypeOverride = undefined;
