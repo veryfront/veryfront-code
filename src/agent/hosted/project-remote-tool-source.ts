@@ -83,6 +83,16 @@ function createRunResilientRemoteToolSource(source: RemoteToolSource): RemoteToo
 
   return {
     id: source.id,
+    ...(source.dispose
+      ? {
+        dispose: async (context: ToolExecutionContext | undefined) => {
+          lastSuccessfulCatalog = undefined;
+          consecutiveFailures = 0;
+          retryAfter = 0;
+          await source.dispose!(context);
+        },
+      }
+      : {}),
     async listTools(context) {
       context?.abortSignal?.throwIfAborted();
       const projectId = getRemoteToolCatalogProjectId(context);
@@ -290,6 +300,7 @@ export function createHostedProjectRemoteToolSource(
 
   return inheritTrustedPlatformSource(input.source, {
     id: input.source.id,
+    ...(resilientSource.dispose ? { dispose: (context) => resilientSource.dispose!(context) } : {}),
     listTools: (context) => toolCatalog.listTools(context),
     async executeTool(toolName, args, context) {
       const normalizedToolInput = input.prepareToolInput?.({
@@ -434,6 +445,9 @@ function createHostedProjectRemoteToolSourceFromConfig(
   const discoverySource = server.kind === "veryfront-api"
     ? inheritTrustedPlatformSource(source, {
       id: source.id,
+      ...(source.dispose
+        ? { dispose: (context?: ToolExecutionContext) => source.dispose!(context) }
+        : {}),
       async listTools(context?: ToolExecutionContext) {
         const definitions = await source.listTools(context);
         accessProfileToolName = resolveVeryfrontApiToolAccessProfileToolName(definitions);
@@ -505,6 +519,7 @@ function createHostedProjectRemoteToolSourceFromConfig(
   const platformSource = createLivePlatformMcpSource(hostedSource);
   return inheritTrustedPlatformSource(platformSource, {
     id: platformSource.id,
+    ...(platformSource.dispose ? { dispose: (context) => platformSource.dispose!(context) } : {}),
     listTools: async (context) =>
       (await platformSource.listTools(context)).filter(({ name }) =>
         !allowedNames || allowedNames.has(name)

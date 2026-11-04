@@ -1,5 +1,6 @@
 import { VERSION } from "#veryfront/utils/version-constant.ts";
 import { defineOwnDataProperty } from "#veryfront/security/own-data-property.ts";
+import { allPrivatePromises } from "#veryfront/security/private-promise.ts";
 import { NETWORK_ERROR, TIMEOUT_ERROR } from "#veryfront/errors";
 import { readMcpToolDiscoveryMetadata } from "./discovery-metadata.ts";
 import { getApiBaseUrlEnv } from "#veryfront/config/env.ts";
@@ -1098,14 +1099,204 @@ function encodeMcpHeader(value: string): string {
   ) return value;
   const bytes = UTF8_ENCODER.encode(value);
   let binary = "";
-  for (const byte of bytes) binary += String.fromCharCode(byte);
+  for (const byte of bytes) binary += String.fromCodePoint(byte);
   return `=?base64?${nativeBtoa(binary)}?=`;
+}
+
+/** Build the headers and body for one JSON-RPC request in a modern or legacy session. */
+function buildMcpRequest(
+  headers: Headers,
+  body: Record<string, unknown>,
+  session: RemoteMcpSession | undefined,
+  annotations: Map<string, McpParameterHeader[]> | undefined,
+): { headers: Headers; body: Record<string, unknown> } {
+  const finalHeaders = copyNativeHeaders(headers);
+  const version = session?.version ?? MODERN_MCP_VERSION;
+  reflectApply(HeadersPrototypeSet, finalHeaders, ["MCP-Protocol-Version", version]);
+  reflectApply(HeadersPrototypeSet, finalHeaders, ["Mcp-Method", body.method]);
+  const params = isRecord(body.params) ? body.params : {};
+  reflectApply(HeadersPrototypeDelete, finalHeaders, ["Mcp-Name"]);
+  if (typeof params.name === "string") {
+    if (!session && isRecord(params.arguments)) {
+      addMcpParameterHeaders(finalHeaders, annotations?.get(params.name) ?? [], params.arguments);
+    }
+    reflectApply(HeadersPrototypeSet, finalHeaders, ["Mcp-Name", encodeMcpHeader(params.name)]);
+  }
+  if (session?.sessionId) {
+    reflectApply(HeadersPrototypeSet, finalHeaders, ["Mcp-Session-Id", session.sessionId]);
+  }
+  if (session) return { headers: finalHeaders, body };
+  return {
+    headers: finalHeaders,
+    body: {
+      ...body,
+      params: {
+        ...params,
+        _meta: {
+          ...(isRecord(params._meta) ? params._meta : {}),
+          "io.modelcontextprotocol/protocolVersion": version,
+          "io.modelcontextprotocol/clientInfo": MCP_CLIENT_INFO,
+          "io.modelcontextprotocol/clientCapabilities": {},
+        },
+      },
+    },
+  };
+}
+
+interface McpRequestOptions {
+  endpoint: string;
+  headers: Headers;
+  body: Record<string, unknown>;
+  requestFetch: typeof fetch;
+  signal: AbortSignal | undefined;
+  maxBytes: number;
+  operation: "discovery" | "discovery-page" | "execution";
+  runId?: string;
+}
+
+/** Whether a failed request may negotiate or renew a legacy session. */
+function shouldNegotiateSession(
+  error: unknown,
+  session: RemoteMcpSession | undefined,
+  operation: McpRequestOptions["operation"],
+): boolean {
+  if (
+    !(error instanceof RemoteMCPHttpError) ||
+    error instanceof RemoteMCPOAuthExpiredHttpError || error.modernError
+  ) return false;
+  // Only discovery may treat an unrecognized 400 as a legacy server; a tool
+  // call could have taken effect before failing, so it is never replayed.
+  if (!session) return operation !== "execution" && error.status === 400;
+  return !!session.sessionId && error.status === 404;
+}
+
+/** Accumulate paginated tools/list results under the aggregate catalog bounds. */
+function createToolListAccumulator() {
+  const annotations = new Map<string, McpParameterHeader[]>();
+  const definitions: ToolDefinition[] = [];
+  // Every returned definition counts toward the bound, including tools
+  // excluded below for invalid header annotations.
+  const names = new Set<string>();
+  const seenCursors = new Set<string>();
+  return {
+    annotations,
+    definitions,
+    accept(page: ToolDefinition[]): void {
+      if (names.size + page.length > MAX_REMOTE_MCP_TOOL_DEFINITIONS) {
+        throw protocolError(
+          `Remote MCP tools/list cannot contain more than ${MAX_REMOTE_MCP_TOOL_DEFINITIONS} tools`,
+        );
+      }
+      for (const definition of page) {
+        if (names.has(definition.name)) {
+          throw protocolError(
+            `Remote MCP tools/list returned duplicate tool name "${definition.name}"`,
+          );
+        }
+        names.add(definition.name);
+        const headers = readMcpParameterHeaders(definition.parameters);
+        if (!headers) continue;
+        annotations.set(definition.name, headers);
+        definitions.push(definition);
+      }
+    },
+    advance(cursor: string): string {
+      if (seenCursors.has(cursor)) {
+        throw protocolError(
+          `Remote MCP tools/list returned repeated pagination cursor "${cursor}"`,
+        );
+      }
+      seenCursors.add(cursor);
+      return cursor;
+    },
+  };
+}
+
+/** Best-effort session cleanup is bounded in aggregate so teardown cannot stall a run. */
+const REMOTE_MCP_SESSION_CLEANUP_BUDGET_MS = 5_000;
+
+/**
+ * Send DELETE for every retained session concurrently under one aggregate
+ * budget. Returns the first failure, if any, after all attempts settle.
+ */
+async function terminateMcpSessions(
+  cleanups: ReadonlyArray<{ endpoint: string; headers: Headers }>,
+  getRequestFetch: (endpoint: string) => typeof fetch,
+): Promise<unknown> {
+  if (cleanups.length === 0) return undefined;
+  const budget = new AbortController();
+  const timer = setTimeout(
+    () =>
+      budget.abort(
+        new DOMException(
+          `Remote MCP session cleanup exceeded ${REMOTE_MCP_SESSION_CLEANUP_BUDGET_MS}ms`,
+          "TimeoutError",
+        ),
+      ),
+    REMOTE_MCP_SESSION_CLEANUP_BUDGET_MS,
+  );
+  const failures: unknown[] = [];
+  const attempts: Promise<void>[] = [];
+  for (let index = 0; index < cleanups.length; index++) {
+    const cleanup = cleanups[index]!;
+    const attempt = (async () => {
+      const scope = createRequestSignalScope(budget.signal);
+      try {
+        const headers = copyNativeHeaders(cleanup.headers);
+        reflectApply(HeadersPrototypeDelete, headers, ["Mcp-Method"]);
+        const response = await getRequestFetch(cleanup.endpoint)(
+          cleanup.endpoint,
+          createNativeRequestInit(undefined, {
+            method: "DELETE",
+            headers,
+            signal: scope.signal,
+            redirect: "error",
+          }),
+        );
+        discardResponseBody(response);
+        if (!response.ok && response.status !== 404 && response.status !== 405) {
+          throw new RemoteMCPHttpError(response.status);
+        }
+      } catch (error) {
+        defineOwnDataProperty(failures, index, error);
+      } finally {
+        scope.dispose();
+      }
+    })();
+    defineOwnDataProperty(attempts, index, attempt);
+  }
+  try {
+    await allPrivatePromises(attempts);
+  } finally {
+    clearTimeout(timer);
+  }
+  for (let index = 0; index < cleanups.length; index++) {
+    if (Object.hasOwn(failures, index)) return failures[index];
+  }
+  return undefined;
 }
 
 interface McpParameterHeader {
   path: string[];
   name: string;
   type: "string" | "integer" | "boolean";
+}
+
+/** Validate one schema-declared header annotation, or return undefined if invalid. */
+function readHeaderAnnotation(
+  value: Record<string, unknown>,
+  path: string[],
+  reachable: boolean,
+  names: ReadonlySet<string>,
+): McpParameterHeader | undefined {
+  const name = value["x-mcp-header"];
+  if (!reachable || typeof name !== "string") return undefined;
+  if (!/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(name) || names.has(name.toLowerCase())) {
+    return undefined;
+  }
+  const type = value.type;
+  if (type !== "string" && type !== "integer" && type !== "boolean") return undefined;
+  return { path, name, type };
 }
 
 /** Inspect only bounded, normalized JSON schemas, never application objects. */
@@ -1120,16 +1311,12 @@ function readMcpParameterHeaders(schema: JsonSchema): McpParameterHeader[] | und
     }
     if (!isRecord(value)) return;
     if (Object.hasOwn(value, "x-mcp-header")) {
-      const name = value["x-mcp-header"];
-      if (
-        !reachable || typeof name !== "string" || !/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(name) ||
-        names.has(name.toLowerCase()) ||
-        (value.type !== "string" && value.type !== "integer" && value.type !== "boolean")
-      ) {
-        valid = false;
+      const annotation = readHeaderAnnotation(value, path, reachable, names);
+      if (annotation) {
+        names.add(annotation.name.toLowerCase());
+        result.push(annotation);
       } else {
-        names.add(name.toLowerCase());
-        result.push({ path, name, type: value.type });
+        valid = false;
       }
     }
     for (const [key, child] of Object.entries(value)) {
@@ -1174,7 +1361,7 @@ function addMcpParameterHeaders(
     }
     reflectApply(HeadersPrototypeSet, headers, [
       `Mcp-Param-${annotation.name}`,
-      encodeMcpHeader(String(value)),
+      encodeMcpHeader(String(value as string | number | boolean)),
     ]);
   }
 }
@@ -1239,18 +1426,20 @@ function createRemoteMCPToolSourceWithFetch(
   }>();
   const initializing = createPrivateMcpMap<string, Promise<RemoteMcpSession>>();
   const parameterHeaders = new Map<string, Map<string, McpParameterHeader[]>>();
-  // Endpoints whose discovery negotiated a legacy session. A tool call for a
-  // new identity on such an endpoint initializes first instead of probing with
-  // a modern request, because an ambiguous call failure is never replayed.
-  const legacyEndpoints = createPrivateMcpMap<string, true>();
+  // Endpoint+credential identities whose discovery negotiated a legacy
+  // session. A tool call for a new run of such an identity initializes first
+  // instead of probing with a modern request, because an ambiguous call
+  // failure is never replayed.
+  const legacyIdentities = createPrivateMcpMap<string, true>();
 
   async function initialize(
     key: string,
     endpoint: string,
     headers: Headers,
     requestFetch: typeof fetch,
-    signal?: AbortSignal,
-    runId?: string,
+    signal: AbortSignal | undefined,
+    runId: string | undefined,
+    identityKey: string,
   ): Promise<RemoteMcpSession> {
     const pending = initializing.get(key);
     if (pending) return await pending;
@@ -1334,7 +1523,7 @@ function createRemoteMCPToolSourceWithFetch(
         MAX_REMOTE_MCP_CALL_RESPONSE_BYTES,
       );
       sessions.set(key, session);
-      legacyEndpoints.set(endpoint, true);
+      legacyIdentities.set(identityKey, true);
       return session;
     })();
     initializing.set(key, promise);
@@ -1345,81 +1534,38 @@ function createRemoteMCPToolSourceWithFetch(
     }
   }
 
-  async function request(
-    endpoint: string,
-    headers: Headers,
-    body: Record<string, unknown>,
-    requestFetch: typeof fetch,
-    signal: AbortSignal | undefined,
-    maxBytes: number,
-    operation: "discovery" | "discovery-page" | "execution",
-    runId?: string,
-  ): Promise<unknown> {
-    const snapshot = snapshotBoundedJsonValue(body, MAX_REMOTE_MCP_REQUEST_BYTES);
+  async function request(options: McpRequestOptions): Promise<unknown> {
+    const { endpoint, headers, requestFetch, signal, maxBytes, operation, runId } = options;
+    const snapshot = snapshotBoundedJsonValue(options.body, MAX_REMOTE_MCP_REQUEST_BYTES);
     if (!snapshot.success || !isRecord(snapshot.value)) {
       throw new TypeError("Remote MCP JSON-RPC request must be a bounded JSON object");
     }
-    body = snapshot.value;
+    const body = snapshot.value;
     const key = await remoteMcpSessionKey(endpoint, headers, runId);
-    // Schema annotations describe the catalog, not a session, so a call made
-    // under a different run than its discovery still mirrors them.
-    const annotationKey = await remoteMcpSessionKey(endpoint, headers);
+    // Schema annotations and protocol support describe the endpoint and
+    // credentials, not a run, so they hold for calls under any run.
+    const identityKey = await remoteMcpSessionKey(endpoint, headers);
     // Session setup never uses a call-only transport such as hosted admission.
     const sessionFetch = getRequestFetch(endpoint);
-    if (initializing.has(key)) await initializing.get(key);
+    const establish = () =>
+      initialize(key, endpoint, headers, sessionFetch, signal, runId, identityKey);
     const send = (session?: RemoteMcpSession) => {
-      const finalHeaders = copyNativeHeaders(headers);
-      const version = session?.version ?? MODERN_MCP_VERSION;
-      reflectApply(HeadersPrototypeSet, finalHeaders, ["MCP-Protocol-Version", version]);
-      reflectApply(HeadersPrototypeSet, finalHeaders, ["Mcp-Method", body.method]);
-      const params = isRecord(body.params) ? body.params : {};
-      reflectApply(HeadersPrototypeDelete, finalHeaders, ["Mcp-Name"]);
-      if (!session && typeof params.name === "string" && isRecord(params.arguments)) {
-        addMcpParameterHeaders(
-          finalHeaders,
-          parameterHeaders.get(annotationKey)?.get(params.name) ?? [],
-          params.arguments,
-        );
-      }
-      if (typeof params.name === "string") {
-        reflectApply(HeadersPrototypeSet, finalHeaders, ["Mcp-Name", encodeMcpHeader(params.name)]);
-      }
-      if (session?.sessionId) {
-        reflectApply(HeadersPrototypeSet, finalHeaders, ["Mcp-Session-Id", session.sessionId]);
-      }
-      const finalBody = session ? body : {
-        ...body,
-        params: {
-          ...params,
-          _meta: {
-            ...(isRecord(params._meta) ? params._meta : {}),
-            "io.modelcontextprotocol/protocolVersion": version,
-            "io.modelcontextprotocol/clientInfo": MCP_CLIENT_INFO,
-            "io.modelcontextprotocol/clientCapabilities": {},
-          },
-        },
-      };
-      return postJsonRpc(endpoint, finalHeaders, finalBody, requestFetch, signal, maxBytes);
+      const built = buildMcpRequest(headers, body, session, parameterHeaders.get(identityKey));
+      return postJsonRpc(endpoint, built.headers, built.body, requestFetch, signal, maxBytes);
     };
+    if (initializing.has(key)) await initializing.get(key);
     let session = sessions.get(key);
-    if (!session && operation === "execution" && legacyEndpoints.has(endpoint)) {
+    if (!session && operation === "execution" && legacyIdentities.has(identityKey)) {
       // Initialization happens before the call is sent, so a failure here never
       // leaves a side-effecting request to replay.
-      session = await initialize(key, endpoint, headers, sessionFetch, signal, runId);
+      session = await establish();
     }
     try {
       return await send(session);
     } catch (error) {
-      if (
-        !(error instanceof RemoteMCPHttpError) ||
-        error instanceof RemoteMCPOAuthExpiredHttpError || error.modernError
-      ) throw error;
-      const fallback = operation !== "execution" && !session && error.status === 400;
-      const expired = !!session?.sessionId && error.status === 404;
-      if (!fallback && !expired) throw error;
-      if (expired && sessions.get(key) === session) sessions.delete(key);
-      const renewed = sessions.get(key) ??
-        await initialize(key, endpoint, headers, sessionFetch, signal, runId);
+      if (!shouldNegotiateSession(error, session, operation)) throw error;
+      if (session && sessions.get(key) === session) sessions.delete(key);
+      const renewed = sessions.get(key) ?? await establish();
       // A pagination cursor belongs to the session that issued it.
       if (operation === "discovery-page") throw new RemoteMCPDiscoveryRestart();
       return await send(renewed);
@@ -1432,78 +1578,39 @@ function createRemoteMCPToolSourceWithFetch(
     listMeta: Record<string, unknown> | undefined,
     context: ToolExecutionContext | undefined,
   ): Promise<ToolDefinition[]> {
-    const headerDefinitions = new Map<string, McpParameterHeader[]>();
-    const definitions: ToolDefinition[] = [];
-    const definitionNames = new Set<string>();
-    const seenCursors = new Set<string>();
+    const catalog = createToolListAccumulator();
     let cursor: string | undefined;
     for (let page = 0; page < MAX_REMOTE_MCP_TOOL_LIST_PAGES; page += 1) {
       const requestId = `${id}:tools:list`;
-      const payload = await request(
+      const params = {
+        ...(cursor !== undefined ? { cursor } : {}),
+        ...(listMeta !== undefined ? { _meta: listMeta } : {}),
+      };
+      const payload = await request({
         endpoint,
         headers,
-        {
+        body: {
           jsonrpc: "2.0",
           id: requestId,
           method: listMethod,
-          ...(cursor !== undefined || listMeta !== undefined
-            ? {
-              params: {
-                ...(cursor !== undefined ? { cursor } : {}),
-                ...(listMeta !== undefined ? { _meta: listMeta } : {}),
-              },
-            }
-            : {}),
+          ...(Object.keys(params).length > 0 ? { params } : {}),
         },
-        getRequestFetch(endpoint),
-        context?.abortSignal,
-        MAX_REMOTE_MCP_TOOL_LIST_RESPONSE_BYTES,
-        cursor === undefined ? "discovery" : "discovery-page",
-        context?.runId,
+        requestFetch: getRequestFetch(endpoint),
+        signal: context?.abortSignal,
+        maxBytes: MAX_REMOTE_MCP_TOOL_LIST_RESPONSE_BYTES,
+        operation: cursor === undefined ? "discovery" : "discovery-page",
+        runId: context?.runId,
+      });
+      const { definitions, nextCursor } = normalizeToolListPage(
+        getJsonRpcResult(payload, requestId),
       );
-
-      const result = getJsonRpcResult(payload, requestId);
-      const { definitions: pageDefinitions, nextCursor } = normalizeToolListPage(result);
-      if (
-        definitions.length + pageDefinitions.length >
-          MAX_REMOTE_MCP_TOOL_DEFINITIONS
-      ) {
-        throw protocolError(
-          `Remote MCP tools/list cannot contain more than ${MAX_REMOTE_MCP_TOOL_DEFINITIONS} tools`,
-        );
-      }
-      for (const definition of pageDefinitions) {
-        if (definitionNames.has(definition.name)) {
-          throw protocolError(
-            `Remote MCP tools/list returned duplicate tool name "${definition.name}"`,
-          );
-        }
-        definitionNames.add(definition.name);
-        const annotations = readMcpParameterHeaders(definition.parameters);
-        if (!annotations) continue;
-        headerDefinitions.set(definition.name, annotations);
-        definitions.push(definition);
-      }
-
+      catalog.accept(definitions);
       if (nextCursor === undefined) {
-        parameterHeaders.set(await remoteMcpSessionKey(endpoint, headers), headerDefinitions);
-        return definitions;
+        parameterHeaders.set(await remoteMcpSessionKey(endpoint, headers), catalog.annotations);
+        return catalog.definitions;
       }
-      if (seenCursors.has(nextCursor)) {
-        throw protocolError(
-          `Remote MCP tools/list returned repeated pagination cursor "${nextCursor}"`,
-        );
-      }
-      seenCursors.add(nextCursor);
-      cursor = nextCursor;
-
-      if (page === MAX_REMOTE_MCP_TOOL_LIST_PAGES - 1) {
-        throw protocolError(
-          `Remote MCP tools/list exceeded ${MAX_REMOTE_MCP_TOOL_LIST_PAGES} pages`,
-        );
-      }
+      cursor = catalog.advance(nextCursor);
     }
-
     throw protocolError(
       `Remote MCP tools/list exceeded ${MAX_REMOTE_MCP_TOOL_LIST_PAGES} pages`,
     );
@@ -1514,41 +1621,21 @@ function createRemoteMCPToolSourceWithFetch(
     async dispose(context) {
       // Await handshakes before terminating the sessions they create.
       await Promise.allSettled(initializing.values());
-      let firstError: unknown;
+      const selected: Array<{ endpoint: string; headers: Headers }> = [];
       // Native iterator entries are indexed directly. Destructuring would call
       // a project-patched Array iterator with the retained session credentials.
       for (const entry of cleanupRequests) {
-        const key = entry[0];
         const cleanup = entry[1];
         if (context && cleanup.runId !== context.runId) continue;
         sessions.delete(cleanup.sourceKey);
-        cleanupRequests.delete(key);
-        const scope = createRequestSignalScope(undefined);
-        try {
-          const headers = copyNativeHeaders(cleanup.headers);
-          reflectApply(HeadersPrototypeDelete, headers, ["Mcp-Method"]);
-          const response = await getRequestFetch(cleanup.endpoint)(
-            cleanup.endpoint,
-            createNativeRequestInit(undefined, {
-              method: "DELETE",
-              headers,
-              signal: scope.signal,
-              redirect: "error",
-            }),
-          );
-          discardResponseBody(response);
-          if (!response.ok && response.status !== 404 && response.status !== 405) {
-            throw new RemoteMCPHttpError(response.status);
-          }
-        } catch (error) {
-          firstError ??= error;
-        } finally {
-          scope.dispose();
-        }
+        cleanupRequests.delete(entry[0]);
+        defineOwnDataProperty(selected, selected.length, cleanup);
       }
+      const firstError = await terminateMcpSessions(selected, getRequestFetch);
       if (!context) {
         sessions.clear();
         parameterHeaders.clear();
+        legacyIdentities.clear();
       }
       if (firstError !== undefined) throw firstError;
     },
@@ -1581,10 +1668,10 @@ function createRemoteMCPToolSourceWithFetch(
       const requestId = `${id}:tools:call:${toolName}`;
 
       try {
-        const payload = await request(
+        const payload = await request({
           endpoint,
           headers,
-          {
+          body: {
             jsonrpc: "2.0",
             id: requestId,
             method: callMethod,
@@ -1594,12 +1681,13 @@ function createRemoteMCPToolSourceWithFetch(
               ...(meta ? { _meta: meta } : {}),
             },
           },
-          getHostedToolCallAdmissionRequestFetch(endpoint) ?? getRequestFetch(endpoint),
-          context?.abortSignal,
-          MAX_REMOTE_MCP_CALL_RESPONSE_BYTES,
-          "execution",
-          context?.runId,
-        );
+          requestFetch: getHostedToolCallAdmissionRequestFetch(endpoint) ??
+            getRequestFetch(endpoint),
+          signal: context?.abortSignal,
+          maxBytes: MAX_REMOTE_MCP_CALL_RESPONSE_BYTES,
+          operation: "execution",
+          runId: context?.runId,
+        });
 
         const result = getJsonRpcResult(payload, requestId, true);
         if (isJsonRpcToolErrorResult(result)) {

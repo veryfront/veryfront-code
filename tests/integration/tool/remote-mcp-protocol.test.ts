@@ -3,6 +3,7 @@ import { assertEquals, assertInstanceOf, assertRejects } from "#veryfront/testin
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { observeFetchRequestInit, withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { createRemoteMCPToolSource } from "#veryfront/tool/remote-mcp.ts";
+import { FakeTime } from "#std/testing/time";
 
 const ENDPOINT = "https://93.184.216.34/mcp";
 const TOOL = { name: "ping", description: "Ping", inputSchema: { type: "object" } };
@@ -414,6 +415,34 @@ describe("remote MCP HTTP compatibility", () => {
     ]);
   });
 
+  it("fails closed when the session is renewed again during restarted pagination", async () => {
+    const server = legacyFixture();
+    let listCalls = 0;
+    await withMockFetch(async (input, init) => {
+      const request = observe(input, init);
+      const body = request.body;
+      if (body?.method !== "tools/list" || !request.headers.get("Mcp-Session-Id")) {
+        return await server.fetch(input, init);
+      }
+      listCalls++;
+      const sessionId = request.headers.get("Mcp-Session-Id")!;
+      if (body.params?.cursor !== undefined) {
+        // Every second page expires the session that issued its cursor.
+        server.sessions.delete(sessionId);
+        return await server.fetch(input, init);
+      }
+      return Response.json({
+        jsonrpc: "2.0",
+        id: body.id,
+        result: { tools: [TOOL], nextCursor: `${sessionId}:page-2` },
+      });
+    }, async () => {
+      const source = createRemoteMCPToolSource({ endpoint: ENDPOINT });
+      await assertRejects(() => source.listTools(), Error, "renewed again");
+    });
+    assertEquals(listCalls, 4);
+  });
+
   it("excludes invalid header annotations without excluding valid sibling tools", async () => {
     const invalidSchemas = [
       { type: "object", properties: { value: { type: "number", "x-mcp-header": "Value" } } },
@@ -498,5 +527,101 @@ describe("remote MCP HTTP compatibility", () => {
       await source.dispose!();
     });
     assertEquals(deletions, 2);
+  });
+
+  it("terminates sessions concurrently under one aggregate cleanup budget", async () => {
+    const server = legacyFixture();
+    const started: string[] = [];
+    let bothStarted: () => void = () => {};
+    const allStarted = new Promise<void>((resolve) => bothStarted = resolve);
+    await withMockFetch(async (input, init) => {
+      const request = observe(input, init);
+      if (request.method !== "DELETE") return await server.fetch(input, init);
+      started.push(request.headers.get("Mcp-Session-Id")!);
+      if (started.length === 2) bothStarted();
+      // A server that never completes DELETE: only the cleanup budget ends it.
+      return await new Promise<Response>((_resolve, reject) => {
+        const signal = init!.signal!;
+        signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+      });
+    }, async () => {
+      const source = createRemoteMCPToolSource({ endpoint: ENDPOINT });
+      await source.listTools({ runId: "one" });
+      await source.listTools({ runId: "two" });
+      using time = new FakeTime();
+      const disposal = source.dispose!();
+      await allStarted;
+      assertEquals(started.length, 2, "deletes must not wait for each other");
+      await time.tickAsync(5_000);
+      const error = await assertRejects(() => disposal);
+      assertEquals((error as DOMException).name, "TimeoutError");
+    });
+  });
+
+  it("scopes legacy negotiation to the credential identity", async () => {
+    const methods: string[] = [];
+    await withMockFetch(async (input, init) => {
+      const request = observe(input, init);
+      const tenant = request.headers.get("authorization");
+      methods.push(`${tenant}:${request.body?.method ?? request.method}`);
+      if (tenant === "Bearer legacy") {
+        const body = request.body!;
+        if (body.method === "initialize") {
+          return Response.json({
+            jsonrpc: "2.0",
+            id: body.id,
+            result: { protocolVersion: "2025-11-25" },
+          }, { headers: { "Mcp-Session-Id": "legacy-session" } });
+        }
+        if (body.method === "notifications/initialized") {
+          return new Response(null, { status: 202 });
+        }
+        if (!request.headers.get("Mcp-Session-Id")) {
+          return new Response("missing session ID", { status: 400 });
+        }
+        return success(body);
+      }
+      // The modern-only tenant rejects session initialization.
+      if (request.body?.method === "initialize") return new Response(null, { status: 405 });
+      return success(request.body!);
+    }, async () => {
+      const source = createRemoteMCPToolSource({
+        endpoint: ENDPOINT,
+        headers: (context) => ({ Authorization: `Bearer ${context?.userId}` }),
+      });
+      await source.listTools({ userId: "legacy" });
+      await source.listTools({ userId: "modern" });
+      assertEquals(await source.executeTool("ping", {}, { userId: "modern", runId: "r" }), "pong");
+    });
+    assertEquals(methods.filter((method) => method.startsWith("Bearer modern")), [
+      "Bearer modern:tools/list",
+      "Bearer modern:tools/call",
+    ]);
+  });
+
+  it("counts tools excluded for invalid annotations toward the catalog limit", async () => {
+    const invalid = (index: number) => ({
+      name: `invalid_${index}`,
+      description: "Invalid header annotation",
+      inputSchema: {
+        type: "object",
+        properties: { value: { type: "number", "x-mcp-header": "Value" } },
+      },
+    });
+    await withMockFetch(async (input, init) => {
+      const body = observe(input, init).body!;
+      const page = Number(body.params?.cursor ?? 0);
+      return Response.json({
+        jsonrpc: "2.0",
+        id: body.id,
+        result: {
+          tools: Array.from({ length: 600 }, (_, index) => invalid(page * 600 + index)),
+          ...(page === 0 ? { nextCursor: "1" } : {}),
+        },
+      });
+    }, async () => {
+      const source = createRemoteMCPToolSource({ endpoint: ENDPOINT });
+      await assertRejects(() => source.listTools(), Error, "cannot contain more than 1000 tools");
+    });
   });
 });
