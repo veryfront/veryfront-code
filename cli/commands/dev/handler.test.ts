@@ -3,11 +3,16 @@ import "#veryfront/schemas/_test-setup.ts";
  * Tests for dev command handler
  */
 
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createInMemoryHostRuntime } from "#veryfront/platform/compat/process.ts";
 import { parseCliArgs } from "#cli/shared/args";
-import { handleDevCommand, parseDevArgs } from "./handler.ts";
+import {
+  type DevProjectEnvDeps,
+  handleDevCommand,
+  loadDevProjectEnv,
+  parseDevArgs,
+} from "./handler.ts";
 import type { ParsedArgs } from "#cli/shared/types";
 
 describe("commands/dev/handler", () => {
@@ -95,6 +100,53 @@ describe("commands/dev/handler", () => {
         _: ["dev"],
       };
       assertEquals(args.port, undefined);
+    });
+  });
+
+  describe("loadDevProjectEnv", () => {
+    function fakeDeps(supported = true) {
+      const loads: string[] = [];
+      let refreshes = 0;
+      const deps: DevProjectEnvDeps = {
+        supportsEnvFiles: () => supported,
+        loadAdditionalEnv: ({ cwd }) => {
+          loads.push(cwd);
+          return Promise.resolve();
+        },
+        refreshEnvironmentConfig: () => {
+          refreshes += 1;
+        },
+      };
+      return { deps, loads, refreshes: () => refreshes };
+    }
+
+    it("rejects --project without a directory before loading anything", async () => {
+      for (const argv of [["dev", "--project"], ["dev", "--project", ""]]) {
+        const fake = fakeDeps();
+        const error = await assertRejects(() => loadDevProjectEnv(parseCliArgs(argv), fake.deps));
+        assertStringIncludes(String(error), "--project requires a directory");
+        assertEquals(fake.loads, []);
+      }
+    });
+
+    it("loads the --project directory's env files and refreshes the config", async () => {
+      const fake = fakeDeps();
+      const projectDir = await loadDevProjectEnv(
+        parseCliArgs(["dev", "--project", "my-project"]),
+        fake.deps,
+      );
+
+      assertEquals(projectDir.endsWith("my-project"), true);
+      assertEquals(fake.loads, [projectDir]);
+      assertEquals(fake.refreshes(), 1);
+    });
+
+    it("skips env loading where the runtime has no env file support", async () => {
+      const fake = fakeDeps(false);
+      await loadDevProjectEnv(parseCliArgs(["dev", "--project", "my-project"]), fake.deps);
+
+      assertEquals(fake.loads, []);
+      assertEquals(fake.refreshes(), 0);
     });
   });
 
