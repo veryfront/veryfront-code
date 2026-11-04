@@ -126,6 +126,7 @@ import {
 } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { Schema } from "#veryfront/extensions/schema/index.ts";
+import { snapshotJsonSchemaObject } from "#veryfront/schemas/schema-input.ts";
 import {
   createStreamTransformState,
   finalizeRunEvents,
@@ -365,8 +366,13 @@ function createInjectedStudioTool(
   toolName: string,
   description: string | undefined,
   parameters: Record<string, unknown> | undefined,
+  outputSchema: Record<string, unknown> | undefined,
   sessionManager: AgentRunSessionManager,
 ): Tool {
+  // Disclosure metadata only: an unusable declaration is omitted, never trusted or fatal.
+  const outputSchemaJson = outputSchema === undefined
+    ? undefined
+    : snapshotJsonSchemaObject(outputSchema);
   const tool: Tool = {
     id: toolName,
     type: "function",
@@ -374,6 +380,7 @@ function createInjectedStudioTool(
     inputSchema: anyObjectSchema,
     inputSchemaJson: (parameters ??
       { type: "object", properties: {}, additionalProperties: true }) as Tool["inputSchemaJson"],
+    ...(outputSchemaJson ? { outputSchemaJson } : {}),
     execute: async (_input, context) => {
       const toolCallId = typeof context?.toolCallId === "string" ? context.toolCallId : null;
       if (!toolCallId) {
@@ -589,6 +596,7 @@ export function buildMergedTools(
           tool.name,
           tool.description,
           tool.inputSchema ?? tool.parameters,
+          tool.outputSchema,
           sessionManager,
         ),
       ]),

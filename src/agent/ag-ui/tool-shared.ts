@@ -1,6 +1,7 @@
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { AGENT_ERROR, INVALID_ARGUMENT } from "#veryfront/errors";
 import type { Schema } from "#veryfront/extensions/schema/index.ts";
+import { snapshotJsonSchemaObject } from "#veryfront/schemas/schema-input.ts";
 import { toolRegistry } from "#veryfront/tool/registry.ts";
 import { isToolVisibleTo } from "#veryfront/tool/executor.ts";
 import type { Tool } from "#veryfront/tool/types.ts";
@@ -18,6 +19,8 @@ export interface AgUiInjectedToolLike {
   name: string;
   description?: string;
   parameters?: unknown;
+  /** Declared result contract; disclosure metadata only, without result validation. */
+  outputSchema?: unknown;
 }
 
 /** Resolve a source agent's authored selection to its current owner-visible catalog. */
@@ -36,11 +39,17 @@ export function buildExplicitAgUiSourceTools(
   return tools;
 }
 
+/** Disclosure metadata only: an unusable declaration is omitted, never trusted or fatal. */
+function snapshotInjectedOutputSchema(tool: AgUiInjectedToolLike): Tool["outputSchemaJson"] {
+  return tool.outputSchema === undefined ? undefined : snapshotJsonSchemaObject(tool.outputSchema);
+}
+
 export function createInjectedAgUiTool(
   runId: string,
   tool: AgUiInjectedToolLike,
   sessionManager: RunResumeSessionManager<AgUiResumeValue>,
 ): Tool {
+  const outputSchemaJson = snapshotInjectedOutputSchema(tool);
   return markRuntimeLocalTool({
     id: tool.name,
     type: "function",
@@ -48,6 +57,7 @@ export function createInjectedAgUiTool(
     inputSchema: getAnyObjectSchema() as Schema<Record<string, unknown>>,
     inputSchemaJson: (tool.parameters ??
       { type: "object", properties: {}, additionalProperties: true }) as Tool["inputSchemaJson"],
+    ...(outputSchemaJson ? { outputSchemaJson } : {}),
     execute: async (_input, context) => {
       const toolCallId = typeof context?.toolCallId === "string" ? context.toolCallId : null;
       if (!toolCallId) {

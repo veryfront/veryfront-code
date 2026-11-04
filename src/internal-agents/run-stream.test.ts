@@ -1,6 +1,6 @@
 import { createRunBoundAgentManualPause } from "#veryfront/agent/hosted/manual-pause-credential.ts";
 import { runWithVeryfrontCloudContext } from "#veryfront/provider/veryfront-cloud/context.ts";
-import { toolRegistryInternal } from "#veryfront/tool/registry.ts";
+import { toolRegistryInternal, toolToProviderDefinition } from "#veryfront/tool/registry.ts";
 import {
   markTrustedHostToolProvenance,
   markTrustedHostToolSet,
@@ -490,6 +490,48 @@ describe("internal-agents/run-stream", () => {
       },
     );
   }
+
+  it("discloses declared output schemas on injected studio tools", () => {
+    const sessionManager = new AgentRunSessionManager();
+    const outputSchema = { type: "object", properties: { opened: { type: "boolean" } } };
+    const runtimeAgent = {
+      id: "studio",
+      config: { id: "studio", system: "test" },
+    } as unknown as Agent;
+    const runInput = (tools: unknown[]) =>
+      ({
+        runId: "run_1",
+        threadId: crypto.randomUUID(),
+        messages: [],
+        tools,
+        context: [],
+      }) as Parameters<typeof buildMergedTools>[1];
+
+    const mergedTools = buildMergedTools(
+      runtimeAgent,
+      runInput([
+        { name: "studio_open_preview", description: "Open preview", outputSchema },
+        { name: "studio_close_preview", description: "Close preview" },
+      ]),
+      sessionManager,
+    ) as Record<string, Tool>;
+
+    assertEquals<unknown>(
+      toolToProviderDefinition(mergedTools.studio_open_preview!).outputSchema,
+      outputSchema,
+    );
+    assertEquals(
+      toolToProviderDefinition(mergedTools.studio_close_preview!).outputSchema,
+      undefined,
+    );
+    const malformed = buildMergedTools(
+      runtimeAgent,
+      runInput([{ name: "studio_open_preview", outputSchema: { type: "object", value: 1n } }]),
+      sessionManager,
+    ) as Record<string, Tool>;
+    assertEquals(typeof malformed.studio_open_preview?.execute, "function");
+    assertEquals(malformed.studio_open_preview?.outputSchemaJson, undefined);
+  });
 
   it("keeps injected studio waits authoritative over same-named registry tools", () => {
     const sessionManager = new AgentRunSessionManager();

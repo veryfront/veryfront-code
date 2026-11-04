@@ -96,6 +96,29 @@ describe("tool/host-tools", () => {
     assertEquals(toolToProviderDefinition(tools.undeclared!).outputSchema, undefined);
   });
 
+  it("preserves declared output schemas on schema-backed host definitions", () => {
+    const outputSchema = {
+      type: "object" as const,
+      properties: { total: { type: "number" as const } },
+    };
+    const tools = createToolsFromHostDefinitions({
+      declared: {
+        description: "Schema-backed output contract",
+        inputSchema: defineSchema((v) => v.object({}))(),
+        outputSchemaJson: outputSchema,
+        execute: () => Promise.resolve({ total: 1 }),
+      },
+      malformed: {
+        description: "Malformed output contract",
+        inputSchema: defineSchema((v) => v.object({}))(),
+        outputSchemaJson: { type: "object", value: 1n } as unknown as JsonSchema,
+        execute: () => Promise.resolve(null),
+      },
+    });
+    assertEquals(toolToProviderDefinition(tools.declared!).outputSchema, outputSchema);
+    assertEquals(tools.malformed, undefined);
+  });
+
   it("materializes class-defined execution methods with their original receiver", async () => {
     class Definition {
       description = "Synthetic class tool";
