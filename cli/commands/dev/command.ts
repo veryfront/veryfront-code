@@ -34,6 +34,11 @@ import { createProjectSelector } from "./project-selector.ts";
 import { createDevLogController } from "./log-controller.ts";
 import { findAvailablePort, isPortAvailable, isPortInUseError } from "./port-fallback.ts";
 import { advertisesCloudGateway, listInferenceOptions } from "./inference-status.ts";
+import {
+  findUnconnectedIntegrationLines,
+  type IntegrationDiagnosticSnapshot,
+  snapshotIntegrationDiagnostics,
+} from "./unconnected-integrations.ts";
 import { captureHostApiEnvironment } from "#cli/process-env";
 import { resolveApiCredentialCandidatesForAuth, resolveApiUrlTrust } from "#cli/shared/config";
 import { captureDevDisplayOptions } from "./display-options.ts";
@@ -439,6 +444,8 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
       }
 
       const shutdownController = new AbortController();
+      let integrationDiagnostics: IntegrationDiagnosticSnapshot | undefined;
+      let integrationDiagnosticsDone: Promise<void> = Promise.resolve();
       let devServer: Awaited<ReturnType<typeof startDevServer>> | null = null;
       let mcpServer: MCPDevServer | null = null;
 
@@ -456,6 +463,12 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
             enableHMR,
             enableFastRefresh: true,
             signal: shutdownController.signal,
+            onConfigResolved: (effectiveConfig) => {
+              integrationDiagnostics = snapshotIntegrationDiagnostics(effectiveConfig, {
+                authToken: runtimeAuth.apiToken,
+                projectSlug: runtimeAuth.projectSlug,
+              });
+            },
           }));
       } catch (error) {
         await disposeConnectedRuntime?.();
@@ -514,6 +527,7 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
             console.log("  ! Stopping immediately. Run cancellation may not have been saved.");
             exitProcess(1);
           }
+          await done;
           return;
         }
         shuttingDown = true;
@@ -524,6 +538,7 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
           shutdownController.abort();
           await stopDevServices(
             [
+              () => integrationDiagnosticsDone,
               () => disposeConnectedRuntime?.(),
               () => mcpServer?.stop(),
               () => devServer?.stop(),
@@ -627,6 +642,22 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
               `Run ${brand("veryfront login")} to renew it.`,
           );
         });
+      }
+      // Discovery lists only connected integrations. Report the ones the agents declare but the
+      // project lacks after Ready, so the banner does not wait on the network.
+      if (integrationDiagnostics) {
+        integrationDiagnosticsDone = findUnconnectedIntegrationLines(
+          integrationDiagnostics,
+          shutdownController.signal,
+        ).then(
+          (lines) => {
+            if (shutdownController.signal.aborted) return;
+            for (let index = 0; index < lines.length; index += 2) {
+              console.log(`  ${warning("!")} ${lines[index]}`);
+              console.log(`    ${lines[index + 1]!.trim()}`);
+            }
+          },
+        );
       }
       if (mcpServer && isVerbose()) {
         console.log(`  ${dim("MCP")} ${brand(`http://localhost:${mcpPort}/mcp`)}`);
