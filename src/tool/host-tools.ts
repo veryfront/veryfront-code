@@ -44,6 +44,8 @@ export type HostToolDefinition = {
   description?: string;
   inputSchema?: unknown;
   inputSchemaJson?: JsonSchema;
+  /** Declared result contract; disclosure metadata only, without result validation. */
+  outputSchemaJson?: JsonSchema;
   /** Catalog navigation hints, without execution authority. */
   discovery?: ToolDiscoveryMetadata;
   parameters?: unknown;
@@ -120,6 +122,7 @@ function snapshotHostToolDefinition(value: unknown): Record<string, unknown> | u
     "execute",
     "inputSchema",
     "inputSchemaJson",
+    "outputSchemaJson",
     "discovery",
     "mcp",
   ];
@@ -202,6 +205,9 @@ export function createToolsFromHostDefinitions(
           description: definition.description,
           inputSchema: definition.inputSchema,
           inputSchemaJson: definition.inputSchemaJson,
+          ...(definition.outputSchemaJson === undefined
+            ? {}
+            : { outputSchemaJson: definition.outputSchemaJson }),
           execute,
           mcp: definition.mcp,
           delegatedPlatformTools: definition.delegatedPlatformTools,

@@ -2596,7 +2596,7 @@ describe("internal-agents/run-stream", () => {
     assertEquals(capturedToolNames, ["gmail__list_emails", "list_projects"]);
   });
 
-  it("carries normalized discovery metadata on forwarded integration tool definitions", async () => {
+  it("carries discovery metadata and declared output schemas on forwarded integration tool definitions", async () => {
     const sessionManager = new AgentRunSessionManager();
     let capturedForwardedDefs: unknown;
 
@@ -2625,6 +2625,7 @@ describe("internal-agents/run-stream", () => {
               name: "gmail__list_emails",
               description: "List emails",
               parameters: { type: "object", properties: {} },
+              outputSchema: { type: "object", properties: { emails: { type: "array" } } },
               discovery: {
                 version: 1,
                 type: "integration",
@@ -2637,6 +2638,7 @@ describe("internal-agents/run-stream", () => {
               name: "slack__post",
               description: "Post a message",
               parameters: { type: "object", properties: {} },
+              outputSchema: [{ type: "object" }],
               discovery: { version: 2, type: "integration" },
             },
           ],
@@ -2666,6 +2668,7 @@ describe("internal-agents/run-stream", () => {
         name: "gmail__list_emails",
         description: "List emails",
         parameters: { type: "object", properties: {} },
+        outputSchema: { type: "object", properties: { emails: { type: "array" } } },
         discovery: { version: 1, type: "integration", domain: "gmail", operation: "list" },
       },
       {

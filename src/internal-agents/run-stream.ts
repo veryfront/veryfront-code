@@ -1058,6 +1058,8 @@ interface ForwardedToolDef {
   description: string;
   inputSchema?: Record<string, unknown>;
   parameters?: Record<string, unknown>;
+  /** Declared result contract; disclosure metadata only. */
+  outputSchema?: Record<string, unknown>;
   discovery?: ToolDiscoveryMetadata;
 }
 
@@ -1081,6 +1083,7 @@ function getForwardedIntegrationToolDefinitions(
       name: def.name,
       description: def.description,
       parameters: def.inputSchema ?? def.parameters ?? { type: "object", properties: {} },
+      ...(isRecord(def.outputSchema) ? { outputSchema: def.outputSchema } : {}),
     };
     copyToolDiscoveryMetadata(def, forwarded);
     return forwarded;
