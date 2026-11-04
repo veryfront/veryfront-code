@@ -6,12 +6,21 @@ import {
   pushPrivateArray,
 } from "#veryfront/security/private-array.ts";
 
-import { privateTextEndsWith, privateTextSlice } from "#veryfront/security/private-text.ts";
+import {
+  privateTextEndsWith,
+  privateTextIncludes,
+  privateTextSlice,
+} from "#veryfront/security/private-text.ts";
 import { parseIntegrationToolIdentity } from "./source-policy.ts";
 
 const catalogToolNames = createPrivateSet<string>();
 forEachPrivateArray(connectors, (connector) => {
-  forEachPrivateArray(connector.tools, (tool) => catalogToolNames.add(tool.id ?? tool.name));
+  forEachPrivateArray(connector.tools, (tool) => {
+    const catalogId = tool.id ?? tool.name;
+    catalogToolNames.add(
+      privateTextIncludes(catalogId, "__") ? catalogId : `${connector.name}__${catalogId}`,
+    );
+  });
 });
 
 export interface UnconnectedIntegrationTarget {
@@ -22,7 +31,8 @@ export interface UnconnectedIntegrationTarget {
 /**
  * Integrations that the configured tool names declare but the project has not connected.
  *
- * A name qualifies only when it is a canonical `integration__tool` name present in the catalog and discovery returned no tool for that integration. A name whose integration
+ * A name qualifies only when it is a canonical `integration__tool` name present in the catalog
+ * and discovery returned no tool for that integration. A name whose integration
  * has discovered tools is a misspelling, not a missing connection.
  */
 export function findUnconnectedIntegrations(

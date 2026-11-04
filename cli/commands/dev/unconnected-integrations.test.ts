@@ -23,6 +23,29 @@ describe("commands/dev/unconnected-integrations", () => {
     ]);
   });
 
+  it("recognizes all catalog tools that use connector-local names", () => {
+    for (
+      const name of [
+        "aws__list-s3-buckets",
+        "aws__list-s3-objects",
+        "aws__get-s3-object",
+        "aws__list-ec2-instances",
+        "aws__list-lambda-functions",
+      ]
+    ) {
+      assertEquals(
+        collectDeclaredIntegrations([{ agentId: "aws-agent", tools: { [name]: true } }]),
+        [
+          { integration: "aws", agentIds: ["aws-agent"] },
+        ],
+      );
+    }
+    assertEquals(
+      collectDeclaredIntegrations([{ agentId: "typo", tools: { "aws__list-s3-bukets": true } }]),
+      [],
+    );
+  });
+
   it("ignores explicitly disabled integration tools", () => {
     assertEquals(
       collectDeclaredIntegrations([{ agentId: "a", tools: { gmail__delete_email: false } }]),
