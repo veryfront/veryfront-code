@@ -518,13 +518,17 @@ export async function resolveHostedChildAgentExecutionConfig(
     selector: agentConfig.skills === false ? [] : agentConfig.skills,
   });
   // Resolve startup inside the target's existing authorization, never the parent's catalog.
-  const bootstrapSkill = agentConfig.bootstrapSkill === undefined
+  // A closed tool selector has no skill loader, so startup is omitted as in the factory.
+  const configuredBootstrapSkill = agentConfig.tools === false
+    ? undefined
+    : agentConfig.bootstrapSkill;
+  const bootstrapSkill = configuredBootstrapSkill === undefined
     ? undefined
     : (skillSelectorSnapshot.definitions.find((skill) =>
-      skill.ownerAgentId === childAgentId && skill.shortName === agentConfig.bootstrapSkill
-    ) ?? skillSelectorSnapshot.definitions.find((skill) => skill.id === agentConfig.bootstrapSkill))
+      skill.ownerAgentId === childAgentId && skill.shortName === configuredBootstrapSkill
+    ) ?? skillSelectorSnapshot.definitions.find((skill) => skill.id === configuredBootstrapSkill))
       ?.id;
-  if (agentConfig.bootstrapSkill !== undefined && bootstrapSkill === undefined) {
+  if (configuredBootstrapSkill !== undefined && bootstrapSkill === undefined) {
     throw CONFIG_INVALID.create({ detail: "Configured startup skill is not authorized" });
   }
   const toolNames = resolveHostedChildToolNames(agentConfig, skillSelectorSnapshot);

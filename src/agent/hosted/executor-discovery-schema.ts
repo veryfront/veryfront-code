@@ -93,7 +93,7 @@ export const getExecutorAgentDefinitionSchema = defineSchema((v) => {
   const ids = () => v.array(getExecutorDiscoveryIdSchema()).max(EXECUTOR_DISCOVERY_MAX_AGENTS);
   return getRuntimeAgentMarkdownDefinitionSchema().extend({
     id: getExecutorDiscoveryIdSchema(),
-    tools: v.union([v.literal(true), ids()]).optional(),
+    tools: v.union([v.boolean(), ids()]).optional(),
     deniedTools: ids().optional(),
     delegates: ids().optional(),
     providerTools: ids().optional(),

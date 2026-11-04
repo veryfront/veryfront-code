@@ -2,13 +2,17 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { resolveHostedChildAgentExecutionConfig } from "./cloud-agent-child-tools.ts";
 
-function childContext(bootstrapSkill?: string, skills: false | string[] = ["ingest-message"]) {
+function childContext(
+  bootstrapSkill?: string,
+  skills: false | string[] = ["ingest-message"],
+  tools: boolean = true,
+) {
   const definition = {
     id: "ingestion-agent",
     name: "Ingestion",
     description: "Ingest email",
     instructions: "Follow the child skill.",
-    tools: true,
+    tools,
     skills,
     ...(bootstrapSkill === undefined ? {} : { bootstrapSkill }),
   };
@@ -95,5 +99,21 @@ Deno.test("child startup requires one exact skill rather than a selector pattern
         "test-project",
       )
     );
+  }
+});
+
+Deno.test("a no-tools child omits its startup skill and exposes no tools", async () => {
+  for (const bootstrapSkill of ["ingest-message", "orchestrator-agent--orchestrate"]) {
+    const config = await resolveHostedChildAgentExecutionConfig(
+      childContext(bootstrapSkill, ["ingest-message"], false),
+      parent,
+      "ingestion-agent",
+      "test-project",
+    );
+    assertEquals(
+      config && "bootstrapSkill" in config ? config.bootstrapSkill : undefined,
+      undefined,
+    );
+    assertEquals(config && "toolNames" in config ? config.toolNames : undefined, []);
   }
 });
