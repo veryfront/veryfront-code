@@ -335,14 +335,12 @@ function createAgUiSetupErrorResponse(input: {
     runId: input.runId,
   });
 
-  const statusCode = status !== undefined && Number.isInteger(status) && status >= 400 &&
-      status <= 599
-    ? status
-    : code === "OVERLOADED_ERROR"
-    ? 503
-    : code === "CONTEXT_LENGTH_EXCEEDED"
-    ? 413
-    : 500;
+  let statusCode: number;
+  if (status !== undefined && Number.isInteger(status) && status >= 400 && status <= 599) {
+    statusCode = status;
+  } else if (code === "OVERLOADED_ERROR") statusCode = 503;
+  else if (code === "CONTEXT_LENGTH_EXCEEDED") statusCode = 413;
+  else statusCode = 500;
   return createAgUiSseErrorResponse(createAgUiRunErrorEvent(message, code), statusCode);
 }
 
@@ -434,6 +432,21 @@ export function createHostedAgentServiceRouteSet<TExecution extends object>(
     return hostedAgUiRuntimeHandler(request);
   }
 
+  function prepareHostedRequestExecution(
+    input: { request: Request; req: ParsedHostedChatRequest },
+    request: Parameters<typeof options.prepareExecution>[0],
+  ) {
+    return runWithHostedRequestPreparationSignal(
+      input.request.signal,
+      () =>
+        runWithVerifiedHostedRunEventWriterRequest(
+          input.req,
+          () =>
+            runWithHostedPlatformDependencies(input.req, () => options.prepareExecution(request)),
+        ),
+    );
+  }
+
   async function executeParsedDurableChatRun(input: {
     req: ParsedHostedChatRequest;
     request: Request;
@@ -448,16 +461,7 @@ export function createHostedAgentServiceRouteSet<TExecution extends object>(
       tracker: options.tracker,
       prepareExecution: async (request) => {
         try {
-          const result = await runWithHostedRequestPreparationSignal(
-            input.request.signal,
-            () =>
-              runWithVerifiedHostedRunEventWriterRequest(
-                input.req,
-                () =>
-                  runWithHostedPlatformDependencies(input.req, () =>
-                    options.prepareExecution(request)),
-              ),
-          );
+          const result = await prepareHostedRequestExecution(input, request);
           prepared = true;
           return result;
         } catch (error) {
