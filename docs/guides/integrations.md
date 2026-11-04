@@ -732,7 +732,8 @@ Connection advice covers connectors published by default in the hosted API,
 including Salesforce. A catalog entry alone does not prove that your deployment
 publishes an experimental or host-adapter connector, so those entries do not
 produce startup connection advice. This does not change which catalog tool
-definitions are available to agents.
+definitions are available to agents. Catalog fallback requires successful
+authenticated API tool discovery. Skipped discovery does not advertise tools.
 
 Studio links use the known Studio origin for the API or `STUDIO_URL` exported
 before the process starts. Project `.env` values and later environment changes

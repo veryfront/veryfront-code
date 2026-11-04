@@ -1040,6 +1040,26 @@ describe("tool-helpers", () => {
       }
     });
 
+    for (const authToken of [undefined, "", "   "]) {
+      it(`does not advertise catalog tools when the explicit credential is ${JSON.stringify(authToken)}`, async () => {
+        let requests = 0;
+        await withMockFetch(() => {
+          requests++;
+          return Promise.resolve(Response.json({ tools: [] }));
+        }, async () => {
+          await assertRejects(
+            () =>
+              getAvailableTools({ salesforce__get_case: true }, {
+                remoteToolContext: { authToken, projectSlug: "case-demo" },
+              }),
+            Error,
+            "Unknown tool reference: salesforce__get_case.",
+          );
+        });
+        assertEquals(requests, 0);
+      });
+    }
+
     it("exposes a declared tool of an unconnected integration from the catalog", async () => {
       toolRegistryInternal.clearAll();
 

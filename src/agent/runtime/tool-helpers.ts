@@ -344,9 +344,13 @@ async function getUnconnectedIntegrationToolDefinition(
   toolName: string,
   discoveredToolNames: Iterable<string>,
   discovery: RemoteIntegrationToolDiscoveryResult | undefined,
+  catalogDiscovered: boolean,
   allowedRemoteToolNames: string[] | undefined,
 ): Promise<ToolDefinition | undefined> {
-  if (discovery?.status !== "ok" || !isRemoteToolAllowed(toolName, allowedRemoteToolNames)) {
+  if (
+    !catalogDiscovered || discovery?.status !== "ok" ||
+    !isRemoteToolAllowed(toolName, allowedRemoteToolNames)
+  ) {
     return undefined;
   }
   const integration = parseIntegrationToolIdentity(toolName)?.integration;
@@ -364,6 +368,7 @@ async function getRemoteToolDefinitions(options?: {
   remoteToolSources?: RemoteToolSource[];
   remoteToolContext?: ToolExecutionContext;
   onIntegrationToolDiscovery?: (result: RemoteIntegrationToolDiscoveryResult) => void;
+  onIntegrationCatalogDiscovered?: () => void;
   discoveredIntegrationToolNames?: Set<string>;
 }): Promise<ToolDefinition[]> {
   const remoteToolContext = options?.remoteToolContext;
@@ -422,6 +427,7 @@ async function getRemoteToolDefinitions(options?: {
     );
     const discovery = await getRemoteIntegrationToolDiscoveryWithEvidence(remoteToolContext, {
       onDiscoveredToolName: (name) => options?.discoveredIntegrationToolNames?.add(name),
+      onCatalogDiscovered: options?.onIntegrationCatalogDiscovered,
     });
     options?.onIntegrationToolDiscovery?.(discovery);
     if (discovery.status === "ok") {
@@ -818,12 +824,16 @@ export async function getAvailableTools(
   // Only raw platform discovery proves that a platform integration is connected.
   const discoveredIntegrationToolNames = createPrivateSet<string>();
   let integrationDiscovery: RemoteIntegrationToolDiscoveryResult | undefined;
+  let integrationCatalogDiscovered = false;
   let sourceListFailed = false;
   const remoteDefs = strictConfiguredToolsOnly ? [] : await getRemoteToolDefinitions({
     onSourceListFailure: () => {
       sourceListFailed = true;
     },
     discoveredIntegrationToolNames,
+    onIntegrationCatalogDiscovered: () => {
+      integrationCatalogDiscovered = true;
+    },
     includeIntegrationTools: options?.includeIntegrationTools,
     allowedRemoteToolNames: options?.allowedRemoteToolNames,
     remoteToolSources: options?.remoteToolSources,
@@ -907,6 +917,7 @@ export async function getAvailableTools(
           name,
           discoveredIntegrationToolNames,
           integrationDiscovery,
+          integrationCatalogDiscovered,
           options?.allowedRemoteToolNames,
         );
       if (unconnectedToolDefinition) {

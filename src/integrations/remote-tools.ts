@@ -818,7 +818,11 @@ export function getRemoteIntegrationToolDiscovery(
  */
 export async function getRemoteIntegrationToolDiscoveryWithEvidence(
   context?: ToolExecutionContext,
-  options?: { onDiscoveredToolName?: (name: string) => void },
+  options?: {
+    onDiscoveredToolName?: (name: string) => void;
+    /** Called only after credential-backed API discovery succeeds, including an empty catalog. */
+    onCatalogDiscovered?: () => void;
+  },
 ): Promise<RemoteIntegrationToolDiscoveryResult> {
   const requestContext = snapshotToolExecutionContext(context, false);
   requestContext.abortSignal?.throwIfAborted();
@@ -836,6 +840,7 @@ export async function getRemoteIntegrationToolDiscoveryWithEvidence(
       requestContext,
     );
     if (catalog.status === "unavailable") return catalog;
+    options?.onCatalogDiscovered?.();
 
     // Keep connection evidence before source policy narrows the available tools.
     forEachPrivateArray(catalog.tools, (tool) => options?.onDiscoveredToolName?.(tool.name));

@@ -119,6 +119,21 @@ describe("integrations/remote-tools", () => {
     assertEquals(definitions, []);
   });
 
+  it("preserves skipped discovery without claiming an authenticated catalog response", async () => {
+    setRemoteToolEnv({});
+    let catalogs = 0;
+    const result = await withMockFetch(() => {
+      throw new Error("discovery must not request a catalog without credentials");
+    }, () =>
+      getRemoteIntegrationToolDiscoveryWithEvidence(undefined, {
+        onCatalogDiscovered: () => {
+          catalogs++;
+        },
+      }));
+    assertEquals(result, { status: "ok", tools: [] });
+    assertEquals(catalogs, 0);
+  });
+
   it("resolves the project and Studio origin an unconnected integration points at", () => {
     setRemoteToolEnv({
       VERYFRONT_API_URL: "https://api.veryfront.org",
