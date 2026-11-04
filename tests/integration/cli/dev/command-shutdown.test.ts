@@ -57,6 +57,7 @@ it("settles startup integration discovery before dev command stop and done compl
             throw new Error("Unexpected outbound origin: " + url.origin);
           }
           if (url.pathname === "/integration-tools") {
+            assertEquals(new Headers(init?.headers).get("x-veryfront-project-slug"), project.slug);
             requests++;
             started.resolve();
             return new Promise((resolve, reject) => {

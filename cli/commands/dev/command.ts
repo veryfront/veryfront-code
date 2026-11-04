@@ -464,7 +464,10 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
             enableFastRefresh: true,
             signal: shutdownController.signal,
             onConfigResolved: (effectiveConfig) => {
-              integrationDiagnostics = snapshotIntegrationDiagnostics(effectiveConfig);
+              integrationDiagnostics = snapshotIntegrationDiagnostics(effectiveConfig, {
+                authToken: runtimeAuth.apiToken,
+                projectSlug: runtimeAuth.projectSlug,
+              });
             },
           }));
       } catch (error) {
@@ -642,7 +645,7 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
       }
       // Discovery lists only connected integrations. Report the ones the agents declare but the
       // project lacks after Ready, so the banner does not wait on the network.
-      if (runtimeAuth.apiToken && runtimeAuth.projectSlug && integrationDiagnostics) {
+      if (integrationDiagnostics) {
         integrationDiagnosticsDone = findUnconnectedIntegrationLines(
           integrationDiagnostics,
           shutdownController.signal,

@@ -20,7 +20,7 @@ import {
   collectDeclaredIntegrations,
   findUnconnectedIntegrationLines,
   normalizeIntegrationPolicyForDiagnostics,
-  snapshotIntegrationDiagnostics,
+  snapshotIntegrationDiagnostics as captureIntegrationDiagnostics,
   suppliesToolsFromSources,
   unconnectedIntegrationLines,
 } from "../../../../cli/commands/dev/unconnected-integrations.ts";
@@ -31,6 +31,14 @@ import {
   LogLevel,
   setLogLevel,
 } from "#veryfront/utils/logger/logger.ts";
+
+const snapshotIntegrationDiagnostics = (
+  config: Parameters<typeof captureIntegrationDiagnostics>[0],
+  target: Parameters<typeof captureIntegrationDiagnostics>[1] = {
+    authToken: "token",
+    projectSlug: "case-demo",
+  },
+) => captureIntegrationDiagnostics(config, target);
 
 const config = { ai: { agents: { discovery: { paths: ["crew"] } } } };
 
@@ -225,6 +233,107 @@ describe("dev integration source discovery", () => {
       ]),
       [{ integration: "salesforce", agentIds: ["case-dispose"] }],
     );
+  });
+  it("captures the effective target when project code replaces string trimming", () => {
+    const trim = String.prototype.trim;
+    let snapshot: ReturnType<typeof snapshotIntegrationDiagnostics>;
+    try {
+      String.prototype.trim = () => {
+        throw new Error("project trim replacement");
+      };
+      snapshot = snapshotIntegrationDiagnostics({
+        fs: { veryfront: { projectSlug: " effective-project " } },
+      });
+    } finally {
+      String.prototype.trim = trim;
+    }
+    assertEquals(snapshot.executionContext.projectSlug, "effective-project");
+  });
+  it("keeps qualified fallback targets and skips unqualified or proxy diagnostics", async () => {
+    const qualified = { authToken: "qualified-token", projectSlug: "linked-project" };
+    agentRegistry.register("target-agent", {
+      id: "target-agent",
+      config: { id: "target-agent", tools: { salesforce__get_case: true } },
+      generate: () => Promise.resolve({ text: "" }),
+    } as unknown as Agent);
+    try {
+      assertEquals(snapshotIntegrationDiagnostics(config, qualified).executionContext, qualified);
+      assertEquals(
+        snapshotIntegrationDiagnostics({ fs: { veryfront: { projectSlug: "  " } } }, qualified)
+          .executionContext,
+        qualified,
+      );
+      let requests = 0;
+      await withMockFetch(() => {
+        requests++;
+        return Promise.resolve(Response.json({ tools: [] }));
+      }, async () => {
+        for (
+          const snapshot of [
+            snapshotIntegrationDiagnostics(config, {
+              authToken: undefined,
+              projectSlug: "linked-project",
+            }),
+            snapshotIntegrationDiagnostics(config, {
+              authToken: "qualified-token",
+              projectSlug: undefined,
+            }),
+            snapshotIntegrationDiagnostics({
+              fs: { veryfront: { proxyMode: true, projectSlug: "linked-project" } },
+            }, qualified),
+          ]
+        ) assertEquals(await findUnconnectedIntegrationLines(snapshot), []);
+      });
+      assertEquals(requests, 0);
+    } finally {
+      agentRegistry.delete("target-agent");
+    }
+  });
+  it("uses the effective project for discovery and advice after preliminary targeting changes", async () => {
+    const env = {
+      VERYFRONT_API_URL: "https://api.test",
+      VERYFRONT_API_TOKEN: "ambient-token",
+      VERYFRONT_PROJECT_SLUG: "preliminary-project",
+    };
+    const previous = new Map(Object.keys(env).map((name) => [name, Deno.env.get(name)]));
+    try {
+      for (const [name, value] of Object.entries(env)) Deno.env.set(name, value);
+      agentRegistry.register("target-agent", {
+        id: "target-agent",
+        config: { id: "target-agent", tools: { salesforce__get_case: true } },
+        generate: () => Promise.resolve({ text: "" }),
+      } as unknown as Agent);
+      const effective = { ...config, fs: { veryfront: { projectSlug: " effective-project " } } };
+      const qualifiedContext = { authToken: "qualified-token", projectSlug: "preliminary-project" };
+      const snapshot = snapshotIntegrationDiagnostics(effective, qualifiedContext);
+      effective.fs.veryfront.projectSlug = "mutated-project";
+      qualifiedContext.projectSlug = "mutated-project";
+      qualifiedContext.authToken = "mutated-token";
+      const requests: Array<{ project: string | null; authorization: string | null }> = [];
+      await withMockFetch((_input, init) => {
+        const headers = new Headers(init?.headers);
+        requests.push({
+          project: headers.get("x-veryfront-project-slug"),
+          authorization: headers.get("authorization"),
+        });
+        return Promise.resolve(Response.json({ tools: [] }));
+      }, async () => {
+        assertEquals(await findUnconnectedIntegrationLines(snapshot), [
+          "Salesforce isn't connected. Agent target-agent needs it.",
+          "  Connect: npx veryfront integration connect salesforce --project effective-project",
+        ]);
+      });
+      assertEquals(requests, [{
+        project: "effective-project",
+        authorization: "Bearer qualified-token",
+      }]);
+    } finally {
+      agentRegistry.delete("target-agent");
+      for (const [name, value] of previous) {
+        if (value === undefined) Deno.env.delete(name);
+        else Deno.env.set(name, value);
+      }
+    }
   });
   it("warns from custom-root agents and ignores stale default-root sources and disabled discovery", async () => {
     const env = {

@@ -11,6 +11,7 @@ import {
 } from "#veryfront/security/private-array.ts";
 import { createPrivateMap } from "#veryfront/security/private-map.ts";
 import { createPrivateSet } from "#veryfront/security/private-set.ts";
+import { privateTextTrim } from "#veryfront/security/private-text.ts";
 import { compareStrings } from "#veryfront/utils/compare.ts";
 import { connectors } from "../../../src/integrations/_data.ts";
 import { findUnconnectedIntegrations } from "../../../src/integrations/unconnected.ts";
@@ -143,14 +144,28 @@ export function normalizeIntegrationPolicyForDiagnostics(
 export interface IntegrationDiagnosticSnapshot {
   readonly agentDiscoveryEnabled: boolean;
   readonly integrationPolicy: SourceIntegrationPolicyManifest;
+  readonly executionContext: Readonly<IntegrationDiagnosticTarget>;
 }
 
-/** Capture effective discovery and source restrictions before project agents execute. */
+interface IntegrationDiagnosticTarget {
+  readonly authToken: string | undefined;
+  readonly projectSlug: string | undefined;
+}
+
+/** Capture effective discovery, policy and qualified project targeting before agents execute. */
 export function snapshotIntegrationDiagnostics(
-  config?: VeryfrontConfig | null,
+  config: VeryfrontConfig | null | undefined,
+  qualifiedTarget: IntegrationDiagnosticTarget,
 ): IntegrationDiagnosticSnapshot {
+  const configuredSlug = config?.fs?.veryfront?.projectSlug;
   return freeze({
-    agentDiscoveryEnabled: resolveDevAgentDirs(config).length > 0,
+    executionContext: freeze({
+      authToken: qualifiedTarget.authToken,
+      projectSlug: (configuredSlug === undefined ? undefined : privateTextTrim(configuredSlug)) ||
+        qualifiedTarget.projectSlug,
+    }),
+    agentDiscoveryEnabled: config?.fs?.veryfront?.proxyMode !== true &&
+      resolveDevAgentDirs(config).length > 0,
     integrationPolicy: normalizeIntegrationPolicyForDiagnostics(config?.integrations),
   });
 }
@@ -175,10 +190,13 @@ export async function findUnconnectedIntegrationLines(
       snapshot.integrationPolicy,
     );
     if (declared.length === 0) return [];
-    const target = getRemoteIntegrationProjectTarget();
+    const target = getRemoteIntegrationProjectTarget(snapshot.executionContext);
     if (!target) return [];
     const connectedNames: string[] = [];
-    const discovery = await getRemoteIntegrationToolDiscoveryWithEvidence({ abortSignal: signal }, {
+    const discovery = await getRemoteIntegrationToolDiscoveryWithEvidence({
+      ...snapshot.executionContext,
+      abortSignal: signal,
+    }, {
       onDiscoveredToolName: (name) => pushPrivateArray(connectedNames, name),
     });
     if (signal?.aborted || discovery.status !== "ok") return [];

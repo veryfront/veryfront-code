@@ -97,11 +97,18 @@ describe("dev integration diagnostic lifecycle", () => {
       );
       clearConfigCache();
       const initial = await getConfig(context.projectDir, await runtime.get());
-      assertEquals(snapshotIntegrationDiagnostics(initial).agentDiscoveryEnabled, false);
+      assertEquals(
+        snapshotIntegrationDiagnostics(initial, {
+          authToken: "qualified-token",
+          projectSlug: "preliminary-project",
+        }).agentDiscoveryEnabled,
+        false,
+      );
       const sourceFiles = {
         "veryfront.config.js": `export default ${
           JSON.stringify({
             title: "Effective remote configuration",
+            fs: { type: "veryfront-api", veryfront: { projectSlug: "effective-project" } },
             dev: { port: 3101 },
             ai: { agents: { discovery: { paths: ["crew"] } } },
             integrations: { allow: { salesforce: {} } },
@@ -124,7 +131,10 @@ describe("dev integration diagnostic lifecycle", () => {
         enableHMR: false,
         onConfigResolved(config) {
           order.push("config");
-          captured = snapshotIntegrationDiagnostics(config);
+          captured = snapshotIntegrationDiagnostics(config, {
+            authToken: "qualified-token",
+            projectSlug: "preliminary-project",
+          });
         },
       });
       try {
@@ -165,6 +175,7 @@ describe("dev integration diagnostic lifecycle", () => {
         }, async () => {
           await server.start();
           assertEquals(captured, {
+            executionContext: { authToken: "qualified-token", projectSlug: "effective-project" },
             agentDiscoveryEnabled: true,
             integrationPolicy: {
               schemaVersion: 1,
