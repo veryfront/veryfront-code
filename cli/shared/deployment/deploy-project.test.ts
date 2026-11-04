@@ -3161,7 +3161,7 @@ describe("release asset manifest", () => {
     assertEquals(DEFAULT_RELEASE_ASSET_MANIFEST_TIMEOUT_MS >= 300_000, true);
   });
 
-  it("says a build still running at the deadline has not failed", async () => {
+  it("distinguishes the polling deadline from a build failure", async () => {
     using time = new FakeTime();
     const controlPlane = helperControlPlane({
       getReleaseAssetManifest: () => Promise.resolve({ state: "building" }),
@@ -3174,7 +3174,7 @@ describe("release asset manifest", () => {
           timeoutMs: 250,
         }),
       Error,
-      "The build has not failed and may still finish",
+      "This timeout does not mean the build failed",
     );
     await time.tickAsync(0);
     await time.tickAsync(100);
@@ -3182,6 +3182,39 @@ describe("release asset manifest", () => {
     await time.tickAsync(50);
 
     await rejection;
+  });
+
+  it("keeps the build outcome uncertain after manifest reads fail", async () => {
+    using time = new FakeTime();
+    let reads = 0;
+    const unavailable = Object.assign(new Error("service unavailable"), { status: 503 });
+    const controlPlane = helperControlPlane({
+      getReleaseAssetManifest: () => {
+        reads++;
+        return reads === 1 ? Promise.resolve({ state: "building" }) : Promise.reject(unavailable);
+      },
+    });
+
+    const rejection = assertRejects(
+      () =>
+        waitForReleaseAssetManifest(controlPlane, PROJECT_SLUG, "release-1", {
+          ...polling,
+          timeoutMs: 250,
+        }),
+      Error,
+      "This timeout does not mean the build failed",
+    );
+    await time.tickAsync(0);
+    await time.tickAsync(100);
+    await time.tickAsync(100);
+    await time.tickAsync(50);
+
+    const error = await rejection;
+    assertInstanceOf(error, Error);
+    assertEquals(error.message.includes("last state: building"), true);
+    assertEquals(error.message.includes("last control-plane failure: HTTP 503"), true);
+    assertEquals(error.message.includes("The build has not failed"), false);
+    assertEquals(reads, 3);
   });
 
   it("names the refused dispatch when no manifest row is ever created", async () => {

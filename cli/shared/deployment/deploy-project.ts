@@ -1084,7 +1084,7 @@ function releaseAssetPollingTimeoutError(options: {
       neverStarted
         ? RELEASE_ASSET_BUILD_NEVER_STARTED_HINT
         : lastState === "queued" || lastState === "building"
-        ? "The build has not failed and may still finish. Check the release asset state " +
+        ? "This timeout does not mean the build failed; it may still finish. Check the release asset state " +
           "before you run deploy again; a new deploy starts a new release."
         : "Check the release asset build and run deploy again."
     }`,
