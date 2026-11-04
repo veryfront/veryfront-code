@@ -99,5 +99,7 @@ export const TRANSFORM_IN_PROGRESS_WAIT_TIMEOUT_MS = 45_000;
 // only that exact promise so a genuinely wedged transform can recover.
 export const TRANSFORM_IN_PROGRESS_STALE_EVICTION_MS = 5 * MS_PER_MINUTE;
 
-export const MAX_TRANSFORM_DEPTH = 15;
+// A guard against runaway resolution, not cycle detection: cycles are found
+// from the import chain itself. Acyclic chains in real apps exceed 15 levels.
+export const MAX_TRANSFORM_DEPTH = 256;
 export const TRANSFORM_BATCH_SIZE = 10;

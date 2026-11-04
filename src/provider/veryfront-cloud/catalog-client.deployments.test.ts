@@ -184,6 +184,54 @@ describe("provider/veryfront-cloud/catalog-client deployments", () => {
     );
   });
 
+  it("uses the served token ceilings when the API sends deployments without legacy rows", () => {
+    const item = deploymentOf(legacyRow("gpt-5.5"));
+    const limit = { context: 256_000, output: 32_000 };
+    const catalog = parseVeryfrontCloudCatalog({
+      deployments: [{
+        ...item,
+        model: { ...item.model, capabilities: { ...item.model.capabilities, limit } },
+      }],
+    });
+    assertEquals(catalog?.models[0]?.limit, limit);
+  });
+
+  it("prefers replacement token ceilings over legacy values for the same model", () => {
+    const row = legacyRow("gpt-5.5");
+    const item = deploymentOf(row);
+    const limit = { context: 128_000, output: 16_000 };
+    const catalog = parseVeryfrontCloudCatalog({
+      models: [{
+        ...row,
+        capabilities: { ...row.capabilities, limit: { context: 1_000_000, output: 64_000 } },
+      }],
+      deployments: [{
+        ...item,
+        model: { ...item.model, capabilities: { ...item.model.capabilities, limit } },
+      }],
+    });
+    assertEquals(catalog?.models[0]?.limit, limit);
+  });
+
+  it("preserves known legacy dimensions when the deployment publishes only one ceiling", () => {
+    const row = legacyRow("gpt-5.5");
+    const item = deploymentOf(row);
+    const catalog = parseVeryfrontCloudCatalog({
+      models: [{
+        ...row,
+        capabilities: { ...row.capabilities, limit: { context: 1_000_000, output: 64_000 } },
+      }],
+      deployments: [{
+        ...item,
+        model: {
+          ...item.model,
+          capabilities: { ...item.model.capabilities, limit: { context: 128_000 } },
+        },
+      }],
+    });
+    assertEquals(catalog?.models[0]?.limit, { context: 128_000, output: 64_000 });
+  });
+
   it("leaves token limits unset when the API serves deployments only", () => {
     const catalog = parseVeryfrontCloudCatalog({
       deployments: LEGACY_ROWS.map((row) => deploymentOf(row)),

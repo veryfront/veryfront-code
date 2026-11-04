@@ -372,33 +372,19 @@ function canSnapshotJsonTailWithoutReplacer(
   const pending: JsonTailScanFrame[] = [{ kind: "enter", value: root }];
   const localActive = new SetConstructor<JsonTraversalReference>();
   const localCompleted = new SetConstructor<JsonTraversalReference>();
-  while (pending.length > 0) {
-    const frame = pending[pending.length - 1]!;
-    pending.length--;
-    if (frame.kind === "exit") {
-      reflectApply(setDelete, localActive, [frame.value]);
-      reflectApply(setAdd, localCompleted, [frame.value]);
-      continue;
+  function isSafeFunctionTail(reference: JsonTraversalReference): boolean {
+    if (isUnsafeJsonTailReference(reference, active, nonPlainBuiltinCache)) return false;
+    try {
+      if (hasJsonTailHook(reference, objectGetPrototypeOf(reference))) return false;
+    } catch {
+      return false;
     }
+    return true;
+  }
 
-    const candidate = frame.value;
-    if (candidate === null) continue;
-    if (isJsonTailPrimitive(candidate)) continue;
-    if (typeof candidate === "function") {
-      const reference = candidate as JsonTraversalReference;
-      if (isUnsafeJsonTailReference(reference, active, nonPlainBuiltinCache)) return false;
-      try {
-        if (hasJsonTailHook(reference, objectGetPrototypeOf(reference))) return false;
-      } catch {
-        return false;
-      }
-      continue;
-    }
-    if (typeof candidate !== "object") return false;
-
-    const reference = candidate as JsonTraversalReference;
+  function appendObjectTail(reference: JsonTraversalReference): boolean {
     if (reflectApply(setHas, localActive, [reference])) return false;
-    if (reflectApply(setHas, localCompleted, [reference])) continue;
+    if (reflectApply(setHas, localCompleted, [reference])) return true;
     if (isUnsafeJsonTailReference(reference, active, nonPlainBuiltinCache)) return false;
 
     const isArray = arrayIsArray(reference);
@@ -409,6 +395,32 @@ function canSnapshotJsonTailWithoutReplacer(
     reflectApply(setAdd, localActive, [reference]);
     appendJsonTailScanFrame(pending, { kind: "exit", value: reference });
     if (!appendJsonTailOwnDataValues(reference, isArray, pending)) return false;
+    return true;
+  }
+
+  function appendCandidate(candidate: unknown): boolean {
+    if (candidate === null) return true;
+    if (isJsonTailPrimitive(candidate)) return true;
+    if (typeof candidate === "function") {
+      if (!isSafeFunctionTail(candidate as JsonTraversalReference)) return false;
+      return true;
+    }
+    if (typeof candidate !== "object") return false;
+
+    if (!appendObjectTail(candidate as JsonTraversalReference)) return false;
+    return true;
+  }
+
+  while (pending.length > 0) {
+    const frame = pending[pending.length - 1]!;
+    pending.length--;
+    if (frame.kind === "exit") {
+      reflectApply(setDelete, localActive, [frame.value]);
+      reflectApply(setAdd, localCompleted, [frame.value]);
+      continue;
+    }
+
+    if (!appendCandidate(frame.value)) return false;
   }
   return true;
 }
@@ -450,6 +462,24 @@ function isOmittedJsonObjectValue(value: unknown): boolean {
   return value === undefined || typeof value === "function" || typeof value === "symbol";
 }
 
+function createJsonChunkWriter(): { append: (value: string) => void; finish: () => string } {
+  const chunks: string[] = [];
+  let chunk = "";
+  return {
+    append(value: string): void {
+      chunk += value;
+      if (chunk.length >= 8192) {
+        defineArrayElement(chunks, chunks.length, chunk);
+        chunk = "";
+      }
+    },
+    finish(): string {
+      if (chunk.length > 0) defineArrayElement(chunks, chunks.length, chunk);
+      return reflectApply(arrayJoin, chunks, [""]);
+    },
+  };
+}
+
 /** Encode normalized JSON without using the native call stack. */
 function encodeNormalizedJson(root: unknown): string | undefined {
   if (
@@ -460,58 +490,42 @@ function encodeNormalizedJson(root: unknown): string | undefined {
   }
 
   const frames: JsonEncodingFrame[] = [{ kind: "value", value: root, inArray: false }];
-  const chunks: string[] = [];
-  let chunk = "";
-  const append = (value: string) => {
-    chunk += value;
-    if (chunk.length >= 8192) {
-      defineArrayElement(chunks, chunks.length, chunk);
-      chunk = "";
+  const { append, finish } = createJsonChunkWriter();
+  function encodeNormalizedArray(frame: JsonArrayEncodingFrame): void {
+    if (frame.index >= frame.length) {
+      append("]");
+      return;
     }
-  };
-  while (frames.length > 0) {
-    const frameIndex = frames.length - 1;
-    const frame = frames[frameIndex]!;
-    frames.length = frameIndex;
-
-    if (frame.kind === "array") {
-      if (frame.index >= frame.length) {
-        append("]");
-        continue;
-      }
-      if (frame.index > 0) append(",");
-      const nested = objectGetOwnPropertyDescriptor(
-        frame.value,
-        StringConstructor(frame.index),
-      )!.value;
-      frame.index++;
-      appendJsonEncodingFrame(frames, frame);
-      appendJsonEncodingFrame(frames, { kind: "value", value: nested, inArray: true });
-      continue;
+    if (frame.index > 0) append(",");
+    const nested = objectGetOwnPropertyDescriptor(
+      frame.value,
+      StringConstructor(frame.index),
+    )!.value;
+    frame.index++;
+    appendJsonEncodingFrame(frames, frame);
+    appendJsonEncodingFrame(frames, { kind: "value", value: nested, inArray: true });
+  }
+  function encodeNormalizedObject(frame: JsonObjectEncodingFrame): void {
+    let key: string | undefined;
+    let nested: unknown;
+    while (frame.index < frame.keys.length) {
+      key = frame.keys[frame.index++]!;
+      nested = objectGetOwnPropertyDescriptor(frame.value, key)!.value;
+      if (!isOmittedJsonObjectValue(nested)) break;
+      key = undefined;
     }
-
-    if (frame.kind === "object") {
-      let key: string | undefined;
-      let nested: unknown;
-      while (frame.index < frame.keys.length) {
-        key = frame.keys[frame.index++]!;
-        nested = objectGetOwnPropertyDescriptor(frame.value, key)!.value;
-        if (!isOmittedJsonObjectValue(nested)) break;
-        key = undefined;
-      }
-      if (key === undefined) {
-        append("}");
-        continue;
-      }
-      if (frame.wroteProperty) append(",");
-      append(jsonStringify(key)!);
-      append(":");
-      frame.wroteProperty = true;
-      appendJsonEncodingFrame(frames, frame);
-      appendJsonEncodingFrame(frames, { kind: "value", value: nested, inArray: false });
-      continue;
+    if (key === undefined) {
+      append("}");
+      return;
     }
-
+    if (frame.wroteProperty) append(",");
+    append(jsonStringify(key)!);
+    append(":");
+    frame.wroteProperty = true;
+    appendJsonEncodingFrame(frames, frame);
+    appendJsonEncodingFrame(frames, { kind: "value", value: nested, inArray: false });
+  }
+  function encodeNormalizedValue(frame: JsonValueEncodingFrame): void {
     const value = frame.value;
     if (value === null) {
       append("null");
@@ -552,8 +566,17 @@ function encodeNormalizedJson(root: unknown): string | undefined {
       append(frame.inArray ? "null" : "");
     }
   }
-  if (chunk.length > 0) defineArrayElement(chunks, chunks.length, chunk);
-  return reflectApply(arrayJoin, chunks, [""]);
+
+  while (frames.length > 0) {
+    const frameIndex = frames.length - 1;
+    const frame = frames[frameIndex]!;
+    frames.length = frameIndex;
+
+    if (frame.kind === "array") encodeNormalizedArray(frame);
+    else if (frame.kind === "object") encodeNormalizedObject(frame);
+    else encodeNormalizedValue(frame);
+  }
+  return finish();
 }
 
 interface JsonTailArrayEncodingFrame {
@@ -603,7 +626,7 @@ function prepareJsonTailValue(
     (type === "object" && prepared !== null || type === "function" || type === "bigint")
   ) {
     const receiver = type === "bigint"
-      ? ObjectConstructor(prepared)
+      ? new ObjectConstructor(prepared)
       : prepared as JsonTraversalReference;
     const toJson = reflectGet(receiver, "toJSON");
     if (typeof toJson === "function") {
@@ -631,90 +654,74 @@ function encodeJsonTailIteratively(
 
   const frames: JsonTailEncodingFrame[] = [{ kind: "value", value: preparedRoot }];
   const localActive = new SetConstructor<JsonTraversalReference>();
-  const chunks: string[] = [];
-  let chunk = "";
   let containsRawJson = false;
-  const append = (value: string) => {
-    chunk += value;
-    if (chunk.length >= 8192) {
-      defineArrayElement(chunks, chunks.length, chunk);
-      chunk = "";
+  const { append, finish } = createJsonChunkWriter();
+
+  function encodeTailArray(frame: JsonTailArrayEncodingFrame): void {
+    if (frame.index >= frame.length) {
+      reflectApply(setDelete, localActive, [frame.value]);
+      append("]");
+      return;
     }
-  };
-
-  while (frames.length > 0) {
-    const frameIndex = frames.length - 1;
-    const frame = frames[frameIndex]!;
-    frames.length = frameIndex;
-
-    if (frame.kind === "array") {
-      if (frame.index >= frame.length) {
-        reflectApply(setDelete, localActive, [frame.value]);
-        append("]");
-        continue;
-      }
-      if (frame.index > 0) append(",");
-      const indexKey = StringConstructor(frame.index++);
-      const nested = prepareJsonTailValue(
-        reflectGet(frame.value, indexKey),
-        indexKey,
+    if (frame.index > 0) append(",");
+    const indexKey = StringConstructor(frame.index++);
+    const nested = prepareJsonTailValue(
+      reflectGet(frame.value, indexKey),
+      indexKey,
+      true,
+      records,
+    );
+    appendJsonTailEncodingFrame(frames, frame);
+    if (isOmittedJsonObjectValue(nested)) append("null");
+    else appendJsonTailEncodingFrame(frames, { kind: "value", value: nested });
+  }
+  function encodeTailObject(frame: JsonTailObjectEncodingFrame): void {
+    let nested: unknown;
+    let nestedKey: string | undefined;
+    while (frame.index < frame.keys.length) {
+      nestedKey = frame.keys[frame.index++]!;
+      nested = prepareJsonTailValue(
+        reflectGet(frame.value, nestedKey),
+        nestedKey,
         true,
         records,
       );
-      appendJsonTailEncodingFrame(frames, frame);
-      if (isOmittedJsonObjectValue(nested)) append("null");
-      else appendJsonTailEncodingFrame(frames, { kind: "value", value: nested });
-      continue;
+      if (!isOmittedJsonObjectValue(nested)) break;
+      nestedKey = undefined;
     }
-
-    if (frame.kind === "object") {
-      let nested: unknown;
-      let nestedKey: string | undefined;
-      while (frame.index < frame.keys.length) {
-        nestedKey = frame.keys[frame.index++]!;
-        nested = prepareJsonTailValue(
-          reflectGet(frame.value, nestedKey),
-          nestedKey,
-          true,
-          records,
-        );
-        if (!isOmittedJsonObjectValue(nested)) break;
-        nestedKey = undefined;
-      }
-      if (nestedKey === undefined) {
-        reflectApply(setDelete, localActive, [frame.value]);
-        append("}");
-        continue;
-      }
-      if (frame.wroteProperty) append(",");
-      append(jsonStringify(nestedKey)!);
-      append(":");
-      frame.wroteProperty = true;
-      appendJsonTailEncodingFrame(frames, frame);
-      appendJsonTailEncodingFrame(frames, { kind: "value", value: nested });
-      continue;
+    if (nestedKey === undefined) {
+      reflectApply(setDelete, localActive, [frame.value]);
+      append("}");
+      return;
     }
-
+    if (frame.wroteProperty) append(",");
+    append(jsonStringify(nestedKey)!);
+    append(":");
+    frame.wroteProperty = true;
+    appendJsonTailEncodingFrame(frames, frame);
+    appendJsonTailEncodingFrame(frames, { kind: "value", value: nested });
+  }
+  function encodeTailValue(frame: JsonTailValueEncodingFrame): void {
     const value = frame.value;
     if (value === null) {
       append("null");
-      continue;
+      return;
     }
     const type = typeof value;
     if (type === "string") {
       append(jsonStringify(value)!);
-      continue;
+      return;
     }
     if (type === "number") {
       append(numberIsFinite(value) ? jsonStringify(value)! : "null");
-      continue;
+      return;
     }
     if (type === "boolean") {
       append(value ? "true" : "false");
-      continue;
+      return;
     }
     if (type === "bigint") throw BIGINT_JSON_TAIL_VALUE;
-    if (type !== "object") continue;
+    if (type !== "object") return;
 
     const reference = value as JsonTraversalReference;
     if (
@@ -723,7 +730,7 @@ function encodeJsonTailIteratively(
     ) {
       containsRawJson = true;
       append(reflectGet(reference, "rawJSON") as string);
-      continue;
+      return;
     }
     if (
       reflectApply(setHas, outerActive, [reference]) ||
@@ -752,10 +759,19 @@ function encodeJsonTailIteratively(
     }
   }
 
-  if (chunk.length > 0) defineArrayElement(chunks, chunks.length, chunk);
+  while (frames.length > 0) {
+    const frameIndex = frames.length - 1;
+    const frame = frames[frameIndex]!;
+    frames.length = frameIndex;
+
+    if (frame.kind === "array") encodeTailArray(frame);
+    else if (frame.kind === "object") encodeTailObject(frame);
+    else encodeTailValue(frame);
+  }
+
   return {
     containsRawJson,
-    serialized: reflectApply(arrayJoin, chunks, [""]),
+    serialized: finish(),
   };
 }
 
@@ -1114,6 +1130,17 @@ export function collectWorkflowJsonRecords(
   // Reading a field of an unidentified Proxy would run its hooks.
   if (!canIdentifyProxyWithoutHooks) return records;
   const pending: Array<readonly [unknown, WorkflowJsonRecordShape]> = [[value, shape]];
+  function appendRecordFields(
+    source: JsonTraversalReference,
+    fields: NonNullable<WorkflowJsonRecordShape["fields"]>,
+  ): void {
+    for (const key of objectKeys(fields)) {
+      const descriptor = objectGetOwnPropertyDescriptor(source, key);
+      if (descriptor !== undefined && "value" in descriptor) {
+        pending[pending.length] = [descriptor.value, fields[key]!];
+      }
+    }
+  }
   while (pending.length > 0) {
     const [candidate, candidateShape] = pending[pending.length - 1]!;
     pending.length -= 1;
@@ -1133,12 +1160,7 @@ export function collectWorkflowJsonRecords(
     }
     const fields = candidateShape.fields;
     if (fields === undefined) continue;
-    for (const key of objectKeys(fields)) {
-      const descriptor = objectGetOwnPropertyDescriptor(source, key);
-      if (descriptor !== undefined && "value" in descriptor) {
-        pending[pending.length] = [descriptor.value, fields[key]!];
-      }
-    }
+    appendRecordFields(source, fields);
   }
   return records;
 }
@@ -1162,30 +1184,15 @@ function registerNodeStateRecords(
   type RecordKind = "states" | "state" | "retry" | "context" | "prior-contexts";
   const pending: Array<readonly [unknown, RecordKind]> = [[nodeStates, "states"]];
   const visited = new WeakMapConstructor<object, Set<RecordKind>>();
-  while (pending.length > 0) {
-    const [candidate, kind] = pending[pending.length - 1]!;
-    pending.length -= 1;
-    if (typeof candidate !== "object" || candidate === null) continue;
-    const source = (reflectApply(weakMapGet, deferredWorkflowJsonSources, [candidate]) ??
-      candidate) as JsonTraversalReference;
-    if (isProxyWithoutHooks(source)) continue;
-    let kinds = reflectApply(weakMapGet, visited, [source]) as Set<RecordKind> | undefined;
-    if (kinds !== undefined && reflectApply(setHas, kinds, [kind])) continue;
-    if (kinds === undefined) {
-      kinds = new SetConstructor<RecordKind>();
-      reflectApply(weakMapSet, visited, [source, kinds]);
+  function appendPriorContexts(source: JsonTraversalReference): void {
+    if (!arrayIsArray(source)) return;
+    const length = ownDataValue(source, "length");
+    if (typeof length !== "number") return;
+    for (let index = 0; index < length; index++) {
+      pending[pending.length] = [ownDataValue(source, `${index}`), "context"];
     }
-    reflectApply(setAdd, kinds, [kind]);
-    if (kind === "prior-contexts") {
-      if (!arrayIsArray(source)) continue;
-      const length = ownDataValue(source, "length");
-      if (typeof length !== "number") continue;
-      for (let index = 0; index < length; index++) {
-        pending[pending.length] = [ownDataValue(source, `${index}`), "context"];
-      }
-      continue;
-    }
-    reflectApply(weakMapSet, records, [source, WORKFLOW_NODE_RECORD]);
+  }
+  function appendStateReferences(source: JsonTraversalReference, kind: RecordKind): void {
     switch (kind) {
       case "states":
         for (const key of objectKeys(source)) {
@@ -1203,6 +1210,27 @@ function registerNodeStateRecords(
         pending[pending.length] = [ownDataValue(source, "previousResults"), "prior-contexts"];
         break;
     }
+  }
+  while (pending.length > 0) {
+    const [candidate, kind] = pending[pending.length - 1]!;
+    pending.length -= 1;
+    if (typeof candidate !== "object" || candidate === null) continue;
+    const source = (reflectApply(weakMapGet, deferredWorkflowJsonSources, [candidate]) ??
+      candidate) as JsonTraversalReference;
+    if (isProxyWithoutHooks(source)) continue;
+    let kinds = reflectApply(weakMapGet, visited, [source]) as Set<RecordKind> | undefined;
+    if (kinds !== undefined && reflectApply(setHas, kinds, [kind])) continue;
+    if (kinds === undefined) {
+      kinds = new SetConstructor<RecordKind>();
+      reflectApply(weakMapSet, visited, [source, kinds]);
+    }
+    reflectApply(setAdd, kinds, [kind]);
+    if (kind === "prior-contexts") {
+      appendPriorContexts(source);
+      continue;
+    }
+    reflectApply(weakMapSet, records, [source, WORKFLOW_NODE_RECORD]);
+    appendStateReferences(source, kind);
   }
 }
 
@@ -1366,76 +1394,163 @@ function normalizeAndFindUnrepresentableValues(
   };
 
   const recordShapes: WorkflowJsonRecords = records ?? new WeakMapConstructor();
-  const normalize = (
-    value: unknown,
+  function appendArrayChild(
+    result: NormalizedJsonValue[],
+    nested: JsonTraversalReference,
+    path: string,
+    depth: number,
+    index: number,
+    canInspectIndex: boolean,
+  ): boolean {
+    const indexKey = StringConstructor(index);
+    let isHole = false;
+    const child = reflectGet(nested, indexKey);
+    if (options.strictContext !== true && canInspectIndex) {
+      try {
+        isHole = !objectHasOwn(nested, indexKey);
+      } catch {
+        // Hole diagnostics are best-effort; the captured value still wins.
+      }
+    }
+    if (isHole) recordLossy(path, "array hole", index);
+    if (isHole && child === undefined) {
+      defineArrayElement(result, result.length, null);
+      return false;
+    }
+    const normalized = normalize(
+      child,
+      `${path}[${index}]`,
+      indexKey,
+      true,
+      depth + 1,
+    );
+    defineArrayElement(
+      result,
+      result.length,
+      normalized === OMIT_JSON_VALUE ? null : normalized,
+    );
+    return true;
+  }
+  function normalizeObjectProperty(
+    result: NormalizedJsonObject,
+    nested: JsonTraversalReference,
+    ownKey: string | symbol,
+    path: string,
+    depth: number,
+    shape: WorkflowJsonRecordShape | undefined,
+  ): void {
+    let childKey: string;
+    if (options.strictContext === true) {
+      const descriptor = objectGetOwnPropertyDescriptor(nested, ownKey);
+      if (isWorkflowJsonPrototypeSnapshotShadow(nested, ownKey, descriptor)) {
+        return;
+      }
+      if (typeof ownKey === "symbol") {
+        if (descriptor !== undefined) recordLossy(path, "symbol-keyed property");
+        return;
+      }
+      childKey = ownKey;
+      if (descriptor === undefined) return;
+      if (descriptor.enumerable !== true) {
+        recordLossy(
+          `${path}.${redactPathSegment(childKey, depth === 0)}`,
+          "non-enumerable property",
+        );
+        return;
+      }
+      recordPropertyDescriptor(
+        descriptor,
+        `${path}.${redactPathSegment(childKey, depth === 0)}`,
+      );
+    } else {
+      childKey = ownKey as string;
+    }
+    const childPath = `${path}.${redactPathSegment(childKey, depth === 0)}`;
+    const normalized = normalize(
+      reflectGet(nested, childKey),
+      childPath,
+      childKey,
+      true,
+      depth + 1,
+      workflowJsonFieldShape(shape, childKey),
+    );
+    if (normalized !== OMIT_JSON_VALUE) result[childKey] = normalized;
+  }
+  function normalizeUninspectedTail(
+    nested: JsonTraversalReference,
     path: string,
     key: string,
     applyToJson: boolean,
-    depth: number,
-    shape?: WorkflowJsonRecordShape,
-  ): NormalizedJsonValue | typeof OMIT_JSON_VALUE => {
-    if (value === null) return null;
-
-    const type = typeof value;
-    const deferredSource = type === "object"
-      ? reflectApply(weakMapGet, deferredWorkflowJsonSources, [value]) as
-        | JsonTraversalReference
-        | undefined
-      : undefined;
-    if (deferredSource !== undefined) {
-      if (options.strictContext === true) {
-        recordLossy(path, "deferred checkpoint value");
+  ): NormalizedJsonValue | typeof OMIT_JSON_VALUE {
+    if (options.strictContext === true) {
+      recordLossy(path, "uninspected value");
+      return nested as NormalizedJsonValue;
+    }
+    try {
+      return normalizeJsonTail(
+        nested,
+        key,
+        active,
+        serializationState,
+        applyToJson,
+        recordShapes,
+      );
+    } catch (error) {
+      if (error === ACTIVE_JSON_TAIL_REFERENCE) {
+        recordFatal(path, "circular reference");
         return null;
       }
-      return normalize(deferredSource, path, key, true, depth, shape);
-    }
-    // A reference back to a record, such as a context that holds itself, is
-    // that record, so it has no `toJSON` hook either; the cycle is reported.
-    if (type === "object") {
-      if (shape === undefined) {
-        shape = reflectApply(weakMapGet, recordShapes, [value]) as
-          | WorkflowJsonRecordShape
-          | undefined;
-      } else {
-        reflectApply(weakMapSet, recordShapes, [value, shape]);
+      if (error === BIGINT_JSON_TAIL_VALUE) {
+        recordFatal(path, "BigInt");
+        return null;
       }
+      throw error;
     }
+  }
+  function normalizeDeferredSource(
+    deferredSource: JsonTraversalReference,
+    path: string,
+    key: string,
+    depth: number,
+    shape: WorkflowJsonRecordShape | undefined,
+  ): NormalizedJsonValue | typeof OMIT_JSON_VALUE {
+    if (options.strictContext === true) {
+      recordLossy(path, "deferred checkpoint value");
+      return null;
+    }
+    return normalize(deferredSource, path, key, true, depth, shape);
+  }
+  function resolveRecordShape(
+    value: unknown,
+    shape: WorkflowJsonRecordShape | undefined,
+  ): WorkflowJsonRecordShape | undefined {
+    if (shape === undefined) {
+      return reflectApply(weakMapGet, recordShapes, [value]) as WorkflowJsonRecordShape | undefined;
+    }
+    reflectApply(weakMapSet, recordShapes, [value, shape]);
+    return shape;
+  }
+  function isUnsafeStrictReference(value: unknown, type: string, path: string): boolean {
     if (
       options.strictContext === true &&
       (type === "object" || type === "function")
     ) {
       if (!canIdentifyProxyWithoutHooks) {
         recordLossy(path, "unverifiable Proxy identity");
-        return null;
+        return true;
       }
       if (isProxyWithoutHooks(value as JsonTraversalReference)) {
         recordLossy(path, describe(value));
-        return null;
+        return true;
       }
     }
-    if (
-      type === "object" &&
-      jsonIsRawJSON !== undefined &&
-      reflectApply(jsonIsRawJSON, jsonRawSupport, [value])
-    ) {
-      recordLossy(path, "raw JSON value");
-      return value as RawJsonValue;
-    }
-    if (
-      applyToJson && shape === undefined &&
-      (type === "object" || type === "function" || type === "bigint")
-    ) {
-      const receiver = type === "bigint"
-        ? ObjectConstructor(value)
-        : value as JsonTraversalReference;
-      const toJson = reflectGet(receiver, "toJSON");
-      if (typeof toJson === "function") {
-        const replacement = reflectApply(toJson, value, [key]);
-        recordLossy(path, describeToJsonValue(value));
-        return normalize(replacement, path, key, false, depth);
-      }
-    }
-
+    return false;
+  }
+  function normalizePrimitive(
+    value: unknown,
+    path: string,
+    type: string,
+  ): NormalizedJsonValue | typeof OMIT_JSON_VALUE {
     if (type === "string" || type === "boolean") return value as string | boolean;
     if (type === "number") {
       if (!numberIsFinite(value)) {
@@ -1457,7 +1572,72 @@ function normalizeAndFindUnrepresentableValues(
       return OMIT_JSON_VALUE;
     }
 
-    const nested = value as JsonTraversalReference;
+    return OMIT_JSON_VALUE;
+  }
+  function normalizeArray(
+    nested: JsonTraversalReference,
+    path: string,
+    depth: number,
+  ): NormalizedJsonValue[] {
+    const result: NormalizedJsonValue[] = isWorkflowJsonPrototypeSnapshot(nested)
+      ? stabilizeWorkflowJsonPrototypeSnapshot([])
+      : [];
+    const length = toJsonLength(reflectGet(nested, "length"));
+    if (options.strictContext === true) {
+      recordStrictArrayDiagnostics(nested, path, length);
+    }
+    const canInspectIndex = canIdentifyProxyWithoutHooks &&
+      !isProxyWithoutHooks(nested);
+    for (let index = 0; index < length; index++) {
+      if (!appendArrayChild(result, nested, path, depth, index, canInspectIndex)) continue;
+      if (found.fatalCount > 0) break;
+    }
+    if (options.strictContext === true && found.fatalCount === 0) {
+      recordObjectExtensibility(nested, path);
+    }
+    if (options.strictContext !== true) recordEnumerableSymbolKeys(nested, path);
+    return result;
+  }
+  function normalizeObject(
+    nested: JsonTraversalReference,
+    path: string,
+    depth: number,
+    shape: WorkflowJsonRecordShape | undefined,
+  ): NormalizedJsonObject {
+    const result: NormalizedJsonObject = objectCreate(null);
+    const childKeys = options.strictContext === true ? reflectOwnKeys(nested) : objectKeys(nested);
+    for (let childIndex = 0; childIndex < childKeys.length; childIndex++) {
+      if (found.fatalCount > 0) break;
+      normalizeObjectProperty(result, nested, childKeys[childIndex]!, path, depth, shape);
+    }
+    if (found.fatalCount === 0 && options.strictContext !== true) {
+      recordEnumerableSymbolKeys(nested, path);
+    }
+    if (found.fatalCount === 0 && options.strictContext === true) {
+      recordObjectExtensibility(nested, path);
+    }
+    // Prototype diagnostics are best-effort and run after the snapshot is
+    // complete, so hostile metadata traps cannot change persistence output.
+    if (
+      found.fatalCount === 0 &&
+      (
+        ((options.strictContext === true || !canIdentifyProxyWithoutHooks) &&
+          isKnownNonPlainBuiltin(nested, serializationState.nonPlainBuiltinCache)) ||
+        !isPlainObject(nested, options.strictContext === true)
+      )
+    ) {
+      recordLossy(path, describe(nested));
+    }
+    return result;
+  }
+  function normalizeReference(
+    nested: JsonTraversalReference,
+    path: string,
+    key: string,
+    applyToJson: boolean,
+    depth: number,
+    shape: WorkflowJsonRecordShape | undefined,
+  ): NormalizedJsonValue | typeof OMIT_JSON_VALUE {
     if (reflectApply(setHas, active, [nested])) {
       recordFatal(path, "circular reference");
       return null;
@@ -1485,148 +1665,76 @@ function normalizeAndFindUnrepresentableValues(
     // the containing object. Raw primitive wrappers preserve exact encoded
     // tokens when the host supports them; older hosts parse them.
     if (depth >= MAX_TRAVERSAL_DEPTH) {
-      if (options.strictContext === true) {
-        recordLossy(path, "uninspected value");
-        return nested as NormalizedJsonValue;
-      }
-      try {
-        return normalizeJsonTail(
-          nested,
-          key,
-          active,
-          serializationState,
-          applyToJson,
-          recordShapes,
-        );
-      } catch (error) {
-        if (error === ACTIVE_JSON_TAIL_REFERENCE) {
-          recordFatal(path, "circular reference");
-          return null;
-        }
-        if (error === BIGINT_JSON_TAIL_VALUE) {
-          recordFatal(path, "BigInt");
-          return null;
-        }
-        throw error;
-      }
+      return normalizeUninspectedTail(nested, path, key, applyToJson);
     }
 
     reflectApply(setAdd, active, [nested]);
     try {
-      if (isArray) {
-        const result: NormalizedJsonValue[] = isWorkflowJsonPrototypeSnapshot(nested)
-          ? stabilizeWorkflowJsonPrototypeSnapshot([])
-          : [];
-        const length = toJsonLength(reflectGet(nested, "length"));
-        if (options.strictContext === true) {
-          recordStrictArrayDiagnostics(nested, path, length);
-        }
-        const canInspectIndex = canIdentifyProxyWithoutHooks &&
-          !isProxyWithoutHooks(nested);
-        for (let index = 0; index < length; index++) {
-          const indexKey = StringConstructor(index);
-          let isHole = false;
-          const child = reflectGet(nested, indexKey);
-          if (options.strictContext !== true && canInspectIndex) {
-            try {
-              isHole = !objectHasOwn(nested, indexKey);
-            } catch {
-              // Hole diagnostics are best-effort; the captured value still wins.
-            }
-          }
-          if (isHole) recordLossy(path, "array hole", index);
-          if (isHole && child === undefined) {
-            defineArrayElement(result, result.length, null);
-            continue;
-          }
-          const normalized = normalize(
-            child,
-            `${path}[${index}]`,
-            indexKey,
-            true,
-            depth + 1,
-          );
-          defineArrayElement(
-            result,
-            result.length,
-            normalized === OMIT_JSON_VALUE ? null : normalized,
-          );
-          if (found.fatalCount > 0) break;
-        }
-        if (options.strictContext === true && found.fatalCount === 0) {
-          recordObjectExtensibility(nested, path);
-        }
-        if (options.strictContext !== true) recordEnumerableSymbolKeys(nested, path);
-        return result;
-      }
+      if (isArray) return normalizeArray(nested, path, depth);
 
-      const result: NormalizedJsonObject = objectCreate(null);
-      const childKeys = options.strictContext === true
-        ? reflectOwnKeys(nested)
-        : objectKeys(nested);
-      for (let childIndex = 0; childIndex < childKeys.length; childIndex++) {
-        if (found.fatalCount > 0) break;
-        const ownKey = childKeys[childIndex]!;
-        let childKey: string;
-        if (options.strictContext === true) {
-          const descriptor = objectGetOwnPropertyDescriptor(nested, ownKey);
-          if (isWorkflowJsonPrototypeSnapshotShadow(nested, ownKey, descriptor)) {
-            continue;
-          }
-          if (typeof ownKey === "symbol") {
-            if (descriptor !== undefined) recordLossy(path, "symbol-keyed property");
-            continue;
-          }
-          childKey = ownKey;
-          if (descriptor === undefined) continue;
-          if (descriptor.enumerable !== true) {
-            recordLossy(
-              `${path}.${redactPathSegment(childKey, depth === 0)}`,
-              "non-enumerable property",
-            );
-            continue;
-          }
-          recordPropertyDescriptor(
-            descriptor,
-            `${path}.${redactPathSegment(childKey, depth === 0)}`,
-          );
-        } else {
-          childKey = ownKey as string;
-        }
-        const childPath = `${path}.${redactPathSegment(childKey, depth === 0)}`;
-        const normalized = normalize(
-          reflectGet(nested, childKey),
-          childPath,
-          childKey,
-          true,
-          depth + 1,
-          workflowJsonFieldShape(shape, childKey),
-        );
-        if (normalized !== OMIT_JSON_VALUE) result[childKey] = normalized;
-      }
-      if (found.fatalCount === 0 && options.strictContext !== true) {
-        recordEnumerableSymbolKeys(nested, path);
-      }
-      if (found.fatalCount === 0 && options.strictContext === true) {
-        recordObjectExtensibility(nested, path);
-      }
-      // Prototype diagnostics are best-effort and run after the snapshot is
-      // complete, so hostile metadata traps cannot change persistence output.
-      if (
-        found.fatalCount === 0 &&
-        (
-          ((options.strictContext === true || !canIdentifyProxyWithoutHooks) &&
-            isKnownNonPlainBuiltin(nested, serializationState.nonPlainBuiltinCache)) ||
-          !isPlainObject(nested, options.strictContext === true)
-        )
-      ) {
-        recordLossy(path, describe(nested));
-      }
-      return result;
+      return normalizeObject(nested, path, depth, shape);
     } finally {
       reflectApply(setDelete, active, [nested]);
       if (options.strictContext === true) reflectApply(setAdd, completed, [nested]);
     }
+  }
+
+  const normalize = (
+    value: unknown,
+    path: string,
+    key: string,
+    applyToJson: boolean,
+    depth: number,
+    shape?: WorkflowJsonRecordShape,
+  ): NormalizedJsonValue | typeof OMIT_JSON_VALUE => {
+    if (value === null) return null;
+
+    const type = typeof value;
+    const deferredSource = type === "object"
+      ? reflectApply(weakMapGet, deferredWorkflowJsonSources, [value]) as
+        | JsonTraversalReference
+        | undefined
+      : undefined;
+    if (deferredSource !== undefined) {
+      return normalizeDeferredSource(deferredSource, path, key, depth, shape);
+    }
+    // A reference back to a record, such as a context that holds itself, is
+    // that record, so it has no `toJSON` hook either; the cycle is reported.
+    if (type === "object") shape = resolveRecordShape(value, shape);
+    if (isUnsafeStrictReference(value, type, path)) return null;
+    if (
+      type === "object" &&
+      jsonIsRawJSON !== undefined &&
+      reflectApply(jsonIsRawJSON, jsonRawSupport, [value])
+    ) {
+      recordLossy(path, "raw JSON value");
+      return value as RawJsonValue;
+    }
+    if (
+      applyToJson && shape === undefined &&
+      (type === "object" || type === "function" || type === "bigint")
+    ) {
+      const receiver = type === "bigint"
+        ? new ObjectConstructor(value)
+        : value as JsonTraversalReference;
+      const toJson = reflectGet(receiver, "toJSON");
+      if (typeof toJson === "function") {
+        const replacement = reflectApply(toJson, value, [key]);
+        recordLossy(path, describeToJsonValue(value));
+        return normalize(replacement, path, key, false, depth);
+      }
+    }
+
+    if (type !== "object") return normalizePrimitive(value, path, type);
+
+    return normalizeReference(
+      value as JsonTraversalReference,
+      path,
+      key,
+      applyToJson,
+      depth,
+      shape,
+    );
   };
 
   const normalized = normalize(root, label, "", true, 0, rootShape);

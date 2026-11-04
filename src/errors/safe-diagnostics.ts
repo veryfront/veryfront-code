@@ -506,59 +506,63 @@ function isLocalhostFileAuthority(authority: string): boolean {
   }
 }
 
-/** Normalize lexical `.` and `..` segments without resolving the filesystem. */
-function normalizeFilesystemPathForDiagnostic(path: string): string {
-  const windowsPath = isWindowsFilesystemPath(path);
-  const hasFileScheme = lowercaseString(sliceString(path, 0, 5)) === "file:";
+function fileDiagnosticRoot(path: string): { prefix: string; start: number } {
+  let cursor = 5;
+  if (
+    isPathSeparatorCodeUnit(charCodeAtString(path, cursor)) &&
+    isPathSeparatorCodeUnit(charCodeAtString(path, cursor + 1))
+  ) {
+    cursor += 2;
+    const authorityStart = cursor;
+    while (cursor < path.length && !isPathSeparatorCodeUnit(charCodeAtString(path, cursor))) {
+      cursor++;
+    }
+    const authority = sliceString(path, authorityStart, cursor);
+    while (cursor < path.length && isPathSeparatorCodeUnit(charCodeAtString(path, cursor))) {
+      cursor++;
+    }
+    return {
+      prefix: `file://${isLocalhostFileAuthority(authority) ? "" : authority}/`,
+      start: cursor,
+    };
+  }
+  while (cursor < path.length && isPathSeparatorCodeUnit(charCodeAtString(path, cursor))) cursor++;
+  return { prefix: "file:/", start: cursor };
+}
+
+function ordinaryDiagnosticRoot(path: string): {
+  prefix: string;
+  start: number;
+  protectedSegments: number;
+} {
   const hasDrive = path.length >= 3 &&
     isAsciiLetterCodeUnit(charCodeAtString(path, 0)) &&
     charCodeAtString(path, 1) === COLON_CODE_UNIT &&
     isPathSeparatorCodeUnit(charCodeAtString(path, 2));
-  const hasUncRoot = !hasDrive && path.length >= 2 &&
+  if (hasDrive) return { prefix: `${sliceString(path, 0, 2)}/`, start: 3, protectedSegments: 0 };
+  const hasUncRoot = path.length >= 2 &&
     isPathSeparatorCodeUnit(charCodeAtString(path, 0)) &&
     isPathSeparatorCodeUnit(charCodeAtString(path, 1));
-  const leadingSeparator = !hasDrive && !hasUncRoot && isPathSeparatorCodeUnit(
-    charCodeAtString(path, 0),
-  );
-  let prefix: string;
-  let start: number;
-  let protectedSegments: number;
-  if (hasFileScheme) {
-    let cursor = 5;
-    if (
-      isPathSeparatorCodeUnit(charCodeAtString(path, cursor)) &&
-      isPathSeparatorCodeUnit(charCodeAtString(path, cursor + 1))
-    ) {
-      cursor += 2;
-      const authorityStart = cursor;
-      while (cursor < path.length && !isPathSeparatorCodeUnit(charCodeAtString(path, cursor))) {
-        cursor++;
-      }
-      const authority = sliceString(path, authorityStart, cursor);
-      while (cursor < path.length && isPathSeparatorCodeUnit(charCodeAtString(path, cursor))) {
-        cursor++;
-      }
-      prefix = `file://${isLocalhostFileAuthority(authority) ? "" : authority}/`;
-      start = cursor;
-    } else {
-      while (cursor < path.length && isPathSeparatorCodeUnit(charCodeAtString(path, cursor))) {
-        cursor++;
-      }
-      prefix = "file:/";
-      start = cursor;
-    }
-    protectedSegments = 0;
-  } else {
-    prefix = hasDrive
-      ? `${sliceString(path, 0, 2)}/`
-      : hasUncRoot
-      ? "//"
-      : leadingSeparator
-      ? "/"
-      : "";
-    start = hasDrive ? 3 : hasUncRoot ? 2 : leadingSeparator ? 1 : 0;
-    protectedSegments = hasUncRoot ? 2 : 0;
+  if (hasUncRoot) return { prefix: "//", start: 2, protectedSegments: 2 };
+  if (isPathSeparatorCodeUnit(charCodeAtString(path, 0))) {
+    return { prefix: "/", start: 1, protectedSegments: 0 };
   }
+  return { prefix: "", start: 0, protectedSegments: 0 };
+}
+
+function diagnosticDotSegmentLength(segment: string, hasFileScheme: boolean): number {
+  if (hasFileScheme) return fileUrlDotSegmentLength(segment);
+  if (segment === ".") return 1;
+  if (segment === "..") return 2;
+  return 0;
+}
+
+function normalizedDiagnosticSegments(
+  path: string,
+  start: number,
+  protectedSegments: number,
+  hasFileScheme: boolean,
+): string[] {
   const segments: string[] = [];
   for (let segmentStart = start; segmentStart < path.length;) {
     let cursor = segmentStart;
@@ -566,13 +570,7 @@ function normalizeFilesystemPathForDiagnostic(path: string): string {
       cursor++;
     }
     const segment = sliceString(path, segmentStart, cursor);
-    const dotSegmentLength = hasFileScheme
-      ? fileUrlDotSegmentLength(segment)
-      : segment === "."
-      ? 1
-      : segment === ".."
-      ? 2
-      : 0;
+    const dotSegmentLength = diagnosticDotSegmentLength(segment, hasFileScheme);
     if (dotSegmentLength === 2) {
       if (segments.length > protectedSegments) apply(arrayPop, segments, []);
     } else if (segment && dotSegmentLength !== 1) {
@@ -583,7 +581,23 @@ function normalizeFilesystemPathForDiagnostic(path: string): string {
     }
     segmentStart = cursor;
   }
-  const normalized = `${prefix}${apply(arrayJoin, segments, ["/"])}`;
+  return segments;
+}
+
+/** Normalize lexical `.` and `..` segments without resolving the filesystem. */
+function normalizeFilesystemPathForDiagnostic(path: string): string {
+  const windowsPath = isWindowsFilesystemPath(path);
+  const hasFileScheme = lowercaseString(sliceString(path, 0, 5)) === "file:";
+  const root = hasFileScheme
+    ? { ...fileDiagnosticRoot(path), protectedSegments: 0 }
+    : ordinaryDiagnosticRoot(path);
+  const segments = normalizedDiagnosticSegments(
+    path,
+    root.start,
+    root.protectedSegments,
+    hasFileScheme,
+  );
+  const normalized = `${root.prefix}${apply(arrayJoin, segments, ["/"])}`;
   return windowsPath && normalized.length >= 1
     ? uppercaseString(normalized[0]!) + sliceString(normalized, 1)
     : normalized;
@@ -666,6 +680,15 @@ function componentEncodedFilesystemPath(path: string): string | undefined {
   }
 }
 
+function formEncodedPunctuation(codeUnit: number): string | undefined {
+  if (codeUnit === 33) return "%21";
+  if (codeUnit === 39) return "%27";
+  if (codeUnit === 40) return "%28";
+  if (codeUnit === 41) return "%29";
+  if (codeUnit === 126) return "%7E";
+  return undefined;
+}
+
 /** Derive the application/x-www-form-urlencoded spelling used by URLSearchParams. */
 function formEncodedFilesystemPath(path: string): string | undefined {
   let encoded: string;
@@ -689,11 +712,7 @@ function formEncodedFilesystemPath(path: string): string | undefined {
       segmentStart = index + 1;
       continue;
     }
-    if (codeUnit === 33) replacement = "%21";
-    else if (codeUnit === 39) replacement = "%27";
-    else if (codeUnit === 40) replacement = "%28";
-    else if (codeUnit === 41) replacement = "%29";
-    else if (codeUnit === 126) replacement = "%7E";
+    replacement = formEncodedPunctuation(codeUnit);
     if (replacement === undefined) continue;
     apply(arrayPush, parts, [sliceString(encoded, segmentStart, index), replacement]);
     segmentStart = index + 1;
@@ -760,6 +779,26 @@ function isPercentEncodedColonAt(input: string, index: number): boolean {
   return lowercaseString(sliceString(input, index, index + 3)) === "%3a";
 }
 
+function hasAbsoluteDriveAt(input: string, index: number): boolean {
+  const literalDriveSeparatorIndex = index + 2;
+  if (
+    charCodeAtString(input, index + 1) === COLON_CODE_UNIT &&
+    (isPathSeparatorCodeUnit(charCodeAtString(input, literalDriveSeparatorIndex)) ||
+      isPercentEncodedPathSeparatorAt(input, literalDriveSeparatorIndex))
+  ) {
+    return true;
+  }
+  const encodedDriveSeparatorIndex = index + 4;
+  if (
+    isPercentEncodedColonAt(input, index + 1) &&
+    (isPathSeparatorCodeUnit(charCodeAtString(input, encodedDriveSeparatorIndex)) ||
+      isPercentEncodedPathSeparatorAt(input, encodedDriveSeparatorIndex))
+  ) {
+    return true;
+  }
+  return false;
+}
+
 /** Detect an absolute path that remains after trusted aliases are redacted. */
 function containsAbsoluteFilesystemPathForDiagnostic(input: string): boolean {
   for (let index = 0; index < input.length; index++) {
@@ -773,24 +812,7 @@ function containsAbsoluteFilesystemPathForDiagnostic(input: string): boolean {
     if (isPathSeparatorCodeUnit(codeUnit) || isPercentEncodedPathSeparatorAt(input, index)) {
       return true;
     }
-    if (isAsciiLetterCodeUnit(codeUnit)) {
-      const literalDriveSeparatorIndex = index + 2;
-      if (
-        charCodeAtString(input, index + 1) === COLON_CODE_UNIT &&
-        (isPathSeparatorCodeUnit(charCodeAtString(input, literalDriveSeparatorIndex)) ||
-          isPercentEncodedPathSeparatorAt(input, literalDriveSeparatorIndex))
-      ) {
-        return true;
-      }
-      const encodedDriveSeparatorIndex = index + 4;
-      if (
-        isPercentEncodedColonAt(input, index + 1) &&
-        (isPathSeparatorCodeUnit(charCodeAtString(input, encodedDriveSeparatorIndex)) ||
-          isPercentEncodedPathSeparatorAt(input, encodedDriveSeparatorIndex))
-      ) {
-        return true;
-      }
-    }
+    if (isAsciiLetterCodeUnit(codeUnit) && hasAbsoluteDriveAt(input, index)) return true;
     const scheme = lowercaseString(sliceString(input, index, index + 7));
     if (
       sliceString(scheme, 0, 5) === "file:" ||
@@ -804,12 +826,7 @@ function containsAbsoluteFilesystemPathForDiagnostic(input: string): boolean {
   return false;
 }
 
-/** Detect a shortened trusted absolute path that cannot be safely redacted as a whole. */
-function containsTruncatedFilesystemPathPrefix(input: string, path: string): boolean {
-  const minimumPrefixLength = minimumAbsolutePathPrefixLength(path);
-  if (minimumPrefixLength === 0 || minimumPrefixLength >= path.length) return false;
-
-  const foldAsciiCase = isWindowsFilesystemPath(path);
+function filesystemPathPrefixTable(path: string, foldAsciiCase: boolean): Uint32Array {
   const prefixTable = new NativeUint32Array(path.length);
   for (let index = 1, prefixLength = 0; index < path.length;) {
     if (
@@ -825,6 +842,17 @@ function containsTruncatedFilesystemPathPrefix(input: string, path: string): boo
       index++;
     }
   }
+
+  return prefixTable;
+}
+
+/** Detect a shortened trusted absolute path that cannot be safely redacted as a whole. */
+function containsTruncatedFilesystemPathPrefix(input: string, path: string): boolean {
+  const minimumPrefixLength = minimumAbsolutePathPrefixLength(path);
+  if (minimumPrefixLength === 0 || minimumPrefixLength >= path.length) return false;
+
+  const foldAsciiCase = isWindowsFilesystemPath(path);
+  const prefixTable = filesystemPathPrefixTable(path, foldAsciiCase);
 
   let matched = 0;
   for (let index = 0; index < input.length; index++) {
@@ -880,6 +908,47 @@ function adaptPunycodeBias(delta: number, pointCount: number, first: boolean): n
   return adjustment + mathFloor((36 * delta) / (delta + 38));
 }
 
+function punycodeThreshold(base: number, bias: number): number {
+  if (base <= bias + 1) return 1;
+  if (base >= bias + 26) return 26;
+  return base - bias;
+}
+
+function readPunycodeInsertion(
+  label: string,
+  cursor: number,
+  insertion: number,
+  bias: number,
+): { cursor: number; insertion: number } | undefined {
+  let weight = 1;
+  for (let thresholdBase = 36;; thresholdBase += 36) {
+    if (cursor >= label.length) return undefined;
+    const digit = punycodeDigit(charCodeAtString(label, cursor++));
+    if (digit >= 36 || digit > mathFloor((MAX_SAFE_INTEGER - insertion) / weight)) {
+      return undefined;
+    }
+    insertion += digit * weight;
+    const threshold = punycodeThreshold(thresholdBase, bias);
+    if (digit < threshold) break;
+    const factor = 36 - threshold;
+    if (weight > mathFloor(MAX_SAFE_INTEGER / factor)) return undefined;
+    weight *= factor;
+  }
+
+  return { cursor, insertion };
+}
+
+function appendPunycodeBasicPrefix(label: string, delimiter: number, output: number[]): boolean {
+  if (delimiter >= 0) {
+    for (let index = 0; index < delimiter; index++) {
+      const codeUnit = charCodeAtString(label, index);
+      if (codeUnit >= 0x80) return false;
+      apply(arrayPush, output, [codeUnit]);
+    }
+  }
+  return true;
+}
+
 /** Decode one validated URL-host punycode label without a Node built-in. */
 function decodePunycodeLabel(label: string): string | undefined {
   const output: number[] = [];
@@ -888,37 +957,17 @@ function decodePunycodeLabel(label: string): string | undefined {
     if (charCodeAtString(label, index) === 45) delimiter = index;
   }
   let cursor = delimiter < 0 ? 0 : delimiter + 1;
-  if (delimiter >= 0) {
-    for (let index = 0; index < delimiter; index++) {
-      const codeUnit = charCodeAtString(label, index);
-      if (codeUnit >= 0x80) return undefined;
-      apply(arrayPush, output, [codeUnit]);
-    }
-  }
+  if (!appendPunycodeBasicPrefix(label, delimiter, output)) return undefined;
 
   let codePoint = 128;
   let bias = 72;
   let insertion = 0;
   while (cursor < label.length) {
     const previousInsertion = insertion;
-    let weight = 1;
-    for (let thresholdBase = 36;; thresholdBase += 36) {
-      if (cursor >= label.length) return undefined;
-      const digit = punycodeDigit(charCodeAtString(label, cursor++));
-      if (digit >= 36 || digit > mathFloor((MAX_SAFE_INTEGER - insertion) / weight)) {
-        return undefined;
-      }
-      insertion += digit * weight;
-      const threshold = thresholdBase <= bias + 1
-        ? 1
-        : thresholdBase >= bias + 26
-        ? 26
-        : thresholdBase - bias;
-      if (digit < threshold) break;
-      const factor = 36 - threshold;
-      if (weight > mathFloor(MAX_SAFE_INTEGER / factor)) return undefined;
-      weight *= factor;
-    }
+    const next = readPunycodeInsertion(label, cursor, insertion, bias);
+    if (next === undefined) return undefined;
+    cursor = next.cursor;
+    insertion = next.insertion;
 
     const pointCount = output.length + 1;
     bias = adaptPunycodeBias(insertion - previousInsertion, pointCount, previousInsertion === 0);
@@ -956,30 +1005,20 @@ function domainToUnicode(authority: string): string {
   return apply(arrayJoin, labels, ["."]);
 }
 
-/**
- * Derive the native filesystem spelling of a normalized file URL.
- *
- * Host APIs report the decoded platform path (e.g. Node's
- * `open '/private/nope'` for `file:///private/nope`), which matches neither
- * the requested URL nor its normalized form, so that spelling must be
- * redacted as an additional alias. Returns undefined for non-file paths and
- * for malformed percent encodings the platform would reject before reaching
- * the host API.
- */
-function platformPathFromNormalizedFileUrl(
+function decodedFileUrlParts(
   normalizedPath: string,
-  preservePosixVerticalBar = false,
-  decodeAuthority = false,
-): string | undefined {
-  if (lowercaseString(sliceString(normalizedPath, 0, 5)) !== "file:") return undefined;
-  if (!URL_HOSTNAME_GETTER || !URL_PATHNAME_GETTER) return undefined;
-
+  hostnameGetter: () => unknown,
+  pathnameGetter: () => unknown,
+): {
+  canonicalAuthority: string;
+  decodedBody: string;
+} | undefined {
   let canonicalAuthority: string;
   let canonicalPathname: string;
   try {
     const parsed = new NativeURL(normalizedPath);
-    const hostname = apply(URL_HOSTNAME_GETTER, parsed, []);
-    const pathname = apply(URL_PATHNAME_GETTER, parsed, []);
+    const hostname = apply(hostnameGetter, parsed, []);
+    const pathname = apply(pathnameGetter, parsed, []);
     if (typeof hostname !== "string" || typeof pathname !== "string") return undefined;
     canonicalAuthority = hostname;
     canonicalPathname = pathname;
@@ -1002,27 +1041,75 @@ function platformPathFromNormalizedFileUrl(
   }
   decodedBody = sliceString(decodedBody, bodyStart);
 
+  return { canonicalAuthority, decodedBody };
+}
+
+function hasLegacyVerticalBarDrive(decodedBody: string): boolean {
+  return decodedBody.length >= 2 &&
+    isAsciiLetterCodeUnit(charCodeAtString(decodedBody, 0)) &&
+    charCodeAtString(decodedBody, 1) === VERTICAL_BAR_CODE_UNIT &&
+    (decodedBody.length === 2 || isPathSeparatorCodeUnit(charCodeAtString(decodedBody, 2)));
+}
+
+function hasDiagnosticDrivePrefix(decodedBody: string): boolean {
+  return decodedBody.length >= 2 &&
+    isAsciiLetterCodeUnit(charCodeAtString(decodedBody, 0)) &&
+    charCodeAtString(decodedBody, 1) === COLON_CODE_UNIT;
+}
+
+function remoteFileUrlPath(
+  canonicalAuthority: string,
+  decodedBody: string,
+  preservePosixVerticalBar: boolean,
+  decodeAuthority: boolean,
+): string | undefined {
+  if (preservePosixVerticalBar) return undefined;
+  const authority = decodeAuthority ? domainToUnicode(canonicalAuthority) : canonicalAuthority;
+  return authority ? `//${authority}/${decodedBody}` : undefined;
+}
+
+/**
+ * Derive the native filesystem spelling of a normalized file URL.
+ *
+ * Host APIs report the decoded platform path (e.g. Node's
+ * `open '/private/nope'` for `file:///private/nope`), which matches neither
+ * the requested URL nor its normalized form, so that spelling must be
+ * redacted as an additional alias. Returns undefined for non-file paths and
+ * for malformed percent encodings the platform would reject before reaching
+ * the host API.
+ */
+function platformPathFromNormalizedFileUrl(
+  normalizedPath: string,
+  preservePosixVerticalBar = false,
+  decodeAuthority = false,
+): string | undefined {
+  if (lowercaseString(sliceString(normalizedPath, 0, 5)) !== "file:") return undefined;
+  if (!URL_HOSTNAME_GETTER || !URL_PATHNAME_GETTER) return undefined;
+
+  const parts = decodedFileUrlParts(normalizedPath, URL_HOSTNAME_GETTER, URL_PATHNAME_GETTER);
+  if (parts === undefined) return undefined;
+  const { canonicalAuthority } = parts;
+  let { decodedBody } = parts;
+
   if (canonicalAuthority && lowercaseString(canonicalAuthority) !== "localhost") {
-    if (preservePosixVerticalBar) return undefined;
-    const authority = decodeAuthority ? domainToUnicode(canonicalAuthority) : canonicalAuthority;
-    return authority ? `//${authority}/${decodedBody}` : undefined;
+    return remoteFileUrlPath(
+      canonicalAuthority,
+      decodedBody,
+      preservePosixVerticalBar,
+      decodeAuthority,
+    );
   }
   // The WHATWG file URL parser also accepts the legacy vertical-bar drive
   // spelling ("file:///C|/nope"), which the host resolves to "C:\nope", so
   // that form must normalize to a colon drive before the alias is derived.
-  const hasVerticalBarDrive = decodedBody.length >= 2 &&
-    isAsciiLetterCodeUnit(charCodeAtString(decodedBody, 0)) &&
-    charCodeAtString(decodedBody, 1) === VERTICAL_BAR_CODE_UNIT &&
-    (decodedBody.length === 2 || isPathSeparatorCodeUnit(charCodeAtString(decodedBody, 2)));
+  const hasVerticalBarDrive = hasLegacyVerticalBarDrive(decodedBody);
   if (preservePosixVerticalBar) {
     return hasVerticalBarDrive ? `/${decodedBody}` : undefined;
   }
   if (hasVerticalBarDrive) {
     decodedBody = `${sliceString(decodedBody, 0, 1)}:${sliceString(decodedBody, 2)}`;
   }
-  const hasDrive = decodedBody.length >= 2 &&
-    isAsciiLetterCodeUnit(charCodeAtString(decodedBody, 0)) &&
-    charCodeAtString(decodedBody, 1) === COLON_CODE_UNIT;
+  const hasDrive = hasDiagnosticDrivePrefix(decodedBody);
   return hasDrive ? decodedBody : `/${decodedBody}`;
 }
 

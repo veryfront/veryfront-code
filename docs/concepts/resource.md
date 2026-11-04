@@ -7,9 +7,8 @@ order: 28
 A resource owns readable project data. It defines a URI pattern, parameters, and
 a loader that returns content.
 
-Resources exist so assistants can inspect context without performing an action.
-They are useful for documentation, project state, generated summaries, or other
-data that should be loaded by name.
+Assistants use resources to read documentation, project state, generated
+summaries or other named context without changing it.
 
 ## Characteristics
 
@@ -22,9 +21,6 @@ data that should be loaded by name.
 
 A resource is read. A tool is called. A prompt gives instructions. MCP servers
 can expose all three, but each has a different contract.
-
-This distinction matters because assistants should read context without calling
-a mutating tool.
 
 ## Wrong fit
 

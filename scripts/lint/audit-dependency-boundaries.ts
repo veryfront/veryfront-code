@@ -47,6 +47,30 @@ function formatNames(names: string[]): string {
   return names.length === 0 ? "none" : names.join(", ");
 }
 
+function auditReactBoundary(
+  manifests: Map<string, DependencyIndexManifest>,
+  issues: DependencyBoundaryAuditIssue[],
+): void {
+  const react = manifests.get("react/deno.json");
+  if (!react) {
+    issues.push({
+      boundary: "react",
+      message: "react boundary is missing from dependency index",
+    });
+  } else {
+    const reactNames = new Set(componentNames(react));
+    for (const expectedComponent of REACT_BOUNDARY_COMPONENTS) {
+      if (!reactNames.has(expectedComponent)) {
+        issues.push({
+          boundary: "react",
+          message:
+            `react boundary is missing expected component ${expectedComponent}`,
+        });
+      }
+    }
+  }
+}
+
 export function auditDependencyBoundaries(
   index: DependencyIndex,
 ): DependencyBoundaryAuditIssue[] {
@@ -79,24 +103,7 @@ export function auditDependencyBoundaries(
     }
   }
 
-  const react = manifests.get("react/deno.json");
-  if (!react) {
-    issues.push({
-      boundary: "react",
-      message: "react boundary is missing from dependency index",
-    });
-  } else {
-    const reactNames = new Set(componentNames(react));
-    for (const expectedComponent of REACT_BOUNDARY_COMPONENTS) {
-      if (!reactNames.has(expectedComponent)) {
-        issues.push({
-          boundary: "react",
-          message:
-            `react boundary is missing expected component ${expectedComponent}`,
-        });
-      }
-    }
-  }
+  auditReactBoundary(manifests, issues);
 
   for (const sensitiveBoundary of SENSITIVE_DEPENDENCY_BOUNDARIES) {
     const manifest = manifests.get(sensitiveBoundary.sourceLocation);

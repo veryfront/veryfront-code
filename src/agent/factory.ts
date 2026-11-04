@@ -26,6 +26,7 @@ import {
 } from "#veryfront/platform/core-platform.ts";
 import { registerTool } from "#veryfront/mcp";
 import { assertLocalToolId, toolRegistry, toolRegistryInternal } from "#veryfront/tool/registry.ts";
+import { getRemoteToolProvenance } from "#veryfront/tool/remote-tool-provenance.ts";
 import {
   hasTrustedHostToolProvenance,
   markTrustedHostToolProvenance,
@@ -525,7 +526,7 @@ function createAugmentedSystem(input: {
 /**
  * Agent helper.
  *
- * `TOutput` is inferred from `config.outputSchema`, so `response.object` is
+ * `TOutput` is inferred from `config.outputSchema`, so `response.data` (also available as `response.object`) is
  * typed without an annotation. Agents without one keep no `object`.
  */
 export function agent<TOutputSchema extends AgentOutputSchema>(
@@ -801,6 +802,11 @@ function registerConfiguredLocalTools(config: AgentConfig): void {
     const entry = pair[1];
     if (!entry || typeof entry !== "object") continue;
     if (isRuntimeLocalTool(entry) || isAgentKnowledgeTool(entry)) continue;
+    // A remote-source tool under its own canonical integration name resolves
+    // from the agent config, because the project registry reserves "__".
+    if (
+      name.includes("__") && entry.id === name && getRemoteToolProvenance(entry) === name
+    ) continue;
     assertLocalToolId(name);
     assertLocalToolId(entry.id);
 

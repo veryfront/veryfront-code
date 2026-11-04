@@ -65,6 +65,212 @@ async function runNoBrandEval(script: string): Promise<unknown> {
 }
 
 describe("ext-llm-anthropic/anthropic-request-builder", () => {
+  for (const url of ["data:application/pdf;base64,JVBERi0=", "https://example.test/report.pdf"]) {
+    it(`preserves PDF documents from ${url.startsWith("data:") ? "bytes" : "URLs"}`, () => {
+      const body = buildAnthropicMessagesRequest(
+        "claude-sonnet-4-5",
+        "anthropic",
+        {
+          prompt: [{
+            role: "user",
+            content: [{ type: "file", url, mediaType: "application/pdf", filename: "report.pdf" }],
+          }],
+        },
+        false,
+        createWarningCollector(),
+      );
+      assertEquals(body.messages, [{
+        role: "user",
+        content: [{
+          type: "document",
+          source: url.startsWith("data:")
+            ? { type: "base64", media_type: "application/pdf", data: "JVBERi0=" }
+            : { type: "url", url },
+        }],
+      }]);
+    });
+  }
+  it("maps inline image bytes to a base64 image source", () => {
+    const body = buildAnthropicMessagesRequest(
+      "claude-sonnet-4-5",
+      "anthropic",
+      {
+        prompt: [{
+          role: "user",
+          content: [{ type: "file", url: "data:image/png;base64,AQ==", mediaType: "image/png" }],
+        }],
+      },
+      false,
+      createWarningCollector(),
+    );
+    assertEquals(body.messages, [{
+      role: "user",
+      content: [{
+        type: "image",
+        source: { type: "base64", media_type: "image/png", data: "AQ==" },
+      }],
+    }]);
+  });
+  it("sends a remote image URL as a url source", () => {
+    const url = "https://example.test/photo.png";
+    const body = buildAnthropicMessagesRequest(
+      "claude-sonnet-4-5",
+      "anthropic",
+      { prompt: [{ role: "user", content: [{ type: "image", url, mediaType: "image/png" }] }] },
+      false,
+      createWarningCollector(),
+    );
+    assertEquals(body.messages, [{
+      role: "user",
+      content: [{ type: "image", source: { type: "url", url } }],
+    }]);
+  });
+  it("sends an image/jpg inline image as image/jpeg", () => {
+    const body = buildAnthropicMessagesRequest(
+      "claude-sonnet-4-5",
+      "anthropic",
+      {
+        prompt: [{
+          role: "user",
+          content: [{ type: "file", url: "data:image/jpeg;base64,/9j/", mediaType: "image/jpg" }],
+        }],
+      },
+      false,
+      createWarningCollector(),
+    );
+    assertEquals(body.messages, [{
+      role: "user",
+      content: [{
+        type: "image",
+        source: { type: "base64", media_type: "image/jpeg", data: "/9j/" },
+      }],
+    }]);
+  });
+  it("matches inline data MIME types case-insensitively", () => {
+    const body = buildAnthropicMessagesRequest(
+      "claude-sonnet-4-5",
+      "anthropic",
+      {
+        prompt: [{
+          role: "user",
+          content: [{
+            type: "file",
+            url: "data:application/PDF;base64,JVBERi0=",
+            mediaType: "application/pdf",
+          }],
+        }],
+      },
+      false,
+      createWarningCollector(),
+    );
+    assertEquals(body.messages, [{
+      role: "user",
+      content: [{
+        type: "document",
+        source: { type: "base64", media_type: "application/pdf", data: "JVBERi0=" },
+      }],
+    }]);
+  });
+  for (
+    const [label, url] of [
+      ["malformed", "data:application/pdf;base64,not-base64"],
+      ["mismatched", "data:image/png;base64,AQ=="],
+    ] as const
+  ) {
+    it(`rejects ${label} inline PDF data`, () => {
+      assertThrows(
+        () =>
+          buildAnthropicMessagesRequest(
+            "claude-sonnet-4-5",
+            "anthropic",
+            {
+              prompt: [{
+                role: "user",
+                content: [{ type: "file", url, mediaType: "application/pdf" }],
+              }],
+            },
+            false,
+            createWarningCollector(),
+          ),
+        TypeError,
+        "matching MIME",
+      );
+    });
+  }
+  for (
+    const url of [
+      "/path/to/photo.png",
+      "file:///path/to/photo.png",
+      "ftp://example.test/photo.png",
+    ]
+  ) {
+    it(`rejects an image URL that is not remote or inline: ${url}`, () => {
+      assertThrows(
+        () =>
+          buildAnthropicMessagesRequest(
+            "claude-sonnet-4-5",
+            "anthropic",
+            {
+              prompt: [{ role: "user", content: [{ type: "image", url, mediaType: "image/png" }] }],
+            },
+            false,
+            createWarningCollector(),
+          ),
+        TypeError,
+        "Anthropic does not support file input (image/png). Send an https URL or inline data",
+      );
+    });
+  }
+
+  it("rejects a PDF whose URL is a local path instead of sending it", () => {
+    assertThrows(
+      () =>
+        buildAnthropicMessagesRequest(
+          "claude-sonnet-4-5",
+          "anthropic",
+          {
+            prompt: [{
+              role: "user",
+              content: [{
+                type: "file",
+                url: "/home/user/report.pdf",
+                mediaType: "application/pdf",
+              }],
+            }],
+          },
+          false,
+          createWarningCollector(),
+        ),
+      TypeError,
+      "Anthropic does not support file input (application/pdf). Send an https URL or inline data",
+    );
+  });
+
+  it("rejects unsupported document types", () => {
+    assertThrows(
+      () =>
+        buildAnthropicMessagesRequest(
+          "claude-sonnet-4-5",
+          "anthropic",
+          {
+            prompt: [{
+              role: "user",
+              content: [{
+                type: "file",
+                url: "data:application/zip;base64,AQ==",
+                mediaType: "application/zip",
+                filename: "notes.zip",
+              }],
+            }],
+          },
+          false,
+          createWarningCollector(),
+        ),
+      TypeError,
+      'Anthropic does not support file input "notes.zip" (application/zip)',
+    );
+  });
+
   it("keeps a cached static system block separate from the uncached dynamic tail", () => {
     const body = buildAnthropicMessagesRequest(
       "claude-sonnet-4-5-20250929",

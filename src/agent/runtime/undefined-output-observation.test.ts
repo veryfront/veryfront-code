@@ -53,3 +53,39 @@ it("records unsupported undefined transformed output while preserving public obj
     },
   }]);
 });
+
+it("streams a data-only middleware response as structured output", async () => {
+  const model: ModelRuntime<ModelRuntimeCallOptions> = {
+    provider: "test",
+    modelId: "test/data-only-middleware",
+    executionMode: "remote",
+    doGenerate() {
+      throw new Error("Middleware must answer before model execution");
+    },
+    doStream() {
+      throw new Error("Middleware must answer before model execution");
+    },
+  };
+  const assistant = agent({
+    id: "data-only-middleware-observation",
+    system: "Unused because middleware answers directly.",
+    resolveModelTransport: () => Promise.resolve({ model }),
+    middleware: [() =>
+      Promise.resolve({
+        text: "structured",
+        data: { city: "Berlin" },
+        messages: [],
+        toolCalls: [],
+        status: "completed",
+      })],
+  });
+
+  const result = await assistant.stream({ input: "Berlin?" });
+  const body = await result.toDataStreamResponse().text();
+  const finish = body.split("\n")
+    .filter((line) => line.startsWith("data: "))
+    .map((line) => JSON.parse(line.slice(6)))
+    .find((event) => event.type === "message-finish");
+
+  assertEquals(finish?.data, { city: "Berlin" });
+});

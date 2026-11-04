@@ -8887,7 +8887,7 @@ export const connectors: IntegrationConfig[] = [
     "tools": [{
       "id": "calendar__list_calendars",
       "name": "List Calendars",
-      "description": "List calendars",
+      "description": "List a page of calendars",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -8896,16 +8896,35 @@ export const connectors: IntegrationConfig[] = [
           "maxResults": {
             "type": "number",
             "in": "query",
-            "description": "Maximum calendars to return",
+            "description": "Maximum calendars per page",
             "default": 100,
           },
+          "pageToken": {
+            "type": "string",
+            "in": "query",
+            "description":
+              "Continuation token from nextPageToken. Keep the other query parameters unchanged.",
+          },
         },
-        "response": { "transform": "items" },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["items", "data", "calendars"],
+            "collectionName": "calendars",
+            "itemFields": [{ "name": "id" }, { "name": "summary" }, { "name": "timeZone" }, {
+              "name": "accessRole",
+            }, { "name": "primary" }],
+            "outputFields": [{ "name": "nextPageToken" }, { "name": "nextSyncToken" }, {
+              "name": "pagination",
+              "kind": "object",
+            }],
+            "omitted": "other provider fields",
+          },
+        },
       },
     }, {
       "id": "calendar__list_events",
       "name": "List Events",
-      "description": "List events",
+      "description": "List a page of calendar events",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -8923,7 +8942,7 @@ export const connectors: IntegrationConfig[] = [
           "maxResults": {
             "type": "number",
             "in": "query",
-            "description": "Maximum events",
+            "description": "Maximum events per page",
             "default": 10,
           },
           "orderBy": {
@@ -8938,8 +8957,31 @@ export const connectors: IntegrationConfig[] = [
             "description": "Expand recurring events",
             "default": true,
           },
+          "pageToken": {
+            "type": "string",
+            "in": "query",
+            "description":
+              "Continuation token from nextPageToken. Keep the other query parameters unchanged.",
+          },
         },
-        "response": { "transform": "items" },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": ["items", "data", "events"],
+            "collectionName": "events",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "summary" },
+              { "name": "start", "kind": "object" },
+              { "name": "end", "kind": "object" },
+              { "name": "status" },
+              { "name": "htmlLink" },
+            ],
+            "outputFields": [{ "name": "nextPageToken" }, { "name": "nextSyncToken" }, {
+              "name": "timeZone",
+            }, { "name": "pagination", "kind": "object" }],
+            "omitted": "event descriptions and other provider fields",
+          },
+        },
       },
     }, {
       "id": "calendar__create_event",
@@ -15945,7 +15987,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "id": "drive__export_file",
       "name": "Export File",
-      "description": "Export file",
+      "description": "Export document text",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -15960,10 +16002,12 @@ export const connectors: IntegrationConfig[] = [
           "mimeType": {
             "type": "string",
             "in": "query",
-            "description": "Export MIME type, e.g. text/plain, text/csv, application/pdf",
-            "required": true,
+            "description": "Text export format: text/plain for Docs or text/csv for Sheets",
+            "default": "text/plain",
+            "pattern": "^text/(plain|csv)$",
           },
         },
+        "response": { "encoding": "text" },
       },
     }],
     "prompts": [{
@@ -21324,14 +21368,7 @@ export const connectors: IntegrationConfig[] = [
       "provider": "google",
       "authorizationUrl": "https://accounts.google.com/o/oauth2/v2/auth",
       "tokenUrl": "https://oauth2.googleapis.com/token",
-      "scopes": [
-        "https://www.googleapis.com/auth/gmail.readonly",
-        "https://www.googleapis.com/auth/gmail.send",
-        "https://www.googleapis.com/auth/gmail.modify",
-        "https://www.googleapis.com/auth/gmail.labels",
-        "https://www.googleapis.com/auth/gmail.compose",
-        "https://mail.google.com/",
-      ],
+      "scopes": ["https://www.googleapis.com/auth/gmail.modify"],
       "requiredApis": [{
         "name": "Gmail API",
         "enableUrl": "https://console.cloud.google.com/apis/library/gmail.googleapis.com",
@@ -21735,23 +21772,6 @@ export const connectors: IntegrationConfig[] = [
         },
       },
     }, {
-      "id": "gmail__delete_email",
-      "name": "Delete Email",
-      "description": "Permanently delete email",
-      "requiresWrite": true,
-      "endpoint": {
-        "method": "DELETE",
-        "url": "https://gmail.googleapis.com/gmail/v1/users/me/messages/{messageId}",
-        "params": {
-          "messageId": {
-            "type": "string",
-            "in": "path",
-            "description": "Email message ID",
-            "required": true,
-          },
-        },
-      },
-    }, {
       "id": "gmail__batch_modify_emails",
       "name": "Batch Modify Emails",
       "description": "Batch modify emails",
@@ -21763,18 +21783,6 @@ export const connectors: IntegrationConfig[] = [
           "ids": { "type": "array", "description": "Email message IDs", "required": true },
           "addLabelIds": { "type": "array", "description": "Label IDs to add" },
           "removeLabelIds": { "type": "array", "description": "Label IDs to remove" },
-        },
-      },
-    }, {
-      "id": "gmail__batch_delete_emails",
-      "name": "Batch Delete Emails",
-      "description": "Permanently delete multiple emails",
-      "requiresWrite": true,
-      "endpoint": {
-        "method": "POST",
-        "url": "https://gmail.googleapis.com/gmail/v1/users/me/messages/batchDelete",
-        "body": {
-          "ids": { "type": "array", "description": "Email message IDs", "required": true },
         },
       },
     }, {
@@ -21886,23 +21894,6 @@ export const connectors: IntegrationConfig[] = [
       "endpoint": {
         "method": "POST",
         "url": "https://gmail.googleapis.com/gmail/v1/users/me/threads/{threadId}/untrash",
-        "params": {
-          "threadId": {
-            "type": "string",
-            "in": "path",
-            "description": "Thread ID",
-            "required": true,
-          },
-        },
-      },
-    }, {
-      "id": "gmail__delete_thread",
-      "name": "Delete Thread",
-      "description": "Permanently delete thread",
-      "requiresWrite": true,
-      "endpoint": {
-        "method": "DELETE",
-        "url": "https://gmail.googleapis.com/gmail/v1/users/me/threads/{threadId}",
         "params": {
           "threadId": {
             "type": "string",
@@ -22174,7 +22165,7 @@ export const connectors: IntegrationConfig[] = [
           "Run List Emails (read-only). It returns message summaries for the connected mailbox without changing it.",
       }],
       "notes": [
-        "The connection requests gmail.readonly, gmail.send, gmail.modify, gmail.labels, gmail.compose and the full-access https://mail.google.com/ scope. The full-access scope is what allows the permanent delete tools; the read tools only need gmail.readonly.",
+        "The connection requests gmail.modify for reading, drafts, sending, labels, and reversible Trash. Permanent message and thread deletion is not exposed.",
         "Every list, get and search tool is read-only. Tools that send, draft, label, archive, trash or delete mail are marked as writes and need write authority.",
         "Each Gmail connection belongs to the Google account that approved consent; the tools act on that mailbox only.",
       ],
@@ -37770,6 +37761,7 @@ export const connectors: IntegrationConfig[] = [
         "Mail.Send",
         "Mail.ReadWrite",
         "Mail.Read.Shared",
+        "Mail.ReadWrite.Shared",
         "Calendars.Read",
         "Calendars.ReadWrite",
         "offline_access",
@@ -37817,6 +37809,12 @@ export const connectors: IntegrationConfig[] = [
             "in": "query",
             "description": "Maximum messages to return",
             "default": 25,
+          },
+          "$skip": {
+            "type": "number",
+            "in": "query",
+            "description":
+              "Messages to skip; use the $skip value from the previous page's @odata.nextLink",
           },
           "$select": {
             "type": "string",
@@ -37932,6 +37930,13 @@ export const connectors: IntegrationConfig[] = [
             "description": "Maximum messages to return",
             "default": 25,
           },
+          "$skiptoken": {
+            "type": "string",
+            "in": "query",
+            "description":
+              "Search page token; copy the $skiptoken value from the previous page's @odata.nextLink as-is",
+            "queryValueFormat": "microsoft-graph-skiptoken",
+          },
           "$select": {
             "type": "string",
             "in": "query",
@@ -37989,6 +37994,12 @@ export const connectors: IntegrationConfig[] = [
             "in": "query",
             "description": "Maximum folders to return",
             "default": 100,
+          },
+          "$skip": {
+            "type": "number",
+            "in": "query",
+            "description":
+              "Folders to skip; use the $skip value from the previous page's @odata.nextLink",
           },
         },
         "response": {
@@ -38374,6 +38385,12 @@ export const connectors: IntegrationConfig[] = [
             "description": "Maximum drafts to return",
             "default": 25,
           },
+          "$skip": {
+            "type": "number",
+            "in": "query",
+            "description":
+              "Drafts to skip; use the $skip value from the previous page's @odata.nextLink",
+          },
           "$select": {
             "type": "string",
             "in": "query",
@@ -38741,6 +38758,12 @@ export const connectors: IntegrationConfig[] = [
             "description": "Maximum messages to return",
             "default": 25,
           },
+          "$skip": {
+            "type": "number",
+            "in": "query",
+            "description":
+              "Messages to skip; use the $skip value from the previous page's @odata.nextLink",
+          },
           "$select": {
             "type": "string",
             "in": "query",
@@ -38799,6 +38822,12 @@ export const connectors: IntegrationConfig[] = [
             "in": "query",
             "description": "Maximum recent messages to inspect as thread representatives",
             "default": 25,
+          },
+          "$skip": {
+            "type": "number",
+            "in": "query",
+            "description":
+              "Messages to skip; use the $skip value from the previous page's @odata.nextLink",
           },
           "$select": {
             "type": "string",
@@ -38909,6 +38938,12 @@ export const connectors: IntegrationConfig[] = [
             "description": "Maximum messages to return",
             "default": 25,
           },
+          "$skip": {
+            "type": "number",
+            "in": "query",
+            "description":
+              "Messages to skip; use the $skip value from the previous page's @odata.nextLink",
+          },
           "$select": {
             "type": "string",
             "in": "query",
@@ -38923,6 +38958,14 @@ export const connectors: IntegrationConfig[] = [
             "default": "receivedDateTime desc",
           },
           "$filter": { "type": "string", "in": "query", "description": "OData filter expression" },
+          "prefer": {
+            "type": "string",
+            "in": "header",
+            "description":
+              'Set to IdType="ImmutableId" to read and address messages by immutable ID. Immutable IDs do not change when a message moves to another folder.',
+            "pattern": '^IdType="ImmutableId"$',
+            "headerName": "Prefer",
+          },
         },
         "response": {
           "transform": "value",
@@ -38983,12 +39026,27 @@ export const connectors: IntegrationConfig[] = [
             "description": "Maximum messages to return",
             "default": 25,
           },
+          "$skiptoken": {
+            "type": "string",
+            "in": "query",
+            "description":
+              "Search page token; copy the $skiptoken value from the previous page's @odata.nextLink as-is",
+            "queryValueFormat": "microsoft-graph-skiptoken",
+          },
           "$select": {
             "type": "string",
             "in": "query",
             "description": "Comma-separated message fields to return",
             "default":
               "id,conversationId,internetMessageId,subject,from,sender,toRecipients,ccRecipients,receivedDateTime,sentDateTime,bodyPreview,categories,isRead,importance,hasAttachments,webLink,flag",
+          },
+          "prefer": {
+            "type": "string",
+            "in": "header",
+            "description":
+              'Set to IdType="ImmutableId" to read and address messages by immutable ID. Immutable IDs do not change when a message moves to another folder.',
+            "pattern": '^IdType="ImmutableId"$',
+            "headerName": "Prefer",
           },
         },
         "response": {
@@ -39021,6 +39079,326 @@ export const connectors: IntegrationConfig[] = [
         },
       },
     }, {
+      "id": "outlook__get_shared_mailbox_email",
+      "name": "Get Shared Mailbox Email",
+      "description": "Get shared mailbox email",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://graph.microsoft.com/v1.0/users/{mailbox}/messages/{messageId}",
+        "params": {
+          "mailbox": {
+            "type": "string",
+            "in": "path",
+            "description": "Mailbox user principal name or Microsoft Graph user ID",
+            "required": true,
+          },
+          "messageId": {
+            "type": "string",
+            "in": "path",
+            "description": "Microsoft Graph message ID",
+            "required": true,
+          },
+          "$select": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated message fields to return",
+            "default":
+              "id,conversationId,internetMessageId,subject,body,bodyPreview,from,sender,toRecipients,ccRecipients,bccRecipients,replyTo,receivedDateTime,sentDateTime,categories,isRead,importance,hasAttachments,webLink,flag",
+          },
+          "prefer": {
+            "type": "string",
+            "in": "header",
+            "description":
+              'Set to IdType="ImmutableId" to read and address messages by immutable ID. Immutable IDs do not change when a message moves to another folder.',
+            "pattern": '^IdType="ImmutableId"$',
+            "headerName": "Prefer",
+          },
+        },
+      },
+    }, {
+      "id": "outlook__list_shared_mailbox_folders",
+      "name": "List Shared Mailbox Folders",
+      "description": "List shared mailbox folders",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://graph.microsoft.com/v1.0/users/{mailbox}/mailFolders",
+        "params": {
+          "mailbox": {
+            "type": "string",
+            "in": "path",
+            "description": "Mailbox user principal name or Microsoft Graph user ID",
+            "required": true,
+          },
+          "includeHiddenFolders": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Include hidden folders",
+            "default": false,
+          },
+          "$top": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum folders to return",
+            "default": 100,
+          },
+          "$skip": {
+            "type": "number",
+            "in": "query",
+            "description":
+              "Folders to skip; use the $skip value from the previous page's @odata.nextLink",
+          },
+        },
+        "response": {
+          "transform": "value",
+          "historicalSummary": {
+            "collectionKeys": ["value", "folders", "data"],
+            "collectionName": "folders",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "displayName" },
+              { "name": "parentFolderId" },
+              { "name": "childFolderCount" },
+              { "name": "unreadItemCount" },
+              { "name": "totalItemCount" },
+            ],
+            "outputFields": [{ "name": "@odata.nextLink" }, { "name": "@odata.count" }],
+            "omitted": "folder provider-specific payload fields",
+          },
+        },
+      },
+    }, {
+      "id": "outlook__list_shared_mailbox_child_folders",
+      "name": "List Shared Mailbox Child Folders",
+      "description": "List shared mailbox child folders",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url":
+          "https://graph.microsoft.com/v1.0/users/{mailbox}/mailFolders/{folderId}/childFolders",
+        "params": {
+          "mailbox": {
+            "type": "string",
+            "in": "path",
+            "description": "Mailbox user principal name or Microsoft Graph user ID",
+            "required": true,
+          },
+          "folderId": {
+            "type": "string",
+            "in": "path",
+            "description": "Parent folder ID or well-known folder name such as inbox",
+            "required": true,
+          },
+          "includeHiddenFolders": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Include hidden folders",
+            "default": false,
+          },
+          "$top": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum folders to return",
+            "default": 100,
+          },
+          "$skip": {
+            "type": "number",
+            "in": "query",
+            "description":
+              "Folders to skip; use the $skip value from the previous page's @odata.nextLink",
+          },
+        },
+        "response": {
+          "transform": "value",
+          "historicalSummary": {
+            "collectionKeys": ["value", "folders", "data"],
+            "collectionName": "folders",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "displayName" },
+              { "name": "parentFolderId" },
+              { "name": "childFolderCount" },
+              { "name": "unreadItemCount" },
+              { "name": "totalItemCount" },
+            ],
+            "outputFields": [{ "name": "@odata.nextLink" }, { "name": "@odata.count" }],
+            "omitted": "folder provider-specific payload fields",
+          },
+        },
+      },
+    }, {
+      "id": "outlook__list_shared_mailbox_attachments",
+      "name": "List Shared Mailbox Attachments",
+      "description": "List shared mailbox attachments",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://graph.microsoft.com/v1.0/users/{mailbox}/messages/{messageId}/attachments",
+        "params": {
+          "mailbox": {
+            "type": "string",
+            "in": "path",
+            "description": "Mailbox user principal name or Microsoft Graph user ID",
+            "required": true,
+          },
+          "messageId": {
+            "type": "string",
+            "in": "path",
+            "description": "Message ID",
+            "required": true,
+          },
+          "$select": {
+            "type": "string",
+            "in": "query",
+            "description":
+              "Comma-separated attachment fields to return. The default omits file contents; use Get Shared Mailbox Attachment to read them.",
+            "default": "id,name,contentType,size,isInline,lastModifiedDateTime",
+          },
+          "prefer": {
+            "type": "string",
+            "in": "header",
+            "description":
+              'Set to IdType="ImmutableId" to read and address messages by immutable ID. Immutable IDs do not change when a message moves to another folder.',
+            "pattern": '^IdType="ImmutableId"$',
+            "headerName": "Prefer",
+          },
+        },
+        "response": {
+          "transform": "value",
+          "historicalSummary": {
+            "collectionKeys": ["value", "attachments", "data"],
+            "collectionName": "attachments",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "name" },
+              { "name": "contentType" },
+              { "name": "size" },
+              { "name": "isInline" },
+              { "name": "lastModifiedDateTime" },
+            ],
+            "outputFields": [{ "name": "@odata.nextLink" }, { "name": "@odata.count" }],
+            "omitted": "attachment binary content and provider-specific payload fields",
+          },
+        },
+      },
+    }, {
+      "id": "outlook__get_shared_mailbox_attachment",
+      "name": "Get Shared Mailbox Attachment",
+      "description": "Get shared mailbox attachment",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url":
+          "https://graph.microsoft.com/v1.0/users/{mailbox}/messages/{messageId}/attachments/{attachmentId}",
+        "params": {
+          "mailbox": {
+            "type": "string",
+            "in": "path",
+            "description": "Mailbox user principal name or Microsoft Graph user ID",
+            "required": true,
+          },
+          "messageId": {
+            "type": "string",
+            "in": "path",
+            "description": "Message ID",
+            "required": true,
+          },
+          "attachmentId": {
+            "type": "string",
+            "in": "path",
+            "description": "Attachment ID",
+            "required": true,
+          },
+          "$expand": {
+            "type": "string",
+            "in": "query",
+            "description":
+              "Set to microsoft.graph.itemattachment/item to return the attached message, event or contact of an item attachment",
+            "pattern": "^microsoft\\.graph\\.itemattachment/item$",
+          },
+          "prefer": {
+            "type": "string",
+            "in": "header",
+            "description":
+              'Set to IdType="ImmutableId" to read and address messages by immutable ID. Immutable IDs do not change when a message moves to another folder.',
+            "pattern": '^IdType="ImmutableId"$',
+            "headerName": "Prefer",
+          },
+        },
+      },
+    }, {
+      "id": "outlook__move_shared_mailbox_email",
+      "name": "Move Shared Mailbox Email",
+      "description": "Move shared mailbox email",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://graph.microsoft.com/v1.0/users/{mailbox}/messages/{messageId}/move",
+        "params": {
+          "mailbox": {
+            "type": "string",
+            "in": "path",
+            "description": "Mailbox user principal name or Microsoft Graph user ID",
+            "required": true,
+          },
+          "messageId": {
+            "type": "string",
+            "in": "path",
+            "description": "Message ID",
+            "required": true,
+          },
+          "prefer": {
+            "type": "string",
+            "in": "header",
+            "description":
+              'Set to IdType="ImmutableId" to read and address messages by immutable ID. Immutable IDs do not change when a message moves to another folder.',
+            "pattern": '^IdType="ImmutableId"$',
+            "headerName": "Prefer",
+          },
+        },
+        "body": {
+          "destinationId": {
+            "type": "string",
+            "description":
+              "Destination folder ID or well-known folder name in the same mailbox. The folder must already exist.",
+            "required": true,
+          },
+        },
+      },
+    }, {
+      "id": "outlook__get_shared_mailbox_email_mime",
+      "name": "Get Shared Mailbox Email MIME",
+      "description": "Get shared mailbox email MIME",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://graph.microsoft.com/v1.0/users/{mailbox}/messages/{messageId}/$value",
+        "params": {
+          "mailbox": {
+            "type": "string",
+            "in": "path",
+            "description": "Mailbox user principal name or Microsoft Graph user ID",
+            "required": true,
+          },
+          "messageId": {
+            "type": "string",
+            "in": "path",
+            "description": "Microsoft Graph message ID",
+            "required": true,
+          },
+          "prefer": {
+            "type": "string",
+            "in": "header",
+            "description":
+              'Set to IdType="ImmutableId" to read and address messages by immutable ID. Immutable IDs do not change when a message moves to another folder.',
+            "pattern": '^IdType="ImmutableId"$',
+            "headerName": "Prefer",
+          },
+        },
+        "response": { "encoding": "base64" },
+      },
+    }, {
       "id": "outlook__list_calendars",
       "name": "List Calendars",
       "description": "List calendars",
@@ -39034,6 +39412,12 @@ export const connectors: IntegrationConfig[] = [
             "in": "query",
             "description": "Maximum calendars to return",
             "default": 100,
+          },
+          "$skip": {
+            "type": "number",
+            "in": "query",
+            "description":
+              "Calendars to skip; use the $skip value from the previous page's @odata.nextLink",
           },
         },
         "response": {
@@ -39141,6 +39525,12 @@ export const connectors: IntegrationConfig[] = [
             "description": "Maximum events to return",
             "default": 25,
           },
+          "$skip": {
+            "type": "number",
+            "in": "query",
+            "description":
+              "Events to skip; use the $skip value from the previous page's @odata.nextLink",
+          },
           "$select": {
             "type": "string",
             "in": "query",
@@ -39206,6 +39596,12 @@ export const connectors: IntegrationConfig[] = [
             "in": "query",
             "description": "Maximum events to return",
             "default": 50,
+          },
+          "$skip": {
+            "type": "number",
+            "in": "query",
+            "description":
+              "Events to skip; use the $skip value from the previous page's @odata.nextLink",
           },
           "$select": {
             "type": "string",
@@ -39455,6 +39851,12 @@ export const connectors: IntegrationConfig[] = [
             "in": "query",
             "description": "Maximum instances to return",
             "default": 50,
+          },
+          "$skip": {
+            "type": "number",
+            "in": "query",
+            "description":
+              "Occurrences to skip; use the $skip value from the previous page's @odata.nextLink",
           },
           "$select": {
             "type": "string",
@@ -39776,7 +40178,7 @@ export const connectors: IntegrationConfig[] = [
         "step": 4,
         "title": "Add Microsoft Graph permissions",
         "description":
-          "Under API permissions, add these delegated Microsoft Graph permissions: Mail.Read, Mail.Send, Mail.ReadWrite, Mail.Read.Shared, Calendars.Read, Calendars.ReadWrite, offline_access. If your tenant does not let users consent to apps, an administrator must grant consent for the organization.",
+          "Under API permissions, add these delegated Microsoft Graph permissions: Mail.Read, Mail.Send, Mail.ReadWrite, Mail.Read.Shared, Mail.ReadWrite.Shared, Calendars.Read, Calendars.ReadWrite, offline_access. If your tenant does not let users consent to apps, an administrator must grant consent for the organization.",
         "docsUrl": "https://learn.microsoft.com/en-us/graph/permissions-reference",
       }, {
         "step": 5,
@@ -39790,7 +40192,8 @@ export const connectors: IntegrationConfig[] = [
           "Run List Emails (read-only). It returns message summaries from the connected mailbox without changing it.",
       }],
       "notes": [
-        "The connection requests Mail.Read, Mail.Send, Mail.ReadWrite, Mail.Read.Shared, Calendars.Read, Calendars.ReadWrite and offline_access. offline_access lets the connection refresh its access token. Mail.Read.Shared lets the tools read mailboxes shared with the user.",
+        "The connection requests Mail.Read, Mail.Send, Mail.ReadWrite, Mail.Read.Shared, Mail.ReadWrite.Shared, Calendars.Read, Calendars.ReadWrite and offline_access. offline_access lets the connection refresh its access token. Mail.Read.Shared lets the tools read mailboxes shared with the user. Mail.ReadWrite.Shared lets Move Shared Mailbox Email move messages in those mailboxes.",
+        "The shared mailbox tools address the mailbox you name in the mailbox argument and never fall back to the signed-in user's mailbox. This connector signs in with delegated OAuth only, so the signed-in user must have access to that mailbox in Exchange. Application (app-only) permissions are not used by this connector.",
         "Tools that create, update, send or delete data are marked as writes and need write authority; the other tools are read-only.",
       ],
       "documentation": "https://learn.microsoft.com/en-us/graph/auth-register-app-v2",
@@ -50392,6 +50795,34 @@ export const connectors: IntegrationConfig[] = [
             "type": "array",
             "description":
               "A batchUpdate requests array containing an updateSheetProperties request",
+            "inputSchema": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "required": ["updateSheetProperties"],
+                "additionalProperties": false,
+                "properties": {
+                  "updateSheetProperties": {
+                    "type": "object",
+                    "required": ["properties", "fields"],
+                    "additionalProperties": false,
+                    "properties": {
+                      "properties": {
+                        "type": "object",
+                        "required": ["sheetId", "title"],
+                        "additionalProperties": false,
+                        "properties": {
+                          "sheetId": { "type": "integer", "minimum": 0 },
+                          "title": { "type": "string" },
+                        },
+                      },
+                      "fields": { "type": "string", "const": "title" },
+                    },
+                  },
+                },
+              },
+            },
             "required": true,
           },
         },
@@ -50440,6 +50871,50 @@ export const connectors: IntegrationConfig[] = [
           "requests": {
             "type": "array",
             "description": "A batchUpdate requests array containing a findReplace request",
+            "inputSchema": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "required": ["findReplace"],
+                "additionalProperties": false,
+                "properties": {
+                  "findReplace": {
+                    "type": "object",
+                    "required": ["find", "replacement"],
+                    "properties": {
+                      "find": { "type": "string" },
+                      "replacement": { "type": "string" },
+                      "allSheets": { "type": "boolean", "const": true },
+                      "sheetId": { "type": "integer", "minimum": 0 },
+                      "matchCase": { "type": "boolean" },
+                      "matchEntireCell": { "type": "boolean" },
+                      "searchByRegex": { "type": "boolean" },
+                      "includeFormulas": { "type": "boolean" },
+                      "range": {
+                        "type": "object",
+                        "description":
+                          "Grid range with the actual sheet ID from spreadsheet metadata and zero-based, end-exclusive indexes.",
+                        "required": ["sheetId"],
+                        "properties": {
+                          "sheetId": { "type": "integer", "minimum": 0 },
+                          "startRowIndex": { "type": "integer", "minimum": 0 },
+                          "endRowIndex": { "type": "integer", "minimum": 0 },
+                          "startColumnIndex": { "type": "integer", "minimum": 0 },
+                          "endColumnIndex": { "type": "integer", "minimum": 0 },
+                        },
+                        "additionalProperties": false,
+                      },
+                    },
+                    "oneOf": [{ "properties": { "range": {} }, "required": ["range"] }, {
+                      "properties": { "sheetId": {} },
+                      "required": ["sheetId"],
+                    }, { "properties": { "allSheets": {} }, "required": ["allSheets"] }],
+                    "additionalProperties": false,
+                  },
+                },
+              },
+            },
             "required": true,
           },
         },
@@ -50495,6 +50970,340 @@ export const connectors: IntegrationConfig[] = [
           "requests": {
             "type": "array",
             "description": "A batchUpdate requests array containing an addChart request",
+            "inputSchema": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "required": ["addChart"],
+                "properties": {
+                  "addChart": {
+                    "type": "object",
+                    "required": ["chart"],
+                    "properties": {
+                      "chart": {
+                        "type": "object",
+                        "required": ["spec", "position"],
+                        "properties": {
+                          "chartId": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "description":
+                              "Optional new unused chart ID. Normally omit this field so Google assigns an ID; do not reuse an existing chart ID.",
+                          },
+                          "spec": {
+                            "type": "object",
+                            "description":
+                              "Chart specification. Position belongs beside spec on the chart.",
+                            "properties": {
+                              "title": { "type": "string" },
+                              "basicChart": {
+                                "type": "object",
+                                "required": ["chartType", "series"],
+                                "properties": {
+                                  "chartType": {
+                                    "type": "string",
+                                    "enum": [
+                                      "BAR",
+                                      "LINE",
+                                      "AREA",
+                                      "COLUMN",
+                                      "SCATTER",
+                                      "COMBO",
+                                      "STEPPED_AREA",
+                                    ],
+                                  },
+                                  "headerCount": { "type": "integer", "minimum": 0 },
+                                  "legendPosition": {
+                                    "type": "string",
+                                    "enum": [
+                                      "BOTTOM_LEGEND",
+                                      "LEFT_LEGEND",
+                                      "RIGHT_LEGEND",
+                                      "TOP_LEGEND",
+                                      "NO_LEGEND",
+                                    ],
+                                  },
+                                  "domains": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "object",
+                                      "required": ["domain"],
+                                      "properties": {
+                                        "domain": {
+                                          "type": "object",
+                                          "properties": {
+                                            "sourceRange": {
+                                              "type": "object",
+                                              "required": ["sources"],
+                                              "properties": {
+                                                "sources": {
+                                                  "type": "array",
+                                                  "minItems": 1,
+                                                  "items": {
+                                                    "type": "object",
+                                                    "description":
+                                                      "Grid range with the actual sheet ID from spreadsheet metadata and zero-based, end-exclusive indexes.",
+                                                    "required": ["sheetId"],
+                                                    "properties": {
+                                                      "sheetId": {
+                                                        "type": "integer",
+                                                        "minimum": 0,
+                                                      },
+                                                      "startRowIndex": {
+                                                        "type": "integer",
+                                                        "minimum": 0,
+                                                      },
+                                                      "endRowIndex": {
+                                                        "type": "integer",
+                                                        "minimum": 0,
+                                                      },
+                                                      "startColumnIndex": {
+                                                        "type": "integer",
+                                                        "minimum": 0,
+                                                      },
+                                                      "endColumnIndex": {
+                                                        "type": "integer",
+                                                        "minimum": 0,
+                                                      },
+                                                    },
+                                                    "additionalProperties": false,
+                                                  },
+                                                  "description":
+                                                    "Each source range must span one row or one column. Google validates range dimensions.",
+                                                },
+                                              },
+                                              "additionalProperties": false,
+                                            },
+                                            "columnReference": {
+                                              "type": "object",
+                                              "required": ["name"],
+                                              "properties": { "name": { "type": "string" } },
+                                              "additionalProperties": false,
+                                            },
+                                          },
+                                          "oneOf": [{
+                                            "properties": { "sourceRange": {} },
+                                            "required": ["sourceRange"],
+                                          }, {
+                                            "properties": { "columnReference": {} },
+                                            "required": ["columnReference"],
+                                          }],
+                                        },
+                                      },
+                                    },
+                                    "maxItems": 1,
+                                  },
+                                  "series": {
+                                    "type": "array",
+                                    "minItems": 1,
+                                    "items": {
+                                      "type": "object",
+                                      "required": ["series"],
+                                      "properties": {
+                                        "series": {
+                                          "type": "object",
+                                          "properties": {
+                                            "sourceRange": {
+                                              "type": "object",
+                                              "required": ["sources"],
+                                              "properties": {
+                                                "sources": {
+                                                  "type": "array",
+                                                  "minItems": 1,
+                                                  "items": {
+                                                    "type": "object",
+                                                    "description":
+                                                      "Grid range with the actual sheet ID from spreadsheet metadata and zero-based, end-exclusive indexes.",
+                                                    "required": ["sheetId"],
+                                                    "properties": {
+                                                      "sheetId": {
+                                                        "type": "integer",
+                                                        "minimum": 0,
+                                                      },
+                                                      "startRowIndex": {
+                                                        "type": "integer",
+                                                        "minimum": 0,
+                                                      },
+                                                      "endRowIndex": {
+                                                        "type": "integer",
+                                                        "minimum": 0,
+                                                      },
+                                                      "startColumnIndex": {
+                                                        "type": "integer",
+                                                        "minimum": 0,
+                                                      },
+                                                      "endColumnIndex": {
+                                                        "type": "integer",
+                                                        "minimum": 0,
+                                                      },
+                                                    },
+                                                    "additionalProperties": false,
+                                                  },
+                                                  "description":
+                                                    "Each source range must span one row or one column. Google validates range dimensions.",
+                                                },
+                                              },
+                                              "additionalProperties": false,
+                                            },
+                                            "columnReference": {
+                                              "type": "object",
+                                              "required": ["name"],
+                                              "properties": { "name": { "type": "string" } },
+                                              "additionalProperties": false,
+                                            },
+                                          },
+                                          "oneOf": [{
+                                            "properties": { "sourceRange": {} },
+                                            "required": ["sourceRange"],
+                                          }, {
+                                            "properties": { "columnReference": {} },
+                                            "required": ["columnReference"],
+                                          }],
+                                        },
+                                        "targetAxis": {
+                                          "type": "string",
+                                          "enum": ["BOTTOM_AXIS", "LEFT_AXIS", "RIGHT_AXIS"],
+                                          "description":
+                                            "Use a minor axis for the chart type: BOTTOM_AXIS for BAR, LEFT_AXIS or RIGHT_AXIS for other basic charts.",
+                                        },
+                                        "type": {
+                                          "type": "string",
+                                          "enum": ["LINE", "AREA", "COLUMN"],
+                                        },
+                                      },
+                                    },
+                                  },
+                                },
+                              },
+                              "pieChart": { "type": "object" },
+                              "bubbleChart": { "type": "object" },
+                              "candlestickChart": { "type": "object" },
+                              "orgChart": { "type": "object" },
+                              "histogramChart": { "type": "object" },
+                              "waterfallChart": { "type": "object" },
+                              "treemapChart": { "type": "object" },
+                              "scorecardChart": { "type": "object" },
+                            },
+                            "not": {
+                              "anyOf": [
+                                { "required": ["position"], "properties": { "position": {} } },
+                                { "required": ["chartType"], "properties": { "chartType": {} } },
+                                {
+                                  "required": ["legendPosition"],
+                                  "properties": { "legendPosition": {} },
+                                },
+                                { "required": ["axis"], "properties": { "axis": {} } },
+                                { "required": ["domains"], "properties": { "domains": {} } },
+                                { "required": ["series"], "properties": { "series": {} } },
+                                {
+                                  "required": ["headerCount"],
+                                  "properties": { "headerCount": {} },
+                                },
+                                {
+                                  "required": ["threeDimensional"],
+                                  "properties": { "threeDimensional": {} },
+                                },
+                                {
+                                  "required": ["interpolateNulls"],
+                                  "properties": { "interpolateNulls": {} },
+                                },
+                                {
+                                  "required": ["stackedType"],
+                                  "properties": { "stackedType": {} },
+                                },
+                                {
+                                  "required": ["lineSmoothing"],
+                                  "properties": { "lineSmoothing": {} },
+                                },
+                                {
+                                  "required": ["compareMode"],
+                                  "properties": { "compareMode": {} },
+                                },
+                                {
+                                  "required": ["totalDataLabel"],
+                                  "properties": { "totalDataLabel": {} },
+                                },
+                              ],
+                            },
+                            "oneOf": [
+                              { "properties": { "basicChart": {} }, "required": ["basicChart"] },
+                              { "properties": { "pieChart": {} }, "required": ["pieChart"] },
+                              { "properties": { "bubbleChart": {} }, "required": ["bubbleChart"] },
+                              {
+                                "properties": { "candlestickChart": {} },
+                                "required": ["candlestickChart"],
+                              },
+                              { "properties": { "orgChart": {} }, "required": ["orgChart"] },
+                              {
+                                "properties": { "histogramChart": {} },
+                                "required": ["histogramChart"],
+                              },
+                              {
+                                "properties": { "waterfallChart": {} },
+                                "required": ["waterfallChart"],
+                              },
+                              {
+                                "properties": { "treemapChart": {} },
+                                "required": ["treemapChart"],
+                              },
+                              {
+                                "properties": { "scorecardChart": {} },
+                                "required": ["scorecardChart"],
+                              },
+                            ],
+                          },
+                          "position": {
+                            "type": "object",
+                            "description": "Chart placement, outside spec.",
+                            "properties": {
+                              "overlayPosition": {
+                                "type": "object",
+                                "required": ["anchorCell"],
+                                "properties": {
+                                  "anchorCell": {
+                                    "type": "object",
+                                    "required": ["sheetId"],
+                                    "properties": {
+                                      "sheetId": { "type": "integer", "minimum": 0 },
+                                      "rowIndex": { "type": "integer", "minimum": 0 },
+                                      "columnIndex": { "type": "integer", "minimum": 0 },
+                                    },
+                                    "additionalProperties": false,
+                                  },
+                                  "offsetXPixels": { "type": "integer" },
+                                  "offsetYPixels": { "type": "integer" },
+                                  "widthPixels": { "type": "integer", "minimum": 0 },
+                                  "heightPixels": { "type": "integer", "minimum": 0 },
+                                },
+                              },
+                              "newSheet": { "type": "boolean", "const": true },
+                              "sheetId": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "description":
+                                  "New unused ID for a dedicated chart-only sheet. For an existing grid tab, use overlayPosition.anchorCell.sheetId.",
+                              },
+                            },
+                            "additionalProperties": false,
+                            "oneOf": [
+                              {
+                                "properties": { "overlayPosition": {} },
+                                "required": ["overlayPosition"],
+                              },
+                              { "properties": { "newSheet": {} }, "required": ["newSheet"] },
+                              { "properties": { "sheetId": {} }, "required": ["sheetId"] },
+                            ],
+                          },
+                        },
+                      },
+                    },
+                    "additionalProperties": false,
+                  },
+                },
+                "additionalProperties": false,
+              },
+            },
             "required": true,
           },
         },
@@ -50519,6 +51328,212 @@ export const connectors: IntegrationConfig[] = [
           "requests": {
             "type": "array",
             "description": "A batchUpdate requests array containing a setDataValidation request",
+            "inputSchema": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "required": ["setDataValidation"],
+                "properties": {
+                  "setDataValidation": {
+                    "type": "object",
+                    "required": ["range"],
+                    "properties": {
+                      "range": {
+                        "type": "object",
+                        "description":
+                          "Grid range with the actual sheet ID from spreadsheet metadata and zero-based, end-exclusive indexes.",
+                        "required": ["sheetId"],
+                        "properties": {
+                          "sheetId": { "type": "integer", "minimum": 0 },
+                          "startRowIndex": { "type": "integer", "minimum": 0 },
+                          "endRowIndex": { "type": "integer", "minimum": 0 },
+                          "startColumnIndex": { "type": "integer", "minimum": 0 },
+                          "endColumnIndex": { "type": "integer", "minimum": 0 },
+                        },
+                        "additionalProperties": false,
+                      },
+                      "rule": {
+                        "type": "object",
+                        "description": "Omit rule to remove validation.",
+                        "required": ["condition"],
+                        "properties": {
+                          "condition": {
+                            "type": "object",
+                            "required": ["type"],
+                            "properties": {
+                              "type": {
+                                "type": "string",
+                                "enum": [
+                                  "NUMBER_GREATER",
+                                  "NUMBER_GREATER_THAN_EQ",
+                                  "NUMBER_LESS",
+                                  "NUMBER_LESS_THAN_EQ",
+                                  "NUMBER_EQ",
+                                  "NUMBER_NOT_EQ",
+                                  "NUMBER_BETWEEN",
+                                  "NUMBER_NOT_BETWEEN",
+                                  "TEXT_CONTAINS",
+                                  "TEXT_NOT_CONTAINS",
+                                  "TEXT_EQ",
+                                  "TEXT_IS_EMAIL",
+                                  "TEXT_IS_URL",
+                                  "DATE_EQ",
+                                  "DATE_BEFORE",
+                                  "DATE_AFTER",
+                                  "DATE_ON_OR_BEFORE",
+                                  "DATE_ON_OR_AFTER",
+                                  "DATE_BETWEEN",
+                                  "DATE_NOT_BETWEEN",
+                                  "DATE_IS_VALID",
+                                  "ONE_OF_RANGE",
+                                  "ONE_OF_LIST",
+                                  "CUSTOM_FORMULA",
+                                  "BOOLEAN",
+                                ],
+                              },
+                              "values": {
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "required": ["userEnteredValue"],
+                                  "properties": { "userEnteredValue": { "type": "string" } },
+                                  "additionalProperties": false,
+                                },
+                                "description":
+                                  "ONE_OF_RANGE uses an A1 range; CUSTOM_FORMULA starts with = or +; ONE_OF_LIST uses literal values. Google validates syntax.",
+                              },
+                            },
+                            "additionalProperties": false,
+                            "oneOf": [{
+                              "type": "object",
+                              "required": ["values"],
+                              "properties": {
+                                "type": {
+                                  "type": "string",
+                                  "enum": [
+                                    "NUMBER_GREATER",
+                                    "NUMBER_GREATER_THAN_EQ",
+                                    "NUMBER_LESS",
+                                    "NUMBER_LESS_THAN_EQ",
+                                    "NUMBER_EQ",
+                                    "NUMBER_NOT_EQ",
+                                    "TEXT_CONTAINS",
+                                    "TEXT_NOT_CONTAINS",
+                                    "TEXT_EQ",
+                                    "DATE_EQ",
+                                    "DATE_BEFORE",
+                                    "DATE_AFTER",
+                                    "DATE_ON_OR_BEFORE",
+                                    "DATE_ON_OR_AFTER",
+                                    "ONE_OF_RANGE",
+                                    "CUSTOM_FORMULA",
+                                  ],
+                                },
+                                "values": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "object",
+                                    "required": ["userEnteredValue"],
+                                    "properties": { "userEnteredValue": { "type": "string" } },
+                                    "additionalProperties": false,
+                                  },
+                                  "minItems": 1,
+                                  "maxItems": 1,
+                                  "description":
+                                    "ONE_OF_RANGE uses an A1 range; CUSTOM_FORMULA starts with = or +; ONE_OF_LIST uses literal values. Google validates syntax.",
+                                },
+                              },
+                            }, {
+                              "type": "object",
+                              "required": ["values"],
+                              "properties": {
+                                "type": {
+                                  "type": "string",
+                                  "enum": [
+                                    "NUMBER_BETWEEN",
+                                    "NUMBER_NOT_BETWEEN",
+                                    "DATE_BETWEEN",
+                                    "DATE_NOT_BETWEEN",
+                                  ],
+                                },
+                                "values": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "object",
+                                    "required": ["userEnteredValue"],
+                                    "properties": { "userEnteredValue": { "type": "string" } },
+                                    "additionalProperties": false,
+                                  },
+                                  "minItems": 2,
+                                  "maxItems": 2,
+                                },
+                              },
+                            }, {
+                              "type": "object",
+                              "required": [],
+                              "properties": {
+                                "type": {
+                                  "type": "string",
+                                  "enum": ["TEXT_IS_EMAIL", "TEXT_IS_URL", "DATE_IS_VALID"],
+                                },
+                                "values": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "object",
+                                    "required": ["userEnteredValue"],
+                                    "properties": { "userEnteredValue": { "type": "string" } },
+                                    "additionalProperties": false,
+                                  },
+                                  "maxItems": 0,
+                                },
+                              },
+                            }, {
+                              "type": "object",
+                              "required": [],
+                              "properties": {
+                                "type": { "type": "string", "const": "BOOLEAN" },
+                                "values": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "object",
+                                    "required": ["userEnteredValue"],
+                                    "properties": { "userEnteredValue": { "type": "string" } },
+                                    "additionalProperties": false,
+                                  },
+                                  "maxItems": 2,
+                                },
+                              },
+                            }, {
+                              "type": "object",
+                              "properties": {
+                                "type": { "type": "string", "const": "ONE_OF_LIST" },
+                                "values": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "object",
+                                    "required": ["userEnteredValue"],
+                                    "properties": { "userEnteredValue": { "type": "string" } },
+                                    "additionalProperties": false,
+                                  },
+                                },
+                              },
+                            }],
+                          },
+                          "inputMessage": { "type": "string" },
+                          "strict": { "type": "boolean" },
+                          "showCustomUi": { "type": "boolean" },
+                        },
+                        "additionalProperties": false,
+                      },
+                      "filteredRowsIncluded": { "type": "boolean" },
+                    },
+                    "additionalProperties": false,
+                  },
+                },
+                "additionalProperties": false,
+              },
+            },
             "required": true,
           },
         },

@@ -194,7 +194,7 @@ export const EVAL_MODEL_EGRESS_BLOCKED = defineError({
 
 /**
  * An eval stopped because the Veryfront Cloud gateway refused its model request
- * under the project's EU-only inference policy (`eu_inference_policy`). Every
+ * under a model policy (account, project or API key). Every
  * later record sends the same model and tools, so it is refused the same way.
  */
 export const EVAL_MODEL_INFERENCE_POLICY_DENIED = defineError({
@@ -203,7 +203,7 @@ export const EVAL_MODEL_INFERENCE_POLICY_DENIED = defineError({
   status: 403,
   title: "Eval model request refused by inference policy",
   suggestion:
-    "The project allows EU-only inference. Choose a model with an EU inference route, then run the eval again",
+    "Review the account and project model policies and the API key model limits. Choose a model allowed by those policies, then run the eval again",
 });
 
 /**

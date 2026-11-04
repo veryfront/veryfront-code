@@ -36,6 +36,7 @@ import {
 import { markRuntimeLocalTool } from "./local-tool.ts";
 import { isRuntimeGeneratedUserMessage } from "./runtime-message-origin.ts";
 import { normalizeInput } from "./input-utils.ts";
+import { isToolResultPart } from "./tool-result-continuation.ts";
 import { cloneRuntimeStateMutableData } from "./index.ts";
 
 function eagerAgent(config: Parameters<typeof agent>[0]): ReturnType<typeof agent> {
@@ -1802,6 +1803,7 @@ describe("agent runtime refresh hooks", () => {
     for (const hasFinalResult of [false, true]) {
       const executedMutations: string[] = [];
       let callCount = 0;
+      let finishedResponse: AgentResponse | undefined;
       const model: ModelRuntime = {
         provider: "hosted",
         modelId: `hosted/interrupted-exposed-batch-${hasFinalResult}`,
@@ -1883,6 +1885,9 @@ describe("agent runtime refresh hooks", () => {
 
       const response = (await assistant.stream({
         input: "Update the taxonomy and agent",
+        onFinish: (result) => {
+          finishedResponse = result;
+        },
       })).toDataStreamResponse();
       const body = await response.text();
 
@@ -1896,8 +1901,8 @@ describe("agent runtime refresh hooks", () => {
       // #3737. Failing closed is about not re-running the batch, not about
       // hiding the truncation. The exposed sibling rendered, but the
       // interrupted call is terminalized into history here, so it also has to
-      // reach the wire — one announce and one failure for it, and none for the
-      // exposed sibling, which is complete and so never enters that branch.
+      // reach the wire. The exposed sibling also needs a terminal error when
+      // it has no final result; an existing result must remain unchanged.
       assertEquals(
         body.match(
           /"type":"tool-input-start","toolCallId":"truncated-agent-after-exposure"/g,
@@ -1910,7 +1915,24 @@ describe("agent runtime refresh hooks", () => {
         )?.length ?? 0,
         1,
       );
-      assertEquals(body.match(/"type":"tool-output-error"/g)?.length ?? 0, 1);
+      assertEquals(
+        body.match(/"type":"tool-output-error","toolCallId":"exposed-file"/g)?.length ?? 0,
+        hasFinalResult ? 0 : 1,
+      );
+      assertEquals(body.match(/"type":"tool-output-error"/g)?.length ?? 0, hasFinalResult ? 1 : 2);
+      assertExists(finishedResponse);
+      const exposedResults = finishedResponse.messages.flatMap((message) => message.parts)
+        .filter(isToolResultPart).filter((part) => part.toolCallId === "exposed-file");
+      assertEquals(exposedResults.length, 1);
+      const exposedResult = exposedResults[0];
+      assertExists(exposedResult);
+      assertEquals(
+        exposedResult.result,
+        hasFinalResult ? { revision: "already-applied" } : {
+          error:
+            "Tool execution skipped because the model turn ended before local execution could continue.",
+        },
+      );
       assertEquals(body.match(/"type":"tool-input-error"/g)?.length ?? 0, 0);
       assertEquals(body.includes("Unexpected recovery."), false);
     }

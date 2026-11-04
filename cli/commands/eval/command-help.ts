@@ -88,6 +88,10 @@ export const evalHelp: CommandHelp = {
       description:
         "Fail a case, including its metrics and checks, that runs longer than this (default: 600, 0 disables the limit)",
     },
+    {
+      flag: "--concurrency <count>",
+      description: "Run this many cases at once per eval, including grading (default: 1)",
+    },
   ],
   examples: [
     "veryfront eval --list",
@@ -104,5 +108,6 @@ export const evalHelp: CommandHelp = {
     "MLFLOW_TRACKING_URI=https://mlflow.example.com veryfront eval",
     "veryfront eval deep-research --json",
     "veryfront eval deep-research --record-timeout 300",
+    "veryfront eval deep-research --concurrency 4",
   ],
 };

@@ -141,7 +141,7 @@ interface InterfaceProperty {
   name: string;
   optional: boolean;
   tsType?: TsType;
-  jsDoc?: { doc?: string };
+  jsDoc?: { doc?: string; tags?: Array<{ kind: string }> };
   params?: unknown[];
   typeParams?: unknown[];
   location?: DenoDocLocation;
@@ -794,6 +794,14 @@ const DESCRIPTIONS: Record<string, Record<string, string>> = {
  */
 const SYNTHETIC_PARENTS: Record<string, { description: string }> = {};
 
+// These package entrypoints belong to first-party executor bootstraps and hosts.
+// Keep their runtime exports without documenting them as application APIs.
+const EXECUTOR_ONLY_EXPORTS = new Set([
+  "./agent/executor-runtime",
+  "./server/http-broker",
+  "./server/http-runtime",
+]);
+
 const API_REFERENCE_INDEX_DESCRIPTIONS: Record<string, string> = {
   "veryfront": "Core app config and routing.",
   "veryfront/agent": "Agents, AG-UI handlers, and memory.",
@@ -893,6 +901,7 @@ function getModuleGroups(): ModuleGroup[] {
 
   // Second pass: deep imports attach to (or create synthetic) parents.
   for (const [exportPath, filePath] of Object.entries(exports)) {
+    if (EXECUTOR_ONLY_EXPORTS.has(exportPath)) continue;
     if (isTopLevelExportPath(exportPath)) continue;
     const parentSlug = topLevelSlug(exportPath);
     let group = groups.get(parentSlug);
@@ -1669,9 +1678,9 @@ const METHOD_DESCRIPTIONS: Record<
   Agent: {
     generate: {
       desc:
-        "Run the agent and return a complete response. Accepts a string or message array as input.",
+        "Run the agent and return a complete response. Pass an object whose `input` is a string or message array, such as `agent.generate({ input: \"Hello\" })`.",
       params: {
-        input: "Prompt string or message history",
+        input: "Request object whose `input` is a prompt string or message history",
         context: "Additional context passed to the agent",
       },
     },
@@ -2052,6 +2061,7 @@ function renderPropertyTable(
   lines.push("| Property | Type | Description | Source |");
   lines.push("|----------|------|-------------|--------|");
   for (const prop of properties) {
+    if (prop.jsDoc?.tags?.some((tag) => tag.kind === "internal")) continue;
     const name = prop.optional ? `${prop.name}?` : prop.name;
     const rawType = renderType(prop.tsType);
     const desc = getPropertyDescription(typeName, prop.name, prop);

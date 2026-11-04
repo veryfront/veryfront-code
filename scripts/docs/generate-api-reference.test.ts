@@ -264,7 +264,8 @@ describe("generate-api-reference", () => {
         integrationsImport.includes("executeRemoteIntegrationTool"),
         false,
       );
-      assertStringIncludes(integrationsImport, "getConnectorNames");
+      // The short import sample is curated; every public helper must still be documented.
+      assertStringIncludes(integrationsReference, "| `getConnectorNames`");
       // Deprecated APIs remain documented for existing callers.
       assertStringIncludes(
         integrationsReference,
@@ -484,6 +485,86 @@ describe("generate-api-reference", () => {
 
       const serverReference = await Deno.readTextFile(
         `${outputDir}/veryfront/server.md`,
+      );
+      assertEquals(
+        serverReference.includes("veryfront/server/http-runtime"),
+        false,
+        "the image-owned executor entrypoint is not an application API",
+      );
+      assertEquals(
+        serverReference.includes("veryfront/server/http-broker"),
+        false,
+      );
+      assertEquals(
+        agentReference.includes("veryfront/agent/executor-runtime"),
+        false,
+      );
+      assertEquals(agentReference.includes("ExecutorHttpRuntime"), false);
+      assertStringIncludes(serverReference, "createVeryfrontServer");
+      assertStringIncludes(agentReference, "AgentRuntime");
+      assertEquals(
+        agentReference.includes("serverResolvedResumeToolCall"),
+        false,
+      );
+      assertEquals(
+        agentReference.includes("serverResolvedToolExposureCheckpoint"),
+        false,
+      );
+      assertStringIncludes(agentReference, "### `ParsedHostedChatRequest`");
+      assertStringIncludes(agentReference, "`agentId`");
+      assertStringIncludes(agentReference, "`forwardedProps`");
+      const runEventsReference = await Deno.readTextFile(
+        `${outputDir}/veryfront/run-events.md`,
+      );
+      assertStringIncludes(
+        runEventsReference,
+        "getAgentRunDetachedAcceptedPayloadSchema",
+      );
+      assertStringIncludes(
+        runEventsReference,
+        'description: "The typed run event contract the Veryfront API publishes."\n',
+      );
+      assertStringIncludes(
+        runEventsReference,
+        '```ts title="run-event-validator.ts"',
+      );
+      assertStringIncludes(
+        runEventsReference,
+        '```ts title="run-event-catalog.ts"',
+      );
+      assertStringIncludes(
+        runEventsReference,
+        '```ts title="read-run-events.ts"',
+      );
+      assertStringIncludes(
+        runEventsReference,
+        'if (!tryResolve("SchemaValidator"))',
+      );
+      assertStringIncludes(
+        runEventsReference,
+        "Viewer events expose only the `type` discriminator.",
+      );
+      assertEquals(
+        runEventsReference.includes("fall back to the raw payload"),
+        false,
+      );
+      assertStringIncludes(serverReference, "veryfront/server/http-resolver");
+      assertStringIncludes(serverReference, "veryfront/server/http-host");
+      const packageConfig = JSON.parse(
+        await Deno.readTextFile(new URL("../../deno.json", import.meta.url)),
+      );
+      assertEquals(
+        packageConfig.exports["./server/http-runtime"],
+        "./src/server/isolated-http/application-runtime.ts",
+        "executor bootstraps must retain their package entrypoint",
+      );
+      assertEquals(
+        packageConfig.exports["./server/http-broker"],
+        "./src/server/isolated-http/index.ts",
+      );
+      assertEquals(
+        packageConfig.exports["./agent/executor-runtime"],
+        "./src/agent/hosted/executor-runtime-entrypoint.ts",
       );
       assertEquals(
         serverReference.match(/### Composable service server/g)?.length,

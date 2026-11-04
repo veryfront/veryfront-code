@@ -239,7 +239,11 @@ Deno.test("lock-only artifact CLI excludes unrelated workspace source; selected 
       JSON.stringify({
         version: "5",
         specifiers: {},
-        npm: { "selected-runtime@1.2.3": { integrity: "sha512-aaa" } },
+        npm: {
+          "selected-runtime@1.2.3": {
+            integrity: "sha512-" + btoa("\0".repeat(64)),
+          },
+        },
       }),
     );
     const script = fromFileUrl(
@@ -274,6 +278,10 @@ Deno.test("lock-only artifact CLI excludes unrelated workspace source; selected 
     const output = JSON.parse(
       await Deno.readTextFile(f.root + "/lock-only.json"),
     );
+    assertEquals(output.components[0].hashes, [{
+      alg: "SHA-512",
+      content: "00".repeat(64),
+    }]);
     assertEquals(
       output.components.map((component: { name: string }) => component.name),
       ["selected-runtime"],

@@ -238,7 +238,9 @@ export async function waitForServerReady(
 ): Promise<void> {
   const {
     timeout = TEST_TIMEOUTS.SERVER_STARTUP,
-    checkPath = "/",
+    // `/readyz` answers once the server listens. Probing a page instead ties
+    // readiness to a cold first render, which can outlast the startup budget.
+    checkPath = "/readyz",
     retryDelay = CLEANUP_CONFIG.CLEANUP_RETRY_DELAY,
   } = options;
   const url = serverUrl(server, checkPath);

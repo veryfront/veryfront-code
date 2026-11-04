@@ -214,8 +214,8 @@ function parseLegacyModel(value: unknown): VeryfrontCloudCatalogModel | undefine
 
 /**
  * Read one entry of `deployments`. Its model's first alias is the short ID.
- * `limit` is not part of a deployment; it comes from the deprecated row for
- * the same model while the API still serves one (veryfront-issue-inbox#3396).
+ * Token ceilings come from model.capabilities.limit. A matching legacy row
+ * supplies only dimensions an older deployment payload does not state.
  */
 function parseDeployment(
   value: Record<string, unknown>,
@@ -229,6 +229,7 @@ function parseDeployment(
   const provider = optionalString(record(value.model_provider).id);
   const surface = optionalString(routing.surface);
   if (!modelId || !id || !provider || !surface) return undefined;
+  const capabilities = record(model.capabilities);
   const reasoning = record(routing.reasoning);
   const chatCompletions = record(routing.chat_completions);
   const deployment: VeryfrontCloudCatalogModel = {
@@ -239,11 +240,11 @@ function parseDeployment(
     surface,
     operations: frozenStringList(routing.operations),
     supportedProviderTools: frozenStringList(routing.provider_tools),
-    thinking: optionalBoolean(record(model.capabilities).reasoning),
+    thinking: optionalBoolean(capabilities.reasoning),
     reasoningMode: optionalString(reasoning.mode),
     transport: optionalString(routing.transport),
     reasoningBudgetTokens: optionalPositiveInteger(reasoning.budget_tokens),
-    limit,
+    limit: servedLimit({ ...limit, ...servedLimit(capabilities.limit) }),
     chatCompletionsReasoningWithFunctionTools: optionalBoolean(
       chatCompletions.reasoning_with_function_tools,
     ),

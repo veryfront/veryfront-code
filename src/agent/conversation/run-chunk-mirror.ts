@@ -132,6 +132,8 @@ export interface ConversationRunChunkMirrorQueueOptions
 export interface ConversationRunChunkMirrorApiOptions
   extends ConversationRunChunkMirrorSharedOptions {
   authToken: string;
+  /** Host-owned renewable credential reader; ordinary callers retain the fixed token. */
+  getAuthToken?: () => string;
   apiUrl: string;
   conversationId: string;
   runId: string;
@@ -171,6 +173,8 @@ export interface HostedConversationRunChunkMirrorOptions {
   /** Trusted opt-in using the normal private append transport. */
   runtimeObservations?: true;
   authToken: string;
+  /** Host-owned renewable credential reader; ordinary callers retain the fixed token. */
+  getAuthToken?: () => string;
   apiUrl: string;
   conversationId: string;
   runId: string;
@@ -195,6 +199,7 @@ function resolveQueueController(
   const maxEventsPerBatch = input.maxEventsPerBatch ?? DEFAULT_IMMEDIATE_FLUSH_EVENT_COUNT;
   return createConversationRunEventQueueController({
     authToken: input.authToken,
+    ...("getAuthToken" in input && input.getAuthToken ? { getAuthToken: input.getAuthToken } : {}),
     apiUrl: input.apiUrl,
     conversationId: input.conversationId,
     runId: input.runId,
@@ -544,6 +549,7 @@ export function createHostedConversationRunChunkMirror(
 
   return createConversationRunChunkMirror({
     authToken: input.authToken,
+    ...(input.getAuthToken ? { getAuthToken: input.getAuthToken } : {}),
     apiUrl: input.apiUrl,
     conversationId: input.conversationId,
     runId: input.runId,

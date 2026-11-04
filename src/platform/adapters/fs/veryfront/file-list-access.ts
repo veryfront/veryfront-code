@@ -43,6 +43,17 @@ interface LoadAllProjectFilesOptions {
 
 const MAX_SNAPSHOT_RETRIES = 3;
 
+function getSnapshotIdentity(ctx: ResolvedContentContext | null | undefined): string | undefined {
+  if (!ctx) return undefined;
+  if (ctx.sourceType === "branch") {
+    return `branch:${ctx.projectSlug}:${ctx.branch ?? "main"}`;
+  }
+  if (ctx.sourceType === "environment") {
+    return `environment:${ctx.projectSlug}:${ctx.environmentName ?? ""}:${ctx.releaseId ?? ""}`;
+  }
+  return `release:${ctx.projectSlug}:${ctx.releaseId ?? ""}`;
+}
+
 export async function loadAllProjectFiles({
   client,
   cache,
@@ -55,13 +66,7 @@ export async function loadAllProjectFiles({
   const snapshotVersion = contextProvider?.getSourceSnapshotVersion?.();
   const cacheStart = performance.now();
   const ctx = contentContext === undefined ? contextProvider?.getContentContext() : contentContext;
-  const snapshotIdentity = ctx
-    ? ctx.sourceType === "branch"
-      ? `branch:${ctx.projectSlug}:${ctx.branch ?? "main"}`
-      : ctx.sourceType === "environment"
-      ? `environment:${ctx.projectSlug}:${ctx.environmentName ?? ""}:${ctx.releaseId ?? ""}`
-      : `release:${ctx.projectSlug}:${ctx.releaseId ?? ""}`
-    : undefined;
+  const snapshotIdentity = getSnapshotIdentity(ctx);
   const cacheKeyPrefix = buildFileCacheKeyPrefix(ctx);
   const persistentCacheInvalidated =
     contextProvider?.isPersistentCacheInvalidated?.(cacheKeyPrefix) ?? false;

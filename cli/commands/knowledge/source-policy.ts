@@ -110,6 +110,13 @@ function findIgnoredDirectory(segments: string[]): string | null {
   return null;
 }
 
+/** Existing authored companion formats must remain visible to ordinary pull. */
+export function isTextKnowledgeCompanionPath(path: string): boolean {
+  const extension = extname(path).toLowerCase();
+  return !extension || TEXT_FALLBACK_EXTENSIONS.has(extension) ||
+    [".csv", ".tsv", ".html", ".htm", ".txt", ".json", ".md", ".mdx", ".ipynb"].includes(extension);
+}
+
 function isSupportedKnowledgeFile(path: string): boolean {
   const extension = extname(path).toLowerCase();
   if (

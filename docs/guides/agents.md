@@ -1,16 +1,15 @@
 ---
 title: "Agents"
 description: "Create an AI agent with a system prompt, tools, and memory."
-order: 18
+order: 120
 ---
 
 An agent is a file in `agents/` that exports a system prompt, optional tools,
 optional memory, and optional skills. The runtime auto-discovers it on startup
 and exposes it via `getAgent(id)` or a route created with `createAgUiHandler()`.
 
-For the normal path, omit `model` and let runtime conventions choose: local
-inference by default, Veryfront Cloud when `VERYFRONT_API_TOKEN` plus project
-context are set.
+Omit `model` to use the default for your configured inference path. With
+`VERYFRONT_API_TOKEN` and project context, the default uses Veryfront Cloud.
 
 ## Prerequisites
 
@@ -240,6 +239,15 @@ Each list accepts up to 16 exact executable names. In Markdown, use
 `optional-bootstrap-tools`. Both startup selections apply to root runs;
 hosted child runs do not inherit them.
 
+### Child transcripts in chat
+
+`veryfront__invoke_agent` forwards child text and tool activity through the parent
+chat stream. The child card updates while the child runs and retains its visible
+transcript after completion. This uses the same event format with or without a
+Veryfront Cloud connection. Standalone execution requires model credentials;
+Cloud run history is optional. Reload replay depends on the application's chat
+storage.
+
 ### Bound large tool results
 
 Set `toolResultContext: true` to keep oversized results out of later model calls.
@@ -264,6 +272,7 @@ export default agent({
 Persisted messages, result events, and callbacks retain the original data. Small
 results remain inline. Skill instructions, schema lookup results, and retrieved
 sections remain visible rather than being wrapped in another reference.
+
 For `invoke_agent` and `veryfront__invoke_agent`, provider replay includes identical
 child response text once while preserving summary metadata and the original
 durable result envelope.
@@ -502,9 +511,6 @@ Skill scripts run in one of two modes, selected automatically:
   request-scoped Veryfront credentials are available, scripts are uploaded to
   and executed inside a remote sandbox session.
 
-Local development does not require sandbox infrastructure. Scripts run as direct
-subprocesses.
-
 ## Skill safety model
 
 - `allowed-tools` in `SKILL.md` is **not** enforced. The Agent Skills
@@ -536,10 +542,8 @@ its `id` matches the value passed to `createAgUiHandler()`.
 
 ## Non-streaming response
 
-For server-side generation (e.g., in `getServerData`), use `generate()`.
-`getAgent()` returns `Agent | undefined`, so narrow the result before calling
-it. Without the guard, the sample fails typecheck under the `"strict": true`
-tsconfig that `veryfront init` writes.
+Use `generate()` for server-side generation, such as in `getServerData`.
+`getAgent()` can return `undefined`; ensure the agent exists before calling it.
 
 ```ts
 import { getAgent } from "veryfront/agent";
@@ -575,10 +579,13 @@ const { text } = await generate({
 It runs one step with no tools, skills or memory, and takes the same
 `outputSchema` an agent does.
 
-Reach for an agent instead when you need the thing itself rather than the
-answer: a registered id other code resolves, tools, memory across turns, or a
-system prompt built at request time. To hold such an agent to a single
-tool-free turn, say so:
+Like an agent, `generate` blocks prompt injection in its input and masks PII
+such as email addresses in its output by default. Pass `security: false` to
+keep those values, for example when you extract contact details. This turns off
+both protections, so only use it on input you trust.
+
+Use an agent when you need a registered ID, tools, memory across turns or a
+dynamic system prompt. To restrict it to one tool-free turn:
 
 ```ts
 const extractor = agent({
@@ -590,17 +597,15 @@ const extractor = agent({
 });
 ```
 
-`maxSteps: 1` stops the runtime from taking a second turn it has no use for.
-`skills: false` removes the `veryfront__load_skill` family from the request in a project
-that does have skills - an agent with one job should not be offered a catalog
-it will never open.
+`maxSteps: 1` limits execution to one step. `skills: false` removes the
+`veryfront__load_skill` tools, even when the project has skills.
 
 ## Structured output
 
 Set `outputSchema` to constrain every response to a schema. Veryfront maps it to
 the selected provider's native structured-output field, then parses and
-validates the model's text back into `response.object`, typed from the schema
-with no annotation of your own.
+validates the model's text back into `response.data`, typed from the schema
+with no annotation of your own. `response.object` remains a compatibility alias.
 
 ```ts
 // agents/weather.ts
@@ -635,13 +640,16 @@ const result = await weather.generate({
   outputSchema: getForecastSchema(),
 });
 
-console.log(result.object.city); // string
-console.log(result.object.tempC); // number
+if (result.data === undefined) {
+  throw new Error(result.metadata?.outputSchemaError ?? "Forecast output is missing");
+}
+console.log(result.data.city); // string
+console.log(result.data.tempC); // number
 ```
 
 Pass `outputSchema` to `generate()` or `stream()` to constrain a single request
-instead; a per-call schema replaces the configured one. `generate()` returns an
-`object` typed from the per-call schema when you pass one. A raw JSON Schema
+instead; a per-call schema replaces the configured one. `generate()` returns
+`data` typed from the per-call schema when you pass one. A raw JSON Schema
 object is accepted in both places and is sent to the provider unchanged.
 
 A requested schema is never dropped silently. A model runtime that does not
@@ -650,18 +658,28 @@ does not validate raises rather than returning a partial object.
 
 A run that stops at the step limit still returns its partial result instead of
 raising. On that path the final assistant text is parsed best effort: a
-successful parse sets `response.object`, and a parse or validation failure sets
+successful parse sets `response.data` and its `response.object` compatibility alias,
+while a parse or validation failure sets
 `response.metadata.outputSchemaError` next to the max-steps warning so the
 failure stays visible.
 
-When the hosted runtime runs an agent, its AG-UI stream reports a JSON snapshot
+When the hosted runtime runs an agent, its SDK AG-UI SSE stream reports a JSON snapshot
 of the parsed value as `result` on the `RunFinished` event, and the Runs API
-stores that snapshot as the run's `output`. The event has no `result` when the
+stores that snapshot in the new run's `output.data`, alongside `output.text`
+when accepted final text is present. Historical records retain their stored
+output shapes.
+
+The event has no `result` when the
 agent declares no `outputSchema`, when the output did not parse, or when the run
 failed or was cancelled. See [Run input and output](./run-input-output.md) for
 what an agent run stores as input and output.
 
-`response.object` in your own code is always the parsed value. The snapshot
+This `RunFinished` frame belongs to the SDK runtime stream. The canonical REST
+run-event payload named `RUN_FINISHED` does not declare `result`. Read the
+structured result from the run's `output.data` when consuming canonical REST events.
+
+`response.data` in your own code is always the parsed value; `response.object`
+contains the same value for compatibility. The snapshot
 equals it when the value is plain JSON (strings, finite numbers, booleans,
 `null`, arrays and plain objects) and stays within the size limits below.
 Otherwise, for example when an `outputSchema` transform returns a `Date`, a
@@ -741,6 +759,13 @@ replace the UTC snapshot. Non-streaming results expose the exact values at
 `result.metadata?.runtimeContext`; streaming runs emit them in the initial data
 event named `veryfront.runtime_context` for durable replay and diagnostics.
 
+When the platform tool source has a trusted canonical run identity,
+`veryfront__get_run({})` reads the current run. Veryfront supplies `run_id` before
+sending the request to the API. An explicit `run_id` reads that run instead and
+still requires normal API authorization. Without a binding runtime identity,
+`run_id` remains required. This default applies to the native platform tool,
+not project-defined tools with the same name.
+
 Runtime context does not count as assistant output.
 A detached stream that ends without cancellation, assistant output, or a reported
 stream error fails with `EMPTY_RESPONSE`.
@@ -806,7 +831,7 @@ export default agent({
 | `bootstrapTools`         | `string[]`                                                                                             | Up to 16 exact authorized tool names exposed immediately in deferred mode                                                                   |
 | `optionalBootstrapTools` | `string[]`                                                                                             | Up to 16 exact tool names exposed initially only when already authorized and provider capacity permits; missing or denied tools are skipped |
 | `bootstrapSkill`         | `string`                                                                                               | One authorized skill whose root loads before the first model call                                                                           |
-| `outputSchema`           | `Schema<T> \| JsonSchema`                                                                              | Constrain responses to a schema and expose the parsed value as `response.object`                                                            |
+| `outputSchema`           | `Schema<T> \| JsonSchema`                                                                              | Constrain responses to a schema and expose the parsed value as `response.data` (`response.object` remains an alias)                         |
 | `temperature`            | `number`                                                                                               | Sampling temperature for model generation (default: `0`)                                                                                    |
 | `maxSteps`               | `number`                                                                                               | Max tool-call iterations per request                                                                                                        |
 | `parallelToolCalls`      | `boolean`                                                                                              | Optional provider tool-call batching control; omission preserves the provider default                                                       |
@@ -855,9 +880,7 @@ For hosted replay, set `serverResolvedTrustedHostedHistoryMessageIds` only after
 matching the replayed platform result contents against immutable canonical run or
 input-response evidence, or an original host-authored content digest retained
 before edits. Mutable row IDs, roles, senders, tool names and editable parts alone
-do not prove origin. Edited replacements lose the grant. Deploy compatible API
-and Studio support and qualify replay against that deployed combination before
-claiming trusted replay acceptance.
+do not prove origin. Edited replacements lose the grant. Ensure trusted replay works with the deployed API, runtime and Studio versions.
 
 ## Verify it worked
 

@@ -640,3 +640,75 @@ describe("provider/runtime-loader", () => {
     });
   });
 });
+
+describe("document input capability", () => {
+  it("rejects files before text-only fast paths can discard them", () => {
+    assertThrows(
+      () =>
+        toOpenAICompatibleMessages([{
+          role: "user",
+          content: [
+            { type: "text", text: "Summarize" },
+            {
+              type: "file",
+              url: "data:application/pdf;base64,JVBERi0=",
+              mediaType: "application/pdf",
+            },
+          ],
+        }]),
+      TypeError,
+      "Chat Completions does not support file input (application/pdf)",
+    );
+  });
+});
+
+describe("document input capability: error filenames", () => {
+  it("names only the base name of a file part whose filename is a path", () => {
+    const error = assertThrows(
+      () =>
+        toOpenAICompatibleMessages([{
+          role: "user",
+          content: [{
+            type: "file",
+            url: "data:application/pdf;base64,JVBERi0=",
+            mediaType: "application/pdf",
+            filename: "/home/user/private/report.pdf",
+          }],
+        }]),
+      TypeError,
+      'file input "report.pdf" (application/pdf)',
+    );
+    assertEquals((error as Error).message.includes("/home/user"), false);
+  });
+});
+
+describe("document input capability: MIME case", () => {
+  it("keeps image files whose media type is upper case", () => {
+    const messages = toOpenAICompatibleMessages([{
+      role: "user",
+      content: [
+        { type: "text", text: "Describe" },
+        { type: "file", url: "https://example.test/photo.png", mediaType: "IMAGE/PNG" },
+      ],
+    }]);
+    assertEquals(messages, [{
+      role: "user",
+      content: [
+        { type: "text", text: "Describe" },
+        { type: "image_url", image_url: { url: "https://example.test/photo.png" } },
+      ],
+    }]);
+  });
+
+  it("rejects inline image data whose MIME type does not match the part", () => {
+    assertThrows(
+      () =>
+        toOpenAICompatibleMessages([{
+          role: "user",
+          content: [{ type: "file", url: "data:image/png;base64,iVBO", mediaType: "image/jpeg" }],
+        }]),
+      TypeError,
+      "must be base64 data with a matching MIME type",
+    );
+  });
+});

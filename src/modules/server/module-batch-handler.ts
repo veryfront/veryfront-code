@@ -47,7 +47,7 @@ import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { getFrameworkSourceLookupDirs } from "#veryfront/platform/compat/framework-source-resolver.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { registerLRUCache } from "#veryfront/cache";
-import { sha256Short } from "#veryfront/cache/hash.ts";
+import { hashString, sha256Short } from "#veryfront/cache/hash.ts";
 import { buildDependencyPinningCacheVariant } from "#veryfront/cache/keys/dependency-pinning.ts";
 import {
   buildSourceMissCacheKey,
@@ -64,7 +64,6 @@ import {
 } from "#veryfront/transforms/esm/package-registry.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { buildServerExternalPackagesIdentity } from "#veryfront/config/server-external-packages.ts";
-import { hashString } from "#veryfront/cache/hash.ts";
 
 const logger = serverLogger.component("module-batch");
 const DEPENDENCY_PIN_PATTERN = /^on:[A-Za-z0-9._-]+$/;

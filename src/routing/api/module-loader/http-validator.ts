@@ -13,6 +13,7 @@ import { createError, toError } from "#veryfront/errors";
 import {
   analyzeSourceCapabilities,
   describeSourceParseFailure,
+  type SourceLocation,
   type SourceParseOptions,
   type WorkerUrlClassification,
 } from "./source-capability-analyzer.ts";
@@ -180,6 +181,30 @@ export interface LocalWorkerSpecifier {
   readonly resolutionBase: "module" | "route";
 }
 
+/** Options for {@linkcode validateHTTPImports}. */
+export interface HTTPImportValidationOptions extends SourceParseOptions {
+  /** The module's path or URL, named in a rejection so the reader can find it. */
+  readonly path?: string;
+}
+
+const GENERIC_DYNAMIC_CODE_MESSAGE =
+  "[API] handler build failed: dynamic code generation cannot be checked against the remote import allow-list.";
+
+/**
+ * The rejection for code that may generate code. An unresolved computed read
+ * is the case ordinary code hits, so name it, say why, and say what to use.
+ */
+function dynamicCodeGenerationMessage(
+  read: SourceLocation | undefined,
+  path: string | undefined,
+): string {
+  if (!read) return GENERIC_DYNAMIC_CODE_MESSAGE;
+  return `${GENERIC_DYNAMIC_CODE_MESSAGE} ${path ?? "The module"}:${read.line}:${read.column} ` +
+    `reads \`${read.expression}\` with a key Veryfront cannot resolve. The key could be ` +
+    `"constructor", which reaches Function and can run code the allow-list never sees. ` +
+    `Use a Map, or a literal key such as obj["name"].`;
+}
+
 /**
  * Validate a handler module's imports, workers and capabilities against the
  * remote-import allow-list, and describe how the loader must execute it.
@@ -192,7 +217,7 @@ export interface LocalWorkerSpecifier {
 export async function validateHTTPImports(
   source: string,
   allowedHosts: string[],
-  options: SourceParseOptions = {},
+  options: HTTPImportValidationOptions = {},
 ): Promise<ValidatedModuleScan> {
   const analysis = await analyzeSourceCapabilities(source, options);
   if (analysis === null) {
@@ -223,8 +248,7 @@ export async function validateHTTPImports(
     throw toError(
       createError({
         type: "api",
-        message:
-          "[API] handler build failed: dynamic code generation cannot be checked against the remote import allow-list.",
+        message: dynamicCodeGenerationMessage(analysis.unresolvedComputedRead, options.path),
       }),
     );
   }

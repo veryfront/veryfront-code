@@ -1,0 +1,29 @@
+{
+  "project_id": "47daf0dd-0e0b-4b40-8732-2ee24388a1e4",
+  "release_id": "1ef8c401-c88b-4fe6-a636-bd64374b1332",
+  "manifest_version": 2,
+  "manifest_hash": "d637ef6b23ba3bcce6d7a9802d66452d259e7eadef68e9056a60321758e51572",
+  "file_count": 2,
+  "total_bytes": 69,
+  "files": [
+    {
+      "version_id": "d8a10a1b-45fc-4e81-902b-1ffdee6406fb",
+      "path": "knowledge/native-source/.hidden/source.md",
+      "entity_type": "virtual_file",
+      "content_hash": "b1f0e70980233644095a2362266a42a640ec3edbbdc2c0a71bac3c090988ff7d",
+      "byte_size": 62,
+      "kind": "text",
+      "content": "﻿---\r\nunknown: { nested: 日本語 }\r\n---\r\n# Native source\r\n"
+    },
+    {
+      "version_id": "be39dd54-a5a4-4cb7-9c85-4f690619d74c",
+      "path": "knowledge/native-source/payload.bin",
+      "entity_type": "virtual_file",
+      "content_hash": "5b8a0c2dcea16dbe644d32c8527f4f7769b6a99a6d437fcc1215f882145e2ee2",
+      "byte_size": 7,
+      "kind": "binary",
+      "content_type": "application/octet-stream",
+      "content_base64": "77u/AP+ACg=="
+    }
+  ]
+}

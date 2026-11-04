@@ -41,7 +41,7 @@ const AUTH_PRESET_DIR_SET = new Set<string>(AUTH_PRESET_DIRS);
 
 function mapFileName(path: string): string {
   const parts = path.split("/");
-  const fileName = parts[parts.length - 1] ?? "";
+  const fileName = parts.at(-1) ?? "";
   const mapped = FILE_NAME_MAPPINGS[fileName];
   if (mapped) {
     parts[parts.length - 1] = mapped;
@@ -67,7 +67,7 @@ async function collectSortedFiles(
   for await (
     const file of walk(root, {
       includeDirs: false,
-      skip: [/[\/\\](?:\.cache|node_modules)[\/\\]?/, /CLAUDE\.md$/],
+      skip: [/[/\\](?:\.cache|node_modules)[/\\]?/, /CLAUDE\.md$/],
     })
   ) {
     files.push(file);
@@ -96,15 +96,35 @@ async function directoryExists(path: string): Promise<boolean> {
   }
 }
 
-async function generateManifest(): Promise<TemplateManifest> {
-  const templatesDir = "./templates/files";
-  const integrationsDir = "./templates/integrations";
-  const authDir = "./templates/auth";
-  const manifest: TemplateManifest = {
-    version: 1,
-    templates: {},
-  };
+function requireAuthTemplateDirectory(exists: boolean, message: string): void {
+  if (!exists) throw new Error(message);
+}
 
+function requireKnownAuthPreset(entry: Deno.DirEntry): void {
+  if (!AUTH_PRESET_DIR_SET.has(entry.name)) {
+    throw new Error(
+      `Unknown auth preset directory: templates/auth/${entry.name}`,
+    );
+  }
+}
+
+function requireSeparateAuthProviderFile(
+  baseAuthFiles: Record<string, string>,
+  mappedPath: string,
+  presetName: string,
+  relativePath: string,
+): void {
+  if (Object.hasOwn(baseAuthFiles, mappedPath)) {
+    throw new Error(
+      `Auth provider file overrides base file: templates/auth/${presetName}/files/${relativePath}`,
+    );
+  }
+}
+
+async function appendMainTemplates(
+  manifest: TemplateManifest,
+  templatesDir: string,
+): Promise<void> {
   // Process main templates (minimal, app, blog, etc.)
   for (const entry of await collectSortedDirectoryEntries(templatesDir)) {
     if (!entry.isDirectory) continue;
@@ -122,7 +142,12 @@ async function generateManifest(): Promise<TemplateManifest> {
 
     manifest.templates[templateName] = { files };
   }
+}
 
+async function appendIntegrationTemplates(
+  manifest: TemplateManifest,
+  integrationsDir: string,
+): Promise<void> {
   // Process integration templates
   for (const entry of await collectSortedDirectoryEntries(integrationsDir)) {
     if (!entry.isDirectory) continue;
@@ -162,59 +187,62 @@ async function generateManifest(): Promise<TemplateManifest> {
 
     manifest.templates[`integration:${integrationName}`] = { files };
   }
+}
 
+async function appendAuthTemplates(
+  manifest: TemplateManifest,
+  authDir: string,
+): Promise<void> {
   // Process auth templates. Each preset layers the shared base files first,
   // then provider-specific files in sorted path order.
-  if (await directoryExists(authDir)) {
-    const baseAuthPath = `${authDir}/_base/files`;
-    if (!(await directoryExists(baseAuthPath))) {
-      throw new Error(
-        "Required auth base template directory is missing: templates/auth/_base/files",
-      );
-    }
-    const baseAuthFiles: Record<string, string> = {};
-    for (const file of await collectSortedFiles(baseAuthPath)) {
-      const relativePath = relative(baseAuthPath, file.path);
-      const mappedPath = mapFileName(relativePath);
-      baseAuthFiles[mappedPath] = await Deno.readTextFile(file.path);
-    }
-
-    for (const entry of await collectSortedDirectoryEntries(authDir)) {
-      if (!entry.isDirectory || entry.name === "_base") continue;
-      if (!AUTH_PRESET_DIR_SET.has(entry.name)) {
-        throw new Error(
-          `Unknown auth preset directory: templates/auth/${entry.name}`,
-        );
-      }
-
-      const presetName = entry.name;
-      const presetPath = `${authDir}/${presetName}/files`;
-
-      if (!(await directoryExists(presetPath))) {
-        throw new Error(
-          `Required auth preset files directory is missing: templates/auth/${presetName}/files`,
-        );
-      }
-
-      const files: Record<string, string> = { ...baseAuthFiles };
-      for (const file of await collectSortedFiles(presetPath)) {
-        const relativePath = relative(presetPath, file.path);
-        const mappedPath = mapFileName(relativePath);
-        if (Object.hasOwn(baseAuthFiles, mappedPath)) {
-          throw new Error(
-            `Auth provider file overrides base file: templates/auth/${presetName}/files/${relativePath}`,
-          );
-        }
-        files[mappedPath] = await Deno.readTextFile(file.path);
-      }
-
-      if (Object.keys(files).length === 0) continue;
-      manifest.templates[`auth:${presetName}`] = { files };
-    }
+  if (!(await directoryExists(authDir))) return;
+  const baseAuthPath = `${authDir}/_base/files`;
+  requireAuthTemplateDirectory(
+    await directoryExists(baseAuthPath),
+    "Required auth base template directory is missing: templates/auth/_base/files",
+  );
+  const baseAuthFiles: Record<string, string> = {};
+  for (const file of await collectSortedFiles(baseAuthPath)) {
+    const relativePath = relative(baseAuthPath, file.path);
+    const mappedPath = mapFileName(relativePath);
+    baseAuthFiles[mappedPath] = await Deno.readTextFile(file.path);
   }
 
-  // Process ai-rules templates (used by `veryfront install`)
-  const aiRulesDir = "./templates/ai-rules";
+  for (const entry of await collectSortedDirectoryEntries(authDir)) {
+    if (!entry.isDirectory || entry.name === "_base") continue;
+    requireKnownAuthPreset(entry);
+
+    const presetName = entry.name;
+    const presetPath = `${authDir}/${presetName}/files`;
+
+    if (!(await directoryExists(presetPath))) {
+      throw new Error(
+        `Required auth preset files directory is missing: templates/auth/${presetName}/files`,
+      );
+    }
+
+    const files: Record<string, string> = { ...baseAuthFiles };
+    for (const file of await collectSortedFiles(presetPath)) {
+      const relativePath = relative(presetPath, file.path);
+      const mappedPath = mapFileName(relativePath);
+      requireSeparateAuthProviderFile(
+        baseAuthFiles,
+        mappedPath,
+        presetName,
+        relativePath,
+      );
+      files[mappedPath] = await Deno.readTextFile(file.path);
+    }
+
+    if (Object.keys(files).length === 0) continue;
+    manifest.templates[`auth:${presetName}`] = { files };
+  }
+}
+
+async function appendAiRuleTemplates(
+  manifest: TemplateManifest,
+  aiRulesDir: string,
+): Promise<void> {
   for (const entry of await collectSortedDirectoryEntries(aiRulesDir)) {
     if (!entry.isFile || !entry.name.endsWith(".md")) continue;
     const content = await Deno.readTextFile(`${aiRulesDir}/${entry.name}`);
@@ -222,7 +250,23 @@ async function generateManifest(): Promise<TemplateManifest> {
       files: { [entry.name]: content },
     };
   }
+}
 
+async function generateManifest(): Promise<TemplateManifest> {
+  const templatesDir = "./templates/files";
+  const integrationsDir = "./templates/integrations";
+  const authDir = "./templates/auth";
+  const manifest: TemplateManifest = {
+    version: 1,
+    templates: {},
+  };
+
+  await appendMainTemplates(manifest, templatesDir);
+  await appendIntegrationTemplates(manifest, integrationsDir);
+  await appendAuthTemplates(manifest, authDir);
+  // Process ai-rules templates (used by `veryfront install`)
+  const aiRulesDir = "./templates/ai-rules";
+  await appendAiRuleTemplates(manifest, aiRulesDir);
   return manifest;
 }
 
@@ -249,7 +293,7 @@ async function decompressGeneratedManifest(
     const binary = atob(encoded);
     const bytes = new Uint8Array(binary.length);
     for (let index = 0; index < binary.length; index++) {
-      bytes[index] = binary.charCodeAt(index);
+      bytes[index] = binary.codePointAt(index)!;
     }
     const stream = new Blob([bytes]).stream().pipeThrough(
       new DecompressionStream("gzip"),

@@ -6,7 +6,6 @@ import {
   assertInstanceOf,
   assertNotEquals,
   assertRejects,
-  assertStrictEquals,
 } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
@@ -17,7 +16,12 @@ import {
   buildFileListCacheKey,
   buildStatCacheKeyPrefix,
 } from "./cache-keys.ts";
-import { createAdapter, seedCachedFiles, waitFor } from "./adapter.test-helpers.ts";
+import {
+  createAdapter,
+  getAdapterTestTransport,
+  seedCachedFiles,
+  waitFor,
+} from "./adapter.test-helpers.ts";
 import type { ResolvedContentContext } from "./types.ts";
 import {
   addPendingInvalidation,
@@ -43,6 +47,32 @@ import { createNotFoundLikeError } from "./read-operations-helpers.ts";
 import { API_CLIENT_ERROR } from "#veryfront/errors";
 import { isNotFoundError } from "#veryfront/platform/compat/not-found-error.ts";
 import { VeryfrontAPIOperations } from "../../veryfront-api-client/operations.ts";
+
+type SnapshotFixtureFile = { path: string; version_id?: string; content?: string };
+const initializedSnapshotFixtures = new WeakSet<VeryfrontFSAdapter>();
+async function ingestSnapshot(adapter: VeryfrontFSAdapter, files: SnapshotFixtureFile[]) {
+  const client = adapter as unknown as {
+    client: {
+      initialize: () => Promise<void>;
+      getProjectSlug: () => string;
+      getProjectId: () => string;
+      getCachedProject: () => { provider: string; layout: string };
+      listAllFiles: () => Promise<SnapshotFixtureFile[]>;
+    };
+  };
+  client.client.initialize = () => Promise.resolve();
+  client.client.getProjectSlug = () => "test-project";
+  client.client.getProjectId = () => "project-123";
+  client.client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
+  client.client.listAllFiles = () => Promise.resolve(files);
+
+  if (!initializedSnapshotFixtures.has(adapter)) {
+    await adapter.initialize();
+    initializedSnapshotFixtures.add(adapter);
+  } else {
+    await adapter.refreshSourceSnapshot("test-fixture-ingestion");
+  }
+}
 
 describe("VeryfrontFSAdapter", () => {
   afterEach(() => {
@@ -238,14 +268,12 @@ describe("VeryfrontFSAdapter", () => {
           getCachedProject(): { provider: string; layout: string };
           listAllFiles(): Promise<Array<{ path: string; content: string }>>;
         };
-        wsManager: { connect(projectId: string): void };
       };
       internals.client.initialize = () => Promise.resolve();
       internals.client.getProjectSlug = () => "test-project";
       internals.client.getProjectId = () => "test-project-id";
       internals.client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
       internals.client.listAllFiles = () => Promise.resolve([]);
-      internals.wsManager.connect = () => {};
 
       const originalNow = Object.getOwnPropertyDescriptor(performance, "now");
       const prototype = VeryfrontFSAdapter.prototype as unknown as Record<string, unknown>;
@@ -303,7 +331,6 @@ describe("VeryfrontFSAdapter", () => {
           getCachedProject(): { provider: string; layout: string };
           listAllFiles(): Promise<Array<{ path: string; content: string }>>;
         };
-        wsManager: { connect(projectId: string): void };
       };
       const originalClientPrototype = Object.getPrototypeOf(internals.client) as object;
       const poisonedClientPrototype = Object.create(originalClientPrototype) as object;
@@ -312,7 +339,6 @@ describe("VeryfrontFSAdapter", () => {
       internals.client.getProjectId = () => "test-project-id";
       internals.client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
       internals.client.listAllFiles = () => Promise.resolve([]);
-      internals.wsManager.connect = () => {};
 
       Object.defineProperty(poisonedClientPrototype, "initialize", {
         configurable: true,
@@ -360,7 +386,6 @@ describe("VeryfrontFSAdapter", () => {
           getCachedProject(): { provider: string; layout: string };
           listAllFiles(): Promise<Array<{ path: string; content: string }>>;
         };
-        wsManager: { connect(projectId: string): void };
       };
       let initializeCalls = 0;
       internals.client.initialize = (_signal?: AbortSignal) => {
@@ -371,7 +396,6 @@ describe("VeryfrontFSAdapter", () => {
       internals.client.getProjectId = () => "test-project-id";
       internals.client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
       internals.client.listAllFiles = () => Promise.resolve([]);
-      internals.wsManager.connect = () => {};
 
       const controller = new AbortController();
       const first = adapter.initialize(controller.signal);
@@ -479,28 +503,23 @@ describe("VeryfrontFSAdapter", () => {
   });
 
   describe("request tokens", () => {
-    it("syncs request-scoped tokens into the WebSocket manager", () => {
-      const adapter = createAdapter({
-        veryfront: {
-          apiBaseUrl: "https://api.example.com",
-          apiToken: "static-token",
-          projectSlug: "test-project",
-          cache: { enabled: false },
-        },
-      });
-      let websocketToken: string | undefined;
-
-      (adapter as unknown as { wsManager: { setApiToken: (token: string) => void } }).wsManager = {
-        setApiToken: (token: string) => {
-          websocketToken = token;
-        },
-      };
-
+    it("syncs request-scoped tokens into the WebSocket transport", async () => {
+      const adapter = createAdapter();
       adapter.setRequestToken("fresh-request-token");
-      assertEquals(websocketToken, "fresh-request-token");
+      await ingestSnapshot(adapter, [{ path: "pages/index.tsx", content: "source" }]);
+      const socket = getAdapterTestTransport(adapter).sockets.at(-1);
+      assertExists(socket);
+      assertEquals(socket.protocols, ["bearer-fresh-request-token"]);
+      adapter.dispose();
 
-      adapter.clearRequestToken();
-      assertEquals(websocketToken, "static-token");
+      const clearedAdapter = createAdapter();
+      clearedAdapter.setRequestToken("fresh-request-token");
+      clearedAdapter.clearRequestToken();
+      await ingestSnapshot(clearedAdapter, [{ path: "pages/index.tsx", content: "source" }]);
+      const restoredSocket = getAdapterTestTransport(clearedAdapter).sockets.at(-1);
+      assertExists(restoredSocket);
+      assertEquals(restoredSocket.protocols, ["bearer-test-token"]);
+      clearedAdapter.dispose();
     });
 
     it("invalidates snapshots and cached file lists across request-authority changes", async () => {
@@ -523,14 +542,10 @@ describe("VeryfrontFSAdapter", () => {
         getCachedFileListSync(): Array<{ path: string; content?: string }> | undefined;
         initialized: boolean;
         sourceSnapshotCheckedAt: number;
-        sourceSnapshotIdentity: string | undefined;
-        sourceSnapshotFiles: Array<{ path: string; content?: string }> | undefined;
         sourceSnapshotRefreshPromise: Promise<void> | null;
       };
-      internals.initialized = true;
-      internals.sourceSnapshotIdentity = adapter.getSourceSnapshotIdentity();
+      await ingestSnapshot(adapter, [{ path: "tenant-a.ts", content: "tenant-a" }]);
       internals.sourceSnapshotCheckedAt = Date.now();
-      internals.sourceSnapshotFiles = [{ path: "tenant-a.ts", content: "tenant-a" }];
       internals.sourceSnapshotRefreshPromise = new Promise(() => {});
       assertEquals(internals.getCachedFileListSync()?.[0]?.path, "tenant-a.ts");
 
@@ -815,9 +830,6 @@ describe("VeryfrontFSAdapter", () => {
         };
       };
 
-      (adapter as unknown as { wsManager: { connect: (_projectId: string) => void } }).wsManager
-        .connect = () => {};
-
       await adapter.initialize();
 
       assertEquals(adapter.getContentContext()?.releaseId, releaseId);
@@ -885,8 +897,8 @@ describe("VeryfrontFSAdapter", () => {
 
       contentHash = "b".repeat(64);
       (adapter as unknown as {
-        wsManager: { deps: { clearMemoryCaches: () => void } };
-      }).wsManager.deps.clearMemoryCaches();
+        clearMemoryCaches: () => void;
+      }).clearMemoryCaches();
 
       assertEquals(getReadyManifestForRender(releaseId), null);
       await waitFor(async () =>
@@ -1145,14 +1157,8 @@ describe("VeryfrontFSAdapter", () => {
   describe("source snapshot fingerprints", () => {
     it("ignores agent data artifacts only for agent configuration fingerprints", async () => {
       const adapter = createAdapter();
-      const internals = adapter as unknown as {
-        sourceSnapshotFiles: Array<{
-          path: string;
-          content?: string;
-        }>;
-        sourceSnapshotVersion: number;
-      };
-      internals.sourceSnapshotFiles = [
+      let fixtureFiles: SnapshotFixtureFile[] = [];
+      fixtureFiles = [
         { path: "agents/support.ts", content: "export default supportAgent" },
         { path: "veryfront.config.ts", content: "export default {}" },
         { path: "knowledge/support.md", content: "first note" },
@@ -1160,16 +1166,18 @@ describe("VeryfrontFSAdapter", () => {
         { path: "knowledge/load.ts", content: "export const load = true" },
         { path: "evals/reports/load.ts", content: "export const load = true" },
       ];
+      await ingestSnapshot(adapter, fixtureFiles);
       const complete = await adapter.getSourceSnapshotFingerprint();
       const config = await adapter.getSourceSnapshotFingerprint({ purpose: "agent-config" });
 
-      internals.sourceSnapshotVersion += 1;
-      internals.sourceSnapshotFiles = internals.sourceSnapshotFiles.map((file) =>
+      fixtureFiles = fixtureFiles.map((file) =>
         file.path === "knowledge/support.md" ||
           file.path === "evals/reports/support/run.json"
           ? { ...file, content: `${file.content} changed` }
           : file
       );
+
+      await ingestSnapshot(adapter, fixtureFiles);
 
       assertNotEquals(await adapter.getSourceSnapshotFingerprint(), complete);
       assertEquals(
@@ -1177,26 +1185,26 @@ describe("VeryfrontFSAdapter", () => {
         config,
       );
 
-      internals.sourceSnapshotVersion += 1;
-      internals.sourceSnapshotFiles = [
-        ...internals.sourceSnapshotFiles,
+      fixtureFiles = [
+        ...fixtureFiles,
         { path: "/knowledge/new.md", content: "new note" },
       ];
+
+      await ingestSnapshot(adapter, fixtureFiles);
       assertEquals(
         await adapter.getSourceSnapshotFingerprint({ purpose: "agent-config" }),
         config,
       );
 
-      internals.sourceSnapshotVersion += 1;
-      internals.sourceSnapshotFiles = internals.sourceSnapshotFiles.filter((file) =>
-        file.path !== "evals/reports/support/run.json"
-      );
+      fixtureFiles = fixtureFiles.filter((file) => file.path !== "evals/reports/support/run.json");
+
+      await ingestSnapshot(adapter, fixtureFiles);
       assertEquals(
         await adapter.getSourceSnapshotFingerprint({ purpose: "agent-config" }),
         config,
       );
 
-      const dataOnlyFiles = internals.sourceSnapshotFiles;
+      const dataOnlyFiles = fixtureFiles;
       for (
         const path of [
           "agents/support.ts",
@@ -1205,13 +1213,16 @@ describe("VeryfrontFSAdapter", () => {
           "evals/reports/load.ts",
         ]
       ) {
-        internals.sourceSnapshotVersion += 1;
-        internals.sourceSnapshotFiles = dataOnlyFiles;
+        fixtureFiles = dataOnlyFiles;
+
+        await ingestSnapshot(adapter, fixtureFiles);
         const before = await adapter.getSourceSnapshotFingerprint({ purpose: "agent-config" });
-        internals.sourceSnapshotVersion += 1;
-        internals.sourceSnapshotFiles = dataOnlyFiles.map((file) =>
+
+        fixtureFiles = dataOnlyFiles.map((file) =>
           file.path === path ? { ...file, content: `${file.content} changed` } : file
         );
+
+        await ingestSnapshot(adapter, fixtureFiles);
         assertNotEquals(
           await adapter.getSourceSnapshotFingerprint({ purpose: "agent-config" }),
           before,
@@ -1222,11 +1233,8 @@ describe("VeryfrontFSAdapter", () => {
 
     it("retains only agent markdown definitions under a configured agent root", async () => {
       const adapter = createAdapter();
-      const internals = adapter as unknown as {
-        sourceSnapshotFiles: Array<{ path: string; content?: string }>;
-        sourceSnapshotVersion: number;
-      };
-      internals.sourceSnapshotFiles = [
+      let fixtureFiles: SnapshotFixtureFile[] = [];
+      fixtureFiles = [
         { path: "knowledge/support.md", content: "first agent" },
         { path: "knowledge/reviewer/AGENT.md", content: "first directory agent" },
         { path: "knowledge/reviewer/SKILL.md", content: "first colocated skill" },
@@ -1235,25 +1243,28 @@ describe("VeryfrontFSAdapter", () => {
         { path: "knowledge/orphan/references/note.md", content: "inactive reference" },
         { path: "knowledge/churn/note.md", content: "first note" },
       ];
+      await ingestSnapshot(adapter, fixtureFiles);
       const options = {
         purpose: "agent-config",
         agentMarkdownPaths: ["./knowledge/"],
       } as unknown as Parameters<typeof adapter.getSourceSnapshotFingerprint>[0];
       const baseline = await adapter.getSourceSnapshotFingerprint(options);
 
-      internals.sourceSnapshotVersion += 1;
-      internals.sourceSnapshotFiles = internals.sourceSnapshotFiles.map((file) =>
+      fixtureFiles = fixtureFiles.map((file) =>
         file.path === "knowledge/churn/note.md" ||
           file.path === "knowledge/orphan/references/note.md"
           ? { ...file, content: `changed ${file.content}` }
           : file
       );
+
+      await ingestSnapshot(adapter, fixtureFiles);
       assertEquals(await adapter.getSourceSnapshotFingerprint(options), baseline);
 
-      internals.sourceSnapshotVersion += 1;
-      internals.sourceSnapshotFiles = internals.sourceSnapshotFiles.map((file) =>
+      fixtureFiles = fixtureFiles.map((file) =>
         file.path === "knowledge/support.md" ? { ...file, content: "changed agent" } : file
       );
+
+      await ingestSnapshot(adapter, fixtureFiles);
       assertNotEquals(await adapter.getSourceSnapshotFingerprint(options), baseline);
 
       for (
@@ -1263,8 +1274,7 @@ describe("VeryfrontFSAdapter", () => {
           "knowledge/reviewer/skills/research/SKILL.md",
         ]
       ) {
-        internals.sourceSnapshotVersion += 1;
-        internals.sourceSnapshotFiles = internals.sourceSnapshotFiles.map((file) =>
+        fixtureFiles = fixtureFiles.map((file) =>
           file.path === "knowledge/churn/note.md" ||
             file.path === "knowledge/orphan/references/note.md"
             ? { ...file, content: file.content?.replace("changed ", "") }
@@ -1274,86 +1284,88 @@ describe("VeryfrontFSAdapter", () => {
             ? { ...file, content: `${file.content} changed` }
             : file
         );
+
+        await ingestSnapshot(adapter, fixtureFiles);
         assertNotEquals(await adapter.getSourceSnapshotFingerprint(options), baseline);
-        internals.sourceSnapshotFiles = internals.sourceSnapshotFiles.map((file) =>
+        fixtureFiles = fixtureFiles.map((file) =>
           file.path === path ? { ...file, content: file.content?.replace(" changed", "") } : file
         );
+        await ingestSnapshot(adapter, fixtureFiles);
       }
     });
 
     it("retains only skill definitions under a configured skill root", async () => {
       const adapter = createAdapter();
-      const internals = adapter as unknown as {
-        sourceSnapshotFiles: Array<{ path: string; content?: string }>;
-        sourceSnapshotVersion: number;
-      };
+      let fixtureFiles: SnapshotFixtureFile[] = [];
 
-      internals.sourceSnapshotFiles = [
+      fixtureFiles = [
         { path: "knowledge/research/SKILL.md", content: "first skill" },
         { path: "knowledge/note.md", content: "first note" },
       ];
+
+      await ingestSnapshot(adapter, fixtureFiles);
       const options = {
         purpose: "agent-config",
         skillMarkdownPaths: ["/knowledge/"],
       } as unknown as Parameters<typeof adapter.getSourceSnapshotFingerprint>[0];
       const baseline = await adapter.getSourceSnapshotFingerprint(options);
 
-      internals.sourceSnapshotVersion += 1;
-      internals.sourceSnapshotFiles = internals.sourceSnapshotFiles.map((file) =>
+      fixtureFiles = fixtureFiles.map((file) =>
         file.path === "knowledge/note.md" ? { ...file, content: "changed note" } : file
       );
+
+      await ingestSnapshot(adapter, fixtureFiles);
       assertEquals(await adapter.getSourceSnapshotFingerprint(options), baseline);
 
-      internals.sourceSnapshotVersion += 1;
-      internals.sourceSnapshotFiles = internals.sourceSnapshotFiles.map((file) =>
+      fixtureFiles = fixtureFiles.map((file) =>
         file.path === "knowledge/research/SKILL.md" ? { ...file, content: "changed skill" } : file
       );
+
+      await ingestSnapshot(adapter, fixtureFiles);
       assertNotEquals(await adapter.getSourceSnapshotFingerprint(options), baseline);
     });
 
     it("normalizes project-root agent discovery aliases", async () => {
       const adapter = createAdapter();
-      const internals = adapter as unknown as {
-        sourceSnapshotFiles: Array<{ path: string; content?: string }>;
-        sourceSnapshotVersion: number;
-      };
+      let fixtureFiles: SnapshotFixtureFile[] = [];
 
       for (const root of [".", "/"]) {
-        internals.sourceSnapshotVersion += 1;
-        internals.sourceSnapshotFiles = [
+        fixtureFiles = [
           { path: "knowledge/AGENT.md", content: "first agent" },
           { path: "knowledge/churn/note.md", content: "first note" },
         ];
+
+        await ingestSnapshot(adapter, fixtureFiles);
         const options = {
           purpose: "agent-config",
           agentMarkdownPaths: [root],
         } as unknown as Parameters<typeof adapter.getSourceSnapshotFingerprint>[0];
         const baseline = await adapter.getSourceSnapshotFingerprint(options);
 
-        internals.sourceSnapshotVersion += 1;
-        internals.sourceSnapshotFiles = internals.sourceSnapshotFiles.map((file) =>
+        fixtureFiles = fixtureFiles.map((file) =>
           file.path === "knowledge/churn/note.md" ? { ...file, content: "changed note" } : file
         );
+
+        await ingestSnapshot(adapter, fixtureFiles);
         assertEquals(await adapter.getSourceSnapshotFingerprint(options), baseline);
 
-        internals.sourceSnapshotVersion += 1;
-        internals.sourceSnapshotFiles = internals.sourceSnapshotFiles.map((file) =>
+        fixtureFiles = fixtureFiles.map((file) =>
           file.path === "knowledge/AGENT.md" ? { ...file, content: "changed agent" } : file
         );
+
+        await ingestSnapshot(adapter, fixtureFiles);
         assertNotEquals(await adapter.getSourceSnapshotFingerprint(options), baseline);
       }
     });
 
     it("separates agent and skill Markdown fingerprint scopes", async () => {
       const adapter = createAdapter();
-      const internals = adapter as unknown as {
-        sourceSnapshotFiles: Array<{ path: string; content?: string }>;
-        sourceSnapshotVersion: number;
-      };
-      internals.sourceSnapshotFiles = [
+      let fixtureFiles: SnapshotFixtureFile[] = [];
+      fixtureFiles = [
         { path: "knowledge/support.md", content: "agent" },
         { path: "knowledge/research/SKILL.md", content: "skill" },
       ];
+      await ingestSnapshot(adapter, fixtureFiles);
 
       const agentFingerprint = await adapter.getSourceSnapshotFingerprint({
         purpose: "agent-config",
@@ -1369,11 +1381,8 @@ describe("VeryfrontFSAdapter", () => {
 
     it("retains runtime-readable Markdown beneath active skill markers", async () => {
       const adapter = createAdapter();
-      const internals = adapter as unknown as {
-        sourceSnapshotFiles: Array<{ path: string; content?: string }>;
-        sourceSnapshotVersion: number;
-      };
-      internals.sourceSnapshotFiles = [
+      let fixtureFiles: SnapshotFixtureFile[] = [];
+      fixtureFiles = [
         { path: "knowledge/global/SKILL.md", content: "global skill" },
         { path: "knowledge/global/references/nested/guide.md", content: "global guide" },
         { path: "knowledge/global/scripts/check.md", content: "script" },
@@ -1393,6 +1402,7 @@ describe("VeryfrontFSAdapter", () => {
         { path: "knowledge/orphan/references/note.md", content: "orphan data" },
         { path: "knowledge/churn/note.md", content: "ordinary data" },
       ];
+      await ingestSnapshot(adapter, fixtureFiles);
       const options = {
         purpose: "agent-config",
         agentMarkdownPaths: ["knowledge"],
@@ -1400,13 +1410,14 @@ describe("VeryfrontFSAdapter", () => {
       } as unknown as Parameters<typeof adapter.getSourceSnapshotFingerprint>[0];
       const baseline = await adapter.getSourceSnapshotFingerprint(options);
 
-      internals.sourceSnapshotVersion += 1;
-      internals.sourceSnapshotFiles = internals.sourceSnapshotFiles.map((file) =>
+      fixtureFiles = fixtureFiles.map((file) =>
         file.path === "knowledge/churn/note.md" ||
           file.path === "knowledge/orphan/references/note.md"
           ? { ...file, content: `changed ${file.content}` }
           : file
       );
+
+      await ingestSnapshot(adapter, fixtureFiles);
       assertEquals(await adapter.getSourceSnapshotFingerprint(options), baseline);
 
       for (
@@ -1418,8 +1429,7 @@ describe("VeryfrontFSAdapter", () => {
           "knowledge/reviewer/skills/research/assets/checklists/checklist.md",
         ]
       ) {
-        internals.sourceSnapshotVersion += 1;
-        internals.sourceSnapshotFiles = internals.sourceSnapshotFiles.map((file) =>
+        fixtureFiles = fixtureFiles.map((file) =>
           file.path === "knowledge/churn/note.md" ||
             file.path === "knowledge/orphan/references/note.md"
             ? { ...file, content: file.content?.replace("changed ", "") }
@@ -1427,57 +1437,58 @@ describe("VeryfrontFSAdapter", () => {
             ? { ...file, content: `${file.content} changed` }
             : file
         );
+
+        await ingestSnapshot(adapter, fixtureFiles);
         assertNotEquals(await adapter.getSourceSnapshotFingerprint(options), baseline);
-        internals.sourceSnapshotFiles = internals.sourceSnapshotFiles.map((file) =>
+        fixtureFiles = fixtureFiles.map((file) =>
           file.path === path ? { ...file, content: file.content?.replace(" changed", "") } : file
         );
+        await ingestSnapshot(adapter, fixtureFiles);
       }
     });
 
     it("retains runtime-readable JSON beneath an active skill in eval reports", async () => {
       const adapter = createAdapter();
-      const internals = adapter as unknown as {
-        sourceSnapshotFiles: Array<{ path: string; content?: string }>;
-        sourceSnapshotVersion: number;
-      };
-      internals.sourceSnapshotFiles = [
+      let fixtureFiles: SnapshotFixtureFile[] = [];
+      fixtureFiles = [
         { path: "evals/reports/research/SKILL.md", content: "research skill" },
         { path: "evals/reports/research/references/context.json", content: '{"version":1}' },
         { path: "evals/reports/run.json", content: '{"score":1}' },
       ];
+      await ingestSnapshot(adapter, fixtureFiles);
       const options = {
         purpose: "agent-config",
         skillMarkdownPaths: ["evals/reports"],
       } as unknown as Parameters<typeof adapter.getSourceSnapshotFingerprint>[0];
       const baseline = await adapter.getSourceSnapshotFingerprint(options);
 
-      internals.sourceSnapshotVersion += 1;
-      internals.sourceSnapshotFiles = internals.sourceSnapshotFiles.map((file) =>
+      fixtureFiles = fixtureFiles.map((file) =>
         file.path === "evals/reports/run.json" ? { ...file, content: '{"score":2}' } : file
       );
+
+      await ingestSnapshot(adapter, fixtureFiles);
       assertEquals(await adapter.getSourceSnapshotFingerprint(options), baseline);
 
-      internals.sourceSnapshotVersion += 1;
-      internals.sourceSnapshotFiles = internals.sourceSnapshotFiles.map((file) =>
+      fixtureFiles = fixtureFiles.map((file) =>
         file.path === "evals/reports/research/references/context.json"
           ? { ...file, content: '{"version":2}' }
           : file.path === "evals/reports/run.json"
           ? { ...file, content: '{"score":1}' }
           : file
       );
+
+      await ingestSnapshot(adapter, fixtureFiles);
       assertNotEquals(await adapter.getSourceSnapshotFingerprint(options), baseline);
     });
 
     it("captures Markdown discovery scopes before asynchronous hashing", async () => {
       const adapter = createAdapter();
-      const internals = adapter as unknown as {
-        sourceSnapshotFiles: Array<{ path: string; content?: string }>;
-        sourceSnapshotVersion: number;
-      };
-      internals.sourceSnapshotFiles = [
+      let fixtureFiles: SnapshotFixtureFile[] = [];
+      fixtureFiles = [
         { path: "pages/large.ts", content: "x".repeat(3 * 1_024 * 1_024) },
         { path: "knowledge/support.md", content: "agent" },
       ];
+      await ingestSnapshot(adapter, fixtureFiles);
       const agentMarkdownPaths = ["knowledge"];
       const pending = adapter.getSourceSnapshotFingerprint({
         purpose: "agent-config",
@@ -1486,7 +1497,7 @@ describe("VeryfrontFSAdapter", () => {
       agentMarkdownPaths[0] = "other";
 
       const captured = await pending;
-      internals.sourceSnapshotVersion += 1;
+
       const expected = await adapter.getSourceSnapshotFingerprint({
         purpose: "agent-config",
         agentMarkdownPaths: ["knowledge"],
@@ -1496,25 +1507,24 @@ describe("VeryfrontFSAdapter", () => {
 
     it("captures the agent configuration fingerprint purpose before hashing", async () => {
       const adapter = createAdapter();
-      const internals = adapter as unknown as {
-        sourceSnapshotFiles: Array<{ path: string; content?: string }>;
-        sourceSnapshotVersion: number;
-      };
+      let fixtureFiles: SnapshotFixtureFile[] = [];
       const executable = {
         path: "agents/support.ts",
         content: "x".repeat(3 * 1_024 * 1_024),
       };
-      internals.sourceSnapshotFiles = [
+      fixtureFiles = [
         executable,
         { path: "knowledge/support.md", content: "first note" },
       ];
+      await ingestSnapshot(adapter, fixtureFiles);
       const baseline = await adapter.getSourceSnapshotFingerprint({ purpose: "agent-config" });
 
-      internals.sourceSnapshotVersion += 1;
-      internals.sourceSnapshotFiles = [
+      fixtureFiles = [
         executable,
         { path: "knowledge/support.md", content: "changed note" },
       ];
+
+      await ingestSnapshot(adapter, fixtureFiles);
       const options: { purpose?: "agent-config" } = { purpose: "agent-config" };
       const pending = adapter.getSourceSnapshotFingerprint(options);
       options.purpose = undefined;
@@ -1524,13 +1534,12 @@ describe("VeryfrontFSAdapter", () => {
 
     it("rejects duplicate reserved data paths from agent configuration fingerprints", async () => {
       const adapter = createAdapter();
-      const internals = adapter as unknown as {
-        sourceSnapshotFiles: Array<{ path: string; content?: string }>;
-      };
-      internals.sourceSnapshotFiles = [
+      let fixtureFiles: SnapshotFixtureFile[] = [];
+      fixtureFiles = [
         { path: "knowledge/support.md", content: "first" },
         { path: "knowledge/support.md", content: "second" },
       ];
+      await ingestSnapshot(adapter, fixtureFiles);
 
       assertEquals(
         await adapter.getSourceSnapshotFingerprint({ purpose: "agent-config" }),
@@ -1540,30 +1549,26 @@ describe("VeryfrontFSAdapter", () => {
 
     it("identifies snapshot contents independently of file-list order", async () => {
       const adapter = createAdapter();
-      const internals = adapter as unknown as {
-        sourceSnapshotFiles: Array<{
-          path: string;
-          version_id?: string;
-          content?: string;
-        }>;
-        sourceSnapshotVersion: number;
-      };
-      internals.sourceSnapshotFiles = [
+      let fixtureFiles: SnapshotFixtureFile[] = [];
+      fixtureFiles = [
         { path: "pages/index.tsx", version_id: "version-1", content: "first" },
         { path: "veryfront.config.ts", version_id: "version-2", content: "second" },
       ];
+      await ingestSnapshot(adapter, fixtureFiles);
       const first = await adapter.getSourceSnapshotFingerprint();
 
-      internals.sourceSnapshotVersion += 1;
-      internals.sourceSnapshotFiles = [...internals.sourceSnapshotFiles].reverse();
+      fixtureFiles = [...fixtureFiles].reverse();
+
+      await ingestSnapshot(adapter, fixtureFiles);
       const reordered = await adapter.getSourceSnapshotFingerprint();
 
-      internals.sourceSnapshotVersion += 1;
-      internals.sourceSnapshotFiles[0] = {
-        ...internals.sourceSnapshotFiles[0],
-        path: internals.sourceSnapshotFiles[0]!.path,
+      fixtureFiles[0] = {
+        ...fixtureFiles[0],
+        path: fixtureFiles[0]!.path,
         version_id: "version-3",
       };
+
+      await ingestSnapshot(adapter, fixtureFiles);
       const changed = await adapter.getSourceSnapshotFingerprint();
 
       assertEquals(reordered, first);
@@ -1572,10 +1577,7 @@ describe("VeryfrontFSAdapter", () => {
 
     it("does not consult project-mutated Array serialization hooks", async () => {
       const adapter = createAdapter();
-      const internals = adapter as unknown as {
-        sourceSnapshotFiles: Array<{ path: string; content?: string }>;
-        sourceSnapshotVersion: number;
-      };
+      let fixtureFiles: SnapshotFixtureFile[] = [];
       const previousToJSON = Object.getOwnPropertyDescriptor(Array.prototype, "toJSON");
       let first: string | undefined;
       let changed: string | undefined;
@@ -1585,11 +1587,13 @@ describe("VeryfrontFSAdapter", () => {
         value: () => ["constant-fingerprint"],
       });
       try {
-        internals.sourceSnapshotFiles = [{ path: "pages/index.tsx", content: "first" }];
+        fixtureFiles = [{ path: "pages/index.tsx", content: "first" }];
+        await ingestSnapshot(adapter, fixtureFiles);
         first = await adapter.getSourceSnapshotFingerprint();
 
-        internals.sourceSnapshotVersion += 1;
-        internals.sourceSnapshotFiles = [{ path: "pages/index.tsx", content: "second" }];
+        fixtureFiles = [{ path: "pages/index.tsx", content: "second" }];
+
+        await ingestSnapshot(adapter, fixtureFiles);
         changed = await adapter.getSourceSnapshotFingerprint();
       } finally {
         if (previousToJSON) {
@@ -1603,55 +1607,53 @@ describe("VeryfrontFSAdapter", () => {
     });
 
     it("does not populate fingerprint records through inherited array setters", async () => {
-      const adapter = createAdapter();
-      const internals = adapter as unknown as {
-        sourceSnapshotFiles: Array<{ path: string; content?: string }>;
-        sourceSnapshotVersion: number;
-      };
+      const firstAdapter = createAdapter();
+      const changedAdapter = createAdapter();
+      await ingestSnapshot(firstAdapter, [{ path: "pages/index.tsx", content: "first" }]);
+      await ingestSnapshot(changedAdapter, [{ path: "pages/index.tsx", content: "second" }]);
       const previousIndex = Object.getOwnPropertyDescriptor(Array.prototype, "0");
       let setterCalls = 0;
-      let firstHash: Promise<string | undefined> | undefined;
-      let changedHash: Promise<string | undefined> | undefined;
-
+      let firstHash: string | undefined;
+      let changedHash: string | undefined;
       Object.defineProperty(Array.prototype, "0", {
         configurable: true,
-        set: () => {
-          setterCalls += 1;
+        set(this: unknown[], value: unknown) {
+          // Node's asynchronous runtime also writes ordinary arrays here. Only
+          // a captured fingerprint path would expose the source record.
+          if (value === "pages/index.tsx") setterCalls += 1;
+          Object.defineProperty(this, "0", {
+            value,
+            writable: true,
+            configurable: true,
+            enumerable: true,
+          });
         },
       });
       try {
-        internals.sourceSnapshotFiles = [{ path: "pages/index.tsx", content: "first" }];
-        firstHash = adapter.getSourceSnapshotFingerprint();
-
-        internals.sourceSnapshotVersion += 1;
-        internals.sourceSnapshotFiles = [{ path: "pages/index.tsx", content: "second" }];
-        changedHash = adapter.getSourceSnapshotFingerprint();
+        const vulnerableRecord: unknown[] = [];
+        vulnerableRecord[0] = "pages/index.tsx";
+        assertEquals(setterCalls, 1, "the detector must catch source-record index assignment");
+        setterCalls = 0;
+        firstHash = await firstAdapter.getSourceSnapshotFingerprint();
+        changedHash = await changedAdapter.getSourceSnapshotFingerprint();
       } finally {
-        if (previousIndex) {
-          Object.defineProperty(Array.prototype, "0", previousIndex);
-        } else {
-          Reflect.deleteProperty(Array.prototype, "0");
-        }
+        if (previousIndex) Object.defineProperty(Array.prototype, "0", previousIndex);
+        else Reflect.deleteProperty(Array.prototype, "0");
       }
-
-      if (!firstHash || !changedHash) throw new Error("Fingerprint hashing did not start");
-      assertNotEquals(await changedHash, await firstHash);
+      assertNotEquals(changedHash, firstHash);
       assertEquals(setterCalls, 0);
     });
 
     it("does not iterate through a mutable source-list hook", async () => {
       const adapter = createAdapter();
       const files = [{ path: "pages/index.tsx", content: "source" }];
+      await ingestSnapshot(adapter, files);
       Object.defineProperty(files, Symbol.iterator, {
         configurable: true,
         value: () => {
           throw new Error("source-list iterator must not run");
         },
       });
-      const internals = adapter as unknown as {
-        sourceSnapshotFiles: Array<{ path: string; content?: string }>;
-      };
-      internals.sourceSnapshotFiles = files;
 
       assertEquals(typeof await adapter.getSourceSnapshotFingerprint(), "string");
     });
@@ -1669,11 +1671,11 @@ describe("VeryfrontFSAdapter", () => {
           return "inherited source";
         },
       };
-      const file = Object.create(inheritedFields) as { path: string; content?: string };
-      const internals = adapter as unknown as {
-        sourceSnapshotFiles: Array<{ path: string; content?: string }>;
-      };
-      internals.sourceSnapshotFiles = [file];
+      const file = { path: "pages/own.tsx", content: "own" };
+      await ingestSnapshot(adapter, [file]);
+      Object.setPrototypeOf(file, inheritedFields);
+      Reflect.deleteProperty(file, "path");
+      Reflect.deleteProperty(file, "content");
 
       assertEquals(await adapter.getSourceSnapshotFingerprint(), undefined);
       assertEquals(inheritedGetterCalls, 0);
@@ -1681,7 +1683,7 @@ describe("VeryfrontFSAdapter", () => {
 
     it("captures each source snapshot record once before marker analysis", async () => {
       let contentDescriptorReads = 0;
-      const mutableRecord = new Proxy({}, {
+      const mutableRecord = new Proxy({ path: "agents/support.ts", content: "first" }, {
         getOwnPropertyDescriptor: (_target, key) => {
           if (key === "path") {
             return {
@@ -1704,14 +1706,12 @@ describe("VeryfrontFSAdapter", () => {
         },
       });
       const mutableAdapter = createAdapter();
-      (mutableAdapter as unknown as { sourceSnapshotFiles: unknown[] }).sourceSnapshotFiles = [
-        mutableRecord,
-      ];
+      await ingestSnapshot(mutableAdapter, [mutableRecord]);
+      contentDescriptorReads = 0;
       const captured = await mutableAdapter.getSourceSnapshotFingerprint();
 
       const stableAdapter = createAdapter();
-      (stableAdapter as unknown as { sourceSnapshotFiles: Array<Record<string, unknown>> })
-        .sourceSnapshotFiles = [{ path: "agents/support.ts", content: "first" }];
+      await ingestSnapshot(stableAdapter, [{ path: "agents/support.ts", content: "first" }]);
       const expected = await stableAdapter.getSourceSnapshotFingerprint();
 
       assertEquals(contentDescriptorReads, 1);
@@ -1732,7 +1732,7 @@ describe("VeryfrontFSAdapter", () => {
           return Object.getOwnPropertyDescriptor(target, key);
         },
       });
-      (adapter as unknown as { sourceSnapshotFiles: typeof files }).sourceSnapshotFiles = files;
+      await ingestSnapshot(adapter, files);
       const timer = setTimeout(() => {
         timerRan = true;
       }, 0);
@@ -1747,13 +1747,12 @@ describe("VeryfrontFSAdapter", () => {
 
     it("fingerprints a snapshot larger than the former aggregate byte cap", async () => {
       const adapter = createAdapter();
-      const internals = adapter as unknown as {
-        sourceSnapshotFiles: Array<{ path: string; content?: string }>;
-      };
-      internals.sourceSnapshotFiles = [{
+      let fixtureFiles: SnapshotFixtureFile[] = [];
+      fixtureFiles = [{
         path: "pages/oversized.tsx",
         content: "x".repeat(32 * 1_024 * 1_024),
       }];
+      await ingestSnapshot(adapter, fixtureFiles);
 
       let timerRan = false;
       const timer = setTimeout(() => {
@@ -1769,12 +1768,11 @@ describe("VeryfrontFSAdapter", () => {
 
     it("fingerprints a snapshot larger than the former file-count cap", async () => {
       const adapter = createAdapter();
-      const internals = adapter as unknown as {
-        sourceSnapshotFiles: Array<{ path: string; content?: string }>;
-      };
-      internals.sourceSnapshotFiles = Array.from({ length: 10_001 }, (_, index) => ({
+      let fixtureFiles: SnapshotFixtureFile[] = [];
+      fixtureFiles = Array.from({ length: 10_001 }, (_, index) => ({
         path: `pages/generated-${index}.tsx`,
       }));
+      await ingestSnapshot(adapter, fixtureFiles);
 
       let timerRan = false;
       const timer = setTimeout(() => {
@@ -1797,21 +1795,20 @@ describe("VeryfrontFSAdapter", () => {
       });
       const internals = adapter as unknown as {
         sourceSnapshotCheckedAt: number;
-        sourceSnapshotFiles: Array<{ path: string; content?: string }> | undefined;
         sourceSnapshotFingerprint: { version: number; value: Promise<string> } | undefined;
-        sourceSnapshotIdentity: string | undefined;
-        wsManager: { deps: { clearMemoryCaches: () => void } };
+        clearMemoryCaches: () => void;
       };
-      internals.sourceSnapshotFiles = [{ path: "pages/index.tsx", content: "old source" }];
-      internals.sourceSnapshotIdentity = adapter.getSourceSnapshotIdentity();
+      const fixtureFiles: SnapshotFixtureFile[] = [{
+        path: "pages/index.tsx",
+        content: "old source",
+      }];
+      await ingestSnapshot(adapter, fixtureFiles);
       internals.sourceSnapshotCheckedAt = Date.now();
       assertEquals(typeof await adapter.getSourceSnapshotFingerprint(), "string");
 
-      internals.wsManager.deps.clearMemoryCaches();
+      internals.clearMemoryCaches();
 
       assertEquals(await adapter.getSourceSnapshotFingerprint(), undefined);
-      assertEquals(internals.sourceSnapshotFiles, undefined);
-      assertEquals(internals.sourceSnapshotIdentity, undefined);
       assertEquals(internals.sourceSnapshotCheckedAt, 0);
       assertEquals(internals.sourceSnapshotFingerprint, undefined);
     });
@@ -1824,16 +1821,16 @@ describe("VeryfrontFSAdapter", () => {
         branch: "main",
       });
       const internals = adapter as unknown as {
-        sourceSnapshotFiles: Array<{ path: string; content?: string }> | undefined;
-        wsManager: { deps: { clearMemoryCaches: () => void } };
+        clearMemoryCaches: () => void;
       };
-      internals.sourceSnapshotFiles = [{
+      const fixtureFiles: SnapshotFixtureFile[] = [{
         path: "pages/index.tsx",
         content: "source being hashed",
       }];
+      await ingestSnapshot(adapter, fixtureFiles);
 
       const pendingFingerprint = adapter.getSourceSnapshotFingerprint();
-      internals.wsManager.deps.clearMemoryCaches();
+      internals.clearMemoryCaches();
 
       assertEquals(await pendingFingerprint, undefined);
     });
@@ -1878,22 +1875,15 @@ describe("VeryfrontFSAdapter", () => {
         }]);
       };
 
-      (adapter as unknown as { wsManager: { connect: (_projectId: string) => void } }).wsManager
-        .connect = () => {};
-
       await adapter.initialize();
       assertEquals(await adapter.readTextFile("pages/index.tsx"), "hello");
 
       const versionBeforeDispose = adapter.getSourceSnapshotVersion();
       const internals = adapter as unknown as {
         sourceSnapshotCheckedAt: number;
-        sourceSnapshotIdentity: string | undefined;
-        sourceSnapshotFiles: Array<{ path: string; content?: string }> | undefined;
         sourceSnapshotFingerprint: { version: number; value: Promise<string> } | undefined;
       };
       internals.sourceSnapshotCheckedAt = Date.now();
-      internals.sourceSnapshotIdentity = "branch:test-project:main";
-      internals.sourceSnapshotFiles = [{ path: "pages/index.tsx", content: "hello" }];
       await adapter.getSourceSnapshotFingerprint();
       assertEquals(
         adapter.getCacheStats().cache.size > 0,
@@ -1911,8 +1901,6 @@ describe("VeryfrontFSAdapter", () => {
         "dispose bumps the source snapshot generation",
       );
       assertEquals(internals.sourceSnapshotCheckedAt, 0);
-      assertEquals(internals.sourceSnapshotIdentity, undefined);
-      assertEquals(internals.sourceSnapshotFiles, undefined);
       assertEquals(internals.sourceSnapshotFingerprint, undefined);
 
       await adapter.initialize();
@@ -2246,9 +2234,6 @@ describe("VeryfrontFSAdapter", () => {
         }]);
       };
 
-      (adapter as unknown as { wsManager: { connect: (_projectId: string) => void } }).wsManager
-        .connect = () => {};
-
       adapter.setRequestBranch("draft");
 
       await adapter.initialize();
@@ -2284,7 +2269,6 @@ describe("VeryfrontFSAdapter", () => {
         cache: {
           setAsync: (key: string, value: unknown) => Promise<void>;
         };
-        wsManager: { connect: (_projectId: string) => void };
       };
 
       internals.client.initialize = () => Promise.resolve();
@@ -2301,7 +2285,6 @@ describe("VeryfrontFSAdapter", () => {
           content: branch,
         }]);
       };
-      internals.wsManager.connect = () => {};
 
       const setStarted = Promise.withResolvers<void>();
       const releaseSet = Promise.withResolvers<void>();
@@ -2366,9 +2349,6 @@ describe("VeryfrontFSAdapter", () => {
         }]);
       };
 
-      (adapter as unknown as { wsManager: { connect: (_projectId: string) => void } }).wsManager
-        .connect = () => {};
-
       await adapter.initialize();
       assertEquals(await adapter.readTextFile("pages/index.tsx"), "main");
 
@@ -2423,9 +2403,6 @@ describe("VeryfrontFSAdapter", () => {
           content: draftContent,
         }]);
       };
-
-      (adapter as unknown as { wsManager: { connect: (_projectId: string) => void } }).wsManager
-        .connect = () => {};
 
       await adapter.initialize();
       assertEquals(
@@ -2491,9 +2468,6 @@ describe("VeryfrontFSAdapter", () => {
         }]);
       };
 
-      (adapter as unknown as { wsManager: { connect: (_projectId: string) => void } }).wsManager
-        .connect = () => {};
-
       await adapter.ensureSourceSnapshotFresh("preview-document-routing", { maxAgeMs: 0 });
 
       assertEquals(
@@ -2547,9 +2521,6 @@ describe("VeryfrontFSAdapter", () => {
         }]);
       };
 
-      (adapter as unknown as { wsManager: { connect: (_projectId: string) => void } }).wsManager
-        .connect = () => {};
-
       await adapter.ensureSourceSnapshotFresh("preview-ssr-render", { maxAgeMs: 0 });
 
       assertEquals(
@@ -2561,8 +2532,8 @@ describe("VeryfrontFSAdapter", () => {
 
       draftContent = "v2";
       (adapter as unknown as {
-        wsManager: { deps: { clearMemoryCaches: () => void } };
-      }).wsManager.deps.clearMemoryCaches();
+        clearMemoryCaches: () => void;
+      }).clearMemoryCaches();
       await adapter.ensureSourceSnapshotFresh(
         "invalidated-cold-document",
         { maxAgeMs: 0 },
@@ -2622,9 +2593,6 @@ describe("VeryfrontFSAdapter", () => {
           content: observedContent,
         }];
       };
-
-      (adapter as unknown as { wsManager: { connect: (_projectId: string) => void } }).wsManager
-        .connect = () => {};
 
       const first = adapter.ensureSourceSnapshotFresh("first-cold-document", { maxAgeMs: 0 });
       const second = adapter.ensureSourceSnapshotFresh("second-cold-document", { maxAgeMs: 0 });
@@ -2687,9 +2655,6 @@ describe("VeryfrontFSAdapter", () => {
         }]);
       };
 
-      (adapter as unknown as { wsManager: { connect: (_projectId: string) => void } }).wsManager
-        .connect = () => {};
-
       await adapter.initialize();
 
       // Sub-resource requests inside one page load must not fan out into a
@@ -2742,9 +2707,6 @@ describe("VeryfrontFSAdapter", () => {
           content: draftContent,
         }]);
       };
-
-      (adapter as unknown as { wsManager: { connect: (_projectId: string) => void } }).wsManager
-        .connect = () => {};
 
       await adapter.initialize();
 
@@ -2815,9 +2777,6 @@ describe("VeryfrontFSAdapter", () => {
           finishMainRefresh = () => resolve(files);
         });
       };
-
-      (adapter as unknown as { wsManager: { connect: (_projectId: string) => void } }).wsManager
-        .connect = () => {};
 
       await adapter.initialize();
       (adapter as unknown as { sourceSnapshotCheckedAt: number }).sourceSnapshotCheckedAt = 0;
@@ -2897,8 +2856,6 @@ describe("VeryfrontFSAdapter", () => {
               });
             },
           };
-          (adapter as unknown as { wsManager: { connect: () => void } }).wsManager.connect =
-            () => {};
           const runtime = createMockAdapter();
           Object.assign(runtime, { fs: new FSAdapterWrapper(adapter) });
           try {
@@ -2954,7 +2911,6 @@ describe("VeryfrontFSAdapter", () => {
             listAllFiles: () => Promise<Array<{ path: string; content?: string }>>;
             getFileContent: (path: string) => Promise<string>;
           };
-          wsManager: { connect: () => void };
         };
         const client = internals.client;
         client.initialize = () => Promise.resolve();
@@ -2974,7 +2930,7 @@ describe("VeryfrontFSAdapter", () => {
           listingPasses > 1
             ? Promise.resolve("export default {};")
             : Promise.reject(createNotFoundLikeError(path));
-        internals.wsManager.connect = () => {};
+
         const prefix = buildFileCacheKeyPrefix({
           sourceType: "branch",
           projectSlug: "test-project",
@@ -3036,7 +2992,6 @@ describe("VeryfrontFSAdapter", () => {
             listAllFiles: () => Promise<Array<{ path: string; content?: string }>>;
             getFileContent: () => Promise<string>;
           };
-          wsManager: { connect: () => void };
         };
         const client = internals.client;
         client.initialize = () => Promise.resolve();
@@ -3070,7 +3025,7 @@ describe("VeryfrontFSAdapter", () => {
             API_CLIENT_ERROR.create({ detail: "Missing content", status: 404 }),
           );
         };
-        internals.wsManager.connect = () => {};
+
         const prefix = buildFileCacheKeyPrefix({
           sourceType: "branch",
           projectSlug: "test-project",
@@ -3143,7 +3098,6 @@ describe("VeryfrontFSAdapter", () => {
           listAllFiles: () => Promise<Array<{ path: string }>>;
           getFileContent: () => Promise<string>;
         };
-        wsManager: { connect: () => void };
       };
       const client = internals.client;
       client.initialize = () => Promise.resolve();
@@ -3164,7 +3118,7 @@ describe("VeryfrontFSAdapter", () => {
         if (++reads === 2) secondReadStarted.resolve();
         return Promise.reject(API_CLIENT_ERROR.create({ detail: "Missing content", status: 404 }));
       };
-      internals.wsManager.connect = () => {};
+
       const prefix = buildFileCacheKeyPrefix({
         sourceType: "branch",
         projectSlug: "test-project",
@@ -3232,7 +3186,6 @@ describe("VeryfrontFSAdapter", () => {
           listAllFiles: () => Promise<Array<{ path: string; content?: string }>>;
           getFileContent: () => Promise<string>;
         };
-        wsManager: { connect: () => void };
       };
       const ownStarted = Promise.withResolvers<void>();
       const ownListing = Promise.withResolvers<Array<{ path: string; content?: string }>>();
@@ -3256,7 +3209,7 @@ describe("VeryfrontFSAdapter", () => {
         }
         return Promise.reject(API_CLIENT_ERROR.create({ detail: "Missing content", status: 404 }));
       };
-      internals.wsManager.connect = () => {};
+
       const prefix = buildFileCacheKeyPrefix({
         sourceType: "branch",
         projectSlug: "test-project",
@@ -3309,7 +3262,6 @@ describe("VeryfrontFSAdapter", () => {
           listAllFiles: () => Promise<Array<{ path: string; content?: string }>>;
           getFileContent: () => Promise<string>;
         };
-        wsManager: { connect: () => void };
       };
       const warmStarted = Promise.withResolvers<void>();
       const warmListing = Promise.withResolvers<Array<{ path: string; content?: string }>>();
@@ -3345,7 +3297,7 @@ describe("VeryfrontFSAdapter", () => {
         }
         return Promise.reject(API_CLIENT_ERROR.create({ detail: "Missing content", status: 404 }));
       };
-      internals.wsManager.connect = () => {};
+
       const prefix = buildFileCacheKeyPrefix({
         sourceType: "branch",
         projectSlug: "test-project",
@@ -3397,7 +3349,6 @@ describe("VeryfrontFSAdapter", () => {
           getCachedProject: () => { provider: string; layout: string };
           listAllFiles: () => Promise<Array<{ path: string; content?: string }>>;
         };
-        wsManager: { connect: () => void };
       };
       let listingPasses = 0;
       client.client.initialize = () => Promise.resolve();
@@ -3408,7 +3359,7 @@ describe("VeryfrontFSAdapter", () => {
         listingPasses++;
         return Promise.resolve([]);
       };
-      client.wsManager.connect = () => {};
+
       try {
         for (
           const path of ["/veryfront.config.js", "/veryfront.config.ts", "/veryfront.config.mjs"]
@@ -3475,9 +3426,6 @@ describe("VeryfrontFSAdapter", () => {
       };
       client.getFileContent = (path: string) => Promise.resolve(`network content for ${path}`);
 
-      (adapter as unknown as { wsManager: { connect: (_projectId: string) => void } }).wsManager
-        .connect = () => {};
-
       await adapter.initialize();
 
       const content = await adapter.readTextFile("lib/graph-performance.ts");
@@ -3515,8 +3463,6 @@ describe("VeryfrontFSAdapter", () => {
       client.getProjectId = () => "project-123";
       client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
       client.listAllFiles = () => Promise.resolve([{ path: "cached.ts", content: "cached body" }]);
-      (adapter as unknown as { wsManager: { connect: (_projectId: string) => void } }).wsManager
-        .connect = () => {};
       try {
         await adapter.initialize();
         assertEquals(await adapter.readTextFile("cached.ts"), "cached body");
@@ -3578,8 +3524,6 @@ describe("VeryfrontFSAdapter", () => {
         refreshStarted.resolve();
         return refreshSettled.promise;
       };
-      (adapter as unknown as { wsManager: { connect: (_projectId: string) => void } }).wsManager
-        .connect = () => {};
 
       try {
         await adapter.initialize();
@@ -3650,8 +3594,6 @@ describe("VeryfrontFSAdapter", () => {
         refreshStarted.resolve();
         return refreshSettled.promise;
       };
-      (adapter as unknown as { wsManager: { connect: (_projectId: string) => void } }).wsManager
-        .connect = () => {};
 
       try {
         await adapter.initialize();
@@ -3730,8 +3672,6 @@ describe("VeryfrontFSAdapter", () => {
         }
         return Promise.resolve(refreshedFiles);
       };
-      (adapter as unknown as { wsManager: { connect: (_projectId: string) => void } }).wsManager
-        .connect = () => {};
 
       try {
         await adapter.initialize();
@@ -3806,8 +3746,6 @@ describe("VeryfrontFSAdapter", () => {
         }
         return Promise.resolve([]);
       };
-      (adapter as unknown as { wsManager: { connect: (_projectId: string) => void } }).wsManager
-        .connect = () => {};
 
       await adapter.initialize();
       const branchAContext = {
@@ -3899,15 +3837,11 @@ describe("VeryfrontFSAdapter", () => {
         await new Promise((resolve) => setTimeout(resolve, 5));
         return listAllFilesCalls < 3 ? firstFiles : changedFiles;
       };
-      (adapter as unknown as { wsManager: { connect: (_projectId: string) => void } }).wsManager
-        .connect = () => {};
 
       await adapter.initialize();
 
       const initialSnapshotVersion = adapter.getSourceSnapshotVersion();
-      const initialSnapshotFiles = (adapter as unknown as {
-        sourceSnapshotFiles: Array<{ path: string; version_id?: string; content?: string }>;
-      }).sourceSnapshotFiles;
+      const initialSnapshotFingerprint = await adapter.getSourceSnapshotFingerprint();
       assertEquals(initialSnapshotVersion > 0, true);
       assertEquals(listAllFilesCalls, 1);
 
@@ -3920,10 +3854,7 @@ describe("VeryfrontFSAdapter", () => {
 
       assertEquals(listAllFilesCalls, 2);
       assertEquals(adapter.getSourceSnapshotVersion(), initialSnapshotVersion);
-      assertStrictEquals(
-        (adapter as unknown as { sourceSnapshotFiles: unknown }).sourceSnapshotFiles,
-        initialSnapshotFiles,
-      );
+      assertEquals(await adapter.getSourceSnapshotFingerprint(), initialSnapshotFingerprint);
       assertEquals(typeof await adapter.getSourceSnapshotFingerprint(), "string");
       assertEquals(routerInvalidations, 0);
       assertEquals(ssrInvalidations, 0);
@@ -3975,8 +3906,6 @@ describe("VeryfrontFSAdapter", () => {
         listAllFilesCalls += 1;
         return Promise.resolve(listAllFilesCalls === 1 ? initialFiles : repeatedPathFiles);
       };
-      (adapter as unknown as { wsManager: { connect: (_projectId: string) => void } }).wsManager
-        .connect = () => {};
 
       await adapter.initialize();
       const initialVersion = adapter.getSourceSnapshotVersion();
@@ -4074,8 +4003,6 @@ describe("VeryfrontFSAdapter", () => {
           content: `export const version = ${listAllFilesCalls};`,
         }]);
       };
-      (adapter as unknown as { wsManager: { connect: (_projectId: string) => void } }).wsManager
-        .connect = () => {};
 
       await adapter.initialize();
       const initialVersion = adapter.getSourceSnapshotVersion();
@@ -4141,8 +4068,6 @@ describe("VeryfrontFSAdapter", () => {
           content: `export const version = ${listAllFilesCalls};`,
         }]);
       };
-      (adapter as unknown as { wsManager: { connect: (_projectId: string) => void } }).wsManager
-        .connect = () => {};
 
       await adapter.initialize();
       (adapter as unknown as { sourceSnapshotCheckedAt: number }).sourceSnapshotCheckedAt = 0;
@@ -4209,11 +4134,12 @@ describe("VeryfrontFSAdapter", () => {
       client.listAllFiles = () => {
         listAllFilesCalls++;
         if (listAllFilesCalls === 1) return Promise.resolve(initialFiles);
-        refreshStarted.resolve();
-        return releaseRefresh.promise;
+        if (listAllFilesCalls === 2) {
+          refreshStarted.resolve();
+          return releaseRefresh.promise;
+        }
+        return Promise.resolve(pushedFiles);
       };
-      (adapter as unknown as { wsManager: { connect: (_projectId: string) => void } }).wsManager
-        .connect = () => {};
 
       await adapter.initialize();
       const context = adapter.getContentContext();
@@ -4222,12 +4148,13 @@ describe("VeryfrontFSAdapter", () => {
       const staleRefresh = adapter.refreshSourceSnapshot("poll");
       await refreshStarted.promise;
 
-      await (adapter as unknown as {
-        replaceSourceSnapshot: (
-          cacheKey: string,
-          files: typeof pushedFiles,
-        ) => Promise<void>;
-      }).replaceSourceSnapshot(buildFileListCacheKey(context), pushedFiles);
+      getAdapterTestTransport(adapter).poke({
+        branchName: "main",
+        changedPaths: ["pages/review.tsx"],
+      });
+      await waitFor(async () =>
+        listAllFilesCalls >= 3 && (await adapter.getSourceSnapshotFingerprint()) !== undefined
+      );
       const pushedVersion = adapter.getSourceSnapshotVersion();
 
       releaseRefresh.resolve(initialFiles);
@@ -4273,8 +4200,6 @@ describe("VeryfrontFSAdapter", () => {
             version_id: "version-1",
             content: "export default {};",
           }]);
-        (adapter as unknown as { wsManager: { connect: (_projectId: string) => void } }).wsManager
-          .connect = () => {};
 
         await adapter.initialize();
         return adapter;
@@ -4337,9 +4262,6 @@ describe("VeryfrontFSAdapter", () => {
       };
       client.searchFiles = () => Promise.resolve([]);
 
-      (adapter as unknown as { wsManager: { connect: (_projectId: string) => void } }).wsManager
-        .connect = () => {};
-
       await adapter.initialize();
       assertEquals(
         await adapter.resolveFile("components/GraphViewer"),
@@ -4395,9 +4317,6 @@ describe("VeryfrontFSAdapter", () => {
       };
       client.searchFiles = () => Promise.resolve([]);
 
-      (adapter as unknown as { wsManager: { connect: (_projectId: string) => void } }).wsManager
-        .connect = () => {};
-
       await adapter.initialize();
 
       const resolvedPath = await adapter.resolveFile("optional/missing-page");
@@ -4448,9 +4367,6 @@ describe("VeryfrontFSAdapter", () => {
         listAllFilesCalls++;
         return Promise.resolve(listAllFilesCalls === 1 ? staleFiles : refreshedFiles);
       };
-
-      (adapter as unknown as { wsManager: { connect: (_projectId: string) => void } }).wsManager
-        .connect = () => {};
 
       await adapter.initialize();
       assertEquals((await adapter.readdir("components")).map((entry) => entry.path), [
@@ -4504,9 +4420,6 @@ describe("VeryfrontFSAdapter", () => {
         }]);
       };
 
-      (adapter as unknown as { wsManager: { connect: (_projectId: string) => void } }).wsManager
-        .connect = () => {};
-
       await adapter.initialize();
 
       const entries = await adapter.readdir("optional");
@@ -4552,8 +4465,6 @@ describe("VeryfrontFSAdapter", () => {
         listAllFilesCalls++;
         return Promise.resolve(files);
       };
-      (adapter as unknown as { wsManager: { connect: (_projectId: string) => void } }).wsManager
-        .connect = () => {};
 
       adapter.setContentContext({
         sourceType: "branch",
@@ -4631,9 +4542,6 @@ describe("VeryfrontFSAdapter", () => {
         pregenerationCalls++;
       };
 
-      (adapter as unknown as { wsManager: { connect: (_projectId: string) => void } }).wsManager
-        .connect = () => {};
-
       adapter.setContentContext({
         sourceType: "branch",
         projectSlug: "test-project",
@@ -4697,9 +4605,6 @@ describe("VeryfrontFSAdapter", () => {
         return Promise.resolve(files);
       };
 
-      (adapter as unknown as { wsManager: { connect: (_projectId: string) => void } }).wsManager
-        .connect = () => {};
-
       adapter.setContentContext({
         sourceType: "environment",
         projectSlug: "test-project",
@@ -4757,9 +4662,6 @@ describe("VeryfrontFSAdapter", () => {
       ).triggerCSSPregeneration = async () => {
         pregenerationCalls++;
       };
-
-      (adapter as unknown as { wsManager: { connect: (_projectId: string) => void } }).wsManager
-        .connect = () => {};
 
       adapter.setContentContext({
         sourceType: "branch",
@@ -4827,8 +4729,6 @@ describe("VeryfrontFSAdapter", () => {
         await new Promise((resolve) => setTimeout(resolve, 20));
         return files;
       };
-      (adapter as unknown as { wsManager: { connect: (_projectId: string) => void } }).wsManager
-        .connect = () => {};
 
       adapter.setContentContext({
         sourceType: "branch",
@@ -4902,8 +4802,6 @@ describe("VeryfrontFSAdapter", () => {
       client.getProjectId = () => "project-123";
       client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
       client.listAllFiles = () => Promise.resolve(files);
-      (adapter as unknown as { wsManager: { connect: (_projectId: string) => void } }).wsManager
-        .connect = () => {};
 
       adapter.setContentContext({
         sourceType: "branch",
@@ -4926,7 +4824,6 @@ describe("VeryfrontFSAdapter", () => {
           getAsync: <T>(key: string) => Promise<T | undefined>;
           deleteByPrefixAsync: (prefix: string) => Promise<void>;
         };
-        sourceSnapshotVersion: number;
         clearRetainedFileList: () => void;
       };
       const cache = internals.cache;
@@ -4938,7 +4835,7 @@ describe("VeryfrontFSAdapter", () => {
       cache.set(fileKey, "stale source");
       cache.set(siblingFileListKey, files);
 
-      const versionBeforeWarmup = internals.sourceSnapshotVersion;
+      const versionBeforeWarmup = adapter.getSourceSnapshotVersion();
       const versionsAtEviction: number[] = [];
       const versionsAtDerivedInvalidation: number[] = [];
       for (
@@ -4952,13 +4849,13 @@ describe("VeryfrontFSAdapter", () => {
         }).invalidationCallbacks;
         const original = callbacks[callback];
         callbacks[callback] = () => {
-          versionsAtDerivedInvalidation.push(internals.sourceSnapshotVersion);
+          versionsAtDerivedInvalidation.push(adapter.getSourceSnapshotVersion());
           original!();
         };
       }
       const deleteByPrefixAsync = cache.deleteByPrefixAsync.bind(cache);
       cache.deleteByPrefixAsync = (prefix: string) => {
-        versionsAtEviction.push(internals.sourceSnapshotVersion);
+        versionsAtEviction.push(adapter.getSourceSnapshotVersion());
         return deleteByPrefixAsync(prefix);
       };
 
@@ -5043,7 +4940,7 @@ describe("VeryfrontFSAdapter", () => {
           delete: (key: string) => boolean;
         };
         clearRetainedFileList: () => void;
-        wsManager: { connect: (_projectId: string) => void };
+
         getCachedFileListAsync: (
           noContextMessage: string,
           lookupLabel: string,
@@ -5066,7 +4963,6 @@ describe("VeryfrontFSAdapter", () => {
         warmedBranches.push(branch);
         return Promise.resolve(branchListings[branch] ?? []);
       };
-      internals.wsManager.connect = () => {};
 
       await adapter.initialize();
 

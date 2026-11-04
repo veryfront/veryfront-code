@@ -48,7 +48,7 @@ import {
   serializeLayouts,
 } from "./pipeline-helpers.ts";
 import { join } from "#veryfront/compat/path";
-import type { EntityInfo, MdxBundle, PageBundle } from "#veryfront/types";
+import type { EntityInfo, LayoutItem, MdxBundle, PageBundle } from "#veryfront/types";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { isExtendedFSAdapter } from "#veryfront/platform/adapters/fs/wrapper.ts";
@@ -74,7 +74,6 @@ import {
 import { clearSSRModuleCacheForProject } from "#veryfront/modules/react-loader/index.ts";
 import { setupSSRGlobals } from "../ssr-globals.ts";
 import { LAYOUT_EXTENSIONS } from "../layouts/types.ts";
-import type { LayoutItem } from "#veryfront/types";
 import {
   type ProgressTimeoutControl,
   withProgressTimeoutThrow,
@@ -111,7 +110,6 @@ import { determineClientModuleStrategy } from "#veryfront/rendering/rsc/client-m
 // Extracted modules
 import { EMPTY_LAYOUT_RESULT, isDotPath } from "./path-helpers.ts";
 import {
-  __injectCssCacheForTests,
   cachePageCss,
   CSS_SSR_TIMEOUT_MS,
   getCachedPageCss,
@@ -221,10 +219,159 @@ function stripInternalRenderOptions(options: InternalRenderOptions): RenderOptio
   return publicOptions;
 }
 
+function throwRenderAttemptError(
+  error: unknown,
+  sourceFile: string,
+  responseHeaders: Record<string, string> | undefined,
+  responseCookies: ResponseCookie[] | undefined,
+): never {
+  if (error instanceof Error) {
+    const classifiedError = unwrapDataResponseMetadataError(error);
+    const sourceError = classifiedError instanceof Error ? classifiedError : error;
+    (sourceError as Error & { sourceFile?: string }).sourceFile = sourceFile;
+  }
+  if (responseHeaders || responseCookies) {
+    throw wrapDataResponseMetadataError(
+      error,
+      mergeDataResponseMetadata([
+        {
+          ...(responseHeaders ? { headers: responseHeaders } : {}),
+          ...(responseCookies ? { cookies: responseCookies } : {}),
+        },
+      ]),
+    );
+  }
+  throw error;
+}
+
+function mergeRenderDataOptions(
+  renderInputOptions: RenderOptions,
+  dataFetchingProps: Record<string, unknown> | undefined,
+  resolvedParams: Record<string, string | string[]>,
+): RenderOptions {
+  const hasResolvedParams = Object.keys(resolvedParams).length > 0;
+  return (dataFetchingProps || hasResolvedParams)
+    ? {
+      ...renderInputOptions,
+      ...(hasResolvedParams ? { params: resolvedParams } : {}),
+      ...(dataFetchingProps
+        ? { props: { ...renderInputOptions?.props, ...dataFetchingProps } }
+        : {}),
+    }
+    : renderInputOptions;
+}
+
+function mergeScriptRenderResponse(
+  pageBundleResult: Awaited<ReturnType<PageRenderer["preparePageBundles"]>>,
+  responseHeaders: Record<string, string> | undefined,
+  responseCookies: ResponseCookie[] | undefined,
+): RenderResult {
+  const scriptResponseMetadata = mergeDataResponseMetadata([
+    {
+      ...(pageBundleResult.scriptResult!.headers
+        ? { headers: pageBundleResult.scriptResult!.headers }
+        : {}),
+      ...(pageBundleResult.scriptResult!.cookies
+        ? { cookies: pageBundleResult.scriptResult!.cookies }
+        : {}),
+    },
+    {
+      ...(responseHeaders ? { headers: responseHeaders } : {}),
+      ...(responseCookies ? { cookies: responseCookies } : {}),
+    },
+  ]);
+  return { ...pageBundleResult.scriptResult!, ...scriptResponseMetadata };
+}
+
+type CriticalModuleFailure = {
+  path: string;
+  error: string;
+  buildFailure: boolean;
+  tenantBuildFailure: boolean;
+  missingSource: boolean;
+};
+
+function throwCriticalModuleFailures(
+  criticalFailures: CriticalModuleFailure[],
+  loaded: LoadedModule[],
+  modules: ModuleToLoad[],
+): void {
+  if (criticalFailures.length > 0) {
+    const failedDetails = criticalFailures
+      .map((f) => `${f.path}: ${f.error}`)
+      .join("\n");
+    // A page module the adapter could not retrieve is the same condition the
+    // layout path already answers 404 for, so it is re-raised with the same
+    // identity the adapter used. Wrapping it in a `render-error` would answer
+    // 500 for a deleted project on the page path while answering 404 on the
+    // layout path.
+    //
+    // `every`, matching `tenantBuildFailure` below: one module that loaded and
+    // threw, or an infrastructure `file-not-found` such as http-cache's write
+    // verification, must not be reported as an absent release.
+    const missingSource = criticalFailures.every((f) => f.missingSource);
+    const failure = (missingSource ? FILE_NOT_FOUND : RENDER_ERROR).create({
+      detail: `Critical page module(s) failed to load:\n${failedDetails}`,
+      context: {
+        criticalFailures,
+        // A module that never compiled is a developer-facing build failure;
+        // one that compiled and threw at module scope is an application
+        // error the project's own error page should present.
+        buildFailure: criticalFailures.some((f) => f.buildFailure),
+        // Only explicit compiler/source classifications may affect
+        // observability severity. Infrastructure can fail in the same phase.
+        //
+        // `every` rather than `some`: today `criticalFailures` holds at most
+        // one entry (collectModulesToLoad pushes exactly one `type: "page"`,
+        // and only pages reach here), so the two are equivalent. If that ever
+        // changes, one tenant mistake must not downgrade a framework fault
+        // that failed alongside it. The array is non-empty inside this branch,
+        // so `every` cannot vacuously return true.
+        tenantBuildFailure: criticalFailures.every((f) => f.tenantBuildFailure),
+        loadedCount: loaded.length,
+        totalModules: modules.length,
+      },
+    });
+
+    // Carry the adapter's own marker across the re-raise so that one notion of
+    // "absent project source" holds on both sides of this boundary, rather
+    // than the slug alone standing in for it here.
+    throw missingSource ? Object.assign(failure, { code: "ENOENT" }) : failure;
+  }
+}
+
+function throwFetchedDataError(error: Error, responseMetadata: DataResponseMetadata): never {
+  if (responseMetadata.headers || responseMetadata.cookies) {
+    throw wrapDataResponseMetadataError(error, responseMetadata);
+  }
+  throw error;
+}
+
+function buildClientPageIslandOptions(pageIslandPlan: ClientPageIslandPlan | null) {
+  return pageIslandPlan
+    ? {
+      clientLayoutPaths: pageIslandPlan.clientLayouts.map((layout) => layout.path),
+      hasServerLayouts: pageIslandPlan.serverLayouts.length > 0,
+    }
+    : undefined;
+}
+
+function buildHydrationRenderOptions(
+  mergedOptions: RenderOptions,
+  layoutDataMap: Map<string, Record<string, unknown>>,
+  serializedLayoutProps: ReturnType<typeof serializeLayoutProps>,
+  clientPageIsland: ReturnType<typeof buildClientPageIslandOptions>,
+): RenderOptions {
+  const hydrationOptions = layoutDataMap.size > 0
+    ? { ...mergedOptions, layoutProps: serializedLayoutProps }
+    : mergedOptions;
+  return clientPageIsland ? { ...hydrationOptions, clientPageIsland } : hydrationOptions;
+}
+
 export class RenderPipeline {
-  private config: RenderPipelineConfig;
-  private dataFetcher: DataFetcher;
-  private moduleLoaderConfig: ModuleLoaderConfig;
+  private readonly config: RenderPipelineConfig;
+  private readonly dataFetcher: DataFetcher;
+  private readonly moduleLoaderConfig: ModuleLoaderConfig;
 
   constructor(config: RenderPipelineConfig) {
     this.config = config;
@@ -435,13 +582,7 @@ export class RenderPipeline {
     );
 
     const loaded: LoadedModule[] = [];
-    const criticalFailures: Array<{
-      path: string;
-      error: string;
-      buildFailure: boolean;
-      tenantBuildFailure: boolean;
-      missingSource: boolean;
-    }> = [];
+    const criticalFailures: CriticalModuleFailure[] = [];
 
     for (const result of results) {
       if (result.mod && !result.error) {
@@ -485,48 +626,7 @@ export class RenderPipeline {
       });
     }
 
-    if (criticalFailures.length > 0) {
-      const failedDetails = criticalFailures
-        .map((f) => `${f.path}: ${f.error}`)
-        .join("\n");
-      // A page module the adapter could not retrieve is the same condition the
-      // layout path already answers 404 for, so it is re-raised with the same
-      // identity the adapter used. Wrapping it in a `render-error` would answer
-      // 500 for a deleted project on the page path while answering 404 on the
-      // layout path.
-      //
-      // `every`, matching `tenantBuildFailure` below: one module that loaded and
-      // threw, or an infrastructure `file-not-found` such as http-cache's write
-      // verification, must not be reported as an absent release.
-      const missingSource = criticalFailures.every((f) => f.missingSource);
-      const failure = (missingSource ? FILE_NOT_FOUND : RENDER_ERROR).create({
-        detail: `Critical page module(s) failed to load:\n${failedDetails}`,
-        context: {
-          criticalFailures,
-          // A module that never compiled is a developer-facing build failure;
-          // one that compiled and threw at module scope is an application
-          // error the project's own error page should present.
-          buildFailure: criticalFailures.some((f) => f.buildFailure),
-          // Only explicit compiler/source classifications may affect
-          // observability severity. Infrastructure can fail in the same phase.
-          //
-          // `every` rather than `some`: today `criticalFailures` holds at most
-          // one entry (collectModulesToLoad pushes exactly one `type: "page"`,
-          // and only pages reach here), so the two are equivalent. If that ever
-          // changes, one tenant mistake must not downgrade a framework fault
-          // that failed alongside it. The array is non-empty inside this branch,
-          // so `every` cannot vacuously return true.
-          tenantBuildFailure: criticalFailures.every((f) => f.tenantBuildFailure),
-          loadedCount: loaded.length,
-          totalModules: modules.length,
-        },
-      });
-
-      // Carry the adapter's own marker across the re-raise so that one notion of
-      // "absent project source" holds on both sides of this boundary, rather
-      // than the slug alone standing in for it here.
-      throw missingSource ? Object.assign(failure, { code: "ENOENT" }) : failure;
-    }
+    throwCriticalModuleFailures(criticalFailures, loaded, modules);
 
     return loaded;
   }
@@ -722,10 +822,7 @@ export class RenderPipeline {
 
     for (const { type, id, result, error } of dataResults) {
       if (error) {
-        if (responseMetadata.headers || responseMetadata.cookies) {
-          throw wrapDataResponseMetadataError(error, responseMetadata);
-        }
-        throw error;
+        throwFetchedDataError(error, responseMetadata);
       }
       if (!result) continue;
 
@@ -759,6 +856,301 @@ export class RenderPipeline {
     }
 
     return responseMetadata;
+  }
+
+  private preloadRenderLayouts(
+    layoutResult: Awaited<ReturnType<LayoutOrchestrator["collectLayouts"]>>,
+    options: RenderOptions,
+  ) {
+    return this.config.layoutOrchestrator.preloadLayoutModules(
+      layoutResult.nestedLayouts,
+      options?.dependencyPinningCacheKey,
+      options?.dependencyPinningDependencies,
+      options?.dependencyPinningSource,
+      options?.url?.origin,
+      options?.abortSignal,
+      options?.environment,
+      options?.dependencyPinningConfiguredVersions,
+      options?.reactPeers,
+    );
+  }
+
+  private async renderPageAttempt(input: {
+    slug: string;
+    options: RenderOptions;
+    timing: Record<string, number>;
+    cacheResult: CacheLookupResult | null;
+    cacheKey: string | null;
+    shouldCache: boolean;
+    pipelineStartTime: number;
+  }): Promise<RenderResult> {
+    const { slug, options, timing, cacheResult, cacheKey, shouldCache, pipelineStartTime } = input;
+    const pageResolveStart = performance.now();
+    const pageInfo = await profilePhase(
+      "render.resolve_page",
+      () =>
+        withSpan(
+          "render.resolve_page",
+          () =>
+            this.config.pageResolver.resolvePage(slug, {
+              signal: options?.abortSignal,
+            }),
+          { "render.slug": slug },
+        ),
+    );
+    timing.pageResolve = Math.round(performance.now() - pageResolveStart);
+
+    const sourceFile = extractRelativePathShared(
+      pageInfo.entity.path,
+      this.config.projectDir,
+    );
+    let responseHeaders: Record<string, string> | undefined;
+    let responseCookies: ResponseCookie[] | undefined;
+
+    try {
+      const skipLayouts = isDotPath({
+        slug,
+        filePath: pageInfo.entity.path,
+        projectDir: this.config.projectDir,
+      });
+
+      const layoutCollectStart = performance.now();
+      const layoutResult = skipLayouts ? EMPTY_LAYOUT_RESULT : await profilePhase(
+        "render.collect_layouts",
+        () =>
+          withSpan(
+            "render.collect_layouts",
+            () => this.config.layoutOrchestrator.collectLayouts(pageInfo),
+            { "render.slug": slug },
+          ),
+      );
+      timing.layoutCollect = Math.round(performance.now() - layoutCollectStart);
+
+      const layoutPreloadPromise = !skipLayouts && layoutResult.nestedLayouts.length > 0
+        ? this.preloadRenderLayouts(layoutResult, options)
+        : Promise.resolve();
+
+      let dataFetchingProps: Record<string, unknown> | undefined;
+      let resolvedParams: Record<string, string | string[]> = options?.params
+        ? { ...options.params }
+        : {};
+      let layoutDataMap = new Map<string, Record<string, unknown>>();
+
+      const dataFetchStart = performance.now();
+      const internalPreResolvedData = (options as InternalRenderOptions | undefined)?.[
+        PRE_RESOLVED_DATA
+      ];
+      const renderInputOptions = internalPreResolvedData && options
+        ? stripInternalRenderOptions(options as InternalRenderOptions)
+        : options;
+      if (internalPreResolvedData) {
+        resolvedParams = internalPreResolvedData.params;
+        dataFetchingProps = Object.keys(internalPreResolvedData.pageProps).length > 0
+          ? internalPreResolvedData.pageProps
+          : undefined;
+        layoutDataMap = internalPreResolvedData.layoutProps;
+        responseHeaders = internalPreResolvedData.headers;
+        responseCookies = internalPreResolvedData.cookies;
+      } else if (options?.url && (options.request || options.staticDataOnly)) {
+        await profilePhase(
+          "render.data_fetching",
+          () =>
+            withSpan(
+              "render.data_fetching",
+              async () => {
+                try {
+                  const dataResolution = await this.resolveDataFetching(
+                    slug,
+                    pageInfo.entity.path,
+                    layoutResult.nestedLayouts,
+                    options,
+                  );
+                  resolvedParams = dataResolution.params;
+                  dataFetchingProps = Object.keys(dataResolution.pageProps).length > 0
+                    ? dataResolution.pageProps
+                    : undefined;
+                  layoutDataMap = dataResolution.layoutProps;
+                  responseHeaders = dataResolution.headers;
+                  responseCookies = dataResolution.cookies;
+                } catch (error) {
+                  if (error instanceof VeryfrontError) throw error;
+
+                  renderPageLog.error("Data fetching error", {
+                    slug,
+                    error: error instanceof Error ? error.message : String(error),
+                  });
+                  throw error;
+                }
+              },
+              { "render.slug": slug },
+            ),
+        );
+      }
+      timing.dataFetch = Math.round(performance.now() - dataFetchStart);
+
+      const mergedOptions = mergeRenderDataOptions(
+        renderInputOptions,
+        dataFetchingProps,
+        resolvedParams,
+      );
+
+      const bundlePrepStart = performance.now();
+      const pageBundleResult = await profilePhase(
+        "render.prepare_bundles",
+        () =>
+          withSpan(
+            "render.prepare_bundles",
+            () =>
+              this.config.pageRenderer.preparePageBundles(
+                pageInfo,
+                slug,
+                cacheResult?.cachedModule,
+                mergedOptions,
+              ),
+            { "render.slug": slug },
+          ),
+      );
+      timing.bundlePrep = Math.round(performance.now() - bundlePrepStart);
+
+      if (pageBundleResult.scriptResult) {
+        return mergeScriptRenderResponse(pageBundleResult, responseHeaders, responseCookies);
+      }
+
+      if (!pageBundleResult.pageElement || !pageBundleResult.pageBundle) {
+        throw RENDER_ERROR.create({
+          detail: "Failed to prepare page bundle",
+          context: { slug },
+        });
+      }
+
+      const { pageElement, pageBundle } = pageBundleResult;
+      const pageIslandPlan = await this.planClientPageIsland(
+        pageInfo,
+        layoutResult.nestedLayouts,
+        mergedOptions,
+      );
+      const clientPageIsland = buildClientPageIslandOptions(pageIslandPlan);
+      const serializedLayoutProps = serializeLayoutProps(
+        layoutDataMap,
+        this.config.projectDir,
+      );
+      const renderOptions = buildHydrationRenderOptions(
+        mergedOptions,
+        layoutDataMap,
+        serializedLayoutProps,
+        clientPageIsland,
+      );
+
+      const mergedFrontmatter = {
+        ...pageInfo.entity.frontmatter,
+        ...(pageBundle as MdxBundle).frontmatter,
+      };
+
+      const headings = (pageBundle as PageBundle).headings || [];
+
+      await layoutPreloadPromise;
+
+      const layoutApplyStart = performance.now();
+      const wrappedElement = await profilePhase(
+        "render.apply_layouts",
+        () =>
+          withSpan(
+            "render.apply_layouts",
+            () =>
+              this.config.layoutOrchestrator.applyLayoutsAndWrappers(
+                pageElement,
+                pageInfo,
+                layoutResult.layoutBundle,
+                layoutResult.nestedLayouts,
+                layoutDataMap,
+                options?.url,
+                resolvedParams,
+                mergedFrontmatter,
+                headings,
+                options?.projectSlug,
+                clientPageIsland,
+                dataFetchingProps,
+                options?.dependencyPinningCacheKey,
+                options?.dependencyPinningDependencies,
+                options?.dependencyPinningSource,
+                options?.abortSignal,
+                options?.environment,
+                options?.dependencyPinningConfiguredVersions,
+                options?.reactPeers,
+              ),
+            {
+              "render.slug": slug,
+              "render.layout_count": layoutResult.nestedLayouts.length,
+            },
+          ),
+      );
+      timing.layoutApply = Math.round(performance.now() - layoutApplyStart);
+
+      // Snapshot CSS imports collected during module loading (before SSR rendering).
+      // These are passed to the HTML generator to be included in the output.
+      const collectedCSSImports = getCSSImportReferences();
+
+      const ssrStart = performance.now();
+      const ssrResult = await profilePhase(
+        "render.ssr",
+        () =>
+          withSpan(
+            "render.ssr",
+            () =>
+              withTimeoutThrow(
+                this.config.ssrOrchestrator.performSSRRendering(
+                  wrappedElement,
+                  {
+                    pageInfo,
+                    pageBundle,
+                    layoutBundle: layoutResult.layoutBundle,
+                    nestedLayouts: layoutResult.nestedLayouts,
+                    collectedMetadata: pageBundleResult.collectedMetadata,
+                    slug,
+                    cssImports: collectedCSSImports,
+                    options: renderOptions,
+                  },
+                  renderOptions,
+                ),
+                SSR_RENDER_TIMEOUT_MS,
+                `SSR rendering for ${slug}`,
+              ),
+            { "render.slug": slug, "render.delivery": mergedOptions?.delivery || "full" },
+          ),
+      );
+      timing.ssr = Math.round(performance.now() - ssrStart);
+
+      if (collectedCSSImports.length > 0) {
+        renderPipelineLog.debug("CSS imports collected for HTML generation", {
+          slug,
+          count: collectedCSSImports.length,
+          paths: collectedCSSImports.map((entry) => entry.moduleKey.split("/").pop()),
+        });
+      }
+
+      const result = assembleRenderResult({
+        slug,
+        cacheKey,
+        ssrResult,
+        pageBundle: pageBundleResult.pageBundle,
+        clientModuleCode: pageBundleResult.clientModuleCode,
+        pageModuleType: pageBundleResult.pageModuleType,
+        shouldCache,
+        skipCachePersist: options?.skipCachePersist,
+        cacheCoordinator: this.config.cacheCoordinator,
+        logger: renderPipelineLog,
+        nonce: renderOptions.nonce,
+        headers: responseHeaders,
+        cookies: responseCookies,
+      });
+
+      timing.total = Math.round(performance.now() - pipelineStartTime);
+      renderPipelineLog.debug("Complete", { slug, timing });
+
+      return result;
+    } catch (error) {
+      throwRenderAttemptError(error, sourceFile, responseHeaders, responseCookies);
+    }
   }
 
   async renderPage(slug: string, options?: RenderOptions): Promise<RenderResult> {
@@ -823,323 +1215,16 @@ export class RenderPipeline {
       withSpan(
         "render.page",
         async () => {
-          const { result } = await runWithCSSCollector(async () => {
-            const pageResolveStart = performance.now();
-            const pageInfo = await profilePhase(
-              "render.resolve_page",
-              () =>
-                withSpan(
-                  "render.resolve_page",
-                  () =>
-                    this.config.pageResolver.resolvePage(slug, {
-                      signal: options?.abortSignal,
-                    }),
-                  { "render.slug": slug },
-                ),
-            );
-            timing.pageResolve = Math.round(performance.now() - pageResolveStart);
-
-            const sourceFile = extractRelativePathShared(
-              pageInfo.entity.path,
-              this.config.projectDir,
-            );
-            let responseHeaders: Record<string, string> | undefined;
-            let responseCookies: ResponseCookie[] | undefined;
-
-            try {
-              const skipLayouts = isDotPath({
-                slug,
-                filePath: pageInfo.entity.path,
-                projectDir: this.config.projectDir,
-              });
-
-              const layoutCollectStart = performance.now();
-              const layoutResult = skipLayouts ? EMPTY_LAYOUT_RESULT : await profilePhase(
-                "render.collect_layouts",
-                () =>
-                  withSpan(
-                    "render.collect_layouts",
-                    () => this.config.layoutOrchestrator.collectLayouts(pageInfo),
-                    { "render.slug": slug },
-                  ),
-              );
-              timing.layoutCollect = Math.round(performance.now() - layoutCollectStart);
-
-              const layoutPreloadPromise = !skipLayouts && layoutResult.nestedLayouts.length > 0
-                ? this.config.layoutOrchestrator.preloadLayoutModules(
-                  layoutResult.nestedLayouts,
-                  options?.dependencyPinningCacheKey,
-                  options?.dependencyPinningDependencies,
-                  options?.dependencyPinningSource,
-                  options?.url?.origin,
-                  options?.abortSignal,
-                  options?.environment,
-                  options?.dependencyPinningConfiguredVersions,
-                  options?.reactPeers,
-                )
-                : Promise.resolve();
-
-              let dataFetchingProps: Record<string, unknown> | undefined;
-              let resolvedParams: Record<string, string | string[]> = options?.params
-                ? { ...options.params }
-                : {};
-              let layoutDataMap = new Map<string, Record<string, unknown>>();
-
-              const dataFetchStart = performance.now();
-              const internalPreResolvedData = (options as InternalRenderOptions | undefined)?.[
-                PRE_RESOLVED_DATA
-              ];
-              const renderInputOptions = internalPreResolvedData && options
-                ? stripInternalRenderOptions(options as InternalRenderOptions)
-                : options;
-              if (internalPreResolvedData) {
-                resolvedParams = internalPreResolvedData.params;
-                dataFetchingProps = Object.keys(internalPreResolvedData.pageProps).length > 0
-                  ? internalPreResolvedData.pageProps
-                  : undefined;
-                layoutDataMap = internalPreResolvedData.layoutProps;
-                responseHeaders = internalPreResolvedData.headers;
-                responseCookies = internalPreResolvedData.cookies;
-              } else if (options?.url && (options.request || options.staticDataOnly)) {
-                await profilePhase(
-                  "render.data_fetching",
-                  () =>
-                    withSpan(
-                      "render.data_fetching",
-                      async () => {
-                        try {
-                          const dataResolution = await this.resolveDataFetching(
-                            slug,
-                            pageInfo.entity.path,
-                            layoutResult.nestedLayouts,
-                            options,
-                          );
-                          resolvedParams = dataResolution.params;
-                          dataFetchingProps = Object.keys(dataResolution.pageProps).length > 0
-                            ? dataResolution.pageProps
-                            : undefined;
-                          layoutDataMap = dataResolution.layoutProps;
-                          responseHeaders = dataResolution.headers;
-                          responseCookies = dataResolution.cookies;
-                        } catch (error) {
-                          if (error instanceof VeryfrontError) throw error;
-
-                          renderPageLog.error("Data fetching error", {
-                            slug,
-                            error: error instanceof Error ? error.message : String(error),
-                          });
-                          throw error;
-                        }
-                      },
-                      { "render.slug": slug },
-                    ),
-                );
-              }
-              timing.dataFetch = Math.round(performance.now() - dataFetchStart);
-
-              const hasResolvedParams = Object.keys(resolvedParams).length > 0;
-              const mergedOptions = (dataFetchingProps || hasResolvedParams)
-                ? {
-                  ...renderInputOptions,
-                  ...(hasResolvedParams ? { params: resolvedParams } : {}),
-                  ...(dataFetchingProps
-                    ? { props: { ...renderInputOptions?.props, ...dataFetchingProps } }
-                    : {}),
-                }
-                : renderInputOptions;
-
-              const bundlePrepStart = performance.now();
-              const pageBundleResult = await profilePhase(
-                "render.prepare_bundles",
-                () =>
-                  withSpan(
-                    "render.prepare_bundles",
-                    () =>
-                      this.config.pageRenderer.preparePageBundles(
-                        pageInfo,
-                        slug,
-                        cacheResult?.cachedModule,
-                        mergedOptions,
-                      ),
-                    { "render.slug": slug },
-                  ),
-              );
-              timing.bundlePrep = Math.round(performance.now() - bundlePrepStart);
-
-              if (pageBundleResult.scriptResult) {
-                const scriptResponseMetadata = mergeDataResponseMetadata([
-                  {
-                    ...(pageBundleResult.scriptResult.headers
-                      ? { headers: pageBundleResult.scriptResult.headers }
-                      : {}),
-                    ...(pageBundleResult.scriptResult.cookies
-                      ? { cookies: pageBundleResult.scriptResult.cookies }
-                      : {}),
-                  },
-                  {
-                    ...(responseHeaders ? { headers: responseHeaders } : {}),
-                    ...(responseCookies ? { cookies: responseCookies } : {}),
-                  },
-                ]);
-                return { ...pageBundleResult.scriptResult, ...scriptResponseMetadata };
-              }
-
-              if (!pageBundleResult.pageElement || !pageBundleResult.pageBundle) {
-                throw RENDER_ERROR.create({
-                  detail: "Failed to prepare page bundle",
-                  context: { slug },
-                });
-              }
-
-              const { pageElement, pageBundle } = pageBundleResult;
-              const pageIslandPlan = await this.planClientPageIsland(
-                pageInfo,
-                layoutResult.nestedLayouts,
-                mergedOptions,
-              );
-              const clientPageIsland = pageIslandPlan
-                ? {
-                  clientLayoutPaths: pageIslandPlan.clientLayouts.map((layout) => layout.path),
-                  hasServerLayouts: pageIslandPlan.serverLayouts.length > 0,
-                }
-                : undefined;
-              const serializedLayoutProps = serializeLayoutProps(
-                layoutDataMap,
-                this.config.projectDir,
-              );
-              const hydrationOptions = layoutDataMap.size > 0
-                ? { ...mergedOptions, layoutProps: serializedLayoutProps }
-                : mergedOptions;
-              const renderOptions = clientPageIsland
-                ? { ...hydrationOptions, clientPageIsland }
-                : hydrationOptions;
-
-              const mergedFrontmatter = {
-                ...pageInfo.entity.frontmatter,
-                ...(pageBundle as MdxBundle).frontmatter,
-              };
-
-              const headings = (pageBundle as PageBundle).headings || [];
-
-              await layoutPreloadPromise;
-
-              const layoutApplyStart = performance.now();
-              const wrappedElement = await profilePhase(
-                "render.apply_layouts",
-                () =>
-                  withSpan(
-                    "render.apply_layouts",
-                    () =>
-                      this.config.layoutOrchestrator.applyLayoutsAndWrappers(
-                        pageElement,
-                        pageInfo,
-                        layoutResult.layoutBundle,
-                        layoutResult.nestedLayouts,
-                        layoutDataMap,
-                        options?.url,
-                        resolvedParams,
-                        mergedFrontmatter,
-                        headings,
-                        options?.projectSlug,
-                        clientPageIsland,
-                        dataFetchingProps,
-                        options?.dependencyPinningCacheKey,
-                        options?.dependencyPinningDependencies,
-                        options?.dependencyPinningSource,
-                        options?.abortSignal,
-                        options?.environment,
-                        options?.dependencyPinningConfiguredVersions,
-                        options?.reactPeers,
-                      ),
-                    {
-                      "render.slug": slug,
-                      "render.layout_count": layoutResult.nestedLayouts.length,
-                    },
-                  ),
-              );
-              timing.layoutApply = Math.round(performance.now() - layoutApplyStart);
-
-              // Snapshot CSS imports collected during module loading (before SSR rendering).
-              // These are passed to the HTML generator to be included in the output.
-              const collectedCSSImports = getCSSImportReferences();
-
-              const ssrStart = performance.now();
-              const ssrResult = await profilePhase(
-                "render.ssr",
-                () =>
-                  withSpan(
-                    "render.ssr",
-                    () =>
-                      withTimeoutThrow(
-                        this.config.ssrOrchestrator.performSSRRendering(
-                          wrappedElement,
-                          {
-                            pageInfo,
-                            pageBundle,
-                            layoutBundle: layoutResult.layoutBundle,
-                            nestedLayouts: layoutResult.nestedLayouts,
-                            collectedMetadata: pageBundleResult.collectedMetadata,
-                            slug,
-                            cssImports: collectedCSSImports,
-                            options: renderOptions,
-                          },
-                          renderOptions,
-                        ),
-                        SSR_RENDER_TIMEOUT_MS,
-                        `SSR rendering for ${slug}`,
-                      ),
-                    { "render.slug": slug, "render.delivery": mergedOptions?.delivery || "full" },
-                  ),
-              );
-              timing.ssr = Math.round(performance.now() - ssrStart);
-
-              if (collectedCSSImports.length > 0) {
-                renderPipelineLog.debug("CSS imports collected for HTML generation", {
-                  slug,
-                  count: collectedCSSImports.length,
-                  paths: collectedCSSImports.map((entry) => entry.moduleKey.split("/").pop()),
-                });
-              }
-
-              const result = assembleRenderResult({
-                slug,
-                cacheKey,
-                ssrResult,
-                pageBundle: pageBundleResult.pageBundle,
-                clientModuleCode: pageBundleResult.clientModuleCode,
-                pageModuleType: pageBundleResult.pageModuleType,
-                shouldCache,
-                skipCachePersist: options?.skipCachePersist,
-                cacheCoordinator: this.config.cacheCoordinator,
-                logger: renderPipelineLog,
-                nonce: renderOptions.nonce,
-                headers: responseHeaders,
-                cookies: responseCookies,
-              });
-
-              timing.total = Math.round(performance.now() - pipelineStartTime);
-              renderPipelineLog.debug("Complete", { slug, timing });
-
-              return result;
-            } catch (error) {
-              if (error instanceof Error) {
-                const classifiedError = unwrapDataResponseMetadataError(error);
-                const sourceError = classifiedError instanceof Error ? classifiedError : error;
-                (sourceError as Error & { sourceFile?: string }).sourceFile = sourceFile;
-              }
-              if (responseHeaders || responseCookies) {
-                throw wrapDataResponseMetadataError(
-                  error,
-                  mergeDataResponseMetadata([
-                    {
-                      ...(responseHeaders ? { headers: responseHeaders } : {}),
-                      ...(responseCookies ? { cookies: responseCookies } : {}),
-                    },
-                  ]),
-                );
-              }
-              throw error;
-            }
+          const { result } = await runWithCSSCollector(() => {
+            return this.renderPageAttempt({
+              slug,
+              options,
+              timing,
+              cacheResult,
+              cacheKey,
+              shouldCache,
+              pipelineStartTime,
+            });
           });
           return result;
         },
@@ -1545,7 +1630,7 @@ export class RenderPipeline {
     dependencyPinningCacheKey: string,
   ): string | null {
     const composition: RenderCacheKeyComposition = {
-      ...(this.config.renderCacheKeyComposition ?? {}),
+      ...this.config.renderCacheKeyComposition,
       colorScheme: options?.colorScheme,
       reactRuntimeScope: options?.reactRuntimeCacheScope,
     };

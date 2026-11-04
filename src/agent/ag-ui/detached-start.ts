@@ -8,6 +8,7 @@ import { streamDataStreamEvents } from "../streaming/data-stream.ts";
 import { getAgUiRequestSchema, normalizeAgUiMessages } from "./host-support.ts";
 import {
   createAgUiBodyLimitErrorResponse,
+  createAgUiSchemaValidationErrorResponse,
   extractRequest,
   parseAgUiJsonBody,
 } from "./request-shared.ts";
@@ -483,24 +484,11 @@ export function createAgUiDetachedStartHandler(
         "Invalid AG-UI detached start request",
       );
       if (bodyLimitError) return bodyLimitError;
-
-      if (
-        error instanceof Error &&
-        "issues" in error &&
-        Array.isArray((error as Record<string, unknown>).issues)
-      ) {
-        const issues = (error as { issues: Array<{ path: unknown[]; message: string }> }).issues;
-        return Response.json(
-          {
-            error: "Invalid AG-UI detached start request",
-            details: issues.map((issue) => ({
-              path: issue.path,
-              message: issue.message,
-            })),
-          },
-          { status: 400 },
-        );
-      }
+      const validationError = createAgUiSchemaValidationErrorResponse(
+        error,
+        "Invalid AG-UI detached start request",
+      );
+      if (validationError) return validationError;
 
       return Response.json(
         {

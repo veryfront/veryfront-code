@@ -492,6 +492,159 @@ function assertNativeTool(event: AgUiToolNativeRecord, context: AgUiToolProfileC
   }
 }
 
+function projectNativeToolStart(
+  event: Extract<AgUiToolNativeRecord, { readonly type: "com.veryfront.tool-call.started" }>,
+  context: AgUiToolProfileContext,
+  protocol: JsonObject | undefined,
+): AgUiToolProjectionCommand {
+  const protocolRecord = requireProtocolHeader(protocol, "TOOL_CALL_START");
+  if (!validateStartIdentity(protocolRecord, context)) {
+    return missingIdentity(
+      "native tool start protocol metadata must include saved AG-UI tool identity",
+      protocol,
+    );
+  }
+  const protocolParentMessageId = protocolRecord === undefined
+    ? undefined
+    : startIdentityParentMessageId(protocolRecord);
+  if (event.data.messageId === undefined && protocolParentMessageId !== undefined) {
+    throw new TypeError("native parent messageId must match saved protocol identity presence");
+  }
+  if (event.data.messageId !== undefined && protocolParentMessageId === undefined) {
+    throw new TypeError("native parent messageId requires saved protocol identity");
+  }
+  if (
+    event.data.messageId !== undefined &&
+    event.data.messageId !== context.parent?.nativeMessageId
+  ) {
+    throw new TypeError("native parent messageId must match persisted mapping");
+  }
+  return {
+    kind: "ag-ui-event",
+    producerOccurrence: { source: event.source, id: event.id },
+    event: validateProjectedAgUi({
+      ...aguiBase(protocolRecord, START_FIELDS),
+      type: "TOOL_CALL_START",
+      toolCallId: context.tool.agUiToolCallId,
+      toolCallName: context.tool.agUiToolCallName,
+      ...(event.data.messageId === undefined
+        ? {}
+        : { parentMessageId: context.parent?.agUiMessageId }),
+    }),
+  };
+}
+
+function projectNativeToolArguments(
+  event: Extract<
+    AgUiToolNativeRecord,
+    { readonly type: "com.veryfront.tool-call.arguments.delta.emitted" }
+  >,
+  context: AgUiToolProfileContext,
+  protocol: JsonObject | undefined,
+): AgUiToolProjectionCommand {
+  const protocolRecord = requireProtocolHeader(protocol, "TOOL_CALL_ARGS");
+  if (!validateCommonIdentity(protocolRecord, context)) {
+    return missingIdentity(
+      "native tool args protocol metadata must include saved AG-UI toolCallId",
+      protocol,
+    );
+  }
+  return {
+    kind: "ag-ui-event",
+    producerOccurrence: { source: event.source, id: event.id },
+    event: validateProjectedAgUi({
+      ...aguiBase(protocolRecord, ARGS_FIELDS),
+      type: "TOOL_CALL_ARGS",
+      toolCallId: context.tool.agUiToolCallId,
+      delta: event.data.delta,
+    }),
+  };
+}
+
+function projectNativeToolEnd(
+  event: Extract<
+    AgUiToolNativeRecord,
+    { readonly type: "com.veryfront.tool-call.arguments.ended" }
+  >,
+  context: AgUiToolProfileContext,
+  protocol: JsonObject | undefined,
+): AgUiToolProjectionCommand {
+  const protocolRecord = requireProtocolHeader(protocol, "TOOL_CALL_END");
+  if (!validateCommonIdentity(protocolRecord, context)) {
+    return missingIdentity(
+      "native tool end protocol metadata must include saved AG-UI toolCallId",
+      protocol,
+    );
+  }
+  if (event.data.input !== undefined) {
+    return {
+      kind: "missing-fact-requirement",
+      reason: "non-json-protocol-metadata",
+      message: "native finalized tool input cannot be represented by AG-UI TOOL_CALL_END",
+      ...(protocol === undefined ? {} : { protocol: { agui: protocol } }),
+    };
+  }
+  return {
+    kind: "ag-ui-event",
+    producerOccurrence: { source: event.source, id: event.id },
+    event: validateProjectedAgUi({
+      ...aguiBase(protocolRecord, END_FIELDS),
+      type: "TOOL_CALL_END",
+      toolCallId: context.tool.agUiToolCallId,
+    }),
+  };
+}
+
+function projectNativeToolResult(
+  event: Extract<
+    AgUiToolNativeRecord,
+    { readonly type: "com.veryfront.tool-call.result.recorded" }
+  >,
+  context: AgUiToolProfileContext,
+  protocol: JsonObject | undefined,
+): AgUiToolProjectionCommand {
+  if (context.kind !== "result") {
+    throw new TypeError(
+      "native tool result projection requires persisted result message context",
+    );
+  }
+  const protocolRecord = requireProtocolHeader(protocol, "TOOL_CALL_RESULT");
+  if ("outputRedacted" in event.data) {
+    return {
+      kind: "missing-fact-requirement",
+      reason: "redacted-output",
+      message: "redacted tool output cannot be projected to AG-UI TOOL_CALL_RESULT content",
+      ...(protocol === undefined ? {} : { protocol: { agui: protocol } }),
+    };
+  }
+  if (event.data.isError === true) {
+    return {
+      kind: "missing-fact-requirement",
+      reason: "error-result",
+      message: "tool result error status has no AG-UI TOOL_CALL_RESULT field",
+      ...(protocol === undefined ? {} : { protocol: { agui: protocol } }),
+    };
+  }
+  if (!validateResultIdentity(protocolRecord, context)) {
+    return missingIdentity(
+      "native tool result protocol metadata must include saved AG-UI result identity",
+      protocol,
+    );
+  }
+  return {
+    kind: "ag-ui-event",
+    producerOccurrence: { source: event.source, id: event.id },
+    event: validateProjectedAgUi({
+      ...aguiBase(protocolRecord, RESULT_FIELDS),
+      type: "TOOL_CALL_RESULT",
+      messageId: context.resultMessage.agUiMessageId,
+      toolCallId: context.tool.agUiToolCallId,
+      content: event.data.output,
+      ...(protocolIdentity(protocolRecord)?.role === undefined ? {} : { role: "tool" }),
+    }),
+  };
+}
+
 export function projectNativeToolEvent(input: ProjectNativeToolInput): AgUiToolProjectionCommand {
   const event = parseNativeToolRecord(input.event);
   const context = validateContext(input.context);
@@ -500,128 +653,16 @@ export function projectNativeToolEvent(input: ProjectNativeToolInput): AgUiToolP
   const protocol = protocolFromNative(event);
   switch (event.type) {
     case "com.veryfront.tool-call.started": {
-      const protocolRecord = requireProtocolHeader(protocol, "TOOL_CALL_START");
-      if (!validateStartIdentity(protocolRecord, context)) {
-        return missingIdentity(
-          "native tool start protocol metadata must include saved AG-UI tool identity",
-          protocol,
-        );
-      }
-      const protocolParentMessageId = protocolRecord === undefined
-        ? undefined
-        : startIdentityParentMessageId(protocolRecord);
-      if (event.data.messageId === undefined && protocolParentMessageId !== undefined) {
-        throw new TypeError("native parent messageId must match saved protocol identity presence");
-      }
-      if (event.data.messageId !== undefined && protocolParentMessageId === undefined) {
-        throw new TypeError("native parent messageId requires saved protocol identity");
-      }
-      if (
-        event.data.messageId !== undefined &&
-        event.data.messageId !== context.parent?.nativeMessageId
-      ) {
-        throw new TypeError("native parent messageId must match persisted mapping");
-      }
-      return {
-        kind: "ag-ui-event",
-        producerOccurrence: { source: event.source, id: event.id },
-        event: validateProjectedAgUi({
-          ...aguiBase(protocolRecord, START_FIELDS),
-          type: "TOOL_CALL_START",
-          toolCallId: context.tool.agUiToolCallId,
-          toolCallName: context.tool.agUiToolCallName,
-          ...(event.data.messageId === undefined
-            ? {}
-            : { parentMessageId: context.parent?.agUiMessageId }),
-        }),
-      };
+      return projectNativeToolStart(event, context, protocol);
     }
     case "com.veryfront.tool-call.arguments.delta.emitted": {
-      const protocolRecord = requireProtocolHeader(protocol, "TOOL_CALL_ARGS");
-      if (!validateCommonIdentity(protocolRecord, context)) {
-        return missingIdentity(
-          "native tool args protocol metadata must include saved AG-UI toolCallId",
-          protocol,
-        );
-      }
-      return {
-        kind: "ag-ui-event",
-        producerOccurrence: { source: event.source, id: event.id },
-        event: validateProjectedAgUi({
-          ...aguiBase(protocolRecord, ARGS_FIELDS),
-          type: "TOOL_CALL_ARGS",
-          toolCallId: context.tool.agUiToolCallId,
-          delta: event.data.delta,
-        }),
-      };
+      return projectNativeToolArguments(event, context, protocol);
     }
     case "com.veryfront.tool-call.arguments.ended": {
-      const protocolRecord = requireProtocolHeader(protocol, "TOOL_CALL_END");
-      if (!validateCommonIdentity(protocolRecord, context)) {
-        return missingIdentity(
-          "native tool end protocol metadata must include saved AG-UI toolCallId",
-          protocol,
-        );
-      }
-      if (event.data.input !== undefined) {
-        return {
-          kind: "missing-fact-requirement",
-          reason: "non-json-protocol-metadata",
-          message: "native finalized tool input cannot be represented by AG-UI TOOL_CALL_END",
-          ...(protocol === undefined ? {} : { protocol: { agui: protocol } }),
-        };
-      }
-      return {
-        kind: "ag-ui-event",
-        producerOccurrence: { source: event.source, id: event.id },
-        event: validateProjectedAgUi({
-          ...aguiBase(protocolRecord, END_FIELDS),
-          type: "TOOL_CALL_END",
-          toolCallId: context.tool.agUiToolCallId,
-        }),
-      };
+      return projectNativeToolEnd(event, context, protocol);
     }
     case "com.veryfront.tool-call.result.recorded": {
-      if (context.kind !== "result") {
-        throw new TypeError(
-          "native tool result projection requires persisted result message context",
-        );
-      }
-      const protocolRecord = requireProtocolHeader(protocol, "TOOL_CALL_RESULT");
-      if ("outputRedacted" in event.data) {
-        return {
-          kind: "missing-fact-requirement",
-          reason: "redacted-output",
-          message: "redacted tool output cannot be projected to AG-UI TOOL_CALL_RESULT content",
-          ...(protocol === undefined ? {} : { protocol: { agui: protocol } }),
-        };
-      }
-      if (event.data.isError === true) {
-        return {
-          kind: "missing-fact-requirement",
-          reason: "error-result",
-          message: "tool result error status has no AG-UI TOOL_CALL_RESULT field",
-          ...(protocol === undefined ? {} : { protocol: { agui: protocol } }),
-        };
-      }
-      if (!validateResultIdentity(protocolRecord, context)) {
-        return missingIdentity(
-          "native tool result protocol metadata must include saved AG-UI result identity",
-          protocol,
-        );
-      }
-      return {
-        kind: "ag-ui-event",
-        producerOccurrence: { source: event.source, id: event.id },
-        event: validateProjectedAgUi({
-          ...aguiBase(protocolRecord, RESULT_FIELDS),
-          type: "TOOL_CALL_RESULT",
-          messageId: context.resultMessage.agUiMessageId,
-          toolCallId: context.tool.agUiToolCallId,
-          content: event.data.output,
-          ...(protocolIdentity(protocolRecord)?.role === undefined ? {} : { role: "tool" }),
-        }),
-      };
+      return projectNativeToolResult(event, context, protocol);
     }
   }
 }

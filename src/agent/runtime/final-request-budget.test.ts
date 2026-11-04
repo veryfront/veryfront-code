@@ -2136,6 +2136,33 @@ describe("invoke_agent child request budget", () => {
     );
   });
 
+  it("selects the transport document input requires before checking native output", () => {
+    const base = {
+      model: { provider: "openai", modelId: "gpt-4.1", openAITransport: "auto" },
+      providerOptions: { openai: { max_output_tokens: 60_000 } },
+      system: "ok",
+      limit: { context: 40_000, output: 64_000 },
+      requestedOutputTokens: 4_096,
+    } as const;
+    enforceProviderRequestBudget({ ...base, messages: [{ role: "user", content: "Read" }] });
+    assertThrows(
+      () =>
+        enforceProviderRequestBudget({
+          ...base,
+          messages: [{
+            role: "user",
+            content: [{
+              type: "file",
+              url: "data:application/pdf;base64,JVBERi0=",
+              mediaType: "application/pdf",
+            }],
+          }],
+        }),
+      Error,
+      "context window",
+    );
+  });
+
   it("compacts history when only the native output control exceeds the window", async () => {
     const modelId = "veryfront-cloud/anthropic/claude-haiku-4-5";
     const history = (): Message[] => [{

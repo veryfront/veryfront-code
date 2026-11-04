@@ -14,6 +14,12 @@ describe("browser HTTP async-context compatibility", () => {
         JSON.stringify({
           extends: new URL("../../../scripts/test.deno.json", import.meta.url).href,
           imports: {
+            "#deno-config": new URL("../../../deno.json", import.meta.url).href,
+            "#veryfront/": new URL("../../../src/", import.meta.url).href,
+            "#veryfront/extensions/websocket": new URL(
+              "../../../src/extensions/websocket/index.ts",
+              import.meta.url,
+            ).href,
             "veryfront/platform/http": new URL(
               "../../../src/platform/compat/http/index.ts",
               import.meta.url,

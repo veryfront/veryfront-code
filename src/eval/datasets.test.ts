@@ -102,6 +102,16 @@ describe("eval/datasets", () => {
     }
   });
 
+  it("preserves and validates expected outcomes", async () => {
+    const example = { id: "negative", input: {}, expectedOutcome: "error" as const };
+    assertEquals(await datasets.inline([example]).load({ baseDir: Deno.cwd() }), [example]);
+    assertThrows(
+      () => datasets.inline([{ ...example, expectedOutcome: "failed" } as never]),
+      Error,
+      "expectedOutcome must be success or error",
+    );
+  });
+
   it("rejects duplicate ids and missing input", async () => {
     assertThrows(
       () =>

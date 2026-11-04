@@ -1,15 +1,29 @@
+import type {
+  JsonSchema,
+  JsonSchemaValidationFunction,
+} from "#veryfront/extensions/schema/index.ts";
+import { compileJsonSchemaValidator } from "#veryfront/schemas/json-schema.ts";
+import { withPristineIntrinsics } from "#veryfront/schemas/pristine-intrinsics.ts";
 import { INITIALIZATION_ERROR } from "#veryfront/errors";
-import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
+import {
+  snapshotBoundedJsonValue,
+  snapshotBoundedParsedJsonValue,
+} from "#veryfront/schemas/json-value.ts";
 import { guardedEgressFetch } from "#veryfront/security/sandbox/worker-egress-guard.ts";
-import { readResponseTextPrefix } from "#veryfront/utils/response-body.ts";
+import { readResponseBytesPrefix, readResponseTextPrefix } from "#veryfront/utils/response-body.ts";
 import {
   LOCAL_INTEGRATION_REQUEST_INVALID,
+  localIntegrationConfigurationError,
   type LocalIntegrationDiagnosticIdentity,
   localIntegrationRequestFailed,
   localIntegrationResponseInvalid,
+  localIntegrationResponseTooLarge,
 } from "#veryfront/integrations/local-integration-errors.ts";
 import {
   INTEGRATION_REQUEST_TIMEOUT_MS,
+  MAX_BINARY_CONTENT_TYPE_LENGTH,
+  MAX_INTEGRATION_BINARY_RESPONSE_BYTES,
+  MAX_INTEGRATION_CALL_REQUEST_BYTES,
   MAX_INTEGRATION_TOOL_CALL_RESPONSE_BYTES,
 } from "#veryfront/integrations/limits.ts";
 import type { IntegrationToolMeta } from "#veryfront/integrations/schema.ts";
@@ -38,6 +52,7 @@ const apply = Reflect.apply;
 const arrayIsArray = Array.isArray;
 const clearTimeoutIntrinsic = clearTimeout;
 const DOMExceptionConstructor = DOMException;
+const decodeUriComponent = decodeURIComponent;
 const encodeUriComponent = encodeURIComponent;
 const freeze = Object.freeze;
 const getOwnPropertyDescriptor = Reflect.getOwnPropertyDescriptor;
@@ -48,6 +63,7 @@ const jsonParse = JSON.parse;
 const jsonStringify = JSON.stringify;
 const numberIsFinite = Number.isFinite;
 const numberIsSafeInteger = Number.isSafeInteger;
+const numberMaxSafeInteger = Number.MAX_SAFE_INTEGER;
 const objectCreate = Object.create;
 const objectDefineProperty = Object.defineProperty;
 const objectKeys = Object.keys;
@@ -63,11 +79,15 @@ const setTimeoutIntrinsic = setTimeout;
 const StringConstructor = String;
 const stringCharCodeAt = String.prototype.charCodeAt;
 const stringIncludes = String.prototype.includes;
+const stringIndexOf = String.prototype.indexOf;
+const stringToLowerCase = String.prototype.toLowerCase;
+const stringTrim = String.prototype.trim;
 const stringReplaceAll = String.prototype.replaceAll;
 const stringSlice = String.prototype.slice;
 const textEncoder = new TextEncoder();
 const textEncoderEncode = TextEncoder.prototype.encode;
 const URLConstructor = URL;
+const URLSearchParamsConstructor = URLSearchParams;
 const urlOrigin = Object.getOwnPropertyDescriptor(URL.prototype, "origin")?.get;
 const urlSearchParams = Object.getOwnPropertyDescriptor(URL.prototype, "searchParams")?.get;
 const urlSearchParamsAppend = URLSearchParams.prototype.append;
@@ -120,6 +140,19 @@ export interface ExecuteLocalIntegrationEndpointOptions extends LocalIntegration
    * would not be the body that was checked.
    */
   readonly body?: string | undefined;
+  /**
+   * The catalog tool's `requiresWrite`; when absent, any non-GET call is a
+   * write. An over-limit response to a write is reported as succeeded rather
+   * than failed, so the caller does not repeat it.
+   */
+  readonly requiresWrite?: boolean | undefined;
+  /**
+   * For a binary (`response.encoding`) endpoint: return the body as raw
+   * `{ bytes, size, content_type }` up to this many bytes, instead of base64
+   * within {@link MAX_INTEGRATION_BINARY_RESPONSE_BYTES}. Only for direct
+   * callers; the result is not a JSON tool result.
+   */
+  readonly rawBinaryMaxBytes?: number;
   /** Internal test seam. Production callers use the standard integration deadline. */
   readonly timeoutMs?: number;
   /** Internal test seam. Production callers use the guarded egress transport. */
@@ -146,6 +179,76 @@ export interface LocalIntegrationJsonResult {
 interface RequestSignalLease {
   readonly signal: AbortSignal;
   release(): void;
+}
+
+const objectEntries = Object.entries;
+const canonicalInputValidators = new WeakMap<
+  IntegrationEndpoint,
+  ReadonlyArray<readonly [string, IntegrationEndpointBodyField, JsonSchemaValidationFunction]>
+>();
+const weakMapGet = WeakMap.prototype.get;
+const weakMapSet = WeakMap.prototype.set;
+
+/**
+ * Enforce canonical nested contracts before credentials or transport.
+ * Validators must be synchronous here: the intrinsic guard cannot protect
+ * deferred adapter work without changing globals across concurrent requests.
+ */
+export function validateLocalIntegrationEndpointInputSchemas(
+  endpoint: IntegrationEndpoint,
+  args: Record<string, unknown>,
+): void {
+  let validators = apply(weakMapGet, canonicalInputValidators, [endpoint]) as
+    | ReadonlyArray<readonly [string, IntegrationEndpointBodyField, JsonSchemaValidationFunction]>
+    | undefined;
+  if (!validators) {
+    const compiled: Array<
+      readonly [string, IntegrationEndpointBodyField, JsonSchemaValidationFunction]
+    > = [];
+    const fields = objectEntries(endpoint.body ?? {});
+    for (let index = 0; index < fields.length; index++) {
+      const entry = fields[index]!;
+      const name = entry[0];
+      const field = entry[1];
+      const schema = getOwnPropertyDescriptor(field, "inputSchema")?.value;
+      if (schema === undefined) continue;
+      let validate: JsonSchemaValidationFunction;
+      try {
+        validate = withPristineIntrinsics(() => compileJsonSchemaValidator(schema as JsonSchema));
+      } catch {
+        localIntegrationConfigurationError("Local integration input schema could not be compiled");
+      }
+      objectDefineProperty(compiled, compiled.length, {
+        enumerable: true,
+        value: freeze([name, field, validate] as const),
+      });
+    }
+    validators = freeze(compiled);
+    apply(weakMapSet, canonicalInputValidators, [endpoint, validators]);
+  }
+  for (let index = 0; index < validators.length; index++) {
+    const entry = validators[index]!;
+    const name = entry[0];
+    const field = entry[1];
+    const validate = entry[2];
+    const input = fieldValue(args, name, field);
+    if (!input.present) continue;
+    const success = withPristineIntrinsics(() => {
+      const result = validate(input.value);
+      if (typeof (result as { then?: unknown })?.then === "function") {
+        // Observe unsupported async work so its rejection cannot outlive the
+        // explicit configuration failure as an unhandled rejection.
+        void (result as PromiseLike<unknown>).then(() => undefined, () => undefined);
+        localIntegrationConfigurationError(
+          "Local integration input validation requires a synchronous JSON Schema validator",
+        );
+      }
+      return (result as { success: boolean }).success;
+    });
+    if (!success) {
+      requestInvalid(`Local integration argument "${name}" does not match its input schema`);
+    }
+  }
 }
 
 function requestInvalid(detail: string): never {
@@ -344,6 +447,21 @@ function pathSegment(value: unknown): string {
   return encoded;
 }
 
+/**
+ * Decodes a `$skiptoken` copied from `@odata.nextLink`. The link carries it
+ * URL-encoded, and URLSearchParams encodes it again, so an undecoded token would
+ * reach Graph as a different token and the next page would be lost.
+ */
+function graphSkipToken(value: string, name: string): string {
+  try {
+    return decodeUriComponent(value);
+  } catch {
+    requestInvalid(
+      `Local integration argument "${name}" must be the $skiptoken value from @odata.nextLink`,
+    );
+  }
+}
+
 function appendQueryValue(
   searchParams: URLSearchParams,
   name: string,
@@ -355,6 +473,8 @@ function appendQueryValue(
       ? `"${replaceAll(item, '"', '\\"')}"`
       : field.queryValueFormat === "microsoft-graph-conversation-id"
       ? `conversationId eq '${replaceAll(item, "'", "''")}'`
+      : field.queryValueFormat === "microsoft-graph-skiptoken"
+      ? graphSkipToken(item, name)
       : item;
     apply(urlSearchParamsAppend, searchParams, [field.queryName ?? name, formatted]);
   };
@@ -373,8 +493,20 @@ function setHeader(headers: Headers, name: string, value: string): void {
   }
 }
 
+/**
+ * Bounds a request value by the whole-request limit only, so one string such as
+ * base64 attachment content may use all of it rather than the 1 MiB default.
+ */
+function snapshotRequestJson(value: unknown) {
+  return snapshotBoundedJsonValue(
+    value,
+    MAX_INTEGRATION_CALL_REQUEST_BYTES,
+    MAX_INTEGRATION_CALL_REQUEST_BYTES,
+  );
+}
+
 function snapshotArguments(args: Record<string, unknown>): Record<string, unknown> {
-  const snapshot = snapshotBoundedJsonValue(args);
+  const snapshot = snapshotRequestJson(args);
   if (!snapshot.success || !isRecord(snapshot.value)) {
     requestInvalid("Local integration arguments must be a bounded JSON object");
   }
@@ -464,6 +596,7 @@ function snapshotAndValidateArguments(
   endpoint: IntegrationEndpoint,
   args: Record<string, unknown>,
 ): Record<string, unknown> {
+  assertSupportedResponseEncoding(endpoint);
   const snapshot = snapshotArguments(args);
   assertKnownArguments(snapshot, endpoint);
 
@@ -474,12 +607,14 @@ function snapshotAndValidateArguments(
     if (!field) continue;
     const resolved = fieldValue(snapshot, name, field);
     if (!resolved.present) continue;
-    // Path and header arguments are fully validated here, not only where the
-    // request is built: `executeTool` mints credentials between this snapshot
-    // and `buildRequest`, so a rejection that waits for build time would
-    // already have sent the client credentials to the token endpoint.
+    // Path, query and header arguments are fully validated here, not only where
+    // the request is built: `executeTool` mints credentials between this
+    // snapshot and `buildRequest`, so a rejection that waits for build time
+    // would already have sent the client credentials to the token endpoint.
     if (field.in === "path") pathSegment(resolved.value);
-    else if (field.in === "header") {
+    else if (field.in === "query") {
+      appendQueryValue(new URLSearchParamsConstructor(), name, resolved.value, field);
+    } else if (field.in === "header") {
       setHeader(
         new HeadersConstructor(),
         field.headerName ?? name,
@@ -491,8 +626,24 @@ function snapshotAndValidateArguments(
   return snapshot;
 }
 
+function isBinaryResponse(endpoint: IntegrationEndpoint): boolean {
+  return endpoint.response?.encoding === "base64";
+}
+
+/** Encoded content is GET-only and never reshaped by a JSON transform. */
+function assertSupportedResponseEncoding(endpoint: IntegrationEndpoint): void {
+  if (endpoint.response?.encoding === undefined) return;
+  if (endpoint.method !== "GET") {
+    requestInvalid("Local integration encoded responses require a GET endpoint");
+  }
+  const transform = endpoint.response?.transform;
+  if (transform !== undefined && transform !== "") {
+    requestInvalid("Local integration encoded responses cannot declare a transform");
+  }
+}
+
 function serializeJson(value: unknown): string {
-  const snapshot = snapshotBoundedJsonValue(value);
+  const snapshot = snapshotRequestJson(value);
   if (!snapshot.success) requestInvalid("Local integration request body must be bounded JSON");
   try {
     return jsonStringify(snapshot.value);
@@ -659,7 +810,11 @@ function createRequestSignal(
   });
 }
 
-const guardedTransport: LocalIntegrationEndpointTransport = async (request) => {
+/**
+ * @internal The default egress-guarded transport, for sources that wrap it to
+ * observe response status. Not exported from the public integrations module.
+ */
+export const guardedTransport: LocalIntegrationEndpointTransport = async (request) => {
   return await guardedEgressFetch(request.url, request.init, {
     authorizeUrl(url): void {
       if (urlValue(urlOrigin, url) !== request.allowedOrigin) {
@@ -669,22 +824,32 @@ const guardedTransport: LocalIntegrationEndpointTransport = async (request) => {
   });
 };
 
-function contentLengthWithinLimit(response: Response): boolean {
-  const raw = apply(headersGet, responseHeadersValue(response), [
-    "content-length",
-  ]) as string | null;
-  if (raw === null) return true;
+function responseHeaderValue(response: Response, name: string): string | null {
+  return apply(headersGet, responseHeadersValue(response), [name]) as string | null;
+}
+
+/**
+ * Reads a declared content length that does not exceed `limit`.
+ *
+ * Returns `null` when no length is declared and `false` when the declaration is
+ * malformed or over the limit.
+ */
+function declaredContentLength(response: Response, limit: number): number | null | false {
+  const raw = responseHeaderValue(response, "content-length");
+  if (raw === null) return null;
   if (raw.length === 0) return false;
   let value = 0;
   for (let index = 0; index < raw.length; index++) {
     const code = charCodeAt(raw, index);
     if (code < 48 || code > 57) return false;
     value = value * 10 + code - 48;
-    if (!numberIsSafeInteger(value) || value > MAX_INTEGRATION_TOOL_CALL_RESPONSE_BYTES) {
-      return false;
-    }
+    if (!numberIsSafeInteger(value) || value > limit) return false;
   }
-  return true;
+  return value;
+}
+
+function contentLengthWithinLimit(response: Response): boolean {
+  return declaredContentLength(response, MAX_INTEGRATION_TOOL_CALL_RESPONSE_BYTES) !== false;
 }
 
 function decodedByteLength(value: string): number {
@@ -704,16 +869,48 @@ function cancelResponseBody(response: Response): void {
   }
 }
 
+/**
+ * Why a 2xx write response body was dropped. The provider already applied the
+ * write, so failing the call would invite the caller to repeat it.
+ */
+type OmittedResponse = "too_large" | "unreadable";
+
+class ResponseOmitted {
+  constructor(readonly reason: OmittedResponse) {}
+}
+
+/**
+ * Reads a bounded JSON body. A body that is over the limits, unreadable, or not
+ * JSON fails the call, except after a write, where it is dropped and returned
+ * as a `ResponseOmitted` instead.
+ */
 async function readResponseJson(
   response: Response,
   signal: AbortSignal,
   identity: LocalIntegrationDiagnosticIdentity,
   status: number,
+  write: boolean,
+  textResponse = false,
 ): Promise<unknown> {
-  if (!contentLengthWithinLimit(response)) {
+  const unusable = (reason: OmittedResponse): ResponseOmitted => {
     cancelResponseBody(response);
-    responseInvalid(identity, status);
+    if (!write) responseInvalid(identity, status);
+    return new ResponseOmitted(reason);
+  };
+  const rawContentType = responseHeaderValue(response, "content-type") ?? "";
+  const parameterStart = apply(stringIndexOf, rawContentType, [";"]) as number;
+  const bareContentType = parameterStart < 0
+    ? rawContentType
+    : slice(rawContentType, 0, parameterStart);
+  const mediaType = apply(stringToLowerCase, apply(stringTrim, bareContentType, []), []) as string;
+  if (
+    textResponse &&
+    (status !== 200 || slice(mediaType, 0, 5) !== "text/" ||
+      mediaType.length > MAX_BINARY_CONTENT_TYPE_LENGTH)
+  ) {
+    return unusable("unreadable");
   }
+  if (!contentLengthWithinLimit(response)) return unusable("too_large");
   let text: string;
   let truncated: boolean;
   try {
@@ -724,23 +921,150 @@ async function readResponseJson(
       { fatalUtf8: true },
     ));
   } catch {
-    responseInvalid(identity, status);
+    return unusable("unreadable");
   }
   if (
     truncated ||
     decodedByteLength(text) > MAX_INTEGRATION_TOOL_CALL_RESPONSE_BYTES
   ) {
-    responseInvalid(identity, status);
+    return unusable("too_large");
   }
+  if (textResponse) {
+    const result = snapshotBoundedJsonValue(
+      { content: text, content_type: mediaType },
+      MAX_INTEGRATION_TOOL_CALL_RESPONSE_BYTES,
+      MAX_INTEGRATION_TOOL_CALL_RESPONSE_BYTES,
+    );
+    if (!result.success) return unusable("too_large");
+    return result.value;
+  }
+  // Accepted actions, such as Microsoft Graph sendMail, return 202 with no body.
+  if (status === 202 && text === "") return null;
   let parsed: unknown;
   try {
     parsed = jsonParse(text);
   } catch {
+    return unusable("unreadable");
+  }
+  // The source text is already bounded, so one string may use the whole response.
+  const snapshot = snapshotBoundedParsedJsonValue(parsed, MAX_INTEGRATION_TOOL_CALL_RESPONSE_BYTES);
+  // Over a structural bound (node count, depth): too large as well.
+  if (!snapshot.success) return unusable("too_large");
+  return snapshot.value;
+}
+
+const BASE64_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+/** Standard base64 that reads no mutable globals, so patched `btoa`/`Buffer` cannot alter it. */
+function encodeBase64(bytes: Uint8Array, size: number): string {
+  let encoded = "";
+  let index = 0;
+  for (; index + 2 < size; index += 3) {
+    const chunk = (bytes[index]! << 16) | (bytes[index + 1]! << 8) | bytes[index + 2]!;
+    encoded += BASE64_ALPHABET[chunk >> 18]! + BASE64_ALPHABET[(chunk >> 12) & 63]! +
+      BASE64_ALPHABET[(chunk >> 6) & 63]! + BASE64_ALPHABET[chunk & 63]!;
+  }
+  if (index < size) {
+    const second = index + 1 < size ? bytes[index + 1]! : 0;
+    const chunk = (bytes[index]! << 16) | (second << 8);
+    encoded += BASE64_ALPHABET[chunk >> 18]! + BASE64_ALPHABET[(chunk >> 12) & 63]! +
+      (index + 1 < size ? BASE64_ALPHABET[(chunk >> 6) & 63]! : "=") + "=";
+  }
+  return encoded;
+}
+
+/** Content codings that fetch decodes before the body is read. */
+function isDecodedContentCoding(coding: string): boolean {
+  return coding === "gzip" || coding === "x-gzip" || coding === "deflate" || coding === "br";
+}
+
+/**
+ * Classifies a response's Content-Encoding list, case-insensitively.
+ *
+ * Returns `"none"` when every coding is absent or identity, `"decoded"` when
+ * fetch decoded the body, and `null` when any coding is one fetch passes
+ * through undecoded, so the body is not the original bytes.
+ */
+function responseContentCoding(response: Response): "none" | "decoded" | null {
+  const raw = responseHeaderValue(response, "content-encoding");
+  if (raw === null) return "none";
+  const list = apply(stringToLowerCase, raw, []) as string;
+  let result: "none" | "decoded" = "none";
+  let start = 0;
+  while (start <= list.length) {
+    const comma = apply(stringIndexOf, list, [",", start]) as number;
+    const end = comma < 0 ? list.length : comma;
+    const coding = apply(stringTrim, slice(list, start, end), []) as string;
+    if (isDecodedContentCoding(coding)) result = "decoded";
+    else if (coding !== "" && coding !== "identity") return null;
+    start = end + 1;
+  }
+  return result;
+}
+
+/**
+ * Reads a binary body byte-exact, without text decoding or JSON parsing.
+ *
+ * Fails closed rather than returning partial content: an empty body, a body
+ * over the limit, a body shorter or longer than its declared length, or a
+ * failed stream is rejected without exposing any of its bytes.
+ */
+async function readResponseBinary(
+  response: Response,
+  signal: AbortSignal,
+  identity: LocalIntegrationDiagnosticIdentity,
+  status: number,
+  rawMaxBytes: number | undefined,
+): Promise<unknown> {
+  const limit = rawMaxBytes ?? MAX_INTEGRATION_BINARY_RESPONSE_BYTES;
+  const coding = responseContentCoding(response);
+  // fetch decodes gzip/br bodies but keeps the encoded Content-Length, which
+  // says nothing about the decoded size, so only an unencoded body is checked
+  // against it. A truncated encoded stream fails in the decoder instead.
+  const declared = coding === "decoded"
+    ? null
+    : declaredContentLength(response, numberMaxSafeInteger);
+  if (coding === null || declared === false) {
+    cancelResponseBody(response);
     responseInvalid(identity, status);
   }
-  const snapshot = snapshotBoundedJsonValue(parsed);
-  if (!snapshot.success) responseInvalid(identity, status);
-  return snapshot.value;
+  if (declared !== null && declared > limit) {
+    cancelResponseBody(response);
+    localIntegrationResponseTooLarge(identity, status, limit);
+  }
+  let bytes: Uint8Array;
+  let truncated: boolean;
+  try {
+    ({ bytes, truncated } = await readResponseBytesPrefix(response, limit, signal));
+  } catch {
+    responseInvalid(identity, status);
+  }
+  if (truncated) localIntegrationResponseTooLarge(identity, status, limit);
+  if (!typedArrayByteLength) responseInvalid(identity, status);
+  const size = apply(typedArrayByteLength, bytes, []) as number;
+  // An empty body is no download at all, so it fails like a 204 instead of
+  // passing as empty content.
+  const lengthMismatch = declared !== null && size !== declared;
+  if (size === 0 || lengthMismatch) {
+    responseInvalid(identity, status);
+  }
+  const rawContentType = responseHeaderValue(response, "content-type") ?? "";
+  const parameterStart = apply(stringIndexOf, rawContentType, [";"]) as number;
+  const contentType = apply(
+    stringTrim,
+    parameterStart < 0 ? rawContentType : slice(rawContentType, 0, parameterStart),
+    [],
+  ) as string;
+  const content_type = contentType === "" ? "application/octet-stream" : contentType;
+  if (rawMaxBytes !== undefined) return freeze({ bytes, size, content_type });
+  // A bounded media type keeps the whole result within the tool result bound.
+  if (content_type.length > MAX_BINARY_CONTENT_TYPE_LENGTH) responseInvalid(identity, status);
+  return freeze({
+    encoding: "base64",
+    content_base64: encodeBase64(bytes, size),
+    size,
+    content_type,
+  });
 }
 
 async function executeTransportRequest(
@@ -748,6 +1072,10 @@ async function executeTransportRequest(
   transport: LocalIntegrationEndpointTransport,
   signal: AbortSignal,
   identity: LocalIntegrationDiagnosticIdentity,
+  binary = false,
+  write = false,
+  rawBinaryMaxBytes?: number,
+  textResponse = false,
 ): Promise<{ readonly status: number; readonly value: unknown }> {
   let response: Response;
   try {
@@ -760,32 +1088,65 @@ async function executeTransportRequest(
     cancelResponseBody(response);
     requestFailed(identity, status);
   }
-  if (status === 204) return freeze({ status, value: null });
+  if (binary) {
+    // Only a complete 200 body is the requested content. 204 has none and
+    // 206 is a partial range, so neither may stand in for the original bytes.
+    if (status !== 200) {
+      cancelResponseBody(response);
+      responseInvalid(identity, status);
+    }
+    return freeze({
+      status,
+      value: await readResponseBinary(response, signal, identity, status, rawBinaryMaxBytes),
+    });
+  }
+  if (status === 204 && !textResponse) return freeze({ status, value: null });
   return freeze({
     status,
-    value: await readResponseJson(response, signal, identity, status),
+    value: await readResponseJson(response, signal, identity, status, write, textResponse),
   });
 }
 
+/**
+ * Selects `response.transform` from a parsed body.
+ *
+ * When the selection is a list and the catalog declares paging output fields
+ * (such as `@odata.nextLink`), those fields are kept beside the list under its
+ * own key, so a caller can still request the next page.
+ */
 function transformResponse(
   value: unknown,
-  transform: string | undefined,
+  response: IntegrationEndpoint["response"],
   identity: LocalIntegrationDiagnosticIdentity,
   status: number,
 ): unknown {
+  const transform = response?.transform;
   if (transform === undefined || transform === "") return value;
+  let parent: Record<string, unknown> | undefined;
+  let segment = "";
   let current = value;
   let start = 0;
   for (let index = 0; index <= transform.length; index++) {
     if (index < transform.length && charCodeAt(transform, index) !== 46) continue;
-    const segment = slice(transform, start, index);
+    segment = slice(transform, start, index);
     if (segment === "" || !isRecord(current)) responseInvalid(identity, status);
+    parent = current;
     const next = ownValue(current, segment);
     if (!next.present) responseInvalid(identity, status);
     current = next.value;
     start = index + 1;
   }
-  return current;
+  const outputFields = response?.historicalSummary?.outputFields ?? [];
+  if (!parent || !arrayIsArray(current) || outputFields.length === 0) return current;
+  const result: Record<string, unknown> = {};
+  objectDefineProperty(result, segment, { enumerable: true, value: current });
+  for (let index = 0; index < outputFields.length; index++) {
+    const name = outputFields[index]!.name;
+    if (name === segment) continue;
+    const field = ownValue(parent, name);
+    if (field.present) objectDefineProperty(result, name, { enumerable: true, value: field.value });
+  }
+  return freeze(result);
 }
 
 /** Execute one admitted catalog REST endpoint through a bounded guarded transport. */
@@ -794,6 +1155,7 @@ export async function executeLocalIntegrationEndpoint(
 ): Promise<unknown> {
   throwIfCallerAborted(options.signal);
   const args = snapshotAndValidateArguments(options.endpoint, options.args);
+  validateLocalIntegrationEndpointInputSchemas(options.endpoint, args);
   // Assemble only when the caller did not already do it before resolving a
   // credential. Re-assembling here would run after that credential step, where
   // a poisoned `toJSON` can throw even though the threaded body is sound.
@@ -812,19 +1174,32 @@ export async function executeLocalIntegrationEndpoint(
       signalLease.signal,
       body,
     );
+    const binary = isBinaryResponse(options.endpoint);
+    const write = options.requiresWrite ?? options.endpoint.method !== "GET";
     const result = await executeTransportRequest(
       request,
       options.transport ?? guardedTransport,
       signalLease.signal,
       options,
+      binary,
+      write,
+      options.rawBinaryMaxBytes,
+      options.endpoint.response?.encoding === "text",
     );
     throwIfCallerAborted(options.signal);
-    return transformResponse(
-      result.value,
-      options.endpoint.response?.transform,
-      options,
-      result.status,
-    );
+    if (binary) return result.value;
+    let omitted: OmittedResponse;
+    if (result.value instanceof ResponseOmitted) omitted = result.value.reason;
+    else {
+      try {
+        return transformResponse(result.value, options.endpoint.response, options, result.status);
+      } catch (cause) {
+        // A completed write must not fail on its response shape either.
+        if (!write) throw cause;
+        omitted = "unreadable";
+      }
+    }
+    return freeze({ success: true, status: result.status, response_omitted: omitted });
   } catch (cause) {
     throwIfCallerAborted(options.signal);
     throw cause;

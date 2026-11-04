@@ -222,9 +222,11 @@ function classifyOutboundRequestBlocked(
   return EGRESS_BLOCKED_DENIAL;
 }
 
-/** Curated codes for the gateway's EU-only inference policy refusals. */
+/** Curated codes for the gateway's project, account and key policy refusals. */
 const INFERENCE_POLICY_CODES: ReadonlySet<string> = new Set([
   "MODEL_NOT_PERMITTED",
+  "ACCOUNT_MODEL_DENIED",
+  "KEY_MODEL_DENIED",
   "INFERENCE_POLICY_DENIED",
 ]);
 

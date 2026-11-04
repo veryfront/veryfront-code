@@ -171,7 +171,11 @@ function shouldCacheCompletedDiscovery(ctx: HandlerContext): boolean {
  * the correct remote project files and the agent registry uses the
  * correct project scope.
  */
-export async function ensureProjectDiscovery(ctx: HandlerContext): Promise<DiscoveryResult> {
+export async function ensureProjectDiscovery(
+  ctx: HandlerContext,
+  assertCurrent?: () => Promise<void>,
+): Promise<DiscoveryResult> {
+  await assertCurrent?.();
   if (requiresIsolatedProjectRuntime(ctx)) {
     // Log the denial with its inputs. This surfaced as an undiagnosable 500 for
     // a full day because the reason never reached the response or the logs.
@@ -188,6 +192,7 @@ export async function ensureProjectDiscovery(ctx: HandlerContext): Promise<Disco
   }
 
   await ctx.adapter.fs.ensureSourceSnapshotFresh?.("primitive-discovery");
+  await assertCurrent?.();
   const key = discoveryKey(ctx);
   const sourceSnapshotVersion = await ctx.adapter.fs.getSourceSnapshotVersion?.();
   const cacheCompletedDiscovery = shouldCacheCompletedDiscovery(ctx) ||
@@ -215,7 +220,7 @@ export async function ensureProjectDiscovery(ctx: HandlerContext): Promise<Disco
     // The adapter invalidates a fingerprint when its snapshot changes during
     // hashing. Restart from the current generation so the fallback namespace
     // and completed record cannot be labeled with the stale generation.
-    return await ensureProjectDiscovery(ctx);
+    return await ensureProjectDiscovery(ctx, assertCurrent);
   }
 
   // Fingerprinting is asynchronous. A scope eviction or newer invocation can
@@ -223,7 +228,7 @@ export async function ensureProjectDiscovery(ctx: HandlerContext): Promise<Disco
   // its concrete fingerprint proves it owns the same source bytes.
   const currentExisting = discoveredProjects.get<DiscoveryRecord>(key);
   if (currentExisting === undefined && existing?.discardedAfterCompletion === true) {
-    return await ensureProjectDiscovery(ctx);
+    return await ensureProjectDiscovery(ctx, assertCurrent);
   }
   if (currentExisting !== existing) {
     if (
@@ -261,14 +266,14 @@ export async function ensureProjectDiscovery(ctx: HandlerContext): Promise<Disco
           settledExisting === undefined &&
           currentExisting.discardedAfterCompletion === true
         ) {
-          return await ensureProjectDiscovery(ctx);
+          return await ensureProjectDiscovery(ctx, assertCurrent);
         }
         throwProjectDiscoveryFailure(
           ctx,
           new Error("Primitive discovery cache changed while awaiting the current generation"),
         );
       }
-      return await ensureProjectDiscovery(ctx);
+      return await ensureProjectDiscovery(ctx, assertCurrent);
     }
     throwProjectDiscoveryFailure(
       ctx,
@@ -330,7 +335,9 @@ export async function ensureProjectDiscovery(ctx: HandlerContext): Promise<Disco
         // side effects, such as reading fixtures by a CWD-relative path, on
         // every agent turn (veryfront-issue-inbox#1620). The configured
         // evalDirs still mark those directories as server-only elsewhere.
-        const result = await discoverAll({ ...discoveryOptions, evalDirs: [] });
+        await assertCurrent?.();
+        const result = await discoverAll({ ...discoveryOptions, assertCurrent, evalDirs: [] });
+        await assertCurrent?.();
         const shouldWarnOnEmptyAiDiscovery = discoveryOptions.toolDirs.length > 0 ||
           discoveryOptions.agentDirs.length > 0;
 

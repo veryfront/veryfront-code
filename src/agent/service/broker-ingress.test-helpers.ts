@@ -24,7 +24,11 @@ export function invocation(overrides: Record<string, unknown> = {}) {
     tools: [],
     context: [],
     agentSource: { type: "release", releaseId: "release-1" },
-    credentials: { authToken: "api-auth-token", inferenceAuthToken: "inference-token" },
+    credentials: {
+      authToken: "api-auth-token",
+      inferenceAuthToken: "inference-token",
+      sourceAuthToken: "source-read-token",
+    },
     ...overrides,
   };
 }

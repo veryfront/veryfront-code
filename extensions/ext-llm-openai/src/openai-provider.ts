@@ -10,10 +10,12 @@
 
 import type { LLMProvider, LLMProviderConfig } from "veryfront/extensions/llm";
 import type {
+  DecisionRuntime,
   EmbeddingRuntime,
   ModelRuntime,
   RuntimeAssistantContentPart,
 } from "veryfront/provider/types";
+import { createOpenAIDecisionsRuntime } from "./openai-decisions.ts";
 import {
   buildProviderError,
   createOpenAIRequestInit,
@@ -27,6 +29,7 @@ import {
   mergeUsage,
   notifyProviderRequestRetry,
   parseRetryAfterMs,
+  promptHasDocumentInput,
   ProviderError,
   ProviderOverloadedError,
   ProviderQuotaError,
@@ -37,6 +40,7 @@ import {
   readRecord,
   requestJson,
   requestStream,
+  routesOpenAIDocumentInputToResponses,
   type RuntimeUsage,
   stringifyJsonValue,
   TOOL_INPUT_PENDING_THRESHOLD_MS,
@@ -1314,6 +1318,19 @@ function requestUsesOpenAIHostedTool(optionsForRuntime: OpenAICompatibleLanguage
   ) !== undefined;
 }
 
+/**
+ * Non-image files need Responses; Chat Completions only carries images. Only
+ * providers that serve Responses documents move there; the rest keep Chat
+ * Completions, which rejects the file before inference.
+ */
+function requiresOpenAIResponses(
+  options: OpenAICompatibleLanguageOptions,
+  documentsOnResponses: boolean,
+): boolean {
+  return requestUsesOpenAIHostedTool(options) ||
+    (documentsOnResponses && promptHasDocumentInput(options.prompt));
+}
+
 function createOpenAIChatCompletionsOnlyRuntime(
   chatRuntime: ModelRuntime<OpenAICompatibleLanguageOptions, RuntimeAssistantContentPart>,
   hostedToolReason?: string,
@@ -1343,19 +1360,22 @@ function createOpenAIChatCompletionsOnlyRuntime(
 function createOpenAIAdaptiveModelRuntime(
   chatRuntime: ModelRuntime<OpenAICompatibleLanguageOptions, RuntimeAssistantContentPart>,
   responsesRuntime: ModelRuntime<OpenAICompatibleLanguageOptions, RuntimeAssistantContentPart>,
+  documentsOnResponses: boolean,
 ): ModelRuntime<OpenAICompatibleLanguageOptions, RuntimeAssistantContentPart> {
   return {
     ...chatRuntime,
     openAITransport: "auto",
-    doGenerate(optionsForRuntime: OpenAICompatibleLanguageOptions) {
-      return requestUsesOpenAIHostedTool(optionsForRuntime)
+    openAIResponsesDocumentInput: documentsOnResponses,
+    // Async, so a request the selected runtime rejects up front still rejects.
+    async doGenerate(optionsForRuntime: OpenAICompatibleLanguageOptions) {
+      return await (requiresOpenAIResponses(optionsForRuntime, documentsOnResponses)
         ? responsesRuntime.doGenerate(optionsForRuntime)
-        : chatRuntime.doGenerate(optionsForRuntime);
+        : chatRuntime.doGenerate(optionsForRuntime));
     },
-    doStream(optionsForRuntime: OpenAICompatibleLanguageOptions) {
-      return requestUsesOpenAIHostedTool(optionsForRuntime)
+    async doStream(optionsForRuntime: OpenAICompatibleLanguageOptions) {
+      return await (requiresOpenAIResponses(optionsForRuntime, documentsOnResponses)
         ? responsesRuntime.doStream(optionsForRuntime)
-        : chatRuntime.doStream(optionsForRuntime);
+        : chatRuntime.doStream(optionsForRuntime));
     },
   };
 }
@@ -1412,6 +1432,19 @@ export function createOpenAIEmbeddingRuntime(
 export class OpenAIProvider implements LLMProvider {
   readonly id = "openai";
 
+  /**
+   * Create a Decisions runtime with bounded payload sizes.
+   * Shared input snapshots allow 64 MiB and 65,536 JSON values; the complete
+   * question set allows 512 MiB and 1,000,000 values. Both have maximum depth 64.
+   * Each JSON part allows 256 KiB, 10,000 values, and depth 32; responses allow
+   * 256 MiB. Snapshot sizes count canonical JSON UTF-8, including escapes.
+   * These bounds also apply to inline images and combinations of otherwise
+   * valid fields. See the extension README for per-field limits.
+   */
+  createDecisions(modelId: string, config: LLMProviderConfig): DecisionRuntime {
+    return createOpenAIDecisionsRuntime(modelId, config);
+  }
+
   createModel(
     modelId: string,
     config: LLMProviderConfig,
@@ -1453,6 +1486,7 @@ export class OpenAIProvider implements LLMProvider {
     return createOpenAIAdaptiveModelRuntime(
       chatRuntime,
       responsesRuntime,
+      routesOpenAIDocumentInputToResponses(providerName, config.baseURL),
     );
   }
 

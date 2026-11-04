@@ -1,3 +1,7 @@
+import {
+  hasHostedToolRunAuthorization,
+  inheritHostedToolRunAuthorization,
+} from "./tool-run-authorization.ts";
 import { prepareFacadedHostedChatRuntimeToolAssembly } from "./chat-runtime-tool-assembly.ts";
 import { markTrustedHostToolSet } from "#veryfront/tool/host-tool-provenance.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
@@ -1826,24 +1830,13 @@ Deno.test("prepareHostedChatExecution preserves allowed remote tool history", as
       }),
   });
 
-  assertEquals(
-    result.finalMessages.some((message) =>
-      message.parts.some((part) =>
-        part.type === "tool-result" &&
-        part.toolName === "harvest__list_accounts" &&
-        "result" in part &&
-        typeof part.result === "object" &&
-        part.result !== null &&
-        "type" in part.result &&
-        part.result.type === "json" &&
-        "value" in part.result &&
-        typeof part.result.value === "object" &&
-        part.result.value !== null &&
-        "accounts" in part.result.value
-      )
-    ),
-    true,
+  const accountResult = result.finalMessages.flatMap((message) => message.parts).find((part) =>
+    part.type === "tool-result" && part.toolName === "harvest__list_accounts"
   );
+  assertEquals(accountResult && "result" in accountResult ? accountResult.result : undefined, {
+    accounts: [{ id: "acct-1", name: "Test Account", product: "harvest" }],
+    summary: { count: 1 },
+  });
 });
 
 Deno.test("prepareHostedChatExecution compacts oversized context and appends a durable event", async () => {
@@ -3055,10 +3048,7 @@ Deno.test(
           type: "tool-result",
           toolCallId: "srvtool-web-search",
           toolName: "web_search",
-          result: {
-            type: "json",
-            value: [],
-          },
+          result: [],
         },
       ],
       "checkpointed provider call and result remain available for replay validation",
@@ -3942,3 +3932,54 @@ for (const toolName of ["form_input", "load_skill"] as const) {
     }
   });
 }
+
+Deno.test("canonical admission privately binds runtime options and trusted copies to its exact project and run", async () => {
+  const runId = "10000000-0000-4000-8000-000000000005";
+  let checked = false;
+  await prepareHostedChatExecution({
+    request: createParsedHostedChatRequest({
+      durableRootRun: {
+        runId,
+        messageId: "message-1",
+        latestEventId: 3,
+        latestExternalEventSequence: 2,
+      },
+    }),
+    agentConfig: { id: "agent-1", model: "configured-model", maxSteps: 3 },
+    apiUrl: "https://api.example.com",
+    abortSignal: new AbortController().signal,
+    resolveModelId: (modelId) => modelId,
+    fetchSteering: () => Promise.resolve({ instructions: "Inspect.", skills: [] }),
+    buildInstructions: () => [],
+    createRuntime: (options) => {
+      checked = true;
+      const expected = { projectId: "project-from-context", runId };
+      assertEquals(hasHostedToolRunAuthorization(options, expected), true);
+      assertEquals(hasHostedToolRunAuthorization({ ...options }, expected), false);
+      const copy = inheritHostedToolRunAuthorization({ ...options }, options);
+      assertEquals(hasHostedToolRunAuthorization(copy, expected), true);
+      assertEquals(
+        hasHostedToolRunAuthorization(copy, { ...expected, runId: "spoofed-run" }),
+        false,
+      );
+      assertEquals(
+        hasHostedToolRunAuthorization(copy, { ...expected, projectId: "spoofed-project" }),
+        false,
+      );
+      assertEquals(JSON.stringify(options).includes("runIdBindsToolAuthorization"), false);
+      return Promise.resolve({
+        runtimeKind: "framework",
+        modelId: "configured-model",
+        cleanup: () => Promise.resolve(),
+        agent: {
+          stream: () =>
+            Promise.resolve({
+              steps: Promise.resolve([]),
+              toUIMessageStream: async function* () {},
+            }),
+        },
+      });
+    },
+  });
+  assertEquals(checked, true);
+});

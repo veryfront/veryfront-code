@@ -331,8 +331,12 @@ function parseCompletedCodexStateMetadata(line) {
   ) return undefined;
   return {
     head: code.commit_sha,
+    // Historical findings persist after resolution. They do not revoke a
+    // separate clean receipt, but never qualify this summary as clean proof.
     hasFindings: [code, security].some((state) =>
-      state.has_any_findings === true || state.has_unresolved_findings === true
+      state.has_unresolved_findings === true ||
+      (state.has_any_findings === true &&
+        state.has_unresolved_findings !== false)
     ),
     clean: code.has_any_findings === false &&
       code.has_unresolved_findings === false,

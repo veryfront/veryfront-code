@@ -230,3 +230,167 @@ it("does not restore aliases removed by an outer policy when adapted again", asy
   await runtime.executeTool("veryfront__get_file", {});
   assertEquals(calls, ["veryfront__get_file"]);
 });
+
+describe("current-run platform lookup", () => {
+  const runId = "bf486556-ec8a-446d-9184-7a9890966a1d";
+  const definitions = ["get_run", "get_file"].map((name) => ({
+    name,
+    description: name,
+    parameters: {
+      type: "object" as const,
+      properties: { run_id: { type: "string" as const } },
+      required: ["run_id"],
+    },
+  }));
+  function fixture(binding?: { runId?: string; runIdBindsToolAuthorization?: boolean }) {
+    const calls: unknown[] = [];
+    const catalog = createPlatformMcpCatalogSource(
+      {
+        id: "platform",
+        listTools: async () => definitions,
+        executeTool: async (_name, args) => {
+          calls.push(args);
+          return args;
+        },
+      },
+      definitions,
+      binding,
+    );
+    return { ...catalog, calls };
+  }
+  it("projects only get_run and dispatches the authoritative ID when omitted", async () => {
+    const bound = fixture({ runId, runIdBindsToolAuthorization: true });
+    assertEquals(bound.definitions[0]?.parameters.required, []);
+    assertEquals(bound.definitions[1]?.parameters.required, ["run_id"]);
+    assertEquals(definitions[0]?.parameters.required, ["run_id"]);
+    await bound.source.executeTool("veryfront__get_run", {});
+    assertEquals(bound.calls, [{ run_id: runId }]);
+  });
+  it("preserves every explicit run_id for API validation and authorization", async () => {
+    const bound = fixture({ runId, runIdBindsToolAuthorization: true });
+    for (const value of ["10000000-1000-4000-8000-100000000001", "invalid", null, undefined]) {
+      const args = { run_id: value };
+      await bound.source.executeTool("veryfront__get_run", args);
+      assertEquals(bound.calls.at(-1), args);
+    }
+    await bound.source.executeTool("veryfront__get_file", {});
+    assertEquals(bound.calls.at(-1), {});
+  });
+  it("requires explicit IDs without valid binding authority", async () => {
+    for (
+      const binding of [undefined, {}, { runId }, {
+        runId: "invalid",
+        runIdBindsToolAuthorization: true,
+      }, {
+        runId,
+        runIdBindsToolAuthorization: false,
+      }]
+    ) {
+      const unbound = fixture(binding);
+      assertEquals(unbound.definitions[0]?.parameters.required, ["run_id"]);
+      await unbound.source.executeTool("veryfront__get_run", {});
+      assertEquals(unbound.calls, [{}]);
+    }
+  });
+});
+
+it("live current-run binding follows each execution context without retaining another run", async () => {
+  const calls: unknown[] = [];
+  const source = createLivePlatformMcpSource({
+    id: "platform",
+    listTools: async () => [{
+      name: "get_run",
+      description: "Read run",
+      parameters: {
+        type: "object",
+        properties: { run_id: { type: "string" } },
+        required: ["run_id"],
+      },
+    }],
+    executeTool: async (_name, args) => {
+      calls.push(args);
+      return args;
+    },
+  });
+  const first = "bf486556-ec8a-446d-9184-7a9890966a1d";
+  const second = "10000000-1000-4000-8000-100000000001";
+  assertEquals(
+    (await source.listTools({ runId: first, runIdBindsToolAuthorization: true }))[0]?.parameters
+      .required,
+    [],
+  );
+  await source.executeTool("veryfront__get_run", {}, {
+    runId: first,
+    runIdBindsToolAuthorization: true,
+  });
+  await source.executeTool("veryfront__get_run", {}, {
+    runId: second,
+    runIdBindsToolAuthorization: true,
+  });
+  await source.executeTool("veryfront__get_run", {}, {
+    runId: second,
+    runIdBindsToolAuthorization: false,
+  });
+  assertEquals((await source.listTools())[0]?.parameters.required, ["run_id"]);
+  assertEquals(calls, [{ run_id: first }, { run_id: second }, {}]);
+});
+
+it("a verified run-scoped live source binds discovery and dispatch without caller context", async () => {
+  const runId = "bf486556-ec8a-446d-9184-7a9890966a1d";
+  const calls: unknown[] = [];
+  const source = createLivePlatformMcpSource({
+    id: "platform",
+    listTools: async () => [{
+      name: "get_run",
+      description: "Read run",
+      parameters: {
+        type: "object",
+        properties: { run_id: { type: "string" } },
+        required: ["run_id"],
+      },
+    }],
+    executeTool: async (_name, args) => {
+      calls.push(args);
+      return args;
+    },
+  }, { runId, runIdBindsToolAuthorization: true });
+  assertEquals((await source.listTools())[0]?.parameters.required, []);
+  await source.executeTool("veryfront__get_run", {});
+  await source.executeTool("veryfront__get_run", {}, {
+    runId: "10000000-1000-4000-8000-100000000001",
+  });
+  assertEquals(calls, [{ run_id: runId }, { run_id: runId }]);
+});
+
+it("agent management errors stay on items through platform tool aliases", async () => {
+  const payload: import("./identity-contracts.ts").AgentManagementList = {
+    data: [{
+      id: "source_abc",
+      name: "broken",
+      description: null,
+      model: null,
+      avatar_url: null,
+      source_type: "project",
+      source_path: "agents/broken.ts",
+      edit_mode: "source_only",
+      can_run: false,
+      errors: [{ code: "parse_error", message: "Missing initializer", line: 3, column: 11 }],
+    }],
+  };
+  const calls: unknown[] = [];
+  const source = createLivePlatformMcpSource({
+    id: "api",
+    listTools: async () => [{
+      name: "list_agents",
+      description: "List agents",
+      parameters: { type: "object", properties: {} },
+    }],
+    executeTool: async (name, args) => {
+      calls.push({ name, args });
+      return { content: [], structuredContent: payload };
+    },
+  });
+  const result = await source.executeTool("veryfront__list_agents", { project_reference: "demo" });
+  assertEquals(result, { content: [], structuredContent: payload });
+  assertEquals(calls, [{ name: "list_agents", args: { project_reference: "demo" } }]);
+});

@@ -1,3 +1,5 @@
+import { forEachPrivateArray } from "#veryfront/security/private-array.ts";
+import { privateTextTrim } from "#veryfront/security/private-text.ts";
 /**
  * Remote Integration Tools
  *
@@ -25,10 +27,19 @@ import {
   parseIntegrationToolIdentity,
 } from "#veryfront/integrations/source-policy.ts";
 import { getRuntimeRequestContext } from "#veryfront/platform/runtime-request-context.ts";
-import { getHostEnv, getHostSecret } from "#veryfront/platform/compat/process/env.ts";
+import {
+  getHostBootEnv,
+  getHostEnv,
+  getHostSecret,
+} from "#veryfront/platform/compat/process/env.ts";
 import { createVeryfrontApiRequestUrlResolver } from "#veryfront/platform/adapters/veryfront-api-url.ts";
-import { type BoundedJsonValue, snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
+import {
+  type BoundedJsonValue,
+  snapshotBoundedJsonValue,
+  snapshotBoundedParsedJsonValue,
+} from "#veryfront/schemas/json-value.ts";
 import { logger } from "#veryfront/utils";
+import { resolveStudioOrigin } from "./studio-origin.ts";
 import {
   hasProjectIdentityControlCharacters,
   isCanonicalProjectSlug,
@@ -275,7 +286,7 @@ function normalizeProjectSlug(projectSlug: unknown): string | undefined {
   if (typeof projectSlug !== "string") {
     throw new TypeError("Integration project slug must be a string");
   }
-  const normalized = projectSlug.trim();
+  const normalized = privateTextTrim(projectSlug);
   if (normalized.length === 0) return undefined;
   if (!isCanonicalProjectSlug(normalized)) {
     throw new TypeError("Integration project slug must be canonical");
@@ -297,6 +308,18 @@ function resolveRequestProjectSlug(
   return normalizeProjectSlug(getEnvironmentConfig().projectSlug);
 }
 
+/** Project slug and Studio origin of the request, when both the project and a credential are known. */
+export function getRemoteIntegrationProjectTarget(
+  context?: ToolExecutionContext,
+): { projectSlug: string; studioOrigin?: string } | undefined {
+  const requestContext = snapshotToolExecutionContext(context, false);
+  const { baseUrl, token } = resolveRequestAuth(requestContext);
+  const projectSlug = resolveRequestProjectSlug(requestContext);
+  if (!baseUrl || !token || !projectSlug) return undefined;
+  const studioOrigin = resolveStudioOrigin(baseUrl, getHostBootEnv("STUDIO_URL"));
+  return studioOrigin ? { projectSlug, studioOrigin } : { projectSlug };
+}
+
 // ---------------------------------------------------------------------------
 // API communication
 // ---------------------------------------------------------------------------
@@ -310,9 +333,13 @@ function joinCallToolText(content: unknown[]): string {
     .join("\n");
 }
 
-function parseJsonText(text: string): unknown | undefined {
+/** Text comes from a byte-bounded response, so one string may use the whole response bound. */
+function parseJsonText(text: string): unknown {
   try {
-    const snapshot = snapshotBoundedJsonValue(JSON.parse(text));
+    const snapshot = snapshotBoundedParsedJsonValue(
+      JSON.parse(text),
+      MAX_INTEGRATION_TOOL_CALL_RESPONSE_BYTES,
+    );
     return snapshot.success ? snapshot.value : undefined;
   } catch {
     return undefined;
@@ -338,7 +365,8 @@ function applyRemoteFailureCondition(
 
   let message = text;
   if (
-    isRecord(payload) && typeof payload.message === "string" && payload.message.trim().length > 0
+    isRecord(payload) && typeof payload.message === "string" &&
+    privateTextTrim(payload.message).length > 0
   ) {
     message = payload.message;
   }
@@ -435,7 +463,7 @@ function parseToolListResponse(value: unknown): RemoteToolDefinition[] | undefin
 function snapshotRemoteToolArguments(
   args: Record<string, unknown>,
 ): Record<string, BoundedJsonValue> {
-  const snapshot = snapshotBoundedJsonValue(args);
+  const snapshot = snapshotBoundedJsonValue(args, MAX_INTEGRATION_CALL_REQUEST_BYTES);
   if (!snapshot.success || !isRecord(snapshot.value)) {
     throw new TypeError(
       "Remote integration tool arguments must be a bounded JSON object without accessors or cycles",
@@ -465,7 +493,7 @@ function serializeCallRequest(
     }
     if (
       value.length === 0 ||
-      value !== value.trim() ||
+      value !== privateTextTrim(value) ||
       hasProjectIdentityControlCharacters(value)
     ) {
       throw new TypeError(`Integration tool call ${label} must be a canonical identifier`);
@@ -505,7 +533,9 @@ async function fetchToolListAttempt(
     // available" (which returns an empty tools array with status 200).
     discardResponseBody(response);
     throw INTEGRATION_TOOL_LIST_REQUEST_FAILED.create({
-      message: `Integration tools API returned ${response.status} ${response.statusText}`.trim(),
+      message: privateTextTrim(
+        `Integration tools API returned ${response.status} ${response.statusText}`,
+      ),
       status: response.status,
     });
   }
@@ -649,6 +679,62 @@ function getRemoteIntegrationToolCatalog(
   return result;
 }
 
+function decodeRemoteToolFailure(
+  result: Record<string, unknown>,
+  hasStructuredContent: boolean,
+  text: string,
+): unknown {
+  const parsed = hasStructuredContent && isRecord(result.structuredContent) &&
+      Object.keys(result.structuredContent).length > 0
+    ? result.structuredContent
+    : parseJsonText(text);
+  const condition = isRecord(result._meta) ? result._meta.condition : undefined;
+  // The failure copies the text into `message`, so re-bound the decoded result.
+  const failure = snapshotBoundedJsonValue(
+    applyRemoteFailureCondition(parsed, text, condition),
+    MAX_INTEGRATION_TOOL_CALL_RESPONSE_BYTES,
+    MAX_INTEGRATION_TOOL_CALL_RESPONSE_BYTES,
+  );
+  if (!failure.success) {
+    throw new TypeError("Integration tools API failure result exceeds the response bound");
+  }
+  return failure.value;
+}
+
+function decodeRemoteToolResult(result: BoundedJsonValue): unknown {
+  // If MCP CallToolResult format, extract content.
+  if (isRecord(result) && Array.isArray(result.content)) {
+    const text = joinCallToolText(result.content);
+
+    const hasStructuredContent = Object.hasOwn(result, "structuredContent");
+    if (hasStructuredContent && !isRecord(result.structuredContent)) {
+      throw new TypeError(
+        "Integration tools API returned malformed MCP structured content",
+      );
+    }
+
+    if (Object.hasOwn(result, "isError") && typeof result.isError !== "boolean") {
+      throw new TypeError("Integration tools API returned a malformed MCP error marker");
+    }
+    if (result.isError === true) {
+      return decodeRemoteToolFailure(result, hasStructuredContent, text);
+    }
+
+    if (hasStructuredContent) {
+      if (!isRecord(result.structuredContent)) {
+        throw new TypeError(
+          "Integration tools API returned malformed MCP structured content",
+        );
+      }
+      return result.structuredContent;
+    }
+
+    return parseJsonText(text) ?? text;
+  }
+
+  return result;
+}
+
 async function callRemoteTool(
   baseUrl: string,
   token: string,
@@ -661,8 +747,10 @@ async function callRemoteTool(
   try {
     const serializedBody = serializeCallRequest(args, context);
     const projectSlug = resolveRequestProjectSlug(context);
-    const requestUrl = createVeryfrontApiRequestUrlResolver(baseUrl)(
-      `/integration-tools/${encodeURIComponent(`${integration}__${toolId}`)}/run`,
+    const resolveRequestUrl = createVeryfrontApiRequestUrlResolver(baseUrl);
+    const remoteToolName = `${integration}__${toolId}`;
+    const requestUrl = resolveRequestUrl(
+      `/integration-tools/${encodeURIComponent(remoteToolName)}/run`,
     );
     const response = await dispatchIntegrationApiRequest({
       requestUrl,
@@ -688,7 +776,11 @@ async function callRemoteTool(
       requestScope.signal,
       "Integration tools API call response",
     );
-    const resultSnapshot = snapshotBoundedJsonValue(rawResult);
+    // The source text is already bounded, so one string may use the whole response.
+    const resultSnapshot = snapshotBoundedParsedJsonValue(
+      rawResult,
+      MAX_INTEGRATION_TOOL_CALL_RESPONSE_BYTES,
+    );
     if (!resultSnapshot.success) {
       throw new TypeError(
         "Integration tools API call response exceeds bounded JSON shape limits",
@@ -696,42 +788,7 @@ async function callRemoteTool(
     }
     const result = resultSnapshot.value;
 
-    // If MCP CallToolResult format, extract content.
-    if (isRecord(result) && Array.isArray(result.content)) {
-      const text = joinCallToolText(result.content);
-
-      const hasStructuredContent = Object.hasOwn(result, "structuredContent");
-      if (hasStructuredContent && !isRecord(result.structuredContent)) {
-        throw new TypeError(
-          "Integration tools API returned malformed MCP structured content",
-        );
-      }
-
-      if (Object.hasOwn(result, "isError") && typeof result.isError !== "boolean") {
-        throw new TypeError("Integration tools API returned a malformed MCP error marker");
-      }
-      if (result.isError === true) {
-        const parsed = hasStructuredContent && isRecord(result.structuredContent) &&
-            Object.keys(result.structuredContent).length > 0
-          ? result.structuredContent
-          : parseJsonText(text);
-        const condition = isRecord(result._meta) ? result._meta.condition : undefined;
-        return applyRemoteFailureCondition(parsed, text, condition);
-      }
-
-      if (hasStructuredContent) {
-        if (!isRecord(result.structuredContent)) {
-          throw new TypeError(
-            "Integration tools API returned malformed MCP structured content",
-          );
-        }
-        return result.structuredContent;
-      }
-
-      return parseJsonText(text) ?? text;
-    }
-
-    return result;
+    return decodeRemoteToolResult(result);
   } finally {
     requestScope.dispose();
   }
@@ -750,8 +807,26 @@ async function callRemoteTool(
  * memoizes both outcomes for the current run. Direct callers inside a
  * Veryfront request receive the same request-scoped behavior.
  */
-export async function getRemoteIntegrationToolDiscovery(
+export function getRemoteIntegrationToolDiscovery(
   context?: ToolExecutionContext,
+): Promise<RemoteIntegrationToolDiscoveryResult> {
+  return getRemoteIntegrationToolDiscoveryWithEvidence(context);
+}
+
+/**
+ * Discovery that also reports every tool name the API listed, before the active source policy
+ * narrows the result. Connection diagnostics need that evidence; it names integrations a
+ * restricted source may not see, so it stays out of the public `veryfront/integrations` API.
+ *
+ * @internal
+ */
+export async function getRemoteIntegrationToolDiscoveryWithEvidence(
+  context?: ToolExecutionContext,
+  options?: {
+    onDiscoveredToolName?: (name: string) => void;
+    /** Called only after credential-backed API discovery succeeds, including an empty catalog. */
+    onCatalogDiscovered?: () => void;
+  },
 ): Promise<RemoteIntegrationToolDiscoveryResult> {
   const requestContext = snapshotToolExecutionContext(context, false);
   requestContext.abortSignal?.throwIfAborted();
@@ -769,7 +844,10 @@ export async function getRemoteIntegrationToolDiscovery(
       requestContext,
     );
     if (catalog.status === "unavailable") return catalog;
+    options?.onCatalogDiscovered?.();
 
+    // Keep connection evidence before source policy narrows the available tools.
+    forEachPrivateArray(catalog.tools, (tool) => options?.onDiscoveredToolName?.(tool.name));
     const sourceIntegrationPolicy = getActiveSourceIntegrationPolicy();
     return {
       status: "ok",

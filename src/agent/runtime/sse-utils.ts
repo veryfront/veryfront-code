@@ -23,6 +23,7 @@ import {
   getRuntimeStreamControllerOwner,
   isPrimaryRuntimeStream,
 } from "#veryfront/runtime/runtime-stream-ownership.ts";
+import { structuredAgentOutputForWire } from "#veryfront/agent/output-schema.ts";
 
 const getOwnDescriptor = Object.getOwnPropertyDescriptor;
 
@@ -63,9 +64,9 @@ export function sendSSE(
       controller,
       encodePrivateText(
         `data: ${
-          privateJsonStringify(
+          privateJsonStringify(structuredAgentOutputForWire(
             sequence ? { ...event, privateToolResultSequence: sequence } : event,
-          )
+          ))
         }\n\n`,
         encoder,
       ),

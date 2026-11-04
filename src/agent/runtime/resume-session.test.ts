@@ -576,6 +576,47 @@ describe("agent/runtime/resume-session", () => {
     manager.reset();
   });
 
+  it("settles overflow cancellation bookkeeping without changing another producer", () => {
+    const manager = new RunResumeSessionManager<{ ok: boolean }>();
+    let overflowSignal: AbortSignal | undefined;
+
+    for (let index = 0; index <= 1_000; index += 1) {
+      const runId = `run_${index}`;
+      const signal = manager.startRun({ runId, threadId: crypto.randomUUID() });
+      manager.cancelRun(runId);
+      if (index === 1_000) overflowSignal = signal;
+    }
+
+    assertExists(overflowSignal);
+    assertEquals(manager.getRunStatus("run_1000"), "cancelled");
+    assertThrows(
+      () => manager.startRun({ runId: "run_1000", threadId: crypto.randomUUID() }),
+      RunAlreadyExistsError,
+    );
+
+    const foreign = new AbortController();
+    foreign.abort();
+    manager.settleCancelledRun("run_1000", foreign.signal);
+    assertEquals(manager.getRunStatus("run_1000"), "cancelled");
+    manager.settleCancelledRun("run_1000", overflowSignal);
+    assertEquals(manager.getRunStatus("run_1000"), null);
+    const replacement = manager.startRun({
+      runId: "run_1000",
+      threadId: crypto.randomUUID(),
+    });
+    manager.settleCancelledRun("run_1000", overflowSignal);
+    manager.settleCancelledRun("run_1000", replacement);
+    assertEquals(manager.getRunStatus("run_1000"), "running");
+    manager.cancelRun("run_1000");
+    assertEquals(manager.getRunStatus("run_1000"), "cancelled");
+    manager.settleCancelledRun("run_1000", overflowSignal);
+    assertEquals(manager.getRunStatus("run_1000"), "cancelled");
+    manager.settleCancelledRun("run_1000", replacement);
+    assertEquals(manager.getRunStatus("run_1000"), null);
+    assertEquals(manager.isSupersededRun("run_1000", overflowSignal), false);
+    manager.reset();
+  });
+
   it("does not leak session slots across repeated completed runs", () => {
     const maxConcurrentSessions = 2;
     const manager = new RunResumeSessionManager<{ ok: boolean }>({ maxConcurrentSessions });

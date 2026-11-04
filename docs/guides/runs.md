@@ -1,7 +1,7 @@
 ---
 title: "Runs"
 description: "Run agent, task, workflow, and eval definitions through the Veryfront platform."
-order: 31
+order: 320
 ---
 
 Veryfront runs are durable executions of agents, tasks, and workflows. An eval
@@ -63,13 +63,22 @@ console.log(accepted.run.status);
 
 `input` on task, workflow and eval runs is any JSON value: an object, an
 array, a string, a number, a boolean or `null`. A task reads it as
-`ctx.input` and its execution settings as `ctx.config`. A task run created
+`ctx.input` and its execution settings as `ctx.config`.
+
+A task run created
 without `input`, or with `input: null`, gives the task `ctx.input` equal to
 `ctx.config`, so tasks that read business data from `config` keep working. A
 task that needs a nullable input should wrap it, for example
 `{ "value": null }`.
 
-```ts
+```ts title="scripts/create-task-run.ts"
+import { createRunsClient } from "veryfront/runs";
+
+const runs = createRunsClient({
+  authToken: process.env.VERYFRONT_API_TOKEN,
+  projectReference: "dreamy-haven",
+});
+
 await runs.createTaskRun({
   projectId: "22222222-2222-4222-8222-222222222222",
   target: "task:classify-ticket",
@@ -204,34 +213,20 @@ Hosted agents can compact a long active turn by retaining its exact latest user
 request and a recent tail of messages. Retained tool calls and results stay together.
 Compaction changes the model context without deleting the durable conversation history.
 
-The internal `AGENT_RUN_CONTEXT_COMPACTED` event identifies the contiguous tail with
-`firstKeptEntryId`. Its optional `preservedMessageIds` contains at most one identifier:
-the exact prepared active user request of the source run retained before that tail.
-An empty list preserves no additional request. Replay restores that original in source order and
-rejects invalid preservation records. Older events keep their existing replay behavior.
-Hosted services default to protecting two recent turns in the supplied context. If it contains only
-one user turn, compaction can shorten its tool loop while preserving the exact request.
-When two turns are available, their protected suffix remains complete; if that suffix
-cannot fit, compaction raises `ContextCompactionError` before summary generation.
-Successful compaction inside two protected complete turns is not supported by this change.
+Hosted services protect two recent turns by default. With only one user turn,
+compaction can shorten its tool loop while preserving the exact request. With
+two turns, their protected suffix stays complete. If that suffix cannot fit,
+compaction raises `ContextCompactionError` before generating a summary.
 
-For verified control-plane replay, completed tool identifiers can be reused in later
-messages when distinct source message identities identify the closed occurrences.
-Preparation preserves these occurrences until budget compaction selects a complete
-recent tail. Pending duplicates and reuse within one message are rejected. Replay
-without trusted source identities retains the existing snapshot supersession behavior.
-The API can omit older turns from its bounded admission snapshot; this release does not
-qualify complete two-turn replay from the full durable history.
+Trusted replay preserves completed tool-call occurrences across messages when
+their source identities distinguish them. Pending duplicates and reuse within
+one message are rejected. Older or untrusted replay retains its existing
+snapshot behavior.
 
-The API must support `preservedMessageIds` and apply its private request-capture
-migration before a framework that emits it is deployed. New admissions capture the
-exact prepared active user request separately from caller metadata. Strict replay
-fails when that immutable proof is unavailable. Edited tail messages also require a
-complete matching entry in their immutable admission snapshot; missing or truncated
-entries cannot authorize replay.
-Deploy occurrence-preserving API replay with a framework that validates completed
-tool identifier reuse across messages. A hosted schema requiring globally unique
-tool identifiers rejects that replay.
+Deploy compatible API and runtime versions before enabling this compaction path.
+Replay fails when the stored evidence cannot verify the retained request or
+edited messages. Bounded replay may omit older turns; this path does not guarantee
+complete two-turn replay from the full durable history.
 
 ## Typed Runs contract SDK
 
@@ -555,4 +550,8 @@ for the 0.8.9 contract. These tests do not prove deployed parity.
 
 ### Process attribution
 
-Accepted hosted task and workflow executions report the same process identity as agent executions. The control-plane response includes the process ID, display name, and service mode in the `x-veryfront-runtime-id`, `x-veryfront-runtime-name`, and `x-veryfront-runtime-mode` headers. Persisting and projecting this snapshot requires the corresponding API producer rollout. A load-balanced URL is not a process identity. Older runtimes without identity headers continue to execute and omit the snapshot. Deploy the framework consumer before enabling API persistence.
+Hosted task and workflow executions report the same process identity as agent
+executions through `x-veryfront-runtime-id`, `x-veryfront-runtime-name` and
+`x-veryfront-runtime-mode`. Use these headers to distinguish processes behind a
+shared URL. Recording the identity requires compatible API and runtime versions;
+older runtimes still execute but omit it.

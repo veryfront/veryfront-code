@@ -22,6 +22,7 @@ const RuntimeAbortSignalTimeout = AbortSignal.timeout;
 const RuntimeError = Error;
 const RuntimeArrayIsArray = Array.isArray;
 const RuntimeArrayPrototypeFind = Array.prototype.find;
+const RuntimeArrayPrototypeAt = Array.prototype.at;
 const RuntimeArrayPrototypeSome = Array.prototype.some;
 const RuntimeArrayPrototypeSort = Array.prototype.sort;
 const RuntimeAtob = atob;
@@ -192,6 +193,11 @@ function parseExpiry(value: string | undefined): number | undefined {
   return RuntimeNumberIsFinite(parsed) ? parsed : undefined;
 }
 
+function isEmptyActivationField(value: string | undefined): boolean {
+  if (value === undefined) return false;
+  return value.trim() === "";
+}
+
 function readActivationFromEnv(
   readEnv: AgentWorkerRuntimeOwnershipProbeEnvReader,
   nowMs: number,
@@ -208,8 +214,8 @@ function readActivationFromEnv(
 
   if (!PROBE_ID_RE.test(probeId)) return undefined;
   if (projectId === undefined || projectId.trim() === "") return undefined;
-  if (workerId !== undefined && workerId.trim() === "") return undefined;
-  if (childToolCallId !== undefined && childToolCallId.trim() === "") return undefined;
+  if (isEmptyActivationField(workerId)) return undefined;
+  if (isEmptyActivationField(childToolCallId)) return undefined;
   if (expiresAtMs === undefined || expiresAtMs <= nowMs) return undefined;
   if (expiresAtMs - nowMs > MAX_ACTIVATION_WINDOW_MS) return undefined;
 
@@ -321,7 +327,7 @@ function readProblemSlug(body: unknown): string | undefined {
   if (type === undefined) return undefined;
   const normalizedType = RuntimeReflectApply(RuntimeStringPrototypeToLowerCase, type, []) as string;
   const parts = RuntimeReflectApply(RuntimeStringPrototypeSplit, normalizedType, ["/"]) as string[];
-  return parts[parts.length - 1];
+  return RuntimeReflectApply(RuntimeArrayPrototypeAt, parts, [-1]) as string | undefined;
 }
 
 type ReplayAuthorityOperation = "source" | "index" | "event";
@@ -377,11 +383,12 @@ function workerGenerationHeaders(
 ): Record<string, string> {
   const runEventPayload = readJwtPayload(credentials.runEventToken);
   const terminalPayload = readJwtPayload(credentials.runTerminalToken);
-  const generation = typeof runEventPayload?.dispatchNonce === "string"
-    ? runEventPayload.dispatchNonce
-    : typeof terminalPayload?.dispatchNonce === "string"
-    ? terminalPayload.dispatchNonce
-    : undefined;
+  let generation: string | undefined;
+  if (typeof runEventPayload?.dispatchNonce === "string") {
+    generation = runEventPayload.dispatchNonce;
+  } else if (typeof terminalPayload?.dispatchNonce === "string") {
+    generation = terminalPayload.dispatchNonce;
+  }
   if (!generation) {
     throw new Error("worker generation authority is unavailable");
   }
@@ -1342,6 +1349,30 @@ function withActivation(
   };
 }
 
+function appendFailureStatus(response: { status: number }): "skipped" | "error" {
+  return response.status === 401 || response.status === 403 ? "skipped" : "error";
+}
+
+function appendFailureReason(
+  response: { status: number },
+): "event-writer-denied" | "append-failed" {
+  return response.status === 401 || response.status === 403
+    ? "event-writer-denied"
+    : "append-failed";
+}
+
+function indexedProbeFailureReason(ok: boolean, after: { reason?: string }): string | undefined {
+  if (ok) return undefined;
+  return after.reason ?? "probe-event-not-indexed";
+}
+
+function rethrowFatalAppendFailure(error: unknown): void {
+  if (
+    errorMessageIncludes(error, "append cursor is unavailable") ||
+    errorMessageIncludes(error, "append outcome is ambiguous")
+  ) throw error;
+}
+
 async function currentWriteIndex(
   activation: AgentWorkerRuntimeOwnershipProbeActivation,
   sink: AgentWorkerRuntimeOwnershipProbeReceiptSink,
@@ -1424,7 +1455,7 @@ async function currentWriteIndex(
     if (!appended.ok) {
       sink({
         ...base,
-        status: appended.status === 401 || appended.status === 403 ? "skipped" : "error",
+        status: appendFailureStatus(appended),
         eventBeforeHash: before.hash,
         sourcePath: canonical.sourcePath,
         sourceHash: canonical.sourceHash,
@@ -1433,21 +1464,17 @@ async function currentWriteIndex(
         indexResponseHash: canonical.indexResponseHash,
         eventResponseHash: await safeHash(appended.body),
         deniedStatus: appended.status,
-        reason: appended.status === 401 || appended.status === 403
-          ? "event-writer-denied"
-          : "append-failed",
+        reason: appendFailureReason(appended),
       });
       return;
     }
     committedLatestExternalEventSequence = readLatestExternalEventSequence(appended.body);
-    if (committedLatestExternalEventSequence === undefined) {
-      committedLatestExternalEventSequence = await retryEventAppendForCursor(
-        instrumented,
-        input.credentials.runEventToken,
-        retryAppendWire,
-        appendIdempotencyKey,
-      );
-    }
+    committedLatestExternalEventSequence ??= await retryEventAppendForCursor(
+      instrumented,
+      input.credentials.runEventToken,
+      retryAppendWire,
+      appendIdempotencyKey,
+    );
     if (committedLatestExternalEventSequence === undefined) {
       sink({
         ...base,
@@ -1480,34 +1507,28 @@ async function currentWriteIndex(
       indexRequestHash: canonical.indexRequestHash,
       indexResponseHash: canonical.indexResponseHash,
       eventResponseHash: await safeHash(appended.body),
-      reason: ok ? undefined : after.reason ?? "probe-event-not-indexed",
+      reason: indexedProbeFailureReason(ok, after),
     });
     return { latestExternalEventSequence: committedLatestExternalEventSequence };
   } catch (error) {
-    if (
-      errorMessageIncludes(error, "append cursor is unavailable") ||
-      errorMessageIncludes(error, "append outcome is ambiguous")
-    ) {
-      throw error;
-    }
+    rethrowFatalAppendFailure(error);
     sink({ ...base, status: "error", errorType: classifyError(error) });
     if (committedLatestExternalEventSequence !== undefined) {
       return { latestExternalEventSequence: committedLatestExternalEventSequence };
     }
-    if (appendAttempted) {
-      if (retryAppendWire !== undefined && retryAppendIdempotencyKey !== undefined) {
-        committedLatestExternalEventSequence = await retryEventAppendForCursor(
-          withActivation(activation, input),
-          input.credentials.runEventToken,
-          retryAppendWire,
-          retryAppendIdempotencyKey,
-        );
-        if (committedLatestExternalEventSequence !== undefined) {
-          return { latestExternalEventSequence: committedLatestExternalEventSequence };
-        }
+    if (!appendAttempted) return;
+    if (retryAppendWire !== undefined && retryAppendIdempotencyKey !== undefined) {
+      committedLatestExternalEventSequence = await retryEventAppendForCursor(
+        withActivation(activation, input),
+        input.credentials.runEventToken,
+        retryAppendWire,
+        retryAppendIdempotencyKey,
+      );
+      if (committedLatestExternalEventSequence !== undefined) {
+        return { latestExternalEventSequence: committedLatestExternalEventSequence };
       }
-      throw fatalCursorError("Agent worker runtime ownership probe append outcome is ambiguous");
     }
+    throw fatalCursorError("Agent worker runtime ownership probe append outcome is ambiguous");
   }
 }
 
@@ -1635,32 +1656,26 @@ async function replacedGenerationDenied(
       return { latestExternalEventSequence: committedLatestExternalEventSequence };
     }
   } catch (error) {
-    if (
-      errorMessageIncludes(error, "append cursor is unavailable") ||
-      errorMessageIncludes(error, "append outcome is ambiguous")
-    ) {
-      throw error;
-    }
+    rethrowFatalAppendFailure(error);
     sink({ ...base, status: "error", errorType: classifyError(error) });
     if (committedLatestExternalEventSequence !== undefined) {
       return { latestExternalEventSequence: committedLatestExternalEventSequence };
     }
-    if (appendOutcomeAmbiguous) {
-      if (retryAppendWire !== undefined && retryAppendIdempotencyKey !== undefined) {
-        committedLatestExternalEventSequence = await retryEventAppendForCursor(
-          withActivation(activation, input),
-          input.previousCredentials.runEventToken,
-          retryAppendWire,
-          retryAppendIdempotencyKey,
-        );
-        if (committedLatestExternalEventSequence !== undefined) {
-          return { latestExternalEventSequence: committedLatestExternalEventSequence };
-        }
-      }
-      throw fatalCursorError(
-        "Agent worker runtime ownership probe stale generation outcome is ambiguous",
+    if (!appendOutcomeAmbiguous) return;
+    if (retryAppendWire !== undefined && retryAppendIdempotencyKey !== undefined) {
+      committedLatestExternalEventSequence = await retryEventAppendForCursor(
+        withActivation(activation, input),
+        input.previousCredentials.runEventToken,
+        retryAppendWire,
+        retryAppendIdempotencyKey,
       );
+      if (committedLatestExternalEventSequence !== undefined) {
+        return { latestExternalEventSequence: committedLatestExternalEventSequence };
+      }
     }
+    throw fatalCursorError(
+      "Agent worker runtime ownership probe stale generation outcome is ambiguous",
+    );
   }
 }
 
@@ -1683,25 +1698,26 @@ async function expiredLeaseDenied(
     const retained = RuntimeReflectApply(RuntimeMapPrototypeGet, retainedCanonicalByRun, [
       input.run.runId,
     ]) as RetainedCanonicalSourceIndexProof | undefined;
-    const canonicalReplay = retained
-      ? await proveRetainedCanonicalSourceIndexReplayDenied(
+    let canonicalReplay;
+    if (retained) {
+      canonicalReplay = await proveRetainedCanonicalSourceIndexReplayDenied(
         activation,
         instrumented,
         retained,
         input.credentials,
-      )
-      : input.currentCredentials
-      ? await proveCanonicalSourceIndexReplayDenied(
+      );
+    } else if (input.currentCredentials) {
+      canonicalReplay = await proveCanonicalSourceIndexReplayDenied(
         activation,
         { ...instrumented, credentials: input.currentCredentials },
         staleIdentity,
         input.credentials,
-      )
-      : (() => {
-        throw new Error(
-          "current or retained worker authority is required to prove expired lease source/index immutability",
-        );
-      })();
+      );
+    } else {
+      throw new Error(
+        "current or retained worker authority is required to prove expired lease source/index immutability",
+      );
+    }
     const denied = await requestJson(
       instrumented,
       "POST",

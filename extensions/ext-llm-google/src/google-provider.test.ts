@@ -192,7 +192,7 @@ describe("ext-llm-google/google-provider", () => {
         functionDeclarations: [{
           name: "weather",
           description: "Get weather",
-          parameters: {
+          parametersJsonSchema: {
             type: "object",
             properties: {
               city: { type: "string" },
@@ -462,7 +462,7 @@ describe("ext-llm-google/google-provider", () => {
       tools: [{
         functionDeclarations: [{
           name: "weather",
-          parameters: {
+          parametersJsonSchema: {
             type: "object",
             properties: {
               city: { type: "string" },

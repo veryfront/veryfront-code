@@ -166,7 +166,7 @@ describe("agent/hosted-child-bootstrap", () => {
         target: { type: "agent", id: "invoke-agent-child" },
         parent_run_id: parentId,
         tool_call_id: "tool-call-1",
-        input: { prompt: "Find the latest logs." },
+        input: { text: "Find the latest logs." },
       });
       assertEquals(requests.length, 1, "admission owns conversation and handoff creation");
       const replay = await bootstrapHostedChildRun({
@@ -195,7 +195,7 @@ describe("agent/hosted-child-bootstrap", () => {
         target: { type: "agent", id: "invoke-agent-child" },
         parent_run_id: parentId,
         tool_call_id: "tool-call-1",
-        input: { prompt: "Find the latest logs." },
+        input: { text: "Find the latest logs." },
       });
     });
   }

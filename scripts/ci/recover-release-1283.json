@@ -1,0 +1,81 @@
+{
+  "schemaVersion": 1,
+  "version": "0.1.1283",
+  "repository": "veryfront/veryfront-code",
+  "source": "8b9eb53979953e4a934014232982cca02eff63b0",
+  "workflowPath": ".github/workflows/cicd.yml",
+  "mainRun": 39465167710,
+  "mainAttempt": 1,
+  "mainEvent": "push",
+  "mainRef": "main",
+  "testedNpmRun": 39462808561,
+  "testedNpmAttempt": 1,
+  "npmArtifact": {
+    "id": 12282639696,
+    "sha256": "84788fa1a06554c634e0867f5d882b027d3cf44fa08a23df885dea40c41a0363",
+    "name": "npm-compatibility-8b9eb53979953e4a934014232982cca02eff63b0",
+    "size_in_bytes": 10237887
+  },
+  "binaryArtifacts": [
+    {
+      "id": 12284014334,
+      "name": "veryfront-linux-arm64",
+      "digest": "sha256:dff5106e98faff07ddfb6413b2df08b03585d5867db9bd705b79f60988034b05",
+      "size_in_bytes": 217473668
+    },
+    {
+      "id": 12284627076,
+      "name": "veryfront-linux-x64",
+      "digest": "sha256:4ca8e8473f157188175840860fd222c881bf7b1e30d5b7b8a18d00947bd70d2a",
+      "size_in_bytes": 171620268
+    },
+    {
+      "id": 12283614368,
+      "name": "veryfront-macos-arm64",
+      "digest": "sha256:05303ebcbe5b95b7cda070a99a12c9129b74a63b2e795fc2bf3189910080535f",
+      "size_in_bytes": 158450813
+    },
+    {
+      "id": 12285011581,
+      "name": "veryfront-macos-x64",
+      "digest": "sha256:c40f77e89e241b2c3a9d647ddc31f533c9960e6cbd01a8bb3ed0fd069c345665",
+      "size_in_bytes": 179235011
+    },
+    {
+      "id": 12284197691,
+      "name": "veryfront-proxy-linux-arm64",
+      "digest": "sha256:b25b02adfe01f8391d6ac2bb1f7652c7d29dec7f2a4ed9f487e4e5bd5a39ec39",
+      "size_in_bytes": 50862394
+    },
+    {
+      "id": 12284162595,
+      "name": "veryfront-proxy-linux-x64",
+      "digest": "sha256:cc9f7ab041916b11be7cdc813f8ea91143c98666dd1e77d294cf78e9fb056336",
+      "size_in_bytes": 50653015
+    },
+    {
+      "id": 12285450320,
+      "name": "veryfront-windows-x64.exe",
+      "digest": "sha256:5a2870e4dbb6a82f79cd10b86f74b2c88269ff73216261d91dfd0bb7f9600e2d",
+      "size_in_bytes": 158075878
+    }
+  ],
+  "mainRequiredJobs": [
+    "SonarQube Cloud quality gate",
+    "build-binaries (macos-latest, aarch64-apple-darwin, veryfront-macos-arm64, cli/main.ts, full)",
+    "build-binaries (macos-latest, x86_64-apple-darwin, veryfront-macos-x64, cli/main.ts, full)",
+    "build-binaries (ubuntu-latest, aarch64-unknown-linux-gnu, veryfront-linux-arm64, cli/main.ts, full)",
+    "build-binaries (ubuntu-latest, aarch64-unknown-linux-gnu, veryfront-proxy-linux-arm64, cli/proxy-...",
+    "build-binaries (ubuntu-latest, x86_64-unknown-linux-gnu, veryfront-linux-x64, cli/main.ts, full)",
+    "build-binaries (ubuntu-latest, x86_64-unknown-linux-gnu, veryfront-proxy-linux-x64, cli/proxy-mai...",
+    "build-binaries (windows-2022, x86_64-pc-windows-msvc, veryfront-windows-x64.exe, cli/main.ts, full)",
+    "quality gate (artifact)",
+    "quality gate (release)",
+    "tested merge-queue run",
+    "version-check"
+  ],
+  "signatureVerificationRequired": true,
+  "decodedProvenanceIsSignatureVerification": false,
+  "testedNpmEvent": "merge_group",
+  "testedNpmRef": "gh-readonly-queue/main/pr-5346-431d4eee7807b0dd9928f0b2edf116adf282d9a8"
+}

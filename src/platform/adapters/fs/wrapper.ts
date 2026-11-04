@@ -1,3 +1,4 @@
+import { delegateCachedSourceObserver } from "./cached-source-observation.ts";
 import type {
   DirEntry,
   FileInfo,
@@ -212,6 +213,7 @@ export class FSAdapterWrapper implements ExtendedFileSystemAdapter {
   #contextRunner: CapturedContextRunner | undefined;
 
   constructor(fsAdapter: FSAdapter) {
+    delegateCachedSourceObserver(this, fsAdapter);
     this._fsAdapter = fsAdapter;
     const readTextFile = captureOptionalMethod(fsAdapter, "readTextFile");
     const readFile = captureOptionalMethod(fsAdapter, "readFile");

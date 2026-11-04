@@ -195,6 +195,7 @@ export const getAgentResponseSchema = defineSchema((v) =>
     thinking: v.string().optional(),
     // Parsed `outputSchema` value. Typed precisely by `AgentResponse<TOutput>`;
     // the runtime schema only has to accept it.
+    data: v.unknown().optional(),
     object: v.unknown().optional(),
     usage: v
       .object({
@@ -266,15 +267,17 @@ export type ToolCall = InferSchema<ReturnType<typeof getToolCallSchema>>;
 export type BaseAgentResponse = InferSchema<ReturnType<typeof getAgentResponseSchema>>;
 
 /**
- * Presence and type of `object` for a given structured-output type.
+ * Optional presence and type of structured aliases for a given output type.
  *
- * `never` is the no-`outputSchema` case and yields no value. `any` is the
- * erasure used by slots that hold agents of any output type, and has to stay
- * assignable from both of the other branches.
+ * `never` is the no-`outputSchema` case and yields no value. A configured
+ * schema may still omit both aliases when max-step parsing fails; the detail is
+ * recorded in `metadata.outputSchemaError`. `any` is the erasure used by slots
+ * that hold agents of any output type and remains assignable from every branch.
  */
-type AgentResponseObject<TOutput> = [TOutput] extends [never] ? { object?: undefined }
-  : 0 extends 1 & TOutput ? { object?: unknown }
-  : { object: TOutput };
+type AgentResponseObject<TOutput> = [TOutput] extends [never]
+  ? { data?: undefined; object?: undefined }
+  : 0 extends 1 & TOutput ? { data?: unknown; object?: unknown }
+  : { data?: TOutput; object?: TOutput };
 
 /**
  * Response payload for agent.

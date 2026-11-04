@@ -7,9 +7,8 @@ order: 29
 A skill owns reusable agent instructions. It can include reference files,
 scripts, and assets.
 
-Skills exist because some agent behavior is larger than one prompt but smaller
-than a new runtime primitive. A skill packages a repeatable way of working, such
-as code review, data analysis, incident response, or repository maintenance.
+A skill packages a repeatable way of working, such as code review, data
+analysis or incident response.
 
 ## Characteristics
 
@@ -31,9 +30,6 @@ A skill never widens or narrows the tools a run can call. The
 `allowed-tools` as tools pre-approved to run without prompting, so Veryfront
 records the declaration and does not enforce it. Configure the agent's tools to
 control what a run can do.
-
-This keeps task-specific agent behavior discoverable without hiding it inside a
-large system prompt.
 
 ## Wrong fit
 

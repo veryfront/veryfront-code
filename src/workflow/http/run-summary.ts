@@ -44,22 +44,28 @@ function defineRecordEntry<T>(record: Record<string, T>, key: string, value: T):
   });
 }
 
+function projectWorkflowNodeState(
+  state: NonNullable<WorkflowRun["nodeStates"]>[string],
+): WorkflowNodeStateSummary {
+  const startedAt = state.startedAt;
+  const completedAt = state.completedAt;
+  const error = state.error;
+  return {
+    nodeId: state.nodeId,
+    status: state.status,
+    attempt: state.attempt,
+    ...(startedAt ? { startedAt: startedAt.toISOString() } : {}),
+    ...(completedAt ? { completedAt: completedAt.toISOString() } : {}),
+    ...(error !== undefined ? { error } : {}),
+  };
+}
+
 /** Project a durable run into the allowlisted built-in HTTP response. */
 export function projectWorkflowRunSummary(run: WorkflowRun): WorkflowRunSummary {
   const nodeStates: Record<string, WorkflowNodeStateSummary> = {};
   for (const [nodeId, state] of Object.entries(run.nodeStates ?? {})) {
     if (!state) continue;
-    const startedAt = state.startedAt;
-    const completedAt = state.completedAt;
-    const error = state.error;
-    defineRecordEntry(nodeStates, nodeId, {
-      nodeId: state.nodeId,
-      status: state.status,
-      attempt: state.attempt,
-      ...(startedAt ? { startedAt: startedAt.toISOString() } : {}),
-      ...(completedAt ? { completedAt: completedAt.toISOString() } : {}),
-      ...(error !== undefined ? { error } : {}),
-    });
+    defineRecordEntry(nodeStates, nodeId, projectWorkflowNodeState(state));
   }
 
   const pendingApprovals: WorkflowApprovalSummary[] = [];

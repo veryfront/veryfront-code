@@ -75,6 +75,17 @@ export function localIntegrationResponseInvalid(
   });
 }
 
+/** A response over a byte limit: rejected whole, never truncated. */
+export function localIntegrationResponseTooLarge(
+  identity: LocalIntegrationDiagnosticIdentity,
+  status: number,
+  limit: number,
+): never {
+  throw LOCAL_INTEGRATION_RESPONSE_INVALID.create({
+    detail: providerDetail(identity, `returned a response larger than ${limit} bytes`, status),
+  });
+}
+
 export function localIntegrationConfigurationError(detail: string): never {
   throw LOCAL_INTEGRATION_CONFIG_INVALID.create({ detail });
 }

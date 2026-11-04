@@ -6,6 +6,11 @@ import {
   assertStringIncludes,
 } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { profilePhase } from "#veryfront/observability";
+import {
+  getCSSImportReferences,
+  registerCSSImport,
+} from "#veryfront/modules/react-loader/css-import-collector.ts";
 import { FakeTime } from "#std/testing/time";
 import { RenderPipeline, type RenderPipelineConfig } from "./pipeline.ts";
 import type { RenderOptions, RenderResult } from "./types.ts";
@@ -1484,6 +1489,72 @@ describe("RenderPipeline behavior", () => {
 
     assertEquals(renderAttempts, 1, "a released source must not pay a recovery retry");
     assertEquals(sourceRefreshes, 0, "a released source must not flush its source snapshot");
+  });
+
+  it("keeps CSS imports and profiling isolated across interleaved render attempts", async () => {
+    Deno.env.set("VERYFRONT_ENABLE_SERVER_TIMING", "1");
+    const firstStarted = Promise.withResolvers<void>();
+    const releaseFirst = Promise.withResolvers<void>();
+    const observedCss = new Map<string, string[]>();
+    const pipeline = createPipeline("/project/pages/interleaved.mdx", {
+      pageResolver: {
+        resolvePage: (slug: string) =>
+          profilePhase(`test.pipeline.${slug.slice(1)}`, async () => {
+            registerCSSImport(`/project/${slug.slice(1)}.css`);
+            if (slug === "/first") {
+              firstStarted.resolve();
+              await releaseFirst.promise;
+            }
+            return { entity: { path: "/project/pages/interleaved.mdx", frontmatter: {} } };
+          }),
+      } as RenderPipelineConfig["pageResolver"],
+      ssrOrchestrator: {
+        performSSRRendering: async (
+          _element: unknown,
+          context: { slug: string; cssImports: { readPath: string }[] },
+        ) => {
+          observedCss.set(context.slug, context.cssImports.map((entry) => entry.readPath));
+          return {
+            fullHtml: "<!doctype html><html><body>isolated</body></html>",
+            finalStream: null,
+            ssrHash: "interleaved",
+          };
+        },
+      } as unknown as RenderPipelineConfig["ssrOrchestrator"],
+    });
+    const render = (slug: string) =>
+      runWithRequestProfiling({ category: "html", method: "GET", pathname: slug }, async () => {
+        await pipeline.renderPage(slug, {
+          delivery: "string",
+          skipCacheCheck: true,
+          skipCachePersist: true,
+        });
+        return finalizeRequestProfiling(200);
+      });
+    const firstRender = render("/first");
+    try {
+      await Promise.race([
+        firstStarted.promise,
+        firstRender.then(() => {
+          throw new Error("First render ended before reaching its barrier");
+        }),
+      ]);
+      const secondProfile = await render("/second");
+      assert(secondProfile);
+      assert("test.pipeline.second" in secondProfile.phases);
+      assertEquals("test.pipeline.first" in secondProfile.phases, false);
+      releaseFirst.resolve();
+      const firstProfile = await firstRender;
+      assert(firstProfile);
+      assert("test.pipeline.first" in firstProfile.phases);
+      assertEquals("test.pipeline.second" in firstProfile.phases, false);
+      assertEquals(observedCss.get("/first"), ["/project/first.css"]);
+      assertEquals(observedCss.get("/second"), ["/project/second.css"]);
+      assertEquals(getCSSImportReferences(), []);
+    } finally {
+      releaseFirst.resolve();
+      await firstRender.catch(() => {});
+    }
   });
 
   it("renderPage emits request-profiler timings for pipeline stages", async () => {

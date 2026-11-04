@@ -16,7 +16,7 @@ export const MAX_INTEGRATION_TOOL_LIST_ATTEMPTS = 3;
 /** Base delay before a tool-list retry; the wait grows linearly per attempt. */
 export const INTEGRATION_TOOL_LIST_RETRY_DELAY_MS = 100;
 
-/** Maximum serialized request accepted by the remote tool-call endpoint. */
+/** Maximum serialized tool-call request, remote or local; one string may use all of it. */
 export const MAX_INTEGRATION_CALL_REQUEST_BYTES = 4 * 1024 * 1024;
 
 /** Maximum decoded JSON response accepted from tool discovery. */
@@ -24,6 +24,29 @@ export const MAX_INTEGRATION_TOOL_LIST_RESPONSE_BYTES = 16 * 1024 * 1024;
 
 /** Maximum decoded JSON response accepted from tool execution. */
 export const MAX_INTEGRATION_TOOL_CALL_RESPONSE_BYTES = 4 * 1024 * 1024;
+
+/** Longest media type a binary tool response may declare (RFC 6838: 127 + "/" + 127). */
+export const MAX_BINARY_CONTENT_TYPE_LENGTH = 255;
+
+/** Room reserved in a binary tool result for its fields other than the base64 string. */
+const BINARY_RESULT_WRAPPER_BYTES = 4 * 1024;
+
+/**
+ * Maximum raw bytes accepted from a binary (base64-encoded) tool response.
+ *
+ * Sized so the whole result, base64 string plus wrapper, fits the 4 MiB tool
+ * result bound ({@link MAX_INTEGRATION_TOOL_CALL_RESPONSE_BYTES}). A larger
+ * body is rejected, never truncated.
+ */
+export const MAX_INTEGRATION_BINARY_RESPONSE_BYTES =
+  Math.floor((MAX_INTEGRATION_TOOL_CALL_RESPONSE_BYTES - BINARY_RESULT_WRAPPER_BYTES) / 4) * 3;
+
+/**
+ * Maximum raw bytes a direct file download returns, such as an Outlook
+ * attachment read with `readAttachment`. The bytes are returned as-is, never as
+ * a tool result, so no JSON bound applies. A larger body is rejected, never truncated.
+ */
+export const MAX_INTEGRATION_FILE_DOWNLOAD_BYTES = 32 * 1024 * 1024;
 
 /** Maximum diagnostic prefix retained from a failed integration API response. */
 export const MAX_INTEGRATION_API_ERROR_RESPONSE_BYTES = 4 * 1024;

@@ -260,29 +260,39 @@ export function closeSchemaForOutputConfig(schema: unknown): unknown {
  * remote `$ref` names nothing this walk can open.
  */
 function collectAllOfRefTargets(schema: unknown, out: Set<string>): void {
-  if (ArrayIsArray(schema)) {
-    for (let index = 0; index < schema.length; index += 1) {
-      collectAllOfRefTargets(schema[index], out);
-    }
+  if (!isRefTargetRecord(schema)) {
+    collectArrayRefTargets(schema, out);
     return;
   }
-  if (typeof schema !== "object" || schema === null) return;
 
-  const source = schema as SchemaRecord;
+  const source = schema;
   const keys = getObjectKeys(source);
   for (let index = 0; index < keys.length; index += 1) {
     const key = keys[index]!;
     const value = source[key];
-    if (hasSetValue(COMPOSITION_LIST_KEYWORDS, key)) {
-      const branches = ArrayIsArray(value) ? value : [value];
-      for (let branchIndex = 0; branchIndex < branches.length; branchIndex += 1) {
-        const branch = branches[branchIndex];
-        if (typeof branch !== "object" || branch === null) continue;
-        const ref = (branch as SchemaRecord).$ref;
-        if (typeof ref === "string" && ref[0] === "#" && ref[1] === "/") addSetValue(out, ref);
-      }
+    if (!hasSetValue(COMPOSITION_LIST_KEYWORDS, key)) {
+      collectAllOfRefTargets(value, out);
+      continue;
+    }
+    const branches = ArrayIsArray(value) ? value : [value];
+    for (let branchIndex = 0; branchIndex < branches.length; branchIndex += 1) {
+      const branch = branches[branchIndex];
+      if (typeof branch !== "object" || branch === null) continue;
+      const ref = (branch as SchemaRecord).$ref;
+      if (typeof ref === "string" && ref[0] === "#" && ref[1] === "/") addSetValue(out, ref);
     }
     collectAllOfRefTargets(value, out);
+  }
+}
+
+function isRefTargetRecord(schema: unknown): schema is SchemaRecord {
+  return !ArrayIsArray(schema) && typeof schema === "object" && schema !== null;
+}
+
+function collectArrayRefTargets(schema: unknown, out: Set<string>): void {
+  if (!ArrayIsArray(schema)) return;
+  for (let index = 0; index < schema.length; index += 1) {
+    collectAllOfRefTargets(schema[index], out);
   }
 }
 

@@ -8,6 +8,7 @@ import {
   findHydrationOrCspFailures,
   getBrowserDiagnosticMessages,
   launchChromium,
+  navigateBrowserPage,
 } from "../_helpers/playwright.ts";
 import { withoutHostBinaryInfraEnv, withProxyModeControlPlaneKey } from "../_helpers/proxy-mode.ts";
 import { computeSourceHash, E2E_BINARY_DIR } from "../e2e/setup/binary.ts";
@@ -600,7 +601,12 @@ export async function withBrowserPageAgainstServer(
     const diagnostics = captureBrowserDiagnostics(page);
 
     try {
-      const response = await page.goto(`http://127.0.0.1:${server.port}/`);
+      const response = await navigateBrowserPage(
+        page,
+        `http://127.0.0.1:${server.port}/`,
+        diagnostics,
+        server.logs,
+      );
       assertEquals(response?.status(), 200, "Should return 200");
       await run({ page, response, diagnostics });
     } finally {

@@ -114,7 +114,7 @@ Read a file from the sandbox workspace.
 
 **Returns:** <code>Promise&lt;string&gt;</code>
 
-### `sandbox.writeFiles(files)`
+### `sandbox.writeFiles(files, options)`
 
 Write one or more files to the sandbox workspace.
 
@@ -186,15 +186,17 @@ Get the sandbox endpoint URL.
 
 Options for creating a sandbox.
 
-| Property            | Type                  | Description                                                                                              | Source                                                                               |
-| ------------------- | --------------------- | -------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
-| `apiUrl?`           | `string`              | Base URL of the Veryfront API. Set apiUrl or VERYFRONT_API_URL outside a scoped Veryfront Cloud context. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts) |
-| `authToken?`        | `string`              | Explicit Veryfront auth token or API key override.                                                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts) |
-| `projectReference?` | `string`              | Project UUID or slug used for billing.                                                                   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts) |
-| `accessScope?`      | `SandboxAccessScope`  | Project access or creator-only access. Defaults to project.                                              | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts) |
-| `ttlMode?`          | `SandboxLifetimeMode` | Cleanup policy. Defaults to default.                                                                     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts) |
-| `ttlHours?`         | `number`              | Required only for duration cleanup.                                                                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts) |
-| `environmentId?`    | `string`              | Environment whose variables are copied once.                                                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts) |
+| Property            | Type                         | Description                                                                                              | Source                                                                               |
+| ------------------- | ---------------------------- | -------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| `apiUrl?`           | `string`                     | Base URL of the Veryfront API. Set apiUrl or VERYFRONT_API_URL outside a scoped Veryfront Cloud context. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts) |
+| `authToken?`        | `string`                     | Explicit Veryfront auth token or API key override.                                                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts) |
+| `getAuthToken?`     | <code>() =&gt; string</code> | Read the current credential before each request when the host renews it.                                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts) |
+| `signal?`           | `AbortSignal`                | Cancel sandbox provisioning and readiness polling.                                                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts) |
+| `projectReference?` | `string`                     | Project UUID or slug used for billing.                                                                   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts) |
+| `accessScope?`      | `SandboxAccessScope`         | Project access or creator-only access. Defaults to project.                                              | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts) |
+| `ttlMode?`          | `SandboxLifetimeMode`        | Cleanup policy. Defaults to default.                                                                     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts) |
+| `ttlHours?`         | `number`                     | Required only for duration cleanup.                                                                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts) |
+| `environmentId?`    | `string`                     | Environment whose variables are copied once.                                                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts) |
 
 ### `CommandResult`
 

@@ -1,7 +1,7 @@
-import { AsyncLocalStorage } from "node:async_hooks";
+import { createPrivateAsyncLocalStorage } from "#veryfront/security/private-async-context.ts";
 import type { RemoteToolSource } from "#veryfront/tool";
 
-const remoteToolSourceStorage = new AsyncLocalStorage<RemoteToolSource[]>();
+const remoteToolSourceStorage = createPrivateAsyncLocalStorage<RemoteToolSource[]>();
 
 /** Return the exact request-scoped remote tool sources active at this runtime boundary. */
 export function getActiveRuntimeRemoteToolSources(): RemoteToolSource[] | undefined {

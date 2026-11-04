@@ -4,6 +4,7 @@
 
 import { dirname, isAbsolute, relative, resolve } from "veryfront/platform/path";
 import { INVALID_ARGUMENT } from "veryfront/errors";
+import { runWithEvalMockToolScope } from "../../../src/agent/runtime/eval-mock-tool-scope.ts";
 import { MAX_TIMER_DELAY_MS, normalizeTimerDurationMs } from "../../../src/utils/timer.ts";
 import type { Agent, AgentResponse } from "veryfront/agent";
 import type { VeryfrontConfig } from "veryfront/config";
@@ -19,6 +20,7 @@ import type {
   EvalDefinition,
   EvalGateFailureSummary,
   EvalMockTools,
+  EvalMockToolsResolverContext,
   EvalModelComparisonMetricName,
   EvalModelComparisonOptions,
   EvalReport,
@@ -28,8 +30,9 @@ import type {
   EvalToolAdapterContext,
   EvalToolCall,
 } from "veryfront/eval";
+import { runWithLocalEvalIdentity } from "../../../src/runtime/local-eval-context.ts";
 import { RECORD_INCOMPLETE_EXPLANATION } from "../../../src/eval/report.ts";
-import { orchestrateExtensions } from "veryfront/extensions";
+import type { ExtensionLoader } from "veryfront/extensions";
 import {
   createEvalReportExporterRegistry,
   type EvalReportExporterRegistry,
@@ -66,6 +69,10 @@ import {
   outputJson,
 } from "../../shared/json-output.ts";
 import { withProjectSourceContext } from "../../shared/project-source-context.ts";
+import {
+  releaseProjectCliExtensions,
+  setupProjectCliExtensions,
+} from "../../shared/project-extensions.ts";
 import { createEvalCliBuiltinExtensions } from "../../../src/extensions/builtin-extensions.ts";
 import type { EvalArgs } from "./handler.ts";
 import {
@@ -75,6 +82,7 @@ import {
 } from "#cli/outbound-fetch";
 import { runWithProviderRequestObserver } from "../../../src/provider/runtime-loader/provider-request-observer.ts";
 import { createEvalProgressReporter, type EvalProgressReporter } from "./progress.ts";
+import { getEnvironmentConfig } from "#veryfront/config/environment-config.ts";
 
 export interface EvalOptions extends EvalArgs {
   projectDir?: string;
@@ -834,7 +842,7 @@ function createEvalToolCallId(toolId: string, context: EvalToolAdapterContext): 
 
 async function resolveEvalMockTools(
   mockTools: EvalMockTools | undefined,
-  context: EvalAgentAdapterContext,
+  context: EvalMockToolsResolverContext,
 ): Promise<ToolSet | undefined> {
   if (mockTools === undefined) {
     return undefined;
@@ -862,48 +870,57 @@ export function resolveEvalRecordTimeoutMs(options: Pick<EvalOptions, "recordTim
 }
 
 export function createAgentAdapter(agent: Agent, options: EvalOptions) {
-  return async ({ definition, example, repetition, signal }: EvalAgentAdapterContext) => {
-    const started = Date.now();
-    const mockTools = await resolveEvalMockTools(definition.mockTools, {
-      definition,
-      example,
-      repetition,
-      // A resolver that awaits network work cancels with the case.
-      ...(signal ? { signal } : {}),
-    });
-    // A resolver that ignored the signal can return after the deadline. The
-    // record is already reported as timed out, so start no model request.
-    if (signal?.aborted) throw signal.reason;
-    const response = await agent.generate({
-      input: normalizeEvalInputForAgent(example.input),
-      context: {
-        eval: {
-          definitionId: definition.id,
-          exampleId: example.id,
-          repetition,
-          metadata: example.metadata ?? {},
+  return ({ definition, example, repetition, signal }: EvalAgentAdapterContext) =>
+    runWithLocalEvalIdentity(async (runId) => {
+      const started = Date.now();
+      const mockTools = await resolveEvalMockTools(definition.mockTools, {
+        definition,
+        example,
+        repetition,
+        runId,
+        // A resolver that awaits network work cancels with the case.
+        ...(signal ? { signal } : {}),
+      });
+      // A resolver that ignored the signal can return after the deadline. The
+      // record is already reported as timed out, so start no model request.
+      if (signal?.aborted) throw signal.reason;
+      const generate = () =>
+        agent.generate({
+          input: normalizeEvalInputForAgent(example.input),
+          context: {
+            runId,
+            runIdBindsToolAuthorization: false,
+            eval: {
+              definitionId: definition.id,
+              exampleId: example.id,
+              repetition,
+              metadata: example.metadata ?? {},
+            },
+          },
+          ...(options.model ? { model: options.model } : {}),
+          ...(options.maxOutputTokens ? { maxOutputTokens: options.maxOutputTokens } : {}),
+          ...(definition.mockTools !== undefined
+            ? { tools: mockTools ?? {}, retainSkillLoaderTools: true }
+            : {}),
+          // The runner aborts this when the case passes --record-timeout.
+          ...(signal ? { abortSignal: signal } : {}),
+        });
+      const response = definition.mockTools !== undefined
+        ? await runWithEvalMockToolScope(mockTools ?? {}, generate)
+        : await generate();
+      return {
+        text: response.text,
+        trace: {
+          events: response.messages,
+          toolCalls: normalizeToolCalls(response),
         },
-      },
-      ...(options.model ? { model: options.model } : {}),
-      ...(options.maxOutputTokens ? { maxOutputTokens: options.maxOutputTokens } : {}),
-      ...(definition.mockTools !== undefined
-        ? { tools: mockTools ?? {}, retainSkillLoaderTools: true }
-        : {}),
-      // The runner aborts this when the case passes --record-timeout.
-      ...(signal ? { abortSignal: signal } : {}),
+        usage: normalizeUsage(response),
+        durationMs: Date.now() - started,
+        completed: response.status === "completed",
+        ...(response.status === "error" ? { outcome: "error" as const } : {}),
+        ...(response.status === "error" ? { error: response.text } : {}),
+      };
     });
-    return {
-      text: response.text,
-      trace: {
-        events: response.messages,
-        toolCalls: normalizeToolCalls(response),
-      },
-      usage: normalizeUsage(response),
-      durationMs: Date.now() - started,
-      completed: response.status === "completed",
-      ...(response.status === "error" ? { error: response.text } : {}),
-    };
-  };
 }
 
 export function createToolAdapter(tool: Tool, baseContext: ToolExecutionContext = {}) {
@@ -923,6 +940,7 @@ export function createToolAdapter(tool: Tool, baseContext: ToolExecutionContext 
       toolCallId,
       durationMs: Date.now() - started,
       completed: !error,
+      ...(error ? { outcome: "error" as const } : {}),
       ...(error ? { error } : {}),
     };
   };
@@ -1258,7 +1276,7 @@ export function resolveEvalExportRedactionFromEnv(): EvalReportExportRedaction {
 }
 
 type EvalCliExtensionSetup = {
-  loader: Awaited<ReturnType<typeof orchestrateExtensions>>;
+  loader: ExtensionLoader;
   exporterRegistry: EvalReportExporterRegistry;
 };
 
@@ -1282,12 +1300,13 @@ async function setupEvalCliExtensions(
   exporterIds: string[],
 ): Promise<EvalCliExtensionSetup> {
   const primeContracts = createEvalCliPrimeContracts();
-  const loader = await orchestrateExtensions({
+  const loader = await setupProjectCliExtensions({
     projectDir,
     config,
     logger: cliLogger.component("eval-extensions"),
     primeContracts: primeContracts.contracts,
     builtinExtensions: createEvalCliBuiltinExtensions(exporterIds),
+    setupTimeoutMs: getEnvironmentConfig().extensionSetupTimeoutMs,
   });
   return { loader, exporterRegistry: primeContracts.exporterRegistry };
 }
@@ -1441,6 +1460,7 @@ function createEvalReportCommandAdapters(input: {
                 : {},
               metadata: options.metadata,
               recordTimeoutMs: resolveEvalRecordTimeoutMs(input.options),
+              concurrency: input.options.concurrency,
               onProgress: (event) => progress.onEvent(event),
             }),
         );
@@ -1676,7 +1696,7 @@ async function runEvalCommandWithProgress(
           },
         );
       } finally {
-        await extensionSetup.loader.teardownAll();
+        await releaseProjectCliExtensions(extensionSetup.loader);
       }
     }
 
@@ -1890,7 +1910,7 @@ async function runEvalCommandWithProgress(
 
       return outcome.exitCode;
     } finally {
-      await extensionSetup.loader.teardownAll();
+      await releaseProjectCliExtensions(extensionSetup.loader);
     }
   });
 }

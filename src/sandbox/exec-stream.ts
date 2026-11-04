@@ -4,6 +4,12 @@
  */
 
 import type { CommandStreamEvent } from "./types.ts";
+import {
+  addAbortSignalListenerOnce,
+  getAbortSignalReason,
+  removeAbortSignalListener,
+  throwIfAbortSignalAborted,
+} from "#veryfront/platform/compat/abort-signal.ts";
 
 /**
  * Parses one NDJSON line, reporting null for anything unusable.
@@ -40,15 +46,24 @@ function parseExecStreamLine(line: string): CommandStreamEvent | null {
  */
 export async function* readCommandStreamEvents(
   body: ReadableStream<Uint8Array>,
+  signal?: AbortSignal,
 ): AsyncGenerator<CommandStreamEvent> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
   let completed = false;
+  const onAbort = () => {
+    void reader.cancel(signal && getAbortSignalReason(signal)).catch(() => {});
+  };
 
   try {
+    if (signal) {
+      throwIfAbortSignalAborted(signal);
+      addAbortSignalListenerOnce(signal, onAbort);
+    }
     while (true) {
       const { done, value } = await reader.read();
+      if (signal) throwIfAbortSignalAborted(signal);
       if (done) {
         completed = true;
         break;
@@ -68,6 +83,7 @@ export async function* readCommandStreamEvents(
     const trailing = parseExecStreamLine(buffer);
     if (trailing) yield trailing;
   } finally {
+    if (signal) removeAbortSignalListener(signal, onAbort);
     // An early return from the caller leaves the stream open; cancel it so the
     // connection is not held until GC.
     if (!completed) {

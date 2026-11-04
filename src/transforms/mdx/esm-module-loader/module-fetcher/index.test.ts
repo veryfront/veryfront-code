@@ -1086,6 +1086,7 @@ describe("module-fetcher", () => {
       // Expire the leader when its entry source returns, before nested imports
       // are admitted. Wait for that source read before starting the follower:
       // asynchronous identity preparation can otherwise reverse flight ownership.
+
       const leaderFetch = fetchAndCacheModule("/_vf_modules/page.js", leader);
       await sourceRead.promise;
       const [leaderResult, followerResult] = await Promise.allSettled([

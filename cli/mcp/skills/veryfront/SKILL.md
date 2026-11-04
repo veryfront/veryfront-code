@@ -12,6 +12,24 @@ metadata:
 
 React meta-framework with App Router and AI-native capabilities.
 
+## Read the installed documentation
+
+Before writing framework code, read the relevant public guide from the installed
+`veryfront` package. In a typical npm project, start at
+`node_modules/veryfront/docs/README.md`. These docs match the installed version.
+In a workspace or linked installation, resolve `veryfront/package.json` with
+`import.meta.resolve` or `require.resolve` from the consuming project, then read
+the `docs/` directory beside that package file.
+
+When working on the framework itself, read this checkout's `docs/getting-started/`,
+`docs/guides/`, `docs/concepts/`, and generated `docs/api-reference/`.
+Public API descriptions and examples belong in those docs and source JSDoc.
+Use this skill for the development procedure below.
+
+If the installed package predates bundled docs, use
+https://veryfront.com/docs/code and check examples against the installed exports
+and types. Website documentation may describe a newer release.
+
 ## What MCP Adds
 
 You already have Read/Write/Edit/Bash. The MCP tools give you:

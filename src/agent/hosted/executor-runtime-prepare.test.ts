@@ -588,6 +588,111 @@ describe("executor runtime preparation", () => {
     });
   }
 
+  for (const kind of ["canonical", "ephemeral"] as const) {
+    it(`binds authored local tool authorization only for ${kind} execution`, async () => {
+      const contexts: Array<Record<string, unknown> | undefined> = [];
+      let modelCalls = 0;
+      const definition = {
+        id: "coder",
+        name: "Coder",
+        description: "Codes",
+        instructions: "Inspect the synthetic execution context.",
+        model: modelId,
+        tools: ["inspect_context"],
+        toolLoading: "eager",
+      } satisfies RuntimeAgentMarkdownDefinition;
+      const inspectContext = tool({
+        id: "inspect_context",
+        description: "Inspect execution context",
+        inputSchema: defineSchema((v) => v.object({}))(),
+        execute: (_input, context) => {
+          contexts.push(context);
+          return "inspected";
+        },
+      });
+      const owner = createRuntimePreparationCore({
+        binding,
+        source,
+        grant: {
+          ...grant,
+          allowedToolNames: ["inspect_context"],
+          execution: kind === "canonical"
+            ? {
+              kind,
+              projectId: "project-1",
+              conversationId: "conversation-1",
+              runId: "run-1",
+              messageId: "message-1",
+              providerReplay: "disabled",
+            }
+            : { kind, projectId: "project-1", branchId: "branch-1" },
+        },
+        facades: {
+          resolveModelRuntime: () => ({
+            ...model,
+            doStream() {
+              return ++modelCalls === 1
+                ? finishStream("inspect_context")
+                : finishStream(undefined, {}, "Synthetic answer");
+            },
+          }),
+          hostTools: new Map(),
+          remoteToolSources: new Map(),
+          projectSteering: {
+            prepare: ({ definition }) => Promise.resolve({ agent: definition }),
+            refresh: () => "Synthetic instructions",
+          },
+          publishParentRunEvents: () => Promise.resolve(),
+          toolExposureCheckpoint: { persist: () => Promise.resolve() },
+          cleanup: () => Promise.resolve(),
+        },
+        project: {
+          signal: new AbortController().signal,
+          prepare: () =>
+            Promise.resolve({
+              description: discoverySuccess({ source, definition }),
+              localTools: { inspect_context: inspectContext },
+              sourceIntegrationPolicy: { schemaVersion: 1, mode: "unrestricted" },
+            }),
+          instantiate: createPreparedHostedRuntimeAgent,
+          retainTask: () => {},
+          close: () => Promise.resolve(),
+        },
+      });
+      try {
+        const prepared = await prepare(owner);
+        assert(prepared && typeof prepared === "object" && !Array.isArray(prepared));
+        assertEquals(prepared.ok, true, JSON.stringify(prepared));
+        const value = prepared.value;
+        assert(value && typeof value === "object" && !Array.isArray(value));
+        const handle = value.preparedRuntimeHandle;
+        assert(typeof handle === "string");
+        const operation = owner.operations.get("agent.stream");
+        assert(operation?.mode === "stream");
+        const events = await Array.fromAsync(operation.handle({
+          preparedRuntimeHandle: handle,
+          messages: [{
+            id: "synthetic-message",
+            role: "user",
+            parts: [{ type: "text", text: "Inspect context" }],
+            timestamp: 1,
+          }],
+        }, {
+          binding,
+          signal: new AbortController().signal,
+          deadline: Date.now() + 30_000,
+        }));
+        assertCleanCompletion(events);
+        assertEquals(contexts.length, 1);
+        assertEquals(contexts[0]?.projectId, "project-1");
+        assertEquals(contexts[0]?.runId, kind === "canonical" ? "run-1" : undefined);
+        assertEquals(contexts[0]?.runIdBindsToolAuthorization, kind === "canonical");
+      } finally {
+        await owner.close();
+      }
+    });
+  }
+
   it("passes authored knowledge, tool loading, and result context through managed executor preparation", async () => {
     const visibleTools: string[][] = [];
     const providerInputs: ModelRuntimeCallOptions[] = [];

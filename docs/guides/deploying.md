@@ -1,7 +1,7 @@
 ---
 title: "Manage Cloud deployments"
 description: "Control source, environments, access, and verification for Veryfront Cloud deployments."
-order: 44
+order: 500
 ---
 
 Use this guide after the first successful deployment when you need explicit
@@ -109,9 +109,10 @@ Deploy uses the last verified Push receipt, confirms the release source digest,
 and prints the environment URL. If the receipt is missing, Deploy first runs a
 quiet Push.
 
-Preview accepts no deployments. It renders the latest push to `main`, so
-`veryfront push` updates it, and `veryfront deploy --env preview` fails with
-`preview-deployment-not-allowed` before anything is uploaded or built.
+By default, Deploy waits up to ten minutes for the release's browser assets to
+be ready. A timeout does not establish build failure. Check the existing
+release's build state before you run Deploy again, because another Deploy
+creates a new release.
 
 For a named nonproduction environment:
 

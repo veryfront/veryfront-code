@@ -23,8 +23,17 @@ import {
   createTestEnvironmentConfig,
 } from "#veryfront/config/environment-config.ts";
 
-import { saveToken } from "../../../../../cli/auth/token-store.ts";
-import { applyRuntimeAuthContext } from "../../../../../cli/shared/runtime-auth.ts";
+import {
+  rememberAcceptedLogin,
+  saveToken,
+  wasLoginAcceptedRecently,
+} from "../../../../../cli/auth/token-store.ts";
+import {
+  applyQualifiedRuntimeAuth,
+  applyRuntimeAuthContext,
+} from "../../../../../cli/shared/runtime-auth.ts";
+import { installMockFetch, restoreMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import { checkCredential } from "../../../../../cli/shared/credential-check.ts";
 
 const TOKEN = "stored-login-token";
 const testApply = Reflect.apply;
@@ -80,6 +89,145 @@ describe("runtime-auth credential intrinsic boundary", () => {
           }
         }
         _resetEnvironmentConfig();
+      }
+    }, { prefix: "vf-runtime-auth-intrinsics-" });
+  });
+
+  it("checks a stored login without handing identity data to replaced trim", async () => {
+    // Task and workflow commands evaluate project config before the
+    // stored-login check, so the check must not parse the account it returns.
+    const identity = { id: "user-identity-id", email: "identity@example.test" };
+    const transport = (() => Promise.resolve(Response.json(identity))) as typeof fetch;
+    const nativeTrim = String.prototype.trim;
+    let observedIdentity = 0;
+
+    try {
+      String.prototype.trim = function (this: unknown): string {
+        if (this === identity.id || this === identity.email) observedIdentity += 1;
+        return testApply(nativeTrim, this, []) as string;
+      };
+
+      const answer = await checkCredential(
+        TOKEN,
+        "https://api.example.test",
+        transport,
+        5_000,
+      );
+
+      assertEquals(answer, "accepted");
+      assertEquals(observedIdentity, 0);
+    } finally {
+      String.prototype.trim = nativeTrim;
+    }
+  });
+
+  it("checks a stored login without handing the token to an inherited signal getter", async () => {
+    // A transport probes the request init for a signal, as the onboarding
+    // deadline wrapper does. An inherited getter must never run on it.
+    const transport = ((_input: unknown, init?: RequestInit) => {
+      void (init && "signal" in init && init.signal);
+      return Promise.resolve(new Response(null, { status: 401 }));
+    }) as typeof fetch;
+    let observedCredential = 0;
+
+    Object.defineProperty(Object.prototype, "signal", {
+      configurable: true,
+      get(this: { headers?: Record<string, string> }) {
+        if (containsToken(this.headers?.Authorization)) observedCredential += 1;
+        return undefined;
+      },
+    });
+    try {
+      const answer = await checkCredential(
+        TOKEN,
+        "https://api.example.test",
+        transport,
+        5_000,
+      );
+
+      assertEquals(answer, "rejected");
+      assertEquals(observedCredential, 0);
+    } finally {
+      delete (Object.prototype as { signal?: unknown }).signal;
+    }
+  });
+
+  it("remembers a rejected stored login without handing it to replaced Set methods", async () => {
+    await withTempDir(async (configHome) => {
+      setEnv("XDG_CONFIG_HOME", configHome);
+      setEnv("OPENAI_API_KEY", "<API_KEY>");
+      _resetEnvironmentConfig();
+      await saveToken(TOKEN, createTestEnvironmentConfig({ xdgConfigHome: configHome }));
+      installMockFetch(
+        (() => Promise.resolve(new Response(null, { status: 401 }))) as typeof fetch,
+      );
+      const nativeHas = Set.prototype.has;
+      const nativeAdd = Set.prototype.add;
+      let observedCredential = 0;
+
+      try {
+        Set.prototype.has = function (this: Set<unknown>, value: unknown): boolean {
+          if (containsToken(value)) observedCredential += 1;
+          return testApply(nativeHas, this, [value]) as boolean;
+        };
+        Set.prototype.add = function <T>(this: Set<T>, value: T): Set<T> {
+          if (containsToken(value)) observedCredential += 1;
+          return testApply(nativeAdd, this, [value]) as Set<T>;
+        };
+
+        // The second call reads the remembered rejection.
+        await applyQualifiedRuntimeAuth(configHome);
+        const context = await applyQualifiedRuntimeAuth(configHome);
+
+        assertEquals(context, {});
+        assertEquals(observedCredential, 0);
+      } finally {
+        Set.prototype.has = nativeHas;
+        Set.prototype.add = nativeAdd;
+        restoreMockFetch();
+        deleteHostSecret("VERYFRONT_API_TOKEN");
+        for (const key of ["XDG_CONFIG_HOME", "VERYFRONT_SERVICE_LAYER", "OPENAI_API_KEY"]) {
+          try {
+            deleteEnv(key);
+          } catch {
+            // expected: env may already be unset
+          }
+        }
+        _resetEnvironmentConfig();
+      }
+    }, { prefix: "vf-runtime-auth-intrinsics-" });
+  });
+
+  it("remembers an accepted login without handing the token to replaced encode or digest", async () => {
+    await withTempDir(async (configHome) => {
+      const env = createTestEnvironmentConfig({ xdgConfigHome: configHome, homeDir: configHome });
+      await saveToken(TOKEN, env);
+      const nativeEncode = TextEncoder.prototype.encode;
+      const nativeDigest = SubtleCrypto.prototype.digest;
+      let observedCredential = 0;
+
+      try {
+        TextEncoder.prototype.encode = function (this: TextEncoder, input?: string) {
+          if (containsToken(input)) observedCredential += 1;
+          return testApply(nativeEncode, this, [input]) as Uint8Array<ArrayBuffer>;
+        };
+        SubtleCrypto.prototype.digest = function (
+          this: SubtleCrypto,
+          ...args: Parameters<SubtleCrypto["digest"]>
+        ) {
+          const data = new TextDecoder().decode(args[1] as Uint8Array);
+          if (containsToken(data)) observedCredential += 1;
+          return testApply(nativeDigest, this, args) as Promise<ArrayBuffer>;
+        };
+
+        await rememberAcceptedLogin("https://api.example.test", TOKEN, env);
+        const remembered = await wasLoginAcceptedRecently("https://api.example.test", TOKEN, env);
+
+        assertEquals(remembered, true);
+        assertEquals(observedCredential, 0);
+      } finally {
+        TextEncoder.prototype.encode = nativeEncode;
+        SubtleCrypto.prototype.digest = nativeDigest;
       }
     }, { prefix: "vf-runtime-auth-intrinsics-" });
   });

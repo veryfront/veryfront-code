@@ -2,6 +2,8 @@
 import { walk } from "@std/fs";
 import { existsSync } from "@std/fs";
 
+import { markdownProse } from "./markdown-prose.ts";
+
 const repoRoot = new URL("../../", import.meta.url).pathname;
 
 // Check markdown files in these directories
@@ -24,7 +26,7 @@ let broken = 0;
 let checked = 0;
 
 async function checkFile(path: string): Promise<void> {
-  const text = await Deno.readTextFile(path);
+  const text = markdownProse(await Deno.readTextFile(path));
   // Match markdown links: [text](url) - requires [ before ]
   const re = /\[[^\[\]]*\]\(([^()]+)\)/g;
   let match: RegExpExecArray | null;
@@ -66,9 +68,16 @@ for (const dir of dirsToCheck) {
     continue;
   }
 
-  for await (const entry of walk(dirPath, { exts: [".md"], includeDirs: false })) {
-    const relativePath = entry.path.slice(repoRoot.length).replaceAll("\\", "/");
-    if (ignoredPrefixes.some((prefix) => relativePath.startsWith(prefix))) continue;
+  for await (
+    const entry of walk(dirPath, { exts: [".md"], includeDirs: false })
+  ) {
+    const relativePath = entry.path.slice(repoRoot.length).replaceAll(
+      "\\",
+      "/",
+    );
+    if (ignoredPrefixes.some((prefix) => relativePath.startsWith(prefix))) {
+      continue;
+    }
     await checkFile(entry.path);
   }
 }
