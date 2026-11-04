@@ -6,6 +6,7 @@ import { compileAllMDX, watchMDX } from "veryfront/build";
 import { CONFIG_NOT_FOUND, PORT_IN_USE } from "veryfront/errors";
 import { join } from "veryfront/platform/path";
 import { runtime } from "#cli/runtime-adapter";
+import { privateTextTrim } from "#veryfront/security/private-text.ts";
 import { getEnv } from "veryfront/platform";
 import { getConfig } from "veryfront/config";
 import { getEnvironmentConfig } from "veryfront/config";
@@ -654,7 +655,7 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
             if (shutdownController.signal.aborted) return;
             for (let index = 0; index < lines.length; index += 2) {
               console.log(`  ${warning("!")} ${lines[index]}`);
-              console.log(`    ${lines[index + 1]!.trim()}`);
+              console.log(`    ${privateTextTrim(lines[index + 1]!)}`);
             }
           },
         );

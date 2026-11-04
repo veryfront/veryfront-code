@@ -1,4 +1,5 @@
 import { forEachPrivateArray } from "#veryfront/security/private-array.ts";
+import { privateTextTrim } from "#veryfront/security/private-text.ts";
 /**
  * Remote Integration Tools
  *
@@ -285,7 +286,7 @@ function normalizeProjectSlug(projectSlug: unknown): string | undefined {
   if (typeof projectSlug !== "string") {
     throw new TypeError("Integration project slug must be a string");
   }
-  const normalized = projectSlug.trim();
+  const normalized = privateTextTrim(projectSlug);
   if (normalized.length === 0) return undefined;
   if (!isCanonicalProjectSlug(normalized)) {
     throw new TypeError("Integration project slug must be canonical");
@@ -364,7 +365,8 @@ function applyRemoteFailureCondition(
 
   let message = text;
   if (
-    isRecord(payload) && typeof payload.message === "string" && payload.message.trim().length > 0
+    isRecord(payload) && typeof payload.message === "string" &&
+    privateTextTrim(payload.message).length > 0
   ) {
     message = payload.message;
   }
@@ -491,7 +493,7 @@ function serializeCallRequest(
     }
     if (
       value.length === 0 ||
-      value !== value.trim() ||
+      value !== privateTextTrim(value) ||
       hasProjectIdentityControlCharacters(value)
     ) {
       throw new TypeError(`Integration tool call ${label} must be a canonical identifier`);
@@ -531,7 +533,9 @@ async function fetchToolListAttempt(
     // available" (which returns an empty tools array with status 200).
     discardResponseBody(response);
     throw INTEGRATION_TOOL_LIST_REQUEST_FAILED.create({
-      message: `Integration tools API returned ${response.status} ${response.statusText}`.trim(),
+      message: privateTextTrim(
+        `Integration tools API returned ${response.status} ${response.statusText}`,
+      ),
       status: response.status,
     });
   }
@@ -818,7 +822,11 @@ export function getRemoteIntegrationToolDiscovery(
  */
 export async function getRemoteIntegrationToolDiscoveryWithEvidence(
   context?: ToolExecutionContext,
-  options?: { onDiscoveredToolName?: (name: string) => void },
+  options?: {
+    onDiscoveredToolName?: (name: string) => void;
+    /** Called only after credential-backed API discovery succeeds, including an empty catalog. */
+    onCatalogDiscovered?: () => void;
+  },
 ): Promise<RemoteIntegrationToolDiscoveryResult> {
   const requestContext = snapshotToolExecutionContext(context, false);
   requestContext.abortSignal?.throwIfAborted();
@@ -836,6 +844,7 @@ export async function getRemoteIntegrationToolDiscoveryWithEvidence(
       requestContext,
     );
     if (catalog.status === "unavailable") return catalog;
+    options?.onCatalogDiscovered?.();
 
     // Keep connection evidence before source policy narrows the available tools.
     forEachPrivateArray(catalog.tools, (tool) => options?.onDiscoveredToolName?.(tool.name));

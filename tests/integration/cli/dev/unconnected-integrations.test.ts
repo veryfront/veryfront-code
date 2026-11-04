@@ -249,6 +249,52 @@ describe("dev integration source discovery", () => {
     }
     assertEquals(snapshot.executionContext.projectSlug, "effective-project");
   });
+  for (const phase of ["before discovery", "during discovery"] as const) {
+    it(`preserves connection warnings when trim is replaced ${phase}`, async () => {
+      const originalTrim = String.prototype.trim;
+      let replacementStack = "";
+      const fail = () => {
+        const error = new Error("project trim replacement");
+        replacementStack ||= error.stack ?? error.message;
+        throw error;
+      };
+      const snapshot = snapshotIntegrationDiagnostics(config);
+      const response = new Response('{"tools":[]}', { headers: { "content-length": "12" } });
+      const envKey = "VERYFRONT_API_URL";
+      const previousUrl = Deno.env.get(envKey);
+      const previousCi = Deno.env.get("CI");
+      let lines: string[] = [];
+      try {
+        Deno.env.set(envKey, "https://api.test");
+        Deno.env.set("CI", "true");
+        getEnvironmentConfig();
+        agentRegistry.register("trim-agent", {
+          id: "trim-agent",
+          config: { id: "trim-agent", tools: { salesforce__get_case: true } },
+          generate: () => Promise.resolve({ text: "" }),
+        } as unknown as Agent);
+        await withMockFetch(() => {
+          if (phase === "during discovery") String.prototype.trim = fail;
+          return Promise.resolve(response);
+        }, async () => {
+          if (phase === "before discovery") String.prototype.trim = fail;
+          lines = await findUnconnectedIntegrationLines(snapshot);
+        });
+      } finally {
+        String.prototype.trim = originalTrim;
+        agentRegistry.delete("trim-agent");
+        if (previousUrl === undefined) Deno.env.delete(envKey);
+        else Deno.env.set(envKey, previousUrl);
+        if (previousCi === undefined) Deno.env.delete("CI");
+        else Deno.env.set("CI", previousCi);
+      }
+      assertEquals(lines, [
+        "Salesforce isn't connected. Agent trim-agent needs it.",
+        "  Connect: npx veryfront integration connect salesforce --project case-demo",
+      ], replacementStack);
+    });
+  }
+
   it("keeps qualified fallback targets and skips unqualified or proxy diagnostics", async () => {
     const qualified = { authToken: "qualified-token", projectSlug: "linked-project" };
     agentRegistry.register("target-agent", {
