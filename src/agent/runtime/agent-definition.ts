@@ -358,25 +358,40 @@ export function parseRuntimeAgentMarkdownDefinition(
  * returned unchanged. Hosted construction paths that do not go through the
  * factory must apply this before reading those fields.
  */
-export function applyClosedRuntimeToolSelector<T extends { tools?: unknown }>(definition: T): T {
+export function applyClosedRuntimeToolSelector<T extends ClosableRuntimeToolSelectorFields>(
+  definition: T,
+): T {
   if (definition.tools !== false) return definition;
-  const {
-    bootstrapTools: _bootstrapTools,
-    optionalBootstrapTools: _optionalBootstrapTools,
-    bootstrapSkill: _bootstrapSkill,
-    knowledge: _knowledge,
-    delegates: _delegates,
-    ...rest
-  } = definition as T & Record<string, unknown>;
-  return {
-    ...rest,
-    tools: false,
-    skills: false,
-    mcpServers: [],
-    toolResultContext: false,
-    toolLoading: "eager",
-  } as unknown as T;
+  const closed = { ...definition };
+  delete closed.bootstrapTools;
+  delete closed.optionalBootstrapTools;
+  delete closed.bootstrapSkill;
+  delete closed.knowledge;
+  delete closed.delegates;
+  return Object.assign(
+    closed,
+    {
+      skills: false,
+      mcpServers: [],
+      toolResultContext: false,
+      toolLoading: "eager",
+    } as const,
+  );
 }
+
+/** Fields a closed `tools: false` selector clears or pins. */
+type ClosableRuntimeToolSelectorFields = {
+  tools?: unknown;
+  skills?: unknown;
+  mcpServers?: unknown;
+  toolResultContext?: unknown;
+  toolLoading?: unknown;
+  bootstrapTools?: unknown;
+  optionalBootstrapTools?: unknown;
+  bootstrapSkill?: unknown;
+  knowledge?: unknown;
+  delegates?: unknown;
+};
 
 const reflectApply = Reflect.apply;
 const arrayIncludes = Array.prototype.includes;
