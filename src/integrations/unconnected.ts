@@ -1,5 +1,4 @@
 import { connectors } from "./_data.ts";
-import { ALL_INTEGRATION_NAMES } from "./schema.ts";
 import { createPrivateSet } from "#veryfront/security/private-set.ts";
 import {
   forEachPrivateArray,
@@ -10,7 +9,10 @@ import {
 import { privateTextEndsWith, privateTextSlice } from "#veryfront/security/private-text.ts";
 import { parseIntegrationToolIdentity } from "./source-policy.ts";
 
-const declaredIntegrations = createPrivateSet<string>(ALL_INTEGRATION_NAMES);
+const catalogToolNames = createPrivateSet<string>();
+forEachPrivateArray(connectors, (connector) => {
+  forEachPrivateArray(connector.tools, (tool) => catalogToolNames.add(tool.id ?? tool.name));
+});
 
 export interface UnconnectedIntegrationTarget {
   readonly projectSlug: string;
@@ -20,8 +22,7 @@ export interface UnconnectedIntegrationTarget {
 /**
  * Integrations that the configured tool names declare but the project has not connected.
  *
- * A name qualifies only when it is a canonical `integration__tool` name for a catalog
- * integration and discovery returned no tool for that integration. A name whose integration
+ * A name qualifies only when it is a canonical `integration__tool` name present in the catalog and discovery returned no tool for that integration. A name whose integration
  * has discovered tools is a misspelling, not a missing connection.
  */
 export function findUnconnectedIntegrations(
@@ -39,7 +40,7 @@ export function findUnconnectedIntegrations(
   forEachPrivateArray(configuredToolNames, (name) => {
     const identity = parseIntegrationToolIdentity(name);
     if (
-      identity && declaredIntegrations.has(identity.integration) &&
+      identity && catalogToolNames.has(name) &&
       !discovered.has(identity.integration)
     ) {
       integrations.add(identity.integration);

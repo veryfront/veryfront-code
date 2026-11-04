@@ -9,10 +9,19 @@
 
 import type { IntegrationName } from "./schema.ts";
 import { compareStrings } from "#veryfront/utils/compare.ts";
-import { somePrivateArray } from "#veryfront/security/private-array.ts";
+import {
+  forEachPrivateArray,
+  pushPrivateArray,
+  somePrivateArray,
+} from "#veryfront/security/private-array.ts";
 import { privateTextIncludes } from "#veryfront/security/private-text.ts";
 
+import { createPrivateSet } from "#veryfront/security/private-set.ts";
+
 const apply = Reflect.apply;
+const arraySort = Array.prototype.sort;
+const objectKeys = Object.keys;
+const freeze = Object.freeze;
 const stringCharCodeAt = String.prototype.charCodeAt;
 const stringIndexOf = String.prototype.indexOf;
 const stringLastIndexOf = String.prototype.lastIndexOf;
@@ -122,19 +131,21 @@ function canonicalizeSourceIntegrationPolicyManifest(
     string,
     { allowedToolIds: readonly string[] | null }
   > = {};
-  for (const integration of Object.keys(manifest.integrations).sort(compareStrings)) {
+  const names = objectKeys(manifest.integrations);
+  apply(arraySort, names, [compareStrings]);
+  forEachPrivateArray(names, (integration) => {
     const restriction = manifest.integrations[integration];
-    if (!restriction) continue;
+    if (!restriction) return;
     const allowedToolIds = restriction.allowedToolIds === null
       ? null
-      : Object.freeze([...restriction.allowedToolIds].sort(compareStrings));
-    integrations[integration] = Object.freeze({ allowedToolIds });
-  }
+      : freeze(uniqueSorted(restriction.allowedToolIds));
+    integrations[integration] = freeze({ allowedToolIds });
+  });
 
-  return Object.freeze({
+  return freeze({
     schemaVersion: 1,
     mode: "allowlist",
-    integrations: Object.freeze(integrations),
+    integrations: freeze(integrations),
   });
 }
 
@@ -159,7 +170,15 @@ export function resolveSourceIntegrationPolicyManifest(
 }
 
 function uniqueSorted(values: readonly string[]): string[] {
-  return [...new Set(values)].sort(compareStrings);
+  const unique = createPrivateSet<string>();
+  const result: string[] = [];
+  forEachPrivateArray(values, (value) => {
+    if (unique.has(value)) return;
+    unique.add(value);
+    pushPrivateArray(result, value);
+  });
+  apply(arraySort, result, [compareStrings]);
+  return result;
 }
 
 /** Build a deterministic manifest from validated `veryfront.config.ts` input. */
@@ -172,18 +191,15 @@ export function normalizeSourceIntegrationPolicy(
     string,
     { allowedToolIds: readonly string[] | null }
   > = {};
-  for (
-    const [integration, restriction] of Object.entries(config.allow).sort(([a], [b]) =>
-      a.localeCompare(b)
-    )
-  ) {
-    if (!restriction) continue;
+  forEachPrivateArray(objectKeys(config.allow), (integration) => {
+    const restriction = config.allow[integration as IntegrationName];
+    if (!restriction) return;
     integrations[integration] = {
       allowedToolIds: restriction.allowedTools === undefined
         ? null
         : uniqueSorted(restriction.allowedTools),
     };
-  }
+  });
 
   return canonicalizeSourceIntegrationPolicyManifest({
     schemaVersion: 1,

@@ -132,33 +132,19 @@ export function unconnectedIntegrationLines(
   return lines;
 }
 
-/**
- * Normalize the integration policy for the connection check, or null when that fails. The config
- * is executable and shares this realm, so a diagnostic must never abort `veryfront dev`.
- */
+/** Normalize source restrictions before loading project agents. */
 export function normalizeIntegrationPolicyForDiagnostics(
   integrations: VeryfrontConfig["integrations"],
-): SourceIntegrationPolicyManifest | null {
-  try {
-    return normalizeSourceIntegrationPolicy(integrations);
-  } catch (error) {
-    serverLogger.debug("Integration policy could not be normalized", { error });
-    return null;
-  }
+): SourceIntegrationPolicyManifest {
+  return normalizeSourceIntegrationPolicy(integrations);
 }
 
-/**
- * Warn from runtime-registered agents; failed discovery or an unusable policy produces no advice.
- *
- * Agents have run by the time this is called, so the caller normalizes the integration policy
- * before they load and passes it in (`null` when that failed).
- */
+/** Warn from runtime-registered agents when platform discovery succeeds. */
 export async function findUnconnectedIntegrationLines(
   config?: VeryfrontConfig | null,
-  integrationPolicy?: SourceIntegrationPolicyManifest | null,
+  integrationPolicy?: SourceIntegrationPolicyManifest,
 ): Promise<string[]> {
   try {
-    if (integrationPolicy === null) return [];
     // Mirror the roots the dev server discovers, not the project-wide discovery settings.
     if (resolveDevAgentDirs(config).length === 0) return [];
     const agents: AgentTools[] = [];

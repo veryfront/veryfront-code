@@ -1118,6 +1118,28 @@ describe("tool-helpers", () => {
       }
     });
 
+    it("keeps Unknown tool reference for a misspelled tool of an unconnected integration", async () => {
+      toolRegistryInternal.clearAll();
+      const originalSlug = Deno.env.get("VERYFRONT_PROJECT_SLUG");
+
+      try {
+        Deno.env.set("VERYFRONT_PROJECT_SLUG", "case-demo");
+        await assertRejects(
+          () =>
+            withMockRemoteIntegrationTools(
+              [],
+              () => getAvailableTools({ "salesforce__get_cse": true }),
+            ),
+          Error,
+          "Unknown tool reference: salesforce__get_cse.",
+        );
+      } finally {
+        if (originalSlug === undefined) Deno.env.delete("VERYFRONT_PROJECT_SLUG");
+        else Deno.env.set("VERYFRONT_PROJECT_SLUG", originalSlug);
+        toolRegistryInternal.clearAll();
+      }
+    });
+
     it("keeps Unknown tool reference when a configured source failed to list its tools", async () => {
       await withMockRemoteIntegrationTools([], async () => {
         await assertRejects(

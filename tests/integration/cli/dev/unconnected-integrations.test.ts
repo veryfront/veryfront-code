@@ -54,24 +54,46 @@ describe("dev integration source discovery", () => {
       "  Connect: npx veryfront integration connect salesforce --project case-demo",
     ]);
   });
-  it("does not let a config that replaces built-ins abort policy normalization", () => {
+  it("still warns when config replaces collection built-ins before normalization", () => {
     const sort = Array.prototype.sort;
+    const iterator = Array.prototype[Symbol.iterator];
+    const add = Set.prototype.add;
+    let lines: string[] | undefined;
     let policy: ReturnType<typeof normalizeIntegrationPolicyForDiagnostics>;
+    const fail = () => {
+      throw new Error("project collection replacement");
+    };
     try {
-      Array.prototype.sort = () => {
-        throw new Error("project sort");
-      };
+      Array.prototype.sort = fail;
+      Array.prototype[Symbol.iterator] = fail;
+      Set.prototype.add = fail;
       policy = normalizeIntegrationPolicyForDiagnostics({
-        allow: { gmail: {}, salesforce: {} },
+        allow: { gmail: {}, salesforce: { allowedTools: ["update_case", "get_case", "get_case"] } },
       });
+      lines = unconnectedIntegrationLines(
+        collectDeclaredIntegrations([
+          { agentId: "case-agent", tools: { salesforce__get_case: true } },
+        ], policy ?? undefined),
+        [],
+        "case-demo",
+      );
     } finally {
       Array.prototype.sort = sort;
+      Array.prototype[Symbol.iterator] = iterator;
+      Set.prototype.add = add;
     }
-    assertEquals(policy, null);
-    assertEquals(
-      normalizeIntegrationPolicyForDiagnostics({ allow: { gmail: {} } })?.mode,
-      "allowlist",
-    );
+    assertEquals(policy, {
+      schemaVersion: 1,
+      mode: "allowlist",
+      integrations: {
+        gmail: { allowedToolIds: null },
+        salesforce: { allowedToolIds: ["get_case", "update_case"] },
+      },
+    });
+    assertEquals(lines, [
+      "Salesforce isn't connected. Agent case-agent needs it.",
+      "  Connect: npx veryfront integration connect salesforce --project case-demo",
+    ]);
   });
 
   it("cannot tell what an agent's own tool sources supply, so it does not warn for them", () => {
@@ -192,7 +214,6 @@ describe("dev integration source discovery", () => {
               "  Connect: npx veryfront integration connect salesforce --project case-demo",
             ],
           );
-          assertEquals(await findUnconnectedIntegrationLines(config, null), []);
           assertEquals(
             await findUnconnectedIntegrationLines({
               ai: { agents: { discovery: { paths: [] } } },
