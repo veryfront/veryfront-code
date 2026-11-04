@@ -53,6 +53,9 @@ export function createPlatformMcpCatalogSource(
     aliases,
     source: markAdaptedPlatformSource({
       id: source.id,
+      // The catalog wrapper is what callers retain, so it must release the raw
+      // source's negotiated sessions.
+      ...(source.dispose ? { dispose: (context) => source.dispose!(context) } : {}),
       listTools: async () => [...catalog],
       executeTool: (name, args, context) => {
         if (!names.has(name)) {

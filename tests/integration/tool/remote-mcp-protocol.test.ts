@@ -322,6 +322,98 @@ describe("remote MCP HTTP compatibility", () => {
     });
   });
 
+  it("mirrors parameter headers for a call made under a different run than discovery", async () => {
+    const tool = {
+      name: "lookup",
+      description: "Read",
+      inputSchema: {
+        type: "object",
+        properties: { region: { type: "string", "x-mcp-header": "Region" } },
+      },
+    };
+    const regions: Array<string | null> = [];
+    await withMockFetch(async (input, init) => {
+      const request = observe(input, init);
+      const body = request.body!;
+      if (body.method === "tools/list") {
+        return Response.json({ jsonrpc: "2.0", id: body.id, result: { tools: [tool] } });
+      }
+      regions.push(request.headers.get("Mcp-Param-Region"));
+      return success(body);
+    }, async () => {
+      const source = createRemoteMCPToolSource({ endpoint: ENDPOINT });
+      await source.listTools();
+      await source.executeTool(tool.name, { region: "eu" }, { runId: "run-a" });
+      await source.dispose?.({ runId: "run-a" });
+      await source.executeTool(tool.name, { region: "us" }, { runId: "run-b" });
+    });
+    assertEquals(regions, ["eu", "us"]);
+  });
+
+  it("accepts a legacy server that negotiates MCP 2024-11-05", async () => {
+    const versions: Array<string | null> = [];
+    await withMockFetch(async (input, init) => {
+      const request = observe(input, init);
+      const body = request.body!;
+      if (body.method === "initialize") {
+        return Response.json({
+          jsonrpc: "2.0",
+          id: body.id,
+          result: { protocolVersion: "2024-11-05" },
+        }, { headers: { "Mcp-Session-Id": "session-2024" } });
+      }
+      if (body.method === "notifications/initialized") return new Response(null, { status: 202 });
+      if (request.headers.get("Mcp-Session-Id") !== "session-2024") {
+        return new Response("missing session ID", { status: 400 });
+      }
+      versions.push(request.headers.get("MCP-Protocol-Version"));
+      return success(body);
+    }, async () => {
+      const source = createRemoteMCPToolSource({ endpoint: ENDPOINT });
+      assertEquals((await source.listTools()).map((t) => t.name), ["ping"]);
+      assertEquals(await source.executeTool("ping", {}), "pong");
+    });
+    assertEquals(versions, ["2024-11-05", "2024-11-05"]);
+  });
+
+  it("restarts paginated discovery from the first page after a session renewal", async () => {
+    const server = legacyFixture();
+    const cursors: Array<string | undefined> = [];
+    let expireOnce = true;
+    await withMockFetch(async (input, init) => {
+      const request = observe(input, init);
+      const body = request.body;
+      if (body?.method !== "tools/list" || !request.headers.get("Mcp-Session-Id")) {
+        return await server.fetch(input, init);
+      }
+      const sessionId = request.headers.get("Mcp-Session-Id")!;
+      const cursor = body.params?.cursor as string | undefined;
+      cursors.push(cursor);
+      if (cursor !== undefined && expireOnce) {
+        expireOnce = false;
+        server.sessions.delete(sessionId);
+        return await server.fetch(input, init);
+      }
+      // Cursors are scoped to the session that issued them.
+      if (cursor !== undefined && cursor !== `${sessionId}:page-2`) {
+        return new Response("foreign cursor", { status: 400 });
+      }
+      const page = cursor === undefined
+        ? { tools: [TOOL], nextCursor: `${sessionId}:page-2` }
+        : { tools: [{ ...TOOL, name: "pong" }] };
+      return Response.json({ jsonrpc: "2.0", id: body.id, result: page });
+    }, async () => {
+      const source = createRemoteMCPToolSource({ endpoint: ENDPOINT });
+      assertEquals((await source.listTools()).map((t) => t.name), ["ping", "pong"]);
+    });
+    assertEquals(cursors, [
+      undefined,
+      "fixture-session-1:page-2",
+      undefined,
+      "fixture-session-2:page-2",
+    ]);
+  });
+
   it("excludes invalid header annotations without excluding valid sibling tools", async () => {
     const invalidSchemas = [
       { type: "object", properties: { value: { type: "number", "x-mcp-header": "Value" } } },

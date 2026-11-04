@@ -107,6 +107,14 @@ class RemoteMCPHttpError extends Error {
   }
 }
 
+/** Internal signal: a session was (re)negotiated mid-pagination, so discovery restarts. */
+class RemoteMCPDiscoveryRestart extends Error {
+  constructor() {
+    super("Remote MCP tools/list must restart in the renewed session");
+    this.name = "RemoteMCPDiscoveryRestart";
+  }
+}
+
 class RemoteMCPOAuthExpiredHttpError extends RemoteMCPHttpError {
   constructor(status: number) {
     super(status);
@@ -1076,7 +1084,7 @@ function buildRunContextMeta(
 }
 
 const MODERN_MCP_VERSION = "2026-07-28";
-const LEGACY_MCP_VERSIONS = ["2025-11-25", "2025-06-18", "2025-03-26"];
+const LEGACY_MCP_VERSIONS = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"];
 const MCP_CLIENT_INFO = { name: "veryfront", version: VERSION };
 interface RemoteMcpSession {
   version: string;
@@ -1344,7 +1352,7 @@ function createRemoteMCPToolSourceWithFetch(
     requestFetch: typeof fetch,
     signal: AbortSignal | undefined,
     maxBytes: number,
-    operation: "discovery" | "execution",
+    operation: "discovery" | "discovery-page" | "execution",
     runId?: string,
   ): Promise<unknown> {
     const snapshot = snapshotBoundedJsonValue(body, MAX_REMOTE_MCP_REQUEST_BYTES);
@@ -1353,6 +1361,11 @@ function createRemoteMCPToolSourceWithFetch(
     }
     body = snapshot.value;
     const key = await remoteMcpSessionKey(endpoint, headers, runId);
+    // Schema annotations describe the catalog, not a session, so a call made
+    // under a different run than its discovery still mirrors them.
+    const annotationKey = await remoteMcpSessionKey(endpoint, headers);
+    // Session setup never uses a call-only transport such as hosted admission.
+    const sessionFetch = getRequestFetch(endpoint);
     if (initializing.has(key)) await initializing.get(key);
     const send = (session?: RemoteMcpSession) => {
       const finalHeaders = copyNativeHeaders(headers);
@@ -1364,7 +1377,7 @@ function createRemoteMCPToolSourceWithFetch(
       if (!session && typeof params.name === "string" && isRecord(params.arguments)) {
         addMcpParameterHeaders(
           finalHeaders,
-          parameterHeaders.get(key)?.get(params.name) ?? [],
+          parameterHeaders.get(annotationKey)?.get(params.name) ?? [],
           params.arguments,
         );
       }
@@ -1392,7 +1405,7 @@ function createRemoteMCPToolSourceWithFetch(
     if (!session && operation === "execution" && legacyEndpoints.has(endpoint)) {
       // Initialization happens before the call is sent, so a failure here never
       // leaves a side-effecting request to replay.
-      session = await initialize(key, endpoint, headers, requestFetch, signal, runId);
+      session = await initialize(key, endpoint, headers, sessionFetch, signal, runId);
     }
     try {
       return await send(session);
@@ -1401,14 +1414,99 @@ function createRemoteMCPToolSourceWithFetch(
         !(error instanceof RemoteMCPHttpError) ||
         error instanceof RemoteMCPOAuthExpiredHttpError || error.modernError
       ) throw error;
-      const fallback = operation === "discovery" && !session && error.status === 400;
+      const fallback = operation !== "execution" && !session && error.status === 400;
       const expired = !!session?.sessionId && error.status === 404;
       if (!fallback && !expired) throw error;
       if (expired && sessions.get(key) === session) sessions.delete(key);
       const renewed = sessions.get(key) ??
-        await initialize(key, endpoint, headers, requestFetch, signal, runId);
+        await initialize(key, endpoint, headers, sessionFetch, signal, runId);
+      // A pagination cursor belongs to the session that issued it.
+      if (operation === "discovery-page") throw new RemoteMCPDiscoveryRestart();
       return await send(renewed);
     }
+  }
+
+  async function listPages(
+    endpoint: string,
+    headers: Headers,
+    listMeta: Record<string, unknown> | undefined,
+    context: ToolExecutionContext | undefined,
+  ): Promise<ToolDefinition[]> {
+    const headerDefinitions = new Map<string, McpParameterHeader[]>();
+    const definitions: ToolDefinition[] = [];
+    const definitionNames = new Set<string>();
+    const seenCursors = new Set<string>();
+    let cursor: string | undefined;
+    for (let page = 0; page < MAX_REMOTE_MCP_TOOL_LIST_PAGES; page += 1) {
+      const requestId = `${id}:tools:list`;
+      const payload = await request(
+        endpoint,
+        headers,
+        {
+          jsonrpc: "2.0",
+          id: requestId,
+          method: listMethod,
+          ...(cursor !== undefined || listMeta !== undefined
+            ? {
+              params: {
+                ...(cursor !== undefined ? { cursor } : {}),
+                ...(listMeta !== undefined ? { _meta: listMeta } : {}),
+              },
+            }
+            : {}),
+        },
+        getRequestFetch(endpoint),
+        context?.abortSignal,
+        MAX_REMOTE_MCP_TOOL_LIST_RESPONSE_BYTES,
+        cursor === undefined ? "discovery" : "discovery-page",
+        context?.runId,
+      );
+
+      const result = getJsonRpcResult(payload, requestId);
+      const { definitions: pageDefinitions, nextCursor } = normalizeToolListPage(result);
+      if (
+        definitions.length + pageDefinitions.length >
+          MAX_REMOTE_MCP_TOOL_DEFINITIONS
+      ) {
+        throw protocolError(
+          `Remote MCP tools/list cannot contain more than ${MAX_REMOTE_MCP_TOOL_DEFINITIONS} tools`,
+        );
+      }
+      for (const definition of pageDefinitions) {
+        if (definitionNames.has(definition.name)) {
+          throw protocolError(
+            `Remote MCP tools/list returned duplicate tool name "${definition.name}"`,
+          );
+        }
+        definitionNames.add(definition.name);
+        const annotations = readMcpParameterHeaders(definition.parameters);
+        if (!annotations) continue;
+        headerDefinitions.set(definition.name, annotations);
+        definitions.push(definition);
+      }
+
+      if (nextCursor === undefined) {
+        parameterHeaders.set(await remoteMcpSessionKey(endpoint, headers), headerDefinitions);
+        return definitions;
+      }
+      if (seenCursors.has(nextCursor)) {
+        throw protocolError(
+          `Remote MCP tools/list returned repeated pagination cursor "${nextCursor}"`,
+        );
+      }
+      seenCursors.add(nextCursor);
+      cursor = nextCursor;
+
+      if (page === MAX_REMOTE_MCP_TOOL_LIST_PAGES - 1) {
+        throw protocolError(
+          `Remote MCP tools/list exceeded ${MAX_REMOTE_MCP_TOOL_LIST_PAGES} pages`,
+        );
+      }
+    }
+
+    throw protocolError(
+      `Remote MCP tools/list exceeded ${MAX_REMOTE_MCP_TOOL_LIST_PAGES} pages`,
+    );
   }
 
   return {
@@ -1424,7 +1522,6 @@ function createRemoteMCPToolSourceWithFetch(
         const cleanup = entry[1];
         if (context && cleanup.runId !== context.runId) continue;
         sessions.delete(cleanup.sourceKey);
-        parameterHeaders.delete(cleanup.sourceKey);
         cleanupRequests.delete(key);
         const scope = createRequestSignalScope(undefined);
         try {
@@ -1462,84 +1559,19 @@ function createRemoteMCPToolSourceWithFetch(
         Object.entries(config.listMeta).filter(([key]) => key !== "tool_call_admission"),
       );
 
-      const headerDefinitions = new Map<string, McpParameterHeader[]>();
-      const definitions: ToolDefinition[] = [];
-      const definitionNames = new Set<string>();
-      const seenCursors = new Set<string>();
-      let cursor: string | undefined;
-      for (let page = 0; page < MAX_REMOTE_MCP_TOOL_LIST_PAGES; page += 1) {
-        const requestId = `${id}:tools:list`;
-        const payload = await request(
-          endpoint,
-          headers,
-          {
-            jsonrpc: "2.0",
-            id: requestId,
-            method: listMethod,
-            ...(cursor !== undefined || listMeta !== undefined
-              ? {
-                params: {
-                  ...(cursor !== undefined ? { cursor } : {}),
-                  ...(listMeta !== undefined ? { _meta: listMeta } : {}),
-                },
-              }
-              : {}),
-          },
-          getRequestFetch(endpoint),
-          context?.abortSignal,
-          MAX_REMOTE_MCP_TOOL_LIST_RESPONSE_BYTES,
-          "discovery",
-          context?.runId,
-        );
-
-        const result = getJsonRpcResult(payload, requestId);
-        const { definitions: pageDefinitions, nextCursor } = normalizeToolListPage(result);
-        if (
-          definitions.length + pageDefinitions.length >
-            MAX_REMOTE_MCP_TOOL_DEFINITIONS
-        ) {
-          throw protocolError(
-            `Remote MCP tools/list cannot contain more than ${MAX_REMOTE_MCP_TOOL_DEFINITIONS} tools`,
-          );
-        }
-        for (const definition of pageDefinitions) {
-          if (definitionNames.has(definition.name)) {
-            throw protocolError(
-              `Remote MCP tools/list returned duplicate tool name "${definition.name}"`,
-            );
-          }
-          definitionNames.add(definition.name);
-          const annotations = readMcpParameterHeaders(definition.parameters);
-          if (!annotations) continue;
-          headerDefinitions.set(definition.name, annotations);
-          definitions.push(definition);
-        }
-
-        if (nextCursor === undefined) {
-          parameterHeaders.set(
-            await remoteMcpSessionKey(endpoint, headers, context?.runId),
-            headerDefinitions,
-          );
-          return definitions;
-        }
-        if (seenCursors.has(nextCursor)) {
-          throw protocolError(
-            `Remote MCP tools/list returned repeated pagination cursor "${nextCursor}"`,
-          );
-        }
-        seenCursors.add(nextCursor);
-        cursor = nextCursor;
-
-        if (page === MAX_REMOTE_MCP_TOOL_LIST_PAGES - 1) {
-          throw protocolError(
-            `Remote MCP tools/list exceeded ${MAX_REMOTE_MCP_TOOL_LIST_PAGES} pages`,
-          );
-        }
+      // A session renewed mid-pagination invalidates earlier cursors, so the
+      // catalog is rebuilt from the first page, at most once.
+      try {
+        return await listPages(endpoint, headers, listMeta, context);
+      } catch (error) {
+        if (!(error instanceof RemoteMCPDiscoveryRestart)) throw error;
       }
-
-      throw protocolError(
-        `Remote MCP tools/list exceeded ${MAX_REMOTE_MCP_TOOL_LIST_PAGES} pages`,
-      );
+      try {
+        return await listPages(endpoint, headers, listMeta, context);
+      } catch (error) {
+        if (!(error instanceof RemoteMCPDiscoveryRestart)) throw error;
+        throw protocolError("Remote MCP session was renewed again during tools/list pagination");
+      }
     },
 
     async executeTool(toolName, args, context) {
