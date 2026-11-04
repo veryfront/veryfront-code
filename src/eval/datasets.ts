@@ -17,13 +17,14 @@ function resolveDatasetPath(baseDir: string, filePath: string): string {
  */
 function assertProjectRelativeDatasetPath(filePath: string): void {
   if (isAbsolute(filePath) || /^[\\/]/.test(filePath) || /^[A-Za-z]:/.test(filePath)) {
+    // Do not echo the path: an absolute path can expose host directory layout in run failures.
     throw createEvalValidationError(
-      `Dataset path ${filePath} must be relative to the project when read through the project files`,
+      "Dataset path must be relative to the project when read through the project files",
     );
   }
   if (filePath.split(/[\\/]/).includes("..")) {
     throw createEvalValidationError(
-      `Dataset path ${filePath} must not contain '..' segments when read through the project files`,
+      "Dataset path must not contain '..' segments when read through the project files",
     );
   }
 }

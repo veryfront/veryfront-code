@@ -123,8 +123,16 @@ describe("eval/datasets", () => {
           "datasets\\..\\..\\host-secret.json",
         ]
       ) {
-        await assertRejects(() => datasets.json(path).load(context), Error, "Dataset path");
-        await assertRejects(() => datasets.jsonl(path).load(context), Error, "Dataset path");
+        for (const dataset of [datasets.json(path), datasets.jsonl(path)]) {
+          const error = await assertRejects(
+            () => dataset.load(context),
+            Error,
+            "Dataset path",
+          ) as Error;
+          // Validation errors reach run failures; they must not echo host paths.
+          assertEquals(error.message.includes(root), false);
+          assertEquals(error.message.includes(path), false);
+        }
       }
       assertEquals(requested, []);
     } finally {

@@ -91,7 +91,10 @@ import {
   MAX_CONVERSATION_RUN_EVENT_APPEND_REQUEST_BYTES,
 } from "#veryfront/agent/conversation/run-event-limits.ts";
 import { getRequestTransportLifetime } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
-import { isVirtualFilesystem } from "#veryfront/platform/adapters/fs/wrapper.ts";
+import {
+  isExtendedFSAdapter,
+  isVirtualFilesystem,
+} from "#veryfront/platform/adapters/fs/wrapper.ts";
 import {
   createNativeRequestInit,
   readOwnInitField,
@@ -5243,6 +5246,7 @@ async function executeEvalRun(
     };
   }
 
+  const projectFs = ctx.adapter.fs;
   const runOptions: RunEvalOptions = {
     adapters: evalItem.definition.targetKind === "agent"
       ? {
@@ -5254,15 +5258,14 @@ async function executeEvalRun(
     baseDir: ctx.projectDir,
     // Virtual-filesystem project files live behind the adapter, not on this host's disk.
     // A disk adapter keeps resolving dataset paths against `baseDir`.
-    ...(isVirtualFilesystem(ctx.adapter.fs)
+    // `readOptionalTextFile` reads the exact path (no module extension resolution or
+    // framework-module guard) and forwards cancellation to the remote fetch.
+    ...(isExtendedFSAdapter(projectFs) && isVirtualFilesystem(projectFs)
       ? {
-        // Forward cancellation so an aborted eval stops a pending remote dataset fetch.
-        readTextFile: async (path: string) =>
-          textFromFileContent(
-            await ctx.adapter.fs.readFile(
-              path,
-              options.signal ? { signal: options.signal } : undefined,
-            ),
+        readTextFile: (path: string) =>
+          projectFs.readOptionalTextFile(
+            path,
+            options.signal ? { signal: options.signal } : {},
           ),
       }
       : {}),

@@ -2,7 +2,7 @@ import { buildGitHubBytesCacheKey, buildGitHubContentCacheKey } from "#veryfront
 import { createError, toError } from "#veryfront/errors";
 import { logger } from "#veryfront/utils";
 import type { FileCache } from "../cache/file-cache.ts";
-import type { GitHubApiClient } from "./github-api-client.ts";
+import type { GitHubApiClient, GitHubRequestOptions } from "./github-api-client.ts";
 import type { GitHubStatOperations } from "./stat-operations.ts";
 import type { GitHubContentItem, ResolvedGitHubConfig } from "./types.ts";
 import { normalizeGitHubPath } from "./path-utils.ts";
@@ -36,7 +36,8 @@ export class GitHubReadOperations {
     this.projectDir = projectDir;
   }
 
-  async readTextFile(path: string): Promise<string> {
+  async readTextFile(path: string, options: GitHubRequestOptions = {}): Promise<string> {
+    options.signal?.throwIfAborted();
     const normalizedPath = normalizeGitHubPath(path, this.projectDir);
     const cacheKey = buildGitHubContentCacheKey(
       buildGitHubCacheRef(this.config),
@@ -49,8 +50,8 @@ export class GitHubReadOperations {
 
     const fileEntry = this.statOps.getFileEntry(normalizedPath);
     const content = fileEntry?.size && fileEntry.size > MAX_CONTENTS_SIZE
-      ? await this.readLargeFile(fileEntry.sha)
-      : await this.readContentsFile(normalizedPath);
+      ? await this.readLargeFile(fileEntry.sha, options)
+      : await this.readContentsFile(normalizedPath, options);
 
     this.cache.set(cacheKey, content);
     return content;
@@ -130,8 +131,11 @@ export class GitHubReadOperations {
     return admittedBytes;
   }
 
-  private async readContentsFile(path: string): Promise<string> {
-    const item = await this.getFileItemFromContents(path);
+  private async readContentsFile(
+    path: string,
+    options: GitHubRequestOptions = {},
+  ): Promise<string> {
+    const item = await this.getFileItemFromContents(path, options);
     return this.decodeBase64(item.content);
   }
 
@@ -142,9 +146,10 @@ export class GitHubReadOperations {
 
   private async getFileItemFromContents(
     path: string,
+    options: GitHubRequestOptions = {},
   ): Promise<GitHubContentItem & { content: string }> {
     try {
-      const response = await this.client.getContents(path);
+      const response = await this.client.getContents(path, undefined, options);
 
       if (Array.isArray(response)) {
         throw toError(
@@ -191,14 +196,14 @@ export class GitHubReadOperations {
     }
   }
 
-  private async readLargeFile(sha: string): Promise<string> {
+  private async readLargeFile(sha: string, options: GitHubRequestOptions = {}): Promise<string> {
     const blobCacheKey = `github:blob:${sha}`;
     const cachedBlob = this.cache.get<string>(blobCacheKey);
     if (cachedBlob !== undefined) return cachedBlob;
 
     logger.debug(`${LOG_PREFIX} Reading large file via Blob API`, { sha });
 
-    const blob = await this.client.getBlob(sha);
+    const blob = await this.client.getBlob(sha, options);
     const content = blob.encoding === "base64" ? this.decodeBase64(blob.content) : blob.content;
 
     this.cache.set(blobCacheKey, content);

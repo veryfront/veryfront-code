@@ -6374,14 +6374,21 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       return { receivedOptions, datasetText };
     }
 
-    it("reads datasets through a virtual filesystem adapter and forwards the eval signal", async () => {
+    it("reads datasets exactly through a virtual filesystem adapter and forwards the eval signal", async () => {
       const reads: Array<{ path: string; signal: AbortSignal | undefined }> = [];
+      const moduleReads: string[] = [];
       const virtualFs = {
         isVeryfrontAdapter: () => true,
         getUnderlyingAdapter: () => ({}),
         isMultiProjectMode: () => false,
         getAdapterType: () => "VeryfrontFSAdapter",
-        readFile: (path: string, readOptions?: { signal?: AbortSignal }) => {
+        // The module-oriented reader resolves source extensions (cases.jsonl.ts) and applies
+        // the framework-module guard; datasets must not go through it.
+        readFile: (path: string) => {
+          moduleReads.push(path);
+          return Promise.resolve("export default {};");
+        },
+        readOptionalTextFile: (path: string, readOptions?: { signal?: AbortSignal }) => {
           reads.push({ path, signal: readOptions?.signal });
           return Promise.resolve('{"id":"case-1","input":"hello"}\n');
         },
@@ -6391,6 +6398,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
 
       assertExists(receivedOptions?.readTextFile);
       assertEquals(datasetText, '{"id":"case-1","input":"hello"}\n');
+      assertEquals(moduleReads, []);
       assertEquals(reads.length, 1);
       assertEquals(reads[0]!.path, "datasets/cases.jsonl");
       assertExists(receivedOptions.signal);
@@ -6406,6 +6414,10 @@ describe("server/handlers/request/project-run-execute.handler", () => {
         isMultiProjectMode: () => false,
         getAdapterType: () => "DenoFSAdapter",
         readFile: () => {
+          read = true;
+          return Promise.resolve("");
+        },
+        readOptionalTextFile: () => {
           read = true;
           return Promise.resolve("");
         },

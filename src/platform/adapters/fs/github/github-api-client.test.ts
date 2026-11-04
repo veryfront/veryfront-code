@@ -7,7 +7,7 @@ import {
   assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import { observeFetchRequestInit, withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { VeryfrontError } from "#veryfront/errors/types.ts";
 import { GitHubApiClient } from "./github-api-client.ts";
 
@@ -387,6 +387,36 @@ describe("GitHubApiClient", () => {
         new URL(requestedUrls[2]!).pathname,
         "/repos/test-owner/test-repo/contents/docs/read%20me%23draft%3F.md",
       );
+    });
+
+    it("cancels the in-flight request and skips retries when the caller signal aborts", async () => {
+      const controller = new AbortController();
+      const reason = new Error("eval cancelled");
+      let fetchCalls = 0;
+      await withMockFetch(
+        (_input, init) => {
+          fetchCalls++;
+          const signal = observeFetchRequestInit(init).signal;
+          // Without a forwarded signal, fail retryably so the missing wiring surfaces as
+          // repeated attempts and an API error instead of a hang.
+          if (!signal) return Promise.resolve(new Response("unavailable", { status: 503 }));
+          queueMicrotask(() => controller.abort(reason));
+          return new Promise<Response>((_resolve, reject) => {
+            signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+          });
+        },
+        async () => {
+          await assertRejects(
+            () =>
+              createFastRetryClient().getContents("datasets/cases.json", undefined, {
+                signal: controller.signal,
+              }),
+            Error,
+            "eval cancelled",
+          );
+        },
+      );
+      assertEquals(fetchCalls, 1);
     });
 
     it("rejects literal traversal segments before fetching", async () => {
