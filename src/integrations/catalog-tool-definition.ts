@@ -1,4 +1,5 @@
 import type { ToolDefinition } from "#veryfront/tool/types.ts";
+import { privateTextIncludes } from "#veryfront/security/private-text.ts";
 import { createPrivateMap } from "#veryfront/security/private-map.ts";
 import { forEachPrivateArray } from "#veryfront/security/private-array.ts";
 import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
@@ -10,7 +11,8 @@ import { toolDefinition } from "./local-tool-source.ts";
 const catalog = createPrivateMap<string, IntegrationToolMeta & { id: string }>();
 forEachPrivateArray(connectors, (connector) => {
   forEachPrivateArray(connector.tools, (tool) => {
-    const id = tool.id ?? tool.name;
+    const catalogId = tool.id ?? tool.name;
+    const id = privateTextIncludes(catalogId, "__") ? catalogId : `${connector.name}__${catalogId}`;
     const snapshot = snapshotBoundedJsonValue({ ...tool, id });
     if (!snapshot.success) throw new TypeError(`Invalid catalog tool metadata: ${id}`);
     catalog.set(id, snapshot.value as IntegrationToolMeta & { id: string });
