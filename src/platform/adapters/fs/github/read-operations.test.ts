@@ -61,6 +61,58 @@ describe("GitHubReadOperations", () => {
     );
   }
 
+  describe("readTextFile cancellation", () => {
+    it("forwards the caller signal to contents and large-blob requests", async () => {
+      const controller = new AbortController();
+      const contentsSignals: Array<AbortSignal | undefined> = [];
+      const blobSignals: Array<AbortSignal | undefined> = [];
+      const ops = createOps({
+        client: {
+          getContents: (_path: string, _ref?: string, options?: { signal?: AbortSignal }) => {
+            contentsSignals.push(options?.signal);
+            return Promise.resolve({ type: "file", content: "dGVzdA==" });
+          },
+          getBlob: (_sha: string, options?: { signal?: AbortSignal }) => {
+            blobSignals.push(options?.signal);
+            return Promise.resolve({ content: "dGVzdA==", encoding: "base64" });
+          },
+        },
+        statOps: {
+          getFileEntry: (path: string) =>
+            path === "large.json" ? { sha: "sha-large", size: 2 * 1024 * 1024 } : undefined,
+        },
+      });
+
+      assertEquals(await ops.readTextFile("small.json", { signal: controller.signal }), "test");
+      assertEquals(await ops.readTextFile("large.json", { signal: controller.signal }), "test");
+      assertEquals(contentsSignals.length, 1);
+      assertEquals(contentsSignals[0] === controller.signal, true);
+      assertEquals(blobSignals.length, 1);
+      assertEquals(blobSignals[0] === controller.signal, true);
+    });
+
+    it("rejects an already-aborted read before any request", async () => {
+      const controller = new AbortController();
+      controller.abort(new Error("eval cancelled"));
+      let requests = 0;
+      const ops = createOps({
+        client: {
+          getContents: () => {
+            requests++;
+            return Promise.resolve({ type: "file", content: "dGVzdA==" });
+          },
+        },
+      });
+
+      await assertRejects(
+        () => ops.readTextFile("cases.json", { signal: controller.signal }),
+        Error,
+        "eval cancelled",
+      );
+      assertEquals(requests, 0);
+    });
+  });
+
   describe("methods", () => {
     it("should be instantiable", () => {
       assertExists(createOps());

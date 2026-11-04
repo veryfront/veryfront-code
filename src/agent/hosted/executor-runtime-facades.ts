@@ -91,6 +91,9 @@ export async function createExecutorRuntimeFacades(options: {
         description: definition.description,
         discovery: readToolDiscoveryMetadata(definition),
         inputSchemaJson: definition.parameters,
+        ...(definition.outputSchema === undefined
+          ? {}
+          : { outputSchemaJson: definition.outputSchema }),
         async execute(args: unknown, context?: ToolExecutionContext) {
           signal.throwIfAborted();
           if (!args || typeof args !== "object" || Array.isArray(args)) {

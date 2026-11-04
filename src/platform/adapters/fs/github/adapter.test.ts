@@ -97,6 +97,61 @@ describe("GitHubFSAdapter", () => {
     });
   });
 
+  describe("readTextFile cancellation", () => {
+    it("stops waiting for the shared tree index when the caller aborts", async () => {
+      let releaseTree: (() => void) | undefined;
+      installMockFetch((url) => {
+        if (!String(url).includes("/git/trees/")) {
+          return Promise.resolve(new Response("Not found", { status: 404 }));
+        }
+        return new Promise<Response>((resolve) => {
+          releaseTree = () =>
+            resolve(new Response(JSON.stringify(mockTreeResponse), { status: 200 }));
+        });
+      });
+      const adapter = createAdapter();
+      const controller = new AbortController();
+
+      const pending = adapter.readTextFile("README.md", { signal: controller.signal });
+      controller.abort(new Error("eval cancelled"));
+      // Let the shared index build finish too: the aborted read must already have settled
+      // with the abort reason rather than continuing into the contents request.
+      releaseTree?.();
+      await assertRejects(() => pending, Error, "eval cancelled");
+
+      // The shared index build is not cancelled; other readers can still use it.
+      await adapter.initialize();
+    });
+
+    it("forwards the caller signal to the contents request through the wrapper's exact read", async () => {
+      const controller = new AbortController();
+      let contentRequests = 0;
+      installMockFetch((url, init) => {
+        if (String(url).includes("/git/trees/")) {
+          return Promise.resolve(new Response(JSON.stringify(mockTreeResponse), { status: 200 }));
+        }
+        contentRequests++;
+        const signal = observeFetchRequestInit(init).signal;
+        controller.abort(new Error("eval cancelled"));
+        if (!signal) {
+          return Promise.resolve(new Response(JSON.stringify(mockFileContent), { status: 200 }));
+        }
+        return new Promise<Response>((_resolve, reject) => {
+          if (signal.aborted) reject(signal.reason);
+          signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+        });
+      });
+      const wrapper = new FSAdapterWrapper(createAdapter());
+
+      await assertRejects(
+        () => wrapper.readOptionalTextFile("README.md", { signal: controller.signal }),
+        Error,
+        "eval cancelled",
+      );
+      assertEquals(contentRequests, 1);
+    });
+  });
+
   describe("initialization", () => {
     it("should fetch tree on initialize", async () => {
       let treeRequested = false;

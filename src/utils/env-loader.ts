@@ -32,13 +32,36 @@ const mapSet = Map.prototype.set;
 const mapClear = Map.prototype.clear;
 const stringToLowerCase = String.prototype.toLowerCase;
 let envLoaded = false;
+// One load per directory, kept while it runs so concurrent callers await the
+// same read. The CLI loads the cwd before a command knows its project, and
+// `--project <dir>` then loads that directory too.
+const envDirLoads = new Map<string, Promise<void>>();
 let osTypeOverride: string | undefined;
+// Test seam: a case-sensitive host can stand in for Windows' case-insensitive
+// environment when the precedence check reads an existing value.
+let existingEnvReaderOverride: ((key: string) => string | undefined) | undefined;
 
 function envLoaderOsType(): string {
   return osTypeOverride ?? getOsType();
 }
 
-/** Load environment variables from `.env` files (`.env`, `.env.{NODE_ENV|DENO_ENV}`, `.env.local`). */
+function readExistingEnv(key: string): string | undefined {
+  return existingEnvReaderOverride ? existingEnvReaderOverride(key) : getEnv(key);
+}
+
+interface EnvDirLoadOptions {
+  override: boolean;
+  debug: boolean;
+  /** Keep every value defined before this load, even an empty one. */
+  keepDefined: boolean;
+}
+
+/**
+ * Load environment variables from `.env` files (`.env`, `.env.{NODE_ENV|DENO_ENV}`, `.env.local`).
+ *
+ * Skipped once a load finished or `markEnvLoaded()` was called. A caller that
+ * arrives while the same directory is still loading awaits that load.
+ */
 export async function loadEnv(
   options: {
     cwd?: string;
@@ -46,13 +69,65 @@ export async function loadEnv(
     debug?: boolean;
   } = {},
 ): Promise<void> {
-  if (envLoaded) return;
   const { cwd = getCwd(), override = false, debug = false } = options;
+  const pending = applyIntrinsic(mapGet, envDirLoads, [cwd]) as Promise<void> | undefined;
+  if (pending) return await pending;
+  if (envLoaded) return;
+  await startEnvDirLoad(cwd, { override, debug, keepDefined: false });
+}
 
+/**
+ * Load a second directory's `.env` files after the primary load.
+ *
+ * For `veryfront dev --project <dir>`: CLI startup loads the cwd and marks the
+ * environment loaded before the project is known. This ignores that marker,
+ * reads each directory at most once, and never replaces a value that was
+ * defined before it started, empty values included, so the shell and the cwd
+ * keep precedence.
+ */
+export async function loadAdditionalEnv(
+  options: { cwd: string; debug?: boolean },
+): Promise<void> {
+  const { cwd, debug = false } = options;
+  const pending = applyIntrinsic(mapGet, envDirLoads, [cwd]) as Promise<void> | undefined;
+  if (pending) return await pending;
+  await startEnvDirLoad(cwd, { override: false, debug, keepDefined: true });
+}
+
+function startEnvDirLoad(cwd: string, options: EnvDirLoadOptions): Promise<void> {
+  const load = readEnvDirFiles(cwd, options);
+  applyIntrinsic(mapSet, envDirLoads, [cwd, load]);
+  return load;
+}
+
+/** Whether a value already in the environment must stay, given the load mode. */
+function keepsExistingValue(
+  existing: string | undefined,
+  setByThisLoad: boolean,
+  options: EnvDirLoadOptions,
+): boolean {
+  if (options.override) return false;
+  // An earlier file of this same load set it: later files rank higher.
+  if (setByThisLoad) return false;
+  // An empty value set before this load counts as set for an additional load.
+  if (options.keepDefined) return existing !== undefined;
+  return Boolean(existing);
+}
+
+async function readEnvDirFiles(cwd: string, options: EnvDirLoadOptions): Promise<void> {
+  const { debug } = options;
   const env = getEnv("NODE_ENV") ?? getEnv("DENO_ENV") ?? "development";
   const envFiles = [`${cwd}/.env`, `${cwd}/.env.${env}`, `${cwd}/.env.local`];
+  // Everything this load tracks per key is keyed by the case-folded name where
+  // the environment ignores case (Windows). A later file's `api_url` then
+  // replaces an earlier file's `API_URL` in the precedence check, in the
+  // values later `$NAME` references see, and in their expansion taint.
+  const caseInsensitive = envLoaderOsType() === "windows";
+  const foldKey = (key: string): string =>
+    caseInsensitive ? applyIntrinsic(stringToLowerCase, key, []) as string : key;
   const loadedVars: Record<string, string> = {};
   const taintedLoadedVars = new Set<string>();
+  const keysSetByThisLoad = new Set<string>();
 
   let loadedCount = 0;
   let totalVars = 0;
@@ -63,18 +138,23 @@ export async function loadEnv(
       const vars = parseEnvFile(content, loadedVars, taintedLoadedVars);
 
       for (const [key, { value, expandedFromProcessEnv }] of Object.entries(vars)) {
-        const existing = getEnv(key);
-        if (existing && !override) continue;
+        const foldedKey = foldKey(key);
+        const setByThisLoad = keysSetByThisLoad.has(foldedKey);
+        if (keepsExistingValue(readExistingEnv(key), setByThisLoad, options)) continue;
 
         setEnv(key, value);
+        keysSetByThisLoad.add(foldedKey);
         markEnvFileValue(key);
+        // Drop provenance recorded under another spelling of this variable, so
+        // no stale record outlives the value that replaced it.
+        clearEnvSourceAliases(key);
         applyIntrinsic(mapSet, envSources, [
           key,
           { file, source: "env-file", expandedFromProcessEnv },
         ]);
-        loadedVars[key] = value;
-        if (expandedFromProcessEnv) taintedLoadedVars.add(key);
-        else taintedLoadedVars.delete(key);
+        loadedVars[foldedKey] = value;
+        if (expandedFromProcessEnv) taintedLoadedVars.add(foldedKey);
+        else taintedLoadedVars.delete(foldedKey);
         totalVars++;
 
         // Log only the key name and value length — never any part of the value.
@@ -376,11 +456,19 @@ export function markEnvFileSource(
 
 export function __resetEnvLoaderForTests(): void {
   envLoaded = false;
+  applyIntrinsic(mapClear, envDirLoads, []);
   applyIntrinsic(mapClear, envSources, []);
   clearEnvFileValueSources();
   osTypeOverride = undefined;
+  existingEnvReaderOverride = undefined;
 }
 
 export function __setEnvLoaderOsTypeForTests(os: string | undefined): void {
   osTypeOverride = os;
+}
+
+export function __setEnvLoaderExistingEnvReaderForTests(
+  reader: ((key: string) => string | undefined) | undefined,
+): void {
+  existingEnvReaderOverride = reader;
 }

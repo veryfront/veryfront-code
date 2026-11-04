@@ -172,8 +172,9 @@ separate, and execution rechecks authorization.
 `veryfront__tool_search` accepts exactly one of four mode fields. All arguments are
 top-level strings or integers:
 
-- `schema: "<exact name>"` returns one exact tool's input schema and loads it
-  for the next model step.
+- `schema: "<exact name>"` returns one exact tool's input schema and declared
+  output schema, then loads it for the next model step. A `null` output schema
+  means the tool source did not declare an output contract.
 - `search: "<phrase>"` finds tools by a short capability phrase without loading
   schemas.
 - `inventory: "all" | "platform"` browses tool metadata pages. `platform` lists

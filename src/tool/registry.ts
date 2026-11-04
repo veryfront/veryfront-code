@@ -148,6 +148,9 @@ export function toolToProviderDefinition(tool: Tool): ToolDefinition {
     name: tool.id,
     description: tool.description,
     parameters: jsonSchema,
+    ...(tool.outputSchemaJson
+      ? { outputSchema: snapshotProviderSchema(tool.outputSchemaJson, tool.id) }
+      : {}),
     ...(discovery ? { discovery } : {}),
     ...snapshotProviderMcpMetadata(tool.mcp, tool.id),
   };

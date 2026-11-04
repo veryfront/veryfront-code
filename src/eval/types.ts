@@ -162,6 +162,8 @@ export type EvalExampleInput = {
 /** Context passed to dataset loaders. */
 export interface EvalDatasetLoadContext {
   baseDir: string;
+  /** Reads a project file by its relative path; without it, files are read from disk under `baseDir`. */
+  readTextFile?: (path: string) => Promise<string>;
 }
 
 /** Dataset loader used by an eval definition. */
@@ -621,6 +623,8 @@ export interface RunEvalOptions {
     tool?: EvalToolAdapter;
   };
   baseDir?: string;
+  /** Reads project files such as JSON and JSONL datasets; see {@link EvalDatasetLoadContext}. */
+  readTextFile?: (path: string) => Promise<string>;
   runId?: string;
   now?: () => Date;
   export?: EvalReportExportConfig;

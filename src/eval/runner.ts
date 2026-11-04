@@ -804,7 +804,10 @@ export async function runEval(
     : normalizeEvalString(options.runId, "Eval run id");
   const baseDir = options.baseDir ?? cwd();
   throwIfEvalAborted(options.signal);
-  const loadedExamples = await definition.dataset.load({ baseDir });
+  const loadedExamples = await definition.dataset.load({
+    baseDir,
+    ...(options.readTextFile ? { readTextFile: options.readTextFile } : {}),
+  });
   throwIfEvalAborted(options.signal);
   const examples = normalizeEvalExamples(
     loadedExamples,
