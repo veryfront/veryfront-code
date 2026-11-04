@@ -40,6 +40,7 @@ import {
 import {
   assertProjectOwnership,
   createDeployProject,
+  DEFAULT_RELEASE_ASSET_MANIFEST_TIMEOUT_MS,
   type DeployEvent,
   type DeployProjectRequest,
   type DeployStepName,
@@ -3136,6 +3137,52 @@ describe("release asset manifest", () => {
 
     await rejection;
     assertEquals(reads, 3);
+  });
+
+  it("waits by default for a hosted build that takes longer than two minutes", async () => {
+    // Hosted builds of large projects took 65 to 134 s on 2026-11-03 and
+    // succeeded; a two-minute default reported those deploys as timed out.
+    using time = new FakeTime();
+    const readyAtMs = 130_000;
+    const controlPlane = helperControlPlane({
+      getReleaseAssetManifest: () =>
+        Promise.resolve(time.now >= readyAtMs ? readyManifest() : { state: "building" }),
+    });
+
+    const pending = waitForReleaseAssetManifest(controlPlane, PROJECT_SLUG, "release-1", {
+      expectedRoutes: ["/"],
+      pollIntervalMs: 10_000,
+    });
+    for (let elapsed = 0; elapsed <= readyAtMs; elapsed += 10_000) {
+      await time.tickAsync(10_000);
+    }
+
+    const result = await pending;
+    assertEquals(result.state, "ready");
+    assertEquals(DEFAULT_RELEASE_ASSET_MANIFEST_TIMEOUT_MS >= 300_000, true);
+  });
+
+  it("says a build still running at the deadline has not failed", async () => {
+    using time = new FakeTime();
+    const controlPlane = helperControlPlane({
+      getReleaseAssetManifest: () => Promise.resolve({ state: "building" }),
+    });
+
+    const rejection = assertRejects(
+      () =>
+        waitForReleaseAssetManifest(controlPlane, PROJECT_SLUG, "release-1", {
+          ...polling,
+          timeoutMs: 250,
+        }),
+      Error,
+      "The build has not failed and may still finish",
+    );
+    await time.tickAsync(0);
+    await time.tickAsync(100);
+    await time.tickAsync(100);
+    await time.tickAsync(50);
+
+    await rejection;
   });
 
   it("names the refused dispatch when no manifest row is ever created", async () => {
