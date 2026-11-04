@@ -91,6 +91,7 @@ import {
   MAX_CONVERSATION_RUN_EVENT_APPEND_REQUEST_BYTES,
 } from "#veryfront/agent/conversation/run-event-limits.ts";
 import { getRequestTransportLifetime } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
+import { isVirtualFilesystem } from "#veryfront/platform/adapters/fs/wrapper.ts";
 import {
   createNativeRequestInit,
   readOwnInitField,
@@ -5251,6 +5252,14 @@ async function executeEvalRun(
       }
       : {},
     baseDir: ctx.projectDir,
+    // Virtual-filesystem project files live behind the adapter, not on this host's disk.
+    // A disk adapter keeps resolving dataset paths against `baseDir`.
+    ...(isVirtualFilesystem(ctx.adapter.fs)
+      ? {
+        readTextFile: async (path: string) =>
+          textFromFileContent(await ctx.adapter.fs.readFile(path)),
+      }
+      : {}),
     runId: request.runId,
     ...createEvalProgressOptions(),
   };

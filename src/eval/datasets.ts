@@ -1,5 +1,5 @@
 import { isAbsolute, join } from "#veryfront/compat/path";
-import type { EvalDataset, EvalExampleInput } from "./types.ts";
+import type { EvalDataset, EvalDatasetLoadContext, EvalExampleInput } from "./types.ts";
 import {
   createEvalValidationError,
   normalizeEvalExamples,
@@ -8,6 +8,11 @@ import {
 
 function resolveDatasetPath(baseDir: string, filePath: string): string {
   return isAbsolute(filePath) ? filePath : join(baseDir, filePath);
+}
+
+function readDatasetText(context: EvalDatasetLoadContext, filePath: string): Promise<string> {
+  if (context.readTextFile && !isAbsolute(filePath)) return context.readTextFile(filePath);
+  return Deno.readTextFile(resolveDatasetPath(context.baseDir, filePath));
 }
 
 function parseJsonDataset(text: string, source: string): EvalExampleInput[] {
@@ -59,9 +64,8 @@ export const datasets = {
     return {
       kind: "json",
       path: datasetPath,
-      async load({ baseDir }) {
-        const resolvedPath = resolveDatasetPath(baseDir, datasetPath);
-        const text = await Deno.readTextFile(resolvedPath);
+      async load(context) {
+        const text = await readDatasetText(context, datasetPath);
         return normalizeEvalExamples(parseJsonDataset(text, datasetPath), datasetPath);
       },
     };
@@ -72,9 +76,8 @@ export const datasets = {
     return {
       kind: "jsonl",
       path: datasetPath,
-      async load({ baseDir }) {
-        const resolvedPath = resolveDatasetPath(baseDir, datasetPath);
-        const text = await Deno.readTextFile(resolvedPath);
+      async load(context) {
+        const text = await readDatasetText(context, datasetPath);
         return normalizeEvalExamples(parseJsonlDataset(text, datasetPath), datasetPath);
       },
     };
