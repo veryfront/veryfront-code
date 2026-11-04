@@ -65,6 +65,9 @@ import { SSRCircuitBreaker } from "./ssr-circuit-breaker.ts";
 import {
   cachedCodeUsesResolvedDependencies,
   type DependencyTransformCacheOptions,
+  type ImportChain,
+  importChainTooLongError,
+  importGraphNode,
   SSRDependencyValidator,
 } from "./ssr-dependency-validator.ts";
 import { preflightLocalImports } from "./preflight-imports.ts";
@@ -423,7 +426,7 @@ export class SSRModuleLoader {
   constructor(private options: SSRModuleLoaderOptions) {
     this.cache = new SSRCacheManager(options);
     this.depValidator = new SSRDependencyValidator(
-      (filePath, source, depth, dependencyHashCache, signal, cacheOptions) =>
+      (filePath, source, depth, dependencyHashCache, signal, cacheOptions, importChain) =>
         this.transformWithDependencies(
           filePath,
           source,
@@ -431,10 +434,13 @@ export class SSRModuleLoader {
           dependencyHashCache,
           signal,
           cacheOptions,
+          importChain,
         ),
       (crossImport, signal) => this.transformCrossProjectImport(crossImport, signal),
       options.adapter,
       options.projectDir,
+      // In-progress transforms are shared per project and content source.
+      `${options.projectId ?? ""}\0${options.contentSourceId ?? ""}\0${options.projectDir}`,
     );
   }
 
@@ -803,6 +809,7 @@ export class SSRModuleLoader {
     dependencyHashCache: DependencyHashCache = createDependencyHashCache(),
     signal?: AbortSignal,
     options?: DependencyTransformCacheOptions,
+    importChain: ImportChain = [filePath],
   ): Promise<ModuleCacheEntry> {
     const fileName = filePath.split("/").pop() || filePath;
 
@@ -816,6 +823,7 @@ export class SSRModuleLoader {
           dependencyHashCache,
           signal,
           options,
+          importChain,
         ),
       {
         "ssr.file": fileName,
@@ -831,6 +839,7 @@ export class SSRModuleLoader {
     dependencyHashCache: DependencyHashCache = createDependencyHashCache(),
     observerSignal?: AbortSignal,
     options?: DependencyTransformCacheOptions,
+    importChain: ImportChain = [filePath],
   ): Promise<ModuleCacheEntry> {
     throwIfAborted(observerSignal);
     if (depth > MAX_TRANSFORM_DEPTH) {
@@ -839,17 +848,12 @@ export class SSRModuleLoader {
         depth,
         maxDepth: MAX_TRANSFORM_DEPTH,
       });
-      throw toError(
-        createError({
-          type: "build",
-          message:
-            `Max transform depth exceeded (${MAX_TRANSFORM_DEPTH}, depth=${depth}) for ${filePath}. Check for circular dependencies.`,
-          context: { file: filePath, phase: "transform" },
-        }),
-      );
+      throw importChainTooLongError(filePath, depth, importChain, this.options.projectDir);
     }
 
     let code = source ?? (await this.options.adapter.fs.readFile(filePath));
+    // Before node position injection: dependents key this module by its source.
+    const importNode = importGraphNode(filePath, code);
 
     // Inject node positions for JSX files in dev or preview mode
     const shouldInjectPositions = this.options.dev || this.options.mode === "preview";
@@ -878,7 +882,14 @@ export class SSRModuleLoader {
         )
       ) {
         globalModuleCache.set(filePathCacheKey, cachedEntry);
-        await this.depValidator.ensureDependenciesExist(code, filePath, depth, observerSignal);
+        await this.depValidator.ensureDependenciesExist(
+          code,
+          filePath,
+          depth,
+          observerSignal,
+          importChain,
+          importNode,
+        );
         return cachedEntry;
       }
     }
@@ -901,6 +912,8 @@ export class SSRModuleLoader {
             filePath,
             depth,
             observerSignal,
+            importChain,
+            importNode,
           );
           if (!await cachedCodeUsesResolvedDependencies(redisCode, resolvedDependencies)) {
             logger.debug("Distributed cache has stale dependency outputs, re-transforming", {
@@ -961,7 +974,14 @@ export class SSRModuleLoader {
           cachedPath: mdxCacheResult.path.slice(-60),
         });
 
-        await this.depValidator.ensureDependenciesExist(code, filePath, depth, observerSignal);
+        await this.depValidator.ensureDependenciesExist(
+          code,
+          filePath,
+          depth,
+          observerSignal,
+          importChain,
+          importNode,
+        );
         return entry;
       }
 
@@ -1114,6 +1134,8 @@ export class SSRModuleLoader {
             dependencyHashCache,
             sharedSignal,
             options,
+            importChain,
+            importNode,
           );
           const crossProjectPaths = await this.depValidator.processCrossProjectImports(
             parseResult.crossProjectImports,

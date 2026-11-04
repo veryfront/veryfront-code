@@ -161,6 +161,15 @@ function productionGateRelativePath(filePath: string, projectDir: string): strin
     : filePath;
 }
 
+/** A regressed cycle waits out the 45 s in-progress transform deadline. */
+function assertCycleReportedPromptly(started: number): void {
+  const elapsed = performance.now() - started;
+  assert(
+    elapsed < TRANSFORM_IN_PROGRESS_WAIT_TIMEOUT_MS / 3,
+    `cycle took ${Math.round(elapsed)} ms to report`,
+  );
+}
+
 // Sanitizers stay off for one verified reason: the terminal cross-project fetch
 // case deliberately abandons an in-flight registry fetch, so http-cache.ts is
 // still holding a retryWithBackoff timer, an op_fetch_send and its
@@ -2266,6 +2275,161 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
       } else {
         setEnv("SSR_TRANSFORM_PER_PROJECT_LIMIT", previousLimit);
       }
+      clearSSRModuleCache();
+      await remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("loads an acyclic import chain deeper than the old limit of 15", async () => {
+    clearSSRModuleCache();
+    const projectDir = await makeTempDir({ prefix: "vf-ssr-deep-chain-" });
+    try {
+      const length = 30;
+      for (let index = 0; index < length; index++) {
+        await writeTextFile(
+          join(projectDir, `m${index}.ts`),
+          index === length - 1
+            ? "export const value = 42;\n"
+            : `export { value } from "./m${index + 1}.ts";\n`,
+        );
+      }
+      const loader = new SSRModuleLoader({
+        projectDir,
+        projectId: "deep-import-chain",
+        contentSourceId: "local-main",
+        adapter: denoAdapter,
+        dev: false,
+      });
+
+      const mod = await loader.loadRawModule(
+        join(projectDir, "page.tsx"),
+        'export { value } from "./m0.ts";\nexport default function Page() { return null; }',
+      );
+
+      assertEquals(mod.value, 42);
+    } finally {
+      clearSSRModuleCache();
+      await remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("reports an import cycle with its chain instead of waiting on itself", async () => {
+    // The cycle used to wait on its own in-progress transform until the 45 s
+    // wait deadline, without naming the cycle.
+    clearSSRModuleCache();
+    const projectDir = await makeTempDir({ prefix: "vf-ssr-import-cycle-" });
+    try {
+      await writeTextFile(
+        join(projectDir, "a.ts"),
+        'import { b } from "./b.ts";\nexport function a() { return b.name; }\n',
+      );
+      await writeTextFile(
+        join(projectDir, "b.ts"),
+        'import { a } from "./a.ts";\nexport function b() { return a.name; }\n',
+      );
+      const loader = new SSRModuleLoader({
+        projectDir,
+        projectId: "import-cycle",
+        contentSourceId: "local-main",
+        adapter: denoAdapter,
+        dev: false,
+      });
+      const started = performance.now();
+
+      const error = await assertRejects(
+        () =>
+          loader.loadRawModule(
+            join(projectDir, "page.tsx"),
+            'import { a } from "./a.ts";\nexport const name = a();\n' +
+              "export default function Page() { return null; }",
+          ),
+        Error,
+        "Circular import is not supported in SSR",
+      );
+      assertCycleReportedPromptly(started);
+      assert(error instanceof Error);
+      assert(
+        /a\.ts -> \S*b\.ts -> \S*a\.ts/.test(error.message),
+        `cycle chain missing from: ${error.message}`,
+      );
+      assert(!error.message.includes(projectDir), `machine path in: ${error.message}`);
+    } finally {
+      clearSSRModuleCache();
+      await remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("reports an import cycle between modules a page imports side by side", async () => {
+    // Sibling imports start separate transforms for a.ts and b.ts. Each one's
+    // own import chain is acyclic, yet a.ts waits on b.ts while b.ts waits
+    // on a.ts.
+    clearSSRModuleCache();
+    const projectDir = await makeTempDir({ prefix: "vf-ssr-sibling-cycle-" });
+    try {
+      await writeTextFile(
+        join(projectDir, "a.ts"),
+        'import { b } from "./b.ts";\nexport function a() { return b.name; }\n',
+      );
+      await writeTextFile(
+        join(projectDir, "b.ts"),
+        'import { a } from "./a.ts";\nexport function b() { return a.name; }\n',
+      );
+      const loader = new SSRModuleLoader({
+        projectDir,
+        projectId: "sibling-import-cycle",
+        contentSourceId: "local-main",
+        adapter: denoAdapter,
+        dev: false,
+      });
+      const started = performance.now();
+
+      await assertRejects(
+        () =>
+          loader.loadRawModule(
+            join(projectDir, "page.tsx"),
+            'import { a } from "./a.ts";\nimport { b } from "./b.ts";\n' +
+              "export const names = [a(), b()];\n" +
+              "export default function Page() { return null; }",
+          ),
+        Error,
+        "Circular import is not supported in SSR",
+      );
+      assertCycleReportedPromptly(started);
+    } finally {
+      clearSSRModuleCache();
+      await remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("reports an import cycle that leads back to the page", async () => {
+    clearSSRModuleCache();
+    const projectDir = await makeTempDir({ prefix: "vf-ssr-page-cycle-" });
+    try {
+      const pagePath = join(projectDir, "page.tsx");
+      const pageSource = 'import { helper } from "./helper.ts";\n' +
+        "export const title = 'page';\n" +
+        "export default function Page() { return helper; }";
+      await writeTextFile(pagePath, pageSource);
+      await writeTextFile(
+        join(projectDir, "helper.ts"),
+        'import { title } from "./page.tsx";\nexport function helper() { return title; }\n',
+      );
+      const loader = new SSRModuleLoader({
+        projectDir,
+        projectId: "page-import-cycle",
+        contentSourceId: "local-main",
+        adapter: denoAdapter,
+        dev: false,
+      });
+      const started = performance.now();
+
+      await assertRejects(
+        () => loader.loadRawModule(pagePath, pageSource),
+        Error,
+        "Circular import is not supported in SSR",
+      );
+      assertCycleReportedPromptly(started);
+    } finally {
       clearSSRModuleCache();
       await remove(projectDir, { recursive: true });
     }
