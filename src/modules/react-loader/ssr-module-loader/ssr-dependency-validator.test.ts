@@ -798,32 +798,73 @@ describe("SSRDependencyValidator", () => {
           importGraphNode(aPath, aImporterSource),
         );
         await bTransformStarted.promise;
-        await validator.processLocalImports(
-          [{ absolutePath: aPath, specifier: "./a.ts" }],
-          bPath,
-          0,
-          createFileSystem(),
-          createDependencyHashCache(),
-          undefined,
-          undefined,
-          [bPath],
-          importGraphNode(bPath, "b.ts"),
-        );
+        const bImportsA = () =>
+          validator.processLocalImports(
+            [{ absolutePath: aPath, specifier: "./a.ts" }],
+            bPath,
+            0,
+            createFileSystem(),
+            createDependencyHashCache(),
+            undefined,
+            undefined,
+            [bPath],
+            importGraphNode(bPath, "b.ts"),
+          );
+        if (expectCycle) {
+          // Rejecting, not only recording a missing dependency, makes the
+          // shared transform fail for every caller waiting on it.
+          await assertRejects(bImportsA, Error, "Circular import is not supported in SSR: a.ts");
+        } else {
+          await bImportsA();
+        }
         releaseB.resolve();
         await aImportsB;
 
-        const reasons = validator.missingDependencies.map((missing) => missing.reason);
-        assertEquals(
-          reasons.some((reason) => reason.includes("Circular import is not supported in SSR")),
-          expectCycle,
-          `missing dependencies: ${JSON.stringify(reasons)}`,
-        );
+        assertEquals(validator.missingDependencies, []);
       } finally {
         releaseB.resolve();
         await remove(projectDir, { recursive: true });
       }
     });
   }
+
+  it("does not treat an ancestor edited mid-traversal as a cycle", async () => {
+    // The chain reached b.ts through an old a.ts; the a.ts b.ts now reads is
+    // a newer version with no pending imports, so nothing waits on itself.
+    const projectDir = await makeTempDir({ prefix: "vf-ssr-ancestor-edit-" });
+    const aPath = join(projectDir, "a.ts");
+    const bPath = join(projectDir, "b.ts");
+    const transformed: string[] = [];
+    const validator = new SSRDependencyValidator(
+      (filePath) => {
+        transformed.push(filePath);
+        return Promise.resolve({ tempPath: `${filePath}.mjs`, contentHash: "hash" });
+      },
+      () => Promise.resolve(""),
+      denoAdapter,
+      projectDir,
+    );
+    try {
+      await writeTextFile(aPath, "new a.ts");
+
+      await validator.processLocalImports(
+        [{ absolutePath: aPath, specifier: "./a.ts" }],
+        bPath,
+        1,
+        createFileSystem(),
+        createDependencyHashCache(),
+        undefined,
+        undefined,
+        [aPath, bPath],
+        importGraphNode(bPath, "b.ts"),
+      );
+
+      assertEquals(transformed, [aPath]);
+      assertEquals(validator.missingDependencies, []);
+    } finally {
+      await remove(projectDir, { recursive: true });
+    }
+  });
 
   it("fails a cached module whose import chain passes the safety bound", async () => {
     // Returning no dependencies here once let a cached module skip validation

@@ -57,6 +57,9 @@ const setConstructor = Set;
 const setAdd = Set.prototype.add;
 const setForEach = Set.prototype.forEach;
 const setHas = Set.prototype.has;
+const weakSetConstructor = WeakSet;
+const weakSetAdd = WeakSet.prototype.add;
+const weakSetHas = WeakSet.prototype.has;
 const stringIndexOf = String.prototype.indexOf;
 const stringSlice = String.prototype.slice;
 const stringStartsWith = String.prototype.startsWith;
@@ -103,13 +106,6 @@ function extendImportChain(chain: ImportChain, path: string): string[] {
   return extended;
 }
 
-function importChainIncludes(chain: ImportChain, path: string): boolean {
-  for (let index = 0; index < chain.length; index++) {
-    if (chain[index] === path) return true;
-  }
-  return false;
-}
-
 /** Project-relative so build errors never show machine paths. */
 function formatImportChain(chain: ImportChain, projectDir: string): string {
   const displayed: string[] = [];
@@ -119,14 +115,23 @@ function formatImportChain(chain: ImportChain, projectDir: string): string {
   return joinStringArray(displayed, " -> ");
 }
 
+const circularImportErrors = new weakSetConstructor<object>();
+
 function circularImportError(chain: ImportChain, projectDir: string): Error {
-  return toError(
+  const error = toError(
     createError({
       type: "build",
       message: `Circular import is not supported in SSR: ${formatImportChain(chain, projectDir)}`,
       context: { file: chain[chain.length - 1], phase: "dependency-resolution" },
     }),
   );
+  reflectApply(weakSetAdd, circularImportErrors, [error]);
+  return error;
+}
+
+function isCircularImportError(error: unknown): boolean {
+  return typeof error === "object" && error !== null &&
+    reflectApply(weakSetHas, circularImportErrors, [error]) as boolean;
 }
 
 /** @internal exported for the loader */
@@ -627,22 +632,21 @@ export class SSRDependencyValidator {
             const requestedPath = ownStringValue(imp, "requestedPath");
             const depPath = resolvedPath ?? requestedPath ?? imp.absolutePath;
             const depChain = extendImportChain(importChain, depPath);
-            // A module's output path is derived from its dependencies' output
-            // paths, so a module on its own import chain would wait on itself.
-            if (importChainIncludes(importChain, depPath)) {
-              throw circularImportError(depChain, this.projectDir);
-            }
             const depSource = await this.readLocalImportSource(imp, localFs);
             const depNode = importGraphNode(depPath, depSource);
+            // A module's output path is derived from its dependencies' output
+            // paths, so a module that reaches its importer through pending
+            // imports would wait on itself. Pending imports include every
+            // ancestor's edge, so this also covers the module's own chain.
             // Check and register in one synchronous step, so two transforms
             // closing the same loop cannot both pass the check.
             const pendingLoop = findActiveImportPath(this.importGraphScope, depNode, importerNode);
             if (pendingLoop) {
-              let cycle: string[] = [fromFilePath];
+              let cycle: string[] = [];
               for (let index = 0; index < pendingLoop.length; index++) {
                 cycle = extendImportChain(cycle, importGraphNodePath(pendingLoop[index]!));
               }
-              throw circularImportError(cycle, this.projectDir);
+              throw circularImportError(extendImportChain(cycle, depPath), this.projectDir);
             }
             const releaseImportEdge = addActiveImportEdge(
               this.importGraphScope,
@@ -675,6 +679,9 @@ export class SSRDependencyValidator {
           } catch (error) {
             throwIfAborted(signal);
             if (isTerminalHttpModuleFetchFailure(error)) throw error;
+            // A cycle must reject the shared transform for every waiter, not
+            // only for the loader that happened to detect it.
+            if (isCircularImportError(error)) throw error;
             pushArrayValue(this.missingDependencies, {
               specifier: imp.specifier,
               fromFile: fromFilePath,
