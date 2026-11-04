@@ -570,3 +570,53 @@ Deno.test("createLiveStudioMcpTools returns no tools without a Studio MCP URL", 
   assertEquals(studioTools.tools, {});
   assertEquals(fixtures.createdSources.length, 0);
 });
+
+Deno.test("createLiveStudioMcpTools releases every created source on close and on setup failure", async () => {
+  const disposed: number[] = [];
+  let created = 0;
+  let failListing = false;
+  const createRemoteToolSource = (config: RemoteMCPToolSourceConfig): RemoteToolSource => {
+    const index = created++;
+    return {
+      id: config.id ?? "studio-mcp-live-tools",
+      listTools: async () => {
+        if (failListing) throw new Error("discovery failed");
+        return [{
+          name: "studio_suggestions",
+          description: "studio_suggestions",
+          parameters: { type: "object", properties: {} },
+        }];
+      },
+      executeTool: async () => ({ ok: true }),
+      dispose: async () => {
+        disposed.push(index);
+      },
+    };
+  };
+  let projectId = "project-1";
+  const tools = await createLiveStudioMcpTools({
+    authToken: "token-1",
+    clientProfile: trustedStudioProfile,
+    getProjectId: () => projectId,
+    studioMcpUrl: "https://studio.example/mcp",
+    createRemoteToolSource,
+  });
+  projectId = "project-2";
+  await tools.tools.studio_suggestions!.execute!({}, {} as never);
+  assertEquals(created, 2);
+  assertEquals(disposed, []);
+  await tools.close();
+  assertEquals(disposed.sort(), [0, 1]);
+
+  failListing = true;
+  await assertRejects(() =>
+    createLiveStudioMcpTools({
+      authToken: "token-1",
+      clientProfile: trustedStudioProfile,
+      getProjectId: () => "project-1",
+      studioMcpUrl: "https://studio.example/mcp",
+      createRemoteToolSource,
+    })
+  );
+  assertEquals(disposed.sort(), [0, 1, 2]);
+});

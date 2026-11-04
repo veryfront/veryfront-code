@@ -46,6 +46,7 @@ import { createAgentServiceRemoteMcpConfig } from "../service/mcp-server-config.
 import { wrapRemoteToolSourceWithMcpPolicy } from "../mcp-tool-policy.ts";
 import { getActiveRuntimeRemoteToolSources } from "./remote-tool-source-context.ts";
 import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
+import { disposeRemoteToolSources } from "#veryfront/tool/remote-tool-source-owner.ts";
 import { compareStrings } from "#veryfront/utils/compare.ts";
 import {
   createAgentKnowledgeSource,
@@ -82,14 +83,14 @@ export function createRuntimeMcpSourceCleanup(
   const ownedSources = sources === undefined ? [] : runtimeOwnedMcpSources.get(sources) ?? [];
   return {
     async [Symbol.asyncDispose]() {
+      const disposable: RemoteToolSource[] = [];
       for (let index = 0; index < ownedSources.length; index++) {
-        if (!hasOwn(ownedSources, index)) continue;
-        const source = ownedSources[index]!;
-        try {
-          await source.dispose?.();
-        } catch {
-          // Session termination is best effort and must preserve the run result.
-        }
+        if (hasOwn(ownedSources, index)) disposable[disposable.length] = ownedSources[index]!;
+      }
+      try {
+        await disposeRemoteToolSources(disposable);
+      } catch {
+        // Session termination is best effort and must preserve the run result.
       }
     },
   };

@@ -115,3 +115,38 @@ it("project-bound cleanup preserves the requested run scope", async () => {
   assertEquals([...active], ["two"]);
   assertEquals(disposedProject, "project-one");
 });
+
+it("MCP cleanup releases independent owned sources concurrently", async () => {
+  const started: string[] = [];
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => release = resolve);
+  const sources = getRuntimeRemoteToolSources({
+    system: "Use remote tools.",
+    mcpServers: [
+      { kind: "veryfront-api", id: "platform-one", toolPolicy: { allow: ["get_file"] } },
+      { kind: "veryfront-api", id: "platform-two", toolPolicy: { allow: ["get_file"] } },
+    ],
+  }, {
+    getVeryfrontBootstrap: () => ({
+      apiBaseUrl: "https://api.example/",
+      apiToken: "test-token",
+      projectSlug: "test-project",
+      hasRequestContext: false,
+      usesVeryfrontFs: false,
+    }),
+    createRemoteToolSource: (config) => ({
+      id: config.id ?? "unnamed",
+      listTools: async () => [],
+      executeTool: async () => undefined,
+      dispose: async () => {
+        started.push(config.id ?? "unnamed");
+        await gate;
+      },
+    }),
+  })!;
+  const cleanup = createRuntimeMcpSourceCleanup(sources)[Symbol.asyncDispose]();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assertEquals(started.sort(), ["platform-one", "platform-two"]);
+  release();
+  await cleanup;
+});

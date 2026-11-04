@@ -1048,3 +1048,62 @@ describe("child-fork Studio MCP eligibility", () => {
     }
   });
 });
+
+describe("child fork MCP source lifecycle", () => {
+  const createDisposableSources = (failListing = false) => {
+    const created: string[] = [];
+    const disposed: string[] = [];
+    const createRemoteToolSource = (config: RemoteMCPToolSourceConfig): RemoteToolSource => {
+      const id = config.id ?? "source";
+      created.push(id);
+      return {
+        id,
+        listTools: () =>
+          failListing && id !== "studio-mcp-live-tools"
+            ? Promise.reject(new Error("discovery failed"))
+            : Promise.resolve([remoteTool("update_file")]),
+        executeTool: () => Promise.resolve({ success: true }),
+        dispose: () => {
+          disposed.push(id);
+          return Promise.resolve();
+        },
+      };
+    };
+    return { created, disposed, createRemoteToolSource };
+  };
+
+  it("releases the Studio and remote sources created for the fork when tooling closes", async () => {
+    const sources = createDisposableSources();
+    const result = await prepareDefaultHostedChildForkToolSources({
+      authToken: "token-1",
+      apiMcpUrl: "https://api.example/mcp",
+      mcpServers: [{ kind: "veryfront-studio" }, { kind: "veryfront-api" }],
+      studioMcpUrl: "https://studio.example/mcp",
+      clientProfile: trustedStudioProfile,
+      getProjectId: () => "project-1",
+      createRemoteToolSource: sources.createRemoteToolSource,
+    });
+    assertEquals(result.ok, true);
+    if (!result.ok) return;
+    assertEquals(sources.created.length, 2);
+    assertEquals(sources.disposed, []);
+    await result.closeStudioMcpTools?.();
+    assertEquals(sources.disposed.sort(), [...sources.created].sort());
+  });
+
+  it("releases already created sources when fork tool setup fails", async () => {
+    const sources = createDisposableSources(true);
+    const result = await prepareDefaultHostedChildForkToolSources({
+      authToken: "token-1",
+      apiMcpUrl: "https://api.example/mcp",
+      mcpServers: [{ kind: "veryfront-studio" }, { kind: "veryfront-api" }],
+      studioMcpUrl: "https://studio.example/mcp",
+      clientProfile: trustedStudioProfile,
+      getProjectId: () => "project-1",
+      createRemoteToolSource: sources.createRemoteToolSource,
+    });
+    assertEquals(result.ok, false);
+    assertEquals(sources.created.length, 2);
+    assertEquals(sources.disposed.sort(), [...sources.created].sort());
+  });
+});

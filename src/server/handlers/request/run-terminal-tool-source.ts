@@ -18,6 +18,8 @@ import {
   type RemoteMCPToolSourceConfig,
 } from "#veryfront/tool";
 import type { RemoteToolSource } from "#veryfront/tool";
+import { shareRemoteMCPProtocolState } from "#veryfront/tool/remote-mcp.ts";
+import { disposeRemoteToolSources } from "#veryfront/tool/remote-tool-source-owner.ts";
 import {
   INGRESS_RUN_EVENT_TOKEN_HEADER,
   INGRESS_RUN_TERMINAL_TOKEN_HEADER,
@@ -40,7 +42,10 @@ export function createRunPlatformToolSource(
     trustedEndpoints: [`${hostApi}/mcp`],
     requestFetch: createVeryfrontApiOriginBoundOutboundFetch(hostApi),
   });
-  const ordinary = createSource(config);
+  // Only the ordinary source runs discovery; the credential-specialized
+  // sources reuse the protocol and header annotations it records.
+  const shared = shareRemoteMCPProtocolState(config);
+  const ordinary = createSource(shared);
   let mutationSource: RemoteToolSource | null = null;
   if (fileWriter) {
     const trustedApi = requireHostPrivateApiHttps(fileWriter.apiBaseUrl);
@@ -50,7 +55,7 @@ export function createRunPlatformToolSource(
       );
     }
     mutationSource = createSource({
-      ...config,
+      ...shared,
       headers: { ...config.headers, [INGRESS_RUN_EVENT_TOKEN_HEADER]: fileWriter.token },
     });
   }
@@ -58,6 +63,7 @@ export function createRunPlatformToolSource(
   const fileSource: RemoteToolSource = retainedMutationSource
     ? {
       id: ordinary.id,
+      dispose: (context) => disposeRemoteToolSources([ordinary, retainedMutationSource], context),
       listTools: (context) => ordinary.listTools(context),
       executeTool: (name, args, context) =>
         isCanonicalFileMutationTool(name)
@@ -71,7 +77,7 @@ export function createRunPlatformToolSource(
     [INGRESS_RUN_TERMINAL_TOKEN_HEADER]: terminal.token,
   };
   const terminalSource = createSource({
-    ...config,
+    ...shared,
     // The call id only names which call the API closes; the token is the authority.
     headers: async (context) => {
       const toolCallId = terminalToolCallIdHeaderValue(context);
@@ -93,6 +99,13 @@ export function createRunPlatformToolSource(
   });
   return {
     id: ordinary.id,
+    dispose: (context) =>
+      disposeRemoteToolSources(
+        retainedMutationSource
+          ? [ordinary, retainedMutationSource, terminalSource]
+          : [ordinary, terminalSource],
+        context,
+      ),
     listTools: (context) => ordinary.listTools(context),
     executeTool: (name, args, context) =>
       isTerminalRunToolName(name) && context?.runId === terminal.runId &&

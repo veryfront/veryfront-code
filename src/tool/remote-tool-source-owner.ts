@@ -1,6 +1,48 @@
 import { createPrivateSet } from "#veryfront/security/private-set.ts";
+import {
+  allPrivatePromises,
+  chainPrivatePromise,
+  resolvePrivatePromise,
+} from "#veryfront/security/private-promise.ts";
+import { defineOwnDataProperty } from "#veryfront/security/own-data-property.ts";
 import { serverLogger } from "#veryfront/utils";
-import type { RemoteToolSource } from "./types.ts";
+import type { RemoteToolSource, ToolExecutionContext } from "./types.ts";
+
+type DisposeOutcome = { failed: false } | { failed: true; error: unknown };
+
+/**
+ * Dispose each distinct source concurrently, so independent session cleanup
+ * budgets overlap instead of adding up. Throws the first failure after every
+ * disposal settles.
+ */
+export async function disposeRemoteToolSources(
+  sources: Iterable<RemoteToolSource>,
+  context?: ToolExecutionContext,
+): Promise<void> {
+  const seen = createPrivateSet<RemoteToolSource>();
+  const pending: Promise<DisposeOutcome>[] = [];
+  for (const source of sources) {
+    if (seen.has(source)) continue;
+    seen.add(source);
+    // Start every disposal before awaiting any, including through a source whose
+    // dispose throws synchronously.
+    const disposal = chainPrivatePromise(resolvePrivatePromise(), () => source.dispose?.(context));
+    defineOwnDataProperty(
+      pending,
+      pending.length,
+      chainPrivatePromise<void, DisposeOutcome>(
+        disposal,
+        () => ({ failed: false }),
+        (error) => ({ failed: true, error }),
+      ),
+    );
+  }
+  const outcomes = await allPrivatePromises(pending);
+  for (let index = 0; index < outcomes.length; index++) {
+    const outcome = outcomes[index]!;
+    if (outcome.failed) throw outcome.error;
+  }
+}
 
 /** Track sources created by a host lifecycle without taking ownership of injected sources. */
 export function createRemoteToolSourceOwner() {
@@ -10,18 +52,11 @@ export function createRemoteToolSourceOwner() {
   const dispose = (): Promise<void> => {
     closing = true;
     cleanup ??= (async () => {
-      let firstError: unknown;
-      let failed = false;
-      for (const source of sources) {
-        try {
-          await source.dispose?.();
-        } catch (error) {
-          if (!failed) firstError = error;
-          failed = true;
-        }
+      try {
+        await disposeRemoteToolSources(sources);
+      } finally {
+        sources.clear();
       }
-      sources.clear();
-      if (failed) throw firstError;
     })();
     return cleanup;
   };

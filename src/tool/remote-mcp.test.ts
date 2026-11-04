@@ -20,6 +20,7 @@ import {
   MAX_REMOTE_MCP_TOOL_DEFINITIONS,
   MAX_REMOTE_MCP_TOOL_LIST_PAGES,
   MAX_REMOTE_MCP_TOOL_LIST_RESPONSE_BYTES,
+  shareRemoteMCPProtocolState,
 } from "./remote-mcp.ts";
 import { getToolResultError } from "./result.ts";
 import { VERSION } from "#veryfront/utils/version-constant.ts";
@@ -2614,6 +2615,256 @@ describe("tool/remote-mcp", () => {
         await source.dispose?.();
         assertEquals(server.live.size, 0);
       });
+    });
+  });
+}
+
+// Remote MCP session lifecycle: disposal races, shared protocol state and
+// primordial use on credential-bearing paths.
+{
+  const ENDPOINT = "http://veryfront-api/mcp";
+  type Body = { id?: string; method: string; params?: Record<string, unknown> };
+  type Seen = { method: string; headers: Headers; body?: Body };
+  const deferred = () => {
+    let resolve!: () => void;
+    const promise = new Promise<void>((done) => resolve = done);
+    return { promise, resolve };
+  };
+  const createServer = () => {
+    const seen: Seen[] = [];
+    const live = new Set<string>();
+    let next = 0;
+    let mode: "legacy" | "modern" = "legacy";
+    let sessionlessGate: Promise<void> | undefined;
+    let initializeGate: Promise<void> | undefined;
+    const sessionlessReached = deferred();
+    const initializeReached = deferred();
+    const tool = {
+      name: "ping",
+      description: "Ping",
+      inputSchema: {
+        type: "object",
+        properties: { region: { type: "string", "x-mcp-header": "Region" } },
+      },
+    };
+    const requestFetch: typeof fetch = async (_input, init) => {
+      const request = observeFetchRequestInit(init);
+      const headers = new Headers(request.headers);
+      if (request.method === "DELETE") {
+        seen.push({ method: "DELETE", headers });
+        live.delete(headers.get("Mcp-Session-Id")!);
+        return new Response(null, { status: 204 });
+      }
+      const body = JSON.parse(String(request.body)) as Body;
+      seen.push({ method: body.method, headers, body });
+      const sessionId = headers.get("Mcp-Session-Id");
+      if (body.method === "initialize") {
+        initializeReached.resolve();
+        if (initializeGate) await initializeGate;
+        if (mode === "modern") return new Response("initialize unsupported", { status: 400 });
+        const id = `lifecycle-session-${++next}`;
+        live.add(id);
+        return Response.json({
+          jsonrpc: "2.0",
+          id: body.id,
+          result: {
+            protocolVersion: "2025-11-25",
+            capabilities: {},
+            serverInfo: { name: "fixture", version: "1" },
+          },
+        }, { headers: { "Mcp-Session-Id": id } });
+      }
+      if (body.method === "notifications/initialized") return new Response(null, { status: 202 });
+      if (!sessionId) {
+        sessionlessReached.resolve();
+        if (sessionlessGate) await sessionlessGate;
+        if (mode === "legacy") return new Response("initialize first", { status: 400 });
+      } else if (!live.has(sessionId)) {
+        return new Response("unknown session", { status: 404 });
+      }
+      return Response.json({
+        jsonrpc: "2.0",
+        id: body.id,
+        result: body.method === "tools/list"
+          ? { tools: [tool] }
+          : { content: [{ type: "text", text: "pong" }] },
+      });
+    };
+    return {
+      seen,
+      live,
+      requestFetch,
+      sessionlessReached: sessionlessReached.promise,
+      initializeReached: initializeReached.promise,
+      setMode: (value: "legacy" | "modern") => mode = value,
+      holdSessionless: (gate: Promise<void>) => sessionlessGate = gate,
+      holdInitialize: (gate: Promise<void>) => initializeGate = gate,
+      methods: () => seen.map((entry) => entry.method),
+    };
+  };
+  const sourceFor = (
+    server: ReturnType<typeof createServer>,
+    config: Partial<Parameters<typeof createRemoteMCPToolSource>[0]> = {},
+  ) =>
+    createRemoteMCPToolSourceFactoryWithTransport({
+      trustedEndpoints: [ENDPOINT],
+      requestFetch: server.requestFetch,
+    })({ endpoint: ENDPOINT, ...config });
+
+  describe("remote MCP session lifecycle", () => {
+    it("refuses session deletion after project code replaced a Headers member", async () => {
+      const server = createServer();
+      const source = sourceFor(server, { headers: { Authorization: "Bearer cleanup-canary" } });
+      await source.listTools();
+      assertEquals(server.live.size, 1);
+      const original = Headers.prototype.has;
+      Headers.prototype.has = function (this: Headers, name: string) {
+        return Reflect.apply(original, this, [name]);
+      };
+      try {
+        await assertRejects(() => source.dispose!(), TypeError, "Refused");
+      } finally {
+        Headers.prototype.has = original;
+      }
+      assertEquals(server.methods().includes("DELETE"), false);
+    });
+
+    it("awaits in-flight handshakes without a patched Promise.allSettled", async () => {
+      const server = createServer();
+      const release = deferred();
+      server.holdInitialize(release.promise);
+      const source = sourceFor(server);
+      const listing = source.listTools().catch((error: unknown) => error);
+      await server.initializeReached;
+      const original = Promise.allSettled;
+      let observed = false;
+      Promise.allSettled = function (this: PromiseConstructor, values: Iterable<unknown>) {
+        observed = true;
+        return Reflect.apply(original, this, [values]);
+      } as typeof Promise.allSettled;
+      let disposing: Promise<void>;
+      try {
+        disposing = source.dispose!();
+      } finally {
+        Promise.allSettled = original;
+      }
+      release.resolve();
+      await disposing;
+      await listing;
+      assertEquals(observed, false);
+      assertEquals(server.methods().includes("DELETE"), true);
+      assertEquals(server.live.size, 0);
+    });
+
+    it("does not negotiate a session after disposal overlapped a sessionless request", async () => {
+      const server = createServer();
+      const release = deferred();
+      server.holdSessionless(release.promise);
+      const source = sourceFor(server);
+      const listing = source.listTools({ runId: "run-a" });
+      await server.sessionlessReached;
+      await source.dispose!({ runId: "run-a" });
+      release.resolve();
+      await assertRejects(() => listing, Error, "disposed");
+      assertEquals(server.methods().includes("initialize"), false);
+      assertEquals(server.live.size, 0);
+    });
+
+    it("stops initializing calls once a sessionless request proves the modern protocol", async () => {
+      const server = createServer();
+      const source = sourceFor(server);
+      await source.listTools({ runId: "run-a" });
+      server.setMode("modern");
+      await source.listTools({ runId: "run-b" });
+      const before = server.seen.length;
+      assertEquals(await source.executeTool("ping", {}, { runId: "run-c" }), "pong");
+      assertEquals(server.methods().slice(before), ["tools/call"]);
+    });
+
+    it("lets credential-specialized sources reuse the ordinary source's legacy discovery", async () => {
+      const server = createServer();
+      const shared = shareRemoteMCPProtocolState({
+        endpoint: ENDPOINT,
+        headers: { Authorization: "Bearer ordinary" },
+      });
+      const ordinary = sourceFor(server, shared);
+      const terminal = sourceFor(server, {
+        ...shared,
+        headers: { Authorization: "Bearer ordinary", "X-Terminal-Token": "terminal" },
+      });
+      await ordinary.listTools({ runId: "run-a" });
+      const before = server.seen.length;
+      assertEquals(await terminal.executeTool("ping", {}, { runId: "run-a" }), "pong");
+      assertEquals(server.methods().slice(before), [
+        "initialize",
+        "notifications/initialized",
+        "tools/call",
+      ]);
+      assertEquals(server.seen.at(-1)!.headers.get("X-Terminal-Token"), "terminal");
+      await ordinary.dispose!();
+      await terminal.dispose!();
+      assertEquals(server.live.size, 0);
+    });
+
+    it("lets credential-specialized sources send the header annotations discovery recorded", async () => {
+      const server = createServer();
+      server.setMode("modern");
+      const shared = shareRemoteMCPProtocolState({ endpoint: ENDPOINT });
+      const ordinary = sourceFor(server, shared);
+      const mutation = sourceFor(server, { ...shared, headers: { "X-Event-Token": "event" } });
+      await ordinary.listTools();
+      assertEquals(await mutation.executeTool("ping", { region: "eu" }), "pong");
+      assertEquals(server.seen.at(-1)!.headers.get("Mcp-Param-Region"), "eu");
+      // Sources outside the shared scope keep their own discovery state.
+      const unrelated = sourceFor(server, { headers: { "X-Event-Token": "event" } });
+      assertEquals(await unrelated.executeTool("ping", { region: "eu" }), "pong");
+      assertEquals(server.seen.at(-1)!.headers.get("Mcp-Param-Region"), null);
+    });
+
+    it("keeps header arguments and session ids off patched String and RegExp members", async () => {
+      const legacyServer = createServer();
+      const legacy = sourceFor(legacyServer);
+      await legacy.listTools({ runId: "run-a" });
+      const modernServer = createServer();
+      modernServer.setMode("modern");
+      const modern = sourceFor(modernServer);
+      await modern.listTools();
+      const seenValues: unknown[] = [];
+      const record = <T extends object, K extends keyof T>(target: T, key: K) => {
+        const original = target[key] as (...args: unknown[]) => unknown;
+        target[key] = function (this: unknown, ...args: unknown[]) {
+          seenValues.push(this, ...args);
+          return Reflect.apply(original, this, args);
+        } as T[K];
+        return () => target[key] = original as T[K];
+      };
+      const restores = [
+        record(String.prototype, "trim"),
+        record(String.prototype, "startsWith"),
+        record(String.prototype, "endsWith"),
+        record(String, "fromCodePoint"),
+        record(RegExp.prototype, "test"),
+      ];
+      try {
+        // A new run of a legacy identity initializes and validates a minted id.
+        assertEquals(await legacy.executeTool("ping", {}, { runId: "run-b" }), "pong");
+        // Modern calls encode schema-declared arguments into headers.
+        assertEquals(await modern.executeTool("ping", { region: "ascii-canary" }), "pong");
+        assertEquals(await modern.executeTool("ping", { region: "ünicode-canary" }), "pong");
+      } finally {
+        for (const restore of restores) restore();
+      }
+      assertEquals(
+        modernServer.seen.at(-1)!.headers.get("Mcp-Param-Region")?.startsWith("=?base64?"),
+        true,
+      );
+      const leaked = seenValues.filter((value) =>
+        typeof value === "string" &&
+        (value.includes("canary") || value.startsWith("lifecycle-session-"))
+      );
+      assertEquals(leaked, []);
+      // Non-ASCII values reach fromCodePoint byte by byte.
+      assertEquals(seenValues.includes(new TextEncoder().encode("ü")[0]), false);
     });
   });
 }

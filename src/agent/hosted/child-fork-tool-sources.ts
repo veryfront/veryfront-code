@@ -11,6 +11,12 @@ import {
   type RemoteToolSource,
 } from "#veryfront/tool";
 import { markTrustedHostToolSet } from "#veryfront/tool/host-tool-provenance.ts";
+import { createRemoteToolSourceOwner } from "#veryfront/tool/remote-tool-source-owner.ts";
+import {
+  allPrivatePromises,
+  chainPrivatePromise,
+  resolvePrivatePromise,
+} from "#veryfront/security/private-promise.ts";
 import { AGENT_ERROR } from "#veryfront/errors";
 import { isErrorAcrossRealms } from "#veryfront/platform/compat/error-introspection.ts";
 import {
@@ -78,6 +84,7 @@ export type DefaultHostedChildForkToolSourcesResult =
   | {
     ok: true;
     forkTools: HostToolSet;
+    /** Closes the Studio tools and releases every MCP source created for the fork. */
     closeStudioMcpTools?: () => Promise<void>;
   }
   | {
@@ -103,11 +110,36 @@ export async function prepareDefaultHostedChildForkToolSources(
 ): Promise<DefaultHostedChildForkToolSourcesResult> {
   throwIfAborted(input.abortSignal);
 
-  let closeStudioMcpTools: (() => Promise<void>) | undefined;
+  let closeStudioTools: (() => Promise<void>) | undefined;
   let studioMcpTools: HostToolSet = {};
   let remoteMcpTools: HostToolSet = {};
   const createLiveStudioTools = input.createLiveStudioTools ?? createLiveStudioMcpTools;
-  const createRemoteToolSource = input.createRemoteToolSource ?? createRemoteMCPToolSource;
+  // Raw sources created here may negotiate sessions; the returned closer and
+  // every failure path release them together with the Studio tools.
+  const remoteSources = createRemoteToolSourceOwner();
+  const createSource = input.createRemoteToolSource ?? createRemoteMCPToolSource;
+  const createRemoteToolSource = (config: RemoteMCPToolSourceConfig) =>
+    remoteSources.own(createSource(config));
+  const closeMcpTools = async (): Promise<void> => {
+    // Both closers start before either is awaited; the first failure wins.
+    const studio = chainPrivatePromise(resolvePrivatePromise(), () => closeStudioTools?.());
+    const remote = chainPrivatePromise(resolvePrivatePromise(), () => remoteSources.dispose());
+    const failures = await allPrivatePromises([
+      chainPrivatePromise(studio, () => undefined, (error) => ({ error })),
+      chainPrivatePromise(remote, () => undefined, (error) => ({ error })),
+    ]);
+    const failure = failures[0] ?? failures[1];
+    if (failure) throw failure.error;
+  };
+  const releaseAfterFailure = async (): Promise<void> => {
+    try {
+      await closeMcpTools();
+    } catch (cleanupError) {
+      input.logger?.error("Failed to close MCP tool sources after child fork setup failed", {
+        errorName: cleanupError instanceof Error ? cleanupError.name : typeof cleanupError,
+      });
+    }
+  };
   const materializeRemoteTools = input.createToolsFromRemoteDefinitions ??
     createToolsFromRemoteDefinitions;
 
@@ -149,7 +181,7 @@ export async function prepareDefaultHostedChildForkToolSources(
           ...studioMcpTools,
           ...canonicalPlatformHostTools(markTrustedHostToolSet(policyTools)),
         };
-        closeStudioMcpTools = studioTools.close;
+        closeStudioTools = studioTools.close;
         continue;
       }
 
@@ -192,6 +224,7 @@ export async function prepareDefaultHostedChildForkToolSources(
       };
     }
   } catch (error) {
+    await releaseAfterFailure();
     if (input.abortSignal?.aborted || input.isAbortError?.(error)) {
       throw error;
     }
@@ -207,17 +240,22 @@ export async function prepareDefaultHostedChildForkToolSources(
     };
   }
 
-  throwIfAborted(input.abortSignal);
+  try {
+    throwIfAborted(input.abortSignal);
 
-  if (input.onConfirmedStudioProjectSwitch) {
-    wrapHostedChildProjectSwitchTool({
-      tools: studioMcpTools,
-      toolName: "veryfront__studio_open_project",
-      onConfirmedProjectSwitch: input.onConfirmedStudioProjectSwitch,
-    });
+    if (input.onConfirmedStudioProjectSwitch) {
+      wrapHostedChildProjectSwitchTool({
+        tools: studioMcpTools,
+        toolName: "veryfront__studio_open_project",
+        onConfirmedProjectSwitch: input.onConfirmedStudioProjectSwitch,
+      });
+    }
+
+    throwIfAborted(input.abortSignal);
+  } catch (error) {
+    await releaseAfterFailure();
+    throw error;
   }
-
-  throwIfAborted(input.abortSignal);
 
   return {
     ok: true,
@@ -226,7 +264,7 @@ export async function prepareDefaultHostedChildForkToolSources(
       studioMcpTools,
       input.globalTools ?? {},
     ),
-    closeStudioMcpTools,
+    closeStudioMcpTools: closeMcpTools,
   };
 }
 

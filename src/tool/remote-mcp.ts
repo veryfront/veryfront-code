@@ -1,7 +1,15 @@
 import { VERSION } from "#veryfront/utils/version-constant.ts";
 import { defineOwnDataProperty } from "#veryfront/security/own-data-property.ts";
-import { allPrivatePromises } from "#veryfront/security/private-promise.ts";
+import { allPrivatePromises, chainPrivatePromise } from "#veryfront/security/private-promise.ts";
 import { mapPrivateArray } from "#veryfront/security/private-array.ts";
+import { testPrivateRegExp } from "#veryfront/security/private-regexp.ts";
+import {
+  privateTextEndsWith,
+  privateTextStartsWith,
+  privateTextTrim,
+} from "#veryfront/security/private-text.ts";
+import { createPrivateSet } from "#veryfront/security/private-set.ts";
+import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
 import { NETWORK_ERROR, TIMEOUT_ERROR } from "#veryfront/errors";
 import { readMcpToolDiscoveryMetadata } from "./discovery-metadata.ts";
 import { getApiBaseUrlEnv } from "#veryfront/config/env.ts";
@@ -64,6 +72,14 @@ const HeadersPrototypeForEach = Headers.prototype.forEach;
 const digest = crypto.subtle.digest.bind(crypto.subtle);
 const encodeUtf8 = TextEncoder.prototype.encode.bind(UTF8_ENCODER);
 const nativeBtoa = btoa;
+const nativeFromCodePoint = String.fromCodePoint;
+const nativeIsSafeInteger = Number.isSafeInteger;
+const objectHasOwn = Object.hasOwn;
+const nativeIsArray = Array.isArray;
+const typedArrayLengthGetter = Object.getOwnPropertyDescriptor(
+  Object.getPrototypeOf(Uint8Array.prototype),
+  "length",
+)!.get!;
 const HeadersPrototypeSet = Headers.prototype.set;
 const HeadersPrototypeGet = Headers.prototype.get;
 const HeadersPrototypeDelete = Headers.prototype.delete;
@@ -159,7 +175,7 @@ interface SseEvent {
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+  return typeof value === "object" && value !== null && !nativeIsArray(value);
 }
 
 function isJsonRpcErrorObject(
@@ -1093,14 +1109,22 @@ interface RemoteMcpSession {
   sessionId?: string;
 }
 
+/** Validate a minted session identifier without consulting mutable RegExp methods. */
+function isValidMcpSessionId(sessionId: string | undefined): sessionId is string {
+  return !!sessionId && sessionId.length <= 4096 && testPrivateRegExp(/^[\x21-\x7e]+$/, sessionId);
+}
+
 function encodeMcpHeader(value: string): string {
   if (
-    /^[\x20-\x7e]*$/.test(value) && value.trim() === value &&
-    !(value.startsWith("=?base64?") && value.endsWith("?="))
+    testPrivateRegExp(/^[\x20-\x7e]*$/, value) && privateTextTrim(value) === value &&
+    !(privateTextStartsWith(value, "=?base64?") && privateTextEndsWith(value, "?="))
   ) return value;
-  const bytes = UTF8_ENCODER.encode(value);
+  const bytes = encodeUtf8(value);
   let binary = "";
-  for (const byte of bytes) binary += String.fromCodePoint(byte);
+  const length = reflectApply(typedArrayLengthGetter, bytes, []) as number;
+  for (let index = 0; index < length; index++) {
+    binary += nativeFromCodePoint(bytes[index]!);
+  }
   return `=?base64?${nativeBtoa(binary)}?=`;
 }
 
@@ -1226,15 +1250,17 @@ async function deleteMcpSession(
   try {
     const headers = copyNativeHeaders(cleanup.headers);
     reflectApply(HeadersPrototypeDelete, headers, ["Mcp-Method"]);
-    const response = await getRequestFetch(cleanup.endpoint)(
-      cleanup.endpoint,
-      createNativeRequestInit(undefined, {
-        method: "DELETE",
-        headers,
-        signal: scope.signal,
-        redirect: "error",
-      }),
-    );
+    const requestFetch = getRequestFetch(cleanup.endpoint);
+    const init = createNativeRequestInit(undefined, {
+      method: "DELETE",
+      headers,
+      signal: scope.signal,
+      redirect: "error",
+    });
+    // The retained Authorization and Mcp-Session-Id must not reach replaced
+    // Request or Headers members, exactly as for the POST dispatch.
+    assertNativeRequestProcessing();
+    const response = await requestFetch(cleanup.endpoint, init);
     discardResponseBody(response);
     if (!response.ok && response.status !== 404 && response.status !== 405) {
       return new RemoteMCPHttpError(response.status);
@@ -1362,18 +1388,19 @@ function addMcpParameterHeaders(
   for (const annotation of annotations) {
     let value: unknown = args;
     for (const segment of annotation.path) {
-      value = isRecord(value) && Object.hasOwn(value, segment) ? value[segment] : undefined;
+      value = isRecord(value) && objectHasOwn(value, segment) ? value[segment] : undefined;
     }
     if (value === undefined || value === null) continue;
     if (
-      (annotation.type === "integer" && !Number.isSafeInteger(value)) ||
+      (annotation.type === "integer" && !nativeIsSafeInteger(value)) ||
       (annotation.type !== "integer" && typeof value !== annotation.type)
     ) {
       throw protocolError("Remote MCP tool header parameter has an invalid type");
     }
     reflectApply(HeadersPrototypeSet, headers, [
       `Mcp-Param-${annotation.name}`,
-      encodeMcpHeader(String(value as string | number | boolean)),
+      // A template literal converts these primitives without calling project code.
+      encodeMcpHeader(`${value as string | number | boolean}`),
     ]);
   }
 }
@@ -1420,6 +1447,52 @@ function createPrivateMcpMap<K, V>(): Map<K, V> {
   return map;
 }
 
+type McpProtocol = "legacy" | "modern";
+
+/** Endpoint protocol knowledge shared by sources that serve one tool catalog. */
+interface SharedMcpProtocolState {
+  protocols: Map<string, McpProtocol>;
+  parameterHeaders: Map<string, Map<string, McpParameterHeader[]>>;
+}
+
+const SHARED_MCP_PROTOCOL_STATE = Symbol("veryfront.remote-mcp.shared-protocol-state");
+const sharedMcpProtocolStates = createPrivateWeakStore<object, SharedMcpProtocolState>();
+
+/**
+ * Share endpoint protocol knowledge across sources derived from this config.
+ *
+ * A composite that routes some calls through a source with extra credentials
+ * (terminal or mutation authority) discovers tools only through its ordinary
+ * source. Sources created from configs spread from the returned value fall back
+ * to the protocol and header annotations that discovery recorded for the same
+ * endpoint, so their first call neither probes a legacy server with a call that
+ * cannot be replayed nor omits schema-declared headers.
+ */
+export function shareRemoteMCPProtocolState<T extends RemoteMCPToolSourceConfig>(config: T): T {
+  const token = Object.freeze({});
+  sharedMcpProtocolStates.set(token, {
+    protocols: createPrivateMcpMap(),
+    parameterHeaders: createPrivateMcpMap(),
+  });
+  return { ...config, [SHARED_MCP_PROTOCOL_STATE]: token };
+}
+
+function readSharedMcpProtocolState(
+  config: RemoteMCPToolSourceConfig,
+): SharedMcpProtocolState | undefined {
+  if (!objectHasOwn(config, SHARED_MCP_PROTOCOL_STATE)) return undefined;
+  const token = (config as { [SHARED_MCP_PROTOCOL_STATE]?: unknown })[SHARED_MCP_PROTOCOL_STATE];
+  return typeof token === "object" && token !== null
+    ? sharedMcpProtocolStates.get(token)
+    : undefined;
+}
+
+/** One in-flight request; disposal marks it closed so it cannot mint a session afterwards. */
+interface McpRequestLease {
+  runId?: string;
+  closed: boolean;
+}
+
 function createRemoteMCPToolSourceWithFetch(
   config: RemoteMCPToolSourceConfig,
   getRequestFetch: (endpoint: string) => typeof fetch,
@@ -1437,12 +1510,15 @@ function createRemoteMCPToolSourceWithFetch(
     runId?: string;
   }>();
   const initializing = createPrivateMcpMap<string, Promise<RemoteMcpSession>>();
-  const parameterHeaders = new Map<string, Map<string, McpParameterHeader[]>>();
-  // Endpoint+credential identities whose discovery negotiated a legacy
-  // session. A tool call for a new run of such an identity initializes first
-  // instead of probing with a modern request, because an ambiguous call
-  // failure is never replayed.
-  const legacyIdentities = createPrivateMcpMap<string, true>();
+  const parameterHeaders = createPrivateMcpMap<string, Map<string, McpParameterHeader[]>>();
+  // The protocol each endpoint+credential identity last proved: "legacy" after
+  // a negotiated session, "modern" after a sessionless request succeeded. A
+  // tool call for a new run of a legacy identity initializes first instead of
+  // probing with a modern request, because an ambiguous call failure is never
+  // replayed.
+  const protocols = createPrivateMcpMap<string, McpProtocol>();
+  const shared = readSharedMcpProtocolState(config);
+  const leases = createPrivateSet<McpRequestLease>();
 
   async function initialize(
     key: string,
@@ -1483,7 +1559,7 @@ function createRemoteMCPToolSourceWithFetch(
         (response) => {
           sessionId = reflectApply(HeadersPrototypeGet, response.headers, ["Mcp-Session-Id"]) ??
             undefined;
-          if (sessionId && /^[\x21-\x7e]+$/.test(sessionId) && sessionId.length <= 4096) {
+          if (isValidMcpSessionId(sessionId)) {
             // The server has minted a session even if parsing or validation fails.
             cleanupHeaders = copyNativeHeaders(initHeaders);
             reflectApply(HeadersPrototypeSet, cleanupHeaders, ["Mcp-Session-Id", sessionId]);
@@ -1509,7 +1585,7 @@ function createRemoteMCPToolSourceWithFetch(
         throw protocolError("Remote MCP initialize returned an unsupported protocol version");
       }
       if (
-        sessionId !== undefined && (!/^[\x21-\x7e]+$/.test(sessionId) || sessionId.length > 4096)
+        sessionId !== undefined && !isValidMcpSessionId(sessionId)
       ) {
         throw protocolError("Remote MCP initialize returned an invalid session identifier");
       }
@@ -1535,7 +1611,8 @@ function createRemoteMCPToolSourceWithFetch(
         MAX_REMOTE_MCP_CALL_RESPONSE_BYTES,
       );
       sessions.set(key, session);
-      legacyIdentities.set(identityKey, true);
+      protocols.set(identityKey, "legacy");
+      shared?.protocols.set(endpoint, "legacy");
       return session;
     })();
     initializing.set(key, promise);
@@ -1547,6 +1624,16 @@ function createRemoteMCPToolSourceWithFetch(
   }
 
   async function request(options: McpRequestOptions): Promise<unknown> {
+    const lease: McpRequestLease = { runId: options.runId, closed: false };
+    leases.add(lease);
+    try {
+      return await sendRequest(options, lease);
+    } finally {
+      leases.delete(lease);
+    }
+  }
+
+  async function sendRequest(options: McpRequestOptions, lease: McpRequestLease): Promise<unknown> {
     const { endpoint, headers, requestFetch, signal, maxBytes, operation, runId } = options;
     const snapshot = snapshotBoundedJsonValue(options.body, MAX_REMOTE_MCP_REQUEST_BYTES);
     if (!snapshot.success || !isRecord(snapshot.value)) {
@@ -1559,21 +1646,35 @@ function createRemoteMCPToolSourceWithFetch(
     const identityKey = await remoteMcpSessionKey(endpoint, headers);
     // Session setup never uses a call-only transport such as hosted admission.
     const sessionFetch = getRequestFetch(endpoint);
-    const establish = () =>
-      initialize(key, endpoint, headers, sessionFetch, signal, runId, identityKey);
+    const establish = () => {
+      // Disposal may have run while this request awaited the server. A session
+      // minted now would outlive the cleanup that already finished.
+      if (lease.closed) throw new Error("Remote MCP source was disposed during the request");
+      return initialize(key, endpoint, headers, sessionFetch, signal, runId, identityKey);
+    };
     const send = (session?: RemoteMcpSession) => {
-      const built = buildMcpRequest(headers, body, session, parameterHeaders.get(identityKey));
+      const annotations = parameterHeaders.get(identityKey) ??
+        shared?.parameterHeaders.get(endpoint);
+      const built = buildMcpRequest(headers, body, session, annotations);
       return postJsonRpc(endpoint, built.headers, built.body, requestFetch, signal, maxBytes);
     };
     if (initializing.has(key)) await initializing.get(key);
     let session = sessions.get(key);
-    if (!session && operation === "execution" && legacyIdentities.has(identityKey)) {
+    const protocol = protocols.get(identityKey) ?? shared?.protocols.get(endpoint);
+    if (!session && operation === "execution" && protocol === "legacy") {
       // Initialization happens before the call is sent, so a failure here never
       // leaves a side-effecting request to replay.
       session = await establish();
     }
     try {
-      return await send(session);
+      const result = await send(session);
+      if (!session) {
+        // A sessionless success proves the modern protocol, so a later call
+        // must not initialize a session the server may no longer accept.
+        protocols.set(identityKey, "modern");
+        shared?.protocols.set(endpoint, "modern");
+      }
+      return result;
     } catch (error) {
       if (!shouldNegotiateSession(error, session, operation)) throw error;
       if (session && sessions.get(key) === session) sessions.delete(key);
@@ -1619,6 +1720,7 @@ function createRemoteMCPToolSourceWithFetch(
       catalog.accept(definitions);
       if (nextCursor === undefined) {
         parameterHeaders.set(await remoteMcpSessionKey(endpoint, headers), catalog.annotations);
+        shared?.parameterHeaders.set(endpoint, catalog.annotations);
         return catalog.definitions;
       }
       cursor = catalog.advance(nextCursor);
@@ -1631,8 +1733,20 @@ function createRemoteMCPToolSourceWithFetch(
   return {
     id,
     async dispose(context) {
-      // Await handshakes before terminating the sessions they create.
-      await Promise.allSettled(initializing.values());
+      // Requests still waiting on the server may not negotiate a session after
+      // this point; handshakes already running are awaited and terminated.
+      for (const lease of leases) {
+        if (!context || lease.runId === context.runId) lease.closed = true;
+      }
+      const handshakes: Promise<unknown>[] = [];
+      for (const entry of initializing) {
+        defineOwnDataProperty(
+          handshakes,
+          handshakes.length,
+          chainPrivatePromise(entry[1], () => undefined, () => undefined),
+        );
+      }
+      await allPrivatePromises(handshakes);
       const selected: Array<{ endpoint: string; headers: Headers }> = [];
       // Native iterator entries are indexed directly. Destructuring would call
       // a project-patched Array iterator with the retained session credentials.
@@ -1647,7 +1761,7 @@ function createRemoteMCPToolSourceWithFetch(
       if (!context) {
         sessions.clear();
         parameterHeaders.clear();
-        legacyIdentities.clear();
+        protocols.clear();
       }
       if (firstError !== undefined) throw firstError;
     },
