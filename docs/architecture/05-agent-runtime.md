@@ -254,3 +254,51 @@ Control-plane checkpoint consumers import `AgentPauseCheckpoint`,
 `veryfront/agent/pause-checkpoint`. Configure the schema validator before parsing,
 as with the other Veryfront schemas. This entrypoint exposes the native
 continuation parser and type; private host pause capabilities stay in the runtime.
+
+### Managed recovery host configuration
+
+Set these variables on the trusted runtime host before the process starts. The
+runtime captures them before it loads project environment files or project code.
+Project settings cannot enable recovery or replace the source identity.
+
+| Variable                                           | Value                                                                                                                  |
+| -------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `VERYFRONT_MANAGED_RECOVERY_ENABLED`               | `true` enables the recovery factory. Omit it or use `false` to disable it. Other values fail configuration validation. |
+| `VERYFRONT_MANAGED_RECOVERY_DIRECTORY`             | Absolute path to an existing durable directory. The directory must not be a symbolic link.                             |
+| `VERYFRONT_MANAGED_RECOVERY_SOURCE_PROJECT_ID`     | UUID of the project that owns the immutable source.                                                                    |
+| `VERYFRONT_MANAGED_RECOVERY_SOURCE_ENVIRONMENT_ID` | UUID of its environment.                                                                                               |
+| `VERYFRONT_MANAGED_RECOVERY_SOURCE_RELEASE_ID`     | UUID of its immutable release.                                                                                         |
+
+When you enable recovery, configure all five variables. If any directory or source
+binding variable is present, the runtime validates the complete source binding and
+absolute directory path even when recovery is disabled. With recovery enabled, it
+also checks that the directory exists and is a directory rather than a symbolic
+link. Mount storage that survives replacement of the runtime process. An
+in-memory or disposable directory cannot preserve checkpoints after host loss.
+
+The transport selects the captured `VERYFRONT_API_BASE_URL`, then
+`VERYFRONT_API_URL`, then `https://api.veryfront.com`. Set the staging API origin
+explicitly on staging hosts. Restart the runtime process after changing host boot
+configuration.
+
+These settings configure storage and source identity. Execution still requires a
+valid signed admission and current generation ownership. The control plane must
+verify ownership before it accepts events or effects from a replacement owner.
+
+### Recovery snapshot consumer contract
+
+Use `parseManagedRecoverySnapshotV1` from
+`veryfront/runtime/managed-recovery-snapshot` after configuring the schema
+validator. Its input is untrusted snapshot data; its output is a validated
+version-one native recovery snapshot. Invalid version, source or run bindings,
+acknowledgement cursors, replay state, tool receipts, or inconsistent continuation
+state fail validation. Do not treat successful parsing as an ownership grant. The control plane must
+separately verify current generation ownership and derive acknowledgement cursors
+from its committed rows.
+
+Pin an SDK release that exports this entrypoint in every consuming service.
+Qualify the API consumer and runtime host together before enabling recovery on
+staging. Staging acceptance must prove automatic lease replacement, rejection of
+obsolete owners, cancellation that stops effects, and pause/resume without
+repeating an acknowledged effect. Local crash-restore tests do not replace these
+staging checks.

@@ -2049,6 +2049,15 @@ describe("WorkflowClient", () => {
       await withNewClient((client) => client.register(testWorkflow.definition));
     });
 
+    it("registers a workflow whose steps read a typed input", async () => {
+      // Type-checked: register() once rejected any input type but unknown.
+      const typedWorkflow = workflow<{ topic: string }>({
+        id: "typed-input-workflow",
+        steps: ({ input }) => [step("research", { agent: "test-agent", input: input.topic })],
+      });
+      await withNewClient((client) => client.register(typedWorkflow));
+    });
+
     it("rejects raw event waits that forge the reserved delay name", async () => {
       await withNewClient((client) => {
         const definition = {

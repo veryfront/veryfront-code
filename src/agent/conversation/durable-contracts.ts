@@ -373,6 +373,7 @@ export const CompleteConversationRunResponseSchema = lazySchema(
 
 /** Response payload for append conversation run events. */
 export interface AppendConversationRunEventsResponse {
+  acknowledgedEventIds?: number[];
   latestEventId: number;
   latestExternalEventSequence: number;
   appendedCount: number;
@@ -394,6 +395,8 @@ export const getAppendConversationRunEventsResponseSchema = defineSchema((v) =>
       latestEventId: v.number().int().nonnegative(),
       latestExternalEventSequence: v.number().int().nonnegative(),
       appendedCount: v.number().int().nonnegative(),
+      acknowledgedEventIds: v.array(v.number().int().min(1).max(Number.MAX_SAFE_INTEGER)).max(100)
+        .optional(),
       modelCallCaptures: v.array(getModelCallCaptureReceiptSchema()).optional(),
       toolCallAdmissions: v.array(getToolCallAdmissionReceiptSchema()).optional(),
       run: v.object({
@@ -407,6 +410,8 @@ export const getAppendConversationRunEventsResponseSchema = defineSchema((v) =>
       latest_event_id: v.number().int().nonnegative(),
       latest_external_event_sequence: v.number().int().nonnegative(),
       appended_count: v.number().int().nonnegative(),
+      acknowledged_event_ids: v.array(v.number().int().min(1).max(Number.MAX_SAFE_INTEGER)).max(100)
+        .optional(),
       model_call_captures: v.array(
         v.object({
           event_id: v.string().min(1),
@@ -431,6 +436,9 @@ export const getAppendConversationRunEventsResponseSchema = defineSchema((v) =>
         latestEventId: d.latest_event_id as number,
         latestExternalEventSequence: d.latest_external_event_sequence as number,
         appendedCount: d.appended_count as number,
+        ...(d.acknowledged_event_ids === undefined
+          ? {}
+          : { acknowledgedEventIds: d.acknowledged_event_ids as number[] }),
         ...("model_call_captures" in d
           ? {
             modelCallCaptures: (d.model_call_captures as Array<Record<string, unknown>>).map(
@@ -508,6 +516,8 @@ export interface FinalizeConversationAgentRunInput {
   terminalAuthToken: string;
   /** Final execution output persisted by the target finalize operation. */
   output?: unknown;
+  /** Authoritative post-middleware text for completed exact-run finalization. */
+  finalText?: string;
   apiUrl: string;
   conversationId: string;
   runId: string;

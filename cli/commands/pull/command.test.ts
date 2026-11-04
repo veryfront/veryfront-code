@@ -435,6 +435,34 @@ describe("listAllFiles", () => {
 });
 
 describe("getFileContent", () => {
+  it("rejects REST binary text slots before files get can write an empty output", async () => {
+    for (const size of [0, 7]) {
+      await assertRejects(
+        () =>
+          getFileContent(
+            createMockClient({
+              get: () =>
+                Promise.resolve({
+                  path: "knowledge/a.bin",
+                  content: "",
+                  size,
+                  binary: {
+                    content_type: "application/octet-stream",
+                    byte_size: size,
+                    content_hash: "a".repeat(64),
+                  },
+                }),
+            }),
+            "project",
+            "knowledge/a.bin",
+            { type: "main" },
+          ),
+        Error,
+        'Cannot read binary file "knowledge/a.bin" as text.',
+      );
+    }
+  });
+
   async function testGetFileContent(
     source: PullSource,
     expectedUrl: string,

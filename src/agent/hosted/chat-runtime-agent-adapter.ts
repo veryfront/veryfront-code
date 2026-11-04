@@ -1,3 +1,7 @@
+import {
+  hasHostedToolRunAuthorization,
+  inheritHostedToolRunAuthorization,
+} from "./tool-run-authorization.ts";
 import { type HostedTaskInput, resolveHostedTaskInput } from "./task-input.ts";
 import type { ToolExecutionDataEvent } from "#veryfront/tool/types.ts";
 import { AGENT_ERROR } from "#veryfront/errors";
@@ -59,7 +63,7 @@ export function createHostedChatRuntimeAgentAdapter(
   input: HostedChatRuntimeAgentAdapterInput,
 ): HostedChatRuntimeAgent {
   const taskInput = resolveHostedTaskInput(input.taskInput, input);
-  input = { ...input, taskInput };
+  input = inheritHostedToolRunAuthorization({ ...input, taskInput }, input);
   const runStream = input.runStream ?? ((operation) => operation());
   return {
     stream: async (streamInput): Promise<HostedChatRuntimeStreamResult> => {
@@ -120,6 +124,10 @@ export async function createHostedChatRuntimeDataStream(
             ? { maxOutputTokens: input.maxOutputTokens }
             : {}),
           context: {
+            runIdBindsToolAuthorization: hasHostedToolRunAuthorization(input, {
+              projectId: projectContext?.projectId,
+              runId: input.runId,
+            }),
             ...(taskInput ? { taskInput } : {}),
             ...(input.rootRunId ? { rootRunId: input.rootRunId } : {}),
             ...(input.runId ? { runId: input.runId } : {}),

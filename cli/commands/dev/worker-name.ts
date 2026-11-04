@@ -1,5 +1,5 @@
 import { hostname } from "node:os";
-import { getHostEnvExcludingEnvFile } from "#veryfront/platform/compat/process.ts";
+import { getHostEnvExcludingEnvFile } from "#cli/process-env";
 import { getEnvSource } from "veryfront/utils/env-loader";
 
 /** Resolve once during trusted CLI setup; never derive identity from project code. */

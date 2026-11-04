@@ -8,7 +8,7 @@
  * - Shims for Deno APIs
  *
  * Usage:
- *   deno run -A scripts/build-npm-dnt.ts
+ *   deno task build:npm
  */
 
 import { build, emptyDir } from "#dnt";
@@ -38,12 +38,15 @@ import { normalizeNpmPackageMetadata } from "./npm-package-metadata.ts";
 import { assertNpmRuntimeHelperContract } from "./npm-runtime-helper-contract.ts";
 import { normalizeEsmShReactNpmShims } from "./npm-react-shims.ts";
 import { NPM_NODE_ENGINE } from "./runtime-support.ts";
+import { copyPublicDocs } from "./copy-public-docs.ts";
+import { isCiNpmBuild, npmDocsBuildContext } from "./npm-docs-build-context.ts";
 
 const denoJson = JSON.parse(await Deno.readTextFile("./deno.json"));
 const version = denoJson.version;
 if (!version) {
 	throw new Error("deno.json must have a 'version' field");
 }
+const docsIdentity = await npmDocsBuildContext.identityForBuild(Deno.cwd(), version, isCiNpmBuild());
 const license = denoJson.license;
 if (!license) {
 	throw new Error("deno.json must have a 'license' field");
@@ -363,6 +366,8 @@ await build({
 		await Deno.copyFile("./LICENSE", "./npm/LICENSE");
 		await Deno.copyFile("./NOTICE", "./npm/NOTICE");
 		await Deno.copyFile("./README.md", "./npm/README.md");
+		await npmDocsBuildContext.assertStable();
+		await copyPublicDocs(Deno.cwd(), "./npm", version, docsIdentity);
 
 		// Copy base tsconfig for user projects to extend
 		await Deno.writeTextFile("./npm/tsconfig.json", JSON.stringify({
@@ -392,8 +397,10 @@ await build({
 		for (const extensionDirectory of STANDARD_ROOT_NPM_EXTENSION_DIRECTORIES) {
 			pkg.dependencies[`@veryfront/${extensionDirectory}`] = version;
 		}
-		pkg.files = ["esm", "script", "bin", "assets", "tsconfig.json", "LICENSE", "NOTICE", "README.md"];
+		pkg.files = ["esm", "script", "bin", "assets", "docs", "tsconfig.json", "LICENSE", "NOTICE", "README.md"];
 		pkg.exports["./tsconfig.json"] = "./tsconfig.json";
+		pkg.exports["./package.json"] = "./package.json";
+		pkg.exports["./docs/*"] = "./docs/*";
 		addTypesExportEntries(pkg.exports);
 		normalizeNpmPackageMetadata(pkg);
 		await Deno.writeTextFile(pkgPath, JSON.stringify(pkg, null, 2));
@@ -572,7 +579,7 @@ await runRootBundledSsrProbe("./node_modules/veryfront/esm");
 		stderr: "piped",
 	}).spawn();
 	const outputPromise = child.output();
-	let timeoutId: number | undefined;
+	let timeoutId: ReturnType<typeof setTimeout> | undefined;
 	const result = await Promise.race([
 		outputPromise.then((output) => ({ kind: "complete" as const, output })),
 		new Promise<{ kind: "timeout" }>((resolve) => {

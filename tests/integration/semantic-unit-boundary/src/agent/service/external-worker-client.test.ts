@@ -296,7 +296,7 @@ describe("external agent worker client", () => {
     assertEquals(calls[4]?.[1]?.method, "POST", "completing a run must POST the completion");
     assertEquals(
       requestBody(calls[4]!),
-      { status: "completed", output: null },
+      { status: "completed" },
       "completeRun must post the terminal status",
     );
   });
@@ -407,7 +407,7 @@ describe("external agent worker client", () => {
 
     assertEquals(run?.run_id, RUN_ID);
     assertEquals(String(calls[1]?.[0]), `${API_URL}/runs/${CANONICAL_RUN_ID}/finalize`);
-    assertEquals(requestBody(calls[1]!), { status: "completed", output: null });
+    assertEquals(requestBody(calls[1]!), { status: "completed" });
   });
 
   it("preserves a renewed lease when afterRenew probe observation fails", async () => {
@@ -439,7 +439,7 @@ describe("external agent worker client", () => {
 
     assertEquals(renewed?.latest_external_event_sequence, 8);
     assertEquals(String(calls[2]?.[0]), `${API_URL}/runs/${CANONICAL_RUN_ID}/finalize`);
-    assertEquals(requestBody(calls[2]!), { status: "completed", output: null });
+    assertEquals(requestBody(calls[2]!), { status: "completed" });
   });
 
   it("recovers a claimed run cursor with a fresh lease when the probe outcome is ambiguous", async () => {
@@ -760,7 +760,7 @@ describe("external agent worker client", () => {
     );
 
     assertEquals(String(calls[1]?.[0]), `${API_URL}/runs/${CANONICAL_RUN_ID}/finalize`);
-    assertEquals(requestBody(calls[1]!), { status: "completed", output: null });
+    assertEquals(requestBody(calls[1]!), { status: "completed" });
   });
 
   it("raises a network error for non-2xx worker API responses", async () => {

@@ -34,6 +34,7 @@ import {
   type HostedServiceRunEventAppendTokenVerification,
 } from "./auth.ts";
 import { createRequestAuthCache } from "./request-auth-cache.ts";
+import { withoutPrivateInvocationCredentials } from "./application-request-credentials.ts";
 import {
   cancelUnusedRequestBody,
   createApplicationRequest,
@@ -88,8 +89,6 @@ const ResponseStatusTextGet = Object.getOwnPropertyDescriptor(
   NativeResponse.prototype,
   "statusText",
 )?.get;
-const ObjectCreate = Object.create;
-const ObjectKeys = Object.keys;
 const ArrayIsArray = Array.isArray;
 const JsonParse = JSON.parse;
 const JsonStringify = JSON.stringify;
@@ -113,16 +112,6 @@ function readRequestValue<T>(request: Request | Response, getter: (() => T) | un
 function isCredentialRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null &&
     !IntrinsicReflectApply(ArrayIsArray, Array, [value]);
-}
-
-function withoutInferenceCredential(credentials: Record<string, unknown>): Record<string, unknown> {
-  const keys = IntrinsicReflectApply(ObjectKeys, Object, [credentials]) as string[];
-  const retained = ObjectCreate(null) as Record<string, unknown>;
-  for (let index = 0; index < keys.length; index++) {
-    const key = keys[index]!;
-    if (key !== "inferenceAuthToken") retained[key] = credentials[key];
-  }
-  return retained;
 }
 
 /** Public API contract for hosted agent service routes logger. */
@@ -295,7 +284,7 @@ async function createRuntimeInvocationApplicationRequest(request: Request): Prom
   const sanitizedPayload = isCredentialRecord(credentials)
     ? {
       ...payload,
-      credentials: withoutInferenceCredential(credentials),
+      credentials: withoutPrivateInvocationCredentials(credentials),
     }
     : payload;
   assertNativeHeaderProcessing();

@@ -94,6 +94,7 @@ export class MCPDevServer {
         isRunning: () => this.running,
         parseRequest: (payload) => JSONRPCRequestSchema.parse(payload),
         handleRequest: (request) => this.handleRequest(request),
+        isNotification: (request) => request.id === undefined,
         toParseErrorResponse: (error) => parseError(error),
         toInvalidRequestResponse: (error) => invalidRequestError(error),
         toErrorResponse: (_error, request) => internalError(request.id),
@@ -216,8 +217,10 @@ export class MCPDevServer {
 
       try {
         const response = await this.handleRequest(body);
+        if (body.id === undefined) return new Response(null, { status: 202, headers });
         return new Response(JSON.stringify(response), { headers });
       } catch (_error) {
+        if (body.id === undefined) return new Response(null, { status: 202, headers });
         return new Response(JSON.stringify(internalError(body.id)), {
           status: 500,
           headers,

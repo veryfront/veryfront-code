@@ -1112,7 +1112,9 @@ describe("agent max steps output schema", () => {
       JSON.parse(line.slice(6))
     );
     for (const event of events) mapRuntimeStreamEventToAgUiEvents(state, event);
-    const original = events.find((event) => event.type === "message-finish")?.object;
+    const finishEvent = events.find((event) => event.type === "message-finish");
+    const original = finishEvent?.data;
+    assertEquals(Object.hasOwn(finishEvent, "object"), false);
     assertEquals(original.captureStatus, "partial");
     assertEquals(original.reasons, ["max_depth"]);
     const finish = finalizeAgUiEvents(state, null).find((event) => event.event === "RunFinished");
@@ -1222,10 +1224,17 @@ describe("agent max steps output schema", () => {
       assertEquals(finished?.object, fixture.expected);
       assertEquals(events.some((event) => event.type === "error"), false);
       assertEquals(finishEvents.length, 1);
-      assertEquals(finishEvents[0].object, snapshot);
+      assertEquals(finishEvents[0].data, snapshot);
+      assertEquals(Object.hasOwn(finishEvents[0], "object"), false);
       assertEquals(
-        observed.filter((event) => event.type === "message-finish").map((event) => event.object),
+        observed.filter((event) => event.type === "message-finish").map((event) => event.data),
         [snapshot],
+      );
+      assertEquals(
+        observed.filter((event) => event.type === "message-finish").some((event) =>
+          Object.hasOwn(event, "object")
+        ),
+        false,
       );
     });
   }

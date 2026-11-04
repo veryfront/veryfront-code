@@ -82,6 +82,6 @@ export async function chooseCloudProject(
   await persistProjectLink(projectDir, config, project);
   await saveSharedProjectAssociation(projectDir, project.slug, config.apiUrl);
   console.log(
-    `  ✓ Linked local project to cloud project ${project.slug}. Source stays local until veryfront push.`,
+    `  ✓ Linked local project to cloud project ${project.slug}. npm run dev syncs source automatically; veryfront push syncs without starting dev.`,
   );
 }

@@ -1,7 +1,7 @@
 ---
 title: "Choose a primitive"
 description: "Choose the smallest Veryfront primitive for the work."
-order: 10
+order: 30
 ---
 
 Pick the smallest primitive that matches the work. This keeps project structure
@@ -41,7 +41,7 @@ clear and prevents overlapping agents, workflows, runs, and integrations.
 | Eval                | You need repeatable agent quality checks, datasets, metrics, and reports.                    | You need code assertions without model execution.                                  |
 | Task                | You own a reusable background function in `tasks/`.                                          | The user needs conversational reasoning or streaming output.                       |
 | Workflow            | The process has ordered steps, parallel branches, retries, or human review.                  | A single agent response or one background function is enough.                      |
-| Run                 | You need durable execution, scheduling, batch status, or run history.                        | The work can finish inside a request without durability.                           |
+| Run                 | You need to start or inspect one execution of an agent, task, workflow, or eval. | You need to define reusable behavior; use an agent, task, or workflow definition. |
 | Integration         | You need provider metadata, OAuth, tokens, or remote integration tools.                      | A local custom API call is enough and no shared connector behavior is needed.      |
 | MCP server          | External assistants or MCP clients need tools, prompts, or resources.                        | The capability is only used inside one Veryfront app route.                        |
 | Sandbox             | Code or shell work needs isolation from the app process.                                     | The code can run safely in your own trusted runtime.                               |
@@ -70,7 +70,7 @@ the matching guide:
 
 - If the guide's first example solves your shape, continue there.
 - If you need two or more primitives, start with the one that owns the triggering event.
-- When choosing between `Task` and `Run`, remember that a task defines the work and a run executes it durably.
+- A `Task` defines reusable work. A `Run` records one execution; it isn't an alternative definition type.
 - When choosing between a one-shot model call and an `Agent`, remember that `generate()` from
   [`veryfront/llm`](../api-reference/veryfront/llm.md) makes one request with no tools, no steps,
   and no memory. Reach for an `Agent` as soon as you need any of those.

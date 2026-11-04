@@ -7,9 +7,8 @@ order: 32
 A sandbox owns isolated command and file execution. It gives agents, tools, or
 workflows a controlled place to run code.
 
-Sandboxes exist because some work should not run directly in the app process.
-Generated code, project inspection, tests, and command execution need a
-controlled boundary.
+Use a sandbox for generated code, project inspection, tests and commands that
+should run outside the app process.
 
 ## Characteristics
 

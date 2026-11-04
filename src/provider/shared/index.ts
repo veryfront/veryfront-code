@@ -15,11 +15,13 @@ export {
   getGoogleGenerateContentUrl,
   getGoogleStreamGenerateContentUrl,
   getOpenAIChatCompletionsUrl,
+  getOpenAIDecisionsUrl,
   getOpenAIEmbeddingUrl,
   getOpenAIResponsesUrl,
 } from "../runtime-loader/provider-endpoints.ts";
 
 // Request init builders
+export { createOriginBoundOutboundFetch } from "../../security/http/outbound-fetch.ts";
 export {
   createAnthropicRequestInit,
   createGoogleRequestInit,
@@ -49,6 +51,17 @@ export {
   type StreamRetentionLimits,
   type StreamRetentionOverflow,
 } from "../runtime-loader/stream-retention.ts";
+
+// Inline file parts: data URL payloads and actionable unsupported-input errors.
+export {
+  fileInputBaseName,
+  isImageFileInput,
+  promptHasDocumentInput,
+  readInlineFileData,
+  readRemoteFileUrl,
+  routesOpenAIDocumentInputToResponses,
+  unsupportedFileInputError,
+} from "../runtime-loader/inline-file.ts";
 
 // Retry, error, HTTP, usage, and JSON boundary plumbing.
 export {
@@ -111,6 +124,15 @@ export {
   canIdentifyProxyWithoutHooks,
   isProxyWithoutHooks,
 } from "#veryfront/platform/compat/error-introspection.ts";
+
+// Trusted stream protocol classification factories for provider parsers.
+// The raw WeakMap writer stays in stream-protocol-classification.ts (internal);
+// only these factories, which create their own errors and record classification
+// internally, are part of the public surface.
+export {
+  createClassifiedProviderStreamProtocolError,
+  createClassifiedStreamRangeError,
+} from "../runtime-loader/stream-protocol-classification-factories.ts";
 
 // Anthropic output_config schema closing, shared with durable model-call capture.
 export { closeSchemaForOutputConfig } from "./anthropic-output-schema.ts";

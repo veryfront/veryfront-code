@@ -1,6 +1,6 @@
 import { createEvalCheckContext } from "./expect.ts";
 import { isEvalDefinition } from "./factory.ts";
-import { createEvalDatasetMetadata, createEvalReport } from "./report.ts";
+import { createEvalDatasetMetadata, createEvalReport, evalRecordPassed } from "./report.ts";
 import { createEvalRunId } from "./run-id.ts";
 import {
   classifyEvalModelAccessDenial,
@@ -158,6 +158,12 @@ function validateAdapterResultFields(
   result: Record<string, unknown>,
   kind: "agent" | "tool",
 ): void {
+  if (result.outcome !== undefined && result.outcome !== "error") {
+    throw createEvalValidationError(`Eval ${kind} adapter outcome must be error`);
+  }
+  if (result.outcome === "error" && result.completed === true) {
+    throw createEvalValidationError(`Eval ${kind} adapter error outcome cannot be completed`);
+  }
   if (result.completed !== undefined && typeof result.completed !== "boolean") {
     throw createEvalValidationError(`Eval ${kind} adapter completed must be a boolean`);
   }
@@ -188,7 +194,9 @@ function createDirectToolTraceCall(
   return {
     ...(result.toolCallId ? { id: result.toolCallId } : {}),
     name: normalizeToolTargetName(definition.target),
-    status: result.error || result.completed === false ? "error" : "ok",
+    status: result.outcome === "error" || result.error || result.completed === false
+      ? "error"
+      : "ok",
     input,
     output: result.output,
     ...(result.error ? { error: result.error } : {}),
@@ -257,18 +265,6 @@ async function runToolTarget(
   return { input, result };
 }
 
-function isBlockingFailure(record: EvalRecord): boolean {
-  return [...(record.metrics ?? []), ...(record.checks ?? [])].some((result) =>
-    !result.skipped && result.pass === false &&
-    (result.severity === "gate" || result.severity === "budget")
-  );
-}
-
-function recordPassed(record: EvalRecord): boolean {
-  if (!record.completed || record.error) return false;
-  return !isBlockingFailure(record);
-}
-
 function emitEvalRuntimeMetrics(report: EvalReport): void {
   const baseAttributes = {
     eval_id: report.definitionId,
@@ -327,7 +323,7 @@ function emitEvalRuntimeMetrics(report: EvalReport): void {
     runtimeMetrics.histogram("vf_eval_duration_ms", record.durationMs, {
       ...baseAttributes,
       metric: "duration",
-      outcome: recordPassed(record) ? "pass" : "fail",
+      outcome: evalRecordPassed(record) ? "pass" : "fail",
     });
   }
 }
@@ -579,6 +575,8 @@ async function runRecord(
     exampleId: example.id,
     repetition,
     input: example.input,
+    ...(example.expectedOutcome ? { expectedOutcome: example.expectedOutcome } : {}),
+    ...(result.outcome ? { outcome: result.outcome } : {}),
     ...(definition.targetKind === "tool" && toolInvoked
       ? { executionInput: toolInput === UNMAPPED_TOOL_INPUT ? example.input : toolInput }
       : {}),
@@ -598,7 +596,7 @@ async function runRecord(
       : normalizeTrace(result.trace),
     usage: normalizeUsage(result.usage),
     durationMs: result.durationMs ?? Date.now() - started,
-    completed: result.completed ?? !result.error,
+    completed: result.completed ?? (result.outcome !== "error" && !result.error),
     ...(result.error ? { error: result.error } : {}),
   };
 
@@ -657,6 +655,7 @@ async function runRecord(
   record.checks = checks;
 
   if (evaluationErrors.length > 0) {
+    delete record.outcome;
     record.error = [record.error, ...evaluationErrors].filter(Boolean).join("; ");
     record.completed = false;
   }
@@ -719,6 +718,7 @@ async function runRecordWithinTimeout(
           // `durationMs` stays the target's own measure, as on a record that
           // finished grading. The whole-case wait is reported through progress.
           ...targetRecord,
+          outcome: undefined,
           completed: false,
           error: [targetRecord.error, timeoutMessage].filter(Boolean).join("; "),
           // Grading never finished, so no metric or check result is reported.
@@ -733,6 +733,7 @@ async function runRecordWithinTimeout(
         exampleId: example.id,
         repetition,
         input: example.input,
+        ...(example.expectedOutcome ? { expectedOutcome: example.expectedOutcome } : {}),
         output: undefined,
         ...(Object.hasOwn(example, "reference") ? { reference: example.reference } : {}),
         ...(executionInput ? { executionInput: executionInput.value } : {}),
@@ -790,6 +791,10 @@ export async function runEval(
   if (!isEvalDefinition(definition)) {
     throw createEvalValidationError("runEval requires a valid eval definition");
   }
+  const concurrency = options.concurrency ?? 1;
+  if (!Number.isSafeInteger(concurrency) || concurrency < 1) {
+    throw createEvalValidationError("Eval concurrency must be a positive safe integer");
+  }
   const startedAt = options.now?.() ?? new Date();
   if (!(startedAt instanceof Date) || !Number.isFinite(startedAt.getTime())) {
     throw createEvalValidationError("Eval start time must be a valid Date");
@@ -817,8 +822,19 @@ export async function runEval(
   const records: EvalRecord[] = [];
   notifyEvalProgress(options, { type: "eval-started", evalId: definition.id, total });
 
-  for (const [index, { example, repetition }] of jobs.entries()) {
-    throwIfEvalAborted(options.signal);
+  // Stop scheduling after a fatal error and propagate it to active adapters.
+  // Workers settle before the caller can tear down extensions or finalize usage.
+  const controller = new AbortController();
+  const signal = options.signal
+    ? AbortSignal.any([options.signal, controller.signal])
+    : controller.signal;
+  const recordOptions = concurrency === 1 ? options : { ...options, signal };
+  let nextIndex = 0;
+  let failed = false;
+  let failure: unknown;
+
+  const runJob = async (index: number): Promise<void> => {
+    const { example, repetition } = jobs[index]!;
     const progress = {
       evalId: definition.id,
       recordId: `${example.id}:${repetition}`,
@@ -828,28 +844,47 @@ export async function runEval(
       total,
     };
     notifyEvalProgress(options, { type: "record-started", ...progress });
+    throwIfEvalAborted(signal);
     // The record's own `durationMs` can come from the adapter, which measures
     // target execution alone. Progress reports the whole case, grading
     // included, because that is the wait a reader is watching.
     const startedAt = Date.now();
     const record = await runRecordWithinTimeout(
       definition,
-      options,
+      recordOptions,
       example,
       repetition,
       runId,
       recordTimeoutMs,
     );
-    throwIfEvalAborted(options.signal);
-    records.push(record);
+    throwIfEvalAborted(signal);
+    records[index] = record;
     notifyEvalProgress(options, {
       type: "record-finished",
       ...progress,
       // Progress consumers use completion as the case outcome, including grading.
-      completed: recordPassed(record),
+      completed: evalRecordPassed(record),
       durationMs: Date.now() - startedAt,
     });
-  }
+  };
+
+  const worker = async (): Promise<void> => {
+    try {
+      while (!failed && nextIndex < total) {
+        throwIfEvalAborted(signal);
+        await runJob(nextIndex++);
+      }
+    } catch (error) {
+      if (!failed) {
+        failed = true;
+        failure = error;
+        controller.abort(error);
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(concurrency, total) }, worker));
+  if (failed) throw failure;
+  throwIfEvalAborted(signal);
 
   const endedAt = options.now?.() ?? new Date();
   if (!(endedAt instanceof Date) || !Number.isFinite(endedAt.getTime())) {

@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { CommandStreamEvent } from "./types.ts";
 import { readCommandStreamEvents } from "./exec-stream.ts";
@@ -103,5 +103,24 @@ describe("sandbox/exec-stream", () => {
     for await (const _event of readCommandStreamEvents(stream)) break;
 
     assertEquals(cancelled, true, "abandoning the generator must not leave the body open");
+  });
+
+  it("cancels a stalled body when the command signal aborts", async () => {
+    let cancelled = false;
+    const stream = new ReadableStream<Uint8Array>({
+      pull() {
+        return new Promise<void>(() => {});
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    const controller = new AbortController();
+    const events = Array.fromAsync(readCommandStreamEvents(stream, controller.signal));
+
+    controller.abort(new Error("command cancelled"));
+
+    await assertRejects(() => events, Error, "command cancelled");
+    assertEquals(cancelled, true);
   });
 });

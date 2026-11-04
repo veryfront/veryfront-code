@@ -190,7 +190,9 @@ function atMost(name: string, value: number, maximum: number): number {
   return value;
 }
 
-function resolveLimits(limits: ToolResultContextLimits | undefined): ResolvedLimits {
+export function resolveToolResultContextLimits(
+  limits: ToolResultContextLimits | undefined,
+): ResolvedLimits {
   return {
     maxInlineBytes: atMost(
       "maxInlineBytes",
@@ -530,7 +532,7 @@ export class ToolResultContext {
   };
 
   constructor(options: ToolResultContextOptions = {}) {
-    this.#limits = resolveLimits(options.limits);
+    this.#limits = resolveToolResultContextLimits(options.limits);
   }
 
   disclose(input: ToolResultDisclosureInput): ToolResultDisclosure {

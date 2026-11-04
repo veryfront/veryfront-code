@@ -1,7 +1,7 @@
 ---
 title: "Configuration"
 description: "Override Veryfront conventions with config and environment variables."
-order: 9
+order: 20
 ---
 
 Veryfront follows convention over configuration. Start with the default
@@ -250,7 +250,7 @@ defineConfig({
   ai: {
     providers: {
       openai: {
-        defaultModel: "gpt-5-nano",
+        defaultModel: "gpt-5.4-nano",
       },
     },
     mcp: {
@@ -329,8 +329,9 @@ Veryfront blocks private network destinations by default. CLI API transports
 permit the exact API origin configured by the operator. Hosted runtimes and
 `veryfront serve` also permit an HTTP API origin set through `VERYFRONT_API_URL`
 or `VERYFRONT_API_BASE_URL` before startup. Project `.env` files and later writes
-cannot authorize HTTP origins. Origin-bound API transports reject redirects;
-other outbound requests keep their existing policies. Use HTTPS unless the API
+cannot authorize HTTP origins. Canonical file mutation tools use the same
+host-configured origin policy and require the exact API `/mcp` endpoint.
+Origin-bound API transports reject redirects; other outbound requests keep their existing policies. Use HTTPS unless the API
 is on a private network you control.
 
 In CI, set the API URL variable used by the command next to
@@ -424,9 +425,12 @@ a `NOT_SUPPORTED` error, because that route names only the model and could not
 tell it apart from a Google model with the same id.
 
 The SDK no longer supports `VERYFRONT_CLOUD_GATEWAY_ROUTES=vendor`; the
-variable is ignored. The API announced the vendor-scoped routes with a
+variable is ignored.
+
+The API announced the vendor-scoped routes with a
 `Sunset: 2026-12-31` deprecation contract. An API deployment may still serve
 the routes during its deprecation window, but this SDK will not select them.
+
 An API deployment that has removed the vendor-scoped inference paths returns
 `410 Gone` and names the neutral replacement. The separate
 `/ai/gateway/billing/finalize` endpoint is not a vendor inference route and
@@ -527,9 +531,7 @@ The framework reads `veryfront.config.ts` automatically. Your config values are 
 
 ## Verify it worked
 
-After editing `veryfront.config.ts`, restart `veryfront dev`. The dev banner
-prints the resolved `title`, output directory, and router mode. Set a
-distinctive `title` and check that the document title in the browser matches.
+After editing `veryfront.config.ts`, restart `veryfront dev`. Verify the setting through the behavior it controls: request a route after changing router configuration, or inspect the output directory after a build. Resolve startup or configuration errors before checking application behavior.
 
 For environment variables, set a temporary non-secret value such as
 `VERYFRONT_CONFIG_CHECK=enabled` and read that value from a temporary API route.

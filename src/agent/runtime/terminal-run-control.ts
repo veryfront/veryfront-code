@@ -506,6 +506,7 @@ export function terminalCompletionResponse(
     text: typeof error.output === "string" && !jsonOutput
       ? error.output
       : JSON.stringify(error.output) ?? "",
+    data: error.output,
     object: error.output,
     messages: [],
     toolCalls: [],

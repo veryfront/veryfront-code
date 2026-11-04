@@ -23,11 +23,13 @@ import {
   telemetryErrorType,
 } from "./telemetry-error.ts";
 import { createRuntimeProviderStreamFailure } from "#veryfront/runtime/provider-stream-error-provenance.ts";
+import { createClassifiedProviderStreamProtocolError } from "#veryfront/provider/runtime-loader/stream-protocol-classification-factories.ts";
 import { isNativeErrorWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
 import {
   buildProviderError,
   ProviderRateLimitError,
   ProviderRequestError,
+  ProviderStreamProtocolError,
 } from "#veryfront/provider/runtime-loader/provider-http.ts";
 import { withRuntimeProviderStreamErrorProvenance } from "#veryfront/agent/runtime/chat-stream-handler.ts";
 import type { ModelRuntime } from "#veryfront/provider/types.ts";
@@ -1048,6 +1050,185 @@ describe("observability/telemetry-error", () => {
           messageRedacted: true,
         }]);
       }
+    });
+
+    it("records distinct fixed Anthropic stream parser issues in safe telemetry", () => {
+      const jsonFailure = createClassifiedProviderStreamProtocolError({
+        provider: "anthropic",
+        status: 200,
+        retryable: false,
+        message:
+          "anthropic request failed: invalid successful stream (tool call arguments were not valid JSON object text)",
+      }, "tool call arguments were not valid JSON object text");
+      const sequenceFailure = createClassifiedProviderStreamProtocolError({
+        provider: "anthropic",
+        status: 200,
+        retryable: false,
+        message:
+          "anthropic request failed: invalid successful stream (message_delta was out of sequence)",
+      }, "message_delta was out of sequence");
+      const a = summarizeErrorCausesForLog(
+        createRuntimeProviderStreamFailure(jsonFailure),
+      );
+      const b = summarizeErrorCausesForLog(
+        createRuntimeProviderStreamFailure(sequenceFailure),
+      );
+      assertEquals(a, [{
+        name: "ProviderStreamProtocolError",
+        provider: "anthropic",
+        status: 200,
+        retryable: false,
+        streamIssue: "tool call arguments were not valid JSON object text",
+        messageRedacted: true,
+      }]);
+      assertEquals(b, [{
+        name: "ProviderStreamProtocolError",
+        provider: "anthropic",
+        status: 200,
+        retryable: false,
+        streamIssue: "message_delta was out of sequence",
+        messageRedacted: true,
+      }]);
+    });
+
+    it("records fixed Anthropic lifecycle and limit issues while retaining redaction", () => {
+      for (
+        const issue of [
+          "stream ended before a terminal marker",
+          "stream ended with unfinished content blocks",
+          "content block index was reused",
+          "Anthropic retained content exceeded 16777216 UTF-8 bytes (content block)",
+        ]
+      ) {
+        const failure = createClassifiedProviderStreamProtocolError({
+          provider: "anthropic",
+          status: 200,
+          retryable: false,
+          message: `anthropic request failed: invalid successful stream (${issue})`,
+        }, issue);
+        assertEquals(
+          summarizeErrorCausesForLog(createRuntimeProviderStreamFailure(failure)),
+          [{
+            name: "ProviderStreamProtocolError",
+            provider: "anthropic",
+            status: 200,
+            retryable: false,
+            streamIssue: issue,
+            messageRedacted: true,
+          }],
+        );
+      }
+    });
+
+    it("records Anthropic stream issues with veryfront-cloud provider label", () => {
+      const failure = createClassifiedProviderStreamProtocolError({
+        provider: "anthropic",
+        status: 200,
+        retryable: false,
+        message:
+          "veryfront-cloud request failed: invalid successful stream (message_start was out of sequence)",
+      }, "message_start was out of sequence");
+      assertEquals(
+        summarizeErrorCausesForLog(createRuntimeProviderStreamFailure(failure)),
+        [{
+          name: "ProviderStreamProtocolError",
+          provider: "anthropic",
+          status: 200,
+          retryable: false,
+          streamIssue: "message_start was out of sequence",
+          messageRedacted: true,
+        }],
+      );
+    });
+
+    it("withholds Anthropic stream issues not in trusted provenance", () => {
+      for (
+        const message of [
+          "anthropic request failed: invalid successful stream (synthetic-secret)",
+          "anthropic request failed: invalid successful stream (message_delta was out of sequence synthetic-secret)",
+          "synthetic-secret request failed: invalid successful stream (message_delta was out of sequence)",
+        ]
+      ) {
+        const failure = new ProviderStreamProtocolError({
+          provider: "anthropic",
+          status: 200,
+          retryable: false,
+          message,
+        });
+        // No recordStreamProtocolClassification call: simulates untrusted error.
+        assertEquals(
+          summarizeErrorCausesForLog(createRuntimeProviderStreamFailure(failure)),
+          [{
+            name: "ProviderStreamProtocolError",
+            provider: "anthropic",
+            status: 200,
+            retryable: false,
+            messageRedacted: true,
+          }],
+        );
+      }
+    });
+
+    it("rejects forged plain Error lookalikes with allowlisted Anthropic messages", () => {
+      const forged = Object.assign(
+        new Error(
+          "anthropic request failed: invalid successful stream (message_delta was out of sequence)",
+        ),
+        {
+          name: "ProviderStreamProtocolError",
+          provider: "anthropic",
+          status: 200,
+          retryable: false,
+        },
+      );
+      // No trusted provenance: forged error must not produce streamIssue.
+      const causes = summarizeErrorCausesForLog(
+        createRuntimeProviderStreamFailure(forged),
+      );
+      assertEquals(causes?.[0]?.streamIssue, undefined);
+    });
+
+    it("rejects Anthropic errors with message accessors", () => {
+      const hostile = new ProviderStreamProtocolError({
+        provider: "anthropic",
+        status: 200,
+        retryable: false,
+        message: "stub",
+      });
+      Object.defineProperty(hostile, "message", {
+        configurable: true,
+        get() {
+          return "anthropic request failed: invalid successful stream (message_delta was out of sequence)";
+        },
+      });
+      // No trusted provenance recorded.
+      const causes = summarizeErrorCausesForLog(
+        createRuntimeProviderStreamFailure(hostile),
+      );
+      assertEquals(causes?.[0]?.streamIssue, undefined);
+    });
+
+    it("rejects Anthropic error proxies", () => {
+      let trapCalls = 0;
+      const real = new ProviderStreamProtocolError({
+        provider: "anthropic",
+        status: 200,
+        retryable: false,
+        message:
+          "anthropic request failed: invalid successful stream (message_delta was out of sequence)",
+      });
+      const proxy = new Proxy(real, {
+        get(target, prop, receiver) {
+          trapCalls++;
+          return Reflect.get(target, prop, receiver);
+        },
+      });
+      // Proxy wraps a real error but the WeakMap key is the proxy, not the target.
+      const causes = summarizeErrorCausesForLog(
+        createRuntimeProviderStreamFailure(proxy),
+      );
+      assertEquals(causes?.[0]?.streamIssue, undefined);
+      assertEquals(trapCalls, 0, "proxy traps must not be invoked");
     });
 
     it("logs only allowlisted error names and transient codes", () => {

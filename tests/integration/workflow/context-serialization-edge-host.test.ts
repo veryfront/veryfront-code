@@ -9,6 +9,7 @@ describe("workflow context serialization on edge hosts", () => {
       import.meta.url,
     ).href;
     const script = `
+      await import("node:fs");
       const host = globalThis;
       const denoDescriptor = Object.getOwnPropertyDescriptor(host, "Deno");
       const processDescriptor = Object.getOwnPropertyDescriptor(host, "process");
@@ -65,6 +66,7 @@ describe("workflow context serialization on edge hosts", () => {
       import.meta.url,
     ).href;
     const script = `
+      await import("node:fs");
       const host = globalThis;
       const denoDescriptor = Object.getOwnPropertyDescriptor(host, "Deno");
       const processDescriptor = Object.getOwnPropertyDescriptor(host, "process");
@@ -118,6 +120,7 @@ describe("workflow context serialization on edge hosts", () => {
       import.meta.url,
     ).href;
     const script = `
+      await import("node:fs");
       const host = globalThis;
       const denoDescriptor = Object.getOwnPropertyDescriptor(host, "Deno");
       const processDescriptor = Object.getOwnPropertyDescriptor(host, "process");
@@ -179,6 +182,7 @@ describe("workflow context serialization on edge hosts", () => {
       import.meta.url,
     ).href;
     const script = `
+      await import("node:fs");
       const host = globalThis;
       const denoDescriptor = Object.getOwnPropertyDescriptor(host, "Deno");
       const processDescriptor = Object.getOwnPropertyDescriptor(host, "process");

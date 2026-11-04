@@ -15,6 +15,7 @@ import type { ParsedArgs } from "#cli/shared/types";
 import { printJson } from "../../shared/json-output.ts";
 import { getBooleanArg, getStringArg } from "../../shared/parsed-args.ts";
 import { downloadUploadToFile, listAllUploads, type UploadItem } from "../uploads/command.ts";
+import { putBinaryKnowledgeAsset } from "./binary-assets.ts";
 import { type PublishedFileReceipt, putRemoteFileFromLocal } from "../files/command.ts";
 import * as commandHelpers from "./command-helpers.ts";
 import { createRunUserLogger, type Logger, serverLogger } from "veryfront/utils";
@@ -27,7 +28,12 @@ import {
   type IndexKnowledgeDocumentInput,
 } from "./indexing.ts";
 import { classifyKnowledgeDirectoryPath, classifyKnowledgeSourcePath } from "./source-policy.ts";
-import { type KnowledgeParserResult, runKnowledgeParser } from "./parser.ts";
+import {
+  isOkfTextCompanion,
+  type KnowledgeParserResult,
+  runKnowledgeParser,
+  validateOkfTextCompanionBytes,
+} from "./parser.ts";
 import {
   buildKnowledgeIngestRunResult,
   type KnowledgeIngestFailedFileResult,
@@ -352,7 +358,7 @@ const OKF_COMPANION_REFERENCE_KEYS = new Set([
 ]);
 const OKF_COMPANION_PATH_KEYS = new Set(["path", "resource"]);
 function okfBundleSkipMessage(): string {
-  return "OKF bundle mode preserves Markdown documents and referenced UTF-8 companion assets; unreferenced generated artifacts are skipped.";
+  return "OKF bundle mode preserves Markdown documents and referenced text and binary companions; unreferenced generated artifacts are skipped.";
 }
 
 function isMarkdownPath(path: string): boolean {
@@ -808,6 +814,7 @@ export async function ingestResolvedSources(
       remotePath: string,
       localPath: string,
       metadata?: Record<string, unknown>,
+      storageKind?: "binary",
     ) => Promise<PublishedFileReceipt>;
     destinationBranch?: string;
     indexKnowledgeDocument?: (
@@ -829,7 +836,39 @@ export async function ingestResolvedSources(
   const okfCompanionPaths = options.okfBundle && options.path
     ? await collectReferencedOkfCompanionPaths(sources, options.path)
     : new Set<string>();
+  let hasBinaryCompanion = false;
+  for (const source of sources) {
+    const relativePath = okfRelativePaths.get(source);
+    if (relativePath && okfCompanionPaths.has(relativePath)) {
+      deps.signal?.throwIfAborted();
+      const bytes = await Deno.readFile(source.localPath);
+      if (isOkfTextCompanion(relativePath, bytes)) {
+        validateOkfTextCompanionBytes(relativePath, bytes);
+      } else hasBinaryCompanion = true;
+    }
+  }
   const slugs = options.slug ? [options.slug] : ensureUniqueSlugs(sources);
+  const preflightParsers = new Map<KnowledgeSource, KnowledgeParserResult>();
+  if (options.okfBundle && hasBinaryCompanion) {
+    // Validate the complete bundle before committing any immutable absent-only asset.
+    for (const [index, source] of sources.entries()) {
+      deps.signal?.throwIfAborted();
+      preflightParsers.set(
+        source,
+        await deps.runParser({
+          filePath: source.localPath,
+          outputDir: deps.outputDir,
+          description: options.description,
+          slug: slugs[index],
+          sourceReference: buildSourceReference(source),
+          okfRelativePath: okfRelativePaths.get(source),
+          ...(okfCompanionPaths.has(okfRelativePaths.get(source) ?? "")
+            ? { okfRole: "companion" as const }
+            : {}),
+        }, { signal: deps.signal }),
+      );
+    }
+  }
   const ingested: KnowledgeIngestFileResult[] = [];
   const failed: KnowledgeIngestFailedFileResult[] = [];
   const recordSourceFailure = (
@@ -905,7 +944,7 @@ export async function ingestResolvedSources(
           }
           : {}),
       };
-      parser = await deps.runParser({
+      parser = preflightParsers.get(source) ?? await deps.runParser({
         filePath: source.localPath,
         outputDir: deps.outputDir,
         description: options.description,
@@ -942,6 +981,7 @@ export async function ingestResolvedSources(
         remotePath,
         parser.sandbox_output_path,
         uploadMetadata,
+        parser.storage_kind,
       );
       published = uploaded;
       deps.signal?.throwIfAborted();
@@ -1086,10 +1126,27 @@ export async function knowledgeCommand(args: ParsedArgs): Promise<void> {
                 projectSlug: config.projectSlug,
                 serviceLayer: "cloud",
               }, () => indexKnowledgeDocument(indexInput)),
-            uploadKnowledgeFile: (remotePath, localPath, metadata) =>
-              putRemoteFileFromLocal(client, config.projectSlug, remotePath, localPath, undefined, {
-                branch: options.branch,
-              }, metadata),
+            uploadKnowledgeFile: (remotePath, localPath, metadata, storageKind) =>
+              storageKind === "binary"
+                ? putBinaryKnowledgeAsset({
+                  client,
+                  project: config.projectSlug,
+                  path: remotePath,
+                  localPath,
+                  branch: options.branch ?? "main",
+                  expected: { kind: "absent" },
+                })
+                : putRemoteFileFromLocal(
+                  client,
+                  config.projectSlug,
+                  remotePath,
+                  localPath,
+                  undefined,
+                  {
+                    branch: options.branch,
+                  },
+                  metadata,
+                ),
           });
           const runResult = buildKnowledgeIngestRunResult({
             requestedCount,

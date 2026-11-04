@@ -93,8 +93,21 @@ export type WorkerUrlClassification =
     resolutionBase: "module" | "route";
   };
 
+/** A 1-based line and column and the source text of one expression. */
+export interface SourceLocation {
+  readonly line: number;
+  readonly column: number;
+  readonly expression: string;
+}
+
 export interface SourceCapabilityAnalysis {
   readonly hasDynamicCodeGeneration: boolean;
+  /**
+   * Where the first read with a key this analysis cannot resolve sits, when
+   * that read is one reason for `hasDynamicCodeGeneration`. It is the case
+   * ordinary code hits most, so the caller can name it in its error.
+   */
+  readonly unresolvedComputedRead?: SourceLocation;
   readonly workers: readonly WorkerUrlClassification[];
   readonly moduleSpecifiers: readonly string[];
   readonly hasUnconstrainedDynamicImport: boolean;
@@ -375,107 +388,125 @@ export async function rewriteUnboundCommonJsDynamicRequire(
     `require(${safeStringLiteral(specifier)})`;
   const staticModuleRequireExpression = (specifier: string): string =>
     staticRequireExpression(specifier);
-  const visit = (node: ASTNode): void => {
-    const scope = nodeScopes.get(node);
-    if (
-      scope && node.type === "Identifier" && node.name === "require" &&
-      resolveBinding(scope, "require") === null &&
-      isIdentifierReference(node, parents) && hasSourceRange(node, source.length)
-    ) {
-      let directCall: ASTNode = node;
-      let link = parents.get(directCall);
-      while (
-        link && TS_EXPRESSION_WRAPPER_TYPES.has(link.parent.type) &&
-        link.key === "expression"
-      ) {
-        directCall = link.parent;
-        link = parents.get(directCall);
-      }
-      const call = link && isCallExpression(link.parent) && link.key === "callee"
-        ? link.parent
-        : undefined;
-      const args = call === undefined ? [] : callArguments(call);
-      let preserveRequire = args.length === 1 && staticString(args[0]) !== null;
-      const directSpecifier = args.length === 1 ? staticString(args[0]) : null;
-      if (call !== undefined && directSpecifier !== null && hasSourceRange(call, source.length)) {
-        recordStaticCall(call, directSpecifier, staticRequireExpression(directSpecifier));
-      } else if (
-        !preserveRequire && args.length === 1 && hasSourceRange(args[0]!, source.length)
-      ) {
-        const boundSpecifier = staticStringFromImmutableBinding(
-          args[0]!,
-          scope,
-          nodeScopes,
-          parents,
-        );
-        if (boundSpecifier !== null) {
-          if (call !== undefined && hasSourceRange(call, source.length)) {
-            recordStaticCall(call, boundSpecifier, staticRequireExpression(boundSpecifier));
-          } else {
-            replacements.push({
-              start: args[0]!.start,
-              end: args[0]!.end,
-              value: safeStringLiteral(boundSpecifier),
-            });
-          }
-          preserveRequire = true;
-        }
-      }
-      if (!preserveRequire) {
-        const parent = parents.get(node);
-        const shorthand = parent?.parent.type === "ObjectProperty" &&
-          parent.key === "value" && parent.parent.shorthand === true;
-        hasDynamicRequireReplacement = true;
-        replacements.push({
-          start: node.start,
-          end: node.end,
-          value: shorthand ? `require: ${replacementIdentifier}` : replacementIdentifier,
-        });
-      }
+  function readRequireCall(node: ASTNode): { call: ASTNode | undefined; args: ASTNode[] } {
+    let callee = node;
+    let link = parents.get(callee);
+    while (link && TS_EXPRESSION_WRAPPER_TYPES.has(link.parent.type) && link.key === "expression") {
+      callee = link.parent;
+      link = parents.get(callee);
     }
-    if (
-      scope && (node.type === "MemberExpression" || node.type === "OptionalMemberExpression") &&
+    const call = link && isCallExpression(link.parent) && link.key === "callee"
+      ? link.parent
+      : undefined;
+    const args = call === undefined ? [] : callArguments(call);
+    return { call, args };
+  }
+
+  function isUnboundRequireIdentifier(
+    node: ASTNode,
+    scope: Scope,
+  ): node is ASTNode & { start: number; end: number } {
+    return node.type === "Identifier" && node.name === "require" &&
+      resolveBinding(scope, "require") === null &&
+      isIdentifierReference(node, parents) && hasSourceRange(node, source.length);
+  }
+
+  function isUnboundModuleRequire(
+    node: ASTNode,
+    scope: Scope,
+  ): node is ASTNode & { start: number; end: number } {
+    return (node.type === "MemberExpression" || node.type === "OptionalMemberExpression") &&
       memberPropertyName(node) === "require" && isNode(node.object) &&
       node.object.type === "Identifier" && node.object.name === "module" &&
-      resolveBinding(scope, "module") === null && hasSourceRange(node, source.length)
+      resolveBinding(scope, "module") === null && hasSourceRange(node, source.length);
+  }
+
+  function recordBoundRequire(
+    call: ASTNode | undefined,
+    argument: ASTNode & { start: number; end: number },
+    boundSpecifier: string,
+  ): void {
+    if (call !== undefined && hasSourceRange(call, source.length)) {
+      recordStaticCall(call, boundSpecifier, staticRequireExpression(boundSpecifier));
+    } else {
+      replacements.push({
+        start: argument.start,
+        end: argument.end,
+        value: safeStringLiteral(boundSpecifier),
+      });
+    }
+  }
+
+  function rewriteRequireIdentifier(
+    node: ASTNode & { start: number; end: number },
+    scope: Scope,
+  ): void {
+    const { call, args } = readRequireCall(node);
+    let preserveRequire = args.length === 1 && staticString(args[0]) !== null;
+    const directSpecifier = args.length === 1 ? staticString(args[0]) : null;
+    if (call !== undefined && directSpecifier !== null && hasSourceRange(call, source.length)) {
+      recordStaticCall(call, directSpecifier, staticRequireExpression(directSpecifier));
+    } else if (
+      !preserveRequire && args.length === 1 && hasSourceRange(args[0]!, source.length)
     ) {
-      let callee: ASTNode = node;
-      let link = parents.get(callee);
-      while (
-        link && TS_EXPRESSION_WRAPPER_TYPES.has(link.parent.type) &&
-        link.key === "expression"
-      ) {
-        callee = link.parent;
-        link = parents.get(callee);
-      }
-      const call = link && isCallExpression(link.parent) && link.key === "callee"
-        ? link.parent
-        : undefined;
-      const args = call === undefined ? [] : callArguments(call);
-      const directSpecifier = args.length === 1 ? staticString(args[0]) : null;
-      if (call !== undefined && directSpecifier !== null && hasSourceRange(call, source.length)) {
-        recordStaticCall(call, directSpecifier, staticModuleRequireExpression(directSpecifier));
-      } else if (call !== undefined && args.length === 1 && hasSourceRange(call, source.length)) {
-        const boundSpecifier = staticStringFromImmutableBinding(
-          args[0]!,
-          scope,
-          nodeScopes,
-          parents,
-        );
-        if (boundSpecifier !== null) {
-          recordStaticCall(call, boundSpecifier, staticModuleRequireExpression(boundSpecifier));
-        } else {
-          replaceDynamicCallee(node);
-        }
-      } else {
-        hasDynamicRequireReplacement = true;
-        replacements.push({
-          start: node.start,
-          end: node.end,
-          value: replacementIdentifier,
-        });
+      const boundSpecifier = staticStringFromImmutableBinding(
+        args[0]!,
+        scope,
+        nodeScopes,
+        parents,
+      );
+      if (boundSpecifier !== null) {
+        recordBoundRequire(call, args[0]!, boundSpecifier);
+        preserveRequire = true;
       }
     }
+    if (!preserveRequire) {
+      const parent = parents.get(node);
+      const shorthand = parent?.parent.type === "ObjectProperty" &&
+        parent.key === "value" && parent.parent.shorthand === true;
+      hasDynamicRequireReplacement = true;
+      replacements.push({
+        start: node.start,
+        end: node.end,
+        value: shorthand ? `require: ${replacementIdentifier}` : replacementIdentifier,
+      });
+    }
+  }
+
+  function rewriteModuleRequire(
+    node: ASTNode & { start: number; end: number },
+    scope: Scope,
+  ): void {
+    const { call, args } = readRequireCall(node);
+    const directSpecifier = args.length === 1 ? staticString(args[0]) : null;
+    if (call !== undefined && directSpecifier !== null && hasSourceRange(call, source.length)) {
+      recordStaticCall(call, directSpecifier, staticModuleRequireExpression(directSpecifier));
+    } else if (call !== undefined && args.length === 1 && hasSourceRange(call, source.length)) {
+      const boundSpecifier = staticStringFromImmutableBinding(
+        args[0]!,
+        scope,
+        nodeScopes,
+        parents,
+      );
+      if (boundSpecifier !== null) {
+        recordStaticCall(call, boundSpecifier, staticModuleRequireExpression(boundSpecifier));
+      } else {
+        replaceDynamicCallee(node);
+      }
+    } else {
+      hasDynamicRequireReplacement = true;
+      replacements.push({
+        start: node.start,
+        end: node.end,
+        value: replacementIdentifier,
+      });
+    }
+  }
+
+  const visit = (node: ASTNode): void => {
+    const scope = nodeScopes.get(node);
+    if (scope && isUnboundRequireIdentifier(node, scope)) rewriteRequireIdentifier(node, scope);
+    if (scope && isUnboundModuleRequire(node, scope)) rewriteModuleRequire(node, scope);
     forEachChild(node, visit);
   };
   visit(program);
@@ -567,76 +598,127 @@ export async function rewriteImportMetaLocations(
     replacement: string | null | Promise<string | null>;
   }> = [];
   let unsupportedResolve = false;
+  function rewriteMissingImportMetaArgument(node: ASTNode & { start: number; end: number }): void {
+    if (rewriteResolveCall) {
+      pendingResolveCallRewrites.push({
+        start: node.start,
+        end: node.end,
+        replacement: rewriteResolveCall("undefined", moduleUrl),
+      });
+    } else if (rewriteResolveArgument) {
+      pendingResolveCallRewrites.push({
+        start: node.start,
+        end: node.end,
+        replacement: rewriteResolveArgument("undefined", moduleUrl),
+      });
+    } else {
+      unsupportedResolve = true;
+    }
+  }
+
+  function rewriteImportMetaArgument(
+    node: ASTNode & { start: number; end: number },
+    argument: ASTNode,
+    specifier: string | null,
+  ): void {
+    if (
+      specifier === null && rewriteResolveArgument && hasSourceRange(argument, source.length)
+    ) {
+      const argumentSource = source.slice(argument.start, argument.end);
+      pendingResolveCallRewrites.push({
+        start: node.start,
+        end: node.end,
+        replacement: (async () => {
+          const rewrittenArgument = await rewriteImportMetaLocations(
+            argumentSource,
+            moduleUrl,
+            resolveSpecifier,
+            rewriteResolveCall,
+            rewriteResolveArgument,
+            rewriteResolveReference,
+          );
+          if (rewrittenArgument === null) return null;
+          return await rewriteResolveArgument(rewrittenArgument, moduleUrl);
+        })(),
+      });
+    } else if (specifier === null) {
+      unsupportedResolve = true;
+    } else if (rewriteResolveCall) {
+      pendingResolveCallRewrites.push({
+        start: node.start,
+        end: node.end,
+        replacement: rewriteResolveCall(specifier, moduleUrl),
+      });
+    } else if (resolveSpecifier) {
+      pendingResolutions.push({
+        start: node.start,
+        end: node.end,
+        specifier,
+      });
+    } else {
+      const resolved = resolveImportMetaUrlSpecifier(specifier, moduleUrl);
+      if (resolved === null) {
+        unsupportedResolve = true;
+      } else {
+        replacements.push({
+          start: node.start,
+          end: node.end,
+          value: safeStringLiteral(resolved),
+        });
+      }
+    }
+  }
+
+  function rewriteImportMetaCall(node: ASTNode): void {
+    const args = callArguments(node);
+    const argument = args.length === 1 ? args[0] : undefined;
+    const specifier = argument === undefined ? null : staticString(argument);
+    if (!hasSourceRange(node, source.length)) {
+      unsupportedResolve = true;
+    } else if (argument === undefined) {
+      rewriteMissingImportMetaArgument(node);
+    } else {
+      rewriteImportMetaArgument(node, argument, specifier);
+    }
+  }
+
+  function rewriteImportMetaObject(node: ASTNode & { start: number; end: number }): void {
+    if (!rewriteResolveReference) {
+      unsupportedResolve = true;
+      return;
+    }
+    pendingResolveCallRewrites.push({
+      start: node.start,
+      end: node.end,
+      replacement: (async () => {
+        const resolve = await rewriteResolveReference(moduleUrl);
+        return `({ __proto__: null, url: ${safeStringLiteral(moduleUrl)}, dirname: ${
+          importMetaPathValue(moduleUrl, "dirname")
+        }, filename: ${importMetaPathValue(moduleUrl, "filename")}, resolve: ${resolve} })`;
+      })(),
+    });
+  }
+
+  function appendImportMetaCallReplacements(rewrittenCalls: Array<string | null>): boolean {
+    for (let index = 0; index < pendingResolveCallRewrites.length; index++) {
+      const request = pendingResolveCallRewrites[index];
+      const replacement = rewrittenCalls[index];
+      if (request === undefined || replacement === undefined || replacement === null) return false;
+      replacements.push({
+        start: request.start,
+        end: request.end,
+        value: replacement,
+      });
+    }
+    return true;
+  }
+
   const visit = (node: ASTNode): void => {
     if (
       isCallExpression(node) && isNode(node.callee) &&
       isImportMetaResolve(node.callee)
     ) {
-      const args = callArguments(node);
-      const argument = args.length === 1 ? args[0] : undefined;
-      const specifier = argument === undefined ? null : staticString(argument);
-      if (!hasSourceRange(node, source.length)) {
-        unsupportedResolve = true;
-      } else if (argument === undefined && rewriteResolveCall) {
-        pendingResolveCallRewrites.push({
-          start: node.start,
-          end: node.end,
-          replacement: rewriteResolveCall("undefined", moduleUrl),
-        });
-      } else if (argument === undefined && rewriteResolveArgument) {
-        pendingResolveCallRewrites.push({
-          start: node.start,
-          end: node.end,
-          replacement: rewriteResolveArgument("undefined", moduleUrl),
-        });
-      } else if (argument === undefined) {
-        unsupportedResolve = true;
-      } else if (
-        specifier === null && rewriteResolveArgument && hasSourceRange(argument, source.length)
-      ) {
-        const argumentSource = source.slice(argument.start, argument.end);
-        pendingResolveCallRewrites.push({
-          start: node.start,
-          end: node.end,
-          replacement: (async () => {
-            const rewrittenArgument = await rewriteImportMetaLocations(
-              argumentSource,
-              moduleUrl,
-              resolveSpecifier,
-              rewriteResolveCall,
-              rewriteResolveArgument,
-              rewriteResolveReference,
-            );
-            if (rewrittenArgument === null) return null;
-            return await rewriteResolveArgument(rewrittenArgument, moduleUrl);
-          })(),
-        });
-      } else if (specifier === null) {
-        unsupportedResolve = true;
-      } else if (rewriteResolveCall) {
-        pendingResolveCallRewrites.push({
-          start: node.start,
-          end: node.end,
-          replacement: rewriteResolveCall(specifier, moduleUrl),
-        });
-      } else if (resolveSpecifier) {
-        pendingResolutions.push({
-          start: node.start,
-          end: node.end,
-          specifier,
-        });
-      } else {
-        const resolved = resolveImportMetaUrlSpecifier(specifier, moduleUrl);
-        if (resolved === null) {
-          unsupportedResolve = true;
-        } else {
-          replacements.push({
-            start: node.start,
-            end: node.end,
-            value: safeStringLiteral(resolved),
-          });
-        }
-      }
+      rewriteImportMetaCall(node);
       return;
     }
     if (isImportMetaResolve(node)) {
@@ -669,20 +751,7 @@ export async function rewriteImportMetaLocations(
       return;
     }
     if (isImportMeta(node) && hasSourceRange(node, source.length)) {
-      if (!rewriteResolveReference) {
-        unsupportedResolve = true;
-        return;
-      }
-      pendingResolveCallRewrites.push({
-        start: node.start,
-        end: node.end,
-        replacement: (async () => {
-          const resolve = await rewriteResolveReference(moduleUrl);
-          return `({ __proto__: null, url: ${safeStringLiteral(moduleUrl)}, dirname: ${
-            importMetaPathValue(moduleUrl, "dirname")
-          }, filename: ${importMetaPathValue(moduleUrl, "filename")}, resolve: ${resolve} })`;
-        })(),
-      });
+      rewriteImportMetaObject(node);
       return;
     }
     forEachChild(node, visit);
@@ -694,16 +763,7 @@ export async function rewriteImportMetaLocations(
     const rewrittenCalls = await Promise.all(
       pendingResolveCallRewrites.map(({ replacement }) => replacement),
     );
-    for (let index = 0; index < pendingResolveCallRewrites.length; index++) {
-      const request = pendingResolveCallRewrites[index];
-      const replacement = rewrittenCalls[index];
-      if (request === undefined || replacement === undefined || replacement === null) return null;
-      replacements.push({
-        start: request.start,
-        end: request.end,
-        value: replacement,
-      });
-    }
+    if (!appendImportMetaCallReplacements(rewrittenCalls)) return null;
   }
 
   if (resolveSpecifier) {
@@ -789,6 +849,26 @@ function isAttributableMutationValue(expression: ASTNode): boolean {
     expression.type === "ClassExpression";
 }
 
+function forEachArrayPatternElement(node: ASTNode, visit: (element: ASTNode) => void): void {
+  if (Array.isArray(node.elements)) {
+    for (const element of node.elements) {
+      if (isNode(element)) visit(element);
+    }
+  }
+}
+
+function forEachObjectPatternTarget(node: ASTNode, visit: (target: ASTNode) => void): void {
+  if (Array.isArray(node.properties)) {
+    for (const property of node.properties) {
+      if (!isNode(property)) continue;
+      const target = property.type === "RestElement"
+        ? patternChild(property.argument)
+        : bindingNodeForObjectPatternProperty(property);
+      if (target) visit(target);
+    }
+  }
+}
+
 /** Visit every leaf target (identifier or member) an assignment pattern writes to. */
 function forEachAssignmentTarget(pattern: ASTNode, visit: (target: ASTNode) => void): void {
   const node = unwrapExpression(pattern);
@@ -800,22 +880,10 @@ function forEachAssignmentTarget(pattern: ASTNode, visit: (target: ASTNode) => v
       if (isNode(node.argument)) forEachAssignmentTarget(node.argument, visit);
       return;
     case "ArrayPattern":
-      if (Array.isArray(node.elements)) {
-        for (const element of node.elements) {
-          if (isNode(element)) forEachAssignmentTarget(element, visit);
-        }
-      }
+      forEachArrayPatternElement(node, (element) => forEachAssignmentTarget(element, visit));
       return;
     case "ObjectPattern":
-      if (Array.isArray(node.properties)) {
-        for (const property of node.properties) {
-          if (!isNode(property)) continue;
-          const target = property.type === "RestElement"
-            ? patternChild(property.argument)
-            : bindingNodeForObjectPatternProperty(property);
-          if (target) forEachAssignmentTarget(target, visit);
-        }
-      }
+      forEachObjectPatternTarget(node, (target) => forEachAssignmentTarget(target, visit));
       return;
     default:
       visit(node);
@@ -888,6 +956,52 @@ function proveBinding(
   return result;
 }
 
+function isSinglePropertyIntegrityWrite(
+  keyNode: ASTNode | undefined,
+  scope: Scope,
+  nodeScopes: WeakMap<ASTNode, Scope>,
+): boolean {
+  if (keyNode === undefined) return true;
+  const key = staticString(keyNode);
+  if (key === null) {
+    // A numeric or symbol key cannot spell `constructor`; any other unreadable key may.
+    return !(isDefinitelySymbolValue(keyNode, scope, nodeScopes) ||
+      isDefinitelyNumericValue(keyNode, scope, nodeScopes));
+  }
+  return PROTOTYPE_INTEGRITY_PROPERTIES.has(key);
+}
+
+function literalDefinesIntegrityProperty(literal: ASTNode): boolean {
+  for (const property of literal.properties as unknown[]) {
+    if (!isNode(property)) continue;
+    if (property.type === "SpreadElement") return true;
+    const key = staticPropertyKey(property);
+    if (key === null) return true;
+    // A non-computed `__proto__:` sets the literal's prototype and is not copied.
+    // A computed `["__proto__"]` is an own property that invokes the target's setter.
+    if (key === "__proto__" && property.computed !== true) continue;
+    if (PROTOTYPE_INTEGRITY_PROPERTIES.has(key)) return true;
+  }
+  return false;
+}
+
+function copiedSourcesDefineIntegrityProperty(
+  args: ASTNode[],
+  scope: Scope,
+  nodeScopes: WeakMap<ASTNode, Scope>,
+): boolean {
+  const resolved = new Map<Binding, ASTNode[] | null>();
+  for (const source of args.slice(1)) {
+    // An unreadable source may carry any own property, whatever the target is.
+    const literals = copiedObjectLiterals(source, scope, nodeScopes, resolved);
+    if (literals === null) return true;
+    for (const literal of literals) {
+      if (literalDefinesIntegrityProperty(literal)) return true;
+    }
+  }
+  return false;
+}
+
 /**
  * Whether the call defines `constructor`, `prototype` or `__proto__` (or a
  * key this analysis cannot read) on some object through `Object.defineProperty`,
@@ -911,41 +1025,10 @@ function isPropertyDefiningIntegrityWrite(
     if (args === undefined) continue;
     if (args === null) return true;
     if (shape === "single") {
-      const keyNode = args[1];
-      if (keyNode === undefined) return true;
-      const key = staticString(keyNode);
-      if (key === null) {
-        // A numeric or symbol key cannot spell `constructor`; any other
-        // unreadable key may.
-        if (
-          isDefinitelySymbolValue(keyNode, scope, nodeScopes) ||
-          isDefinitelyNumericValue(keyNode, scope, nodeScopes)
-        ) continue;
-        return true;
-      }
-      if (PROTOTYPE_INTEGRITY_PROPERTIES.has(key)) return true;
+      if (isSinglePropertyIntegrityWrite(args[1], scope, nodeScopes)) return true;
       continue;
     }
-    const resolved = new Map<Binding, ASTNode[] | null>();
-    for (const source of args.slice(1)) {
-      // A source this analysis cannot read back to object literals may carry
-      // any own property, whatever the target is; fail closed.
-      const literals = copiedObjectLiterals(source, scope, nodeScopes, resolved);
-      if (literals === null) return true;
-      for (const literal of literals) {
-        for (const property of literal.properties as unknown[]) {
-          if (!isNode(property)) continue;
-          if (property.type === "SpreadElement") return true;
-          const key = staticPropertyKey(property);
-          if (key === null) return true;
-          // A non-computed `__proto__:` in a literal sets that literal's own
-          // prototype and is never copied; a computed `["__proto__"]` is an
-          // own property whose copy invokes the target's `__proto__` setter.
-          if (key === "__proto__" && property.computed !== true) continue;
-          if (PROTOTYPE_INTEGRITY_PROPERTIES.has(key)) return true;
-        }
-      }
-    }
+    if (copiedSourcesDefineIntegrityProperty(args, scope, nodeScopes)) return true;
   }
   return false;
 }
@@ -1067,22 +1150,10 @@ function forEachPatternIdentifier(pattern: ASTNode, visit: (name: string) => voi
       if (isNode(node.argument)) forEachPatternIdentifier(node.argument, visit);
       return;
     case "ArrayPattern":
-      if (Array.isArray(node.elements)) {
-        for (const element of node.elements) {
-          if (isNode(element)) forEachPatternIdentifier(element, visit);
-        }
-      }
+      forEachArrayPatternElement(node, (element) => forEachPatternIdentifier(element, visit));
       return;
     case "ObjectPattern":
-      if (Array.isArray(node.properties)) {
-        for (const property of node.properties) {
-          if (!isNode(property)) continue;
-          const target = property.type === "RestElement"
-            ? patternChild(property.argument)
-            : bindingNodeForObjectPatternProperty(property);
-          if (target) forEachPatternIdentifier(target, visit);
-        }
-      }
+      forEachObjectPatternTarget(node, (target) => forEachPatternIdentifier(target, visit));
       return;
     case "TSParameterProperty":
       if (isNode(node.parameter)) forEachPatternIdentifier(node.parameter, visit);
@@ -1227,6 +1298,20 @@ function arrayDestructuringInitializer(
   };
 }
 
+function recordIdentifierInitializer(
+  scope: Scope,
+  pattern: ASTNode,
+  initializer: ASTNode,
+  assignment: boolean,
+): void {
+  const binding = assignment
+    ? resolveBinding(scope, pattern.name as string)
+    : ensureBinding(scope, pattern.name as string);
+  if (binding === null) return;
+  binding.hasAliasAssignment ||= assignment;
+  binding.initializers.push(initializer);
+}
+
 function recordPatternInitializer(
   scope: Scope,
   pattern: ASTNode,
@@ -1234,12 +1319,7 @@ function recordPatternInitializer(
   assignment: boolean,
 ): void {
   if (pattern.type === "Identifier" && typeof pattern.name === "string") {
-    const binding = assignment
-      ? resolveBinding(scope, pattern.name)
-      : ensureBinding(scope, pattern.name);
-    if (binding === null) return;
-    binding.hasAliasAssignment ||= assignment;
-    binding.initializers.push(initializer);
+    recordIdentifierInitializer(scope, pattern, initializer, assignment);
     return;
   }
   if (pattern.type === "AssignmentPattern" && isNode(pattern.left)) {
@@ -1258,7 +1338,17 @@ function recordPatternInitializer(
     else registerDestructuringAliases(scope, pattern, initializer);
     return;
   }
-  if (pattern.type !== "ArrayPattern" || !Array.isArray(pattern.elements)) return;
+  if (pattern.type !== "ArrayPattern") return;
+  recordArrayPatternInitializers(scope, pattern, initializer, assignment);
+}
+
+function recordArrayPatternInitializers(
+  scope: Scope,
+  pattern: ASTNode,
+  initializer: ASTNode,
+  assignment: boolean,
+): void {
+  if (!Array.isArray(pattern.elements)) return;
   pattern.elements.forEach((element, index) => {
     if (!isNode(element)) return;
     const elementInitializer = arrayDestructuringInitializer(
@@ -1325,17 +1415,20 @@ function createNodeScope(node: ASTNode, incomingScope: Scope, root: Scope): Scop
   return incomingScope;
 }
 
+function registerNamedExpressionBinding(scope: Scope, node: ASTNode): void {
+  if (!isNode(node.id)) return;
+  registerPattern(scope, node.id);
+  if (node.id.type === "Identifier" && typeof node.id.name === "string") {
+    ensureBinding(scope, node.id.name).initializers.push(node);
+  }
+}
+
 function registerScopeLocalBindings(scope: Scope, node: ASTNode): void {
   if (isFunction(node)) {
     // A named function expression binds its own name inside its body. The
     // value is the function itself, so record it: a proof that walks the
     // binding's initializers must see a callable, not only a later reassignment.
-    if (node.type === "FunctionExpression" && isNode(node.id)) {
-      registerPattern(scope, node.id);
-      if (node.id.type === "Identifier" && typeof node.id.name === "string") {
-        ensureBinding(scope, node.id.name).initializers.push(node);
-      }
-    }
+    if (node.type === "FunctionExpression") registerNamedExpressionBinding(scope, node);
     const params = node.params;
     if (Array.isArray(params)) {
       for (const parameter of params) registerParameterPattern(scope, patternChild(parameter));
@@ -1346,12 +1439,9 @@ function registerScopeLocalBindings(scope: Scope, node: ASTNode): void {
     registerParameterPattern(scope, patternChild(node.param));
     return;
   }
-  if (node.type === "ClassExpression" && isNode(node.id)) {
+  if (node.type === "ClassExpression") {
     // Same as a named function expression: the class is its own name's value.
-    registerPattern(scope, node.id);
-    if (node.id.type === "Identifier" && typeof node.id.name === "string") {
-      ensureBinding(scope, node.id.name).initializers.push(node);
-    }
+    registerNamedExpressionBinding(scope, node);
   }
 }
 
@@ -1484,6 +1574,25 @@ function resolveBinding(scope: Scope, name: string): Binding | null {
   return null;
 }
 
+function markLoopAssignedBindings(scope: Scope, left: ASTNode): void {
+  // A `var` loop declaration reuses any outer binding of the same name, so
+  // declared targets are marked exactly like assigned ones.
+  let targets: Array<ASTNode | undefined>;
+  if (left.type === "VariableDeclaration") {
+    targets = (Array.isArray(left.declarations) ? left.declarations : [])
+      .map((declarator) => isNode(declarator) ? patternChild(declarator.id) : undefined);
+  } else {
+    targets = [left];
+  }
+  for (const target of targets) {
+    if (!target) continue;
+    forEachPatternIdentifier(target, (name) => {
+      const binding = resolveBinding(scope, name);
+      if (binding !== null) binding.loopAssigned = true;
+    });
+  }
+}
+
 function collectAssignments(
   program: ASTNode,
   nodeScopes: WeakMap<ASTNode, Scope>,
@@ -1524,19 +1633,7 @@ function collectAssignments(
       }
     }
     if ((node.type === "ForInStatement" || node.type === "ForOfStatement") && isNode(node.left)) {
-      // A `var` loop declaration reuses any outer binding of the same name, so
-      // declared targets are marked exactly like assigned ones.
-      const targets = node.left.type === "VariableDeclaration"
-        ? (Array.isArray(node.left.declarations) ? node.left.declarations : [])
-          .map((declarator) => isNode(declarator) ? patternChild(declarator.id) : undefined)
-        : [node.left];
-      for (const target of targets) {
-        if (!target) continue;
-        forEachPatternIdentifier(target, (name) => {
-          const binding = resolveBinding(scope, name);
-          if (binding !== null) binding.loopAssigned = true;
-        });
-      }
+      markLoopAssignedBindings(scope, node.left);
     }
     forEachChild(node, collectAliasAssignments);
   };
@@ -2670,6 +2767,26 @@ function resolvesToUnboundIdentifier(
   return false;
 }
 
+function identifierPropertyValues(
+  expression: ASTNode,
+  propertyName: string | null,
+  scope: Scope,
+  nodeScopes: WeakMap<ASTNode, Scope>,
+  seen: Set<Binding>,
+): ASTNode[] {
+  const binding = resolveBinding(scope, expression.name as string);
+  if (binding === null || seen.has(binding)) return [];
+  seen.add(binding);
+  return bindingPropertyValues(
+    binding,
+    propertyName,
+    scope,
+    nodePosition(expression),
+    nodeScopes,
+    seen,
+  );
+}
+
 function objectPropertyValues(
   node: ASTNode,
   propertyName: string | null,
@@ -2730,17 +2847,7 @@ function objectPropertyValues(
     return objectLiteralPropertyValues(expression, propertyName, scope, nodeScopes, seen);
   }
   if (expression.type === "Identifier" && typeof expression.name === "string") {
-    const binding = resolveBinding(scope, expression.name);
-    if (binding === null || seen.has(binding)) return [];
-    seen.add(binding);
-    return bindingPropertyValues(
-      binding,
-      propertyName,
-      scope,
-      nodePosition(expression),
-      nodeScopes,
-      seen,
-    );
+    return identifierPropertyValues(expression, propertyName, scope, nodeScopes, seen);
   }
   const assignArgs = objectIntrinsicCallArguments(
     expression,
@@ -4365,6 +4472,7 @@ function isReflectGetGlobalArgument(
 
 interface MutableSourceCapabilityAnalysis {
   hasDynamicCodeGeneration: boolean;
+  unresolvedComputedRead?: ASTNode;
   workers: WorkerUrlClassification[];
   moduleSpecifiers: string[];
   hasUnconstrainedDynamicImport: boolean;
@@ -4476,6 +4584,22 @@ function applyIdentifierCapability(
   }
 }
 
+function memberMayReadConstructor(
+  node: ASTNode,
+  property: string | null,
+  scope: Scope,
+  nodeScopes: WeakMap<ASTNode, Scope>,
+  parents: WeakMap<ASTNode, ParentLink>,
+): boolean {
+  // A symbol or a number can never spell "constructor", whatever the object is.
+  const computedKeyCannotSpellConstructor = node.computed === true && isNode(node.property) &&
+    (isDefinitelySymbolValue(node.property, scope, nodeScopes) ||
+      isDefinitelyNumericValue(node.property, scope, nodeScopes));
+  return !isMemberWriteTarget(node, parents) &&
+    (property === "constructor" ||
+      node.computed === true && property === null && !computedKeyCannotSpellConstructor);
+}
+
 function applyMemberCapability(
   node: ASTNode,
   scope: Scope,
@@ -4492,20 +4616,17 @@ function applyMemberCapability(
   if (objectIsGlobal && property === "Symbol" && isMutationTarget(node, parents)) {
     analysis.hasDynamicCodeGeneration = true;
   }
-  // A symbol or a number can never spell "constructor", whatever the object is.
-  const computedKeyCannotSpellConstructor = node.computed === true && isNode(node.property) &&
-    (isDefinitelySymbolValue(node.property, scope, nodeScopes) ||
-      isDefinitelyNumericValue(node.property, scope, nodeScopes));
-  const mayReadConstructor = !isMemberWriteTarget(node, parents) &&
-    (property === "constructor" ||
-      node.computed === true && property === null && !computedKeyCannotSpellConstructor);
+  const mayReadConstructor = memberMayReadConstructor(node, property, scope, nodeScopes, parents);
   // `constructor` on a plain object is `Object`; on an array, string, number,
   // boolean or regular-expression literal it is that intrinsic. None of them is
   // `Function`, so the read is inert in one hop, and a second hop on the result
   // is a computed read on a callable this analysis rejects on its own.
   const objectConstructorIsInert = objectIsProvablyPlain ||
     object !== undefined && hasIntrinsicNonCallablePrototype(object, scope, nodeScopes);
-  if (mayReadConstructor && !objectConstructorIsInert) analysis.hasDynamicCodeGeneration = true;
+  if (mayReadConstructor && !objectConstructorIsInert) {
+    analysis.hasDynamicCodeGeneration = true;
+    if (property === null) analysis.unresolvedComputedRead ??= node;
+  }
   if (
     property === "extensions" && object !== undefined &&
     resolvesToUnboundIdentifier(object, "require", scope, nodeScopes)
@@ -4521,6 +4642,15 @@ function applyMemberCapability(
     analysis.hasDynamicCodeGeneration = true;
   }
   if (!objectIsGlobal) return;
+  applyGlobalMemberCapability(node, property, parents, analysis);
+}
+
+function applyGlobalMemberCapability(
+  node: ASTNode,
+  property: string | null,
+  parents: WeakMap<ASTNode, ParentLink>,
+  analysis: MutableSourceCapabilityAnalysis,
+): void {
   if (property === null || property === "eval" || property === "Function") {
     analysis.hasDynamicCodeGeneration = true;
   }
@@ -4740,6 +4870,49 @@ const NUMERIC_BINARY_OPERATORS = new Set([
 ]);
 const NUMERIC_UNARY_OPERATORS = new Set(["-", "+", "~"]);
 
+function assignmentIsDefinitelyNumeric(
+  expression: ASTNode,
+  scope: Scope,
+  nodeScopes: WeakMap<ASTNode, Scope>,
+  context: BindingProofContext,
+): boolean {
+  const operator = String(expression.operator);
+  if (operator === "=") {
+    return isDefinitelyNumericValue(expression.right as ASTNode, scope, nodeScopes, context);
+  }
+  if (NUMERIC_BINARY_OPERATORS.has(operator.slice(0, -1))) return true;
+  return operator === "+=" && isNode(expression.left) &&
+    isDefinitelyNumericValue(expression.left, scope, nodeScopes, context) &&
+    isDefinitelyNumericValue(expression.right as ASTNode, scope, nodeScopes, context);
+}
+
+function identifierIsDefinitelyNumeric(
+  name: string,
+  scope: Scope,
+  nodeScopes: WeakMap<ASTNode, Scope>,
+  context: BindingProofContext,
+): boolean {
+  const binding = resolveBinding(scope, name);
+  if (
+    binding === null || binding.loopAssigned || binding.hasUnknownIncomingValue ||
+    binding.initializers.length === 0 || binding.memberInitializers.length > 0
+  ) return false;
+  return proveBinding(
+    context,
+    binding,
+    true,
+    () =>
+      binding.initializers.every((initializer) =>
+        isDefinitelyNumericValue(
+          initializer,
+          nodeScopes.get(initializer) ?? binding.scope,
+          nodeScopes,
+          context,
+        )
+      ),
+  );
+}
+
 /**
  * Whether the expression can only evaluate to a number or bigint, so that as a
  * property key it can never spell "constructor".
@@ -4782,35 +4955,10 @@ function isDefinitelyNumericValue(
       isDefinitelyNumericValue(expression.right, scope, nodeScopes, context);
   }
   if (expression.type === "Identifier" && typeof expression.name === "string") {
-    const binding = resolveBinding(scope, expression.name);
-    if (
-      binding === null || binding.loopAssigned || binding.hasUnknownIncomingValue ||
-      binding.initializers.length === 0 || binding.memberInitializers.length > 0
-    ) return false;
-    return proveBinding(
-      context,
-      binding,
-      true,
-      () =>
-        binding.initializers.every((initializer) =>
-          isDefinitelyNumericValue(
-            initializer,
-            nodeScopes.get(initializer) ?? binding.scope,
-            nodeScopes,
-            context,
-          )
-        ),
-    );
+    return identifierIsDefinitelyNumeric(expression.name, scope, nodeScopes, context);
   }
   if (expression.type === "AssignmentExpression" && isNode(expression.right)) {
-    const operator = String(expression.operator);
-    if (operator === "=") {
-      return isDefinitelyNumericValue(expression.right, scope, nodeScopes, context);
-    }
-    if (NUMERIC_BINARY_OPERATORS.has(operator.slice(0, -1))) return true;
-    return operator === "+=" && isNode(expression.left) &&
-      isDefinitelyNumericValue(expression.left, scope, nodeScopes, context) &&
-      isDefinitelyNumericValue(expression.right, scope, nodeScopes, context);
+    return assignmentIsDefinitelyNumeric(expression, scope, nodeScopes, context);
   }
   const branches = expressionBranches(expression);
   return branches !== null &&
@@ -5666,6 +5814,26 @@ function applyExportedCapabilityAlias(
 }
 
 /**
+ * Identifier names only: a read such as `c[lookup("<TOKEN>")]` is shown as
+ * `c[…]`, so no literal, comment or call argument reaches an error or a log.
+ */
+function describeOperand(node: unknown): string {
+  if (!isNode(node)) return "…";
+  if (node.type === "Identifier" && typeof node.name === "string") return node.name;
+  if (node.type === "ThisExpression") return "this";
+  return "…";
+}
+
+function sourceLocation(node: ASTNode): SourceLocation {
+  const loc = node.loc as { start?: { line?: number; column?: number } } | undefined;
+  return {
+    line: loc?.start?.line ?? 1,
+    column: (loc?.start?.column ?? 0) + 1,
+    expression: `${describeOperand(node.object)}[${describeOperand(node.property)}]`,
+  };
+}
+
+/**
  * Parse executable JavaScript/TypeScript and classify capabilities that a raw
  * text scan cannot distinguish from inert strings, comments, types, or local
  * bindings. A null result means the parser could not read the source; callers
@@ -5724,8 +5892,10 @@ export async function analyzeSourceCapabilities(
   };
 
   visit(program);
+  const read = analysis.unresolvedComputedRead;
   return {
     hasDynamicCodeGeneration: analysis.hasDynamicCodeGeneration,
+    ...(read ? { unresolvedComputedRead: sourceLocation(read) } : {}),
     workers: analysis.workers,
     moduleSpecifiers: analysis.moduleSpecifiers,
     hasUnconstrainedDynamicImport: analysis.hasUnconstrainedDynamicImport,

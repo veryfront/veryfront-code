@@ -1,7 +1,7 @@
 ---
 title: "Integration credentials and scopes"
 description: "Separate platform login from provider authorization, set up each credential type, and choose connection scopes."
-order: 55
+order: 450
 ---
 
 An integration call combines credentials that come from different owners. Use
@@ -69,6 +69,7 @@ details for a project-credentials connector instead of opening a browser.
 | Basic authentication        | `basic`                                  | Set the user and secret variables, for example `TWILIO_AUTH_TOKEN`.       | Yes, project credentials only | Yes                                   |
 | OAuth client credentials    | `oauth2` with `token_url` only           | Set the client ID and secret variables, for example `PERSONIO_CLIENT_ID`. | Yes, project credentials only | Yes                                   |
 | Salesforce service account  | See [Set up Salesforce](./salesforce.md) | Set the three `SALESFORCE_SERVICE_ACCOUNT_*` variables.                   | Yes                           | Yes                                   |
+| Outlook app-only access     | None, catalog `outlook` is delegated     | Set the four `OUTLOOK_SERVICE_ACCOUNT_*` variables.                       | Yes                           | Yes                                   |
 
 Keep provider secrets in your approved secret manager and in project environment
 variables. Never place them in agent prompts, tool arguments, project files,
@@ -97,6 +98,9 @@ credentials, and the Salesforce service account. It rejects authorization-code
 OAuth, query-string credentials, GraphQL connectors, and tools outside the exact
 grant. Use hosted execution for any connector that needs OAuth consent. See
 [Run account-free local integration tools](../integrations.md#run-account-free-local-integration-tools).
+
+For Outlook app-only access, use `createOutlookServiceAccountToolSource`. See
+[Run Outlook integration tools locally](../self-hosting.md#run-outlook-integration-tools-locally).
 
 ## Connection scope
 

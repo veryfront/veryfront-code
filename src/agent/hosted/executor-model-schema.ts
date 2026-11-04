@@ -327,6 +327,31 @@ export function executorModelIds(ids: ReadonlySet<string>): Set<string> {
 export function executorModelJson(value: unknown): JsonValue {
   let nodes = 0;
   const ancestors = createPrivateSet<object>();
+  function copyProperties(
+    input: unknown,
+    output: Record<string, unknown> | unknown[],
+    keys: readonly (string | symbol)[],
+    array: boolean,
+    guardedArray: boolean,
+    depth: number,
+  ): void {
+    for (let index = 0; index < keys.length; index++) {
+      const key = keys[index]!;
+      if (array && key === "length") continue;
+      if (guardedArray && key === "toJSON") continue;
+      const descriptor = getOwnPropertyDescriptor(input, key);
+      if (
+        typeof key !== "string" || !descriptor || !hasOwn(descriptor, "value") ||
+        !descriptor.enumerable
+      ) throw new TypeError("Invalid managed model data");
+      if (!array && descriptor.value === undefined) continue;
+      defineOwnDataProperty(output, key, copy(descriptor.value, depth + 1), {
+        enumerable: true,
+        writable: true,
+        configurable: true,
+      });
+    }
+  }
   function copy(input: unknown, depth: number): unknown {
     if (++nodes > 100_000 || depth > 128) throw new TypeError("Invalid managed model data");
     if (input === null || typeof input !== "object") return input;
@@ -351,22 +376,7 @@ export function executorModelJson(value: unknown): JsonValue {
     ) {
       throw new TypeError("Invalid managed model data");
     }
-    for (let index = 0; index < keys.length; index++) {
-      const key = keys[index]!;
-      if (array && key === "length") continue;
-      if (guardedArray && key === "toJSON") continue;
-      const descriptor = getOwnPropertyDescriptor(input, key);
-      if (
-        typeof key !== "string" || !descriptor || !hasOwn(descriptor, "value") ||
-        !descriptor.enumerable
-      ) throw new TypeError("Invalid managed model data");
-      if (!array && descriptor.value === undefined) continue;
-      defineOwnDataProperty(output, key, copy(descriptor.value, depth + 1), {
-        enumerable: true,
-        writable: true,
-        configurable: true,
-      });
-    }
+    copyProperties(input, output, keys, array, guardedArray, depth);
     ancestors.delete(input);
     return output;
   }

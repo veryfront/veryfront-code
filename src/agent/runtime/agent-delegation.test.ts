@@ -10,6 +10,7 @@ import {
   isProviderSafeDelegateId,
 } from "./agent-delegation.ts";
 import type { Agent } from "../types.ts";
+import { withLocalChildExecution } from "../composition/local-child-execution.ts";
 import {
   getRuntimeSourceIntegrationPolicy,
   SOURCE_INTEGRATION_POLICY_CONTEXT_KEY,
@@ -215,7 +216,7 @@ describe("invoke_agent", () => {
     assertEquals(result, { text: "drafted copy", toolCalls: 0, status: "completed" });
   });
 
-  it("keeps generic invoke_agent child stream events private", async () => {
+  it("forwards generic invoke_agent child stream events to its parent chat", async () => {
     const writer = {
       id: "writer",
       config: {},
@@ -247,7 +248,11 @@ describe("invoke_agent", () => {
       },
     });
 
-    assertEquals(published, []);
+    assertEquals(published, [{
+      toolCallId: "call-1",
+      agentId: "writer",
+      event: { type: "text-delta", id: "child-1", delta: "hi" },
+    }]);
   });
 
   it("reports an error when the invoked agent id is unknown", async () => {
@@ -430,4 +435,119 @@ it("isFrameworkChildRunTool recognizes framework invoke_agent and delegate tools
     false,
   );
   assertEquals(isFrameworkChildRunTool(true), false);
+});
+
+for (const connected of [false, true]) {
+  it(`streams child activity before completion ${connected ? "with a local execution owner" : "without a Cloud connection"}`, async () => {
+    let finish!: () => void;
+    const finished = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    let firstEvent!: () => void;
+    const first = new Promise<void>((resolve) => {
+      firstEvent = resolve;
+    });
+    const published: unknown[] = [];
+    const observed: unknown[] = [];
+    let completed = false;
+    const child = {
+      id: "writer",
+      config: { name: "Writer" },
+      stream: async (input: { onFinish?: (response: unknown) => void }) => ({
+        toDataStreamResponse: () =>
+          new Response(
+            new ReadableStream({
+              async start(controller) {
+                controller.enqueue(new TextEncoder().encode(
+                  'data: {"type":"text-delta","id":"child-text","delta":"Working"}\n\n',
+                ));
+                await finished;
+                input.onFinish?.({ text: "Done", toolCalls: [], status: "completed" });
+                controller.close();
+              },
+            }),
+          ),
+      }),
+    } as unknown as Agent;
+    const tool = createInvokeAgentTool({ resolveAgent: () => child });
+    const execute = () =>
+      tool.execute({ agent_id: "writer", description: "Write", prompt: "Write" }, {
+        toolCallId: "parent-call",
+        publishDataEvent: (event) => {
+          published.push(event.value);
+          firstEvent();
+        },
+      }).then((value) => {
+        completed = true;
+        return value;
+      });
+    const result = connected
+      ? withLocalChildExecution((invocation) =>
+        invocation.execute({
+          onEvent: async (event) => {
+            observed.push(event);
+          },
+        }), execute)
+      : execute();
+    let deadline: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        first,
+        new Promise<never>((_, reject) => {
+          deadline = setTimeout(() => reject(new Error("Child event was not forwarded")), 5000);
+        }),
+      ]);
+      assertEquals(completed, false);
+      assertEquals(published, [{
+        toolCallId: "parent-call",
+        agentId: "writer",
+        agentName: "Writer",
+        event: { type: "text-delta", id: "child-text", delta: "Working" },
+      }]);
+      assertEquals(observed.length, connected ? 1 : 0);
+    } finally {
+      if (deadline !== undefined) clearTimeout(deadline);
+      finish();
+    }
+    assertEquals(await result, { text: "Done", toolCalls: 0, status: "completed" });
+  });
+}
+
+it("forwards partial child activity and preserves a child stream failure", async () => {
+  const published: unknown[] = [];
+  const child = {
+    id: "writer",
+    config: {},
+    stream: async () => ({
+      toDataStreamResponse: () =>
+        new Response(
+          'data: {"type":"text-delta","id":"child-text","delta":"Checking"}\n\n' +
+            'data: {"type":"error","error":"Child failed"}\n\n',
+        ),
+    }),
+  } as unknown as Agent;
+  const tool = createInvokeAgentTool({ resolveAgent: () => child });
+  await assertRejects(
+    () =>
+      tool.execute({ agent_id: "writer", description: "Write", prompt: "Write" }, {
+        toolCallId: "parent-call",
+        publishDataEvent: (event) => {
+          published.push(event.value);
+        },
+      }),
+    Error,
+    "Child failed",
+  );
+  assertEquals(published, [
+    {
+      toolCallId: "parent-call",
+      agentId: "writer",
+      event: { type: "text-delta", id: "child-text", delta: "Checking" },
+    },
+    {
+      toolCallId: "parent-call",
+      agentId: "writer",
+      event: { type: "error", error: "Child failed" },
+    },
+  ]);
 });

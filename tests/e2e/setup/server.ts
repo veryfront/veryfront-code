@@ -4,14 +4,14 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { getProjectsToProvision } from "../helpers/projects.ts";
-import { startServer as startVeryfrontRuntimeServer } from "../../../src/server/index.ts";
+import type { VeryfrontServer } from "../../../src/server/index.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = join(__dirname, "..", "..", "..");
 const PLAYWRIGHT_STATE_PATH = join(PROJECT_ROOT, ".playwright-e2e-state.json");
 
 let serverProcess: ChildProcess | null = null;
-let runtimeServer: Awaited<ReturnType<typeof startVeryfrontRuntimeServer>> | null = null;
+let runtimeServer: VeryfrontServer | null = null;
 let runtimeServerAbortController: AbortController | null = null;
 let workspaceRoot: string | null = null;
 // Readiness polls bare `localhost` and carries the project in `x-project-slug`.
@@ -297,23 +297,28 @@ export async function startServer(
       projectSlugs.map((slug) => [slug, join(workspace, "projects", slug)]),
     );
 
-    runtimeServer = await startVeryfrontRuntimeServer({
-      mode: "production",
-      projectDir: localProjects[defaultProjectSlug],
-      port: 8080,
-      bindAddress: "127.0.0.1",
-      signal: runtimeServerAbortController.signal,
-      defaultProjectSlug,
-      defaultProjectId: defaultProjectSlug,
-      defaultEnvironment: options.environment ?? "production",
-      localProjects,
-    });
-
     try {
+      // The dev suite starts a Deno CLI child and must not eagerly load
+      // the production runtime through Playwright's module loader.
+      const { startServer: startVeryfrontRuntimeServer } = await import(
+        "../../../src/server/index.ts"
+      );
+      runtimeServer = await startVeryfrontRuntimeServer({
+        mode: "production",
+        projectDir: localProjects[defaultProjectSlug],
+        port: 8080,
+        bindAddress: "127.0.0.1",
+        signal: runtimeServerAbortController.signal,
+        defaultProjectSlug,
+        defaultProjectId: defaultProjectSlug,
+        defaultEnvironment: options.environment ?? "production",
+        localProjects,
+      });
       await runtimeServer.ready;
       await waitForReady(readinessUrl, 60_000);
     } catch (error) {
       runtimeServerAbortController.abort();
+      await runtimeServer?.stop();
       runtimeServerAbortController = null;
       runtimeServer = null;
       await cleanupWorkspace();

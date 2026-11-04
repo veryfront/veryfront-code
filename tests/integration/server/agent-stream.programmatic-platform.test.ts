@@ -9,13 +9,23 @@ import { withVeryfrontPlatformRemoteTools } from "#veryfront/server/handlers/req
 import { createAgentWithConfig } from "#veryfront/server/handlers/request/internal-agent-run.test-helpers.ts";
 
 const apiOrigin = "https://8.8.8.8";
-const catalog = ["get_file", "create_file", "outlook__upload_attachment", "succeed_run"].map((
-  name,
-) => ({
-  name,
-  description: name,
-  inputSchema: { type: "object", properties: { project_reference: { type: "string" } } },
-}));
+const catalog = ["get_run", "get_file", "create_file", "outlook__upload_attachment", "succeed_run"]
+  .map((
+    name,
+  ) => ({
+    name,
+    description: name,
+    inputSchema: name === "get_run"
+      ? {
+        type: "object",
+        properties: {
+          project_reference: { type: "string" },
+          run_id: { type: "string", format: "uuid" },
+        },
+        required: ["run_id"],
+      }
+      : { type: "object", properties: { project_reference: { type: "string" } } },
+  }));
 
 async function withPlatformTransport(fn: (calls: Record<string, unknown>[]) => Promise<void>) {
   const previous = Deno.env.get("VERYFRONT_API_URL");
@@ -261,5 +271,23 @@ describe("programmatic platform source availability", () => {
       assertEquals((calls[2]!.headers as Headers).get("X-Veryfront-Run-Terminal-Token"), null);
       assertEquals((calls[2]!.headers as Headers).get("X-Veryfront-Run-Event-Token"), null);
     });
+  });
+});
+
+it("hosted current-run lookup dispatches its runtime ID without model transcription", async () => {
+  await withPlatformTransport(async (calls) => {
+    const currentRunId = "bf486556-ec8a-446d-9184-7a9890966a1d";
+    const configured = await withVeryfrontPlatformRemoteTools({
+      agent: createAgentWithConfig("orchestrator", { tools: { veryfront__get_run: true } }),
+      token: "test-user",
+      projectId: "project-1",
+      currentRunId,
+    });
+    const sources = Reflect.get(configured.config, "__vfRemoteToolSources") as RemoteToolSource[];
+    assertExists(sources[0]);
+    await sources[0].executeTool("veryfront__get_run", {}, { runId: currentRunId });
+    assertEquals(calls[0]?.name, "get_run");
+    assertEquals(calls[0]?.arguments, { project_reference: "project-1", run_id: currentRunId });
+    assertEquals((calls[0]?._meta as Record<string, unknown>)?.run_id, currentRunId);
   });
 });

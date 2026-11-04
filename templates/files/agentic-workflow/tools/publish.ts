@@ -13,6 +13,7 @@ export default tool({
   inputSchema: defineSchema((v) =>
     v.object({
       title: v.string().default("Untitled").describe("Headline of the article"),
+      article: v.string().default("").describe("Approved article text"),
     })
   )(),
   execute: ({ title }) => ({

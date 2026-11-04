@@ -152,20 +152,22 @@ function supportedAgUiEvent(input: unknown): AgUiRunProfileSupportedEvent {
   }
 }
 
+function startedRunProtocol(event: AgUiEventOf<"RUN_STARTED">) {
+  return {
+    threadId: event.threadId,
+    runId: event.runId,
+    ...(event.protocolVersion === undefined ? {} : { protocolVersion: event.protocolVersion }),
+    ...(event.parentRunId === undefined ? {} : { parentRunId: event.parentRunId }),
+    ...(event.input === undefined ? {} : { input: event.input }),
+  };
+}
+
 function protocolMetadata(event: AgUiRunProfileSupportedEvent): JsonObject | undefined {
   switch (event.type) {
     case "RUN_STARTED":
       return toJsonObject({
         ...baseProtocolMetadata(event, RUN_STARTED_FIELDS),
-        run: {
-          threadId: event.threadId,
-          runId: event.runId,
-          ...(event.protocolVersion === undefined
-            ? {}
-            : { protocolVersion: event.protocolVersion }),
-          ...(event.parentRunId === undefined ? {} : { parentRunId: event.parentRunId }),
-          ...(event.input === undefined ? {} : { input: event.input }),
-        },
+        run: startedRunProtocol(event),
       });
     case "RUN_FINISHED":
       return toJsonObject({
@@ -343,6 +345,35 @@ function nonJsonRunProfileInputRequirement(
   return snapshot.success ? undefined : nonJsonRequirement();
 }
 
+function projectFinishedRunProfile(
+  event: AgUiEventOf<"RUN_FINISHED">,
+  context: AgUiRunProfileStoredRunContext,
+  protocol: JsonObject,
+): AgUiRunProfileProjectionCommand {
+  const conflict = contextConflict(event, context);
+  if (conflict) return conflict;
+  if (event.outcome?.type === "interrupt") {
+    return pausedCommand(context, event, protocol);
+  }
+  if (event.outcome?.type === "cancelled") {
+    return canonicalCommand(
+      context,
+      "com.veryfront.run.cancelled",
+      {
+        ...(context.cancellationReason === undefined ? {} : { reason: context.cancellationReason }),
+        ...extensionPayload(protocol),
+      },
+      protocol,
+    );
+  }
+  return canonicalCommand(
+    context,
+    "com.veryfront.run.succeeded",
+    extensionPayload(protocol),
+    protocol,
+  );
+}
+
 export function projectAgUiRunProfileEvent(
   input: ProjectAgUiRunProfileInput,
 ): AgUiRunProfileProjectionCommand {
@@ -370,30 +401,7 @@ export function projectAgUiRunProfileEvent(
       );
     }
     case "RUN_FINISHED": {
-      const conflict = contextConflict(event, context);
-      if (conflict) return conflict;
-      if (event.outcome?.type === "interrupt") {
-        return pausedCommand(context, event, protocol);
-      }
-      if (event.outcome?.type === "cancelled") {
-        return canonicalCommand(
-          context,
-          "com.veryfront.run.cancelled",
-          {
-            ...(context.cancellationReason === undefined
-              ? {}
-              : { reason: context.cancellationReason }),
-            ...extensionPayload(protocol),
-          },
-          protocol,
-        );
-      }
-      return canonicalCommand(
-        context,
-        "com.veryfront.run.succeeded",
-        extensionPayload(protocol),
-        protocol,
-      );
+      return projectFinishedRunProfile(event, context, protocol);
     }
     case "RUN_ERROR": {
       return canonicalCommand(
@@ -496,12 +504,17 @@ function projectedFinished(
   return candidate;
 }
 
+function compareJsonObjectKeys(left: string, right: string): number {
+  if (left < right) return -1;
+  return left > right ? 1 : 0;
+}
+
 function canonicalJsonValue(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(canonicalJsonValue);
   if (value && typeof value === "object") {
     return Object.fromEntries(
       Object.entries(value)
-        .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
+        .sort(([left], [right]) => compareJsonObjectKeys(left, right))
         .map(([key, entry]) => [key, canonicalJsonValue(entry)]),
     );
   }

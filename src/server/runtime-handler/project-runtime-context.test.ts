@@ -1658,9 +1658,38 @@ describe("resolveProjectRuntimeContext", () => {
     ] as const
   ) {
     it(`preserves the environment loading contract for ${method} run${suffix} without a production release`, async () => {
-      const req = new Request(`http://localhost/api/control-plane/runs/run_1${suffix}`, {
+      const path = `/api/control-plane/runs/run_1${suffix}`;
+      const adapter = createExtendedMockAdapter();
+      const body = method === "POST" && suffix === "/execute"
+        ? JSON.stringify({
+          runId: "run_1",
+          projectId: "proj-proxy",
+          kind: "task",
+          target: "task:knowledge-ingest",
+        })
+        : undefined;
+      let jws: string | undefined;
+      if (body) {
+        const { createControlPlaneSignature } = await import(
+          "../handlers/request/internal-agent-run.test-helpers.ts"
+        );
+        const signed = await createControlPlaneSignature(body, {
+          audience: "proxy-project",
+          projectId: "proj-proxy",
+          requestId: "run_1",
+          requestMethod: method,
+          requestPath: path,
+        });
+        const originalGet = adapter.env.get.bind(adapter.env);
+        adapter.env.get = (name: string) =>
+          name === "CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY" ? signed.publicKeyPem : originalGet(name);
+        jws = signed.jws;
+      }
+      const req = new Request(`http://localhost${path}`, {
         method,
+        ...(body ? { body } : {}),
         headers: {
+          ...(jws ? { "x-veryfront-control-plane-jws": jws } : {}),
           "x-project-slug": "proxy-project",
           "x-project-id": "proj-proxy",
           "x-token": "proxy-token",
@@ -1672,7 +1701,7 @@ describe("resolveProjectRuntimeContext", () => {
       const result = await resolveProjectRuntimeContext(makeRuntimeContextInput({
         req,
         url,
-        adapter: createExtendedMockAdapter(),
+        adapter,
         headers: extractRequestHeaders(req, url, true, true),
         requestContext: createRequestContext(req, { proxyTrusted: true }),
         isProxyMode: true,

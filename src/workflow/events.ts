@@ -215,7 +215,8 @@ export function snapshotRun(
   const pendingApprovals = run.pendingApprovals ?? [];
   for (let index = 0; index < pendingApprovals.length; index++) {
     const approval = pendingApprovals[index];
-    if (!approval || approval.status !== "pending") continue;
+    if (!approval) continue;
+    if (approval.status !== "pending") continue;
     defineRecordEntry(approvals, approval.id, {
       nodeId: approval.nodeId,
       ...(approval.message !== undefined ? { message: approval.message } : {}),
@@ -295,22 +296,25 @@ export function deriveRunEvents(
   // first, and a combined diff keeps that one sequence. A baseline without an
   // approvals field never observed approvals, so nothing is derived against
   // it: emitting there could repeat an approval the caller already knew.
-  if (next.approvals && (!previous || previous.approvals !== undefined)) {
-    const baseline = previous?.approvals;
-    const approvalEntries = objectEntries(next.approvals);
-    for (let index = 0; index < approvalEntries.length; index++) {
-      const approvalId = approvalEntries[index]![0];
-      const approval = approvalEntries[index]![1];
-      if (baseline && objectHasOwn(baseline, approvalId)) continue;
-      appendEvent(events, {
-        type: "approval.pending",
-        runId,
-        approvalId,
-        nodeId: approval.nodeId,
-        ...(approval.message !== undefined ? { message: approval.message } : {}),
-      });
+  const appendApprovalEvents = () => {
+    if (next.approvals && (!previous || previous.approvals !== undefined)) {
+      const baseline = previous?.approvals;
+      const approvalEntries = objectEntries(next.approvals);
+      for (let index = 0; index < approvalEntries.length; index++) {
+        const approvalId = approvalEntries[index]![0];
+        const approval = approvalEntries[index]![1];
+        if (baseline && objectHasOwn(baseline, approvalId)) continue;
+        appendEvent(events, {
+          type: "approval.pending",
+          runId,
+          approvalId,
+          nodeId: approval.nodeId,
+          ...(approval.message !== undefined ? { message: approval.message } : {}),
+        });
+      }
     }
-  }
+  };
+  appendApprovalEvents();
 
   return events;
 }

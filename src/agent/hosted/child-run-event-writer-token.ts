@@ -615,6 +615,21 @@ export function createHostedRunEventWriterCapability(input: {
   return objectFreeze(capability);
 }
 
+/** @internal Rotate a trusted worker's exact-run writer after lease renewal. */
+export function refreshHostedRunEventWriterCapability(
+  capability: HostedRunEventWriterCapability,
+  input: { runId: string; runEventAppendToken: string },
+): void {
+  const state = getWeakMapValue(capabilityState, capability);
+  if (
+    !state || state.runId !== input.runId ||
+    !isValidRunEventWriterToken(input.runEventAppendToken, MAX_ROOT_RUN_EVENT_WRITER_TOKEN_BYTES)
+  ) {
+    throw new HostedChildRunEventWriterTokenExchangeError();
+  }
+  state.runEventAppendToken = input.runEventAppendToken;
+}
+
 /** Build a durable mirror from private capability state without exposing its credential. */
 export function createHostedConversationRunChunkMirrorFromCapability(
   capability: HostedRunEventWriterCapability | undefined,
@@ -637,6 +652,7 @@ export function createHostedConversationRunChunkMirrorFromCapability(
     ...mirrorInput,
     apiUrl: state.apiUrl,
     authToken: state.runEventAppendToken,
+    getAuthToken: () => state.runEventAppendToken,
     runId: state.runId,
     canonicalRunId: state.canonicalRunId,
     // Capability transports are host-owned, but durable persistence still

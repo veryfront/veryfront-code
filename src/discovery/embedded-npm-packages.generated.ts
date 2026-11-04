@@ -538,8 +538,8 @@ export const EMBEDDED_NPM_PACKAGES: Readonly<Record<string, readonly string[]>> 
   "pg-protocol": ["1.16.1"],
   "pg-types": ["2.2.0"],
   "picocolors": ["1.1.1"],
-  "playwright": ["1.60.0"],
-  "playwright-core": ["1.60.0"],
+  "playwright": ["1.61.1"],
+  "playwright-core": ["1.61.1"],
   "postcss": ["8.5.29"],
   "postcss-selector-parser": ["7.1.6"],
   "postgres-array": ["2.0.0"],
@@ -641,7 +641,7 @@ export const EMBEDDED_NPM_PACKAGES: Readonly<Record<string, readonly string[]>> 
   "yaml": ["2.9.0"],
   "yargs": ["17.7.3"],
   "yargs-parser": ["21.1.1"],
-  "zod": ["4.3.6"],
+  "zod": ["4.6.7"],
   "zwitch": ["2.0.4"],
 };
 
@@ -861,7 +861,7 @@ export const PROXY_EMBEDDED_NPM_PACKAGES: Readonly<Record<string, readonly strin
   "yaml": ["2.9.1"],
   "yargs": ["17.7.3"],
   "yargs-parser": ["21.1.1"],
-  "zod": ["4.3.6"],
+  "zod": ["4.6.7"],
 };
 
 /**
@@ -937,7 +937,7 @@ export const EMBEDDED_NPM_CONSTRAINTS: Readonly<Record<string, readonly string[]
   "micromark-util-types": ["2.0.2"],
   "parse5": ["7.3.0"],
   "pdf-lib": ["1.17.1"],
-  "playwright": ["1.60.0"],
+  "playwright": ["1.61.1"],
   "postcss": ["8.5.29"],
   "postcss-selector-parser": ["7.1.6"],
   "protobufjs": ["7.6.5"],
@@ -965,7 +965,7 @@ export const EMBEDDED_NPM_CONSTRAINTS: Readonly<Record<string, readonly string[]
   "vfile": ["6.0.3"],
   "ws": ["8.21.1"],
   "yaml": ["2.9.0"],
-  "zod": ["4.3.6"],
+  "zod": ["4.6.7"],
 };
 
 /** The same, for the PROXY binary. */
@@ -992,5 +992,5 @@ export const PROXY_EMBEDDED_NPM_CONSTRAINTS: Readonly<Record<string, readonly st
   "ajv-formats": ["3.0.1"],
   "jose": ["5.9.6"],
   "redis": ["5.11.0"],
-  "zod": ["4.3.6"],
+  "zod": ["4.6.7"],
 };

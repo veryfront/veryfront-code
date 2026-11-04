@@ -8,16 +8,17 @@ import { type AgentConfig, type RuntimeReasoningOption } from "../types.ts";
 import { type ModelRuntime, resolveModel } from "#veryfront/provider";
 import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
 import { warmVeryfrontCloudCatalog } from "#veryfront/provider/veryfront-cloud/provider.ts";
-import { readVeryfrontCloudModelFacts } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
 import { isVeryfrontCloudEnabled } from "#veryfront/platform/cloud/resolver.ts";
 import { resolveProviderOptionsWithDefaults } from "./default-provider-options.ts";
 import {
   resolveConfiguredAgentModel,
   resolveModelProviderOptionKey,
   resolveRuntimeModel,
+  routesDirectWithoutCatalog,
 } from "./model-resolution.ts";
 import {
   isVeryfrontCloudAnthropicSurfaceModel,
+  readVeryfrontCloudModelFacts,
   resolveVeryfrontCloudModelThinking,
   resolveVeryfrontCloudReasoningOption,
   resolveVeryfrontCloudThinkingProviderOptions,
@@ -226,7 +227,14 @@ function resolveReasoningWithDefaults(
     return { enabled: false };
   }
 
-  if (isVeryfrontCloudAnthropicSurfaceModel(modelString)) {
+  // A direct-provider model takes no catalog defaults, so it resolves the same
+  // whatever another run loaded first.
+  if (
+    !(IntrinsicReflectApply(StringStartsWith, modelString, [
+      VERYFRONT_CLOUD_MODEL_PREFIX,
+    ]) as boolean) ||
+    isVeryfrontCloudAnthropicSurfaceModel(modelString)
+  ) {
     return undefined;
   }
 
@@ -250,13 +258,21 @@ export async function resolveAgentModelTransport(
   // A private resolver that carries its own catalog (a project-run execution)
   // loads and reads that catalog with its own credential instead: the ambient
   // credential must not decide which model its credential pays for.
+  //
+  // A model that routes to a provider key never reaches Veryfront Cloud, so
+  // an ambient run does not load the catalog for it: a stale login must not
+  // log a catalog failure for a run that never uses it. It takes no catalog
+  // thinking defaults either way.
   const privateCatalog = input.resolveModelRuntime
     ? modelRuntimeResolverCatalogs.get(input.resolveModelRuntime)
     : undefined;
   const isLocalModel = typeof configuredModel === "string" && configuredModel.startsWith("local/");
   if (privateCatalog) {
     if (!isLocalModel) await privateCatalog.load();
-  } else if (!input.resolveModelRuntime && isVeryfrontCloudEnabled() && !isLocalModel) {
+  } else if (
+    !input.resolveModelRuntime && isVeryfrontCloudEnabled() && !isLocalModel &&
+    !routesDirectWithoutCatalog(configuredModel)
+  ) {
     await warmVeryfrontCloudCatalog();
   }
   const readCatalog = <T>(fn: () => T): T => privateCatalog ? privateCatalog.read(fn) : fn();
@@ -286,15 +302,20 @@ export async function resolveAgentModelTransport(
   // Private managed calls carry audited neutral controls. Only adaptive
   // Anthropic thinking needs native call data; legacy native temperature
   // overrides would replace the broker's persisted neutral input.
-  const providerOptions = privatelyResolvedModel
-    ? privateThinking?.enabled && privateReasoning === undefined
-      ? readCatalog(() =>
+  function resolveTransportProviderOptions(): Record<string, unknown> | undefined {
+    if (!privatelyResolvedModel) {
+      return readCatalog(() =>
+        resolveProviderOptionsWithDefaults(resolvedModelString, transport?.providerOptions)
+      );
+    }
+    if (privateThinking?.enabled && privateReasoning === undefined) {
+      return readCatalog(() =>
         resolveVeryfrontCloudThinkingProviderOptions(resolvedModelString, privateThinking)
-      )
-      : undefined
-    : readCatalog(() =>
-      resolveProviderOptionsWithDefaults(resolvedModelString, transport?.providerOptions)
-    );
+      );
+    }
+    return undefined;
+  }
+  const providerOptions = resolveTransportProviderOptions();
   const languageModel = privatelyResolvedModel ?? transport?.model ??
     resolveModel(resolvedModelString);
   // A Veryfront Cloud model settles its protocol and capabilities on its first

@@ -45,6 +45,7 @@ export const getEvalSourceExampleSchema = defineSchema((v) =>
   v.object({
     id: v.string(),
     input: v.unknown(),
+    expectedOutcome: v.enum(["success", "error"] as const).optional(),
     reference: v.unknown().optional(),
     metadata: v.record(v.string(), v.unknown()).optional(),
   })
@@ -290,6 +291,7 @@ function copyExample(example: EvalExample): EvalExample {
   return {
     id: example.id,
     input: example.input,
+    ...(example.expectedOutcome ? { expectedOutcome: example.expectedOutcome } : {}),
     ...(example.reference !== undefined ? { reference: example.reference } : {}),
     ...(example.metadata ? { metadata: { ...example.metadata } } : {}),
   };

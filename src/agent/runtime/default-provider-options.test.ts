@@ -11,18 +11,13 @@ import { resolveProviderOptionsWithDefaults } from "./default-provider-options.t
 describe("resolveProviderOptionsWithDefaults", () => {
   beforeEach(seedServedCatalogForTests);
   afterEach(__resetVeryfrontCloudCatalogForTests);
-  it("enables Anthropic thinking by default for Anthropic models", () => {
-    const result = resolveProviderOptionsWithDefaults(
-      "anthropic/claude-sonnet-4-6",
+  it("takes no catalog thinking defaults for a direct Anthropic model", () => {
+    // The catalog describes what the gateway serves, not a call made with the
+    // developer's own key, and a direct run must resolve the same in any order.
+    assertEquals(
+      resolveProviderOptionsWithDefaults("anthropic/claude-sonnet-4-6", undefined),
       undefined,
     );
-
-    assertEquals(result, {
-      anthropic: {
-        temperature: 1,
-        thinking: { type: "enabled", budget_tokens: 2048 },
-      },
-    });
   });
 
   it("recognizes the veryfront-cloud prefix as Anthropic when applicable", () => {
@@ -73,7 +68,7 @@ describe("resolveProviderOptionsWithDefaults", () => {
 
   it("enables adaptive thinking for Claude Opus 4.8", () => {
     assertEquals(
-      resolveProviderOptionsWithDefaults("anthropic/claude-opus-4-8", undefined),
+      resolveProviderOptionsWithDefaults("veryfront-cloud/anthropic/claude-opus-4-8", undefined),
       {
         anthropic: {
           thinking: {
@@ -96,7 +91,7 @@ describe("resolveProviderOptionsWithDefaults", () => {
     };
 
     const result = resolveProviderOptionsWithDefaults(
-      "anthropic/claude-sonnet-4-6",
+      "veryfront-cloud/anthropic/claude-sonnet-4-6",
       existing,
     );
 
@@ -111,7 +106,7 @@ describe("resolveProviderOptionsWithDefaults", () => {
     };
 
     const result = resolveProviderOptionsWithDefaults(
-      "anthropic/claude-sonnet-4-6",
+      "veryfront-cloud/anthropic/claude-sonnet-4-6",
       existing,
     );
 
@@ -126,7 +121,7 @@ describe("resolveProviderOptionsWithDefaults", () => {
     };
 
     const result = resolveProviderOptionsWithDefaults(
-      "anthropic/claude-sonnet-4-6",
+      "veryfront-cloud/anthropic/claude-sonnet-4-6",
       existing,
     );
 
@@ -147,7 +142,7 @@ describe("resolveProviderOptionsWithDefaults", () => {
     };
 
     const result = resolveProviderOptionsWithDefaults(
-      "anthropic/claude-sonnet-4-6",
+      "veryfront-cloud/anthropic/claude-sonnet-4-6",
       existing,
     );
 

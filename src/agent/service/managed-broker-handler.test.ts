@@ -4,7 +4,14 @@ import {
   inheritHostedAgentPauseCapability,
 } from "../hosted/manual-pause-credential.ts";
 import "#veryfront/schemas/_test-setup.ts";
-import { assert, assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
+import {
+  assert,
+  assertEquals,
+  assertStrictEquals,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
+import { bindManagedBrokerInferenceAuthority } from "./managed-broker-inference.ts";
+import { registerModelRuntimeResolverRevoker } from "../runtime/model-transport.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createControlPlaneSignature } from "#veryfront/server/handlers/request/internal-agent-run.test-helpers.ts";
 import type {
@@ -25,6 +32,258 @@ import { agUiSseEventTypes, parseAgUiSseResponse } from "../ag-ui/sse-parser.ts"
 const projectId = "00000000-0000-4000-8000-000000000005";
 const userId = "00000000-0000-4000-8000-000000000006";
 const path = "/api/control-plane/runs/run-1/stream";
+
+describe("broker-owned inference dispatch", () => {
+  for (const kind of ["durable", "ag-ui"] as const) {
+    it(`binds only verified ${kind} inference authority outside executor data`, async () => {
+      const fixture = runtimeFixture();
+      const execution = new AbortController();
+      let started: ManagedExecutorStartInput | undefined;
+      let preparedResolver: ManagedExecutorStartInput["model"]["resolver"] | undefined;
+      const token = "synthetic-private-inference";
+      const options = {
+        owner: { scopeKind: "global" as const, serviceName: "test-service" },
+        broker: {
+          start: (input: ManagedExecutorStartInput) => {
+            started = input;
+            return Promise.resolve(fixture.runtime);
+          },
+        },
+        ingress: {
+          authenticate: () => Promise.resolve({ userId, authToken: "synthetic-api-token" }),
+          verifyProjectAccess: () => Promise.resolve({ success: true as const }),
+          verifyRunEventAppendToken: () => Promise.resolve(true),
+        },
+        prepare: ({ ingress }: { ingress: { executor: unknown } }) => {
+          assertEquals(JSON.stringify(ingress.executor).includes(token), false);
+          const start = managedStart({ agentId: "builder" });
+          preparedResolver = start.model.resolver;
+          return Promise.resolve({
+            start,
+            messages: [],
+            executionSignal: execution.signal,
+            output: { write: () => Promise.resolve(), finish: () => Promise.resolve() },
+          });
+        },
+      };
+      const managed = kind === "durable"
+        ? createManagedDurableBrokerHandler(options)
+        : createManagedAgUiBrokerHandler({ ...options, defaultAgentId: "builder" });
+      const conversationId = "00000000-0000-4000-8000-000000000001";
+      const body = kind === "durable"
+        ? {
+          messages: [],
+          context: { conversationId, projectId, branchId: "branch-1" },
+          durableRootRun: { runId: "run-1", messageId: "00000000-0000-4000-8000-000000000002" },
+        }
+        : {
+          threadId: conversationId,
+          runId: "run-1",
+          messages: [],
+          tools: [],
+          context: [{ description: "veryfront.projectId", value: JSON.stringify(projectId) }],
+        };
+      try {
+        const response = await managed.handle(
+          new Request(`https://broker.test/api/${kind === "durable" ? "runs" : "ag-ui"}`, {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              "x-veryfront-run-event-token": "synthetic-writer",
+              "x-veryfront-inference-token": token,
+            },
+            body: JSON.stringify(body),
+          }),
+        );
+        assertEquals(response.status, kind === "durable" ? 202 : 200);
+        assert(started);
+        if (kind === "durable") {
+          assert(started.model.resolver !== preparedResolver);
+          const retainedResolver = started.model.resolver;
+          execution.abort();
+          assertThrows(
+            () => retainedResolver("veryfront-cloud/mistral/mistral-small-2503"),
+            TypeError,
+            "Run-scoped inference credential is no longer active",
+          );
+        } else {
+          // AG-UI has no verified writer/inference binding. A presented header
+          // alone must not replace the trusted adapter's model authority.
+          assertStrictEquals(started.model.resolver, preparedResolver);
+        }
+        fixture.release();
+        if (kind === "ag-ui") await parseAgUiSseResponse(response);
+      } finally {
+        fixture.release();
+        await managed.close();
+      }
+    });
+  }
+
+  it("selects scoped authority without ambient fallback and preserves other model policies", async () => {
+    const start = managedStart({ agentId: "builder" });
+    const ambient: string[] = [];
+    const scoped: string[] = [];
+    start.model.resolver = (id) => {
+      ambient.push(id);
+      return undefined;
+    };
+    const bound = bindManagedBrokerInferenceAuthority({
+      start,
+      createResolver: () => (id) => {
+        scoped.push(id);
+        return undefined;
+      },
+      signal: new AbortController().signal,
+    });
+    assertEquals(bound.start.model.resolver("veryfront-cloud/openai/synthetic"), undefined);
+    assertEquals(ambient, []);
+    assertEquals(scoped, ["veryfront-cloud/openai/synthetic"]);
+    bound.start.model.resolver("custom/model");
+    assertEquals(ambient, ["custom/model"]);
+    assertStrictEquals(bound.start.model.grant, start.model.grant);
+    assertStrictEquals(bound.start.installation, start.installation);
+    assertStrictEquals(bound.start.prepare, start.prepare);
+    assertStrictEquals(bound.start.session, start.session);
+    await bound.cleanup?.();
+  });
+
+  it("preserves the scoped failure identity without invoking ambient credentials", async () => {
+    const failure = new Error("synthetic scoped refusal");
+    const start = managedStart({ agentId: "builder" });
+    let ambient = 0;
+    start.model.resolver = () => {
+      ambient++;
+      return undefined;
+    };
+    const bound = bindManagedBrokerInferenceAuthority({
+      start,
+      createResolver: () => () => {
+        throw failure;
+      },
+      signal: new AbortController().signal,
+    });
+    const actual = assertThrows(() => bound.start.model.resolver("veryfront-cloud/test"));
+    assertStrictEquals(actual, failure);
+    assertEquals(ambient, 0);
+    await bound.cleanup?.();
+  });
+
+  for (const alreadyAborted of [false, true]) {
+    it(`revokes per execution before adapter cleanup (alreadyAborted=${alreadyAborted})`, async () => {
+      const controller = new AbortController();
+      let active = true;
+      let revocations = 0;
+      let cleanups = 0;
+      const authority = () => {
+        if (!active) throw new TypeError("synthetic retired authority");
+        return undefined;
+      };
+      registerModelRuntimeResolverRevoker(authority, () => {
+        active = false;
+        revocations++;
+      });
+      if (alreadyAborted) controller.abort();
+      const bound = bindManagedBrokerInferenceAuthority({
+        start: managedStart({ agentId: "builder" }),
+        createResolver: () => authority,
+        signal: controller.signal,
+        cleanup: () => {
+          assertEquals(active, false);
+          cleanups++;
+          return Promise.resolve();
+        },
+      });
+      if (!alreadyAborted) bound.start.model.resolver("veryfront-cloud/test");
+      controller.abort();
+      assertThrows(() => bound.start.model.resolver("veryfront-cloud/test"), TypeError);
+      await bound.cleanup?.();
+      await bound.cleanup?.();
+      assertEquals(revocations, 1);
+      assertEquals(cleanups, 1);
+    });
+  }
+
+  it("retirement preserves adapter cleanup errors and does not revoke a sibling", async () => {
+    const failure = new Error("synthetic cleanup failure");
+    let active = true;
+    const authority = () => undefined;
+    registerModelRuntimeResolverRevoker(authority, () => {
+      active = false;
+    });
+    const sibling = () => undefined;
+    let siblingActive = true;
+    registerModelRuntimeResolverRevoker(sibling, () => {
+      siblingActive = false;
+    });
+    const bound = bindManagedBrokerInferenceAuthority({
+      start: managedStart({ agentId: "builder" }),
+      createResolver: () => authority,
+      signal: new AbortController().signal,
+      cleanup: () => Promise.reject(failure),
+    });
+    let actual: unknown;
+    try {
+      await bound.cleanup?.();
+    } catch (error) {
+      actual = error;
+    }
+    assertStrictEquals(actual, failure);
+    assertEquals(active, false);
+    assertEquals(siblingActive, true);
+  });
+
+  it("does not manufacture run authority when ingress supplies none", () => {
+    const start = managedStart({ agentId: "builder" });
+    const cleanup = () => Promise.resolve();
+    const bound = bindManagedBrokerInferenceAuthority({
+      start,
+      createResolver: () => undefined,
+      signal: new AbortController().signal,
+      cleanup,
+    });
+    assertStrictEquals(bound.start, start);
+    assertStrictEquals(bound.cleanup, cleanup);
+  });
+
+  it("preserves both retirement and adapter failures", async () => {
+    const retirementFailure = new Error("synthetic revocation failure");
+    const cleanupFailure = new Error("synthetic adapter failure");
+    const authority = () => undefined;
+    registerModelRuntimeResolverRevoker(authority, () => {
+      throw retirementFailure;
+    });
+    const bound = bindManagedBrokerInferenceAuthority({
+      start: managedStart({ agentId: "builder" }),
+      createResolver: () => authority,
+      signal: new AbortController().signal,
+      cleanup: () => Promise.reject(cleanupFailure),
+    });
+    let actual: unknown;
+    try {
+      await bound.cleanup?.();
+    } catch (error) {
+      actual = error;
+    }
+    assert(actual instanceof AggregateError);
+    assertStrictEquals(actual.errors[0], retirementFailure);
+    assertStrictEquals(actual.errors[1], cleanupFailure);
+  });
+
+  it("refuses malformed preparation before issuing private authority", () => {
+    let issued = 0;
+    assertThrows(() =>
+      bindManagedBrokerInferenceAuthority({
+        start: { session: {} } as ManagedExecutorStartInput,
+        createResolver: () => {
+          issued++;
+          return () => undefined;
+        },
+        signal: new AbortController().signal,
+      }), TypeError);
+    assertEquals(issued, 0);
+  });
+});
 
 describe("managed AG-UI broker handler", () => {
   for (const scopeKind of ["global", "project"] as const) {
@@ -92,7 +351,7 @@ describe("managed AG-UI broker handler", () => {
         assertEquals(ingress.kind, "ag-ui");
         assertEquals(JSON.stringify(ingress.executor).includes("synthetic-private-token"), false);
         return Promise.resolve({
-          start: { session: {} } as ManagedExecutorStartInput,
+          start: managedStart({ agentId: "builder" }),
           messages: [],
           executionSignal: new AbortController().signal,
         });
@@ -630,7 +889,7 @@ describe("managed durable broker handler", () => {
           assertEquals(ingress.broker.getParsedRequest().authToken, "synthetic-private-token");
           assertEquals(JSON.stringify(ingress.executor).includes("synthetic-private-token"), false);
           return Promise.resolve({
-            start: { session: {} } as ManagedExecutorStartInput,
+            start: managedStart({ agentId: "builder" }),
             messages: [],
             executionSignal: controller.signal,
             output: {
@@ -895,7 +1154,7 @@ async function handler(
         });
       }
       return {
-        start: { session: {} } as ManagedExecutorStartInput,
+        start: managedStart({ agentId: "builder" }),
         messages: [],
         executionSignal: executionController.signal,
         output: options.missingOutput ? undefined : {
@@ -962,6 +1221,7 @@ describe("managed broker handler", () => {
     const fixture = runtimeFixture();
     const execution = new AbortController();
     let started: ManagedExecutorStartInput | undefined;
+    let preparedResolver: ManagedExecutorStartInput["model"]["resolver"] | undefined;
     const managed = createManagedBrokerHandler({
       responseMode: "detached",
       broker: {
@@ -986,6 +1246,7 @@ describe("managed broker handler", () => {
         assertEquals(JSON.stringify(ingress.executor).includes("api-token"), false);
         assertEquals(JSON.stringify(ingress.executor).includes("broker-token"), false);
         const start = managedStart({ agentId: "builder" });
+        preparedResolver = start.model.resolver;
         start.trustedRuntime = {
           projectToolNames: [],
           sourceIntegrationPolicy: { schemaVersion: 1, mode: "unrestricted" },
@@ -1006,6 +1267,8 @@ describe("managed broker handler", () => {
     try {
       const response = await managed.handle(first.request);
       assertEquals(response.status, 202, await response.clone().text());
+      assert(started);
+      assert(started.model.resolver !== preparedResolver);
       assertEquals(started?.trustedRuntime?.hostedKnowledgeAuthToken, "api-token");
       assertEquals(
         started?.trustedRuntime?.hostedKnowledgeApiUrl,
@@ -1019,7 +1282,13 @@ describe("managed broker handler", () => {
         }).includes("api-token"),
         false,
       );
+      const retainedResolver = started.model.resolver;
       execution.abort();
+      assertThrows(
+        () => retainedResolver("veryfront-cloud/mistral/mistral-small-2503"),
+        TypeError,
+        "Run-scoped inference credential is no longer active",
+      );
     } finally {
       fixture.release();
       await managed.close();

@@ -1,10 +1,11 @@
 ---
 title: "Security headers and CSP"
-description: "Veryfront applies a Content-Security-Policy and a CSRF check by default. Use this guide to allow the third-party origins your site needs and to send the token every protected mutating request must carry."
-order: 11
+description: "Configure Content-Security-Policy sources and verify the security headers served by your application."
+order: 90
 ---
 
-Every hosted Veryfront project is served with a Content-Security-Policy and a set of hardening headers. You do not switch them on; they apply in production whether or not you configure anything. What you do configure is the extra origins your own site needs.
+Hosted Veryfront projects receive security headers and a Content-Security-Policy
+in production. Configure the additional origins your site needs.
 
 ## The default policy
 
@@ -52,13 +53,18 @@ Both close injection routes, and neither can be widened: they are required direc
 
 On hosted `*.veryfront.com` and `*.veryfront.org` addresses, that enforced header also contains `frame-ancestors 'self' https://veryfront.com https://veryfront.org`. This explicit allowlist lets Studio embed the project while `X-Frame-Options: DENY` remains the fallback for older browsers. Custom domains do not receive this exception.
 
-The exception is `VERYFRONT_CSP`. Setting that environment variable replaces the policy wholesale and serves it enforced on its own, so neither the reported floor nor this pair is added alongside it. Writing a whole policy by hand is an explicit act, and Veryfront does not second-guess it.
+`VERYFRONT_CSP` replaces the entire policy with an enforced policy. It also
+replaces the default report-only policy and required directives.
 
-**Every directive you give a value in `security.csp` is enforced too**, including `form-action` and `frame-ancestors`. Listing your image origins means you have thought about images, so `img-src` binds with your sources in it. Directives you never mentioned keep reporting, and so does one written as `undefined`, which counts as unconfigured rather than as a declaration. Adding one origin does not bind the rest of your policy, because deciding to allow a CDN and deciding to bind script execution across your site are different decisions.
+**Each directive configured in `security.csp` is enforced**, including
+`form-action` and `frame-ancestors`. Other directives remain report-only.
+`undefined` counts as unconfigured. Adding an origin to one directive does not
+enforce the rest of the policy.
 
-One consequence worth knowing: CSP resolves a missing directive by falling back to a broader one, so enforcing `script-src` would otherwise also constrain workers and frames. Veryfront emits those alongside it, with the same sources the reported policy gives them, so declaring one directive never tightens another behind your back.
-
-To bind a directive, configure it. To see what binding it would cost first, read the reports.
+CSP falls back to broader directives when specific ones are missing. When you
+enforce `script-src`, Veryfront also emits worker and frame directives with
+their report-only sources so the fallback does not restrict them further.
+Review violation reports before enforcing another directive.
 
 ## Violation reports
 
@@ -66,7 +72,9 @@ The policy asks browsers to report what it blocks, to `/_vf/csp-report` on your 
 
 You do not configure this and cannot switch it off. Reports are recorded with the violating document, the directive, the blocked URL and the status. Query strings are removed, so identifiers in a URL do not reach a log. They are rate-limited, and the endpoint always answers `204`.
 
-The endpoint is exempt from `security.auth` and `security.csrf`. A browser reports a violation without credentials and without a CSRF token, because a report is not a user action, so a protected project would otherwise report nothing at all. Exempting it discloses nothing: it reads no credentials, changes no state, and its response never varies.
+The reporting endpoint is exempt from `security.auth` and `security.csrf` so
+browsers can submit reports without credentials or a CSRF token. It reads no
+credentials, changes no application state and always returns `204`.
 
 ## Adding an origin
 
@@ -115,7 +123,7 @@ export default {
 };
 ```
 
-Misspelling a directive fails configuration loading rather than silently doing nothing. Browsers ignore unrecognized directive names, so `fontSource: [...]` would otherwise look configured and protect nothing.
+Unknown directive names, such as `fontSource`, fail configuration loading.
 
 ## What you cannot remove
 
@@ -168,96 +176,7 @@ Preview deployments serve the same policy as production, so a CSP problem shows 
 
 ## Cross-site request forgery
 
-Veryfront checks CSRF on every protected request whose method is not `GET`, `HEAD`, or `OPTIONS`. The check is a double-submit pair. Veryfront issues a CSRF cookie on HTML document responses, and your client code must send that same value back in an `x-csrf-token` header.
-
-HTTPS and loopback origins use `__Host-vf_csrf`. Plain-HTTP LAN development uses an origin-scoped `vf_csrf_http_<encoded-origin-and-config>` physical cookie plus a `vf_csrf_names_<encoded-origin>` discovery cookie, avoiding collisions with HTTPS siblings. During migration, an HTTPS origin uses `vf_csrf_https_<encoded-origin-and-config>` when an HTTP sibling still advertises the shared legacy token, so HTTPS does not make that token unreadable to the already-open HTTP app.
-
-A protected request that omits the header, sends an empty one, or sends a value that does not match the cookie receives `403`.
-
-`veryfront dev` runs the same check as your deployed build. Earlier releases skipped it locally, so a mutating `fetch` you wrote by hand worked for as long as you were building the feature and then failed on the first deploy. It now fails on your machine instead, and the local `403` body names the cookie and the header your project expects.
-
-### Send the token
-
-Use `csrfMutationHeaders` from `veryfront/index.client`. It reads the cookie and returns the headers to hand to `fetch`:
-
-```ts
-import { csrfMutationHeaders } from "veryfront/index.client";
-
-const response = await fetch("/api/cases", {
-  method: "POST",
-  headers: csrfMutationHeaders("/api/cases", {
-    headers: { "content-type": "application/json" },
-  }),
-  body: JSON.stringify({ title: "Example case" }),
-});
-```
-
-Veryfront's own client hooks send the header for you. That covers `useChat`, `useAgent`, `useStreaming`, `useCompletion`, the upload hooks, and the workflow hooks. Reach for the helper when you write the request yourself.
-
-A machine client can satisfy the double-submit check by sending any matching
-cookie/header pair together with its real authentication, as the curl examples
-in this documentation do. Use `excludePaths` only when the entire route is
-intentionally outside browser CSRF protection, such as a dedicated webhook
-receiver, and authenticate that route independently.
-
-### Choose your own names
-
-Pass an object to `security.csrf` to rename either half of the pair, and give the browser helper the same names:
-
-```ts
-export default {
-  security: {
-    csrf: {
-      cookieName: "my_csrf",
-      headerName: "x-my-csrf",
-      excludePaths: ["/api/webhooks"],
-    },
-  },
-};
-```
-
-The server advertises configured names to Veryfront's browser hooks, so
-`useChat`, `useAgent`, `useStreaming`, and `useCompletion` continue to work
-without repeating them. For a hand-written request, discovery is automatic;
-you can also pass the names explicitly when you need to override it:
-
-```ts
-const headers = csrfMutationHeaders("/api/cases", {
-  cookieName: "my_csrf",
-  headerName: "x-my-csrf",
-  headers: { "content-type": "application/json" },
-});
-```
-
-`excludePaths` takes canonical absolute paths. A listed path and everything under it skips the check, except `/`, which matches only the root path. This is what a third-party webhook receiver needs, because the sender holds no cookie of yours.
-
-On plain-HTTP LAN development origins, browsers reject `Secure` `__Host-`
-cookies. Veryfront therefore derives an origin-scoped
-`vf_csrf_http_<encoded-origin-and-config>` token name and advertises it through
-`vf_csrf_names_<encoded-origin>`. Use `csrfMutationHeaders` so discovery stays
-automatic; do not read or construct the physical cookie name directly. The
-header remains `x-csrf-token`, and HTTPS (including deployed origins) keeps the
-hardened `__Host-vf_csrf` cookie.
-
-### Turn the check off
-
-Set `security.csrf` to `false`:
-
-```ts
-export default {
-  security: {
-    csrf: false,
-  },
-};
-```
-
-This is the only supported opt-out, and it applies in every environment. It stops the check and stops Veryfront issuing the cookie. Prefer `excludePaths` when only some routes need to be reachable without a token.
-
-### What Veryfront exempts
-
-- The CSP report endpoint, for the reason given in [Violation reports](#violation-reports).
-- Signed platform dispatches. Control-plane operations and channel invocations carry a signed envelope that the receiving handler verifies, and hold no cookie to echo.
-- Two framework-owned local development surfaces: the client log endpoint at `/_veryfront/log` and the dashboard API under `/_dev/api/`. Both admit only a direct loopback connection from a canonical local-development host, and the dashboard requires its own port-scoped session token on top of that. Your own routes get no such exemption, in development or anywhere else.
+For browser request tokens, custom header names, and route exclusions, see [Send authenticated browser mutations](./csrf-requests.md).
 
 ## Related
 

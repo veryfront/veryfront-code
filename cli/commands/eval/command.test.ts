@@ -13,6 +13,7 @@ import {
   _resetEnvironmentConfig,
   createTestEnvironmentConfig,
 } from "#veryfront/config/environment-config.ts";
+import { scriptedModel } from "../../../src/agent/runtime/model-runtime.test-helpers.ts";
 import { VeryfrontError } from "veryfront/errors";
 import { type Agent, agent as createAgent, type AgentResponse } from "veryfront/agent";
 import { defineSchema } from "veryfront/schemas";
@@ -72,6 +73,8 @@ import {
 } from "./command.ts";
 import { parseEvalArgs } from "./handler.ts";
 import { createEvalModelAccessDeniedError } from "../../../src/eval/model-access.ts";
+import { getLocalEvalIdentity } from "../../../src/runtime/local-eval-context.ts";
+import { isActiveEvalMockTool } from "../../../src/agent/runtime/eval-mock-tool-scope.ts";
 import { __installOutboundFetchTransportForTests } from "#cli/outbound-fetch";
 import { buildProviderError } from "../../../src/provider/runtime-loader/provider-http.ts";
 import { deleteHostSecret, getHostEnv } from "#cli/process-env";
@@ -462,6 +465,7 @@ describe("eval CLI command helpers", () => {
       "baseline-model": "anthropic/claude-opus-4-6",
       "candidate-model": ["moonshotai/kimi-k2.6"],
       "comparison-policy": "evals/model-comparison.policy.json",
+      concurrency: 4,
     });
 
     assertEquals(parsed.success, true);
@@ -484,7 +488,66 @@ describe("eval CLI command helpers", () => {
       assertEquals(parsed.data.baselineModel, "anthropic/claude-opus-4-6");
       assertEquals(parsed.data.candidateModels, ["moonshotai/kimi-k2.6"]);
       assertEquals(parsed.data.comparisonPolicy, "evals/model-comparison.policy.json");
+      assertEquals(parsed.data.concurrency, 4);
     }
+  });
+
+  it("rejects an invalid eval concurrency limit", () => {
+    for (const concurrency of [0, -1, 1.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1]) {
+      const parsed = parseEvalArgs({ _: ["eval"], concurrency });
+      assertEquals(parsed.success, false, `invalid concurrency: ${concurrency}`);
+    }
+  });
+
+  it("passes the CLI concurrency limit through to record execution", async () => {
+    await withTempDir(async (projectDir) => {
+      const bothStarted = Promise.withResolvers<void>();
+      let active = 0;
+      let maximum = 0;
+      const definition = evalDataset({
+        id: "eval:parallel-checks",
+        dataset: [{ id: "one", input: "one" }, { id: "two", input: "two" }],
+        async check({ expect }) {
+          maximum = Math.max(maximum, ++active);
+          if (active === 2) bothStarted.resolve();
+          try {
+            await bothStarted.promise;
+            expect.completed().gate();
+          } finally {
+            active--;
+          }
+        },
+      });
+      definition.source = {
+        filePath: `${projectDir}/evals/parallel.eval.ts`,
+        exportName: "default",
+      };
+      const runtime = createProjectRuntimeDiscovery(
+        normalizeSourceIntegrationPolicy({ allow: {} }),
+      );
+      runtime.evals.set(definition.id, definition);
+      setJsonMode(true);
+      try {
+        await captureConsoleOutput(async () => {
+          const exitCode = await runEvalCommand(
+            createEvalOptions({
+              id: definition.id,
+              projectDir,
+              concurrency: 2,
+              recordTimeout: 2,
+            }),
+            {
+              discoverProjectAgentRuntime: () => Promise.resolve(runtime),
+              hydrateEvalRuntimeAuth: () => Promise.resolve({ apiToken: "token" }),
+            },
+          );
+          assertEquals(exitCode, 0);
+        });
+        assertEquals(maximum, 2);
+      } finally {
+        bothStarted.resolve();
+      }
+    }, { prefix: "vf-eval-concurrency-" });
   });
 
   it("normalizes eval ids without requiring users to type the namespace", () => {
@@ -877,6 +940,182 @@ describe("eval CLI command helpers", () => {
     ]);
   });
 
+  it("passes a declared local agent error without changing completion", async () => {
+    const agent = makeAgentStub(async () => ({
+      ...completedAgentResponse("search_docs"),
+      status: "error",
+      text: "Invalid reference",
+    }));
+    const report = await runEval(
+      evalAgent({
+        target: "agent:test",
+        dataset: [{ id: "invalid-reference", input: {}, expectedOutcome: "error" }],
+        check({ record }) {
+          assertEquals(record.error, "Invalid reference");
+        },
+      }),
+      { adapters: { agent: createAgentAdapter(agent, createEvalOptions()) } },
+    );
+    assertEquals(report.summary.passed, 1);
+    assertEquals(report.records[0]?.completed, false);
+  });
+
+  it("advertises and executes canonical mocks only during an eval", async () => {
+    const observed: string[][] = [];
+    let step = 0;
+    const model: ModelRuntime = {
+      provider: "hosted",
+      modelId: "hosted/eval-canonical-mock",
+      async doGenerate(options) {
+        const tools =
+          (options as { tools?: Array<{ name: string }> | Record<string, unknown> }).tools;
+        observed.push(
+          Array.isArray(tools)
+            ? tools.map((entry) => entry.name).toSorted()
+            : Object.keys(tools ?? {}).toSorted(),
+        );
+        if (++step === 1) {
+          return {
+            content: [{
+              type: "tool-call",
+              toolCallId: "call-canonical",
+              toolName: "veryfront__invoke_agent",
+              input: '{"query":"delegated"}',
+            }],
+            finishReason: "tool-calls",
+            usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          };
+        }
+        return {
+          content: [{ type: "text", text: "done" }],
+          finishReason: "stop",
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        };
+      },
+      async doStream() {
+        return { stream: new ReadableStream() };
+      },
+    };
+    const assistant = createAgent({
+      id: "eval-canonical-mock-runtime",
+      model: "hosted/eval-canonical-mock",
+      system: "Call the canonical mock.",
+      skills: false,
+      tools: {},
+      resolveModelTransport: async () => ({ model }),
+    });
+    const canonical = makeEvalTool("veryfront__invoke_agent", "canonical-mock");
+    const mocks = { veryfront__invoke_agent: canonical, local_mock: makeEvalTool("local_mock") };
+    const definition = evalAgent({
+      id: "eval:canonical-mock-runtime",
+      target: "agent:eval-canonical-mock-runtime",
+      dataset: [{ id: "one", input: "delegate" }],
+      mockTools: mocks,
+    });
+    const result = await createAgentAdapter(assistant, createEvalOptions())({
+      definition,
+      example: { id: "one", input: "delegate" },
+      repetition: 1,
+    });
+    assertEquals(observed[0], ["local_mock", "veryfront__invoke_agent"]);
+    assertEquals(result.trace?.toolCalls?.map((call) => [call.name, call.status]), [[
+      "veryfront__invoke_agent",
+      "ok",
+    ]]);
+    await assistant.generate({ input: "outside eval", tools: mocks });
+    assertEquals(observed.at(-1), ["local_mock"]);
+  });
+
+  it("binds one runtime identity to each example repetition and its mock tools", async () => {
+    const generatedIds: unknown[] = [];
+    const bindings: unknown[] = [];
+    const mockIds: unknown[] = [];
+    const agent = makeAgentStub(async (input) => {
+      generatedIds.push(input.context?.runId);
+      bindings.push(input.context?.runIdBindsToolAuthorization);
+      return completedAgentResponse("search_docs");
+    });
+    const definition = evalAgent({
+      id: "eval:runtime-identity",
+      target: "agent:assistant",
+      dataset: datasets.inline([{ id: "q1", input: "Find docs" }]),
+      mockTools: (context) => {
+        mockIds.push(context.runId);
+        return {};
+      },
+    });
+    const adapter = createAgentAdapter(agent, createEvalOptions());
+    for (const [exampleId, repetition] of [["q1", 1], ["q2", 1], ["q1", 2]] as const) {
+      await adapter({ definition, example: { id: exampleId, input: "Find docs" }, repetition });
+    }
+    assertEquals(
+      generatedIds.every((id) => typeof id === "string" && /^[0-9a-f-]{36}$/.test(id)),
+      true,
+    );
+    assertEquals(bindings, [false, false, false]);
+    assertEquals(mockIds, generatedIds);
+    assertEquals(new Set(generatedIds).size, 3);
+  });
+
+  it("exposes the local case UUID to the real agent and validates its mocked run lookup", async () => {
+    let expectedRunId: string | undefined;
+    const executed: unknown[] = [];
+    const model = scriptedModel([
+      () => {
+        const prompt = model.systemPrompts().at(-1) ?? "";
+        const runId = /run_id: ([^\s]+)/.exec(prompt)?.[1];
+        assertEquals(runId, expectedRunId);
+        return {
+          toolCalls: [{ id: "lookup", name: "veryfront__get_run", input: { run_id: runId } }],
+        };
+      },
+      { text: "done" },
+      { text: "outside" },
+    ]);
+    const assistant = createAgent({
+      id: "eval-run-identity",
+      system: "Read the current run using the runtime identity.",
+      model: "test/identity",
+      skills: false,
+      resolveModelTransport: () => Promise.resolve({ model }),
+    });
+    const definition = evalAgent({
+      target: "agent:eval-run-identity",
+      dataset: [{ id: "one", input: "Read current run" }],
+      mockTools: ({ runId }) => {
+        expectedRunId = runId;
+        return {
+          veryfront__get_run: tool({
+            id: "veryfront__get_run",
+            description: "Read this eval case run",
+            // GetRunReference uses PublicRunIdSchema (1..128 letters, digits, underscore or hyphen).
+            // UUID is also required here so the harness cannot regress to an arbitrary label.
+            inputSchema: defineSchema((v) =>
+              v.object({
+                run_id: v.string().min(1).max(128).regex(/^[a-zA-Z0-9_-]+$/).uuid(),
+              }).strict()
+            )(),
+            execute: (input, context) => {
+              assertEquals(input.run_id, runId);
+              assertEquals(context?.runIdBindsToolAuthorization, false);
+              executed.push(input.run_id);
+              return { status: "running" };
+            },
+          }) as Tool,
+        };
+      },
+    });
+    const result = await createAgentAdapter(assistant, createEvalOptions())({
+      definition,
+      example: { id: "one", input: "Read current run" },
+      repetition: 1,
+    });
+    assertEquals(executed, [expectedRunId]);
+    assertEquals(result.text, "done");
+    await assistant.generate({ input: "Outside eval", context: { runId: crypto.randomUUID() } });
+    assertEquals(/run_id: /.test(model.systemPrompts().at(-1) ?? ""), false);
+  });
+
   it("passes static mock tools into real agent.generate and keeps real traces", async () => {
     const mockTools = { search_docs: makeEvalTool("search_docs", "mock") };
     let capturedGenerateInput: Parameters<Agent["generate"]>[0] | undefined;
@@ -931,6 +1170,45 @@ describe("eval CLI command helpers", () => {
 
     assertEquals(report.records.map((record) => record.completed), [true, true, true, true]);
     assertEquals(calls, ["q1:1", "q1:2", "q2:1", "q2:2"]);
+  });
+
+  it("isolates identities and mock tool authority across concurrent agent cases", async () => {
+    const bothStarted = Promise.withResolvers<void>();
+    const ids = new Map<string, string>();
+    const ownTools = new Map<string, Tool>();
+    const agent = makeAgentStub(async (input) => {
+      const caseId = input.input as string;
+      const ownTool = input.tools!.search_docs as Tool;
+      const identity = getLocalEvalIdentity()!;
+      ids.set(caseId, identity);
+      ownTools.set(caseId, ownTool);
+      if (ids.size === 2) bothStarted.resolve();
+      await bothStarted.promise;
+      assertEquals(getLocalEvalIdentity(), identity);
+      assertEquals(input.context?.runId, identity);
+      assertEquals(isActiveEvalMockTool("search_docs", ownTool), true);
+      const otherTool = ownTools.get(caseId === "one" ? "two" : "one");
+      assertEquals(isActiveEvalMockTool("search_docs", otherTool), false);
+      return completedAgentResponse("search_docs");
+    });
+    const definition = evalAgent({
+      id: "eval:isolated-cases",
+      target: "agent:assistant",
+      dataset: datasets.inline([{ id: "q1", input: "one" }, { id: "q2", input: "two" }]),
+      mockTools: ({ example }) => ({ search_docs: makeEvalTool("search_docs", example.id) }),
+    });
+    try {
+      const report = await runEval(definition, {
+        concurrency: 2,
+        recordTimeoutMs: 2_000,
+        adapters: { agent: createAgentAdapter(agent, createEvalOptions()) },
+      });
+      assertEquals(report.records.map((record) => record.completed), [true, true]);
+      assertEquals(new Set(ids.values()).size, 2);
+      assertEquals(getLocalEvalIdentity(), undefined);
+    } finally {
+      bothStarted.resolve();
+    }
   });
 
   it("starts no model request when a mock tool resolver returns after the record deadline", async () => {
@@ -1499,7 +1777,7 @@ describe("eval CLI command helpers", () => {
       );
 
       assertEquals(exitCode, 1);
-      assertEquals(contexts, [
+      assertEquals(contexts.map((context) => ({ eval: (context as { eval: unknown }).eval })), [
         {
           eval: {
             definitionId: "eval:alpha",
@@ -2315,6 +2593,7 @@ describe("eval CLI command helpers", () => {
     });
 
     assertEquals(result.completed, false);
+    assertEquals(result.outcome, "error");
     assertEquals(result.error, "Rate limited");
     assertEquals(result.output, { error: "Rate limited" });
   });
@@ -3034,6 +3313,21 @@ describe("eval CLI command helpers", () => {
         error: 'No EvalReportExporter registered for "missing".',
       },
     ]);
+  });
+
+  it("accepts every policy metric advertised by the model comparison guide", async () => {
+    const guide = await Deno.readTextFile(
+      new URL("../../../docs/guides/eval-comparison.md", import.meta.url),
+    );
+    const paragraph = /Policy metrics can reference([\s\S]*?)\.\n/.exec(guide)?.[1] ?? "";
+    const metrics = [...paragraph.matchAll(/`([^`]+)`/g)].map((match) => match[1]!);
+    assertEquals(metrics.length > 0, true, "the guide must list its supported policy metrics");
+    const constraints = Object.fromEntries(metrics.map((metric) => [metric, { max: 1 }]));
+    await withTempDir(async (projectDir) => {
+      await Deno.writeTextFile(`${projectDir}/policy.json`, JSON.stringify({ constraints }));
+      const policy = await loadEvalModelComparisonPolicy(projectDir, "policy.json");
+      assertEquals(policy.constraints, constraints);
+    });
   });
 
   it("loads model comparison policy files relative to the project directory", async () => {

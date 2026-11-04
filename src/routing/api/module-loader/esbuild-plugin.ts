@@ -11,6 +11,7 @@ import {
 } from "#veryfront/utils";
 import type { Message, Plugin } from "veryfront/extensions/bundler";
 import { isAllowedRemoteHost, validateHTTPImports } from "./http-validator.ts";
+import { getLoaderForFile } from "./loader-helpers.ts";
 import {
   type ImportMetaSpecifierResolver,
   rewriteImportMetaLocations,
@@ -68,10 +69,13 @@ async function validateRemoteModuleSource(
   resolveImportMetaSpecifier?: ImportMetaSpecifierResolver,
 ): Promise<{
   readonly contents: string;
-  readonly loader: "js";
+  readonly loader: "js" | "jsx" | "ts" | "tsx";
 }> {
   // A fetched module is ESM; a top-level `return` must not parse as CommonJS.
-  const scan = await validateHTTPImports(contents, allowedHosts, { commonJS: false });
+  const scan = await validateHTTPImports(contents, allowedHosts, {
+    commonJS: false,
+    path: describeRemoteModuleUrl(moduleUrl),
+  });
   if (scan.localWorkerSpecifiers.length > 0) {
     throw new TypeError(
       "[API] handler build failed: a fetched remote module cannot start a local Worker whose graph is outside remote source validation.",
@@ -87,7 +91,12 @@ async function validateRemoteModuleSource(
       "[API] handler build failed: import.meta location cannot be preserved because the remote module source could not be parsed or its resolver is dynamic",
     );
   }
-  return { contents: rewritten, loader: "js" };
+  const pathname = new URL(moduleUrl).pathname.toLowerCase();
+  // .mts and .cts are TypeScript module extensions the shared helper does not map.
+  const loader = /\.[mc]ts$/.test(pathname) ? "ts" : getLoaderForFile(pathname);
+  // Remote sources are validated as executable modules, not JSON. Query
+  // parameters and redirect aliases must not determine their source grammar.
+  return { contents: rewritten, loader: loader === "json" ? "js" : loader };
 }
 
 function describeRemoteModuleUrl(value: string): string {

@@ -4,6 +4,7 @@ import { basename, dirname, resolve } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { ensureNpmNodeModulesLinks } from "../../tests/ensure-npm-links.mjs";
+import { executorBootstrapTestPatterns } from "../../tests/integration/agent/executor-node-bootstrap-groups.fixture.ts";
 import { buildRuntimeTestProcessEnv } from "./runtime-env.mjs";
 
 const ROOT = fileURLToPath(new URL("../../", import.meta.url));
@@ -38,7 +39,7 @@ const TEST_FILES = [
 
 /** Build the same native coverage command for the fixed lane and its mapping regression. */
 export function buildNativeCoverageArgs(
-  { root, reportPath, sourceFiles, testFiles },
+  { root, reportPath, sourceFiles, testFiles, timeoutMs = 30_000 },
 ) {
   return [
     "--enable-source-maps",
@@ -47,7 +48,7 @@ export function buildNativeCoverageArgs(
     "--experimental-test-coverage",
     "--test",
     "--test-concurrency=1",
-    "--test-timeout=30000",
+    `--test-timeout=${timeoutMs}`,
     ...sourceFiles.map((source) => `--test-coverage-include=${source}`),
     "--test-reporter=spec",
     "--test-reporter-destination=stdout",
@@ -55,6 +56,84 @@ export function buildNativeCoverageArgs(
     `--test-reporter-destination=${reportPath}`,
     ...testFiles,
   ];
+}
+
+/** Every real test file retains its own budget; cold installs share port 8081. */
+export function buildNativeCoverageGroups() {
+  const bootstrap = "tests/integration/agent/executor-node-bootstrap.test.ts";
+  return [
+    {
+      testFiles: TEST_FILES.filter((file) => file !== bootstrap),
+      pattern: "",
+      expectedTests: 191,
+    },
+    ...executorBootstrapTestPatterns().map((pattern, index) => ({
+      testFiles: [bootstrap],
+      pattern,
+      expectedTests: index === 3 ? 22 : 1,
+    })),
+  ];
+}
+
+/** Owned children inherit the collector's V8 directory for range-aware merging. */
+export async function runNativeCoverageGroups(
+  root = ROOT,
+  groups = buildNativeCoverageGroups(),
+) {
+  if (!process.env.NODE_V8_COVERAGE) {
+    throw new Error("Native coverage collector is required");
+  }
+  for (const group of groups) {
+    // An owned child is a new test runner, while V8 coverage remains inherited.
+    const env = buildRuntimeTestProcessEnv(process.env);
+    delete env.NODE_TEST_CONTEXT;
+    const child = spawn(process.execPath, [
+      "--enable-source-maps",
+      "--import",
+      resolve(root, "tests/node/resolver.mjs"),
+      "--test",
+      "--test-concurrency=1",
+      "--test-timeout=30000",
+      "--test-reporter=spec",
+      ...(group.pattern ? [`--test-name-pattern=${group.pattern}`] : []),
+      ...group.testFiles,
+    ], {
+      cwd: root,
+      env,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let output = "";
+    child.stdout.on("data", (chunk) => {
+      output += chunk;
+      process.stdout.write(chunk);
+    });
+    child.stderr.on("data", (chunk) => {
+      output += chunk;
+      process.stderr.write(chunk);
+    });
+    const timer = group.pattern
+      ? setTimeout(() => child.kill("SIGKILL"), 25_000)
+      : undefined;
+    try {
+      const code = await new Promise((resolveCode, reject) => {
+        child.once("error", reject);
+        child.once("close", resolveCode);
+      });
+      const count = Number(/^ℹ tests (\d+)$/m.exec(output)?.[1]);
+      const complete = ["fail", "cancelled", "skipped", "todo"].every((key) =>
+        output.includes(`ℹ ${key} 0\n`)
+      );
+      if (
+        code !== 0 || count !== group.expectedTests || !complete ||
+        !output.includes(`ℹ pass ${count}\n`)
+      ) {
+        throw new Error("Incomplete native executor coverage group");
+      }
+    } finally {
+      clearTimeout(timer);
+      child.kill("SIGKILL");
+    }
+  }
 }
 
 function sourcePath(root, value) {
@@ -155,7 +234,9 @@ async function main() {
       root: ROOT,
       reportPath,
       sourceFiles: SOURCE_FILES,
-      testFiles: TEST_FILES,
+      // This file only orchestrates bounded children; it does not run fixtures itself.
+      testFiles: ["tests/integration/ci/node-executor-coverage.fixture.mjs"],
+      timeoutMs: 180_000,
     }),
     {
       cwd: ROOT,

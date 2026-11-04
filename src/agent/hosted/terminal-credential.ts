@@ -1,6 +1,12 @@
+import { registerHostedToolRunAuthorization } from "./tool-run-authorization.ts";
+import { MAX_ROOT_RUN_EVENT_WRITER_TOKEN_BYTES } from "../conversation/run-event-limits.ts";
 import { snapshotOwnDataRecords } from "#veryfront/security/own-data-record.ts";
 import { getPrivateStreamReader } from "#veryfront/security/private-stream.ts";
-import { forEachPrivateArray, mapPrivateArray } from "#veryfront/security/private-array.ts";
+import {
+  appendPrivateArray,
+  forEachPrivateArray,
+  mapPrivateArray,
+} from "#veryfront/security/private-array.ts";
 import { createVeryfrontApiRequestUrlResolver } from "#veryfront/platform/adapters/veryfront-api-url.ts";
 import { authorizeHostedTaskInput } from "./task-input.ts";
 import { readResponseTextPrefix } from "#veryfront/utils/response-body.ts";
@@ -11,25 +17,29 @@ import {
   type HostedTaskInput,
   resolveHostedTaskInput,
 } from "./task-input.ts";
-import type { ParseHostedChatRequestOptions } from "./chat-request-parser.ts";
+import type {
+  ParsedHostedChatRequest,
+  ParseHostedChatRequestOptions,
+} from "./chat-request-parser.ts";
 import {
+  createHostedRunEventWriterCapability,
+  getActiveHostedRunEventWriterCapability,
   type HostedAcceptedTaskInputReceipt,
   hostedAcceptedTaskInputReference,
+  type HostedRunEventWriterCapability,
+  refreshHostedRunEventWriterCapability,
+  waitForHostedParentToolStart,
 } from "./child-run-event-writer-token.ts";
 import {
   type HostedPlatformDependencyOwner,
   registerHostedChildPlatformDependencies,
+  rotateHostedPlatformDependencyCredential,
   transferHostedPlatformDependencies,
 } from "./platform-dependency-credential.ts";
 import { isCanonicalFileMutationTool } from "#veryfront/tool/platform-tool-policy.ts";
 import { INGRESS_RUN_EVENT_TOKEN_HEADER } from "#veryfront/security/http/ingress-credentials.ts";
 import { createVeryfrontCloudInferenceModelResolver } from "./inference-credential.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
-import {
-  createHostedRunEventWriterCapability,
-  getActiveHostedRunEventWriterCapability,
-  waitForHostedParentToolStart,
-} from "./child-run-event-writer-token.ts";
 import type {
   BoundConversationAgentRunFinalizer,
   ConversationRunProjection,
@@ -50,10 +60,14 @@ import {
   terminalToolCallIdHeaderValue,
 } from "../runtime/terminal-run-control.ts";
 import { type RemoteMCPToolSourceConfig } from "#veryfront/tool/remote-mcp.ts";
-import type { RemoteToolSource } from "#veryfront/tool/types.ts";
-import type { ParsedHostedChatRequest } from "./chat-request-parser.ts";
+import type { RemoteToolSource, ToolExecutionContext } from "#veryfront/tool/types.ts";
+import { copyNativeHeaders } from "#veryfront/platform/compat/http/native-request-init.ts";
 import type { AgentServiceMcpServerConfig } from "../service/mcp-server-config.ts";
 import { createProjectScopedMcpUrl } from "../service/project-scoped-mcp-url.ts";
+
+function inheritedInvocationIdentity(parentId: string, toolCallId: string): string {
+  return `${parentId}:${toolCallId}`;
+}
 
 export const RUN_TERMINAL_TOKEN_HEADER = "X-Veryfront-Run-Terminal-Token";
 export { RUN_TERMINAL_TOOL_CALL_ID_HEADER };
@@ -71,6 +85,7 @@ const evidenceRegExpExec = RegExp.prototype.exec;
 const hostFetch = globalThis.fetch;
 const NativeHeaders = Headers;
 const headersSet = Headers.prototype.set;
+const headersDelete = Headers.prototype.delete;
 const apply = Reflect.apply;
 type HostedTerminalDescriptor =
   | Pick<ConversationRunProjection, "runId">
@@ -94,15 +109,18 @@ const credentials = createPrivateWeakStore<
     authToken?: string;
     apiUrl?: string;
     fetch?: typeof globalThis.fetch;
+    eventWriters?: HostedRunEventWriterCapability[];
   }
 >();
 
 type InheritedTerminalReceipt = {
   status: "completed" | "failed" | "cancelled";
   output: unknown;
+  outputFormat?: "text-data-v1";
   error?: { code: string; message: string };
 };
 const terminalReceipts = createPrivateWeakStore<object, InheritedTerminalReceipt>();
+const inheritedOutputFormats = createPrivateWeakStore<Response, "text-data-v1">();
 
 /** Read the original terminal outcome returned by authenticated child admission. */
 export function hostedInheritedTerminalReceipt(
@@ -145,6 +163,22 @@ export function hostedTerminalCanonicalRunId(request: ParsedHostedChatRequest): 
   }
 }
 
+/** Bind tool context only to the privately admitted project and current run. */
+export function bindHostedToolRunAuthorization(
+  target: { projectId?: string | null; runId?: string },
+  request: ParsedHostedChatRequest,
+): void {
+  const authority = credentials.get(request);
+  if (
+    !authority?.projectId || authority.projectId !== target.projectId ||
+    authority.runId !== target.runId || !hostedTerminalCanonicalRunId(request)
+  ) return;
+  registerHostedToolRunAuthorization(target, {
+    projectId: authority.projectId,
+    runId: authority.runId,
+  });
+}
+
 /** Transfer the verified request capability to its private durable run descriptor. */
 export function bindHostedTerminalRun(
   request: ParsedHostedChatRequest,
@@ -152,7 +186,8 @@ export function bindHostedTerminalRun(
   transport: { apiUrl: string; fetch?: typeof globalThis.fetch },
 ): void {
   const authority = credentials.get(request);
-  if (authority && run?.runId === authority.runId) {
+  if (!authority) return;
+  if (run?.runId === authority.runId) {
     credentials.set(run, {
       ...authority,
       apiUrl: transport.apiUrl,
@@ -188,6 +223,7 @@ export function hostedTerminalToolSourceFactory(
   request: HostedPlatformDependencyOwner | undefined,
   apiMcpUrl: string,
   fallback: (config: RemoteMCPToolSourceConfig) => RemoteToolSource,
+  getAuthToken?: () => string | undefined,
 ): (config: RemoteMCPToolSourceConfig, server?: AgentServiceMcpServerConfig) => RemoteToolSource {
   const authority = request ? credentials.get(request) : undefined;
   if (!authority) return fallback;
@@ -195,16 +231,32 @@ export function hostedTerminalToolSourceFactory(
   const parentEventWriter = getActiveHostedRunEventWriterCapability();
   return (config, server) => {
     if (server?.kind !== "veryfront-api") return fallback(config);
-    const ordinary = fallback(config);
+    const liveHeaders: NonNullable<RemoteMCPToolSourceConfig["headers"]> = async (context) => {
+      const original = typeof config.headers === "function"
+        ? await config.headers(context)
+        : config.headers;
+      const headers = new NativeHeaders(original);
+      // Run event authority comes only from the private run credential, never configured headers.
+      apply(headersDelete, headers, [INGRESS_RUN_EVENT_TOKEN_HEADER]);
+      if (getAuthToken) {
+        const token = getAuthToken();
+        if (!token) throw new Error("Hosted MCP credential authority is unavailable");
+        apply(headersSet, headers, ["Authorization", `Bearer ${token}`]);
+      }
+      return headers;
+    };
+    const ordinary = fallback({ ...config, headers: liveHeaders });
+    // Project mutations by the verified current run need its exact-run event authority.
+    const isCurrentRunProjectCall = (name: string, context: ToolExecutionContext | undefined) =>
+      !!authority.eventToken && context?.projectId === authority.projectId &&
+      context.runId === authority.runId && hasCurrentTerminalRunCredentialAuthority(context) &&
+      name !== "create_run" && name !== "veryfront__create_run";
     const mutation = authority.eventToken
       ? fallback({
         ...config,
         endpoint: expectedEndpoint,
         headers: async (context) => {
-          const original = typeof config.headers === "function"
-            ? await config.headers(context)
-            : config.headers;
-          const headers = new NativeHeaders(original);
+          const headers = copyNativeHeaders(await liveHeaders(context));
           if (context?.projectId === authority.projectId && context.runId === authority.runId) {
             apply(headersSet, headers, [INGRESS_RUN_EVENT_TOKEN_HEADER, authority.eventToken!]);
           }
@@ -216,10 +268,7 @@ export function hostedTerminalToolSourceFactory(
       ...config,
       endpoint: expectedEndpoint,
       headers: async (context) => {
-        const original = typeof config.headers === "function"
-          ? await config.headers(context)
-          : config.headers;
-        const headers = new NativeHeaders(original);
+        const headers = new NativeHeaders(await liveHeaders(context));
         if (
           context?.runId === authority.runId && hasCurrentTerminalRunCredentialAuthority(context)
         ) {
@@ -276,7 +325,7 @@ export function hostedTerminalToolSourceFactory(
             },
           }, context);
         }
-        return isCanonicalFileMutationTool(name)
+        return isCanonicalFileMutationTool(name) || isCurrentRunProjectCall(name, context)
           ? mutation.executeTool(name, args, context)
           : ordinary.executeTool(name, args, context);
       },
@@ -327,7 +376,9 @@ export function hostedInheritedRunAdmitter(
       headers: {
         Authorization: `Bearer ${parent.authToken}`,
         "Content-Type": "application/json",
-        "Idempotency-Key": `inherited:${await computeHash(`${parentId}:${toolCallId}`)}`,
+        "Idempotency-Key": `inherited:${await computeHash(
+          inheritedInvocationIdentity(parentId, toolCallId),
+        )}`,
         "X-Veryfront-Run-Execution-Mode": "inherited",
         Accept: "application/vnd.veryfront.inherited-run+json",
         [RUN_TERMINAL_TOKEN_HEADER]: parent.token,
@@ -338,7 +389,10 @@ export function hostedInheritedRunAdmitter(
         parent_run_id: parentId,
         tool_call_id: toolCallId,
         ...(input.conversationId ? { conversation_id: input.conversationId } : {}),
-        input: { prompt, ...(acceptedReference ? { accepted_task_input: acceptedReference } : {}) },
+        input: {
+          text: prompt,
+          ...(acceptedReference ? { accepted_task_input: acceptedReference } : {}),
+        },
       }),
       signal: AbortSignal.timeout(15000),
     });
@@ -393,6 +447,8 @@ async function normalizeInheritedExecutionResponse(
     (binding.conversationId !== undefined && value.conversationId !== binding.conversationId) ||
     !["pending", "running", "waiting", "completed", "failed", "cancelled"].includes(value.status) ||
     (terminal && !Object.hasOwn(value, "output")) ||
+    (value.outputFormat !== undefined &&
+      (value.status !== "completed" || value.outputFormat !== "text-data-v1")) ||
     (value.error != null &&
       (typeof value.error?.code !== "string" || typeof value.error?.message !== "string"))
   ) throw mismatch();
@@ -413,6 +469,9 @@ async function normalizeInheritedExecutionResponse(
     }),
     { status: response.status, headers },
   );
+  if (value.outputFormat === "text-data-v1") {
+    inheritedOutputFormats.set(normalized, value.outputFormat);
+  }
   if (value.taskInput !== undefined) {
     const taskInput = resolveHostedTaskInput(value.taskInput, {
       projectId: binding.projectId,
@@ -502,13 +561,72 @@ export async function acceptWorkflowInheritedRunAdmission(
     eventToken,
     terminalToken ? terminalRoutingRunId(terminalToken) : row.id,
   );
+  const outputFormat = inheritedOutputFormats.get(response);
   return {
     terminalReceipt: {
       status: row.status,
       output: row.output,
+      ...(outputFormat ? { outputFormat } : {}),
       ...(row.error ? { error: { code: row.error.code, message: row.error.message } } : {}),
     },
   };
+}
+
+function assertInheritedChildResourceBinding(
+  response: Response,
+  binding: { conversationId?: string },
+  row: Record<string, unknown>,
+  canonicalId: string,
+  eventCursor: number,
+  externalCursor: number,
+): void {
+  if (
+    canonicalId !== row.id ||
+    (binding.conversationId !== undefined && row.conversation_id !== binding.conversationId) ||
+    typeof row.conversation_id !== "string" ||
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+      row.conversation_id,
+    ) ||
+    typeof row.output_message_id !== "string" ||
+    !response.headers.has("X-Veryfront-Run-Event-Sequence") ||
+    !response.headers.has("X-Veryfront-Run-External-Event-Sequence") ||
+    !Number.isSafeInteger(eventCursor) || eventCursor < 0 ||
+    !Number.isSafeInteger(externalCursor) || externalCursor < 0
+  ) throw new Error("Inherited child resource binding mismatch");
+}
+
+function recordInheritedTerminalReceipt(
+  run: Pick<ConversationRunProjection, "runId">,
+  row: {
+    status: string;
+    output?: unknown;
+    error?: { code?: unknown; message?: unknown };
+  },
+  outputFormat: "text-data-v1" | undefined,
+): void {
+  if (row.status === "completed" || row.status === "failed" || row.status === "cancelled") {
+    terminalReceipts.set(run, {
+      status: row.status,
+      output: row.output ?? null,
+      ...(outputFormat ? { outputFormat } : {}),
+      ...(typeof row.error?.code === "string" && typeof row.error?.message === "string"
+        ? { error: { code: row.error.code, message: row.error.message } }
+        : {}),
+    });
+  }
+}
+
+function assertInheritedLeaseReceipt(
+  receipt: { run_id?: unknown },
+  canonicalId: string,
+  leaseExpiresAt: number,
+): void {
+  if (
+    receipt.run_id !== canonicalId || !Number.isFinite(leaseExpiresAt) ||
+    leaseExpiresAt <= Date.now()
+  ) {
+    throw new Error("Inherited child lease response binding mismatch");
+  }
 }
 
 /** Bind an inherited admission response to private exact-child authority for trusted runtime adapters. */
@@ -544,19 +662,14 @@ export async function acceptInheritedRunAdmission(
   const canonical = terminalRoute(token, runId);
   const eventCursor = Number(response.headers.get("X-Veryfront-Run-Event-Sequence"));
   const externalCursor = Number(response.headers.get("X-Veryfront-Run-External-Event-Sequence"));
-  if (
-    canonical.id !== row.id ||
-    (binding.conversationId !== undefined && row.conversation_id !== binding.conversationId) ||
-    typeof row.conversation_id !== "string" ||
-    !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
-      row.conversation_id,
-    ) ||
-    typeof row.output_message_id !== "string" ||
-    !response.headers.has("X-Veryfront-Run-Event-Sequence") ||
-    !response.headers.has("X-Veryfront-Run-External-Event-Sequence") ||
-    !Number.isSafeInteger(eventCursor) || eventCursor < 0 ||
-    !Number.isSafeInteger(externalCursor) || externalCursor < 0
-  ) throw new Error("Inherited child resource binding mismatch");
+  assertInheritedChildResourceBinding(
+    response,
+    binding,
+    row,
+    canonical.id,
+    eventCursor,
+    externalCursor,
+  );
   const taskInput = admittedInputs.get(response);
   const verification = await verifyInheritedTaskInputBinding(response, binding, eventToken, runId);
   if (taskInput) authorizeHostedTaskInput(taskInput);
@@ -572,15 +685,8 @@ export async function acceptInheritedRunAdmission(
     status: row.status === "waiting" ? "waiting_for_tool" as const : row.status,
     streamProtocolVersion: 2 as const,
   };
-  if (row.status === "completed" || row.status === "failed" || row.status === "cancelled") {
-    terminalReceipts.set(run, {
-      status: row.status,
-      output: row.output ?? null,
-      ...(typeof row.error?.code === "string" && typeof row.error?.message === "string"
-        ? { error: { code: row.error.code, message: row.error.message } }
-        : {}),
-    });
-  }
+  const outputFormat = inheritedOutputFormats.get(response);
+  recordInheritedTerminalReceipt(run, row, outputFormat);
   credentials.set(run, {
     token,
     agentId: binding.agentId,
@@ -613,6 +719,18 @@ export async function acceptInheritedRunAdmission(
   return run;
 }
 
+/** Read invocation authority only from this exact child's private admission descriptor. */
+export function hostedInheritedInvocationCredentialReader(
+  descriptor: HostedTerminalDescriptor,
+): (() => string) | undefined {
+  if (!credentials.get(descriptor)) return undefined;
+  return () => {
+    const current = credentials.get(descriptor);
+    if (!current?.authToken) throw new Error("Inherited child invocation authority is required");
+    return current.authToken;
+  };
+}
+
 /** Create inference transport only from this inherited child's private admission authority. */
 export function hostedInheritedInferenceModelResolver(
   descriptor: HostedTerminalDescriptor,
@@ -623,7 +741,13 @@ export function hostedInheritedInferenceModelResolver(
   if (!authority.inferenceToken || !authority.apiUrl) {
     throw new Error("Inherited child inference authority is required");
   }
-  const resolver = createVeryfrontCloudInferenceModelResolver(authority.inferenceToken, {
+  const resolver = createVeryfrontCloudInferenceModelResolver(() => {
+    const current = credentials.get(descriptor);
+    if (!current?.inferenceToken) {
+      throw new Error("Inherited child inference authority is required");
+    }
+    return current.inferenceToken;
+  }, {
     apiBaseUrl: authority.apiUrl,
     assertParentActive: () => options.signal?.throwIfAborted(),
   });
@@ -631,6 +755,94 @@ export function hostedInheritedInferenceModelResolver(
     ? (model: string) =>
       resolver(model.startsWith("veryfront-cloud/") ? model : `veryfront-cloud/${model}`)
     : resolver;
+}
+
+type RenewedInheritedAuthority = Readonly<{
+  invocation: string;
+  inference: string;
+  terminal: string;
+  renewal: string;
+  events: string;
+}>;
+
+const RUN_CREDENTIAL_ROTATION_HEADER = "X-Veryfront-Run-Credential-Rotation";
+const RUN_CREDENTIAL_ROTATION_VERSION = "v2";
+const RENEWED_INHERITED_AUTHORITY_HEADERS = [
+  "X-Veryfront-Run-Invocation-Token",
+  "X-Veryfront-Inference-Token",
+  RUN_TERMINAL_TOKEN_HEADER,
+  "X-Veryfront-Run-Renewal-Token",
+  "X-Veryfront-Run-Event-Token",
+] as const;
+
+function acknowledgesInheritedAuthorityRotation(response: Response): boolean {
+  // Mixed-version rollout contract: an old API returns neither the acknowledgement
+  // nor credentials, while a v2 API acknowledges and returns the complete bundle.
+  // Any partial or unrecognised response fails closed instead of mixing generations.
+  const acknowledgement = response.headers.get(RUN_CREDENTIAL_ROTATION_HEADER);
+  if (acknowledgement === RUN_CREDENTIAL_ROTATION_VERSION) return true;
+  let hasCredentialHeader = false;
+  forEachPrivateArray(RENEWED_INHERITED_AUTHORITY_HEADERS, (header) => {
+    if (response.headers.has(header)) hasCredentialHeader = true;
+  });
+  if (acknowledgement !== null || hasCredentialHeader) {
+    throw new Error("Inherited child lease credential rotation acknowledgement mismatch");
+  }
+  return false;
+}
+
+function readRenewedInheritedAuthority(
+  response: Response,
+  runId: string,
+  canonicalRunId: string,
+): RenewedInheritedAuthority {
+  if (!response.headers.get("Cache-Control")?.includes("no-store")) {
+    throw new Error("Inherited child lease credentials require no-store");
+  }
+  const authority = {
+    invocation: response.headers.get("X-Veryfront-Run-Invocation-Token"),
+    inference: response.headers.get("X-Veryfront-Inference-Token"),
+    terminal: response.headers.get(RUN_TERMINAL_TOKEN_HEADER),
+    renewal: response.headers.get("X-Veryfront-Run-Renewal-Token"),
+    events: response.headers.get("X-Veryfront-Run-Event-Token"),
+  };
+  if (
+    !authority.invocation || authority.invocation.length > 16384 ||
+    !authority.inference || authority.inference.length > 16384 ||
+    !authority.terminal || authority.terminal.length > 16384 ||
+    !authority.renewal || authority.renewal.length > 16384 ||
+    !authority.events || authority.events.length > MAX_ROOT_RUN_EVENT_WRITER_TOKEN_BYTES ||
+    terminalRoutingRunId(authority.terminal) !== runId ||
+    terminalRoute(authority.terminal, runId).id !== canonicalRunId
+  ) {
+    throw new Error("Inherited child lease authority binding mismatch");
+  }
+  return authority as RenewedInheritedAuthority;
+}
+
+function rotateInheritedChildAuthority(
+  descriptor: HostedTerminalDescriptor,
+  response: Response,
+): void {
+  const authority = credentials.get(descriptor);
+  if (!authority) throw new Error("Inherited child authority is required");
+  const renewed = readRenewedInheritedAuthority(
+    response,
+    authority.runId,
+    terminalRoute(authority.token, authority.runId).id,
+  );
+  rotateHostedPlatformDependencyCredential(descriptor, renewed.invocation);
+  forEachPrivateArray(authority.eventWriters ?? [], (writer) => {
+    refreshHostedRunEventWriterCapability(writer, {
+      runId: authority.runId,
+      runEventAppendToken: renewed.events,
+    });
+  });
+  authority.authToken = renewed.invocation;
+  authority.inferenceToken = renewed.inference;
+  authority.token = renewed.terminal;
+  authority.renewalToken = renewed.renewal;
+  authority.eventToken = renewed.events;
 }
 
 /** Preserve exact private authority when a trusted adapter projects its descriptor. */
@@ -712,6 +924,7 @@ export async function withHostedInheritedLease<T>(
             headers: {
               Authorization: `Bearer ${authority.renewalToken}`,
               "Content-Type": "application/json",
+              [RUN_CREDENTIAL_ROTATION_HEADER]: RUN_CREDENTIAL_ROTATION_VERSION,
             },
             body: JSON.stringify({ lease_duration_seconds: 60 }),
             signal: controller.signal,
@@ -730,11 +943,9 @@ export async function withHostedInheritedLease<T>(
       }
       const receipt = await response.json();
       leaseExpiresAt = Date.parse(receipt.expires_at);
-      if (
-        receipt.run_id !== canonicalId || !Number.isFinite(leaseExpiresAt) ||
-        leaseExpiresAt <= Date.now()
-      ) {
-        throw new Error("Inherited child lease response binding mismatch");
+      assertInheritedLeaseReceipt(receipt, canonicalId, leaseExpiresAt);
+      if (acknowledgesInheritedAuthorityRotation(response)) {
+        rotateInheritedChildAuthority(descriptor, response);
       }
       armExpiry();
     }
@@ -765,23 +976,27 @@ export function hostedBoundRunStatus(descriptor: HostedTerminalDescriptor, expec
     return undefined;
   }
   const apiUrl = authority.apiUrl;
-  const authToken = authority.authToken;
-  return (abortSignal?: AbortSignal) =>
-    getCanonicalRunStatus({
+  return (abortSignal?: AbortSignal) => {
+    const current = credentials.get(descriptor);
+    if (!current?.authToken || current.runId !== expectedRunId) {
+      throw new Error("Inherited child authority is required");
+    }
+    return getCanonicalRunStatus({
       apiUrl,
-      authToken,
-      runId: authority.runId,
-      canonicalRunId: terminalRoute(authority.token, authority.runId).id,
+      authToken: current.authToken,
+      runId: current.runId,
+      canonicalRunId: terminalRoute(current.token, current.runId).id,
       abortSignal,
-      fetch: authority.fetch,
+      fetch: current.fetch,
     });
+  };
 }
 
 /** Reconstitute only the exact child writer issued by inherited admission. */
 export function hostedInheritedEventWriter(descriptor: HostedTerminalDescriptor) {
   const authority = credentials.get(descriptor);
   if (!authority?.eventToken || !authority.apiUrl) return undefined;
-  return createHostedRunEventWriterCapability({
+  const writer = createHostedRunEventWriterCapability({
     inheritedExecution: true,
     projectId: authority.projectId,
     apiUrl: authority.apiUrl,
@@ -796,6 +1011,9 @@ export function hostedInheritedEventWriter(descriptor: HostedTerminalDescriptor)
       fetch: authority.fetch,
     }),
   });
+  authority.eventWriters ??= [];
+  appendPrivateArray(authority.eventWriters, [writer]);
+  return writer;
 }
 
 /** Restore child input only from verified private native admission, never caller context. */
@@ -893,14 +1111,15 @@ export function hostedAcceptedChildEvidence(
     return canonical;
   }
   const send = transport?.fetch ?? authority.fetch ?? hostFetch,
-    token = authority.authToken,
     resolveApiUrl = createVeryfrontApiRequestUrlResolver(transport?.apiUrl ?? authority.apiUrl!);
   const requestSignal = signal
     ? AbortSignal.any([signal, AbortSignal.timeout(15000)])
     : AbortSignal.timeout(15000);
   async function read(path: string): Promise<unknown> {
+    const currentToken = credentials.get(descriptor)?.authToken;
+    if (!currentToken) throw new Error("Accepted receipt reader authority is required");
     const response = await send(resolveApiUrl(path), {
-      headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
+      headers: { Authorization: `Bearer ${currentToken}`, Accept: "application/json" },
       redirect: "error",
       signal: requestSignal,
     });

@@ -1,6 +1,9 @@
+import { parseExecutorDataEvent } from "./streaming/executor-data-schema.ts";
+import { readStructuredAgentOutput } from "./output-schema.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import {
   assertEquals,
+  assertExists,
   assertRejects,
   assertStringIncludes,
   assertThrows,
@@ -191,6 +194,8 @@ describe("agent output schema", () => {
 
       assertEquals(onlyRequestedFormat(calls)?.type, "json_schema");
       // Inference is checked here without an annotation on `response`.
+      assertEquals(response.data, response.object);
+      assertExists(response.object);
       assertEquals(response.object.city, "Berlin");
       assertEquals(response.object.tempC, 12);
     });
@@ -212,7 +217,31 @@ describe("agent output schema", () => {
 
       assertEquals(response.text, '{"city":"[EMAIL]","tempC":12}');
       assertEquals(response.object, { city: "[EMAIL]", tempC: 12 });
+      assertEquals(response.data, response.object);
     });
+
+    for (const value of [false, 0, "", null]) {
+      it(`preserves structured ${JSON.stringify(value)} in both aliases`, async () => {
+        const model = createRecordingModel(JSON.stringify(value), []);
+        const structured = agent({
+          id: "falsy-structured-output",
+          system: "Return the requested value.",
+          outputSchema: {
+            type: value === null
+              ? "null"
+              : typeof value === "boolean"
+              ? "boolean"
+              : typeof value === "number"
+              ? "number"
+              : "string",
+          },
+          resolveModelTransport: () => Promise.resolve({ model }),
+        });
+        const response = await structured.generate({ input: "Return the value." });
+        assertEquals(response.data, value);
+        assertEquals(response.object, value);
+      });
+    }
 
     it("should leave an agent without a schema unchanged", async () => {
       const calls: ModelRuntimeCallOptions[] = [];
@@ -318,7 +347,8 @@ describe("agent output schema", () => {
       const result = await weather.stream({
         input: "Berlin?",
         onFinish: (response) => {
-          finished = response.object;
+          finished = response.data;
+          assertEquals(response.data, response.object);
         },
       });
       const body = await result.toDataStreamResponse().text();
@@ -326,7 +356,18 @@ describe("agent output schema", () => {
       assertEquals(onlyRequestedFormat(calls)?.type, "json_schema");
       assertEquals(finished, { city: "Berlin", tempC: 12 });
       assertStringIncludes(body, '"type":"message-finish"');
-      assertStringIncludes(body, '"object":{"city":"Berlin","tempC":12}');
+      assertStringIncludes(body, '"data":{"city":"Berlin","tempC":12}');
+      assertEquals(body.includes('"object":{"city":"Berlin","tempC":12}'), false);
+      const finishLine = body.split("\n").find((line) =>
+        line.startsWith("data: ") && line.includes('"type":"message-finish"')
+      );
+      assertEquals(Boolean(finishLine), true);
+      const finish = parseExecutorDataEvent(JSON.parse(finishLine!.slice(6)));
+      assertEquals("data" in finish ? finish.data : undefined, { city: "Berlin", tempC: 12 });
+      assertEquals(
+        "object" in finish ? finish.object : undefined,
+        "data" in finish ? finish.data : undefined,
+      );
     });
 
     it("should emit an error event when streamed output is not parseable", async () => {
@@ -354,5 +395,27 @@ describe("agent output schema", () => {
       assertStringIncludes(body, "is not valid JSON for its outputSchema");
       assertEquals(onFinishCalled, false);
     });
+  });
+});
+
+describe("structured output aliases", () => {
+  it("accepts equivalent aliases with different key order", () => {
+    assertEquals(readStructuredAgentOutput({ data: { a: 1, b: 2 }, object: { b: 2, a: 1 } }), {
+      data: { a: 1, b: 2 },
+      object: { a: 1, b: 2 },
+    });
+  });
+  it("rejects conflicting aliases", () => {
+    assertThrows(() => readStructuredAgentOutput({ data: false, object: true }));
+  });
+  it("does not invoke getters or inherit aliases", () => {
+    assertThrows(() =>
+      readStructuredAgentOutput({
+        get data() {
+          throw new Error("getter invoked");
+        },
+      })
+    );
+    assertEquals(readStructuredAgentOutput(Object.create({ data: 1 })), undefined);
   });
 });

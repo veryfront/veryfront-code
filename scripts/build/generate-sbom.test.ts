@@ -12,6 +12,8 @@ import {
   SUPPORTED_LOCK_VERSIONS,
 } from "./generate-sbom.ts";
 
+const SAMPLE_SHA512_SRI = "sha512-" + btoa("\0".repeat(64));
+
 Deno.test("SBOM sensitivity ratchet owns the explicit Node WebSocket dependencies", () => {
   const boundary = SENSITIVE_DEPENDENCY_BOUNDARIES.find((candidate) =>
     candidate.sourceLocation === "extensions/ext-node-websocket-ws/deno.json"
@@ -34,8 +36,8 @@ describe("componentsFromLock", () => {
       version: "5",
       specifiers: { "npm:zod@4.3.6": "4.3.6" },
       npm: {
-        "zod@4.3.6": { integrity: "sha512-aaa", dependencies: [] },
-        "fast-deep-equal@3.1.3": { integrity: "sha512-bbb" },
+        "zod@4.3.6": { integrity: SAMPLE_SHA512_SRI, dependencies: [] },
+        "fast-deep-equal@3.1.3": { integrity: SAMPLE_SHA512_SRI },
       },
     });
 
@@ -45,7 +47,7 @@ describe("componentsFromLock", () => {
     const zod = components.find((c) => c.name === "zod")!;
     assertEquals(zod.version, "4.3.6");
     assertEquals(zod.purl, "pkg:npm/zod@4.3.6");
-    assertEquals(zod.hashes?.[0], { alg: "SHA-512", content: "aaa" });
+    assertEquals(zod.hashes?.[0], { alg: "SHA-512", content: "00".repeat(64) });
   });
 
   it("strips peer-disambiguator suffix from canonical name@version", () => {
@@ -53,7 +55,7 @@ describe("componentsFromLock", () => {
       version: "5",
       specifiers: {},
       npm: {
-        "@mdx-js/mdx@3.1.1_acorn@8.16.0": { integrity: "sha512-x" },
+        "@mdx-js/mdx@3.1.1_acorn@8.16.0": { integrity: SAMPLE_SHA512_SRI },
       },
     });
     const c = componentsFromLock(lock)[0];
@@ -67,9 +69,9 @@ describe("componentsFromLock", () => {
       version: "5",
       specifiers: {},
       npm: {
-        "@opentelemetry/core@2.6.0": { integrity: "sha512-a" },
+        "@opentelemetry/core@2.6.0": { integrity: SAMPLE_SHA512_SRI },
         "@opentelemetry/core@2.6.0_@opentelemetry+api@1.9.0": {
-          integrity: "sha512-a",
+          integrity: SAMPLE_SHA512_SRI,
         },
       },
     });
@@ -80,7 +82,7 @@ describe("componentsFromLock", () => {
     const lock = JSON.stringify({
       version: "5",
       specifiers: {},
-      npm: { "@opentelemetry/api@1.9.0": { integrity: "sha512-x" } },
+      npm: { "@opentelemetry/api@1.9.0": { integrity: SAMPLE_SHA512_SRI } },
     });
     const components = componentsFromLock(lock);
     assertEquals(components[0].purl, "pkg:npm/%40opentelemetry/api@1.9.0");
@@ -117,9 +119,9 @@ describe("componentsFromLock", () => {
           "1.3.16_ai@6.0.182__zod@3.25.76_just-bash@2.14.5",
       },
       npm: {
-        "zod@4.3.6": { integrity: "sha512-core", dependencies: [] },
+        "zod@4.3.6": { integrity: SAMPLE_SHA512_SRI, dependencies: [] },
         "bash-tool@1.3.16_ai@6.0.182__zod@3.25.76_just-bash@2.14.5": {
-          integrity: "sha512-shell",
+          integrity: SAMPLE_SHA512_SRI,
           dependencies: [],
         },
       },
@@ -156,8 +158,8 @@ describe("componentsFromLock", () => {
         "npm:tailwindcss@4.2.2": "4.2.2",
       },
       npm: {
-        "bash-tool@1.3.16": { integrity: "sha512-shell", dependencies: [] },
-        "tailwindcss@4.2.2": { integrity: "sha512-tailwind", dependencies: [] },
+        "bash-tool@1.3.16": { integrity: SAMPLE_SHA512_SRI, dependencies: [] },
+        "tailwindcss@4.2.2": { integrity: SAMPLE_SHA512_SRI, dependencies: [] },
       },
       workspace: {
         dependencies: [],
@@ -238,8 +240,8 @@ describe("componentsFromLock", () => {
         "npm:tailwindcss@4.2.2": "4.2.2",
       },
       npm: {
-        "bash-tool@1.3.16": { integrity: "sha512-shell", dependencies: [] },
-        "tailwindcss@4.2.2": { integrity: "sha512-tailwind", dependencies: [] },
+        "bash-tool@1.3.16": { integrity: SAMPLE_SHA512_SRI, dependencies: [] },
+        "tailwindcss@4.2.2": { integrity: SAMPLE_SHA512_SRI, dependencies: [] },
       },
       workspace: {
         dependencies: [],
@@ -328,7 +330,7 @@ describe("componentsFromLock", () => {
         "npm:bash-tool@1.3.16": "1.3.16",
       },
       npm: {
-        "bash-tool@1.3.16": { integrity: "sha512-shell", dependencies: [] },
+        "bash-tool@1.3.16": { integrity: SAMPLE_SHA512_SRI, dependencies: [] },
       },
       workspace: {
         dependencies: [],
@@ -461,4 +463,45 @@ it("generate-sbom CLI rejects --lock without a value as a usage error", async ()
   assertEquals(result.code, 2);
   assertStringIncludes(stderr, "--lock requires a non-empty path");
   assertStringIncludes(stderr, "Usage:");
+});
+
+describe("SBOM checksum encoding", () => {
+  for (const [bits, size] of [[256, 32], [384, 48], [512, 64]] as const) {
+    it(`encodes SHA-${bits} SRI bytes as CycloneDX hexadecimal`, () => {
+      const encoded = btoa("\0".repeat(size));
+      for (const value of [encoded, encoded.replace(/=+$/, "")]) {
+        const lock = JSON.stringify({
+          version: "5",
+          npm: {
+            "checksum-fixture@1.0.0": { integrity: `sha${bits}-${value}` },
+          },
+        });
+        assertEquals(componentsFromLock(lock)[0].hashes, [{
+          alg: `SHA-${bits}`,
+          content: "00".repeat(size),
+        }]);
+      }
+    });
+  }
+
+  it("rejects malformed, noncanonical and wrong-sized supported checksums", () => {
+    for (
+      const integrity of [
+        "sha512-",
+        "sha512-not-base64!",
+        "sha512-YQ==",
+        "sha256-AB==",
+        `sha256-${"A".repeat(42)}B=`,
+        `sha512-${btoa("\0".repeat(64))}extra`,
+      ]
+    ) {
+      const lock = JSON.stringify({
+        version: "5",
+        npm: {
+          "checksum-fixture@1.0.0": { integrity },
+        },
+      });
+      assertThrows(() => componentsFromLock(lock), Error, "Invalid SHA");
+    }
+  });
 });

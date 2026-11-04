@@ -106,9 +106,7 @@ export function extractOpenAIResponsesUsage(payload: unknown): RuntimeUsage | un
   const inputTokens = readTokenCount(usage.input_tokens);
   const outputTokens = readTokenCount(usage.output_tokens);
   const reportedTotalTokens = readTokenCount(usage.total_tokens);
-  const totalTokens = reportedTotalTokens !== undefined
-    ? reportedTotalTokens
-    : sumTokenCounts(inputTokens, outputTokens);
+  const totalTokens = reportedTotalTokens ?? sumTokenCounts(inputTokens, outputTokens);
   const inputDetails = readRecord(usage.input_tokens_details);
   const cachedTokens = readTokenCount(inputDetails?.cached_tokens);
   const outputDetails = readRecord(usage.output_tokens_details);

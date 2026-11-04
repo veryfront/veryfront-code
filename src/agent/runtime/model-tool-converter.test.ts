@@ -438,7 +438,7 @@ describe("model-tool-converter", () => {
     assertEquals("tool_128" in result!, false);
   });
 
-  it("sanitizes Google-compatible runtime tool schemas", () => {
+  it("preserves canonical Google JSON Schema runtime tool contracts", () => {
     const result = convertToolsToRuntimeTools([
       {
         name: "choose_kind",
@@ -457,15 +457,11 @@ describe("model-tool-converter", () => {
 
     const schema = getRuntimeToolSchema(result?.choose_kind);
 
-    assertEquals(containsKey(schema, "const"), false);
-    assertEquals(containsKey(schema, "default"), false);
-    assertEquals(containsKey(schema, "additionalProperties"), false);
-    assertEquals(
-      (schema as { properties?: { kind?: { enum?: unknown[] } } }).properties?.kind?.enum,
-      [
-        "file",
-      ],
-    );
+    assertEquals(schema, {
+      type: "object",
+      additionalProperties: false,
+      properties: { kind: { type: "string", const: "file", default: "file" } },
+    });
   });
 
   it("preserves complete tool schemas for a Google-published model on an OpenAI gateway wire surface", () => {

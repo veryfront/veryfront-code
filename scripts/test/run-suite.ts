@@ -108,6 +108,8 @@ const SSR_PIPELINE_RUNTIME_FIXTURE =
   "tests/integration/semantic-unit-boundary/src/transforms/pipeline/__fixtures__/fixture-runner-ssr.test.ts";
 const HOSTED_EXECUTOR_MODEL_DISPATCH_INTRINSICS =
   "tests/integration/semantic-unit-boundary/src/agent/hosted/executor-model-dispatch-intrinsics.test.ts";
+const RUN_STREAM_PREVIEW_CONTEXT =
+  "tests/integration/semantic-unit-boundary/internal-agents/run-stream-preview-context.test.ts";
 const RUNTIME_PATTERNS = {
   node: [
     "src/**/*.test.ts",
@@ -125,6 +127,7 @@ const RUNTIME_PATTERNS = {
     "tests/integration/runtime/compat/spawn-missing-executable.test.ts",
     "tests/integration/security/sandbox-runtime-guard.test.ts",
     "tests/integration/security/host-api-http.test.ts",
+    "tests/integration/security/eval-agent-service-failure-intrinsics.test.ts",
     "tests/integration/server/dependency-snapshot-intrinsics.test.ts",
     "tests/integration/server/runtime-file-mutation-authority-intrinsics.test.ts",
     "tests/integration/agent/external-worker-client-intrinsics.test.ts",
@@ -148,6 +151,7 @@ const RUNTIME_PATTERNS = {
     "tests/integration/agent/executor-discovery-request-intrinsics.test.ts",
     "tests/integration/security/application-request.test.ts",
     HOSTED_EXECUTOR_MODEL_DISPATCH_INTRINSICS,
+    RUN_STREAM_PREVIEW_CONTEXT,
     SSR_PIPELINE_RUNTIME_FIXTURE,
   ],
   bun: [
@@ -167,6 +171,7 @@ const RUNTIME_PATTERNS = {
     "tests/integration/runtime/compat/spawn-missing-executable.test.ts",
     "tests/integration/security/sandbox-runtime-guard.test.ts",
     "tests/integration/security/host-api-http.test.ts",
+    "tests/integration/security/eval-agent-service-failure-intrinsics.test.ts",
     "tests/integration/server/dependency-snapshot-intrinsics.test.ts",
     "tests/integration/server/runtime-file-mutation-authority-intrinsics.test.ts",
     "tests/integration/agent/external-worker-client-intrinsics.test.ts",
@@ -190,6 +195,7 @@ const RUNTIME_PATTERNS = {
     "tests/integration/agent/executor-discovery-request-intrinsics.test.ts",
     "tests/integration/security/application-request.test.ts",
     HOSTED_EXECUTOR_MODEL_DISPATCH_INTRINSICS,
+    RUN_STREAM_PREVIEW_CONTEXT,
     SSR_PIPELINE_RUNTIME_FIXTURE,
   ],
 } as const;

@@ -1,7 +1,7 @@
 ---
 title: "Middleware"
 description: "CORS, rate limiting, logging, and custom middleware pipelines."
-order: 15
+order: 70
 ---
 
 Middleware runs before your route handler. Use it for rate limits, logging, timeouts, and auth checks. A `MiddlewarePipeline` chains middleware together and short-circuits to a `Response` when one rejects the request.

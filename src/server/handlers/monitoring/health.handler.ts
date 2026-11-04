@@ -75,7 +75,7 @@ export class HealthHandler extends BaseHandler {
           timestamp: new Date().toISOString(),
           mode: hasStaticBuild ? "static+ssr" : "ssr",
           version: RUNTIME_VERSION,
-          capabilities: [DEPENDENCY_ARTIFACT_BUILD_CAPABILITY],
+          capabilities: [DEPENDENCY_ARTIFACT_BUILD_CAPABILITY, "run-schema-snapshot-v1"],
           tracing: {
             enabled: isTracingEnabled(),
             degraded: tracingDegraded,

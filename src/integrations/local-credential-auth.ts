@@ -16,6 +16,7 @@ import {
 } from "#veryfront/integrations/limits.ts";
 
 const apply = Reflect.apply;
+const mathMin = Math.min;
 const arrayIsArray = Array.isArray;
 const arrayJoin = Array.prototype.join;
 const encodeUriComponent = encodeURIComponent;
@@ -143,7 +144,7 @@ function join(values: readonly string[], separator: string): string {
 }
 
 function compareStrings(left: string, right: string): number {
-  const length = left.length < right.length ? left.length : right.length;
+  const length = mathMin(left.length, right.length);
   for (let index = 0; index < length; index++) {
     const leftCode = apply(stringCharCodeAt, left, [index]) as number;
     const rightCode = apply(stringCharCodeAt, right, [index]) as number;
@@ -293,6 +294,40 @@ function copyTokenParams(
   return copied;
 }
 
+function createApiKeyAuthPlan(
+  connector: Pick<IntegrationConfig, "auth" | "envVars" | "name">,
+  auth: IntegrationConfig["auth"],
+): LocalApiKeyAuthPlan {
+  if (auth.queryParamName) {
+    localIntegrationConfigurationError(
+      `Local integration "${connector.name}" uses unsupported query credentials`,
+    );
+  }
+  if (!auth.keyName) {
+    localIntegrationConfigurationError(
+      `Local integration "${connector.name}" is missing its API-key name`,
+    );
+  }
+  const additionalHeaders = freeze({ ...auth.additionalHeaders });
+  const required = [assertCanonicalCredentialName(auth.keyName, connector.name)];
+  const additionalNames = objectValues(additionalHeaders);
+  for (let index = 0; index < additionalNames.length; index++) {
+    append(
+      required,
+      assertCanonicalCredentialName(additionalNames[index]!, connector.name),
+    );
+  }
+  return freeze({
+    kind: "api-key",
+    connectorName: connector.name,
+    keyName: required[0]!,
+    headerName: auth.headerName ?? "Authorization",
+    headerPrefix: auth.headerPrefix,
+    additionalHeaders,
+    requiredEnvironmentVariables: freeze(required),
+  });
+}
+
 /** Build a serializable, value-free credential plan from trusted catalog metadata. */
 export function createLocalCredentialAuthPlan(
   connector: Pick<IntegrationConfig, "auth" | "envVars" | "name">,
@@ -314,34 +349,7 @@ export function createLocalCredentialAuthPlan(
   }
 
   if (auth.type === "api-key") {
-    if (auth.queryParamName) {
-      localIntegrationConfigurationError(
-        `Local integration "${connector.name}" uses unsupported query credentials`,
-      );
-    }
-    if (!auth.keyName) {
-      localIntegrationConfigurationError(
-        `Local integration "${connector.name}" is missing its API-key name`,
-      );
-    }
-    const additionalHeaders = freeze({ ...auth.additionalHeaders });
-    const required = [assertCanonicalCredentialName(auth.keyName, connector.name)];
-    const additionalNames = objectValues(additionalHeaders);
-    for (let index = 0; index < additionalNames.length; index++) {
-      append(
-        required,
-        assertCanonicalCredentialName(additionalNames[index]!, connector.name),
-      );
-    }
-    return freeze({
-      kind: "api-key",
-      connectorName: connector.name,
-      keyName: required[0]!,
-      headerName: auth.headerName ?? "Authorization",
-      headerPrefix: auth.headerPrefix,
-      additionalHeaders,
-      requiredEnvironmentVariables: freeze(required),
-    });
+    return createApiKeyAuthPlan(connector, auth);
   }
 
   if (auth.type === "basic") {
@@ -480,6 +488,15 @@ async function readCredential(
   return value;
 }
 
+function isPresentCredential(
+  value: string | undefined,
+  plan: LocalCredentialAuthPlan,
+  name: string,
+): value is string {
+  return value !== undefined &&
+    !(plan.kind === "basic" && name === plan.usernameName && stringIncludesValue(value, ":"));
+}
+
 async function readCredentials(
   plan: LocalCredentialAuthPlan,
   provider: LocalIntegrationCredentialProvider,
@@ -493,9 +510,7 @@ async function readCredentials(
     // `:`, so a username containing one would silently shift part of itself
     // into the password. Fail closed as a missing credential.
     if (
-      value === undefined ||
-      (plan.kind === "basic" && name === plan.usernameName &&
-        stringIncludesValue(value, ":"))
+      !isPresentCredential(value, plan, name)
     ) {
       append(missing, name);
     } else values[name] = value;
@@ -602,6 +617,21 @@ function tokenResponseRecord(
   return value as Record<string, unknown>;
 }
 
+function resolveApiKeyHeaders(
+  plan: LocalApiKeyAuthPlan,
+  values: Record<string, string>,
+): ResolvedLocalCredentialAuth {
+  const key = values[plan.keyName]!;
+  const headers: Record<string, string> = objectCreate(null);
+  headers[plan.headerName] = plan.headerPrefix ? `${plan.headerPrefix} ${key}` : key;
+  const additionalEntries = objectEntries(plan.additionalHeaders);
+  for (let index = 0; index < additionalEntries.length; index++) {
+    const [headerName, environmentName] = additionalEntries[index]!;
+    headers[headerName] = values[environmentName]!;
+  }
+  return freeze({ kind: "headers", connectorName: plan.connectorName, headers: freeze(headers) });
+}
+
 /** Resolve short-lived secret values for a previously validated auth plan. */
 export async function resolveLocalCredentialAuth(
   plan: LocalCredentialAuthPlan,
@@ -610,15 +640,7 @@ export async function resolveLocalCredentialAuth(
   const values = await readCredentials(plan, provider);
 
   if (plan.kind === "api-key") {
-    const key = values[plan.keyName]!;
-    const headers: Record<string, string> = objectCreate(null);
-    headers[plan.headerName] = plan.headerPrefix ? `${plan.headerPrefix} ${key}` : key;
-    const additionalEntries = objectEntries(plan.additionalHeaders);
-    for (let index = 0; index < additionalEntries.length; index++) {
-      const [headerName, environmentName] = additionalEntries[index]!;
-      headers[headerName] = values[environmentName]!;
-    }
-    return freeze({ kind: "headers", connectorName: plan.connectorName, headers: freeze(headers) });
+    return resolveApiKeyHeaders(plan, values);
   }
 
   if (plan.kind === "basic") {

@@ -62,7 +62,7 @@ it("privately retains server-issued claim authority for canonical append and fin
   assertEquals(calls[2].url, `https://api.example.test/runs/${id}/finalize`);
   assertEquals(calls[2].headers.get("Authorization"), "Bearer invocation");
   assertEquals(calls[2].headers.get("X-Veryfront-Run-Terminal-Token"), terminal);
-  assertEquals(await calls[2].json(), { status: "completed", output: null });
+  assertEquals(await calls[2].json(), { status: "completed" });
   await assertRejects(
     () => client.completeRun({ runId: publicId, status: "completed" }),
     Error,

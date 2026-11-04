@@ -156,6 +156,16 @@ export function createRunBoundAgentManualPause(input: {
     }
     return undefined;
   };
+  const restoreRejectedPauseState = (
+    mayCommitPause: boolean,
+    response: Response | undefined,
+    previouslyStopped: boolean,
+  ): void => {
+    if (mayCommitPause && response) {
+      const status = apply(responseStatus, response, []) as number;
+      if (status >= 400 && status < 500) state.stopped = previouslyStopped;
+    }
+  };
   const request = async <T>(
     suffix: string,
     body: string | undefined,
@@ -180,10 +190,7 @@ export function createRunBoundAgentManualPause(input: {
           }
           : undefined,
       );
-      if (mayCommitPause && response) {
-        const status = apply(responseStatus, response, []) as number;
-        if (status >= 400 && status < 500) state.stopped = previouslyStopped;
-      }
+      restoreRejectedPauseState(mayCommitPause, response, previouslyStopped);
       const settled = await settle(response, parse);
       if (settled) return settled.value;
       checkLifetime();

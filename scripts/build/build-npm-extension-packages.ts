@@ -151,9 +151,39 @@ export function createDntExtensionEntryPoints(input: {
   }));
 }
 
+function rewriteStagedExtensionImports(
+  original: string,
+  filePath: string,
+  input: { rootDir: string },
+  stagedSourceTargets: Map<string, string>,
+  usedSpecifiers: Set<string>,
+): string {
+  let next = original;
+  for (const [specifier, targetPath] of stagedSourceTargets) {
+    if (!next.includes(specifier)) continue;
+    let targetSpecifier = relative(dirname(filePath), targetPath).replaceAll(
+      "\\",
+      "/",
+    );
+    if (!targetSpecifier.startsWith(".")) {
+      targetSpecifier = `./${targetSpecifier}`;
+    }
+    next = next.replaceAll(specifier, targetSpecifier);
+    usedSpecifiers.add(specifier);
+  }
+  next = next.replaceAll(
+    '"veryfront/extensions"',
+    `"${toFileUrl(join(input.rootDir, "src/extensions/index.ts")).href}"`,
+  );
+  return next;
+}
+
 async function prepareDntExtensionBuildInput(input: {
   rootDir: string;
-  spec: Pick<ExtensionPackageSpec, "entryPoints" | "manifestDir" | "stagedSources">;
+  spec: Pick<
+    ExtensionPackageSpec,
+    "entryPoints" | "manifestDir" | "stagedSources"
+  >;
 }): Promise<
   { entryPoints: { name: string; path: string }[]; cleanup(): Promise<void> }
 > {
@@ -187,17 +217,12 @@ async function prepareDntExtensionBuildInput(input: {
   for await (const filePath of walkFiles(stagedExtensionDir)) {
     if (!filePath.endsWith(".ts")) continue;
     const original = await Deno.readTextFile(filePath);
-    let next = original;
-    for (const [specifier, targetPath] of stagedSourceTargets) {
-      if (!next.includes(specifier)) continue;
-      let targetSpecifier = relative(dirname(filePath), targetPath).replaceAll("\\", "/");
-      if (!targetSpecifier.startsWith(".")) targetSpecifier = `./${targetSpecifier}`;
-      next = next.replaceAll(specifier, targetSpecifier);
-      usedSpecifiers.add(specifier);
-    }
-    next = next.replaceAll(
-      '"veryfront/extensions"',
-      `"${toFileUrl(join(input.rootDir, "src/extensions/index.ts")).href}"`,
+    const next = rewriteStagedExtensionImports(
+      original,
+      filePath,
+      input,
+      stagedSourceTargets,
+      usedSpecifiers,
     );
     if (next !== original) {
       await Deno.writeTextFile(filePath, next);

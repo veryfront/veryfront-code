@@ -78,7 +78,13 @@ describe("managed broker ingress", () => {
     assertEquals(result.executor.input.runId, "run-1");
     const visible = JSON.stringify(result.executor);
     for (
-      const secret of ["broker-token", "api-auth-token", "run-event-token", "inference-token"]
+      const secret of [
+        "broker-token",
+        "api-auth-token",
+        "run-event-token",
+        "inference-token",
+        "source-read-token",
+      ]
     ) {
       assertEquals(visible.includes(secret), false);
     }
@@ -89,6 +95,7 @@ describe("managed broker ingress", () => {
     const credential of [
       "api-auth-token",
       "inference-token",
+      "source-read-token",
       "run-event-token",
       "Bearer broker-token",
       "broker-token",
@@ -101,6 +108,19 @@ describe("managed broker ingress", () => {
           role: "user",
           content: `Use ${credential} for this request`,
         }],
+      }));
+      await assertIngressError(
+        () => parseBrokerRuntimeAgentIngress(signed.request, options(signed.publicKeyPem)),
+        403,
+        "BROKER_INGRESS_SCOPE_DENIED",
+      );
+    });
+  }
+
+  for (const field of ["sourceAuthToken", "source-auth-token", "source_auth_token"]) {
+    it(`rejects forwarded source authority under ${field}`, async () => {
+      const signed = await signedRequest(invocation({
+        forwardedProps: { nested: { [field]: "untrusted-source-authority" } },
       }));
       await assertIngressError(
         () => parseBrokerRuntimeAgentIngress(signed.request, options(signed.publicKeyPem)),
@@ -134,6 +154,12 @@ describe("managed broker ingress", () => {
       ["property name", { attachments: [{ "result-inference%2Dtoken-metadata": "value" }] }],
       ["Bearer attachment URL", {
         attachments: [{ url: "https://files.test/document?token=Bearer%20broker%2Dtoken" }],
+      }],
+      ["source attachment URL", {
+        attachments: [{ url: "https://files.test/document?token=source%2Dread%2Dtoken" }],
+      }],
+      ["source property name", {
+        attachments: [{ "source%2Dread%2Dtoken": "value" }],
       }],
     ] as const
   ) {

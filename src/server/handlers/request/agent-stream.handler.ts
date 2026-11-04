@@ -1,4 +1,22 @@
 import {
+  type CachedSourceObservation,
+  observeCachedSource,
+} from "#veryfront/platform/adapters/fs/cached-source-observation.ts";
+import { bindSourceObservationStages } from "#veryfront/internal-agents/source-observation.ts";
+import {
+  bindProjectEventWriter,
+  createProjectEventWriter,
+  getProjectEventPersistenceSchema,
+} from "#veryfront/internal-agents/project-event-writer.ts";
+import { bindManagedRecoveryCredentials } from "#veryfront/internal-agents/managed-recovery-http.ts";
+import {
+  assertManagedRecoveryExecutionBinding,
+  assertManagedRecoveryRequestBinding,
+  bindManagedRecoveryInput,
+  bindManagedRecoveryRunSession,
+  type ManagedRecoveryRunSession,
+} from "#veryfront/internal-agents/managed-recovery-input.ts";
+import {
   copyNativeResponse,
   readResponseValue,
   ResponseBodyGet,
@@ -84,6 +102,7 @@ import {
 } from "#veryfront/internal-agents/runtime-owner.ts";
 import {
   ControlPlaneRequestError,
+  getVerifiedControlPlaneRecoveryAdmission,
   verifyControlPlaneRequest,
 } from "#veryfront/internal-agents/control-plane-auth.ts";
 import {
@@ -132,6 +151,7 @@ import { createRunPlatformToolSource } from "./run-terminal-tool-source.ts";
 import { requireInferenceProviderCredential } from "#veryfront/provider/runtime-loader/provider-request-init.ts";
 import { isServerShuttingDown } from "../../shutdown-state.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
+import { terminalRoute } from "#veryfront/agent/conversation/terminal-route.ts";
 import { resolveVeryfrontApiBaseUrlFromHostEnv } from "#veryfront/platform/cloud/resolver.ts";
 import { serverLogger } from "#veryfront/utils";
 import {
@@ -151,6 +171,7 @@ import {
   capturePlatformDependencySource,
   getVerifiedPlatformToolDependencies,
   registerPlatformDependencyOwner,
+  verifyOperatorRunTerminalToken,
 } from "#veryfront/agent/service/auth.ts";
 import { prepareDeclarativeConfigContext } from "#veryfront/config/declarative-evaluator.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
@@ -183,6 +204,9 @@ export interface AgentStreamHandlerDeps
   normalizeSourceIntegrationPolicy?: typeof normalizeSourceIntegrationPolicy;
   createRunScopedProviderReplayCheckpointPersister?:
     typeof createRunScopedProviderReplayCheckpointPersister;
+  verifyRunTerminalToken?: (
+    input: { token: string; projectId: string; runId: string },
+  ) => Promise<boolean>;
 }
 
 type AgentSourceTargetIdentity = Pick<
@@ -212,6 +236,7 @@ const defaultDeps: AgentStreamHandlerDeps = {
     getDiscoveredHostTools({ agentId }) as RuntimeAgentStreamExecutionDeps["localTools"],
   providerReplayCheckpointEmissionEnabled: isProviderReplayCheckpointEmissionEnabled(),
   createRunScopedProviderReplayCheckpointPersister,
+  verifyRunTerminalToken: verifyOperatorRunTerminalToken,
 };
 const logger = serverLogger.component("agent-stream-handler");
 const createInvocationNamespace = crypto.randomUUID.bind(crypto);
@@ -569,6 +594,7 @@ async function resolveAgentSourceConfig(
   ctx: HandlerContext,
   sourceContext: RuntimeAgentSourceContext,
   environment: Record<string, string>,
+  assertCurrent?: () => Promise<void>,
 ): Promise<VeryfrontConfig> {
   const cacheKey = ctx.projectId ?? ctx.projectSlug;
   if (!cacheKey) {
@@ -578,6 +604,7 @@ async function resolveAgentSourceConfig(
     ctx.adapter.fs as SourceContextFsWrapper,
     "agent-source-config",
   );
+  await assertCurrent?.();
   return await getHostedConfig(ctx.projectDir, ctx.adapter, {
     cacheKey,
     sourceContext: buildAgentSourceRunOptions(sourceContext),
@@ -614,6 +641,42 @@ function readRunTerminalToken(req: Request): string | null {
   }
 }
 
+async function verifiedCanonicalRunId(
+  input: {
+    token: string | null;
+    projectId: string | undefined;
+    publicRunId: string;
+    verify: AgentStreamHandlerDeps["verifyRunTerminalToken"];
+  },
+): Promise<string | undefined> {
+  if (!input.token || !input.projectId || !input.verify) return undefined;
+  try {
+    if (
+      await input.verify({
+        token: input.token,
+        projectId: input.projectId,
+        runId: input.publicRunId,
+      }) !== true
+    ) return undefined;
+    return terminalRoute(input.token, input.publicRunId).id;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * @internal Authored project tools may treat the run ID as authority only after the
+ * terminal capability verified this run for the same project the tools execute in.
+ */
+export function bindsAuthoredToolRun(input: {
+  currentRunId: string | undefined;
+  terminalProjectId: string | undefined;
+  sandboxProjectId: string | null;
+}): boolean {
+  return input.currentRunId !== undefined && !!input.sandboxProjectId &&
+    input.sandboxProjectId === input.terminalProjectId;
+}
+
 function requestedProgrammaticPlatformNames(
   input: Parameters<typeof withVeryfrontPlatformRemoteTools>[0],
 ): string[] {
@@ -647,6 +710,8 @@ function includeRequestedPlatformAliases(
 }
 
 export async function withVeryfrontPlatformRemoteTools(input: {
+  /** Canonical identity supplied by the host runtime, never model arguments. */
+  currentRunId?: string;
   agent: Agent;
   token?: string | null;
   projectId?: string | null;
@@ -711,6 +776,7 @@ export async function withVeryfrontPlatformRemoteTools(input: {
   const platformCatalog = createPlatformMcpCatalogSource(
     platformRemoteToolSource,
     platformToolDefinitions,
+    { runId: input.currentRunId, runIdBindsToolAuthorization: true },
   );
   platformToolDefinitions = platformCatalog.definitions;
   includeRequestedPlatformAliases(platformToolDefinitions, requestedToolNames, input);
@@ -898,6 +964,8 @@ function appendMissingStudioSources(
 }
 
 async function withExplicitVeryfrontStudioRemoteTools(input: {
+  /** Canonical identity supplied by the verified host request, never model arguments. */
+  currentRunId?: string;
   agent: Agent;
   token?: string | null;
   projectId?: string | null;
@@ -960,7 +1028,10 @@ async function withExplicitVeryfrontStudioRemoteTools(input: {
     resolvedStudioSources.push({
       policy: createMcpToolPolicyGate(withPlatformMcpPolicyAliases(server.toolPolicy)),
       remoteConfig,
-      source: createLivePlatformMcpSource(createRemoteMCPToolSource(remoteConfig)),
+      source: createLivePlatformMcpSource(createRemoteMCPToolSource(remoteConfig), {
+        runId: input.currentRunId,
+        runIdBindsToolAuthorization: true,
+      }),
     });
   }
   if (resolvedStudioSources.length === 0) return input.agent;
@@ -1470,6 +1541,7 @@ export class AgentStreamHandler extends BaseHandler {
       return this.respond(buildRuntimeShuttingDownResponse(this.createResponseBuilder(ctx)));
     }
 
+    let pendingRecovery: { runId: string; session: ManagedRecoveryRunSession } | undefined;
     const builder = this.createResponseBuilder(ctx)
       .withCORS(req, ctx.securityConfig?.cors)
       .withSecurity(ctx.securityConfig ?? undefined, req);
@@ -1487,6 +1559,13 @@ export class AgentStreamHandler extends BaseHandler {
       const verifiedClaims = await verifyControlPlaneRequest(req, ctx, rawBody, {
         expectedSubject: payload.runId,
         expectedSurface: "studio",
+      });
+      assertManagedRecoveryExecutionBinding(payload, verifiedClaims);
+      bindManagedRecoveryCredentials(verifiedClaims, {
+        authToken: payload.credentials?.authToken,
+        sourceAuthToken: payload.credentials?.sourceAuthToken,
+        terminalToken: readIngressCredential(req, INGRESS_RUN_TERMINAL_TOKEN_HEADER),
+        writerToken: readIngressCredential(req, INGRESS_RUN_EVENT_TOKEN_HEADER),
       });
       // Capture host process identity before entering project-controlled environment scopes.
       const runtimeIdentity = getServiceRuntimeIdentity();
@@ -1524,6 +1603,37 @@ export class AgentStreamHandler extends BaseHandler {
         ? payload.credentials?.sourceAuthToken || ""
         : apiAuthToken;
       const executionProject = payload.executionProject;
+      const terminalProjectId = executionProject?.projectId ?? ctx.projectId;
+      const currentRunId = await verifiedCanonicalRunId({
+        token: terminalToken,
+        projectId: terminalProjectId,
+        publicRunId: payload.runId,
+        verify: this.deps.verifyRunTerminalToken,
+      });
+      const projectEventPersistence = platformDependencies !== undefined
+        ? getProjectEventPersistenceSchema().optional().parse(
+          IntrinsicReflectApply(JsonParse, JSON, [rawBody]).projectEventPersistence,
+        )
+        : undefined;
+      const projectEventWriter = projectEventPersistence
+        ? (() => {
+          if (payload.managedRecoveryAdmission || !runEventAppendToken) {
+            throw new Error("Invalid project event writer admission");
+          }
+          const projectId = executionProject?.projectId ?? ctx.projectId;
+          if (!projectId) throw new Error("Project writer requires an exact project");
+          return createProjectEventWriter({
+            apiUrl: resolveVeryfrontApiBaseUrlFromHostEnv(),
+            runId: payload.runId,
+            canonicalRunId: projectEventPersistence.canonicalRunId,
+            projectId,
+            threadId: payload.threadId,
+            token: runEventAppendToken,
+            latestEventId: projectEventPersistence.latestEventId,
+            latestExternalEventSequence: projectEventPersistence.latestExternalEventSequence,
+          });
+        })()
+        : undefined;
       if (payload.agentSource.type === "environment" && !apiAuthToken) {
         throw AUTHENTICATION_REQUIRED.create({
           detail: "Named agent source environment requires a request-scoped API token",
@@ -1564,14 +1674,44 @@ export class AgentStreamHandler extends BaseHandler {
         hasAgentConfig: Boolean(payload.agentConfig),
       });
 
+      // Reserve cancellation ownership before source preparation can await tenant data.
+      const reservedRecovery = verifiedClaims &&
+          getVerifiedControlPlaneRecoveryAdmission(verifiedClaims)
+        ? await this.deps.sessionManager.startManagedRecoveryRun({
+          runId: payload.runId,
+          threadId: payload.threadId,
+          servingIdentity: ctx.projectId
+            ? {
+              projectId: ctx.projectId,
+              spanAttributes: buildServingSpanAttributes(ctx),
+            }
+            : undefined,
+          claims: verifiedClaims,
+        })
+        : undefined;
+      if (reservedRecovery) {
+        pendingRecovery = { runId: payload.runId, session: reservedRecovery };
+      }
+      const assertRecoveryActive = async () => {
+        reservedRecovery?.signal.throwIfAborted();
+        await reservedRecovery?.lifetime.assertCurrent();
+        reservedRecovery?.signal.throwIfAborted();
+      };
+      await assertRecoveryActive();
+      if (reservedRecovery) await assertManagedRecoveryRequestBinding(payload, reservedRecovery);
+      await assertRecoveryActive();
+
       const createDiscoveredAgentExecution = (
         projectScopedContext: HandlerContext,
         envVarsForAgent: Record<string, string>,
         requestSourceFingerprint: string | undefined,
         sourceFingerprintOptions: SourceSnapshotFingerprintOptions,
+        configSourceObservation: CachedSourceObservation | undefined,
       ) =>
       async () => {
-        await this.deps.ensureProjectDiscovery(projectScopedContext);
+        await assertRecoveryActive();
+        await this.deps.ensureProjectDiscovery(projectScopedContext, assertRecoveryActive);
+        await assertRecoveryActive();
         if (requestSourceFingerprint !== undefined) {
           const discoverySourceFingerprint = await requireAgentSourceSnapshotFingerprint(
             projectScopedContext,
@@ -1581,6 +1721,7 @@ export class AgentStreamHandler extends BaseHandler {
           assertDiscoveredSourceFingerprint(requestSourceFingerprint, discoverySourceFingerprint);
         }
 
+        await assertRecoveryActive();
         const agent = this.deps.getAgent(payload.agentId);
         if (!agent) {
           logger.warn("Internal agent stream request referenced unknown agent", {
@@ -1594,11 +1735,43 @@ export class AgentStreamHandler extends BaseHandler {
 
         // veryfront-api is the trusted control-plane caller; it resolves
         // authorization before attaching request-scoped project-agent config.
+        const discoverySourceObservation = configSourceObservation &&
+            projectScopedContext.projectId && projectScopedContext.branchId
+          ? await observeCachedSource(projectScopedContext.adapter.fs)
+          : undefined;
         const runtimeBaseAgent = resolveRuntimeBaseAgent(payload, agent);
         const runtimeInput = sanitizeRuntimeRunAgentInput(
           toRuntimeRunAgentInput(payload),
           runtimeBaseAgent as Agent,
         );
+        // Preview qualification requires a concrete branch UUID. Main-branch runs
+        // execute normally without private proof and cannot qualify this protocol.
+        if (
+          configSourceObservation && discoverySourceObservation && currentRunId &&
+          projectScopedContext.projectId &&
+          projectScopedContext.branchId && payload.agentSource.type === "branch" &&
+          !payload.sourceProject &&
+          !payload.managedRecoveryAdmission
+        ) {
+          bindSourceObservationStages(runtimeInput, {
+            identity: {
+              projectId: projectScopedContext.projectId,
+              branchId: projectScopedContext.branchId,
+              canonicalRunId: currentRunId,
+              publicRunId: payload.runId,
+              agentId: runtimeBaseAgent.id,
+            },
+            config: configSourceObservation,
+            discovery: discoverySourceObservation,
+          });
+        }
+        bindManagedRecoveryInput(runtimeInput, verifiedClaims);
+        if (projectEventWriter) bindProjectEventWriter(runtimeInput, projectEventWriter);
+        if (reservedRecovery) {
+          bindManagedRecoveryRunSession(runtimeInput, reservedRecovery, () => {
+            pendingRecovery = undefined;
+          });
+        }
         if (platformDependencies && platformDependencyScope.projectId) {
           registerPlatformDependencyOwner(runtimeInput, verifiedClaims, {
             ...platformDependencyScope,
@@ -1624,6 +1797,7 @@ export class AgentStreamHandler extends BaseHandler {
           });
         const localTools = this.deps.getLocalTools?.(runtimeBaseAgent.id);
         const platformRuntimeAgent = await withVeryfrontPlatformRemoteTools({
+          currentRunId: projectEventPersistence?.canonicalRunId ?? currentRunId,
           agent: runtimeBaseAgent as Agent,
           token: apiAuthToken || null,
           projectId: executionProject?.projectId ??
@@ -1643,7 +1817,9 @@ export class AgentStreamHandler extends BaseHandler {
             ? { token: terminalToken, runId: payload.runId }
             : null,
         });
+        await assertRecoveryActive();
         const runtimeAgent = await withExplicitVeryfrontStudioRemoteTools({
+          currentRunId: projectEventPersistence?.canonicalRunId ?? currentRunId,
           agent: platformRuntimeAgent,
           token: projectRuntimeToken || null,
           projectId: executionProject?.projectId ??
@@ -1671,9 +1847,16 @@ export class AgentStreamHandler extends BaseHandler {
         // verifyControlPlaneRequest above authenticates the raw envelope before
         // this verified credential can be bound to the runtime input.
         registerAgentStreamRuntimeCredentials(runtimeInput, payload, verifiedClaims, pauseToken);
+        const sandboxProjectId = executionProject?.projectId ??
+          projectScopedContext.projectId ?? null;
         const runAgentStream = () =>
           createRuntimeAgentStreamResponse(runtimeInput, runtimeAgent, {
             ...this.deps,
+            runIdBindsToolAuthorization: bindsAuthoredToolRun({
+              currentRunId,
+              terminalProjectId,
+              sandboxProjectId,
+            }),
             localTools,
             providerReplayCheckpoints,
             persistProviderReplayCheckpoint,
@@ -1689,8 +1872,7 @@ export class AgentStreamHandler extends BaseHandler {
               branchId: executionProject
                 ? executionProject.runtimeTargetBranchId
                 : payload.runtimeTargetBranchId,
-              projectId: executionProject?.projectId ??
-                projectScopedContext.projectId ?? null,
+              projectId: sandboxProjectId,
             },
           });
         const shouldIsolateEnv = apiAuthToken.length > 0;
@@ -1715,6 +1897,7 @@ export class AgentStreamHandler extends BaseHandler {
           }
           return await runWithProjectEnv(agentEnv, runAgentStream);
         };
+        await assertRecoveryActive();
         let response = await executeStream();
         if (isSuccessfulAgentEventStream(response)) {
           response = setResponseHeaders(response, [
@@ -1750,6 +1933,7 @@ export class AgentStreamHandler extends BaseHandler {
           payload.agentSource,
           () =>
             runWithVerifiedCacheApiCredential(verifiedClaims, async () => {
+              await assertRecoveryActive();
               if (payload.sourceProject) sharedRegistryScope = tryGetRegistryScopeId();
               // Resolved before the config load because hosted evaluation binds
               // config to the same environment the run will execute with.
@@ -1773,6 +1957,7 @@ export class AgentStreamHandler extends BaseHandler {
                 sourceAuthToken,
                 req.signal,
               );
+              await assertRecoveryActive();
               const guardedSourceConfig = payload.agentSource.type === "branch"
                 ? await resolveGuardedAgentSourceConfig(
                   requestScopedContext,
@@ -1780,11 +1965,20 @@ export class AgentStreamHandler extends BaseHandler {
                   envVarsForAgent,
                 )
                 : undefined;
+              await assertRecoveryActive();
               const sourceConfig = guardedSourceConfig?.config ?? await resolveAgentSourceConfig(
                 requestScopedContext,
                 payload.agentSource,
                 envVarsForAgent,
+                assertRecoveryActive,
               );
+              await assertRecoveryActive();
+              const configSourceObservation =
+                payload.agentSource.type === "branch" && !payload.sourceProject &&
+                  !payload.managedRecoveryAdmission && currentRunId &&
+                  requestScopedContext.projectId && requestScopedContext.branchId
+                  ? await observeCachedSource(requestScopedContext.adapter.fs)
+                  : undefined;
               const sourceFingerprintOptions = getAgentSourceFingerprintOptions(sourceConfig);
               const requestSourceFingerprint = payload.agentSource.type === "branch"
                 ? await requireAgentSourceSnapshotFingerprint(
@@ -1825,6 +2019,7 @@ export class AgentStreamHandler extends BaseHandler {
                   : sourceScopedContext.requestContext,
               };
               const executeInAgentSourceContext = async () => {
+                await assertRecoveryActive();
                 if (payload.sourceProject) sharedRegistryScope = tryGetRegistryScopeId();
                 const sourceIntegrationPolicy = (
                   this.deps.normalizeSourceIntegrationPolicy ?? normalizeSourceIntegrationPolicy
@@ -1849,6 +2044,7 @@ export class AgentStreamHandler extends BaseHandler {
                     envVarsForAgent,
                     requestSourceFingerprint,
                     sourceFingerprintOptions,
+                    configSourceObservation,
                   ),
                 );
               };
@@ -1902,6 +2098,13 @@ export class AgentStreamHandler extends BaseHandler {
       );
     } catch (error_) {
       return this.respondToStreamFailure(error_, req, ctx, builder);
+    } finally {
+      if (pendingRecovery) {
+        const { runId, session } = pendingRecovery;
+        this.deps.sessionManager.cancelRun(runId, session.signal);
+        this.deps.sessionManager.settleCancelledRun(runId, session.signal);
+        session.settle();
+      }
     }
   }
 

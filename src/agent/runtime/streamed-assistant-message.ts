@@ -36,13 +36,10 @@ export function isPersistedReasoningPart(part: StreamingReasoningPart): boolean 
     (part.redactedData?.length ?? 0) > 0;
 }
 
-export function buildStreamedAssistantMessage(
-  state: Pick<ChatStreamState, "accumulatedText" | "reasoningParts" | "toolCalls">,
-  identity: StreamedAssistantMessageIdentity,
-  options: { preserveRecoverablePlaceholderToolCalls?: boolean } = {},
-): Message {
-  const parts: MessagePart[] = [];
-
+function appendStreamedReasoningParts(
+  parts: MessagePart[],
+  state: Pick<ChatStreamState, "reasoningParts">,
+): void {
   for (let index = 0; index < state.reasoningParts.length; index++) {
     if (!hasOwn(state.reasoningParts, index)) continue;
     const reasoningPart = state.reasoningParts[index]!;
@@ -56,6 +53,16 @@ export function buildStreamedAssistantMessage(
       ...(reasoningPart.redactedData ? { redactedData: reasoningPart.redactedData } : {}),
     });
   }
+}
+
+export function buildStreamedAssistantMessage(
+  state: Pick<ChatStreamState, "accumulatedText" | "reasoningParts" | "toolCalls">,
+  identity: StreamedAssistantMessageIdentity,
+  options: { preserveRecoverablePlaceholderToolCalls?: boolean } = {},
+): Message {
+  const parts: MessagePart[] = [];
+
+  appendStreamedReasoningParts(parts, state);
 
   if (state.accumulatedText) {
     pushPrivateArray(parts, { type: "text", text: state.accumulatedText });

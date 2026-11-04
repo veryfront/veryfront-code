@@ -633,6 +633,15 @@ describe("VeryfrontApiClient", () => {
         controller.signal,
       );
 
+      await client.reportReleaseAssetManifestState(
+        "rel-1",
+        "failed",
+        "boom",
+        "project-slug",
+        controller.signal,
+        7,
+      );
+
       assertEquals(calls, [
         ["start", "rel-1", "project-slug", controller.signal],
         [
@@ -645,7 +654,8 @@ describe("VeryfrontApiClient", () => {
           controller.signal,
         ],
         ["write manifest", "rel-1", manifest, "project-slug", controller.signal],
-        ["update state", "rel-1", "failed", "boom", "project-slug", controller.signal],
+        ["update state", "rel-1", "failed", "boom", "project-slug", controller.signal, undefined],
+        ["update state", "rel-1", "failed", "boom", "project-slug", controller.signal, 7],
       ]);
     });
   });

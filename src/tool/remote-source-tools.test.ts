@@ -7,6 +7,7 @@ import {
   loadRemoteToolsFromSource,
 } from "./remote-source-tools.ts";
 import { getRemoteToolProvenance } from "./remote-tool-provenance.ts";
+import { JSON_VALUE_MAX_SERIALIZED_BYTES } from "#veryfront/schemas/json-value.ts";
 
 describe("tool/remote-source-tools", () => {
   it("materializes runtime tools from remote definitions while preserving remote schemas", async () => {
@@ -222,5 +223,35 @@ describe("tool/remote-source-tools", () => {
     );
     assertEquals(getterCalls, 0);
     assertEquals(executionCalls, 0);
+  });
+
+  it("passes one string over 1 MiB to the source but keeps the whole-input bound", async () => {
+    const received: Record<string, unknown>[] = [];
+    const source: RemoteToolSource = {
+      id: "docs-source",
+      async listTools() {
+        return [];
+      },
+      async executeTool(_toolName, args) {
+        received.push(args);
+        return null;
+      },
+    };
+    const tools = createToolsFromRemoteDefinitions(source, [{
+      name: "upload",
+      description: "Upload",
+      parameters: { type: "object" },
+    }]);
+    const content = "A".repeat(2 * 1024 * 1024);
+
+    await tools.upload!.execute({ content });
+    await assertRejects(
+      () => tools.upload!.execute({ content: "A".repeat(JSON_VALUE_MAX_SERIALIZED_BYTES) }),
+      Error,
+      "bounded JSON object",
+    );
+
+    assertEquals(received.length, 1);
+    assertEquals(received[0]?.content, content);
   });
 });

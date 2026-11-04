@@ -111,6 +111,11 @@ export class StaticHandler extends BaseHandler {
           }
 
           if (isDynamicBuildFallbackPath(pathname)) return null;
+          // A dotted application URL may be an API route or a page parameter.
+          // Existing static bytes still win above, but a miss must reach route
+          // discovery before it can become a 404. Reserved build assets have
+          // no application route fallback.
+          if (!isProductionBuildAssetPath(pathname)) return null;
           if (!this.staticService.isAssetRequest(pathname)) return null;
 
           return builder

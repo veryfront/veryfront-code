@@ -1320,6 +1320,7 @@ export class VeryfrontAPIOperations {
     state: "partial" | "failed",
     error?: string,
     signal?: AbortSignal,
+    manifestVersion?: number,
   ): Promise<ReleaseAssetManifestStateResponse> {
     const url = `/projects/${encodeURIComponent(projectRef)}/releases/${
       encodeURIComponent(version)
@@ -1329,7 +1330,11 @@ export class VeryfrontAPIOperations {
     const raw = await this.request(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(error ? { state, error } : { state }),
+      body: JSON.stringify({
+        state,
+        ...(error ? { error } : {}),
+        ...(manifestVersion === undefined ? {} : { manifest_version: manifestVersion }),
+      }),
       signal,
     });
     return getReleaseAssetManifestStateResponseSchema().parse(raw);
@@ -1373,8 +1378,16 @@ export class VeryfrontAPIOperations {
     state: "partial" | "failed",
     error?: string,
     signal?: AbortSignal,
+    manifestVersion?: number,
   ): Promise<ReleaseAssetManifestStateResponse> {
-    return this.updateReleaseAssetManifestState(projectRef, version, state, error, signal);
+    return this.updateReleaseAssetManifestState(
+      projectRef,
+      version,
+      state,
+      error,
+      signal,
+      manifestVersion,
+    );
   }
 
   async getReleaseAssetManifest(

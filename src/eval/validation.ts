@@ -142,11 +142,21 @@ export function normalizeEvalExamples(
       throw createEvalValidationError(`${source}[${index}] input is required`);
     }
 
+    if (
+      example.expectedOutcome !== undefined && example.expectedOutcome !== "success" &&
+      example.expectedOutcome !== "error"
+    ) {
+      throw createEvalValidationError(
+        `${source}[${index}] expectedOutcome must be success or error`,
+      );
+    }
+
     assertMetadata(example.metadata, `${source}[${index}]`);
 
     return {
       id,
       input: example.input,
+      ...(example.expectedOutcome ? { expectedOutcome: example.expectedOutcome } : {}),
       ...(Object.hasOwn(example, "reference") ? { reference: example.reference } : {}),
       ...(example.metadata ? { metadata: { ...example.metadata } } : {}),
     };

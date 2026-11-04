@@ -5,7 +5,7 @@ import { parse } from "#std/yaml/parse";
 const WORKFLOW_PR_GUARD =
   "github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository";
 const CREATE_APP_TOKEN_ACTION =
-  "actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1";
+  "actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510";
 const TRUSTED_AGGREGATE_JOBS = new Set([
   "tests",
   "quality-gate-merge",

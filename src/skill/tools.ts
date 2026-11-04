@@ -50,6 +50,12 @@ import {
   SKILL_TEXT_FILE_MAX_BYTES,
 } from "./limits.ts";
 import { getSkillScriptExecutor } from "./executor.ts";
+import {
+  addAbortSignalListenerOnce,
+  getAbortSignalReason,
+  isAbortSignalAborted,
+  removeAbortSignalListener,
+} from "#veryfront/platform/compat/abort-signal.ts";
 import type {
   Skill,
   SkillContent,
@@ -682,18 +688,39 @@ export function createExecuteSkillScriptTool(
         authoritativeScripts,
       );
       const executor = options.executor ?? getSkillScriptExecutor();
-      const result = await budget.run(async (abortSignal) =>
-        await executor.execute({
+      budget.throwIfTerminated();
+      const executorController = new AbortController();
+      const forwardAbort = () =>
+        executorController.abort(
+          budget.abortSignal ? getAbortSignalReason(budget.abortSignal) : undefined,
+        );
+      const remainingMs = budget.remainingMs();
+      const timeout = remainingMs === undefined
+        ? undefined
+        : setTimeout(() => executorController.abort(budget.timeoutError), remainingMs);
+      if (budget.abortSignal) {
+        addAbortSignalListenerOnce(budget.abortSignal, forwardAbort);
+        if (isAbortSignalAborted(budget.abortSignal)) forwardAbort();
+      }
+      let result: SkillScriptResult;
+      try {
+        result = await executor.execute({
+          projectId: context?.projectId,
+          branch: context?.branch,
           scriptPath: validatedPath,
           scriptContent,
           scriptSnapshot,
           args: input.args,
           env: input.env,
           validatedSourceRoot: skill.fsAdapter === undefined ? skill.rootPath : undefined,
-          timeoutMs: budget.remainingMs(),
-          abortSignal,
-        })
-      );
+          timeoutMs: remainingMs,
+          abortSignal: executorController.signal,
+        });
+      } finally {
+        if (timeout !== undefined) clearTimeout(timeout);
+        if (budget.abortSignal) removeAbortSignalListener(budget.abortSignal, forwardAbort);
+      }
+      budget.throwIfTerminated();
       return snapshotScriptOutput(result);
     },
   });

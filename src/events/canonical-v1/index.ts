@@ -1,5 +1,19 @@
 /** Explicit canonical-v1 read contracts. Existing pilot event parsers are unchanged. */
-export * from "./types.ts";
+export type {
+  CanonicalEventV1,
+  CanonicalMemberV1,
+  DescendantCursorV1,
+  DescendantRunReadPageV1,
+  EventDiscoveryV1,
+  EventViewV1,
+  LegacyMemberV1,
+  LegacyReasonV1,
+  RunReadMemberV1,
+  RunReadMetadataV1,
+  RunReadPageV1,
+  StreamMemberV1,
+  TransientMemberV1,
+} from "./types.ts";
 import type {
   DescendantCursorV1,
   DescendantRunReadPageV1,

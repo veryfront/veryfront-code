@@ -8,7 +8,10 @@
  */
 
 import { getEnv } from "#veryfront/platform/compat/process.ts";
-import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
+import {
+  snapshotBoundedJsonValue,
+  snapshotBoundedParsedJsonValue,
+} from "#veryfront/schemas/json-value.ts";
 import { createOriginBoundOutboundFetch } from "#veryfront/security/http/outbound-fetch.ts";
 import type { RemoteToolSource, ToolDefinition, ToolExecutionContext } from "#veryfront/tool";
 import { readResponseTextPrefix } from "#veryfront/utils/response-body.ts";
@@ -163,29 +166,40 @@ const CURATED_SOQL_RESTRICTIONS =
   "side-effecting clauses are rejected. DataCategory filters are allowed only where the " +
   "parameter description advertises them.";
 
+type SalesforceEndpointParameter = NonNullable<SalesforceEndpoint["params"]>[string];
+
+function appendToolParameterSchema(
+  key: string,
+  definition: SalesforceEndpointParameter,
+  properties: Record<string, unknown>,
+  required: string[],
+): void {
+  if (
+    definition.in === "header" &&
+    !(definition.required === true && definition.default === undefined)
+  ) {
+    return;
+  }
+  const curatedSoql = key === "q" && definition.in === "query" &&
+    typeof definition.default === "string";
+  properties[key] = {
+    ...endpointTypeToJsonSchema(definition.type),
+    description: curatedSoql
+      ? `${definition.description} ${CURATED_SOQL_RESTRICTIONS}`
+      : definition.description,
+    ...(definition.exposeDefault === true && definition.default !== undefined
+      ? { default: definition.default }
+      : {}),
+  };
+  if (definition.required === true) required.push(key);
+}
+
 function buildToolInputSchema(endpoint: SalesforceEndpoint): Record<string, unknown> {
   const properties: Record<string, unknown> = {};
   const required: string[] = [];
 
   for (const [key, definition] of Object.entries(endpoint.params ?? {})) {
-    if (
-      definition.in === "header" &&
-      !(definition.required === true && definition.default === undefined)
-    ) {
-      continue;
-    }
-    const curatedSoql = key === "q" && definition.in === "query" &&
-      typeof definition.default === "string";
-    properties[key] = {
-      ...endpointTypeToJsonSchema(definition.type),
-      description: curatedSoql
-        ? `${definition.description} ${CURATED_SOQL_RESTRICTIONS}`
-        : definition.description,
-      ...(definition.exposeDefault === true && definition.default !== undefined
-        ? { default: definition.default }
-        : {}),
-    };
-    if (definition.required === true) required.push(key);
+    appendToolParameterSchema(key, definition, properties, required);
   }
 
   for (const [key, definition] of Object.entries(endpoint.body ?? {})) {
@@ -534,25 +548,25 @@ function validateEndpointInputs(
   }
 }
 
+function matchesEndpointInputType(definition: SalesforceEndpointInput, value: unknown): boolean {
+  if (definition.type === "string") return typeof value === "string";
+  if (definition.type === "number") return typeof value === "number";
+  if (definition.type === "boolean") return typeof value === "boolean";
+  if (definition.type === "string[]") {
+    return Array.isArray(value) && value.every((entry) => typeof entry === "string");
+  }
+  if (definition.type === "object") return isRecord(value);
+  if (definition.type === "array") return Array.isArray(value);
+  return false;
+}
+
 function validateEndpointInputType(
   key: string,
   definition: SalesforceEndpointInput,
   value: unknown,
 ): void {
   if (value === undefined) return;
-  const valid = definition.type === "string"
-    ? typeof value === "string"
-    : definition.type === "number"
-    ? typeof value === "number"
-    : definition.type === "boolean"
-    ? typeof value === "boolean"
-    : definition.type === "string[]"
-    ? Array.isArray(value) && value.every((entry) => typeof entry === "string")
-    : definition.type === "object"
-    ? isRecord(value)
-    : definition.type === "array"
-    ? Array.isArray(value)
-    : false;
+  const valid = matchesEndpointInputType(definition, value);
   if (!valid) {
     const expected = definition.type === "string[]" ? "string array" : definition.type;
     throw new TypeError(`Salesforce tool input "${key}" must be a ${expected}`);
@@ -791,17 +805,43 @@ function omitSoqlDataCategoryClause(query: string): string {
   );
 }
 
+function isSoqlFieldOperator(remainder: string): boolean {
+  return remainder.startsWith("=") || remainder.startsWith("!=") ||
+    remainder.startsWith("<") || remainder.startsWith(">") ||
+    /^(?:like|not in|in|includes|excludes)(?:$|[ (])/.test(remainder);
+}
+
+function orderedSoqlField(entry: string): string | undefined {
+  const normalizedEntry = collapseSoqlWhitespace(entry);
+  const firstSpace = normalizedEntry.indexOf(" ");
+  const field = firstSpace === -1 ? normalizedEntry : normalizedEntry.slice(0, firstSpace);
+  return field && /^[a-z][a-z0-9_.]*$/i.test(field) ? field : undefined;
+}
+
+interface SoqlOrderedEntry {
+  field: string | undefined;
+  separator: number;
+}
+
+function nextSoqlOrderedEntry(
+  clause: string,
+  previous: SoqlOrderedEntry | undefined,
+): SoqlOrderedEntry | undefined {
+  if (previous?.separator === -1) return undefined;
+  const entryStart = previous === undefined ? 0 : previous.separator + 1;
+  if (entryStart > clause.length) return undefined;
+  const separator = clause.indexOf(",", entryStart);
+  const entry = clause.slice(entryStart, separator === -1 ? clause.length : separator);
+  return { field: orderedSoqlField(entry), separator };
+}
+
 function* iterateSoqlClauseFields(query: string): Generator<string> {
   const masked = collapseSoqlWhitespace(maskSoqlStrings(query));
   for (const match of masked.matchAll(/[a-z][a-z0-9_.]*/gi)) {
     let operatorStart = match.index + match[0].length;
     while (operatorStart < masked.length && masked[operatorStart] === " ") operatorStart++;
     const remainder = masked.slice(operatorStart, operatorStart + 10).toLowerCase();
-    if (
-      remainder.startsWith("=") || remainder.startsWith("!=") ||
-      remainder.startsWith("<") || remainder.startsWith(">") ||
-      /^(?:like|not in|in|includes|excludes)(?:$|[ (])/.test(remainder)
-    ) yield match[0].toLowerCase();
+    if (isSoqlFieldOperator(remainder)) yield match[0].toLowerCase();
   }
   for (const startPattern of [/\border\s+by\b/i, /\bgroup\s+by\b/i]) {
     const clause = extractSoqlClause(
@@ -810,16 +850,10 @@ function* iterateSoqlClauseFields(query: string): Generator<string> {
       /\b(?:order\s+by|group\s+by|limit|offset|having|with)\b/gi,
     );
     if (!clause) continue;
-    let entryStart = 0;
-    while (entryStart <= clause.length) {
-      const separator = clause.indexOf(",", entryStart);
-      const entry = clause.slice(entryStart, separator === -1 ? clause.length : separator);
-      const normalizedEntry = collapseSoqlWhitespace(entry);
-      const firstSpace = normalizedEntry.indexOf(" ");
-      const field = firstSpace === -1 ? normalizedEntry : normalizedEntry.slice(0, firstSpace);
-      if (field && /^[a-z][a-z0-9_.]*$/i.test(field)) yield field.toLowerCase();
-      if (separator === -1) break;
-      entryStart = separator + 1;
+    let entry = nextSoqlOrderedEntry(clause, undefined);
+    while (entry !== undefined) {
+      if (entry.field) yield entry.field.toLowerCase();
+      entry = nextSoqlOrderedEntry(clause, entry);
     }
   }
 }
@@ -833,6 +867,40 @@ function parseSoqlShape(query: string): { projection: string; object: string } |
   const projection = trimmed.slice("select ".length, fromIndex);
   const object = /^[a-z][a-z0-9_]*/i.exec(trimmed.slice(fromIndex + " from ".length))?.[0];
   return projection && object ? { projection, object } : undefined;
+}
+
+function validateCuratedSoqlShape(
+  expected: string,
+  supplied: string,
+): { projection: string; object: string } {
+  const expectedMatch = parseSoqlShape(expected);
+  const suppliedMatch = parseSoqlShape(supplied);
+  if (
+    !expectedMatch ||
+    !suppliedMatch ||
+    !hasExactSoqlShapeKeywords(supplied) ||
+    // Compare comma counts first so an attacker-sized projection is rejected
+    // without materializing and sorting an unbounded field array.
+    countSoqlCommas(suppliedMatch.projection) !== countSoqlCommas(expectedMatch.projection) ||
+    normalizeSoqlProjection(suppliedMatch.projection).join(",") !==
+      normalizeSoqlProjection(expectedMatch.projection).join(",") ||
+    suppliedMatch.object.toLowerCase() !== expectedMatch.object.toLowerCase()
+  ) {
+    throw new TypeError(
+      "Salesforce curated tool SOQL must preserve its selected fields and object",
+    );
+  }
+  return expectedMatch;
+}
+
+function assertAllowedSoqlFields(allowedFields: Set<string>, query: string): void {
+  for (const field of iterateSoqlClauseFields(query)) {
+    if (!allowedFields.has(field)) {
+      throw new TypeError(
+        "Salesforce curated tool SOQL may only filter or sort by authorized root-object fields",
+      );
+    }
+  }
 }
 
 function validateCuratedSoql(tool: IntegrationToolMeta, args: Record<string, unknown>): void {
@@ -866,35 +934,13 @@ function validateCuratedSoql(tool: IntegrationToolMeta, args: Record<string, unk
       throw new TypeError("Salesforce curated tool SOQL does not allow predicate functions");
     }
   }
-  const expectedMatch = parseSoqlShape(expected);
-  const suppliedMatch = parseSoqlShape(supplied);
-  if (
-    !expectedMatch ||
-    !suppliedMatch ||
-    !hasExactSoqlShapeKeywords(supplied) ||
-    // Compare comma counts first so an attacker-sized projection is rejected
-    // without materializing and sorting an unbounded field array.
-    countSoqlCommas(suppliedMatch.projection) !== countSoqlCommas(expectedMatch.projection) ||
-    normalizeSoqlProjection(suppliedMatch.projection).join(",") !==
-      normalizeSoqlProjection(expectedMatch.projection).join(",") ||
-    suppliedMatch.object.toLowerCase() !== expectedMatch.object.toLowerCase()
-  ) {
-    throw new TypeError(
-      "Salesforce curated tool SOQL must preserve its selected fields and object",
-    );
-  }
+  const expectedMatch = validateCuratedSoqlShape(expected, supplied);
 
   const allowedFields = new Set(
     normalizeSoqlProjection(expectedMatch.projection).map(removeSoqlWhitespace),
   );
   for (const field of iterateSoqlClauseFields(queryDefinition.default)) allowedFields.add(field);
-  for (const field of iterateSoqlClauseFields(args.q)) {
-    if (!allowedFields.has(field)) {
-      throw new TypeError(
-        "Salesforce curated tool SOQL may only filter or sort by authorized root-object fields",
-      );
-    }
-  }
+  assertAllowedSoqlFields(allowedFields, args.q);
 
   const expectedWhere = extractSoqlWhereClause(queryDefinition.default);
   if (expectedWhere) {
@@ -911,13 +957,17 @@ function validateCuratedSoql(tool: IntegrationToolMeta, args: Record<string, unk
   }
 }
 
-function buildSalesforceRequest(
+function assertSalesforceInstanceUrl(url: URL, rawUrl: string, token: SalesforceToken): void {
+  if (url.origin !== token.instanceOrigin || rawUrl.includes("{{") || rawUrl.includes("{")) {
+    throw new TypeError("Salesforce endpoint resolved outside the authorized instance origin");
+  }
+}
+
+function resolveSalesforceRequestUrl(
   endpoint: SalesforceEndpoint,
   args: Record<string, unknown>,
   token: SalesforceToken,
-  signal: AbortSignal,
-): Request {
-  validateEndpointInputs(endpoint, args);
+): URL {
   const templatePrefix = "{{oauth.raw.instance_url}}";
   if (!endpoint.url.startsWith(`${templatePrefix}/`)) {
     throw new TypeError("Salesforce endpoint must use the instance URL template");
@@ -933,9 +983,15 @@ function buildSalesforceRequest(
   }
 
   const url = new URL(rawUrl);
-  if (url.origin !== token.instanceOrigin || rawUrl.includes("{{") || rawUrl.includes("{")) {
-    throw new TypeError("Salesforce endpoint resolved outside the authorized instance origin");
-  }
+  assertSalesforceInstanceUrl(url, rawUrl, token);
+  return url;
+}
+
+function appendSalesforceQuery(
+  url: URL,
+  endpoint: SalesforceEndpoint,
+  args: Record<string, unknown>,
+): void {
   for (const [key, definition] of Object.entries(endpoint.params ?? {})) {
     if (definition.in !== "query") continue;
     const value = resolveEndpointValue(args, key, definition);
@@ -947,17 +1003,13 @@ function buildSalesforceRequest(
       url.searchParams.set(queryName, String(value));
     }
   }
+}
 
-  const headers = new Headers({
-    Accept: "application/json",
-    Authorization: `Bearer ${token.accessToken}`,
-  });
-  for (const [key, definition] of Object.entries(endpoint.params ?? {})) {
-    if (definition.in !== "header") continue;
-    const value = resolveEndpointValue(args, key, definition);
-    if (value !== undefined) headers.set(definition.headerName ?? key, String(value));
-  }
-
+function buildSalesforceRequestBody(
+  endpoint: SalesforceEndpoint,
+  args: Record<string, unknown>,
+  headers: Headers,
+): string | undefined {
   let body: string | undefined;
   if (endpoint.body && ["POST", "PUT", "PATCH"].includes(endpoint.method)) {
     if (endpoint.bodyMode !== undefined) {
@@ -971,6 +1023,30 @@ function buildSalesforceRequest(
     body = JSON.stringify(bodyObject);
     headers.set("Content-Type", endpoint.contentType ?? "application/json");
   }
+  return body;
+}
+
+function buildSalesforceRequest(
+  endpoint: SalesforceEndpoint,
+  args: Record<string, unknown>,
+  token: SalesforceToken,
+  signal: AbortSignal,
+): Request {
+  validateEndpointInputs(endpoint, args);
+  const url = resolveSalesforceRequestUrl(endpoint, args, token);
+  appendSalesforceQuery(url, endpoint, args);
+
+  const headers = new Headers({
+    Accept: "application/json",
+    Authorization: `Bearer ${token.accessToken}`,
+  });
+  for (const [key, definition] of Object.entries(endpoint.params ?? {})) {
+    if (definition.in !== "header") continue;
+    const value = resolveEndpointValue(args, key, definition);
+    if (value !== undefined) headers.set(definition.headerName ?? key, String(value));
+  }
+
+  const body = buildSalesforceRequestBody(endpoint, args, headers);
 
   return new Request(url, {
     method: endpoint.method,
@@ -1013,7 +1089,11 @@ async function executeSalesforceEndpoint(
     let result: unknown = text;
     if (contentType.includes("application/json")) {
       try {
-        const snapshot = snapshotBoundedJsonValue(JSON.parse(text));
+        // The text is already bounded, so one string may use the whole response.
+        const snapshot = snapshotBoundedParsedJsonValue(
+          JSON.parse(text),
+          MAX_INTEGRATION_TOOL_CALL_RESPONSE_BYTES,
+        );
         if (!snapshot.success) throw new TypeError("Salesforce response is not bounded JSON");
         result = snapshot.value;
       } catch (cause) {

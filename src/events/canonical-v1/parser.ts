@@ -180,7 +180,7 @@ async function matchesSourceSchema(
   return (await validate(input)).success;
 }
 function safeCursor(value: string): void {
-  if (!/^[1-9][0-9]*$/.test(value) || BigInt(value) > BigInt(Number.MAX_SAFE_INTEGER)) {
+  if (!/^[1-9]\d*$/.test(value) || BigInt(value) > BigInt(Number.MAX_SAFE_INTEGER)) {
     throw new TypeError("Invalid canonical-v1 durable cursor");
   }
 }
@@ -377,10 +377,11 @@ export async function decodeDescendantCursorV1(token: string): Promise<Descendan
   };
   const bytes = new TextEncoder().encode(JSON.stringify(canonical));
   const result = "vfd1." +
-    btoa(Array.from(bytes, (b) => String.fromCharCode(b)).join("")).replaceAll("+", "-").replaceAll(
-      "/",
-      "_",
-    ).replace(/=+$/, "");
+    btoa(Array.from(bytes, (b) => String.fromCodePoint(b)).join("")).replaceAll("+", "-")
+      .replaceAll(
+        "/",
+        "_",
+      ).replace(/=+$/, "");
   if (result !== token) throw new TypeError("Noncanonical descendant cursor encoding");
   return value;
 }

@@ -26,6 +26,21 @@ describe("getFrameworkRoot", () => {
       expected: "/var/folders/xyz/deno-compile-abc123def",
     },
     {
+      name: "preserves a nested project in compiled source paths",
+      input: "/tmp/deno-compile-candidate/project/src/platform/compat/vfs-paths.ts",
+      expected: "/tmp/deno-compile-candidate/project",
+    },
+    {
+      name: "preserves a nested project in embedded framework paths",
+      input: "/tmp/deno-compile-candidate/project/dist/framework-src/react/index.ts.src",
+      expected: "/tmp/deno-compile-candidate/project",
+    },
+    {
+      name: "preserves a nested project in Windows compiled source paths",
+      input: String.raw`C:\Temp\deno-compile-candidate\project\src\platform\compat\vfs-paths.ts`,
+      expected: "C:/Temp/deno-compile-candidate/project",
+    },
+    {
       name: "should resolve production /app path",
       input: "/app/src/modules/server/module-server.ts",
       expected: "/app",

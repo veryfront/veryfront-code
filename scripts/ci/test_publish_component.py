@@ -67,3 +67,44 @@ class CodeWitnessTests(unittest.TestCase):
         for key,value in [('id',True),('draft',True),('tag_name','v0.1.1279')]:
             facts=Facts();facts.release[key]=value
             with self.subTest(key=key),self.assertRaises(ValueError):facts.witness()
+
+class ReleaseReadinessTests(unittest.TestCase):
+    def test_waits_for_publication_without_weakening_the_witness(self):
+        from urllib.error import HTTPError
+        facts=Facts(); attempts=[]; elapsed=[0]
+        def public(url):
+            if '/releases/tags/' in url:
+                attempts.append(url)
+                if len(attempts)<3:raise HTTPError(url,404,'Not Found',{},None)
+            return facts.public(url)
+        def sleep(seconds):elapsed[0]+=seconds
+        result=publisher.witness_when_ready(VERSION,ENV,public,facts.source,
+            clock=lambda:elapsed[0],sleep=sleep)
+        self.assertEqual(elapsed[0],60)
+        self.assertEqual(len(attempts),3)
+        self.assertEqual(result['release']['package_source_revision'],SOURCE)
+        self.assertEqual(set(result['release']['binaries']),{'linux/amd64','linux/arm64'})
+
+    def test_missing_publication_is_bounded(self):
+        from urllib.error import HTTPError
+        elapsed=[0]; attempts=[]
+        def public(url):
+            attempts.append(url)
+            raise HTTPError(url,404,'Not Found',{},None)
+        def sleep(seconds):elapsed[0]+=seconds
+        with self.assertRaises(TimeoutError):
+            publisher.witness_when_ready(VERSION,ENV,public,Facts().source,
+                clock=lambda:elapsed[0],sleep=sleep)
+        self.assertEqual(elapsed[0],900)
+        self.assertEqual(len(attempts),30)
+
+    def test_other_http_failures_and_invalid_materials_fail_immediately(self):
+        from urllib.error import HTTPError
+        def no_sleep(_):self.fail('Invalid release facts must not be retried')
+        for status in (401,403,429,500):
+            def public(url):raise HTTPError(url,status,'Refused',{},None)
+            with self.subTest(status=status),self.assertRaises(HTTPError):
+                publisher.witness_when_ready(VERSION,ENV,public,Facts().source,sleep=no_sleep)
+        facts=Facts();facts.release['assets'][0]['digest']=None
+        with self.assertRaises(ValueError):
+            publisher.witness_when_ready(VERSION,ENV,facts.public,facts.source,sleep=no_sleep)

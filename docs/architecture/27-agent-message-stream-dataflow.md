@@ -256,7 +256,8 @@ The audit found and fixed two local integration drift issues:
   legacy direct model IDs for saved configurations.
 - Anthropic default thinking is catalog-driven: Sonnet 4.6 and Haiku 4.5 keep
   manual thinking budgets, while Opus 4.8 uses adaptive thinking and does not
-  force `temperature: 1`.
+  force `temperature: 1`. These defaults apply only to Veryfront Cloud models;
+  a direct-provider model such as `anthropic/*` takes none.
 
 ## Provider integration notes
 

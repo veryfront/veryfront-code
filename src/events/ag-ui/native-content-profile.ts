@@ -472,6 +472,107 @@ function canonicalCommand(
   return { kind: "canonical-event", family, event, protocol: { agui: protocol } };
 }
 
+function nativeTextEventType(event: { readonly type: string }) {
+  if (event.type === "TEXT_MESSAGE_START") return "com.veryfront.message.text.started" as const;
+  if (event.type === "TEXT_MESSAGE_CONTENT") {
+    return "com.veryfront.message.text.delta.emitted" as const;
+  }
+  return "com.veryfront.message.text.ended" as const;
+}
+
+function nativeReasoningEventType(event: { readonly type: string }) {
+  if (event.type === "REASONING_MESSAGE_START") {
+    return "com.veryfront.message.reasoning.started" as const;
+  }
+  if (event.type === "REASONING_MESSAGE_CONTENT") {
+    return "com.veryfront.message.reasoning.delta.emitted" as const;
+  }
+  return "com.veryfront.message.reasoning.ended" as const;
+}
+
+function agUiTextEventType(event: { readonly type: string }) {
+  if (event.type === "com.veryfront.message.text.started") return "TEXT_MESSAGE_START" as const;
+  if (event.type === "com.veryfront.message.text.delta.emitted") {
+    return "TEXT_MESSAGE_CONTENT" as const;
+  }
+  return "TEXT_MESSAGE_END" as const;
+}
+
+function textProtocolFields(event: { readonly type: string }) {
+  if (event.type === "com.veryfront.message.text.started") return TEXT_START_FIELDS;
+  if (event.type === "com.veryfront.message.text.delta.emitted") return TEXT_CONTENT_FIELDS;
+  return TEXT_END_FIELDS;
+}
+
+function agUiReasoningEventType(event: { readonly type: string }) {
+  if (event.type === "com.veryfront.message.reasoning.started") {
+    return "REASONING_MESSAGE_START" as const;
+  }
+  if (event.type === "com.veryfront.message.reasoning.delta.emitted") {
+    return "REASONING_MESSAGE_CONTENT" as const;
+  }
+  return "REASONING_MESSAGE_END" as const;
+}
+
+function reasoningProtocolFields(event: { readonly type: string }) {
+  if (event.type === "com.veryfront.message.reasoning.started") return REASONING_START_FIELDS;
+  if (event.type === "com.veryfront.message.reasoning.delta.emitted") {
+    return REASONING_CONTENT_FIELDS;
+  }
+  return REASONING_END_FIELDS;
+}
+
+function projectTextContent(
+  event: Extract<
+    AgUiContentProfileSupportedEvent,
+    { readonly type: "TEXT_MESSAGE_START" | "TEXT_MESSAGE_CONTENT" | "TEXT_MESSAGE_END" }
+  >,
+  context: AgUiContentProfileContext,
+  family: AgUiContentProfileFamily,
+  protocol: JsonObject,
+): AgUiContentProjectionCommand {
+  if (context.family !== "text") {
+    throw new TypeError(
+      `AG-UI ${family} content event cannot be projected with ${context.family} context`,
+    );
+  }
+  assertAgUiMessageId(event, context);
+  const type = nativeTextEventType(event);
+  return canonicalCommand(
+    "text",
+    recordEnvelope(context, type, textData(event, context, protocol)),
+    protocol,
+  );
+}
+
+function projectReasoningContent(
+  event: Extract<
+    AgUiContentProfileSupportedEvent,
+    {
+      readonly type:
+        | "REASONING_MESSAGE_START"
+        | "REASONING_MESSAGE_CONTENT"
+        | "REASONING_MESSAGE_END";
+    }
+  >,
+  context: AgUiContentProfileContext,
+  family: AgUiContentProfileFamily,
+  protocol: JsonObject,
+): AgUiContentProjectionCommand {
+  if (context.family !== "reasoning") {
+    throw new TypeError(
+      `AG-UI ${family} content event cannot be projected with ${context.family} context`,
+    );
+  }
+  assertAgUiMessageId(event, context);
+  const type = nativeReasoningEventType(event);
+  return canonicalCommand(
+    "reasoning",
+    recordEnvelope(context, type, reasoningData(event, context, protocol)),
+    protocol,
+  );
+}
+
 export function projectAgUiContentEvent(
   input: ProjectAgUiContentInput,
 ): AgUiContentProjectionCommand {
@@ -486,42 +587,12 @@ export function projectAgUiContentEvent(
     case "TEXT_MESSAGE_START":
     case "TEXT_MESSAGE_CONTENT":
     case "TEXT_MESSAGE_END": {
-      if (context.family !== "text") {
-        throw new TypeError(
-          `AG-UI ${family} content event cannot be projected with ${context.family} context`,
-        );
-      }
-      assertAgUiMessageId(event, context);
-      const type = event.type === "TEXT_MESSAGE_START"
-        ? "com.veryfront.message.text.started"
-        : event.type === "TEXT_MESSAGE_CONTENT"
-        ? "com.veryfront.message.text.delta.emitted"
-        : "com.veryfront.message.text.ended";
-      return canonicalCommand(
-        "text",
-        recordEnvelope(context, type, textData(event, context, protocol)),
-        protocol,
-      );
+      return projectTextContent(event, context, family, protocol);
     }
     case "REASONING_MESSAGE_START":
     case "REASONING_MESSAGE_CONTENT":
     case "REASONING_MESSAGE_END": {
-      if (context.family !== "reasoning") {
-        throw new TypeError(
-          `AG-UI ${family} content event cannot be projected with ${context.family} context`,
-        );
-      }
-      assertAgUiMessageId(event, context);
-      const type = event.type === "REASONING_MESSAGE_START"
-        ? "com.veryfront.message.reasoning.started"
-        : event.type === "REASONING_MESSAGE_CONTENT"
-        ? "com.veryfront.message.reasoning.delta.emitted"
-        : "com.veryfront.message.reasoning.ended";
-      return canonicalCommand(
-        "reasoning",
-        recordEnvelope(context, type, reasoningData(event, context, protocol)),
-        protocol,
-      );
+      return projectReasoningContent(event, context, family, protocol);
     }
     case "STEP_STARTED":
     case "STEP_FINISHED": {
@@ -695,11 +766,7 @@ function projectedText(
 ): AgUiContentProjectionCommand {
   assertNativeTextMapping(event, context);
   const protocol = protocolFromNative(event);
-  const eventType = event.type === "com.veryfront.message.text.started"
-    ? "TEXT_MESSAGE_START"
-    : event.type === "com.veryfront.message.text.delta.emitted"
-    ? "TEXT_MESSAGE_CONTENT"
-    : "TEXT_MESSAGE_END";
+  const eventType = agUiTextEventType(event);
   const protocolRecord = requireProtocolHeader(protocol, eventType);
   if (
     event.type === "com.veryfront.message.text.delta.emitted" && "contentRedacted" in event.data
@@ -721,11 +788,7 @@ function projectedText(
   }
   const base = aguiBase(
     protocolRecord,
-    event.type === "com.veryfront.message.text.started"
-      ? TEXT_START_FIELDS
-      : event.type === "com.veryfront.message.text.delta.emitted"
-      ? TEXT_CONTENT_FIELDS
-      : TEXT_END_FIELDS,
+    textProtocolFields(event),
   );
   switch (event.type) {
     case "com.veryfront.message.text.started":
@@ -786,11 +849,7 @@ function projectedReasoning(
 ): AgUiContentProjectionCommand {
   assertNativeReasoningMapping(event, context);
   const protocol = protocolFromNative(event);
-  const eventType = event.type === "com.veryfront.message.reasoning.started"
-    ? "REASONING_MESSAGE_START"
-    : event.type === "com.veryfront.message.reasoning.delta.emitted"
-    ? "REASONING_MESSAGE_CONTENT"
-    : "REASONING_MESSAGE_END";
+  const eventType = agUiReasoningEventType(event);
   const protocolRecord = requireProtocolHeader(protocol, eventType);
   if (
     event.type === "com.veryfront.message.reasoning.delta.emitted" &&
@@ -813,11 +872,7 @@ function projectedReasoning(
   }
   const base = aguiBase(
     protocolRecord,
-    event.type === "com.veryfront.message.reasoning.started"
-      ? REASONING_START_FIELDS
-      : event.type === "com.veryfront.message.reasoning.delta.emitted"
-      ? REASONING_CONTENT_FIELDS
-      : REASONING_END_FIELDS,
+    reasoningProtocolFields(event),
   );
   switch (event.type) {
     case "com.veryfront.message.reasoning.started":

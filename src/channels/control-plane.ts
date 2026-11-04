@@ -1,12 +1,18 @@
+import { snapshotRunSchemaPair } from "#veryfront/schemas/schema-identity.ts";
 import { SECURITY_VIOLATION } from "#veryfront/errors";
+import { createPrivateTextDecoder, encodePrivateText } from "#veryfront/security/private-text.ts";
 import type { Agent } from "#veryfront/agent/types.ts";
 import type { DiscoveryResult } from "#veryfront/discovery";
 import type { HandlerContext } from "#veryfront/types/server.ts";
 import { skillRegistry } from "#veryfront/skill/registry.ts";
-import { base64urlEncodeBytes } from "#veryfront/utils/base64url.ts";
+import { privateJsonParse } from "#veryfront/security/private-json.ts";
+import {
+  privateByteLength,
+  PrivateUint8Array,
+  setPrivateBytes,
+} from "#veryfront/security/private-bytes.ts";
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
-import type { InferSchema, JsonSchema, Schema } from "#veryfront/extensions/schema/index.ts";
-import { resolveJsonSchemaDocument } from "#veryfront/schemas/schema-identity.ts";
+import type { InferSchema, Schema } from "#veryfront/extensions/schema/index.ts";
 import {
   CONTROL_PLANE_RUN_OPERATION_PATH,
   CONTROL_PLANE_RUN_PATH,
@@ -21,6 +27,30 @@ const SIGNED_REQUEST_PATH_BASE = "https://control-plane.invalid";
 const SIGNED_REQUEST_METHOD_PATTERN = /^[!#$%&'*+\-.^_`|~0-9A-Z]+$/u;
 const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const SafeURL = URL;
+const apply = Reflect.apply;
+const stringIndexOf = String.prototype.indexOf;
+const stringSlice = String.prototype.slice;
+const stringCharCodeAt = String.prototype.charCodeAt;
+const stringFromCharCode = String.fromCharCode;
+const regexExec = RegExp.prototype.exec;
+const arrayIsArray = Array.isArray;
+const numberIsInteger = Number.isInteger;
+const numberIsSafeInteger = Number.isSafeInteger;
+const dateNow = Date.now;
+const floor = Math.floor;
+const nativeAtob = atob;
+const nativeBtoa = btoa;
+const NativeArrayBuffer = ArrayBuffer;
+const urlOrigin = ObjectGetOwnPropertyDescriptor(SafeURL.prototype, "origin")!.get!;
+const urlPathname = ObjectGetOwnPropertyDescriptor(SafeURL.prototype, "pathname")!.get!;
+const urlSearch = ObjectGetOwnPropertyDescriptor(SafeURL.prototype, "search")!.get!;
+const urlHash = ObjectGetOwnPropertyDescriptor(SafeURL.prototype, "hash")!.get!;
+const pemWhitespace = /\s/u;
+// Verification remains host-owned after project modules run in this process.
+const hostSubtle = crypto.subtle;
+const hostDigest = hostSubtle.digest.bind(hostSubtle);
+const hostVerify = hostSubtle.verify.bind(hostSubtle);
+const hostImportKey = hostSubtle.importKey.bind(hostSubtle);
 
 /** Shared control plane agents list path value. */
 export const CONTROL_PLANE_AGENTS_LIST_PATH = "/api/control-plane/agents/list";
@@ -303,6 +333,18 @@ export const getRuntimeAgentSchema = defineSchema((v) =>
      * (veryfront-issue-inbox#2108).
      */
     output_schema: v.record(v.string(), v.unknown()).optional(),
+    schema_snapshot: v.object({
+      version: v.literal(1),
+      state: v.literal("captured"),
+      input: v.object({
+        schema: v.union([v.boolean(), v.record(v.string(), v.unknown())]),
+        sha256: v.string(),
+      }).nullable(),
+      output: v.object({
+        schema: v.union([v.boolean(), v.record(v.string(), v.unknown())]),
+        sha256: v.string(),
+      }).nullable(),
+    }).optional(),
   })
 );
 /** Zod schema for runtime agent. */
@@ -383,7 +425,10 @@ export type ControlPlaneClaims = InferSchema<ReturnType<typeof getControlPlaneCl
 
 /** Public API contract for runtime agent discovery deps. */
 export interface RuntimeAgentDiscoveryDeps {
-  ensureProjectDiscovery: (ctx: HandlerContext) => Promise<DiscoveryResult>;
+  ensureProjectDiscovery: (
+    ctx: HandlerContext,
+    assertCurrent?: () => Promise<void>,
+  ) => Promise<DiscoveryResult>;
   getAgent: (id: string) => Agent | undefined;
   getAllAgentIds: () => string[];
 }
@@ -396,23 +441,73 @@ type SignedRequestClaims = {
   sub: string;
 } & Record<string, unknown>;
 
-function base64urlDecodeToBytes(input: string): ArrayBuffer {
-  const normalized = input
-    .replaceAll("-", "+")
-    .replaceAll("_", "/")
-    .padEnd(Math.ceil(input.length / 4) * 4, "=");
+function replaceLiteral(input: string, search: string, replacement: string): string {
+  let result = "";
+  let after = 0;
+  while (true) {
+    const index: number = apply(stringIndexOf, input, [search, after]);
+    if (index < 0) return result + apply(stringSlice, input, [after]);
+    result += apply(stringSlice, input, [after, index]) + replacement;
+    after = index + search.length;
+  }
+}
 
-  return toArrayBuffer(Uint8Array.from(atob(normalized), (char) => char.charCodeAt(0)));
+function removePemMarker(input: string, marker: string): string {
+  const index: number = apply(stringIndexOf, input, [marker]);
+  return index < 0
+    ? input
+    : apply(stringSlice, input, [0, index]) + apply(stringSlice, input, [index + marker.length]);
+}
+
+function splitCompactJws(jws: string): string[] {
+  const first: number = apply(stringIndexOf, jws, ["."]);
+  const second: number = apply(stringIndexOf, jws, [".", first + 1]);
+  if (first < 0 || second < 0 || apply(stringIndexOf, jws, [".", second + 1]) >= 0) return [];
+  return [
+    apply(stringSlice, jws, [0, first]),
+    apply(stringSlice, jws, [first + 1, second]),
+    apply(stringSlice, jws, [second + 1]),
+  ];
+}
+
+function decodeBase64(input: string): ArrayBuffer {
+  const binary = nativeAtob(input);
+  const buffer = new NativeArrayBuffer(binary.length);
+  const bytes = new PrivateUint8Array(buffer);
+  for (let index = 0; index < binary.length; index++) {
+    bytes[index] = apply(stringCharCodeAt, binary, [index]);
+  }
+  return buffer;
+}
+
+function base64urlDecodeToBytes(input: string): ArrayBuffer {
+  // Native atob accepts unpadded base64, including compact JWS segments.
+  return decodeBase64(replaceLiteral(replaceLiteral(input, "-", "+"), "_", "/"));
+}
+
+function base64urlEncodeDigest(buffer: ArrayBuffer): string {
+  const bytes = new PrivateUint8Array(buffer);
+  let binary = "";
+  for (let index = 0; index < privateByteLength(bytes); index++) {
+    binary += stringFromCharCode(bytes[index]!);
+  }
+  return replaceLiteral(
+    replaceLiteral(replaceLiteral(nativeBtoa(binary), "+", "-"), "/", "_"),
+    "=",
+    "",
+  );
 }
 
 function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
-  const buffer = new ArrayBuffer(bytes.byteLength);
-  new Uint8Array(buffer).set(bytes);
+  const buffer = new NativeArrayBuffer(privateByteLength(bytes));
+  setPrivateBytes(new PrivateUint8Array(buffer), bytes);
   return buffer;
 }
 
 function parseCompactJwsPart<T>(encodedPart: string): T {
-  return JSON.parse(new TextDecoder().decode(base64urlDecodeToBytes(encodedPart))) as T;
+  return privateJsonParse(
+    createPrivateTextDecoder().decode(base64urlDecodeToBytes(encodedPart)),
+  ) as T;
 }
 
 function parseCompactJwsObject(
@@ -420,7 +515,7 @@ function parseCompactJwsObject(
   label: string,
 ): Record<string, unknown> {
   const value = parseCompactJwsPart<unknown>(encodedPart);
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+  if (value === null || typeof value !== "object" || arrayIsArray(value)) {
     throw new TypeError(`Compact JWS ${label} must be a JSON object`);
   }
   return value as Record<string, unknown>;
@@ -444,7 +539,7 @@ function readCompactJwsInteger(
 ): number {
   const descriptor = ObjectGetOwnPropertyDescriptor(value, field);
   const candidate = descriptor && "value" in descriptor ? descriptor.value : undefined;
-  if (typeof candidate !== "number" || !Number.isInteger(candidate)) {
+  if (typeof candidate !== "number" || !numberIsInteger(candidate)) {
     throw new TypeError(`Compact JWS field "${field}" must be an integer`);
   }
   return candidate;
@@ -454,7 +549,7 @@ function requireCanonicalSignedRequestMethod(value: string): string {
   if (
     value.length === 0 ||
     value.length > MAX_SIGNED_REQUEST_METHOD_CODE_UNITS ||
-    !SIGNED_REQUEST_METHOD_PATTERN.test(value)
+    apply(regexExec, SIGNED_REQUEST_METHOD_PATTERN, [value]) === null
   ) {
     throw new TypeError('Compact JWS field "request_method" must be a canonical HTTP method');
   }
@@ -477,10 +572,10 @@ function requireCanonicalSignedRequestPath(value: string): string {
     throw new TypeError('Compact JWS field "request_path" must be a canonical URL pathname');
   }
   if (
-    parsed.origin !== SIGNED_REQUEST_PATH_BASE ||
-    parsed.pathname !== value ||
-    parsed.search !== "" ||
-    parsed.hash !== ""
+    apply(urlOrigin, parsed, []) !== SIGNED_REQUEST_PATH_BASE ||
+    apply(urlPathname, parsed, []) !== value ||
+    apply(urlSearch, parsed, []) !== "" ||
+    apply(urlHash, parsed, []) !== ""
   ) {
     throw new TypeError('Compact JWS field "request_path" must be a canonical URL pathname');
   }
@@ -567,7 +662,7 @@ function parseDispatchSignatureClaims(encodedPayload: string): SignedRequestClai
 function parseControlPlaneSignatureClaims(encodedPayload: string): SignedRequestClaims {
   const { claims, base } = parseSignatureBaseClaims(encodedPayload);
   const surface = readCompactJwsString(claims, "surface");
-  if (!CONTROL_PLANE_SURFACES.includes(surface as ControlPlaneSurface)) {
+  if (surface !== "studio" && surface !== "channels" && surface !== "a2a" && surface !== "mcp") {
     throw new TypeError('Compact JWS field "surface" is not supported');
   }
   return {
@@ -584,12 +679,16 @@ function parseControlPlaneSignatureClaims(encodedPayload: string): SignedRequest
 }
 
 function pemToDer(pem: string, label: string): ArrayBuffer {
-  const body = pem
-    .replace(`-----BEGIN ${label}-----`, "")
-    .replace(`-----END ${label}-----`, "")
-    .replace(/\s/g, "");
-
-  return toArrayBuffer(Uint8Array.from(atob(body), (char) => char.charCodeAt(0)));
+  const unwrapped = removePemMarker(
+    removePemMarker(pem, `-----BEGIN ${label}-----`),
+    `-----END ${label}-----`,
+  );
+  let body = "";
+  for (let index = 0; index < unwrapped.length; index++) {
+    const character = unwrapped[index]!;
+    if (apply(regexExec, pemWhitespace, [character]) === null) body += character;
+  }
+  return decodeBase64(body);
 }
 
 let cachedEd25519PublicKey:
@@ -601,7 +700,7 @@ function importEd25519PublicKey(pem: string): Promise<CryptoKey> {
     return cachedEd25519PublicKey.promise;
   }
 
-  const promise = crypto.subtle.importKey(
+  const promise = hostImportKey(
     "spki",
     pemToDer(pem, "PUBLIC KEY"),
     "Ed25519",
@@ -618,8 +717,8 @@ function importEd25519PublicKey(pem: string): Promise<CryptoKey> {
 }
 
 async function sha256Base64url(body: string): Promise<string> {
-  const hash = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(body));
-  return base64urlEncodeBytes(new Uint8Array(hash));
+  const hash = await hostDigest("SHA-256", toArrayBuffer(encodePrivateText(body)));
+  return base64urlEncodeDigest(hash);
 }
 
 async function verifySignedRequestJws<TClaims extends SignedRequestClaims>(
@@ -645,7 +744,7 @@ async function verifySignedRequestJws<TClaims extends SignedRequestClaims>(
     };
   },
 ): Promise<TClaims> {
-  const parts = jws.split(".");
+  const parts = splitCompactJws(jws);
   if (parts.length !== 3) {
     throw SECURITY_VIOLATION.create({ detail: "Control-plane signature must be a compact JWS" });
   }
@@ -663,10 +762,10 @@ async function verifySignedRequestJws<TClaims extends SignedRequestClaims>(
   const claims = options.claimsSchema.parse(parseCompactJwsPart(encodedPayload));
   const claimSnapshot = options.parseClaims(encodedPayload);
 
-  const signingInput = new TextEncoder().encode(`${encodedHeader}.${encodedPayload}`);
+  const signingInput = toArrayBuffer(encodePrivateText(`${encodedHeader}.${encodedPayload}`));
   const signature = base64urlDecodeToBytes(encodedSignature);
   const publicKey = await importEd25519PublicKey(options.publicKeyPem);
-  const verified = await crypto.subtle.verify("Ed25519", publicKey, signature, signingInput);
+  const verified = await hostVerify("Ed25519", publicKey, signature, signingInput);
 
   if (!verified) {
     throw SECURITY_VIOLATION.create({ detail: "Control-plane signature verification failed" });
@@ -705,7 +804,7 @@ async function verifySignedRequestJws<TClaims extends SignedRequestClaims>(
     );
   }
 
-  const now = Math.floor(Date.now() / 1000);
+  const now = floor(dateNow() / 1000);
   if (claimSnapshot.exp <= now) {
     throw SECURITY_VIOLATION.create({ detail: "Control-plane signature expired" });
   }
@@ -818,30 +917,29 @@ export function getRuntimeAgentPublicMetadata(
   };
 }
 
-/**
- * The JSON Schema document of a declared agent `outputSchema`, resolved like the schema identity
- * helper does. `undefined` when none is declared or it cannot be converted; running such an agent
- * fails on its own, so the list stays usable.
- */
-function resolveDeclaredOutputSchemaDocument(outputSchema: unknown): JsonSchema | undefined {
-  try {
-    return resolveJsonSchemaDocument(outputSchema);
-  } catch {
-    return undefined;
-  }
-}
-
-function getRuntimeAgentMetadata(id: string, agent: Agent): RuntimeAgent {
-  const rawConfig = agent.config as { version?: unknown };
+async function getRuntimeAgentMetadata(id: string, agent: Agent): Promise<RuntimeAgent> {
+  const config = agent.config;
+  const rawConfig = config as { version?: unknown };
   const publicMetadata = getRuntimeAgentPublicMetadata(id, agent);
-  const outputSchema = resolveDeclaredOutputSchemaDocument(agent.config.outputSchema);
-
+  // Detach each declaration before either hash awaits. A failed input conversion
+  // must not remove the legacy output document from an otherwise usable listing.
+  const inputCapture = snapshotRunSchemaPair({});
+  const outputCapture = snapshotRunSchemaPair({ outputSchema: config.outputSchema });
+  const inputPair = await inputCapture;
+  const outputPair = await outputCapture;
+  const pair = inputPair.state === "captured" && outputPair.state === "captured"
+    ? { version: 1, state: "captured", input: inputPair.input, output: outputPair.output }
+    : undefined;
+  const outputSchema = outputPair.state === "captured" ? outputPair.output?.schema : undefined;
   return RuntimeAgentSchema.parse({
     ...publicMetadata,
-    model: agent.config.model ?? null,
+    model: config.model ?? null,
     version: typeof rawConfig.version === "string" ? rawConfig.version : null,
     skills: resolveAgentSkills(agent),
-    ...(outputSchema === undefined ? {} : { output_schema: outputSchema }),
+    ...(outputSchema !== undefined && typeof outputSchema === "object"
+      ? { output_schema: outputSchema }
+      : {}),
+    ...(pair === undefined ? {} : { schema_snapshot: pair }),
   });
 }
 
@@ -852,10 +950,12 @@ export async function listRuntimeAgents(
 ): Promise<RuntimeAgentListResponse> {
   await deps.ensureProjectDiscovery(ctx);
 
-  const agents = deps.getAllAgentIds()
-    .map((id) => ({ id, agent: deps.getAgent(id) }))
-    .filter((entry): entry is { id: string; agent: Agent } => Boolean(entry.agent))
-    .map(({ id, agent }) => getRuntimeAgentMetadata(id, agent))
+  const agents = (await Promise.all(
+    deps.getAllAgentIds()
+      .map((id) => ({ id, agent: deps.getAgent(id) }))
+      .filter((entry): entry is { id: string; agent: Agent } => Boolean(entry.agent))
+      .map(({ id, agent }) => getRuntimeAgentMetadata(id, agent)),
+  ))
     .sort((left, right) => left.name.localeCompare(right.name));
 
   return RuntimeAgentListResponseSchema.parse({ agents });
@@ -990,15 +1090,17 @@ async function verifySignedRequestJwsSignature(
     if (
       jws.length > MAX_SIGNATURE_JWS_CODE_UNITS ||
       options.publicKeyPem.length > MAX_SIGNATURE_PUBLIC_KEY_CODE_UNITS ||
-      !Number.isSafeInteger(options.maxAgeSeconds) ||
+      !numberIsSafeInteger(options.maxAgeSeconds) ||
       options.maxAgeSeconds < 0
     ) {
       return false;
     }
 
-    const parts = jws.split(".");
+    const parts = splitCompactJws(jws);
     if (parts.length !== 3) return false;
-    const [encodedHeader, encodedPayload, encodedSignature] = parts;
+    const encodedHeader = parts[0];
+    const encodedPayload = parts[1];
+    const encodedSignature = parts[2];
     if (!encodedHeader || !encodedPayload || !encodedSignature) return false;
 
     // Proxy authenticity checks must remain available before extension-backed
@@ -1007,10 +1109,10 @@ async function verifySignedRequestJwsSignature(
     parseSignatureProtectedHeader(encodedHeader);
     const claims = parseClaims(encodedPayload);
 
-    const signingInput = new TextEncoder().encode(`${encodedHeader}.${encodedPayload}`);
+    const signingInput = toArrayBuffer(encodePrivateText(`${encodedHeader}.${encodedPayload}`));
     const signature = base64urlDecodeToBytes(encodedSignature);
     const publicKey = await importEd25519PublicKey(options.publicKeyPem);
-    const verified = await crypto.subtle.verify("Ed25519", publicKey, signature, signingInput);
+    const verified = await hostVerify("Ed25519", publicKey, signature, signingInput);
     if (!verified) return false;
 
     if (claims.iss !== "veryfront-api") return false;
@@ -1038,14 +1140,14 @@ async function verifySignedRequestJwsSignature(
       return false;
     }
     if (
-      !Number.isSafeInteger(claims.iat) ||
-      !Number.isSafeInteger(claims.exp) ||
+      !numberIsSafeInteger(claims.iat) ||
+      !numberIsSafeInteger(claims.exp) ||
       claims.exp <= claims.iat
     ) {
       return false;
     }
 
-    const now = Math.floor(Date.now() / 1000);
+    const now = floor(dateNow() / 1000);
     if (claims.exp <= now) return false;
     if (claims.iat > now + SIGNATURE_SKEW_SECONDS) return false;
     if (now - claims.iat > options.maxAgeSeconds) return false;

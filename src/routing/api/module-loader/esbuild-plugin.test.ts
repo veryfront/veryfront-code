@@ -1,12 +1,13 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 import {
   installMockFetch,
   observeFetchRequestInit,
   restoreMockFetch,
 } from "#veryfront/testing/mock-fetch.ts";
-import { computeIntegrity, type LockfileManager } from "#veryfront/utils";
+import { computeIntegrity, createLockfileManager, type LockfileManager } from "#veryfront/utils";
 import { MAX_BUNDLE_CHUNK_SIZE_BYTES } from "#veryfront/utils/constants/buffers.ts";
 import { createHTTPPlugin } from "./esbuild-plugin.ts";
 import * as esbuild from "veryfront/extensions/bundler";
@@ -405,6 +406,149 @@ describe("routing/api/module-loader/esbuild-plugin", () => {
         );
       } finally {
         restoreMockFetch();
+      }
+    });
+
+    it("compiles remote TypeScript with the resolved module's loader", async () => {
+      const projectDir = await makeTempDir();
+      const resolvedUrl = "https://esm.sh/typed/parse.ts?version=1&filename=ignored.js";
+      const source = "export interface Result { value: number }\n" +
+        "export const result: Result = { value: 42 };";
+      let loadHandler: ((args: OnLoadArgs) => unknown) | undefined;
+      createHTTPPlugin({ allowedHosts: ["https://esm.sh"], projectDir }).setup(createMockBuild(
+        () => {},
+        (_opts, fn) => {
+          loadHandler = fn;
+        },
+      ));
+      assertExists(loadHandler);
+
+      try {
+        installMockFetch((async () => new Response(source)) as typeof fetch);
+        // Both the initial fetch and the integrity-verified lockfile path must
+        // use the URL path rather than treating a query suffix as an extension.
+        for (let attempt = 0; attempt < 2; attempt++) {
+          const result = await loadHandler({
+            path: resolvedUrl,
+            namespace: "http-url",
+            pluginData: undefined,
+            suffix: "",
+          }) as { contents: string; loader: "js" | "ts" };
+          assertEquals(result.loader, "ts", JSON.stringify(result));
+          const compiled = await esbuild.transform(result.contents, { loader: result.loader });
+          assertEquals(compiled.code.includes("interface Result"), false);
+          assertEquals(compiled.code.includes("value: 42"), true);
+        }
+      } finally {
+        restoreMockFetch();
+        await esbuild.stop();
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+
+    it("compiles remote .mts and .cts modules as TypeScript", async () => {
+      let loadHandler: ((args: OnLoadArgs) => unknown) | undefined;
+      createHTTPPlugin(["https://esm.sh"]).setup(createMockBuild(
+        () => {},
+        (_opts, fn) => {
+          loadHandler = fn;
+        },
+      ));
+      assertExists(loadHandler);
+      try {
+        installMockFetch(
+          (async () =>
+            new Response(
+              "export interface Result { value: number }\n" +
+                "export const result: Result = { value: 42 };",
+            )) as typeof fetch,
+        );
+        for (const extension of ["mts", "cts"] as const) {
+          const result = await loadHandler({
+            path: `https://esm.sh/typed/parse.${extension}?filename=ignored.js`,
+            namespace: "http-url",
+            pluginData: undefined,
+            suffix: "",
+          }) as { contents: string; loader: "js" | "ts" };
+          assertEquals(result.loader, "ts", extension);
+          const compiled = await esbuild.transform(result.contents, { loader: result.loader });
+          assertEquals(compiled.code.includes("interface Result"), false);
+        }
+      } finally {
+        restoreMockFetch();
+        await esbuild.stop();
+      }
+    });
+
+    it("compiles fetched JSX and TSX modules with their source grammar", async () => {
+      let loadHandler: ((args: OnLoadArgs) => unknown) | undefined;
+      createHTTPPlugin(["https://esm.sh"]).setup(createMockBuild(
+        () => {},
+        (_opts, fn) => {
+          loadHandler = fn;
+        },
+      ));
+      assertExists(loadHandler);
+      try {
+        installMockFetch(
+          (async () => new Response("export const node = <span />;")) as typeof fetch,
+        );
+        for (const extension of ["jsx", "tsx"] as const) {
+          const result = await loadHandler({
+            path: `https://esm.sh/component.${extension}?filename=ignored.js`,
+            namespace: "http-url",
+            pluginData: undefined,
+            suffix: "",
+          }) as { contents: string; loader: "jsx" | "tsx" };
+          assertEquals(result.loader, extension);
+          const compiled = await esbuild.transform(result.contents, { loader: result.loader });
+          assertEquals(compiled.code.includes("React.createElement"), true);
+        }
+      } finally {
+        restoreMockFetch();
+        await esbuild.stop();
+      }
+    });
+
+    it("uses a locked TypeScript URL rather than the JavaScript import alias", async () => {
+      const projectDir = await makeTempDir();
+      const requestUrl = "https://esm.sh/parser.js";
+      const resolvedUrl = "https://esm.sh/pinned/parser.ts?version=1";
+      const source = "export const value: number = 42;";
+      const lockfile = createLockfileManager(projectDir);
+      await lockfile.set(requestUrl, {
+        resolved: resolvedUrl,
+        integrity: await computeIntegrity(source),
+        fetchedAt: new Date().toISOString(),
+      });
+      let loadHandler: ((args: OnLoadArgs) => unknown) | undefined;
+      const requestedUrls: string[] = [];
+      createHTTPPlugin({ allowedHosts: ["https://esm.sh"], lockfile }).setup(createMockBuild(
+        () => {},
+        (_opts, fn) => {
+          loadHandler = fn;
+        },
+      ));
+      assertExists(loadHandler);
+      try {
+        installMockFetch(
+          (async (input) => {
+            requestedUrls.push(String(input));
+            return new Response(source);
+          }) as typeof fetch,
+        );
+        const result = await loadHandler({
+          path: requestUrl,
+          namespace: "http-url",
+          pluginData: undefined,
+          suffix: "",
+        }) as { contents: string; loader: string };
+        assertEquals(result.loader, "ts");
+        assertEquals(result.contents, source);
+        assertEquals(requestedUrls, [resolvedUrl]);
+      } finally {
+        restoreMockFetch();
+        await Deno.remove(projectDir, { recursive: true });
       }
     });
 

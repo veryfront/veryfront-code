@@ -1,7 +1,6 @@
 import type {
   BaseNodeConfig,
   SubWorkflowNodeConfig,
-  WorkflowContext,
   WorkflowDefinition,
   WorkflowNode,
 } from "../types.ts";
@@ -11,7 +10,8 @@ import { INVALID_ARGUMENT } from "#veryfront/errors";
 /** Options accepted by sub workflow. */
 export interface SubWorkflowOptions extends BaseNodeConfig {
   workflow: WorkflowDefinition;
-  input?: unknown | ((context: WorkflowContext) => unknown);
+  /** Literal input or a function that derives it from workflow context. */
+  input?: unknown;
   output?: (result: unknown) => unknown;
 }
 

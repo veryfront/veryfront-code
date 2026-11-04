@@ -94,6 +94,85 @@ describe("agent runtime streamed tool result collection", () => {
     );
   });
 
+  it("executes a committed local call after preamble text and a stop finish", () => {
+    const call = {
+      id: "inspect",
+      name: "inspect_record",
+      arguments: "{}",
+      inputAvailable: true,
+    };
+    const state = {
+      accumulatedText: "Checking the demo record.",
+      finishReason: "stop" as const,
+      toolCalls: new Map([[call.id, call]]),
+      toolResults: [],
+    };
+    assertEquals(shouldContinueAfterStreamStep(state), true);
+    assertEquals(
+      shouldContinueAfterStreamStep({
+        ...state,
+        toolResults: [{ toolCallId: call.id, toolName: call.name, output: { valid: true } }],
+      }),
+      false,
+      "a completed local call must not be executed again",
+    );
+    assertEquals(
+      shouldContinueAfterStreamStep({
+        ...state,
+        toolCalls: new Map([[call.id, { ...call, inputAvailable: false }]]),
+      }),
+      false,
+      "partial input must not execute",
+    );
+    assertEquals(shouldContinueAfterStreamStep({ ...state, finishReason: "length" }), false);
+  });
+
+  it("blocks mixed batches until every provider call has a final result", () => {
+    for (const finishReason of ["stop", "tool-calls"] as const) {
+      for (const accumulatedText of ["", "Checking the record."]) {
+        const state = {
+          accumulatedText,
+          finishReason,
+          toolCalls: new Map([
+            ["local", { id: "local", name: "save_record", arguments: "{}", inputAvailable: true }],
+            ["provider", {
+              id: "provider",
+              name: "search",
+              arguments: "{}",
+              inputAvailable: true,
+              providerExecuted: true,
+            }],
+          ]),
+          toolResults: [],
+        };
+        const result = {
+          toolCallId: "provider",
+          toolName: "search",
+          output: { found: true },
+          providerExecuted: true,
+        };
+        assertEquals(
+          shouldContinueAfterStreamStep(state),
+          false,
+          "unresolved provider work must block local side effects",
+        );
+        assertEquals(
+          shouldContinueAfterStreamStep({
+            ...state,
+            toolResults: [{ ...result, preliminary: true }],
+          }),
+          false,
+          "a preliminary result is not final",
+        );
+        assertEquals(
+          shouldContinueAfterStreamStep({ ...state, toolResults: [result] }),
+          true,
+          "a final provider result allows the committed local call",
+        );
+      }
+    }
+  });
+
   it("continues after provider-executed tool results arrive without assistant text", () => {
     const shouldContinue = shouldContinueAfterStreamStep({
       accumulatedText: "",

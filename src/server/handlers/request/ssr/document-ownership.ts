@@ -1,22 +1,25 @@
 /**
- * SSR document ownership predicate.
+ * SSR document ownership predicates.
  *
  * The API/page classifier and `SSRHandler` must agree on which pathnames SSR
- * renders (or sheds): the classifier defers the memory-pressure response to
- * SSR only for requests that actually reach it. A pathname outside this
- * predicate, including `/_`-prefixed infrastructure paths and extension paths
- * such as `GET /file.md`, belongs to another handler (for example
- * `MarkdownPreviewHandler`), which serves it whether or not the renderer is
- * under pressure, so it must still get its source freshness up front.
+ * renders (or sheds). Dotted application paths need page metadata to decide
+ * ownership: a dynamic page may accept `record.v2` or `photo.png` as its ID.
+ * Static files take precedence, while an undeclared extension path remains
+ * with another handler or the final 404.
  *
  * @module server/handlers/request/ssr/document-ownership
  */
 
-/** True when `SSRHandler` is the handler that renders or sheds this pathname. */
+/** Paths that can be declared pages after static files and API routes are checked. */
+export function isDocumentPathnameCandidate(pathname: string): boolean {
+  return !pathname.startsWith("/_");
+}
+
+/** Paths SSR can own without checking for an explicitly declared page. */
 export function ssrOwnsDocumentPathname(pathname: string): boolean {
   // SSRHandler's route pattern is /^(?!\/_).*/, so /_veryfront/ and every
   // other /_ infrastructure path never reaches its render path.
-  if (pathname.startsWith("/_")) return false;
+  if (!isDocumentPathnameCandidate(pathname)) return false;
 
   // Extension paths fall through SSR to their own handlers; .veryfront paths
   // are virtual documents that SSR does render.

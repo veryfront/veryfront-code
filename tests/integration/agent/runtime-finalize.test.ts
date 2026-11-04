@@ -430,7 +430,8 @@ describe("runtime finalize terminal control", () => {
               }], { runId: "run-current" }),
             ).text();
             assert(body.includes('"type":"message-finish"'), body);
-            assert(body.includes('"object":"done"'), body);
+            assert(body.includes('"data":"done"'), body);
+            assert(!body.includes('"object":"done"'), body);
           } else {
             assertEquals((await runtime.generate("run", { runId: "run-current" })).object, "done");
           }
@@ -701,7 +702,8 @@ describe("runtime finalize terminal control", () => {
             ).text();
             assertEquals(body.match(/"type":"message-finish"/g)?.length, 1);
             assert(!body.includes('"type":"error"'), body);
-            assert(body.includes('"object":{"city":"TEST CITY"}'), body);
+            assert(body.includes('"data":{"city":"TEST CITY"}'), body);
+            assert(!body.includes('"object":{"city":"TEST CITY"}'), body);
           } else {
             assertEquals(
               (await runtime.generate("run", {
@@ -783,7 +785,8 @@ describe("runtime finalize terminal control", () => {
         }], { runId: "run-current" });
         const text = await new Response(stream).text();
         assert(text.includes('"type":"message-finish"'), text);
-        assert(text.includes('"object":{"ingested":3}'), text);
+        assert(text.includes('"data":{"ingested":3}'), text);
+        assert(!text.includes('"object":{"ingested":3}'), text);
         assert(!text.includes('"type":"error"'), text);
         assert(text.includes('"type":"tool-output-available","toolCallId":"fail-1"'), text);
         assert(text.includes('"type":"tool-output-error","toolCallId":"marker-1"'), text);

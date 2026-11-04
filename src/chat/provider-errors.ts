@@ -10,6 +10,7 @@ import {
 } from "#veryfront/provider/runtime-loader/provider-http.ts";
 import { readRuntimeCost } from "#veryfront/provider/runtime-usage.ts";
 import {
+  ACCOUNT_MODEL_DENIED_ERROR,
   AGENT_PROVIDER_AUTH_ERROR,
   AI_PROVIDER_BILLING_ERROR,
   AI_PROVIDER_SPEND_CHECK_UNAVAILABLE_ERROR,
@@ -17,6 +18,7 @@ import {
   AI_PROVIDER_WORKSPACE_LIMIT_ERROR,
   GATEWAY_PROJECT_REQUIRED_ERROR,
   INFERENCE_POLICY_DENIED_ERROR,
+  KEY_MODEL_DENIED_ERROR,
   MODEL_NOT_PERMITTED_ERROR,
   MODEL_UNSUPPORTED_ASSISTANT_PREFILL_ERROR,
   OUTPUT_SCHEMA_INVALID_ERROR,
@@ -87,16 +89,20 @@ function findJsonObjectEnd(value: string, startIndex: number): number | null {
   let inString = false;
   let escaped = false;
 
+  const consumeStringCharacter = (character: string): void => {
+    if (escaped) {
+      escaped = false;
+    } else if (character === "\\") {
+      escaped = true;
+    } else if (character === '"') {
+      inString = false;
+    }
+  };
+
   for (let index = startIndex + 1; index < value.length; index++) {
     const character = value[index]!;
     if (inString) {
-      if (escaped) {
-        escaped = false;
-      } else if (character === "\\") {
-        escaped = true;
-      } else if (character === '"') {
-        inString = false;
-      }
+      consumeStringCharacter(character);
       continue;
     }
 
@@ -210,6 +216,17 @@ function parseKnownProblemBodyInternal(
   // this structured code. Its wording is fixed locally, never copied.
   if (getOwnDataProperty(body, "code") === "gateway_project_required") {
     return { ...GATEWAY_PROJECT_REQUIRED_ERROR };
+  }
+
+  if (allowInferencePolicy) {
+    switch (getOwnDataProperty(body, "code")) {
+      case "account-model-denied":
+        return { ...ACCOUNT_MODEL_DENIED_ERROR };
+      case "policy-model-denied":
+        return { ...MODEL_NOT_PERMITTED_ERROR };
+      case "key-model-denied":
+        return { ...KEY_MODEL_DENIED_ERROR };
+    }
   }
 
   // The gateway refuses a request its EU-only inference policy cannot serve,
@@ -406,6 +423,21 @@ function classifyInvalidRequestMessage(message: string): ParsedProviderError | n
   return null;
 }
 
+function classifyInvalidRequestBody(
+  body: Record<string, unknown> & { message: string },
+): ParsedProviderError | null {
+  const classified = classifyInvalidRequestMessage(body.message);
+  if (classified) {
+    return classified;
+  }
+  // OpenAI uses invalid_json_schema for output formats, while invalid tool
+  // schemas use invalid_function_parameters. Keep the upstream text private.
+  if (body.code === "invalid_json_schema") {
+    return OUTPUT_SCHEMA_INVALID_ERROR;
+  }
+  return null;
+}
+
 function parseKnownProviderBody(
   body: unknown,
   seen: WeakSet<object> = new WeakSet(),
@@ -457,15 +489,7 @@ function parseKnownProviderBody(
   }
 
   if (typeof body.message === "string" && isInvalidRequestEnvelope(body)) {
-    const classified = classifyInvalidRequestMessage(body.message);
-    if (classified) {
-      return classified;
-    }
-    // OpenAI uses invalid_json_schema for output formats, while invalid tool
-    // schemas use invalid_function_parameters. Keep the upstream text private.
-    if (body.code === "invalid_json_schema") {
-      return OUTPUT_SCHEMA_INVALID_ERROR;
-    }
+    return classifyInvalidRequestBody(body as Record<string, unknown> & { message: string });
   }
 
   return null;
@@ -510,18 +534,7 @@ export function parseProviderError(error: unknown): ParsedProviderError {
   }
 }
 
-function parseProviderErrorInner(
-  error: unknown,
-  seen: WeakSet<object>,
-  depth: number,
-): ParsedProviderError {
-  if (depth >= MAX_PROVIDER_ERROR_DEPTH) {
-    return DEFAULT_EXTERNAL_SERVICE_ERROR;
-  }
-
-  const registered = registeredProviderFailure(error);
-  if (registered) return registered;
-
+function classifyTypedProviderFailure(error: unknown): ParsedProviderError | null {
   if (error instanceof ProviderRateLimitError) {
     return {
       code: "RATE_LIMITED",
@@ -544,6 +557,154 @@ function parseProviderErrorInner(
       message: "The LLM provider is currently overloaded",
     };
   }
+
+  return null;
+}
+
+function classifyProviderMessage(message: string): ParsedProviderError | null {
+  const normalizedMessage = message.toLowerCase();
+  if (isAssistantPrefillUnsupportedMessage(message)) {
+    return MODEL_UNSUPPORTED_ASSISTANT_PREFILL_ERROR;
+  }
+  // Also matched here, not only on the structured-body path: the same
+  // rejection reaches this function as a bare `Error` whenever the body was
+  // never preserved -- an unparsed shape, a truncated read, or a provider
+  // whose envelope carries no `invalid_request_error` type at all.
+  if (isOpenObjectSchemaRejection(message)) {
+    return OUTPUT_SCHEMA_NOT_CLOSED_ERROR;
+  }
+  if (isProviderWorkspaceLimitMessage(normalizedMessage)) {
+    return AI_PROVIDER_WORKSPACE_LIMIT_ERROR;
+  }
+  if (isProviderBillingMessage(normalizedMessage)) {
+    return AI_PROVIDER_BILLING_ERROR;
+  }
+  if (isCreditLimitMessage(normalizedMessage)) {
+    return { code: "INSUFFICIENT_CREDITS", message: "Insufficient AI credits", status: 402 };
+  }
+  if (normalizedMessage.includes("overload") || normalizedMessage.includes("capacity")) {
+    return { code: "OVERLOADED_ERROR", message: "The LLM provider is currently overloaded" };
+  }
+  if (
+    normalizedMessage.includes("rate limit") ||
+    normalizedMessage.includes("too many requests") ||
+    normalizedMessage.includes("429")
+  ) {
+    return {
+      code: "RATE_LIMITED",
+      message: "Too many requests. Please wait a moment and try again.",
+      status: 429,
+    };
+  }
+  if (
+    normalizedMessage.includes("prompt is too long") ||
+    normalizedMessage.includes("too many tokens") ||
+    normalizedMessage.includes("context size has been exceeded") ||
+    normalizedMessage.includes("context length exceeded")
+  ) {
+    return { code: "CONTEXT_LENGTH_EXCEEDED", message: "Conversation is too long" };
+  }
+  if (normalizedMessage.includes("invalid veryfront schema")) {
+    return PROJECT_SCHEMA_ERROR;
+  }
+  return null;
+}
+
+function parseProviderMessageBodies(
+  message: string,
+  parseProblemBody: typeof parseKnownProblemBody,
+): ParsedProviderError | null {
+  const parsedMessage = parseErrorJson(message);
+  const parsedMessageError = parseKnownProviderBody(
+    parsedMessage,
+    new WeakSet(),
+    0,
+    parseProblemBody,
+  );
+  if (parsedMessageError) {
+    return parsedMessageError;
+  }
+
+  const parsedEmbeddedMessage = parseEmbeddedErrorJson(message);
+  const parsedEmbeddedMessageError = parseKnownProviderBody(
+    parsedEmbeddedMessage,
+    new WeakSet(),
+    0,
+    parseProblemBody,
+  );
+  if (parsedEmbeddedMessageError) {
+    return parsedEmbeddedMessageError;
+  }
+
+  return null;
+}
+
+function parseProviderResponseBody(
+  responseBody: string | undefined,
+  parseProblemBody: typeof parseKnownProblemBody,
+): ParsedProviderError | null {
+  if (responseBody) {
+    const normalizedResponseBody = responseBody.toLowerCase();
+    if (normalizedResponseBody.includes("invalid veryfront schema")) {
+      return PROJECT_SCHEMA_ERROR;
+    }
+
+    const parsedBody = parseErrorJson(responseBody);
+    const parsedError = parseKnownProviderBody(parsedBody, new WeakSet(), 0, parseProblemBody);
+    if (parsedError) {
+      return parsedError;
+    }
+  }
+  return null;
+}
+
+function parseNestedProviderError(
+  error: unknown,
+  seen: WeakSet<object>,
+  depth: number,
+): ParsedProviderError | null {
+  if (isErrorRecord(error)) {
+    for (const key of ["lastError", "cause"]) {
+      const nested = parseProviderErrorInner(getOwnDataProperty(error, key), seen, depth + 1);
+      if (
+        nested.code !== DEFAULT_EXTERNAL_SERVICE_ERROR.code ||
+        nested.message !== DEFAULT_EXTERNAL_SERVICE_ERROR.message
+      ) {
+        return nested;
+      }
+    }
+  }
+  return null;
+}
+
+function classifyProviderErrorMessage(
+  error: unknown,
+  parseProblemBody: typeof parseKnownProblemBody,
+): ParsedProviderError | null {
+  const message = getErrorMessage(error);
+  if (message) {
+    const messageBodyError = parseProviderMessageBodies(message, parseProblemBody);
+    if (messageBodyError) return messageBodyError;
+    const classifiedMessage = classifyProviderMessage(message);
+    if (classifiedMessage) return classifiedMessage;
+  }
+  return null;
+}
+
+function parseProviderErrorInner(
+  error: unknown,
+  seen: WeakSet<object>,
+  depth: number,
+): ParsedProviderError {
+  if (depth >= MAX_PROVIDER_ERROR_DEPTH) {
+    return DEFAULT_EXTERNAL_SERVICE_ERROR;
+  }
+
+  const registered = registeredProviderFailure(error);
+  if (registered) return registered;
+
+  const typedFailure = classifyTypedProviderFailure(error);
+  if (typedFailure) return typedFailure;
 
   if (isErrorRecord(error)) {
     if (seen.has(error)) {
@@ -570,106 +731,19 @@ function parseProviderErrorInner(
   const parseProblemBody = error instanceof ProviderError && error.viaVeryfrontGateway === true
     ? parseGatewayProblemBody
     : parseKnownProblemBody;
-  if (responseBody) {
-    const normalizedResponseBody = responseBody.toLowerCase();
-    if (normalizedResponseBody.includes("invalid veryfront schema")) {
-      return PROJECT_SCHEMA_ERROR;
-    }
+  const responseError = parseProviderResponseBody(responseBody, parseProblemBody);
+  if (responseError) return responseError;
 
-    const parsedBody = parseErrorJson(responseBody);
-    const parsedError = parseKnownProviderBody(parsedBody, new WeakSet(), 0, parseProblemBody);
-    if (parsedError) {
-      return parsedError;
-    }
-  }
-
-  if (isErrorRecord(error)) {
-    for (const key of ["lastError", "cause"]) {
-      const nested = parseProviderErrorInner(getOwnDataProperty(error, key), seen, depth + 1);
-      if (
-        nested.code !== DEFAULT_EXTERNAL_SERVICE_ERROR.code ||
-        nested.message !== DEFAULT_EXTERNAL_SERVICE_ERROR.message
-      ) {
-        return nested;
-      }
-    }
-  }
+  const nestedError = parseNestedProviderError(error, seen, depth);
+  if (nestedError) return nestedError;
 
   const parsedDirectError = parseKnownProviderBody(error, new WeakSet(), 0, parseProblemBody);
   if (parsedDirectError) {
     return parsedDirectError;
   }
 
-  const message = getErrorMessage(error);
-  if (message) {
-    const parsedMessage = parseErrorJson(message);
-    const parsedMessageError = parseKnownProviderBody(
-      parsedMessage,
-      new WeakSet(),
-      0,
-      parseProblemBody,
-    );
-    if (parsedMessageError) {
-      return parsedMessageError;
-    }
-
-    const parsedEmbeddedMessage = parseEmbeddedErrorJson(message);
-    const parsedEmbeddedMessageError = parseKnownProviderBody(
-      parsedEmbeddedMessage,
-      new WeakSet(),
-      0,
-      parseProblemBody,
-    );
-    if (parsedEmbeddedMessageError) {
-      return parsedEmbeddedMessageError;
-    }
-
-    const normalizedMessage = message.toLowerCase();
-    if (isAssistantPrefillUnsupportedMessage(message)) {
-      return MODEL_UNSUPPORTED_ASSISTANT_PREFILL_ERROR;
-    }
-    // Also matched here, not only on the structured-body path: the same
-    // rejection reaches this function as a bare `Error` whenever the body was
-    // never preserved -- an unparsed shape, a truncated read, or a provider
-    // whose envelope carries no `invalid_request_error` type at all.
-    if (isOpenObjectSchemaRejection(message)) {
-      return OUTPUT_SCHEMA_NOT_CLOSED_ERROR;
-    }
-    if (isProviderWorkspaceLimitMessage(normalizedMessage)) {
-      return AI_PROVIDER_WORKSPACE_LIMIT_ERROR;
-    }
-    if (isProviderBillingMessage(normalizedMessage)) {
-      return AI_PROVIDER_BILLING_ERROR;
-    }
-    if (isCreditLimitMessage(normalizedMessage)) {
-      return { code: "INSUFFICIENT_CREDITS", message: "Insufficient AI credits", status: 402 };
-    }
-    if (normalizedMessage.includes("overload") || normalizedMessage.includes("capacity")) {
-      return { code: "OVERLOADED_ERROR", message: "The LLM provider is currently overloaded" };
-    }
-    if (
-      normalizedMessage.includes("rate limit") ||
-      normalizedMessage.includes("too many requests") ||
-      normalizedMessage.includes("429")
-    ) {
-      return {
-        code: "RATE_LIMITED",
-        message: "Too many requests. Please wait a moment and try again.",
-        status: 429,
-      };
-    }
-    if (
-      normalizedMessage.includes("prompt is too long") ||
-      normalizedMessage.includes("too many tokens") ||
-      normalizedMessage.includes("context size has been exceeded") ||
-      normalizedMessage.includes("context length exceeded")
-    ) {
-      return { code: "CONTEXT_LENGTH_EXCEEDED", message: "Conversation is too long" };
-    }
-    if (normalizedMessage.includes("invalid veryfront schema")) {
-      return PROJECT_SCHEMA_ERROR;
-    }
-  }
+  const messageError = classifyProviderErrorMessage(error, parseProblemBody);
+  if (messageError) return messageError;
 
   return DEFAULT_EXTERNAL_SERVICE_ERROR;
 }

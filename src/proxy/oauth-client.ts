@@ -148,7 +148,7 @@ export async function fetchOAuthToken(
           grant_type: "client_credentials",
           client_id: config.apiClientId,
           client_secret: config.apiClientSecret,
-          ...(config.projectSlug ? { project_slug: config.projectSlug } : {}),
+          ...(config.projectSlug ? { project_reference: config.projectSlug } : {}),
           ...(config.customDomain ? { custom_domain: config.customDomain } : {}),
         };
 

@@ -2605,6 +2605,25 @@ describe("agent/ag-ui-handler onComplete (server-side persistence)", () => {
     assertEquals(calls, 0);
   });
 
+  it("completes a bodyless data-only assistant response", async () => {
+    const response: AgentResponse = {
+      text: "",
+      data: false,
+      messages: [],
+      toolCalls: [],
+      status: "completed",
+    };
+    const handler = createAgUiHandler({
+      agent: createCompletionAgent(response, { bodyless: true }),
+    });
+
+    const body = await (await handler(agUiRequest())).text();
+
+    assertStringIncludes(body, "event: RunFinished");
+    assertStringIncludes(body, '"result":false');
+    assertEquals(body.includes("EMPTY_ASSISTANT_OUTPUT"), false);
+  });
+
   it("does not fire when the run produced no finalized response", async () => {
     let calls = 0;
     const handler = createAgUiHandler({

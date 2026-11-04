@@ -23,6 +23,9 @@ describe("connected local development", () => {
   it("leaves unlinked projects standalone without authentication", async () => {
     assertEquals(
       await prepareConnectedDev(undefined, "preview", {
+        sync: () => {
+          throw new Error("must not sync standalone source");
+        },
         authenticate: () => {
           throw new Error("must not authenticate");
         },
@@ -38,6 +41,9 @@ describe("connected local development", () => {
     await assertRejects(
       () =>
         prepareConnectedDev("demo", "preview", {
+          sync: () => {
+            throw new Error("must not sync before login");
+          },
           authenticate: () => Promise.resolve(false),
           resolve: () => {
             throw new Error("must not resolve");
@@ -52,6 +58,10 @@ describe("connected local development", () => {
     const calls: string[][] = [];
     const result = await prepareConnectedDev("demo", "staging", {
       authenticate: () => Promise.resolve(true),
+      sync: (target) => {
+        calls.push(["sync", target.projectSlug]);
+        return Promise.resolve();
+      },
       resolve: (project, environment) => {
         calls.push([project, environment]);
         return Promise.resolve({
@@ -62,7 +72,7 @@ describe("connected local development", () => {
         });
       },
     });
-    assertEquals(calls, [["demo", "staging"]]);
+    assertEquals(calls, [["demo", "staging"], ["sync", "demo"]]);
     assertEquals(result?.environmentId, "e");
   });
 });
@@ -75,6 +85,9 @@ it("uses the official API for an implicitly qualified default credential", () =>
 it("excludes proxy projects from local Cloud admission", async () => {
   assertEquals(
     await prepareConnectedDev("proxy-project", "preview", {
+      sync: () => {
+        throw new Error("must not sync proxy source");
+      },
       authenticate: () => {
         throw new Error("must not authenticate local Cloud runtime");
       },
@@ -491,4 +504,23 @@ Deno.test("canonical connected identity reaches inference environment and runtim
     else setEnv("VERYFRONT_PROJECT_SLUG", previous);
     refreshEnvironmentConfig();
   }
+});
+
+it("refuses connected readiness when source synchronization fails", async () => {
+  await assertRejects(
+    () =>
+      prepareConnectedDev("demo", "preview", {
+        authenticate: () => Promise.resolve(true),
+        resolve: () =>
+          Promise.resolve({
+            projectId: "p",
+            projectSlug: "demo",
+            environmentId: "e",
+            environmentName: "preview",
+          }),
+        sync: () => Promise.reject(new Error("source sync conflict")),
+      }),
+    Error,
+    "source sync conflict",
+  );
 });

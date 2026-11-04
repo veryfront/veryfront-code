@@ -73,6 +73,7 @@ interface NumericBoundary {
 }
 
 const STATIC_DEFAULT_VALUE = Symbol("veryfront.staticJsonSchemaDefault");
+const TRANSPARENT_INPUT_SCHEMA = Symbol("veryfront.transparentInputSchema");
 
 interface StaticDefaultValue {
   value: unknown;
@@ -225,7 +226,7 @@ function originatesFromCustomSchema(schema: z.ZodTypeAny): boolean {
     if (tag !== "pipe" && tag !== "ZodEffects") return false;
 
     const def = getDef(current);
-    const input = def.schema ?? def.in;
+    const input = getTransparentInputSchema(def) ?? def.schema ?? def.in;
     if (!input || input === current) return false;
     current = input;
     depth++;
@@ -235,8 +236,27 @@ function originatesFromCustomSchema(schema: z.ZodTypeAny): boolean {
 }
 
 function representedPipeSchema(def: ZodDef): z.ZodTypeAny | undefined {
+  const transparent = getTransparentInputSchema(def);
+  if (transparent) return transparent;
   const input = def.schema ?? def.in;
   return input && originatesFromCustomSchema(input) && def.out ? def.out : input;
+}
+
+/** Identity input stages do not change the public schema's metadata. */
+export function recordTransparentSchemaInput(
+  schema: z.ZodTypeAny,
+  represented: z.ZodTypeAny,
+): void {
+  Object.defineProperty(getDef(schema), TRANSPARENT_INPUT_SCHEMA, {
+    configurable: true,
+    enumerable: true,
+    value: represented,
+    writable: false,
+  });
+}
+
+function getTransparentInputSchema(def: ZodDef): z.ZodTypeAny | undefined {
+  return Object.getOwnPropertyDescriptor(def, TRANSPARENT_INPUT_SCHEMA)?.value;
 }
 
 /** Record a literal default without evaluating Zod's possibly dynamic getter. */
@@ -734,7 +754,7 @@ function hasDefaultSchema(schema: z.ZodTypeAny): boolean {
       case "optional":
       case "ZodEffects":
       case "pipe": {
-        const inner = def.innerType ?? def.schema ?? def.in;
+        const inner = getTransparentInputSchema(def) ?? def.innerType ?? def.schema ?? def.in;
         if (!inner || inner === current) return false;
         current = inner;
         depth++;

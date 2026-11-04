@@ -32,13 +32,15 @@ function getEsbuildBinaryName(): string {
   return `@esbuild/${Deno.build.os}-${arch}`;
 }
 
-function getVFSBasePath(filePath: string, tempDir: string): string {
-  const denoCompileMatch = filePath.match(/^(.*\/deno-compile-[^/]+)\//);
-  if (denoCompileMatch?.[1]) return denoCompileMatch[1];
-  const parts = filePath.split("/");
-  const srcIndex = parts.lastIndexOf("src");
-  if (srcIndex > 0) return parts.slice(0, srcIndex).join("/");
-  return `${tempDir}/deno-compile-veryfront`;
+export function getVFSBasePath(filePath: string, tempDir: string): string {
+  // This independently packaged extension knows its module's location relative
+  // to the dependency root, including project prefixes retained by Deno VFS.
+  const extensionRoot = filePath.match(/^(.*)\/extensions\/ext-bundler-esbuild\/src\//)?.[1];
+  if (extensionRoot) return extensionRoot;
+
+  return filePath.match(/^(.*\/deno-compile-[^/]+)\//)?.[1] ??
+    filePath.match(/^(.*)\/src\//)?.[1] ??
+    `${tempDir}/deno-compile-veryfront`;
 }
 
 async function isFile(path: string): Promise<boolean> {

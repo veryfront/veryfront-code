@@ -2457,29 +2457,34 @@ it("reconciles claim cursor when the probe append cursor is unavailable", async 
 it("does not send mutation requests after the probe deadline expires", async () => {
   const receipts: AgentWorkerRuntimeOwnershipProbeReceipt[] = [];
   const methods: string[] = [];
-  const probe = createAgentWorkerRuntimeOwnershipProbe(
-    { ...activation, operationTimeoutMs: 1 },
-    (receipt) => receipts.push(receipt),
-  );
+  const originalNow = Date.now;
+  let now = originalNow();
+  Date.now = () => now;
+  try {
+    const probe = createAgentWorkerRuntimeOwnershipProbe(
+      { ...activation, operationTimeoutMs: 1 },
+      (receipt) => receipts.push(receipt),
+    );
 
-  await probe.afterClaim({
-    apiUrl: "https://api.example.test",
-    fetch: (input, init) => {
-      const request = new Request(input, init);
-      methods.push(request.method);
-      return new Promise((resolve) =>
-        setTimeout(() => resolve(Response.json({ data: [], page_info: { next: "again" } })), 5)
-      );
-    },
-    workerId,
-    run: probeRun(),
-    credentials: credentials(),
-    embedder: managedTestEmbedder(),
-  });
+    await probe.afterClaim({
+      apiUrl: "https://api.example.test",
+      fetch: (input, init) => {
+        const request = new Request(input, init);
+        methods.push(request.method);
+        // Expire after the first read dispatch, before the next page check.
+        now += 2;
+        return Promise.resolve(Response.json({ data: [], page_info: { next: "again" } }));
+      },
+      workerId,
+      run: probeRun(),
+      credentials: credentials(),
+      embedder: managedTestEmbedder(),
+    });
+  } finally {
+    Date.now = originalNow;
+  }
 
-  // Expiry before the first dispatch may suppress even the initial read.
-  assertEquals(methods.length <= 1, true);
-  assertEquals(methods.every((method) => method === "GET"), true);
+  assertEquals(methods, ["GET"]);
   assertEquals(receipts[0]?.status, "error");
   assertEquals(receipts[0]?.reason, "operation-deadline-exceeded");
 });

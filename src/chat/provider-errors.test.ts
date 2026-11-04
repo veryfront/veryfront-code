@@ -222,6 +222,29 @@ describe("chat/provider-errors", () => {
     );
   });
 
+  it("preserves the refusing account, project or key without echoing provider text", async () => {
+    for (
+      const [gatewayCode, expected] of [
+        ["account-model-denied", "ACCOUNT_MODEL_DENIED"],
+        ["policy-model-denied", "MODEL_NOT_PERMITTED"],
+        ["key-model-denied", "KEY_MODEL_DENIED"],
+      ]
+    ) {
+      const body = { code: gatewayCode, error: "secret request body", model: "model" };
+      assertEquals(parseKnownProblemBody(body), null);
+      const error = await buildProviderError(
+        "openai",
+        markVeryfrontGatewayResponse(
+          new Response(JSON.stringify(body), { status: 403 }),
+        ),
+      );
+      const parsed = parseProviderError(error);
+      assertEquals(parsed.code, expected);
+      assertEquals(parsed.status, 403);
+      assertEquals(parsed.message.includes("secret"), false);
+    }
+  });
+
   it("maps a gateway EU inference policy refusal to MODEL_NOT_PERMITTED naming the model", async () => {
     const expected = {
       code: "MODEL_NOT_PERMITTED",
@@ -257,8 +280,7 @@ describe("chat/provider-errors", () => {
   it("ignores an unmarked EU inference policy refusal without a usable model id", () => {
     const expected = {
       code: "MODEL_NOT_PERMITTED",
-      message:
-        "The selected model is not available under this project's inference policy (EU-only inference).",
+      message: "The selected model is not available under this project's inference policy.",
       status: 403,
     };
     for (const model of ["", 42, "a\nb", "<script>", "x".repeat(300)]) {

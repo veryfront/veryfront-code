@@ -14,13 +14,17 @@ export interface IntegrationEndpointParam {
   exposeDefault?: boolean;
   pattern?: string;
   queryName?: string;
-  queryValueFormat?: "microsoft-graph-search" | "microsoft-graph-conversation-id";
+  queryValueFormat?:
+    | "microsoft-graph-search"
+    | "microsoft-graph-conversation-id"
+    | "microsoft-graph-skiptoken";
   headerName?: string;
 }
 
 interface IntegrationEndpointBodyField {
   type: "string" | "number" | "boolean" | "object" | "array";
   description: string;
+  inputSchema?: Record<string, unknown>;
   required?: boolean;
 }
 
@@ -53,6 +57,8 @@ export interface IntegrationEndpoint {
   body?: Record<string, IntegrationEndpointBodyField>;
   contentType?: string;
   response?: {
+    /** Return recoverable bytes or readable UTF-8 text instead of JSON. */
+    encoding?: "base64" | "text";
     transform?: string;
     enrich?: {
       type: "gmail-message-metadata";

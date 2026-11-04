@@ -35,6 +35,7 @@ export const filesHelp: CommandHelp = {
   ],
   notes: [
     "Subcommands: list, get, put, delete",
+    "files get reads text files and rejects binary assets before writing local output",
     "Uses the project files API, not the uploads store",
     "Designed for precise sandbox writes where `veryfront push` would be too broad",
   ],

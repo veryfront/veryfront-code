@@ -3198,6 +3198,92 @@ describe("stream lifecycle shadow mode", () => {
     assertEquals(report, { count: 0, categories: [] });
   });
 
+  it("flags configured dynamic tools on provider result and error events", async () => {
+    const { events, controller, encoder } = createSSECollector();
+    const state = createStreamState();
+
+    await processStream(
+      createMockResult([
+        {
+          type: "tool-result",
+          toolCallId: "remote-ok",
+          toolName: "outlook__list_emails",
+          input: {},
+          output: { ok: true },
+          providerExecuted: true,
+        },
+        {
+          type: "tool-error",
+          toolCallId: "remote-err",
+          toolName: "outlook__list_emails",
+          input: {},
+          error: "boom",
+          providerExecuted: true,
+        },
+        { type: "finish", finishReason: "stop", totalUsage: null },
+      ]),
+      state,
+      controller,
+      encoder,
+      "text-1",
+      {
+        streamLifecycleMode: "legacy",
+        dynamicToolNames: ["outlook__list_emails"],
+      },
+      undefined,
+    );
+
+    const toolEvents = events.filter((event) =>
+      typeof event.type === "string" && event.type.startsWith("tool-")
+    );
+    assertEquals(
+      toolEvents.map((event) => [event.type, event.dynamic]),
+      toolEvents.map((event) => [event.type, true]),
+    );
+    assertEquals(
+      toolEvents.some((event) => event.type === "tool-output-available"),
+      true,
+    );
+    assertEquals(toolEvents.some((event) => event.type === "tool-output-error"), true);
+    assertEquals(state.toolResults.map((result) => result.dynamic), [true, true]);
+  });
+
+  it("honors an explicit dynamic false on a configured dynamic tool call", async () => {
+    const { events, controller, encoder } = createSSECollector();
+    const state = createStreamState();
+
+    await processStream(
+      createMockResult([
+        {
+          type: "tool-call",
+          toolCallId: "remote-call",
+          toolName: "outlook__list_emails",
+          input: {},
+          dynamic: false,
+        },
+        { type: "finish", finishReason: "tool-calls", totalUsage: null },
+      ]),
+      state,
+      controller,
+      encoder,
+      "text-1",
+      {
+        streamLifecycleMode: "legacy",
+        dynamicToolNames: ["outlook__list_emails"],
+      },
+      undefined,
+    );
+
+    const toolEvents = events.filter((event) =>
+      typeof event.type === "string" && event.type.startsWith("tool-")
+    );
+    assertEquals(
+      toolEvents.some((event) => event.type === "tool-input-available"),
+      true,
+    );
+    assertEquals(toolEvents.some((event) => event.dynamic === true), false);
+  });
+
   it("does not build a shadow or report in legacy mode", async () => {
     const legacy = await runTextFixture({ mode: "legacy" });
     assertEquals(legacy.report, undefined);
@@ -4558,13 +4644,14 @@ describe("chat-stream-handler provider-executed tool finalization", () => {
     assertEquals(state.finishReason, "tool-calls");
   });
 
-  it("still classifies a held-open timeout as tool-calls so committed local tools run", async () => {
+  it("keeps timeout classification but blocks local side effects with an unresolved provider call", async () => {
     const { events, controller, encoder } = createSSECollector();
     const state = createStreamState();
 
     // The reported shape: a provider web_fetch that never resolves plus a
-    // committed local tool. Holding the stream open must not turn the eventual
-    // timeout into "stop", which strands the local tool unexecuted.
+    // committed local tool. Keep the timeout classification, but do not execute
+    // local side effects while the provider sibling has no final result.
+    // The UI error below terminalizes display only; it is not a provider result.
     const result = createDelayedResult([
       {
         chunk: {
@@ -4590,7 +4677,7 @@ describe("chat-stream-handler provider-executed tool finalization", () => {
     result.cleanup();
 
     assertEquals(state.finishReason, "tool-calls");
-    assertEquals(shouldContinueAfterStreamStep(state), true);
+    assertEquals(shouldContinueAfterStreamStep(state), false);
     assertEquals(
       events.filter((event) => event.type === "tool-output-error").map((event) => event.toolCallId),
       ["srvtoolu_07"],
