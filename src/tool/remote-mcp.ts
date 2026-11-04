@@ -1,6 +1,7 @@
 import { VERSION } from "#veryfront/utils/version-constant.ts";
 import { defineOwnDataProperty } from "#veryfront/security/own-data-property.ts";
 import { allPrivatePromises } from "#veryfront/security/private-promise.ts";
+import { mapPrivateArray } from "#veryfront/security/private-array.ts";
 import { NETWORK_ERROR, TIMEOUT_ERROR } from "#veryfront/errors";
 import { readMcpToolDiscoveryMetadata } from "./discovery-metadata.ts";
 import { getApiBaseUrlEnv } from "#veryfront/config/env.ts";
@@ -1215,6 +1216,37 @@ function createToolListAccumulator() {
 /** Best-effort session cleanup is bounded in aggregate so teardown cannot stall a run. */
 const REMOTE_MCP_SESSION_CLEANUP_BUDGET_MS = 5_000;
 
+/** Send one session DELETE; resolves with the failure instead of rejecting. */
+async function deleteMcpSession(
+  cleanup: { endpoint: string; headers: Headers },
+  getRequestFetch: (endpoint: string) => typeof fetch,
+  budget: AbortSignal,
+): Promise<unknown> {
+  const scope = createRequestSignalScope(budget);
+  try {
+    const headers = copyNativeHeaders(cleanup.headers);
+    reflectApply(HeadersPrototypeDelete, headers, ["Mcp-Method"]);
+    const response = await getRequestFetch(cleanup.endpoint)(
+      cleanup.endpoint,
+      createNativeRequestInit(undefined, {
+        method: "DELETE",
+        headers,
+        signal: scope.signal,
+        redirect: "error",
+      }),
+    );
+    discardResponseBody(response);
+    if (!response.ok && response.status !== 404 && response.status !== 405) {
+      return new RemoteMCPHttpError(response.status);
+    }
+    return undefined;
+  } catch (error) {
+    return error ?? new Error("Remote MCP session cleanup failed");
+  } finally {
+    scope.dispose();
+  }
+}
+
 /**
  * Send DELETE for every retained session concurrently under one aggregate
  * budget. Returns the first failure, if any, after all attempts settle.
@@ -1235,43 +1267,19 @@ async function terminateMcpSessions(
       ),
     REMOTE_MCP_SESSION_CLEANUP_BUDGET_MS,
   );
-  const failures: unknown[] = [];
-  const attempts: Promise<void>[] = [];
-  for (let index = 0; index < cleanups.length; index++) {
-    const cleanup = cleanups[index]!;
-    const attempt = (async () => {
-      const scope = createRequestSignalScope(budget.signal);
-      try {
-        const headers = copyNativeHeaders(cleanup.headers);
-        reflectApply(HeadersPrototypeDelete, headers, ["Mcp-Method"]);
-        const response = await getRequestFetch(cleanup.endpoint)(
-          cleanup.endpoint,
-          createNativeRequestInit(undefined, {
-            method: "DELETE",
-            headers,
-            signal: scope.signal,
-            redirect: "error",
-          }),
-        );
-        discardResponseBody(response);
-        if (!response.ok && response.status !== 404 && response.status !== 405) {
-          throw new RemoteMCPHttpError(response.status);
-        }
-      } catch (error) {
-        defineOwnDataProperty(failures, index, error);
-      } finally {
-        scope.dispose();
-      }
-    })();
-    defineOwnDataProperty(attempts, index, attempt);
-  }
+  let outcomes: unknown[];
   try {
-    await allPrivatePromises(attempts);
+    outcomes = await allPrivatePromises(
+      mapPrivateArray(
+        cleanups,
+        (cleanup) => deleteMcpSession(cleanup, getRequestFetch, budget.signal),
+      ),
+    );
   } finally {
     clearTimeout(timer);
   }
-  for (let index = 0; index < cleanups.length; index++) {
-    if (Object.hasOwn(failures, index)) return failures[index];
+  for (let index = 0; index < outcomes.length; index++) {
+    if (outcomes[index] !== undefined) return outcomes[index];
   }
   return undefined;
 }
@@ -1320,13 +1328,17 @@ function readMcpParameterHeaders(schema: JsonSchema): McpParameterHeader[] | und
       }
     }
     for (const [key, child] of Object.entries(value)) {
-      if (key === "properties" && isRecord(child)) {
-        for (const [name, property] of Object.entries(child)) {
-          visit(property, [...path, name], reachable);
-        }
-      } else if (key !== "x-mcp-header") {
-        visit(child, path, false);
-      }
+      if (key === "properties" && isRecord(child)) visitProperties(child, path, reachable);
+      else if (key !== "x-mcp-header") visit(child, path, false);
+    }
+  }
+  function visitProperties(
+    properties: Record<string, unknown>,
+    path: string[],
+    reachable: boolean,
+  ) {
+    for (const [name, property] of Object.entries(properties)) {
+      visit(property, [...path, name], reachable);
     }
   }
   if (Object.hasOwn(schema, "x-mcp-header")) return undefined;

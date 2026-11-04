@@ -76,6 +76,12 @@ function isTransientRemoteToolCatalogError(error: unknown): boolean {
 }
 
 /** Keep one source's last successful catalog available during transient refresh failures. */
+/** Forward session release from a wrapper to the source it wraps. */
+function forwardDispose(source: RemoteToolSource): Pick<RemoteToolSource, "dispose"> {
+  const dispose = source.dispose;
+  return dispose ? { dispose: (context) => dispose.call(source, context) } : {};
+}
+
 function createRunResilientRemoteToolSource(source: RemoteToolSource): RemoteToolSource {
   let lastSuccessfulCatalog: LastSuccessfulRemoteToolCatalog | undefined;
   let consecutiveFailures = 0;
@@ -300,7 +306,7 @@ export function createHostedProjectRemoteToolSource(
 
   return inheritTrustedPlatformSource(input.source, {
     id: input.source.id,
-    ...(resilientSource.dispose ? { dispose: (context) => resilientSource.dispose!(context) } : {}),
+    ...forwardDispose(resilientSource),
     listTools: (context) => toolCatalog.listTools(context),
     async executeTool(toolName, args, context) {
       const normalizedToolInput = input.prepareToolInput?.({
@@ -445,9 +451,7 @@ function createHostedProjectRemoteToolSourceFromConfig(
   const discoverySource = server.kind === "veryfront-api"
     ? inheritTrustedPlatformSource(source, {
       id: source.id,
-      ...(source.dispose
-        ? { dispose: (context?: ToolExecutionContext) => source.dispose!(context) }
-        : {}),
+      ...forwardDispose(source),
       async listTools(context?: ToolExecutionContext) {
         const definitions = await source.listTools(context);
         accessProfileToolName = resolveVeryfrontApiToolAccessProfileToolName(definitions);
@@ -519,7 +523,7 @@ function createHostedProjectRemoteToolSourceFromConfig(
   const platformSource = createLivePlatformMcpSource(hostedSource);
   return inheritTrustedPlatformSource(platformSource, {
     id: platformSource.id,
-    ...(platformSource.dispose ? { dispose: (context) => platformSource.dispose!(context) } : {}),
+    ...forwardDispose(platformSource),
     listTools: async (context) =>
       (await platformSource.listTools(context)).filter(({ name }) =>
         !allowedNames || allowedNames.has(name)
