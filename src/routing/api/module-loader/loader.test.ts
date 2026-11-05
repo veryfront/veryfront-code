@@ -16,6 +16,7 @@ import {
   bundlerForcesTypeScript,
   canDirectImportSpecifier,
   generateCompiledBinaryRequireShim,
+  generateRouteRuntimeShim,
   getNodeExternalPackagesToResolve,
   getUserDependencies,
   isBareModuleSpecifier,
@@ -26,6 +27,7 @@ import {
   prepareHandlerModule,
   readDenoImportMap,
   resolveEsmUserDependencies,
+  rewriteCompiledBinaryRouteModule,
   rewriteCompiledBinaryUserDependencyImports,
   rewriteCompiledBinaryVeryfrontImports,
   rewriteDenoNodeBuiltinImports,
@@ -5667,5 +5669,93 @@ describe("isSpecifierResolutionError", () => {
   it("ignores non-Error values", () => {
     assertEquals(isSpecifierResolutionError(null), false);
     assertEquals(isSpecifierResolutionError("not a dependency"), false);
+  });
+});
+
+// veryfront-code#5471: the compiled binary rewrites CJS user dependency imports
+// to `require(...)` and `__vf_interopDefault(...)` after bundling. These tests
+// run the same bundle-then-rewrite pipeline and evaluate the handler, so a
+// rewritten reference the bundle does not define fails here, not in production.
+describe("compiled-binary CJS user dependencies (#5471)", {
+  sanitizeResources: false,
+  sanitizeOps: false,
+}, () => {
+  async function loadCompiledRoute(routeSource: string): Promise<() => Promise<Response>> {
+    const projectDir = Deno.realPathSync(await makeTempDir());
+    const packageDir = join(projectDir, "node_modules", "cjs-fixture");
+    await fs.mkdir(packageDir, { recursive: true });
+    await fs.writeTextFile(
+      join(packageDir, "package.json"),
+      JSON.stringify({ name: "cjs-fixture", version: "1.0.0", main: "index.js" }),
+    );
+    await fs.writeTextFile(
+      join(packageDir, "index.js"),
+      [
+        'const path = require("path");',
+        "class Pool { query() { return path.basename('/rows/ok'); } }",
+        "module.exports = { Pool, version: '1.0.0' };",
+      ].join("\n"),
+    );
+    await fs.writeTextFile(
+      join(projectDir, "package.json"),
+      JSON.stringify({ dependencies: { "cjs-fixture": "1.0.0" } }),
+    );
+
+    const routePath = join(projectDir, "app", "api", "route.ts");
+    const userDeps = new Map([["cjs-fixture", "1.0.0"]]);
+    const shimNamespace = "vf-test-route-runtime-shim";
+    const { build } = await import("veryfront/extensions/bundler");
+    const result = await build({
+      bundle: true,
+      write: false,
+      format: "esm",
+      platform: "neutral",
+      target: "es2022",
+      inject: ["veryfront:route-runtime-shim"],
+      external: ["node:*", "cjs-fixture", "cjs-fixture/*"],
+      stdin: { contents: routeSource, loader: "ts", resolveDir: join(projectDir, "app", "api") },
+      plugins: [{
+        name: "vf-test-route-runtime-shim",
+        setup(pluginBuild) {
+          pluginBuild.onResolve({ filter: /^veryfront:route-runtime-shim$/ }, () => ({
+            path: "veryfront:route-runtime-shim",
+            namespace: shimNamespace,
+          }));
+          pluginBuild.onLoad({ filter: /.*/, namespace: shimNamespace }, () => ({
+            contents: generateRouteRuntimeShim(projectDir, toFileUrl(routePath).href, true),
+            loader: "js",
+          }));
+        },
+      }],
+    });
+    const bundled = result.outputFiles?.[0]?.text ?? "";
+    const handlerPath = join(projectDir, "handler.mjs");
+    await fs.writeTextFile(
+      handlerPath,
+      rewriteCompiledBinaryRouteModule(bundled, projectDir, userDeps),
+    );
+    const module = await import(toFileUrl(handlerPath).href);
+    return module.GET;
+  }
+
+  denoIt("runs a handler that default-imports a CJS package", async () => {
+    const GET = await loadCompiledRoute(
+      'import pg from "cjs-fixture";\nexport const GET = () => new Response(new pg.Pool().query());',
+    );
+    assertEquals(await (await GET()).text(), "ok");
+  });
+
+  denoIt("runs a handler that mixes default and named CJS imports", async () => {
+    const GET = await loadCompiledRoute(
+      'import pg, { version } from "cjs-fixture";\nexport const GET = () => new Response(new pg.Pool().query() + version);',
+    );
+    assertEquals(await (await GET()).text(), "ok1.0.0");
+  });
+
+  denoIt("runs a handler that dynamically imports a CJS package", async () => {
+    const GET = await loadCompiledRoute(
+      'export const GET = async () => { const pg = await import("cjs-fixture"); return new Response(new pg.Pool().query()); };',
+    );
+    assertEquals(await (await GET()).text(), "ok");
   });
 });
