@@ -15,6 +15,7 @@ import {
   bundledModuleScopeDiscriminator,
   bundlerForcesTypeScript,
   canDirectImportSpecifier,
+  chooseRouteHelperPrefix,
   generateCompiledBinaryRequireShim,
   generateRouteRuntimeShim,
   getNodeExternalPackagesToResolve,
@@ -1825,7 +1826,7 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
     assertMatch(rewritten, /import\("\.\/_vf_tool\.mjs"\)/);
   });
 
-  it("rewrites compiled-binary user dependency imports to require-based shims", () => {
+  it("rewrites compiled-binary user dependency imports to require-based shims", async () => {
     const source = [
       'import thing from "my-lib";',
       'import { alpha as beta } from "my-lib";',
@@ -1835,7 +1836,7 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
       'const loaded = import("my-lib/subpath");',
     ].join("\n");
 
-    const rewritten = rewriteCompiledBinaryUserDependencyImports(
+    const rewritten = await rewriteCompiledBinaryUserDependencyImports(
       source,
       new Map([["my-lib", "^1.0.0"]]),
     );
@@ -1854,7 +1855,7 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
     );
   });
 
-  it("rewrites ESM-only user dependency imports to real file:// module URLs", () => {
+  it("rewrites ESM-only user dependency imports to real file:// module URLs", async () => {
     const source = [
       'import thing from "esm-lib";',
       'import { alpha } from "esm-lib";',
@@ -1864,7 +1865,7 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
       'const sub = import("esm-lib/subpath");',
     ].join("\n");
 
-    const rewritten = rewriteCompiledBinaryUserDependencyImports(
+    const rewritten = await rewriteCompiledBinaryUserDependencyImports(
       source,
       new Map([["esm-lib", "^1.0.0"]]),
       new Map([[
@@ -1900,13 +1901,13 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
     assertEquals(rewritten.includes('require("esm-lib")'), false);
   });
 
-  it("keeps CJS deps on the require shim while ESM deps use file:// URLs", () => {
+  it("keeps CJS deps on the require shim while ESM deps use file:// URLs", async () => {
     const source = [
       'import esm from "esm-lib";',
       'import cjs from "cjs-lib";',
     ].join("\n");
 
-    const rewritten = rewriteCompiledBinaryUserDependencyImports(
+    const rewritten = await rewriteCompiledBinaryUserDependencyImports(
       source,
       new Map([["esm-lib", "^1.0.0"], ["cjs-lib", "^1.0.0"]]),
       new Map([[
@@ -1985,14 +1986,14 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
     assertEquals(esmDeps.has("evil-lib"), false);
   });
 
-  it("leaves ESM subpath imports that escape the package dir unrewritten", () => {
+  it("leaves ESM subpath imports that escape the package dir unrewritten", async () => {
     const source = [
       'import ok from "esm-lib/dist/ok.mjs";',
       'import escape from "esm-lib/../../../../etc/passwd";',
       'const dyn = import("esm-lib/../../secret");',
     ].join("\n");
 
-    const rewritten = rewriteCompiledBinaryUserDependencyImports(
+    const rewritten = await rewriteCompiledBinaryUserDependencyImports(
       source,
       new Map([["esm-lib", "^1.0.0"]]),
       new Map([[
@@ -5750,11 +5751,17 @@ describe("route CommonJS require (#5471)", () => {
       }],
     });
     const bundled = result.outputFiles?.[0]?.text ?? "";
-    const rewritten = rewriteCompiledBinaryUserDependencyImports(bundled, userDeps);
+    const helperPrefix = chooseRouteHelperPrefix(bundled);
+    const rewritten = await rewriteCompiledBinaryUserDependencyImports(
+      bundled,
+      userDeps,
+      new Map(),
+      helperPrefix,
+    );
     const handlerPath = join(projectDir, "handler.mjs");
     await fs.writeTextFile(
       handlerPath,
-      prependRouteRequirePrologue(bundled, rewritten, projectDir, true),
+      prependRouteRequirePrologue(rewritten, projectDir, true, helperPrefix),
     );
     const module = await import(toFileUrl(handlerPath).href);
     return module.GET;
@@ -5851,15 +5858,46 @@ describe("route CommonJS require (#5471)", () => {
     assertEquals(await responseText(GET), "ok");
   });
 
-  denoIt("rejects route code that declares a prologue binding", async () => {
-    await assertRejects(
-      () =>
-        loadCompiledRoute(
-          "const __vf_namespace = 1;\nexport const GET = () => new Response(String(__vf_namespace));",
-        ),
-      Error,
-      "__vf_namespace is reserved for the Veryfront route module loader",
+  denoIt("runs route code that declares the default helper names", async () => {
+    const GET = await loadCompiledRoute(
+      [
+        'import pg, { version } from "cjs-fixture";',
+        "const __vf_namespace = 'ns';",
+        "const __vf_interopDefault = 'interop';",
+        "const __vf_tmp_pg = 'tmp';",
+        "export const GET = () => new Response(",
+        "  [__vf_namespace, __vf_interopDefault, __vf_tmp_pg, new pg.Pool().query(), version].join(','),",
+        ");",
+      ].join("\n"),
     );
+    assertEquals(await responseText(GET), "ns,interop,tmp,ok,1.0.0");
+  });
+
+  denoIt("leaves import-like text in strings and template literals alone", async () => {
+    const GET = await loadCompiledRoute(
+      [
+        'import pg from "cjs-fixture";',
+        "const text = `",
+        'import other from "cjs-fixture";',
+        "`;",
+        "export const GET = () => new Response(text.trim() + ' ' + new pg.Pool().query());",
+      ].join("\n"),
+    );
+    assertEquals(await responseText(GET), 'import other from "cjs-fixture"; ok');
+  });
+
+  denoIt("returns one namespace object per CommonJS module", async () => {
+    const GET = await loadCompiledRoute(
+      [
+        'import * as staticNs from "cjs-fixture";',
+        "export const GET = async () => {",
+        '  const first = await import("cjs-fixture");',
+        '  const second = await import("cjs-fixture");',
+        "  return new Response(String(first === second && first === staticNs));",
+        "};",
+      ].join("\n"),
+    );
+    assertEquals(await responseText(GET), "true");
   });
 
   denoIt("allows the reserved names in strings and property access", async () => {
@@ -5991,6 +6029,21 @@ describe("route CommonJS require (#5471)", () => {
       thrownMessage(() => vfRequire("cjs-fixture/missing")),
       'npm package "cjs-fixture" is installed but "cjs-fixture/missing" could not be resolved',
     );
+  });
+
+  denoIt("resolves relative ids locally and names a missing one by its id", async () => {
+    const projectDir = await writeProject({ "lib/helper.js": "module.exports = 1;" });
+    const vfRequire = await importCompiledBinaryRequireShim(projectDir) as unknown as {
+      resolve(id: string): string;
+    };
+
+    assertEquals(
+      Deno.realPathSync(vfRequire.resolve("./lib/helper")),
+      Deno.realPathSync(join(projectDir, "lib", "helper.js")),
+    );
+    const error = assertThrows(() => vfRequire.resolve("./missing")) as Error & { code?: string };
+    assertEquals(error.message, 'Cannot find module "./missing"');
+    assertEquals(error.code, "MODULE_NOT_FOUND");
   });
 
   denoIt("rejects a native addon with a clear error", async () => {

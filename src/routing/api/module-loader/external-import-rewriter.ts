@@ -7,6 +7,7 @@ import { rewriteNpmImports } from "#veryfront/transforms/npm-import-rewrites.ts"
 import { resolveContainedPackagePath } from "#veryfront/transforms/import-rewriter/package-resolution.ts";
 import { parseImports, replaceSpecifiers } from "#veryfront/transforms/esm/lexer.ts";
 import {
+  DEFAULT_ROUTE_HELPER_PREFIX,
   getNodeExternalPackagesToResolveForRoute,
   NODE_BUILTINS as ROUTE_NODE_BUILTINS,
   readProjectDependenciesForRoute,
@@ -50,19 +51,41 @@ export async function readProjectDependencies(
   return await readProjectDependenciesForRoute(projectDir, fs);
 }
 
+export { DEFAULT_ROUTE_HELPER_PREFIX };
+
+/** Module-level names the prologue and compiled import rewrite declare. */
+const ROUTE_HELPER_SUFFIXES = [
+  "createRequire",
+  "dirname",
+  "resolve",
+  "interopDefault",
+  "namespace",
+  "tmp_",
+] as const;
+const ROUTE_HELPER_NAME = /\b__vf_(createRequire|dirname|resolve|interopDefault|namespace)\b/g;
+
 /**
- * Top-level bindings the route `require` prologues declare. The prologue is
- * prepended after esbuild has resolved collisions, so bundled route code must
- * not declare any of these; `assertNoRouteRequirePrologueCollision` fails the
- * build instead of emitting a module that cannot parse.
+ * Choose the prefix for the route prologue's module-level helpers.
+ *
+ * The prologue is prepended after esbuild has resolved collisions, so its
+ * names must not appear in the bundled route at all. The first prefix none of
+ * whose helper names occurs anywhere in the bundle is used, which keeps the
+ * default whenever the route does not mention it.
  */
-export const ROUTE_REQUIRE_PROLOGUE_BINDINGS: readonly string[] = [
-  "__vf_createRequire",
-  "__vf_dirname",
-  "__vf_resolve",
-  "__vf_interopDefault",
-  "__vf_namespace",
-];
+export function chooseRouteHelperPrefix(bundledCode: string): string {
+  for (let index = 0;; index++) {
+    const prefix = index === 0 ? DEFAULT_ROUTE_HELPER_PREFIX : `__vf${index}_`;
+    if (!ROUTE_HELPER_SUFFIXES.some((suffix) => bundledCode.includes(prefix + suffix))) {
+      return prefix;
+    }
+  }
+}
+
+/** Rename the prologue's module-level helpers from the default prefix. */
+export function withRouteHelperPrefix(code: string, helperPrefix: string): string {
+  if (helperPrefix === DEFAULT_ROUTE_HELPER_PREFIX) return code;
+  return code.replace(ROUTE_HELPER_NAME, (_, suffix: string) => helperPrefix + suffix);
+}
 
 /**
  * Generates a CJS module loader shim for compiled Deno binaries.
@@ -75,15 +98,19 @@ export const ROUTE_REQUIRE_PROLOGUE_BINDINGS: readonly string[] = [
  * exports, module, __filename, and __dirname bindings.
  *
  * The loader state lives in a private scope. Only `require`, the two helpers
- * the compiled import rewrite calls and the `node:` imports are module-level
- * (see ROUTE_REQUIRE_PROLOGUE_BINDINGS).
+ * the compiled import rewrite calls and the `node:` imports are module-level;
+ * they carry `helperPrefix` (see chooseRouteHelperPrefix).
  */
-export function generateCompiledBinaryRequireShim(projectDir: string): string {
+export function generateCompiledBinaryRequireShim(
+  projectDir: string,
+  helperPrefix: string = DEFAULT_ROUTE_HELPER_PREFIX,
+): string {
   const builtinSet = JSON.stringify(NODE_BUILTINS);
   const safeProjectDir = JSON.stringify(projectDir);
   const safeProjectRoot = JSON.stringify(pathHelper.resolve(projectDir));
 
-  return `
+  return withRouteHelperPrefix(
+    `
 import { createRequire as __vf_createRequire } from "node:module";
 import { dirname as __vf_dirname, resolve as __vf_resolve } from "node:path";
 var require = (function () {
@@ -156,6 +183,27 @@ function __vf_resolveBare(id, parentDir) {
     throw sanitized;
   }
 }
+// Relative and absolute ids resolve against the requiring module's directory,
+// probing the extensions Node probes. A missing module is reported by the id
+// the code asked for, not the host path it was looked up at.
+function __vf_isFile(candidate) {
+  try { return Deno.statSync(candidate).isFile; } catch (_) { return false; }
+}
+function __vf_resolveLocal(id, parentDir) {
+  var base = __vf_resolve(parentDir, id);
+  // Refuse paths outside the project before probing them, so a missing-module
+  // error never tells route code whether a host file exists.
+  __vf_assertContained(__vf_canonicalize(base));
+  var candidates = [base, base + ".js", base + ".cjs", base + ".json", base + "/index.js", base + "/index.cjs", base + "/index.json"];
+  for (var i = 0; i < candidates.length; i++) {
+    if (!__vf_isFile(candidates[i])) continue;
+    __vf_assertContained(__vf_canonicalize(candidates[i]));
+    return candidates[i];
+  }
+  var missing = new Error("Cannot find module " + JSON.stringify(id));
+  missing.code = "MODULE_NOT_FOUND";
+  throw missing;
+}
 function __vf_loadCjs(id, parentDir) {
   if (id.startsWith("node:")) return __vf_builtinRequire(id);
   if (__vf_builtinSet.has(id)) return __vf_builtinRequire(id);
@@ -163,13 +211,7 @@ function __vf_loadCjs(id, parentDir) {
   if (slashIdx > 0 && __vf_builtinSet.has(id.slice(0, slashIdx))) return __vf_builtinRequire(id);
   var resolved;
   if (id.startsWith(".") || id.startsWith("/")) {
-    resolved = __vf_resolve(parentDir, id);
-    if (!resolved.match(/\\.[a-zA-Z0-9]+$/)) {
-      var exts = [".js", ".cjs", ".json", "/index.js", "/index.cjs", "/index.json"];
-      for (var i = 0; i < exts.length; i++) {
-        try { Deno.statSync(resolved + exts[i]); resolved += exts[i]; break; } catch (_) { /* expected: probing file extensions */ }
-      }
-    }
+    resolved = __vf_resolveLocal(id, parentDir);
   } else {
     resolved = __vf_resolveBare(id, parentDir);
   }
@@ -199,63 +241,47 @@ function __vf_loadCjs(id, parentDir) {
   __vf_cache[resolved] = mod.exports;
   var dir = __vf_dirname(resolved);
   var childReq = function(childId) { return __vf_loadCjs(childId, dir); };
-  childReq.resolve = function(childId) {
-    if (childId.startsWith(".") || childId.startsWith("/")) return __vf_resolve(dir, childId);
-    return __vf_resolveBare(childId, dir);
-  };
+  childReq.resolve = function(childId) { return __vf_resolveId(childId, dir); };
   childReq.ensure = function(mods, cb) { cb(); };
   var fn = new Function("exports", "require", "module", "__filename", "__dirname", "global", "globalThis", "Worker", code);
   fn(mod.exports, childReq, mod, resolved, dir, globalThis, globalThis, undefined);
   __vf_cache[resolved] = mod.exports;
   return mod.exports;
 }
+function __vf_resolveId(id, parentDir) {
+  if (id.startsWith(".") || id.startsWith("/")) return __vf_resolveLocal(id, parentDir);
+  return __vf_resolveBare(id, parentDir);
+}
 var routeRequire = function(id) { return __vf_loadCjs(id, ${safeProjectDir}); };
-routeRequire.resolve = function(id) { return __vf_resolveBare(id, ${safeProjectDir}); };
+routeRequire.resolve = function(id) { return __vf_resolveId(id, ${safeProjectDir}); };
 routeRequire.ensure = function(mods, cb) { cb(); };
 return routeRequire;
 })();
 function __vf_interopDefault(m) { return m && m.__esModule && m.default !== undefined ? m.default : m; }
 // As with native CommonJS interop, \`default\` is the whole module.exports, also
 // for modules marked __esModule.
-function __vf_namespace(m) {
-  var ns = Object.create(null);
-  if (m !== null && (typeof m === "object" || typeof m === "function")) {
-    for (var key in m) if (key !== "default") ns[key] = m[key];
-  }
-  ns.default = m;
-  return ns;
-}
-`.trim();
-}
-
-/**
- * Fail the build when bundled route code declares a name the prepended
- * `require` prologue also declares at module scope. Only declarations count:
- * the name inside a string or as a property is not a binding and cannot
- * collide.
- */
-export function assertNoRouteRequirePrologueCollision(bundledCode: string): void {
-  for (const name of ROUTE_REQUIRE_PROLOGUE_BINDINGS) {
-    if (declaresBinding(bundledCode, name)) {
-      throw new Error(
-        `${name} is reserved for the Veryfront route module loader; rename it in the route or its imports`,
-      );
+// One namespace per module, so repeated imports of a package see the same
+// object, as with ES module namespaces.
+var __vf_namespace = (function () {
+  var objects = new WeakMap();
+  var primitives = new Map();
+  return function (m) {
+    var isObject = m !== null && (typeof m === "object" || typeof m === "function");
+    var cache = isObject ? objects : primitives;
+    var cached = cache.get(m);
+    if (cached) return cached;
+    var ns = Object.create(null);
+    if (isObject) {
+      for (var key in m) if (key !== "default") ns[key] = m[key];
     }
-  }
-}
-
-function declaresBinding(code: string, name: string): boolean {
-  const id = name.replace(/\$/g, "\\$");
-  const notIdent = "(?![\\w$])";
-  const patterns = [
-    // var/let/const/function/class declarations.
-    `(?:^|[^\\w$.])(?:var|let|const|function\\s*\\*?|class)\\s+${id}${notIdent}`,
-    // Destructuring declarations: const { a: name } = ..., const [name] = ...
-    `(?:^|[^\\w$.])(?:var|let|const)\\s*[{[][^=;]*?(?:^|[^\\w$.])${id}${notIdent}[^=;]*?[}\\]]\\s*=`,
-    // Import bindings: import name, import * as name, import { x as name }.
-    `(?:^|[^\\w$.])import\\s+[^'";]*?(?:^|[^\\w$.:])${id}${notIdent}[^'";]*?\\bfrom\\s*["']`,
-  ];
-  return patterns.some((pattern) => new RegExp(pattern, "m").test(code));
+    ns.default = m;
+    cache.set(m, ns);
+    return ns;
+  };
+})();
+`.trim(),
+    helperPrefix,
+  );
 }
 
 export function getNodeExternalPackagesToResolve(userDeps: Map<string, string>): string[] {
@@ -436,12 +462,13 @@ export function rewriteCompiledBinaryVeryfrontImports(code: string): string {
   return rewriteCompiledVeryfrontImportsForRoute(code);
 }
 
-export function rewriteCompiledBinaryUserDependencyImports(
+export async function rewriteCompiledBinaryUserDependencyImports(
   code: string,
   userDeps: Map<string, string>,
   esmDeps: Map<string, EsmDependencyLocation> = new Map(),
-): string {
-  return rewriteCompiledUserDependencyImportsForRoute(code, userDeps, esmDeps);
+  helperPrefix: string = DEFAULT_ROUTE_HELPER_PREFIX,
+): Promise<string> {
+  return await rewriteCompiledUserDependencyImportsForRoute(code, userDeps, esmDeps, helperPrefix);
 }
 
 export async function rewriteDenoNpmDependencyImports(
@@ -547,6 +574,7 @@ export async function rewriteExternalImports(
   projectDir: string,
   fs: SourceReader,
   userDeps: Map<string, string> = new Map(),
+  helperPrefix: string = DEFAULT_ROUTE_HELPER_PREFIX,
 ): Promise<string> {
   let transformed = code;
 
@@ -575,7 +603,12 @@ export async function rewriteExternalImports(
     // compile time.
     if (isCompiledBinary()) {
       const esmDeps = await resolveEsmUserDependencies(projectDir, fs, userDeps);
-      transformed = rewriteCompiledBinaryUserDependencyImports(transformed, userDeps, esmDeps);
+      transformed = await rewriteCompiledBinaryUserDependencyImports(
+        transformed,
+        userDeps,
+        esmDeps,
+        helperPrefix,
+      );
     } else {
       transformed = await rewriteDenoNpmDependencyImports(transformed, projectDir, fs, userDeps);
     }

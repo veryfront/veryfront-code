@@ -9,6 +9,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { FileInfo } from "#veryfront/platform/adapters/base.ts";
 import type { FileSystem } from "#veryfront/platform/compat/fs.ts";
 import {
+  chooseRouteHelperPrefix,
   generateCompiledBinaryRequireShim,
   getNodeExternalPackagesToResolve,
   NODE_BUILTINS,
@@ -113,27 +114,27 @@ describe("external-import-rewriter", () => {
     });
   });
 
-  describe("rewriteCompiledBinaryUserDependencyImports", () => {
+  describe("rewriteCompiledBinaryUserDependencyImports", async () => {
     const deps = new Map([["lodash", "^4"]]);
 
-    it("rewrites a default import to interop require", () => {
-      const out = rewriteCompiledBinaryUserDependencyImports(
+    it("rewrites a default import to interop require", async () => {
+      const out = await rewriteCompiledBinaryUserDependencyImports(
         `import _ from "lodash";`,
         deps,
       );
       assertEquals(out, `const _ = __vf_interopDefault(require("lodash"));`);
     });
 
-    it("rewrites a namespace import to a namespace over require", () => {
-      const out = rewriteCompiledBinaryUserDependencyImports(
+    it("rewrites a namespace import to a namespace over require", async () => {
+      const out = await rewriteCompiledBinaryUserDependencyImports(
         `import * as _ from "lodash";`,
         deps,
       );
       assertEquals(out, `const _ = __vf_namespace(require("lodash"));`);
     });
 
-    it("rewrites a named import to a destructuring require", () => {
-      const out = rewriteCompiledBinaryUserDependencyImports(
+    it("rewrites a named import to a destructuring require", async () => {
+      const out = await rewriteCompiledBinaryUserDependencyImports(
         `import { merge } from "lodash";`,
         deps,
       );
@@ -141,8 +142,8 @@ describe("external-import-rewriter", () => {
       assertStringIncludes(out, "merge");
     });
 
-    it("rewrites a dynamic import to a lazy namespace promise", () => {
-      const out = rewriteCompiledBinaryUserDependencyImports(
+    it("rewrites a dynamic import to a lazy namespace promise", async () => {
+      const out = await rewriteCompiledBinaryUserDependencyImports(
         `const m = import("lodash");`,
         deps,
       );
@@ -152,20 +153,20 @@ describe("external-import-rewriter", () => {
       );
     });
 
-    it("rewrites a subpath import including the subpath in require", () => {
-      const out = rewriteCompiledBinaryUserDependencyImports(
+    it("rewrites a subpath import including the subpath in require", async () => {
+      const out = await rewriteCompiledBinaryUserDependencyImports(
         `import merge from "lodash/merge";`,
         deps,
       );
       assertStringIncludes(out, `require("lodash/merge")`);
     });
 
-    it("leaves imports for packages not in userDeps untouched", () => {
+    it("leaves imports for packages not in userDeps untouched", async () => {
       const code = `import x from "react";`;
-      assertEquals(rewriteCompiledBinaryUserDependencyImports(code, deps), code);
+      assertEquals(await rewriteCompiledBinaryUserDependencyImports(code, deps), code);
     });
 
-    it("rewrites ESM-only dependency imports to resolved file URLs", () => {
+    it("rewrites ESM-only dependency imports to resolved file URLs", async () => {
       const esmDeps = new Map([
         ["esm-only", {
           entryUrl: "file:///srv/app/node_modules/esm-only/dist/index.mjs",
@@ -173,7 +174,7 @@ describe("external-import-rewriter", () => {
         }],
       ]);
 
-      const out = rewriteCompiledBinaryUserDependencyImports(
+      const out = await rewriteCompiledBinaryUserDependencyImports(
         [
           `import mod from "esm-only";`,
           `import util from "esm-only/utils.js";`,
@@ -188,7 +189,7 @@ describe("external-import-rewriter", () => {
       assertStringIncludes(out, `import("file:///srv/app/node_modules/esm-only/lazy.js")`);
     });
 
-    it("leaves ESM subpath imports untouched when they escape the package directory", () => {
+    it("leaves ESM subpath imports untouched when they escape the package directory", async () => {
       const esmDeps = new Map([
         ["esm-only", {
           entryUrl: "file:///srv/app/node_modules/esm-only/dist/index.mjs",
@@ -198,7 +199,7 @@ describe("external-import-rewriter", () => {
       const code = `import secret from "esm-only/../../secret.js";`;
 
       assertEquals(
-        rewriteCompiledBinaryUserDependencyImports(
+        await rewriteCompiledBinaryUserDependencyImports(
           code,
           new Map([["esm-only", "^1"]]),
           esmDeps,
@@ -397,8 +398,33 @@ describe("external-import-rewriter", () => {
       // Defines a require function and an interop helper.
       assertStringIncludes(shim, "var require = (function () {");
       assertStringIncludes(shim, "function __vf_interopDefault(m)");
-      assertStringIncludes(shim, "function __vf_namespace(m)");
+      assertStringIncludes(shim, "var __vf_namespace = (function () {");
       assert(shim.length > 0);
+    });
+
+    it("renames only the module-level helpers to the chosen prefix", () => {
+      const shim = generateCompiledBinaryRequireShim("/srv/app", "__vf2_");
+      assertStringIncludes(
+        shim,
+        'import { createRequire as __vf2_createRequire } from "node:module";',
+      );
+      assertStringIncludes(shim, "resolve as __vf2_resolve");
+      assertStringIncludes(shim, "function __vf2_interopDefault(m)");
+      assertStringIncludes(shim, "var __vf2_namespace = (function () {");
+      // Private-scope names keep their own spelling.
+      assertStringIncludes(shim, "function __vf_resolveBare(id, parentDir)");
+      assertEquals(
+        /\b__vf_(createRequire|dirname|resolve|interopDefault|namespace)\b/.test(shim),
+        false,
+      );
+    });
+  });
+
+  describe("chooseRouteHelperPrefix", () => {
+    it("keeps the default prefix unless the bundle mentions a helper name", () => {
+      assertEquals(chooseRouteHelperPrefix("const __vf_routeSourceUrl = 1;"), "__vf_");
+      assertEquals(chooseRouteHelperPrefix("const x = '__vf_namespace';"), "__vf1_");
+      assertEquals(chooseRouteHelperPrefix("__vf_tmp_a; __vf1_resolve;"), "__vf2_");
     });
   });
 

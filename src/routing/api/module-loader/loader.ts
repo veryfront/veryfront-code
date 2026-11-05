@@ -43,7 +43,8 @@ import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { wrapWithCurrentContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
 import { isWithinDirectory } from "#veryfront/security/path-validation.ts";
 import {
-  assertNoRouteRequirePrologueCollision,
+  chooseRouteHelperPrefix,
+  DEFAULT_ROUTE_HELPER_PREFIX,
   generateCompiledBinaryRequireShim,
   NODE_BUILTINS,
   readProjectDependencies,
@@ -67,6 +68,7 @@ import { tryGetRegistryScopeId } from "#veryfront/cache/cache-key-builder.ts";
 import { getProjectEnvSnapshot } from "#veryfront/server/project-env/storage.ts";
 import { currentRequestContext } from "#veryfront/platform/request-context-access.ts";
 export {
+  chooseRouteHelperPrefix,
   generateCompiledBinaryRequireShim,
   getNodeExternalPackagesToResolve,
   loadVeryfrontExportsMap,
@@ -1567,29 +1569,33 @@ export function generateRouteRuntimeShim(routeSourceUrl: string): string {
  * cannot load CJS files from disk; other runtimes resolve `require` from the
  * project's node_modules with `createRequire`.
  */
-export function generateRouteRequirePrologue(projectDir: string, compiledBinary: boolean): string {
-  if (compiledBinary) return generateCompiledBinaryRequireShim(projectDir);
+export function generateRouteRequirePrologue(
+  projectDir: string,
+  compiledBinary: boolean,
+  helperPrefix: string = DEFAULT_ROUTE_HELPER_PREFIX,
+): string {
+  if (compiledBinary) return generateCompiledBinaryRequireShim(projectDir, helperPrefix);
   return [
-    'import { createRequire as __vf_createRequire } from "node:module";',
-    `var require = __vf_createRequire(${JSON.stringify(projectDir + "/package.json")});`,
+    `import { createRequire as ${helperPrefix}createRequire } from "node:module";`,
+    `var require = ${helperPrefix}createRequire(${JSON.stringify(projectDir + "/package.json")});`,
   ].join("\n");
 }
 
 /**
  * Prepend the route `require` prologue to a bundled, rewritten handler.
  *
- * `bundledCode` is esbuild's output before the post-bundle rewrites; it is
- * checked for names the prologue declares, which esbuild could not rename. A
- * hashbang esbuild kept stays the first line, the only place it is valid.
+ * `helperPrefix` is the prefix chosen for the bundle with
+ * chooseRouteHelperPrefix and also passed to the import rewrite, so the
+ * prologue's names never collide with route code. A hashbang esbuild kept
+ * stays the first line, the only place it is valid.
  */
 export function prependRouteRequirePrologue(
-  bundledCode: string,
   rewrittenCode: string,
   projectDir: string,
   compiledBinary: boolean,
+  helperPrefix: string = DEFAULT_ROUTE_HELPER_PREFIX,
 ): string {
-  assertNoRouteRequirePrologueCollision(bundledCode);
-  const prologue = generateRouteRequirePrologue(projectDir, compiledBinary);
+  const prologue = generateRouteRequirePrologue(projectDir, compiledBinary, helperPrefix);
   if (!rewrittenCode.startsWith("#!")) return `${prologue}\n${rewrittenCode}`;
   const eol = rewrittenCode.indexOf("\n");
   if (eol === -1) return `${rewrittenCode}\n${prologue}\n`;
@@ -2245,8 +2251,20 @@ function buildTranspiledModuleSource(
       const js = result.outputFiles?.[0]?.text ?? "export {}";
       logger.debug(`transpiled size ${js.length} bytes`);
 
-      const rewritten = await rewriteExternalImports(js, projectDir, sourceSnapshot, userDeps);
-      return prependRouteRequirePrologue(js, rewritten, projectDir, isDeno && isCompiledBinary());
+      const helperPrefix = chooseRouteHelperPrefix(js);
+      const rewritten = await rewriteExternalImports(
+        js,
+        projectDir,
+        sourceSnapshot,
+        userDeps,
+        helperPrefix,
+      );
+      return prependRouteRequirePrologue(
+        rewritten,
+        projectDir,
+        isDeno && isCompiledBinary(),
+        helperPrefix,
+      );
     },
     { "api.modulePath": modulePath, "api.projectDir": projectDir },
   );

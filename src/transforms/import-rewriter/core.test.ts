@@ -144,7 +144,7 @@ describe("import rewrite compatibility golden tests", () => {
       `import { x } from "./_vf_agent.mjs";`,
     );
     assertStringIncludes(
-      rewriteCompiledBinaryUserDependencyImports(
+      await rewriteCompiledBinaryUserDependencyImports(
         `const m = import("lodash/merge");`,
         new Map([["lodash", "^4"]]),
       ),

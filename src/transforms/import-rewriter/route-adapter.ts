@@ -1,7 +1,11 @@
 import type { FileSystem } from "#veryfront/platform/compat/fs.ts";
 import * as pathHelper from "#veryfront/compat/path";
 import { serverLogger } from "#veryfront/utils";
-import { parseImports, replaceSpecifiers } from "#veryfront/transforms/esm/lexer.ts";
+import {
+  parseImports,
+  parseMaskedImports,
+  replaceSpecifiers,
+} from "#veryfront/transforms/esm/lexer.ts";
 import { resolveContainedPackagePath } from "./package-resolution.ts";
 import { isWithinDirectory } from "#veryfront/security/path-validation.ts";
 import {
@@ -200,100 +204,140 @@ const IDENT = "[\\w$]+";
 const IMPORT_CLAUSE = new RegExp(
   `^(?:(${IDENT})\\s*(?:,\\s*)?)?(?:\\*\\s*as\\s+(${IDENT})|(\\{[^}]*\\}))?$`,
 );
+const STATIC_FROM_IMPORT = /^import\s*([\s\S]*?)\s*from\s*["'][^"']*["']\s*$/;
+const SIDE_EFFECT_IMPORT = /^import\s*["'][^"']*["']\s*$/;
+const DYNAMIC_IMPORT_CLOSE = /^\s*\)/;
+
+/** Prefix of the helpers the compiled route rewrite calls; see the prologue. */
+export const DEFAULT_ROUTE_HELPER_PREFIX = "__vf_";
 
 /**
  * Rewrite one static import clause to CommonJS bindings over `required`, or
  * return null when the clause is not a form this rewrite understands.
  */
-function rewriteCjsImportClause(clause: string, required: string): string | null {
+function rewriteCjsImportClause(
+  clause: string,
+  required: string,
+  helperPrefix: string,
+): string | null {
   const parsed = clause.trim().match(IMPORT_CLAUSE);
   if (!parsed) return null;
   const [, defaultName, namespaceName, named] = parsed;
   if (!defaultName && !namespaceName && !named) return null;
   const bindings = [defaultName, namespaceName, named].filter(Boolean).length;
-  const source = bindings > 1 ? `__vf_tmp_${defaultName ?? namespaceName}` : required;
+  const source = bindings > 1 ? `${helperPrefix}tmp_${defaultName ?? namespaceName}` : required;
   const statements = bindings > 1 ? [`const ${source} = ${required}`] : [];
-  if (defaultName) statements.push(`const ${defaultName} = __vf_interopDefault(${source})`);
-  if (namespaceName) statements.push(`const ${namespaceName} = __vf_namespace(${source})`);
+  if (defaultName) {
+    statements.push(`const ${defaultName} = ${helperPrefix}interopDefault(${source})`);
+  }
+  if (namespaceName) {
+    statements.push(`const ${namespaceName} = ${helperPrefix}namespace(${source})`);
+  }
   if (named) statements.push(`const ${toCjsDestructureBindings(named)} = ${source}`);
   return statements.join("; ");
 }
 
-export function rewriteCompiledUserDependencyImportsForRoute(
+/** The user dependency a specifier names (`pkg` or `pkg/sub`), longest first. */
+function matchUserDependency(
+  specifier: string,
+  userDeps: Map<string, string>,
+): { name: string; subpath: string } | null {
+  let best: string | null = null;
+  for (const name of userDeps.keys()) {
+    if (specifier !== name && !specifier.startsWith(`${name}/`)) continue;
+    if (best === null || name.length > best.length) best = name;
+  }
+  return best === null ? null : { name: best, subpath: specifier.slice(best.length) };
+}
+
+/**
+ * Rewrite a bundled compiled-binary route's user dependency imports.
+ *
+ * Import statements come from the module lexer, so text that only looks like
+ * an import (strings, template literals, comments) is never touched. CommonJS
+ * dependencies become `require(...)` bindings over the helpers the route
+ * prologue declares under `helperPrefix`; ESM-only dependencies keep their
+ * import and point at a contained file:// URL.
+ */
+export async function rewriteCompiledUserDependencyImportsForRoute(
   code: string,
   userDeps: Map<string, string>,
   esmDeps: Map<string, EsmDependencyLocation> = new Map(),
-): string {
-  let transformed = code;
+  helperPrefix: string = DEFAULT_ROUTE_HELPER_PREFIX,
+): Promise<string> {
+  if (userDeps.size === 0) return code;
+  const { masked, imports, unmask } = await parseMaskedImports(code);
+  const edits: { start: number; end: number; text: string }[] = [];
 
-  for (const name of userDeps.keys()) {
-    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  for (const imported of imports) {
+    if (typeof imported.n !== "string") continue;
+    const dependency = matchUserDependency(imported.n, userDeps);
+    if (!dependency) continue;
+    const { name, subpath } = dependency;
+    const isDynamic = imported.d > -1;
 
     // ESM-only dependencies are rewritten to real ES module file:// URLs so that
     // import.meta, top-level await, etc. work. They must NOT be transpiled to
     // CommonJS and evaluated via the `new Function` shim (see __vf_loadCjs).
     const esm = esmDeps.get(name);
     if (esm) {
-      // Resolve a subpath import to a contained file:// URL. The subpath comes
-      // from the handler source; reject any that escape the package directory
-      // (e.g. "pkg/../../secret") by leaving the import untouched so it fails to
-      // resolve rather than reading outside node_modules.
-      const subpathUrl = (subpath: string, original: string): string | null => {
+      let url = esm.entryUrl;
+      if (subpath) {
+        // Reject a subpath that escapes the package directory (e.g.
+        // "pkg/../../secret") by leaving the import untouched so it fails to
+        // resolve rather than reading outside node_modules.
         const target = resolveContainedPackagePath(esm.packageDir, "." + subpath);
         if (!target) {
-          logger.warn(`Skipping ESM subpath import that escapes package directory: ${original}`);
-          return null;
+          logger.warn(`Skipping ESM subpath import that escapes package directory: ${imported.n}`);
+          continue;
         }
-        return pathHelper.toFileUrl(target).href;
-      };
-
-      transformed = transformed.replace(
-        new RegExp(`from\\s+["']${escaped}(/[^"']+)["']`, "g"),
-        (match, subpath) => {
-          const url = subpathUrl(subpath, match);
-          return url ? `from "${url}"` : match;
-        },
-      );
-      transformed = transformed.replace(
-        new RegExp(`from\\s+["']${escaped}["']`, "g"),
-        () => `from "${esm.entryUrl}"`,
-      );
-      transformed = transformed.replace(
-        new RegExp(`import\\s*\\(\\s*["']${escaped}(/[^"']+)["']\\s*\\)`, "g"),
-        (match, subpath) => {
-          const url = subpathUrl(subpath, match);
-          return url ? `import("${url}")` : match;
-        },
-      );
-      transformed = transformed.replace(
-        new RegExp(`import\\s*\\(\\s*["']${escaped}["']\\s*\\)`, "g"),
-        () => `import("${esm.entryUrl}")`,
-      );
+        url = pathHelper.toFileUrl(target).href;
+      }
+      // Static specifier spans exclude the quotes; dynamic ones include them.
+      edits.push({
+        start: imported.s,
+        end: imported.e,
+        text: isDynamic ? JSON.stringify(url) : url,
+      });
       continue;
     }
 
-    // Every static import clause form (default, named, namespace and their
-    // combinations) for the package root or a subpath. Namespace imports get
-    // an ES module namespace whose `default` is the CommonJS `module.exports`.
-    transformed = transformed.replace(
-      new RegExp(`import\\s+([^'";]+?)\\s+from\\s+["']${escaped}(/[^"']+)?["']`, "g"),
-      (match, clause: string, subpath: string | undefined) =>
-        rewriteCjsImportClause(clause, `require("${name}${subpath ?? ""}")`) ?? match,
-    );
-    transformed = transformed.replace(
-      new RegExp(`import\\s*["']${escaped}(/[^"']+)?["']`, "g"),
-      (_, subpath: string | undefined) => `require("${name}${subpath ?? ""}")`,
-    );
-    // A dynamic import stays lazy and asynchronous: a load failure rejects the
-    // returned promise instead of throwing synchronously.
-    transformed = transformed.replace(
-      new RegExp(`import\\s*\\(\\s*["']${escaped}(/[^"']*)?["']\\s*\\)`, "g"),
-      (_, subpath) =>
-        `Promise.resolve().then(() => __vf_namespace(require("${name}${subpath || ""}")))`,
-    );
+    const required = `require(${JSON.stringify(name + subpath)})`;
+    if (isDynamic) {
+      // A dynamic import stays lazy and asynchronous: a load failure rejects
+      // the returned promise instead of throwing synchronously. Imports with
+      // options (`import(x, {...})`) are left unchanged.
+      const close = masked.slice(imported.e).match(DYNAMIC_IMPORT_CLOSE);
+      if (!close) continue;
+      edits.push({
+        start: imported.ss,
+        end: imported.e + close[0].length,
+        text: `Promise.resolve().then(() => ${helperPrefix}namespace(${required}))`,
+      });
+      continue;
+    }
+
+    const statement = masked.slice(imported.ss, imported.se);
+    if (SIDE_EFFECT_IMPORT.test(statement)) {
+      edits.push({ start: imported.ss, end: imported.se, text: required });
+      continue;
+    }
+    const clause = statement.match(STATIC_FROM_IMPORT)?.[1];
+    const rewritten = clause === undefined
+      ? null
+      : rewriteCjsImportClause(clause, required, helperPrefix);
+    if (rewritten !== null) {
+      edits.push({ start: imported.ss, end: imported.se, text: rewritten });
+    }
   }
 
-  return transformed;
+  if (edits.length === 0) return code;
+  edits.sort((left, right) => right.start - left.start);
+  let transformed = masked;
+  for (const edit of edits) {
+    transformed = transformed.slice(0, edit.start) + edit.text + transformed.slice(edit.end);
+  }
+  return unmask(transformed);
 }
 
 export async function rewriteDenoNpmDependencyImportsForRoute(
