@@ -339,28 +339,6 @@ export function rewriteCompiledBinaryUserDependencyImports(
   return rewriteCompiledUserDependencyImportsForRoute(code, userDeps, esmDeps);
 }
 
-/**
- * Rewrite a bundled route module's user dependency imports for the compiled
- * binary and prepend the CJS loader that the rewritten code calls.
- *
- * The rewritten `require(...)` and `__vf_interopDefault(...)` calls are added
- * after bundling, so the loader must be added after bundling too: injected into
- * the bundle, esbuild renamed its `require` and tree-shook the helper, and every
- * CJS default import failed with a ReferenceError at request time. esbuild
- * reserves top-level `require` in ESM output, so the prepended declaration
- * cannot collide with route code, and esbuild's own `__require` fallback for
- * bundled CJS picks it up as well.
- */
-export function rewriteCompiledBinaryRouteModule(
-  code: string,
-  projectDir: string,
-  userDeps: Map<string, string>,
-  esmDeps: Map<string, EsmDependencyLocation> = new Map(),
-): string {
-  const rewritten = rewriteCompiledBinaryUserDependencyImports(code, userDeps, esmDeps);
-  return `${generateCompiledBinaryRequireShim(projectDir)}\n${rewritten}`;
-}
-
 export async function rewriteDenoNpmDependencyImports(
   code: string,
   projectDir: string,
@@ -487,11 +465,12 @@ export async function rewriteExternalImports(
     // Rewrite user-installed npm dependencies.
     // In non-compiled Deno: use npm: specifiers (resolved by Deno's npm support).
     // In compiled binaries: load CJS packages from node_modules through the
-    // compiled-binary `require` loader, since npm: specifiers only work for
-    // packages embedded at compile time.
+    // compiled-binary `require` loader the module loader prepends after
+    // bundling, since npm: specifiers only work for packages embedded at
+    // compile time.
     if (isCompiledBinary()) {
       const esmDeps = await resolveEsmUserDependencies(projectDir, fs, userDeps);
-      transformed = rewriteCompiledBinaryRouteModule(transformed, projectDir, userDeps, esmDeps);
+      transformed = rewriteCompiledBinaryUserDependencyImports(transformed, userDeps, esmDeps);
     } else {
       transformed = await rewriteDenoNpmDependencyImports(transformed, projectDir, fs, userDeps);
     }

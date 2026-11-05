@@ -16,6 +16,7 @@ import {
   bundlerForcesTypeScript,
   canDirectImportSpecifier,
   generateCompiledBinaryRequireShim,
+  generateRouteRequirePrologue,
   generateRouteRuntimeShim,
   getNodeExternalPackagesToResolve,
   getUserDependencies,
@@ -27,7 +28,6 @@ import {
   prepareHandlerModule,
   readDenoImportMap,
   resolveEsmUserDependencies,
-  rewriteCompiledBinaryRouteModule,
   rewriteCompiledBinaryUserDependencyImports,
   rewriteCompiledBinaryVeryfrontImports,
   rewriteDenoNodeBuiltinImports,
@@ -5676,10 +5676,13 @@ describe("isSpecifierResolutionError", () => {
 // to `require(...)` and `__vf_interopDefault(...)` after bundling. These tests
 // run the same bundle-then-rewrite pipeline and evaluate the handler, so a
 // rewritten reference the bundle does not define fails here, not in production.
-describe("compiled-binary CJS user dependencies (#5471)", {
-  sanitizeResources: false,
-  sanitizeOps: false,
-}, () => {
+describe("route CommonJS require (#5471)", () => {
+  afterAll(async () => {
+    await __resetPoolForTests();
+    const { stop } = await import("veryfront/extensions/bundler");
+    await stop();
+  });
+
   async function loadCompiledRoute(routeSource: string): Promise<() => Promise<Response>> {
     const projectDir = Deno.realPathSync(await makeTempDir());
     const packageDir = join(projectDir, "node_modules", "cjs-fixture");
@@ -5722,7 +5725,7 @@ describe("compiled-binary CJS user dependencies (#5471)", {
             namespace: shimNamespace,
           }));
           pluginBuild.onLoad({ filter: /.*/, namespace: shimNamespace }, () => ({
-            contents: generateRouteRuntimeShim(projectDir, toFileUrl(routePath).href, true),
+            contents: generateRouteRuntimeShim(toFileUrl(routePath).href),
             loader: "js",
           }));
         },
@@ -5732,7 +5735,9 @@ describe("compiled-binary CJS user dependencies (#5471)", {
     const handlerPath = join(projectDir, "handler.mjs");
     await fs.writeTextFile(
       handlerPath,
-      rewriteCompiledBinaryRouteModule(bundled, projectDir, userDeps),
+      `${generateRouteRequirePrologue(projectDir, true)}\n${
+        rewriteCompiledBinaryUserDependencyImports(bundled, userDeps)
+      }`,
     );
     const module = await import(toFileUrl(handlerPath).href);
     return module.GET;
@@ -5757,5 +5762,38 @@ describe("compiled-binary CJS user dependencies (#5471)", {
       'export const GET = async () => { const pg = await import("cjs-fixture"); return new Response(new pg.Pool().query()); };',
     );
     assertEquals(await (await GET()).text(), "ok");
+  });
+
+  denoIt("lets bundled project CommonJS require Node built-ins", async () => {
+    // Runs the real loader on this runtime. A virtual adapter forces the
+    // esbuild bundle path, which inlines the .cjs file behind esbuild's
+    // `__require`; that helper only sees a module-scope `require`.
+    const realDir = Deno.realPathSync(await makeTempDir());
+    await fs.writeTextFile(
+      join(realDir, "helper.cjs"),
+      'module.exports = { base: require("node:path").basename("/rows/ok") };',
+    );
+    await fs.writeTextFile(
+      join(realDir, "handler.ts"),
+      'import helper from "./helper.cjs";\nexport const GET = () => new Response(helper.base);',
+    );
+    const virtualBase = join(await makeTempDir(), `vf-nonexistent-${Date.now()}`);
+    const toReal = (path: string): string => path.replace(virtualBase, realDir);
+    const virtualAdapter: RuntimeAdapter = {
+      ...adapter,
+      fs: {
+        ...adapter.fs,
+        readFile: (path: string) => fs.readTextFile(toReal(path)),
+        exists: (path: string) => fs.exists(toReal(path)),
+      },
+    };
+
+    const route = await loadHandlerModule({
+      projectDir: virtualBase,
+      modulePath: join(virtualBase, "handler.ts"),
+      adapter: virtualAdapter,
+      config: undefined,
+    });
+    assertEquals(await getText(route), "ok");
   });
 });

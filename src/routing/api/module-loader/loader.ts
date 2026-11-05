@@ -43,6 +43,7 @@ import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { wrapWithCurrentContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
 import { isWithinDirectory } from "#veryfront/security/path-validation.ts";
 import {
+  generateCompiledBinaryRequireShim,
   NODE_BUILTINS,
   readProjectDependencies,
   rewriteExternalImports,
@@ -70,7 +71,6 @@ export {
   loadVeryfrontExportsMap,
   resolveEsmUserDependencies,
   resolveNodePackageToFileUrl,
-  rewriteCompiledBinaryRouteModule,
   rewriteCompiledBinaryUserDependencyImports,
   rewriteCompiledBinaryVeryfrontImports,
   rewriteDenoNodeBuiltinImports,
@@ -1534,41 +1534,43 @@ function resolveBundledImportMetaSpecifier(
 }
 
 /**
- * Source of the module injected into every bundled route handler.
- *
- * Many npm packages use CJS require() for Node built-ins (e.g. require('fs')).
- * When esbuild bundles CJS into ESM output, these become __require() shims that
- * fail at runtime, so the non-compiled runtimes inject a createRequire-based
- * `require` resolved from the project's node_modules.
- *
- * The compiled binary does not inject its CJS loader. User dependency imports
- * are rewritten to `require(...)` and `__vf_interopDefault(...)` only after
- * bundling, so esbuild never sees those references: it tree-shakes the helper
- * and renames the injected `require`, leaving the rewritten handler with free
- * identifiers. `rewriteExternalImports` prepends the loader to the bundled
- * output instead, where esbuild's reserved top-level `require` cannot collide.
+ * Source of the module injected into every bundled route handler. Injection
+ * binds the route's free `Worker` identifier, renaming either side on a
+ * collision, so relative worker URLs resolve against the route source.
  */
-export function generateRouteRuntimeShim(
-  projectDir: string,
-  routeSourceUrl: string,
-  compiledBinary: boolean,
-): string {
-  const workerShim = [
+export function generateRouteRuntimeShim(routeSourceUrl: string): string {
+  return [
     `const __vf_routeSourceUrl = ${JSON.stringify(routeSourceUrl)};`,
     `const Worker = typeof globalThis.Worker === "function" ? class extends globalThis.Worker {`,
     `  constructor(specifier, options) {`,
     `    super(typeof specifier === "string" && (specifier.startsWith("./") || specifier.startsWith("../")) ? new URL(specifier, __vf_routeSourceUrl) : specifier, options);`,
     `  }`,
     `} : globalThis.Worker;`,
+    "export { Worker };",
   ].join("\n");
-  if (compiledBinary) return [workerShim, "export { Worker };"].join("\n");
+}
 
-  const safeProjectDir = JSON.stringify(projectDir + "/package.json");
+/**
+ * Module-scope `require` prepended to a bundled route handler.
+ *
+ * Bundled CommonJS calls `require()` through esbuild's `__require`, which only
+ * finds a `require` binding in module scope, and the compiled binary rewrites
+ * user dependency imports to `require(...)` and `__vf_interopDefault(...)`
+ * after bundling. Neither can be served by an injected shim: esbuild reserves
+ * top-level `require` in ESM output, so it renamed the injected binding, and it
+ * tree-shook the interop helper nothing referenced yet. Prepending after
+ * bundling keeps both names as written, and the reserved name means route code
+ * cannot declare a colliding top-level `require`.
+ *
+ * The compiled binary needs its own CJS loader because its `createRequire`
+ * cannot load CJS files from disk; other runtimes resolve `require` from the
+ * project's node_modules with `createRequire`.
+ */
+export function generateRouteRequirePrologue(projectDir: string, compiledBinary: boolean): string {
+  if (compiledBinary) return generateCompiledBinaryRequireShim(projectDir);
   return [
     'import { createRequire as __vf_createRequire } from "node:module";',
-    `var require = __vf_createRequire(${safeProjectDir});`,
-    workerShim,
-    "export { require, Worker };",
+    `var require = __vf_createRequire(${JSON.stringify(projectDir + "/package.json")});`,
   ].join("\n");
 }
 
@@ -2130,11 +2132,7 @@ function buildTranspiledModuleSource(
       const { build } = await import("veryfront/extensions/bundler");
 
       const routeSourceUrl = pathHelper.toFileUrl(resolvedPath).href;
-      const routeRuntimeShim = generateRouteRuntimeShim(
-        projectDir,
-        routeSourceUrl,
-        isDeno && isCompiledBinary(),
-      );
+      const routeRuntimeShim = generateRouteRuntimeShim(routeSourceUrl);
 
       const buildOptions = typescriptDecoratorOptions
         ? typeScriptBuildOptions(projectDir, typescriptDecoratorOptions, bundleTypeScript)
@@ -2225,7 +2223,9 @@ function buildTranspiledModuleSource(
       const js = result.outputFiles?.[0]?.text ?? "export {}";
       logger.debug(`transpiled size ${js.length} bytes`);
 
-      return await rewriteExternalImports(js, projectDir, sourceSnapshot, userDeps);
+      const rewritten = await rewriteExternalImports(js, projectDir, sourceSnapshot, userDeps);
+      const prologue = generateRouteRequirePrologue(projectDir, isDeno && isCompiledBinary());
+      return `${prologue}\n${rewritten}`;
     },
     { "api.modulePath": modulePath, "api.projectDir": projectDir },
   );
