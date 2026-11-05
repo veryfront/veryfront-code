@@ -244,6 +244,7 @@ import {
   RuntimeEmptyResponseError,
 } from "./empty-response-recovery.ts";
 import {
+  closeAgentConfigToolSelector,
   getProviderReplayInvokeAgentToolCallsSchema,
   getRuntimeAllowedRemoteTools,
   getRuntimeForwardedIntegrationToolDefs,
@@ -3487,6 +3488,11 @@ export class AgentRuntime {
     this.id = id;
     this.config = { ...config };
     if (ObjectGetPrototypeOf(config) === null) ObjectSetPrototypeOf(this.config, null);
+    // Direct construction (ag-ui, forks, internal run streams, public callers)
+    // must close `tools: false` exactly as agent() does: startup tools/skill,
+    // skills, knowledge, delegates, MCP servers and the tool-result reader all
+    // run through or expose callable tools.
+    if (this.config.tools === false) closeAgentConfigToolSelector(this.config);
 
     // Agents are stateless by default (see docs/guides/memory-and-streaming.md):
     // with no `memory` config, calls never share conversation history, so
