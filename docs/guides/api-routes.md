@@ -220,6 +220,19 @@ export function GET() {
 }
 ```
 
+## npm packages
+
+API routes can import packages listed in the project's `package.json`. The
+package must be installed in the project's `node_modules` where the server
+runs. CommonJS packages support default, named, namespace and dynamic
+`import()` forms. ES module packages load as ES modules.
+
+Packages that ship a native addon (`.node` file) are not supported. Loading one
+fails with `native addon "<path>" cannot be loaded`. A package that is listed
+but not installed fails with `npm package "<name>" is not installed in this
+runtime's node_modules`. Both errors happen when the route module loads, so the
+route returns a server error until the dependency is changed.
+
 ## Chat endpoint
 
 The most common API route pattern in Veryfront connects a chat UI to an agent:

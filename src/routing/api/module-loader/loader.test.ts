@@ -5796,4 +5796,39 @@ describe("route CommonJS require (#5471)", () => {
     });
     assertEquals(await getText(route), "ok");
   });
+
+  denoIt("names an npm package that is not installed instead of a host path", async () => {
+    const projectDir = Deno.realPathSync(await makeTempDir());
+    await fs.writeTextFile(join(projectDir, "package.json"), "{}");
+    const vfRequire = await importCompiledBinaryRequireShim(projectDir);
+
+    const error = assertThrows(() => vfRequire("not-installed-pkg"));
+    assertEquals(
+      error instanceof Error ? error.message : String(error),
+      'npm package "not-installed-pkg" is not installed in this runtime\'s node_modules',
+    );
+  });
+
+  denoIt("rejects a native addon with a clear error", async () => {
+    const projectDir = Deno.realPathSync(await makeTempDir());
+    const packageDir = join(projectDir, "node_modules", "native-fixture");
+    await fs.mkdir(packageDir, { recursive: true });
+    await fs.writeTextFile(join(projectDir, "package.json"), "{}");
+    await fs.writeTextFile(
+      join(packageDir, "package.json"),
+      JSON.stringify({ name: "native-fixture", main: "index.js" }),
+    );
+    await fs.writeTextFile(
+      join(packageDir, "index.js"),
+      'module.exports = require("./addon.node");',
+    );
+    await fs.writeTextFile(join(packageDir, "addon.node"), "\u007fELF");
+    const vfRequire = await importCompiledBinaryRequireShim(projectDir);
+
+    const error = assertThrows(() => vfRequire("native-fixture"));
+    assertEquals(
+      error instanceof Error ? error.message : String(error),
+      'native addon "./addon.node" cannot be loaded: native addons are not supported in this runtime',
+    );
+  });
 });

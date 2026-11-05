@@ -114,7 +114,17 @@ function __vf_loadCjs(id, parentDir) {
       }
     }
   } else {
-    resolved = __vf_builtinRequire.resolve(id);
+    try {
+      resolved = __vf_builtinRequire.resolve(id);
+    } catch (error) {
+      // The resolver's message carries the host project path in its require
+      // stack. Name only the package the route asked for.
+      if (!error || error.code !== "MODULE_NOT_FOUND") throw error;
+      throw new Error("npm package " + JSON.stringify(id) + " is not installed in this runtime's node_modules");
+    }
+  }
+  if (resolved.endsWith(".node")) {
+    throw new Error("native addon " + JSON.stringify(id) + " cannot be loaded: native addons are not supported in this runtime");
   }
   // VULN-FS-5: Canonicalize before asserting containment, so the candidate and
   // the already-canonical project root are compared like with like, then assert
