@@ -37,6 +37,8 @@ import {
   transferHostedPlatformDependencies,
 } from "./platform-dependency-credential.ts";
 import { isCanonicalFileMutationTool } from "#veryfront/tool/platform-tool-policy.ts";
+import { shareRemoteMCPProtocolState } from "#veryfront/tool/remote-mcp.ts";
+import { disposeRemoteToolSources } from "#veryfront/tool/remote-tool-source-owner.ts";
 import { INGRESS_RUN_EVENT_TOKEN_HEADER } from "#veryfront/security/http/ingress-credentials.ts";
 import { createVeryfrontCloudInferenceModelResolver } from "./inference-credential.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
@@ -245,7 +247,10 @@ export function hostedTerminalToolSourceFactory(
       }
       return headers;
     };
-    const ordinary = fallback({ ...config, headers: liveHeaders });
+    // Only the ordinary source runs discovery; the credential-specialized
+    // sources reuse the protocol and header annotations it records.
+    const shared = shareRemoteMCPProtocolState(config);
+    const ordinary = fallback({ ...shared, headers: liveHeaders });
     // Project mutations by the verified current run need its exact-run event authority.
     const isCurrentRunProjectCall = (name: string, context: ToolExecutionContext | undefined) =>
       !!authority.eventToken && context?.projectId === authority.projectId &&
@@ -253,7 +258,7 @@ export function hostedTerminalToolSourceFactory(
       name !== "create_run" && name !== "veryfront__create_run";
     const mutation = authority.eventToken
       ? fallback({
-        ...config,
+        ...shared,
         endpoint: expectedEndpoint,
         headers: async (context) => {
           const headers = copyNativeHeaders(await liveHeaders(context));
@@ -265,7 +270,7 @@ export function hostedTerminalToolSourceFactory(
       })
       : ordinary;
     const terminal = fallback({
-      ...config,
+      ...shared,
       endpoint: expectedEndpoint,
       headers: async (context) => {
         const headers = new NativeHeaders(await liveHeaders(context));
@@ -294,6 +299,7 @@ export function hostedTerminalToolSourceFactory(
     });
     return {
       id: ordinary.id,
+      dispose: (context) => disposeRemoteToolSources([ordinary, mutation, terminal], context),
       listTools: (context) => ordinary.listTools(context),
       executeTool: async (name, args, context) => {
         if (isTerminalRunToolName(name)) return terminal.executeTool(name, args, context);

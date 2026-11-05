@@ -13,6 +13,7 @@ import { applySourceIntegrationPolicy } from "#veryfront/integrations/source-pol
 import { isToolAllowedBySourcePolicy } from "#veryfront/tool/platform-tool-policy.ts";
 import { observePrivatePromise } from "#veryfront/security/private-promise.ts";
 import { createPrivateSet } from "#veryfront/security/private-set.ts";
+import { createRemoteToolSourceOwner } from "#veryfront/tool/remote-tool-source-owner.ts";
 import { defineOwnDataProperty } from "#veryfront/security/own-data-property.ts";
 import type { ChatSystemMessage } from "#veryfront/chat/types.ts";
 import {
@@ -216,6 +217,8 @@ export type HostedChatRuntimeToolAssemblyResult = {
   readonly sourceIntegrationPolicy: SourceIntegrationPolicyManifest;
   runtimeTools: ToolSet;
   remoteToolSources: RemoteToolSource[];
+  /** Release only the remote sources created by this assembly. */
+  closeRemoteToolSources?: () => Promise<void>;
   /** API-backed source used for framework research artifact mirroring. */
   researchArtifactRemoteToolSource?: RemoteToolSource;
   localToolNames: string[];
@@ -1357,13 +1360,33 @@ async function prepareHostedChatRuntimeToolAssemblyInternal<
   return result;
 }
 
+async function prepareOwnedHostedChatRuntimeToolAssembly<
+  TTraceAttributes extends HostToolTraceAttributes = HostToolTraceAttributes,
+>(
+  input: PrepareHostedChatRuntimeToolAssemblyInput<TTraceAttributes>,
+  configDerivedSelector: boolean,
+): Promise<HostedChatRuntimeToolAssemblyResult> {
+  const owner = createRemoteToolSourceOwner();
+  const createSource = input.createRemoteToolSource ?? createRemoteMCPToolSource;
+  try {
+    const result = await prepareHostedChatRuntimeToolAssemblyInternal({
+      ...input,
+      createRemoteToolSource: (config, server) => owner.own(createSource(config, server)),
+    }, configDerivedSelector);
+    result.closeRemoteToolSources = owner.dispose;
+    return result;
+  } catch (error) {
+    return await owner.fail(error);
+  }
+}
+
 /** Prepare hosted chat runtime tool assembly. */
 export function prepareHostedChatRuntimeToolAssembly<
   TTraceAttributes extends HostToolTraceAttributes = HostToolTraceAttributes,
 >(
   input: PrepareHostedChatRuntimeToolAssemblyInput<TTraceAttributes>,
 ): Promise<HostedChatRuntimeToolAssemblyResult> {
-  return prepareHostedChatRuntimeToolAssemblyInternal(input, false);
+  return prepareOwnedHostedChatRuntimeToolAssembly(input, false);
 }
 
 /** @internal Prepare an assembly whose selector provenance was verified by the hosted runtime. */
@@ -1372,7 +1395,7 @@ export function prepareConfigDerivedHostedChatRuntimeToolAssembly<
 >(
   input: PrepareHostedChatRuntimeToolAssemblyInput<TTraceAttributes>,
 ): Promise<HostedChatRuntimeToolAssemblyResult> {
-  return prepareHostedChatRuntimeToolAssemblyInternal(
+  return prepareOwnedHostedChatRuntimeToolAssembly(
     input,
     input.includeRuntimeEssentialToolsWhenEmpty === true,
   );

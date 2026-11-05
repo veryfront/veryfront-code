@@ -264,6 +264,8 @@ export interface ToolDefinition {
  */
 export interface RemoteToolSource {
   id: string;
+  /** Release remote sessions owned by this source. */
+  dispose?(context?: ToolExecutionContext): Promise<void>;
   listTools(context?: ToolExecutionContext): Promise<ToolDefinition[]>;
   executeTool(
     toolName: string,

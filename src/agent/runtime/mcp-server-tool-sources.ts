@@ -46,6 +46,7 @@ import { createAgentServiceRemoteMcpConfig } from "../service/mcp-server-config.
 import { wrapRemoteToolSourceWithMcpPolicy } from "../mcp-tool-policy.ts";
 import { getActiveRuntimeRemoteToolSources } from "./remote-tool-source-context.ts";
 import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
+import { disposeRemoteToolSources } from "#veryfront/tool/remote-tool-source-owner.ts";
 import { compareStrings } from "#veryfront/utils/compare.ts";
 import {
   createAgentKnowledgeSource,
@@ -69,6 +70,31 @@ export const VERYFRONT_STUDIO_MCP_SOURCE_ID = "studio-mcp";
 export const VERYFRONT_STUDIO_TOOL_PREFIX = "studio_";
 /** Canonical naming prefix for Studio MCP tools. */
 export const VERYFRONT_CANONICAL_STUDIO_TOOL_PREFIX = "veryfront__studio_";
+
+const runtimeOwnedMcpSources = createPrivateWeakStore<
+  readonly RemoteToolSource[],
+  readonly RemoteToolSource[]
+>();
+
+/** Release only sources created for this loop; inherited sources belong to their caller. */
+export function createRuntimeMcpSourceCleanup(
+  sources: readonly RemoteToolSource[] | undefined,
+): AsyncDisposable {
+  const ownedSources = sources === undefined ? [] : runtimeOwnedMcpSources.get(sources) ?? [];
+  return {
+    async [Symbol.asyncDispose]() {
+      const disposable: RemoteToolSource[] = [];
+      for (let index = 0; index < ownedSources.length; index++) {
+        if (hasOwn(ownedSources, index)) disposable[disposable.length] = ownedSources[index]!;
+      }
+      try {
+        await disposeRemoteToolSources(disposable);
+      } catch {
+        // Session termination is best effort and must preserve the run result.
+      }
+    },
+  };
+}
 
 const RUNTIME_PROVIDED_BOOLEAN_TOOL_NAMES = new Set(["bash", "invoke_agent"]);
 const FRAMEWORK_KNOWLEDGE_TOOL_NAME = "veryfront__search_knowledge";
@@ -371,6 +397,12 @@ export function bindRemoteToolSourceToProject(
 
   return inheritTrustedPlatformSource(source, {
     id: source.id,
+    ...(source.dispose
+      ? {
+        dispose: (context) =>
+          source.dispose!(context ? withServerProject(context, projectId) : undefined),
+      }
+      : {}),
     listTools: (context) => catalog.listTools(withServerProject(context, projectId)),
     async executeTool(toolName, args, context) {
       const execution = await catalog.prepareExecution({
@@ -672,6 +704,7 @@ export function getRuntimeRemoteToolSources(
   const remoteToolSources = concatPrivateArrays(guardedKnowledgeSources, nonKnowledgeSources);
 
   if (remoteToolSources.length > 0) {
+    runtimeOwnedMcpSources.set(remoteToolSources, configuredSources);
     return remoteToolSources;
   }
 

@@ -1,4 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { VERSION } from "#veryfront/utils/version-constant.ts";
 import { assert, assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { isNode } from "#veryfront/platform/compat/runtime.ts";
@@ -501,6 +502,88 @@ describe("private tool-call admission", () => {
     assertEquals(privateRequests.length, 2);
   });
 
+  it("initializes legacy sessions on the endpoint transport and admits only the call", async () => {
+    const endpoint = "https://api.example.test/prefix/mcp";
+    const sessions = new Set<string>();
+    let nextSession = 0;
+    const privateMethods: string[] = [];
+    const configuredMethods: string[] = [];
+    const legacyServer: HostedRequestFetch = async (_url, init) => {
+      assert(init && "body" in init, "fetch must receive request options");
+      const body = JSON.parse(String(init?.body));
+      const sessionId = new Headers(init && "headers" in init ? init.headers : undefined)
+        .get("Mcp-Session-Id");
+      if (body.method === "initialize") {
+        const minted = `legacy-session-${++nextSession}`;
+        sessions.add(minted);
+        return Response.json({
+          jsonrpc: "2.0",
+          id: body.id,
+          result: { protocolVersion: "2025-11-25" },
+        }, { headers: { "Mcp-Session-Id": minted } });
+      }
+      if (body.method === "notifications/initialized") return new Response(null, { status: 202 });
+      if (!sessionId || !sessions.has(sessionId)) {
+        return new Response("missing session ID", { status: sessionId ? 404 : 400 });
+      }
+      return Response.json({
+        jsonrpc: "2.0",
+        id: body.id,
+        result: body.method === "tools/list"
+          ? { tools: [{ name: "lookup", description: "Lookup", inputSchema: { type: "object" } }] }
+          : { structuredContent: { ok: true } },
+      });
+    };
+    const capability = createHostedRunEventWriterCapability({
+      apiUrl: "https://api.example.test/prefix",
+      runId: "external-run",
+      canonicalRunId: runId,
+      runEventAppendToken: "synthetic-private-writer-token",
+      fetch: (url, init) => {
+        privateMethods.push(JSON.parse(String((init as RequestInit).body)).method);
+        return legacyServer(url, init);
+      },
+    });
+    const callback = async () => receipt;
+    bindHostedToolCallAdmissionWriter(callback, {
+      capability,
+      expectedRunId: "external-run",
+      projectId,
+    });
+    const source = createRemoteMCPToolSourceFactoryWithTransport({
+      trustedEndpoints: [endpoint],
+      requestFetch: (url, init) => {
+        configuredMethods.push(JSON.parse(String((init as RequestInit).body)).method);
+        return legacyServer(url, init);
+      },
+    })({ endpoint, headers: { Authorization: "Bearer synthetic-application-token" } });
+    // Discovery without a run identity, as the request handler pre-discovers.
+    await source.listTools();
+    await runWithToolCallAdmissionReceipt(receipt, () => {}, async () => {
+      assertEquals(
+        await source.executeTool("lookup", {}, { runId: "external-run" }),
+        { ok: true },
+      );
+      // An expired session renews on the endpoint transport, then the call is admitted again.
+      sessions.clear();
+      assertEquals(
+        await source.executeTool("lookup", {}, { runId: "external-run" }),
+        { ok: true },
+      );
+    }, callback);
+    assertEquals(privateMethods, ["tools/call", "tools/call", "tools/call"]);
+    assertEquals(configuredMethods, [
+      "tools/list",
+      "initialize",
+      "notifications/initialized",
+      "tools/list",
+      "initialize",
+      "notifications/initialized",
+      "initialize",
+      "notifications/initialized",
+    ]);
+  });
+
   it("keeps the admission writer token private through native request conversion", async () => {
     const token = "synthetic-private-admission-token";
     const endpoint = "https://api.example.test/mcp";
@@ -695,6 +778,9 @@ describe("private tool-call admission", () => {
         assertEquals(headers.get("Authorization"), "Bearer synthetic-application-token");
         assertEquals(headers.get("X-Veryfront-Run-Event-Writer-Token"), "synthetic-append-token");
         assertEquals(body.params._meta, {
+          "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+          "io.modelcontextprotocol/clientInfo": { name: "veryfront", version: VERSION },
+          "io.modelcontextprotocol/clientCapabilities": {},
           run_id: "external-run",
           tool_call_admission: {
             occurrence_id: occurrenceId,

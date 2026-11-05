@@ -394,3 +394,19 @@ it("agent management errors stay on items through platform tool aliases", async 
   assertEquals(result, { content: [], structuredContent: payload });
   assertEquals(calls, [{ name: "list_agents", args: { project_reference: "demo" } }]);
 });
+
+it("releases the raw source through the retained platform catalog wrapper", async () => {
+  const disposed: Array<string | undefined> = [];
+  const { source } = createPlatformMcpCatalogSource({
+    id: "platform",
+    listTools: async () => [],
+    executeTool: async () => ({}),
+    dispose: async (context) => {
+      disposed.push(context?.runId);
+    },
+  }, []);
+  assertExists(source.dispose);
+  await source.dispose({ runId: "run-a" });
+  await source.dispose();
+  assertEquals(disposed, ["run-a", undefined]);
+});

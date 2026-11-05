@@ -3,6 +3,13 @@ import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { createContext7ToolSource } from "./context7.ts";
+import { VERSION } from "#veryfront/utils/version-constant.ts";
+
+const modernMeta = {
+  "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+  "io.modelcontextprotocol/clientInfo": { name: "veryfront", version: VERSION },
+  "io.modelcontextprotocol/clientCapabilities": {},
+};
 
 describe("tool/context7", () => {
   it("creates a remote tool source with the correct id", () => {
@@ -65,6 +72,7 @@ describe("tool/context7", () => {
       jsonrpc: "2.0",
       id: "context7:tools:list",
       method: "tools/list",
+      params: { _meta: modernMeta },
     });
     assertEquals(tools.length, 2);
     assertEquals(tools[0]?.name, "resolve-library-id");
@@ -104,6 +112,7 @@ describe("tool/context7", () => {
       method: "tools/call",
       params: {
         name: "resolve-library-id",
+        _meta: modernMeta,
         arguments: {
           libraryName: "Next.js",
           query: "How to set up routing",

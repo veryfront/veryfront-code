@@ -41,6 +41,73 @@ import { createDefaultResearchRunArtifactMirrorHandler } from "#veryfront/agent/
 import { withPlatformHostToolAliases } from "#veryfront/agent/platform-host-tools.ts";
 
 describe("private host tool metadata", () => {
+  for (const failSetup of [false, true]) {
+    it(`releases owned sources after assembly ${failSetup ? "failure" : "completion"}`, async () => {
+      let listings = 0;
+      let disposals = 0;
+      const setupError = new Error("assembly setup failed after discovery");
+      const assemble = () =>
+        prepareHostedChatRuntimeToolAssembly({
+          taskContext: { authToken: "token", projectId: "project-one", model: "openai/gpt-5-nano" },
+          sourceIntegrationPolicy: { schemaVersion: 1, mode: "unrestricted" },
+          instructions: "Synthetic instructions",
+          localTools: {},
+          apiUrl: "https://api.example.com",
+          apiMcpUrl: "https://api.example.com/mcp",
+          preloadLatestConversationUserText: false,
+          createRemoteToolSource: (config) => ({
+            id: config.id ?? "owned",
+            listTools: async () => {
+              listings++;
+              return [];
+            },
+            executeTool: async () => undefined,
+            dispose: async () => {
+              disposals++;
+            },
+          }),
+          renderInstructions: () => {
+            assertEquals(listings, 1);
+            if (failSetup) throw setupError;
+            return "Prepared instructions";
+          },
+        });
+      if (failSetup) {
+        assertStrictEquals(await assertRejects(assemble), setupError);
+      } else {
+        const assembly = await assemble();
+        assertEquals(disposals, 0);
+        await assembly.closeRemoteToolSources?.();
+        await assembly.closeRemoteToolSources?.();
+      }
+      assertEquals(disposals, 1);
+    });
+  }
+
+  it("leaves injected facaded sources with their caller", async () => {
+    let disposals = 0;
+    const source = {
+      id: "borrowed",
+      listTools: async () => [],
+      executeTool: async () => undefined,
+      dispose: async () => {
+        disposals++;
+      },
+    };
+    const assembly = await prepareFacadedHostedChatRuntimeToolAssembly({
+      signal: new AbortController().signal,
+      taskContext: { model: "openai/gpt-5-nano" },
+      sourceIntegrationPolicy: { schemaVersion: 1, mode: "unrestricted" },
+      instructions: "Synthetic instructions",
+      localTools: {},
+      remoteToolSources: [source],
+    });
+    await assembly.closeRemoteToolSources?.();
+    assertEquals(disposals, 0);
+    await source.dispose();
+    assertEquals(disposals, 1);
+  });
+
   it("keeps trusted platform tools and removes spoofed names under integration restrictions", async () => {
     let listings = 0;
     const trusted = markTrustedPlatformSource({

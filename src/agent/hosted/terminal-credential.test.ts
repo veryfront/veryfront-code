@@ -8,7 +8,13 @@ import {
 } from "./child-run-event-writer-token.ts";
 import { createTerminalRunControl } from "#veryfront/agent/runtime/terminal-run-control.ts";
 import { bindRuntimeRemoteToolSourcesToCredentialOwner } from "#veryfront/agent/runtime/mcp-server-tool-sources.ts";
-import { assert, assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
+import {
+  assert,
+  assertEquals,
+  assertRejects,
+  assertStrictEquals,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { ParsedHostedChatRequest } from "./chat-request-parser.ts";
 import type { RemoteMCPToolSourceConfig } from "#veryfront/tool/remote-mcp.ts";
@@ -132,6 +138,38 @@ describe("private terminal credential routing", () => {
       assertEquals(Object.keys(original), ["Authorization"]);
     });
   }
+
+  it("disposes every constituent source and shares discovery state between them", async () => {
+    const value = request();
+    registerHostedTerminalCredential(value, "test-authority");
+    const configs: RemoteMCPToolSourceConfig[] = [];
+    const disposed: Array<{ endpoint: unknown; runId?: string }> = [];
+    const fallback = (config: RemoteMCPToolSourceConfig): RemoteToolSource => {
+      configs.push(config);
+      return {
+        id: config.id ?? "platform",
+        listTools: async () => [],
+        executeTool: async () => undefined,
+        dispose: async (context) => {
+          disposed.push({ endpoint: config.endpoint, runId: context?.runId });
+        },
+      };
+    };
+    const source = hostedTerminalToolSourceFactory(value, "https://api.example/mcp", fallback)(
+      { id: "platform", endpoint: "https://active.example/mcp" },
+      { kind: "veryfront-api" },
+    );
+    await source.dispose!({ runId: "run-1" });
+    assertEquals(disposed, [
+      { endpoint: "https://active.example/mcp", runId: "run-1" },
+      { endpoint: "https://api.example/projects/project-1/mcp", runId: "run-1" },
+    ]);
+    const tokens = configs.map((config) =>
+      Object.getOwnPropertySymbols(config).map((key) => Reflect.get(config, key))
+    );
+    assertEquals(tokens[0]!.length, 1);
+    for (const token of tokens) assertStrictEquals(token[0], tokens[0]![0]);
+  });
 
   it("names the finalize call beside its terminal credential so the API can close it", async () => {
     const value = request();

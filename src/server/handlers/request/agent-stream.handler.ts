@@ -47,6 +47,7 @@ import {
 import { clearRegistryScope } from "#veryfront/registry/project-scoped-registry-manager.ts";
 import { clearTranspileCacheForNamespace } from "#veryfront/discovery/transpiler.ts";
 import { withResponseCleanup } from "./response-cleanup.ts";
+import { createRemoteToolSourceOwner } from "#veryfront/tool/remote-tool-source-owner.ts";
 import { clearProjectDiscoveryCacheForScope } from "./api/project-discovery.ts";
 import { resolveVisibleRegistryTool } from "#veryfront/agent/runtime/tool-helpers.ts";
 import type { Agent } from "#veryfront/agent";
@@ -722,6 +723,8 @@ export async function withVeryfrontPlatformRemoteTools(input: {
   captureProgrammaticPlatformSource?: (source: RemoteToolSource) => void;
   terminalAuthority?: { token: string; runId: string } | null;
   fileWriterToken?: string | null;
+  /** Retain the created platform source so the caller releases its sessions after the run. */
+  ownRemoteToolSource?: (source: RemoteToolSource) => RemoteToolSource;
 }): Promise<Agent> {
   const veryfrontApiMcpPolicy = getVeryfrontApiMcpPolicy(input.agent);
   const implicitlyRequestedToolNames = input.agent.config.mcpServers === undefined
@@ -747,7 +750,7 @@ export async function withVeryfrontPlatformRemoteTools(input: {
   const apiUrl = input.fileWriterToken
     ? resolveHostOwnedSourceApiBaseUrl()
     : resolveVeryfrontApiBaseUrlFromHostEnv();
-  const platformRemoteToolSource = createRunPlatformToolSource(
+  const createdPlatformSource = createRunPlatformToolSource(
     {
       id: VERYFRONT_API_MCP_SOURCE_ID,
       endpoint: `${apiUrl}/mcp`,
@@ -757,6 +760,8 @@ export async function withVeryfrontPlatformRemoteTools(input: {
     undefined,
     input.fileWriterToken ? { apiBaseUrl: apiUrl, token: input.fileWriterToken } : null,
   );
+  const platformRemoteToolSource = input.ownRemoteToolSource?.(createdPlatformSource) ??
+    createdPlatformSource;
   let platformToolDefinitions: ToolDefinition[] | null = null;
   try {
     platformToolDefinitions = await platformRemoteToolSource.listTools({
@@ -972,6 +977,8 @@ async function withExplicitVeryfrontStudioRemoteTools(input: {
   forwardedProps?: Record<string, unknown>;
   conversationId?: string;
   availableToolNames?: string[];
+  /** Retain each created Studio source so the caller releases its sessions after the run. */
+  ownRemoteToolSource?: (source: RemoteToolSource) => RemoteToolSource;
 }): Promise<Agent> {
   const configuredServers = input.agent.config.mcpServers?.filter(isExplicitStudioMcpServer) ?? [];
   if (configuredServers.length === 0) return input.agent;
@@ -1013,6 +1020,8 @@ async function withExplicitVeryfrontStudioRemoteTools(input: {
   const studioRemoteToolSources: RemoteToolSource[] = [];
   const broadStudioToolNames = new Set<string>();
   const resolvedStudioSources: ResolvedStudioSource[] = [];
+  const ownStudioSource = (source: RemoteToolSource) =>
+    input.ownRemoteToolSource?.(source) ?? source;
   for (const server of configuredServers) {
     const remoteConfig = createAgentServiceRemoteMcpConfig({
       server,
@@ -1028,10 +1037,13 @@ async function withExplicitVeryfrontStudioRemoteTools(input: {
     resolvedStudioSources.push({
       policy: createMcpToolPolicyGate(withPlatformMcpPolicyAliases(server.toolPolicy)),
       remoteConfig,
-      source: createLivePlatformMcpSource(createRemoteMCPToolSource(remoteConfig), {
-        runId: input.currentRunId,
-        runIdBindsToolAuthorization: true,
-      }),
+      source: createLivePlatformMcpSource(
+        ownStudioSource(createRemoteMCPToolSource(remoteConfig)),
+        {
+          runId: input.currentRunId,
+          runIdBindsToolAuthorization: true,
+        },
+      ),
     });
   }
   if (resolvedStudioSources.length === 0) return input.agent;
@@ -1623,6 +1635,17 @@ export class AgentStreamHandler extends BaseHandler {
     }
 
     let pendingRecovery: { runId: string; session: ManagedRecoveryRunSession } | undefined;
+    // Platform MCP sources created for this run negotiate sessions that must be
+    // released when its response ends, or here if no response takes them over.
+    const platformSources = createRemoteToolSourceOwner();
+    let platformSourcesReleaseDeferred = false;
+    const releasePlatformSources = () => {
+      platformSources.dispose().catch((cleanupError: unknown) => {
+        logger.warn("Platform MCP session cleanup failed", {
+          errorName: cleanupError instanceof Error ? cleanupError.name : typeof cleanupError,
+        });
+      });
+    };
     const builder = this.createResponseBuilder(ctx)
       .withCORS(req, ctx.securityConfig?.cors)
       .withSecurity(ctx.securityConfig ?? undefined, req);
@@ -1882,6 +1905,7 @@ export class AgentStreamHandler extends BaseHandler {
           terminalAuthority: terminalToken && payload.credentials?.authToken
             ? { token: terminalToken, runId: payload.runId }
             : null,
+          ownRemoteToolSource: (source) => platformSources.own(source),
         });
         await assertRecoveryActive();
         const runtimeAgent = await withExplicitVeryfrontStudioRemoteTools({
@@ -1893,6 +1917,7 @@ export class AgentStreamHandler extends BaseHandler {
           forwardedProps: runtimeInput.forwardedProps,
           availableToolNames: runtimeInput.tools.map((tool) => tool.name),
           conversationId: runtimeInput.threadId,
+          ownRemoteToolSource: (source) => platformSources.own(source),
         });
         // The remote-tool wrappers clone the agent; keep its
         // markdown definition so fail-closed selectors survive.
@@ -1964,7 +1989,11 @@ export class AgentStreamHandler extends BaseHandler {
           return await runWithProjectEnv(agentEnv, runAgentStream);
         };
         await assertRecoveryActive();
-        let response = await executeStream();
+        let response = withResponseCleanup(
+          await executeStream(),
+          releasePlatformSources,
+          req.signal,
+        );
         if (isSuccessfulAgentEventStream(response)) {
           response = setResponseHeaders(response, [
             [RUNTIME_ID_HEADER, runtimeIdentity.id],
@@ -1987,6 +2016,8 @@ export class AgentStreamHandler extends BaseHandler {
             runtimeOwnerInvokeUrl,
           ]])
           : response;
+        // The response body now owns the release.
+        platformSourcesReleaseDeferred = true;
         return this.respond(
           applyBuilderHeaders(responseWithOwner, builder.headers),
         );
@@ -2161,6 +2192,7 @@ export class AgentStreamHandler extends BaseHandler {
     } catch (error_) {
       return this.respondToStreamFailure(error_, req, ctx, builder);
     } finally {
+      if (!platformSourcesReleaseDeferred) releasePlatformSources();
       if (pendingRecovery) {
         const { runId, session } = pendingRecovery;
         this.deps.sessionManager.cancelRun(runId, session.signal);

@@ -79,6 +79,7 @@ import {
 import { flattenSystemInstructions } from "#veryfront/agent/runtime/tool-inventory.ts";
 import { compactForStep, estimateOverhead } from "#veryfront/chat/message-prep.ts";
 import {
+  createRuntimeMcpSourceCleanup,
   getRuntimeRemoteToolSources,
   type RuntimeRemoteToolConfig,
 } from "#veryfront/agent/runtime/mcp-server-tool-sources.ts";
@@ -1128,6 +1129,7 @@ async function getDeclaredRemoteSourceToolNames(input: {
   deps: RuntimeAgentStreamExecutionDeps;
 }): Promise<string[]> {
   const sources = getRuntimeRemoteToolSources(input.agent.config);
+  await using _remoteMcpCleanup = createRuntimeMcpSourceCleanup(sources);
   if (!sources?.length) {
     return [];
   }

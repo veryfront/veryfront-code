@@ -21,6 +21,24 @@ import { NETWORK_ERROR, PERMISSION_DENIED, TIMEOUT_ERROR, VeryfrontError } from 
 import { FakeTime } from "#std/testing/time";
 import { createUnconfirmedProjectContextSwitchResult } from "../project/context.ts";
 
+it("forwards owner disposal through the hosted project source without changing run scope", async () => {
+  const context = { runId: "run-one" };
+  let disposedContext: ToolExecutionContext | undefined;
+  const source = createHostedProjectRemoteToolSource({
+    source: {
+      id: "owned",
+      listTools: async () => [],
+      executeTool: async () => undefined,
+      dispose: async (value) => {
+        disposedContext = value;
+      },
+    },
+    defaultProjectId: "project-one",
+  });
+  await source.dispose?.(context);
+  assertEquals(disposedContext, context);
+});
+
 function projectFileTool(name: string): ToolDefinition {
   return {
     name,
@@ -1613,4 +1631,38 @@ describe("optional Studio MCP eligibility", () => {
     assertInstanceOf(error, VeryfrontError);
     assertEquals(error.slug, "permission-denied");
   });
+});
+
+Deno.test("createHostedProjectRemoteToolSources forwards disposal through every hosted wrapper", async () => {
+  for (
+    const server of [
+      { kind: "veryfront-api" as const, toolPolicy: { allow: ["update_file"] } },
+      { kind: "veryfront-studio" as const, toolPolicy: { allow: ["update_file"] } },
+      { kind: "veryfront-api" as const },
+    ]
+  ) {
+    const disposed: Array<string | undefined> = [];
+    const sources = createHostedProjectRemoteToolSources({
+      authToken: "token-1",
+      apiMcpUrl: "https://api.example/mcp",
+      studioMcpUrl: "https://studio.example/mcp",
+      clientProfile: {
+        id: "veryfront-studio",
+        type: "web",
+        trusted: true,
+        capabilities: ["ui_panels"],
+      },
+      mcpServers: [server],
+      getProjectId: () => "project-1",
+      createRemoteToolSource: (config) => ({
+        ...createRemoteSource({ id: config.id, tools: [projectFileTool("update_file")] }),
+        dispose: async (context?: ToolExecutionContext) => {
+          disposed.push(context?.runId);
+        },
+      }),
+    });
+    assertEquals(sources.length, 1);
+    await sources[0]!.dispose?.({ runId: "run-one" });
+    assertEquals(disposed, ["run-one"], server.kind);
+  }
 });

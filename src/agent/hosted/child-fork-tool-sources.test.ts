@@ -567,6 +567,55 @@ Deno.test("prepareDefaultHostedChildForkToolSources reports Studio setup failure
   assertEquals(logged.length, 1);
 });
 
+Deno.test("prepareDefaultHostedChildForkToolSources closes every configured Studio source", async () => {
+  const closed: string[] = [];
+  let created = 0;
+  const createLiveStudioTools = () => {
+    const name = `studio-${++created}`;
+    return Promise.resolve({
+      tools: {},
+      close: () => {
+        closed.push(name);
+        return Promise.resolve();
+      },
+    });
+  };
+  const input = {
+    authToken: "token-1",
+    apiMcpUrl: "https://api.example/mcp",
+    studioMcpUrl: "https://studio.example/mcp",
+    clientProfile: trustedStudioProfile,
+    getProjectId: () => "project-1",
+    createLiveStudioTools,
+  };
+
+  const result = await prepareDefaultHostedChildForkToolSources({
+    ...input,
+    mcpServers: [{ kind: "veryfront-studio" }, { kind: "veryfront-studio" }],
+  });
+  assertEquals(result.ok, true);
+  if (!result.ok) return;
+  await result.closeStudioMcpTools?.();
+  assertEquals(closed.sort(), ["studio-1", "studio-2"]);
+
+  // A setup failure after both entries also closes both.
+  closed.length = 0;
+  created = 0;
+  const failed = await prepareDefaultHostedChildForkToolSources({
+    ...input,
+    mcpServers: [
+      { kind: "veryfront-studio" },
+      { kind: "veryfront-studio" },
+      { kind: "veryfront-api" },
+    ],
+    createRemoteToolSource: () => {
+      throw new Error("api unavailable");
+    },
+  });
+  assertEquals(failed.ok, false);
+  assertEquals(closed.sort(), ["studio-1", "studio-2"]);
+});
+
 Deno.test("prepareDefaultHostedChildForkToolSources rethrows abort errors", async () => {
   const abortController = new AbortController();
   abortController.abort(new Error("fork aborted"));
@@ -1046,5 +1095,64 @@ describe("child-fork Studio MCP eligibility", () => {
       assertEquals(result.ok, !fail);
       assertEquals(calls, 1);
     }
+  });
+});
+
+describe("child fork MCP source lifecycle", () => {
+  const createDisposableSources = (failListing = false) => {
+    const created: string[] = [];
+    const disposed: string[] = [];
+    const createRemoteToolSource = (config: RemoteMCPToolSourceConfig): RemoteToolSource => {
+      const id = config.id ?? "source";
+      created.push(id);
+      return {
+        id,
+        listTools: () =>
+          failListing && id !== "studio-mcp-live-tools"
+            ? Promise.reject(new Error("discovery failed"))
+            : Promise.resolve([remoteTool("update_file")]),
+        executeTool: () => Promise.resolve({ success: true }),
+        dispose: () => {
+          disposed.push(id);
+          return Promise.resolve();
+        },
+      };
+    };
+    return { created, disposed, createRemoteToolSource };
+  };
+
+  it("releases the Studio and remote sources created for the fork when tooling closes", async () => {
+    const sources = createDisposableSources();
+    const result = await prepareDefaultHostedChildForkToolSources({
+      authToken: "token-1",
+      apiMcpUrl: "https://api.example/mcp",
+      mcpServers: [{ kind: "veryfront-studio" }, { kind: "veryfront-api" }],
+      studioMcpUrl: "https://studio.example/mcp",
+      clientProfile: trustedStudioProfile,
+      getProjectId: () => "project-1",
+      createRemoteToolSource: sources.createRemoteToolSource,
+    });
+    assertEquals(result.ok, true);
+    if (!result.ok) return;
+    assertEquals(sources.created.length, 2);
+    assertEquals(sources.disposed, []);
+    await result.closeStudioMcpTools?.();
+    assertEquals(sources.disposed.sort(), [...sources.created].sort());
+  });
+
+  it("releases already created sources when fork tool setup fails", async () => {
+    const sources = createDisposableSources(true);
+    const result = await prepareDefaultHostedChildForkToolSources({
+      authToken: "token-1",
+      apiMcpUrl: "https://api.example/mcp",
+      mcpServers: [{ kind: "veryfront-studio" }, { kind: "veryfront-api" }],
+      studioMcpUrl: "https://studio.example/mcp",
+      clientProfile: trustedStudioProfile,
+      getProjectId: () => "project-1",
+      createRemoteToolSource: sources.createRemoteToolSource,
+    });
+    assertEquals(result.ok, false);
+    assertEquals(sources.created.length, 2);
+    assertEquals(sources.disposed.sort(), [...sources.created].sort());
   });
 });
