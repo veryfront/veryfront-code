@@ -5823,6 +5823,33 @@ describe("route CommonJS require (#5471)", () => {
     assertEquals(await responseText(GET), "fnfn");
   });
 
+  denoIt("exposes only own properties as CommonJS named exports", async () => {
+    const files = {
+      "node_modules/proto-fixture/package.json": JSON.stringify({
+        name: "proto-fixture",
+        main: "index.js",
+      }),
+      "node_modules/proto-fixture/index.js": [
+        "const base = { inherited: 'proto' };",
+        "Object.defineProperty(base, 'throwing', { enumerable: true, get() { throw new Error('getter ran'); } });",
+        "const exported = Object.create(base);",
+        "exported.own = 'own';",
+        "module.exports = exported;",
+      ].join("\n"),
+    };
+    const GET = await loadCompiledRoute(
+      [
+        'import * as ns from "proto-fixture";',
+        "export const GET = async () => {",
+        '  const dyn = await import("proto-fixture");',
+        '  return new Response([ns.own, "inherited" in ns, "throwing" in dyn].join(":"));',
+        "};",
+      ].join("\n"),
+      files,
+    );
+    assertEquals(await responseText(GET), "own:false:false");
+  });
+
   denoIt("resolves a package's own nested dependency before the hoisted copy", async () => {
     const files = {
       "node_modules/outer/package.json": JSON.stringify({ name: "outer", main: "index.js" }),
@@ -6015,6 +6042,12 @@ describe("route CommonJS require (#5471)", () => {
   function thrownMessage(fn: () => unknown): string {
     const error = assertThrows(fn);
     return error instanceof Error ? error.message : String(error);
+  }
+
+  function thrownError(fn: () => unknown): Error & { code?: string } {
+    const error = assertThrows(fn);
+    if (!(error instanceof Error)) throw new Error(`expected an Error, got ${String(error)}`);
+    return error;
   }
 
   denoIt("names an npm package that is not installed instead of a host path", async () => {
@@ -6285,6 +6318,60 @@ describe("route CommonJS require (#5471)", () => {
     const vfRequire = await importCompiledBinaryRequireShim(projectDir);
 
     assertEquals(vfRequire("test"), "package named test");
+  });
+
+  denoIt("applies the exports map of a package named like a prefix-only built-in", async () => {
+    const projectDir = await writeProject({
+      "node_modules/test/package.json": JSON.stringify({
+        name: "test",
+        exports: {
+          ".": { import: "./esm.mjs", require: "./main.js" },
+          "./public": "./public.js",
+          "./features/*": "./features/*.js",
+          "./features/private": null,
+        },
+      }),
+      "node_modules/test/main.js": "module.exports = 'main';",
+      "node_modules/test/public.js": "module.exports = 'public';",
+      "node_modules/test/private.js": "module.exports = 'private';",
+      "node_modules/test/features/a.js": "module.exports = 'feature a';",
+      "node_modules/test/features/private.js": "module.exports = 'blocked feature';",
+    });
+    const vfRequire = await importCompiledBinaryRequireShim(projectDir);
+
+    assertEquals(vfRequire("test"), "main");
+    assertEquals(vfRequire("test/public"), "public");
+    assertEquals(vfRequire("test/features/a"), "feature a");
+    for (const id of ["test/private.js", "test/features/private", "test/package.json"]) {
+      const error = thrownError(() => vfRequire(id));
+      assertEquals(error.code, "ERR_PACKAGE_PATH_NOT_EXPORTED", id);
+      assertEquals(error.message.includes(projectDir), false, error.message);
+    }
+  });
+
+  denoIt("links CommonJS parent and child module records", async () => {
+    const projectDir = await writeProject({
+      "node_modules/cli-pkg/package.json": JSON.stringify({ name: "cli-pkg", main: "index.js" }),
+      "node_modules/cli-pkg/index.js": [
+        "const child = require('./child');",
+        "require('./child');",
+        "module.exports = {",
+        "  topHasParent: Boolean(module.parent),",
+        "  childParentIsTop: child.parent === module,",
+        "  children: module.children.length,",
+        "  childIsChild: module.children[0] === child.mod,",
+        "};",
+      ].join("\n"),
+      "node_modules/cli-pkg/child.js": "module.exports = { parent: module.parent, mod: module };",
+    });
+    const vfRequire = await importCompiledBinaryRequireShim(projectDir);
+
+    assertEquals(vfRequire("cli-pkg"), {
+      topHasParent: true,
+      childParentIsTop: true,
+      children: 1,
+      childIsChild: true,
+    });
   });
 
   denoIt("hides host paths in other package resolution errors", async () => {
