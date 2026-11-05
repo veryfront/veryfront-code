@@ -29,9 +29,11 @@ const arrayIsArray = Array.isArray;
 const NativeConsole = console;
 
 /**
- * Non-zero while this logger writes a formatted line through `console`.
- * Console interceptors use it to pass framework log lines through untouched
- * instead of treating them as application output.
+ * Non-zero while this logger dispatches a record: formatting it, calling log
+ * record emitters and subscribers, and writing the line through `console`.
+ * Console interceptors use it to pass anything written during that dispatch
+ * through untouched instead of treating it as application output, so an
+ * emitter that logs cannot be captured back into the logger.
  */
 let frameworkConsoleWriteDepth = 0;
 
@@ -689,6 +691,21 @@ class ConsoleLogger implements Logger {
     message: string,
     args: unknown[],
   ): void {
+    frameworkConsoleWriteDepth++;
+    try {
+      this.dispatch(level, logLevel, consoleMethod, message, args);
+    } finally {
+      frameworkConsoleWriteDepth--;
+    }
+  }
+
+  private dispatch(
+    level: LogEntry["level"],
+    logLevel: LogLevel,
+    consoleMethod: "debug" | "log" | "warn" | "error",
+    message: string,
+    args: unknown[],
+  ): void {
     try {
       const { level: resolvedLevel, format: resolvedFormat } = resolveLoggerConfig();
       if (resolvedLevel > logLevel) return;
@@ -744,13 +761,10 @@ class ConsoleLogger implements Logger {
 
       const consoleFn = NativeConsole[stderrOnly ? "error" : consoleMethod];
       if (typeof consoleFn === "function") {
-        frameworkConsoleWriteDepth++;
         try {
           apply(consoleFn, NativeConsole, [line]);
         } catch (_) {
           /* logging sink failures must not affect application control flow */
-        } finally {
-          frameworkConsoleWriteDepth--;
         }
       }
     } catch (_) {

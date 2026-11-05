@@ -7,17 +7,23 @@ import { REDACTED } from "#veryfront/utils/logger/redact.ts";
 import { runWithRequestContext } from "#veryfront/utils/logger/request-context.ts";
 import {
   __resetLoggerConfigForTests,
+  __subscribeLogRecordEmitter,
   LogLevel,
   setLogLevel,
 } from "#veryfront/utils/logger/logger.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import {
+  __isRouteConsoleCaptureWrapperForTests,
   __uninstallRouteConsoleCaptureForTests,
   formatRouteConsoleMessage,
   ROUTE_CONSOLE_MESSAGE_LIMIT,
   runWithRouteConsoleCapture,
 } from "./route-console.ts";
 import { executeAppRoute, executePagesRoute } from "./route-executor.ts";
+
+// Read before any test replaces the console: importing the route executor
+// must already have wrapped it, ahead of any route module.
+const wrappedAtImport = __isRouteConsoleCaptureWrapperForTests(console.log);
 
 interface Recorded {
   level: string;
@@ -225,6 +231,50 @@ describe("route console capture", () => {
       `{"a":1,"toJSON":[Function],"g":[Getter],"toString":[Function],"password":${REDACTED}}`,
     );
     assertEquals(calls, 0);
+  });
+
+  it("wraps the console when the route executor is imported", () => {
+    assertEquals(wrappedAtImport, true);
+  });
+
+  it("redacts filesystem paths in strings and keys", () => {
+    assertEquals(
+      formatRouteConsoleMessage([
+        "failed at /srv/project/private/route.ts",
+        { path: "/srv/project/private/data.json", "/srv/project/private/rows": 1 },
+      ]),
+      'failed at route.ts {"path":"data.json","rows":1}',
+    );
+  });
+
+  it("stops formatting at the message limit", () => {
+    const message = formatRouteConsoleMessage([
+      "x".repeat(ROUTE_CONSOLE_MESSAGE_LIMIT),
+      "y".repeat(ROUTE_CONSOLE_MESSAGE_LIMIT),
+    ]);
+    assertEquals(message, "x".repeat(ROUTE_CONSOLE_MESSAGE_LIMIT) + "… [truncated]");
+  });
+
+  it("passes through console output from a log record subscriber", () => {
+    let calls = 0;
+    const unsubscribe = __subscribeLogRecordEmitter(() => {
+      calls++;
+      console.log("subscriber diagnostic");
+    });
+    try {
+      inRequest(
+        serverLogger.child({ project_id: "project-a" }),
+        () =>
+          runWithRouteConsoleCapture(() => {
+            console.error("route failure");
+          }),
+      );
+    } finally {
+      unsubscribe();
+    }
+
+    assertEquals(calls, 1);
+    assertEquals(passedThrough.some((args) => args[0] === "subscriber diagnostic"), true);
   });
 
   it("captures console output from a host-realm app route handler", async () => {
