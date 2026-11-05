@@ -977,6 +977,8 @@ async function withExplicitVeryfrontStudioRemoteTools(input: {
   forwardedProps?: Record<string, unknown>;
   conversationId?: string;
   availableToolNames?: string[];
+  /** Retain each created Studio source so the caller releases its sessions after the run. */
+  ownRemoteToolSource?: (source: RemoteToolSource) => RemoteToolSource;
 }): Promise<Agent> {
   const configuredServers = input.agent.config.mcpServers?.filter(isExplicitStudioMcpServer) ?? [];
   if (configuredServers.length === 0) return input.agent;
@@ -1018,6 +1020,8 @@ async function withExplicitVeryfrontStudioRemoteTools(input: {
   const studioRemoteToolSources: RemoteToolSource[] = [];
   const broadStudioToolNames = new Set<string>();
   const resolvedStudioSources: ResolvedStudioSource[] = [];
+  const ownStudioSource = (source: RemoteToolSource) =>
+    input.ownRemoteToolSource?.(source) ?? source;
   for (const server of configuredServers) {
     const remoteConfig = createAgentServiceRemoteMcpConfig({
       server,
@@ -1033,10 +1037,13 @@ async function withExplicitVeryfrontStudioRemoteTools(input: {
     resolvedStudioSources.push({
       policy: createMcpToolPolicyGate(withPlatformMcpPolicyAliases(server.toolPolicy)),
       remoteConfig,
-      source: createLivePlatformMcpSource(createRemoteMCPToolSource(remoteConfig), {
-        runId: input.currentRunId,
-        runIdBindsToolAuthorization: true,
-      }),
+      source: createLivePlatformMcpSource(
+        ownStudioSource(createRemoteMCPToolSource(remoteConfig)),
+        {
+          runId: input.currentRunId,
+          runIdBindsToolAuthorization: true,
+        },
+      ),
     });
   }
   if (resolvedStudioSources.length === 0) return input.agent;
@@ -1910,6 +1917,7 @@ export class AgentStreamHandler extends BaseHandler {
           forwardedProps: runtimeInput.forwardedProps,
           availableToolNames: runtimeInput.tools.map((tool) => tool.name),
           conversationId: runtimeInput.threadId,
+          ownRemoteToolSource: (source) => platformSources.own(source),
         });
         // The remote-tool wrappers clone the agent; keep its
         // markdown definition so fail-closed selectors survive.
