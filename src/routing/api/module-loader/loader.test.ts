@@ -6148,6 +6148,69 @@ describe("route CommonJS require (#5471)", () => {
     assertEquals(await responseText(GET), "dashed");
   });
 
+  denoIt("shows a reassigned module.exports to a circular require", async () => {
+    const projectDir = await writeProject({
+      "node_modules/cycle/package.json": JSON.stringify({ name: "cycle", main: "a.js" }),
+      "node_modules/cycle/a.js": [
+        "module.exports = { name: 'a' };",
+        'module.exports.seenByB = require("./b");',
+      ].join("\n"),
+      "node_modules/cycle/b.js": 'module.exports = require("./a").name;',
+    });
+    const vfRequire = await importCompiledBinaryRequireShim(projectDir);
+
+    assertEquals((vfRequire("cycle") as { seenByB: string }).seenByB, "a");
+  });
+
+  denoIt("fails on a malformed local package.json instead of using index", async () => {
+    const projectDir = await writeProject({
+      "node_modules/bad-manifest/package.json": JSON.stringify({
+        name: "bad-manifest",
+        main: "index.js",
+      }),
+      "node_modules/bad-manifest/index.js": 'module.exports = require("./lib");',
+      "node_modules/bad-manifest/lib/package.json": "{ not json",
+      "node_modules/bad-manifest/lib/index.js": "module.exports = 'fallback';",
+    });
+    const vfRequire = await importCompiledBinaryRequireShim(projectDir);
+
+    assertEquals(
+      thrownMessage(() => vfRequire("bad-manifest")),
+      'invalid package.json for "./lib"',
+    );
+  });
+
+  denoIt("reports an extensionless native addon as a native addon", async () => {
+    const projectDir = await writeProject({
+      "node_modules/bare-addon/package.json": JSON.stringify({
+        name: "bare-addon",
+        main: "index.js",
+      }),
+      "node_modules/bare-addon/index.js": 'module.exports = require("./build/addon");',
+      "node_modules/bare-addon/build/addon.node": "\u007fELF",
+    });
+    const vfRequire = await importCompiledBinaryRequireShim(projectDir);
+
+    assertEquals(
+      thrownMessage(() => vfRequire("bare-addon")),
+      'native addon "./build/addon" cannot be loaded: native addons are not supported in this runtime',
+    );
+  });
+
+  denoIt("names an ES module file required from a CommonJS package", async () => {
+    const projectDir = await writeProject({
+      "node_modules/mixed/package.json": JSON.stringify({ name: "mixed", main: "index.js" }),
+      "node_modules/mixed/index.js": "module.exports = 'root';",
+      "node_modules/mixed/feature.mjs": "export default 'esm';",
+    });
+    const vfRequire = await importCompiledBinaryRequireShim(projectDir);
+
+    assertEquals(
+      thrownMessage(() => vfRequire("mixed/feature.mjs")),
+      'ES module file "mixed/feature.mjs" cannot be loaded with require: import the package by a CommonJS entry',
+    );
+  });
+
   denoIt("rejects a native addon with a clear error", async () => {
     const projectDir = await writeProject({
       "node_modules/native-fixture/package.json": JSON.stringify({

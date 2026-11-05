@@ -230,7 +230,9 @@ package's `module.exports` as `default`, alongside its named properties.
 
 Import packages by their root name or by a file path inside the package. Subpath
 names defined only in a package's `exports` map, or a package whose `exports`
-field is a single string, may not resolve.
+field is a single string, may not resolve. A package is treated as CommonJS or
+ESM as a whole, so an `.mjs` file inside a CommonJS package fails with
+`ES module file "<path>" cannot be loaded with require`.
 
 Packages that ship a native addon (`.node` file) are not supported. Loading one
 fails with `native addon "<path>" cannot be loaded`. A package that is listed

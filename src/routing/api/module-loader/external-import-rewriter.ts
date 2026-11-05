@@ -208,7 +208,9 @@ function __vf_isFile(candidate) {
   try { return Deno.statSync(candidate).isFile; } catch (_) { return false; }
 }
 function __vf_probeFile(path) {
-  var candidates = [path, path + ".js", path + ".cjs", path + ".json"];
+  // ".node" is probed so an extensionless native addon reaches the
+  // unsupported-addon error instead of a misleading MODULE_NOT_FOUND.
+  var candidates = [path, path + ".js", path + ".cjs", path + ".json", path + ".node"];
   for (var i = 0; i < candidates.length; i++) {
     if (__vf_isFile(candidates[i])) return candidates[i];
   }
@@ -221,8 +223,14 @@ function __vf_probeIndex(dir) {
 function __vf_probeDirectory(dir, id) {
   var manifest = __vf_resolve(dir, "package.json");
   if (__vf_isFile(manifest)) {
+    // As in Node, an unreadable or malformed manifest is an error, not a
+    // reason to fall back to index.
     var main;
-    try { main = JSON.parse(Deno.readTextFileSync(manifest)).main; } catch (_) { /* expected: unreadable manifest falls back to index */ }
+    try {
+      main = JSON.parse(Deno.readTextFileSync(manifest)).main;
+    } catch (_) {
+      throw new Error("invalid package.json for " + JSON.stringify(id));
+    }
     if (typeof main === "string" && main) {
       var entry = __vf_resolve(dir, main);
       __vf_assertContained(__vf_canonicalize(entry), id);
@@ -263,6 +271,9 @@ function __vf_loadCjs(id, parentDir) {
   if (resolved.endsWith(".node")) {
     throw new Error("native addon " + JSON.stringify(id) + " cannot be loaded: native addons are not supported in this runtime");
   }
+  if (resolved.endsWith(".mjs")) {
+    throw new Error("ES module file " + JSON.stringify(id) + " cannot be loaded with require: import the package by a CommonJS entry");
+  }
   // VULN-FS-5: Canonicalize before asserting containment, so the candidate and
   // the already-canonical project root are compared like with like, then assert
   // once. Checking the non-canonical path first rejected dependencies genuinely
@@ -272,18 +283,20 @@ function __vf_loadCjs(id, parentDir) {
   // entries pointing outside the root: the escape is only visible once resolved.
   resolved = __vf_canonicalize(resolved);
   __vf_assertContained(resolved, id);
-  if (resolved in __vf_cache) return __vf_cache[resolved];
+  // The cache holds module records, so a circular require sees a
+  // reassigned module.exports while the first module is still evaluating.
+  if (resolved in __vf_cache) return __vf_cache[resolved].exports;
   var code = Deno.readTextFileSync(resolved);
   if (resolved.endsWith(".json")) {
     var json = JSON.parse(code);
-    __vf_cache[resolved] = json;
+    __vf_cache[resolved] = { exports: json };
     return json;
   }
   // Node strips a leading hashbang from CommonJS sources; a Function body
   // cannot contain one. Commenting it out keeps line numbers intact.
   if (code.startsWith("#!")) code = "//" + code.slice(2);
   var mod = { exports: {} };
-  __vf_cache[resolved] = mod.exports;
+  __vf_cache[resolved] = mod;
   var dir = __vf_dirname(resolved);
   var childReq = function(childId) { return __vf_loadCjs(childId, dir); };
   childReq.resolve = function(childId) { return __vf_resolveId(childId, dir); };
@@ -297,7 +310,6 @@ function __vf_loadCjs(id, parentDir) {
     delete __vf_cache[resolved];
     throw error;
   }
-  __vf_cache[resolved] = mod.exports;
   return mod.exports;
 }
 function __vf_resolveId(id, parentDir) {
