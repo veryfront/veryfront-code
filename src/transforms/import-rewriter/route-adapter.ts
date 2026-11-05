@@ -217,9 +217,10 @@ export const DEFAULT_ROUTE_HELPER_PREFIX = "__vf_";
  */
 function rewriteCjsImportClause(
   clause: string,
-  required: string,
+  specifier: string,
   helperPrefix: string,
 ): string | null {
+  const required = `require(${specifier})`;
   const parsed = clause.trim().match(IMPORT_CLAUSE);
   if (!parsed) return null;
   const [, defaultName, namespaceName, named] = parsed;
@@ -231,10 +232,31 @@ function rewriteCjsImportClause(
     statements.push(`const ${defaultName} = ${helperPrefix}interopDefault(${source})`);
   }
   if (namespaceName) {
-    statements.push(`const ${namespaceName} = ${helperPrefix}namespace(${source})`);
+    statements.push(`const ${namespaceName} = ${helperPrefix}namespace(${specifier})`);
   }
-  if (named) statements.push(`const ${toCjsDestructureBindings(named)} = ${source}`);
+  if (named) {
+    let pattern: string;
+    try {
+      pattern = toCjsDestructureBindings(named);
+    } catch (_) {
+      // expected: an import clause this rewrite does not understand stays as written
+      return null;
+    }
+    statements.push(`const ${pattern} = ${source}`);
+  }
   return statements.join("; ");
+}
+
+const UNSAFE_LITERAL_CHARS: Readonly<Record<string, string>> = {
+  "<": "\\u003C",
+  ">": "\\u003E",
+  "\u2028": "\\u2028",
+  "\u2029": "\\u2029",
+};
+
+/** A JavaScript string literal safe to embed anywhere in generated code. */
+function toJsStringLiteral(value: string): string {
+  return JSON.stringify(value).replace(/[<>\u2028\u2029]/g, (char) => UNSAFE_LITERAL_CHARS[char]!);
 }
 
 /** The user dependency a specifier names (`pkg` or `pkg/sub`), longest first. */
@@ -297,12 +319,13 @@ export async function rewriteCompiledUserDependencyImportsForRoute(
       edits.push({
         start: imported.s,
         end: imported.e,
-        text: isDynamic ? JSON.stringify(url) : url,
+        text: isDynamic ? toJsStringLiteral(url) : url,
       });
       continue;
     }
 
-    const required = `require(${JSON.stringify(name + subpath)})`;
+    const specifier = toJsStringLiteral(name + subpath);
+    const required = `require(${specifier})`;
     if (isDynamic) {
       // A dynamic import stays lazy and asynchronous: a load failure rejects
       // the returned promise instead of throwing synchronously. Imports with
@@ -312,7 +335,7 @@ export async function rewriteCompiledUserDependencyImportsForRoute(
       edits.push({
         start: imported.ss,
         end: imported.e + close[0].length,
-        text: `Promise.resolve().then(() => ${helperPrefix}namespace(${required}))`,
+        text: `Promise.resolve().then(() => ${helperPrefix}namespace(${specifier}))`,
       });
       continue;
     }
@@ -325,7 +348,7 @@ export async function rewriteCompiledUserDependencyImportsForRoute(
     const clause = statement.match(STATIC_FROM_IMPORT)?.[1];
     const rewritten = clause === undefined
       ? null
-      : rewriteCjsImportClause(clause, required, helperPrefix);
+      : rewriteCjsImportClause(clause, specifier, helperPrefix);
     if (rewritten !== null) {
       edits.push({ start: imported.ss, end: imported.se, text: rewritten });
     }

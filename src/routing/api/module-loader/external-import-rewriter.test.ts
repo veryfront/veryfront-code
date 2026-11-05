@@ -130,7 +130,7 @@ describe("external-import-rewriter", () => {
         `import * as _ from "lodash";`,
         deps,
       );
-      assertEquals(out, `const _ = __vf_namespace(require("lodash"));`);
+      assertEquals(out, `const _ = __vf_namespace("lodash");`);
     });
 
     it("rewrites a named import to a destructuring require", async () => {
@@ -149,7 +149,7 @@ describe("external-import-rewriter", () => {
       );
       assertStringIncludes(
         out,
-        `Promise.resolve().then(() => __vf_namespace(require("lodash")))`,
+        `Promise.resolve().then(() => __vf_namespace("lodash"))`,
       );
     });
 
@@ -398,7 +398,7 @@ describe("external-import-rewriter", () => {
       // Defines a require function and an interop helper.
       assertStringIncludes(shim, "var require = (function () {");
       assertStringIncludes(shim, "function __vf_interopDefault(m)");
-      assertStringIncludes(shim, "var __vf_namespace = (function () {");
+      assertStringIncludes(shim, "__vf_namespace = function (id) {");
       assert(shim.length > 0);
     });
 
@@ -410,13 +410,29 @@ describe("external-import-rewriter", () => {
       );
       assertStringIncludes(shim, "resolve as __vf2_resolve");
       assertStringIncludes(shim, "function __vf2_interopDefault(m)");
-      assertStringIncludes(shim, "var __vf2_namespace = (function () {");
+      assertStringIncludes(shim, "__vf2_namespace = function (id) {");
       // Private-scope names keep their own spelling.
       assertStringIncludes(shim, "function __vf_resolveBare(id, parentDir)");
       assertEquals(
         /\b__vf_(createRequire|dirname|resolve|interopDefault|namespace)\b/.test(shim),
         false,
       );
+    });
+  });
+
+  describe("generateCompiledBinaryRequireShim literals", () => {
+    it("embeds a project path containing a helper name unchanged", () => {
+      const shim = generateCompiledBinaryRequireShim("/srv/__vf_resolve/app", "__vf1_");
+      assertStringIncludes(shim, '__vf1_createRequire("/srv/__vf_resolve/app" + "/package.json")');
+      assertStringIncludes(shim, 'var __vf_projectRoot = "/srv/__vf_resolve/app";');
+    });
+
+    it("escapes characters unsafe in generated code", async () => {
+      const out = await rewriteCompiledBinaryUserDependencyImports(
+        `import x from "lodash/a<b>";`,
+        new Map([["lodash", "^4"]]),
+      );
+      assertEquals(out, `const x = __vf_interopDefault(require("lodash/a\\u003Cb\\u003E"));`);
     });
   });
 

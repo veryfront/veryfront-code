@@ -46,19 +46,32 @@ export function resolveExportEntry(entry: unknown): string | undefined {
   return undefined;
 }
 
+const NAMED_IMPORT_ENTRY =
+  /\s*(?:("(?:[^"\\\r\n]|\\.)*"|'(?:[^'\\\r\n]|\\.)*')|([A-Za-z_$][\w$]*))(?:\s+as\s+([A-Za-z_$][\w$]*))?\s*(?:,|$)/y;
+
+/**
+ * Convert a named import clause (`{ a, b as c, "d-e" as f }`) to a
+ * destructuring pattern (`{ a, b: c, "d-e": f }`). A string-literal name
+ * needs an alias, as in the import itself.
+ */
 export function toCjsDestructureBindings(bindings: string): string {
   const inner = bindings.trim().replace(/^\{\s*/, "").trimEnd().replace(/\}$/, "");
-  if (!inner) return "{}";
+  if (!inner.trim()) return "{}";
 
-  const converted = inner
-    .split(",")
-    .map((part) => part.trim())
-    .filter(Boolean)
-    .map((part) => {
-      const aliasMatch = part.match(/^([A-Za-z_$][\w$]*)\s+as\s+([A-Za-z_$][\w$]*)$/);
-      if (aliasMatch) return `${aliasMatch[1]}: ${aliasMatch[2]}`;
-      return part;
-    });
+  const converted: string[] = [];
+  NAMED_IMPORT_ENTRY.lastIndex = 0;
+  while (inner.slice(NAMED_IMPORT_ENTRY.lastIndex).trim() !== "") {
+    const start = NAMED_IMPORT_ENTRY.lastIndex;
+    const entry = NAMED_IMPORT_ENTRY.exec(inner);
+    if (!entry || NAMED_IMPORT_ENTRY.lastIndex === start) {
+      throw new Error(`Unsupported named import clause: ${bindings}`);
+    }
+    const [, literal, name, alias] = entry;
+    if (literal !== undefined && alias === undefined) {
+      throw new Error(`Unsupported named import clause: ${bindings}`);
+    }
+    converted.push(alias === undefined ? name! : `${literal ?? name}: ${alias}`);
+  }
 
   return `{ ${converted.join(", ")} }`;
 }

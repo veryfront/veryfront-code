@@ -1843,7 +1843,7 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
 
     assertMatch(rewritten, /const thing = __vf_interopDefault\(require\("my-lib"\)\)/);
     assertMatch(rewritten, /const \{ alpha: beta \} = require\("my-lib"\)/);
-    assertMatch(rewritten, /const namespace = __vf_namespace\(require\("my-lib"\)\)/);
+    assertMatch(rewritten, /const namespace = __vf_namespace\("my-lib"\)/);
     assertMatch(
       rewritten,
       /const __vf_tmp_combo = require\("my-lib"\); const combo = __vf_interopDefault\(__vf_tmp_combo\); const \{ gamma \} = __vf_tmp_combo/,
@@ -1851,7 +1851,7 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
     assertMatch(rewritten, /const widget = __vf_interopDefault\(require\("my-lib\/subpath"\)\)/);
     assertMatch(
       rewritten,
-      /Promise\.resolve\(\)\.then\(\(\) => __vf_namespace\(require\("my-lib\/subpath"\)\)\)/,
+      /Promise\.resolve\(\)\.then\(\(\) => __vf_namespace\("my-lib\/subpath"\)\)/,
     );
   });
 
@@ -5452,7 +5452,7 @@ describe("generateCompiledBinaryRequireShim - static checks (VULN-FS-5)", () => 
     // both branches (i.e. AFTER the `} else { resolved = ...resolve(id); }`).
     const elseIdx = shim.indexOf("resolved = __vf_resolveBare(id, parentDir)");
     assert(elseIdx !== -1, "the shim must resolve bare ids through __vf_resolveBare");
-    const assertIdx = shim.indexOf("__vf_assertContained(resolved)", elseIdx);
+    const assertIdx = shim.indexOf("__vf_assertContained(resolved, id)", elseIdx);
     assertEquals(
       assertIdx > elseIdx,
       true,
@@ -5468,7 +5468,7 @@ describe("generateCompiledBinaryRequireShim - static checks (VULN-FS-5)", () => 
     // already-canonical root, which rejects legitimate dependencies whenever
     // the project root is itself a symlink.
     const canonIdx = shim.indexOf("resolved = __vf_canonicalize(resolved)");
-    const assertIdx = shim.indexOf("__vf_assertContained(resolved)", canonIdx);
+    const assertIdx = shim.indexOf("__vf_assertContained(resolved, id)", canonIdx);
     assertEquals(
       canonIdx !== -1 && assertIdx > canonIdx,
       true,
@@ -6044,6 +6044,108 @@ describe("route CommonJS require (#5471)", () => {
     const error = assertThrows(() => vfRequire.resolve("./missing")) as Error & { code?: string };
     assertEquals(error.message, 'Cannot find module "./missing"');
     assertEquals(error.code, "MODULE_NOT_FOUND");
+  });
+
+  denoIt("resolves a local directory through its package.json main", async () => {
+    const projectDir = await writeProject({
+      "node_modules/dir-main/package.json": JSON.stringify({ name: "dir-main", main: "index.js" }),
+      "node_modules/dir-main/index.js": 'module.exports = require("./lib");',
+      "node_modules/dir-main/lib/package.json": JSON.stringify({ main: "./entry.js" }),
+      "node_modules/dir-main/lib/entry.js": "module.exports = 'main entry';",
+    });
+    const vfRequire = await importCompiledBinaryRequireShim(projectDir);
+
+    assertEquals(vfRequire("dir-main"), "main entry");
+  });
+
+  denoIt("drops a module whose evaluation threw from the cache", async () => {
+    const projectDir = await writeProject({
+      "node_modules/retry/package.json": JSON.stringify({ name: "retry", main: "index.js" }),
+      "node_modules/retry/index.js": [
+        'try { require("./flaky"); } catch (_) { /* first attempt fails */ }',
+        'module.exports = require("./flaky");',
+      ].join("\n"),
+      "node_modules/retry/flaky.js": [
+        "if (!globalThis.__vfFlakyOnce) {",
+        "  globalThis.__vfFlakyOnce = true;",
+        "  exports.partial = true;",
+        "  throw new Error('first');",
+        "}",
+        "module.exports = 'second';",
+      ].join("\n"),
+    });
+    const vfRequire = await importCompiledBinaryRequireShim(projectDir);
+
+    try {
+      assertEquals(vfRequire("retry"), "second");
+    } finally {
+      delete (globalThis as Record<string, unknown>).__vfFlakyOnce;
+    }
+  });
+
+  denoIt("runs CommonJS code with module.exports as top-level this", async () => {
+    const projectDir = await writeProject({
+      "node_modules/this-export/package.json": JSON.stringify({
+        name: "this-export",
+        main: "index.js",
+      }),
+      "node_modules/this-export/index.js": '"use strict";\nthis.plugin = "via this";',
+    });
+    const vfRequire = await importCompiledBinaryRequireShim(projectDir);
+
+    assertEquals((vfRequire("this-export") as { plugin: string }).plugin, "via this");
+  });
+
+  denoIt("loads runtime built-ins missing from the shared list", async () => {
+    const projectDir = await writeProject({
+      "node_modules/uses-hooks/package.json": JSON.stringify({
+        name: "uses-hooks",
+        main: "index.js",
+      }),
+      "node_modules/uses-hooks/index.js":
+        'module.exports = typeof require("async_hooks").AsyncLocalStorage;',
+    });
+    const vfRequire = await importCompiledBinaryRequireShim(projectDir);
+
+    assertEquals(vfRequire("uses-hooks"), "function");
+  });
+
+  denoIt("names the requested id, not the host path, when blocking a path", async () => {
+    const projectDir = await writeProject({});
+    const vfRequire = await importCompiledBinaryRequireShim(projectDir);
+
+    const message = thrownMessage(() => vfRequire("../outside/secret.js"));
+    assertEquals(message, 'CJS loader blocked path outside project: "../outside/secret.js"');
+  });
+
+  denoIt("gives distinct modules with equal exports distinct namespaces", async () => {
+    const files = {
+      "node_modules/num-a/package.json": JSON.stringify({ name: "num-a", main: "index.js" }),
+      "node_modules/num-a/index.js": "module.exports = 42;",
+      "node_modules/num-b/package.json": JSON.stringify({ name: "num-b", main: "index.js" }),
+      "node_modules/num-b/index.js": "module.exports = 42;",
+    };
+    const GET = await loadCompiledRoute(
+      [
+        'import * as a from "num-a";',
+        'import * as b from "num-b";',
+        "export const GET = () => new Response(String(a !== b && a.default === b.default));",
+      ].join("\n"),
+      files,
+    );
+    assertEquals(await responseText(GET), "true");
+  });
+
+  denoIt("rewrites string-literal named imports", async () => {
+    const files = {
+      "node_modules/dashed/package.json": JSON.stringify({ name: "dashed", main: "index.js" }),
+      "node_modules/dashed/index.js": "exports['a-b'] = 'dashed';",
+    };
+    const GET = await loadCompiledRoute(
+      'import { "a-b" as value } from "dashed";\nexport const GET = () => new Response(value);',
+      files,
+    );
+    assertEquals(await responseText(GET), "dashed");
   });
 
   denoIt("rejects a native addon with a clear error", async () => {

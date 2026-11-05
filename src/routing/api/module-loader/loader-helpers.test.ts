@@ -41,6 +41,10 @@ describe("routing/api/module-loader helpers", () => {
     );
     assertEquals(toCjsDestructureBindings("{ foo, bar }"), "{ foo, bar }");
     assertEquals(toCjsDestructureBindings("{   }"), "{}");
+    assertEquals(
+      toCjsDestructureBindings(`{ "a-b" as value, 'c,d' as other, e, }`),
+      `{ "a-b": value, 'c,d': other, e }`,
+    );
   });
 
   it("returns the expected file loaders and extensions", () => {

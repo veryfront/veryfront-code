@@ -105,18 +105,35 @@ export function generateCompiledBinaryRequireShim(
   projectDir: string,
   helperPrefix: string = DEFAULT_ROUTE_HELPER_PREFIX,
 ): string {
-  const builtinSet = JSON.stringify(NODE_BUILTINS);
-  const safeProjectDir = JSON.stringify(projectDir);
-  const safeProjectRoot = JSON.stringify(pathHelper.resolve(projectDir));
+  // Helper names are renamed before the literals go in, so a project path that
+  // happens to contain a helper name is embedded unchanged.
+  const literals: Record<string, string> = {
+    __VF_BUILTIN_LIST__: JSON.stringify(NODE_BUILTINS),
+    __VF_PROJECT_DIR__: JSON.stringify(projectDir),
+    __VF_PROJECT_ROOT__: JSON.stringify(pathHelper.resolve(projectDir)),
+  };
+  let shim = withRouteHelperPrefix(COMPILED_BINARY_REQUIRE_SHIM_TEMPLATE, helperPrefix);
+  for (const [placeholder, literal] of Object.entries(literals)) {
+    shim = shim.split(placeholder).join(literal);
+  }
+  return shim;
+}
 
-  return withRouteHelperPrefix(
-    `
+const COMPILED_BINARY_REQUIRE_SHIM_TEMPLATE = `
 import { createRequire as __vf_createRequire } from "node:module";
 import { dirname as __vf_dirname, resolve as __vf_resolve } from "node:path";
+var __vf_namespace;
 var require = (function () {
-var __vf_builtinRequire = __vf_createRequire(${safeProjectDir} + "/package.json");
-var __vf_builtinSet = new Set(${builtinSet});
-var __vf_projectRoot = ${safeProjectRoot};
+var __vf_builtinRequire = __vf_createRequire(__VF_PROJECT_DIR__ + "/package.json");
+var __vf_builtinSet = new Set(__VF_BUILTIN_LIST__);
+// Every built-in this runtime provides, not only the shared list.
+try {
+  var __vf_runtimeBuiltins = __vf_builtinRequire("node:module").builtinModules;
+  for (var __vf_b = 0; __vf_b < __vf_runtimeBuiltins.length; __vf_b++) {
+    __vf_builtinSet.add(__vf_runtimeBuiltins[__vf_b].replace(/^node:/, ""));
+  }
+} catch (_) { /* expected: fall back to the shared list */ }
+var __vf_projectRoot = __VF_PROJECT_ROOT__;
 // VULN-FS-5: Canonicalize the project root so containment checks using
 // Deno.realPathSync(resolved) compare canonical-vs-canonical. Without this,
 // when the project itself is opened via a symlink, the realpath'd resolved
@@ -139,11 +156,12 @@ function __vf_canonicalize(candidate) {
   } catch (_) { /* expected: parent may not exist either */ }
   return __vf_resolve(candidate);
 }
-function __vf_assertContained(resolved) {
+// The error names the id the code asked for, never the resolved host path.
+function __vf_assertContained(resolved, id) {
   var norm = __vf_resolve(resolved).replace(/\\\\/g, "/");
   var root = __vf_projectRoot.replace(/\\\\/g, "/");
   if (!norm.startsWith(root + "/") && norm !== root) {
-    throw new Error("CJS loader blocked path outside project: " + resolved);
+    throw new Error("CJS loader blocked path outside project: " + JSON.stringify(id));
   }
 }
 // Bare ids resolve from the requiring module's directory, as Node does, so a
@@ -189,26 +207,53 @@ function __vf_resolveBare(id, parentDir) {
 function __vf_isFile(candidate) {
   try { return Deno.statSync(candidate).isFile; } catch (_) { return false; }
 }
+function __vf_probeFile(path) {
+  var candidates = [path, path + ".js", path + ".cjs", path + ".json"];
+  for (var i = 0; i < candidates.length; i++) {
+    if (__vf_isFile(candidates[i])) return candidates[i];
+  }
+  return null;
+}
+function __vf_probeIndex(dir) {
+  return __vf_probeFile(__vf_resolve(dir, "index"));
+}
+// A directory resolves through its package.json "main", then its index file.
+function __vf_probeDirectory(dir, id) {
+  var manifest = __vf_resolve(dir, "package.json");
+  if (__vf_isFile(manifest)) {
+    var main;
+    try { main = JSON.parse(Deno.readTextFileSync(manifest)).main; } catch (_) { /* expected: unreadable manifest falls back to index */ }
+    if (typeof main === "string" && main) {
+      var entry = __vf_resolve(dir, main);
+      __vf_assertContained(__vf_canonicalize(entry), id);
+      var found = __vf_probeFile(entry) || __vf_probeIndex(entry);
+      if (found) return found;
+    }
+  }
+  return __vf_probeIndex(dir);
+}
 function __vf_resolveLocal(id, parentDir) {
   var base = __vf_resolve(parentDir, id);
   // Refuse paths outside the project before probing them, so a missing-module
   // error never tells route code whether a host file exists.
-  __vf_assertContained(__vf_canonicalize(base));
-  var candidates = [base, base + ".js", base + ".cjs", base + ".json", base + "/index.js", base + "/index.cjs", base + "/index.json"];
-  for (var i = 0; i < candidates.length; i++) {
-    if (!__vf_isFile(candidates[i])) continue;
-    __vf_assertContained(__vf_canonicalize(candidates[i]));
-    return candidates[i];
+  __vf_assertContained(__vf_canonicalize(base), id);
+  var found = __vf_probeFile(base) || __vf_probeDirectory(base, id);
+  if (found) {
+    __vf_assertContained(__vf_canonicalize(found), id);
+    return found;
   }
   var missing = new Error("Cannot find module " + JSON.stringify(id));
   missing.code = "MODULE_NOT_FOUND";
   throw missing;
 }
-function __vf_loadCjs(id, parentDir) {
-  if (id.startsWith("node:")) return __vf_builtinRequire(id);
-  if (__vf_builtinSet.has(id)) return __vf_builtinRequire(id);
+function __vf_isBuiltin(id) {
+  if (id.startsWith("node:")) return true;
+  if (__vf_builtinSet.has(id)) return true;
   var slashIdx = id.indexOf("/");
-  if (slashIdx > 0 && __vf_builtinSet.has(id.slice(0, slashIdx))) return __vf_builtinRequire(id);
+  return slashIdx > 0 && __vf_builtinSet.has(id.slice(0, slashIdx));
+}
+function __vf_loadCjs(id, parentDir) {
+  if (__vf_isBuiltin(id)) return __vf_builtinRequire(id);
   var resolved;
   if (id.startsWith(".") || id.startsWith("/")) {
     resolved = __vf_resolveLocal(id, parentDir);
@@ -226,7 +271,7 @@ function __vf_loadCjs(id, parentDir) {
   // Canonicalizing first also keeps the guard against symlinked node_modules
   // entries pointing outside the root: the escape is only visible once resolved.
   resolved = __vf_canonicalize(resolved);
-  __vf_assertContained(resolved);
+  __vf_assertContained(resolved, id);
   if (resolved in __vf_cache) return __vf_cache[resolved];
   var code = Deno.readTextFileSync(resolved);
   if (resolved.endsWith(".json")) {
@@ -243,8 +288,15 @@ function __vf_loadCjs(id, parentDir) {
   var childReq = function(childId) { return __vf_loadCjs(childId, dir); };
   childReq.resolve = function(childId) { return __vf_resolveId(childId, dir); };
   childReq.ensure = function(mods, cb) { cb(); };
-  var fn = new Function("exports", "require", "module", "__filename", "__dirname", "global", "globalThis", "Worker", code);
-  fn(mod.exports, childReq, mod, resolved, dir, globalThis, globalThis, undefined);
+  // As in Node, top-level \`this\` is module.exports, and a module whose
+  // evaluation throws is dropped from the cache so a retry fails again.
+  try {
+    var fn = new Function("exports", "require", "module", "__filename", "__dirname", "global", "globalThis", "Worker", code);
+    fn.call(mod.exports, mod.exports, childReq, mod, resolved, dir, globalThis, globalThis, undefined);
+  } catch (error) {
+    delete __vf_cache[resolved];
+    throw error;
+  }
   __vf_cache[resolved] = mod.exports;
   return mod.exports;
 }
@@ -252,37 +304,32 @@ function __vf_resolveId(id, parentDir) {
   if (id.startsWith(".") || id.startsWith("/")) return __vf_resolveLocal(id, parentDir);
   return __vf_resolveBare(id, parentDir);
 }
-var routeRequire = function(id) { return __vf_loadCjs(id, ${safeProjectDir}); };
-routeRequire.resolve = function(id) { return __vf_resolveId(id, ${safeProjectDir}); };
+var routeRequire = function(id) { return __vf_loadCjs(id, __VF_PROJECT_DIR__); };
+routeRequire.resolve = function(id) { return __vf_resolveId(id, __VF_PROJECT_DIR__); };
 routeRequire.ensure = function(mods, cb) { cb(); };
+// One namespace per resolved module, as with ES module namespaces: repeated
+// imports of a module share it, and distinct modules never do. As with native
+// CommonJS interop, \`default\` is the whole module.exports, also for modules
+// marked __esModule.
+var namespaces = new Map();
+__vf_namespace = function (id) {
+  var key = __vf_isBuiltin(id)
+    ? "builtin:" + id.replace(/^node:/, "")
+    : __vf_canonicalize(__vf_resolveId(id, __VF_PROJECT_DIR__));
+  if (namespaces.has(key)) return namespaces.get(key);
+  var m = routeRequire(id);
+  var ns = Object.create(null);
+  if (m !== null && (typeof m === "object" || typeof m === "function")) {
+    for (var name in m) if (name !== "default") ns[name] = m[name];
+  }
+  ns.default = m;
+  namespaces.set(key, ns);
+  return ns;
+};
 return routeRequire;
 })();
 function __vf_interopDefault(m) { return m && m.__esModule && m.default !== undefined ? m.default : m; }
-// As with native CommonJS interop, \`default\` is the whole module.exports, also
-// for modules marked __esModule.
-// One namespace per module, so repeated imports of a package see the same
-// object, as with ES module namespaces.
-var __vf_namespace = (function () {
-  var objects = new WeakMap();
-  var primitives = new Map();
-  return function (m) {
-    var isObject = m !== null && (typeof m === "object" || typeof m === "function");
-    var cache = isObject ? objects : primitives;
-    var cached = cache.get(m);
-    if (cached) return cached;
-    var ns = Object.create(null);
-    if (isObject) {
-      for (var key in m) if (key !== "default") ns[key] = m[key];
-    }
-    ns.default = m;
-    cache.set(m, ns);
-    return ns;
-  };
-})();
-`.trim(),
-    helperPrefix,
-  );
-}
+`.trim();
 
 export function getNodeExternalPackagesToResolve(userDeps: Map<string, string>): string[] {
   return getNodeExternalPackagesToResolveForRoute(userDeps);
