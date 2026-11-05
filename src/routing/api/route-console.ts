@@ -19,10 +19,19 @@
 
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { Logger } from "#veryfront/utils/logger/logger.ts";
-import { isFrameworkConsoleWrite } from "#veryfront/utils/logger/logger.ts";
+import {
+  isFrameworkConsoleWrite,
+  isLogLevelEnabled,
+  LogLevel,
+} from "#veryfront/utils/logger/logger.ts";
 import { getRequestLogger } from "#veryfront/utils/logger/request-context.ts";
-import { sanitizeStructuredTelemetryData } from "#veryfront/observability/telemetry-error.ts";
-import { redactedErrorMessage } from "./module-loader/path-redaction.ts";
+import { isSensitiveKey, REDACTED } from "#veryfront/utils/logger/redact.ts";
+import {
+  isNativeErrorWithoutHooks,
+  isProxyWithoutHooks,
+  readNativeErrorNameWithoutHooks,
+} from "#veryfront/platform/compat/error-introspection.ts";
+import { redactFreeText } from "./module-loader/path-redaction.ts";
 
 /** Longest console message forwarded to project logs, in characters. */
 export const ROUTE_CONSOLE_MESSAGE_LIMIT = 8192;
@@ -30,8 +39,9 @@ export const ROUTE_CONSOLE_MESSAGE_LIMIT = 8192;
 const CAPTURED_METHODS = ["log", "info", "warn", "error", "debug"] as const;
 type CapturedMethod = typeof CAPTURED_METHODS[number];
 type ConsoleFunction = (...args: unknown[]) => void;
+type LoggerMethod = "debug" | "info" | "warn" | "error";
 
-const LOGGER_LEVEL: Readonly<Record<CapturedMethod, "debug" | "info" | "warn" | "error">> = {
+const LOGGER_METHOD: Readonly<Record<CapturedMethod, LoggerMethod>> = {
   log: "info",
   info: "info",
   warn: "warn",
@@ -39,47 +49,183 @@ const LOGGER_LEVEL: Readonly<Record<CapturedMethod, "debug" | "info" | "warn" | 
   debug: "debug",
 };
 
+const LOGGER_LEVEL: Readonly<Record<LoggerMethod, LogLevel>> = {
+  debug: LogLevel.DEBUG,
+  info: LogLevel.INFO,
+  warn: LogLevel.WARN,
+  error: LogLevel.ERROR,
+};
+
 interface RouteConsoleScope {
   readonly logger: Logger;
 }
 
 const routeConsoleScope = new AsyncLocalStorage<RouteConsoleScope>();
+
+// Intrinsics captured before project code runs, so formatting never calls a
+// method project code replaced.
 const apply = Reflect.apply;
+const objectKeys = Object.keys;
+const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const isArray = Array.isArray;
+const jsonStringify = JSON.stringify;
+const IntrinsicString = String;
+const IntrinsicNumber = Number;
+const numberParseInt = Number.parseInt;
+const numberParseFloat = Number.parseFloat;
+const dateToISOString = Date.prototype.toISOString;
+const stringSlice = String.prototype.slice;
+const stringIndexOf = String.prototype.indexOf;
 
-let installed: Record<CapturedMethod, ConsoleFunction> | null = null;
-let originals: Record<CapturedMethod, ConsoleFunction> | null = null;
+const MAX_DEPTH = 4;
+const MAX_ENTRIES = 50;
+const MAX_NODES = 500;
 
-function formatArg(value: unknown): string {
-  if (typeof value === "string") return value;
-  if (value instanceof Error) {
-    return `${value.name}: ${redactedErrorMessage(value)}`;
+interface FormatBudget {
+  nodes: number;
+}
+
+/** A data property's value; accessors are reported, never run. */
+function readOwnData(value: object, key: string): { value: unknown } | string {
+  const descriptor = getOwnPropertyDescriptor(value, key);
+  if (!descriptor) return "undefined";
+  if (!("value" in descriptor)) return "[Getter]";
+  return { value: descriptor.value };
+}
+
+function formatError(error: Error): string {
+  const name = redactFreeText(readNativeErrorNameWithoutHooks(error));
+  const message = readOwnData(error, "message");
+  const text = typeof message === "string" || typeof message.value !== "string"
+    ? ""
+    : redactFreeText(message.value);
+  return text ? `${name}: ${text}` : name;
+}
+
+/**
+ * Render a value without running project code: no `toJSON`, `toString`,
+ * `valueOf` or getters, and never the value's own string conversion.
+ */
+function formatValue(
+  value: unknown,
+  depth: number,
+  seen: Set<object>,
+  budget: FormatBudget,
+): string {
+  if (--budget.nodes < 0) return "…";
+  if (typeof value === "string") return depth === 0 ? value : jsonStringify(value);
+  if (typeof value === "bigint") return `${IntrinsicString(value)}n`;
+  if (
+    value === null || value === undefined || typeof value === "number" ||
+    typeof value === "boolean" || typeof value === "symbol"
+  ) {
+    return IntrinsicString(value);
   }
+  if (typeof value === "function") return "[Function]";
+  if (isProxyWithoutHooks(value)) return "[Proxy]";
+  if (isNativeErrorWithoutHooks(value)) return formatError(value);
   try {
-    const serialized = JSON.stringify(sanitizeStructuredTelemetryData(value));
-    if (serialized !== undefined) return serialized;
+    return apply(dateToISOString, value, []) as string;
   } catch (_) {
-    /* expected: circular references or non-serializable values */
+    /* expected: not a Date */
   }
+  if (seen.has(value)) return "[Circular]";
+  if (depth >= MAX_DEPTH) return isArray(value) ? "[Array]" : "[Object]";
+
+  seen.add(value);
   try {
-    return String(value);
+    const keys = objectKeys(value);
+    const parts: string[] = [];
+    for (let index = 0; index < keys.length && index < MAX_ENTRIES; index++) {
+      const key = keys[index]!;
+      const read = isSensitiveKey(key) ? REDACTED : readOwnData(value, key);
+      const rendered = typeof read === "string"
+        ? read
+        : formatValue(read.value, depth + 1, seen, budget);
+      parts.push(isArray(value) ? rendered : `${jsonStringify(key)}:${rendered}`);
+    }
+    if (keys.length > MAX_ENTRIES) parts.push("…");
+    return isArray(value) ? `[${parts.join(",")}]` : `{${parts.join(",")}}`;
   } catch (_) {
     return "[Unserializable]";
+  } finally {
+    seen.delete(value);
   }
+}
+
+function formatArg(value: unknown, budget: FormatBudget): string {
+  return formatValue(value, 0, new Set(), budget);
+}
+
+/** `%d`, `%i` and `%f` take primitives only; an object would run `valueOf`. */
+function formatNumber(value: unknown, specifier: string): string {
+  if (typeof value === "bigint") return `${IntrinsicString(value)}n`;
+  if (typeof value === "object" || typeof value === "function" || typeof value === "symbol") {
+    return "NaN";
+  }
+  if (specifier === "i") return IntrinsicString(numberParseInt(IntrinsicString(value), 10));
+  if (specifier === "f") return IntrinsicString(numberParseFloat(IntrinsicString(value)));
+  return IntrinsicString(IntrinsicNumber(value));
+}
+
+/**
+ * Apply console format specifiers (`%s %d %i %f %j %o %O %c %%`) in a leading
+ * format string, as the console does, then append the remaining arguments.
+ */
+function formatWithSpecifiers(args: readonly unknown[], budget: FormatBudget): string[] {
+  const format = args[0];
+  if (typeof format !== "string" || apply(stringIndexOf, format, ["%"]) === -1) {
+    return args.map((arg) => formatArg(arg, budget));
+  }
+  let next = 1;
+  let out = "";
+  let index = 0;
+  while (index < format.length) {
+    const at = apply(stringIndexOf, format, ["%", index]) as number;
+    if (at === -1 || at === format.length - 1) {
+      out += apply(stringSlice, format, [index]);
+      break;
+    }
+    out += apply(stringSlice, format, [index, at]);
+    const specifier = format[at + 1]!;
+    if (specifier === "%") {
+      out += "%";
+    } else if ("sdifjoOc".includes(specifier) && next < args.length) {
+      const arg = args[next++];
+      if (specifier === "c") {
+        /* CSS styling has no meaning in a log line */
+      } else if (specifier === "d" || specifier === "i" || specifier === "f") {
+        out += formatNumber(arg, specifier);
+      } else {
+        out += formatArg(arg, budget);
+      }
+    } else {
+      out += `%${specifier}`;
+    }
+    index = at + 2;
+  }
+  return [out, ...args.slice(next).map((arg) => formatArg(arg, budget))];
 }
 
 /** Format console arguments into one capped message line. */
 export function formatRouteConsoleMessage(args: readonly unknown[]): string {
-  const message = args.map(formatArg).join(" ");
+  const message = formatWithSpecifiers(args, { nodes: MAX_NODES }).join(" ");
   if (message.length <= ROUTE_CONSOLE_MESSAGE_LIMIT) return message;
-  return `${message.slice(0, ROUTE_CONSOLE_MESSAGE_LIMIT)}… [truncated]`;
+  return `${apply(stringSlice, message, [0, ROUTE_CONSOLE_MESSAGE_LIMIT])}… [truncated]`;
 }
+
+let installed: Record<CapturedMethod, ConsoleFunction> | null = null;
+let originals: Record<CapturedMethod, ConsoleFunction> | null = null;
 
 function captureWrapper(method: CapturedMethod, original: ConsoleFunction): ConsoleFunction {
   return function routeConsoleCapture(this: unknown, ...args: unknown[]): void {
     const scope = routeConsoleScope.getStore();
-    if (scope && !isFrameworkConsoleWrite()) {
+    const loggerMethod = LOGGER_METHOD[method];
+    // A level the logger would drop goes to the console as before, so a
+    // route's `console.debug` or `console.log` is never silently lost.
+    if (scope && !isFrameworkConsoleWrite() && isLogLevelEnabled(LOGGER_LEVEL[loggerMethod])) {
       try {
-        scope.logger[LOGGER_LEVEL[method]](formatRouteConsoleMessage(args));
+        scope.logger[loggerMethod](formatRouteConsoleMessage(args));
         return;
       } catch (_) {
         /* fall back to the original console so the output is never lost */

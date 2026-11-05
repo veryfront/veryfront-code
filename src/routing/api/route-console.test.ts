@@ -3,7 +3,13 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import type { Logger } from "#veryfront/utils/logger/logger.ts";
 import { serverLogger } from "#veryfront/utils";
+import { REDACTED } from "#veryfront/utils/logger/redact.ts";
 import { runWithRequestContext } from "#veryfront/utils/logger/request-context.ts";
+import {
+  __resetLoggerConfigForTests,
+  LogLevel,
+  setLogLevel,
+} from "#veryfront/utils/logger/logger.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import {
   __uninstallRouteConsoleCaptureForTests,
@@ -162,6 +168,63 @@ describe("route console capture", () => {
     const long = formatRouteConsoleMessage(["x".repeat(ROUTE_CONSOLE_MESSAGE_LIMIT + 10)]);
     assertEquals(long.length, ROUTE_CONSOLE_MESSAGE_LIMIT + "… [truncated]".length);
     assertEquals(long.endsWith("… [truncated]"), true);
+  });
+
+  it("leaves output the logger level would drop on the console", () => {
+    const records: Recorded[] = [];
+    setLogLevel(LogLevel.WARN);
+    try {
+      inRequest(recordingLogger(records), () =>
+        runWithRouteConsoleCapture(() => {
+          console.log("below the level");
+          console.error("at the level");
+        }));
+    } finally {
+      __resetLoggerConfigForTests();
+    }
+
+    assertEquals(records.map((record) => record.message), ["at the level"]);
+    assertEquals(passedThrough, [["below the level"]]);
+  });
+
+  it("applies console format specifiers", () => {
+    assertEquals(
+      formatRouteConsoleMessage(["%s has %d rows (%i%%) %o", "t", 3, 4.7, { a: 1 }, "extra"]),
+      't has 3 rows (4%) {"a":1} extra',
+    );
+    assertEquals(formatRouteConsoleMessage(["%d", { valueOf: () => 1 }]), "NaN");
+    assertEquals(formatRouteConsoleMessage(["%s and %s", "one"]), "one and %s");
+  });
+
+  it("redacts paths in an error's name and message", () => {
+    const error = new Error("failed at /srv/app/secret/handler.ts");
+    error.name = "/srv/app/secret/BadError";
+    assertEquals(formatRouteConsoleMessage([error]), "BadError: failed at handler.ts");
+  });
+
+  it("formats values without running their hooks", () => {
+    let calls = 0;
+    const value = {
+      a: 1,
+      toJSON() {
+        calls++;
+        return "json";
+      },
+      get g() {
+        calls++;
+        return "getter";
+      },
+      toString() {
+        calls++;
+        return "string";
+      },
+      password: "hunter2",
+    };
+    assertEquals(
+      formatRouteConsoleMessage([value]),
+      `{"a":1,"toJSON":[Function],"g":[Getter],"toString":[Function],"password":${REDACTED}}`,
+    );
+    assertEquals(calls, 0);
   });
 
   it("captures console output from a host-realm app route handler", async () => {

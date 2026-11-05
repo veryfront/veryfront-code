@@ -268,6 +268,18 @@ export function setLogLevel(level: LogLevel): void {
   loggerConfig = { ...config, level };
 }
 
+/**
+ * Whether a message at `level` is written under the active configuration.
+ * Returns false when the configuration cannot be read.
+ */
+export function isLogLevelEnabled(level: LogLevel): boolean {
+  try {
+    return resolveLoggerConfig().level <= level;
+  } catch {
+    return false;
+  }
+}
+
 /** @internal Alias kept for tests. */
 export const __resetLoggerConfigForTests = refreshLoggerConfig;
 
