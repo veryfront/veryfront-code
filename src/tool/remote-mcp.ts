@@ -1456,9 +1456,21 @@ function createPrivateMcpMap<K, V>(): Map<K, V> {
 
 type McpProtocol = "legacy" | "modern";
 
+/** One observed protocol; a higher sequence is a more recent observation. */
+interface McpProtocolProof {
+  protocol: McpProtocol;
+  sequence: number;
+}
+
+let mcpProtocolProofSequence = 0;
+
+function proveMcpProtocol(protocol: McpProtocol): McpProtocolProof {
+  return { protocol, sequence: ++mcpProtocolProofSequence };
+}
+
 /** Endpoint protocol knowledge shared by sources that serve one tool catalog. */
 interface SharedMcpProtocolState {
-  protocols: Map<string, McpProtocol>;
+  protocols: Map<string, McpProtocolProof>;
   parameterHeaders: Map<string, Map<string, McpParameterHeader[]>>;
 }
 
@@ -1494,7 +1506,11 @@ function readSharedMcpProtocolState(
     : undefined;
 }
 
-/** One in-flight request; disposal marks it closed so it cannot mint a session afterwards. */
+/**
+ * One in-flight listTools or executeTool operation, held from before its
+ * endpoint and headers resolve until it settles; disposal marks it closed so
+ * it cannot mint a session afterwards.
+ */
 interface McpRequestLease {
   runId?: string;
   closed: boolean;
@@ -1523,9 +1539,41 @@ function createRemoteMCPToolSourceWithFetch(
   // tool call for a new run of a legacy identity initializes first instead of
   // probing with a modern request, because an ambiguous call failure is never
   // replayed.
-  const protocols = createPrivateMcpMap<string, McpProtocol>();
+  const protocols = createPrivateMcpMap<string, McpProtocolProof>();
   const shared = readSharedMcpProtocolState(config);
   const leases = createPrivateSet<McpRequestLease>();
+
+  function recordProtocol(identityKey: string, endpoint: string, protocol: McpProtocol): void {
+    const proof = proveMcpProtocol(protocol);
+    protocols.set(identityKey, proof);
+    shared?.protocols.set(endpoint, proof);
+  }
+
+  /**
+   * The most recent proof for this identity or, through a shared config, for
+   * the endpoint. A legacy session negotiated before a later modern proof is
+   * stale: the server accepts sessionless requests and may have dropped it.
+   */
+  function currentProtocol(identityKey: string, endpoint: string): McpProtocol | undefined {
+    const own = protocols.get(identityKey);
+    const other = shared?.protocols.get(endpoint);
+    if (!own) return other?.protocol;
+    if (!other) return own.protocol;
+    return other.sequence > own.sequence ? other.protocol : own.protocol;
+  }
+
+  async function withLease<T>(
+    runId: string | undefined,
+    operation: (lease: McpRequestLease) => Promise<T>,
+  ): Promise<T> {
+    const lease: McpRequestLease = { runId, closed: false };
+    leases.add(lease);
+    try {
+      return await operation(lease);
+    } finally {
+      leases.delete(lease);
+    }
+  }
 
   async function initialize(
     key: string,
@@ -1618,8 +1666,7 @@ function createRemoteMCPToolSourceWithFetch(
         MAX_REMOTE_MCP_CALL_RESPONSE_BYTES,
       );
       sessions.set(key, session);
-      protocols.set(identityKey, "legacy");
-      shared?.protocols.set(endpoint, "legacy");
+      recordProtocol(identityKey, endpoint, "legacy");
       return session;
     })();
     initializing.set(key, promise);
@@ -1630,17 +1677,7 @@ function createRemoteMCPToolSourceWithFetch(
     }
   }
 
-  async function request(options: McpRequestOptions): Promise<unknown> {
-    const lease: McpRequestLease = { runId: options.runId, closed: false };
-    leases.add(lease);
-    try {
-      return await sendRequest(options, lease);
-    } finally {
-      leases.delete(lease);
-    }
-  }
-
-  async function sendRequest(options: McpRequestOptions, lease: McpRequestLease): Promise<unknown> {
+  async function request(options: McpRequestOptions, lease: McpRequestLease): Promise<unknown> {
     const { endpoint, headers, requestFetch, signal, maxBytes, operation, runId } = options;
     const snapshot = snapshotBoundedJsonValue(options.body, MAX_REMOTE_MCP_REQUEST_BYTES);
     if (!snapshot.success || !isRecord(snapshot.value)) {
@@ -1667,7 +1704,12 @@ function createRemoteMCPToolSourceWithFetch(
     };
     if (initializing.has(key)) await initializing.get(key);
     let session = sessions.get(key);
-    const protocol = protocols.get(identityKey) ?? shared?.protocols.get(endpoint);
+    const protocol = currentProtocol(identityKey, endpoint);
+    if (session && protocol === "modern") {
+      // Negotiated before a later sessionless success; the server may have dropped it.
+      sessions.delete(key);
+      session = undefined;
+    }
     if (!session && operation === "execution" && protocol === "legacy") {
       // Initialization happens before the call is sent, so a failure here never
       // leaves a side-effecting request to replay.
@@ -1678,13 +1720,18 @@ function createRemoteMCPToolSourceWithFetch(
       if (!session) {
         // A sessionless success proves the modern protocol, so a later call
         // must not initialize a session the server may no longer accept.
-        protocols.set(identityKey, "modern");
-        shared?.protocols.set(endpoint, "modern");
+        recordProtocol(identityKey, endpoint, "modern");
       }
       return result;
     } catch (error) {
       if (!shouldNegotiateSession(error, session, operation)) throw error;
       if (session && sessions.get(key) === session) sessions.delete(key);
+      if (session && currentProtocol(identityKey, endpoint) === "modern") {
+        // A concurrent request proved sessionless support while this one used
+        // its rejected session; a new legacy handshake would fail there.
+        if (operation === "discovery-page") throw new RemoteMCPDiscoveryRestart();
+        return await send();
+      }
       const renewed = sessions.get(key) ?? await establish();
       // A pagination cursor belongs to the session that issued it.
       if (operation === "discovery-page") throw new RemoteMCPDiscoveryRestart();
@@ -1697,6 +1744,7 @@ function createRemoteMCPToolSourceWithFetch(
     headers: Headers,
     listMeta: Record<string, unknown> | undefined,
     context: ToolExecutionContext | undefined,
+    lease: McpRequestLease,
   ): Promise<ToolDefinition[]> {
     const catalog = createToolListAccumulator();
     let cursor: string | undefined;
@@ -1720,7 +1768,7 @@ function createRemoteMCPToolSourceWithFetch(
         maxBytes: MAX_REMOTE_MCP_TOOL_LIST_RESPONSE_BYTES,
         operation: cursor === undefined ? "discovery" : "discovery-page",
         runId: context?.runId,
-      });
+      }, lease);
       const { definitions, nextCursor } = normalizeToolListPage(
         getJsonRpcResult(payload, requestId),
       );
@@ -1735,6 +1783,68 @@ function createRemoteMCPToolSourceWithFetch(
     throw protocolError(
       `Remote MCP tools/list exceeded ${MAX_REMOTE_MCP_TOOL_LIST_PAGES} pages`,
     );
+  }
+
+  async function executeWithLease(
+    toolName: string,
+    args: Record<string, unknown>,
+    context: ToolExecutionContext | undefined,
+    lease: McpRequestLease,
+  ): Promise<unknown> {
+    const endpoint = validateEndpoint(await resolveValue(config.endpoint, context));
+    const headers = await resolveHeaders(config.headers, context);
+    const meta = buildRunContextMeta(context, endpoint);
+    const requestId = `${id}:tools:call:${toolName}`;
+
+    try {
+      const payload = await request({
+        endpoint,
+        headers,
+        body: {
+          jsonrpc: "2.0",
+          id: requestId,
+          method: callMethod,
+          params: {
+            name: toolName,
+            arguments: args,
+            ...(meta ? { _meta: meta } : {}),
+          },
+        },
+        requestFetch: getHostedToolCallAdmissionRequestFetch(endpoint) ??
+          getRequestFetch(endpoint),
+        signal: context?.abortSignal,
+        maxBytes: MAX_REMOTE_MCP_CALL_RESPONSE_BYTES,
+        operation: "execution",
+        runId: context?.runId,
+      }, lease);
+
+      const result = getJsonRpcResult(payload, requestId, true);
+      if (isJsonRpcToolErrorResult(result)) {
+        return preserveToolExecutionErrorMarker(
+          normalizeKnownToolError(result.result, toolName, endpoint, context),
+        );
+      }
+      // The response text is already bounded, so one string may use the whole response.
+      const resultSnapshot = snapshotBoundedParsedJsonValue(
+        result,
+        MAX_REMOTE_MCP_CALL_RESPONSE_BYTES,
+      );
+      if (!resultSnapshot.success) {
+        throw protocolError("Remote MCP tools/call returned an unbounded JSON result");
+      }
+      return normalizeCallToolResult({
+        result: resultSnapshot.value,
+        toolName,
+        endpoint,
+        context,
+      });
+    } catch (error) {
+      const normalizedError = normalizeKnownToolException(error, toolName, endpoint, context);
+      if (normalizedError) {
+        return normalizedError;
+      }
+      throw error;
+    }
   }
 
   return {
@@ -1773,83 +1883,34 @@ function createRemoteMCPToolSourceWithFetch(
       }
       if (firstError !== undefined) throw firstError;
     },
-    async listTools(context) {
-      const endpoint = validateEndpoint(await resolveValue(config.endpoint, context));
-      const headers = await resolveHeaders(config.headers, context);
-      const listMeta = config.listMeta === undefined ? undefined : Object.fromEntries(
-        Object.entries(config.listMeta).filter(([key]) => key !== "tool_call_admission"),
-      );
+    listTools(context) {
+      // The lease spans configuration resolution and every page, so disposal
+      // during any of those awaits closes it.
+      return withLease(context?.runId, async (lease) => {
+        const endpoint = validateEndpoint(await resolveValue(config.endpoint, context));
+        const headers = await resolveHeaders(config.headers, context);
+        const listMeta = config.listMeta === undefined ? undefined : Object.fromEntries(
+          Object.entries(config.listMeta).filter(([key]) => key !== "tool_call_admission"),
+        );
 
-      // A session renewed mid-pagination invalidates earlier cursors, so the
-      // catalog is rebuilt from the first page, at most once.
-      try {
-        return await listPages(endpoint, headers, listMeta, context);
-      } catch (error) {
-        if (!(error instanceof RemoteMCPDiscoveryRestart)) throw error;
-      }
-      try {
-        return await listPages(endpoint, headers, listMeta, context);
-      } catch (error) {
-        if (!(error instanceof RemoteMCPDiscoveryRestart)) throw error;
-        throw protocolError("Remote MCP session was renewed again during tools/list pagination");
-      }
+        // A session renewed mid-pagination invalidates earlier cursors, so the
+        // catalog is rebuilt from the first page, at most once.
+        try {
+          return await listPages(endpoint, headers, listMeta, context, lease);
+        } catch (error) {
+          if (!(error instanceof RemoteMCPDiscoveryRestart)) throw error;
+        }
+        try {
+          return await listPages(endpoint, headers, listMeta, context, lease);
+        } catch (error) {
+          if (!(error instanceof RemoteMCPDiscoveryRestart)) throw error;
+          throw protocolError("Remote MCP session was renewed again during tools/list pagination");
+        }
+      });
     },
 
-    async executeTool(toolName, args, context) {
-      const endpoint = validateEndpoint(await resolveValue(config.endpoint, context));
-      const headers = await resolveHeaders(config.headers, context);
-      const meta = buildRunContextMeta(context, endpoint);
-      const requestId = `${id}:tools:call:${toolName}`;
-
-      try {
-        const payload = await request({
-          endpoint,
-          headers,
-          body: {
-            jsonrpc: "2.0",
-            id: requestId,
-            method: callMethod,
-            params: {
-              name: toolName,
-              arguments: args,
-              ...(meta ? { _meta: meta } : {}),
-            },
-          },
-          requestFetch: getHostedToolCallAdmissionRequestFetch(endpoint) ??
-            getRequestFetch(endpoint),
-          signal: context?.abortSignal,
-          maxBytes: MAX_REMOTE_MCP_CALL_RESPONSE_BYTES,
-          operation: "execution",
-          runId: context?.runId,
-        });
-
-        const result = getJsonRpcResult(payload, requestId, true);
-        if (isJsonRpcToolErrorResult(result)) {
-          return preserveToolExecutionErrorMarker(
-            normalizeKnownToolError(result.result, toolName, endpoint, context),
-          );
-        }
-        // The response text is already bounded, so one string may use the whole response.
-        const resultSnapshot = snapshotBoundedParsedJsonValue(
-          result,
-          MAX_REMOTE_MCP_CALL_RESPONSE_BYTES,
-        );
-        if (!resultSnapshot.success) {
-          throw protocolError("Remote MCP tools/call returned an unbounded JSON result");
-        }
-        return normalizeCallToolResult({
-          result: resultSnapshot.value,
-          toolName,
-          endpoint,
-          context,
-        });
-      } catch (error) {
-        const normalizedError = normalizeKnownToolException(error, toolName, endpoint, context);
-        if (normalizedError) {
-          return normalizedError;
-        }
-        throw error;
-      }
+    executeTool(toolName, args, context) {
+      return withLease(context?.runId, (lease) => executeWithLease(toolName, args, context, lease));
     },
   };
 }

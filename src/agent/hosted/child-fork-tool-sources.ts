@@ -17,6 +17,11 @@ import {
   chainPrivatePromise,
   resolvePrivatePromise,
 } from "#veryfront/security/private-promise.ts";
+import {
+  appendPrivateArray,
+  mapPrivateArray,
+  pushPrivateArray,
+} from "#veryfront/security/private-array.ts";
 import { AGENT_ERROR } from "#veryfront/errors";
 import { isErrorAcrossRealms } from "#veryfront/platform/compat/error-introspection.ts";
 import {
@@ -110,7 +115,8 @@ export async function prepareDefaultHostedChildForkToolSources(
 ): Promise<DefaultHostedChildForkToolSourcesResult> {
   throwIfAborted(input.abortSignal);
 
-  let closeStudioTools: (() => Promise<void>) | undefined;
+  // Every configured Studio entry negotiates its own session, so each closer is kept.
+  const studioClosers: Array<() => Promise<void>> = [];
   let studioMcpTools: HostToolSet = {};
   let remoteMcpTools: HostToolSet = {};
   const createLiveStudioTools = input.createLiveStudioTools ?? createLiveStudioMcpTools;
@@ -121,15 +127,21 @@ export async function prepareDefaultHostedChildForkToolSources(
   const createRemoteToolSource = (config: RemoteMCPToolSourceConfig) =>
     remoteSources.own(createSource(config));
   const closeMcpTools = async (): Promise<void> => {
-    // Both closers start before either is awaited; the first failure wins.
-    const studio = chainPrivatePromise(resolvePrivatePromise(), () => closeStudioTools?.());
-    const remote = chainPrivatePromise(resolvePrivatePromise(), () => remoteSources.dispose());
-    const failures = await allPrivatePromises([
-      chainPrivatePromise(studio, () => undefined, (error) => ({ error })),
-      chainPrivatePromise(remote, () => undefined, (error) => ({ error })),
-    ]);
-    const failure = failures[0] ?? failures[1];
-    if (failure) throw failure.error;
+    // Every closer starts before any is awaited; the first failure wins.
+    const closers: Array<() => Promise<void>> = [];
+    appendPrivateArray(closers, studioClosers);
+    pushPrivateArray(closers, () => remoteSources.dispose());
+    const failures = await allPrivatePromises(
+      mapPrivateArray(closers, (close) =>
+        chainPrivatePromise(
+          chainPrivatePromise(resolvePrivatePromise(), close),
+          () => undefined,
+          (error) => ({ error }),
+        )),
+    );
+    for (const failure of failures) {
+      if (failure) throw failure.error;
+    }
   };
   const releaseAfterFailure = async (): Promise<void> => {
     try {
@@ -170,6 +182,8 @@ export async function prepareDefaultHostedChildForkToolSources(
             ? { createRemoteToolSource: input.createRemoteToolSource }
             : {}),
         });
+        // Retained before anything else can throw, so a failure below still closes it.
+        pushPrivateArray(studioClosers, studioTools.close);
         const policyTools = wrapHostToolSetWithMcpPolicy(
           studioTools.tools,
           withPlatformMcpPolicyAliases(server.toolPolicy),
@@ -181,7 +195,6 @@ export async function prepareDefaultHostedChildForkToolSources(
           ...studioMcpTools,
           ...canonicalPlatformHostTools(markTrustedHostToolSet(policyTools)),
         };
-        closeStudioTools = studioTools.close;
         continue;
       }
 

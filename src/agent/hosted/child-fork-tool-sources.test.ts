@@ -567,6 +567,55 @@ Deno.test("prepareDefaultHostedChildForkToolSources reports Studio setup failure
   assertEquals(logged.length, 1);
 });
 
+Deno.test("prepareDefaultHostedChildForkToolSources closes every configured Studio source", async () => {
+  const closed: string[] = [];
+  let created = 0;
+  const createLiveStudioTools = () => {
+    const name = `studio-${++created}`;
+    return Promise.resolve({
+      tools: {},
+      close: () => {
+        closed.push(name);
+        return Promise.resolve();
+      },
+    });
+  };
+  const input = {
+    authToken: "token-1",
+    apiMcpUrl: "https://api.example/mcp",
+    studioMcpUrl: "https://studio.example/mcp",
+    clientProfile: trustedStudioProfile,
+    getProjectId: () => "project-1",
+    createLiveStudioTools,
+  };
+
+  const result = await prepareDefaultHostedChildForkToolSources({
+    ...input,
+    mcpServers: [{ kind: "veryfront-studio" }, { kind: "veryfront-studio" }],
+  });
+  assertEquals(result.ok, true);
+  if (!result.ok) return;
+  await result.closeStudioMcpTools?.();
+  assertEquals(closed.sort(), ["studio-1", "studio-2"]);
+
+  // A setup failure after both entries also closes both.
+  closed.length = 0;
+  created = 0;
+  const failed = await prepareDefaultHostedChildForkToolSources({
+    ...input,
+    mcpServers: [
+      { kind: "veryfront-studio" },
+      { kind: "veryfront-studio" },
+      { kind: "veryfront-api" },
+    ],
+    createRemoteToolSource: () => {
+      throw new Error("api unavailable");
+    },
+  });
+  assertEquals(failed.ok, false);
+  assertEquals(closed.sort(), ["studio-1", "studio-2"]);
+});
+
 Deno.test("prepareDefaultHostedChildForkToolSources rethrows abort errors", async () => {
   const abortController = new AbortController();
   abortController.abort(new Error("fork aborted"));

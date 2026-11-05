@@ -2685,8 +2685,10 @@ describe("tool/remote-mcp", () => {
     let mode: "legacy" | "modern" = "legacy";
     let sessionlessGate: Promise<void> | undefined;
     let initializeGate: Promise<void> | undefined;
+    let sessionGate: Promise<void> | undefined;
     const sessionlessReached = deferred();
     const initializeReached = deferred();
+    const sessionReached = deferred();
     const tool = {
       name: "ping",
       description: "Ping",
@@ -2727,8 +2729,12 @@ describe("tool/remote-mcp", () => {
         sessionlessReached.resolve();
         if (sessionlessGate) await sessionlessGate;
         if (mode === "legacy") return new Response("initialize first", { status: 400 });
-      } else if (!live.has(sessionId)) {
-        return new Response("unknown session", { status: 404 });
+      } else {
+        if (body.method === "tools/call") {
+          sessionReached.resolve();
+          if (sessionGate) await sessionGate;
+        }
+        if (!live.has(sessionId)) return new Response("unknown session", { status: 404 });
       }
       return Response.json({
         jsonrpc: "2.0",
@@ -2744,7 +2750,14 @@ describe("tool/remote-mcp", () => {
       requestFetch,
       sessionlessReached: sessionlessReached.promise,
       initializeReached: initializeReached.promise,
+      sessionReached: sessionReached.promise,
       setMode: (value: "legacy" | "modern") => mode = value,
+      // A modern-only server forgets every legacy session it once issued.
+      upgradeToModern: () => {
+        mode = "modern";
+        live.clear();
+      },
+      holdSessionCalls: (gate: Promise<void>) => sessionGate = gate,
       holdSessionless: (gate: Promise<void>) => sessionlessGate = gate,
       holdInitialize: (gate: Promise<void>) => initializeGate = gate,
       methods: () => seen.map((entry) => entry.method),
@@ -2827,6 +2840,96 @@ describe("tool/remote-mcp", () => {
       const before = server.seen.length;
       assertEquals(await source.executeTool("ping", {}, { runId: "run-c" }), "pong");
       assertEquals(server.methods().slice(before), ["tools/call"]);
+    });
+
+    it("does not negotiate a session after disposal overlapped endpoint resolution", async () => {
+      const server = createServer();
+      const resolving = deferred();
+      const release = deferred();
+      const source = sourceFor(server, {
+        endpoint: async () => {
+          resolving.resolve();
+          await release.promise;
+          return ENDPOINT;
+        },
+      });
+      const listing = source.listTools({ runId: "run-a" });
+      await resolving.promise;
+      await source.dispose!({ runId: "run-a" });
+      release.resolve();
+      await assertRejects(() => listing, Error, "disposed");
+      assertEquals(server.methods().includes("initialize"), false);
+      assertEquals(server.live.size, 0);
+    });
+
+    it("does not negotiate a session after disposal overlapped header resolution for a call", async () => {
+      const server = createServer();
+      const shared = shareRemoteMCPProtocolState({ endpoint: ENDPOINT });
+      const ordinary = sourceFor(server, shared);
+      await ordinary.listTools({ runId: "run-a" });
+      const resolving = deferred();
+      const release = deferred();
+      // Shared discovery proved legacy, so this call initializes before sending.
+      const terminal = sourceFor(server, {
+        ...shared,
+        headers: async () => {
+          resolving.resolve();
+          await release.promise;
+          return { "X-Terminal-Token": "t" };
+        },
+      });
+      const call = terminal.executeTool("ping", {}, { runId: "run-b" });
+      await resolving.promise;
+      await terminal.dispose!();
+      release.resolve();
+      await assertRejects(() => call, Error, "disposed");
+      assertEquals(server.methods().filter((method) => method === "initialize").length, 1);
+      await ordinary.dispose!();
+      assertEquals(server.live.size, 0);
+    });
+
+    it("drops a run's legacy session once another run proves the modern protocol", async () => {
+      const server = createServer();
+      const source = sourceFor(server);
+      await source.listTools({ runId: "run-a" });
+      server.upgradeToModern();
+      await source.listTools({ runId: "run-b" });
+      const before = server.seen.length;
+      assertEquals(await source.executeTool("ping", {}, { runId: "run-a" }), "pong");
+      assertEquals(server.methods().slice(before), ["tools/call"]);
+      assertEquals(server.seen.at(-1)!.headers.get("Mcp-Session-Id"), null);
+    });
+
+    it("retries sessionlessly when the modern protocol was proven during a session call", async () => {
+      const server = createServer();
+      const source = sourceFor(server);
+      await source.listTools({ runId: "run-a" });
+      const release = deferred();
+      server.holdSessionCalls(release.promise);
+      const call = source.executeTool("ping", {}, { runId: "run-a" });
+      await server.sessionReached;
+      server.upgradeToModern();
+      await source.listTools({ runId: "run-b" });
+      const before = server.seen.length;
+      release.resolve();
+      assertEquals(await call, "pong");
+      assertEquals(server.methods().slice(before), ["tools/call"]);
+      assertEquals(server.seen.at(-1)!.headers.get("Mcp-Session-Id"), null);
+    });
+
+    it("drops a specialized source's legacy session after shared discovery proves modern", async () => {
+      const server = createServer();
+      const shared = shareRemoteMCPProtocolState({ endpoint: ENDPOINT });
+      const ordinary = sourceFor(server, shared);
+      const terminal = sourceFor(server, { ...shared, headers: { "X-Terminal-Token": "t" } });
+      await ordinary.listTools({ runId: "run-a" });
+      assertEquals(await terminal.executeTool("ping", {}, { runId: "run-a" }), "pong");
+      server.upgradeToModern();
+      await ordinary.listTools({ runId: "run-b" });
+      const before = server.seen.length;
+      assertEquals(await terminal.executeTool("ping", {}, { runId: "run-a" }), "pong");
+      assertEquals(server.methods().slice(before), ["tools/call"]);
+      assertEquals(server.seen.at(-1)!.headers.get("Mcp-Session-Id"), null);
     });
 
     it("lets credential-specialized sources reuse the ordinary source's legacy discovery", async () => {
