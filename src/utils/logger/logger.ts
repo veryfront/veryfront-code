@@ -27,6 +27,18 @@ const apply = Reflect.apply;
 const arrayPush = Array.prototype.push;
 const arrayIsArray = Array.isArray;
 const NativeConsole = console;
+
+/**
+ * Non-zero while this logger writes a formatted line through `console`.
+ * Console interceptors use it to pass framework log lines through untouched
+ * instead of treating them as application output.
+ */
+let frameworkConsoleWriteDepth = 0;
+
+/** Whether the current `console` call is the framework logger's own write. */
+export function isFrameworkConsoleWrite(): boolean {
+  return frameworkConsoleWriteDepth > 0;
+}
 const NativeDate = Date;
 const dateToISOString = Date.prototype.toISOString;
 const NativePerformance = performance;
@@ -720,10 +732,13 @@ class ConsoleLogger implements Logger {
 
       const consoleFn = NativeConsole[stderrOnly ? "error" : consoleMethod];
       if (typeof consoleFn === "function") {
+        frameworkConsoleWriteDepth++;
         try {
           apply(consoleFn, NativeConsole, [line]);
         } catch (_) {
           /* logging sink failures must not affect application control flow */
+        } finally {
+          frameworkConsoleWriteDepth--;
         }
       }
     } catch (_) {
