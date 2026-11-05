@@ -22,6 +22,7 @@ import { formatTraceparent } from "#veryfront/observability/tracing/traceparent.
 import type { Span } from "#veryfront/observability/tracing/api-shim.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { serverLogger as logger } from "#veryfront/utils";
+import { runWithRouteConsoleCapture } from "./route-console.ts";
 import type { HandlerContext } from "#veryfront/types";
 import { getWorkerPool, isHostRealmApiExecution } from "#veryfront/security/sandbox/worker-pool.ts";
 import {
@@ -1387,7 +1388,7 @@ export function executeAppRoute(
           identity: routeOptions.applicationIdentity,
           env: snapshotProjectEnvForWorker() ?? EMPTY_PROJECT_ENV,
         };
-        const pendingResult = resolvedFn(request, appContext);
+        const pendingResult = runWithRouteConsoleCapture(() => resolvedFn(request, appContext));
         const result = isTrustedRouteResponsePromise(pendingResult)
           ? await pendingResult
           : pendingResult;
@@ -1472,7 +1473,9 @@ export function executePagesRoute(
           snapshotProjectEnvForWorker() ?? EMPTY_PROJECT_ENV,
           routeOptions.applicationIdentity,
         );
-        const pendingResult = (methodHandler as PagesRouteHandler)(ctx);
+        const pendingResult = runWithRouteConsoleCapture(() =>
+          (methodHandler as PagesRouteHandler)(ctx)
+        );
         const result = isTrustedRouteResponsePromise(pendingResult)
           ? await pendingResult
           : pendingResult;
