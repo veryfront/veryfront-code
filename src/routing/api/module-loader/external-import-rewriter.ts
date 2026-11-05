@@ -147,10 +147,13 @@ function __vf_resolveBare(id, parentDir) {
     // node_modules on the lookup path has the package at all.
     if (!error || error.code !== "MODULE_NOT_FOUND") throw error;
     var name = __vf_packageName(id);
-    if (__vf_packageInstalled(name, parentDir)) {
-      throw new Error("npm package " + JSON.stringify(name) + " is installed but " + JSON.stringify(id) + " could not be resolved");
-    }
-    throw new Error("npm package " + JSON.stringify(name) + " is not installed in this runtime's node_modules");
+    // Keep the code: packages probe optional dependencies with
+    // \`error.code === "MODULE_NOT_FOUND"\`.
+    var sanitized = new Error(__vf_packageInstalled(name, parentDir)
+      ? "npm package " + JSON.stringify(name) + " is installed but " + JSON.stringify(id) + " could not be resolved"
+      : "npm package " + JSON.stringify(name) + " is not installed in this runtime's node_modules");
+    sanitized.code = "MODULE_NOT_FOUND";
+    throw sanitized;
   }
 }
 function __vf_loadCjs(id, parentDir) {
@@ -212,8 +215,9 @@ routeRequire.ensure = function(mods, cb) { cb(); };
 return routeRequire;
 })();
 function __vf_interopDefault(m) { return m && m.__esModule && m.default !== undefined ? m.default : m; }
+// As with native CommonJS interop, \`default\` is the whole module.exports, also
+// for modules marked __esModule.
 function __vf_namespace(m) {
-  if (m && m.__esModule) return m;
   var ns = Object.create(null);
   if (m !== null && (typeof m === "object" || typeof m === "function")) {
     for (var key in m) if (key !== "default") ns[key] = m[key];
@@ -226,16 +230,32 @@ function __vf_namespace(m) {
 
 /**
  * Fail the build when bundled route code declares a name the prepended
- * `require` prologue also declares at module scope.
+ * `require` prologue also declares at module scope. Only declarations count:
+ * the name inside a string or as a property is not a binding and cannot
+ * collide.
  */
 export function assertNoRouteRequirePrologueCollision(bundledCode: string): void {
   for (const name of ROUTE_REQUIRE_PROLOGUE_BINDINGS) {
-    if (new RegExp(`(^|[^\\w$])${name.replace(/\$/g, "\\$")}($|[^\\w$])`).test(bundledCode)) {
+    if (declaresBinding(bundledCode, name)) {
       throw new Error(
         `${name} is reserved for the Veryfront route module loader; rename it in the route or its imports`,
       );
     }
   }
+}
+
+function declaresBinding(code: string, name: string): boolean {
+  const id = name.replace(/\$/g, "\\$");
+  const notIdent = "(?![\\w$])";
+  const patterns = [
+    // var/let/const/function/class declarations.
+    `(?:^|[^\\w$.])(?:var|let|const|function\\s*\\*?|class)\\s+${id}${notIdent}`,
+    // Destructuring declarations: const { a: name } = ..., const [name] = ...
+    `(?:^|[^\\w$.])(?:var|let|const)\\s*[{[][^=;]*?(?:^|[^\\w$.])${id}${notIdent}[^=;]*?[}\\]]\\s*=`,
+    // Import bindings: import name, import * as name, import { x as name }.
+    `(?:^|[^\\w$.])import\\s+[^'";]*?(?:^|[^\\w$.:])${id}${notIdent}[^'";]*?\\bfrom\\s*["']`,
+  ];
+  return patterns.some((pattern) => new RegExp(pattern, "m").test(code));
 }
 
 export function getNodeExternalPackagesToResolve(userDeps: Map<string, string>): string[] {

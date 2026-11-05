@@ -5862,6 +5862,79 @@ describe("route CommonJS require (#5471)", () => {
     );
   });
 
+  denoIt("allows the reserved names in strings and property access", async () => {
+    const GET = await loadCompiledRoute(
+      [
+        'import pg from "cjs-fixture";',
+        "const record = { __vf_namespace: 'prop' };",
+        "export const GET = () => new Response('__vf_namespace ' + record.__vf_namespace + ' ' + new pg.Pool().query());",
+      ].join("\n"),
+    );
+    assertEquals(await responseText(GET), "__vf_namespace prop ok");
+  });
+
+  denoIt("gives __esModule packages a namespace whose default is module.exports", async () => {
+    const files = {
+      "node_modules/flagged/package.json": JSON.stringify({ name: "flagged", main: "index.js" }),
+      "node_modules/flagged/index.js": [
+        'Object.defineProperty(exports, "__esModule", { value: true });',
+        "exports.default = 'inner';",
+        "exports.named = 'n';",
+      ].join("\n"),
+    };
+    const GET = await loadCompiledRoute(
+      [
+        'import inner, * as ns from "flagged";',
+        "export const GET = async () => {",
+        '  const dynamic = await import("flagged");',
+        "  return new Response([inner, ns.named, ns.default.named, dynamic.default.default].join(','));",
+        "};",
+      ].join("\n"),
+      files,
+    );
+    assertEquals(await responseText(GET), "inner,n,n,inner");
+  });
+
+  denoIt("rewrites default-plus-named imports of a subpath and side-effect imports", async () => {
+    const files = {
+      "node_modules/combo/package.json": JSON.stringify({ name: "combo", main: "index.js" }),
+      "node_modules/combo/index.js": "module.exports = 'root';",
+      "node_modules/combo/sub.js": "module.exports = { helper: 'h', toString: () => 'sub' };",
+      "node_modules/combo/side.js": "globalThis.__comboSide = 'side';",
+    };
+    const GET = await loadCompiledRoute(
+      [
+        'import "combo/side";',
+        'import main, { helper } from "combo/sub";',
+        "export const GET = () => new Response(",
+        "  [String(main), helper, (globalThis as Record<string, unknown>).__comboSide].join(','),",
+        ");",
+      ].join("\n"),
+      files,
+    );
+    assertEquals(await responseText(GET), "sub,h,side");
+  });
+
+  denoIt("keeps MODULE_NOT_FOUND on a missing optional dependency", async () => {
+    const files = {
+      "node_modules/optional-user/package.json": JSON.stringify({
+        name: "optional-user",
+        main: "index.js",
+      }),
+      "node_modules/optional-user/index.js": [
+        "let value;",
+        'try { value = require("optional-native"); }',
+        "catch (error) { if (error.code !== 'MODULE_NOT_FOUND') throw error; value = 'fallback'; }",
+        "module.exports = value;",
+      ].join("\n"),
+    };
+    const GET = await loadCompiledRoute(
+      'import value from "optional-user";\nexport const GET = () => new Response(value);',
+      files,
+    );
+    assertEquals(await responseText(GET), "fallback");
+  });
+
   denoIt("lets bundled project CommonJS require Node built-ins", async () => {
     // Runs the real loader on this runtime. A virtual adapter forces the
     // esbuild bundle path, which inlines the .cjs file behind esbuild's
