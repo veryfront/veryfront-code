@@ -85,8 +85,14 @@ interface FormatBudget {
   nodes: number;
 }
 
+/** An object or array whose own properties are rendered. */
+type ConsoleValueContainer = Readonly<Record<string, unknown>>;
+
 /** A data property's value; accessors are reported, never run. */
-function readOwnData(value: object, key: string): { value: unknown } | string {
+function readOwnData(
+  value: ConsoleValueContainer | Error,
+  key: string,
+): { value: unknown } | string {
   const descriptor = getOwnPropertyDescriptor(value, key);
   if (!descriptor) return "undefined";
   if (!("value" in descriptor)) return "[Getter]";
@@ -138,7 +144,9 @@ function formatValue(
     const parts: string[] = [];
     for (let index = 0; index < keys.length && index < MAX_ENTRIES; index++) {
       const key = keys[index]!;
-      const read = isSensitiveKey(key) ? REDACTED : readOwnData(value, key);
+      const read = isSensitiveKey(key)
+        ? REDACTED
+        : readOwnData(value as ConsoleValueContainer, key);
       const rendered = typeof read === "string"
         ? read
         : formatValue(read.value, depth + 1, seen, budget);
