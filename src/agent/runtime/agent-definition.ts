@@ -91,7 +91,7 @@ export const getRuntimeAgentMarkdownDefinitionSchema = defineSchema((v) =>
       v.array(v.string().min(1)),
       v.record(v.string().min(1), v.boolean()),
     ]).optional(),
-    tools: v.union([v.literal(true), v.array(v.string().min(1))]).optional(),
+    tools: v.union([v.boolean(), v.array(v.string().min(1))]).optional(),
     toolLoading: v.union([v.literal("eager"), v.literal("deferred")]).optional(),
     bootstrapTools: v.array(v.string().min(1).max(512)).max(16).optional(),
     optionalBootstrapTools: v.array(v.string().min(1).max(512)).max(16).optional(),
@@ -209,7 +209,8 @@ function parseCapabilitySelector(value: unknown, field: string): true | string[]
   return parseStringArray(value, field);
 }
 
-function parseToolSelector(value: unknown): { tools: true | string[]; deniedTools: string[] } {
+function parseToolSelector(value: unknown): { tools: boolean | string[]; deniedTools: string[] } {
+  if (value === false) return { tools: false, deniedTools: [] };
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     return { tools: parseCapabilitySelector(value, "tools"), deniedTools: [] };
   }
@@ -348,6 +349,49 @@ export function parseRuntimeAgentMarkdownDefinition(
   objectSetPrototypeOf(definition, null);
   return getRuntimeAgentMarkdownDefinitionSchema().parse(definition);
 }
+
+/**
+ * Apply the closed `tools: false` selector to a serialized agent definition,
+ * mirroring the factory: no startup tools or skill, no knowledge, delegates,
+ * skills or MCP servers, no tool-result reader, and eager loading (deferred
+ * loading would synthesize a callable `tool_search`). Any other selector is
+ * returned unchanged. Hosted construction paths that do not go through the
+ * factory must apply this before reading those fields.
+ */
+export function applyClosedRuntimeToolSelector<T extends ClosableRuntimeToolSelectorFields>(
+  definition: T,
+): T {
+  if (definition.tools !== false) return definition;
+  const closed = { ...definition };
+  delete closed.bootstrapTools;
+  delete closed.optionalBootstrapTools;
+  delete closed.bootstrapSkill;
+  delete closed.knowledge;
+  delete closed.delegates;
+  return Object.assign(
+    closed,
+    {
+      skills: false,
+      mcpServers: [],
+      toolResultContext: false,
+      toolLoading: "eager",
+    } as const,
+  );
+}
+
+/** Fields a closed `tools: false` selector clears or pins. */
+type ClosableRuntimeToolSelectorFields = {
+  tools?: unknown;
+  skills?: unknown;
+  mcpServers?: unknown;
+  toolResultContext?: unknown;
+  toolLoading?: unknown;
+  bootstrapTools?: unknown;
+  optionalBootstrapTools?: unknown;
+  bootstrapSkill?: unknown;
+  knowledge?: unknown;
+  delegates?: unknown;
+};
 
 const reflectApply = Reflect.apply;
 const arrayIncludes = Array.prototype.includes;

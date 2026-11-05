@@ -256,7 +256,7 @@ export function parseToolArgs(
  */
 export function isDynamicTool(
   name: string,
-  toolsConfig?: true | Record<string, ToolConfigEntry>,
+  toolsConfig?: boolean | Record<string, ToolConfigEntry>,
 ): boolean {
   const entry = typeof toolsConfig === "object" && intrinsicHasOwn(toolsConfig, name)
     ? toolsConfig[name]
@@ -272,7 +272,7 @@ export function isDynamicTool(
 // deno-lint-ignore no-explicit-any -- generic erasure: accepts Tool with any input/output types
 export type ToolConfigEntry = Tool<any, any> | boolean;
 
-type ConfiguredTools = true | Record<string, ToolConfigEntry> | undefined;
+type ConfiguredTools = boolean | Record<string, ToolConfigEntry> | undefined;
 
 function getConfiguredRemoteToolName(
   entry: ToolConfigEntry | undefined,
@@ -573,6 +573,9 @@ async function executeConfiguredToolImplementation(
 ): Promise<unknown> {
   const ownershipCheck = assertExecutionOwnership();
   if (ownershipCheck) await ownershipCheck;
+  if (toolsConfig === false) {
+    throw PERMISSION_DENIED.create({ detail: `Tool "${toolName}" is disabled for this agent` });
+  }
   const configuredEntry = toolsConfig === true ? undefined : toolsConfig?.[toolName];
   const configuredRemoteToolName = getConfiguredRemoteToolName(configuredEntry);
   const authorizationToolName = getConfiguredToolAuthorizationName(toolName, configuredEntry);

@@ -586,6 +586,24 @@ Deno.test("hosted child project agents request only materialized skill and deleg
   );
 });
 
+Deno.test("hosted child no-tools selector leaves only explicit provider-native tools", () => {
+  assertEquals(
+    veryfrontCloudAgentServiceInternals.resolveHostedChildToolNames({
+      id: "text-only",
+      name: "Text only",
+      description: "Answers directly",
+      instructions: "Answer directly.",
+      tools: false,
+      skills: ["visible-guide"],
+      knowledge: true,
+      delegates: ["writer"],
+      providerTools: ["web_search", "web_fetch"],
+      deniedTools: ["web_fetch"],
+    }),
+    ["web_search"],
+  );
+});
+
 Deno.test("hosted child project agents drop parent-only canonical control tools from configured child selectors", () => {
   assertEquals(
     veryfrontCloudAgentServiceInternals.resolveHostedChildToolNames({

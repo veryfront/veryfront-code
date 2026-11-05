@@ -245,6 +245,7 @@ import {
   RuntimeEmptyResponseError,
 } from "./empty-response-recovery.ts";
 import {
+  closeAgentConfigToolSelector,
   getProviderReplayInvokeAgentToolCallsSchema,
   getRuntimeAllowedRemoteTools,
   getRuntimeForwardedIntegrationToolDefs,
@@ -2329,12 +2330,13 @@ function hasToolResultContextEnabled(
 }
 
 function createActiveToolResultContext(input: {
-  config: Pick<AgentConfig, "toolResultContext">;
+  config: Pick<AgentConfig, "tools" | "toolResultContext">;
   hasToolReplacements?: boolean;
   supportsToolCalling?: boolean;
 }): ToolResultContext | undefined {
   if (
-    input.supportsToolCalling === false || input.hasToolReplacements ||
+    input.config.tools === false || input.supportsToolCalling === false ||
+    input.hasToolReplacements ||
     !hasToolResultContextEnabled(input.config)
   ) {
     return undefined;
@@ -3107,7 +3109,7 @@ async function traceConfiguredToolExecution(input: {
   admittedTurn: AdmittedToolTurn;
   owner: Message[];
   prepareTerminalDispatch: () => Promise<void>;
-  toolsConfig: true | Record<string, ToolConfigEntry> | undefined;
+  toolsConfig: boolean | Record<string, ToolConfigEntry> | undefined;
   context: ToolExecutionContext;
   allowedRemoteToolNames: string[] | undefined;
   remoteToolSources: ReturnType<typeof getRuntimeRemoteToolSources>;
@@ -3487,6 +3489,11 @@ export class AgentRuntime {
     this.id = id;
     this.config = { ...config };
     if (ObjectGetPrototypeOf(config) === null) ObjectSetPrototypeOf(this.config, null);
+    // Direct construction (ag-ui, forks, internal run streams, public callers)
+    // must close `tools: false` exactly as agent() does: startup tools/skill,
+    // skills, knowledge, delegates, MCP servers and the tool-result reader all
+    // run through or expose callable tools.
+    if (this.config.tools === false) closeAgentConfigToolSelector(this.config);
 
     // Agents are stateless by default (see docs/guides/memory-and-streaming.md):
     // with no `memory` config, calls never share conversation history, so
@@ -3982,6 +3989,7 @@ export class AgentRuntime {
     toolReplacements: AgentGenerateToolReplacements | undefined,
     retainSkillLoaderTools: boolean | undefined,
   ): AgentGenerateToolReplacements | undefined {
+    if (this.config.tools === false) return undefined;
     if (toolReplacements === undefined) {
       return undefined;
     }

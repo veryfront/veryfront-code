@@ -354,6 +354,32 @@ it("deferred stream can reload another agent write tool after a successful write
   assertEquals(body.includes("Created both agents."), true);
 });
 
+it("exposes explicitly selected provider tools without a search helper when host tools are closed", async () => {
+  for (const hostBinding of [false, true]) {
+    const model = scriptedModel([{ text: "done" }], {
+      provider: "anthropic",
+      modelId: "claude-sonnet-4-6",
+      only: "generate",
+    });
+    const assistant = agent(
+      {
+        id: hostBinding ? "no-tools-host-deferred" : "no-tools-authored-deferred",
+        model: "anthropic/claude-sonnet-4-6",
+        system: "Answer directly.",
+        tools: false,
+        providerTools: ["web_search"],
+        toolLoading: "deferred",
+        resolveModelTransport: () => ({ model }),
+        ...(hostBinding ? { __vfToolLoadingMode: "deferred" } : {}),
+      } as AgentConfig & RuntimeToolFilterConfig,
+    );
+
+    await assistant.generate({ input: "Say done." });
+
+    assertEquals(model.toolNames(0), ["web_search"]);
+  }
+});
+
 it("deferred generate activates and executes provider-native web search on demand", async () => {
   const model = scriptedModel([
     {

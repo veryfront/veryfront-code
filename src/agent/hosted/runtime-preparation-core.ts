@@ -45,9 +45,10 @@ import {
 import { wrapRemoteToolSourceWithMcpPolicy } from "#veryfront/agent/mcp-tool-policy.ts";
 import { getProviderNativeToolNames } from "#veryfront/agent/runtime/provider-native-tool-inventory.ts";
 import { resolveProviderToolSchemaTarget } from "#veryfront/agent/runtime/model-resolution.ts";
-import type {
-  RuntimeAgentMarkdownDefinition,
-  RuntimeAgentThinkingConfig,
+import {
+  applyClosedRuntimeToolSelector,
+  type RuntimeAgentMarkdownDefinition,
+  type RuntimeAgentThinkingConfig,
 } from "#veryfront/agent/runtime/agent-definition.ts";
 import {
   type ExecutorBinding,
@@ -707,7 +708,8 @@ export function createRuntimePreparationCore(input: RuntimePreparationCoreOption
         }
         return described.value.definition;
       };
-      const definition = resolveDefinition();
+      // The closed selector strips startup, knowledge, MCP and tool-result fields.
+      const definition = applyClosedRuntimeToolSelector(resolveDefinition());
       const modelId = request.modelId ?? grant.defaultModelId;
       const resolveModelGrant = () => {
         const modelGrant = privateMapGet(modelGrants, modelId);
@@ -811,7 +813,8 @@ export function createRuntimePreparationCore(input: RuntimePreparationCoreOption
           );
         }
       };
-      populateRemoteToolSources();
+      // A closed selector calls no tools, so no remote source is connected or listed.
+      if (definition.tools !== false) populateRemoteToolSources();
       if (remoteToolSources.length > 0) resourcesStarted = true;
       const resolveInitialToolSelection = () => {
         const sourceToolNames = resolveHostedRuntimeAllowedTools({
@@ -1089,6 +1092,7 @@ export function createRuntimePreparationCore(input: RuntimePreparationCoreOption
         allowedToolNames,
         deniedToolNames,
         allowedProviderToolNames: providerToolNames,
+        ...(definition.tools === false ? { closedToolSelector: true } : {}),
         toolLoading: definition.toolLoading,
         bootstrapTools: definition.bootstrapTools,
         optionalBootstrapTools: definition.optionalBootstrapTools,

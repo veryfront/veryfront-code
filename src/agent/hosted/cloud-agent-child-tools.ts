@@ -37,7 +37,10 @@ import {
   type RuntimeSkillDefinition,
 } from "../runtime/skill-metadata.ts";
 import type { ResolvedSkillSelectorSnapshot } from "#veryfront/skill/selector.ts";
-import type { RuntimeAgentMarkdownDefinition } from "../runtime/agent-definition.ts";
+import {
+  applyClosedRuntimeToolSelector,
+  type RuntimeAgentMarkdownDefinition,
+} from "../runtime/agent-definition.ts";
 import { buildAgentDelegateTools } from "../runtime/agent-delegation.ts";
 import {
   CANONICAL_FORM_INPUT_TOOL_ID,
@@ -154,8 +157,10 @@ export function resolveMcpServers(
     mcpServers?: readonly AgentServiceMcpServerConfig[];
     createRemoteToolSource?: (config: RemoteMCPToolSourceConfig) => RemoteToolSource;
   },
-  agentConfig?: Pick<RuntimeAgentMarkdownDefinition, "mcpServers">,
+  agentConfig?: Pick<RuntimeAgentMarkdownDefinition, "mcpServers" | "tools">,
 ): readonly AgentServiceMcpServerConfig[] {
+  // MCP servers are callable tool sources; the closed selector connects none.
+  if (agentConfig?.tools === false) return [];
   // A deployment-owned transport is a privileged capability. When present,
   // omitting mcpServers locks the service to first-party defaults as its
   // authority ceiling, so tenant configuration cannot bind that transport to
@@ -325,6 +330,11 @@ export function resolveHostedChildToolNames(
     return undefined;
   }
 
+  if (agentConfig.tools === false) {
+    const deniedToolNames = new Set(agentConfig.deniedTools ?? []);
+    return (agentConfig.providerTools ?? []).filter((name) => !deniedToolNames.has(name));
+  }
+
   const deniedToolNames = new Set(agentConfig.deniedTools ?? []);
   const hasAuthorizedSkills = skillSelectorSnapshot === undefined ||
     skillSelectorSnapshot.allowedSkillIds.length > 0;
@@ -455,7 +465,7 @@ function providerOnlyToolNamesField(
   agentConfig: RuntimeAgentMarkdownDefinition,
 ): { providerOnlyToolNames?: string[] } {
   if (agentConfig.tools === true || !agentConfig.providerTools?.length) return {};
-  const callable = new Set(agentConfig.tools ?? []);
+  const callable = new Set(agentConfig.tools === false ? [] : agentConfig.tools ?? []);
   const providerOnly = agentConfig.providerTools.filter((name) => !callable.has(name));
   return providerOnly.length > 0 ? { providerOnlyToolNames: providerOnly } : {};
 }
@@ -499,6 +509,8 @@ export async function resolveHostedChildAgentExecutionConfig(
       abortSignal,
     });
   }
+  // Mirror the factory for the closed selector before any field is read.
+  agentConfig = applyClosedRuntimeToolSelector(agentConfig);
   const steering = await raceHostedChildAbort(
     fetchProjectSteering(context, {
       projectId: projectId || null,
@@ -513,13 +525,17 @@ export async function resolveHostedChildAgentExecutionConfig(
     selector: agentConfig.skills === false ? [] : agentConfig.skills,
   });
   // Resolve startup inside the target's existing authorization, never the parent's catalog.
-  const bootstrapSkill = agentConfig.bootstrapSkill === undefined
+  // A closed tool selector has no skill loader, so startup is omitted as in the factory.
+  const configuredBootstrapSkill = agentConfig.tools === false
+    ? undefined
+    : agentConfig.bootstrapSkill;
+  const bootstrapSkill = configuredBootstrapSkill === undefined
     ? undefined
     : (skillSelectorSnapshot.definitions.find((skill) =>
-      skill.ownerAgentId === childAgentId && skill.shortName === agentConfig.bootstrapSkill
-    ) ?? skillSelectorSnapshot.definitions.find((skill) => skill.id === agentConfig.bootstrapSkill))
+      skill.ownerAgentId === childAgentId && skill.shortName === configuredBootstrapSkill
+    ) ?? skillSelectorSnapshot.definitions.find((skill) => skill.id === configuredBootstrapSkill))
       ?.id;
-  if (agentConfig.bootstrapSkill !== undefined && bootstrapSkill === undefined) {
+  if (configuredBootstrapSkill !== undefined && bootstrapSkill === undefined) {
     throw CONFIG_INVALID.create({ detail: "Configured startup skill is not authorized" });
   }
   const toolNames = resolveHostedChildToolNames(agentConfig, skillSelectorSnapshot);

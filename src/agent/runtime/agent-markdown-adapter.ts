@@ -22,15 +22,17 @@ export function createRuntimeAgentFromMarkdownDefinition(
   );
   const failClosedUnrestrictedSelector = definition.tools === true && deniedToolEntries.length > 0;
   const selectedToolMap: Record<string, boolean> = {
-    ...(definition.tools !== undefined && definition.tools !== true
+    ...(definition.tools !== undefined && definition.tools !== true && definition.tools !== false
       ? Object.fromEntries(definition.tools.map((name) => [name, true as const]))
       : {}),
     ...Object.fromEntries(deniedToolEntries),
   };
   // AgentConfig cannot express "all except". When an unrestricted serialized
   // selector also carries denials, retain the false-only map and fail closed.
-  const selectedTools: true | Record<string, boolean> | undefined = definition.tools === true &&
-      !failClosedUnrestrictedSelector
+  const selectedTools: boolean | Record<string, boolean> | undefined = definition.tools === false
+    ? false
+    : definition.tools === true &&
+        !failClosedUnrestrictedSelector
     ? true
     : Object.keys(selectedToolMap).length > 0
     ? selectedToolMap
@@ -66,7 +68,7 @@ export function createRuntimeAgentFromMarkdownDefinition(
     ...(delegates === undefined ? {} : { delegates }),
     ...(definition.mcpServers === undefined ? {} : { mcpServers: definition.mcpServers }),
     ...(selectedTools !== undefined &&
-        (selectedTools === true || Object.keys(selectedTools).length > 0)
+        (typeof selectedTools === "boolean" || Object.keys(selectedTools).length > 0)
       ? { tools: selectedTools }
       : {}),
     ...(definition.toolLoading === undefined ? {} : { toolLoading: definition.toolLoading }),

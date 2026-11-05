@@ -31,7 +31,10 @@ import {
   prepareAgentRuntimeMessagesFromUiMessages,
   type PrepareAgentRuntimeMessagesFromUiMessagesOptions,
 } from "../runtime/message-preparation.ts";
-import type { RuntimeAgentThinkingConfig } from "../runtime/agent-definition.ts";
+import {
+  applyClosedRuntimeToolSelector,
+  type RuntimeAgentThinkingConfig,
+} from "../runtime/agent-definition.ts";
 import type { RuntimeSkillLoaderToolName } from "../runtime/skill-prompt.ts";
 import type { AgentConfig } from "../types.ts";
 import {
@@ -172,7 +175,7 @@ export type HostedChatRuntimeCreationPreparationInput<TRuntimeAgentDefinition> =
     maxSteps?: number;
     allowedRemoteTools?: unknown;
     providerTools?: string[];
-    tools?: true | string[];
+    tools?: boolean | string[];
     deniedTools?: string[];
     skills?: import("#veryfront/skill/selector.ts").SkillSelector;
     toolLoading?: AgentConfig["toolLoading"];
@@ -371,7 +374,7 @@ export type HostedChatExecutionPreparationInput<
     maxSteps?: number;
     allowedRemoteTools?: unknown;
     providerTools?: string[];
-    tools?: true | string[];
+    tools?: boolean | string[];
     deniedTools?: string[];
   },
   TRuntimeResult extends HostedChatRuntimeCreationResult,
@@ -538,6 +541,9 @@ export async function prepareHostedChatRuntimeCreationOptions<
 >(
   input: HostedChatRuntimeCreationPreparationInput<TRuntimeAgentDefinition>,
 ): Promise<HostedChatRuntimeCreationPreparationResult<TRuntimeAgentDefinition>> {
+  // The closed selector must survive runtime construction: strip every field
+  // that would otherwise reintroduce a callable helper or tool source.
+  input = { ...input, agentConfig: applyClosedRuntimeToolSelector(input.agentConfig) };
   const steering = await input.fetchSteering({
     projectId: input.projectId,
     authToken: input.authToken,
@@ -665,6 +671,7 @@ export async function prepareHostedChatRuntimeCreationOptions<
       ...createAgentToolOptions(),
       allowedProviderTools: runtimeConfig.requestedAllowedProviderTools,
       includeRuntimeEssentialToolsWhenEmpty: runtimeConfig.includeRuntimeEssentialToolsWhenEmpty,
+      ...(input.agentConfig.tools === false ? { closedToolSelector: true } : {}),
       ...createReplayAndRunOptions(),
       agentId: input.agentConfig.id,
       ...(input.rootRunContext?.effectiveParentRunId
@@ -732,7 +739,7 @@ export async function prepareHostedChatExecution<
     maxSteps?: number;
     allowedRemoteTools?: unknown;
     providerTools?: string[];
-    tools?: true | string[];
+    tools?: boolean | string[];
     deniedTools?: string[];
     toolLoading?: AgentConfig["toolLoading"];
     bootstrapTools?: AgentConfig["bootstrapTools"];

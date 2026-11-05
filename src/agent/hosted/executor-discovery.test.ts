@@ -140,6 +140,40 @@ describe("executor discovery operations", () => {
     assertEquals(parsed.tools, undefined);
   });
 
+  it("accepts the closed tools selector at the executor boundary", () => {
+    const parsed = parseDiscoveryData(getExecutorAgentDefinitionSchema(), {
+      id: "no-tools",
+      name: "No Tools",
+      description: "Synthetic",
+      instructions: "Synthetic instructions",
+      tools: false,
+    }, true);
+    assertEquals(parsed.tools, false);
+  });
+
+  it("describes a code agent with tools false instead of closing discovery", async () => {
+    const f = fixture({
+      agents: [
+        agent({ id: "no-tools", system: "Synthetic", model: "openai/synthetic", tools: false }),
+      ],
+    });
+    try {
+      const result = await call(f.owner, "discovery.describe");
+      assert(getExecutorDiscoveryResultSchema().parse(result).ok);
+      assert(
+        result !== null && typeof result === "object" && !Array.isArray(result) &&
+          result.ok === true,
+      );
+      const value = result.value;
+      assert(value !== null && typeof value === "object" && !Array.isArray(value));
+      const definition = value.definition;
+      assert(definition !== null && typeof definition === "object" && !Array.isArray(definition));
+      assertEquals(definition.tools, false);
+    } finally {
+      await f.owner.close();
+    }
+  });
+
   it("accepts hosted skill selector forms at the executor boundary", () => {
     const glob256 = `${"s".repeat(254)}-*`;
     assertEquals(glob256.length, 256);
