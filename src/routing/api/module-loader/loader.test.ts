@@ -5716,6 +5716,13 @@ describe("route CommonJS require (#5471)", () => {
     routeSource: string,
     files: Record<string, string> = CJS_FIXTURE,
   ): Promise<() => Promise<Response>> {
+    return (await loadCompiledRouteModule(routeSource, files)).GET as () => Promise<Response>;
+  }
+
+  async function loadCompiledRouteModule(
+    routeSource: string,
+    files: Record<string, string> = CJS_FIXTURE,
+  ): Promise<Record<string, unknown>> {
     const projectDir = await writeProject(files);
     const packages = new Set(
       Object.keys(files)
@@ -5763,8 +5770,7 @@ describe("route CommonJS require (#5471)", () => {
       handlerPath,
       prependRouteRequirePrologue(rewritten, projectDir, true, helperPrefix),
     );
-    const module = await import(toFileUrl(handlerPath).href);
-    return module.GET;
+    return await import(toFileUrl(handlerPath).href);
   }
 
   async function responseText(GET: () => Promise<Response>): Promise<string> {
@@ -6209,6 +6215,92 @@ describe("route CommonJS require (#5471)", () => {
       thrownMessage(() => vfRequire("mixed/feature.mjs")),
       'ES module file "mixed/feature.mjs" cannot be loaded with require: import the package by a CommonJS entry',
     );
+  });
+
+  denoIt("rewrites imports bound to non-ASCII identifiers", async () => {
+    const GET = await loadCompiledRoute(
+      'import café from "cjs-fixture";\nexport const GET = () => new Response(new café.Pool().query());',
+    );
+    assertEquals(await responseText(GET), "ok");
+  });
+
+  denoIt("rewrites static and dynamic package imports with attributes", async () => {
+    const files = {
+      "node_modules/json-pkg/package.json": JSON.stringify({ name: "json-pkg", main: "index.js" }),
+      "node_modules/json-pkg/index.js": "module.exports = {};",
+      "node_modules/json-pkg/data.json": JSON.stringify({ rows: 3 }),
+    };
+    const GET = await loadCompiledRoute(
+      [
+        'import data from "json-pkg/data.json" with { type: "json" };',
+        "export const GET = async () => {",
+        '  const lazy = await import("json-pkg/data.json", { with: { type: "json" } });',
+        "  return new Response(`${data.rows},${lazy.default.rows}`);",
+        "};",
+      ].join("\n"),
+      files,
+    );
+    assertEquals(await responseText(GET), "3,3");
+  });
+
+  denoIt("rewrites named and namespace re-exports from a CommonJS package", async () => {
+    const module = await loadCompiledRouteModule(
+      [
+        'export { version, Pool as RowPool, default as pg } from "cjs-fixture";',
+        'export * as fixture from "cjs-fixture";',
+        "export const GET = () => new Response('ok');",
+      ].join("\n"),
+    );
+    assertEquals(module.version, "1.0.0");
+    assertEquals(typeof module.RowPool, "function");
+    assertEquals((module.pg as { version: string }).version, "1.0.0");
+    assertEquals((module.fixture as { version: string }).version, "1.0.0");
+  });
+
+  denoIt("rejects export * from a CommonJS package with a clear error", async () => {
+    await assertRejects(
+      () => loadCompiledRouteModule('export * from "cjs-fixture";\nexport const GET = () => null;'),
+      Error,
+      'export * from CommonJS package "cjs-fixture" is not supported; export its names explicitly',
+    );
+  });
+
+  denoIt("gives CommonJS modules module.require and module metadata", async () => {
+    const projectDir = await writeProject({
+      "node_modules/mod-api/package.json": JSON.stringify({ name: "mod-api", main: "index.js" }),
+      "node_modules/mod-api/index.js":
+        'module.exports = module.require("./child") + ":" + (module.filename === __filename) + ":" + module.loaded;',
+      "node_modules/mod-api/child.js": "module.exports = 'child';",
+    });
+    const vfRequire = await importCompiledBinaryRequireShim(projectDir);
+
+    assertEquals(vfRequire("mod-api"), "child:true:false");
+  });
+
+  denoIt("resolves a package named like a prefix-only Node built-in", async () => {
+    const projectDir = await writeProject({
+      "node_modules/test/package.json": JSON.stringify({ name: "test", main: "index.js" }),
+      "node_modules/test/index.js": "module.exports = 'package named test';",
+    });
+    const vfRequire = await importCompiledBinaryRequireShim(projectDir);
+
+    assertEquals(vfRequire("test"), "package named test");
+  });
+
+  denoIt("hides host paths in other package resolution errors", async () => {
+    const projectDir = await writeProject({
+      "node_modules/bad-config/package.json": "{ not json",
+      "node_modules/bad-config/index.js": "module.exports = 1;",
+    });
+    const vfRequire = await importCompiledBinaryRequireShim(projectDir);
+
+    const message = thrownMessage(() => vfRequire("bad-config"));
+    assertEquals(
+      message.startsWith('npm package "bad-config" could not be resolved'),
+      true,
+      message,
+    );
+    assertEquals(message.includes(projectDir), false, message);
   });
 
   denoIt("rejects a native addon with a clear error", async () => {

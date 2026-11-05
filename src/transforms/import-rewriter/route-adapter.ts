@@ -9,6 +9,10 @@ import {
 import { resolveContainedPackagePath } from "./package-resolution.ts";
 import { isWithinDirectory } from "#veryfront/security/path-validation.ts";
 import {
+  JS_IDENTIFIER,
+  JS_STRING_LITERAL,
+  type ModuleSpecifier,
+  parseModuleSpecifiers,
   resolveExportEntry as resolveRouteExportEntry,
   toCjsDestructureBindings,
 } from "#veryfront/routing/api/module-loader/loader-helpers.ts";
@@ -198,15 +202,25 @@ export function rewriteCompiledVeryfrontImportsForRoute(code: string): string {
   return transformed;
 }
 
-/** A JavaScript identifier as esbuild emits local bindings (ASCII, `$` allowed). */
-const IDENT = "[\\w$]+";
-
 const IMPORT_CLAUSE = new RegExp(
-  `^(?:(${IDENT})\\s*(?:,\\s*)?)?(?:\\*\\s*as\\s+(${IDENT})|(\\{[^}]*\\}))?$`,
+  `^(?:(${JS_IDENTIFIER})\\s*(?:,\\s*)?)?(?:\\*\\s*as\\s+(${JS_IDENTIFIER})|(\\{[^}]*\\}))?$`,
+  "u",
 );
-const STATIC_FROM_IMPORT = /^import\s*([\s\S]*?)\s*from\s*["'][^"']*["']\s*$/;
-const SIDE_EFFECT_IMPORT = /^import\s*["'][^"']*["']\s*$/;
-const DYNAMIC_IMPORT_CLOSE = /^\s*\)/;
+/** Import attributes (`with { type: "json" }`) and an optional semicolon. */
+const STATEMENT_TAIL = `(?:\\s*(?:with|assert)\\s*\\{[^}]*\\})?\\s*;?\\s*$`;
+const FROM_SPECIFIER = `from\\s*["'][^"']*["']`;
+const STATIC_FROM_IMPORT = new RegExp(
+  `^import\\s*([\\s\\S]*?)\\s*${FROM_SPECIFIER}${STATEMENT_TAIL}`,
+);
+const SIDE_EFFECT_IMPORT = new RegExp(`^import\\s*["'][^"']*["']${STATEMENT_TAIL}`);
+const EXPORT_STAR = new RegExp(`^export\\s*\\*\\s*${FROM_SPECIFIER}${STATEMENT_TAIL}`);
+const EXPORT_STAR_AS = new RegExp(
+  `^export\\s*\\*\\s*as\\s+(${JS_STRING_LITERAL}|${JS_IDENTIFIER})\\s*${FROM_SPECIFIER}${STATEMENT_TAIL}`,
+  "u",
+);
+const EXPORT_NAMED = new RegExp(
+  `^export\\s*(\\{[\\s\\S]*\\})\\s*${FROM_SPECIFIER}${STATEMENT_TAIL}`,
+);
 
 /** Prefix of the helpers the compiled route rewrite calls; see the prologue. */
 export const DEFAULT_ROUTE_HELPER_PREFIX = "__vf_";
@@ -225,25 +239,51 @@ function rewriteCjsImportClause(
   if (!parsed) return null;
   const [, defaultName, namespaceName, named] = parsed;
   if (!defaultName && !namespaceName && !named) return null;
-  const bindings = [defaultName, namespaceName, named].filter(Boolean).length;
-  const source = bindings > 1 ? `${helperPrefix}tmp_${defaultName ?? namespaceName}` : required;
-  const statements = bindings > 1 ? [`const ${source} = ${required}`] : [];
-  if (defaultName) {
-    statements.push(`const ${defaultName} = ${helperPrefix}interopDefault(${source})`);
-  }
-  if (namespaceName) {
-    statements.push(`const ${namespaceName} = ${helperPrefix}namespace(${specifier})`);
-  }
+
+  // `{ default as x }` is the default import under another name, so it takes
+  // the same interop as `import x`; the other names destructure.
+  const defaultAliases: string[] = [];
+  const otherNames: string[] = [];
   if (named) {
-    let pattern: string;
+    let specifiers: ModuleSpecifier[];
     try {
-      pattern = toCjsDestructureBindings(named);
+      specifiers = parseModuleSpecifiers(named);
     } catch (_) {
       // expected: an import clause this rewrite does not understand stays as written
       return null;
     }
-    statements.push(`const ${pattern} = ${source}`);
+    for (const entry of specifiers) {
+      if (entry.name === "default" && !entry.nameIsString && entry.alias && !entry.aliasIsString) {
+        defaultAliases.push(entry.alias);
+      } else {
+        otherNames.push(entry.alias === undefined ? entry.name : `${entry.name} as ${entry.alias}`);
+      }
+    }
   }
+  const defaults = defaultName ? [defaultName, ...defaultAliases] : defaultAliases;
+  let pattern: string | undefined;
+  if (otherNames.length > 0) {
+    try {
+      pattern = toCjsDestructureBindings(`{ ${otherNames.join(", ")} }`);
+    } catch (_) {
+      // expected: an import clause this rewrite does not understand stays as written
+      return null;
+    }
+  }
+
+  const bindings = defaults.length + (namespaceName ? 1 : 0) + (pattern ? 1 : 0);
+  if (bindings === 0) return required;
+  // More than one binding means a default or namespace binding is present.
+  const first = defaults[0] ?? namespaceName ?? "";
+  const source = bindings > 1 ? `${helperPrefix}tmp_${first}` : required;
+  const statements = bindings > 1 ? [`const ${source} = ${required}`] : [];
+  for (const name of defaults) {
+    statements.push(`const ${name} = ${helperPrefix}interopDefault(${source})`);
+  }
+  if (namespaceName) {
+    statements.push(`const ${namespaceName} = ${helperPrefix}namespace(${specifier})`);
+  }
+  if (pattern) statements.push(`const ${pattern} = ${source}`);
   return statements.join("; ");
 }
 
@@ -273,6 +313,90 @@ function matchUserDependency(
 }
 
 /**
+ * Rewrite a re-export from a CommonJS dependency into local bindings and a
+ * local export list. Names are read once, when the route module loads, as
+ * with the import rewrite. `export *` cannot be rewritten: a CommonJS
+ * module's names are only known at run time.
+ */
+function rewriteCjsReexport(
+  statement: string,
+  specifier: string,
+  dependency: string,
+  helperPrefix: string,
+  index: number,
+): string {
+  const local = `${helperPrefix}reexport_${index}`;
+  const starAs = statement.match(EXPORT_STAR_AS);
+  if (starAs) {
+    return `const ${local} = ${helperPrefix}namespace(${specifier}); export { ${local} as ${
+      starAs[1]
+    } }`;
+  }
+  const named = statement.match(EXPORT_NAMED);
+  if (named) {
+    const statements = [`const ${local} = require(${specifier})`];
+    const exported: string[] = [];
+    parseModuleSpecifiers(named[1]!).forEach((entry, position) => {
+      const binding = `${local}_${position}`;
+      const value = entry.name === "default" && !entry.nameIsString
+        ? `${helperPrefix}interopDefault(${local})`
+        : entry.nameIsString
+        ? `${local}[${entry.name}]`
+        : `${local}.${entry.name}`;
+      statements.push(`const ${binding} = ${value}`);
+      exported.push(`${binding} as ${entry.alias ?? entry.name}`);
+    });
+    return `${statements.join("; ")}; export { ${exported.join(", ")} }`;
+  }
+  if (EXPORT_STAR.test(statement)) {
+    throw new Error(
+      `export * from CommonJS package ${
+        JSON.stringify(dependency)
+      } is not supported; export its names explicitly`,
+    );
+  }
+  throw new Error(
+    `Unsupported re-export from CommonJS package ${JSON.stringify(dependency)}: ${statement}`,
+  );
+}
+
+/**
+ * The index just past the `)` closing a dynamic `import(` whose specifier ends
+ * at `from`, skipping an options argument; -1 when it cannot be found.
+ */
+function findDynamicImportEnd(code: string, from: number): number {
+  let depth = 0;
+  for (let index = from; index < code.length; index++) {
+    const char = code[index]!;
+    if (char === '"' || char === "'" || char === "`") {
+      for (index++; index < code.length && code[index] !== char; index++) {
+        if (code[index] === "\\") index++;
+      }
+      continue;
+    }
+    if (char === "/" && code[index + 1] === "/") {
+      const end = code.indexOf("\n", index);
+      if (end === -1) return -1;
+      index = end;
+      continue;
+    }
+    if (char === "/" && code[index + 1] === "*") {
+      const end = code.indexOf("*/", index + 2);
+      if (end === -1) return -1;
+      index = end + 1;
+      continue;
+    }
+    if (char === "(" || char === "{" || char === "[") depth++;
+    else if (char === "}" || char === "]") depth--;
+    else if (char === ")") {
+      if (depth === 0) return index + 1;
+      depth--;
+    }
+  }
+  return -1;
+}
+
+/**
  * Rewrite a bundled compiled-binary route's user dependency imports.
  *
  * Import statements come from the module lexer, so text that only looks like
@@ -290,6 +414,7 @@ export async function rewriteCompiledUserDependencyImportsForRoute(
   if (userDeps.size === 0) return code;
   const { masked, imports, unmask } = await parseMaskedImports(code);
   const edits: { start: number; end: number; text: string }[] = [];
+  let reexports = 0;
 
   for (const imported of imports) {
     if (typeof imported.n !== "string") continue;
@@ -328,19 +453,27 @@ export async function rewriteCompiledUserDependencyImportsForRoute(
     const required = `require(${specifier})`;
     if (isDynamic) {
       // A dynamic import stays lazy and asynchronous: a load failure rejects
-      // the returned promise instead of throwing synchronously. Imports with
-      // options (`import(x, {...})`) are left unchanged.
-      const close = masked.slice(imported.e).match(DYNAMIC_IMPORT_CLOSE);
-      if (!close) continue;
+      // the returned promise instead of throwing synchronously. An options
+      // argument (import attributes) is consumed: require reads JSON itself.
+      const end = findDynamicImportEnd(masked, imported.e);
+      if (end === -1) continue;
       edits.push({
         start: imported.ss,
-        end: imported.e + close[0].length,
+        end,
         text: `Promise.resolve().then(() => ${helperPrefix}namespace(${specifier}))`,
       });
       continue;
     }
 
     const statement = masked.slice(imported.ss, imported.se);
+    if (statement.startsWith("export")) {
+      edits.push({
+        start: imported.ss,
+        end: imported.se,
+        text: rewriteCjsReexport(statement, specifier, imported.n, helperPrefix, reexports++),
+      });
+      continue;
+    }
     if (SIDE_EFFECT_IMPORT.test(statement)) {
       edits.push({ start: imported.ss, end: imported.se, text: required });
       continue;

@@ -45,6 +45,10 @@ describe("routing/api/module-loader helpers", () => {
       toCjsDestructureBindings(`{ "a-b" as value, 'c,d' as other, e, }`),
       `{ "a-b": value, 'c,d': other, e }`,
     );
+    assertEquals(
+      toCjsDestructureBindings("{ café as c2, caf\\u00e9 }"),
+      "{ café: c2, caf\\u00e9 }",
+    );
   });
 
   it("returns the expected file loaders and extensions", () => {

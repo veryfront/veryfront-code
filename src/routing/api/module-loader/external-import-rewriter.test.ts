@@ -161,6 +161,49 @@ describe("external-import-rewriter", () => {
       assertStringIncludes(out, `require("lodash/merge")`);
     });
 
+    it("rewrites a re-export into local bindings and an export list", async () => {
+      const out = await rewriteCompiledBinaryUserDependencyImports(
+        `export { merge as join, default as lodash, "a-b" as dashed } from "lodash";`,
+        deps,
+      );
+      assertEquals(
+        out,
+        'const __vf_reexport_0 = require("lodash"); ' +
+          "const __vf_reexport_0_0 = __vf_reexport_0.merge; " +
+          "const __vf_reexport_0_1 = __vf_interopDefault(__vf_reexport_0); " +
+          'const __vf_reexport_0_2 = __vf_reexport_0["a-b"]; ' +
+          "export { __vf_reexport_0_0 as join, __vf_reexport_0_1 as lodash, __vf_reexport_0_2 as dashed };",
+      );
+    });
+
+    it("rewrites package imports that carry attributes", async () => {
+      const out = await rewriteCompiledBinaryUserDependencyImports(
+        [
+          `import data from "lodash/data.json" with { type: "json" };`,
+          `const lazy = import("lodash/data.json", { with: { type: "json" } });`,
+        ].join("\n"),
+        deps,
+      );
+      assertEquals(
+        out,
+        [
+          'const data = __vf_interopDefault(require("lodash/data.json"));',
+          'const lazy = Promise.resolve().then(() => __vf_namespace("lodash/data.json"));',
+        ].join("\n"),
+      );
+    });
+
+    it("rewrites a named default import with interop", async () => {
+      const out = await rewriteCompiledBinaryUserDependencyImports(
+        `import { default as lodash, merge } from "lodash";`,
+        deps,
+      );
+      assertEquals(
+        out,
+        'const __vf_tmp_lodash = require("lodash"); const lodash = __vf_interopDefault(__vf_tmp_lodash); const { merge } = __vf_tmp_lodash;',
+      );
+    });
+
     it("leaves imports for packages not in userDeps untouched", async () => {
       const code = `import x from "react";`;
       assertEquals(await rewriteCompiledBinaryUserDependencyImports(code, deps), code);
@@ -433,6 +476,20 @@ describe("external-import-rewriter", () => {
         new Map([["lodash", "^4"]]),
       );
       assertEquals(out, `const x = __vf_interopDefault(require("lodash/a\\u003Cb\\u003E"));`);
+    });
+  });
+
+  describe("generateCompiledBinaryRequireShim path ids", () => {
+    it("classifies ids with the platform's absolute-path check", () => {
+      // Windows drive-letter and UNC ids cannot be exercised on this host, so
+      // assert the loader classifies path ids through path.isAbsolute.
+      const shim = generateCompiledBinaryRequireShim("/srv/app");
+      assertStringIncludes(
+        shim,
+        'var __vf_isAbsolute = __vf_builtinRequire("node:path").isAbsolute;',
+      );
+      assertStringIncludes(shim, "if (__vf_isPathId(id)) {");
+      assertStringIncludes(shim, "if (__vf_isPathId(id)) return __vf_resolveLocal(id, parentDir);");
     });
   });
 

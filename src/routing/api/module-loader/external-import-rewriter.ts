@@ -61,6 +61,7 @@ const ROUTE_HELPER_SUFFIXES = [
   "interopDefault",
   "namespace",
   "tmp_",
+  "reexport_",
 ] as const;
 const ROUTE_HELPER_NAME = /\b__vf_(createRequire|dirname|resolve|interopDefault|namespace)\b/g;
 
@@ -126,13 +127,24 @@ var __vf_namespace;
 var require = (function () {
 var __vf_builtinRequire = __vf_createRequire(__VF_PROJECT_DIR__ + "/package.json");
 var __vf_builtinSet = new Set(__VF_BUILTIN_LIST__);
-// Every built-in this runtime provides, not only the shared list.
+// Every built-in this runtime provides, not only the shared list. Node's
+// prefix-only built-ins (node:test, node:sqlite, node:sea) have no bare form,
+// so a package of that name still resolves from node_modules, even where the
+// runtime lists the bare name.
+var __vf_prefixOnlyBuiltins = new Set(["sea", "sqlite", "test", "test/reporters"]);
 try {
   var __vf_runtimeBuiltins = __vf_builtinRequire("node:module").builtinModules;
   for (var __vf_b = 0; __vf_b < __vf_runtimeBuiltins.length; __vf_b++) {
-    __vf_builtinSet.add(__vf_runtimeBuiltins[__vf_b].replace(/^node:/, ""));
+    var __vf_name = __vf_runtimeBuiltins[__vf_b];
+    if (__vf_name.startsWith("node:") || __vf_prefixOnlyBuiltins.has(__vf_name)) continue;
+    __vf_builtinSet.add(__vf_name);
   }
 } catch (_) { /* expected: fall back to the shared list */ }
+// Absolute ids include Windows drive-letter and UNC paths.
+var __vf_isAbsolute = __vf_builtinRequire("node:path").isAbsolute;
+function __vf_isPathId(id) {
+  return id.startsWith(".") || __vf_isAbsolute(id);
+}
 var __vf_projectRoot = __VF_PROJECT_ROOT__;
 // VULN-FS-5: Canonicalize the project root so containment checks using
 // Deno.realPathSync(resolved) compare canonical-vs-canonical. Without this,
@@ -183,15 +195,37 @@ function __vf_packageInstalled(name, parentDir) {
     if (__vf_dirname(dir) === dir) return false;
   }
 }
+// A package named like a prefix-only built-in (test, sqlite, sea) is looked up
+// in node_modules directly: the runtime's resolver may claim the bare name.
+function __vf_resolvePrefixOnlyName(id, parentDir) {
+  for (var dir = __vf_resolve(parentDir); ; dir = __vf_dirname(dir)) {
+    var packageDir = __vf_resolve(dir, "node_modules", __vf_packageName(id));
+    var exists = false;
+    try { Deno.statSync(packageDir); exists = true; } catch (_) { /* expected: not installed at this level */ }
+    // A relative id keeps host paths out of any error it raises.
+    if (exists) return __vf_resolveLocal("./node_modules/" + id, dir);
+    if (__vf_dirname(dir) === dir) break;
+  }
+  var missing = new Error("npm package " + JSON.stringify(__vf_packageName(id)) + " is not installed in this runtime's node_modules");
+  missing.code = "MODULE_NOT_FOUND";
+  throw missing;
+}
 function __vf_resolveBare(id, parentDir) {
+  if (__vf_prefixOnlyBuiltins.has(__vf_packageName(id))) return __vf_resolvePrefixOnlyName(id, parentDir);
   try {
     return __vf_parentRequire(parentDir).resolve(id);
   } catch (error) {
     // The resolver's message carries host paths in its require stack. Name
     // only what the route asked for, and say "not installed" only when no
     // node_modules on the lookup path has the package at all.
-    if (!error || error.code !== "MODULE_NOT_FOUND") throw error;
     var name = __vf_packageName(id);
+    // Other resolver errors (an invalid package.json, a blocked subpath) keep
+    // their code but not their message, which names host paths.
+    if (!error || error.code !== "MODULE_NOT_FOUND") {
+      var failed = new Error("npm package " + JSON.stringify(name) + " could not be resolved" + (error && error.code ? " (" + error.code + ")" : ""));
+      if (error && error.code) failed.code = error.code;
+      throw failed;
+    }
     // Keep the code: packages probe optional dependencies with
     // \`error.code === "MODULE_NOT_FOUND"\`.
     var sanitized = new Error(__vf_packageInstalled(name, parentDir)
@@ -263,7 +297,7 @@ function __vf_isBuiltin(id) {
 function __vf_loadCjs(id, parentDir) {
   if (__vf_isBuiltin(id)) return __vf_builtinRequire(id);
   var resolved;
-  if (id.startsWith(".") || id.startsWith("/")) {
+  if (__vf_isPathId(id)) {
     resolved = __vf_resolveLocal(id, parentDir);
   } else {
     resolved = __vf_resolveBare(id, parentDir);
@@ -295,12 +329,13 @@ function __vf_loadCjs(id, parentDir) {
   // Node strips a leading hashbang from CommonJS sources; a Function body
   // cannot contain one. Commenting it out keeps line numbers intact.
   if (code.startsWith("#!")) code = "//" + code.slice(2);
-  var mod = { exports: {} };
-  __vf_cache[resolved] = mod;
   var dir = __vf_dirname(resolved);
   var childReq = function(childId) { return __vf_loadCjs(childId, dir); };
   childReq.resolve = function(childId) { return __vf_resolveId(childId, dir); };
   childReq.ensure = function(mods, cb) { cb(); };
+  // The CommonJS module API packages use: module.require, id, filename, path.
+  var mod = { exports: {}, id: resolved, filename: resolved, path: dir, loaded: false, children: [], paths: [], require: childReq };
+  __vf_cache[resolved] = mod;
   // As in Node, top-level \`this\` is module.exports, and a module whose
   // evaluation throws is dropped from the cache so a retry fails again.
   try {
@@ -310,10 +345,11 @@ function __vf_loadCjs(id, parentDir) {
     delete __vf_cache[resolved];
     throw error;
   }
+  mod.loaded = true;
   return mod.exports;
 }
 function __vf_resolveId(id, parentDir) {
-  if (id.startsWith(".") || id.startsWith("/")) return __vf_resolveLocal(id, parentDir);
+  if (__vf_isPathId(id)) return __vf_resolveLocal(id, parentDir);
   return __vf_resolveBare(id, parentDir);
 }
 var routeRequire = function(id) { return __vf_loadCjs(id, __VF_PROJECT_DIR__); };

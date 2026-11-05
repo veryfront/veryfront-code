@@ -46,34 +46,74 @@ export function resolveExportEntry(entry: unknown): string | undefined {
   return undefined;
 }
 
-const NAMED_IMPORT_ENTRY =
-  /\s*(?:("(?:[^"\\\r\n]|\\.)*"|'(?:[^'\\\r\n]|\\.)*')|([A-Za-z_$][\w$]*))(?:\s+as\s+([A-Za-z_$][\w$]*))?\s*(?:,|$)/y;
+/**
+ * A JavaScript identifier, including Unicode letters and `\u` escapes, as
+ * the source of a RegExp built with the `u` flag.
+ */
+export const JS_IDENTIFIER = "(?:[\\p{ID_Start}$_]|\\\\u[0-9a-fA-F]{4}|\\\\u\\{[0-9a-fA-F]+\\})" +
+  "(?:[\\p{ID_Continue}$\\u200C\\u200D]|\\\\u[0-9a-fA-F]{4}|\\\\u\\{[0-9a-fA-F]+\\})*";
+
+/** A single- or double-quoted string literal, as the source of a RegExp. */
+export const JS_STRING_LITERAL = `"(?:[^"\\\\\\r\\n]|\\\\.)*"|'(?:[^'\\\\\\r\\n]|\\\\.)*'`;
+
+const SPECIFIER_ENTRY = new RegExp(
+  `\\s*(?:(${JS_STRING_LITERAL})|(${JS_IDENTIFIER}))` +
+    `(?:\\s+as\\s+(?:(${JS_STRING_LITERAL})|(${JS_IDENTIFIER})))?\\s*(?:,|$)`,
+  "uy",
+);
+
+/** One `name as alias` entry of an import or export clause, as source text. */
+export interface ModuleSpecifier {
+  /** The name in the other module: an identifier or a string literal. */
+  readonly name: string;
+  readonly nameIsString: boolean;
+  /** The local or exported name, if it differs: an identifier or a string literal. */
+  readonly alias?: string;
+  readonly aliasIsString: boolean;
+}
+
+/** Parse a `{ ... }` import or export clause. Throws on anything else. */
+export function parseModuleSpecifiers(clause: string): ModuleSpecifier[] {
+  const trimmed = clause.trim();
+  if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) {
+    throw new Error(`Unsupported import or export clause: ${clause}`);
+  }
+  const inner = trimmed.slice(1, -1);
+  const specifiers: ModuleSpecifier[] = [];
+  const entry = new RegExp(SPECIFIER_ENTRY.source, SPECIFIER_ENTRY.flags);
+  while (inner.slice(entry.lastIndex).trim() !== "") {
+    const start = entry.lastIndex;
+    const match = entry.exec(inner);
+    if (!match || entry.lastIndex === start) {
+      throw new Error(`Unsupported import or export clause: ${clause}`);
+    }
+    const [, nameString, nameIdent, aliasString, aliasIdent] = match;
+    specifiers.push({
+      name: (nameString ?? nameIdent)!,
+      nameIsString: nameString !== undefined,
+      alias: aliasString ?? aliasIdent,
+      aliasIsString: aliasString !== undefined,
+    });
+  }
+  return specifiers;
+}
 
 /**
  * Convert a named import clause (`{ a, b as c, "d-e" as f }`) to a
  * destructuring pattern (`{ a, b: c, "d-e": f }`). A string-literal name
- * needs an alias, as in the import itself.
+ * needs an identifier alias, as in the import itself.
  */
 export function toCjsDestructureBindings(bindings: string): string {
-  const inner = bindings.trim().replace(/^\{\s*/, "").trimEnd().replace(/\}$/, "");
-  if (!inner.trim()) return "{}";
-
   const converted: string[] = [];
-  NAMED_IMPORT_ENTRY.lastIndex = 0;
-  while (inner.slice(NAMED_IMPORT_ENTRY.lastIndex).trim() !== "") {
-    const start = NAMED_IMPORT_ENTRY.lastIndex;
-    const entry = NAMED_IMPORT_ENTRY.exec(inner);
-    if (!entry || NAMED_IMPORT_ENTRY.lastIndex === start) {
+  for (const specifier of parseModuleSpecifiers(bindings)) {
+    if (specifier.aliasIsString || (specifier.nameIsString && specifier.alias === undefined)) {
       throw new Error(`Unsupported named import clause: ${bindings}`);
     }
-    const [, literal, name, alias] = entry;
-    if (literal !== undefined && alias === undefined) {
-      throw new Error(`Unsupported named import clause: ${bindings}`);
-    }
-    converted.push(alias === undefined ? name! : `${literal ?? name}: ${alias}`);
+    converted.push(
+      specifier.alias === undefined ? specifier.name : `${specifier.name}: ${specifier.alias}`,
+    );
   }
-
-  return `{ ${converted.join(", ")} }`;
+  return converted.length === 0 ? "{}" : `{ ${converted.join(", ")} }`;
 }
 
 export function getLoaderForFile(filePath: string): "tsx" | "jsx" | "ts" | "js" | "json" {
