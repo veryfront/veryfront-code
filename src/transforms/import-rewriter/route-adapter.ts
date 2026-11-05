@@ -194,6 +194,9 @@ export function rewriteCompiledVeryfrontImportsForRoute(code: string): string {
   return transformed;
 }
 
+/** A JavaScript identifier as esbuild emits local bindings (ASCII, `$` allowed). */
+const IDENT = "[\\w$]+";
+
 export function rewriteCompiledUserDependencyImportsForRoute(
   code: string,
   userDeps: Map<string, string>,
@@ -247,8 +250,11 @@ export function rewriteCompiledUserDependencyImportsForRoute(
       continue;
     }
 
+    // `IDENT` matches the local binding names esbuild emits, `$` included.
+    // Namespace and dynamic imports get an ES module namespace object, so
+    // `ns.default` is the CommonJS `module.exports` as under native interop.
     transformed = transformed.replace(
-      new RegExp(`import\\s+(\\w+)\\s+from\\s+["']${escaped}["']`, "g"),
+      new RegExp(`import\\s+(${IDENT})\\s+from\\s+["']${escaped}["']`, "g"),
       (_, localName) => `const ${localName} = __vf_interopDefault(require("${name}"))`,
     );
     transformed = transformed.replace(
@@ -256,12 +262,12 @@ export function rewriteCompiledUserDependencyImportsForRoute(
       (_, bindings) => `const ${toCjsDestructureBindings(bindings)} = require("${name}")`,
     );
     transformed = transformed.replace(
-      new RegExp(`import\\s+\\*\\s+as\\s+(\\w+)\\s+from\\s+["']${escaped}["']`, "g"),
-      (_, localName) => `const ${localName} = require("${name}")`,
+      new RegExp(`import\\s+\\*\\s+as\\s+(${IDENT})\\s+from\\s+["']${escaped}["']`, "g"),
+      (_, localName) => `const ${localName} = __vf_namespace(require("${name}"))`,
     );
     transformed = transformed.replace(
       new RegExp(
-        `import\\s+(\\w+)\\s*,\\s*(\\{[^}]+\\})\\s+from\\s+["']${escaped}["']`,
+        `import\\s+(${IDENT})\\s*,\\s*(\\{[^}]+\\})\\s+from\\s+["']${escaped}["']`,
         "g",
       ),
       (_, defaultName, bindings) => {
@@ -273,23 +279,27 @@ export function rewriteCompiledUserDependencyImportsForRoute(
     );
     transformed = transformed.replace(
       new RegExp(
-        `import\\s+(\\w+|\\*\\s+as\\s+\\w+|\\{[^}]+\\})\\s+from\\s+["']${escaped}(/[^"']+)["']`,
+        `import\\s+(${IDENT}|\\*\\s+as\\s+${IDENT}|\\{[^}]+\\})\\s+from\\s+["']${escaped}(/[^"']+)["']`,
         "g",
       ),
       (_, binding, subpath) => {
         const trimmedBinding = String(binding).trim();
+        const required = `require("${name}${subpath}")`;
         if (trimmedBinding.startsWith("{")) {
-          return `const ${toCjsDestructureBindings(trimmedBinding)} = require("${name}${subpath}")`;
+          return `const ${toCjsDestructureBindings(trimmedBinding)} = ${required}`;
         }
-        const name_ = trimmedBinding.startsWith("*")
-          ? trimmedBinding.replace(/\*\s+as\s+/, "")
-          : trimmedBinding;
-        return `const ${name_} = require("${name}${subpath}")`;
+        if (trimmedBinding.startsWith("*")) {
+          return `const ${trimmedBinding.replace(/\*\s+as\s+/, "")} = __vf_namespace(${required})`;
+        }
+        return `const ${trimmedBinding} = __vf_interopDefault(${required})`;
       },
     );
+    // A dynamic import stays lazy and asynchronous: a load failure rejects the
+    // returned promise instead of throwing synchronously.
     transformed = transformed.replace(
       new RegExp(`import\\s*\\(\\s*["']${escaped}(/[^"']*)?["']\\s*\\)`, "g"),
-      (_, subpath) => `Promise.resolve(require("${name}${subpath || ""}"))`,
+      (_, subpath) =>
+        `Promise.resolve().then(() => __vf_namespace(require("${name}${subpath || ""}")))`,
     );
   }
 

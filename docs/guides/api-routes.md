@@ -225,13 +225,22 @@ export function GET() {
 API routes can import packages listed in the project's `package.json`. The
 package must be installed in the project's `node_modules` where the server
 runs. CommonJS packages support default, named, namespace and dynamic
-`import()` forms. ES module packages load as ES modules.
+`import()` forms. A namespace import or a dynamic `import()` exposes the
+package's `module.exports` as `default`, alongside its named properties.
+
+Import packages by their root name or by a file path inside the package. Subpath
+names defined only in a package's `exports` map, or a package whose `exports`
+field is a single string, may not resolve.
 
 Packages that ship a native addon (`.node` file) are not supported. Loading one
 fails with `native addon "<path>" cannot be loaded`. A package that is listed
 but not installed fails with `npm package "<name>" is not installed in this
-runtime's node_modules`. Both errors happen when the route module loads, so the
-route returns a server error until the dependency is changed.
+runtime's node_modules`.
+
+A static `import` resolves when the route module loads, so either error makes
+every request to the route fail until the dependency is changed. A dynamic
+`import()` resolves when it runs: only requests that reach it fail, and the
+handler can catch the rejected promise.
 
 ## Chat endpoint
 

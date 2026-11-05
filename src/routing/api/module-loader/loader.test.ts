@@ -16,7 +16,6 @@ import {
   bundlerForcesTypeScript,
   canDirectImportSpecifier,
   generateCompiledBinaryRequireShim,
-  generateRouteRequirePrologue,
   generateRouteRuntimeShim,
   getNodeExternalPackagesToResolve,
   getUserDependencies,
@@ -26,6 +25,7 @@ import {
   loadModuleFromCode,
   lookupImportMapEntry,
   prepareHandlerModule,
+  prependRouteRequirePrologue,
   readDenoImportMap,
   resolveEsmUserDependencies,
   rewriteCompiledBinaryUserDependencyImports,
@@ -1842,13 +1842,16 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
 
     assertMatch(rewritten, /const thing = __vf_interopDefault\(require\("my-lib"\)\)/);
     assertMatch(rewritten, /const \{ alpha: beta \} = require\("my-lib"\)/);
-    assertMatch(rewritten, /const namespace = require\("my-lib"\)/);
+    assertMatch(rewritten, /const namespace = __vf_namespace\(require\("my-lib"\)\)/);
     assertMatch(
       rewritten,
       /const __vf_tmp_combo = require\("my-lib"\); const combo = __vf_interopDefault\(__vf_tmp_combo\); const \{ gamma \} = __vf_tmp_combo/,
     );
-    assertMatch(rewritten, /const widget = require\("my-lib\/subpath"\)/);
-    assertMatch(rewritten, /Promise\.resolve\(require\("my-lib\/subpath"\)\)/);
+    assertMatch(rewritten, /const widget = __vf_interopDefault\(require\("my-lib\/subpath"\)\)/);
+    assertMatch(
+      rewritten,
+      /Promise\.resolve\(\)\.then\(\(\) => __vf_namespace\(require\("my-lib\/subpath"\)\)\)/,
+    );
   });
 
   it("rewrites ESM-only user dependency imports to real file:// module URLs", () => {
@@ -5446,7 +5449,8 @@ describe("generateCompiledBinaryRequireShim - static checks (VULN-FS-5)", () => 
     // The original (vulnerable) layout called __vf_assertContained only inside
     // the relative/absolute branch. The fix moves the assertion to run after
     // both branches (i.e. AFTER the `} else { resolved = ...resolve(id); }`).
-    const elseIdx = shim.indexOf("__vf_builtinRequire.resolve(id)");
+    const elseIdx = shim.indexOf("resolved = __vf_resolveBare(id, parentDir)");
+    assert(elseIdx !== -1, "the shim must resolve bare ids through __vf_resolveBare");
     const assertIdx = shim.indexOf("__vf_assertContained(resolved)", elseIdx);
     assertEquals(
       assertIdx > elseIdx,
@@ -5683,29 +5687,43 @@ describe("route CommonJS require (#5471)", () => {
     await stop();
   });
 
-  async function loadCompiledRoute(routeSource: string): Promise<() => Promise<Response>> {
-    const projectDir = Deno.realPathSync(await makeTempDir());
-    const packageDir = join(projectDir, "node_modules", "cjs-fixture");
-    await fs.mkdir(packageDir, { recursive: true });
-    await fs.writeTextFile(
-      join(packageDir, "package.json"),
-      JSON.stringify({ name: "cjs-fixture", version: "1.0.0", main: "index.js" }),
-    );
-    await fs.writeTextFile(
-      join(packageDir, "index.js"),
-      [
-        'const path = require("path");',
-        "class Pool { query() { return path.basename('/rows/ok'); } }",
-        "module.exports = { Pool, version: '1.0.0' };",
-      ].join("\n"),
-    );
-    await fs.writeTextFile(
-      join(projectDir, "package.json"),
-      JSON.stringify({ dependencies: { "cjs-fixture": "1.0.0" } }),
-    );
+  const CJS_FIXTURE: Record<string, string> = {
+    "node_modules/cjs-fixture/package.json": JSON.stringify({
+      name: "cjs-fixture",
+      version: "1.0.0",
+      main: "index.js",
+    }),
+    "node_modules/cjs-fixture/index.js": [
+      'const path = require("path");',
+      "class Pool { query() { return path.basename('/rows/ok'); } }",
+      "module.exports = { Pool, version: '1.0.0' };",
+    ].join("\n"),
+  };
 
+  async function writeProject(files: Record<string, string>): Promise<string> {
+    const projectDir = Deno.realPathSync(await makeTempDir());
+    await fs.writeTextFile(join(projectDir, "package.json"), "{}");
+    for (const [path, contents] of Object.entries(files)) {
+      const target = join(projectDir, path);
+      await fs.mkdir(join(target, ".."), { recursive: true });
+      await fs.writeTextFile(target, contents);
+    }
+    return projectDir;
+  }
+
+  async function loadCompiledRoute(
+    routeSource: string,
+    files: Record<string, string> = CJS_FIXTURE,
+  ): Promise<() => Promise<Response>> {
+    const projectDir = await writeProject(files);
+    const packages = new Set(
+      Object.keys(files)
+        .filter((path) => path.startsWith("node_modules/") && path.endsWith("/package.json"))
+        .map((path) => path.slice("node_modules/".length, -"/package.json".length))
+        .filter((name) => !name.includes("/node_modules/")),
+    );
+    const userDeps = new Map([...packages].map((name) => [name, "1.0.0"]));
     const routePath = join(projectDir, "app", "api", "route.ts");
-    const userDeps = new Map([["cjs-fixture", "1.0.0"]]);
     const shimNamespace = "vf-test-route-runtime-shim";
     const { build } = await import("veryfront/extensions/bundler");
     const result = await build({
@@ -5715,7 +5733,7 @@ describe("route CommonJS require (#5471)", () => {
       platform: "neutral",
       target: "es2022",
       inject: ["veryfront:route-runtime-shim"],
-      external: ["node:*", "cjs-fixture", "cjs-fixture/*"],
+      external: ["node:*", ...[...packages].flatMap((name) => [name, `${name}/*`])],
       stdin: { contents: routeSource, loader: "ts", resolveDir: join(projectDir, "app", "api") },
       plugins: [{
         name: "vf-test-route-runtime-shim",
@@ -5732,36 +5750,116 @@ describe("route CommonJS require (#5471)", () => {
       }],
     });
     const bundled = result.outputFiles?.[0]?.text ?? "";
+    const rewritten = rewriteCompiledBinaryUserDependencyImports(bundled, userDeps);
     const handlerPath = join(projectDir, "handler.mjs");
     await fs.writeTextFile(
       handlerPath,
-      `${generateRouteRequirePrologue(projectDir, true)}\n${
-        rewriteCompiledBinaryUserDependencyImports(bundled, userDeps)
-      }`,
+      prependRouteRequirePrologue(bundled, rewritten, projectDir, true),
     );
     const module = await import(toFileUrl(handlerPath).href);
     return module.GET;
+  }
+
+  async function responseText(GET: () => Promise<Response>): Promise<string> {
+    return await (await GET()).text();
   }
 
   denoIt("runs a handler that default-imports a CJS package", async () => {
     const GET = await loadCompiledRoute(
       'import pg from "cjs-fixture";\nexport const GET = () => new Response(new pg.Pool().query());',
     );
-    assertEquals(await (await GET()).text(), "ok");
+    assertEquals(await responseText(GET), "ok");
   });
 
   denoIt("runs a handler that mixes default and named CJS imports", async () => {
     const GET = await loadCompiledRoute(
       'import pg, { version } from "cjs-fixture";\nexport const GET = () => new Response(new pg.Pool().query() + version);',
     );
-    assertEquals(await (await GET()).text(), "ok1.0.0");
+    assertEquals(await responseText(GET), "ok1.0.0");
   });
 
   denoIt("runs a handler that dynamically imports a CJS package", async () => {
     const GET = await loadCompiledRoute(
       'export const GET = async () => { const pg = await import("cjs-fixture"); return new Response(new pg.Pool().query()); };',
     );
-    assertEquals(await (await GET()).text(), "ok");
+    assertEquals(await responseText(GET), "ok");
+  });
+
+  denoIt("rewrites default imports bound to a $ identifier", async () => {
+    const GET = await loadCompiledRoute(
+      'import $ from "cjs-fixture";\nexport const GET = () => new Response(new $.Pool().query());',
+    );
+    assertEquals(await responseText(GET), "ok");
+  });
+
+  denoIt("gives namespace and dynamic imports a default export", async () => {
+    const files = {
+      "node_modules/fn-fixture/package.json": JSON.stringify({
+        name: "fn-fixture",
+        main: "index.js",
+      }),
+      "node_modules/fn-fixture/index.js": "module.exports = function () { return 'fn'; };",
+    };
+    const GET = await loadCompiledRoute(
+      [
+        'import * as ns from "fn-fixture";',
+        'export const GET = async () => new Response(ns.default() + (await import("fn-fixture")).default());',
+      ].join("\n"),
+      files,
+    );
+    assertEquals(await responseText(GET), "fnfn");
+  });
+
+  denoIt("resolves a package's own nested dependency before the hoisted copy", async () => {
+    const files = {
+      "node_modules/outer/package.json": JSON.stringify({ name: "outer", main: "index.js" }),
+      "node_modules/outer/index.js": 'module.exports = require("inner");',
+      "node_modules/outer/node_modules/inner/package.json": JSON.stringify({
+        name: "inner",
+        main: "index.js",
+      }),
+      "node_modules/outer/node_modules/inner/index.js": "module.exports = 'nested';",
+      "node_modules/inner/package.json": JSON.stringify({ name: "inner", main: "index.js" }),
+      "node_modules/inner/index.js": "module.exports = 'hoisted';",
+    };
+    const GET = await loadCompiledRoute(
+      'import outer from "outer";\nexport const GET = () => new Response(outer);',
+      files,
+    );
+    assertEquals(await responseText(GET), "nested");
+  });
+
+  denoIt("loads a CommonJS package whose entry starts with a hashbang", async () => {
+    const files = {
+      "node_modules/bin-fixture/package.json": JSON.stringify({
+        name: "bin-fixture",
+        main: "cli.js",
+      }),
+      "node_modules/bin-fixture/cli.js": "#!/usr/bin/env node\nmodule.exports = 'bin';",
+    };
+    const GET = await loadCompiledRoute(
+      'import bin from "bin-fixture";\nexport const GET = () => new Response(bin);',
+      files,
+    );
+    assertEquals(await responseText(GET), "bin");
+  });
+
+  denoIt("keeps a route hashbang as the first line", async () => {
+    const GET = await loadCompiledRoute(
+      '#!/usr/bin/env node\nimport pg from "cjs-fixture";\nexport const GET = () => new Response(new pg.Pool().query());',
+    );
+    assertEquals(await responseText(GET), "ok");
+  });
+
+  denoIt("rejects route code that declares a prologue binding", async () => {
+    await assertRejects(
+      () =>
+        loadCompiledRoute(
+          "const __vf_namespace = 1;\nexport const GET = () => new Response(String(__vf_namespace));",
+        ),
+      Error,
+      "__vf_namespace is reserved for the Veryfront route module loader",
+    );
   });
 
   denoIt("lets bundled project CommonJS require Node built-ins", async () => {
@@ -5797,37 +5895,44 @@ describe("route CommonJS require (#5471)", () => {
     assertEquals(await getText(route), "ok");
   });
 
+  function thrownMessage(fn: () => unknown): string {
+    const error = assertThrows(fn);
+    return error instanceof Error ? error.message : String(error);
+  }
+
   denoIt("names an npm package that is not installed instead of a host path", async () => {
-    const projectDir = Deno.realPathSync(await makeTempDir());
-    await fs.writeTextFile(join(projectDir, "package.json"), "{}");
+    const projectDir = await writeProject({});
     const vfRequire = await importCompiledBinaryRequireShim(projectDir);
 
-    const error = assertThrows(() => vfRequire("not-installed-pkg"));
     assertEquals(
-      error instanceof Error ? error.message : String(error),
+      thrownMessage(() => vfRequire("not-installed-pkg")),
       'npm package "not-installed-pkg" is not installed in this runtime\'s node_modules',
     );
   });
 
-  denoIt("rejects a native addon with a clear error", async () => {
-    const projectDir = Deno.realPathSync(await makeTempDir());
-    const packageDir = join(projectDir, "node_modules", "native-fixture");
-    await fs.mkdir(packageDir, { recursive: true });
-    await fs.writeTextFile(join(projectDir, "package.json"), "{}");
-    await fs.writeTextFile(
-      join(packageDir, "package.json"),
-      JSON.stringify({ name: "native-fixture", main: "index.js" }),
-    );
-    await fs.writeTextFile(
-      join(packageDir, "index.js"),
-      'module.exports = require("./addon.node");',
-    );
-    await fs.writeTextFile(join(packageDir, "addon.node"), "\u007fELF");
+  denoIt("does not call an installed package with a missing subpath uninstalled", async () => {
+    const projectDir = await writeProject(CJS_FIXTURE);
     const vfRequire = await importCompiledBinaryRequireShim(projectDir);
 
-    const error = assertThrows(() => vfRequire("native-fixture"));
     assertEquals(
-      error instanceof Error ? error.message : String(error),
+      thrownMessage(() => vfRequire("cjs-fixture/missing")),
+      'npm package "cjs-fixture" is installed but "cjs-fixture/missing" could not be resolved',
+    );
+  });
+
+  denoIt("rejects a native addon with a clear error", async () => {
+    const projectDir = await writeProject({
+      "node_modules/native-fixture/package.json": JSON.stringify({
+        name: "native-fixture",
+        main: "index.js",
+      }),
+      "node_modules/native-fixture/index.js": 'module.exports = require("./addon.node");',
+      "node_modules/native-fixture/addon.node": "\u007fELF",
+    });
+    const vfRequire = await importCompiledBinaryRequireShim(projectDir);
+
+    assertEquals(
+      thrownMessage(() => vfRequire("native-fixture")),
       'native addon "./addon.node" cannot be loaded: native addons are not supported in this runtime',
     );
   });

@@ -124,12 +124,12 @@ describe("external-import-rewriter", () => {
       assertEquals(out, `const _ = __vf_interopDefault(require("lodash"));`);
     });
 
-    it("rewrites a namespace import to require", () => {
+    it("rewrites a namespace import to a namespace over require", () => {
       const out = rewriteCompiledBinaryUserDependencyImports(
         `import * as _ from "lodash";`,
         deps,
       );
-      assertEquals(out, `const _ = require("lodash");`);
+      assertEquals(out, `const _ = __vf_namespace(require("lodash"));`);
     });
 
     it("rewrites a named import to a destructuring require", () => {
@@ -141,12 +141,15 @@ describe("external-import-rewriter", () => {
       assertStringIncludes(out, "merge");
     });
 
-    it("rewrites a dynamic import to a resolved require promise", () => {
+    it("rewrites a dynamic import to a lazy namespace promise", () => {
       const out = rewriteCompiledBinaryUserDependencyImports(
         `const m = import("lodash");`,
         deps,
       );
-      assertStringIncludes(out, `Promise.resolve(require("lodash"))`);
+      assertStringIncludes(
+        out,
+        `Promise.resolve().then(() => __vf_namespace(require("lodash")))`,
+      );
     });
 
     it("rewrites a subpath import including the subpath in require", () => {
@@ -388,12 +391,13 @@ describe("external-import-rewriter", () => {
       const shim = generateCompiledBinaryRequireShim("/srv/app");
       // Declares the require shim and embeds the project package.json path.
       assertStringIncludes(shim, "__vf_createRequire");
-      assertStringIncludes(shim, "/srv/app/package.json");
+      assertStringIncludes(shim, '__vf_createRequire("/srv/app" + "/package.json")');
       // Embeds the node builtin set used for routing builtin requires.
       assertStringIncludes(shim, JSON.stringify(NODE_BUILTINS));
       // Defines a require function and an interop helper.
-      assertStringIncludes(shim, "var require = function(id)");
-      assertStringIncludes(shim, "__vf_interopDefault");
+      assertStringIncludes(shim, "var require = (function () {");
+      assertStringIncludes(shim, "function __vf_interopDefault(m)");
+      assertStringIncludes(shim, "function __vf_namespace(m)");
       assert(shim.length > 0);
     });
   });

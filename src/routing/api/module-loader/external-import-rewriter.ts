@@ -51,6 +51,20 @@ export async function readProjectDependencies(
 }
 
 /**
+ * Top-level bindings the route `require` prologues declare. The prologue is
+ * prepended after esbuild has resolved collisions, so bundled route code must
+ * not declare any of these; `assertNoRouteRequirePrologueCollision` fails the
+ * build instead of emitting a module that cannot parse.
+ */
+export const ROUTE_REQUIRE_PROLOGUE_BINDINGS: readonly string[] = [
+  "__vf_createRequire",
+  "__vf_dirname",
+  "__vf_resolve",
+  "__vf_interopDefault",
+  "__vf_namespace",
+];
+
+/**
  * Generates a CJS module loader shim for compiled Deno binaries.
  *
  * In compiled binaries, `createRequire()` can resolve module paths and load
@@ -59,16 +73,21 @@ export async function readProjectDependencies(
  * limitation by using `Deno.readTextFileSync` to read CJS files and
  * `new Function` to evaluate them in a proper CJS wrapper with require,
  * exports, module, __filename, and __dirname bindings.
+ *
+ * The loader state lives in a private scope. Only `require`, the two helpers
+ * the compiled import rewrite calls and the `node:` imports are module-level
+ * (see ROUTE_REQUIRE_PROLOGUE_BINDINGS).
  */
 export function generateCompiledBinaryRequireShim(projectDir: string): string {
   const builtinSet = JSON.stringify(NODE_BUILTINS);
-  const safeProjectDir = JSON.stringify(projectDir + "/package.json");
+  const safeProjectDir = JSON.stringify(projectDir);
   const safeProjectRoot = JSON.stringify(pathHelper.resolve(projectDir));
 
   return `
 import { createRequire as __vf_createRequire } from "node:module";
 import { dirname as __vf_dirname, resolve as __vf_resolve } from "node:path";
-var __vf_builtinRequire = __vf_createRequire(${safeProjectDir});
+var require = (function () {
+var __vf_builtinRequire = __vf_createRequire(${safeProjectDir} + "/package.json");
 var __vf_builtinSet = new Set(${builtinSet});
 var __vf_projectRoot = ${safeProjectRoot};
 // VULN-FS-5: Canonicalize the project root so containment checks using
@@ -78,6 +97,7 @@ var __vf_projectRoot = ${safeProjectRoot};
 // legitimate dependencies would be rejected.
 try { __vf_projectRoot = Deno.realPathSync(__vf_projectRoot); } catch (_) { /* expected: projectRoot may not exist at shim init in some environments */ }
 var __vf_cache = Object.create(null);
+var __vf_parentRequires = Object.create(null);
 // Resolve symlinks so containment compares canonical paths. A module that does
 // not exist yet cannot be canonicalized, so fall back to its parent directory,
 // which is what carries a symlinked project root; only if that fails too is the
@@ -99,6 +119,40 @@ function __vf_assertContained(resolved) {
     throw new Error("CJS loader blocked path outside project: " + resolved);
   }
 }
+// Bare ids resolve from the requiring module's directory, as Node does, so a
+// package's own non-hoisted node_modules wins over the project root's copy.
+function __vf_parentRequire(parentDir) {
+  var cached = __vf_parentRequires[parentDir];
+  if (cached) return cached;
+  cached = __vf_createRequire(__vf_resolve(parentDir, "__vf_parent.js"));
+  __vf_parentRequires[parentDir] = cached;
+  return cached;
+}
+function __vf_packageName(id) {
+  var parts = id.split("/");
+  return id.startsWith("@") ? parts.slice(0, 2).join("/") : parts[0];
+}
+function __vf_packageInstalled(name, parentDir) {
+  for (var dir = __vf_resolve(parentDir); ; dir = __vf_dirname(dir)) {
+    try { Deno.statSync(__vf_resolve(dir, "node_modules", name)); return true; } catch (_) { /* expected: not installed at this level */ }
+    if (__vf_dirname(dir) === dir) return false;
+  }
+}
+function __vf_resolveBare(id, parentDir) {
+  try {
+    return __vf_parentRequire(parentDir).resolve(id);
+  } catch (error) {
+    // The resolver's message carries host paths in its require stack. Name
+    // only what the route asked for, and say "not installed" only when no
+    // node_modules on the lookup path has the package at all.
+    if (!error || error.code !== "MODULE_NOT_FOUND") throw error;
+    var name = __vf_packageName(id);
+    if (__vf_packageInstalled(name, parentDir)) {
+      throw new Error("npm package " + JSON.stringify(name) + " is installed but " + JSON.stringify(id) + " could not be resolved");
+    }
+    throw new Error("npm package " + JSON.stringify(name) + " is not installed in this runtime's node_modules");
+  }
+}
 function __vf_loadCjs(id, parentDir) {
   if (id.startsWith("node:")) return __vf_builtinRequire(id);
   if (__vf_builtinSet.has(id)) return __vf_builtinRequire(id);
@@ -114,14 +168,7 @@ function __vf_loadCjs(id, parentDir) {
       }
     }
   } else {
-    try {
-      resolved = __vf_builtinRequire.resolve(id);
-    } catch (error) {
-      // The resolver's message carries the host project path in its require
-      // stack. Name only the package the route asked for.
-      if (!error || error.code !== "MODULE_NOT_FOUND") throw error;
-      throw new Error("npm package " + JSON.stringify(id) + " is not installed in this runtime's node_modules");
-    }
+    resolved = __vf_resolveBare(id, parentDir);
   }
   if (resolved.endsWith(".node")) {
     throw new Error("native addon " + JSON.stringify(id) + " cannot be loaded: native addons are not supported in this runtime");
@@ -142,13 +189,16 @@ function __vf_loadCjs(id, parentDir) {
     __vf_cache[resolved] = json;
     return json;
   }
+  // Node strips a leading hashbang from CommonJS sources; a Function body
+  // cannot contain one. Commenting it out keeps line numbers intact.
+  if (code.startsWith("#!")) code = "//" + code.slice(2);
   var mod = { exports: {} };
   __vf_cache[resolved] = mod.exports;
   var dir = __vf_dirname(resolved);
   var childReq = function(childId) { return __vf_loadCjs(childId, dir); };
   childReq.resolve = function(childId) {
     if (childId.startsWith(".") || childId.startsWith("/")) return __vf_resolve(dir, childId);
-    return __vf_builtinRequire.resolve(childId);
+    return __vf_resolveBare(childId, dir);
   };
   childReq.ensure = function(mods, cb) { cb(); };
   var fn = new Function("exports", "require", "module", "__filename", "__dirname", "global", "globalThis", "Worker", code);
@@ -156,11 +206,36 @@ function __vf_loadCjs(id, parentDir) {
   __vf_cache[resolved] = mod.exports;
   return mod.exports;
 }
+var routeRequire = function(id) { return __vf_loadCjs(id, ${safeProjectDir}); };
+routeRequire.resolve = function(id) { return __vf_resolveBare(id, ${safeProjectDir}); };
+routeRequire.ensure = function(mods, cb) { cb(); };
+return routeRequire;
+})();
 function __vf_interopDefault(m) { return m && m.__esModule && m.default !== undefined ? m.default : m; }
-var require = function(id) { return __vf_loadCjs(id, ${JSON.stringify(projectDir)}); };
-require.resolve = function(id) { return __vf_builtinRequire.resolve(id); };
-require.ensure = function(mods, cb) { cb(); };
+function __vf_namespace(m) {
+  if (m && m.__esModule) return m;
+  var ns = Object.create(null);
+  if (m !== null && (typeof m === "object" || typeof m === "function")) {
+    for (var key in m) if (key !== "default") ns[key] = m[key];
+  }
+  ns.default = m;
+  return ns;
+}
 `.trim();
+}
+
+/**
+ * Fail the build when bundled route code declares a name the prepended
+ * `require` prologue also declares at module scope.
+ */
+export function assertNoRouteRequirePrologueCollision(bundledCode: string): void {
+  for (const name of ROUTE_REQUIRE_PROLOGUE_BINDINGS) {
+    if (new RegExp(`(^|[^\\w$])${name.replace(/\$/g, "\\$")}($|[^\\w$])`).test(bundledCode)) {
+      throw new Error(
+        `${name} is reserved for the Veryfront route module loader; rename it in the route or its imports`,
+      );
+    }
+  }
 }
 
 export function getNodeExternalPackagesToResolve(userDeps: Map<string, string>): string[] {

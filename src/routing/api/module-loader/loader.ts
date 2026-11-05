@@ -43,6 +43,7 @@ import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { wrapWithCurrentContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
 import { isWithinDirectory } from "#veryfront/security/path-validation.ts";
 import {
+  assertNoRouteRequirePrologueCollision,
   generateCompiledBinaryRequireShim,
   NODE_BUILTINS,
   readProjectDependencies,
@@ -1574,6 +1575,27 @@ export function generateRouteRequirePrologue(projectDir: string, compiledBinary:
   ].join("\n");
 }
 
+/**
+ * Prepend the route `require` prologue to a bundled, rewritten handler.
+ *
+ * `bundledCode` is esbuild's output before the post-bundle rewrites; it is
+ * checked for names the prologue declares, which esbuild could not rename. A
+ * hashbang esbuild kept stays the first line, the only place it is valid.
+ */
+export function prependRouteRequirePrologue(
+  bundledCode: string,
+  rewrittenCode: string,
+  projectDir: string,
+  compiledBinary: boolean,
+): string {
+  assertNoRouteRequirePrologueCollision(bundledCode);
+  const prologue = generateRouteRequirePrologue(projectDir, compiledBinary);
+  if (!rewrittenCode.startsWith("#!")) return `${prologue}\n${rewrittenCode}`;
+  const eol = rewrittenCode.indexOf("\n");
+  if (eol === -1) return `${rewrittenCode}\n${prologue}\n`;
+  return `${rewrittenCode.slice(0, eol + 1)}${prologue}\n${rewrittenCode.slice(eol + 1)}`;
+}
+
 function createRouteRuntimeShimPlugin(contents: string): Plugin {
   return {
     name: "vf-route-runtime-shim",
@@ -2224,8 +2246,7 @@ function buildTranspiledModuleSource(
       logger.debug(`transpiled size ${js.length} bytes`);
 
       const rewritten = await rewriteExternalImports(js, projectDir, sourceSnapshot, userDeps);
-      const prologue = generateRouteRequirePrologue(projectDir, isDeno && isCompiledBinary());
-      return `${prologue}\n${rewritten}`;
+      return prependRouteRequirePrologue(js, rewritten, projectDir, isDeno && isCompiledBinary());
     },
     { "api.modulePath": modulePath, "api.projectDir": projectDir },
   );
