@@ -6066,6 +6066,29 @@ describe("route CommonJS require (#5471)", () => {
     },
   );
 
+  denoIt("reads a slash after a postfix increment as division", async () => {
+    const files = {
+      "node_modules/postfix-fixture/package.json": JSON.stringify({
+        name: "postfix-fixture",
+        main: "index.js",
+      }),
+      "node_modules/postfix-fixture/index.js": [
+        "let p, i = 1;",
+        'i++ / (p = import(".\\u002fchild.mjs"), 1) / 2;',
+        "module.exports = () => p.then((m) => m.value);",
+      ].join("\n"),
+      "node_modules/postfix-fixture/child.mjs": "export const value = 'postfix child';",
+    };
+    const GET = await loadCompiledRoute(
+      [
+        'import load from "postfix-fixture";',
+        "export const GET = async () => new Response(await load());",
+      ].join("\n"),
+      files,
+    );
+    assertEquals(await responseText(GET), "postfix child");
+  });
+
   denoIt("caches namespaces without the mutable Map prototype", async () => {
     const files = {
       "node_modules/map-fixture/package.json": JSON.stringify({
@@ -6976,6 +6999,25 @@ describe("route CommonJS require (#5471)", () => {
     const vfRequire = await importCompiledBinaryRequireShim(projectDir);
 
     assertEquals(vfRequire("link-fixture"), true);
+  });
+
+  denoIt("resolves relative custom resolve paths from the working directory", async () => {
+    const projectDir = await writeProject({
+      "fixtures/node_modules/plugin/package.json": JSON.stringify({
+        name: "plugin",
+        main: "index.js",
+      }),
+      "fixtures/node_modules/plugin/index.js": "module.exports = 1;",
+      "node_modules/loader/package.json": JSON.stringify({ name: "loader", main: "index.js" }),
+      "node_modules/loader/index.js": [
+        "const path = require('node:path');",
+        "const fixtures = path.relative(process.cwd(), path.join(__dirname, '..', '..', 'fixtures'));",
+        "module.exports = require.resolve('plugin', { paths: [fixtures] });",
+      ].join("\n"),
+    });
+    const vfRequire = await importCompiledBinaryRequireShim(projectDir);
+
+    assertEquals(vfRequire("loader"), join(projectDir, "fixtures/node_modules/plugin/index.js"));
   });
 
   denoIt("lets a top-level dependency require through module.parent", async () => {

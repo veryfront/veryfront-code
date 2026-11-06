@@ -475,7 +475,8 @@ function __vf_resolveWithOptions(id, parentDir, options) {
   if (!Array.isArray(options.paths)) throw new TypeError("require.resolve options.paths must be an array");
   for (var i = 0; i < options.paths.length; i++) {
     try {
-      return __vf_resolveContained(id, __vf_resolve(parentDir, options.paths[i]));
+      // As in Node, a relative entry is taken from the working directory.
+      return __vf_resolveContained(id, __vf_resolve(options.paths[i]));
     } catch (error) {
       if (!error || error.code !== "MODULE_NOT_FOUND") throw error;
     }
@@ -616,6 +617,15 @@ function __vf_rewriteCjsDynamicImports(code, helperName) {
     }
     // A ")" closing an if/while/for/with condition starts a statement, where
     // "/" begins a regex literal; any other ")" ends a value.
+    // "++" and "--" after a value are postfix and end that value, so a "/"
+    // after them divides; before a value they are prefix operators.
+    if ((c === "+" || c === "-") && code[i + 1] === c) {
+      var afterValue = previous === "word" || previous === "value" || previous === ")" || previous === "]";
+      previous = afterValue ? "value" : c;
+      controlWord = false;
+      i += 2;
+      continue;
+    }
     if (c === "(") parens.push(controlWord);
     controlWord = false;
     if (c === "{") stack.push("{");
