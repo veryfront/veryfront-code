@@ -1,12 +1,19 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { describe, it } from "#veryfront/testing/bdd";
-import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert";
+import {
+  assertEquals,
+  assertNotEquals,
+  assertRejects,
+  assertThrows,
+} from "#veryfront/testing/assert";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { tool } from "./factory.ts";
 import type { ToolApprovalDecision, ToolApprovalRequest } from "./approval.ts";
 import type { ToolConfig } from "./types.ts";
 import { createInputRequestApprovalGate } from "./approval-input-request-gate.ts";
-import { createToolsFromHostDefinitions } from "./host-tools.ts";
+import { createToolsFromHostDefinitions, type HostToolSet } from "./host-tools.ts";
+import { wrapHostToolSetWithMcpPolicy } from "../agent/mcp-tool-policy.ts";
+import { wrapHostedChildSteeringMutationTool } from "../agent/hosted/child-steering-tools.ts";
 import { traceHostTools } from "./tracing.ts";
 
 /** The rules the gate asks under for a policy without step-up, as the API stores them. */
@@ -14,6 +21,12 @@ const ASKED_RULES = {
   exclude_run_starters: true,
   required_capability: "project.approvals.decide",
   excluded_user_ids: ["maker"],
+};
+
+/** The window the gate asks for by default, as the API stores it. */
+const ASKED_WINDOW = {
+  created_at: "2026-01-01T00:00:00.000Z",
+  expires_at: "2026-01-01T00:30:00.000Z",
 };
 
 /** What the gate sends: a plain body string and header record. */
@@ -167,6 +180,36 @@ describe("tool approval", () => {
     assertEquals(asked, ["transfer"]);
   });
 
+  it("asks under the exposed name through every host wrapper", async () => {
+    const asked: string[] = [];
+    const inferred = () =>
+      tool({
+        description: "Move money",
+        approval: {},
+        inputSchema: defineSchema((v) => v.object({ amount: v.number() }))(),
+        execute: () => ({ ok: true }),
+      });
+    const wrapped: HostToolSet[] = [
+      wrapHostToolSetWithMcpPolicy({ transfer: inferred() }, { deny: ["other"] }),
+      {
+        transfer: wrapHostedChildSteeringMutationTool({
+          toolName: "transfer",
+          toolDefinition: inferred(),
+        }),
+      },
+    ];
+    for (const tools of wrapped) {
+      const { transfer } = createToolsFromHostDefinitions(tools);
+      await transfer!.execute({ amount: 1 }, {
+        requestToolApproval: (request) => {
+          asked.push(request.toolName);
+          return Promise.resolve({ approved: true, outcome: "approved" });
+        },
+      });
+    }
+    assertEquals(asked, ["transfer", "transfer"]);
+  });
+
   it("runs a schema that transforms its input on the parsed value of the approved arguments", async () => {
     const executed: unknown[] = [];
     const gated = tool({
@@ -241,6 +284,22 @@ describe("tool approval", () => {
     assertEquals(typeof (gated.outputSchema as { safeParse?: unknown }).safeParse, "undefined");
     assertEquals(gated.outputSchema as unknown, gated.outputSchemaJson);
     assertEquals((gated.outputSchemaJson as { anyOf?: unknown[] }).anyOf?.[0], contract);
+  });
+
+  it("gives each gated tool its own refusal contract", () => {
+    const gated = () =>
+      tool({
+        description: "Move money",
+        approval: {},
+        inputSchema: defineSchema((v) => v.object({ amount: v.number() }))(),
+        outputSchema: defineSchema((v) => v.object({ ok: v.boolean() }))(),
+        execute: () => ({ ok: true }),
+      });
+    type Declared = { anyOf: Array<{ required?: string[] }> };
+    const first = gated().outputSchemaJson as Declared;
+    const second = gated().outputSchemaJson as Declared;
+    first.anyOf[1]!.required?.push("changed");
+    assertEquals(second.anyOf[1]!.required, ["status", "outcome", "tool", "message"]);
   });
 
   it("declares a refusal as a valid output, keeping an object contract an object", () => {
@@ -443,6 +502,7 @@ describe("createInputRequestApprovalGate", () => {
           tool_call_id: "call-1",
           tool_call: { name: "transfer", arguments: { to: "acme", amount: 9 } },
           responder_rules: ASKED_RULES,
+          ...ASKED_WINDOW,
           status: "open",
         }],
       })),
@@ -490,6 +550,7 @@ describe("createInputRequestApprovalGate", () => {
           tool_call_id: "call-1",
           tool_call: { name: "transfer", arguments: { amount: 9 } },
           responder_rules: ASKED_RULES,
+          ...ASKED_WINDOW,
           status: "submitted",
           response: { values: { decision: "approve" } },
         }],
@@ -526,6 +587,7 @@ describe("createInputRequestApprovalGate", () => {
           tool_call_id: "call-1",
           tool_call: { name: "transfer", arguments: { amount: 9 } },
           responder_rules: ASKED_RULES,
+          ...ASKED_WINDOW,
           status: "submitted",
           response: { values: { decision: "approve" } },
         }],
@@ -560,6 +622,7 @@ describe("createInputRequestApprovalGate", () => {
           tool_call_id: "call-1",
           tool_call: { name: "transfer", arguments: { amount: 9 } },
           responder_rules: ASKED_RULES,
+          ...ASKED_WINDOW,
           status: "submitted",
           response: { values: { decision: "approve" } },
         }],
@@ -580,6 +643,58 @@ describe("createInputRequestApprovalGate", () => {
         policy: { stepUpSeconds: 300 },
       })
     );
+  });
+
+  it("never adopts an earlier request that allowed longer than the current expiry", async () => {
+    const replies = [
+      new Response(JSON.stringify({ detail: "conflict" }), { status: 409 }),
+      new Response(JSON.stringify({
+        data: [{
+          input_request_id: "ir-1",
+          tool_call_id: "call-1",
+          tool_call: { name: "transfer", arguments: { amount: 9 } },
+          responder_rules: ASKED_RULES,
+          ...ASKED_WINDOW,
+          status: "submitted",
+          response: { values: { decision: "approve" } },
+        }],
+      })),
+    ];
+    const gate = createInputRequestApprovalGate({
+      apiUrl: "http://api.test",
+      authToken: "maker-token",
+      runId: "run-1",
+      pollIntervalMs: 1,
+      fetch: () => Promise.resolve(replies.shift()!),
+    });
+    await assertRejects(() =>
+      gate({
+        toolName: "transfer",
+        toolCallId: "call-1",
+        input: { amount: 9 },
+        policy: { expiresInSeconds: 60 },
+      })
+    );
+  });
+
+  it("never lets a host id take the anchor of a hashed one", async () => {
+    const sent: Array<{ tool_call_id: string }> = [];
+    const gate = createInputRequestApprovalGate({
+      apiUrl: "http://api.test",
+      authToken: "maker-token",
+      runId: "run-1",
+      pollIntervalMs: 1,
+      fetch: (_input, init) => {
+        sent.push(JSON.parse(String((init as SentInit).body)));
+        return Promise.resolve(
+          new Response(JSON.stringify({ input_request_id: "ir-1", status: "expired" })),
+        );
+      },
+    });
+    await gate({ toolName: "transfer", toolCallId: "c".repeat(200), input: {}, policy: {} });
+    const hashed = sent[0]!.tool_call_id;
+    await gate({ toolName: "transfer", toolCallId: hashed, input: {}, policy: {} });
+    assertNotEquals(sent[1]!.tool_call_id, hashed);
   });
 
   it("anchors a tool call id longer than the Runs API accepts by its hash, and refuses a long name", async () => {

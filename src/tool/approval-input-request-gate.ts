@@ -32,6 +32,7 @@ interface InputRequestResource {
   tool_call?: { name: string; arguments: unknown } | null;
   responder_rules?: ResponderRules | null;
   status: "open" | "submitted" | "cancelled" | "expired";
+  created_at?: string | null;
   expires_at?: string | null;
   response?: {
     values?: Record<string, unknown>;
@@ -53,6 +54,17 @@ const EXPIRY_GRACE_MS = 60_000;
 const MAX_RUNS_IDENTIFIER_LENGTH = 128;
 /** How long a gated call waits for a decision when its policy names no expiry. */
 const DEFAULT_EXPIRES_IN_SECONDS = 30 * 60;
+/** The namespace of the tool call ids the gate makes up. */
+const ANCHOR_PREFIX = "approval-";
+/** Clock rounding the API may apply to a stored expiry. */
+const EXPIRY_TOLERANCE_MS = 1000;
+
+/** Whether a stored request stays open no longer than `windowMs` after it was asked. */
+function withinWindow(item: InputRequestResource, windowMs: number): boolean {
+  if (!item.created_at || !item.expires_at) return false;
+  return Date.parse(item.expires_at) - Date.parse(item.created_at) <=
+    windowMs + EXPIRY_TOLERANCE_MS;
+}
 
 const DECISION_FIELDS = [
   {
@@ -135,6 +147,7 @@ export function createInputRequestApprovalGate(
     toolCallId: string,
     request: { toolName: string; input: unknown },
     rules: ResponderRules,
+    windowMs: number,
     signal?: AbortSignal,
   ) => {
     const matches: InputRequestResource[] = [];
@@ -151,7 +164,9 @@ export function createInputRequestApprovalGate(
           item.tool_call_id === toolCallId && item.tool_call?.name === request.toolName &&
           canonicalJson(item.tool_call.arguments) === canonicalJson(request.input) &&
           // A request asked under another policy (a shorter step-up, say) never stands in for this one.
-          sameRules(item.responder_rules, rules)
+          sameRules(item.responder_rules, rules) &&
+          // Nor does one that stayed open longer than this call's expiry allows.
+          withinWindow(item, windowMs)
         ),
       );
       cursor = listed.page_info?.next ?? undefined;
@@ -172,14 +187,16 @@ export function createInputRequestApprovalGate(
       });
     }
     // Hosts that do not track tool call ids still need one durable anchor per gated call, and a
-    // host id longer than the Runs API accepts is anchored by its hash, which a retry repeats.
+    // host id longer than the Runs API accepts is anchored by its hash, which a retry repeats. A
+    // host id in the anchors' own namespace is hashed too, so no host id can take another's anchor.
     const toolCallId = request.toolCallId === undefined
-      ? `approval-${crypto.randomUUID()}`
-      : request.toolCallId.length > MAX_RUNS_IDENTIFIER_LENGTH
-      ? `approval-${await computeHash(request.toolCallId)}`
+      ? `${ANCHOR_PREFIX}${crypto.randomUUID()}`
+      : request.toolCallId.length > MAX_RUNS_IDENTIFIER_LENGTH ||
+          request.toolCallId.startsWith(ANCHOR_PREFIX)
+      ? `${ANCHOR_PREFIX}${await computeHash(request.toolCallId)}`
       : request.toolCallId;
-    const expiresAt = Date.now() +
-      (request.policy.expiresInSeconds ?? DEFAULT_EXPIRES_IN_SECONDS) * 1000;
+    const windowMs = (request.policy.expiresInSeconds ?? DEFAULT_EXPIRES_IN_SECONDS) * 1000;
+    const expiresAt = Date.now() + windowMs;
     const runRequests = `/runs/${encodeURIComponent(options.runId)}/input-requests`;
     const callHash = await computeHash(`${options.runId}:${toolCallId}`);
     const rules: ResponderRules = {
@@ -211,7 +228,7 @@ export function createInputRequestApprovalGate(
     if (response.ok) {
       created = body as InputRequestResource;
     } else if (response.status === 409 || response.status === 422) {
-      const existing = await recover(runRequests, toolCallId, request, rules, signal);
+      const existing = await recover(runRequests, toolCallId, request, rules, windowMs, signal);
       if (!existing) throw failure(response, body);
       created = existing;
     } else {

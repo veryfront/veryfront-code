@@ -55,7 +55,8 @@ export interface ToolApprovalRefusal {
   message: string;
 }
 
-const REFUSAL_JSON_SCHEMA: JsonSchema = Object.freeze<JsonSchema>({
+/** A refusal's JSON contract, new per tool, so changing one tool's contract never changes another's. */
+const refusalJsonSchema = (): JsonSchema => ({
   type: "object",
   properties: {
     status: { const: "not_approved" },
@@ -99,7 +100,7 @@ export function withToolApprovalRefusal(
   if (outputSchemaJson === undefined) return undefined;
   return {
     ...(outputSchemaJson.type === "object" ? { type: "object" } : {}),
-    anyOf: [outputSchemaJson, REFUSAL_JSON_SCHEMA],
+    anyOf: [outputSchemaJson, refusalJsonSchema()],
   };
 }
 
