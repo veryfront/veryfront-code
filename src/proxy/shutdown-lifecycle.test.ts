@@ -208,11 +208,15 @@ describe("proxy shutdown lifecycle", () => {
 
   it("starts and waits out the admission grace on the clock captured before extensions load", async () => {
     const admission = new ProxyDrainAdmission(1);
-    const nowDescriptor = Object.getOwnPropertyDescriptor(Performance.prototype, "now")!;
+    // Deno defines `now` on Performance.prototype; Bun on the instance.
+    const nowOwner: object = Object.hasOwn(performance, "now")
+      ? performance
+      : Performance.prototype;
+    const nowDescriptor = Object.getOwnPropertyDescriptor(nowOwner, "now")!;
     let wait: Promise<void> | undefined;
     let admitsStream: boolean | undefined;
     try {
-      Object.defineProperty(Performance.prototype, "now", {
+      Object.defineProperty(nowOwner, "now", {
         ...nowDescriptor,
         value: () => {
           throw new Error("poisoned performance.now");
@@ -225,7 +229,7 @@ describe("proxy shutdown lifecycle", () => {
       );
       wait = admission.waitForWindow();
     } finally {
-      Object.defineProperty(Performance.prototype, "now", nowDescriptor);
+      Object.defineProperty(nowOwner, "now", nowDescriptor);
     }
 
     assertEquals(admitsStream, false);
