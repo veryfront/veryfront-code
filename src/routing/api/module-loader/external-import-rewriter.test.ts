@@ -1,9 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import {
-  assertEquals,
-  assertStringIncludes,
-  assertThrows,
-} from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStringIncludes, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { FileInfo } from "#veryfront/platform/adapters/base.ts";
 import type { FileSystem } from "#veryfront/platform/compat/fs.ts";

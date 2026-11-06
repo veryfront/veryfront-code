@@ -28,7 +28,7 @@ import {
 // audits removed opt-outs. Platform/compat process and opaque-deps suites now
 // restore the globals and child processes they touch instead of suppressing
 // leak reports.
-export const SANITIZER_OPT_OUT_BASELINE = 340;
+export const SANITIZER_OPT_OUT_BASELINE = 338;
 
 const OPT_OUT_PATTERN = /sanitize(?:Resources|Ops|Exit)\s*:\s*false/g;
 

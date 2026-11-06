@@ -49,9 +49,9 @@ import {
   rewriteExternalImports,
 } from "./external-import-rewriter.ts";
 import {
-  commonJSPathPrelude,
   createCompiledBuiltinPlugin,
-  prependBuiltinRequire,
+  prepareDependencyFile,
+  prependRuntimeRequire,
 } from "./compiled-cjs-bundling.ts";
 import {
   MAX_WORKER_MODULE_SOURCE_BYTES,
@@ -1312,6 +1312,16 @@ const noDependencyFiles: DependencyFilePredicate = () => false;
  * bundles. Both the given and the canonical project root count: esbuild
  * reports resolved paths with symlinks followed.
  */
+/** The project root with symlinks followed, or as given when it has none on the host. */
+async function canonicalProjectRoot(projectDir: string): Promise<string> {
+  try {
+    return await realPath(projectDir);
+  } catch {
+    // expected: an adapter-backed project may have no host directory
+    return pathHelper.resolve(projectDir);
+  }
+}
+
 async function projectDependencyFiles(projectDir: string): Promise<DependencyFilePredicate> {
   const roots = new Set([pathHelper.resolve(projectDir)]);
   try {
@@ -1322,6 +1332,50 @@ async function projectDependencyFiles(projectDir: string): Promise<DependencyFil
   const prefixes = [...roots].map((root) => pathHelper.join(root, "node_modules") + pathHelper.sep);
   return (path) =>
     path !== "" && prefixes.some((prefix) => pathHelper.resolve(path).startsWith(prefix));
+}
+
+/**
+ * The `type` field of the package.json nearest a directory, as Node uses it to
+ * decide whether a `.js` file is ESM. The walk stays inside the project.
+ */
+class PackageTypeLookup {
+  readonly #byDirectory = new Map<string, Promise<string | undefined>>();
+  readonly #root: string;
+
+  constructor(private readonly sourceSnapshot: ProjectSourceSnapshot, projectDir: string) {
+    this.#root = pathHelper.resolve(projectDir);
+  }
+
+  of(directory: string): Promise<string | undefined> {
+    let found = this.#byDirectory.get(directory);
+    if (!found) {
+      found = this.#read(directory);
+      this.#byDirectory.set(directory, found);
+    }
+    return found;
+  }
+
+  async #read(directory: string): Promise<string | undefined> {
+    let manifest: string | null = null;
+    try {
+      manifest = await this.sourceSnapshot.readTextFile(pathHelper.join(directory, "package.json"));
+    } catch (error) {
+      if (error instanceof ProjectBoundaryViolationError) throw error;
+      // expected: no package.json here; look in the parent directory
+    }
+    if (manifest !== null) {
+      try {
+        const type = (JSON.parse(manifest) as { type?: unknown }).type;
+        return typeof type === "string" ? type : undefined;
+      } catch {
+        // Node rejects a malformed package.json; esbuild reports it as well.
+        return undefined;
+      }
+    }
+    const parent = pathHelper.dirname(directory);
+    if (parent === directory || !isWithinDirectory(this.#root, parent)) return undefined;
+    return await this.of(parent);
+  }
 }
 
 function createImportMapPlugin(
@@ -1901,6 +1955,7 @@ function createProjectBoundaryPlugin(
   workerImportMap: DenoImportMap | null,
   isDependencyFile: DependencyFilePredicate = noDependencyFiles,
 ): Plugin {
+  const packageTypes = new PackageTypeLookup(sourceSnapshot, projectDir);
   return {
     name: "vf-project-boundary",
     setup(build) {
@@ -1933,14 +1988,16 @@ function createProjectBoundaryPlugin(
           }
           if (executableModule && dependency) {
             return {
-              contents: commonJSPathPrelude(source.contents, source.logicalPath) +
-                (/\bimport\.meta\b/.test(source.contents)
-                  ? await rewriteBundledImportMetaUrl(
-                    source.contents,
-                    pathHelper.toFileUrl(source.logicalPath).href,
-                    null,
-                  )
-                  : source.contents),
+              contents: await prepareDependencyFile({
+                build,
+                contents: source.contents,
+                logicalPath: source.logicalPath,
+                resolvedPath: args.path,
+                packageType: await packageTypes.of(pathHelper.dirname(source.logicalPath)),
+                isDependencyFile,
+                rewriteImportMeta: (contents, moduleUrl) =>
+                  rewriteBundledImportMetaUrl(contents, moduleUrl, null),
+              }),
               loader: getLoaderForFile(source.logicalPath),
               resolveDir: pathHelper.dirname(source.logicalPath),
             };
@@ -2277,7 +2334,9 @@ function buildTranspiledModuleSource(
 
       logger.debug(`built handler ${projectModuleLabel(resolvedPath, projectDir)}`);
       const output = result.outputFiles?.[0]?.text ?? "export {}";
-      const js = compiled ? prependBuiltinRequire(output, requiredBuiltins) : output;
+      const js = compiled
+        ? prependRuntimeRequire(output, requiredBuiltins, await canonicalProjectRoot(projectDir))
+        : output;
       logger.debug(`transpiled size ${js.length} bytes`);
 
       // Only dependencies left external are rewritten: bundled package code
