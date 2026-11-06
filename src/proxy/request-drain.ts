@@ -134,6 +134,21 @@ export function createProxyDrainingResponse(): Response {
   });
 }
 
+/**
+ * Readiness path for the proxy. Unlike the static `/_proxy/health` liveness
+ * check, it fails as soon as shutdown starts, so Kubernetes removes the
+ * endpoint instead of routing new requests to a replica that refuses them.
+ */
+export const PROXY_READY_PATH = "/_proxy/ready";
+
+export function createProxyReadinessResponse(shuttingDown: boolean): Response {
+  if (shuttingDown) return createProxyDrainingResponse();
+  return Response.json(
+    { service: "veryfront-proxy", status: "ready" },
+    { headers: { "Cache-Control": "no-store" } },
+  );
+}
+
 export async function closeProxyServerWithin(
   close: () => Promise<void>,
   timeoutMs: number,

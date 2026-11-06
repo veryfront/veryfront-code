@@ -142,6 +142,12 @@ describe("proxy main request URL parsing", () => {
     const source = await Deno.readTextFile(new URL("./main.ts", import.meta.url));
 
     assertStringIncludes(source, "if (shuttingDown) return createProxyDrainingResponse()");
+    // Readiness is answered before the draining short-circuit so it can fail
+    // with 503 while liveness (/_proxy/health) stays a static 200.
+    assertStringIncludes(
+      source,
+      "if (url.pathname === PROXY_READY_PATH) return createProxyReadinessResponse(shuttingDown);\n  if (shuttingDown) return createProxyDrainingResponse();",
+    );
     assertStringIncludes(
       source,
       "proxyRequestDrainTracker.start(requestId, req.method, url.pathname)",

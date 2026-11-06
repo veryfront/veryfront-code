@@ -106,7 +106,9 @@ import { removeStickyCookieFromPublicCacheableResponse } from "./response-header
 import {
   closeProxyServerWithin,
   createProxyDrainingResponse,
+  createProxyReadinessResponse,
   parseProxyDrainTimeoutMs,
+  PROXY_READY_PATH,
   ProxyRequestDrainTracker,
 } from "./request-drain.ts";
 import {
@@ -851,6 +853,7 @@ async function router(req: Request): Promise<Response> {
   if (url.pathname === "/_proxy/health") {
     return Response.json({ service: "veryfront-proxy", status: "ok" });
   }
+  if (url.pathname === PROXY_READY_PATH) return createProxyReadinessResponse(shuttingDown);
   if (shuttingDown) return createProxyDrainingResponse();
 
   const requestId = crypto.randomUUID();

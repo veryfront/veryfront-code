@@ -9,7 +9,9 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   closeProxyServerWithin,
   createProxyDrainingResponse,
+  createProxyReadinessResponse,
   parseProxyDrainTimeoutMs,
+  PROXY_READY_PATH,
   ProxyRequestDrainTracker,
 } from "./request-drain.ts";
 
@@ -376,6 +378,19 @@ describe("proxy request drain", () => {
     assertEquals(response.headers.get("retry-after"), "1");
     assertEquals(response.headers.get("cache-control"), "no-store");
     assertEquals(response.headers.get("x-content-type-options"), "nosniff");
+  });
+
+  it("reports ready until shutdown starts, then fails readiness with the draining response", async () => {
+    assertEquals(PROXY_READY_PATH, "/_proxy/ready");
+    const ready = createProxyReadinessResponse(false);
+    assertEquals(ready.status, 200);
+    assertEquals(ready.headers.get("cache-control"), "no-store");
+    assertEquals(await ready.json(), { service: "veryfront-proxy", status: "ready" });
+
+    const draining = createProxyReadinessResponse(true);
+    assertEquals(draining.status, 503);
+    assertEquals(draining.headers.get("retry-after"), "1");
+    await draining.body?.cancel();
   });
 
   it("bounds server close when an adapter keeps waiting on open connections", async () => {
