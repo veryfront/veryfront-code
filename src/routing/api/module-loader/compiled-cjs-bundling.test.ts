@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assert, assertEquals } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { type PluginBuild, stop as stopBundler } from "veryfront/extensions/bundler";
 import {
@@ -16,8 +16,10 @@ import {
   PackageTypeLookup,
   prepareCommonJSFile,
   prepareDependencyFile,
+  prepareDependencyJson,
   prepareModuleFile,
   prependRuntimeRequire,
+  registerBundledModule,
   resolveLiteralCalls,
   rewriteImportSpecifiers,
   type RuntimeRequireHost,
@@ -269,15 +271,99 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
     });
 
     it("resolves a dependency's relative import in Node's order", async () => {
-      const [handler] = await resolveHandlers(createDependencyResolvePlugin(isDependency, isFile));
+      const [, handler] = await resolveHandlers(
+        createDependencyResolvePlugin(isDependency, isFile),
+      );
       assertEquals(await handler!(args("./impl")), { path: "/d/node_modules/p/impl.js" });
       assertEquals(await handler!(args("./missing")), undefined);
       assertEquals(await handler!(args("./impl", "/d/pages/api/route.ts")), undefined);
     });
 
     it("leaves a native addon found by Node's extension order to the loader", async () => {
-      const [handler] = await resolveHandlers(createDependencyResolvePlugin(isDependency, isFile));
+      const [, handler] = await resolveHandlers(
+        createDependencyResolvePlugin(isDependency, isFile),
+      );
       assertEquals(await handler!(args("./addon")), { path: "/d/node_modules/p/addon.node" });
+    });
+
+    it("resolves a linked workspace package's package imports from its node_modules", async () => {
+      const calls: unknown[] = [];
+      const build = {
+        onResolve: (options: { filter: RegExp }, handler: ResolveHandler) => {
+          filters.push(options.filter);
+          registered.push(handler);
+        },
+        onLoad: () => {},
+        resolve: (path: string, options: Record<string, unknown>) => {
+          calls.push({ path, ...options });
+          // Only /d/node_modules exists, as the bundler needs.
+          return Promise.resolve(
+            path === "missing" || options.resolveDir !== "/d/node_modules"
+              ? { errors: [{ text: "Could not resolve" }] }
+              : { path: "/d/node_modules/pg/index.js", errors: [], suffix: "?q" },
+          );
+        },
+      };
+      const registered: ResolveHandler[] = [];
+      const filters: RegExp[] = [];
+      const workspace = (path: string) => path.startsWith("/d/packages/") || isDependency(path);
+      await createDependencyResolvePlugin(workspace, isFile).setup(
+        build as unknown as PluginBuild,
+      );
+      const [bare] = registered;
+      // A package's own `#import` resolves from its package.json, as before.
+      assertEquals(["pg", "@s/p", "#own", "./x", "/x"].map((id) => filters[0]!.test(id)), [
+        true,
+        true,
+        false,
+        false,
+        false,
+      ]);
+      const result = await bare!({ ...args("pg", "/d/packages/w/index.js") });
+      assertEquals((result as { path: string }).path, "/d/node_modules/pg/index.js");
+      assertEquals((result as { suffix: string }).suffix, "?q");
+      const tried = (path: string, ...dirs: string[]) =>
+        dirs.map((resolveDir) => ({
+          path,
+          kind: "require-call",
+          importer: "/d/packages/w/index.js",
+          resolveDir,
+          pluginData: { vfFromNodeModules: true },
+        }));
+      assertEquals(
+        calls,
+        tried("pg", "/d/packages/w/node_modules", "/d/packages/node_modules", "/d/node_modules"),
+      );
+      calls.length = 0;
+      assertEquals(await bare!({ ...args("missing", "/d/packages/w/index.js") }), {
+        errors: [{ text: "Could not resolve" }],
+      });
+      // Its own second resolution, files in node_modules, project code and
+      // built-ins resolve as before.
+      assertEquals(
+        await bare!({
+          ...args("pg", "/d/packages/w/index.js"),
+          pluginData: { vfFromNodeModules: true },
+        }),
+        undefined,
+      );
+      assertEquals(await bare!(args("pg")), undefined);
+      assertEquals(await bare!(args("pg", "/d/pages/api/route.ts")), undefined);
+      assertEquals(await bare!(args("fs", "/d/packages/w/index.js")), undefined);
+      assertEquals(
+        await bare!(args("data:text/javascript,1", "/d/packages/w/index.js")),
+        undefined,
+      );
+      assertEquals(
+        calls,
+        tried(
+          "missing",
+          "/d/packages/w/node_modules",
+          "/d/packages/node_modules",
+          "/d/node_modules",
+          "/node_modules",
+        ),
+      );
     });
   });
 
@@ -311,9 +397,56 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
       isFile: () => Promise.resolve(false),
     });
 
-    it("returns a file that reads no CommonJS names and no import.meta unchanged", async () => {
+    it("registers a file that reads no CommonJS names and no import.meta, unparsed", async () => {
       const contents = 'module.exports = require("./other");';
-      assertEquals(await prepareDependencyFile(input(contents, "/d/a.js")), contents);
+      assertEquals(
+        await prepareDependencyFile(input(contents, "/d/a.js")),
+        registerBundledModule(contents, "/d/a.js"),
+      );
+      assertEquals(
+        await prepareDependencyFile(input(contents, "/d/bin/tool")),
+        registerBundledModule(contents, "/d/bin/tool"),
+      );
+      assertEquals(
+        await prepareDependencyFile(input(contents, "/d/a.cjs", "module")),
+        registerBundledModule(contents, "/d/a.cjs"),
+      );
+      // An ES module has no `module` to register.
+      assertEquals(await prepareDependencyFile(input(contents, "/d/a.js", "module")), contents);
+      assertEquals(await prepareDependencyFile(input(contents, "/d/a.mjs")), contents);
+    });
+
+    it("registers a module object by its path after the module's own code", () => {
+      const code = registerBundledModule("module.exports = 1;", '/d/"q".js');
+      const registered: unknown[] = [];
+      new Function("module", "__vf_register_bundled_module", code)(
+        { exports: 2 },
+        (path: string, module: unknown) => registered.push([path, module]),
+      );
+      assertEquals(registered, [['/d/"q".js', { exports: 1 }]]);
+      // Outside a CommonJS module, or without the registry, it does nothing.
+      const bare = registerBundledModule("", "/d/esm.js");
+      new Function("module", "__vf_register_bundled_module", bare)(undefined, () => {
+        throw new Error("registered");
+      });
+      new Function("module", bare)(null);
+      new Function("module", code)({ exports: 0 });
+    });
+
+    it("turns dependency JSON into a module that registers itself and rejects bad JSON", () => {
+      const code = prepareDependencyJson('{"a":[1]}', "/d/data.json");
+      const registered: Array<{ exports: unknown }> = [];
+      const module = { exports: {} };
+      new Function("module", "__vf_register_bundled_module", code)(
+        module,
+        (_path: string, value: { exports: unknown }) => registered.push(value),
+      );
+      assertEquals(module.exports, { a: [1] });
+      assert(registered[0] === module);
+      assertThrows(() => prepareDependencyJson("{", "/d/bad.json"), SyntaxError);
+      const bom = { exports: {} };
+      new Function("module", prepareDependencyJson('\uFEFF{"b":2}', "/d/bom.json"))(bom);
+      assertEquals(bom.exports, { b: 2 });
     });
 
     it("leaves files that are neither JavaScript nor CommonJS alone", async () => {
@@ -406,7 +539,11 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
   });
 
   describe("createRuntimeRequire()", () => {
-    const builtins: Record<string, unknown> = { fs: { kind: "fs" }, "node:fs": { kind: "fs" } };
+    const builtins: Record<string, unknown> = {
+      fs: { kind: "fs" },
+      "node:fs": { kind: "fs" },
+      "vf-state": { loads: 0 },
+    };
     const files: Record<string, string> = {
       "/app/data.json": '{"a":1}',
       "/app/link.json": "", // a link to /outside.json
@@ -449,6 +586,63 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
       "/app/node_modules/p/sealed.js": "require('driver/hidden');",
       "/app/node_modules/p/split.js":
         "require.ensure(['./base'], function (r) { exports.base = r('./base').name; });",
+      "/app/node_modules/p/meta.js": [
+        "exports.id = module.id;",
+        "exports.filename = module.filename;",
+        "exports.path = module.path;",
+        "exports.loadedDuring = module.loaded;",
+        "exports.ownRequire = module.require === require;",
+        "exports.cached = require.cache[__filename] === module;",
+      ].join("\n"),
+      "/app/node_modules/p/counter.js":
+        "var state = require('vf-state'); state.loads++; module.exports = state.loads;",
+      "/app/node_modules/p/addon.node": "",
+      "/app/node_modules/p/esm.mjs": "export {};",
+      "/app/node_modules/p/patterns.js": [
+        "exports.feature = require('patterned/feature/a');",
+        "exports.longest = require('patterned/feature/deep/b');",
+        "exports.exact = require('patterned/exact');",
+        "exports.own = require('#own');",
+        "exports.ownPattern = require('#lib/x');",
+        "exports.ownPackage = require('#dep');",
+      ].join("\n"),
+      "/app/node_modules/p/package.json": JSON.stringify({
+        imports: {
+          "#own": "./base.js",
+          "#lib/*": "./lib/*.js",
+          "#dep": "driver/extra",
+          "#outside": "../escape.js",
+        },
+      }),
+      "/app/node_modules/p/lib/x.js": "module.exports = 'lib x';",
+      "/app/node_modules/p/no-import.js": "require('#missing');",
+      "/app/node_modules/p/escape-import.js": "require('#outside');",
+      "/app/node_modules/patterned/package.json": JSON.stringify({
+        exports: {
+          "./feature/*": "./features/*.js",
+          "./feature/deep/*": { node: "./deep/*.js" },
+          "./exact": "./exact.js",
+          "./*.js": null,
+        },
+      }),
+      "/app/node_modules/patterned/features/a.js": "module.exports = 'feature a';",
+      "/app/node_modules/patterned/deep/b.js": "module.exports = 'deep b';",
+      "/app/node_modules/patterned/exact.js": "module.exports = 'exact';",
+      "/app/node_modules/p/broken-pkg.js": "require('broken');",
+      "/app/node_modules/broken/package.json": "{",
+      "/app/node_modules/broken/index.js": "module.exports = 'broken';",
+      "/app/node_modules/p/outside-pattern.js": "require('patterned/feature/../../escape');",
+      "/app/node_modules/p/bom.json": '\uFEFF{"bom":true}',
+      "/app/node_modules/p/plugin/package.json": JSON.stringify({ main: "lib/main" }),
+      "/app/node_modules/p/plugin/lib/main.js": "module.exports = 'plugin main';",
+      "/app/node_modules/p/plugin/index.js": "module.exports = 'plugin index';",
+      "/app/node_modules/p/dirmain/package.json": JSON.stringify({ main: "lib" }),
+      "/app/node_modules/p/dirmain/lib/index.js": "module.exports = 'main dir index';",
+      "/app/node_modules/p/badmain/package.json": JSON.stringify({ main: "missing" }),
+      "/app/node_modules/p/badmain/index.js": "module.exports = 'fallback index';",
+      "/app/node_modules/p/binding.node": "",
+      "/app/node_modules/sibling.js": "module.exports = 'file beside the package';",
+      "/app/node_modules/sibling/index.js": "module.exports = 'package';",
     };
     let reads = 0;
     const host: RuntimeRequireHost = {
@@ -485,7 +679,12 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
       dirname: (path) => path.slice(0, path.lastIndexOf("/")),
       sep: "/",
     };
-    const require = createRuntimeRequire(host, "/app", ["test"], ["/app/node_modules"]);
+    const { require, register } = createRuntimeRequire(
+      host,
+      "/app",
+      ["test"],
+      ["/app/node_modules"],
+    );
 
     it("serves any built-in, including a computed id", () => {
       assertEquals(require("fs"), { kind: "fs" });
@@ -565,7 +764,7 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
       for (
         const id of [
           "left-pad",
-          "./data.json",
+          "./missing.json",
           42,
           "/app/code.js",
           "/app/link.json",
@@ -576,6 +775,102 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
         assertEquals(errorCode(() => require(id)), "MODULE_NOT_FOUND", String(id));
       }
       assertEquals(errorCode(() => require.resolve("/app/missing.js")), "MODULE_NOT_FOUND");
+    });
+
+    it("resolves a relative id from the project root", () => {
+      assert(require("./data.json") === require("/app/data.json"));
+      assertEquals(require.resolve("./data"), "/app/data.json");
+      assertEquals(require.resolve("driver"), "/app/node_modules/driver/cjs.js");
+    });
+
+    it("gives each module Node's module object and shares one cache", () => {
+      const meta = require("/app/node_modules/p/meta.js");
+      assertEquals(meta, {
+        id: "/app/node_modules/p/meta.js",
+        filename: "/app/node_modules/p/meta.js",
+        path: "/app/node_modules/p",
+        loadedDuring: false,
+        ownRequire: true,
+        cached: true,
+      });
+      const cached = require.cache["/app/node_modules/p/meta.js"] as unknown as { loaded: boolean };
+      assertEquals(cached.loaded, true);
+    });
+
+    it("reloads a module deleted from require.cache", () => {
+      const first = require("/app/node_modules/p/counter.js");
+      assertEquals(require("/app/node_modules/p/counter.js"), first);
+      delete require.cache["/app/node_modules/p/counter.js"];
+      assertEquals(require("/app/node_modules/p/counter.js"), (first as number) + 1);
+    });
+
+    it("returns a module the bundle registered, so both loads share it", () => {
+      const bundled = { exports: { bundled: true } };
+      register("/app/node_modules/p/registered.js", bundled);
+      register("/app/node_modules/p/registered.js", { exports: { second: true } });
+      // A path through a link is keyed by its real path.
+      const linked = { exports: { linked: true } };
+      register("/app/link.json", linked);
+      assert(require.cache["/outside.json"] === linked);
+      delete require.cache["/outside.json"];
+      files["/app/node_modules/p/registered.js"] = "module.exports = { evaluated: true };";
+      assert(require("/app/node_modules/p/" + "registered.js") === bundled.exports);
+    });
+
+    it("takes Node's paths option in require.resolve", () => {
+      assertEquals(
+        require.resolve("driver", { paths: ["/app/node_modules/p", 7, "relative"] }),
+        "/app/node_modules/driver/cjs.js",
+      );
+      assertEquals(
+        require.resolve("nested", { paths: ["/app/node_modules/p"] }),
+        "/app/node_modules/p/node_modules/nested/index.js",
+      );
+      assertEquals(
+        errorCode(() => require.resolve("nested", { paths: ["/app"] })),
+        "MODULE_NOT_FOUND",
+      );
+      assertEquals(
+        require.resolve("./base", { paths: ["/app/node_modules/p"] }),
+        "/app/node_modules/p/base.js",
+      );
+    });
+
+    it("loads a directory and an extension as Node does", () => {
+      assertEquals(require("/app/node_modules/p/bom.json"), { bom: true });
+      assertEquals(require("/app/node_modules/p/" + "plugin"), "plugin main");
+      assertEquals(require("/app/node_modules/p/dirmain"), "main dir index");
+      assertEquals(require("/app/node_modules/p/badmain"), "fallback index");
+      assertEquals(errorCode(() => require("/app/node_modules/p/binding")), "ERR_DLOPEN_FAILED");
+      assertEquals(
+        require.resolve("/app/node_modules/p/binding"),
+        "/app/node_modules/p/binding.node",
+      );
+      // A file named like the package comes first, as in Node.
+      assertEquals(require("sibling"), "file beside the package");
+    });
+
+    it("rejects a native addon and an ES module with Node's codes", () => {
+      assertEquals(errorCode(() => require("/app/node_modules/p/addon.node")), "ERR_DLOPEN_FAILED");
+      assertEquals(errorCode(() => require("/app/node_modules/p/esm.mjs")), "ERR_REQUIRE_ESM");
+    });
+
+    it("matches exports patterns and the package's own imports", () => {
+      assertEquals(require("/app/node_modules/p/patterns.js"), {
+        feature: "feature a",
+        longest: "deep b",
+        exact: "exact",
+        own: { name: "base" },
+        ownPattern: "lib x",
+        ownPackage: { name: "extra" },
+      });
+      for (const file of ["no-import", "escape-import", "broken-pkg", "outside-pattern"]) {
+        assertEquals(
+          errorCode(() => require(`/app/node_modules/p/${file}.js`)),
+          "MODULE_NOT_FOUND",
+          file,
+        );
+      }
     });
 
     it("names a project path relative to the project and hides any other", () => {
@@ -603,6 +898,10 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
         code.includes(
           '}, "/app", ["test","test/reporters","sqlite","sea"], ["/app/node_modules"]);',
         ),
+        code,
+      );
+      assert(
+        code.includes("const { require, register: __vf_register_bundled_module } = ("),
         code,
       );
       assert(code.endsWith("\nexport {};\n"), code);

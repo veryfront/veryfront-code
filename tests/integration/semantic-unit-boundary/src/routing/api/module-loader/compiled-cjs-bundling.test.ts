@@ -16,6 +16,7 @@ import {
   dependencyDirectories,
   PackageTypeLookup,
   prepareDependencyFile,
+  prepareDependencyJson,
   prependRuntimeRequire,
 } from "#veryfront/routing/api/module-loader/compiled-cjs-bundling.ts";
 
@@ -63,10 +64,13 @@ function dependencyFilePlugin(
   return {
     name: "test-dependency-files",
     setup(build) {
-      // Every dependency file but JSON, as the route build's boundary loads them.
+      // Every dependency file, as the route build's boundary loads them.
       build.onLoad({ filter: /.*/ }, async (args) => {
-        if (!isDependencyFile(args.path) || args.path.endsWith(".json")) return undefined;
+        if (!isDependencyFile(args.path)) return undefined;
         const contents = await readFile(args.path, "utf8");
+        if (args.path.endsWith(".json")) {
+          return { contents: prepareDependencyJson(contents, args.path), loader: "js" };
+        }
         return {
           contents: await prepareDependencyFile({
             build,
@@ -76,6 +80,7 @@ function dependencyFilePlugin(
             packageType: await packageTypes.of(args.path.slice(0, args.path.lastIndexOf("/"))),
             isDependencyFile,
             isFile,
+            suffix: args.suffix,
           }),
           loader: "js",
         };
@@ -398,6 +403,74 @@ describe("compiled-binary route bundling of CommonJS dependencies", () => {
       assertEquals(mod.pg, { name: "dialect:pg", sep: "/", driver: "driver" });
       assertEquals(mod.again, true);
       assertEquals(mod.project, "MODULE_NOT_FOUND");
+    });
+  });
+
+  it("shares one module between a bundled require and a computed one", async () => {
+    await inProject(async (projectDir) => {
+      await writeFiles(projectDir, {
+        "node_modules/plugins/package.json": JSON.stringify({ name: "plugins", main: "index.js" }),
+        "node_modules/plugins/index.js": [
+          'var path = require("path");',
+          'var bundled = require("./plugin");',
+          'var data = require("./data.json");',
+          "bundled.count++;",
+          'exports.same = require(path.join(__dirname, "plugin.js")) === bundled;',
+          'exports.count = require(path.join(__dirname, "plu" + "gin")).count;',
+          'exports.sameJson = require(path.join(__dirname, "data.json")) === data;',
+          "exports.cached = require.cache[require.resolve(path.join(__dirname, 'plugin'))].exports === bundled;",
+        ].join("\n"),
+        "node_modules/plugins/plugin.js": "exports.count = 0;",
+        "node_modules/plugins/data.json": '{"name":"data"}',
+      });
+      const mod = await bundleAndImport(
+        projectDir,
+        'import plugins from "plugins";\nexport { plugins };\n',
+      );
+      assertEquals(mod.plugins, { same: true, count: 1, sameJson: true, cached: true });
+    });
+  });
+
+  it("resolves a workspace package's imports past the project's tsconfig paths", async () => {
+    await inProject(async (projectDir) => {
+      await writeFiles(projectDir, {
+        "tsconfig.json": JSON.stringify({
+          compilerOptions: { baseUrl: ".", paths: { "pg": ["./mock/pg.js"] } },
+        }),
+        "mock/pg.js": 'module.exports = "mock";',
+        "node_modules/pg/package.json": JSON.stringify({ name: "pg", main: "index.js" }),
+        "node_modules/pg/index.js": 'module.exports = "pg";',
+        "packages/ws/package.json": JSON.stringify({ name: "ws", main: "index.js" }),
+        "packages/ws/index.js": 'module.exports = require("pg");',
+      });
+      await mkdir(`${projectDir}/node_modules`, { recursive: true });
+      await symlink("../packages/ws", `${projectDir}/node_modules/ws`);
+      const mod = await bundleAndImport(
+        projectDir,
+        'import ws from "ws";\nimport pg from "pg";\nexport const picked = [ws, pg];\n',
+      );
+      // The route's own import still follows the project's paths.
+      assertEquals(mod.picked, ["pg", "mock"]);
+    });
+  });
+
+  it("keeps the query of a dependency module in its import.meta.url", async () => {
+    await inProject(async (projectDir) => {
+      await writeFiles(projectDir, {
+        "node_modules/queried/package.json": JSON.stringify({
+          name: "queried",
+          type: "module",
+          main: "index.js",
+        }),
+        "node_modules/queried/index.js": 'export { url, sibling } from "./child.js?v=1";',
+        "node_modules/queried/child.js": [
+          "export const url = import.meta.url;",
+          'export const sibling = import.meta.resolve("./other.js");',
+        ].join("\n"),
+      });
+      const mod = await bundleAndImport(projectDir, 'export * from "queried";\n');
+      const base = pathToFileURL(`${projectDir}/node_modules/queried`).href;
+      assertEquals({ ...mod }, { url: `${base}/child.js?v=1`, sibling: `${base}/other.js` });
     });
   });
 

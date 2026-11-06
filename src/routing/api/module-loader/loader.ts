@@ -59,6 +59,7 @@ import {
   type IsFile,
   PackageTypeLookup,
   prepareDependencyFile,
+  prepareDependencyJson,
   prependRuntimeRequire,
   rewriteImportSpecifiers,
 } from "./compiled-cjs-bundling.ts";
@@ -1959,6 +1960,15 @@ function createProjectBoundaryPlugin(
               importMap: workerImportMap,
             });
           }
+          // A dependency's JSON registers itself, so that a computed require()
+          // of the same file returns the same object.
+          if (!executableModule && dependency) {
+            return {
+              contents: prepareDependencyJson(source.contents, args.path),
+              loader: "js",
+              resolveDir: pathHelper.dirname(source.logicalPath),
+            };
+          }
           if (executableModule && dependency) {
             return {
               contents: await prepareDependencyFile({
@@ -1969,6 +1979,7 @@ function createProjectBoundaryPlugin(
                 packageType: await packageTypes.of(pathHelper.dirname(source.logicalPath)),
                 isDependencyFile,
                 isFile: hostIsFile,
+                suffix: args.suffix,
               }),
               loader: getLoaderForFile(source.logicalPath),
               resolveDir: pathHelper.dirname(source.logicalPath),
