@@ -3,6 +3,8 @@ import type { ToolExecutionContext } from "./types.ts";
 import { inheritFrameworkSkillLoader } from "#veryfront/skill/loader-provenance.ts";
 import { inheritTrustedHostToolProvenance } from "./host-tool-provenance.ts";
 
+const apply = Reflect.apply;
+
 /** Public API contract for host tool trace runner. */
 export type HostToolTraceRunner = <TResult>(
   spanName: string,
@@ -60,8 +62,11 @@ export function traceHostTools<
       definition,
       inheritFrameworkSkillLoader(definition, {
         ...definition,
-        execute: (input: unknown, context: ToolExecutionContext | undefined) =>
-          options.trace(getSpanName(toolName), () => {
+        // A method, so the receiver a host binds (a gated tool reads its exposed name from
+        // `this.id`) reaches the original execute.
+        execute(this: unknown, input: unknown, context: ToolExecutionContext | undefined) {
+          const receiver = this;
+          return options.trace(getSpanName(toolName), () => {
             const attributes = options.buildAttributes?.({
               toolName,
               toolCallId: getToolCallId(context),
@@ -70,8 +75,9 @@ export function traceHostTools<
             if (attributes) {
               options.setAttributes?.(attributes);
             }
-            return originalExecute(input, context);
-          }),
+            return apply(originalExecute, receiver, [input, context]);
+          });
+        },
       }),
     );
   }

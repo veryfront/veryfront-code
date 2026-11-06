@@ -6,6 +6,7 @@ import { tool } from "./factory.ts";
 import type { ToolApprovalDecision, ToolApprovalRequest } from "./approval.ts";
 import { createInputRequestApprovalGate } from "./approval-input-request-gate.ts";
 import { createToolsFromHostDefinitions } from "./host-tools.ts";
+import { traceHostTools } from "./tracing.ts";
 
 /** What the gate sends: a plain body string and header record. */
 type SentInit = { body?: string; method?: string; headers?: Record<string, string> };
@@ -130,6 +131,25 @@ describe("tool approval", () => {
       execute: () => ({ ok: true }),
     });
     const { transfer } = createToolsFromHostDefinitions({ transfer: inferred });
+    await transfer!.execute({ amount: 1 }, {
+      requestToolApproval: (request) => {
+        asked.push(request.toolName);
+        return Promise.resolve({ approved: true, outcome: "approved" });
+      },
+    });
+    assertEquals(asked, ["transfer"]);
+  });
+
+  it("asks under the exposed name when the host traces the tool first", async () => {
+    const asked: string[] = [];
+    const inferred = tool({
+      description: "Move money",
+      approval: {},
+      inputSchema: defineSchema((v) => v.object({ amount: v.number() }))(),
+      execute: () => ({ ok: true }),
+    });
+    const traced = traceHostTools({ transfer: inferred }, { trace: (_name, run) => run() });
+    const { transfer } = createToolsFromHostDefinitions(traced);
     await transfer!.execute({ amount: 1 }, {
       requestToolApproval: (request) => {
         asked.push(request.toolName);
