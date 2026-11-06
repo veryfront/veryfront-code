@@ -130,10 +130,23 @@ var require = (function () {
 // uninitialized when this runs. These locals come from the global object,
 // which is reached through syntax alone.
 var __vf_global = (function () {}).constructor("return this")();
-var Array = __vf_global.Array, Deno = __vf_global.Deno, Error = __vf_global.Error;
-var Function = __vf_global.Function, JSON = __vf_global.JSON, Map = __vf_global.Map;
-var Object = __vf_global.Object, Set = __vf_global.Set, Symbol = __vf_global.Symbol;
-var TypeError = __vf_global.TypeError, globalThis = __vf_global;
+var Deno = __vf_global.Deno, Error = __vf_global.Error, Function = __vf_global.Function;
+var Map = __vf_global.Map, Set = __vf_global.Set, TypeError = __vf_global.TypeError;
+var globalThis = __vf_global;
+// The static methods the loader calls are captured now, before route code
+// runs, so a later \`Object.freeze = ...\` cannot change how it behaves.
+var __vf_Object = __vf_global.Object;
+var Object = {
+  create: __vf_Object.create,
+  defineProperty: __vf_Object.defineProperty,
+  freeze: __vf_Object.freeze,
+  getOwnPropertyDescriptor: __vf_Object.getOwnPropertyDescriptor,
+  keys: __vf_Object.keys,
+  prototype: { hasOwnProperty: __vf_Object.prototype.hasOwnProperty },
+};
+var Array = { isArray: __vf_global.Array.isArray };
+var JSON = { parse: __vf_global.JSON.parse, stringify: __vf_global.JSON.stringify };
+var Symbol = { toStringTag: __vf_global.Symbol.toStringTag };
 var __vf_builtinRequire = __vf_createRequire(__VF_PROJECT_DIR__ + "/package.json");
 var __vf_builtinSet = new Set(__VF_BUILTIN_LIST__);
 // Every built-in this runtime provides, not only the shared list. Node's
@@ -181,7 +194,9 @@ function __vf_canonicalize(candidate) {
 function __vf_assertContained(resolved, id) {
   var norm = __vf_resolve(resolved).replace(/\\\\/g, "/");
   var root = __vf_projectRoot.replace(/\\\\/g, "/");
-  if (!norm.startsWith(root + "/") && norm !== root) {
+  // A project at a filesystem root ("/", "C:/") already ends in a separator.
+  var prefix = root.endsWith("/") ? root : root + "/";
+  if (!norm.startsWith(prefix) && norm !== root) {
     throw new Error("CJS loader blocked path outside project: " + JSON.stringify(id));
   }
 }
@@ -273,7 +288,7 @@ function __vf_resolveInPackage(id, dir, packageDir) {
   var exportsField;
   if (__vf_isFile(manifest)) {
     try {
-      exportsField = JSON.parse(Deno.readTextFileSync(manifest)).exports;
+      exportsField = JSON.parse(__vf_readText(manifest, name)).exports;
     } catch (_) {
       throw new Error("invalid package.json for " + JSON.stringify(name));
     }
@@ -346,7 +361,8 @@ function __vf_isFile(candidate) {
 function __vf_probeFile(path) {
   // ".node" is probed so an extensionless native addon reaches the
   // unsupported-addon error instead of a misleading MODULE_NOT_FOUND.
-  var candidates = [path, path + ".js", path + ".cjs", path + ".json", path + ".node"];
+  // Node's order for an extensionless request; ".cjs" is never added.
+  var candidates = [path, path + ".js", path + ".json", path + ".node"];
   for (var i = 0; i < candidates.length; i++) {
     if (__vf_isFile(candidates[i])) return candidates[i];
   }
@@ -363,7 +379,7 @@ function __vf_probeDirectory(dir, id) {
     // reason to fall back to index.
     var main;
     try {
-      main = JSON.parse(Deno.readTextFileSync(manifest)).main;
+      main = JSON.parse(__vf_readText(manifest, id)).main;
     } catch (_) {
       throw new Error("invalid package.json for " + JSON.stringify(id));
     }
@@ -419,6 +435,8 @@ function __vf_resolveContained(id, parentDir) {
   return found;
 }
 function __vf_resolveWithOptions(id, parentDir, options) {
+  // Built-ins resolve to themselves, whatever search paths are given.
+  if (__vf_isBuiltin(id)) return id;
   if (!options || options.paths === void 0) return __vf_resolveContained(id, parentDir);
   if (!Array.isArray(options.paths)) throw new TypeError("require.resolve options.paths must be an array");
   for (var i = 0; i < options.paths.length; i++) {
@@ -437,7 +455,9 @@ function __vf_resolveWithOptions(id, parentDir, options) {
 // absolute dynamic imports in code (not in strings, comments, templates or
 // regex literals) are routed to a module-relative loader instead.
 var __vf_regexAfterWord = { "return": 1, "typeof": 1, "instanceof": 1, "in": 1, "of": 1, "new": 1, "delete": 1, "void": 1, "throw": 1, "case": 1, "do": 1, "else": 1, "yield": 1, "await": 1 };
-var __vf_relativeImportCall = /import\\s*\\(\\s*(["'])((?:\\.{1,2}\\/|\\/)[^"'\\\\\\r\\n]*)\\1\\s*\\)/y;
+// Only "import(" and the specifier are replaced, so an options argument and
+// the closing parenthesis stay as written and reach the helper.
+var __vf_relativeImportCall = /import\\s*\\(\\s*(["'])((?:\\.{1,2}\\/|\\/)[^"'\\\\\\r\\n]*)\\1/y;
 function __vf_skipQuoted(code, i, quote) {
   for (i++; i < code.length && code[i] !== quote; i++) {
     if (code[i] === "\\\\") i++;
@@ -456,7 +476,7 @@ function __vf_skipRegex(code, i) {
   }
   return i;
 }
-function __vf_rewriteCjsDynamicImports(code) {
+function __vf_rewriteCjsDynamicImports(code, helperName) {
   if (code.indexOf("import") === -1) return code;
   var out = "";
   var copied = 0;
@@ -509,9 +529,9 @@ function __vf_rewriteCjsDynamicImports(code) {
         __vf_relativeImportCall.lastIndex = start;
         var call = __vf_relativeImportCall.exec(code);
         if (call) {
-          out += code.slice(copied, start) + "__vf_cjsImport(" + JSON.stringify(call[2]) + ")";
+          out += code.slice(copied, start) + helperName + "(" + JSON.stringify(call[2]);
           copied = i = __vf_relativeImportCall.lastIndex;
-          previous = ")";
+          previous = "value";
           continue;
         }
       }
@@ -525,16 +545,40 @@ function __vf_rewriteCjsDynamicImports(code) {
   }
   return copied === 0 ? code : out + code.slice(copied);
 }
-function __vf_importFrom(spec, parentDir) {
+function __vf_importFrom(spec, parentDir, options) {
   return (async function () {
     // A query or hash belongs to the module URL, not to the file path.
     var suffixAt = spec.search(/[?#]/);
     var path = suffixAt === -1 ? spec : spec.slice(0, suffixAt);
     var target = __vf_resolve(parentDir, path);
     __vf_assertContained(__vf_canonicalize(target), spec);
-    var url = __vf_builtinRequire("node:url").pathToFileURL(target).href;
-    return await import(suffixAt === -1 ? url : url + spec.slice(suffixAt));
+    var toUrl = __vf_builtinRequire("node:url").pathToFileURL;
+    var url = toUrl(target).href + (suffixAt === -1 ? "" : spec.slice(suffixAt));
+    try {
+      return options === void 0 ? await import(url) : await import(url, options);
+    } catch (error) {
+      // A load failure for this file names its host path; report the
+      // specifier the package wrote instead.
+      var message = error && typeof error.message === "string" ? error.message : "";
+      if (message.indexOf(__vf_projectRoot) === -1 && message.indexOf(toUrl(__vf_projectRoot).href) === -1) throw error;
+      var failed = new Error("cannot import " + JSON.stringify(spec) + " from a CommonJS module" + (error && error.code ? " (" + error.code + ")" : ""));
+      if (error && error.code) failed.code = error.code;
+      throw failed;
+    }
   })();
+}
+// Reads a module or manifest as Node does: a UTF-8 byte-order mark is dropped,
+// and a read failure names the requested id, never the host path.
+function __vf_readText(path, id) {
+  var text;
+  try {
+    text = Deno.readTextFileSync(path);
+  } catch (error) {
+    var failed = new Error("cannot read module " + JSON.stringify(id) + (error && error.code ? " (" + error.code + ")" : ""));
+    if (error && error.code) failed.code = error.code;
+    throw failed;
+  }
+  return text.charCodeAt(0) === 0xFEFF ? text.slice(1) : text;
 }
 // As in Node, every required module records the module that first required it
 // as module.parent, and each requiring module lists it once in module.children.
@@ -570,7 +614,7 @@ function __vf_loadCjs(id, parentDir, parentMod) {
     __vf_linkChild(parentMod, __vf_cache[resolved]);
     return __vf_cache[resolved].exports;
   }
-  var code = Deno.readTextFileSync(resolved);
+  var code = __vf_readText(resolved, id);
   if (resolved.endsWith(".json")) {
     var json = JSON.parse(code);
     var jsonMod = { exports: json, id: resolved, filename: resolved, loaded: true, children: [], parent: parentMod };
@@ -582,8 +626,12 @@ function __vf_loadCjs(id, parentDir, parentMod) {
   // cannot contain one. Commenting it out keeps line numbers intact.
   if (code.startsWith("#!")) code = "//" + code.slice(2);
   var dir = __vf_dirname(resolved);
-  code = __vf_rewriteCjsDynamicImports(code);
-  var cjsImport = function (spec) { return __vf_importFrom(spec, dir); };
+  // The helper's name is one the package's source never mentions, so no
+  // binding of the package can shadow it at a rewritten import.
+  var importHelper = "__vf_cjsImport";
+  while (code.indexOf(importHelper) !== -1) importHelper += "_";
+  code = __vf_rewriteCjsDynamicImports(code, importHelper);
+  var cjsImport = function (spec, options) { return __vf_importFrom(spec, dir, options); };
   var mod;
   var childReq = function(childId) { return __vf_loadCjs(childId, dir, mod); };
   childReq.resolve = function(childId, options) { return __vf_resolveWithOptions(childId, dir, options); };
@@ -599,7 +647,7 @@ function __vf_loadCjs(id, parentDir, parentMod) {
     // Worker and the dynamic-import helper come from an enclosing function,
     // so a package's own top-level \`const Worker\` shadows them instead of
     // colliding with a parameter.
-    var outer = new Function("global", "globalThis", "Worker", "__vf_cjsImport", "return function (exports, require, module, __filename, __dirname) {\\n" + code + "\\n};");
+    var outer = new Function("global", "globalThis", "Worker", importHelper, "return function (exports, require, module, __filename, __dirname) {\\n" + code + "\\n};");
     var fn = outer(globalThis, globalThis, void 0, cjsImport);
     fn.call(mod.exports, mod.exports, childReq, mod, resolved, dir);
   } catch (error) {

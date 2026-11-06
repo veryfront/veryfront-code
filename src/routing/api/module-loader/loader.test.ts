@@ -5973,6 +5973,69 @@ describe("route CommonJS require (#5471)", () => {
     );
   });
 
+  denoIt(
+    "forwards options and survives a shadowing binding in CommonJS dynamic imports",
+    async () => {
+      const files = {
+        "node_modules/opts-fixture/package.json": JSON.stringify({
+          name: "opts-fixture",
+          main: "index.js",
+        }),
+        "node_modules/opts-fixture/index.js": [
+          "const __vf_cjsImport = null;",
+          "module.exports = async () => {",
+          "  const data = await import('./data.json', { with: { type: 'json' } });",
+          "  let missing;",
+          "  try { await import('./missing.mjs'); } catch (error) { missing = String(error && error.message); }",
+          "  return [data.default.ok, missing].join('|');",
+          "};",
+        ].join("\n"),
+        "node_modules/opts-fixture/data.json": JSON.stringify({ ok: "json" }),
+      };
+      const route = await loadCompiledRouteModule(
+        [
+          'import load from "opts-fixture";',
+          "export const GET = async () => new Response(await load());",
+        ].join("\n"),
+        files,
+      );
+      const text = await responseText(route.GET as () => Promise<Response>);
+      const [data, missing] = text.split("|");
+      assertEquals(data, "json");
+      assertEquals(missing!.includes("missing.mjs"), true, missing);
+      assertEquals(missing!.includes("/node_modules/opts-fixture"), false, missing);
+    },
+  );
+
+  denoIt("seals namespaces with intrinsics captured before route code runs", async () => {
+    const files = {
+      "node_modules/patch-fixture/package.json": JSON.stringify({
+        name: "patch-fixture",
+        main: "index.js",
+      }),
+      "node_modules/patch-fixture/index.js": "module.exports = { value: 1 };",
+    };
+    // The route replaces Object.freeze for the whole process; put it back.
+    const originalFreeze = Object.freeze;
+    try {
+      const GET = await loadCompiledRoute(
+        [
+          "Object.freeze = (value) => value;",
+          "const write = (target, key) => { target[key] = 2; };",
+          "export const GET = async () => {",
+          '  const dyn = await import("patch-fixture");',
+          "  try { write(dyn, 'value'); return new Response('writable'); }",
+          "  catch (error) { return new Response(error.name); }",
+          "};",
+        ].join("\n"),
+        files,
+      );
+      assertEquals(await responseText(GET), "TypeError");
+    } finally {
+      Object.freeze = originalFreeze;
+    }
+  });
+
   denoIt("gives CommonJS namespaces the immutability of module namespaces", async () => {
     const files = {
       "node_modules/frozen-fixture/package.json": JSON.stringify({
@@ -6621,6 +6684,93 @@ describe("route CommonJS require (#5471)", () => {
     const vfRequire = await importCompiledBinaryRequireShim(linkedProject);
 
     assertEquals(vfRequire("paths-fixture"), [join(projectDir, "node_modules")]);
+  });
+
+  denoIt("resolves built-ins before custom resolve paths", async () => {
+    const projectDir = await writeProject({});
+    const vfRequire = await importCompiledBinaryRequireShim(projectDir) as
+      & ((id: string) => unknown)
+      & {
+        resolve: (id: string, options?: { paths: string[] }) => string;
+      };
+
+    assertEquals(vfRequire.resolve("fs", { paths: [] }), "fs");
+    assertEquals(vfRequire.resolve("node:fs", { paths: [] }), "node:fs");
+  });
+
+  denoIt("strips a byte-order mark from JSON and package manifests", async () => {
+    const bom = "\uFEFF";
+    const projectDir = await writeProject({
+      // The package root goes through the runtime's resolver; the BOMs below
+      // reach the loader's own JSON and manifest reads.
+      "node_modules/bom-fixture/package.json": JSON.stringify({
+        name: "bom-fixture",
+        main: "index.js",
+      }),
+      "node_modules/bom-fixture/index.js":
+        "module.exports = [require('./data.json').ok, require('./dir')].join(':');",
+      "node_modules/bom-fixture/data.json": bom + JSON.stringify({ ok: "json" }),
+      "node_modules/bom-fixture/dir/package.json": bom + JSON.stringify({ main: "entry.js" }),
+      "node_modules/bom-fixture/dir/entry.js": "module.exports = 'dir';",
+      "node_modules/test/package.json": bom +
+        JSON.stringify({ name: "test", exports: "./main.js" }),
+      "node_modules/test/main.js": "module.exports = 'test';",
+    });
+    const vfRequire = await importCompiledBinaryRequireShim(projectDir);
+
+    assertEquals(vfRequire("bom-fixture"), "json:dir");
+    assertEquals(vfRequire("test"), "test");
+  });
+
+  denoIt("probes only Node's extensions for an extensionless require", async () => {
+    const projectDir = await writeProject({
+      "node_modules/ext-fixture/package.json": JSON.stringify({
+        name: "ext-fixture",
+        main: "index.js",
+      }),
+      "node_modules/ext-fixture/index.js": [
+        "let onlyCjs;",
+        "try { onlyCjs = require('./only'); } catch (error) { onlyCjs = error.code; }",
+        "module.exports = [typeof require('./both'), onlyCjs].join(':');",
+      ].join("\n"),
+      "node_modules/ext-fixture/both.cjs": "module.exports = 'cjs';",
+      "node_modules/ext-fixture/both.json": "{}",
+      "node_modules/ext-fixture/only.cjs": "module.exports = 'cjs';",
+    });
+    const vfRequire = await importCompiledBinaryRequireShim(projectDir);
+
+    assertEquals(vfRequire("ext-fixture"), "object:MODULE_NOT_FOUND");
+  });
+
+  denoIt("hides host paths when a resolved module cannot be read", async () => {
+    const projectDir = await writeProject({
+      "node_modules/locked-fixture/package.json": JSON.stringify({
+        name: "locked-fixture",
+        main: "index.js",
+      }),
+      "node_modules/locked-fixture/index.js": "module.exports = 1;",
+    });
+    Deno.chmodSync(join(projectDir, "node_modules/locked-fixture/index.js"), 0o000);
+    const vfRequire = await importCompiledBinaryRequireShim(projectDir);
+
+    const message = thrownMessage(() => vfRequire("locked-fixture"));
+    assertEquals(message.includes(projectDir), false, message);
+    assertEquals(message.includes("locked-fixture"), true, message);
+  });
+
+  denoIt("loads modules inside a project at the filesystem root", async () => {
+    const dir = Deno.realPathSync(await makeTempDir());
+    await fs.writeTextFile(join(dir, "abs.js"), "module.exports = 'from root project';");
+    const shimPath = join(dir, "vf-root-shim.mjs");
+    await fs.writeTextFile(
+      shimPath,
+      `${generateCompiledBinaryRequireShim("/")}\nexport { require as vfRequire };\n`,
+    );
+    const { vfRequire } = await import(toFileUrl(shimPath).href) as {
+      vfRequire: (id: string) => unknown;
+    };
+
+    assertEquals(vfRequire(join(dir, "abs.js")), "from root project");
   });
 
   denoIt("lets a top-level dependency require through module.parent", async () => {
