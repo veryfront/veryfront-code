@@ -11,6 +11,7 @@ import { isWithinDirectory } from "#veryfront/security/path-validation.ts";
 import {
   JS_IDENTIFIER,
   JS_STRING_LITERAL,
+  moduleExportNameValue,
   type ModuleSpecifier,
   parseModuleSpecifiers,
   resolveExportEntry as resolveRouteExportEntry,
@@ -255,7 +256,7 @@ function rewriteCjsImportClause(
       return null;
     }
     for (const entry of specifiers) {
-      if (entry.name === "default" && !entry.nameIsString && entry.alias && !entry.aliasIsString) {
+      if (moduleExportNameValue(entry) === "default" && entry.alias && !entry.aliasIsString) {
         defaultAliases.push(entry.alias);
       } else {
         otherNames.push(entry.alias === undefined ? entry.name : `${entry.name} as ${entry.alias}`);
@@ -340,7 +341,7 @@ function rewriteCjsReexport(
     const exported: string[] = [];
     parseModuleSpecifiers(named[1]!).forEach((entry, position) => {
       const binding = `${local}_${position}`;
-      const value = entry.name === "default" && !entry.nameIsString
+      const value = moduleExportNameValue(entry) === "default"
         ? `${helperPrefix}interopDefault(${local})`
         : entry.nameIsString
         ? `${local}[${entry.name}]`
@@ -496,7 +497,9 @@ export async function rewriteCompiledUserDependencyImportsForRoute(
       edits.push({
         start: imported.ss,
         end,
-        text: `Promise.resolve().then(() => ${helperPrefix}namespace(${specifier}))`,
+        // An async arrow returns an intrinsic promise whatever route code binds
+        // to `Promise`, and the await defers loading as import() does.
+        text: `(async () => { await null; return ${helperPrefix}namespace(${specifier}); })()`,
       });
       continue;
     }

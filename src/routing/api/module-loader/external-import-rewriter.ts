@@ -125,6 +125,15 @@ import { createRequire as __vf_createRequire } from "node:module";
 import { dirname as __vf_dirname, resolve as __vf_resolve } from "node:path";
 var __vf_namespace;
 var require = (function () {
+// Route code shares this module scope, so a top-level route binding named like
+// an intrinsic (\`const Set = ...\`) would shadow it here, or still be
+// uninitialized when this runs. These locals come from the global object,
+// which is reached through syntax alone.
+var __vf_global = (function () {}).constructor("return this")();
+var Array = __vf_global.Array, Deno = __vf_global.Deno, Error = __vf_global.Error;
+var Function = __vf_global.Function, JSON = __vf_global.JSON, Map = __vf_global.Map;
+var Object = __vf_global.Object, Set = __vf_global.Set, Symbol = __vf_global.Symbol;
+var TypeError = __vf_global.TypeError, globalThis = __vf_global;
 var __vf_builtinRequire = __vf_createRequire(__VF_PROJECT_DIR__ + "/package.json");
 var __vf_builtinSet = new Set(__VF_BUILTIN_LIST__);
 // Every built-in this runtime provides, not only the shared list. Node's
@@ -202,7 +211,7 @@ var __vf_requireConditions = { require: true, node: true, "node-addons": true, d
 function __vf_exportsTarget(target, star) {
   if (typeof target === "string") {
     if (!target.startsWith("./")) return null;
-    var value = star === undefined ? target : target.split("*").join(star);
+    var value = star === void 0 ? target : target.split("*").join(star);
     var segments = value.slice(2).split("/");
     for (var i = 0; i < segments.length; i++) {
       var segment = segments[i];
@@ -222,9 +231,9 @@ function __vf_exportsTarget(target, star) {
     for (var k = 0; k < conditions.length; k++) {
       if (!__vf_requireConditions[conditions[k]]) continue;
       var resolved = __vf_exportsTarget(target[conditions[k]], star);
-      if (resolved !== undefined) return resolved;
+      if (resolved !== void 0) return resolved;
     }
-    return undefined;
+    return void 0;
   }
   return null;
 }
@@ -234,7 +243,7 @@ function __vf_exportsSubpath(exportsField, subpath) {
   if (dotKeys !== 0 && dotKeys !== keys.length) return null;
   var map = dotKeys === 0 ? { ".": exportsField } : exportsField;
   if (Object.prototype.hasOwnProperty.call(map, subpath) && subpath.indexOf("*") === -1) {
-    return __vf_exportsTarget(map[subpath], undefined);
+    return __vf_exportsTarget(map[subpath], void 0);
   }
   var bestKey = null;
   var bestPrefix = -1;
@@ -253,7 +262,7 @@ function __vf_exportsSubpath(exportsField, subpath) {
       bestStar = subpath.slice(prefix.length, subpath.length - suffix.length);
     }
   }
-  return bestKey === null ? undefined : __vf_exportsTarget(map[bestKey], bestStar);
+  return bestKey === null ? void 0 : __vf_exportsTarget(map[bestKey], bestStar);
 }
 // Resolves id inside an installed package directory: through its "exports"
 // map when it has one, as Node does, otherwise by plain file lookup. Errors
@@ -269,7 +278,7 @@ function __vf_resolveInPackage(id, dir, packageDir) {
       throw new Error("invalid package.json for " + JSON.stringify(name));
     }
   }
-  if (exportsField === undefined || exportsField === null) {
+  if (exportsField === void 0 || exportsField === null) {
     // A relative id keeps host paths out of any error it raises.
     return __vf_resolveLocal("./node_modules/" + id, dir);
   }
@@ -383,9 +392,48 @@ function __vf_resolveLocal(id, parentDir) {
 }
 function __vf_isBuiltin(id) {
   if (id.startsWith("node:")) return true;
-  if (__vf_builtinSet.has(id)) return true;
-  var slashIdx = id.indexOf("/");
-  return slashIdx > 0 && __vf_builtinSet.has(id.slice(0, slashIdx));
+  // Only the runtime's own built-in ids: "fs/promises" is a built-in, while
+  // "fs/plugin" resolves from an installed package named fs, as in Node.
+  return __vf_builtinSet.has(id);
+}
+// Node's module.paths: each ancestor's node_modules, stopping at the project
+// root so host directories above it are never listed.
+function __vf_nodeModulePaths(dir) {
+  var paths = [];
+  for (var current = dir; ; current = __vf_dirname(current)) {
+    if (!/(^|[\\/])node_modules$/.test(current)) paths.push(__vf_resolve(current, "node_modules"));
+    if (current === __vf_projectRoot || __vf_dirname(current) === current) break;
+  }
+  return paths;
+}
+// require.resolve(id, { paths }): id resolves from each listed directory in
+// turn, and the result must stay inside the project.
+function __vf_resolveWithOptions(id, parentDir, options) {
+  if (!options || options.paths === void 0) return __vf_resolveId(id, parentDir);
+  if (!Array.isArray(options.paths)) throw new TypeError("require.resolve options.paths must be an array");
+  for (var i = 0; i < options.paths.length; i++) {
+    try {
+      var found = __vf_resolveId(id, __vf_resolve(parentDir, options.paths[i]));
+      if (!__vf_isBuiltin(id)) __vf_assertContained(__vf_canonicalize(found), id);
+      return found;
+    } catch (error) {
+      if (!error || error.code !== "MODULE_NOT_FOUND") throw error;
+    }
+  }
+  var missing = new Error("Cannot find module " + JSON.stringify(id));
+  missing.code = "MODULE_NOT_FOUND";
+  throw missing;
+}
+// A CommonJS module evaluated through Function would resolve its own
+// import("./x.mjs") against this handler, not its file. Literal relative and
+// absolute dynamic imports are routed here instead.
+var __vf_cjsDynamicImport = /(^|[^.\\w$])import\\s*\\(\\s*(["'])(\\.{1,2}\\/[^"'\\\\\\r\\n]*|\\/[^"'\\\\\\r\\n]*)\\2\\s*\\)/g;
+function __vf_importFrom(spec, parentDir) {
+  return (async function () {
+    var target = __vf_resolve(parentDir, spec);
+    __vf_assertContained(__vf_canonicalize(target), spec);
+    return await import(__vf_builtinRequire("node:url").pathToFileURL(target).href);
+  })();
 }
 // As in Node, every required module records the module that first required it
 // as module.parent, and each requiring module lists it once in module.children.
@@ -433,19 +481,23 @@ function __vf_loadCjs(id, parentDir, parentMod) {
   // cannot contain one. Commenting it out keeps line numbers intact.
   if (code.startsWith("#!")) code = "//" + code.slice(2);
   var dir = __vf_dirname(resolved);
+  code = code.replace(__vf_cjsDynamicImport, function (_match, lead, _quote, spec) {
+    return lead + "__vf_cjsImport(" + JSON.stringify(spec) + ")";
+  });
+  var cjsImport = function (spec) { return __vf_importFrom(spec, dir); };
   var mod;
   var childReq = function(childId) { return __vf_loadCjs(childId, dir, mod); };
-  childReq.resolve = function(childId) { return __vf_resolveId(childId, dir); };
+  childReq.resolve = function(childId, options) { return __vf_resolveWithOptions(childId, dir, options); };
   childReq.ensure = function(mods, cb) { cb(); };
   // The CommonJS module API packages use: module.require, id, filename, path.
-  mod = { exports: {}, id: resolved, filename: resolved, path: dir, loaded: false, children: [], paths: [], parent: parentMod, require: childReq };
+  mod = { exports: {}, id: resolved, filename: resolved, path: dir, loaded: false, children: [], paths: __vf_nodeModulePaths(dir), parent: parentMod, require: childReq };
   __vf_cache[resolved] = mod;
   __vf_linkChild(parentMod, mod);
   // As in Node, top-level \`this\` is module.exports, and a module whose
   // evaluation throws is dropped from the cache so a retry fails again.
   try {
-    var fn = new Function("exports", "require", "module", "__filename", "__dirname", "global", "globalThis", "Worker", code);
-    fn.call(mod.exports, mod.exports, childReq, mod, resolved, dir, globalThis, globalThis, undefined);
+    var fn = new Function("exports", "require", "module", "__filename", "__dirname", "global", "globalThis", "Worker", "__vf_cjsImport", code);
+    fn.call(mod.exports, mod.exports, childReq, mod, resolved, dir, globalThis, globalThis, void 0, cjsImport);
   } catch (error) {
     delete __vf_cache[resolved];
     if (parentMod) {
@@ -463,9 +515,9 @@ function __vf_resolveId(id, parentDir) {
 }
 // The route is the parent of the modules it requires, as the module a Node
 // createRequire() call is anchored to would be.
-var routeModule = { exports: {}, id: __VF_PROJECT_DIR__, filename: __VF_PROJECT_DIR__, path: __VF_PROJECT_DIR__, loaded: true, children: [], paths: [], parent: null };
+var routeModule = { exports: {}, id: __VF_PROJECT_DIR__, filename: __VF_PROJECT_DIR__, path: __VF_PROJECT_DIR__, loaded: true, children: [], paths: __vf_nodeModulePaths(__VF_PROJECT_DIR__), parent: null };
 var routeRequire = function(id) { return __vf_loadCjs(id, __VF_PROJECT_DIR__, routeModule); };
-routeRequire.resolve = function(id) { return __vf_resolveId(id, __VF_PROJECT_DIR__); };
+routeRequire.resolve = function(id, options) { return __vf_resolveWithOptions(id, __VF_PROJECT_DIR__, options); };
 routeRequire.ensure = function(mods, cb) { cb(); };
 routeModule.require = routeRequire;
 // One namespace per resolved module, as with ES module namespaces: repeated
@@ -483,8 +535,18 @@ __vf_namespace = function (id) {
   if (m !== null && (typeof m === "object" || typeof m === "function")) {
     // Own properties only: native interop never exposes inherited ones, and
     // reading them could run an inherited getter during import.
+    // Getters stay lazy: an export getter runs when the name is read, not
+    // while the namespace is built.
     var names = Object.keys(m);
-    for (var i = 0; i < names.length; i++) if (names[i] !== "default") ns[names[i]] = m[names[i]];
+    for (var i = 0; i < names.length; i++) {
+      if (names[i] === "default") continue;
+      var descriptor = Object.getOwnPropertyDescriptor(m, names[i]);
+      if (descriptor && "value" in descriptor) {
+        Object.defineProperty(ns, names[i], { value: descriptor.value, enumerable: true, writable: true });
+      } else {
+        Object.defineProperty(ns, names[i], { enumerable: true, get: (function (key) { return function () { return m[key]; }; })(names[i]) });
+      }
+    }
   }
   ns.default = m;
   // Module namespaces are sealed: strict-mode writes, additions and deletes
@@ -496,7 +558,7 @@ __vf_namespace = function (id) {
 };
 return routeRequire;
 })();
-function __vf_interopDefault(m) { return m && m.__esModule && m.default !== undefined ? m.default : m; }
+function __vf_interopDefault(m) { return m && m.__esModule && m.default !== void 0 ? m.default : m; }
 `.trim();
 
 export function getNodeExternalPackagesToResolve(userDeps: Map<string, string>): string[] {

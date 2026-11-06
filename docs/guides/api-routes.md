@@ -235,6 +235,9 @@ ESM as a whole, so an `.mjs` file inside a CommonJS package fails with
 `ES module file "<path>" cannot be loaded with require`. Re-export named
 values from a CommonJS package (`export { name } from "pkg"`); `export * from
 "pkg"` is not supported, because its names are only known at run time.
+Inside a CommonJS package, `import("./file.mjs")` with a literal relative or
+absolute path loads that file relative to the package; a computed specifier
+does not.
 
 Packages that ship a native addon (`.node` file) are not supported. Loading one
 fails with `native addon "<path>" cannot be loaded`. A package that is listed

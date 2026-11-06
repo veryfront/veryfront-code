@@ -1851,7 +1851,7 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
     assertMatch(rewritten, /const widget = __vf_interopDefault\(require\("my-lib\/subpath"\)\)/);
     assertMatch(
       rewritten,
-      /Promise\.resolve\(\)\.then\(\(\) => __vf_namespace\("my-lib\/subpath"\)\)/,
+      /\(async \(\) => \{ await null; return __vf_namespace\("my-lib\/subpath"\); \}\)\(\)/,
     );
   });
 
@@ -5850,6 +5850,103 @@ describe("route CommonJS require (#5471)", () => {
     assertEquals(await responseText(GET), "own:false:false");
   });
 
+  denoIt("keeps the prologue working when the route shadows intrinsics", async () => {
+    const files = {
+      "node_modules/shadow-fixture/package.json": JSON.stringify({
+        name: "shadow-fixture",
+        main: "index.js",
+      }),
+      "node_modules/shadow-fixture/index.js": "module.exports = { value: 'v' };",
+    };
+    const GET = await loadCompiledRoute(
+      [
+        'import fixture from "shadow-fixture";',
+        'import * as ns from "shadow-fixture";',
+        "const Set = 'route set';",
+        "const Map = 'route map';",
+        "const Object = 'route object';",
+        "const Promise = null;",
+        "const Error = 'route error';",
+        "const JSON = 'route json';",
+        "export const GET = async () => {",
+        '  const dyn = await import("shadow-fixture");',
+        "  return new Response([fixture.value, ns.value, dyn.value, Set, Map, Object, Promise, Error, JSON].join(':'));",
+        "};",
+      ].join("\n"),
+      files,
+    );
+    assertEquals(
+      await responseText(GET),
+      "v:v:v:route set:route map:route object::route error:route json",
+    );
+  });
+
+  denoIt("does not run export getters while building a namespace", async () => {
+    const files = {
+      "node_modules/lazy-fixture/package.json": JSON.stringify({
+        name: "lazy-fixture",
+        main: "index.js",
+      }),
+      "node_modules/lazy-fixture/index.js": [
+        "let ready = false;",
+        "Object.defineProperty(exports, 'lazy', { enumerable: true, get() { if (!ready) throw new Error('not ready'); return 'lazy'; } });",
+        "exports.ready = () => { ready = true; };",
+      ].join("\n"),
+    };
+    const GET = await loadCompiledRoute(
+      [
+        'import * as ns from "lazy-fixture";',
+        "export const GET = async () => {",
+        '  const dyn = await import("lazy-fixture");',
+        "  ns.ready();",
+        "  return new Response(ns.lazy + ':' + dyn.lazy);",
+        "};",
+      ].join("\n"),
+      files,
+    );
+    assertEquals(await responseText(GET), "lazy:lazy");
+  });
+
+  denoIt("applies default interop to a quoted default name", async () => {
+    const files = {
+      "node_modules/num-fixture/package.json": JSON.stringify({
+        name: "num-fixture",
+        main: "index.js",
+      }),
+      "node_modules/num-fixture/index.js": "module.exports = 42;",
+    };
+    const route = await loadCompiledRouteModule(
+      [
+        'import { "default" as value } from "num-fixture";',
+        'export { "default" as reexported } from "num-fixture";',
+        "export const GET = async () => new Response(String(value));",
+      ].join("\n"),
+      files,
+    );
+    assertEquals(await responseText(route.GET as () => Promise<Response>), "42");
+    assertEquals(route.reexported, 42);
+  });
+
+  denoIt("resolves a dynamic import inside a CommonJS module relative to that module", async () => {
+    const files = {
+      "node_modules/bridge-fixture/package.json": JSON.stringify({
+        name: "bridge-fixture",
+        main: "index.js",
+      }),
+      "node_modules/bridge-fixture/index.js":
+        "module.exports = () => import('./child.mjs').then((m) => m.value);",
+      "node_modules/bridge-fixture/child.mjs": "export const value = 'esm child';",
+    };
+    const GET = await loadCompiledRoute(
+      [
+        'import load from "bridge-fixture";',
+        "export const GET = async () => new Response(await load());",
+      ].join("\n"),
+      files,
+    );
+    assertEquals(await responseText(GET), "esm child");
+  });
+
   denoIt("gives CommonJS namespaces the immutability of module namespaces", async () => {
     const files = {
       "node_modules/frozen-fixture/package.json": JSON.stringify({
@@ -6402,6 +6499,46 @@ describe("route CommonJS require (#5471)", () => {
       children: 1,
       childIsChild: true,
     });
+  });
+
+  denoIt(
+    "resolves a package subpath that is not a built-in subpath from node_modules",
+    async () => {
+      const projectDir = await writeProject({
+        "node_modules/fs/package.json": JSON.stringify({ name: "fs", main: "index.js" }),
+        "node_modules/fs/plugin.js": "module.exports = 'fs package plugin';",
+      });
+      const vfRequire = await importCompiledBinaryRequireShim(projectDir);
+
+      assertEquals(vfRequire("fs/plugin"), "fs package plugin");
+      assertEquals(typeof (vfRequire("fs/promises") as { readFile: unknown }).readFile, "function");
+    },
+  );
+
+  denoIt("gives modules their node_modules lookup paths and honors resolve paths", async () => {
+    const projectDir = await writeProject({
+      "node_modules/plugin-loader/package.json": JSON.stringify({
+        name: "plugin-loader",
+        main: "index.js",
+      }),
+      "node_modules/plugin-loader/index.js": [
+        "const path = require('node:path');",
+        "module.exports = {",
+        "  paths: module.paths,",
+        "  viaPaths: path.basename(path.dirname(require.resolve('./plugin', { paths: [path.join(__dirname, 'plugins')] }))),",
+        "};",
+      ].join("\n"),
+      "node_modules/plugin-loader/plugins/plugin.js": "module.exports = 1;",
+    });
+    const vfRequire = await importCompiledBinaryRequireShim(projectDir);
+
+    const result = vfRequire("plugin-loader") as { paths: string[]; viaPaths: string };
+    assertEquals(
+      result.paths[0],
+      join(projectDir, "node_modules", "plugin-loader", "node_modules"),
+    );
+    assertEquals(result.paths.includes(join(projectDir, "node_modules")), true);
+    assertEquals(result.viaPaths, "plugins");
   });
 
   denoIt("lets a top-level dependency require through module.parent", async () => {

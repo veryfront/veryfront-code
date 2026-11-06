@@ -148,7 +148,7 @@ describe("import rewrite compatibility golden tests", () => {
         `const m = import("lodash/merge");`,
         new Map([["lodash", "^4"]]),
       ),
-      `Promise.resolve().then(() => __vf_namespace("lodash/merge"))`,
+      `(async () => { await null; return __vf_namespace("lodash/merge"); })()`,
     );
     assertEquals(
       rewriteDenoNodeBuiltinImports(`import { readFile } from "fs";`),

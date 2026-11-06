@@ -98,6 +98,39 @@ export function parseModuleSpecifiers(clause: string): ModuleSpecifier[] {
   return specifiers;
 }
 
+const SIMPLE_ESCAPES: Record<string, string> = {
+  b: "\b",
+  f: "\f",
+  n: "\n",
+  r: "\r",
+  t: "\t",
+  v: "\v",
+  "0": "\0",
+};
+
+/**
+ * The name a specifier's `name` denotes, with string-literal quotes removed
+ * and escapes decoded, so `default`, `"default"` and `\u0064efault` compare
+ * equal.
+ */
+export function moduleExportNameValue(specifier: ModuleSpecifier): string {
+  const source = specifier.nameIsString ? specifier.name.slice(1, -1) : specifier.name;
+  return source.replace(
+    /\\(?:u\{([0-9a-fA-F]+)\}|u([0-9a-fA-F]{4})|x([0-9a-fA-F]{2})|(\r\n|[\s\S]))/g,
+    (_match, codePoint?: string, unit?: string, byte?: string, other?: string) => {
+      const hex = codePoint ?? unit ?? byte;
+      if (hex !== undefined) return String.fromCodePoint(parseInt(hex, 16));
+      if (
+        other === "\n" || other === "\r" || other === "\r\n" || other === "\u2028" ||
+        other === "\u2029"
+      ) {
+        return "";
+      }
+      return SIMPLE_ESCAPES[other!] ?? other!;
+    },
+  );
+}
+
 /**
  * Convert a named import clause (`{ a, b as c, "d-e" as f }`) to a
  * destructuring pattern (`{ a, b: c, "d-e": f }`). A string-literal name

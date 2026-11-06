@@ -149,7 +149,7 @@ describe("external-import-rewriter", () => {
       );
       assertStringIncludes(
         out,
-        `Promise.resolve().then(() => __vf_namespace("lodash"))`,
+        `(async () => { await null; return __vf_namespace("lodash"); })()`,
       );
     });
 
@@ -188,7 +188,7 @@ describe("external-import-rewriter", () => {
         out,
         [
           'const data = __vf_interopDefault(require("lodash/data.json"));',
-          'const lazy = Promise.resolve().then(() => __vf_namespace("lodash/data.json"));',
+          'const lazy = (async () => { await null; return __vf_namespace("lodash/data.json"); })();',
         ].join("\n"),
       );
     });
@@ -200,7 +200,7 @@ describe("external-import-rewriter", () => {
       );
       assertEquals(
         out,
-        'const lazy = Promise.resolve().then(() => __vf_namespace("lodash"));',
+        'const lazy = (async () => { await null; return __vf_namespace("lodash"); })();',
       );
     });
 
@@ -211,6 +211,31 @@ describe("external-import-rewriter", () => {
       );
       assertStringIncludes(out, `require("lodash")`);
       assertStringIncludes(out, `"}": brace`);
+    });
+
+    it("applies default interop to a quoted default name", async () => {
+      const out = await rewriteCompiledBinaryUserDependencyImports(
+        [
+          `import { "default" as value } from "lodash";`,
+          `export { "default" as reexported } from "lodash";`,
+        ].join("\n"),
+        deps,
+      );
+      assertStringIncludes(out, `const value = __vf_interopDefault(`);
+      assertStringIncludes(out, `= __vf_interopDefault(__vf_reexport_0)`);
+      const escaped = await rewriteCompiledBinaryUserDependencyImports(
+        `import { \\u0064efault as value } from "lodash";`,
+        deps,
+      );
+      assertStringIncludes(escaped, `const value = __vf_interopDefault(`);
+    });
+
+    it("rewrites a dynamic import without the Promise binding", async () => {
+      const out = await rewriteCompiledBinaryUserDependencyImports(
+        `const m = import("lodash");`,
+        deps,
+      );
+      assertEquals(out.includes("Promise"), false, out);
     });
 
     it("rewrites a named default import with interop", async () => {
