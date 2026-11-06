@@ -202,8 +202,10 @@ export function rewriteCompiledVeryfrontImportsForRoute(code: string): string {
   return transformed;
 }
 
+/** A `{ ... }` specifier list; quoted names may contain braces. */
+const SPECIFIER_LIST = `\\{(?:${JS_STRING_LITERAL}|[^}"'])*\\}`;
 const IMPORT_CLAUSE = new RegExp(
-  `^(?:(${JS_IDENTIFIER})\\s*(?:,\\s*)?)?(?:\\*\\s*as\\s+(${JS_IDENTIFIER})|(\\{[^}]*\\}))?$`,
+  `^(?:(${JS_IDENTIFIER})\\s*(?:,\\s*)?)?(?:\\*\\s*as\\s+(${JS_IDENTIFIER})|(${SPECIFIER_LIST}))?$`,
   "u",
 );
 /** Import attributes (`with { type: "json" }`) and an optional semicolon. */
@@ -360,18 +362,44 @@ function rewriteCjsReexport(
   );
 }
 
+/** Characters after which a `/` begins a regex literal rather than dividing. */
+const REGEX_PRECEDERS = new Set([..."(,=:[!&|?{};+-*%<>~^"]);
+
+/** The index just past the regex literal (and its flags) starting at `start`. */
+function findRegexLiteralEnd(code: string, start: number): number {
+  let inClass = false;
+  for (let index = start + 1; index < code.length; index++) {
+    const char = code[index]!;
+    if (char === "\n") return -1;
+    if (char === "\\") index++;
+    else if (char === "[") inClass = true;
+    else if (char === "]") inClass = false;
+    else if (char === "/" && !inClass) {
+      let end = index + 1;
+      while (end < code.length && /[a-z]/i.test(code[end]!)) end++;
+      return end;
+    }
+  }
+  return -1;
+}
+
 /**
  * The index just past the `)` closing a dynamic `import(` whose specifier ends
  * at `from`, skipping an options argument; -1 when it cannot be found.
  */
 function findDynamicImportEnd(code: string, from: number): number {
   let depth = 0;
+  // The last significant character decides whether a `/` starts a regex
+  // literal or divides, as in the usual lexer heuristic.
+  let previous = "(";
   for (let index = from; index < code.length; index++) {
     const char = code[index]!;
+    if (/\s/.test(char)) continue;
     if (char === '"' || char === "'" || char === "`") {
       for (index++; index < code.length && code[index] !== char; index++) {
         if (code[index] === "\\") index++;
       }
+      previous = char;
       continue;
     }
     if (char === "/" && code[index + 1] === "/") {
@@ -386,6 +414,14 @@ function findDynamicImportEnd(code: string, from: number): number {
       index = end + 1;
       continue;
     }
+    if (char === "/" && REGEX_PRECEDERS.has(previous)) {
+      const end = findRegexLiteralEnd(code, index);
+      if (end === -1) return -1;
+      index = end - 1;
+      previous = "/";
+      continue;
+    }
+    previous = char;
     if (char === "(" || char === "{" || char === "[") depth++;
     else if (char === "}" || char === "]") depth--;
     else if (char === ")") {

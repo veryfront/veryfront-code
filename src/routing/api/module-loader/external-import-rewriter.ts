@@ -467,6 +467,7 @@ var routeModule = { exports: {}, id: __VF_PROJECT_DIR__, filename: __VF_PROJECT_
 var routeRequire = function(id) { return __vf_loadCjs(id, __VF_PROJECT_DIR__, routeModule); };
 routeRequire.resolve = function(id) { return __vf_resolveId(id, __VF_PROJECT_DIR__); };
 routeRequire.ensure = function(mods, cb) { cb(); };
+routeModule.require = routeRequire;
 // One namespace per resolved module, as with ES module namespaces: repeated
 // imports of a module share it, and distinct modules never do. As with native
 // CommonJS interop, \`default\` is the whole module.exports, also for modules
@@ -486,6 +487,10 @@ __vf_namespace = function (id) {
     for (var i = 0; i < names.length; i++) if (names[i] !== "default") ns[names[i]] = m[names[i]];
   }
   ns.default = m;
+  // Module namespaces are sealed: strict-mode writes, additions and deletes
+  // throw a TypeError, as they do on a native namespace.
+  Object.defineProperty(ns, Symbol.toStringTag, { value: "Module" });
+  Object.freeze(ns);
   namespaces.set(key, ns);
   return ns;
 };

@@ -5850,6 +5850,36 @@ describe("route CommonJS require (#5471)", () => {
     assertEquals(await responseText(GET), "own:false:false");
   });
 
+  denoIt("gives CommonJS namespaces the immutability of module namespaces", async () => {
+    const files = {
+      "node_modules/frozen-fixture/package.json": JSON.stringify({
+        name: "frozen-fixture",
+        main: "index.js",
+      }),
+      "node_modules/frozen-fixture/index.js": "module.exports = { value: 1 };",
+    };
+    const GET = await loadCompiledRoute(
+      [
+        'import * as ns from "frozen-fixture";',
+        "const attempt = (fn) => { try { fn(); return 'ok'; } catch (error) { return error.name; } };",
+        "const write = (target, key) => { target[key] = 2; };",
+        "const remove = (target, key) => { delete target[key]; };",
+        "export const GET = async () => {",
+        '  const dyn = await import("frozen-fixture");',
+        "  return new Response([",
+        "    attempt(() => write(ns, 'value')),",
+        "    attempt(() => write(dyn, 'added')),",
+        "    attempt(() => remove(ns, 'default')),",
+        "    ns.value,",
+        "    Object.isExtensible(dyn),",
+        "  ].join(':'));",
+        "};",
+      ].join("\n"),
+      files,
+    );
+    assertEquals(await responseText(GET), "TypeError:TypeError:TypeError:1:false");
+  });
+
   denoIt("resolves a package's own nested dependency before the hoisted copy", async () => {
     const files = {
       "node_modules/outer/package.json": JSON.stringify({ name: "outer", main: "index.js" }),
@@ -6372,6 +6402,21 @@ describe("route CommonJS require (#5471)", () => {
       children: 1,
       childIsChild: true,
     });
+  });
+
+  denoIt("lets a top-level dependency require through module.parent", async () => {
+    const projectDir = await writeProject({
+      "node_modules/plugin-host/package.json": JSON.stringify({
+        name: "plugin-host",
+        main: "index.js",
+      }),
+      "node_modules/plugin-host/index.js": "module.exports = module.parent.require('peer-dep');",
+      "node_modules/peer-dep/package.json": JSON.stringify({ name: "peer-dep", main: "index.js" }),
+      "node_modules/peer-dep/index.js": "module.exports = 'peer';",
+    });
+    const vfRequire = await importCompiledBinaryRequireShim(projectDir);
+
+    assertEquals(vfRequire("plugin-host"), "peer");
   });
 
   denoIt("hides host paths in other package resolution errors", async () => {

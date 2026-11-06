@@ -193,6 +193,26 @@ describe("external-import-rewriter", () => {
       );
     });
 
+    it("rewrites a dynamic import whose attributes contain a regex literal", async () => {
+      const out = await rewriteCompiledBinaryUserDependencyImports(
+        `const lazy = import("lodash", { with: { type: /[)]/.test("") ? "json" : "json" } });`,
+        deps,
+      );
+      assertEquals(
+        out,
+        'const lazy = Promise.resolve().then(() => __vf_namespace("lodash"));',
+      );
+    });
+
+    it("rewrites a named import whose string-literal name contains a brace", async () => {
+      const out = await rewriteCompiledBinaryUserDependencyImports(
+        `import { "}" as brace } from "lodash";`,
+        deps,
+      );
+      assertStringIncludes(out, `require("lodash")`);
+      assertStringIncludes(out, `"}": brace`);
+    });
+
     it("rewrites a named default import with interop", async () => {
       const out = await rewriteCompiledBinaryUserDependencyImports(
         `import { default as lodash, merge } from "lodash";`,
