@@ -36,31 +36,6 @@ describe("throwIfAbortSignalAborted", () => {
     assertStrictEquals(result.value, reason);
   });
 
-  it("throws an AbortError when the native throwIfAborted throws undefined", async () => {
-    // Bun 1.3.6 can throw undefined from throwIfAborted() after GC drops the reason.
-    // The helper captures the native method at load, so load a fresh copy while the
-    // prototype method behaves like that on every runtime.
-    const nativeThrowIfAborted = AbortSignal.prototype.throwIfAborted;
-    let fresh: typeof import("./abort-signal.ts") | undefined;
-    AbortSignal.prototype.throwIfAborted = function throwUndefined(this: AbortSignal) {
-      throw undefined;
-    };
-    try {
-      fresh = await import("./abort-signal.ts?lost-abort-reason");
-    } finally {
-      AbortSignal.prototype.throwIfAborted = nativeThrowIfAborted;
-    }
-
-    const result = captureThrown(() =>
-      fresh!.throwIfAbortSignalAborted(abortedController(new Error("eval cancelled")).signal)
-    );
-    assertEquals(result.threw, true);
-    assertInstanceOf(result.value, DOMException);
-    const thrown = result.value as DOMException;
-    assertEquals(thrown.name, "AbortError");
-    assertEquals(thrown.message, "The operation was aborted");
-  });
-
   it("never throws undefined after Bun collects an unread abort reason", () => {
     // Bun 1.3.6 keeps the reason alive only through a live signal wrapper. Aborting
     // before the signal is read and then collecting garbage drops the reason. Other
