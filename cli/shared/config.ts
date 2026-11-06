@@ -712,7 +712,10 @@ async function resolveConfigBase(
 
   if (!apiToken && interactive && allowAuthPrompt) {
     const userInfo = await ensureAuthenticated(env, dir, authOptions);
-    if (!userInfo) throw new Error("Authentication required for this operation.");
+    if (!userInfo) {
+      const hint = misnamedApiKeyHint();
+      throw new Error(`Authentication required for this operation.${hint ? ` ${hint}` : ""}`);
+    }
     apiToken = (await readToken(env)) ?? null;
     apiTokenSource = apiToken ? "token-store" : undefined;
     if (!apiToken) throw new Error("Authentication failed. Please try again.");
