@@ -137,7 +137,7 @@ var require = (function () {
 // which is reached through syntax alone.
 var __vf_global = (function () {}).constructor("return this")();
 var Deno = __vf_global.Deno, Error = __vf_global.Error, Function = __vf_global.Function;
-var Map = __vf_global.Map, Set = __vf_global.Set, TypeError = __vf_global.TypeError;
+var TypeError = __vf_global.TypeError;
 var globalThis = __vf_global;
 // The static methods the loader calls are captured now, before route code
 // runs, so a later \`Object.freeze = ...\` cannot change how it behaves.
@@ -156,18 +156,25 @@ var Symbol = { toStringTag: __vf_global.Symbol.toStringTag };
 var String = { fromCodePoint: __vf_global.String.fromCodePoint };
 var parseInt = __vf_global.parseInt, SyntaxError = __vf_global.SyntaxError;
 var __vf_builtinRequire = __vf_createRequire(__VF_PROJECT_DIR__ + "/package.json");
-var __vf_builtinSet = new Set(__VF_BUILTIN_LIST__);
+// Lookup tables are null-prototype objects rather than Set or Map, so route or
+// package code that replaces a collection prototype method cannot change them.
+function __vf_tableOf(names) {
+  var table = Object.create(null);
+  for (var i = 0; i < names.length; i++) table[names[i]] = true;
+  return table;
+}
+var __vf_builtinSet = __vf_tableOf(__VF_BUILTIN_LIST__);
 // Every built-in this runtime provides, not only the shared list. Node's
 // prefix-only built-ins (node:test, node:sqlite, node:sea) have no bare form,
 // so a package of that name still resolves from node_modules, even where the
 // runtime lists the bare name.
-var __vf_prefixOnlyBuiltins = new Set(["sea", "sqlite", "test", "test/reporters"]);
+var __vf_prefixOnlyBuiltins = __vf_tableOf(["sea", "sqlite", "test", "test/reporters"]);
 try {
   var __vf_runtimeBuiltins = __vf_builtinRequire("node:module").builtinModules;
   for (var __vf_b = 0; __vf_b < __vf_runtimeBuiltins.length; __vf_b++) {
     var __vf_name = __vf_runtimeBuiltins[__vf_b];
-    if (__vf_name.startsWith("node:") || __vf_prefixOnlyBuiltins.has(__vf_name)) continue;
-    __vf_builtinSet.add(__vf_name);
+    if (__vf_name.startsWith("node:") || __vf_prefixOnlyBuiltins[__vf_name] === true) continue;
+    __vf_builtinSet[__vf_name] = true;
   }
 } catch (_) { /* expected: fall back to the shared list */ }
 // Absolute ids include Windows drive-letter and UNC paths.
@@ -341,7 +348,7 @@ function __vf_resolveBare(id, parentDir) {
     unknown.code = "MODULE_NOT_FOUND";
     throw unknown;
   }
-  if (__vf_prefixOnlyBuiltins.has(__vf_packageName(id))) return __vf_resolvePrefixOnlyName(id, parentDir);
+  if (__vf_prefixOnlyBuiltins[__vf_packageName(id)] === true) return __vf_resolvePrefixOnlyName(id, parentDir);
   try {
     return __vf_parentRequire(parentDir).resolve(id);
   } catch (error) {
@@ -423,11 +430,11 @@ function __vf_isBuiltin(id) {
   // Only real built-ins are reserved under node:, as in Node.
   if (id.startsWith("node:")) {
     var bare = id.slice(5);
-    return __vf_builtinSet.has(bare) || __vf_prefixOnlyBuiltins.has(bare);
+    return __vf_builtinSet[bare] === true || __vf_prefixOnlyBuiltins[bare] === true;
   }
   // Only the runtime's own built-in ids: "fs/promises" is a built-in, while
   // "fs/plugin" resolves from an installed package named fs, as in Node.
-  return __vf_builtinSet.has(id);
+  return __vf_builtinSet[id] === true;
 }
 // Node's module.paths: each ancestor's node_modules, stopping at the project
 // root so host directories above it are never listed. The directory is
@@ -446,10 +453,13 @@ function __vf_nodeModulePaths(dir) {
 // require.resolve(id) and require.resolve(id, { paths }): with paths, id
 // resolves from each listed directory in turn. Either way a module result must
 // stay inside the project, as loading it would, so no host path leaks out.
+// The canonical path is returned, the same key require.cache uses.
 function __vf_resolveContained(id, parentDir) {
   var found = __vf_resolveId(id, parentDir);
-  if (!__vf_isBuiltin(id) && !__vf_isBuiltin(found)) __vf_assertContained(__vf_canonicalize(found), id);
-  return found;
+  if (__vf_isBuiltin(id) || __vf_isBuiltin(found)) return found;
+  var canonical = __vf_canonicalize(found);
+  __vf_assertContained(canonical, id);
+  return canonical;
 }
 // require.resolve.paths(request): null for a built-in, the requiring
 // directory for a relative request, otherwise its node_modules lookup paths.
@@ -590,7 +600,8 @@ function __vf_rewriteCjsDynamicImports(code, helperName) {
       var start = i;
       while (i < code.length && (/[A-Za-z0-9_$]/.test(code[i]) || code.charCodeAt(i) > 127)) i++;
       var word = code.slice(start, i);
-      if (word === "import" && previous !== ".") {
+      // Not a property (obj.import) or a private name (this.#import).
+      if (word === "import" && previous !== "." && previous !== "#") {
         var call = __vf_matchRelativeImport(code, i);
         if (call) {
           out += code.slice(copied, start) + helperName + "(" + JSON.stringify(call.spec);
@@ -651,8 +662,14 @@ function __vf_readText(path, id) {
 }
 // As in Node, every required module records the module that first required it
 // as module.parent, and each requiring module lists it once in module.children.
+// Index loops instead of Array prototype methods, which package code can replace.
+function __vf_childIndex(parentMod, mod) {
+  var children = parentMod.children;
+  for (var i = 0; i < children.length; i++) if (children[i] === mod) return i;
+  return -1;
+}
 function __vf_linkChild(parentMod, mod) {
-  if (parentMod && parentMod.children.indexOf(mod) === -1) parentMod.children.push(mod);
+  if (parentMod && __vf_childIndex(parentMod, mod) === -1) parentMod.children[parentMod.children.length] = mod;
 }
 function __vf_loadCjs(id, parentDir, parentMod) {
   if (__vf_isBuiltin(id)) return __vf_builtinRequire(id);
@@ -724,8 +741,12 @@ function __vf_loadCjs(id, parentDir, parentMod) {
   } catch (error) {
     delete __vf_cache[resolved];
     if (parentMod) {
-      var childIdx = parentMod.children.indexOf(mod);
-      if (childIdx !== -1) parentMod.children.splice(childIdx, 1);
+      var childIdx = __vf_childIndex(parentMod, mod);
+      if (childIdx !== -1) {
+        var siblings = parentMod.children;
+        for (var k = childIdx; k < siblings.length - 1; k++) siblings[k] = siblings[k + 1];
+        siblings.length = siblings.length - 1;
+      }
     }
     throw error;
   }
@@ -749,10 +770,11 @@ routeModule.require = routeRequire;
 // imports of a module share it, and distinct modules never do. As with native
 // CommonJS interop, \`default\` is the whole module.exports, also for modules
 // marked __esModule.
-var namespaces = new Map();
+var namespaces = Object.create(null);
 // import() rejects options that are not an object, a "with" value that is not
 // an object, a non-string attribute value, and attributes it does not support.
-__vf_validateImportOptions = function (options) {
+// The only supported type is "json", and only for a JSON module.
+__vf_validateImportOptions = function (options, id) {
   if (options === void 0) return;
   if (options === null || (typeof options !== "object" && typeof options !== "function")) {
     throw new TypeError("The second argument to import() must be an object");
@@ -771,12 +793,20 @@ __vf_validateImportOptions = function (options) {
       throw new SyntaxError("Unsupported import attribute " + JSON.stringify(keys[i]));
     }
   }
+  var type = attributes.type;
+  if (type === void 0) return;
+  if (type !== "json") {
+    throw new TypeError("Import attribute type " + JSON.stringify(type) + " is not supported");
+  }
+  if (id !== void 0 && (__vf_isBuiltin(id) || !__vf_resolveId(id, __VF_PROJECT_DIR__).endsWith(".json"))) {
+    throw new TypeError("Module " + JSON.stringify(id) + " is not a JSON module, but was imported with type json");
+  }
 };
 __vf_namespace = function (id) {
   var key = __vf_isBuiltin(id)
     ? "builtin:" + id.replace(/^node:/, "")
     : __vf_canonicalize(__vf_resolveId(id, __VF_PROJECT_DIR__));
-  if (namespaces.has(key)) return namespaces.get(key);
+  if (key in namespaces) return namespaces[key];
   var m = routeRequire(id);
   var ns = Object.create(null);
   if (m !== null && (typeof m === "object" || typeof m === "function")) {
@@ -800,7 +830,7 @@ __vf_namespace = function (id) {
   // throw a TypeError, as they do on a native namespace.
   Object.defineProperty(ns, Symbol.toStringTag, { value: "Module" });
   Object.freeze(ns);
-  namespaces.set(key, ns);
+  namespaces[key] = ns;
   return ns;
 };
 return routeRequire;

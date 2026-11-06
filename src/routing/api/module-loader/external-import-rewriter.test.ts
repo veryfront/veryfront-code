@@ -187,8 +187,8 @@ describe("external-import-rewriter", () => {
       assertEquals(
         out,
         [
-          'const data = __vf_interopDefault(require("lodash/data.json"));',
-          'const lazy = ((__vf_options) => (async () => { await null; __vf_validateImportOptions(__vf_options); return __vf_namespace("lodash/data.json"); })())({ with: { type: "json" } });',
+          '__vf_validateImportOptions({ with: { type: "json" } }, "lodash/data.json"); const data = __vf_interopDefault(require("lodash/data.json"));',
+          'const lazy = ((__vf_options) => (async () => { await null; __vf_validateImportOptions(__vf_options, "lodash/data.json"); return __vf_namespace("lodash/data.json"); })())({ with: { type: "json" } });',
         ].join("\n"),
       );
     });
@@ -200,7 +200,7 @@ describe("external-import-rewriter", () => {
       );
       assertEquals(
         out,
-        'const lazy = ((__vf_options) => (async () => { await null; __vf_validateImportOptions(__vf_options); return __vf_namespace("lodash"); })())({ with: { type: /[)]/.test("") ? "json" : "json" } });',
+        'const lazy = ((__vf_options) => (async () => { await null; __vf_validateImportOptions(__vf_options, "lodash"); return __vf_namespace("lodash"); })())({ with: { type: /[)]/.test("") ? "json" : "json" } });',
       );
     });
 
@@ -238,6 +238,27 @@ describe("external-import-rewriter", () => {
       assertEquals(out.includes("Promise"), false, out);
     });
 
+    it("rewrites a dynamic import nested in another import's options", async () => {
+      const out = await rewriteCompiledBinaryUserDependencyImports(
+        `const a = import("lodash", (import("lodash/inner"), {}));`,
+        deps,
+      );
+      assertEquals(out.includes('import("lodash'), false, out);
+      assertStringIncludes(out, '__vf_namespace("lodash/inner")');
+      assertStringIncludes(out, '__vf_namespace("lodash")');
+    });
+
+    it("checks static import attributes when the route module loads", async () => {
+      const out = await rewriteCompiledBinaryUserDependencyImports(
+        `import data from "lodash/data.json" with { type: "json" };`,
+        deps,
+      );
+      assertStringIncludes(
+        out,
+        '__vf_validateImportOptions({ with: { type: "json" } }, "lodash/data.json");',
+      );
+    });
+
     it("embeds a project path that contains a placeholder name unchanged", () => {
       const shim = generateCompiledBinaryRequireShim("/tmp/__VF_PROJECT_ROOT__");
       assertStringIncludes(shim, 'var __vf_projectRoot = "/tmp/__VF_PROJECT_ROOT__";');
@@ -254,7 +275,7 @@ describe("external-import-rewriter", () => {
       assertEquals(
         out,
         [
-          'const a = ((__vf_options) => (async () => { await null; __vf_validateImportOptions(__vf_options); return __vf_namespace("lodash"); })())((seen = true, {}));',
+          'const a = ((__vf_options) => (async () => { await null; __vf_validateImportOptions(__vf_options, "lodash"); return __vf_namespace("lodash"); })())((seen = true, {}));',
           'const b = (async () => { await null; return __vf_namespace("lodash"); })();',
         ].join("\n"),
       );
@@ -337,7 +358,7 @@ describe("external-import-rewriter", () => {
       );
       assertEquals(
         out,
-        'const lazy = ((__vf_options) => (async () => { await null; __vf_validateImportOptions(__vf_options); return __vf_namespace("lodash"); })())({ with: { type: (() => { return /[)]/.test("") ? "json" : "json"; })() } });',
+        'const lazy = ((__vf_options) => (async () => { await null; __vf_validateImportOptions(__vf_options, "lodash"); return __vf_namespace("lodash"); })())({ with: { type: (() => { return /[)]/.test("") ? "json" : "json"; })() } });',
       );
     });
 

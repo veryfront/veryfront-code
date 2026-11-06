@@ -368,6 +368,17 @@ function rewriteCjsReexport(
 }
 
 /**
+ * The `{ ... }` attributes of a static import whose lexer attribute index is
+ * `start`, or "" when it has none.
+ */
+function staticImportAttributes(masked: string, start: number, end: number): string {
+  if (start < 0) return "";
+  const text = masked.slice(start, end).trim().replace(/;$/, "").trimEnd()
+    .replace(/^(?:with|assert)\s*/, "");
+  return text.startsWith("{") && text.endsWith("}") ? text : "";
+}
+
+/**
  * Rewrite a bundled compiled-binary route's user dependency imports.
  *
  * Import statements come from the module lexer, so text that only looks like
@@ -384,7 +395,11 @@ export async function rewriteCompiledUserDependencyImportsForRoute(
 ): Promise<string> {
   if (userDeps.size === 0) return code;
   const { masked, imports, unmask } = await parseMaskedImports(code);
-  const edits: { start: number; end: number; text: string; static?: boolean }[] = [];
+  // An edit renders its replacement; a dynamic import's options may contain
+  // further imports, so its render receives the rewrite of a nested range.
+  type Render = (rewriteRange: (start: number, end: number) => string) => string;
+  const edits: { start: number; end: number; render: Render; static?: boolean }[] = [];
+  const fixed = (text: string): Render => () => text;
   let reexports = 0;
 
   for (const imported of imports) {
@@ -416,7 +431,7 @@ export async function rewriteCompiledUserDependencyImportsForRoute(
       edits.push({
         start: imported.s,
         end: imported.e,
-        text: isDynamic ? toJsStringLiteral(url) : url,
+        render: fixed(isDynamic ? toJsStringLiteral(url) : url),
       });
       continue;
     }
@@ -434,34 +449,56 @@ export async function rewriteCompiledUserDependencyImportsForRoute(
       // An async arrow returns an intrinsic promise whatever route code binds
       // to `Promise`, and the await defers loading as import() does.
       const lazy = `(async () => { await null; return ${helperPrefix}namespace(${specifier}); })()`;
-      const options = imported.a > -1
-        ? masked.slice(imported.a, imported.se - 1).trim().replace(/,$/, "").trimEnd()
-        : "";
       // The options argument is evaluated first, as import() would, and
       // validated when the load starts, so bad options reject the promise.
       const optionsParam = `${helperPrefix}options`;
+      const optionsStart = imported.a;
+      const optionsEnd = imported.se - 1;
       edits.push({
         start: imported.ss,
         end: imported.se,
-        text: options
-          ? `((${optionsParam}) => (async () => { await null; ${helperPrefix}validateImportOptions(${optionsParam}); return ${helperPrefix}namespace(${specifier}); })())(${options})`
-          : lazy,
+        render: (rewriteRange) => {
+          const options = optionsStart > -1
+            ? rewriteRange(optionsStart, optionsEnd).trim().replace(/,$/, "").trimEnd()
+            : "";
+          return options
+            ? `((${optionsParam}) => (async () => { await null; ${helperPrefix}validateImportOptions(${optionsParam}, ${specifier}); return ${helperPrefix}namespace(${specifier}); })())(${options})`
+            : lazy;
+        },
       });
       continue;
     }
 
     const statement = masked.slice(imported.ss, imported.se);
+    // Import attributes are checked when the route module loads, as a native
+    // import checks them before the route runs.
+    const attributes = staticImportAttributes(masked, imported.a, imported.se);
+    const check = attributes
+      ? `${helperPrefix}validateImportOptions({ with: ${attributes} }, ${specifier}); `
+      : "";
     if (statement.startsWith("export")) {
+      const reexport = rewriteCjsReexport(
+        statement,
+        specifier,
+        imported.n,
+        helperPrefix,
+        reexports++,
+      );
       edits.push({
         start: imported.ss,
         end: imported.se,
-        text: rewriteCjsReexport(statement, specifier, imported.n, helperPrefix, reexports++),
+        render: fixed(check + reexport),
         static: true,
       });
       continue;
     }
     if (SIDE_EFFECT_IMPORT.test(statement)) {
-      edits.push({ start: imported.ss, end: imported.se, text: required, static: true });
+      edits.push({
+        start: imported.ss,
+        end: imported.se,
+        render: fixed(check + required),
+        static: true,
+      });
       continue;
     }
     const clause = statement.match(STATIC_FROM_IMPORT)?.[1];
@@ -469,7 +506,12 @@ export async function rewriteCompiledUserDependencyImportsForRoute(
       ? null
       : rewriteCjsImportClause(clause, specifier, helperPrefix);
     if (rewritten !== null) {
-      edits.push({ start: imported.ss, end: imported.se, text: rewritten, static: true });
+      edits.push({
+        start: imported.ss,
+        end: imported.se,
+        render: fixed(check + rewritten),
+        static: true,
+      });
     }
   }
 
@@ -477,15 +519,23 @@ export async function rewriteCompiledUserDependencyImportsForRoute(
   // A replaced declaration ended where ASI applied, but a replacement
   // expression would let a following line starting with ( [ or a template
   // continue it, so every static rewrite ends in its own semicolon.
-  for (const edit of edits) {
-    if (edit.static && masked[edit.end] !== ";" && !edit.text.endsWith(";")) edit.text += ";";
-  }
-  edits.sort((left, right) => right.start - left.start);
-  let transformed = masked;
-  for (const edit of edits) {
-    transformed = transformed.slice(0, edit.start) + edit.text + transformed.slice(edit.end);
-  }
-  return unmask(transformed);
+  // Edits are applied front to back. One nested in another (an import inside
+  // a dynamic import's options) is skipped at the outer level and applied
+  // when the outer edit renders that range, so no two edits overlap.
+  edits.sort((left, right) => left.start - right.start);
+  const rewriteRange = (start: number, end: number): string => {
+    let out = "";
+    let cursor = start;
+    for (const edit of edits) {
+      if (edit.start < cursor || edit.end > end) continue;
+      let text = edit.render(rewriteRange);
+      if (edit.static && masked[edit.end] !== ";" && !text.endsWith(";")) text += ";";
+      out += masked.slice(cursor, edit.start) + text;
+      cursor = edit.end;
+    }
+    return out + masked.slice(cursor, end);
+  };
+  return unmask(rewriteRange(0, masked.length));
 }
 
 export async function rewriteDenoNpmDependencyImportsForRoute(

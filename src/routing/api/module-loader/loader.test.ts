@@ -6066,6 +6066,34 @@ describe("route CommonJS require (#5471)", () => {
     },
   );
 
+  denoIt("caches namespaces without the mutable Map prototype", async () => {
+    const files = {
+      "node_modules/map-fixture/package.json": JSON.stringify({
+        name: "map-fixture",
+        main: "index.js",
+      }),
+      "node_modules/map-fixture/index.js":
+        "Map.prototype.set = null; module.exports = { value: 'v' };",
+    };
+    const originalSet = Map.prototype.set;
+    try {
+      const GET = await loadCompiledRoute(
+        [
+          "export const GET = async () => {",
+          '  const ns = await import("map-fixture");',
+          "  return new Response(ns.value);",
+          "};",
+        ].join("\n"),
+        files,
+      );
+      const text = await responseText(GET);
+      Map.prototype.set = originalSet;
+      assertEquals(text, "v");
+    } finally {
+      Map.prototype.set = originalSet;
+    }
+  });
+
   denoIt("gives CommonJS namespaces the immutability of module namespaces", async () => {
     const files = {
       "node_modules/frozen-fixture/package.json": JSON.stringify({
@@ -6872,7 +6900,14 @@ describe("route CommonJS require (#5471)", () => {
   });
 
   denoIt("validates dynamic-import options like import()", async () => {
-    const projectDir = await writeProject({});
+    const projectDir = await writeProject({
+      "node_modules/typed-fixture/package.json": JSON.stringify({
+        name: "typed-fixture",
+        main: "index.js",
+      }),
+      "node_modules/typed-fixture/index.js": "module.exports = { js: true };",
+      "node_modules/typed-fixture/data.json": JSON.stringify({ ok: "json" }),
+    });
     const shimPath = join(projectDir, "vf-validate-shim.mjs");
     await fs.writeTextFile(
       shimPath,
@@ -6881,16 +6916,66 @@ describe("route CommonJS require (#5471)", () => {
       }\nexport { __vf_validateImportOptions as validate };\n`,
     );
     const { validate } = await import(toFileUrl(shimPath).href) as {
-      validate: (options: unknown) => void;
+      validate: (options: unknown, id?: string) => void;
     };
 
     validate(undefined);
     validate({});
     validate({ with: { type: "json" } });
+    assertEquals(thrownError(() => validate({ with: { type: "javascript" } })).name, "TypeError");
+    validate({ with: { type: "json" } }, "typed-fixture/data.json");
+    assertEquals(
+      thrownError(() => validate({ with: { type: "json" } }, "typed-fixture")).name,
+      "TypeError",
+    );
+    assertEquals(
+      thrownError(() => validate({ with: { type: "json" } }, "node:fs")).name,
+      "TypeError",
+    );
     assertEquals(thrownError(() => validate(null)).name, "TypeError");
     assertEquals(thrownError(() => validate({ with: 1 })).name, "TypeError");
     assertEquals(thrownError(() => validate({ with: { type: 1 } })).name, "TypeError");
     assertEquals(thrownError(() => validate({ with: { other: "x" } })).name, "SyntaxError");
+  });
+
+  denoIt("leaves a private method named #import alone", async () => {
+    const projectDir = await writeProject({
+      "node_modules/private-fixture/package.json": JSON.stringify({
+        name: "private-fixture",
+        main: "index.js",
+      }),
+      "node_modules/private-fixture/index.js": [
+        "class Loader {",
+        "  #import(spec) { return 'private ' + spec; }",
+        "  run() { return this.#import('./child.mjs'); }",
+        "}",
+        "module.exports = new Loader().run();",
+      ].join("\n"),
+    });
+    const vfRequire = await importCompiledBinaryRequireShim(projectDir);
+
+    assertEquals(vfRequire("private-fixture"), "private ./child.mjs");
+  });
+
+  denoIt("returns the canonical path require.cache uses from require.resolve", async () => {
+    const projectDir = await writeProject({
+      "node_modules/link-fixture/package.json": JSON.stringify({
+        name: "link-fixture",
+        main: "index.js",
+      }),
+      "node_modules/link-fixture/real.js": "module.exports = 'real';",
+      "node_modules/link-fixture/index.js": [
+        "require('./link');",
+        "module.exports = require.resolve('./link') in require.cache;",
+      ].join("\n"),
+    });
+    Deno.symlinkSync(
+      join(projectDir, "node_modules/link-fixture/real.js"),
+      join(projectDir, "node_modules/link-fixture/link.js"),
+    );
+    const vfRequire = await importCompiledBinaryRequireShim(projectDir);
+
+    assertEquals(vfRequire("link-fixture"), true);
   });
 
   denoIt("lets a top-level dependency require through module.parent", async () => {
