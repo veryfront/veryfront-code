@@ -6,6 +6,8 @@ const EXT_TO_LOADER: Record<string, "tsx" | "jsx" | "ts" | "js" | "json"> = {
   tsx: "tsx",
   jsx: "jsx",
   ts: "ts",
+  mts: "ts",
+  cts: "ts",
   json: "json",
 };
 

@@ -51,13 +51,16 @@ import {
 import {
   COMPILED_RESOLVE_OPTIONS,
   createCompiledBuiltinPlugin,
-  createDependencyFilePredicate,
   createDependencyResolvePlugin,
   createImportExternalsPlugin,
+  createNativeAddonPlugin,
+  dependencyDirectories,
+  dependencyFilePredicate,
   type IsFile,
   PackageTypeLookup,
   prepareDependencyFile,
   prependRuntimeRequire,
+  rewriteImportSpecifiers,
 } from "./compiled-cjs-bundling.ts";
 import {
   MAX_WORKER_MODULE_SOURCE_BYTES,
@@ -2182,11 +2185,14 @@ function buildTranspiledModuleSource(
         'import { createRequire as __vf_createRequire } from "node:module";',
         `var require = __vf_createRequire(${safeProjectDir});`,
       ].join("\n");
-      const isDependencyFile = compiled
-        ? await createDependencyFilePredicate(projectDir, {
+      const dependencyDirs = compiled
+        ? await dependencyDirectories(projectDir, {
           realPath,
           readDir: (path) => createFileSystem().readDir(path),
         })
+        : [];
+      const isDependencyFile = compiled
+        ? dependencyFilePredicate(dependencyDirs)
         : noDependencyFiles;
       const routeSourceUrl = pathHelper.toFileUrl(resolvedPath).href;
       const workerShim = [
@@ -2243,7 +2249,8 @@ function buildTranspiledModuleSource(
         plugins: [
           ...(compiled
             ? [
-              createCompiledBuiltinPlugin(),
+              createNativeAddonPlugin(),
+              createCompiledBuiltinPlugin(isDependencyFile),
               createDependencyResolvePlugin(isDependencyFile, hostIsFile),
             ]
             : []),
@@ -2274,7 +2281,13 @@ function buildTranspiledModuleSource(
             workerImportMap,
             isDependencyFile,
           ),
-          ...(compiled ? [createImportExternalsPlugin(runtimeDeps.keys())] : []),
+          ...(compiled
+            ? [
+              // After the import map, so that a project can map a built-in name.
+              createCompiledBuiltinPlugin(() => true),
+              createImportExternalsPlugin(runtimeDeps.keys()),
+            ]
+            : []),
           createHTTPPlugin({
             allowedHosts,
             projectDir,
@@ -2307,13 +2320,16 @@ function buildTranspiledModuleSource(
       logger.debug(`built handler ${projectModuleLabel(resolvedPath, projectDir)}`);
       const output = result.outputFiles?.[0]?.text ?? "export {}";
       const js = compiled
-        ? prependRuntimeRequire(output, await canonicalProjectRoot(projectDir))
+        ? prependRuntimeRequire(output, await canonicalProjectRoot(projectDir), dependencyDirs)
         : output;
       logger.debug(`transpiled size ${js.length} bytes`);
 
-      // Only dependencies left external are rewritten: bundled package code
-      // may contain text that looks like an import of a bundled dependency.
-      return await rewriteExternalImports(js, projectDir, sourceSnapshot, runtimeDeps);
+      // Only dependencies left external are rewritten. The compiled bundle
+      // holds package code whose strings may read like imports, so there only
+      // parsed import specifiers are.
+      const rewrite = (code: string) =>
+        rewriteExternalImports(code, projectDir, sourceSnapshot, runtimeDeps);
+      return compiled ? await rewriteImportSpecifiers(js, rewrite) : await rewrite(js);
     },
     { "api.modulePath": modulePath, "api.projectDir": projectDir },
   );

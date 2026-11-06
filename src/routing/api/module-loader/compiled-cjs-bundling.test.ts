@@ -9,6 +9,7 @@ import {
   createDependencyResolvePlugin,
   createImportExternalsPlugin,
   createImportMetaResolve,
+  createNativeAddonPlugin,
   createRuntimeRequire,
   nodePreferredFile,
   nodeRelativeFile,
@@ -18,6 +19,7 @@ import {
   prepareModuleFile,
   prependRuntimeRequire,
   resolveLiteralCalls,
+  rewriteImportSpecifiers,
   type RuntimeRequireHost,
 } from "./compiled-cjs-bundling.ts";
 
@@ -84,7 +86,7 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
   });
 
   describe("nodePreferredFile()", () => {
-    const files = new Set(["/d/impl.js", "/d/lib/index.js", "/d/data.json"]);
+    const files = new Set(["/d/impl.js", "/d/lib/index.js", "/d/data.json", "/d/entry.js"]);
     const isFile = (path: string) => Promise.resolve(files.has(path));
 
     it("prefers Node's extensions over a TypeScript sibling the bundler probed", async () => {
@@ -103,6 +105,8 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
         "/d/node_modules/p/index.cjs",
       );
       assertEquals(await nodePreferredFile("/d/only.ts", "./only", "/d", isFile), "/d/only.ts");
+      // Node checks the exact path before adding an extension.
+      assertEquals(await nodePreferredFile("/d/entry", "./entry", "/d", isFile), "/d/entry");
     });
   });
 
@@ -195,21 +199,40 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
 
   describe("createCompiledBuiltinPlugin()", () => {
     it("keeps built-ins external, with a required id unchanged", async () => {
-      const [builtins] = await resolveHandlers(createCompiledBuiltinPlugin());
-      assertEquals(builtins!({ path: "fs", kind: "require-call" }), {
+      const [builtins] = await resolveHandlers(createCompiledBuiltinPlugin(() => true));
+      assertEquals(builtins!({ path: "fs", kind: "require-call", importer: "/d/a.js" }), {
         path: "fs",
         external: true,
       });
-      assertEquals(builtins!({ path: "path", kind: "import-statement" }), {
+      assertEquals(builtins!({ path: "path", kind: "import-statement", importer: "/d/a.js" }), {
         path: "node:path",
         external: true,
       });
-      assertEquals(builtins!({ path: "left-pad", kind: "require-call" }), undefined);
+      assertEquals(
+        builtins!({ path: "left-pad", kind: "require-call", importer: "/d/a.js" }),
+        undefined,
+      );
     });
 
+    it("leaves other importers to the resolvers after it", async () => {
+      const [builtins] = await resolveHandlers(
+        createCompiledBuiltinPlugin((importer) => importer.includes("/node_modules/")),
+      );
+      assertEquals(
+        builtins!({ path: "fs", kind: "import-statement", importer: "/d/src/route.ts" }),
+        undefined,
+      );
+      assertEquals(
+        builtins!({ path: "fs", kind: "import-statement", importer: "/d/node_modules/p/a.js" }),
+        { path: "node:fs", external: true },
+      );
+    });
+  });
+
+  describe("createNativeAddonPlugin()", () => {
     it("rejects a native addon once it is loaded, naming only the file", async () => {
-      assertEquals(await resolveHandlers(createCompiledBuiltinPlugin()).then((h) => h.length), 1);
-      const [native] = await handlers(createCompiledBuiltinPlugin(), "onLoad");
+      assertEquals(await resolveHandlers(createNativeAddonPlugin()), []);
+      const [native] = await handlers(createNativeAddonPlugin(), "onLoad");
       assertEquals(native!({ path: "/srv/app/node_modules/x/build/addon.node" }), {
         errors: [{ text: 'Native addons are not supported in API routes: "addon.node"' }],
       });
@@ -281,6 +304,48 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
     });
   });
 
+  describe("rewriteImportSpecifiers()", () => {
+    it("rewrites parsed imports and leaves strings that read like imports", async () => {
+      const code = [
+        'import a from "fs";',
+        'const later = () => import("fs");',
+        "const text = 'from \"fs\"';",
+        "const call = 'import(\"fs\")';",
+        'export * from "dep/sub";',
+      ].join("\n");
+      const probes: string[] = [];
+      const rewritten = await rewriteImportSpecifiers(code, (probe) => {
+        probes.push(probe);
+        return Promise.resolve(
+          probe.replaceAll('"fs"', '"node:fs"').replaceAll('"dep/sub"', '"file:///d/sub.js"'),
+        );
+      });
+      assertEquals(probes, ['export * from "fs";\nexport * from "dep/sub";']);
+      assertEquals(
+        rewritten,
+        [
+          'import a from "node:fs";',
+          'const later = () => import("node:fs");',
+          "const text = 'from \"fs\"';",
+          "const call = 'import(\"fs\")';",
+          'export * from "file:///d/sub.js";',
+        ].join("\n"),
+      );
+    });
+
+    it("skips a module without imports and fails closed on a lost import", async () => {
+      assertEquals(
+        await rewriteImportSpecifiers("export const a = 1;", () => Promise.reject()),
+        "export const a = 1;",
+      );
+      const error = await rewriteImportSpecifiers('import "fs";', () => Promise.resolve("")).then(
+        () => null,
+        (caught: Error) => caught.message,
+      );
+      assertEquals(error, "[API] handler build failed: import specifiers could not be rewritten");
+    });
+  });
+
   describe("resolveLiteralCalls()", () => {
     it("replaces resolved literal calls once per specifier and keeps the rest", async () => {
       const asked: string[] = [];
@@ -327,27 +392,57 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
     const files: Record<string, string> = {
       "/app/data.json": '{"a":1}',
       "/app/link.json": "", // a link to /outside.json
-      "/app/code.js": "",
+      "/app/code.js": "module.exports = 'project';",
+      "/app/node_modules/p/dialects/pg.js": [
+        "exports.base = require('../base').name;",
+        "exports.fs = require('fs').kind;",
+        "exports.file = __filename;",
+        "exports.self = this === exports;",
+      ].join("\n"),
+      "/app/node_modules/p/base.js": "#!/usr/bin/env node\nexports.name = 'base';",
+      "/app/node_modules/p/dir/index.json": '{"dir":true}',
+      "/app/node_modules/p/cycle-a.js":
+        "exports.early = 1; exports.b = require('./cycle-b').seen; exports.late = 2;",
+      "/app/node_modules/p/cycle-b.js": "exports.seen = require('./cycle-a').early;",
+      "/app/node_modules/p/throws.js": "throw new Error('boom');",
+      "/app/node_modules/p/bare.js": "require('lodash');",
     };
     let reads = 0;
     const host: RuntimeRequireHost = {
       // Like Deno's, it knows bare prefix-only names that Node does not.
       getBuiltinModule: (id) => id === "test" ? { kind: "test" } : builtins[id],
-      realpathSync: (path) => {
-        if (path === "/app/link.json") return "/outside.json";
-        if (!(path in files)) throw new Error("ENOENT");
-        return path;
-      },
+      isFile: (path) => path in files,
+      realpathSync: (path) => path === "/app/link.json" ? "/outside.json" : path,
       readFileSync: (path) => {
         reads++;
         return files[path]!;
       },
+      compile: (source) =>
+        new Function(
+          "exports",
+          "require",
+          "module",
+          "__filename",
+          "__dirname",
+          source,
+        ) as ReturnType<
+          RuntimeRequireHost["compile"]
+        >,
       isAbsolute: (path) => path.startsWith("/"),
       relative: (from, to) =>
         to.startsWith(from + "/") ? to.slice(from.length + 1) : to === from ? "" : "../" + to,
+      join: (...paths) => {
+        const parts: string[] = [];
+        for (const part of paths.join("/").split("/")) {
+          if (part === "..") parts.pop();
+          else if (part !== "." && part !== "") parts.push(part);
+        }
+        return "/" + parts.join("/");
+      },
+      dirname: (path) => path.slice(0, path.lastIndexOf("/")),
       sep: "/",
     };
-    const require = createRuntimeRequire(host, "/app", ["test"]);
+    const require = createRuntimeRequire(host, "/app", ["test"], ["/app/node_modules"]);
 
     it("serves any built-in, including a computed id", () => {
       assertEquals(require("fs"), { kind: "fs" });
@@ -366,34 +461,65 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
       assert(require("/app/data.json") === first);
       assertEquals(reads, 1);
       assertEquals(require.resolve("/app/code.js"), "/app/code.js");
+      assertEquals(require.resolve("/app/data"), "/app/data.json");
+      assertEquals(require("/app/node_modules/p/dir"), { dir: true });
     });
 
-    it("fails closed for packages, other files and paths outside the project", () => {
-      for (const id of ["left-pad", "./data.json", 42, "/app/code.js", "/app/link.json", "/app"]) {
+    it("runs a dependency's JavaScript as CommonJS, once, with its own require", () => {
+      const dialect = require("/app/node_modules/p/dialects/" + "pg");
+      assertEquals(dialect, {
+        base: "base",
+        fs: "fs",
+        file: "/app/node_modules/p/dialects/pg.js",
+        self: true,
+      });
+      assert(require("/app/node_modules/p/dialects/pg.js") === dialect);
+    });
+
+    it("hands a cycle the exports so far, as Node does", () => {
+      assertEquals(require("/app/node_modules/p/cycle-a.js"), { early: 1, b: 1, late: 2 });
+    });
+
+    it("forgets a module whose body throws", () => {
+      for (let attempt = 0; attempt < 2; attempt++) {
+        let message: unknown;
+        try {
+          require("/app/node_modules/p/throws.js");
+        } catch (error) {
+          message = (error as Error).message;
+        }
+        assertEquals(message, "boom");
+      }
+    });
+
+    it("fails closed for packages, project code and paths outside the project", () => {
+      for (
+        const id of [
+          "left-pad",
+          "./data.json",
+          42,
+          "/app/code.js",
+          "/app/link.json",
+          "/app",
+          "/app/node_modules/p/bare.js",
+        ]
+      ) {
         assertEquals(errorCode(() => require(id)), "MODULE_NOT_FOUND", String(id));
       }
       assertEquals(errorCode(() => require.resolve("/app/missing.js")), "MODULE_NOT_FOUND");
     });
 
     it("names a project path relative to the project and hides any other", () => {
+      const message = (id: string) => {
+        try {
+          require(id);
+        } catch (error) {
+          return (error as Error).message;
+        }
+      };
+      assertEquals(message("/app/code.js"), 'Cannot find module "code.js"');
       assertEquals(
-        (() => {
-          try {
-            require("/app/code.js");
-          } catch (error) {
-            return (error as Error).message;
-          }
-        })(),
-        'Cannot find module "code.js"',
-      );
-      assertEquals(
-        (() => {
-          try {
-            require("/app/link.json");
-          } catch (error) {
-            return (error as Error).message;
-          }
-        })(),
+        message("/app/link.json"),
         'Cannot find module "a path outside this project or missing"',
       );
     });
@@ -401,20 +527,25 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
 
   describe("prependRuntimeRequire()", () => {
     it("binds require to the runtime require with the host built-ins", () => {
-      const code = prependRuntimeRequire("export {};\n", "/app");
+      const code = prependRuntimeRequire("export {};\n", "/app", ["/app/node_modules"]);
       assert(code.includes(createRuntimeRequire.toString()), code);
       assert(code.includes('import __vf_runtime_process from "node:process";'), code);
-      assert(code.includes('}, "/app", ["test","test/reporters","sqlite","sea"]);'), code);
+      assert(
+        code.includes(
+          '}, "/app", ["test","test/reporters","sqlite","sea"], ["/app/node_modules"]);',
+        ),
+        code,
+      );
       assert(code.endsWith("\nexport {};\n"), code);
     });
 
     it("keeps a hashbang on the first line", () => {
-      const code = prependRuntimeRequire("#!/usr/bin/env node\nexport {};\n", "/app");
+      const code = prependRuntimeRequire("#!/usr/bin/env node\nexport {};\n", "/app", []);
       assert(code.startsWith("#!/usr/bin/env node\nimport __vf_runtime_process from "), code);
     });
 
     it("picks helper names the bundle does not already use", () => {
-      const code = prependRuntimeRequire("const __vf_runtime_fs = 1;\n", "/app");
+      const code = prependRuntimeRequire("const __vf_runtime_fs = 1;\n", "/app", []);
       assert(code.includes("import * as __vf_runtime___fs from"), code);
     });
   });
@@ -475,6 +606,16 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
         assert(js?.includes('exports.d = "/d/p";'), String(js));
       });
 
+      it("prepares a .cts file as CommonJS TypeScript", async () => {
+        const code = await prepareCommonJSFile(
+          "const d: string = __dirname;\nexports.d = d;",
+          "/d/p/index.cts",
+          "module",
+          resolveRelative,
+        );
+        assert(code?.includes('const d = "/d/p";'), String(code));
+      });
+
       it("leaves files Node loads as ESM alone", async () => {
         const source = "export const d = typeof __dirname;";
         assertEquals(
@@ -514,6 +655,14 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
           assert(code.includes(part), code);
         }
         assert(!code.includes("function __vf_import_meta_resolve_"), code);
+      });
+
+      it("yields the same output for the same file", async () => {
+        const source = "export const r = import.meta.resolve(name);\n";
+        assertEquals(
+          await prepareModuleFile(source, "/d/p/a.mjs", resolveRelative),
+          await prepareModuleFile(source, "/d/p/a.mjs", resolveRelative),
+        );
       });
 
       it("binds other uses to a resolver of the file, after any hashbang", async () => {

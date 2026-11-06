@@ -44,6 +44,8 @@ describe("routing/api/module-loader helpers", () => {
     assertEquals(getLoaderForFile("file.jsx"), "jsx", "jsx files must use the jsx loader");
     assertEquals(getLoaderForFile("file.json"), "json", "json files must use the json loader");
     assertEquals(getLoaderForFile("file.mjs"), "js", "mjs files must use the js loader");
+    assertEquals(getLoaderForFile("file.cts"), "ts", "cts files are CommonJS TypeScript");
+    assertEquals(getLoaderForFile("file.mts"), "ts", "mts files are ESM TypeScript");
     assertEquals(getLoaderForFile("noext"), "js", "unmapped extensions fall back to the js loader");
   });
 });

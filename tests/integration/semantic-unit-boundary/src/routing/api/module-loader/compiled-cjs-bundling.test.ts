@@ -12,6 +12,8 @@ import {
   createDependencyFilePredicate,
   createDependencyResolvePlugin,
   createImportExternalsPlugin,
+  createNativeAddonPlugin,
+  dependencyDirectories,
   PackageTypeLookup,
   prepareDependencyFile,
   prependRuntimeRequire,
@@ -105,13 +107,19 @@ async function bundleAndImport(
         sourcefile: `${projectDir}/route.ts`,
       },
       plugins: [
-        createCompiledBuiltinPlugin(),
+        createNativeAddonPlugin(),
+        createCompiledBuiltinPlugin(isDependencyFile),
         createDependencyResolvePlugin(isDependencyFile, isFile),
+        createCompiledBuiltinPlugin(() => true),
         createImportExternalsPlugin(importExternals),
         dependencyFilePlugin(projectDir, isDependencyFile),
       ],
     });
-    const code = prependRuntimeRequire(result.outputFiles?.[0]?.text ?? "", projectDir);
+    const code = prependRuntimeRequire(
+      result.outputFiles?.[0]?.text ?? "",
+      projectDir,
+      await dependencyDirectories(projectDir, hostFs),
+    );
     const file = `${projectDir}/handler.mjs`;
     await writeFile(file, code);
     return await import(pathToFileURL(file).href);
@@ -347,6 +355,39 @@ describe("compiled-binary route bundling of CommonJS dependencies", () => {
         'import { require } from "./helper.ts";\nexport const value = require("q");\n',
       );
       assertEquals(mod.value, "helper:q");
+    });
+  });
+
+  it("runs a dependency file a computed path requires", async () => {
+    await inProject(async (projectDir) => {
+      await writeFiles(projectDir, {
+        "node_modules/dialects/package.json": JSON.stringify({
+          name: "dialects",
+          main: "index.js",
+        }),
+        "node_modules/dialects/index.js": [
+          'var path = require("path");',
+          "exports.load = function (name) {",
+          '  return require(path.join(__dirname, "dialects", name + ".js"));',
+          "};",
+        ].join("\n"),
+        "node_modules/dialects/dialects/pg.js":
+          'var base = require("../base");\nexports.name = base.prefix + "pg";\nexports.sep = require("path").sep;',
+        "node_modules/dialects/base.js": 'exports.prefix = "dialect:";',
+        "src/secret.js": 'module.exports = "project code";',
+      });
+      const mod = await bundleAndImport(
+        projectDir,
+        'import dialects from "dialects";\n' +
+          "export const pg = dialects.load('pg');\n" +
+          "export const again = dialects.load('pg') === pg;\n" +
+          "let project;\n" +
+          'try { dialects.load("../../../src/secret"); } catch (error) { project = (error as { code?: string }).code; }\n' +
+          "export { project };\n",
+      );
+      assertEquals(mod.pg, { name: "dialect:pg", sep: "/" });
+      assertEquals(mod.again, true);
+      assertEquals(mod.project, "MODULE_NOT_FOUND");
     });
   });
 
