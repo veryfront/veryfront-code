@@ -26,6 +26,7 @@ import type { LocalIntegrationEndpointTransport } from "./local-endpoint-executo
 import {
   _createLocalIntegrationToolSourceForTesting,
   type LocalIntegrationToolSourceOptions,
+  toolDefinition,
 } from "./local-tool-source.ts";
 
 const TEST_CREDENTIAL = "LOCAL_INTEGRATION_SECRET_MUST_NOT_LEAK";
@@ -97,6 +98,24 @@ describe("createLocalIntegrationToolSource", () => {
     _resetEnvironmentConfig();
     deleteEnv(EXPERIMENTAL_INTEGRATIONS_ENV);
     deleteEnv(HOST_LOCAL_INTEGRATION_CREDENTIALS_ENV);
+  });
+
+  it("publishes nested request contracts in local tool definitions", () => {
+    const ids = [
+      "sheets__find_replace",
+      "sheets__rename_sheet",
+      "sheets__create_chart",
+      "sheets__set_data_validation",
+    ];
+    const connector = getConnector("sheets")!;
+    for (const id of ids) {
+      const tool = connector.tools.find((tool) => tool.id === id)!;
+      const definition = toolDefinition({ ...tool, id }, tool.endpoint!, []);
+      const field = tool.endpoint!.body!.requests!;
+      const published =
+        (definition.parameters as { properties: Record<string, unknown> }).properties.requests;
+      assertEquals(published, { ...field.inputSchema, description: field.description });
+    }
   });
 
   it("lists only explicitly granted catalog tools with credential-free metadata", async () => {

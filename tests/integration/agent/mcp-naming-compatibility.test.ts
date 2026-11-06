@@ -1,4 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { VERSION } from "#veryfront/utils/version-constant.ts";
 import { createRemoteMCPToolSource } from "#veryfront/tool";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { wrapRemoteToolSourceWithMcpPolicy } from "#veryfront/agent/mcp-tool-policy.ts";
@@ -30,7 +31,11 @@ it("keeps saved selectors and deny policies with canonical discovery", async () 
     await withMockFetch(async (_url, init) => {
       const body = JSON.parse(String(init?.body));
       if (body.method === "tools/list") {
-        assertEquals(body.params?._meta, undefined);
+        assertEquals(body.params?._meta, {
+          "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+          "io.modelcontextprotocol/clientInfo": { name: "veryfront", version: VERSION },
+          "io.modelcontextprotocol/clientCapabilities": {},
+        });
         const canonical = canonicalDiscovery;
         return Response.json({
           jsonrpc: "2.0",

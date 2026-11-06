@@ -84,9 +84,8 @@ export const getModelCallCompletedPayloadSchema = defineRunEventSchema((v) =>
 );
 
 /**
- * Payload of a detached run the runtime accepted: the lease owner and the
- * dispatch attempt it accepted. Viewers receive this type as `{ type }` only,
- * so a viewer row does not match; fall back to the raw payload.
+ * Payload of a detached run accepted by the runtime.
+ * Viewer events expose only the `type` discriminator.
  */
 export const getAgentRunDetachedAcceptedPayloadSchema = defineRunEventSchema((v) =>
   variant(v, "AGENT_RUN_DETACHED_ACCEPTED", {

@@ -157,14 +157,15 @@ function hasExplicitToolDenial(
   tools: AgentConfig["tools"],
   toolName: string,
 ): boolean {
-  return tools !== undefined && tools !== true && tools[toolName] === false;
+  return tools === false ||
+    (tools !== undefined && tools !== true && tools[toolName] === false);
 }
 
 function hasConfiguredToolEntry(
   tools: AgentConfig["tools"],
   toolName: string,
 ): boolean {
-  if (tools === undefined || tools === true) return false;
+  if (tools === undefined || typeof tools === "boolean") return false;
   const names = ObjectKeys(tools);
   for (let index = 0; index < names.length; index++) {
     if (names[index] === toolName) return tools[toolName] !== undefined;
@@ -238,7 +239,7 @@ function restrictConfiguredTools(
   visibleLocalTools: ToolNameLookup,
   sourceAgentId: string | undefined,
 ): AgentConfig["tools"] {
-  if (tools === undefined) return undefined;
+  if (tools === undefined || tools === false) return tools;
   if (tools === true) {
     // `true` authorizes the whole scoped catalog. An explicit allowlist replaces
     // it with registry lookups for exactly the allowlisted names.
@@ -247,7 +248,7 @@ function restrictConfiguredTools(
     // every `true` entry against the local and remote tool registries and
     // throws `Unknown tool reference` for a name that only exists as a
     // provider-native definition. Those names travel in `providerTools` alone.
-    const selected: Exclude<AgentConfig["tools"], true | undefined> = {};
+    const selected: Exclude<AgentConfig["tools"], boolean | undefined> = {};
     for (let index = 0; index < allowedToolNames.length; index++) {
       const toolName = allowedToolNames[index];
       if (toolName === undefined) continue;
@@ -265,7 +266,7 @@ function restrictConfiguredTools(
     }
     return selected;
   }
-  const intersected: Exclude<AgentConfig["tools"], true | undefined> = {};
+  const intersected: Exclude<AgentConfig["tools"], boolean | undefined> = {};
   const configuredToolNames = ObjectKeys(tools);
   for (let index = 0; index < configuredToolNames.length; index++) {
     const toolName = configuredToolNames[index];
@@ -320,7 +321,7 @@ function getRetainedRemoteToolNames(
   visibleLocalTools: ToolNameLookup,
   providerToolNames: ToolNameLookup,
 ): string[] {
-  if (tools === undefined || tools === true) return [];
+  if (tools === undefined || typeof tools === "boolean") return [];
   const names: string[] = [];
   const seen = createNullPrototypeObject(null) as ToolNameLookup;
   const toolNames = ObjectKeys(tools);
@@ -403,6 +404,12 @@ export function applyAgUiRuntimeRestrictionsForModel(
   const configuredProviderToolNames = config.providerTools === undefined
     ? []
     : filterAllowedNames(config.providerTools, supportedProviderTools);
+  if (config.tools === false) {
+    restricted.providerTools = config.providerTools === undefined
+      ? undefined
+      : filterAllowedNames(configuredProviderToolNames, allowedTools);
+    return restricted;
+  }
   const providerToolNames = toToolNameLookup(configuredProviderToolNames);
   const visibleLocalTools = getVisibleLocalToolNames(sourceAgentId);
   const configuredMcpTools = config.tools === true
@@ -485,7 +492,7 @@ export function applyAgUiRuntimeRestrictionsForModel(
   const retainedRemoteToolLookup = toToolNameLookup(retainedRemoteToolNames);
   for (let index = 0; index < allowedToolNames.length; index++) {
     const toolName = allowedToolNames[index];
-    const configuredTool = config.tools === true || config.tools === undefined ||
+    const configuredTool = typeof config.tools === "boolean" || config.tools === undefined ||
         toolName === undefined
       ? undefined
       : config.tools[toolName];

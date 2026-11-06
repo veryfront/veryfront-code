@@ -302,6 +302,7 @@ export interface ReleaseAssetBuildClient {
     version: string,
     state: "failed",
     error?: string,
+    manifestVersion?: number,
   ): Promise<unknown>;
   /**
    * Required project CSS compiler. A build client without an explicitly
@@ -3294,6 +3295,7 @@ export async function runReleaseAssetBuild(
           input.releaseVersionRef,
           "failed",
           sanitized,
+          validatedStart.manifestVersion,
         );
       } catch (reportErr) {
         logger.warn("Failed to report build failure state", {

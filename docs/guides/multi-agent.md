@@ -17,7 +17,7 @@ for runtime selection, or set an explicit `provider/model` override.
 
 ## Prerequisites
 
-- At least two agents in `agents/` (see [Agents](./agents.md)).
+- A working agent project, such as the [Local quickstart](../getting-started/quickstart.md).
 - A configured provider (see [Providers](./providers.md)).
 
 Direct local delegation does not require a Veryfront account. Set a direct
@@ -25,6 +25,109 @@ provider key, run `veryfront dev`, and use `delegates` on the parent agent. The
 runtime runs the delegates in-process and gives the parent one scoped tool for
 each allowed agent. Veryfront Cloud is only required when you choose hosted run
 or control-plane capabilities.
+
+## Local delegation
+
+This section starts with the quickstart project and creates both specialists.
+Keep its provider key. Add an agent that identifies the important facts:
+
+```ts
+// agents/researcher.ts
+import { agent } from "veryfront/agent";
+
+export default agent({
+  id: "researcher",
+  system:
+    "Identify the three most important facts in the user's request. Return concise bullet points.",
+  maxSteps: 3,
+});
+```
+
+Add a second specialist that turns notes into a clear answer:
+
+```ts
+// agents/writer.ts
+import { agent } from "veryfront/agent";
+
+export default agent({
+  id: "writer",
+  system: "Turn the supplied notes into a concise, practical answer.",
+  maxSteps: 3,
+});
+```
+
+Replace `agents/assistant.ts` with an orchestrator that can call both
+specialists:
+
+```ts
+// agents/assistant.ts
+import { agent } from "veryfront/agent";
+
+export default agent({
+  id: "assistant",
+  name: "Assistant",
+  description: "Research a request and turn it into a practical answer.",
+  system:
+    "Use the researcher first. Pass the researcher's notes to the writer, then return the writer's answer.",
+  delegates: ["researcher", "writer"],
+  maxSteps: 10,
+});
+```
+
+Each delegate runs in the same Veryfront process as the assistant. The
+`delegates` list exposes the specialists as `agent_researcher` and
+`agent_writer` tools. It does not create hosted child runs or require a
+Veryfront account.
+
+If the development server is still running, keep using it. If you stopped the
+server for the eval, start it again:
+
+```bash
+npm run dev
+```
+
+Open the local URL printed by the CLI and ask:
+
+```text
+Compare two ways a small team could reduce support response time. Recommend one.
+```
+
+Ensure the run calls `agent_researcher` and `agent_writer`, then returns one
+combined recommendation.
+
+Replace `evals/assistant.eval.ts` so the smoke eval checks delegation instead
+of the starter's calculator behavior:
+
+```ts
+// evals/assistant.eval.ts
+import { datasets, evalAgent, metrics } from "veryfront/eval";
+
+export default evalAgent({
+  name: "Assistant delegation smoke test",
+  target: "agent:assistant",
+  dataset: datasets.inline([
+    {
+      id: "support-recommendation",
+      input:
+        "Compare two ways a small team could reduce support response time. Recommend one.",
+    },
+  ]),
+  metrics: [
+    metrics.agent.calledTool("agent_researcher").gate(),
+    metrics.agent.calledTool("agent_writer").gate(),
+    metrics.agent.noFailedTools().gate(),
+  ],
+});
+```
+
+Stop the dev server with `Ctrl+C`, then run:
+
+```bash
+npm run eval -- assistant
+```
+
+The eval passes when both specialists run without tool errors. It does not grade
+the recommendation's quality; add answer checks for your application's needs.
 
 ## Agent-as-tool
 
@@ -236,7 +339,11 @@ Evidence reads require verified canonical parent identity. The hosted service ve
 
 If you use a custom hosted request parser or route set, supply `verifyRunTerminalToken` when the writer credential has no canonical generation. Pass the verifier returned by `createHostedServiceAuth` with the same host authentication configuration. The standard hosted service supplies this verifier.
 
-The hosted runtime records the accepted receipt through its private parent event writer. Native child admission verifies the receipt's lineage, target, successful source events and version content before storing one immutable input. The child event credential binds its project, root, run and input digest. Equal admission replay restores that same input; altered receipts conflict. Application code receives no event credential or general HTTP client.
+The hosted runtime submits the receipt through its private event writer. Native
+child admission verifies the lineage, target, successful source events and
+artifact version content before storing one immutable input. Replaying the same
+receipt restores that input; altered receipts conflict. Application code receives
+no event credential or general HTTP client.
 
 Child tools read `getVerifiedHostedTaskInput(context)`. A present binding is accepted only after native verification and must match the tool's host-derived project, root and run. JSON reconstruction does not preserve this authority. An application should validate the expected stage and historical artifact content before deriving arguments such as an email directory. Payload fields are never spread into credentials, prompts or general context. Legacy children without a binding keep their existing behavior.
 

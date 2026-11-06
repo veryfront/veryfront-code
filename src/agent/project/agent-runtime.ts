@@ -148,7 +148,10 @@ async function resolveAgentSystem(system: AgentConfig["system"]): Promise<AgentS
 function resolveAgentToolNames(
   tools: AgentConfig["tools"],
   knowledge: AgentConfig["knowledge"],
-): true | string[] | undefined {
+): boolean | string[] | undefined {
+  if (tools === false) {
+    return false;
+  }
   if (tools === true) {
     return true;
   }

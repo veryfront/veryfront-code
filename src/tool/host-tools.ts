@@ -14,6 +14,7 @@ import { getRemoteToolProvenance, markRemoteToolProvenance } from "./remote-tool
 import { inheritTrustedHostToolProvenance } from "./host-tool-provenance.ts";
 import { defineOwnDataProperty } from "#veryfront/security/own-data-property.ts";
 import { inheritProviderObservedSkillBodies } from "./provider-observed-skill-bodies.ts";
+import { snapshotJsonSchemaObject } from "#veryfront/schemas/schema-input.ts";
 
 const apply = Reflect.apply;
 const arrayIsArray = Array.isArray;
@@ -44,6 +45,8 @@ export type HostToolDefinition = {
   description?: string;
   inputSchema?: unknown;
   inputSchemaJson?: JsonSchema;
+  /** Declared result contract; disclosure metadata only, without result validation. */
+  outputSchemaJson?: JsonSchema;
   /** Catalog navigation hints, without execution authority. */
   discovery?: ToolDiscoveryMetadata;
   parameters?: unknown;
@@ -120,6 +123,7 @@ function snapshotHostToolDefinition(value: unknown): Record<string, unknown> | u
     "execute",
     "inputSchema",
     "inputSchemaJson",
+    "outputSchemaJson",
     "discovery",
     "mcp",
   ];
@@ -202,6 +206,9 @@ export function createToolsFromHostDefinitions(
           description: definition.description,
           inputSchema: definition.inputSchema,
           inputSchemaJson: definition.inputSchemaJson,
+          ...(definition.outputSchemaJson === undefined
+            ? {}
+            : { outputSchemaJson: definition.outputSchemaJson }),
           execute,
           mcp: definition.mcp,
           delegatedPlatformTools: definition.delegatedPlatformTools,
@@ -218,6 +225,15 @@ export function createToolsFromHostDefinitions(
           delegatedPlatformTools: definition.delegatedPlatformTools,
         };
         materializedTool = tool(config);
+        if (definition.outputSchemaJson !== undefined) {
+          // `tool()` derives output contracts from a Schema only; carry the
+          // declared JSON contract with the same bounds `dynamicTool` applies.
+          const outputSchemaJson = snapshotJsonSchemaObject(definition.outputSchemaJson);
+          if (!outputSchemaJson) {
+            throw new TypeError("outputSchemaJson must be a bounded JSON Schema object");
+          }
+          materializedTool.outputSchemaJson = outputSchemaJson;
+        }
       }
       if (materializedTool) {
         copyToolDiscoveryMetadata(definition, materializedTool);

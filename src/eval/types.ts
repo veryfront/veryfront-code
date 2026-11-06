@@ -162,6 +162,8 @@ export type EvalExampleInput = {
 /** Context passed to dataset loaders. */
 export interface EvalDatasetLoadContext {
   baseDir: string;
+  /** Reads a project file by its relative path; without it, files are read from disk under `baseDir`. */
+  readTextFile?: (path: string) => Promise<string>;
 }
 
 /** Dataset loader used by an eval definition. */
@@ -621,6 +623,8 @@ export interface RunEvalOptions {
     tool?: EvalToolAdapter;
   };
   baseDir?: string;
+  /** Reads project files such as JSON and JSONL datasets; see {@link EvalDatasetLoadContext}. */
+  readTextFile?: (path: string) => Promise<string>;
   runId?: string;
   now?: () => Date;
   export?: EvalReportExportConfig;
@@ -632,12 +636,14 @@ export interface RunEvalOptions {
    * on without waiting for it. Omit or pass 0 for no limit.
    */
   recordTimeoutMs?: number;
-  /** Stops remaining cases and propagates cancellation to the active case. */
+  /** Most records executing at once, including grading. Positive safe integer; defaults to 1. */
+  concurrency?: number;
+  /** Stops remaining cases and propagates cancellation to all active cases. */
   signal?: AbortSignal;
   /**
-   * Receives progress while records run. Records run one after another, so
-   * events arrive in dataset order. A listener that throws, or whose promise
-   * rejects, does not affect the run.
+   * Receives progress while records run. With concurrency above 1, completion
+   * events can arrive out of dataset order; reports retain dataset order.
+   * A listener that throws, or whose promise rejects, does not affect the run.
    */
   onProgress?: (event: EvalProgressEvent) => void | Promise<void>;
 }

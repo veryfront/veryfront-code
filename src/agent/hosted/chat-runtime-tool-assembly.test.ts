@@ -6,6 +6,7 @@ import {
 } from "#veryfront/tool/host-tool-provenance.ts";
 import { toolToProviderDefinition } from "#veryfront/tool/registry.ts";
 import "#veryfront/schemas/_test-setup.ts";
+import { getProviderNativeToolNames } from "#veryfront/agent/runtime/provider-native-tool-inventory.ts";
 import {
   assertEquals,
   assertExists,
@@ -37,10 +38,78 @@ import {
   prepareFacadedHostedChatRuntimeToolAssembly,
   prepareHostedChatRuntimeToolAssembly,
 } from "#veryfront/agent/hosted/chat-runtime-tool-assembly.ts";
+import { resolveHostedRuntimeRequestConfig } from "#veryfront/agent/hosted/runtime-request-config.ts";
 import { createDefaultResearchRunArtifactMirrorHandler } from "#veryfront/agent/artifacts/default-research-artifact-support.ts";
 import { withPlatformHostToolAliases } from "#veryfront/agent/platform-host-tools.ts";
 
 describe("private host tool metadata", () => {
+  for (const failSetup of [false, true]) {
+    it(`releases owned sources after assembly ${failSetup ? "failure" : "completion"}`, async () => {
+      let listings = 0;
+      let disposals = 0;
+      const setupError = new Error("assembly setup failed after discovery");
+      const assemble = () =>
+        prepareHostedChatRuntimeToolAssembly({
+          taskContext: { authToken: "token", projectId: "project-one", model: "openai/gpt-5-nano" },
+          sourceIntegrationPolicy: { schemaVersion: 1, mode: "unrestricted" },
+          instructions: "Synthetic instructions",
+          localTools: {},
+          apiUrl: "https://api.example.com",
+          apiMcpUrl: "https://api.example.com/mcp",
+          preloadLatestConversationUserText: false,
+          createRemoteToolSource: (config) => ({
+            id: config.id ?? "owned",
+            listTools: async () => {
+              listings++;
+              return [];
+            },
+            executeTool: async () => undefined,
+            dispose: async () => {
+              disposals++;
+            },
+          }),
+          renderInstructions: () => {
+            assertEquals(listings, 1);
+            if (failSetup) throw setupError;
+            return "Prepared instructions";
+          },
+        });
+      if (failSetup) {
+        assertStrictEquals(await assertRejects(assemble), setupError);
+      } else {
+        const assembly = await assemble();
+        assertEquals(disposals, 0);
+        await assembly.closeRemoteToolSources?.();
+        await assembly.closeRemoteToolSources?.();
+      }
+      assertEquals(disposals, 1);
+    });
+  }
+
+  it("leaves injected facaded sources with their caller", async () => {
+    let disposals = 0;
+    const source = {
+      id: "borrowed",
+      listTools: async () => [],
+      executeTool: async () => undefined,
+      dispose: async () => {
+        disposals++;
+      },
+    };
+    const assembly = await prepareFacadedHostedChatRuntimeToolAssembly({
+      signal: new AbortController().signal,
+      taskContext: { model: "openai/gpt-5-nano" },
+      sourceIntegrationPolicy: { schemaVersion: 1, mode: "unrestricted" },
+      instructions: "Synthetic instructions",
+      localTools: {},
+      remoteToolSources: [source],
+    });
+    await assembly.closeRemoteToolSources?.();
+    assertEquals(disposals, 0);
+    await source.dispose();
+    assertEquals(disposals, 1);
+  });
+
   it("keeps trusted platform tools and removes spoofed names under integration restrictions", async () => {
     let listings = 0;
     const trusted = markTrustedPlatformSource({
@@ -494,6 +563,46 @@ Deno.test("prepareHostedChatRuntimeToolAssembly preserves skill loading without 
 
   assertEquals(toolAssembly.localToolNames, ["veryfront__load_skill", "veryfront__sleep"]);
   assertEquals(taskContext.availableToolNames, ["veryfront__load_skill", "veryfront__sleep"]);
+});
+
+Deno.test("hosted no-tools request does not restore essential callable tools", async () => {
+  const runtimeConfig = resolveHostedRuntimeRequestConfig({
+    request: {},
+    agentConfig: {
+      tools: false,
+      skills: ["plan"],
+      delegates: ["writer"],
+      providerTools: ["web_search"],
+    },
+    resolveModelId: (model) => model,
+  });
+  const taskContext: HostedChatRuntimeToolAssemblyContext = {
+    authToken: "token",
+    projectId: "project-1",
+    model: "anthropic/claude-sonnet-4-6",
+    availableSkillIds: ["plan"],
+  };
+  const toolAssembly = await prepareConfigDerivedHostedChatRuntimeToolAssembly({
+    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+    taskContext,
+    instructions: "Base instructions",
+    localTools: markTrustedHostToolSet({
+      invoke_agent: localTool("Invoke agent"),
+      load_skill: localTool("Load skill"),
+      sleep: localTool("Sleep"),
+    }),
+    apiUrl: "https://api.example.com",
+    apiMcpUrl: "https://api.example.com/mcp",
+    allowedToolNames: runtimeConfig.requestedAllowedTools,
+    allowedProviderToolNames: runtimeConfig.requestedAllowedProviderTools,
+    includeRuntimeEssentialToolsWhenEmpty: runtimeConfig.includeRuntimeEssentialToolsWhenEmpty,
+    createRemoteToolSource: remoteSourceFromConfig,
+    preloadLatestConversationUserText: false,
+  });
+
+  assertEquals(runtimeConfig.includeRuntimeEssentialToolsWhenEmpty, false);
+  assertEquals(toolAssembly.localToolNames, []);
+  assertEquals(taskContext.availableToolNames, ["web_search"]);
 });
 
 Deno.test("prepareHostedChatRuntimeToolAssembly preserves only trusted skill loaders under canonical grants", async () => {
@@ -3390,3 +3499,39 @@ it("optional startup hints cannot recover tools removed by an empty execution gr
   assertEquals(assembly.availableToolNames, []);
   assertEquals(Object.keys(assembly.runtimeTools), []);
 });
+
+for (const model of ["openai/gpt-5.4-nano", "anthropic/claude-sonnet-4-6"]) {
+  Deno.test(`prepareHostedChatRuntimeToolAssembly never adds the local web_fetch fallback for a closed selector on ${model}`, async () => {
+    const assemble = (closedToolSelector: boolean) => {
+      const taskContext: HostedChatRuntimeToolAssemblyContext = {
+        authToken: "token",
+        projectId: "project-1",
+        model,
+      };
+      return prepareHostedChatRuntimeToolAssembly({
+        sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+        taskContext,
+        instructions: "Base instructions",
+        localTools: {
+          sleep: localTool("Sleep"),
+          web_fetch: localTool("Fetch a URL"),
+        },
+        apiUrl: "https://api.example.com",
+        apiMcpUrl: "https://api.example.com/mcp",
+        allowedToolNames: [],
+        allowedProviderToolNames: ["web_fetch"],
+        sourceProviderToolNames: ["web_fetch"],
+        ...(closedToolSelector ? { closedToolSelector: true } : {}),
+        createRemoteToolSource: remoteSourceFromConfig,
+        preloadLatestConversationUserText: false,
+      });
+    };
+
+    const closed = await assemble(true);
+    assertEquals(closed.localToolNames, []);
+    assertEquals(closed.runtimeTools.web_fetch, undefined);
+    // Provider-native web_fetch stays available wherever the model offers it.
+    const providerNative = getProviderNativeToolNames({ model }).includes("web_fetch");
+    assertEquals(closed.providerToolNames, providerNative ? ["web_fetch"] : []);
+  });
+}

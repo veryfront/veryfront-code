@@ -1,14 +1,17 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertNotEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { deleteEnv, getEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { makeTempDir, remove, writeTextFile } from "#veryfront/testing/deno-compat.ts";
 import {
   __resetEnvLoaderForTests,
+  __setEnvLoaderExistingEnvReaderForTests,
   __setEnvLoaderOsTypeForTests,
   getEnvSource,
+  loadAdditionalEnv,
   loadEnv,
   markConfigFileSource,
+  markEnvLoaded,
   markProcessEnvSource,
   supportsEnvFiles,
 } from "./env-loader.ts";
@@ -230,6 +233,204 @@ describe("env-loader", () => {
       assertEquals(getEnv(key), "new");
 
       cleanupKeys(key);
+    });
+
+    it("should load a second directory's files without overriding the first", async () => {
+      // `veryfront dev --project <dir>` loads the cwd first, then the project.
+      const shared = createKey("SHARED");
+      const projectOnly = createKey("PROJECT_ONLY");
+      const projectDir = await makeTempDir({ prefix: "env-loader-project-" });
+      try {
+        await writeEnvFile(".env", `${shared}=cwd`);
+        await writeTextFile(`${projectDir}/.env`, `${shared}=project\n${projectOnly}=project`);
+
+        await loadEnv({ cwd: tempDir });
+        markEnvLoaded();
+        await loadAdditionalEnv({ cwd: projectDir });
+
+        assertEquals(getEnv(shared), "cwd");
+        assertEquals(getEnv(projectOnly), "project");
+        assertEquals(getEnvSource(projectOnly)?.source, "env-file");
+      } finally {
+        cleanupKeys(shared, projectOnly);
+        await remove(projectDir, { recursive: true });
+      }
+    });
+
+    it("should keep a value the first directory set to empty", async () => {
+      const shared = createKey("EMPTY_SHARED");
+      const projectDir = await makeTempDir({ prefix: "env-loader-project-" });
+      try {
+        await writeEnvFile(".env", `${shared}=`);
+        await writeTextFile(`${projectDir}/.env`, `${shared}=project`);
+
+        await loadEnv({ cwd: tempDir });
+        await loadAdditionalEnv({ cwd: projectDir });
+
+        assertEquals(getEnv(shared), "");
+      } finally {
+        cleanupKeys(shared);
+        await remove(projectDir, { recursive: true });
+      }
+    });
+
+    it("should let a later file of one load outrank an earlier one", async () => {
+      const key = createKey("LATER_FILE");
+      const projectDir = await makeTempDir({ prefix: "env-loader-project-" });
+      try {
+        await writeEnvFile(".env", `${key}=base`);
+        await writeEnvFile(".env.local", `${key}=local`);
+        await loadEnv({ cwd: tempDir });
+        assertEquals(getEnv(key), "local", "primary load");
+
+        deleteEnv(key);
+        await writeTextFile(`${projectDir}/.env`, `${key}=project-base`);
+        await writeTextFile(`${projectDir}/.env.local`, `${key}=project-local`);
+        await loadAdditionalEnv({ cwd: projectDir });
+        assertEquals(getEnv(key), "project-local", "additional load");
+      } finally {
+        cleanupKeys(key);
+        await remove(projectDir, { recursive: true });
+      }
+    });
+
+    it("should let a later file outrank a differently-cased key on Windows", async () => {
+      const key = createKey("LATER_FILE_CASE");
+      const lowerKey = key.toLowerCase();
+      await writeEnvFile(".env", `${key}=base`);
+      await writeEnvFile(".env.local", `${lowerKey}=local`);
+      // Windows reads the environment case-insensitively.
+      __setEnvLoaderExistingEnvReaderForTests((name) => getEnv(name) ?? getEnv(name.toUpperCase()));
+      try {
+        await withOsTypeAsync("windows", () => loadAdditionalEnv({ cwd: tempDir }));
+
+        assertEquals(getEnv(lowerKey), "local");
+      } finally {
+        cleanupKeys(key, lowerKey);
+      }
+    });
+
+    describe("when a later file replaces a differently-cased key on Windows", () => {
+      let previousNodeEnv: string | undefined;
+
+      beforeEach(() => {
+        previousNodeEnv = getEnv("NODE_ENV");
+        setEnv("NODE_ENV", "production");
+        // Windows reads the environment case-insensitively.
+        __setEnvLoaderExistingEnvReaderForTests((name) =>
+          getEnv(name) ?? getEnv(name.toUpperCase())
+        );
+      });
+
+      afterEach(() => {
+        if (previousNodeEnv === undefined) deleteEnv("NODE_ENV");
+        else setEnv("NODE_ENV", previousNodeEnv);
+      });
+
+      it("should drop the earlier spelling's provenance", async () => {
+        const key = createKey("ALIAS_SOURCE");
+        const lowerKey = key.toLowerCase();
+        const shellKey = createKey("ALIAS_SHELL");
+        setEnv(shellKey, "shell-secret");
+        await writeEnvFile(".env", `${key}=repository-literal`);
+        await writeEnvFile(".env.local", `${lowerKey}=\${${shellKey}}`);
+        try {
+          await withOsTypeAsync("windows", () => loadEnv({ cwd: tempDir }));
+
+          assertEquals(getEnvSource(lowerKey), {
+            source: "env-file",
+            file: `${tempDir}/.env.local`,
+            expandedFromProcessEnv: true,
+          });
+          assertNotEquals(
+            withOsType("windows", () => getEnvSource(key)),
+            { source: "env-file", file: `${tempDir}/.env`, expandedFromProcessEnv: false },
+            "the replaced .env record must not describe the live value",
+          );
+        } finally {
+          cleanupKeys(key, lowerKey, shellKey);
+        }
+      });
+
+      it("should clear the earlier spelling's expansion taint", async () => {
+        const key = createKey("ALIAS_TAINT");
+        const lowerKey = key.toLowerCase();
+        const shellKey = createKey("ALIAS_TAINT_SHELL");
+        const dependent = createKey("ALIAS_TAINT_DEPENDENT");
+        setEnv(shellKey, "shell-secret");
+        await writeEnvFile(".env", `${key}=\${${shellKey}}`);
+        await writeEnvFile(".env.production", `${lowerKey}=repository-literal`);
+        await writeEnvFile(".env.local", `${dependent}=\${${key}}`);
+        try {
+          await withOsTypeAsync("windows", () => loadEnv({ cwd: tempDir }));
+
+          assertEquals(getEnv(dependent), "repository-literal");
+          assertEquals(getEnvSource(dependent), {
+            source: "env-file",
+            file: `${tempDir}/.env.local`,
+            expandedFromProcessEnv: false,
+          });
+        } finally {
+          cleanupKeys(key, lowerKey, shellKey, dependent);
+        }
+      });
+
+      it("should expand later references to the winning value", async () => {
+        const key = createKey("ALIAS_VALUE");
+        const lowerKey = key.toLowerCase();
+        const dependent = createKey("ALIAS_VALUE_DEPENDENT");
+        await writeEnvFile(".env", `${key}=first\n${lowerKey}=second`);
+        await writeEnvFile(".env.production", `${key}=winner`);
+        await writeEnvFile(".env.local", `${dependent}=\${${key}}`);
+        try {
+          await withOsTypeAsync("windows", () => loadEnv({ cwd: tempDir }));
+
+          assertEquals(getEnv(dependent), "winner");
+        } finally {
+          cleanupKeys(key, lowerKey, dependent);
+        }
+      });
+    });
+
+    it("should read an additional directory only once", async () => {
+      const key = createKey("ADDITIONAL_ONCE");
+      await writeEnvFile(".env", `${key}=first`);
+      try {
+        await loadAdditionalEnv({ cwd: tempDir });
+        deleteEnv(key);
+        await loadAdditionalEnv({ cwd: tempDir });
+
+        assertEquals(getEnv(key), undefined);
+      } finally {
+        cleanupKeys(key);
+      }
+    });
+
+    it("should skip loading once markEnvLoaded was called", async () => {
+      const key = createKey("MARKED");
+      await writeEnvFile(".env", `${key}=from-file`);
+      try {
+        markEnvLoaded();
+        await loadEnv({ cwd: tempDir, override: true });
+
+        assertEquals(getEnv(key), undefined);
+      } finally {
+        cleanupKeys(key);
+      }
+    });
+
+    it("should make a concurrent caller await the in-flight load", async () => {
+      const key = createKey("CONCURRENT");
+      await writeEnvFile(".env", `${key}=loaded`);
+      try {
+        const first = loadEnv({ cwd: tempDir });
+        await loadEnv({ cwd: tempDir });
+
+        assertEquals(getEnv(key), "loaded");
+        await first;
+      } finally {
+        cleanupKeys(key);
+      }
     });
 
     it("should handle multiline values in double quotes", async () => {

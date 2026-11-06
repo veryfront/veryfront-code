@@ -176,6 +176,8 @@ export type HostedChatRuntimeCreationOptions<TRuntimeAgentDefinition, TThinkingC
    * delegation stays available for empty and non-empty configured sets.
    */
   includeRuntimeEssentialToolsWhenEmpty?: boolean;
+  /** The agent declared `tools: false`; no host fallback tool is added. */
+  closedToolSelector?: boolean;
   allowDelegation?: boolean;
   thinking?: TThinkingConfig;
   conversationId?: string;

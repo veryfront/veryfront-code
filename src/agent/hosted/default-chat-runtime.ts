@@ -289,6 +289,7 @@ async function buildToolAssembly(
     cloudContext: VeryfrontCloudContext;
     providerNativeToolNames: readonly string[];
     toolSchemaTarget: ProviderToolSchemaTarget;
+    retainRemoteToolSourceCleanup: (cleanup: (() => Promise<void>) | undefined) => void;
   },
 ): Promise<HostedChatRuntimeToolAssemblyResult> {
   const liveProjectSteering = input.options.liveProjectSteering;
@@ -342,6 +343,7 @@ async function buildToolAssembly(
     toolSchemaTarget: input.toolSchemaTarget,
     reservedToolSlots: getToolResultReaderReservedToolSlots(input.options.toolResultContext),
     includeRuntimeEssentialToolsWhenEmpty: input.options.includeRuntimeEssentialToolsWhenEmpty,
+    ...(input.options.closedToolSelector === true ? { closedToolSelector: true } : {}),
     sourceProviderToolNames: input.options.liveProjectSteering?.agent.providerTools,
     projectScopedRemoteToolOptions: input.projectScopedRemoteToolOptions,
     createRemoteToolSource: input.createRemoteToolSource,
@@ -377,6 +379,7 @@ async function buildToolAssembly(
       }
     },
   });
+  input.retainRemoteToolSourceCleanup(toolAssembly.closeRemoteToolSources);
   return {
     ...toolAssembly,
     runtimeTools: scopeHostedRuntimeTools({
@@ -713,7 +716,25 @@ export async function createDefaultHostedChatRuntime(
             catalogSettled: catalogLoaded && canVeryfrontCloudCatalogRefuse(),
           }),
       );
-      const cleanup = input.cleanup ?? (() => Promise.resolve());
+      let closeRemoteToolSources: (() => Promise<void>) | undefined;
+      let cleanupPromise: Promise<void> | undefined;
+      const cleanup = () => {
+        cleanupPromise ??= (async () => {
+          let firstError: unknown;
+          try {
+            await closeRemoteToolSources?.();
+          } catch (error) {
+            firstError = error;
+          }
+          try {
+            await input.cleanup?.();
+          } catch (error) {
+            firstError ??= error;
+          }
+          if (firstError !== undefined) throw firstError;
+        })();
+        return cleanupPromise;
+      };
 
       try {
         const toolAssembly = await runWithHostedRunEventWriterCapability(
@@ -725,6 +746,9 @@ export async function createDefaultHostedChatRuntime(
               cloudContext,
               providerNativeToolNames,
               toolSchemaTarget,
+              retainRemoteToolSourceCleanup: (close) => {
+                closeRemoteToolSources = close;
+              },
             }),
         );
         const selection = projectDefinitionSelection(taskContext);

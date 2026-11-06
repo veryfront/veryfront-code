@@ -53,6 +53,7 @@ import type { ModuleLexer } from "#veryfront/extensions/bundler/module-lexer.ts"
 import type { ASTNode } from "#veryfront/extensions/parser/index.ts";
 import { tryResolve as tryResolveContract } from "#veryfront/extensions/contracts.ts";
 import { importFirstPartyExtensionModule } from "#veryfront/extensions/first-party-import.ts";
+import { ensureDefaultBundlerContracts } from "#veryfront/extensions/bundler/defaults.ts";
 import { parseBarePackageSpecifier } from "#veryfront/transforms/shared/package-specifier.ts";
 import { NODE_BUILTINS } from "#veryfront/transforms/import-rewriter/node-builtins.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
@@ -5426,6 +5427,9 @@ export async function transpileConfigSourceForImport(
   source: string,
   configPath: string,
 ): Promise<string> {
+  // CLI commands that never start a server load the config before anything
+  // registers a Bundler, so the config loader registers the built-in one.
+  await ensureDefaultBundlerContracts();
   const { transform } = await import("veryfront/extensions/bundler");
   const extension = extname(configPath);
   const loader = extension === ".tsx" ? "tsx" : "ts";
@@ -7017,6 +7021,7 @@ export async function bundleProjectConfigSourceForImport(
   source: string,
   configPath: string,
 ): Promise<string> {
+  await ensureDefaultBundlerContracts();
   const { build: bundle } = await import("veryfront/extensions/bundler");
   const fs = createFileSystem();
   const lexicalConfigPath = resolve(configPath);

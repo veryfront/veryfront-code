@@ -342,6 +342,37 @@ describe("agent/agent-service-runtime", () => {
     assertEquals(serviceAgent?.config.providerTools, ["web_fetch"]);
   });
 
+  it("preserves no-tools through service agent construction", () => {
+    const bundle = createAgentServiceRuntime({
+      serviceName: "test-agent-service",
+      getConfig: () => ({
+        VERYFRONT_API_URL: "https://api.example.test",
+        NODE_ENV: "test",
+        PORT: 3180,
+        ALLOWED_ORIGINS: ["https://studio.example.test"],
+      }),
+      getAgentConfig: () => ({
+        id: "assistant",
+        name: "Assistant",
+        description: "",
+        instructions: "Answer directly.",
+        tools: false,
+        skills: true,
+        knowledge: true,
+        providerTools: ["web_search"],
+      }),
+      logger: createLogger(),
+      prepareExecution: async () => ({ ok: true }),
+      streamExecutionToAgUiResponse: () => new Response("streamed"),
+      startDetachedExecution: async () => {},
+    });
+
+    const serviceAgent = bundle.runtime.contract.agents.assistant;
+    assertEquals(serviceAgent?.config.tools, false);
+    assertEquals(serviceAgent?.config.skills, false);
+    assertEquals(serviceAgent?.config.providerTools, ["web_search"]);
+  });
+
   it("suppresses skill infrastructure when an unrestricted selector with denials fails closed", () => {
     const warnings: Array<{ message: string; metadata?: Record<string, unknown> }> = [];
     const bundle = createAgentServiceRuntime({

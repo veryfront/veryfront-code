@@ -9,7 +9,7 @@ import {
 
 export type CredentialProbeRuntime = "node" | "deno" | "bun";
 const PROFILE = "installed-runtime-credential-boundary-v2";
-const RUNTIMES = ["node", "deno", "bun"];
+const RUNTIMES = new Set(["node", "deno", "bun"]);
 
 export function installedRuntimeCredentialProbeProfile(options: {
   githubActions: string | undefined;
@@ -37,7 +37,7 @@ export function installedCredentialProcessFailure(
   },
 ): Error {
   if (
-    !RUNTIMES.includes(runtime) ||
+    !RUNTIMES.has(runtime) ||
     !INSTALLED_CREDENTIAL_PROBES.some((p) => p.file === fixture)
   ) {
     return new Error(
@@ -48,29 +48,35 @@ export function installedCredentialProcessFailure(
   const stderr = typeof output.stderr === "string"
     ? output.stderr.slice(0, 8192)
     : "";
-  const hints = [];
-  if (/ERR_ASSERTION|AssertionError/.test(stderr)) hints.push("assertion");
-  if (
-    /ERR_MODULE_NOT_FOUND|Module not found|Cannot find (?:module|package)/i
-      .test(stderr)
-  ) hints.push("module-resolution");
-  if (/NotCapable|PermissionDenied|permission denied/i.test(stderr)) {
-    hints.push("permission");
+  function failureHints(): string[] {
+    const hints = [];
+    if (/ERR_ASSERTION|AssertionError/.test(stderr)) hints.push("assertion");
+    if (
+      /ERR_MODULE_NOT_FOUND|Module not found|Cannot find (?:module|package)/i
+        .test(stderr)
+    ) hints.push("module-resolution");
+    if (/NotCapable|PermissionDenied|permission denied/i.test(stderr)) {
+      hints.push("permission");
+    }
+    if (/cached-only|not found in cache/i.test(stderr)) {
+      hints.push("uncached-dependency");
+    }
+    if (
+      /unexpected argument|unrecognized option|unknown option/i.test(stderr)
+    ) {
+      hints.push("runtime-arguments");
+    }
+    if (/Invalid Bunfig|failed to load bunfig|Expected preload/i.test(stderr)) {
+      hints.push("runtime-config");
+    }
+    if (output.code === 124) hints.push("deadline");
+    if (output.code === 125 || output.outputTruncated === true) {
+      hints.push("output-limit");
+    }
+    return hints;
   }
-  if (/cached-only|not found in cache/i.test(stderr)) {
-    hints.push("uncached-dependency");
-  }
-  if (/unexpected argument|unrecognized option|unknown option/i.test(stderr)) {
-    hints.push("runtime-arguments");
-  }
-  if (/Invalid Bunfig|failed to load bunfig|Expected preload/i.test(stderr)) {
-    hints.push("runtime-config");
-  }
-  if (output.code === 124) hints.push("deadline");
-  if (output.code === 125 || output.outputTruncated === true) {
-    hints.push("output-limit");
-  }
-  const escaped = fixture.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const hints = failureHints();
+  const escaped = fixture.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
   const match = new RegExp(escaped + ":([1-9][0-9]{0,3}):[0-9]{1,4}").exec(
     stderr,
   );
@@ -171,7 +177,7 @@ export async function runInstalledRuntimeCredentialProbes(options: {
   runnerOs: string | undefined;
   execute: (fixture: InstalledCredentialProbe) => Promise<Output>;
 }) {
-  if (!RUNTIMES.includes(options.runtime)) {
+  if (!RUNTIMES.has(options.runtime)) {
     throw new Error("Installed credential runtime is unsupported");
   }
   if (options.githubActions !== "true" || options.runnerOs !== "Linux") {
@@ -179,10 +185,9 @@ export async function runInstalledRuntimeCredentialProbes(options: {
       "Installed runtime credential probes require Linux Actions",
     );
   }
-  let version: string | undefined;
-  const probes = [];
-  for (const probe of INSTALLED_CREDENTIAL_PROBES) {
-    const output = await options.execute(probe.file);
+  function confirmedProbeOutput(
+    output: Output,
+  ): { observed: string; payloadText: string } {
     if (
       output.code !== 0 || typeof output.stderr !== "string" ||
       output.stderr !== "" ||
@@ -201,18 +206,31 @@ export async function runInstalledRuntimeCredentialProbes(options: {
         "Installed runtime credential probe framing is unconfirmed",
       );
     }
-    const observed = identityLine(identity, options.runtime);
+    return { observed: identityLine(identity, options.runtime), payloadText };
+  }
+  function expectedCounts(
+    probe: (typeof INSTALLED_CREDENTIAL_PROBES)[number],
+  ): { rejected: number; safe: number } {
+    if (options.runtime === "node") {
+      return { rejected: probe.rejected, safe: 0 };
+    }
+    if (probe.file === "native-header-package-probe.mjs") {
+      return { rejected: 0, safe: 3 };
+    }
+    return { rejected: 1, safe: 1 };
+  }
+  let version: string | undefined;
+  const probes = [];
+  for (const probe of INSTALLED_CREDENTIAL_PROBES) {
+    const output = await options.execute(probe.file);
+    const { observed, payloadText } = confirmedProbeOutput(output);
     if (version !== undefined && version !== observed) {
       throw new Error("Installed credential runtime changed between probes");
     }
     version = observed;
-    const header = probe.file === "native-header-package-probe.mjs";
-    const expectedRejected = options.runtime === "node"
-      ? probe.rejected
-      : header
-      ? 0
-      : 1;
-    const expectedSafe = options.runtime === "node" ? 0 : header ? 3 : 1;
+    const { rejected: expectedRejected, safe: expectedSafe } = expectedCounts(
+      probe,
+    );
     const payload = runtimePayload(
       payloadText,
       options.runtime,

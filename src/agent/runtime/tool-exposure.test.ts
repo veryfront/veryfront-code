@@ -655,13 +655,21 @@ it("metadata search ranks tools without loading schemas", () => {
   assertEquals(Object.hasOwn(result.matches[0]!, "parameters"), false);
 });
 
-it("reads one exact input contract without matching by substring", () => {
+it("reads one exact input contract and reports an undeclared output without matching by substring", () => {
   const authorized = [definition("get_agent", "Read an agent")];
   const contract = readToolExposureContract({ name: "get_agent", authorized });
   assertEquals(contract?.name, "get_agent");
   assertEquals(
     (contract?.inputSchema as { properties?: Record<string, unknown> }).properties?.value,
     { type: "string", description: "get_agent unique parameter" },
+  );
+  assertEquals(contract?.outputSchema, null);
+  assertEquals(
+    readToolExposureContract({
+      name: "get_agent",
+      authorized: [{ ...authorized[0]!, outputSchema: undefined }],
+    })?.outputSchema,
+    null,
   );
   assertEquals(readToolExposureContract({ name: "get", authorized }), undefined);
   assertThrows(() => readToolExposureContract({ name: "", authorized }));

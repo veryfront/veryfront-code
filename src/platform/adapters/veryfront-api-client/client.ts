@@ -790,6 +790,7 @@ export class VeryfrontApiClient {
     error?: string,
     projectRef = this.requireProjectSlug(),
     signal?: AbortSignal,
+    manifestVersion?: number,
   ) {
     return this.operations.updateReleaseAssetManifestState(
       projectRef,
@@ -797,6 +798,7 @@ export class VeryfrontApiClient {
       state,
       error,
       signal,
+      manifestVersion,
     );
   }
 
@@ -838,8 +840,16 @@ export class VeryfrontApiClient {
     error?: string,
     projectRef = this.requireProjectSlug(),
     signal?: AbortSignal,
+    manifestVersion?: number,
   ): ReturnType<VeryfrontApiClient["updateReleaseAssetManifestState"]> {
-    return this.updateReleaseAssetManifestState(version, state, error, projectRef, signal);
+    return this.updateReleaseAssetManifestState(
+      version,
+      state,
+      error,
+      projectRef,
+      signal,
+      manifestVersion,
+    );
   }
 
   getReleaseAssetManifest(

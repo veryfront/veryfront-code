@@ -309,7 +309,7 @@ describe("OAuth Client", () => {
             grant_type: "client_credentials",
             client_id: "test",
             client_secret: "test",
-            project_slug: "demo-project",
+            project_reference: "demo-project",
             custom_domain: "demo.example",
           },
           "the token request must carry the client_credentials grant and the project binding",
@@ -321,9 +321,9 @@ describe("OAuth Client", () => {
           apiClientSecret: "test",
         });
         assertEquals(
-          "project_slug" in (bodies[1] ?? {}),
+          "project_reference" in (bodies[1] ?? {}),
           false,
-          "an unbound token request must omit project_slug",
+          "an unbound token request must omit project_reference",
         );
       } finally {
         await server.shutdown();

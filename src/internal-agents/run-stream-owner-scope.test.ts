@@ -31,6 +31,15 @@ const emptyInput = { runId: "run-1", tools: [], forwardedProps: {} } as any;
 // deno-lint-ignore no-explicit-any -- test stub: unused on these paths
 const sessionManager = {} as any;
 
+Deno.test("buildMergedTools preserves a no-tools selector against forwarded client tools", () => {
+  const merged = buildMergedTools(
+    makeAgent("text-only", false),
+    { ...emptyInput, tools: [{ name: "client_lookup", description: "Lookup" }] },
+    sessionManager,
+  );
+  assertEquals(merged, false);
+});
+
 Deno.test("buildMergedTools with tools: true excludes other agents' owned tools", () => {
   clearMCPRegistry();
   try {

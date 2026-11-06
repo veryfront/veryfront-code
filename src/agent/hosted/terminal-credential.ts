@@ -22,8 +22,13 @@ import type {
   ParseHostedChatRequestOptions,
 } from "./chat-request-parser.ts";
 import {
+  createHostedRunEventWriterCapability,
+  getActiveHostedRunEventWriterCapability,
   type HostedAcceptedTaskInputReceipt,
   hostedAcceptedTaskInputReference,
+  type HostedRunEventWriterCapability,
+  refreshHostedRunEventWriterCapability,
+  waitForHostedParentToolStart,
 } from "./child-run-event-writer-token.ts";
 import {
   type HostedPlatformDependencyOwner,
@@ -32,16 +37,11 @@ import {
   transferHostedPlatformDependencies,
 } from "./platform-dependency-credential.ts";
 import { isCanonicalFileMutationTool } from "#veryfront/tool/platform-tool-policy.ts";
+import { shareRemoteMCPProtocolState } from "#veryfront/tool/remote-mcp.ts";
+import { disposeRemoteToolSources } from "#veryfront/tool/remote-tool-source-owner.ts";
 import { INGRESS_RUN_EVENT_TOKEN_HEADER } from "#veryfront/security/http/ingress-credentials.ts";
 import { createVeryfrontCloudInferenceModelResolver } from "./inference-credential.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
-import {
-  createHostedRunEventWriterCapability,
-  getActiveHostedRunEventWriterCapability,
-  type HostedRunEventWriterCapability,
-  refreshHostedRunEventWriterCapability,
-  waitForHostedParentToolStart,
-} from "./child-run-event-writer-token.ts";
 import type {
   BoundConversationAgentRunFinalizer,
   ConversationRunProjection,
@@ -62,7 +62,8 @@ import {
   terminalToolCallIdHeaderValue,
 } from "../runtime/terminal-run-control.ts";
 import { type RemoteMCPToolSourceConfig } from "#veryfront/tool/remote-mcp.ts";
-import type { RemoteToolSource } from "#veryfront/tool/types.ts";
+import type { RemoteToolSource, ToolExecutionContext } from "#veryfront/tool/types.ts";
+import { copyNativeHeaders } from "#veryfront/platform/compat/http/native-request-init.ts";
 import type { AgentServiceMcpServerConfig } from "../service/mcp-server-config.ts";
 import { createProjectScopedMcpUrl } from "../service/project-scoped-mcp-url.ts";
 
@@ -86,6 +87,7 @@ const evidenceRegExpExec = RegExp.prototype.exec;
 const hostFetch = globalThis.fetch;
 const NativeHeaders = Headers;
 const headersSet = Headers.prototype.set;
+const headersDelete = Headers.prototype.delete;
 const apply = Reflect.apply;
 type HostedTerminalDescriptor =
   | Pick<ConversationRunProjection, "runId">
@@ -170,7 +172,7 @@ export function bindHostedToolRunAuthorization(
 ): void {
   const authority = credentials.get(request);
   if (
-    !authority || !authority.projectId || authority.projectId !== target.projectId ||
+    !authority?.projectId || authority.projectId !== target.projectId ||
     authority.runId !== target.runId || !hostedTerminalCanonicalRunId(request)
   ) return;
   registerHostedToolRunAuthorization(target, {
@@ -236,6 +238,8 @@ export function hostedTerminalToolSourceFactory(
         ? await config.headers(context)
         : config.headers;
       const headers = new NativeHeaders(original);
+      // Run event authority comes only from the private run credential, never configured headers.
+      apply(headersDelete, headers, [INGRESS_RUN_EVENT_TOKEN_HEADER]);
       if (getAuthToken) {
         const token = getAuthToken();
         if (!token) throw new Error("Hosted MCP credential authority is unavailable");
@@ -243,13 +247,21 @@ export function hostedTerminalToolSourceFactory(
       }
       return headers;
     };
-    const ordinary = fallback({ ...config, headers: liveHeaders });
+    // Only the ordinary source runs discovery; the credential-specialized
+    // sources reuse the protocol and header annotations it records.
+    const shared = shareRemoteMCPProtocolState(config);
+    const ordinary = fallback({ ...shared, headers: liveHeaders });
+    // Project mutations by the verified current run need its exact-run event authority.
+    const isCurrentRunProjectCall = (name: string, context: ToolExecutionContext | undefined) =>
+      !!authority.eventToken && context?.projectId === authority.projectId &&
+      context.runId === authority.runId && hasCurrentTerminalRunCredentialAuthority(context) &&
+      name !== "create_run" && name !== "veryfront__create_run";
     const mutation = authority.eventToken
       ? fallback({
-        ...config,
+        ...shared,
         endpoint: expectedEndpoint,
         headers: async (context) => {
-          const headers = new NativeHeaders(await liveHeaders(context));
+          const headers = copyNativeHeaders(await liveHeaders(context));
           if (context?.projectId === authority.projectId && context.runId === authority.runId) {
             apply(headersSet, headers, [INGRESS_RUN_EVENT_TOKEN_HEADER, authority.eventToken!]);
           }
@@ -258,7 +270,7 @@ export function hostedTerminalToolSourceFactory(
       })
       : ordinary;
     const terminal = fallback({
-      ...config,
+      ...shared,
       endpoint: expectedEndpoint,
       headers: async (context) => {
         const headers = new NativeHeaders(await liveHeaders(context));
@@ -287,6 +299,7 @@ export function hostedTerminalToolSourceFactory(
     });
     return {
       id: ordinary.id,
+      dispose: (context) => disposeRemoteToolSources([ordinary, mutation, terminal], context),
       listTools: (context) => ordinary.listTools(context),
       executeTool: async (name, args, context) => {
         if (isTerminalRunToolName(name)) return terminal.executeTool(name, args, context);
@@ -318,7 +331,7 @@ export function hostedTerminalToolSourceFactory(
             },
           }, context);
         }
-        return isCanonicalFileMutationTool(name)
+        return isCanonicalFileMutationTool(name) || isCurrentRunProjectCall(name, context)
           ? mutation.executeTool(name, args, context)
           : ordinary.executeTool(name, args, context);
       },
@@ -588,6 +601,40 @@ function assertInheritedChildResourceBinding(
   ) throw new Error("Inherited child resource binding mismatch");
 }
 
+function recordInheritedTerminalReceipt(
+  run: Pick<ConversationRunProjection, "runId">,
+  row: {
+    status: string;
+    output?: unknown;
+    error?: { code?: unknown; message?: unknown };
+  },
+  outputFormat: "text-data-v1" | undefined,
+): void {
+  if (row.status === "completed" || row.status === "failed" || row.status === "cancelled") {
+    terminalReceipts.set(run, {
+      status: row.status,
+      output: row.output ?? null,
+      ...(outputFormat ? { outputFormat } : {}),
+      ...(typeof row.error?.code === "string" && typeof row.error?.message === "string"
+        ? { error: { code: row.error.code, message: row.error.message } }
+        : {}),
+    });
+  }
+}
+
+function assertInheritedLeaseReceipt(
+  receipt: { run_id?: unknown },
+  canonicalId: string,
+  leaseExpiresAt: number,
+): void {
+  if (
+    receipt.run_id !== canonicalId || !Number.isFinite(leaseExpiresAt) ||
+    leaseExpiresAt <= Date.now()
+  ) {
+    throw new Error("Inherited child lease response binding mismatch");
+  }
+}
+
 /** Bind an inherited admission response to private exact-child authority for trusted runtime adapters. */
 export async function acceptInheritedRunAdmission(
   response: Response,
@@ -645,16 +692,7 @@ export async function acceptInheritedRunAdmission(
     streamProtocolVersion: 2 as const,
   };
   const outputFormat = inheritedOutputFormats.get(response);
-  if (row.status === "completed" || row.status === "failed" || row.status === "cancelled") {
-    terminalReceipts.set(run, {
-      status: row.status,
-      output: row.output ?? null,
-      ...(outputFormat ? { outputFormat } : {}),
-      ...(typeof row.error?.code === "string" && typeof row.error?.message === "string"
-        ? { error: { code: row.error.code, message: row.error.message } }
-        : {}),
-    });
-  }
+  recordInheritedTerminalReceipt(run, row, outputFormat);
   credentials.set(run, {
     token,
     agentId: binding.agentId,
@@ -911,12 +949,7 @@ export async function withHostedInheritedLease<T>(
       }
       const receipt = await response.json();
       leaseExpiresAt = Date.parse(receipt.expires_at);
-      if (
-        receipt.run_id !== canonicalId || !Number.isFinite(leaseExpiresAt) ||
-        leaseExpiresAt <= Date.now()
-      ) {
-        throw new Error("Inherited child lease response binding mismatch");
-      }
+      assertInheritedLeaseReceipt(receipt, canonicalId, leaseExpiresAt);
       if (acknowledgesInheritedAuthorityRotation(response)) {
         rotateInheritedChildAuthority(descriptor, response);
       }
@@ -984,7 +1017,8 @@ export function hostedInheritedEventWriter(descriptor: HostedTerminalDescriptor)
       fetch: authority.fetch,
     }),
   });
-  appendPrivateArray(authority.eventWriters ??= [], [writer]);
+  authority.eventWriters ??= [];
+  appendPrivateArray(authority.eventWriters, [writer]);
   return writer;
 }
 

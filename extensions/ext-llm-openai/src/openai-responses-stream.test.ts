@@ -74,6 +74,37 @@ function data(payload: unknown): string {
 }
 
 describe("ext-llm-openai/openai-responses-stream", () => {
+  it("ignores keepalive events a quiet reasoning span interleaves", async () => {
+    // Azure OpenAI sends these mid-stream while a reasoning model is quiet for long spans.
+    const keepalive = (sequence: number) =>
+      `event: keepalive\r\n${data({ type: "keepalive", sequence_number: sequence })}`;
+    const parts = await collectParts(
+      streamFromText([
+        data({ type: "response.created", response: { status: "in_progress" } }),
+        keepalive(3),
+        keepalive(4),
+        data({
+          type: "response.completed",
+          response: {
+            status: "completed",
+            usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+          },
+        }),
+        "data: [DONE]\r\n\r\n",
+      ].join("")),
+    );
+    const finish = parts.at(-1) as { type?: string; finishReason?: unknown } | undefined;
+    assertEquals(finish?.type, "finish");
+    assertEquals(finish?.finishReason, { unified: "stop", raw: "completed" });
+  });
+
+  it("still rejects an unknown event type", async () => {
+    await assertRejects(
+      () => collectParts(streamFromText(data({ type: "response.unheard_of" }))),
+      ProviderStreamProtocolError,
+    );
+  });
+
   it("classifies declared error events without exposing provider text or inventing HTTP status", async () => {
     for (
       const [code, ErrorClass, retryable, publicCode] of [

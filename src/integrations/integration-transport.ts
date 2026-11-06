@@ -2,6 +2,7 @@
 import { createVeryfrontApiOriginBoundOutboundFetch } from "#veryfront/security/http/outbound-fetch.ts";
 import { readResponseTextPrefix } from "#veryfront/utils/response-body.ts";
 import { logger } from "#veryfront/utils";
+import { privateTextTrim } from "#veryfront/security/private-text.ts";
 import {
   INTEGRATION_REQUEST_TIMEOUT_MS,
   MAX_REMOTE_INTEGRATION_API_TOKEN_LENGTH,
@@ -101,9 +102,10 @@ function assertResponseContentLengthWithin(
   const rawContentLength = response.headers.get("content-length");
   if (rawContentLength === null) return;
 
-  const contentLength = Number(rawContentLength.trim());
+  const normalizedContentLength = privateTextTrim(rawContentLength);
+  const contentLength = Number(normalizedContentLength);
   if (
-    !/^\d+$/.test(rawContentLength.trim()) ||
+    !/^\d+$/.test(normalizedContentLength) ||
     !Number.isSafeInteger(contentLength) ||
     contentLength > maxBytes
   ) {

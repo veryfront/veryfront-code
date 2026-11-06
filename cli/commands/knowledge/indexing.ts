@@ -182,7 +182,7 @@ async function readEmptyCanonicalIndexReceipt(
   signal?.throwIfAborted();
   const current = result.data.find((item) => item.path === published.path);
   if (
-    !current || current.file_id !== published.file_id ||
+    current?.file_id !== published.file_id ||
     current.file_version_id !== published.version_id || !current.index_ready
   ) {
     throw new Error(
@@ -244,29 +244,33 @@ export async function indexKnowledgeDocument(
   const vectors = await embedder.embedMany(texts, { signal });
   signal?.throwIfAborted();
   const dimension = vectors[0]?.length ?? 0;
-  if (
-    ![768, 1024, 1536, 3072, 4096].includes(dimension) ||
-    vectors.length !== texts.length ||
-    vectors.some((vector) =>
-      vector.length !== dimension || vector.some((value) => !Number.isFinite(value))
-    )
-  ) {
-    throw new Error(
-      "Embedding provider returned an invalid count, dimension, or non-finite vector.",
-    );
+  function validateEmbeddingModel() {
+    if (
+      ![768, 1024, 1536, 3072, 4096].includes(dimension) ||
+      vectors.length !== texts.length ||
+      vectors.some((vector) =>
+        vector.length !== dimension || vector.some((value) => !Number.isFinite(value))
+      )
+    ) {
+      throw new Error(
+        "Embedding provider returned an invalid count, dimension, or non-finite vector.",
+      );
+    }
+    const normalizedModel = embedder.model.startsWith("veryfront-cloud/")
+      ? embedder.model.slice("veryfront-cloud/".length)
+      : embedder.model;
+    const separator = normalizedModel.indexOf("/");
+    if (separator <= 0 || separator === normalizedModel.length - 1) {
+      throw new Error("Embedding model must identify its provider and model name.");
+    }
+    const model = {
+      provider: normalizedModel.slice(0, separator),
+      name: normalizedModel.slice(separator + 1),
+      dimension,
+    };
+    return model;
   }
-  const normalizedModel = embedder.model.startsWith("veryfront-cloud/")
-    ? embedder.model.slice("veryfront-cloud/".length)
-    : embedder.model;
-  const separator = normalizedModel.indexOf("/");
-  if (separator <= 0 || separator === normalizedModel.length - 1) {
-    throw new Error("Embedding model must identify its provider and model name.");
-  }
-  const model = {
-    provider: normalizedModel.slice(0, separator),
-    name: normalizedModel.slice(separator + 1),
-    dimension,
-  };
+  const model = validateEmbeddingModel();
   const bodyOffset = source.length - body.length;
   const chunks = parts.map(({ content, startOffset: start, endOffset: end }, chunk_index) => {
     if (body.slice(start, end) !== content) {
@@ -305,11 +309,14 @@ export async function indexKnowledgeDocument(
     signal ? { signal, retryPolicy: "none" } : undefined,
   );
   signal?.throwIfAborted();
-  const acknowledgedChecksum = typeof result.checksum === "string" && result.checksum
-    ? result.checksum
-    : input.checksumAcknowledgement === "legacy-null" && result.checksum === null
-    ? canonicalVersion.checksum
-    : undefined;
+  function acknowledgedSourceChecksum(): string | undefined {
+    if (typeof result.checksum === "string" && result.checksum) return result.checksum;
+    if (input.checksumAcknowledgement === "legacy-null" && result.checksum === null) {
+      return canonicalVersion.checksum;
+    }
+    return undefined;
+  }
+  const acknowledgedChecksum = acknowledgedSourceChecksum();
   if (
     result.file_id !== canonicalVersion.file_id ||
     result.version_id !== canonicalVersion.version_id ||

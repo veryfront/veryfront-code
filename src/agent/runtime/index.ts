@@ -135,6 +135,7 @@ import { convertToolsToRuntimeTools } from "./model-tool-converter.ts";
 import {
   bindRuntimeRemoteToolSourcesToCredentialOwner,
   constrainRuntimeRemoteToolSources,
+  createRuntimeMcpSourceCleanup,
   getRuntimeRemoteToolSources,
   getRuntimeUnavailableOptionalRemoteTools,
 } from "./mcp-server-tool-sources.ts";
@@ -244,6 +245,7 @@ import {
   RuntimeEmptyResponseError,
 } from "./empty-response-recovery.ts";
 import {
+  closeAgentConfigToolSelector,
   getProviderReplayInvokeAgentToolCallsSchema,
   getRuntimeAllowedRemoteTools,
   getRuntimeForwardedIntegrationToolDefs,
@@ -1871,10 +1873,10 @@ function executeFrameworkToolSearch(input: {
         ...result,
         contract,
         nextStep: isAvailable
-          ? "This tool is already available. Call it with this input schema."
+          ? "This tool is already available. Call it with this input schema. The output schema is the declared result contract, or null when absent."
           : result.loadedCount > 0
-          ? "This tool is loaded for the next step. Call it with this input schema."
-          : "This is the exact input schema, but the tool could not be loaded within the current tool limit.",
+          ? "This tool is loaded for the next step. Call it with this input schema. The output schema is the declared result contract, or null when absent."
+          : "These are the exact declared schemas, but the tool could not be loaded within the current tool limit.",
       },
       checkpoint: checkpoint(),
     };
@@ -2328,12 +2330,13 @@ function hasToolResultContextEnabled(
 }
 
 function createActiveToolResultContext(input: {
-  config: Pick<AgentConfig, "toolResultContext">;
+  config: Pick<AgentConfig, "tools" | "toolResultContext">;
   hasToolReplacements?: boolean;
   supportsToolCalling?: boolean;
 }): ToolResultContext | undefined {
   if (
-    input.supportsToolCalling === false || input.hasToolReplacements ||
+    input.config.tools === false || input.supportsToolCalling === false ||
+    input.hasToolReplacements ||
     !hasToolResultContextEnabled(input.config)
   ) {
     return undefined;
@@ -3106,7 +3109,7 @@ async function traceConfiguredToolExecution(input: {
   admittedTurn: AdmittedToolTurn;
   owner: Message[];
   prepareTerminalDispatch: () => Promise<void>;
-  toolsConfig: true | Record<string, ToolConfigEntry> | undefined;
+  toolsConfig: boolean | Record<string, ToolConfigEntry> | undefined;
   context: ToolExecutionContext;
   allowedRemoteToolNames: string[] | undefined;
   remoteToolSources: ReturnType<typeof getRuntimeRemoteToolSources>;
@@ -3486,6 +3489,11 @@ export class AgentRuntime {
     this.id = id;
     this.config = { ...config };
     if (ObjectGetPrototypeOf(config) === null) ObjectSetPrototypeOf(this.config, null);
+    // Direct construction (ag-ui, forks, internal run streams, public callers)
+    // must close `tools: false` exactly as agent() does: startup tools/skill,
+    // skills, knowledge, delegates, MCP servers and the tool-result reader all
+    // run through or expose callable tools.
+    if (this.config.tools === false) closeAgentConfigToolSelector(this.config);
 
     // Agents are stateless by default (see docs/guides/memory-and-streaming.md):
     // with no `memory` config, calls never share conversation history, so
@@ -3981,6 +3989,7 @@ export class AgentRuntime {
     toolReplacements: AgentGenerateToolReplacements | undefined,
     retainSkillLoaderTools: boolean | undefined,
   ): AgentGenerateToolReplacements | undefined {
+    if (this.config.tools === false) return undefined;
     if (toolReplacements === undefined) {
       return undefined;
     }
@@ -4710,6 +4719,7 @@ export class AgentRuntime {
       const remoteToolSources = hasToolReplacements
         ? undefined
         : getRuntimeRemoteToolSources(this.config, undefined, this.id);
+      await using _remoteMcpCleanup = createRuntimeMcpSourceCleanup(remoteToolSources);
       const unavailableOptionalRemoteTools = hasToolReplacements
         ? { names: [], prefixes: [] }
         : getRuntimeUnavailableOptionalRemoteTools(this.config, remoteToolSources);
@@ -5792,6 +5802,7 @@ export class AgentRuntime {
     const allowedRemoteToolNames = getRuntimeAllowedRemoteTools(this.config);
     const forwardedRemoteToolDefinitions = getRuntimeForwardedIntegrationToolDefs(this.config);
     const remoteToolSources = getRuntimeRemoteToolSources(this.config, undefined, this.id);
+    await using _remoteMcpCleanup = createRuntimeMcpSourceCleanup(remoteToolSources);
     const unavailableOptionalRemoteTools = getRuntimeUnavailableOptionalRemoteTools(
       this.config,
       remoteToolSources,
@@ -6113,13 +6124,18 @@ export class AgentRuntime {
           inputDeltas: [inputText],
           inputAvailable: true,
         };
-        announceStreamedToolCallInput(controller, encoder, streamedCall);
+        announceStreamedToolCallInput(
+          controller,
+          encoder,
+          streamedCall,
+          (name) => isDynamicTool(name, this.config.tools),
+        );
         sendSSE(controller, encoder, {
           type: "tool-input-available",
           toolCallId: resumeToolCall.id,
           toolName: resumeToolCall.name,
           input: resumeToolCall.input,
-          ...(isDynamicTool(resumeToolCall.name) ? { dynamic: true } : {}),
+          ...(isDynamicTool(resumeToolCall.name, this.config.tools) ? { dynamic: true } : {}),
         });
 
         const assistantToolCallMessage: Message = {
@@ -6261,14 +6277,14 @@ export class AgentRuntime {
               type: "tool-output-available",
               toolCallId: resumeToolCall.id,
               output: result,
-              ...(isDynamicTool(resumeToolCall.name) ? { dynamic: true } : {}),
+              ...(isDynamicTool(resumeToolCall.name, this.config.tools) ? { dynamic: true } : {}),
             });
           } else {
             sendSSE(controller, encoder, {
               type: "tool-output-error",
               toolCallId: resumeToolCall.id,
               errorText: resultError,
-              ...(isDynamicTool(resumeToolCall.name) ? { dynamic: true } : {}),
+              ...(isDynamicTool(resumeToolCall.name, this.config.tools) ? { dynamic: true } : {}),
             });
           }
           const toolResultMessage = createPolicyAwareToolResultMessage(
@@ -6670,6 +6686,9 @@ export class AgentRuntime {
               languageModel.runtimeCapabilities?.toolCallStreamRequiresFinish === true,
             providerExecutedToolNames: getProviderExecutedToolNames(runtimeTools),
             availableToolNames: acceptedRuntimeToolNames,
+            dynamicToolNames: runtimeToolNames.filter((name) =>
+              isDynamicTool(name, this.config.tools)
+            ),
             streamLifecycleMode,
             ...(this.#modelStreamTimeouts
               ? { streamLifecyclePolicy: { ...this.#modelStreamTimeouts } }
@@ -6832,7 +6851,7 @@ export class AgentRuntime {
             partialArgumentsPreview: materialized.partialArgumentsPreview,
           });
           if (tc.inputAnnounced === true) {
-            const dynamicIncomplete = isDynamicTool(tc.name);
+            const dynamicIncomplete = isDynamicTool(tc.name, this.config.tools);
             sendSSE(controller, encoder, {
               type: "tool-input-error",
               toolCallId: tc.id,
@@ -6911,7 +6930,12 @@ export class AgentRuntime {
             toolCall.providerExecuted !== true && isStreamedToolCallIncomplete(toolCall) &&
             !finalToolResults.has(toolCall.id)
           ) {
-            announceStreamedToolCallInput(controller, encoder, toolCall);
+            announceStreamedToolCallInput(
+              controller,
+              encoder,
+              toolCall,
+              (name) => isDynamicTool(name, this.config.tools),
+            );
           }
         }
         await this.#persistRecoveryBoundary(
@@ -7011,7 +7035,12 @@ export class AgentRuntime {
           // same name recorded below and in the persisted assistant message,
           // so the card matches a reload. Announcing is idempotent, so a call
           // surfaced upstream is not reported twice.
-          announceStreamedToolCallInput(controller, encoder, toolCall);
+          announceStreamedToolCallInput(
+            controller,
+            encoder,
+            toolCall,
+            (name) => isDynamicTool(name, this.config.tools),
+          );
         }
         const incompleteToolCall: ToolCall = {
           id: toolCall.id,
@@ -7293,7 +7322,7 @@ export class AgentRuntime {
             error: capturedInput.parseError,
           });
 
-          const dynamic = isDynamicTool(tc.name);
+          const dynamic = isDynamicTool(tc.name, this.config.tools);
           sendSSE(controller, encoder, {
             type: "tool-input-error",
             toolCallId: tc.id,
@@ -7527,7 +7556,7 @@ export class AgentRuntime {
             }
           }
 
-          const dynamic = isDynamicTool(tc.name);
+          const dynamic = isDynamicTool(tc.name, this.config.tools);
           if (resultError === undefined) {
             sendSSE(controller, encoder, {
               type: "tool-output-available",
@@ -7712,7 +7741,7 @@ export class AgentRuntime {
           type: "tool-output-error",
           toolCallId: sibling.toolCallId,
           errorText: reason,
-          ...(isDynamicTool(sibling.toolName) ? { dynamic: true } : {}),
+          ...(isDynamicTool(sibling.toolName, this.config.tools) ? { dynamic: true } : {}),
         });
       }
     });
@@ -7726,7 +7755,7 @@ export class AgentRuntime {
         type: acknowledged ? "tool-output-available" : "tool-output-error",
         toolCallId: toolCall.id,
         ...(acknowledged ? { output: error.acknowledgedResult } : { errorText: error.message }),
-        ...(isDynamicTool(toolCall.name) ? { dynamic: true } : {}),
+        ...(isDynamicTool(toolCall.name, this.config.tools) ? { dynamic: true } : {}),
       });
     }
   }
@@ -7781,7 +7810,7 @@ export class AgentRuntime {
     }
 
     if (options.emitSse !== false) {
-      const dynamic = isDynamicTool(toolCall.name);
+      const dynamic = isDynamicTool(toolCall.name, this.config.tools);
       sendSSE(controller, encoder, {
         type: "tool-output-error",
         toolCallId: toolCall.id,

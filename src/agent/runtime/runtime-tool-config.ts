@@ -94,6 +94,7 @@ export type RuntimeToolFilterConfig = AgentConfig & {
       name: string;
       description: string;
       parameters: Record<string, unknown>;
+      outputSchema?: Record<string, unknown>;
       discovery?: ToolDiscoveryMetadata;
     }
   >;
@@ -140,11 +141,28 @@ export type RuntimeToolLoadingResolution = {
     | "tools-selector";
 };
 
+/**
+ * Close a `tools: false` config in place, matching agent(): no skills,
+ * knowledge, delegates, MCP servers, startup tools or skill, or tool-result
+ * reader. Every one of those runs through or exposes a callable tool.
+ */
+export function closeAgentConfigToolSelector(config: AgentConfig): void {
+  config.skills = false;
+  config.knowledge = undefined;
+  config.delegates = undefined;
+  config.mcpServers = undefined;
+  config.bootstrapSkill = undefined;
+  config.bootstrapTools = undefined;
+  config.optionalBootstrapTools = undefined;
+  config.toolResultContext = undefined;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
 function isToolSearchDenied(config: AgentConfig): boolean {
+  if (config.tools === false) return true;
   const deniedTools = (config as { deniedTools?: unknown }).deniedTools;
   if (
     ArrayIsArray(deniedTools) &&
@@ -425,6 +443,10 @@ export function getRuntimeForwardedIntegrationToolDefs(
             !Array.isArray(def.parameters)
           ? def.parameters
           : { type: "object", properties: {} },
+        ...(def.outputSchema && typeof def.outputSchema === "object" &&
+            !Array.isArray(def.outputSchema)
+          ? { outputSchema: def.outputSchema }
+          : {}),
       };
       copyToolDiscoveryMetadata(def, definition);
       return definition;

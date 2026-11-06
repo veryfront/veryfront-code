@@ -300,11 +300,6 @@ const report = await runEval(definition, {
 });
 ```
 
-Braintrust should follow the same contract as a sibling
-`@veryfront/ext-eval-report-*` exporter, for example a future
-`@veryfront/ext-eval-report-braintrust`, instead of being special-cased in
-project eval definitions or the MLflow exporter.
-
 
 ## Verify the export
 

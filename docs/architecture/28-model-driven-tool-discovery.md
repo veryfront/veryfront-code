@@ -75,8 +75,9 @@ mechanism.
 Provide exactly one of four mode fields. Every argument is a top-level string or
 integer:
 
-- `{"schema":"veryfront__get_agent"}` returns the exact input schema of one authorized
-  executable tool and loads it for the next model step. Use it when the exact
+- `{"schema":"veryfront__get_agent"}` returns the exact input schema and declared output
+  schema of one authorized executable tool and loads it for the next model step.
+  The output schema is `null` when the source did not declare one. Use it when the exact
   name is known. The name never matches by substring. Provider-native tools have
   no inspectable schema, so load them with `query`.
 - `{"search":"create agent"}` ranks up to five tools by a short capability

@@ -87,6 +87,29 @@ describe("agent/ag-ui/runtime-restrictions", () => {
     assertEquals(hasAgUiRuntimeRestrictions({ allowedTools: [] }), true);
   });
 
+  it("keeps an authored no-tools selector closed under a wider run allowlist", () => {
+    const restricted = applyAgUiRuntimeRestrictions(
+      createConfig({
+        tools: false,
+        knowledge: true,
+        providerTools: ["web_fetch", "unsupported_native"],
+      }),
+      {
+        allowedTools: [
+          "web_fetch",
+          "unsupported_native",
+          "veryfront__load_skill",
+          "veryfront__search_knowledge",
+          "agent_writer",
+        ],
+      },
+    );
+
+    assertEquals(restricted.tools, false);
+    assertEquals(restricted.providerTools, ["web_fetch"]);
+    assertEquals(createEphemeralAgent(restricted).config.tools, false);
+  });
+
   it("keeps only allowlisted configured tools", () => {
     const restricted = applyAgUiRuntimeRestrictions(createConfig(), {
       allowedTools: ["web_search"],
@@ -585,7 +608,7 @@ describe("agent/ag-ui/runtime-restrictions", () => {
     );
 
     const tools = restrictedAgent.config.tools;
-    assert(tools !== undefined && tools !== true);
+    assert(tools !== undefined && typeof tools !== "boolean");
     assertEquals(restrictedAgent.config.skills, true);
     assertEquals(tools.load_skill, false);
     assertEquals(typeof tools.veryfront__load_skill, "object");
@@ -600,7 +623,7 @@ describe("agent/ag-ui/runtime-restrictions", () => {
     );
     assertEquals(restricted.skills, false);
     const tools = restricted.tools;
-    assert(tools !== undefined && tools !== true);
+    assert(tools !== undefined && typeof tools !== "boolean");
     assertEquals(tools.veryfront__load_skill, false);
   });
 
@@ -615,7 +638,7 @@ describe("agent/ag-ui/runtime-restrictions", () => {
     );
 
     const tools = restricted.tools;
-    assert(tools !== undefined && tools !== true);
+    assert(tools !== undefined && typeof tools !== "boolean");
     assertEquals(restricted.skills, true);
     assertEquals(tools.load_skill, false);
     assertEquals(tools.veryfront__load_skill, canonicalLoader);
@@ -685,7 +708,7 @@ describe("agent/ag-ui/runtime-restrictions", () => {
       { allowedTools: ["veryfront__search_knowledge"] },
     );
     const allowedTools = allowed.tools;
-    if (allowedTools === true || allowedTools === undefined) {
+    if (typeof allowedTools === "boolean" || allowedTools === undefined) {
       throw new Error("Expected explicit restricted tool map");
     }
     assertEquals(typeof allowedTools.veryfront__search_knowledge, "object");

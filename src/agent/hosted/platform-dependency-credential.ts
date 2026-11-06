@@ -11,6 +11,7 @@ import { appendPrivateArray } from "#veryfront/security/private-array.ts";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
 import type { RemoteToolSource } from "#veryfront/tool/types.ts";
+import { serverLogger } from "#veryfront/utils";
 import {
   createVerifiedPlatformToolDependencyRunner,
   getVerifiedPlatformToolDependencies,
@@ -39,6 +40,8 @@ type Authority = {
   authToken: string;
   runner?: Runner;
   sourceFactory?: SourceFactory;
+  /** The MCP source created for this owner; revocation terminates its sessions. */
+  source?: RemoteToolSource;
   active: boolean;
   children: Authority[];
 };
@@ -95,7 +98,11 @@ export async function configureHostedPlatformDependencySource(
       owner,
       parentOwner,
     );
-    if (source) authority.runner?.captureSource(source);
+    if (!source) return;
+    authority.source = source;
+    // Revocation during creation already ran, so release the late source here.
+    if (!authority.active) releaseAuthoritySource(authority);
+    else authority.runner?.captureSource(source);
   }
 }
 
@@ -189,8 +196,26 @@ export function captureHostedPlatformDependencyExecution() {
   return <T>(operation: () => Promise<T>): Promise<T> => runAuthority(authority, operation);
 }
 
+/**
+ * Start terminating the owner's MCP sessions. Revocation is synchronous and
+ * runs from abort listeners, so a cleanup failure is logged, never thrown.
+ */
+function releaseAuthoritySource(authority: Authority): void {
+  const source = authority.source;
+  authority.source = undefined;
+  if (!source?.dispose) return;
+  (async () => {
+    await source.dispose!();
+  })().catch((error: unknown) => {
+    serverLogger.warn("Hosted platform MCP session cleanup failed", {
+      errorName: error instanceof Error ? error.name : typeof error,
+    });
+  });
+}
+
 function revokeAuthority(authority: Authority): void {
   authority.active = false;
+  releaseAuthoritySource(authority);
   authority.runner?.revoke();
   for (let index = 0; index < authority.children.length; index++) {
     revokeAuthority(authority.children[index]!);

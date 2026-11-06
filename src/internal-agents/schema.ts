@@ -144,6 +144,15 @@ export const getInternalAgentControlPlaneStreamRequestSchema = defineSchema((v) 
         path: ["agentConfig", "id"],
       });
     }
+    // Control-plane requests are built from a normalized invocation, where the
+    // closed selector is already `tools: []` plus generated allowlists.
+    if (input.agentConfig?.tools === false) {
+      ctx.addIssue({
+        code: "custom",
+        message: "agentConfig.tools: false must be normalized before the control-plane request",
+        path: ["agentConfig", "tools"],
+      });
+    }
 
     const maxOutputTokens = input.forwardedProps?.maxOutputTokens;
     if (

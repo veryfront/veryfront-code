@@ -249,6 +249,8 @@ export interface ToolDefinition {
   name: string;
   description: string;
   parameters: JsonSchema;
+  /** Declared tool result contract, when the source provides one. */
+  outputSchema?: JsonSchema;
   /** Catalog navigation hints, without execution authority. */
   discovery?: ToolDiscoveryMetadata;
   title?: string;
@@ -262,6 +264,8 @@ export interface ToolDefinition {
  */
 export interface RemoteToolSource {
   id: string;
+  /** Release remote sessions owned by this source. */
+  dispose?(context?: ToolExecutionContext): Promise<void>;
   listTools(context?: ToolExecutionContext): Promise<ToolDefinition[]>;
   executeTool(
     toolName: string,

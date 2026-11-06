@@ -2,7 +2,8 @@ import "#veryfront/schemas/_test-setup.ts";
 import { generateKeyPairSync, sign } from "node:crypto";
 import { it } from "#veryfront/testing/bdd.ts";
 import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
-import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import { observeFetchRequestInit, withMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import { getActiveRuntimeRemoteToolSources } from "../../../src/agent/runtime/remote-tool-source-context.ts";
 import { createAgentServiceSandboxTools } from "#veryfront/sandbox";
 import { createConnectedLocalPlatformTools } from "../../../src/agent/ag-ui/connected-local-platform-tools.ts";
 import {
@@ -477,5 +478,65 @@ it("binds each delegated child script to its own run and role credential", async
       return Promise.resolve();
     });
     await tools.revoke(root);
+  });
+});
+
+it("terminates the owner's MCP session when the owner is revoked", async () => {
+  await fixture(async ({ transport, scope, eventToken, authToken }) => {
+    const live = new Set<string>();
+    const mcpTransport: typeof fetch = async (input, init) => {
+      if (!String(input).endsWith("/mcp")) return await transport(input, init);
+      const request = observeFetchRequestInit(init);
+      const headers = new Headers(request.headers);
+      const sessionId = headers.get("Mcp-Session-Id");
+      if (request.method === "DELETE") {
+        live.delete(sessionId!);
+        return new Response(null, { status: 204 });
+      }
+      const body = JSON.parse(String(request.body)) as { id?: string; method: string };
+      if (body.method === "initialize") {
+        live.add("connected-session");
+        return Response.json({
+          jsonrpc: "2.0",
+          id: body.id,
+          result: {
+            protocolVersion: "2025-11-25",
+            capabilities: {},
+            serverInfo: { name: "legacy", version: "1" },
+          },
+        }, { headers: { "Mcp-Session-Id": "connected-session" } });
+      }
+      if (body.method === "notifications/initialized") return new Response(null, { status: 202 });
+      if (!sessionId) return new Response("initialize first", { status: 400 });
+      return Response.json({ jsonrpc: "2.0", id: body.id, result: { tools: [] } });
+    };
+    // A sandbox-scoped credential wraps the MCP source in the sandbox composite.
+    const tools = createConnectedLocalPlatformTools("https://api.veryfront.com", mcpTransport, {
+      createSandboxTools: () => Promise.resolve({ tools: {}, closeSandbox: async () => {} }),
+    });
+    const owner = { runId: scope.runId };
+    await tools.register(owner, scope, eventToken(scope.runId), authToken);
+    const writer = createHostedRunEventWriterCapability({
+      apiUrl: "https://api.veryfront.com",
+      runId: scope.runId,
+      canonicalRunId: "55555555-5555-4555-8555-555555555555",
+      runEventAppendToken: eventToken(scope.runId),
+    });
+    await tools.run({
+      owner,
+      scope,
+      writer,
+      canonicalRunId: "55555555-5555-4555-8555-555555555555",
+      signal: new AbortController().signal,
+      admit: () => {
+        throw new Error("No tools execute");
+      },
+    }, async () => {
+      const [source] = getActiveRuntimeRemoteToolSources() ?? [];
+      await source!.listTools();
+    });
+    assertEquals([...live], ["connected-session"]);
+    await tools.revoke(owner);
+    assertEquals(live.size, 0);
   });
 });

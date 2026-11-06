@@ -77,13 +77,14 @@ async function runCommand(cmd: string[], cwd?: string) {
 	console.log(`$ ${cmd.join(" ")}`);
 	if (DRY_RUN) return;
 
-	if (!cmd[0]) {
+	const commandName = cmd[0];
+	if (!commandName) {
 		throw new Error("Command cannot be empty");
 	}
 
   if (isDenoRuntime) {
     // @ts-ignore - Deno global
-    const command = new Deno.Command(cmd[0], {
+    const command = new Deno.Command(commandName, {
       args: cmd.slice(1),
       cwd,
       stdout: "inherit",
@@ -96,9 +97,10 @@ async function runCommand(cmd: string[], cwd?: string) {
       exit(1);
     }
   } else if (childProcess) {
+    const nativeChildProcess = childProcess;
     // Node.js
     await new Promise<void>((resolve, reject) => {
-      const child = childProcess.spawn(cmd[0], cmd.slice(1), {
+      const child = nativeChildProcess.spawn(commandName, cmd.slice(1), {
         cwd,
         stdio: "inherit",
       });
@@ -119,50 +121,75 @@ async function runCommand(cmd: string[], cwd?: string) {
   }
 }
 
+interface ExampleVersionManifest {
+	dependencies?: { veryfront?: unknown };
+	devDependencies?: { veryfront?: unknown };
+}
+
+function updateExampleDependencies(json: ExampleVersionManifest, newVersion: string): boolean {
+	let changed = false;
+	if (json.dependencies?.veryfront) {
+		json.dependencies.veryfront = `^${newVersion}`;
+		changed = true;
+	}
+	if (json.devDependencies?.veryfront) {
+		json.devDependencies.veryfront = `^${newVersion}`;
+		changed = true;
+	}
+	return changed;
+}
+
 async function updateExampleVersions(newVersion: string) {
 	console.log("\n📝 Updating examples versions...");
 	const examplesDir = getPath().resolve("examples");
 
-	if (await fs.exists(examplesDir)) {
-		for await (const entry of fs.readDir(examplesDir)) {
-			if (entry.isDirectory) {
-				const packageJsonPath = getPath().join(examplesDir, entry.name, "package.json");
-				if (await fs.exists(packageJsonPath)) {
-					try {
-						const content = await fs.readTextFile(packageJsonPath);
-						const json = JSON.parse(content);
-						let changed = false;
-
-						if (json.dependencies && json.dependencies.veryfront) {
-							json.dependencies.veryfront = `^${newVersion}`;
-							changed = true;
-						}
-
-						if (json.devDependencies && json.devDependencies.veryfront) {
-							json.devDependencies.veryfront = `^${newVersion}`;
-							changed = true;
-						}
-
-						if (changed) {
-							if (DRY_RUN) {
-								console.log(`  [DRY RUN] Would update ${entry.name} to ${newVersion}`);
-							} else {
-								await fs.writeTextFile(
-									packageJsonPath,
-									JSON.stringify(json, null, 2) + "\n",
-								);
-								console.log(`  ✓ Updated ${entry.name}`);
-							}
-						}
-					} catch (e) {
-						console.warn(`  ⚠ Failed to update ${entry.name}:`, e);
-					}
-				}
+	if (!await fs.exists(examplesDir)) return;
+	for await (const entry of fs.readDir(examplesDir)) {
+		if (!entry.isDirectory) continue;
+		const packageJsonPath = getPath().join(examplesDir, entry.name, "package.json");
+		if (!await fs.exists(packageJsonPath)) continue;
+		try {
+			const content = await fs.readTextFile(packageJsonPath);
+			const json = JSON.parse(content);
+			if (!updateExampleDependencies(json, newVersion)) continue;
+			if (DRY_RUN) {
+				console.log(`  [DRY RUN] Would update ${entry.name} to ${newVersion}`);
+			} else {
+				await fs.writeTextFile(
+					packageJsonPath,
+					JSON.stringify(json, null, 2) + "\n",
+				);
+				console.log(`  ✓ Updated ${entry.name}`);
 			}
+		} catch (e) {
+			console.warn(`  ⚠ Failed to update ${entry.name}:`, e);
 		}
 	}
 }
 
+function rewriteTemplateVersions(content: string, newVersion: string): string {
+	const regex1 = /veryfront:\s*"[\^~]?[\d.]+",/g;
+	const regex2 = /"veryfront":\s*"npm:veryfront@[\^~]?[\d.]+"/g;
+	const regex3 = /"veryfront\/":\s*"npm:veryfront@[\^~]?[\d.]+\/"/g;
+
+	let newContent = bumpVersionAssignments(content, newVersion);
+	if (regex1.test(newContent)) {
+		newContent = newContent.replace(regex1, `veryfront: "^${newVersion}",`);
+	}
+	if (regex2.test(newContent)) {
+		newContent = newContent.replace(
+			regex2,
+			`"veryfront": "npm:veryfront@^${newVersion}"`,
+		);
+	}
+	if (regex3.test(newContent)) {
+		newContent = newContent.replace(
+			regex3,
+			`"veryfront/": "npm:veryfront@^${newVersion}/"`,
+		);
+	}
+	return newContent;
+}
 
 async function updateTemplates(newVersion: string) {
 	console.log("\n📝 Updating template versions...");
@@ -178,26 +205,7 @@ async function updateTemplates(newVersion: string) {
 		if (await fs.exists(fullPath)) {
 			try {
 				const content = await fs.readTextFile(fullPath);
-				const regex1 = /veryfront:\s*"[\^~]?[\d\.]+",/g;
-				const regex2 = /"veryfront":\s*"npm:veryfront@[\^~]?[\d\.]+"/g;
-				const regex3 = /"veryfront\/":\s*"npm:veryfront@[\^~]?[\d\.]+\/"/g;
-
-				let newContent = bumpVersionAssignments(content, newVersion);
-				if (regex1.test(newContent)) {
-					newContent = newContent.replace(regex1, `veryfront: "^${newVersion}",`);
-				}
-				if (regex2.test(newContent)) {
-					newContent = newContent.replace(
-						regex2,
-						`"veryfront": "npm:veryfront@^${newVersion}"`,
-					);
-				}
-				if (regex3.test(newContent)) {
-					newContent = newContent.replace(
-						regex3,
-						`"veryfront/": "npm:veryfront@^${newVersion}/"`,
-					);
-				}
+				const newContent = rewriteTemplateVersions(content, newVersion);
 				if (newContent !== content) {
 					if (DRY_RUN) {
 						console.log(`  [DRY RUN] Would update ${filePath}`);
@@ -210,6 +218,19 @@ async function updateTemplates(newVersion: string) {
 				console.warn(`  ⚠ Failed to update ${filePath}:`, e);
 			}
 		}
+	}
+}
+
+function requireReleaseConfirmation(confirmation: string | null | undefined): void {
+	if (confirmation?.toLowerCase() !== "y") {
+		console.log("Aborted.");
+		exit(0);
+	}
+}
+
+function validateReleaseManifest(denoJson: { name?: unknown }): void {
+	if (typeof denoJson.name !== "string" || !denoJson.name) {
+		throw new Error("deno.json must define a non-empty package name");
 	}
 }
 
@@ -226,10 +247,7 @@ async function runRelease() {
 		console.log("DRY RUN: No changes will be made.");
 	} else if (!args.yes) {
 		const confirm = await promptUser("Continue? [y/N]");
-		if (confirm?.toLowerCase() !== "y") {
-			console.log("Aborted.");
-			exit(0);
-		}
+		requireReleaseConfirmation(confirm);
 	}
 
 	// 1. Run tests
@@ -247,9 +265,7 @@ async function runRelease() {
 		// which buries the one meaningful line under unrelated churn that then
 		// has to be reverted by hand.
 		const source = await fs.readTextFile(denoJsonPath);
-		if (typeof denoJson.name !== "string" || !denoJson.name) {
-			throw new Error("deno.json must define a non-empty package name");
-		}
+		validateReleaseManifest(denoJson);
 		const lockPath = getPath().resolve("scripts/deno.lock");
 		const lockSource = await fs.readTextFile(lockPath);
 		const nextLockSource = rewriteWorkspacePackageVersion(

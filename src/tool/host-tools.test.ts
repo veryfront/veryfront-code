@@ -5,6 +5,7 @@ import type { JsonSchema } from "#veryfront/extensions/schema/index.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { createToolsFromHostDefinitions, type HostToolSet } from "./host-tools.ts";
 import { createToolsFromRemoteDefinitions } from "./remote-source-tools.ts";
+import { toolToProviderDefinition } from "./registry.ts";
 import { getRemoteToolProvenance } from "./remote-tool-provenance.ts";
 import {
   hasTrustedHostToolProvenance,
@@ -61,6 +62,61 @@ describe("tool/host-tools", () => {
       resource: "Agents",
     });
     assertEquals(tools.invalid?.discovery, undefined);
+  });
+
+  it("preserves declared output schemas through hosted materialization", () => {
+    const outputSchema = {
+      type: "object" as const,
+      properties: { total: { type: "number" as const } },
+    };
+    class Definition {
+      description = "Inherited output contract";
+      inputSchemaJson = emptyJsonSchema;
+      execute() {
+        return Promise.resolve({ total: 1 });
+      }
+    }
+    Object.defineProperty(Definition.prototype, "outputSchemaJson", { value: outputSchema });
+    const tools = createToolsFromHostDefinitions({
+      declared: {
+        description: "Declared output contract",
+        inputSchemaJson: emptyJsonSchema,
+        outputSchemaJson: outputSchema,
+        execute: () => Promise.resolve({ total: 1 }),
+      },
+      inherited: new Definition(),
+      undeclared: {
+        description: "No output contract",
+        inputSchemaJson: emptyJsonSchema,
+        execute: () => Promise.resolve(null),
+      },
+    });
+    assertEquals(toolToProviderDefinition(tools.declared!).outputSchema, outputSchema);
+    assertEquals(toolToProviderDefinition(tools.inherited!).outputSchema, outputSchema);
+    assertEquals(toolToProviderDefinition(tools.undeclared!).outputSchema, undefined);
+  });
+
+  it("preserves declared output schemas on schema-backed host definitions", () => {
+    const outputSchema = {
+      type: "object" as const,
+      properties: { total: { type: "number" as const } },
+    };
+    const tools = createToolsFromHostDefinitions({
+      declared: {
+        description: "Schema-backed output contract",
+        inputSchema: defineSchema((v) => v.object({}))(),
+        outputSchemaJson: outputSchema,
+        execute: () => Promise.resolve({ total: 1 }),
+      },
+      malformed: {
+        description: "Malformed output contract",
+        inputSchema: defineSchema((v) => v.object({}))(),
+        outputSchemaJson: { type: "object", value: 1n } as unknown as JsonSchema,
+        execute: () => Promise.resolve(null),
+      },
+    });
+    assertEquals(toolToProviderDefinition(tools.declared!).outputSchema, outputSchema);
+    assertEquals(tools.malformed, undefined);
   });
 
   it("materializes class-defined execution methods with their original receiver", async () => {

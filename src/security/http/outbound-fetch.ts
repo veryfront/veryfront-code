@@ -866,7 +866,7 @@ export async function guardedExactHttpLoopbackOutboundFetch(
 /**
  * Create a credential-safe provider transport bound to one configured origin.
  * Redirects are rejected rather than followed so provider-specific credential
- * headers (for example `x-api-key`) can never cross an origin boundary.
+ * headers (for example `x-api-key`) never cross an origin boundary.
  */
 export function createOriginBoundOutboundFetch(baseUrl: string): typeof fetch {
   return createOriginBoundFetchWithTransport(baseUrl, getTrustedHostTransport());

@@ -79,6 +79,7 @@ import {
 import { flattenSystemInstructions } from "#veryfront/agent/runtime/tool-inventory.ts";
 import { compactForStep, estimateOverhead } from "#veryfront/chat/message-prep.ts";
 import {
+  createRuntimeMcpSourceCleanup,
   getRuntimeRemoteToolSources,
   type RuntimeRemoteToolConfig,
 } from "#veryfront/agent/runtime/mcp-server-tool-sources.ts";
@@ -126,6 +127,7 @@ import {
 } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { Schema } from "#veryfront/extensions/schema/index.ts";
+import { snapshotJsonSchemaObject } from "#veryfront/schemas/schema-input.ts";
 import {
   createStreamTransformState,
   finalizeRunEvents,
@@ -279,6 +281,8 @@ export interface RuntimeAgentStreamExecutionDeps {
     projectId?: string | null;
     sandboxEndpoint?: string;
   };
+  /** Set by the host only after it verified this run's terminal capability for the sandbox project. */
+  runIdBindsToolAuthorization?: boolean;
   createBashTool?: AgentServiceSandboxToolsOptions["createBashTool"];
   createAgentServiceSandboxTools?: (
     input: AgentServiceSandboxToolsOptions,
@@ -363,8 +367,13 @@ function createInjectedStudioTool(
   toolName: string,
   description: string | undefined,
   parameters: Record<string, unknown> | undefined,
+  outputSchema: Record<string, unknown> | undefined,
   sessionManager: AgentRunSessionManager,
 ): Tool {
+  // Disclosure metadata only: an unusable declaration is omitted, never trusted or fatal.
+  const outputSchemaJson = outputSchema === undefined
+    ? undefined
+    : snapshotJsonSchemaObject(outputSchema);
   const tool: Tool = {
     id: toolName,
     type: "function",
@@ -372,6 +381,7 @@ function createInjectedStudioTool(
     inputSchema: anyObjectSchema,
     inputSchemaJson: (parameters ??
       { type: "object", properties: {}, additionalProperties: true }) as Tool["inputSchemaJson"],
+    ...(outputSchemaJson ? { outputSchemaJson } : {}),
     execute: async (_input, context) => {
       const toolCallId = typeof context?.toolCallId === "string" ? context.toolCallId : null;
       if (!toolCallId) {
@@ -522,6 +532,7 @@ export function buildMergedTools(
   availableForwardedToolNames?: string[],
   availableLocalTools?: Record<string, Tool | boolean>,
 ) {
+  if (agent.config.tools === false) return false;
   const serverResolvedProjectToolNames = getServerResolvedProjectToolNames(input.forwardedProps);
   const explicitlyDeniedToolNames = getExplicitlyDeniedToolNames(agent);
   // A markdown `tools: true` + `deniedTools` agent fails closed on the
@@ -587,6 +598,7 @@ export function buildMergedTools(
           tool.name,
           tool.description,
           tool.inputSchema ?? tool.parameters,
+          tool.outputSchema,
           sessionManager,
         ),
       ]),
@@ -636,6 +648,9 @@ export function buildMergedTools(
       ) {
         merged[toolName] = availableLocalTools?.[toolName] ?? serverResolvedProjectTool ??
           (visibleRegistryTool?.ownerAgentId ? visibleRegistryTool : true);
+      } else if (sourceAllowedRemoteToolNames.includes(`veryfront__${toolName}`)) {
+        // Platform discovery publishes canonical names for legacy boolean selectors.
+        merged[`veryfront__${toolName}`] = true;
       }
       continue;
     }
@@ -1053,6 +1068,8 @@ interface ForwardedToolDef {
   description: string;
   inputSchema?: Record<string, unknown>;
   parameters?: Record<string, unknown>;
+  /** Declared result contract; disclosure metadata only. */
+  outputSchema?: Record<string, unknown>;
   discovery?: ToolDiscoveryMetadata;
 }
 
@@ -1076,6 +1093,7 @@ function getForwardedIntegrationToolDefinitions(
       name: def.name,
       description: def.description,
       parameters: def.inputSchema ?? def.parameters ?? { type: "object", properties: {} },
+      ...(isRecord(def.outputSchema) ? { outputSchema: def.outputSchema } : {}),
     };
     copyToolDiscoveryMetadata(def, forwarded);
     return forwarded;
@@ -1112,6 +1130,7 @@ async function getDeclaredRemoteSourceToolNames(input: {
   deps: RuntimeAgentStreamExecutionDeps;
 }): Promise<string[]> {
   const sources = getRuntimeRemoteToolSources(input.agent.config);
+  await using _remoteMcpCleanup = createRuntimeMcpSourceCleanup(sources);
   if (!sources?.length) {
     return [];
   }
@@ -1536,13 +1555,29 @@ export async function createRuntimeAgentStreamResponse(
     const sourceRemoteFilterBase = Object.hasOwn(agent.config, "__vfAllowedRemoteTools")
       ? sourceAllowedRemoteToolNames
       : undefined;
-    const grantedRemoteToolNames = forwardedAllowedRemoteToolNames === undefined
+    const grantedRemoteToolNames = agent.config.tools === false
+      ? []
+      : forwardedAllowedRemoteToolNames === undefined
       ? sourceRemoteFilterBase
       : mergeRemoteToolNames(
         sourceAllowedRemoteToolNames,
         forwardedAllowedRemoteToolNames,
       );
-    const runtimeToolAllowlist = getRuntimeToolAllowlist(input.forwardedProps);
+    const requestedToolAllowlist = getRuntimeToolAllowlist(input.forwardedProps);
+    const runtimeToolAllowlist = requestedToolAllowlist === null
+      ? null
+      : new Set(requestedToolAllowlist);
+    if (runtimeToolAllowlist && agent.config.tools && agent.config.tools !== true) {
+      for (const [name, entry] of Object.entries(agent.config.tools)) {
+        const canonical = `veryfront__${name}`;
+        if (
+          entry === true && runtimeToolAllowlist.has(name) &&
+          sourceAllowedRemoteToolNames.includes(canonical)
+        ) {
+          runtimeToolAllowlist.add(canonical);
+        }
+      }
+    }
     if (runtimeToolAllowlist === null && forwardedAllowedRemoteToolNames !== undefined) {
       logger.debug(
         "runtimeOverrides.allowedTools is additive on internal runs; use runtimeOverrides.toolAllowlist to restrict the run tool surface",
@@ -1667,6 +1702,9 @@ export async function createRuntimeAgentStreamResponse(
       runId: input.runId,
       ...(deps.projectAgentSandbox?.projectId
         ? { projectId: deps.projectAgentSandbox.projectId }
+        : {}),
+      ...(deps.runIdBindsToolAuthorization === true && deps.projectAgentSandbox?.projectId
+        ? { runIdBindsToolAuthorization: true }
         : {}),
       ...(deps.projectAgentSandbox?.authToken
         ? { authToken: deps.projectAgentSandbox.authToken }

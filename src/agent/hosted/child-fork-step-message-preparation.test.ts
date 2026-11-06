@@ -324,6 +324,7 @@ it("hosted preparation keeps raw result payloads stable across repeated provider
     { found: true },
     { type: "json", value: { customerField: "preserve this user object" } },
     { type: "text", value: "ordinary user data" },
+    { type: "error-text", value: "ordinary user error-shaped data" },
     { error: "Synthetic provider failure" },
     "Plain output",
   ];

@@ -54,6 +54,37 @@ export const SERVER_ONLY_MODULE_PATTERNS: readonly RegExp[] = [
 
 const textEncoder = new TextEncoder();
 
+type ModuleStatement = ReturnType<typeof parse>["program"]["body"][number];
+
+function staticImportSpecifier(
+  node: Extract<ModuleStatement, { type: "ImportDeclaration" }>,
+): string | undefined {
+  if (node.importKind === "type") return undefined;
+  if (
+    node.specifiers.length &&
+    node.specifiers.every((specifier) =>
+      specifier.type === "ImportSpecifier" && specifier.importKind === "type"
+    )
+  ) return undefined;
+  return node.source.value;
+}
+
+function staticExportSpecifier(
+  node: Extract<
+    ModuleStatement,
+    { type: "ExportNamedDeclaration" | "ExportAllDeclaration" }
+  >,
+): string | undefined {
+  if (!node.source || node.exportKind === "type") return undefined;
+  if (
+    node.type === "ExportNamedDeclaration" && node.specifiers.length &&
+    node.specifiers.every((specifier) =>
+      specifier.type === "ExportSpecifier" && specifier.exportKind === "type"
+    )
+  ) return undefined;
+  return node.source.value;
+}
+
 /** Parse real module declarations; comments and documentation strings are not edges. */
 export function* staticSpecifiers(source: string): Generator<string> {
   const ast = parse(source, {
@@ -61,30 +92,16 @@ export function* staticSpecifiers(source: string): Generator<string> {
     plugins: ["typescript", "jsx"],
   });
   for (const node of ast.program.body) {
+    let specifier: string | undefined;
     if (node.type === "ImportDeclaration") {
-      if (node.importKind === "type") continue;
-      if (
-        node.specifiers.length &&
-        node.specifiers.every((specifier) =>
-          specifier.type === "ImportSpecifier" &&
-          specifier.importKind === "type"
-        )
-      ) continue;
-      yield node.source.value;
+      specifier = staticImportSpecifier(node);
     } else if (
       node.type === "ExportNamedDeclaration" ||
       node.type === "ExportAllDeclaration"
     ) {
-      if (!node.source || node.exportKind === "type") continue;
-      if (
-        node.type === "ExportNamedDeclaration" && node.specifiers.length &&
-        node.specifiers.every((specifier) =>
-          specifier.type === "ExportSpecifier" &&
-          specifier.exportKind === "type"
-        )
-      ) continue;
-      yield node.source.value;
+      specifier = staticExportSpecifier(node);
     }
+    if (specifier !== undefined) yield specifier;
   }
 }
 
@@ -96,6 +113,33 @@ export function normalizePath(path: string): string {
     else parts.push(segment);
   }
   return parts.join("/");
+}
+
+function resolveMappedSpecifier(
+  spec: string,
+  fromPath: string,
+  importMap: Record<string, string>,
+): string | null {
+  // Deno import-map semantics: a bare key (`#veryfront/security`) maps only the
+  // exact specifier — it points at a *file*. Only a trailing-slash key
+  // (`#veryfront/`) maps sub-paths. Matching sub-paths against a bare key would
+  // mis-resolve `#veryfront/security/sandbox/x.ts` onto the security barrel file
+  // and silently drop the edge — hiding real server leaks.
+  let bestKey = "";
+  for (const key of Object.keys(importMap)) {
+    const matches = key.endsWith("/") ? spec.startsWith(key) : spec === key;
+    if (matches && key.length > bestKey.length) bestKey = key;
+  }
+  const mapped = importMap[bestKey];
+  if (!mapped) {
+    throw new Error(
+      `Unresolved import-map specifier ${spec} from ${fromPath}`,
+    );
+  }
+  if (/^(?:npm|jsr|https?):/.test(mapped)) return null;
+  return normalizePath(
+    mapped.replace(/^\.\//, "") + spec.slice(bestKey.length),
+  );
 }
 
 /**
@@ -114,31 +158,23 @@ export function resolveSpecifier(
     return normalizePath(fromDir + spec);
   }
   if (spec.startsWith("#")) {
-    // Deno import-map semantics: a bare key (`#veryfront/security`) maps only the
-    // exact specifier — it points at a *file*. Only a trailing-slash key
-    // (`#veryfront/`) maps sub-paths. Matching sub-paths against a bare key would
-    // mis-resolve `#veryfront/security/sandbox/x.ts` onto the security barrel file
-    // and silently drop the edge — hiding real server leaks.
-    let bestKey = "";
-    for (const key of Object.keys(importMap)) {
-      const matches = key.endsWith("/") ? spec.startsWith(key) : spec === key;
-      if (matches && key.length > bestKey.length) bestKey = key;
-    }
-    const mapped = importMap[bestKey];
-    if (!mapped) {
-      throw new Error(
-        `Unresolved import-map specifier ${spec} from ${fromPath}`,
-      );
-    }
-    if (/^(?:npm|jsr|https?):/.test(mapped)) return null;
-    return normalizePath(
-      mapped.replace(/^\.\//, "") + spec.slice(bestKey.length),
-    );
+    return resolveMappedSpecifier(spec, fromPath, importMap);
   }
   if (spec.startsWith("node:")) return spec;
   if (builtinModules.includes(spec)) return `node:${spec}`;
   // Third-party dependencies are checked by the packed npm browser build.
   return null;
+}
+
+function enqueueModuleImports(
+  mod: { path: string; source: string },
+  importMap: Record<string, string>,
+  queue: Array<{ repoPath: string; via: string | null }>,
+): void {
+  for (const specifier of staticSpecifiers(mod.source)) {
+    const next = resolveSpecifier(specifier, mod.path, importMap);
+    if (next) queue.push({ repoPath: next, via: mod.path });
+  }
 }
 
 /** Walk the static value-import graph, mapping each reached module to its edge + byte size. */
@@ -170,10 +206,7 @@ export async function collectClientGraph(
     graph.set(mod.path, { via, bytes: textEncoder.encode(mod.source).length });
 
     if (mod.path.endsWith(".json")) continue;
-    for (const specifier of staticSpecifiers(mod.source)) {
-      const next = resolveSpecifier(specifier, mod.path, importMap);
-      if (next) queue.push({ repoPath: next, via: mod.path });
-    }
+    enqueueModuleImports(mod, importMap, queue);
   }
   return graph;
 }
@@ -195,7 +228,8 @@ export function traceLeak(graph: ClientGraph, leak: string): string {
     chain.push(cursor);
     cursor = graph.get(cursor)?.via ?? null;
   }
-  return chain.reverse().join(" → ");
+  chain.reverse();
+  return chain.join(" → ");
 }
 
 export function summarizeGraph(

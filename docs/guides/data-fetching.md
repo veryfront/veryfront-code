@@ -6,7 +6,7 @@ order: 50
 
 Veryfront pages can load data three ways: `getServerData` on every request,
 `getStaticData` during static generation and cacheable production requests, or
-`fetch` from a client component. Each one has its place.
+`fetch` from a client component.
 
 Examples below use the default app router. Set `router: "pages"` in `veryfront.config.ts` to switch to the pages router.
 

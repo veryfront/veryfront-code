@@ -9,11 +9,8 @@ project entities such as agents, skills, tools, workflows, prompts, and
 resources. Common project directories keep shared code, content, and assets
 predictable.
 
-Conventions reduce configuration by making intent visible in the file tree. A
-route file is an entry point. An agent file is a reusable AI capability. A tool
-file is a callable operation. Keeping those roles separate lets Veryfront
-discover project entities without hiding them inside route trees or central
-registries.
+The file tree identifies each definition's role. Veryfront discovers reusable
+capabilities separately from the routes that call them.
 
 ## Core idea
 
@@ -41,6 +38,5 @@ that routes, runs, workflows, MCP servers, and agent services can use. This is
 why agents, tools, workflows, prompts, resources, and skills live at the project
 root instead of under a route directory.
 
-The convention keeps app structure predictable as a project grows. User-facing
-surfaces stay in router directories, while reusable capabilities stay visible at
-the same level as framework configuration.
+Keep user-facing routes in router directories and reusable capabilities at the
+project root.

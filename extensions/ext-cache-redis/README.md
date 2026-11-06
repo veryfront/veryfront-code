@@ -76,6 +76,14 @@ ASCII characters and cannot contain Redis glob metacharacters (`*`, `?`, `[`,
 `has(key)`, `stats()`, and `close()`. Entry expiry is carried in
 `entry.expiresAt`. The proxy uses the contract for OAuth service-token caching.
 
+When a SET receives the exact Redis replica-write refusal, the store disposes
+the old client and retries that write once through a fresh connection to the
+configured writer URL. The retry uses the same entry and its remaining lifetime;
+it does not mint another token. Other operation errors and a repeated refusal
+fail closed. Concurrent operations share connection startup, and detached client
+errors cannot invalidate a replacement. `close()` disposes the client and is
+final: subsequent operations cannot reopen the store.
+
 ## Capabilities
 
 - **net `*`:** Redis connection. Narrow to a specific host in your own deployment policy if you're not using a wildcard.

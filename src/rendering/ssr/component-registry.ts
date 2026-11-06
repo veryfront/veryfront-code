@@ -487,6 +487,8 @@ export class ComponentRegistry {
       }
 
       if (!(entry.isFile || entry.isSymlink) || !/\.(tsx|jsx|ts|js)$/.test(entry.name)) continue;
+      // Type declarations describe modules; they are not runtime components.
+      if (entry.name.endsWith(".d.ts")) continue;
 
       const extMatch = /\.(tsx|jsx|ts|js)$/.exec(entry.name);
       const fileType = extMatch?.[1] as "tsx" | "jsx" | "ts" | "js" | undefined;

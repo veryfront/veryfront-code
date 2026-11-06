@@ -862,6 +862,30 @@ Deno.test("project agent settings survive code to hosted definition roundtrip", 
   }
 });
 
+Deno.test("a code agent's no-tools selector survives hosted definition roundtrip", async () => {
+  registerSkill("visible-guide", {
+    id: "visible-guide",
+    metadata: { name: "visible-guide", description: "A visible guide" },
+    rootPath: "/test/skills/visible-guide",
+  });
+  const codeAgent = agent({
+    id: "text-only",
+    system: "Answer directly.",
+    tools: false,
+    skills: ["visible-guide"],
+    knowledge: true,
+    delegates: ["specialist"],
+    providerTools: ["web_search"],
+  });
+  const definition = await createRuntimeAgentDefinitionFromAgent(codeAgent);
+  const hostedAgent = createRuntimeAgentFromMarkdownDefinition(definition);
+
+  assertEquals(definition.tools, false);
+  assertEquals(hostedAgent.config.tools, false);
+  assertEquals(hostedAgent.config.providerTools, ["web_search"]);
+  assertEquals(hostedAgent.config.delegates, undefined);
+});
+
 Deno.test("project agent definitions preserve optional Studio MCP", async () => {
   const definition = await createRuntimeAgentDefinitionFromAgent(agent({
     id: "optional-studio",

@@ -19,8 +19,10 @@ import {
   setLogLevel,
 } from "#veryfront/utils/logger/logger.ts";
 import {
+  getRemoteIntegrationProjectTarget,
   getRemoteIntegrationToolDefinitions,
   getRemoteIntegrationToolDiscovery,
+  getRemoteIntegrationToolDiscoveryWithEvidence,
   isRemoteIntegrationTool,
   type RemoteIntegrationToolDiscoveryResult,
   runRemoteIntegrationTool,
@@ -115,6 +117,55 @@ describe("integrations/remote-tools", () => {
     }, async () => await getRemoteIntegrationToolDefinitions());
 
     assertEquals(definitions, []);
+  });
+
+  it("preserves skipped discovery without claiming an authenticated catalog response", async () => {
+    setRemoteToolEnv({});
+    let catalogs = 0;
+    const result = await withMockFetch(() => {
+      throw new Error("discovery must not request a catalog without credentials");
+    }, () =>
+      getRemoteIntegrationToolDiscoveryWithEvidence(undefined, {
+        onCatalogDiscovered: () => {
+          catalogs++;
+        },
+      }));
+    assertEquals(result, { status: "ok", tools: [] });
+    assertEquals(catalogs, 0);
+  });
+
+  it("resolves the project and Studio origin an unconnected integration points at", () => {
+    setRemoteToolEnv({
+      VERYFRONT_API_URL: "https://api.veryfront.org",
+      VERYFRONT_API_TOKEN: "token",
+      VERYFRONT_PROJECT_SLUG: "case-demo",
+    });
+
+    assertEquals(getRemoteIntegrationProjectTarget(), {
+      projectSlug: "case-demo",
+      studioOrigin: "https://veryfront.org",
+    });
+  });
+
+  it("omits the Studio origin for an API host without a known Studio", () => {
+    setRemoteToolEnv({
+      VERYFRONT_API_URL: "https://api.test",
+      VERYFRONT_API_TOKEN: "token",
+      VERYFRONT_PROJECT_SLUG: "case-demo",
+    });
+
+    assertEquals(getRemoteIntegrationProjectTarget(), { projectSlug: "case-demo" });
+  });
+
+  it("has no project target without a project slug or a credential", () => {
+    setRemoteToolEnv({ VERYFRONT_API_URL: "https://api.test", VERYFRONT_API_TOKEN: "token" });
+    assertEquals(getRemoteIntegrationProjectTarget(), undefined);
+
+    setRemoteToolEnv({
+      VERYFRONT_API_URL: "https://api.test",
+      VERYFRONT_PROJECT_SLUG: "case-demo",
+    });
+    assertEquals(getRemoteIntegrationProjectTarget(), undefined);
   });
 
   it("discovers integration tools from a host-private stored login token", async () => {
@@ -900,6 +951,71 @@ describe("integrations/remote-tools", () => {
 
     assertEquals(definitions, []);
     assertEquals(bodyCancelled, true);
+  });
+
+  it("retains cached connection evidence without replaceable array iterators", async () => {
+    setRemoteToolEnv({ VERYFRONT_API_URL: "https://api.test", VERYFRONT_API_TOKEN: "token" });
+    await withMockFetch(() =>
+      Promise.resolve(Response.json({
+        tools: [{
+          name: "gmail__list_emails",
+          description: "List emails",
+          inputSchema: { type: "object" },
+        }],
+      })), () =>
+      runWithRemoteIntegrationToolDiscoveryScope(async () => {
+        await getRemoteIntegrationToolDiscovery();
+        const descriptor = Object.getOwnPropertyDescriptor(Array.prototype, Symbol.iterator)!;
+        const seen: string[] = [];
+        let result: RemoteIntegrationToolDiscoveryResult | undefined;
+        try {
+          Object.defineProperty(Array.prototype, Symbol.iterator, {
+            value: () => {
+              throw new Error("project iterator");
+            },
+            configurable: true,
+          });
+          result = await getRemoteIntegrationToolDiscoveryWithEvidence(undefined, {
+            onDiscoveredToolName: (name) => {
+              seen[seen.length] = name;
+            },
+          });
+        } finally {
+          Object.defineProperty(Array.prototype, Symbol.iterator, descriptor);
+        }
+        assertEquals(result?.status, "ok");
+        assertEquals(seen, ["gmail__list_emails"]);
+      }));
+  });
+
+  it("keeps pre-policy discovery evidence off the public discovery API", async () => {
+    setRemoteToolEnv({
+      VERYFRONT_API_BASE_URL: "https://api.test",
+      VERYFRONT_API_TOKEN: "env-token",
+    });
+    const policy = normalizeSourceIntegrationPolicy({ allow: { github: {} } });
+    const seen: string[] = [];
+
+    const result = await runWithExactSourceIntegrationPolicy(policy, () =>
+      withMockFetch(
+        async () =>
+          Response.json({
+            tools: [{ name: "gmail__list_emails", description: "List", inputSchema: {} }],
+          }),
+        // A restricted source passing its own hook must not learn which integrations are connected.
+        () =>
+          (getRemoteIntegrationToolDiscovery as (
+            context?: undefined,
+            options?: { onDiscoveredToolName?: (name: string) => void },
+          ) => Promise<RemoteIntegrationToolDiscoveryResult>)(undefined, {
+            onDiscoveredToolName: (name) => {
+              seen[seen.length] = name;
+            },
+          }),
+      ));
+
+    assertEquals(result, { status: "ok", tools: [] });
+    assertEquals(seen, []);
   });
 
   it("filters remote tool discovery through the active source integration policy", async () => {

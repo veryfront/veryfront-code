@@ -80,8 +80,8 @@ describe("002.5 Transform Concurrency Under Load", () => {
       );
     });
 
-    it("deep recursion (15 levels) completes without deadlock", async () => {
-      // Simulates MAX_TRANSFORM_DEPTH=15 levels of recursive transforms
+    it("deep recursion (30 levels) completes without deadlock", async () => {
+      // Simulates an import chain deeper than the old 15-level transform limit
       // Each level acquires a slot, does work, releases, then the parent acquires
 
       const projectId = `deep-recursion-${Date.now()}`;
@@ -102,7 +102,7 @@ describe("002.5 Transform Concurrency Under Load", () => {
         releaseTransformSlot(projectId);
       }
 
-      await simulateRecursiveTransform(15);
+      await simulateRecursiveTransform(30);
 
       assertEquals(
         getTransformStats().activeProjects.has(projectId),

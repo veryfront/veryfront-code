@@ -1,4 +1,5 @@
 import { RESOURCE_NOT_FOUND } from "#veryfront/errors";
+import { createRemoteToolSourceOwner } from "#veryfront/tool/remote-tool-source-owner.ts";
 import {
   createRemoteMCPToolSource,
   type HostToolSet,
@@ -126,7 +127,12 @@ export async function createLiveStudioMcpTools(input: LiveStudioMcpToolsOptions)
   }
 
   const sourceId = input.sourceId ?? "studio-mcp-live-tools";
-  const createRemoteToolSource = input.createRemoteToolSource ?? createRemoteMCPToolSource;
+  // Every source created for an identity is retained until close, so the
+  // sessions its discovery or calls negotiated are terminated.
+  const sourceOwner = createRemoteToolSourceOwner();
+  const createSource = input.createRemoteToolSource ?? createRemoteMCPToolSource;
+  const createRemoteToolSource = (config: RemoteMCPToolSourceConfig) =>
+    sourceOwner.own(createSource(config));
   const loadRemoteTools = input.loadRemoteTools ?? loadRemoteToolsFromSource;
   let studioState: StudioMcpState | null = null;
   let pendingStates: PendingStudioMcpState[] = [];
@@ -189,7 +195,12 @@ export async function createLiveStudioMcpTools(input: LiveStudioMcpToolsOptions)
     }
   };
 
-  const initialState = await loadState(getFallbackIdentity());
+  let initialState: StudioMcpState;
+  try {
+    initialState = await loadState(getFallbackIdentity());
+  } catch (error) {
+    return await sourceOwner.fail(error);
+  }
   const wrappedTools: HostToolSet = {};
 
   for (const [toolName, toolDefinition] of Object.entries(initialState.tools)) {
@@ -235,6 +246,7 @@ export async function createLiveStudioMcpTools(input: LiveStudioMcpToolsOptions)
       latestRequestedIdentity = null;
       studioState = null;
       pendingStates = [];
+      await sourceOwner.dispose();
     },
   };
 }

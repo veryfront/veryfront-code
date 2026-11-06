@@ -28,6 +28,7 @@ const definitionKeys = createPrivateSet([
   "name",
   "description",
   "parameters",
+  "outputSchema",
   "title",
   "annotations",
   "discovery",
@@ -189,7 +190,10 @@ export function executorToolDefinition(value: unknown, limits: ExecutorToolLimit
   const record = {};
   for (let index = 0; index < entries.length; index++) {
     const key = entries[index]![0], entry = entries[index]![1];
-    if (entry !== undefined || (key !== "title" && key !== "annotations" && key !== "discovery")) {
+    if (
+      entry !== undefined ||
+      (key !== "title" && key !== "annotations" && key !== "discovery" && key !== "outputSchema")
+    ) {
       defineOwnDataProperty(record, key, entry, { enumerable: true });
     }
   }
@@ -200,6 +204,9 @@ export function executorToolDefinition(value: unknown, limits: ExecutorToolLimit
     typeof data.name !== "string" || !getExecutorToolIdSchema().safeParse(data.name).success ||
     typeof data.description !== "string" ||
     !data.parameters || typeof data.parameters !== "object" || isArray(data.parameters) ||
+    (data.outputSchema !== undefined &&
+      (!data.outputSchema || typeof data.outputSchema !== "object" ||
+        isArray(data.outputSchema))) ||
     (data.title !== undefined && typeof data.title !== "string") ||
     (data.annotations !== undefined && !isToolAnnotations(data.annotations))
   ) throw new TypeError("Invalid executor tool definition");
@@ -211,6 +218,7 @@ export function executorToolDefinition(value: unknown, limits: ExecutorToolLimit
     name: data.name,
     description: data.description,
     parameters: data.parameters,
+    ...(data.outputSchema === undefined ? {} : { outputSchema: data.outputSchema }),
     ...(data.title === undefined ? {} : { title: data.title }),
     ...(data.annotations === undefined ? {} : { annotations: data.annotations }),
     ...(discovery === undefined ? {} : { discovery }),

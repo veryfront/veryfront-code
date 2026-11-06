@@ -1,3 +1,9 @@
+import type {
+  JsonSchema,
+  JsonSchemaValidationFunction,
+} from "#veryfront/extensions/schema/index.ts";
+import { compileJsonSchemaValidator } from "#veryfront/schemas/json-schema.ts";
+import { withPristineIntrinsics } from "#veryfront/schemas/pristine-intrinsics.ts";
 import { INITIALIZATION_ERROR } from "#veryfront/errors";
 import {
   snapshotBoundedJsonValue,
@@ -7,6 +13,7 @@ import { guardedEgressFetch } from "#veryfront/security/sandbox/worker-egress-gu
 import { readResponseBytesPrefix, readResponseTextPrefix } from "#veryfront/utils/response-body.ts";
 import {
   LOCAL_INTEGRATION_REQUEST_INVALID,
+  localIntegrationConfigurationError,
   type LocalIntegrationDiagnosticIdentity,
   localIntegrationRequestFailed,
   localIntegrationResponseInvalid,
@@ -172,6 +179,76 @@ export interface LocalIntegrationJsonResult {
 interface RequestSignalLease {
   readonly signal: AbortSignal;
   release(): void;
+}
+
+const objectEntries = Object.entries;
+const canonicalInputValidators = new WeakMap<
+  IntegrationEndpoint,
+  ReadonlyArray<readonly [string, IntegrationEndpointBodyField, JsonSchemaValidationFunction]>
+>();
+const weakMapGet = WeakMap.prototype.get;
+const weakMapSet = WeakMap.prototype.set;
+
+/**
+ * Enforce canonical nested contracts before credentials or transport.
+ * Validators must be synchronous here: the intrinsic guard cannot protect
+ * deferred adapter work without changing globals across concurrent requests.
+ */
+export function validateLocalIntegrationEndpointInputSchemas(
+  endpoint: IntegrationEndpoint,
+  args: Record<string, unknown>,
+): void {
+  let validators = apply(weakMapGet, canonicalInputValidators, [endpoint]) as
+    | ReadonlyArray<readonly [string, IntegrationEndpointBodyField, JsonSchemaValidationFunction]>
+    | undefined;
+  if (!validators) {
+    const compiled: Array<
+      readonly [string, IntegrationEndpointBodyField, JsonSchemaValidationFunction]
+    > = [];
+    const fields = objectEntries(endpoint.body ?? {});
+    for (let index = 0; index < fields.length; index++) {
+      const entry = fields[index]!;
+      const name = entry[0];
+      const field = entry[1];
+      const schema = getOwnPropertyDescriptor(field, "inputSchema")?.value;
+      if (schema === undefined) continue;
+      let validate: JsonSchemaValidationFunction;
+      try {
+        validate = withPristineIntrinsics(() => compileJsonSchemaValidator(schema as JsonSchema));
+      } catch {
+        localIntegrationConfigurationError("Local integration input schema could not be compiled");
+      }
+      objectDefineProperty(compiled, compiled.length, {
+        enumerable: true,
+        value: freeze([name, field, validate] as const),
+      });
+    }
+    validators = freeze(compiled);
+    apply(weakMapSet, canonicalInputValidators, [endpoint, validators]);
+  }
+  for (let index = 0; index < validators.length; index++) {
+    const entry = validators[index]!;
+    const name = entry[0];
+    const field = entry[1];
+    const validate = entry[2];
+    const input = fieldValue(args, name, field);
+    if (!input.present) continue;
+    const success = withPristineIntrinsics(() => {
+      const result = validate(input.value);
+      if (typeof (result as { then?: unknown })?.then === "function") {
+        // Observe unsupported async work so its rejection cannot outlive the
+        // explicit configuration failure as an unhandled rejection.
+        void (result as PromiseLike<unknown>).then(() => undefined, () => undefined);
+        localIntegrationConfigurationError(
+          "Local integration input validation requires a synchronous JSON Schema validator",
+        );
+      }
+      return (result as { success: boolean }).success;
+    });
+    if (!success) {
+      requestInvalid(`Local integration argument "${name}" does not match its input schema`);
+    }
+  }
 }
 
 function requestInvalid(detail: string): never {
@@ -553,15 +630,15 @@ function isBinaryResponse(endpoint: IntegrationEndpoint): boolean {
   return endpoint.response?.encoding === "base64";
 }
 
-/** A binary response is a byte-exact download: GET only, never reshaped by a transform. */
+/** Encoded content is GET-only and never reshaped by a JSON transform. */
 function assertSupportedResponseEncoding(endpoint: IntegrationEndpoint): void {
-  if (!isBinaryResponse(endpoint)) return;
+  if (endpoint.response?.encoding === undefined) return;
   if (endpoint.method !== "GET") {
-    requestInvalid("Local integration binary responses require a GET endpoint");
+    requestInvalid("Local integration encoded responses require a GET endpoint");
   }
   const transform = endpoint.response?.transform;
   if (transform !== undefined && transform !== "") {
-    requestInvalid("Local integration binary responses cannot declare a transform");
+    requestInvalid("Local integration encoded responses cannot declare a transform");
   }
 }
 
@@ -813,12 +890,26 @@ async function readResponseJson(
   identity: LocalIntegrationDiagnosticIdentity,
   status: number,
   write: boolean,
+  textResponse = false,
 ): Promise<unknown> {
   const unusable = (reason: OmittedResponse): ResponseOmitted => {
     cancelResponseBody(response);
     if (!write) responseInvalid(identity, status);
     return new ResponseOmitted(reason);
   };
+  const rawContentType = responseHeaderValue(response, "content-type") ?? "";
+  const parameterStart = apply(stringIndexOf, rawContentType, [";"]) as number;
+  const bareContentType = parameterStart < 0
+    ? rawContentType
+    : slice(rawContentType, 0, parameterStart);
+  const mediaType = apply(stringToLowerCase, apply(stringTrim, bareContentType, []), []) as string;
+  if (
+    textResponse &&
+    (status !== 200 || slice(mediaType, 0, 5) !== "text/" ||
+      mediaType.length > MAX_BINARY_CONTENT_TYPE_LENGTH)
+  ) {
+    return unusable("unreadable");
+  }
   if (!contentLengthWithinLimit(response)) return unusable("too_large");
   let text: string;
   let truncated: boolean;
@@ -837,6 +928,15 @@ async function readResponseJson(
     decodedByteLength(text) > MAX_INTEGRATION_TOOL_CALL_RESPONSE_BYTES
   ) {
     return unusable("too_large");
+  }
+  if (textResponse) {
+    const result = snapshotBoundedJsonValue(
+      { content: text, content_type: mediaType },
+      MAX_INTEGRATION_TOOL_CALL_RESPONSE_BYTES,
+      MAX_INTEGRATION_TOOL_CALL_RESPONSE_BYTES,
+    );
+    if (!result.success) return unusable("too_large");
+    return result.value;
   }
   // Accepted actions, such as Microsoft Graph sendMail, return 202 with no body.
   if (status === 202 && text === "") return null;
@@ -975,6 +1075,7 @@ async function executeTransportRequest(
   binary = false,
   write = false,
   rawBinaryMaxBytes?: number,
+  textResponse = false,
 ): Promise<{ readonly status: number; readonly value: unknown }> {
   let response: Response;
   try {
@@ -999,10 +1100,10 @@ async function executeTransportRequest(
       value: await readResponseBinary(response, signal, identity, status, rawBinaryMaxBytes),
     });
   }
-  if (status === 204) return freeze({ status, value: null });
+  if (status === 204 && !textResponse) return freeze({ status, value: null });
   return freeze({
     status,
-    value: await readResponseJson(response, signal, identity, status, write),
+    value: await readResponseJson(response, signal, identity, status, write, textResponse),
   });
 }
 
@@ -1054,6 +1155,7 @@ export async function executeLocalIntegrationEndpoint(
 ): Promise<unknown> {
   throwIfCallerAborted(options.signal);
   const args = snapshotAndValidateArguments(options.endpoint, options.args);
+  validateLocalIntegrationEndpointInputSchemas(options.endpoint, args);
   // Assemble only when the caller did not already do it before resolving a
   // credential. Re-assembling here would run after that credential step, where
   // a poisoned `toJSON` can throw even though the threaded body is sound.
@@ -1082,6 +1184,7 @@ export async function executeLocalIntegrationEndpoint(
       binary,
       write,
       options.rawBinaryMaxBytes,
+      options.endpoint.response?.encoding === "text",
     );
     throwIfCallerAborted(options.signal);
     if (binary) return result.value;

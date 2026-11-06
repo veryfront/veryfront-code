@@ -47,6 +47,7 @@ import {
 import { clearRegistryScope } from "#veryfront/registry/project-scoped-registry-manager.ts";
 import { clearTranspileCacheForNamespace } from "#veryfront/discovery/transpiler.ts";
 import { withResponseCleanup } from "./response-cleanup.ts";
+import { createRemoteToolSourceOwner } from "#veryfront/tool/remote-tool-source-owner.ts";
 import { clearProjectDiscoveryCacheForScope } from "./api/project-discovery.ts";
 import { resolveVisibleRegistryTool } from "#veryfront/agent/runtime/tool-helpers.ts";
 import type { Agent } from "#veryfront/agent";
@@ -664,6 +665,19 @@ async function verifiedCanonicalRunId(
   }
 }
 
+/**
+ * @internal Authored project tools may treat the run ID as authority only after the
+ * terminal capability verified this run for the same project the tools execute in.
+ */
+export function bindsAuthoredToolRun(input: {
+  currentRunId: string | undefined;
+  terminalProjectId: string | undefined;
+  sandboxProjectId: string | null;
+}): boolean {
+  return input.currentRunId !== undefined && !!input.sandboxProjectId &&
+    input.sandboxProjectId === input.terminalProjectId;
+}
+
 function requestedProgrammaticPlatformNames(
   input: Parameters<typeof withVeryfrontPlatformRemoteTools>[0],
 ): string[] {
@@ -709,6 +723,8 @@ export async function withVeryfrontPlatformRemoteTools(input: {
   captureProgrammaticPlatformSource?: (source: RemoteToolSource) => void;
   terminalAuthority?: { token: string; runId: string } | null;
   fileWriterToken?: string | null;
+  /** Retain the created platform source so the caller releases its sessions after the run. */
+  ownRemoteToolSource?: (source: RemoteToolSource) => RemoteToolSource;
 }): Promise<Agent> {
   const veryfrontApiMcpPolicy = getVeryfrontApiMcpPolicy(input.agent);
   const implicitlyRequestedToolNames = input.agent.config.mcpServers === undefined
@@ -734,7 +750,7 @@ export async function withVeryfrontPlatformRemoteTools(input: {
   const apiUrl = input.fileWriterToken
     ? resolveHostOwnedSourceApiBaseUrl()
     : resolveVeryfrontApiBaseUrlFromHostEnv();
-  const platformRemoteToolSource = createRunPlatformToolSource(
+  const createdPlatformSource = createRunPlatformToolSource(
     {
       id: VERYFRONT_API_MCP_SOURCE_ID,
       endpoint: `${apiUrl}/mcp`,
@@ -744,6 +760,8 @@ export async function withVeryfrontPlatformRemoteTools(input: {
     undefined,
     input.fileWriterToken ? { apiBaseUrl: apiUrl, token: input.fileWriterToken } : null,
   );
+  const platformRemoteToolSource = input.ownRemoteToolSource?.(createdPlatformSource) ??
+    createdPlatformSource;
   let platformToolDefinitions: ToolDefinition[] | null = null;
   try {
     platformToolDefinitions = await platformRemoteToolSource.listTools({
@@ -959,6 +977,8 @@ async function withExplicitVeryfrontStudioRemoteTools(input: {
   forwardedProps?: Record<string, unknown>;
   conversationId?: string;
   availableToolNames?: string[];
+  /** Retain each created Studio source so the caller releases its sessions after the run. */
+  ownRemoteToolSource?: (source: RemoteToolSource) => RemoteToolSource;
 }): Promise<Agent> {
   const configuredServers = input.agent.config.mcpServers?.filter(isExplicitStudioMcpServer) ?? [];
   if (configuredServers.length === 0) return input.agent;
@@ -1000,6 +1020,8 @@ async function withExplicitVeryfrontStudioRemoteTools(input: {
   const studioRemoteToolSources: RemoteToolSource[] = [];
   const broadStudioToolNames = new Set<string>();
   const resolvedStudioSources: ResolvedStudioSource[] = [];
+  const ownStudioSource = (source: RemoteToolSource) =>
+    input.ownRemoteToolSource?.(source) ?? source;
   for (const server of configuredServers) {
     const remoteConfig = createAgentServiceRemoteMcpConfig({
       server,
@@ -1015,10 +1037,13 @@ async function withExplicitVeryfrontStudioRemoteTools(input: {
     resolvedStudioSources.push({
       policy: createMcpToolPolicyGate(withPlatformMcpPolicyAliases(server.toolPolicy)),
       remoteConfig,
-      source: createLivePlatformMcpSource(createRemoteMCPToolSource(remoteConfig), {
-        runId: input.currentRunId,
-        runIdBindsToolAuthorization: true,
-      }),
+      source: createLivePlatformMcpSource(
+        ownStudioSource(createRemoteMCPToolSource(remoteConfig)),
+        {
+          runId: input.currentRunId,
+          runIdBindsToolAuthorization: true,
+        },
+      ),
     });
   }
   if (resolvedStudioSources.length === 0) return input.agent;
@@ -1478,6 +1503,87 @@ function safeRunId(req: Request): string | null {
   }
 }
 
+function resolveIngressSourceCredentials(payload: InternalAgentStreamRequest, ctx: HandlerContext) {
+  const apiAuthToken = payload.sourceProject
+    ? payload.credentials?.authToken || ""
+    : payload.credentials?.authToken || ctx.proxyToken || "";
+  const sourceAuthToken = payload.sourceProject
+    ? payload.credentials?.sourceAuthToken || ""
+    : apiAuthToken;
+  return { apiAuthToken, sourceAuthToken };
+}
+
+function buildIngressSourceContext(
+  payload: InternalAgentStreamRequest,
+  ctx: HandlerContext,
+  apiAuthToken: string,
+  sourceAuthToken: string,
+) {
+  const projectRuntimeToken = payload.sourceProject ? apiAuthToken : ctx.proxyToken || "";
+  const requestScopedContext: HandlerContext = {
+    ...ctx,
+    proxyToken: sourceAuthToken || undefined,
+    // The signed invocation is authoritative. Never promote an unrelated
+    // request header into the environment used for hosted evaluation.
+    environmentId: payload.agentSource.type === "branch"
+      ? payload.executionEnvironmentId
+      : sourceEnvironmentIdOf(payload) ?? undefined,
+    requestContext: ctx.requestContext
+      ? { ...ctx.requestContext, token: sourceAuthToken }
+      : ctx.requestContext,
+  };
+  return { projectRuntimeToken, requestScopedContext };
+}
+
+function assertGuardedConfigFingerprint(actual: string, guarded: GuardedAgentSourceConfig): void {
+  if (actual !== guarded.fingerprint) {
+    throw createSourceSnapshotChangedError(
+      "The branch source changed after its agent configuration was evaluated",
+    );
+  }
+}
+
+function resolveIngressPlatformDependencies(
+  payload: InternalAgentStreamRequest,
+  ctx: HandlerContext,
+  verifiedClaims: Parameters<typeof getVerifiedPlatformToolDependencies>[0],
+  rawBody: string,
+) {
+  const platformDependencyScope = {
+    projectId: payload.executionProject?.projectId ?? ctx.projectId,
+    runId: payload.runId,
+    agentId: payload.agentId,
+  };
+  const platformDependencies = platformDependencyScope.projectId
+    ? getVerifiedPlatformToolDependencies(verifiedClaims, {
+      ...platformDependencyScope,
+      projectId: platformDependencyScope.projectId,
+    })
+    : undefined;
+  if (
+    Object.hasOwn(
+      IntrinsicReflectApply(JsonParse, JSON, [rawBody]),
+      "platformToolDependencies",
+    ) && platformDependencies === undefined
+  ) {
+    throw PERMISSION_DENIED.create({
+      detail: "Operator-verified platform dependency authority is unavailable",
+    });
+  }
+  return { platformDependencyScope, platformDependencies };
+}
+
+function assertNamedSourceCredential(
+  payload: InternalAgentStreamRequest,
+  apiAuthToken: string,
+): void {
+  if (payload.agentSource.type === "environment" && !apiAuthToken) {
+    throw AUTHENTICATION_REQUIRED.create({
+      detail: "Named agent source environment requires a request-scoped API token",
+    });
+  }
+}
+
 export class AgentStreamHandler extends BaseHandler {
   metadata: HandlerMetadata = {
     name: "AgentStreamHandler",
@@ -1529,6 +1635,17 @@ export class AgentStreamHandler extends BaseHandler {
     }
 
     let pendingRecovery: { runId: string; session: ManagedRecoveryRunSession } | undefined;
+    // Platform MCP sources created for this run negotiate sessions that must be
+    // released when its response ends, or here if no response takes them over.
+    const platformSources = createRemoteToolSourceOwner();
+    let platformSourcesReleaseDeferred = false;
+    const releasePlatformSources = () => {
+      platformSources.dispose().catch((cleanupError: unknown) => {
+        logger.warn("Platform MCP session cleanup failed", {
+          errorName: cleanupError instanceof Error ? cleanupError.name : typeof cleanupError,
+        });
+      });
+    };
     const builder = this.createResponseBuilder(ctx)
       .withCORS(req, ctx.securityConfig?.cors)
       .withSecurity(ctx.securityConfig ?? undefined, req);
@@ -1557,42 +1674,23 @@ export class AgentStreamHandler extends BaseHandler {
       // Capture host process identity before entering project-controlled environment scopes.
       const runtimeIdentity = getServiceRuntimeIdentity();
       const runtimeNameHeader = EncodeURIComponent(runtimeIdentity.name);
-      const platformDependencyScope = {
-        projectId: payload.executionProject?.projectId ?? ctx.projectId,
-        runId: payload.runId,
-        agentId: payload.agentId,
-      };
-      const platformDependencies = platformDependencyScope.projectId
-        ? getVerifiedPlatformToolDependencies(verifiedClaims, {
-          ...platformDependencyScope,
-          projectId: platformDependencyScope.projectId,
-        })
-        : undefined;
-      if (
-        Object.hasOwn(
-          IntrinsicReflectApply(JsonParse, JSON, [rawBody]),
-          "platformToolDependencies",
-        ) && platformDependencies === undefined
-      ) {
-        throw PERMISSION_DENIED.create({
-          detail: "Operator-verified platform dependency authority is unavailable",
-        });
-      }
+      const { platformDependencyScope, platformDependencies } = resolveIngressPlatformDependencies(
+        payload,
+        ctx,
+        verifiedClaims,
+        rawBody,
+      );
       const runEventAppendToken = readIngressCredential(req, INGRESS_RUN_EVENT_TOKEN_HEADER);
       const terminalToken = readRunTerminalToken(req);
       const pauseToken = readIngressCredential(req, INGRESS_RUN_STOP_TOKEN_HEADER);
       assertSharedAgentSourceProject(ctx, payload);
       assertAgentSourceMatchesHostedTarget(ctx, payload);
-      const apiAuthToken = payload.sourceProject
-        ? payload.credentials?.authToken || ""
-        : payload.credentials?.authToken || ctx.proxyToken || "";
-      const sourceAuthToken = payload.sourceProject
-        ? payload.credentials?.sourceAuthToken || ""
-        : apiAuthToken;
+      const { apiAuthToken, sourceAuthToken } = resolveIngressSourceCredentials(payload, ctx);
       const executionProject = payload.executionProject;
+      const terminalProjectId = executionProject?.projectId ?? ctx.projectId;
       const currentRunId = await verifiedCanonicalRunId({
         token: terminalToken,
-        projectId: executionProject?.projectId ?? ctx.projectId,
+        projectId: terminalProjectId,
         publicRunId: payload.runId,
         verify: this.deps.verifyRunTerminalToken,
       });
@@ -1620,11 +1718,7 @@ export class AgentStreamHandler extends BaseHandler {
           });
         })()
         : undefined;
-      if (payload.agentSource.type === "environment" && !apiAuthToken) {
-        throw AUTHENTICATION_REQUIRED.create({
-          detail: "Named agent source environment requires a request-scoped API token",
-        });
-      }
+      assertNamedSourceCredential(payload, apiAuthToken);
       // Shared execution receives the control plane's run-bound invocation
       // credential for the consuming project. The source credential only reads
       // its pinned release and is never used for runtime tools or inference.
@@ -1635,19 +1729,12 @@ export class AgentStreamHandler extends BaseHandler {
       // invocation credential, whose scope profile authorizes the platform
       // tool callbacks (files:write among them) that the stream credential
       // deliberately lacks.
-      const projectRuntimeToken = payload.sourceProject ? apiAuthToken : ctx.proxyToken || "";
-      const requestScopedContext: HandlerContext = {
-        ...ctx,
-        proxyToken: sourceAuthToken || undefined,
-        // The signed invocation is authoritative. Never promote an unrelated
-        // request header into the environment used for hosted evaluation.
-        environmentId: payload.agentSource.type === "branch"
-          ? payload.executionEnvironmentId
-          : sourceEnvironmentIdOf(payload) ?? undefined,
-        requestContext: ctx.requestContext
-          ? { ...ctx.requestContext, token: sourceAuthToken }
-          : ctx.requestContext,
-      };
+      const { projectRuntimeToken, requestScopedContext } = buildIngressSourceContext(
+        payload,
+        ctx,
+        apiAuthToken,
+        sourceAuthToken,
+      );
       logger.info("Accepted internal agent stream request", {
         runId: payload.runId,
         threadId: payload.threadId,
@@ -1686,6 +1773,49 @@ export class AgentStreamHandler extends BaseHandler {
       await assertRecoveryActive();
       if (reservedRecovery) await assertManagedRecoveryRequestBinding(payload, reservedRecovery);
       await assertRecoveryActive();
+
+      const bindDiscoveredRuntimeInput = (
+        runtimeInput: ReturnType<typeof sanitizeRuntimeRunAgentInput>,
+        runtimeBaseAgent: ReturnType<typeof resolveRuntimeBaseAgent>,
+        projectScopedContext: HandlerContext,
+        configSourceObservation: CachedSourceObservation | undefined,
+        discoverySourceObservation: CachedSourceObservation | undefined,
+      ) => {
+        // Preview qualification requires a concrete branch UUID. Main-branch runs
+        // execute normally without private proof and cannot qualify this protocol.
+        if (
+          configSourceObservation && discoverySourceObservation && currentRunId &&
+          projectScopedContext.projectId &&
+          projectScopedContext.branchId && payload.agentSource.type === "branch" &&
+          !payload.sourceProject &&
+          !payload.managedRecoveryAdmission
+        ) {
+          bindSourceObservationStages(runtimeInput, {
+            identity: {
+              projectId: projectScopedContext.projectId,
+              branchId: projectScopedContext.branchId,
+              canonicalRunId: currentRunId,
+              publicRunId: payload.runId,
+              agentId: runtimeBaseAgent.id,
+            },
+            config: configSourceObservation,
+            discovery: discoverySourceObservation,
+          });
+        }
+        bindManagedRecoveryInput(runtimeInput, verifiedClaims);
+        if (projectEventWriter) bindProjectEventWriter(runtimeInput, projectEventWriter);
+        if (reservedRecovery) {
+          bindManagedRecoveryRunSession(runtimeInput, reservedRecovery, () => {
+            pendingRecovery = undefined;
+          });
+        }
+        if (platformDependencies && platformDependencyScope.projectId) {
+          registerPlatformDependencyOwner(runtimeInput, verifiedClaims, {
+            ...platformDependencyScope,
+            projectId: platformDependencyScope.projectId,
+          });
+        }
+      };
 
       const createDiscoveredAgentExecution = (
         projectScopedContext: HandlerContext,
@@ -1730,40 +1860,13 @@ export class AgentStreamHandler extends BaseHandler {
           toRuntimeRunAgentInput(payload),
           runtimeBaseAgent as Agent,
         );
-        // Preview qualification requires a concrete branch UUID. Main-branch runs
-        // execute normally without private proof and cannot qualify this protocol.
-        if (
-          configSourceObservation && discoverySourceObservation && currentRunId &&
-          projectScopedContext.projectId &&
-          projectScopedContext.branchId && payload.agentSource.type === "branch" &&
-          !payload.sourceProject &&
-          !payload.managedRecoveryAdmission
-        ) {
-          bindSourceObservationStages(runtimeInput, {
-            identity: {
-              projectId: projectScopedContext.projectId,
-              branchId: projectScopedContext.branchId,
-              canonicalRunId: currentRunId,
-              publicRunId: payload.runId,
-              agentId: runtimeBaseAgent.id,
-            },
-            config: configSourceObservation,
-            discovery: discoverySourceObservation,
-          });
-        }
-        bindManagedRecoveryInput(runtimeInput, verifiedClaims);
-        if (projectEventWriter) bindProjectEventWriter(runtimeInput, projectEventWriter);
-        if (reservedRecovery) {
-          bindManagedRecoveryRunSession(runtimeInput, reservedRecovery, () => {
-            pendingRecovery = undefined;
-          });
-        }
-        if (platformDependencies && platformDependencyScope.projectId) {
-          registerPlatformDependencyOwner(runtimeInput, verifiedClaims, {
-            ...platformDependencyScope,
-            projectId: platformDependencyScope.projectId,
-          });
-        }
+        bindDiscoveredRuntimeInput(
+          runtimeInput,
+          runtimeBaseAgent,
+          projectScopedContext,
+          configSourceObservation,
+          discoverySourceObservation,
+        );
         const providerReplayCheckpoints = getServerResolvedProviderReplayCheckpoints({
           forwardedProps: runtimeInput.forwardedProps,
           ...(runtimeInput.serverResolvedProviderReplayCheckpoints !== undefined
@@ -1802,6 +1905,7 @@ export class AgentStreamHandler extends BaseHandler {
           terminalAuthority: terminalToken && payload.credentials?.authToken
             ? { token: terminalToken, runId: payload.runId }
             : null,
+          ownRemoteToolSource: (source) => platformSources.own(source),
         });
         await assertRecoveryActive();
         const runtimeAgent = await withExplicitVeryfrontStudioRemoteTools({
@@ -1813,6 +1917,7 @@ export class AgentStreamHandler extends BaseHandler {
           forwardedProps: runtimeInput.forwardedProps,
           availableToolNames: runtimeInput.tools.map((tool) => tool.name),
           conversationId: runtimeInput.threadId,
+          ownRemoteToolSource: (source) => platformSources.own(source),
         });
         // The remote-tool wrappers clone the agent; keep its
         // markdown definition so fail-closed selectors survive.
@@ -1833,9 +1938,16 @@ export class AgentStreamHandler extends BaseHandler {
         // verifyControlPlaneRequest above authenticates the raw envelope before
         // this verified credential can be bound to the runtime input.
         registerAgentStreamRuntimeCredentials(runtimeInput, payload, verifiedClaims, pauseToken);
+        const sandboxProjectId = executionProject?.projectId ??
+          projectScopedContext.projectId ?? null;
         const runAgentStream = () =>
           createRuntimeAgentStreamResponse(runtimeInput, runtimeAgent, {
             ...this.deps,
+            runIdBindsToolAuthorization: bindsAuthoredToolRun({
+              currentRunId,
+              terminalProjectId,
+              sandboxProjectId,
+            }),
             localTools,
             providerReplayCheckpoints,
             persistProviderReplayCheckpoint,
@@ -1851,8 +1963,7 @@ export class AgentStreamHandler extends BaseHandler {
               branchId: executionProject
                 ? executionProject.runtimeTargetBranchId
                 : payload.runtimeTargetBranchId,
-              projectId: executionProject?.projectId ??
-                projectScopedContext.projectId ?? null,
+              projectId: sandboxProjectId,
             },
           });
         const shouldIsolateEnv = apiAuthToken.length > 0;
@@ -1878,7 +1989,11 @@ export class AgentStreamHandler extends BaseHandler {
           return await runWithProjectEnv(agentEnv, runAgentStream);
         };
         await assertRecoveryActive();
-        let response = await executeStream();
+        let response = withResponseCleanup(
+          await executeStream(),
+          releasePlatformSources,
+          req.signal,
+        );
         if (isSuccessfulAgentEventStream(response)) {
           response = setResponseHeaders(response, [
             [RUNTIME_ID_HEADER, runtimeIdentity.id],
@@ -1901,6 +2016,8 @@ export class AgentStreamHandler extends BaseHandler {
             runtimeOwnerInvokeUrl,
           ]])
           : response;
+        // The response body now owns the release.
+        platformSourcesReleaseDeferred = true;
         return this.respond(
           applyBuilderHeaders(responseWithOwner, builder.headers),
         );
@@ -1973,11 +2090,7 @@ export class AgentStreamHandler extends BaseHandler {
                   "agent-source-runtime-config-identity",
                   guardedSourceConfig.fingerprintOptions,
                 );
-                if (currentConfigFingerprint !== guardedSourceConfig.fingerprint) {
-                  throw createSourceSnapshotChangedError(
-                    "The branch source changed after its agent configuration was evaluated",
-                  );
-                }
+                assertGuardedConfigFingerprint(currentConfigFingerprint, guardedSourceConfig);
               }
               const sourceScopedContext: HandlerContext = {
                 ...requestScopedContext,
@@ -2079,6 +2192,7 @@ export class AgentStreamHandler extends BaseHandler {
     } catch (error_) {
       return this.respondToStreamFailure(error_, req, ctx, builder);
     } finally {
+      if (!platformSourcesReleaseDeferred) releasePlatformSources();
       if (pendingRecovery) {
         const { runId, session } = pendingRecovery;
         this.deps.sessionManager.cancelRun(runId, session.signal);

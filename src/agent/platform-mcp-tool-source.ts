@@ -33,26 +33,16 @@ export function createPlatformMcpCatalogSource(
     if (names.has(name)) continue;
     names.add(name);
     if (name !== definition.name) aliases.set(name, definition.name);
-    catalog.push({
-      ...definition,
-      name,
-      ...(name === "veryfront__get_run" && currentRunId
-        ? {
-          parameters: {
-            ...definition.parameters,
-            ...(definition.parameters.required
-              ? { required: definition.parameters.required.filter((key) => key !== "run_id") }
-              : {}),
-          },
-        }
-        : {}),
-    });
+    catalog.push(buildPlatformCatalogDefinition(definition, name, currentRunId));
   }
   return {
     definitions: catalog,
     aliases,
     source: markAdaptedPlatformSource({
       id: source.id,
+      // The catalog wrapper is what callers retain, so it must release the raw
+      // source's negotiated sessions.
+      ...(source.dispose ? { dispose: (context) => source.dispose!(context) } : {}),
       listTools: async () => [...catalog],
       executeTool: (name, args, context) => {
         if (!names.has(name)) {
@@ -67,6 +57,27 @@ export function createPlatformMcpCatalogSource(
         );
       },
     }),
+  };
+}
+
+function buildPlatformCatalogDefinition(
+  definition: ToolDefinition,
+  name: string,
+  currentRunId: string | undefined,
+): ToolDefinition {
+  return {
+    ...definition,
+    name,
+    ...(name === "veryfront__get_run" && currentRunId
+      ? {
+        parameters: {
+          ...definition.parameters,
+          ...(definition.parameters.required
+            ? { required: definition.parameters.required.filter((key) => key !== "run_id") }
+            : {}),
+        },
+      }
+      : {}),
   };
 }
 
@@ -150,6 +161,7 @@ export function createLivePlatformMcpSource(
   };
   return markAdaptedPlatformSource({
     id: source.id,
+    ...(source.dispose ? { dispose: (context) => source.dispose!(context) } : {}),
     listTools,
     executeTool: async (name, args, context) => {
       if (!wireNames.has(name)) await listTools(context);
