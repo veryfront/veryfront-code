@@ -95,6 +95,7 @@ export class ProxyRequestDrainTracker {
 export function parseProxyDrainTimeoutMs(
   rawValue: string | undefined,
   defaultValue: number,
+  name = "SHUTDOWN_DRAIN_TIMEOUT_MS",
 ): number {
   if (
     !Number.isSafeInteger(defaultValue) ||
@@ -107,7 +108,7 @@ export function parseProxyDrainTimeoutMs(
   }
   if (rawValue === undefined || rawValue === "") return defaultValue;
   if (!/^\d+$/.test(rawValue)) {
-    throw new TypeError("SHUTDOWN_DRAIN_TIMEOUT_MS must be a non-negative decimal integer");
+    throw new TypeError(`${name} must be a non-negative decimal integer`);
   }
   const parsed = Number(rawValue);
   if (
@@ -115,9 +116,7 @@ export function parseProxyDrainTimeoutMs(
     parsed < 0 ||
     parsed > 10 * 60 * 1_000
   ) {
-    throw new RangeError(
-      "SHUTDOWN_DRAIN_TIMEOUT_MS must be between 0 and 600000",
-    );
+    throw new RangeError(`${name} must be between 0 and 600000`);
   }
   return parsed;
 }
@@ -132,6 +131,58 @@ export function createProxyDrainingResponse(): Response {
       "X-Content-Type-Options": "nosniff",
     },
   });
+}
+
+/**
+ * After SIGTERM the proxy keeps admitting new requests for a short grace
+ * window. The gateway reaches it over pooled keep-alive connections through the
+ * Service, and requests already queued on those connections would otherwise
+ * get the draining 503. Each admitted response closes its connection (see
+ * `withConnectionClose`), so the gateway reconnects through the Service, which
+ * no longer routes to this terminating pod. After the window, new requests get
+ * the draining response.
+ */
+export class ProxyDrainAdmission {
+  private admitUntil: number | null = null;
+
+  constructor(
+    private readonly windowMs: number,
+    private readonly now: () => number = () => performance.now(),
+  ) {
+    if (!Number.isSafeInteger(windowMs) || windowMs < 0) {
+      throw new RangeError("Proxy drain admission window must be a non-negative integer");
+    }
+  }
+
+  begin(): void {
+    this.admitUntil ??= this.now() + this.windowMs;
+  }
+
+  admits(): boolean {
+    return this.admitUntil === null || this.now() < this.admitUntil;
+  }
+
+  remainingMs(): number {
+    return this.admitUntil === null ? 0 : Math.max(0, this.admitUntil - this.now());
+  }
+}
+
+/** Ask the HTTP/1.1 server to close the connection after this response. */
+export function withConnectionClose(response: Response): Response {
+  if (response.status === 101) return response;
+  try {
+    response.headers.set("Connection", "close");
+    return response;
+  } catch {
+    // Fetched upstream responses carry immutable headers.
+    const headers = new Headers(response.headers);
+    headers.set("Connection", "close");
+    return new Response(response.body, {
+      status: response.status,
+      statusText: response.statusText,
+      headers,
+    });
+  }
 }
 
 /**

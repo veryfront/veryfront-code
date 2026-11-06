@@ -12,7 +12,9 @@ import {
   createProxyReadinessResponse,
   parseProxyDrainTimeoutMs,
   PROXY_READY_PATH,
+  ProxyDrainAdmission,
   ProxyRequestDrainTracker,
+  withConnectionClose,
 } from "./request-drain.ts";
 
 describe("proxy request drain", () => {
@@ -391,6 +393,53 @@ describe("proxy request drain", () => {
     assertEquals(draining.status, 503);
     assertEquals(draining.headers.get("retry-after"), "1");
     await draining.body?.cancel();
+  });
+
+  it("admits requests for the grace window after shutdown starts, then refuses them", () => {
+    let now = 1_000;
+    const admission = new ProxyDrainAdmission(10_000, () => now);
+    assertEquals(admission.admits(), true);
+    assertEquals(admission.remainingMs(), 0);
+
+    admission.begin();
+    assertEquals(admission.admits(), true);
+    assertEquals(admission.remainingMs(), 10_000);
+
+    now += 4_000;
+    admission.begin(); // a second signal does not extend the window
+    assertEquals(admission.admits(), true);
+    assertEquals(admission.remainingMs(), 6_000);
+
+    now += 6_000;
+    assertEquals(admission.admits(), false);
+    assertEquals(admission.remainingMs(), 0);
+    assertThrows(() => new ProxyDrainAdmission(-1), RangeError);
+  });
+
+  it("marks admitted drain responses to close their connection", async () => {
+    const mutable = withConnectionClose(new Response("ok", { headers: { "x-a": "1" } }));
+    assertEquals(mutable.headers.get("connection"), "close");
+    assertEquals(mutable.headers.get("x-a"), "1");
+
+    const upstream = Response.redirect("https://example.com/next", 307);
+    const rebuilt = withConnectionClose(upstream);
+    assertEquals(rebuilt.status, 307);
+    assertEquals(rebuilt.headers.get("location"), "https://example.com/next");
+    assertEquals(rebuilt.headers.get("connection"), "close");
+    await rebuilt.body?.cancel();
+    await mutable.body?.cancel();
+  });
+
+  it("parses the admission grace with its own variable name", () => {
+    assertEquals(
+      parseProxyDrainTimeoutMs(undefined, 10_000, "SHUTDOWN_ADMISSION_GRACE_MS"),
+      10_000,
+    );
+    assertThrows(
+      () => parseProxyDrainTimeoutMs("x", 10_000, "SHUTDOWN_ADMISSION_GRACE_MS"),
+      TypeError,
+      "SHUTDOWN_ADMISSION_GRACE_MS",
+    );
   });
 
   it("bounds server close when an adapter keeps waiting on open connections", async () => {

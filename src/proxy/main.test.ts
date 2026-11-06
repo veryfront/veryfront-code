@@ -141,13 +141,24 @@ describe("proxy main request URL parsing", () => {
   it("drains tracked responses before closing the proxy server", async () => {
     const source = await Deno.readTextFile(new URL("./main.ts", import.meta.url));
 
-    assertStringIncludes(source, "if (shuttingDown) return createProxyDrainingResponse()");
     // Readiness is answered before the draining short-circuit so it can fail
-    // with 503 while liveness (/_proxy/health) stays a static 200.
+    // with 503 while liveness (/_proxy/health) stays a static 200. After the
+    // admission grace window (and for new WebSockets) requests get the 503.
+    const readyIndex = source.indexOf(
+      "if (url.pathname === PROXY_READY_PATH) return createProxyReadinessResponse(shuttingDown);",
+    );
+    const refuseIndex = source.indexOf(
+      "if (shuttingDown && (isWebSocketUpgrade || !drainAdmission.admits())) {\n    return createProxyDrainingResponse();",
+    );
+    const trackIndex = source.indexOf("proxyRequestDrainTracker.start(requestId");
+    assertEquals(readyIndex >= 0 && refuseIndex > readyIndex && trackIndex > refuseIndex, true);
+    // Admitted drain responses close their connection so the gateway reconnects
+    // through the Service, which no longer routes to this pod.
     assertStringIncludes(
       source,
-      "if (url.pathname === PROXY_READY_PATH) return createProxyReadinessResponse(shuttingDown);\n  if (shuttingDown) return createProxyDrainingResponse();",
+      "if (shuttingDown) response = withConnectionClose(response);\n    return proxyRequestDrainTracker.completeOnResponseEnd(requestId, req, response);",
     );
+    assertStringIncludes(source, "shuttingDown = true;\n  drainAdmission.begin();");
     assertStringIncludes(
       source,
       "proxyRequestDrainTracker.start(requestId, req.method, url.pathname)",
@@ -161,7 +172,7 @@ describe("proxy main request URL parsing", () => {
     // close the server underneath in-flight responses.
     assertStringIncludes(
       source,
-      "await proxyRequestDrainTracker.waitForDrain(SHUTDOWN_DRAIN_TIMEOUT_MS)",
+      "await proxyRequestDrainTracker.waitForDrain(\n        Math.max(0, SHUTDOWN_DRAIN_TIMEOUT_MS - SHUTDOWN_ADMISSION_GRACE_MS),",
       "shutdown must wait for the configured drain budget, not a zero timeout",
     );
     assertStringIncludes(
@@ -170,7 +181,9 @@ describe("proxy main request URL parsing", () => {
       "the default drain budget must stay a real waiting window",
     );
 
+    const graceIndex = source.indexOf("const graceMs = drainAdmission.remainingMs();");
     const drainIndex = source.indexOf("await proxyRequestDrainTracker.waitForDrain");
+    assertEquals(graceIndex >= 0 && drainIndex > graceIndex, true);
     const closeIndex = source.indexOf("await closeProxyServerWithin");
     const handlerCloseIndex = source.indexOf('name: "proxy_handler"');
     const shutdownHooksIndex = source.indexOf('name: "extension_owners"');
