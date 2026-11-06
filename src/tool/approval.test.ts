@@ -969,6 +969,41 @@ describe("createInputRequestApprovalGate", () => {
     assertEquals(cancelled, ["http://api.test/input-requests/ir-1/cancel"]);
   });
 
+  it("waits on a request the API committed when its creation answer was lost", async () => {
+    const replies: Array<() => Promise<Response>> = [
+      () => Promise.reject(new TypeError("connection reset")),
+      () =>
+        Promise.resolve(
+          new Response(JSON.stringify({
+            data: [{
+              input_request_id: "ir-1",
+              tool_call_id: "call-1",
+              tool_call: { name: "transfer", arguments: {} },
+              responder_rules: ASKED_RULES,
+              ...ASKED_WINDOW,
+              status: "submitted",
+              response: { values: { decision: "deny" } },
+            }],
+          })),
+        ),
+    ];
+    const gate = createInputRequestApprovalGate({
+      apiUrl: "http://api.test",
+      authToken: "maker-token",
+      runId: "run-1",
+      pollIntervalMs: 1,
+      fetch: () => replies.shift()!(),
+    });
+    const decision = await gate({
+      toolName: "transfer",
+      toolCallId: "call-1",
+      input: {},
+      policy: {},
+    });
+    assertEquals(decision.approvalId, "ir-1");
+    assertEquals(decision.approved, false);
+  });
+
   it("keeps polling through transient failures", async () => {
     const replies: Array<() => Promise<Response>> = [
       () =>

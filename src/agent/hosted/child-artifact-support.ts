@@ -5,6 +5,7 @@ import type { ToolExecutionContext } from "#veryfront/tool";
 import { toChildRunToolInputRecord } from "../child-run/execution-support.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
 import { privateJsonStringify } from "#veryfront/security/private-json.ts";
+import { getCurrentToolCallOccurrenceIdentity } from "#veryfront/runtime/tool-call-occurrence.ts";
 
 /** Forwards the receiver a host binds, so a gated tool reads its exposed name from `this.id`. */
 const apply = Reflect.apply;
@@ -106,7 +107,8 @@ export function withHostedChildRerunnableFileWriteFallbacks(input: {
             content,
           },
           // Its own call id, so a gated update asks for its own approval, not the create's. A hash
-          // in the gate's reserved "approval-" namespace, so no host id can name it by accident.
+          // in the gate's reserved "approval-" namespace, so no host id can name it by accident, and
+          // of the create's occurrence, so a reused create id never shares an earlier fallback's.
           execOptions?.toolCallId
             ? {
               ...execOptions,
@@ -115,6 +117,7 @@ export function withHostedChildRerunnableFileWriteFallbacks(input: {
                   "create_file_fallback",
                   execOptions.toolCallId,
                   updateToolName,
+                  createOccurrence(execOptions.toolCallId) ?? null,
                 ]),
               )}`,
             }
@@ -123,6 +126,12 @@ export function withHostedChildRerunnableFileWriteFallbacks(input: {
       },
     }),
   };
+}
+
+/** The runtime's occurrence of the create call being dispatched, when it is this call. */
+function createOccurrence(toolCallId: string): string | undefined {
+  const dispatched = getCurrentToolCallOccurrenceIdentity();
+  return dispatched?.toolCallId === toolCallId ? dispatched.occurrenceId : undefined;
 }
 
 /** Check whether a prompt asks for a hosted child text project artifact. */

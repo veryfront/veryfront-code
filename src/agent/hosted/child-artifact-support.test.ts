@@ -1,3 +1,8 @@
+import {
+  introduceToolCallOccurrence,
+  runWithToolCallOccurrenceDispatch,
+  runWithToolCallOccurrences,
+} from "#veryfront/runtime/tool-call-occurrence.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import {
@@ -259,4 +264,32 @@ Deno.test("withHostedChildRerunnableFileWriteFallbacks gives the fallback update
   // No direct update call's own id can name the fallback's.
   assertEquals(callIds[1] === "call-1:update_file", false);
   assertEquals(callIds[1]!.startsWith("approval-"), true);
+});
+
+Deno.test("withHostedChildRerunnableFileWriteFallbacks gives each occurrence of a reused create id its own fallback id", async () => {
+  const callIds: Array<string | undefined> = [];
+  const tools = withHostedChildRerunnableFileWriteFallbacks({
+    tools: {
+      create_file: { execute: () => ({ isError: true, message: "File already exists" }) },
+      update_file: {
+        execute: (_input, context) => {
+          callIds.push(context?.toolCallId);
+          return { success: true };
+        },
+      },
+    },
+  });
+  const input = { project_reference: "project-1", path: "/plans/report.md", content: "# Report" };
+  await runWithToolCallOccurrences(async () => {
+    for (const call of [{ id: "call_0" }, { id: "call_0" }]) {
+      introduceToolCallOccurrence(call);
+      await runWithToolCallOccurrenceDispatch(
+        call,
+        () => tools.create_file?.execute?.(input, { toolCallId: "call_0" }),
+      );
+    }
+  });
+
+  assertEquals(callIds.length, 2);
+  assertEquals(callIds[0] === callIds[1], false);
 });

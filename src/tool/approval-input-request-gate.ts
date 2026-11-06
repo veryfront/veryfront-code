@@ -323,26 +323,30 @@ export function createInputRequestApprovalGate(
     try {
       created = await open();
     } catch (error) {
-      // A cancellation can land after the API committed the request but before its answer arrived:
-      // find it without the dead signal and withdraw it, as a cancellation while polling does.
+      // The API may have committed the request before its answer was lost or the run was cancelled.
+      if (!signal?.aborted && !isTransportFailure(error)) throw error;
+      const committed = await recover(
+        runRequests,
+        toolCallId,
+        request,
+        rules,
+        windowMs,
+        occurrence,
+        // A cancelled run looks it up without its dead signal.
+        signal?.aborted ? undefined : signal,
+      ).catch((recoverError) => {
+        agentLogger.warn("Could not find the tool approval request after creating it failed", {
+          error: recoverError instanceof Error ? recoverError.message : String(recoverError),
+        });
+        return undefined;
+      });
+      // A cancelled call withdraws it, as a cancellation while polling does; a live one waits on it.
       if (signal?.aborted) {
-        const committed = await recover(
-          runRequests,
-          toolCallId,
-          request,
-          rules,
-          windowMs,
-          occurrence,
-        )
-          .catch((recoverError) => {
-            agentLogger.warn("Could not find the pending tool approval to withdraw", {
-              error: recoverError instanceof Error ? recoverError.message : String(recoverError),
-            });
-            return undefined;
-          });
         if (committed?.status === "open") await withdraw(committed.input_request_id);
+        throw error;
       }
-      throw error;
+      if (!committed) throw error;
+      created = committed;
     }
     const id = encodeSegment(created.input_request_id);
     const expiry = created.expires_at ? dateParse(created.expires_at) : expiresAt;
