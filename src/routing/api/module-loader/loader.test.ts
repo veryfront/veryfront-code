@@ -6036,6 +6036,33 @@ describe("route CommonJS require (#5471)", () => {
     }
   });
 
+  denoIt(
+    "routes commented and escaped CommonJS dynamic imports relative to the module",
+    async () => {
+      const files = {
+        "node_modules/escape-fixture/package.json": JSON.stringify({
+          name: "escape-fixture",
+          main: "index.js",
+        }),
+        "node_modules/escape-fixture/index.js": [
+          "module.exports = () => Promise.all([",
+          "  import(/* webpackIgnore: true */ './child.mjs'),",
+          '  import(".\\u002fchild.mjs" /* trailing */),',
+          "]).then((mods) => mods.map((m) => m.value).join(':'));",
+        ].join("\n"),
+        "node_modules/escape-fixture/child.mjs": "export const value = 'child';",
+      };
+      const GET = await loadCompiledRoute(
+        [
+          'import load from "escape-fixture";',
+          "export const GET = async () => new Response(await load());",
+        ].join("\n"),
+        files,
+      );
+      assertEquals(await responseText(GET), "child:child");
+    },
+  );
+
   denoIt("gives CommonJS namespaces the immutability of module namespaces", async () => {
     const files = {
       "node_modules/frozen-fixture/package.json": JSON.stringify({

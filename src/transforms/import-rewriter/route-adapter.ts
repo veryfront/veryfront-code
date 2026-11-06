@@ -431,12 +431,17 @@ export async function rewriteCompiledUserDependencyImportsForRoute(
       // The lexer reports the end of the whole import(...) expression,
       // tokenizing strings, comments and regex literals in the options.
       if (imported.se <= imported.e) continue;
+      // An async arrow returns an intrinsic promise whatever route code binds
+      // to `Promise`, and the await defers loading as import() does.
+      const lazy = `(async () => { await null; return ${helperPrefix}namespace(${specifier}); })()`;
+      // The options argument is still evaluated, first, as import() would.
+      const options = imported.a > -1
+        ? masked.slice(imported.a, imported.se - 1).trim().replace(/,$/, "").trimEnd()
+        : "";
       edits.push({
         start: imported.ss,
         end: imported.se,
-        // An async arrow returns an intrinsic promise whatever route code binds
-        // to `Promise`, and the await defers loading as import() does.
-        text: `(async () => { await null; return ${helperPrefix}namespace(${specifier}); })()`,
+        text: options ? `((${options}), ${lazy})` : lazy,
       });
       continue;
     }

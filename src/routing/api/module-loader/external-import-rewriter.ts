@@ -113,10 +113,12 @@ export function generateCompiledBinaryRequireShim(
     __VF_PROJECT_DIR__: JSON.stringify(projectDir),
     __VF_PROJECT_ROOT__: JSON.stringify(pathHelper.resolve(projectDir)),
   };
-  let shim = withRouteHelperPrefix(COMPILED_BINARY_REQUIRE_SHIM_TEMPLATE, helperPrefix);
-  for (const [placeholder, literal] of Object.entries(literals)) {
-    shim = shim.split(placeholder).join(literal);
-  }
+  // One pass, so a literal that happens to contain a placeholder name is
+  // never substituted again.
+  const shim = withRouteHelperPrefix(COMPILED_BINARY_REQUIRE_SHIM_TEMPLATE, helperPrefix).replace(
+    /__VF_(?:BUILTIN_LIST|PROJECT_DIR|PROJECT_ROOT)__/g,
+    (placeholder) => literals[placeholder]!,
+  );
   return shim;
 }
 
@@ -457,7 +459,6 @@ function __vf_resolveWithOptions(id, parentDir, options) {
 var __vf_regexAfterWord = { "return": 1, "typeof": 1, "instanceof": 1, "in": 1, "of": 1, "new": 1, "delete": 1, "void": 1, "throw": 1, "case": 1, "do": 1, "else": 1, "yield": 1, "await": 1 };
 // Only "import(" and the specifier are replaced, so an options argument and
 // the closing parenthesis stay as written and reach the helper.
-var __vf_relativeImportCall = /import\\s*\\(\\s*(["'])((?:\\.{1,2}\\/|\\/)[^"'\\\\\\r\\n]*)\\1/y;
 function __vf_skipQuoted(code, i, quote) {
   for (i++; i < code.length && code[i] !== quote; i++) {
     if (code[i] === "\\\\") i++;
@@ -475,6 +476,46 @@ function __vf_skipRegex(code, i) {
     else if (c === "/" && !inClass) return i + 1;
   }
   return i;
+}
+function __vf_skipTrivia(code, i) {
+  for (;;) {
+    var c = code[i];
+    if (c === " " || c === "\\t" || c === "\\n" || c === "\\r") { i++; continue; }
+    if (c === "/" && code[i + 1] === "/") {
+      var lineEnd = code.indexOf("\\n", i);
+      i = lineEnd === -1 ? code.length : lineEnd;
+      continue;
+    }
+    if (c === "/" && code[i + 1] === "*") {
+      var blockEnd = code.indexOf("*/", i + 2);
+      i = blockEnd === -1 ? code.length : blockEnd + 2;
+      continue;
+    }
+    return i;
+  }
+}
+var __vf_simpleEscapes = { b: "\\b", f: "\\f", n: "\\n", r: "\\r", t: "\\t", v: "\\v", "0": "\\0" };
+// The value of a string literal's body, with its escapes decoded.
+function __vf_decodeStringBody(body) {
+  return body.replace(/\\\\(?:u\\{([0-9a-fA-F]+)\\}|u([0-9a-fA-F]{4})|x([0-9a-fA-F]{2})|(\\r\\n|[\\s\\S]))/g, function (_match, codePoint, unit, byte, other) {
+    var hex = codePoint || unit || byte;
+    if (hex) return String.fromCodePoint(parseInt(hex, 16));
+    if (other === "\\n" || other === "\\r" || other === "\\r\\n" || other === " " || other === " ") return "";
+    return __vf_simpleEscapes[other] !== void 0 ? __vf_simpleEscapes[other] : other;
+  });
+}
+// At an "import" token: the end of "import ( <string>" when the string is a
+// relative or absolute path, with comments allowed between the tokens, or null.
+function __vf_matchRelativeImport(code, afterWord) {
+  var open = __vf_skipTrivia(code, afterWord);
+  if (code[open] !== "(") return null;
+  var quoteAt = __vf_skipTrivia(code, open + 1);
+  var quote = code[quoteAt];
+  if (quote !== "'" && quote !== '"') return null;
+  var end = __vf_skipQuoted(code, quoteAt, quote);
+  var spec = __vf_decodeStringBody(code.slice(quoteAt + 1, end - 1));
+  if (!/^(?:\\.{1,2}\\/|\\/)/.test(spec)) return null;
+  return { end: end, spec: spec };
 }
 function __vf_rewriteCjsDynamicImports(code, helperName) {
   if (code.indexOf("import") === -1) return code;
@@ -526,11 +567,10 @@ function __vf_rewriteCjsDynamicImports(code, helperName) {
       while (i < code.length && (/[A-Za-z0-9_$]/.test(code[i]) || code.charCodeAt(i) > 127)) i++;
       var word = code.slice(start, i);
       if (word === "import" && previous !== ".") {
-        __vf_relativeImportCall.lastIndex = start;
-        var call = __vf_relativeImportCall.exec(code);
+        var call = __vf_matchRelativeImport(code, i);
         if (call) {
-          out += code.slice(copied, start) + helperName + "(" + JSON.stringify(call[2]);
-          copied = i = __vf_relativeImportCall.lastIndex;
+          out += code.slice(copied, start) + helperName + "(" + JSON.stringify(call.spec);
+          copied = i = call.end;
           previous = "value";
           continue;
         }

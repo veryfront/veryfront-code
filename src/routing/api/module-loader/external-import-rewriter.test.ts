@@ -188,7 +188,7 @@ describe("external-import-rewriter", () => {
         out,
         [
           'const data = __vf_interopDefault(require("lodash/data.json"));',
-          'const lazy = (async () => { await null; return __vf_namespace("lodash/data.json"); })();',
+          'const lazy = (({ with: { type: "json" } }), (async () => { await null; return __vf_namespace("lodash/data.json"); })());',
         ].join("\n"),
       );
     });
@@ -200,7 +200,7 @@ describe("external-import-rewriter", () => {
       );
       assertEquals(
         out,
-        'const lazy = (async () => { await null; return __vf_namespace("lodash"); })();',
+        'const lazy = (({ with: { type: /[)]/.test("") ? "json" : "json" } }), (async () => { await null; return __vf_namespace("lodash"); })());',
       );
     });
 
@@ -236,6 +236,28 @@ describe("external-import-rewriter", () => {
         deps,
       );
       assertEquals(out.includes("Promise"), false, out);
+    });
+
+    it("embeds a project path that contains a placeholder name unchanged", () => {
+      const shim = generateCompiledBinaryRequireShim("/tmp/__VF_PROJECT_ROOT__");
+      assertStringIncludes(shim, 'var __vf_projectRoot = "/tmp/__VF_PROJECT_ROOT__";');
+      assertEquals(shim.includes('"/tmp/"/tmp'), false);
+    });
+
+    it("keeps dynamic-import options evaluated before the lazy load", async () => {
+      const out = await rewriteCompiledBinaryUserDependencyImports(
+        [`const a = import("lodash", (seen = true, {}));`, `const b = import("lodash",);`].join(
+          "\n",
+        ),
+        deps,
+      );
+      assertEquals(
+        out,
+        [
+          'const a = (((seen = true, {})), (async () => { await null; return __vf_namespace("lodash"); })());',
+          'const b = (async () => { await null; return __vf_namespace("lodash"); })();',
+        ].join("\n"),
+      );
     });
 
     it("rewrites a named default import with interop", async () => {
@@ -315,7 +337,7 @@ describe("external-import-rewriter", () => {
       );
       assertEquals(
         out,
-        'const lazy = (async () => { await null; return __vf_namespace("lodash"); })();',
+        'const lazy = (({ with: { type: (() => { return /[)]/.test("") ? "json" : "json"; })() } }), (async () => { await null; return __vf_namespace("lodash"); })());',
       );
     });
 
