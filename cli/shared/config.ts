@@ -13,7 +13,7 @@ import { type EnvironmentConfig, getApiTokenEnv, getEnvironmentConfig } from "ve
 import { getEnvSource } from "veryfront/utils/env-loader";
 import { cliLogger, VERSION } from "#cli/utils";
 import { readToken } from "../auth/token-store.ts";
-import { ensureAuthenticated } from "../auth/login.ts";
+import { ensureAuthenticated, misnamedApiKeyHint } from "../auth/login.ts";
 import {
   API_URL_ENV_KEYS,
   type ApiUrlEnvKey,
@@ -720,7 +720,10 @@ async function resolveConfigBase(
 
   if (!apiToken) {
     throw new Error(
-      "Missing API token. Run 'veryfront login' or set VERYFRONT_API_TOKEN environment variable",
+      `Missing API token. ${
+        misnamedApiKeyHint() ??
+          "Run 'veryfront login' or set VERYFRONT_API_TOKEN environment variable"
+      }`,
     );
   }
 

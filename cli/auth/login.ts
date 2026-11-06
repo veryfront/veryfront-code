@@ -117,6 +117,21 @@ export interface CredentialValidationOptions {
  * block sign-in forever, so the check is bounded and a timeout simply falls
  * through to the normal flow.
  */
+const MISNAMED_API_KEY_HINT_LINES = [
+  "VERYFRONT_API_KEY is set, but the CLI reads VERYFRONT_API_TOKEN.",
+  "Set VERYFRONT_API_TOKEN to the same key, or run 'veryfront login'.",
+] as const;
+
+/**
+ * Studio's key page tells users to export `VERYFRONT_API_KEY`, which the CLI
+ * does not read. When that is the only one set, missing-auth messages name the
+ * variable the CLI does read instead of a bare "Not logged in".
+ */
+export function misnamedApiKeyHint(): string | undefined {
+  if (!getEnv("VERYFRONT_API_KEY") || getEnv("VERYFRONT_API_TOKEN")) return undefined;
+  return MISNAMED_API_KEY_HINT_LINES.join(" ");
+}
+
 const DEFAULT_EXISTING_SESSION_TIMEOUT_MS = 5_000;
 const DEFAULT_OAUTH_BROWSER_LAUNCH_TIMEOUT_MS = 10_000;
 let existingSessionTimeoutMs = DEFAULT_EXISTING_SESSION_TIMEOUT_MS;
@@ -142,7 +157,9 @@ async function outputLoginAuthenticationRequiredJson(): Promise<void> {
     code: "AUTHENTICATION_ERROR",
     slug: "authentication-required",
     registrySlug: "authentication-required",
-    message: "Not logged in. Set VERYFRONT_API_TOKEN or run in interactive mode.",
+    message: `Not logged in. ${
+      misnamedApiKeyHint() ?? "Set VERYFRONT_API_TOKEN or run in interactive mode."
+    }`,
   }));
 }
 
@@ -898,7 +915,11 @@ export async function login(
   await assertApiUrlAcceptsNewCredential(env, projectDir);
 
   if (!isInteractive() && (method === undefined || method === "token")) {
-    cliLogger.error("Not logged in. Set VERYFRONT_API_TOKEN or run in interactive mode.");
+    cliLogger.error(
+      `Not logged in. ${
+        misnamedApiKeyHint() ?? "Set VERYFRONT_API_TOKEN or run in interactive mode."
+      }`,
+    );
     return null;
   }
 
@@ -936,7 +957,11 @@ async function requestInteractiveAuthentication(
   validationOptions: CredentialValidationOptions,
 ): Promise<AuthIdentity | null> {
   if (!isTTY() || !isInteractive()) {
-    cliLogger.error("Not logged in. Set VERYFRONT_API_TOKEN or run in interactive mode.");
+    cliLogger.error(
+      `Not logged in. ${
+        misnamedApiKeyHint() ?? "Set VERYFRONT_API_TOKEN or run in interactive mode."
+      }`,
+    );
     return null;
   }
 
@@ -1091,7 +1116,7 @@ export async function whoami(
       code: "AUTHENTICATION_ERROR",
       slug: "authentication-required",
       registrySlug: "authentication-required",
-      message: "Not logged in. Run 'veryfront login' to authenticate.",
+      message: `Not logged in. ${misnamedApiKeyHint() ?? "Run 'veryfront login' to authenticate."}`,
       context: { authenticated: false },
     }));
     return null;
@@ -1099,7 +1124,10 @@ export async function whoami(
 
   console.log();
   console.log("  " + error("✗") + " Not logged in");
-  console.log("  " + dim("Run 'veryfront login' to authenticate"));
+  const hintLines = misnamedApiKeyHint()
+    ? MISNAMED_API_KEY_HINT_LINES
+    : ["Run 'veryfront login' to authenticate"];
+  for (const line of hintLines) console.log("  " + dim(line));
 
   return null;
 }

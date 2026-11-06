@@ -5,7 +5,7 @@ import { cliLogger, exitProcess, isVerbose } from "#cli/utils";
 import { cwd } from "veryfront/platform";
 import { createFileSystem } from "veryfront/platform";
 import { brand, createNoopSpinner, dim } from "#cli/ui";
-import { ensureAuthenticated } from "../../auth/index.ts";
+import { ensureAuthenticated, misnamedApiKeyHint } from "../../auth/index.ts";
 import { type EnvironmentConfig, getEnvironmentConfig } from "veryfront/config";
 import { createSpinner } from "#cli/ui";
 import { isTTY, promptUser } from "#cli/utils";
@@ -237,7 +237,9 @@ export async function upCommand(
   const userInfo = await ensureAuthenticated(env, projectDir);
   if (!userInfo) {
     if (jsonOutput) {
-      const message = "Not authenticated. Set VERYFRONT_API_TOKEN or run veryfront login.";
+      const message = `Not authenticated. ${
+        misnamedApiKeyHint() ?? "Set VERYFRONT_API_TOKEN or run veryfront login."
+      }`;
       const authError = AUTHENTICATION_REQUIRED.create({ detail: message });
       streamJsonLine(
         createStreamErrorResult({

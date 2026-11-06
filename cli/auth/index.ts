@@ -10,6 +10,7 @@ export {
   isApiKeyIdentity,
   login,
   logout,
+  misnamedApiKeyHint,
   readToken,
   saveToken,
   type UserInfo,
