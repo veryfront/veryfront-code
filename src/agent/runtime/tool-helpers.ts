@@ -126,9 +126,14 @@ async function executeLocalWrapper(
           enumerable: false,
           configurable: true,
         });
+        // A gated tool asks under the name it is configured as, which its execute reads from `this.id`;
+        // every other tool keeps its own receiver.
+        const receiver = intrinsicHasOwn(localTool, "approval")
+          ? intrinsicObjectCreate(localTool, { id: { value: toolName, enumerable: true } })
+          : localTool;
         return await dispatchWithTerminalRunControl(
           context,
-          () => localTool.execute(input, executionContext),
+          () => intrinsicReflectApply(localTool.execute, receiver, [input, executionContext]),
         );
       } finally {
         active = false;
@@ -182,6 +187,7 @@ const logger = serverLogger.component("agent");
 const intrinsicReflectApply = Reflect.apply;
 const intrinsicObjectEntries = Object.entries;
 const intrinsicHasOwn = Object.hasOwn;
+const intrinsicObjectCreate = Object.create;
 const intrinsicIsArray = Array.isArray;
 const intrinsicArrayPush = Array.prototype.push;
 const intrinsicArrayIncludes = Array.prototype.includes;

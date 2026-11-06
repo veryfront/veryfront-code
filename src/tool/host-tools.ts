@@ -191,6 +191,11 @@ export function createToolsFromHostDefinitions(
     const definition = snapshotHostToolDefinition(originalDefinition);
     if (!isHostToolDefinition(definition)) continue;
 
+    // A gated tool asks under the name it is exposed as, which its execute reads from `this.id`
+    // (see below); every other tool keeps its original receiver.
+    const gated = objectHasOwn(definition, "approval");
+    const receiverNamed = (name: string) =>
+      objectCreate(originalDefinition as object, { id: { value: name, enumerable: true } });
     const execute = async (input: unknown, context: ToolExecutionContext | undefined) =>
       await apply(definition.execute, originalDefinition, [
         input,
@@ -234,6 +239,25 @@ export function createToolsFromHostDefinitions(
           }
           materializedTool.outputSchemaJson = outputSchemaJson;
         }
+      }
+      if (materializedTool && gated) {
+        // The materialized tool stays gated, and a later alias of it asks under the outer name.
+        defineOwnDataProperty(materializedTool, "approval", (definition as Tool).approval, {
+          enumerable: true,
+          configurable: true,
+          writable: false,
+        });
+        materializedTool.execute = async function (
+          this: { id?: unknown } | undefined,
+          input: unknown,
+          context: ToolExecutionContext | undefined,
+        ) {
+          const name = typeof this?.id === "string" && this.id.length > 0 ? this.id : toolName;
+          return await apply(definition.execute, receiverNamed(name), [
+            input,
+            normalizeExecutionContext(toolName, context, options),
+          ]);
+        };
       }
       if (materializedTool) {
         copyToolDiscoveryMetadata(definition, materializedTool);
