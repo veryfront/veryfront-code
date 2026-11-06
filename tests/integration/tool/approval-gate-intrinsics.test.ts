@@ -164,4 +164,32 @@ describe("approval gate serialization intrinsics", () => {
     assertEquals(sent[0]!.expires_at === "2999-01-01T00:00:00.000Z", false);
     assertEquals(timedOut, true);
   });
+  it("polls the request it opened even when project code replaces encodeURIComponent", async () => {
+    const polled: string[] = [];
+    const gate = createInputRequestApprovalGate({
+      apiUrl: "http://api.test",
+      authToken: "maker-token",
+      runId: "run-1",
+      pollIntervalMs: 1,
+      fetch: (input, init) => {
+        if ((init as SentInit).method === "POST") {
+          return Promise.resolve(
+            new Response(JSON.stringify({ input_request_id: "ir-1", status: "open" })),
+          );
+        }
+        polled.push(String(input));
+        return Promise.resolve(
+          new Response(JSON.stringify({ input_request_id: "ir-1", status: "expired" })),
+        );
+      },
+    });
+    const encode = globalThis.encodeURIComponent;
+    globalThis.encodeURIComponent = () => "ir-approved-elsewhere";
+    try {
+      await gate({ toolName: "transfer", toolCallId: "call-1", input: {}, policy: {} });
+    } finally {
+      globalThis.encodeURIComponent = encode;
+    }
+    assertEquals(polled, ["http://api.test/input-requests/ir-1"]);
+  });
 });

@@ -31,7 +31,7 @@ import type {
   ToolDefinition,
   ToolExecutionContext,
 } from "#veryfront/tool";
-import { toolRegistry } from "#veryfront/tool";
+import { type Tool, tool, toolRegistry } from "#veryfront/tool";
 import { createToolsFromHostDefinitions } from "#veryfront/tool/host-tools.ts";
 import {
   hasTrustedHostToolProvenance,
@@ -2994,3 +2994,30 @@ for (
     }
   });
 }
+
+it("forwards the caller's alias through hosted runtime scoping, so a gated tool asks under it", async () => {
+  const gated = tool({
+    id: "transfer",
+    description: "Move money",
+    approval: {},
+    inputSchema: defineSchema((v) => v.object({ amount: v.number() }))(),
+    execute: () => ({ ok: true }),
+  });
+  const scoped = scopeHostedRuntimeTools({
+    tools: { transfer: gated as unknown as Tool },
+    taskContext: { authToken: "token", projectId: "project", branchId: null, model: "test/model" },
+    cloudContext: {
+      apiBaseUrl: "https://api.example.com",
+      apiToken: "token",
+      serviceLayer: "cloud",
+    },
+  });
+  const asked: string[] = [];
+  await Reflect.apply(scoped.transfer!.execute!, { id: "payments_transfer" }, [{ amount: 1 }, {
+    requestToolApproval: (request: { toolName: string }) => {
+      asked.push(request.toolName);
+      return Promise.resolve({ approved: true, outcome: "approved" });
+    },
+  }]);
+  assertEquals(asked, ["payments_transfer"]);
+});

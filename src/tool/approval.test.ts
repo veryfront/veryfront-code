@@ -937,6 +937,25 @@ describe("createInputRequestApprovalGate", () => {
     assertEquals(decision, { approved: false, outcome: "expired", approvalId: "ir-1" });
   });
 
+  it("stops waiting as expired when the API still reads the request as open past its expiry", async () => {
+    const gate = createInputRequestApprovalGate({
+      apiUrl: "http://api.test",
+      authToken: "maker-token",
+      runId: "run-1",
+      pollIntervalMs: 1,
+      fetch: () =>
+        Promise.resolve(
+          new Response(JSON.stringify({
+            input_request_id: "ir-1",
+            status: "open",
+            expires_at: new Date(Date.now() - 120_000).toISOString(),
+          })),
+        ),
+    });
+    const decision = await gate({ toolName: "transfer", input: {}, policy: {} });
+    assertEquals(decision, { approved: false, outcome: "expired", approvalId: "ir-1" });
+  });
+
   it("never adopts an earlier request that asked about other arguments", async () => {
     const replies = [
       new Response(JSON.stringify({ detail: "conflict" }), { status: 409 }),

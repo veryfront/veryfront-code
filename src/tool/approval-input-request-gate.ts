@@ -71,6 +71,7 @@ function withinWindow(item: InputRequestResource, windowMs: number): boolean {
 // Captured before project code runs: what the checker sees, what recovery compares and where the gate
 // sends its requests must not depend on globals project code can replace.
 const nativeFetch = fetch;
+const encodeSegment = encodeURIComponent;
 const responseText = Response.prototype.text;
 const apply = Reflect.apply;
 const isArray = Array.isArray;
@@ -196,7 +197,7 @@ export function createInputRequestApprovalGate(
     let cursor: string | undefined;
     // The whole run is read: the list has no tool call filter, and an older request still counts.
     do {
-      const cursorParam = cursor ? `&cursor=${encodeURIComponent(cursor)}` : "";
+      const cursorParam = cursor ? `&cursor=${encodeSegment(cursor)}` : "";
       const listed = await call(`${runRequests}?limit=100${cursorParam}`, {
         signal,
       }) as InputRequestPage;
@@ -249,7 +250,7 @@ export function createInputRequestApprovalGate(
       : request.toolCallId;
     const windowMs = (request.policy.expiresInSeconds ?? DEFAULT_EXPIRES_IN_SECONDS) * 1000;
     const expiresAt = dateNow() + windowMs;
-    const runRequests = `/runs/${encodeURIComponent(options.runId)}/input-requests`;
+    const runRequests = `/runs/${encodeSegment(options.runId)}/input-requests`;
     const callHash = await computeHash(`${options.runId}:${toolCallId}`);
     const rules: ResponderRules = {
       exclude_run_starters: true,
@@ -286,7 +287,7 @@ export function createInputRequestApprovalGate(
     } else {
       throw failure(response, body);
     }
-    const id = encodeURIComponent(created.input_request_id);
+    const id = encodeSegment(created.input_request_id);
     const expiry = created.expires_at ? dateParse(created.expires_at) : expiresAt;
     const deadline = expiry + EXPIRY_GRACE_MS;
     let current = created;
@@ -298,10 +299,10 @@ export function createInputRequestApprovalGate(
         const untilDue = now < expiry ? expiry - now : deadline - now;
         await wait(untilDue > 0 && untilDue < pollIntervalMs ? untilDue : pollIntervalMs, signal);
         const latest = await poll(`/input-requests/${id}`, signal);
-        if (latest) {
-          current = latest;
-        } else if (dateNow() > deadline) {
-          // The API stopped answering past the request's expiry: the call does not run.
+        if (latest) current = latest;
+        if (current.status === "open" && dateNow() > deadline) {
+          // Past the request's expiry the call does not run, whether the API stopped answering or
+          // still reads the request as open.
           return { approved: false, outcome: "expired", approvalId: created.input_request_id };
         }
       }

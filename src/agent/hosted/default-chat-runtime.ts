@@ -9,6 +9,7 @@ import {
   type HostToolSet,
   type RemoteMCPToolSourceConfig,
   type RemoteToolSource,
+  type Tool,
   type ToolExecutionContext,
   type ToolSet,
 } from "#veryfront/tool";
@@ -112,6 +113,15 @@ const stringTrim = String.prototype.trim;
 const TypeErrorConstructor = TypeError;
 const objectEntries = Object.entries;
 const objectSetPrototypeOf = Object.setPrototypeOf;
+const objectCreate = Object.create;
+
+/** The wrapped tool as receiver, named as its caller exposes it, so a gated tool asks under that alias. */
+function receiverFor(tool: Tool, caller: unknown): Tool {
+  const id = (caller as { id?: unknown } | undefined)?.id;
+  return typeof id === "string" && id.length > 0 && id !== tool.id
+    ? objectCreate(tool, { id: { value: id, enumerable: true } })
+    : tool;
+}
 
 function mapOwnRecord<TInput, TOutput>(
   input: Record<string, TInput>,
@@ -570,10 +580,10 @@ export function scopeHostedRuntimeToolResults(tools: ToolSet): ToolSet {
           tool,
           inheritFrameworkSkillLoader(tool, {
             ...tool,
-            execute: async (toolInput: unknown, context?: ToolExecutionContext) => {
+            async execute(this: unknown, toolInput: unknown, context?: ToolExecutionContext) {
               try {
                 return snapshotHostedToolResult(
-                  await apply(execute, tool, [toolInput, context]),
+                  await apply(execute, receiverFor(tool, this), [toolInput, context]),
                 );
               } catch (error) {
                 if (preserveTrustedError) throw error;
@@ -604,12 +614,14 @@ export function scopeHostedRuntimeTools(input: {
           tool,
           inheritFrameworkSkillLoader(tool, {
             ...tool,
-            execute: (toolInput: unknown, context?: ToolExecutionContext) =>
-              withoutHostedCredentials({
+            execute(this: unknown, toolInput: unknown, context?: ToolExecutionContext) {
+              const receiver = receiverFor(tool, this);
+              return withoutHostedCredentials({
                 taskContext: input.taskContext,
                 cloudContext: input.cloudContext,
-                operation: () => apply(tool.execute, tool, [toolInput, context]),
-              }),
+                operation: () => apply(tool.execute, receiver, [toolInput, context]),
+              });
+            },
           }),
         ),
       );
