@@ -191,8 +191,13 @@ export function createToolsFromHostDefinitions(
     const definition = snapshotHostToolDefinition(originalDefinition);
     if (!isHostToolDefinition(definition)) continue;
 
+    // A gated tool asks under the name it is exposed as, which its execute reads from `this.id`;
+    // every other tool keeps its original receiver.
+    const receiver = !objectHasOwn(definition, "approval")
+      ? originalDefinition
+      : objectCreate(originalDefinition as object, { id: { value: toolName, enumerable: true } });
     const execute = async (input: unknown, context: ToolExecutionContext | undefined) =>
-      await apply(definition.execute, originalDefinition, [
+      await apply(definition.execute, receiver, [
         input,
         normalizeExecutionContext(toolName, context, options),
       ]);

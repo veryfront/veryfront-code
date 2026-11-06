@@ -16,6 +16,8 @@ export interface InputRequestApprovalGateOptions {
   runId: string;
   fetch?: typeof fetch;
   pollIntervalMs?: number;
+  /** Longest wait for any one API response before it counts as failed. */
+  requestTimeoutMs?: number;
 }
 
 interface InputRequestResource {
@@ -23,13 +25,24 @@ interface InputRequestResource {
   tool_call_id?: string | null;
   tool_call?: { name: string; arguments: unknown } | null;
   status: "open" | "submitted" | "cancelled" | "expired";
+  expires_at?: string | null;
   response?: {
     values?: Record<string, unknown>;
     actor?: { type: string; id: string };
   } | null;
 }
 
+interface InputRequestPage {
+  data?: InputRequestResource[];
+  page_info?: { next?: string | null };
+}
+
 const DEFAULT_POLL_INTERVAL_MS = 1000;
+const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
+/** Polls that keep failing past the request's expiry give up after this long, as expired. */
+const EXPIRY_GRACE_MS = 60_000;
+/** Pages of the run's requests read to find the one an earlier attempt opened. */
+const MAX_RECOVERY_PAGES = 10;
 /** How long a gated call waits for a decision when its policy names no expiry. */
 const DEFAULT_EXPIRES_IN_SECONDS = 30 * 60;
 
@@ -53,16 +66,22 @@ export function createInputRequestApprovalGate(
 ): ToolApprovalGate {
   const doFetch = options.fetch ?? fetch;
   const base = options.apiUrl.replace(/\/+$/, "");
-  const pollIntervalMs = options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
-  // Zero, negative or non-finite intervals would poll back to back and hit rate limits.
-  if (!Number.isFinite(pollIntervalMs) || pollIntervalMs <= 0) {
-    throw INVALID_ARGUMENT.create({
-      detail: "Approval pollIntervalMs must be a positive, finite number of milliseconds",
-    });
-  }
+  const pollIntervalMs = positiveMs(
+    "pollIntervalMs",
+    options.pollIntervalMs,
+    DEFAULT_POLL_INTERVAL_MS,
+  );
+  const requestTimeoutMs = positiveMs(
+    "requestTimeoutMs",
+    options.requestTimeoutMs,
+    DEFAULT_REQUEST_TIMEOUT_MS,
+  );
   const send = async (path: string, init: RequestInit = {}) => {
+    // A response that never completes fails after the timeout instead of holding the call forever.
+    const timeout = AbortSignal.timeout(requestTimeoutMs);
     const response = await doFetch(`${base}${path}`, {
       ...init,
+      signal: init.signal ? AbortSignal.any([init.signal, timeout]) : timeout,
       headers: {
         Authorization: `Bearer ${options.authToken}`,
         "Content-Type": "application/json",
@@ -77,15 +96,59 @@ export function createInputRequestApprovalGate(
         (body as { detail?: string }).detail ?? ""
       }`.trim(),
     });
-  const call = async (path: string, init: RequestInit = {}): Promise<InputRequestResource> => {
+  const call = async (path: string, init: RequestInit = {}): Promise<unknown> => {
     const { response, body } = await send(path, init);
     if (!response.ok) throw failure(response, body);
-    return body as InputRequestResource;
+    return body;
+  };
+  /** The request's latest state, or undefined when this poll failed in a way a later one may not. */
+  const poll = async (path: string, signal?: AbortSignal) => {
+    try {
+      const { response, body } = await send(path, { signal });
+      if (response.ok) return body as InputRequestResource;
+      if (response.status !== 429 && response.status < 500) throw failure(response, body);
+      agentLogger.warn("Tool approval poll failed; retrying", { status: response.status });
+    } catch (error) {
+      if (signal?.aborted || !isTransportFailure(error)) throw error;
+      agentLogger.warn("Tool approval poll failed; retrying", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+    return undefined;
+  };
+  /**
+   * The request an earlier attempt at this call opened, in whatever state it is now (its response
+   * was lost, or it asked with another expiry, so the key no longer replays). Only a request about
+   * this exact call counts: an approval never carries over to other arguments.
+   */
+  const recover = async (
+    runRequests: string,
+    toolCallId: string,
+    request: { toolName: string; input: unknown },
+    signal?: AbortSignal,
+  ) => {
+    const matches: InputRequestResource[] = [];
+    let cursor: string | undefined;
+    for (let page = 0; page < MAX_RECOVERY_PAGES; page++) {
+      const query = `limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`;
+      const listed = await call(`${runRequests}?${query}`, { signal }) as InputRequestPage;
+      matches.push(
+        ...(listed.data ?? []).filter((item) =>
+          item.tool_call_id === toolCallId && item.tool_call?.name === request.toolName &&
+          canonicalJson(item.tool_call.arguments) === canonicalJson(request.input)
+        ),
+      );
+      cursor = listed.page_info?.next ?? undefined;
+      if (!cursor) break;
+    }
+    return matches.find((item) => item.status === "open") ?? matches[0];
   };
 
   return async (request, signal) => {
     // Hosts that do not track tool call ids still need one durable anchor per gated call.
     const toolCallId = request.toolCallId ?? `approval-${crypto.randomUUID()}`;
+    const expiresAt = Date.now() +
+      (request.policy.expiresInSeconds ?? DEFAULT_EXPIRES_IN_SECONDS) * 1000;
     const runRequests = `/runs/${encodeURIComponent(options.runId)}/input-requests`;
     const { response, body } = await send(runRequests, {
       method: "POST",
@@ -110,38 +173,33 @@ export function createInputRequestApprovalGate(
         tool_call: { name: request.toolName, arguments: request.input },
         // This gate reads the decision itself; the gated call never parks for a tool result.
         delivery: "none",
-        expires_at: new Date(
-          Date.now() + (request.policy.expiresInSeconds ?? DEFAULT_EXPIRES_IN_SECONDS) * 1000,
-        ).toISOString(),
+        expires_at: new Date(expiresAt).toISOString(),
       }),
     });
     let created: InputRequestResource;
     if (response.ok) {
       created = body as InputRequestResource;
     } else if (response.status === 409 || response.status === 422) {
-      // An earlier attempt at this call already opened its request (its response was lost, or it
-      // asked with another expiry, so the key no longer replays). Wait on that request, but only if
-      // it asks about this exact call: an approval never carries over to other arguments.
-      const open = await call(`${runRequests}?status=open&limit=100`, { signal }) as unknown as {
-        data?: InputRequestResource[];
-      };
-      const existing = open.data?.find((item) => item.tool_call_id === toolCallId);
-      if (
-        !existing || existing.tool_call?.name !== request.toolName ||
-        canonicalJson(existing.tool_call.arguments) !== canonicalJson(request.input)
-      ) {
-        throw failure(response, body);
-      }
+      const existing = await recover(runRequests, toolCallId, request, signal);
+      if (!existing) throw failure(response, body);
       created = existing;
     } else {
       throw failure(response, body);
     }
     const id = encodeURIComponent(created.input_request_id);
+    const deadline = (created.expires_at ? Date.parse(created.expires_at) : expiresAt) +
+      EXPIRY_GRACE_MS;
     let current = created;
     try {
       while (current.status === "open") {
         await wait(pollIntervalMs, signal);
-        current = await call(`/input-requests/${id}`, { signal });
+        const latest = await poll(`/input-requests/${id}`, signal);
+        if (latest) {
+          current = latest;
+        } else if (Date.now() > deadline) {
+          // The API stopped answering past the request's expiry: the call does not run.
+          return { approved: false, outcome: "expired", approvalId: created.input_request_id };
+        }
       }
     } catch (error) {
       // A cancelled run withdraws its pending approval so no checker can approve a dead call.
@@ -161,6 +219,24 @@ export function createInputRequestApprovalGate(
     }
     return toDecision(current);
   };
+}
+
+function positiveMs(name: string, value: number | undefined, fallback: number): number {
+  const ms = value ?? fallback;
+  // Zero, negative or non-finite values would poll back to back or never wait at all.
+  if (!Number.isFinite(ms) || ms <= 0) {
+    throw INVALID_ARGUMENT.create({
+      detail: `Approval ${name} must be a positive, finite number of milliseconds`,
+    });
+  }
+  return ms;
+}
+
+/** A failure to reach the API at all (network or timeout), which a later poll may not hit. */
+function isTransportFailure(error: unknown): boolean {
+  return error instanceof TypeError ||
+    (error instanceof DOMException &&
+      (error.name === "TimeoutError" || error.name === "AbortError"));
 }
 
 function toDecision(request: InputRequestResource): ToolApprovalDecision {

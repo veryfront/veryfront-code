@@ -4,6 +4,7 @@ import {
   type ToolApprovalPolicy,
   type ToolApprovalRefusal,
   withToolApprovalRefusal,
+  withToolApprovalRefusalSchema,
 } from "./approval.ts";
 import type { Tool, ToolConfig, ToolDiscoveryMetadata, ToolExecutionContext } from "./types.ts";
 import { readToolDiscoveryMetadata } from "./discovery-metadata.ts";
@@ -281,7 +282,9 @@ export function tool<TInput = unknown, TOutput = unknown>(
     ...(approval ? { approval } : {}),
     inputSchema: inputSchema as Schema<TInput>,
     inputSchemaJson,
-    outputSchema: outputSchema as Schema<TOutput | ToolApprovalRefusal> | undefined,
+    outputSchema: approval
+      ? withToolApprovalRefusalSchema(outputSchema as Schema<TOutput> | undefined)
+      : outputSchema as Schema<TOutput | ToolApprovalRefusal> | undefined,
     outputSchemaJson: approval ? withToolApprovalRefusal(outputSchemaJson) : outputSchemaJson,
     // A method, not an arrow: discovery registers a copy of an id-less tool under its file's id,
     // and the call runs on that copy, so `this.id` is the name the checker should see.

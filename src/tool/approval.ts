@@ -6,7 +6,8 @@
  * execution context; without one the tool refuses to run.
  */
 import { INVALID_ARGUMENT, PERMISSION_DENIED } from "#veryfront/errors";
-import type { JsonSchema } from "#veryfront/extensions/schema/index.ts";
+import type { JsonSchema, Schema } from "#veryfront/extensions/schema/index.ts";
+import { defineSchema } from "#veryfront/schemas/index.ts";
 import type { ToolExecutionContext } from "./types.ts";
 
 /** How a tool asks for approval before it runs. */
@@ -65,6 +66,27 @@ const REFUSAL_JSON_SCHEMA: JsonSchema = Object.freeze<JsonSchema>({
   required: ["status", "outcome", "tool", "message"],
   additionalProperties: false,
 });
+
+const getRefusalSchema = defineSchema((v) =>
+  v.object({
+    status: v.literal("not_approved"),
+    outcome: v.enum(["denied", "expired", "withdrawn"] as const),
+    tool: v.string(),
+    comment: v.string().optional(),
+    message: v.string(),
+  }).strict()
+);
+
+/**
+ * Widen a gated tool's native output validator so a refusal passes it too. The strict refusal is
+ * tried first, so a lenient output schema never strips a refusal into something else.
+ */
+export function withToolApprovalRefusalSchema<T>(
+  outputSchema: Schema<T> | undefined,
+): Schema<T | ToolApprovalRefusal> | undefined {
+  if (outputSchema === undefined) return undefined;
+  return defineSchema((v) => v.union([getRefusalSchema(), outputSchema]))();
+}
 
 /**
  * Widen a gated tool's declared output so a refusal is a valid result. An object contract stays an
@@ -140,18 +162,20 @@ export async function requireToolApproval(
     context?.abortSignal,
   );
   if (decision.approved === true && decision.outcome === "approved") return undefined;
+  // A decision that contradicts itself (approved, but not "approved") fails closed as a denial, and
+  // both the outcome and its message come from that one normalized value.
+  const outcome = decision.outcome === "approved" ? "denied" : decision.outcome;
   // The model gets words it can relay; the checker's identity stays with the host's record.
-  const message = decision.outcome === "denied"
+  const message = outcome === "denied"
     ? `The approver denied the ${toolName} call${
       decision.comment ? `: "${decision.comment}".` : "."
     } It did not run.`
-    : decision.outcome === "expired"
+    : outcome === "expired"
     ? `Nobody approved the ${toolName} call in time. It did not run.`
     : `The ${toolName} call was withdrawn before approval. It did not run.`;
   return {
     status: "not_approved",
-    // A decision that contradicts itself (approved, but not "approved") fails closed as a denial.
-    outcome: decision.outcome === "approved" ? "denied" : decision.outcome,
+    outcome,
     tool: toolName,
     ...(decision.comment ? { comment: decision.comment } : {}),
     message,

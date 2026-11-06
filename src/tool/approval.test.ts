@@ -5,6 +5,7 @@ import { defineSchema } from "#veryfront/schemas/index.ts";
 import { tool } from "./factory.ts";
 import type { ToolApprovalDecision, ToolApprovalRequest } from "./approval.ts";
 import { createInputRequestApprovalGate } from "./approval-input-request-gate.ts";
+import { createToolsFromHostDefinitions } from "./host-tools.ts";
 
 /** What the gate sends: a plain body string and header record. */
 type SentInit = { body?: string; method?: string; headers?: Record<string, string> };
@@ -120,6 +121,41 @@ describe("tool approval", () => {
     assertEquals(asked, ["transfer-funds"]);
   });
 
+  it("asks under the name a host materialized an id-less tool with", async () => {
+    const asked: string[] = [];
+    const inferred = tool({
+      description: "Move money",
+      approval: {},
+      inputSchema: defineSchema((v) => v.object({ amount: v.number() }))(),
+      execute: () => ({ ok: true }),
+    });
+    const { transfer } = createToolsFromHostDefinitions({ transfer: inferred });
+    await transfer!.execute({ amount: 1 }, {
+      requestToolApproval: (request) => {
+        asked.push(request.toolName);
+        return Promise.resolve({ approved: true, outcome: "approved" });
+      },
+    });
+    assertEquals(asked, ["transfer"]);
+  });
+
+  it("lets a refusal through the tool's own output validator", async () => {
+    const gated = tool({
+      id: "transfer",
+      description: "Move money",
+      approval: {},
+      inputSchema: defineSchema((v) => v.object({ amount: v.number() }))(),
+      outputSchema: defineSchema((v) => v.object({ ok: v.boolean() }))(),
+      execute: () => ({ ok: true }),
+    });
+    const refusal = await gated.execute({ amount: 1 }, {
+      requestToolApproval: () => Promise.resolve({ approved: false, outcome: "denied" }),
+    });
+    assertEquals(gated.outputSchema!.safeParse(refusal), { success: true, data: refusal });
+    assertEquals(gated.outputSchema!.safeParse({ ok: true }).success, true);
+    assertEquals(gated.outputSchema!.safeParse({ ok: "yes" }).success, false);
+  });
+
   it("declares a refusal as a valid output, keeping an object contract an object", () => {
     const gated = tool({
       id: "transfer",
@@ -165,6 +201,13 @@ describe("tool approval", () => {
       requestToolApproval: () => Promise.resolve({ approved: true, outcome: "expired" }),
     });
     assertEquals(executed, []);
+    const refusal = await transferTool(executed).execute({ amount: 1 }, {
+      requestToolApproval: () => Promise.resolve({ approved: false, outcome: "approved" }),
+    }) as unknown as { outcome: string; message: string };
+    assertEquals([refusal.outcome, refusal.message], [
+      "denied",
+      "The approver denied the transfer call. It did not run.",
+    ]);
   });
 
   it("rejects an approval policy it does not understand", () => {
@@ -340,9 +383,105 @@ describe("createInputRequestApprovalGate", () => {
     assertEquals(decision.outcome, "approved");
     assertEquals(urls, [
       "http://api.test/runs/run-1/input-requests",
-      "http://api.test/runs/run-1/input-requests?status=open&limit=100",
+      "http://api.test/runs/run-1/input-requests?limit=100",
       "http://api.test/input-requests/ir-1",
     ]);
+  });
+
+  it("returns the decision of an earlier request that was answered before the retry", async () => {
+    const urls: string[] = [];
+    const replies = [
+      new Response(JSON.stringify({ detail: "conflict" }), { status: 409 }),
+      new Response(JSON.stringify({
+        data: [],
+        page_info: { next: "page 2" },
+      })),
+      new Response(JSON.stringify({
+        data: [{
+          input_request_id: "ir-1",
+          tool_call_id: "call-1",
+          tool_call: { name: "transfer", arguments: { amount: 9 } },
+          status: "submitted",
+          response: { values: { decision: "approve" } },
+        }],
+      })),
+    ];
+    const gate = createInputRequestApprovalGate({
+      apiUrl: "http://api.test",
+      authToken: "maker-token",
+      runId: "run-1",
+      pollIntervalMs: 1,
+      fetch: (input) => {
+        urls.push(String(input));
+        return Promise.resolve(replies.shift()!);
+      },
+    });
+    const decision = await gate({
+      toolName: "transfer",
+      toolCallId: "call-1",
+      input: { amount: 9 },
+      policy: {},
+    });
+    assertEquals(decision.outcome, "approved");
+    assertEquals(
+      urls.at(-1),
+      "http://api.test/runs/run-1/input-requests?limit=100&cursor=page%202",
+    );
+  });
+
+  it("keeps polling through transient failures", async () => {
+    const replies: Array<() => Promise<Response>> = [
+      () =>
+        Promise.resolve(new Response(JSON.stringify({ input_request_id: "ir-1", status: "open" }))),
+      () => Promise.resolve(new Response("{}", { status: 503 })),
+      () => Promise.reject(new TypeError("connection reset")),
+      () =>
+        Promise.resolve(
+          new Response(JSON.stringify({
+            input_request_id: "ir-1",
+            status: "submitted",
+            response: { values: { decision: "approve" } },
+          })),
+        ),
+    ];
+    const gate = createInputRequestApprovalGate({
+      apiUrl: "http://api.test",
+      authToken: "maker-token",
+      runId: "run-1",
+      pollIntervalMs: 1,
+      fetch: () => replies.shift()!(),
+    });
+    const decision = await gate({ toolName: "transfer", input: {}, policy: {} });
+    assertEquals(decision.outcome, "approved");
+  });
+
+  it("stops waiting as expired when polls time out past the request's expiry", async () => {
+    let created = false;
+    const gate = createInputRequestApprovalGate({
+      apiUrl: "http://api.test",
+      authToken: "maker-token",
+      runId: "run-1",
+      pollIntervalMs: 1,
+      requestTimeoutMs: 5,
+      fetch: (_input, init) => {
+        if (!created) {
+          created = true;
+          return Promise.resolve(
+            new Response(JSON.stringify({
+              input_request_id: "ir-1",
+              status: "open",
+              expires_at: new Date(Date.now() - 120_000).toISOString(),
+            })),
+          );
+        }
+        // A server that accepts the connection and never answers.
+        return new Promise((_resolve, reject) =>
+          init?.signal?.addEventListener("abort", () => reject(init.signal!.reason))
+        );
+      },
+    });
+    const decision = await gate({ toolName: "transfer", input: {}, policy: {} });
+    assertEquals(decision, { approved: false, outcome: "expired", approvalId: "ir-1" });
   });
 
   it("never adopts an earlier request that asked about other arguments", async () => {
@@ -371,19 +510,21 @@ describe("createInputRequestApprovalGate", () => {
     );
   });
 
-  it("rejects a polling interval that would poll back to back", () => {
-    for (const pollIntervalMs of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
-      assertThrows(
-        () =>
-          createInputRequestApprovalGate({
-            apiUrl: "http://api.test",
-            authToken: "maker-token",
-            runId: "run-1",
-            pollIntervalMs,
-          }),
-        Error,
-        "pollIntervalMs",
-      );
+  it("rejects a polling interval or timeout that would not wait", () => {
+    for (const ms of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      for (const name of ["pollIntervalMs", "requestTimeoutMs"] as const) {
+        assertThrows(
+          () =>
+            createInputRequestApprovalGate({
+              apiUrl: "http://api.test",
+              authToken: "maker-token",
+              runId: "run-1",
+              [name]: ms,
+            }),
+          Error,
+          name,
+        );
+      }
     }
   });
 });
