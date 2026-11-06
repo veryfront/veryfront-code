@@ -71,7 +71,8 @@ export function withHostedChildRerunnableFileWriteFallbacks(input: {
       async execute(this: unknown, toolInput: unknown, execOptions?: ToolExecutionContext) {
         const normalizedToolInput = toChildRunToolInputRecord(toolInput);
         const result = await apply(createFileExecute, this, [toolInput, execOptions]);
-        if (!isHostedChildCreateFileAlreadyExistsResult(result)) {
+        // A refused create never writes, whatever the checker's note says.
+        if (isApprovalRefusal(result) || !isHostedChildCreateFileAlreadyExistsResult(result)) {
           return result;
         }
 
@@ -102,7 +103,10 @@ export function withHostedChildRerunnableFileWriteFallbacks(input: {
             path,
             content,
           },
-          execOptions,
+          // Its own call id, so a gated update asks for its own approval, not the create's.
+          execOptions?.toolCallId
+            ? { ...execOptions, toolCallId: `${execOptions.toolCallId}:${updateToolName}` }
+            : execOptions,
         ]);
       },
     }),
@@ -168,6 +172,10 @@ export function normalizeHostedChildArtifactPath(path: string): string | null {
   }
 
   return normalizedPath;
+}
+
+function isApprovalRefusal(result: unknown): boolean {
+  return isRecord(result) && result.status === "not_approved";
 }
 
 function isHostedChildCreateFileAlreadyExistsResultAtDepth(

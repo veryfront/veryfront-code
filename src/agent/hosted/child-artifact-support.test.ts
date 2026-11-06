@@ -202,3 +202,58 @@ Deno.test("canonical child file writes report artifact paths", () => {
     );
   }
 });
+
+Deno.test("withHostedChildRerunnableFileWriteFallbacks never falls back after an approval refusal", async () => {
+  const updates: unknown[] = [];
+  const refusal = {
+    status: "not_approved",
+    outcome: "denied",
+    tool: "create_file",
+    comment: "file already exists, leave it",
+    message: 'The call to "create_file" was denied: file already exists, leave it',
+  };
+  const tools = withHostedChildRerunnableFileWriteFallbacks({
+    tools: {
+      create_file: { execute: () => refusal },
+      update_file: { execute: (input) => updates.push(input) },
+    },
+  });
+
+  const result = await tools.create_file?.execute?.({
+    project_reference: "project-1",
+    path: "/plans/report.md",
+    content: "# Report",
+  });
+
+  assertEquals(result, refusal);
+  assertEquals(updates, []);
+});
+
+Deno.test("withHostedChildRerunnableFileWriteFallbacks gives the fallback update its own call id", async () => {
+  const callIds: Array<string | undefined> = [];
+  const tools = withHostedChildRerunnableFileWriteFallbacks({
+    tools: {
+      create_file: {
+        execute: (_input, context) => {
+          callIds.push(context?.toolCallId);
+          return { isError: true, message: "File already exists" };
+        },
+      },
+      update_file: {
+        execute: (_input, context) => {
+          callIds.push(context?.toolCallId);
+          return { success: true };
+        },
+      },
+    },
+  });
+
+  await tools.create_file?.execute?.(
+    { project_reference: "project-1", path: "/plans/report.md", content: "# Report" },
+    { toolCallId: "call-1" },
+  );
+
+  assertEquals(callIds[0], "call-1");
+  assertEquals(typeof callIds[1], "string");
+  assertEquals(callIds[1] === "call-1", false);
+});

@@ -3,6 +3,7 @@
  * on its run that someone other than the run's starter must answer, and the call waits for it.
  */
 import { INVALID_ARGUMENT } from "#veryfront/errors";
+import { privateJsonParse, privateJsonStringify } from "#veryfront/security/private-json.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
 import { agentLogger } from "#veryfront/utils/logger/index.ts";
 import type { ToolApprovalDecision, ToolApprovalGate } from "./approval.ts";
@@ -66,6 +67,16 @@ function withinWindow(item: InputRequestResource, windowMs: number): boolean {
     windowMs + EXPIRY_TOLERANCE_MS;
 }
 
+// Captured before project code runs: what the checker sees and what recovery compares must be what runs.
+const nativeFetch = fetch;
+const responseText = Response.prototype.text;
+const apply = Reflect.apply;
+const isArray = Array.isArray;
+const objectKeys = Object.keys;
+const arrayMap = Array.prototype.map;
+const arraySort = Array.prototype.sort;
+const arrayJoin = Array.prototype.join;
+
 const DECISION_FIELDS = [
   {
     name: "decision",
@@ -84,7 +95,7 @@ const DECISION_FIELDS = [
 export function createInputRequestApprovalGate(
   options: InputRequestApprovalGateOptions,
 ): ToolApprovalGate {
-  const doFetch = options.fetch ?? fetch;
+  const doFetch = options.fetch ?? nativeFetch;
   let base = options.apiUrl;
   while (base.endsWith("/")) base = base.slice(0, -1);
   const pollIntervalMs = positiveMs(
@@ -109,7 +120,12 @@ export function createInputRequestApprovalGate(
         ...init.headers,
       },
     });
-    return { response, body: await response.json().catch(() => ({})) as unknown };
+    const text = await (apply(responseText, response, []) as Promise<string>).catch(() => "");
+    let body: unknown = {};
+    try {
+      body = privateJsonParse(text);
+    } catch { /* A body that is not JSON reads as empty. */ }
+    return { response, body };
   };
   const failure = (response: Response, body: unknown) =>
     INVALID_ARGUMENT.create({
@@ -212,7 +228,7 @@ export function createInputRequestApprovalGate(
         "Idempotency-Key": `tool-approval:${callHash}`,
       },
       signal,
-      body: JSON.stringify({
+      body: privateJsonStringify({
         title: `Approve ${request.toolName}`,
         requested_responder_type: "human",
         tool_call_id: toolCallId,
@@ -317,17 +333,20 @@ function sameRules(stored: ResponderRules | null | undefined, wanted: ResponderR
 
 /** JSON with object keys sorted, so arguments compare equal whatever order storage returns them in. */
 function canonicalJson(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (isArray(value)) {
+    return `[${
+      apply(arrayJoin, apply(arrayMap, value, [(item: unknown) => canonicalJson(item)]), [","])
+    }]`;
+  }
   if (value !== null && typeof value === "object") {
     const record = value as Record<string, unknown>;
-    return `{${
-      Object.keys(record).sort((left, right) => left.localeCompare(right)).map((key) =>
-        `${JSON.stringify(key)}:${canonicalJson(record[key])}`
-      )
-        .join(",")
-    }}`;
+    const keys = apply(arraySort, objectKeys(record), []) as string[];
+    const entries = apply(arrayMap, keys, [
+      (key: string) => `${privateJsonStringify(key)}:${canonicalJson(record[key])}`,
+    ]);
+    return `{${apply(arrayJoin, entries, [","])}}`;
   }
-  return JSON.stringify(value);
+  return privateJsonStringify(value) ?? "undefined";
 }
 
 function wait(ms: number, signal?: AbortSignal): Promise<void> {
