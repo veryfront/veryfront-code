@@ -1,6 +1,8 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { mkdir, readFile, realpath, writeFile } from "node:fs/promises";
+import { pathToFileURL } from "node:url";
 import { withTempDir } from "#veryfront/testing/deno-compat.ts";
 import * as esbuild from "veryfront/extensions/bundler";
 import type { Plugin } from "veryfront/extensions/bundler";
@@ -13,8 +15,8 @@ import {
 async function writeFiles(root: string, files: Record<string, string>): Promise<void> {
   for (const [relative, contents] of Object.entries(files)) {
     const path = `${root}/${relative}`;
-    await Deno.mkdir(path.slice(0, path.lastIndexOf("/")), { recursive: true });
-    await Deno.writeTextFile(path, contents);
+    await mkdir(path.slice(0, path.lastIndexOf("/")), { recursive: true });
+    await writeFile(path, contents);
   }
 }
 
@@ -22,7 +24,7 @@ async function writeFiles(root: string, files: Record<string, string>): Promise<
 async function packageTypeOf(filePath: string, root: string): Promise<string | undefined> {
   for (let dir = filePath.slice(0, filePath.lastIndexOf("/")); dir.startsWith(root);) {
     try {
-      return JSON.parse(await Deno.readTextFile(`${dir}/package.json`)).type;
+      return JSON.parse(await readFile(`${dir}/package.json`, "utf8")).type;
     } catch {
       dir = dir.slice(0, dir.lastIndexOf("/"));
     }
@@ -37,7 +39,7 @@ function dependencyFilePlugin(projectDir: string): Plugin {
     name: "test-dependency-files",
     setup(build) {
       build.onLoad({ filter: /node_modules[\\/].*\.[cm]?js$/ }, async (args) => {
-        const contents = await Deno.readTextFile(args.path);
+        const contents = await readFile(args.path, "utf8");
         return {
           contents: await prepareDependencyFile({
             build,
@@ -86,8 +88,8 @@ async function bundleAndImport(
       projectDir,
     );
     const file = `${projectDir}/handler.mjs`;
-    await Deno.writeTextFile(file, code);
-    return await import(`file://${file}`);
+    await writeFile(file, code);
+    return await import(pathToFileURL(file).href);
   } finally {
     await esbuild.stop();
   }
@@ -95,7 +97,7 @@ async function bundleAndImport(
 
 /** Runs a test in a fresh project directory, with symlinks in its path followed. */
 function inProject(fn: (projectDir: string) => Promise<void>): Promise<void> {
-  return withTempDir((dir) => fn(Deno.realPathSync(dir)), { prefix: "vf-cjs-bundle-" });
+  return withTempDir(async (dir) => fn(await realpath(dir)), { prefix: "vf-cjs-bundle-" });
 }
 
 // The compiled binary bundles a route's CommonJS dependencies (inbox#4177).
