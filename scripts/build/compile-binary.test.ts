@@ -476,6 +476,8 @@ it("compiled proxy smoke covers cache and observability providers", async () => 
       "run_smoke sentry",
       "VERYFRONT_ERROR_REPORTER=sentry",
       "SENTRY_DSN=https://public@example.com/1",
+      // Five SIGTERMed probes must not each wait out the 10s admission grace.
+      "SHUTDOWN_ADMISSION_GRACE_MS=0",
     ]
   ) {
     assertEquals(

@@ -4,6 +4,15 @@ import { continueProxyShutdownPromise, delayProxyShutdown } from "./shutdown-int
 import { isControlPlaneRunStreamPost } from "./retry.ts";
 import { MAX_PROXY_TIMER_DELAY_MS } from "./timing.ts";
 
+// Captured before extensions activate: shutdown timing must not consult a
+// replaced Performance.prototype.now.
+const apply = Reflect.apply;
+const monotonicClock = performance;
+const monotonicNowMethod = performance.now;
+function monotonicNow(): number {
+  return apply(monotonicNowMethod, monotonicClock, []);
+}
+
 export interface TrackedProxyRequest {
   requestId: string;
   method: string;
@@ -19,7 +28,7 @@ export class ProxyRequestDrainTracker {
       requestId,
       method,
       path,
-      startTime: performance.now(),
+      startTime: monotonicNow(),
     });
   }
 
@@ -78,10 +87,10 @@ export class ProxyRequestDrainTracker {
     }
     if (this.inFlight.size === 0) return true;
 
-    const deadline = performance.now() + timeoutMs;
+    const deadline = monotonicNow() + timeoutMs;
 
     while (this.inFlight.size > 0) {
-      const remainingMs = deadline - performance.now();
+      const remainingMs = deadline - monotonicNow();
       if (remainingMs <= 0) return false;
 
       await delayProxyShutdown(Math.min(pollIntervalMs, remainingMs));
@@ -152,7 +161,7 @@ export class ProxyDrainAdmission {
 
   constructor(
     private readonly windowMs: number,
-    private readonly now: () => number = () => performance.now(),
+    private readonly now: () => number = () => monotonicNow(),
   ) {
     if (!Number.isSafeInteger(windowMs) || windowMs < 0) {
       throw new RangeError("Proxy drain admission window must be a non-negative integer");

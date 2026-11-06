@@ -206,6 +206,33 @@ describe("proxy shutdown lifecycle", () => {
     assertEquals(await wait, undefined);
   });
 
+  it("starts and waits out the admission grace on the clock captured before extensions load", async () => {
+    const admission = new ProxyDrainAdmission(1);
+    const nowDescriptor = Object.getOwnPropertyDescriptor(Performance.prototype, "now")!;
+    let wait: Promise<void> | undefined;
+    let admitsStream: boolean | undefined;
+    try {
+      Object.defineProperty(Performance.prototype, "now", {
+        ...nowDescriptor,
+        value: () => {
+          throw new Error("poisoned performance.now");
+        },
+      });
+      admission.begin("SIGTERM");
+      admitsStream = admission.admits(
+        new Request("http://proxy.test/events", { headers: { accept: "text/event-stream" } }),
+        "/events",
+      );
+      wait = admission.waitForWindow();
+    } finally {
+      Object.defineProperty(Performance.prototype, "now", nowDescriptor);
+    }
+
+    assertEquals(admitsStream, false);
+    assertEquals(await wait, undefined);
+    assertEquals(admission.getGrantedMs(), 1);
+  });
+
   it("rejects malformed shutdown step configurations", async () => {
     const ran: string[] = [];
     const record = (name: string) => ({
