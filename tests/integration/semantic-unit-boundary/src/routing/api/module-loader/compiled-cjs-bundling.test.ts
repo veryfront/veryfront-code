@@ -11,6 +11,7 @@ import {
   createCompiledBuiltinPlugin,
   createDependencyFilePredicate,
   createDependencyResolvePlugin,
+  createImportExternalsPlugin,
   PackageTypeLookup,
   prepareDependencyFile,
   prependRuntimeRequire,
@@ -60,8 +61,9 @@ function dependencyFilePlugin(
   return {
     name: "test-dependency-files",
     setup(build) {
-      build.onLoad({ filter: /\.[cm]?js$/ }, async (args) => {
-        if (!isDependencyFile(args.path)) return undefined;
+      // Every dependency file but JSON, as the route build's boundary loads them.
+      build.onLoad({ filter: /.*/ }, async (args) => {
+        if (!isDependencyFile(args.path) || args.path.endsWith(".json")) return undefined;
         const contents = await readFile(args.path, "utf8");
         return {
           contents: await prepareDependencyFile({
@@ -72,7 +74,6 @@ function dependencyFilePlugin(
             packageType: await packageTypes.of(args.path.slice(0, args.path.lastIndexOf("/"))),
             isDependencyFile,
             isFile,
-            rewriteImportMeta: (source) => Promise.resolve(source),
           }),
           loader: "js",
         };
@@ -85,8 +86,8 @@ function dependencyFilePlugin(
 async function bundleAndImport(
   projectDir: string,
   route: string,
+  importExternals: string[] = [],
 ): Promise<Record<string, unknown>> {
-  const requiredBuiltins = new Set<string>();
   const isDependencyFile = await createDependencyFilePredicate(projectDir, hostFs);
   try {
     const result = await esbuild.build({
@@ -104,16 +105,13 @@ async function bundleAndImport(
         sourcefile: `${projectDir}/route.ts`,
       },
       plugins: [
-        createCompiledBuiltinPlugin(requiredBuiltins),
+        createCompiledBuiltinPlugin(),
         createDependencyResolvePlugin(isDependencyFile, isFile),
+        createImportExternalsPlugin(importExternals),
         dependencyFilePlugin(projectDir, isDependencyFile),
       ],
     });
-    const code = prependRuntimeRequire(
-      result.outputFiles?.[0]?.text ?? "",
-      requiredBuiltins,
-      projectDir,
-    );
+    const code = prependRuntimeRequire(result.outputFiles?.[0]?.text ?? "", projectDir);
     const file = `${projectDir}/handler.mjs`;
     await writeFile(file, code);
     return await import(pathToFileURL(file).href);
@@ -192,6 +190,14 @@ describe("compiled-binary route bundling of CommonJS dependencies", () => {
           "var prefixOnly;",
           'try { require.resolve("test"); } catch (error) { prefixOnly = error.code; }',
           "exports.prefixOnly = prefixOnly;",
+          // A computed built-in id is never seen by the bundler.
+          'var fsId = ["f", "s"].join("");',
+          "exports.computedBuiltin = typeof require(fsId).readFileSync;",
+          'exports.computedPrefixed = typeof require("node:" + "events");',
+          "exports.computedResolve = require.resolve(fsId);",
+          "var bareTest;",
+          'try { require(["te", "st"].join("")); } catch (error) { bareTest = error.code; }',
+          "exports.bareTest = bareTest;",
         ].join("\n"),
       });
       const mod = await bundleAndImport(
@@ -212,6 +218,10 @@ describe("compiled-binary route bundling of CommonJS dependencies", () => {
           'Cannot find module "a path outside this project or missing"',
         ],
         prefixOnly: "MODULE_NOT_FOUND",
+        computedBuiltin: "function",
+        computedPrefixed: "function",
+        computedResolve: "fs",
+        bareTest: "MODULE_NOT_FOUND",
       });
     });
   });
@@ -308,14 +318,22 @@ describe("compiled-binary route bundling of CommonJS dependencies", () => {
         "node_modules/modonly/package.json": JSON.stringify({ name: "modonly", module: "esm.js" }),
         "node_modules/modonly/index.js": 'module.exports = "index";',
         "node_modules/modonly/esm.js": 'export default "module";',
+        // An extensionless main and a default index pick .js over .ts too.
+        "node_modules/mainpkg/package.json": JSON.stringify({ name: "mainpkg", main: "impl" }),
+        "node_modules/mainpkg/impl.js": 'module.exports = "js";',
+        "node_modules/mainpkg/impl.ts": 'export default "ts";',
+        "node_modules/idxpkg/package.json": JSON.stringify({ name: "idxpkg" }),
+        "node_modules/idxpkg/index.js": 'module.exports = "js";',
+        "node_modules/idxpkg/index.ts": 'export default "ts";',
       });
       await symlink("../packages/wsorder", `${projectDir}/node_modules/wsorder`);
       const mod = await bundleAndImport(
         projectDir,
         'import order from "order";\nimport modonly from "modonly";\nimport wsorder from "wsorder";\n' +
-          "export const picked = [order.impl, order.data, modonly, wsorder];\n",
+          'import mainpkg from "mainpkg";\nimport idxpkg from "idxpkg";\n' +
+          "export const picked = [order.impl, order.data, modonly, wsorder, mainpkg, idxpkg];\n",
       );
-      assertEquals(mod.picked, ["js", "json", "index", "js"]);
+      assertEquals(mod.picked, ["js", "json", "index", "js", "js", "js"]);
     });
   });
 
@@ -332,6 +350,104 @@ describe("compiled-binary route bundling of CommonJS dependencies", () => {
     });
   });
 
+  it("prepares an extensionless CommonJS entry", async () => {
+    await inProject(async (projectDir) => {
+      await writeFiles(projectDir, {
+        "node_modules/bare/package.json": JSON.stringify({ name: "bare", main: "entry" }),
+        "node_modules/bare/entry": [
+          "exports.dir = __dirname;",
+          "exports.file = __filename;",
+          'exports.self = require.resolve("./entry");',
+        ].join("\n"),
+      });
+      const mod = await bundleAndImport(projectDir, 'import bare from "bare";\nexport { bare };\n');
+      const entry = `${projectDir}/node_modules/bare/entry`;
+      assertEquals(mod.bare, { dir: `${projectDir}/node_modules/bare`, file: entry, self: entry });
+    });
+  });
+
+  it("keeps import.meta locations of a dependency module its own", async () => {
+    await inProject(async (projectDir) => {
+      await writeFiles(projectDir, {
+        "node_modules/meta/package.json": JSON.stringify({
+          name: "meta",
+          type: "module",
+          main: "index.js",
+        }),
+        "node_modules/meta/index.js": [
+          "const meta = import.meta;",
+          "const resolve = import.meta.resolve;",
+          'const name = ["./data", "json"].join(".");',
+          "export const url = import.meta.url;",
+          "export const dir = meta.dirname;",
+          "export const detached = resolve(name);",
+          'export const builtin = import.meta.resolve("fs");',
+          'export const computedBuiltin = resolve(["node", "path"].join(":"));',
+          'export const sibling = import.meta.resolve("other");',
+          "let bare;",
+          'try { resolve(["oth", "er"].join("")); } catch (error) { bare = error.code; }',
+          "export const computedBare = bare;",
+        ].join("\n"),
+        "node_modules/other/package.json": JSON.stringify({ name: "other", main: "main.js" }),
+        "node_modules/other/main.js": "module.exports = 1;",
+      });
+      const mod = await bundleAndImport(
+        projectDir,
+        'export * from "meta";\n',
+      );
+      const base = pathToFileURL(`${projectDir}/node_modules`).href;
+      assertEquals({ ...mod }, {
+        url: `${base}/meta/index.js`,
+        dir: `${projectDir}/node_modules/meta`,
+        detached: `${base}/meta/data.json`,
+        builtin: "node:fs",
+        computedBuiltin: "node:path",
+        sibling: `${base}/other/main.js`,
+        computedBare: "ERR_MODULE_NOT_FOUND",
+      });
+    });
+  });
+
+  it("bundles a package whose name ends in .node", async () => {
+    await inProject(async (projectDir) => {
+      await writeFiles(projectDir, {
+        "node_modules/client.node/package.json": JSON.stringify({
+          name: "client.node",
+          main: "index.js",
+        }),
+        "node_modules/client.node/index.js": 'module.exports = "client";',
+      });
+      const mod = await bundleAndImport(
+        projectDir,
+        'import client from "client.node";\nexport { client };\n',
+      );
+      assertEquals(mod.client, "client");
+    });
+  });
+
+  it("bundles the CommonJS entry of a package it keeps external for imports", async () => {
+    await inProject(async (projectDir) => {
+      await writeFiles(projectDir, {
+        "node_modules/dual/package.json": JSON.stringify({
+          name: "dual",
+          exports: { ".": { import: "./index.mjs", require: "./index.cjs" } },
+        }),
+        "node_modules/dual/index.mjs": 'export default "esm";',
+        "node_modules/dual/index.cjs": 'module.exports = "cjs";',
+        "node_modules/user/package.json": JSON.stringify({ name: "user", main: "index.js" }),
+        "node_modules/user/index.js": 'module.exports = require("dual");',
+      });
+      const mod = await bundleAndImport(
+        projectDir,
+        'import user from "user";\nexport { user };\nexport const later = () => import("dual");\n',
+        ["dual"],
+      );
+      assertEquals(mod.user, "cjs");
+      const code = await readFile(`${projectDir}/handler.mjs`, "utf8");
+      assert(code.includes('import("dual")'), code);
+    });
+  });
+
   it("rejects a native addon at build time", async () => {
     await inProject(async (projectDir) => {
       await writeFiles(projectDir, {
@@ -343,7 +459,9 @@ describe("compiled-binary route bundling of CommonJS dependencies", () => {
         bundleAndImport(projectDir, 'import native from "native";\nexport { native };\n')
       );
       assert(
-        String((error as Error).message).includes("Native addons are not supported"),
+        String((error as Error).message).includes(
+          'Native addons are not supported in API routes: "binding.node"',
+        ),
         String(error),
       );
     });

@@ -53,6 +53,7 @@ import {
   createCompiledBuiltinPlugin,
   createDependencyFilePredicate,
   createDependencyResolvePlugin,
+  createImportExternalsPlugin,
   type IsFile,
   PackageTypeLookup,
   prepareDependencyFile,
@@ -1961,8 +1962,6 @@ function createProjectBoundaryPlugin(
                 packageType: await packageTypes.of(pathHelper.dirname(source.logicalPath)),
                 isDependencyFile,
                 isFile: hostIsFile,
-                rewriteImportMeta: (contents, moduleUrl) =>
-                  rewriteBundledImportMetaUrl(contents, moduleUrl, null),
               }),
               loader: getLoaderForFile(source.logicalPath),
               resolveDir: pathHelper.dirname(source.logicalPath),
@@ -2177,14 +2176,12 @@ function buildTranspiledModuleSource(
       // When esbuild bundles CJS into ESM output, these become __require() shims that
       // fail at runtime. Inject a createRequire-based shim so require() works in ESM.
       // Use projectDir as the resolve base so require() finds the project's node_modules.
-      // The compiled binary binds `require` after the build instead, from the
-      // built-ins the bundle actually requires.
+      // The compiled binary binds `require` after the build instead.
       const safeProjectDir = JSON.stringify(projectDir + "/package.json");
       const requireShim = compiled ? "" : [
         'import { createRequire as __vf_createRequire } from "node:module";',
         `var require = __vf_createRequire(${safeProjectDir});`,
       ].join("\n");
-      const requiredBuiltins = new Set<string>();
       const isDependencyFile = compiled
         ? await createDependencyFilePredicate(projectDir, {
           realPath,
@@ -2233,7 +2230,9 @@ function buildTranspiledModuleSource(
           "veryfront",
           "veryfront/*",
           "@opentelemetry/*",
-          ...userExternals,
+          // The compiled binary keeps them external through a plugin, which
+          // can tell an import from a require().
+          ...(compiled ? [] : userExternals),
         ],
         stdin: {
           contents: await rewriteBundledImportMetaUrl(source, routeSourceUrl, denoImports),
@@ -2244,7 +2243,7 @@ function buildTranspiledModuleSource(
         plugins: [
           ...(compiled
             ? [
-              createCompiledBuiltinPlugin(requiredBuiltins),
+              createCompiledBuiltinPlugin(),
               createDependencyResolvePlugin(isDependencyFile, hostIsFile),
             ]
             : []),
@@ -2275,6 +2274,7 @@ function buildTranspiledModuleSource(
             workerImportMap,
             isDependencyFile,
           ),
+          ...(compiled ? [createImportExternalsPlugin(runtimeDeps.keys())] : []),
           createHTTPPlugin({
             allowedHosts,
             projectDir,
@@ -2307,7 +2307,7 @@ function buildTranspiledModuleSource(
       logger.debug(`built handler ${projectModuleLabel(resolvedPath, projectDir)}`);
       const output = result.outputFiles?.[0]?.text ?? "export {}";
       const js = compiled
-        ? prependRuntimeRequire(output, requiredBuiltins, await canonicalProjectRoot(projectDir))
+        ? prependRuntimeRequire(output, await canonicalProjectRoot(projectDir))
         : output;
       logger.debug(`transpiled size ${js.length} bytes`);
 

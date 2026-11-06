@@ -7,27 +7,44 @@ import {
   createCompiledBuiltinPlugin,
   createDependencyFilePredicate,
   createDependencyResolvePlugin,
+  createImportExternalsPlugin,
+  createImportMetaResolve,
+  createRuntimeRequire,
   nodePreferredFile,
   nodeRelativeFile,
   PackageTypeLookup,
   prepareDependencyFile,
   prependRuntimeRequire,
+  resolveLiteralCalls,
+  type RuntimeRequireHost,
 } from "./compiled-cjs-bundling.ts";
 
 type ResolveHandler = (args: Record<string, unknown>) => unknown;
+type Plugin = { setup(build: PluginBuild): void | Promise<void> };
 
-/** The onResolve handlers a plugin registers, in order. */
-async function resolveHandlers(
-  plugin: { setup(build: PluginBuild): void | Promise<void> },
-): Promise<ResolveHandler[]> {
-  const handlers: ResolveHandler[] = [];
+/** The onResolve or onLoad handlers a plugin registers, in order. */
+async function handlers(plugin: Plugin, hook: "onResolve" | "onLoad"): Promise<ResolveHandler[]> {
+  const registered: ResolveHandler[] = [];
+  const register = (_options: unknown, handler: ResolveHandler) => registered.push(handler);
   const build = {
-    onResolve: (_options: unknown, handler: ResolveHandler) => handlers.push(handler),
-    onLoad: () => {},
+    onResolve: hook === "onResolve" ? register : () => {},
+    onLoad: hook === "onLoad" ? register : () => {},
     onDispose: () => {},
   };
   await plugin.setup(build as unknown as PluginBuild);
-  return handlers;
+  return registered;
+}
+
+const resolveHandlers = (plugin: Plugin) => handlers(plugin, "onResolve");
+
+/** Throws the code of the error `fn` throws, or undefined. */
+function errorCode(fn: () => unknown): unknown {
+  try {
+    fn();
+  } catch (error) {
+    return (error as { code?: unknown }).code;
+  }
+  return undefined;
 }
 
 describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
@@ -175,9 +192,8 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
   });
 
   describe("createCompiledBuiltinPlugin()", () => {
-    it("keeps built-ins external and records the ones required", async () => {
-      const required = new Set<string>();
-      const [builtins, native] = await resolveHandlers(createCompiledBuiltinPlugin(required));
+    it("keeps built-ins external, with a required id unchanged", async () => {
+      const [builtins] = await resolveHandlers(createCompiledBuiltinPlugin());
       assertEquals(builtins!({ path: "fs", kind: "require-call" }), {
         path: "fs",
         external: true,
@@ -187,9 +203,13 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
         external: true,
       });
       assertEquals(builtins!({ path: "left-pad", kind: "require-call" }), undefined);
-      assertEquals([...required], ["fs"]);
-      assertEquals(native!({ path: "./build/addon.node" }), {
-        errors: [{ text: 'Native addons are not supported in API routes: "./build/addon.node"' }],
+    });
+
+    it("rejects a native addon once it is loaded, naming only the file", async () => {
+      assertEquals(await resolveHandlers(createCompiledBuiltinPlugin()).then((h) => h.length), 1);
+      const [native] = await handlers(createCompiledBuiltinPlugin(), "onLoad");
+      assertEquals(native!({ path: "/srv/app/node_modules/x/build/addon.node" }), {
+        errors: [{ text: 'Native addons are not supported in API routes: "addon.node"' }],
       });
     });
   });
@@ -212,11 +232,28 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
       assertEquals(await handler!(args("./impl", "/d/pages/api/route.ts")), undefined);
     });
 
-    it("rejects a native addon found by Node's extension order", async () => {
+    it("leaves a native addon found by Node's extension order to the loader", async () => {
       const [handler] = await resolveHandlers(createDependencyResolvePlugin(isDependency, isFile));
-      assertEquals(await handler!(args("./addon")), {
-        errors: [{ text: 'Native addons are not supported in API routes: "./addon"' }],
+      assertEquals(await handler!(args("./addon")), { path: "/d/node_modules/p/addon.node" });
+    });
+  });
+
+  describe("createImportExternalsPlugin()", () => {
+    it("keeps imports of the packages external and leaves require() to the bundler", async () => {
+      const [handler] = await resolveHandlers(createImportExternalsPlugin(["dual", "@s/p.js"]));
+      for (const kind of ["import-statement", "dynamic-import"]) {
+        assertEquals(handler!({ path: "dual/sub", kind }), { path: "dual/sub", external: true });
+      }
+      assertEquals(handler!({ path: "@s/p.js", kind: "import-statement" }), {
+        path: "@s/p.js",
+        external: true,
       });
+      assertEquals(handler!({ path: "dual", kind: "require-call" }), undefined);
+      assertEquals(handler!({ path: "dual", kind: "require-resolve" }), undefined);
+    });
+
+    it("registers nothing without packages", async () => {
+      assertEquals(await resolveHandlers(createImportExternalsPlugin([])), []);
     });
   });
 
@@ -229,25 +266,11 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
       packageType,
       isDependencyFile: () => true,
       isFile: () => Promise.resolve(false),
-      rewriteImportMeta: (source: string, url: string) => Promise.resolve(`${url}|${source}`),
     });
 
     it("returns a file that reads no CommonJS names and no import.meta unchanged", async () => {
       const contents = 'module.exports = require("./other");';
       assertEquals(await prepareDependencyFile(input(contents, "/d/a.js")), contents);
-    });
-
-    it("points import.meta at the file's own URL in an ESM file", async () => {
-      assertEquals(
-        await prepareDependencyFile(input("export const u = import.meta.url;", "/d/a.mjs")),
-        "file:///d/a.mjs|export const u = import.meta.url;",
-      );
-      assertEquals(
-        await prepareDependencyFile(
-          input("const d = __dirname; import.meta.url;", "/d/b.js", "module"),
-        ),
-        "file:///d/b.js|const d = __dirname; import.meta.url;",
-      );
     });
 
     it("leaves files that are neither JavaScript nor CommonJS alone", async () => {
@@ -256,49 +279,141 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
     });
   });
 
-  describe("prependRuntimeRequire()", () => {
-    it("binds required built-ins and fails closed for anything else", async () => {
-      const code = prependRuntimeRequire(
-        "export const load = (id) => require(id);\nexport const resolve = (id) => require.resolve(id);\n",
-        ["node:path"],
-        "/app",
+  describe("resolveLiteralCalls()", () => {
+    it("replaces resolved literal calls once per specifier and keeps the rest", async () => {
+      const asked: string[] = [];
+      const code = await resolveLiteralCalls(
+        `M("./a"); M('./a'); M("missing"); M(name); const r = M; M("x\\"y");`,
+        "M",
+        (specifier) => {
+          asked.push(specifier);
+          return Promise.resolve(specifier === "./a" ? "/d/a.js" : null);
+        },
       );
-      const mod = await import(`data:text/javascript,${encodeURIComponent(code)}`);
-      assertEquals(typeof mod.load("node:path").join, "function");
-      assertEquals(mod.resolve("fs"), "fs");
-      assertEquals(mod.resolve("node:test"), "node:test");
-      for (const id of ["left-pad", "./relative.json", 42]) {
-        let code: unknown;
-        try {
-          mod.load(id);
-        } catch (error) {
-          code = (error as { code?: unknown }).code;
-        }
-        assertEquals(code, "MODULE_NOT_FOUND", String(id));
+      assertEquals(
+        code,
+        `"/d/a.js"; "/d/a.js"; M("missing"); M(name); const r = M; M("x\\"y");`,
+      );
+      assertEquals(asked, ["./a", "missing"]);
+    });
+  });
+
+  describe("createImportMetaResolve()", () => {
+    const resolve = createImportMetaResolve(
+      "file:///app/node_modules/p/index.js",
+      ["test"],
+      (id) => (id === "fs" || id === "test" ? {} : undefined),
+    );
+
+    it("resolves URLs and relative paths against the module", () => {
+      assertEquals(resolve("./data.json"), "file:///app/node_modules/p/data.json");
+      assertEquals(resolve("../q"), "file:///app/node_modules/q");
+      assertEquals(resolve("/etc/x"), "file:///etc/x");
+      assertEquals(resolve("node:path"), "node:path");
+      assertEquals(resolve("https://example.com/a"), "https://example.com/a");
+    });
+
+    it("gives built-ins their node: id and rejects package names", () => {
+      assertEquals(resolve("fs"), "node:fs");
+      assertEquals(errorCode(() => resolve("test")), "ERR_MODULE_NOT_FOUND");
+      assertEquals(errorCode(() => resolve("left-pad")), "ERR_MODULE_NOT_FOUND");
+    });
+  });
+
+  describe("createRuntimeRequire()", () => {
+    const builtins: Record<string, unknown> = { fs: { kind: "fs" }, "node:fs": { kind: "fs" } };
+    const files: Record<string, string> = {
+      "/app/data.json": '{"a":1}',
+      "/app/link.json": "", // a link to /outside.json
+      "/app/code.js": "",
+    };
+    let reads = 0;
+    const host: RuntimeRequireHost = {
+      // Like Deno's, it knows bare prefix-only names that Node does not.
+      getBuiltinModule: (id) => id === "test" ? { kind: "test" } : builtins[id],
+      realpathSync: (path) => {
+        if (path === "/app/link.json") return "/outside.json";
+        if (!(path in files)) throw new Error("ENOENT");
+        return path;
+      },
+      readFileSync: (path) => {
+        reads++;
+        return files[path]!;
+      },
+      isAbsolute: (path) => path.startsWith("/"),
+      relative: (from, to) =>
+        to.startsWith(from + "/") ? to.slice(from.length + 1) : to === from ? "" : "../" + to,
+      sep: "/",
+    };
+    const require = createRuntimeRequire(host, "/app", ["test"]);
+
+    it("serves any built-in, including a computed id", () => {
+      assertEquals(require("fs"), { kind: "fs" });
+      assertEquals(require("node:" + "fs"), { kind: "fs" });
+      assertEquals(require.resolve("fs"), "fs");
+    });
+
+    it("treats a bare prefix-only name as a package", () => {
+      assertEquals(errorCode(() => require("test")), "MODULE_NOT_FOUND");
+      assertEquals(errorCode(() => require.resolve("test")), "MODULE_NOT_FOUND");
+    });
+
+    it("loads project JSON once and resolves existing project paths", () => {
+      const first = require("/app/data.json");
+      assertEquals(first, { a: 1 });
+      assert(require("/app/data.json") === first);
+      assertEquals(reads, 1);
+      assertEquals(require.resolve("/app/code.js"), "/app/code.js");
+    });
+
+    it("fails closed for packages, other files and paths outside the project", () => {
+      for (const id of ["left-pad", "./data.json", 42, "/app/code.js", "/app/link.json", "/app"]) {
+        assertEquals(errorCode(() => require(id)), "MODULE_NOT_FOUND", String(id));
       }
-      let unresolved: unknown;
-      try {
-        mod.resolve("test");
-      } catch (error) {
-        unresolved = (error as { code?: unknown }).code;
-      }
-      assertEquals(unresolved, "MODULE_NOT_FOUND");
+      assertEquals(errorCode(() => require.resolve("/app/missing.js")), "MODULE_NOT_FOUND");
+    });
+
+    it("names a project path relative to the project and hides any other", () => {
+      assertEquals(
+        (() => {
+          try {
+            require("/app/code.js");
+          } catch (error) {
+            return (error as Error).message;
+          }
+        })(),
+        'Cannot find module "code.js"',
+      );
+      assertEquals(
+        (() => {
+          try {
+            require("/app/link.json");
+          } catch (error) {
+            return (error as Error).message;
+          }
+        })(),
+        'Cannot find module "a path outside this project or missing"',
+      );
+    });
+  });
+
+  describe("prependRuntimeRequire()", () => {
+    it("binds require to the runtime require with the host built-ins", () => {
+      const code = prependRuntimeRequire("export {};\n", "/app");
+      assert(code.includes(createRuntimeRequire.toString()), code);
+      assert(code.includes('import __vf_runtime_process from "node:process";'), code);
+      assert(code.includes('}, "/app", ["test","test/reporters","sqlite","sea"]);'), code);
+      assert(code.endsWith("\nexport {};\n"), code);
     });
 
     it("keeps a hashbang on the first line", () => {
-      const code = prependRuntimeRequire("#!/usr/bin/env node\nexport {};\n", ["path"], "/app");
-      assert(code.startsWith("#!/usr/bin/env node\nimport * as "), code);
+      const code = prependRuntimeRequire("#!/usr/bin/env node\nexport {};\n", "/app");
+      assert(code.startsWith("#!/usr/bin/env node\nimport __vf_runtime_process from "), code);
     });
 
     it("picks helper names the bundle does not already use", () => {
-      const code = prependRuntimeRequire("const __vf_builtin0 = 1;\n", ["path"], "/app");
-      assert(code.includes("import * as __vf_builtin_0 from"), code);
-    });
-
-    it("resolves a prefix-only built-in only with its prefix", () => {
-      const code = prependRuntimeRequire("export {};\n", [], "/app");
-      assert(code.includes('"node:test": 1'), code);
-      assert(!code.includes('"test": 1'), code);
+      const code = prependRuntimeRequire("const __vf_runtime_fs = 1;\n", "/app");
+      assert(code.includes("import * as __vf_runtime___fs from"), code);
     });
   });
 });
