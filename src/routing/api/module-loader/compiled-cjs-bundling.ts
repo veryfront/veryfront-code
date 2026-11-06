@@ -87,18 +87,21 @@ export function commonJSPathPrelude(contents: string, filePath: string): string 
  * so the prologue cannot collide with route code.
  */
 export function prependBuiltinRequire(code: string, requiredBuiltins: Iterable<string>): string {
-  const ids = [...requiredBuiltins].sort();
+  // A fixed order keeps the output byte-identical for the same set of ids.
+  const ids = [...requiredBuiltins].sort((a, b) => a.localeCompare(b, "en"));
   let prefix = "__vf_builtin";
   while (code.includes(prefix)) prefix += "_";
 
-  const lines = ids.map((id, index) =>
-    `import * as ${prefix}${index} from ${JSON.stringify(`node:${builtinModuleName(id)}`)};`
-  );
-  const entries = ids.map((id, index) =>
-    `${JSON.stringify(id)}: ${prefix}${index}.default ?? ${prefix}${index}`
-  );
+  const lines = ids.map((id, index) => {
+    const specifier = JSON.stringify("node:" + builtinModuleName(id));
+    return `import * as ${prefix}${index} from ${specifier};`;
+  });
+  const fields = ["__proto__: null"];
+  for (const [index, id] of ids.entries()) {
+    fields.push(`${JSON.stringify(id)}: ${prefix}${index}.default ?? ${prefix}${index}`);
+  }
   lines.push(
-    `const ${prefix}s = { __proto__: null${entries.map((entry) => `, ${entry}`).join("")} };`,
+    `const ${prefix}s = { ${fields.join(", ")} };`,
     "const require = (id) => {",
     // The table has no prototype, so `in` reads only its own keys and does
     // not depend on built-ins route code could replace.
