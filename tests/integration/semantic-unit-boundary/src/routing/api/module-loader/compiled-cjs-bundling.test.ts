@@ -195,11 +195,14 @@ describe("compiled-binary route bundling of CommonJS dependencies", () => {
         "node_modules/plain/package.json": JSON.stringify({ name: "plain", module: "index.js" }),
         "node_modules/plain/index.js": "export const mode = typeof __filename;\n",
       });
-      const mod = await bundleAndImport(
+      await bundleAndImport(
         projectDir,
         'import { mode as a } from "scoped";\nimport { mode as b } from "plain";\nexport const modes = [a, b];\n',
       );
-      assertEquals(mod.modes, ["undefined", "undefined"]);
+      // Checked in the bundle, not at runtime: Bun defines both names in ESM too.
+      const code = await readFile(`${projectDir}/handler.mjs`, "utf8");
+      assert(!code.includes("function (__dirname, __filename)"), code);
+      assert(code.includes("typeof __dirname") && code.includes("typeof __filename"), code);
     });
   });
 
