@@ -271,6 +271,27 @@ describe("tool approval", () => {
     assertEquals(executed[0] instanceof Date, true);
   });
 
+  it("parses the approved arguments once, so a stateful transform cannot change what runs", async () => {
+    const executed: unknown[] = [];
+    let parses = 0;
+    const gated = tool({
+      id: "transfer",
+      description: "Move money",
+      approval: {},
+      inputSchema: defineSchema((v) =>
+        v.object({ amount: v.number().transform((amount) => amount + parses++) })
+      )(),
+      execute: (input) => {
+        executed.push(input.amount);
+        return { ok: true };
+      },
+    });
+    await gated.execute({ amount: 10 }, {
+      requestToolApproval: () => Promise.resolve({ approved: true, outcome: "approved" }),
+    });
+    assertEquals(executed, [10]);
+  });
+
   it("types a tool from a config that may carry approval as able to refuse", async () => {
     const config: ToolConfig<{ amount: number }, { ok: boolean }> = {
       id: "transfer",
@@ -803,6 +824,35 @@ describe("createInputRequestApprovalGate", () => {
       assertEquals(error instanceof Error, true);
     }
     assertEquals(requests, 0);
+  });
+
+  it("polls at the request's expiry when it comes before the next polling interval", async () => {
+    const gate = createInputRequestApprovalGate({
+      apiUrl: "http://api.test",
+      authToken: "maker-token",
+      runId: "run-1",
+      pollIntervalMs: 10_000,
+      fetch: (_input, init) =>
+        Promise.resolve(
+          new Response(JSON.stringify(
+            (init as SentInit).method === "POST"
+              ? {
+                input_request_id: "ir-1",
+                status: "open",
+                expires_at: new Date(Date.now() + 20).toISOString(),
+              }
+              : { input_request_id: "ir-1", status: "expired" },
+          )),
+        ),
+    });
+    const started = Date.now();
+    const decision = await gate({
+      toolName: "transfer",
+      input: {},
+      policy: { expiresInSeconds: 1 },
+    });
+    assertEquals(decision.outcome, "expired");
+    assertEquals(Date.now() - started < 5_000, true);
   });
 
   it("keeps polling through transient failures", async () => {

@@ -313,27 +313,25 @@ export function tool<TInput = unknown, TOutput = unknown>(
           );
         }
       };
-      const validated = parse(input);
+      if (!approval) return await execute(parse(input), context);
 
-      if (approval) {
-        // One JSON snapshot of the arguments as called is what the checker approves and what runs,
-        // so a caller still holding them cannot change them while the approval is pending. It is
-        // parsed again after approval, so a schema that transforms its input still runs as usual.
-        const snapshot = snapshotBoundedJsonValue(input);
-        if (
-          !snapshot.success || snapshot.value === null || typeof snapshot.value !== "object" ||
-          arrayIsArray(snapshot.value)
-        ) {
-          throw INVALID_ARGUMENT.create({
-            detail: `Tool "${id}" requires approval, so its arguments must be a JSON object`,
-          });
-        }
-        const toolName = typeof this?.id === "string" && this.id.length > 0 ? this.id : id;
-        const args = snapshot.value as Record<string, unknown>;
-        const refusal = await requireToolApproval(toolName, approval, args, context);
-        if (refusal) return refusal;
-        return await execute(parse(args), context);
+      // One JSON snapshot of the arguments as called is what the checker approves, so a caller still
+      // holding them cannot change them while the approval is pending. It is parsed once, before
+      // asking, and that parse is what runs: a stateful transform cannot change the approved call.
+      const snapshot = snapshotBoundedJsonValue(input);
+      if (
+        !snapshot.success || snapshot.value === null || typeof snapshot.value !== "object" ||
+        arrayIsArray(snapshot.value)
+      ) {
+        throw INVALID_ARGUMENT.create({
+          detail: `Tool "${id}" requires approval, so its arguments must be a JSON object`,
+        });
       }
+      const args = snapshot.value as Record<string, unknown>;
+      const validated = parse(args);
+      const toolName = typeof this?.id === "string" && this.id.length > 0 ? this.id : id;
+      const refusal = await requireToolApproval(toolName, approval, args, context);
+      if (refusal) return refusal;
       return await execute(validated, context);
     },
     mcp,

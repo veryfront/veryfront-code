@@ -256,4 +256,7 @@ Deno.test("withHostedChildRerunnableFileWriteFallbacks gives the fallback update
   assertEquals(callIds[0], "call-1");
   assertEquals(typeof callIds[1], "string");
   assertEquals(callIds[1] === "call-1", false);
+  // No direct update call's own id can name the fallback's.
+  assertEquals(callIds[1] === "call-1:update_file", false);
+  assertEquals(callIds[1]!.startsWith("approval-"), true);
 });

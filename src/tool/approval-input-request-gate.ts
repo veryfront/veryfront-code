@@ -287,12 +287,16 @@ export function createInputRequestApprovalGate(
       throw failure(response, body);
     }
     const id = encodeURIComponent(created.input_request_id);
-    const deadline = (created.expires_at ? dateParse(created.expires_at) : expiresAt) +
-      EXPIRY_GRACE_MS;
+    const expiry = created.expires_at ? dateParse(created.expires_at) : expiresAt;
+    const deadline = expiry + EXPIRY_GRACE_MS;
     let current = created;
     try {
       while (current.status === "open") {
-        await wait(pollIntervalMs, signal);
+        // A poll never sleeps past the request's expiry, or past the grace after it, so an expiry
+        // shorter than the polling interval still ends the wait on time.
+        const now = dateNow();
+        const untilDue = now < expiry ? expiry - now : deadline - now;
+        await wait(untilDue > 0 && untilDue < pollIntervalMs ? untilDue : pollIntervalMs, signal);
         const latest = await poll(`/input-requests/${id}`, signal);
         if (latest) {
           current = latest;

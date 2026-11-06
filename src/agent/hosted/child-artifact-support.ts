@@ -3,6 +3,8 @@ import { privateArtifactText } from "../artifacts/private-artifact-text.ts";
 import { somePrivateArray } from "#veryfront/security/private-array.ts";
 import type { ToolExecutionContext } from "#veryfront/tool";
 import { toChildRunToolInputRecord } from "../child-run/execution-support.ts";
+import { computeHash } from "#veryfront/utils/hash-utils.ts";
+import { privateJsonStringify } from "#veryfront/security/private-json.ts";
 
 /** Forwards the receiver a host binds, so a gated tool reads its exposed name from `this.id`. */
 const apply = Reflect.apply;
@@ -103,9 +105,19 @@ export function withHostedChildRerunnableFileWriteFallbacks(input: {
             path,
             content,
           },
-          // Its own call id, so a gated update asks for its own approval, not the create's.
+          // Its own call id, so a gated update asks for its own approval, not the create's. A hash
+          // in the gate's reserved "approval-" namespace, so no host id can name it by accident.
           execOptions?.toolCallId
-            ? { ...execOptions, toolCallId: `${execOptions.toolCallId}:${updateToolName}` }
+            ? {
+              ...execOptions,
+              toolCallId: `approval-${await computeHash(
+                privateJsonStringify([
+                  "create_file_fallback",
+                  execOptions.toolCallId,
+                  updateToolName,
+                ]),
+              )}`,
+            }
             : execOptions,
         ]);
       },
