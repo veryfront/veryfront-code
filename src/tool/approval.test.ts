@@ -76,6 +76,22 @@ describe("tool approval", () => {
     }]);
   });
 
+  it("never runs an approved call whose run was cancelled while it waited", async () => {
+    const executed: unknown[] = [];
+    const controller = new AbortController();
+    await assertRejects(() =>
+      transferTool(executed).execute({ amount: 25000 }, {
+        toolCallId: "call-1",
+        abortSignal: controller.signal,
+        requestToolApproval: () => {
+          controller.abort();
+          return Promise.resolve({ approved: true, outcome: "approved" });
+        },
+      })
+    );
+    assertEquals(executed, []);
+  });
+
   it("returns the refusal and never runs a denied call", async () => {
     const executed: unknown[] = [];
     const result = await transferTool(executed).execute({ amount: 25000 }, {
@@ -159,6 +175,26 @@ describe("tool approval", () => {
       },
     });
     assertEquals(asked, ["transfer"]);
+  });
+
+  it("stays gated and asks under the outer name when a materialized tool is aliased again", async () => {
+    const asked: string[] = [];
+    const inferred = tool({
+      description: "Move money",
+      approval: {},
+      inputSchema: defineSchema((v) => v.object({ amount: v.number() }))(),
+      execute: () => ({ ok: true }),
+    });
+    const { inner } = createToolsFromHostDefinitions({ inner: inferred });
+    assertEquals(inner!.approval, {});
+    const { outer } = createToolsFromHostDefinitions({ outer: inner! });
+    await outer!.execute({ amount: 1 }, {
+      requestToolApproval: (request) => {
+        asked.push(request.toolName);
+        return Promise.resolve({ approved: true, outcome: "approved" });
+      },
+    });
+    assertEquals(asked, ["outer"]);
   });
 
   it("asks under the exposed name when the host traces the tool first", async () => {
@@ -749,6 +785,26 @@ describe("createInputRequestApprovalGate", () => {
     assertEquals("checker" in decision, false);
   });
 
+  it("refuses a tool call id that is not valid Unicode, so no two ids share one hashed anchor", async () => {
+    let requests = 0;
+    const gate = createInputRequestApprovalGate({
+      apiUrl: "http://api.test",
+      authToken: "maker-token",
+      runId: "run-1",
+      fetch: () => {
+        requests++;
+        return Promise.resolve(new Response(JSON.stringify({ input_request_id: "ir-1" })));
+      },
+    });
+    for (const toolCallId of ["approval-\uD800", "approval-\uDC00"]) {
+      const error = await gate({ toolName: "transfer", toolCallId, input: {}, policy: {} })
+        .catch((caught: unknown) => caught);
+      assertEquals((error as { approved?: boolean }).approved === true, false);
+      assertEquals(error instanceof Error, true);
+    }
+    assertEquals(requests, 0);
+  });
+
   it("keeps polling through transient failures", async () => {
     const replies: Array<() => Promise<Response>> = [
       () =>
@@ -770,6 +826,33 @@ describe("createInputRequestApprovalGate", () => {
       runId: "run-1",
       pollIntervalMs: 1,
       fetch: () => replies.shift()!(),
+    });
+    const decision = await gate({ toolName: "transfer", input: {}, policy: {} });
+    assertEquals(decision.outcome, "approved");
+  });
+
+  it("retries a poll whose response body never arrives instead of reading it as empty", async () => {
+    const stalled = new ReadableStream({
+      start(controller) {
+        controller.error(new DOMException("body timed out", "TimeoutError"));
+      },
+    });
+    const replies: Array<() => Response> = [
+      () => new Response(JSON.stringify({ input_request_id: "ir-1", status: "open" })),
+      () => new Response(stalled),
+      () =>
+        new Response(JSON.stringify({
+          input_request_id: "ir-1",
+          status: "submitted",
+          response: { values: { decision: "approve" } },
+        })),
+    ];
+    const gate = createInputRequestApprovalGate({
+      apiUrl: "http://api.test",
+      authToken: "maker-token",
+      runId: "run-1",
+      pollIntervalMs: 1,
+      fetch: () => Promise.resolve(replies.shift()!()),
     });
     const decision = await gate({ toolName: "transfer", input: {}, policy: {} });
     assertEquals(decision.outcome, "approved");

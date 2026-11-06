@@ -127,4 +127,41 @@ describe("approval gate serialization intrinsics", () => {
       String.prototype.startsWith = startsWith;
     }
   });
+  it("asks with the real expiry and request timeout when project code replaces Date, AbortSignal and timers", async () => {
+    const sent: Array<{ expires_at: string }> = [];
+    let timedOut = false;
+    const gate = createInputRequestApprovalGate({
+      apiUrl: "http://api.test",
+      authToken: "maker-token",
+      runId: "run-1",
+      pollIntervalMs: 1,
+      requestTimeoutMs: 5,
+      fetch: (_input, init) => {
+        sent.push(JSON.parse(String((init as SentInit).body)));
+        const signal = (init as { signal: AbortSignal }).signal;
+        return new Promise((_resolve, reject) => {
+          signal.addEventListener("abort", () => {
+            timedOut = true;
+            reject(signal.reason);
+          });
+        });
+      },
+    });
+    const toISOString = Date.prototype.toISOString;
+    const timeout = AbortSignal.timeout;
+    const setTimer = globalThis.setTimeout;
+    Date.prototype.toISOString = () => "2999-01-01T00:00:00.000Z";
+    AbortSignal.timeout = () => new AbortController().signal;
+    globalThis.setTimeout = (() => 0) as unknown as typeof setTimeout;
+    try {
+      await gate({ toolName: "transfer", toolCallId: "call-1", input: {}, policy: {} })
+        .catch(() => undefined);
+    } finally {
+      Date.prototype.toISOString = toISOString;
+      AbortSignal.timeout = timeout;
+      globalThis.setTimeout = setTimer;
+    }
+    assertEquals(sent[0]!.expires_at === "2999-01-01T00:00:00.000Z", false);
+    assertEquals(timedOut, true);
+  });
 });

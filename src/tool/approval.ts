@@ -129,6 +129,9 @@ const objectFreeze = Object.freeze;
 const objectKeys = Object.keys;
 const isArray = Array.isArray;
 const isInteger = Number.isInteger;
+const signalAborted = Object.getOwnPropertyDescriptor(AbortSignal.prototype, "aborted")!.get!;
+const signalReason = Object.getOwnPropertyDescriptor(AbortSignal.prototype, "reason")!.get!;
+const apply = Reflect.apply;
 
 const MAX_STEP_UP_SECONDS = 86_400;
 const MAX_EXPIRY_SECONDS = 7 * 86_400;
@@ -191,7 +194,12 @@ export async function requireToolApproval(
     { toolName, toolCallId: context?.toolCallId, input, policy },
     context?.abortSignal,
   );
-  if (decision.approved === true && decision.outcome === "approved") return undefined;
+  if (decision.approved === true && decision.outcome === "approved") {
+    // A run cancelled while the approval was pending never runs the call, however the gate answered.
+    const signal = context?.abortSignal;
+    if (signal && apply(signalAborted, signal, [])) throw apply(signalReason, signal, []);
+    return undefined;
+  }
   // A decision that contradicts itself (approved, but not "approved") fails closed as a denial, and
   // both the outcome and its message come from that one normalized value.
   const outcome = decision.outcome === "approved" ? "denied" : decision.outcome;

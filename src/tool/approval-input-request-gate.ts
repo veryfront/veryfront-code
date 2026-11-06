@@ -5,6 +5,7 @@
 import { INVALID_ARGUMENT } from "#veryfront/errors";
 import { privateJsonParse, privateJsonStringify } from "#veryfront/security/private-json.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
+import { isWellFormedString } from "#veryfront/utils/is-well-formed-string.ts";
 import { agentLogger } from "#veryfront/utils/logger/index.ts";
 import type { ToolApprovalDecision, ToolApprovalGate } from "./approval.ts";
 
@@ -79,6 +80,12 @@ const arraySort = Array.prototype.sort;
 const arrayJoin = Array.prototype.join;
 const dateParse = Date.parse;
 const dateNow = Date.now;
+const IntrinsicDate = Date;
+const dateToISOString = Date.prototype.toISOString;
+const signalTimeout = AbortSignal.timeout;
+const signalAny = AbortSignal.any;
+const nativeSetTimeout = setTimeout;
+const nativeClearTimeout = clearTimeout;
 const numberIsFinite = Number.isFinite;
 const stringStartsWith = String.prototype.startsWith;
 const stringEndsWith = String.prototype.endsWith;
@@ -121,21 +128,27 @@ export function createInputRequestApprovalGate(
   );
   const send = async (path: string, init: RequestInit = {}) => {
     // A response that never completes fails after the timeout instead of holding the call forever.
-    const timeout = AbortSignal.timeout(requestTimeoutMs);
+    const timeout = apply(signalTimeout, AbortSignal, [requestTimeoutMs]) as AbortSignal;
     const response = await doFetch(`${base}${path}`, {
       ...init,
-      signal: init.signal ? AbortSignal.any([init.signal, timeout]) : timeout,
+      signal: init.signal
+        ? apply(signalAny, AbortSignal, [[init.signal, timeout]]) as AbortSignal
+        : timeout,
       headers: {
         Authorization: `Bearer ${options.authToken}`,
         "Content-Type": "application/json",
         ...init.headers,
       },
     });
-    const text = await (apply(responseText, response, []) as Promise<string>).catch(() => "");
+    // A body that fails to arrive is a transport failure, never an empty answer.
+    const text = await (apply(responseText, response, []) as Promise<string>);
     let body: unknown = {};
     try {
       body = privateJsonParse(text);
-    } catch { /* A body that is not JSON reads as empty. */ }
+    } catch (error) {
+      // Only an error response may carry a body that is not JSON.
+      if (response.ok) throw error;
+    }
     return { response, body };
   };
   const failure = (response: Response, body: unknown) =>
@@ -218,6 +231,13 @@ export function createInputRequestApprovalGate(
         }…" cannot ask for approval: its name exceeds ${MAX_RUNS_IDENTIFIER_LENGTH} characters`,
       });
     }
+    // Hashing replaces a lone surrogate, so ids that differ only there would share one anchor.
+    if (request.toolCallId !== undefined && !isWellFormedString(request.toolCallId)) {
+      throw INVALID_ARGUMENT.create({
+        detail:
+          `Tool "${request.toolName}" cannot ask for approval: its call id is not valid Unicode`,
+      });
+    }
     // Hosts that do not track tool call ids still need one durable anchor per gated call, and a
     // host id longer than the Runs API accepts is anchored by its hash, which a retry repeats. A
     // host id in the anchors' own namespace is hashed too, so no host id can take another's anchor.
@@ -253,7 +273,7 @@ export function createInputRequestApprovalGate(
         tool_call: { name: request.toolName, arguments: request.input },
         // This gate reads the decision itself; the gated call never parks for a tool result.
         delivery: "none",
-        expires_at: new Date(expiresAt).toISOString(),
+        expires_at: apply(dateToISOString, new IntrinsicDate(expiresAt), []) as string,
       }),
     });
     let created: InputRequestResource;
@@ -368,12 +388,12 @@ function canonicalJson(value: unknown): string {
 function wait(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) return reject(signal.reason);
-    const timer = setTimeout(() => {
+    const timer = nativeSetTimeout(() => {
       signal?.removeEventListener("abort", abort);
       resolve();
     }, ms);
     const abort = () => {
-      clearTimeout(timer);
+      nativeClearTimeout(timer);
       reject(signal?.reason);
     };
     signal?.addEventListener("abort", abort, { once: true });
