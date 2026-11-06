@@ -63,11 +63,12 @@ const EXPIRY_TOLERANCE_MS = 1000;
 /** Whether a stored request stays open no longer than `windowMs` after it was asked. */
 function withinWindow(item: InputRequestResource, windowMs: number): boolean {
   if (!item.created_at || !item.expires_at) return false;
-  return Date.parse(item.expires_at) - Date.parse(item.created_at) <=
+  return dateParse(item.expires_at) - dateParse(item.created_at) <=
     windowMs + EXPIRY_TOLERANCE_MS;
 }
 
-// Captured before project code runs: what the checker sees and what recovery compares must be what runs.
+// Captured before project code runs: what the checker sees, what recovery compares and where the gate
+// sends its requests must not depend on globals project code can replace.
 const nativeFetch = fetch;
 const responseText = Response.prototype.text;
 const apply = Reflect.apply;
@@ -76,6 +77,16 @@ const objectKeys = Object.keys;
 const arrayMap = Array.prototype.map;
 const arraySort = Array.prototype.sort;
 const arrayJoin = Array.prototype.join;
+const dateParse = Date.parse;
+const dateNow = Date.now;
+const numberIsFinite = Number.isFinite;
+const stringStartsWith = String.prototype.startsWith;
+const stringEndsWith = String.prototype.endsWith;
+const stringSlice = String.prototype.slice;
+const NativeSet = Set;
+const setHas = Set.prototype.has;
+const setAdd = Set.prototype.add;
+const randomUUID = crypto.randomUUID.bind(crypto);
 
 const DECISION_FIELDS = [
   {
@@ -97,7 +108,7 @@ export function createInputRequestApprovalGate(
 ): ToolApprovalGate {
   const doFetch = options.fetch ?? nativeFetch;
   let base = options.apiUrl;
-  while (base.endsWith("/")) base = base.slice(0, -1);
+  while (apply(stringEndsWith, base, ["/"])) base = apply(stringSlice, base, [0, -1]) as string;
   const pollIntervalMs = positiveMs(
     "pollIntervalMs",
     options.pollIntervalMs,
@@ -166,8 +177,9 @@ export function createInputRequestApprovalGate(
     windowMs: number,
     signal?: AbortSignal,
   ) => {
-    const matches: InputRequestResource[] = [];
-    const seen = new Set<string>();
+    let open: InputRequestResource | undefined;
+    let first: InputRequestResource | undefined;
+    const seen = new NativeSet<string>();
     let cursor: string | undefined;
     // The whole run is read: the list has no tool call filter, and an older request still counts.
     do {
@@ -175,23 +187,27 @@ export function createInputRequestApprovalGate(
       const listed = await call(`${runRequests}?limit=100${cursorParam}`, {
         signal,
       }) as InputRequestPage;
-      matches.push(
-        ...(listed.data ?? []).filter((item) =>
-          item.tool_call_id === toolCallId && item.tool_call?.name === request.toolName &&
+      const items = listed.data ?? [];
+      for (let index = 0; index < items.length; index++) {
+        const item = items[index]!;
+        const matches = item.tool_call_id === toolCallId &&
+          item.tool_call?.name === request.toolName &&
           canonicalJson(item.tool_call.arguments) === canonicalJson(request.input) &&
           // A request asked under another policy (a shorter step-up, say) never stands in for this one.
           sameRules(item.responder_rules, rules) &&
           // Nor does one that stayed open longer than this call's expiry allows.
-          withinWindow(item, windowMs)
-        ),
-      );
+          withinWindow(item, windowMs);
+        if (!matches) continue;
+        first ??= item;
+        if (item.status === "open") open ??= item;
+      }
       cursor = listed.page_info?.next ?? undefined;
-      if (cursor && seen.has(cursor)) {
+      if (cursor && apply(setHas, seen, [cursor])) {
         throw INVALID_ARGUMENT.create({ detail: "Approval recovery read a repeating page cursor" });
       }
-      if (cursor) seen.add(cursor);
+      if (cursor) apply(setAdd, seen, [cursor]);
     } while (cursor);
-    return matches.find((item) => item.status === "open") ?? matches[0];
+    return open ?? first;
   };
 
   return async (request, signal) => {
@@ -206,13 +222,13 @@ export function createInputRequestApprovalGate(
     // host id longer than the Runs API accepts is anchored by its hash, which a retry repeats. A
     // host id in the anchors' own namespace is hashed too, so no host id can take another's anchor.
     const toolCallId = request.toolCallId === undefined
-      ? `${ANCHOR_PREFIX}${crypto.randomUUID()}`
+      ? `${ANCHOR_PREFIX}${randomUUID()}`
       : request.toolCallId.length > MAX_RUNS_IDENTIFIER_LENGTH ||
-          request.toolCallId.startsWith(ANCHOR_PREFIX)
+          apply(stringStartsWith, request.toolCallId, [ANCHOR_PREFIX])
       ? `${ANCHOR_PREFIX}${await computeHash(request.toolCallId)}`
       : request.toolCallId;
     const windowMs = (request.policy.expiresInSeconds ?? DEFAULT_EXPIRES_IN_SECONDS) * 1000;
-    const expiresAt = Date.now() + windowMs;
+    const expiresAt = dateNow() + windowMs;
     const runRequests = `/runs/${encodeURIComponent(options.runId)}/input-requests`;
     const callHash = await computeHash(`${options.runId}:${toolCallId}`);
     const rules: ResponderRules = {
@@ -251,7 +267,7 @@ export function createInputRequestApprovalGate(
       throw failure(response, body);
     }
     const id = encodeURIComponent(created.input_request_id);
-    const deadline = (created.expires_at ? Date.parse(created.expires_at) : expiresAt) +
+    const deadline = (created.expires_at ? dateParse(created.expires_at) : expiresAt) +
       EXPIRY_GRACE_MS;
     let current = created;
     try {
@@ -260,7 +276,7 @@ export function createInputRequestApprovalGate(
         const latest = await poll(`/input-requests/${id}`, signal);
         if (latest) {
           current = latest;
-        } else if (Date.now() > deadline) {
+        } else if (dateNow() > deadline) {
           // The API stopped answering past the request's expiry: the call does not run.
           return { approved: false, outcome: "expired", approvalId: created.input_request_id };
         }
@@ -271,7 +287,7 @@ export function createInputRequestApprovalGate(
         // Best effort: finalizing the run also cancels its open requests.
         await call(`/input-requests/${id}/cancel`, {
           method: "POST",
-          headers: { "Idempotency-Key": crypto.randomUUID() },
+          headers: { "Idempotency-Key": randomUUID() },
         }).catch((cancelError) =>
           agentLogger.warn("Could not withdraw the pending tool approval", {
             inputRequestId: created.input_request_id,
@@ -288,7 +304,7 @@ export function createInputRequestApprovalGate(
 function positiveMs(name: string, value: number | undefined, fallback: number): number {
   const ms = value ?? fallback;
   // Zero, negative or non-finite values would poll back to back or never wait at all.
-  if (!Number.isFinite(ms) || ms <= 0) {
+  if (!numberIsFinite(ms) || ms <= 0) {
     throw INVALID_ARGUMENT.create({
       detail: `Approval ${name} must be a positive, finite number of milliseconds`,
     });

@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createInputRequestApprovalGate } from "#veryfront/tool/approval-input-request-gate.ts";
+import { snapshotToolApprovalPolicy } from "#veryfront/tool/approval.ts";
 
 const ASKED_RULES = {
   exclude_run_starters: true,
@@ -61,6 +62,69 @@ describe("approval gate serialization intrinsics", () => {
     } finally {
       JSON.stringify = stringify;
       Object.keys = keys;
+    }
+  });
+
+  it("freezes a policy even when project code replaces Object.freeze", () => {
+    const freeze = Object.freeze;
+    Object.freeze = (<T>(value: T) => value) as typeof Object.freeze;
+    let policy: { stepUpSeconds?: number } | undefined;
+    try {
+      policy = snapshotToolApprovalPolicy({ stepUpSeconds: 300 }, "transfer");
+    } finally {
+      Object.freeze = freeze;
+    }
+    assertEquals(Object.isFrozen(policy), true);
+  });
+
+  it("never adopts a longer-lived request or a colliding id when project code replaces Date and String methods", async () => {
+    const sent: Array<{ tool_call_id: string }> = [];
+    const replies = [
+      new Response(JSON.stringify({ input_request_id: "ir-0", status: "expired" })),
+      new Response(JSON.stringify({ detail: "conflict" }), { status: 409 }),
+      new Response(JSON.stringify({
+        data: [{
+          input_request_id: "ir-1",
+          tool_call_id: "call-1",
+          tool_call: { name: "transfer", arguments: { amount: 1 } },
+          responder_rules: ASKED_RULES,
+          ...ASKED_WINDOW,
+          status: "submitted",
+          response: { values: { decision: "approve" } },
+        }],
+      })),
+    ];
+    const gate = createInputRequestApprovalGate({
+      apiUrl: "http://api.test",
+      authToken: "maker-token",
+      runId: "run-1",
+      pollIntervalMs: 1,
+      fetch: (_input, init) => {
+        if ((init as SentInit).method === "POST") {
+          sent.push(JSON.parse(String((init as SentInit).body)));
+        }
+        return Promise.resolve(replies.shift()!);
+      },
+    });
+    const parse = Date.parse;
+    const startsWith = String.prototype.startsWith;
+    Date.parse = () => 0;
+    String.prototype.startsWith = () => false;
+    try {
+      await gate({ toolName: "transfer", toolCallId: "approval-native", input: {}, policy: {} });
+      const decision = await gate({
+        toolName: "transfer",
+        toolCallId: "call-1",
+        input: { amount: 1 },
+        policy: { expiresInSeconds: 60 },
+      }).catch((error: unknown) => error);
+      Date.parse = parse;
+      String.prototype.startsWith = startsWith;
+      assertEquals(sent[0]!.tool_call_id === "approval-native", false);
+      assertEquals((decision as { approved?: boolean }).approved === true, false);
+    } finally {
+      Date.parse = parse;
+      String.prototype.startsWith = startsWith;
     }
   });
 });

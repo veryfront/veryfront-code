@@ -124,6 +124,12 @@ export function withToolApprovalRefusalOutput<T>(
   };
 }
 
+// Captured before project code runs, so a replaced global cannot leave a policy mutable or loosen it.
+const objectFreeze = Object.freeze;
+const objectKeys = Object.keys;
+const isArray = Array.isArray;
+const isInteger = Number.isInteger;
+
 const MAX_STEP_UP_SECONDS = 86_400;
 const MAX_EXPIRY_SECONDS = 7 * 86_400;
 
@@ -133,11 +139,13 @@ export function snapshotToolApprovalPolicy(
   toolId: string,
 ): ToolApprovalPolicy | undefined {
   if (policy === undefined) return undefined;
-  if (policy === null || typeof policy !== "object" || Array.isArray(policy)) {
+  if (policy === null || typeof policy !== "object" || isArray(policy)) {
     throw INVALID_ARGUMENT.create({ detail: `Tool "${toolId}" approval must be an object` });
   }
   const record = policy as Record<string, unknown>;
-  for (const key of Object.keys(record)) {
+  const keys = objectKeys(record);
+  for (let index = 0; index < keys.length; index++) {
+    const key = keys[index];
     if (key !== "stepUpSeconds" && key !== "expiresInSeconds") {
       throw INVALID_ARGUMENT.create({
         detail: `Tool "${toolId}" approval has unknown key "${key}"`,
@@ -147,7 +155,7 @@ export function snapshotToolApprovalPolicy(
   const seconds = (key: "stepUpSeconds" | "expiresInSeconds", max: number) => {
     const value = record[key];
     if (value === undefined) return undefined;
-    if (typeof value !== "number" || !Number.isInteger(value) || value <= 0 || value > max) {
+    if (typeof value !== "number" || !isInteger(value) || value <= 0 || value > max) {
       throw INVALID_ARGUMENT.create({
         detail:
           `Tool "${toolId}" approval.${key} must be a whole number of seconds from 1 to ${max}`,
@@ -157,7 +165,7 @@ export function snapshotToolApprovalPolicy(
   };
   const stepUpSeconds = seconds("stepUpSeconds", MAX_STEP_UP_SECONDS);
   const expiresInSeconds = seconds("expiresInSeconds", MAX_EXPIRY_SECONDS);
-  return Object.freeze({
+  return objectFreeze({
     ...(stepUpSeconds === undefined ? {} : { stepUpSeconds }),
     ...(expiresInSeconds === undefined ? {} : { expiresInSeconds }),
   });
