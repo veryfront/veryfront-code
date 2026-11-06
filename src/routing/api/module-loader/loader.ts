@@ -1305,6 +1305,28 @@ async function loadValidatedJSModule(
   );
 }
 
+/** Whether a path the bundler resolved is an installed dependency's file. */
+type DependencyFilePredicate = (path: string) => boolean;
+
+const noDependencyFiles: DependencyFilePredicate = () => false;
+
+/**
+ * Files under the project's own node_modules, which a compiled-binary route
+ * bundles. Both the given and the canonical project root count: esbuild
+ * reports resolved paths with symlinks followed.
+ */
+async function projectDependencyFiles(projectDir: string): Promise<DependencyFilePredicate> {
+  const roots = new Set([pathHelper.resolve(projectDir)]);
+  try {
+    roots.add(await realPath(projectDir));
+  } catch {
+    // expected: an adapter-backed project may have no host directory
+  }
+  const prefixes = [...roots].map((root) => pathHelper.join(root, "node_modules") + pathHelper.sep);
+  return (path) =>
+    path !== "" && prefixes.some((prefix) => pathHelper.resolve(path).startsWith(prefix));
+}
+
 function createImportMapPlugin(
   projectDir: string,
   sourceSnapshot: ProjectSourceSnapshot,
@@ -1313,6 +1335,7 @@ function createImportMapPlugin(
   denoImports: DenoImportMap,
   workerImportMap: DenoImportMap | null,
   config?: VeryfrontConfig,
+  isDependencyFile: DependencyFilePredicate = noDependencyFiles,
 ): Plugin {
   // A project's own veryfront config wins over its Deno config for the same
   // specifier, matching how the rest of the build reads resolve options.
@@ -1332,6 +1355,9 @@ function createImportMapPlugin(
     setup(build) {
       build.onResolve({ filter: /.*/ }, (args) => {
         if (args.path.startsWith("node:")) return { path: args.path, external: true };
+        // A dependency resolves its own imports as Node does: the project's
+        // import map does not apply inside node_modules.
+        if (isDependencyFile(args.importer)) return undefined;
 
         if (
           !REMOTE_URL_SPECIFIER.test(args.path) &&
@@ -1733,6 +1759,7 @@ function createProjectAliasPlugin(
   routeModulePath: string,
   allowedHosts: string[],
   workerImportMap: DenoImportMap | null,
+  isDependencyFile: DependencyFilePredicate = noDependencyFiles,
 ): Plugin {
   const projectRoot = pathHelper.resolve(projectDir);
 
@@ -1740,6 +1767,8 @@ function createProjectAliasPlugin(
     name: "vf-project-alias",
     setup(build) {
       build.onResolve({ filter: /^@\// }, (args) => {
+        // `@/` names a project file only in project code, never in a dependency.
+        if (isDependencyFile(args.importer)) return undefined;
         const aliasedPath = args.path.slice(2);
         const absolutePath = pathHelper.resolve(projectRoot, modulePathOfSpecifier(aliasedPath));
         if (!isWithinDirectory(projectRoot, absolutePath)) {
@@ -1780,12 +1809,16 @@ function createAdapterResolvePlugin(
   routeModulePath: string,
   allowedHosts: string[],
   workerImportMap: DenoImportMap | null,
+  isDependencyFile: DependencyFilePredicate = noDependencyFiles,
 ): Plugin {
   return {
     name: "vf-adapter-resolve",
     setup(build) {
       build.onResolve({ filter: /^\.\.?\// }, (args) => {
         if (args.namespace === "http-url" || args.namespace === "import-map") return undefined;
+        // Node resolves a dependency's relative imports, including directory
+        // indexes and .json files; the project boundary still loads them.
+        if (isDependencyFile(args.importer)) return undefined;
 
         const baseDir = args.importer ? pathHelper.dirname(args.importer) : args.resolveDir;
         if (!baseDir) return undefined;
@@ -1869,7 +1902,7 @@ function createProjectBoundaryPlugin(
   routeModulePath: string,
   allowedHosts: string[],
   workerImportMap: DenoImportMap | null,
-  definesCommonJSPaths = false,
+  isDependencyFile: DependencyFilePredicate = noDependencyFiles,
 ): Plugin {
   return {
     name: "vf-project-boundary",
@@ -1879,8 +1912,14 @@ function createProjectBoundaryPlugin(
           const source = await sourceSnapshot.read(args.path);
           const executableModule = !isJSONModulePath(source.logicalPath);
           const commonJS = mayBeCommonJSDependency(source.logicalPath);
+          // An installed dependency the compiled binary bundles gets the trust
+          // it has everywhere else, where it loads at runtime unscanned: its
+          // code is not held to the route-code rules, which reject ordinary
+          // package code such as computed property reads. It still loads only
+          // from inside the project.
+          const dependency = isDependencyFile(args.path);
           // JSON is parsed as data, never executed; see the note above.
-          if (executableModule) {
+          if (executableModule && !dependency) {
             const scan = await validateHTTPImports(source.contents, allowedHosts, {
               commonJS,
               path: projectModuleLabel(source.logicalPath, projectDir),
@@ -1895,12 +1934,23 @@ function createProjectBoundaryPlugin(
               importMap: workerImportMap,
             });
           }
-          const pathPrelude = executableModule && commonJS && definesCommonJSPaths
-            ? commonJSPathPrelude(source.contents, source.logicalPath)
-            : "";
+          if (executableModule && dependency) {
+            return {
+              contents: commonJSPathPrelude(source.contents, source.logicalPath) +
+                (/\bimport\.meta\b/.test(source.contents)
+                  ? await rewriteBundledImportMetaUrl(
+                    source.contents,
+                    pathHelper.toFileUrl(source.logicalPath).href,
+                    null,
+                  )
+                  : source.contents),
+              loader: getLoaderForFile(source.logicalPath),
+              resolveDir: pathHelper.dirname(source.logicalPath),
+            };
+          }
           return {
             contents: executableModule
-              ? pathPrelude + await rewriteBundledImportMetaUrl(
+              ? await rewriteBundledImportMetaUrl(
                 source.contents,
                 pathHelper.toFileUrl(source.logicalPath).href,
                 workerImportMap,
@@ -2115,6 +2165,9 @@ function buildTranspiledModuleSource(
         `var require = __vf_createRequire(${safeProjectDir});`,
       ].join("\n");
       const requiredBuiltins = new Set<string>();
+      const isDependencyFile = compiled
+        ? await projectDependencyFiles(projectDir)
+        : noDependencyFiles;
       const routeSourceUrl = pathHelper.toFileUrl(resolvedPath).href;
       const workerShim = [
         `const __vf_routeSourceUrl = ${JSON.stringify(routeSourceUrl)};`,
@@ -2178,6 +2231,7 @@ function buildTranspiledModuleSource(
             denoImports,
             workerImportMap,
             config,
+            isDependencyFile,
           ),
           createProjectAliasPlugin(
             sourceSnapshot,
@@ -2185,6 +2239,7 @@ function buildTranspiledModuleSource(
             resolvedPath,
             allowedHosts,
             workerImportMap,
+            isDependencyFile,
           ),
           createAdapterResolvePlugin(
             sourceSnapshot,
@@ -2192,6 +2247,7 @@ function buildTranspiledModuleSource(
             resolvedPath,
             allowedHosts,
             workerImportMap,
+            isDependencyFile,
           ),
           createHTTPPlugin({
             allowedHosts,
@@ -2205,7 +2261,7 @@ function buildTranspiledModuleSource(
             resolvedPath,
             allowedHosts,
             workerImportMap,
-            compiled,
+            isDependencyFile,
           ),
         ],
         // Only the opt-in decorator transform needs a working directory: adding

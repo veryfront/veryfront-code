@@ -806,18 +806,26 @@ export default function Home() {
           version: "1.0.0",
           exports: { ".": { require: "./lib/index.js", default: "./lib/index.js" } },
         }),
+        // Ordinary package code the route-code checks reject: computed reads,
+        // directory and extensionless requires.
         "node_modules/legacy/lib/index.js": `"use strict";
 var fs = require("fs");
 var path = require("path");
-var data = require("./data.json");
+var data = require("./data");
+var util = require("./util");
 var optional;
 try { optional = require("not-installed-optional"); } catch (error) { optional = error.code; }
 exports.name = data.name;
 exports.ownFile = path.basename(__filename);
 exports.readsSibling = fs.readFileSync(path.join(__dirname, "data.json"), "utf8").length > 0;
 exports.optional = optional;
+exports.picked = util.pick(data, "name");
 `,
         "node_modules/legacy/lib/data.json": JSON.stringify({ name: "legacy-data" }),
+        "node_modules/legacy/lib/util/index.js": `exports.pick = function (object, key) {
+  return object[key];
+};
+`,
         "node_modules/esm-only/package.json": JSON.stringify({
           name: "esm-only",
           version: "1.0.0",
@@ -851,6 +859,7 @@ export function GET() {
           ownFile: "index.js",
           readsSibling: true,
           optional: "MODULE_NOT_FOUND",
+          picked: "legacy-data",
         },
         name: "legacy-data",
         kind: "esm",
