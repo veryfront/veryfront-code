@@ -16,6 +16,7 @@ const defineOwnProperty = Object.defineProperty;
 const freeze = Object.freeze;
 const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const NativeTypeError = TypeError;
+const NativeDOMException = DOMException;
 const abortSignalAbortedGetter = getOwnPropertyDescriptor(
   AbortSignal.prototype,
   "aborted",
@@ -68,9 +69,22 @@ export function getAbortSignalReason(signal: AbortSignal): unknown {
   return apply(abortSignalReasonGetter, signal, []);
 }
 
-/** Throw the native cancellation reason without consulting instance methods. */
+/**
+ * Throw the native cancellation reason without consulting instance methods.
+ *
+ * An aborted signal always has a reason, but Bun 1.3.6 can garbage-collect it and
+ * then throw `undefined`. That case throws an AbortError, so a cancellation never
+ * reaches a caller as `undefined`.
+ */
 export function throwIfAbortSignalAborted(signal: AbortSignal): void {
-  apply(abortSignalThrowIfAborted, signal, []);
+  try {
+    apply(abortSignalThrowIfAborted, signal, []);
+  } catch (reason) {
+    if (reason === undefined) {
+      throw new NativeDOMException("The operation was aborted", "AbortError");
+    }
+    throw reason;
+  }
 }
 
 /** Attach one native abort listener without consulting instance methods. */
