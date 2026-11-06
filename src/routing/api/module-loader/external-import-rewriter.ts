@@ -397,25 +397,33 @@ function __vf_isBuiltin(id) {
   return __vf_builtinSet.has(id);
 }
 // Node's module.paths: each ancestor's node_modules, stopping at the project
-// root so host directories above it are never listed.
+// root so host directories above it are never listed. The directory is
+// canonicalized first, so the walk meets the canonical root even when the
+// project was opened through a symlink.
 function __vf_nodeModulePaths(dir) {
   var paths = [];
-  for (var current = dir; ; current = __vf_dirname(current)) {
-    if (!/(^|[\\/])node_modules$/.test(current)) paths.push(__vf_resolve(current, "node_modules"));
+  var start = __vf_canonicalize(dir);
+  try { __vf_assertContained(start, dir); } catch (_) { return paths; }
+  for (var current = start; ; current = __vf_dirname(current)) {
+    if (!/(^|[\\\\/])node_modules$/.test(current)) paths.push(__vf_resolve(current, "node_modules"));
     if (current === __vf_projectRoot || __vf_dirname(current) === current) break;
   }
   return paths;
 }
-// require.resolve(id, { paths }): id resolves from each listed directory in
-// turn, and the result must stay inside the project.
+// require.resolve(id) and require.resolve(id, { paths }): with paths, id
+// resolves from each listed directory in turn. Either way a module result must
+// stay inside the project, as loading it would, so no host path leaks out.
+function __vf_resolveContained(id, parentDir) {
+  var found = __vf_resolveId(id, parentDir);
+  if (!__vf_isBuiltin(id) && !__vf_isBuiltin(found)) __vf_assertContained(__vf_canonicalize(found), id);
+  return found;
+}
 function __vf_resolveWithOptions(id, parentDir, options) {
-  if (!options || options.paths === void 0) return __vf_resolveId(id, parentDir);
+  if (!options || options.paths === void 0) return __vf_resolveContained(id, parentDir);
   if (!Array.isArray(options.paths)) throw new TypeError("require.resolve options.paths must be an array");
   for (var i = 0; i < options.paths.length; i++) {
     try {
-      var found = __vf_resolveId(id, __vf_resolve(parentDir, options.paths[i]));
-      if (!__vf_isBuiltin(id)) __vf_assertContained(__vf_canonicalize(found), id);
-      return found;
+      return __vf_resolveContained(id, __vf_resolve(parentDir, options.paths[i]));
     } catch (error) {
       if (!error || error.code !== "MODULE_NOT_FOUND") throw error;
     }
@@ -519,9 +527,13 @@ function __vf_rewriteCjsDynamicImports(code) {
 }
 function __vf_importFrom(spec, parentDir) {
   return (async function () {
-    var target = __vf_resolve(parentDir, spec);
+    // A query or hash belongs to the module URL, not to the file path.
+    var suffixAt = spec.search(/[?#]/);
+    var path = suffixAt === -1 ? spec : spec.slice(0, suffixAt);
+    var target = __vf_resolve(parentDir, path);
     __vf_assertContained(__vf_canonicalize(target), spec);
-    return await import(__vf_builtinRequire("node:url").pathToFileURL(target).href);
+    var url = __vf_builtinRequire("node:url").pathToFileURL(target).href;
+    return await import(suffixAt === -1 ? url : url + spec.slice(suffixAt));
   })();
 }
 // As in Node, every required module records the module that first required it
@@ -583,8 +595,13 @@ function __vf_loadCjs(id, parentDir, parentMod) {
   // As in Node, top-level \`this\` is module.exports, and a module whose
   // evaluation throws is dropped from the cache so a retry fails again.
   try {
-    var fn = new Function("exports", "require", "module", "__filename", "__dirname", "global", "globalThis", "Worker", "__vf_cjsImport", code);
-    fn.call(mod.exports, mod.exports, childReq, mod, resolved, dir, globalThis, globalThis, void 0, cjsImport);
+    // The wrapper's own parameters are Node's five. global, globalThis,
+    // Worker and the dynamic-import helper come from an enclosing function,
+    // so a package's own top-level \`const Worker\` shadows them instead of
+    // colliding with a parameter.
+    var outer = new Function("global", "globalThis", "Worker", "__vf_cjsImport", "return function (exports, require, module, __filename, __dirname) {\\n" + code + "\\n};");
+    var fn = outer(globalThis, globalThis, void 0, cjsImport);
+    fn.call(mod.exports, mod.exports, childReq, mod, resolved, dir);
   } catch (error) {
     delete __vf_cache[resolved];
     if (parentMod) {
@@ -602,7 +619,7 @@ function __vf_resolveId(id, parentDir) {
 }
 // The route is the parent of the modules it requires, as the module a Node
 // createRequire() call is anchored to would be.
-var routeModule = { exports: {}, id: __VF_PROJECT_DIR__, filename: __VF_PROJECT_DIR__, path: __VF_PROJECT_DIR__, loaded: true, children: [], paths: __vf_nodeModulePaths(__VF_PROJECT_DIR__), parent: null };
+var routeModule = { exports: {}, id: __VF_PROJECT_DIR__, filename: __VF_PROJECT_DIR__, path: __VF_PROJECT_DIR__, loaded: true, children: [], paths: __vf_nodeModulePaths(__vf_projectRoot), parent: null };
 var routeRequire = function(id) { return __vf_loadCjs(id, __VF_PROJECT_DIR__, routeModule); };
 routeRequire.resolve = function(id, options) { return __vf_resolveWithOptions(id, __VF_PROJECT_DIR__, options); };
 routeRequire.ensure = function(mods, cb) { cb(); };

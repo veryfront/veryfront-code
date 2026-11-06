@@ -5934,7 +5934,7 @@ describe("route CommonJS require (#5471)", () => {
         main: "index.js",
       }),
       "node_modules/bridge-fixture/index.js":
-        "module.exports = () => import('./child.mjs').then((m) => m.value);",
+        "module.exports = () => Promise.all([import('./child.mjs'), import('./child.mjs?variant#x')]).then(([a, b]) => a.value + ':' + b.value);",
       "node_modules/bridge-fixture/child.mjs": "export const value = 'esm child';",
     };
     const GET = await loadCompiledRoute(
@@ -5944,7 +5944,7 @@ describe("route CommonJS require (#5471)", () => {
       ].join("\n"),
       files,
     );
-    assertEquals(await responseText(GET), "esm child");
+    assertEquals(await responseText(GET), "esm child:esm child");
   });
 
   denoIt("leaves import-like text in CommonJS strings and comments alone", async () => {
@@ -6565,6 +6565,62 @@ describe("route CommonJS require (#5471)", () => {
     );
     assertEquals(result.paths.includes(join(projectDir, "node_modules")), true);
     assertEquals(result.viaPaths, "plugins");
+  });
+
+  denoIt("loads a CommonJS package that declares wrapper-like top-level names", async () => {
+    const projectDir = await writeProject({
+      "node_modules/names-fixture/package.json": JSON.stringify({
+        name: "names-fixture",
+        main: "index.js",
+      }),
+      "node_modules/names-fixture/index.js": [
+        "const Worker = 'w';",
+        "const global = 'g';",
+        "const globalThis = 't';",
+        "const __vf_cjsImport = 'i';",
+        "module.exports = [Worker, global, globalThis, __vf_cjsImport].join('');",
+      ].join("\n"),
+    });
+    const vfRequire = await importCompiledBinaryRequireShim(projectDir);
+
+    assertEquals(vfRequire("names-fixture"), "wgti");
+  });
+
+  denoIt("keeps default require.resolve results inside the project", async () => {
+    const outerDir = await writeProject({
+      "node_modules/outside-pkg/package.json": JSON.stringify({
+        name: "outside-pkg",
+        main: "index.js",
+      }),
+      "node_modules/outside-pkg/index.js": "module.exports = 1;",
+      "app/package.json": "{}",
+      "app/node_modules/probe/package.json": JSON.stringify({ name: "probe", main: "index.js" }),
+      "app/node_modules/probe/index.js": [
+        "try { module.exports = require.resolve('outside-pkg'); }",
+        "catch (error) { module.exports = 'blocked: ' + error.message; }",
+      ].join("\n"),
+    });
+    const vfRequire = await importCompiledBinaryRequireShim(join(outerDir, "app"));
+
+    const result = String(vfRequire("probe"));
+    assertEquals(result.startsWith("blocked: "), true, result);
+    assertEquals(result.includes(outerDir), false, result);
+  });
+
+  denoIt("stops route lookup paths at a project opened through a symlink", async () => {
+    const projectDir = await writeProject({
+      "node_modules/paths-fixture/package.json": JSON.stringify({
+        name: "paths-fixture",
+        main: "index.js",
+      }),
+      "node_modules/paths-fixture/index.js": "module.exports = module.parent.paths;",
+    });
+    const linkDir = Deno.realPathSync(await makeTempDir());
+    const linkedProject = join(linkDir, "linked-project");
+    Deno.symlinkSync(projectDir, linkedProject);
+    const vfRequire = await importCompiledBinaryRequireShim(linkedProject);
+
+    assertEquals(vfRequire("paths-fixture"), [join(projectDir, "node_modules")]);
   });
 
   denoIt("lets a top-level dependency require through module.parent", async () => {
