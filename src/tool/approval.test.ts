@@ -4,9 +4,17 @@ import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/as
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { tool } from "./factory.ts";
 import type { ToolApprovalDecision, ToolApprovalRequest } from "./approval.ts";
+import type { ToolConfig } from "./types.ts";
 import { createInputRequestApprovalGate } from "./approval-input-request-gate.ts";
 import { createToolsFromHostDefinitions } from "./host-tools.ts";
 import { traceHostTools } from "./tracing.ts";
+
+/** The rules the gate asks under for a policy without step-up, as the API stores them. */
+const ASKED_RULES = {
+  exclude_run_starters: true,
+  required_capability: "project.approvals.decide",
+  excluded_user_ids: ["maker"],
+};
 
 /** What the gate sends: a plain body string and header record. */
 type SentInit = { body?: string; method?: string; headers?: Record<string, string> };
@@ -157,6 +165,46 @@ describe("tool approval", () => {
       },
     });
     assertEquals(asked, ["transfer"]);
+  });
+
+  it("runs a schema that transforms its input on the parsed value of the approved arguments", async () => {
+    const executed: unknown[] = [];
+    const gated = tool({
+      id: "schedule",
+      description: "Schedule a transfer",
+      approval: {},
+      inputSchema: defineSchema((v) =>
+        v.object({ when: v.string().transform((at) => new Date(at)) })
+      )(),
+      execute: (input) => {
+        executed.push(input.when);
+        return { ok: true };
+      },
+    });
+    const asked: unknown[] = [];
+    await gated.execute({ when: "2026-11-06T00:00:00Z" } as never, {
+      requestToolApproval: (request) => {
+        asked.push(request.input);
+        return Promise.resolve({ approved: true, outcome: "approved" });
+      },
+    });
+    assertEquals(asked, [{ when: "2026-11-06T00:00:00Z" }]);
+    assertEquals(executed[0] instanceof Date, true);
+  });
+
+  it("types a tool from a config that may carry approval as able to refuse", async () => {
+    const config: ToolConfig<{ amount: number }, { ok: boolean }> = {
+      id: "transfer",
+      description: "Move money",
+      approval: {},
+      inputSchema: defineSchema((v) => v.object({ amount: v.number() }))(),
+      execute: () => ({ ok: true }),
+    };
+    const result = await tool(config).execute({ amount: 1 }, {
+      requestToolApproval: () => Promise.resolve({ approved: false, outcome: "denied" }),
+    });
+    const mayRefuse: typeof result extends { ok: boolean } ? false : true = true;
+    assertEquals(mayRefuse, true);
   });
 
   it("lets a refusal through the tool's own output validator", async () => {
@@ -394,6 +442,7 @@ describe("createInputRequestApprovalGate", () => {
           input_request_id: "ir-1",
           tool_call_id: "call-1",
           tool_call: { name: "transfer", arguments: { to: "acme", amount: 9 } },
+          responder_rules: ASKED_RULES,
           status: "open",
         }],
       })),
@@ -440,6 +489,7 @@ describe("createInputRequestApprovalGate", () => {
           input_request_id: "ir-1",
           tool_call_id: "call-1",
           tool_call: { name: "transfer", arguments: { amount: 9 } },
+          responder_rules: ASKED_RULES,
           status: "submitted",
           response: { values: { decision: "approve" } },
         }],
@@ -466,6 +516,122 @@ describe("createInputRequestApprovalGate", () => {
       urls.at(-1),
       "http://api.test/runs/run-1/input-requests?limit=100&cursor=page%202",
     );
+  });
+
+  it("reads every page of the run before giving up on recovery", async () => {
+    const pages = Array.from({ length: 12 }, (_, page) =>
+      new Response(JSON.stringify({
+        data: page < 11 ? [] : [{
+          input_request_id: "ir-1",
+          tool_call_id: "call-1",
+          tool_call: { name: "transfer", arguments: { amount: 9 } },
+          responder_rules: ASKED_RULES,
+          status: "submitted",
+          response: { values: { decision: "approve" } },
+        }],
+        page_info: { next: page < 11 ? `page ${page + 2}` : null },
+      })));
+    const replies = [
+      new Response(JSON.stringify({ detail: "conflict" }), { status: 409 }),
+      ...pages,
+    ];
+    const gate = createInputRequestApprovalGate({
+      apiUrl: "http://api.test",
+      authToken: "maker-token",
+      runId: "run-1",
+      pollIntervalMs: 1,
+      fetch: () => Promise.resolve(replies.shift()!),
+    });
+    const decision = await gate({
+      toolName: "transfer",
+      toolCallId: "call-1",
+      input: { amount: 9 },
+      policy: {},
+    });
+    assertEquals(decision.outcome, "approved");
+  });
+
+  it("never adopts an earlier request asked under a weaker policy", async () => {
+    const replies = [
+      new Response(JSON.stringify({ detail: "conflict" }), { status: 409 }),
+      new Response(JSON.stringify({
+        data: [{
+          input_request_id: "ir-1",
+          tool_call_id: "call-1",
+          tool_call: { name: "transfer", arguments: { amount: 9 } },
+          responder_rules: ASKED_RULES,
+          status: "submitted",
+          response: { values: { decision: "approve" } },
+        }],
+      })),
+    ];
+    const gate = createInputRequestApprovalGate({
+      apiUrl: "http://api.test",
+      authToken: "maker-token",
+      runId: "run-1",
+      pollIntervalMs: 1,
+      fetch: () => Promise.resolve(replies.shift()!),
+    });
+    await assertRejects(() =>
+      gate({
+        toolName: "transfer",
+        toolCallId: "call-1",
+        input: { amount: 9 },
+        policy: { stepUpSeconds: 300 },
+      })
+    );
+  });
+
+  it("anchors a tool call id longer than the Runs API accepts by its hash, and refuses a long name", async () => {
+    const sent: Array<{ tool_call_id: string }> = [];
+    const gate = createInputRequestApprovalGate({
+      apiUrl: "http://api.test",
+      authToken: "maker-token",
+      runId: "run-1",
+      pollIntervalMs: 1,
+      fetch: (_input, init) => {
+        sent.push(JSON.parse(String((init as SentInit).body)));
+        return Promise.resolve(
+          new Response(JSON.stringify({ input_request_id: "ir-1", status: "expired" })),
+        );
+      },
+    });
+    const longId = "c".repeat(200);
+    await gate({ toolName: "transfer", toolCallId: longId, input: {}, policy: {} });
+    await gate({ toolName: "transfer", toolCallId: longId, input: {}, policy: {} });
+    assertEquals(sent[0]!.tool_call_id.length <= 128, true);
+    assertEquals(sent[0]!.tool_call_id, sent[1]!.tool_call_id);
+    await assertRejects(() =>
+      gate({ toolName: "t".repeat(129), toolCallId: "call-1", input: {}, policy: {} })
+    );
+  });
+
+  it("names no checker for a response without an authenticated actor", async () => {
+    const gate = createInputRequestApprovalGate({
+      apiUrl: "http://api.test",
+      authToken: "maker-token",
+      runId: "run-1",
+      pollIntervalMs: 1,
+      fetch: () =>
+        Promise.resolve(
+          new Response(JSON.stringify({
+            input_request_id: "ir-1",
+            status: "submitted",
+            response: {
+              values: { decision: "approve" },
+              actor: { type: "unavailable", reason: "identity_removed" },
+            },
+          })),
+        ),
+    });
+    const decision = await gate({
+      toolName: "transfer",
+      toolCallId: "call-1",
+      input: {},
+      policy: {},
+    });
+    assertEquals(decision.outcome, "approved");
+    assertEquals("checker" in decision, false);
   });
 
   it("keeps polling through transient failures", async () => {

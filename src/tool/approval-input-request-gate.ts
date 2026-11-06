@@ -20,15 +20,23 @@ export interface InputRequestApprovalGateOptions {
   requestTimeoutMs?: number;
 }
 
+interface ResponderRules {
+  exclude_run_starters?: boolean;
+  required_capability?: string;
+  step_up_seconds?: number;
+}
+
 interface InputRequestResource {
   input_request_id: string;
   tool_call_id?: string | null;
   tool_call?: { name: string; arguments: unknown } | null;
+  responder_rules?: ResponderRules | null;
   status: "open" | "submitted" | "cancelled" | "expired";
   expires_at?: string | null;
   response?: {
     values?: Record<string, unknown>;
-    actor?: { type: string; id: string };
+    // A historical response may carry no authenticated actor, only `type: "unavailable"`.
+    actor?: { type: string; id?: string };
   } | null;
 }
 
@@ -41,8 +49,8 @@ const DEFAULT_POLL_INTERVAL_MS = 1000;
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 /** Polls that keep failing past the request's expiry give up after this long, as expired. */
 const EXPIRY_GRACE_MS = 60_000;
-/** Pages of the run's requests read to find the one an earlier attempt opened. */
-const MAX_RECOVERY_PAGES = 10;
+/** The Runs API's limit on a tool call id and a tool name. */
+const MAX_RUNS_IDENTIFIER_LENGTH = 128;
 /** How long a gated call waits for a decision when its policy names no expiry. */
 const DEFAULT_EXPIRES_IN_SECONDS = 30 * 60;
 
@@ -126,33 +134,59 @@ export function createInputRequestApprovalGate(
     runRequests: string,
     toolCallId: string,
     request: { toolName: string; input: unknown },
+    rules: ResponderRules,
     signal?: AbortSignal,
   ) => {
     const matches: InputRequestResource[] = [];
+    const seen = new Set<string>();
     let cursor: string | undefined;
-    for (let page = 0; page < MAX_RECOVERY_PAGES; page++) {
+    // The whole run is read: the list has no tool call filter, and an older request still counts.
+    do {
       const cursorParam = cursor ? `&cursor=${encodeURIComponent(cursor)}` : "";
-      const query = `limit=100${cursorParam}`;
-      const listed = await call(`${runRequests}?${query}`, { signal }) as InputRequestPage;
+      const listed = await call(`${runRequests}?limit=100${cursorParam}`, {
+        signal,
+      }) as InputRequestPage;
       matches.push(
         ...(listed.data ?? []).filter((item) =>
           item.tool_call_id === toolCallId && item.tool_call?.name === request.toolName &&
-          canonicalJson(item.tool_call.arguments) === canonicalJson(request.input)
+          canonicalJson(item.tool_call.arguments) === canonicalJson(request.input) &&
+          // A request asked under another policy (a shorter step-up, say) never stands in for this one.
+          sameRules(item.responder_rules, rules)
         ),
       );
       cursor = listed.page_info?.next ?? undefined;
-      if (!cursor) break;
-    }
+      if (cursor && seen.has(cursor)) {
+        throw INVALID_ARGUMENT.create({ detail: "Approval recovery read a repeating page cursor" });
+      }
+      if (cursor) seen.add(cursor);
+    } while (cursor);
     return matches.find((item) => item.status === "open") ?? matches[0];
   };
 
   return async (request, signal) => {
-    // Hosts that do not track tool call ids still need one durable anchor per gated call.
-    const toolCallId = request.toolCallId ?? `approval-${crypto.randomUUID()}`;
+    if (request.toolName.length > MAX_RUNS_IDENTIFIER_LENGTH) {
+      throw INVALID_ARGUMENT.create({
+        detail: `Tool "${
+          request.toolName.slice(0, 32)
+        }…" cannot ask for approval: its name exceeds ${MAX_RUNS_IDENTIFIER_LENGTH} characters`,
+      });
+    }
+    // Hosts that do not track tool call ids still need one durable anchor per gated call, and a
+    // host id longer than the Runs API accepts is anchored by its hash, which a retry repeats.
+    const toolCallId = request.toolCallId === undefined
+      ? `approval-${crypto.randomUUID()}`
+      : request.toolCallId.length > MAX_RUNS_IDENTIFIER_LENGTH
+      ? `approval-${await computeHash(request.toolCallId)}`
+      : request.toolCallId;
     const expiresAt = Date.now() +
       (request.policy.expiresInSeconds ?? DEFAULT_EXPIRES_IN_SECONDS) * 1000;
     const runRequests = `/runs/${encodeURIComponent(options.runId)}/input-requests`;
     const callHash = await computeHash(`${options.runId}:${toolCallId}`);
+    const rules: ResponderRules = {
+      exclude_run_starters: true,
+      required_capability: "project.approvals.decide",
+      ...(request.policy.stepUpSeconds ? { step_up_seconds: request.policy.stepUpSeconds } : {}),
+    };
     const { response, body } = await send(runRequests, {
       method: "POST",
       // Keyed by run and tool call, so a retry after a lost response gets the committed request
@@ -166,13 +200,7 @@ export function createInputRequestApprovalGate(
         requested_responder_type: "human",
         tool_call_id: toolCallId,
         fields: DECISION_FIELDS,
-        responder_rules: {
-          exclude_run_starters: true,
-          required_capability: "project.approvals.decide",
-          ...(request.policy.stepUpSeconds
-            ? { step_up_seconds: request.policy.stepUpSeconds }
-            : {}),
-        },
+        responder_rules: rules,
         tool_call: { name: request.toolName, arguments: request.input },
         // This gate reads the decision itself; the gated call never parks for a tool result.
         delivery: "none",
@@ -183,7 +211,7 @@ export function createInputRequestApprovalGate(
     if (response.ok) {
       created = body as InputRequestResource;
     } else if (response.status === 409 || response.status === 422) {
-      const existing = await recover(runRequests, toolCallId, request, signal);
+      const existing = await recover(runRequests, toolCallId, request, rules, signal);
       if (!existing) throw failure(response, body);
       created = existing;
     } else {
@@ -247,7 +275,9 @@ function toDecision(request: InputRequestResource): ToolApprovalDecision {
   if (request.status === "expired") return { approved: false, outcome: "expired", approvalId };
   if (request.status === "cancelled") return { approved: false, outcome: "withdrawn", approvalId };
   const values = request.response?.values ?? {};
-  const checker = request.response?.actor;
+  const actor = request.response?.actor;
+  // A response without an authenticated actor names no checker rather than an empty one.
+  const checker = actor?.id ? { type: actor.type, id: actor.id } : undefined;
   const comment = typeof values.comment === "string" && values.comment.trim()
     ? values.comment.trim()
     : undefined;
@@ -256,9 +286,16 @@ function toDecision(request: InputRequestResource): ToolApprovalDecision {
     approved: decided === "approved",
     outcome: decided,
     approvalId,
-    ...(checker ? { checker: { type: checker.type, id: checker.id } } : {}),
+    ...(checker ? { checker } : {}),
     ...(comment ? { comment } : {}),
   };
+}
+
+/** Whether a stored request was asked under exactly these rules. */
+function sameRules(stored: ResponderRules | null | undefined, wanted: ResponderRules): boolean {
+  return (stored?.exclude_run_starters ?? false) === (wanted.exclude_run_starters ?? false) &&
+    (stored?.required_capability ?? null) === (wanted.required_capability ?? null) &&
+    (stored?.step_up_seconds ?? null) === (wanted.step_up_seconds ?? null);
 }
 
 /** JSON with object keys sorted, so arguments compare equal whatever order storage returns them in. */

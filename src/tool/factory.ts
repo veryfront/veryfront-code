@@ -232,8 +232,12 @@ export function tool<TInput = unknown, TOutput = unknown>(
   config: ToolConfig<TInput, TOutput> & { approval: ToolApprovalPolicy },
 ): Tool<TInput, TOutput | ToolApprovalRefusal>;
 export function tool<TInput = unknown, TOutput = unknown>(
-  config: ToolConfig<TInput, TOutput>,
+  config: ToolConfig<TInput, TOutput> & { approval?: undefined },
 ): Tool<TInput, TOutput>;
+/** A config that may carry `approval` (one typed as `ToolConfig`, say) may return a refusal too. */
+export function tool<TInput = unknown, TOutput = unknown>(
+  config: ToolConfig<TInput, TOutput>,
+): Tool<TInput, TOutput | ToolApprovalRefusal>;
 export function tool<TInput = unknown, TOutput = unknown>(
   config: ToolConfig<TInput, TOutput>,
 ): Tool<TInput, TOutput | ToolApprovalRefusal> {
@@ -296,10 +300,10 @@ export function tool<TInput = unknown, TOutput = unknown>(
       input: TInput,
       context?: ToolExecutionContext,
     ) {
-      let validated = input;
-      if (parseInput) {
+      const parse = (value: unknown): TInput => {
+        if (!parseInput) return value as TInput;
         try {
-          validated = parseInput(input) as TInput;
+          return parseInput(value) as TInput;
         } catch (error) {
           throw toError(
             createError({
@@ -308,12 +312,14 @@ export function tool<TInput = unknown, TOutput = unknown>(
             }),
           );
         }
-      }
+      };
+      const validated = parse(input);
 
       if (approval) {
-        // One JSON snapshot is both what the checker approves and what runs, so a caller still
-        // holding the original arguments cannot change them while the approval is pending.
-        const snapshot = snapshotBoundedJsonValue(validated);
+        // One JSON snapshot of the arguments as called is what the checker approves and what runs,
+        // so a caller still holding them cannot change them while the approval is pending. It is
+        // parsed again after approval, so a schema that transforms its input still runs as usual.
+        const snapshot = snapshotBoundedJsonValue(input);
         if (
           !snapshot.success || snapshot.value === null || typeof snapshot.value !== "object" ||
           arrayIsArray(snapshot.value)
@@ -326,7 +332,7 @@ export function tool<TInput = unknown, TOutput = unknown>(
         const args = snapshot.value as Record<string, unknown>;
         const refusal = await requireToolApproval(toolName, approval, args, context);
         if (refusal) return refusal;
-        return await execute(args as TInput, context);
+        return await execute(parse(args), context);
       }
       return await execute(validated, context);
     },
