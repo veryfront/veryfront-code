@@ -780,6 +780,84 @@ export function GET() {
     });
   });
 
+  // veryfront-issue-inbox#4177: a compiled binary cannot load a CommonJS file
+  // from disk at runtime, so the route build bundles CommonJS dependencies.
+  it("should bundle CommonJS dependencies of compiled-binary API routes", async () => {
+    const projectDir = await createTestProject(
+      "api-cjs-deps-test",
+      `
+export default function Home() {
+  return <div>Home Page</div>;
+}
+`,
+      {
+        "package.json": JSON.stringify({
+          name: "test-api-cjs-deps",
+          type: "module",
+          dependencies: {
+            react: "^19.0.0",
+            "react-dom": "^19.0.0",
+            legacy: "1.0.0",
+            "esm-only": "1.0.0",
+          },
+        }),
+        "node_modules/legacy/package.json": JSON.stringify({
+          name: "legacy",
+          version: "1.0.0",
+          exports: { ".": { require: "./lib/index.js", default: "./lib/index.js" } },
+        }),
+        "node_modules/legacy/lib/index.js": `"use strict";
+var fs = require("fs");
+var path = require("path");
+var data = require("./data.json");
+var optional;
+try { optional = require("not-installed-optional"); } catch (error) { optional = error.code; }
+exports.name = data.name;
+exports.ownFile = path.basename(__filename);
+exports.readsSibling = fs.readFileSync(path.join(__dirname, "data.json"), "utf8").length > 0;
+exports.optional = optional;
+`,
+        "node_modules/legacy/lib/data.json": JSON.stringify({ name: "legacy-data" }),
+        "node_modules/esm-only/package.json": JSON.stringify({
+          name: "esm-only",
+          version: "1.0.0",
+          type: "module",
+          exports: "./index.js",
+        }),
+        "node_modules/esm-only/index.js": `export const kind = "esm";\n`,
+        "pages/api/cjs.ts": `
+import legacy, { name } from "legacy";
+import { kind } from "esm-only";
+
+export function GET() {
+  return Response.json({ legacy, name, kind });
+}
+`,
+      },
+    );
+
+    await withServer(projectDir, async (server) => {
+      const response = await fetch(`http://127.0.0.1:${server.port}/api/cjs`);
+      const body = await response.text();
+
+      assertEquals(
+        response.status,
+        200,
+        `Should return 200\nResponse body: ${body}\n${server.logs.join("").slice(-16000)}`,
+      );
+      assertEquals(JSON.parse(body), {
+        legacy: {
+          name: "legacy-data",
+          ownFile: "index.js",
+          readsSibling: true,
+          optional: "MODULE_NOT_FOUND",
+        },
+        name: "legacy-data",
+        kind: "esm",
+      });
+    });
+  });
+
   it("fails closed when API isolation conflicts with a broad host execution grant", async () => {
     const projectDir = await createTestProject(
       "isolation-fail-closed-test",

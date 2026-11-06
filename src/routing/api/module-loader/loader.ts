@@ -43,11 +43,16 @@ import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { wrapWithCurrentContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
 import { isWithinDirectory } from "#veryfront/security/path-validation.ts";
 import {
-  generateCompiledBinaryRequireShim,
   NODE_BUILTINS,
   readProjectDependencies,
+  resolveEsmUserDependencies as resolveEsmUserDependencyLocations,
   rewriteExternalImports,
 } from "./external-import-rewriter.ts";
+import {
+  commonJSPathPrelude,
+  createCompiledBuiltinPlugin,
+  prependBuiltinRequire,
+} from "./compiled-cjs-bundling.ts";
 import {
   MAX_WORKER_MODULE_SOURCE_BYTES,
   type PreparedWorkerModule,
@@ -1864,6 +1869,7 @@ function createProjectBoundaryPlugin(
   routeModulePath: string,
   allowedHosts: string[],
   workerImportMap: DenoImportMap | null,
+  definesCommonJSPaths = false,
 ): Plugin {
   return {
     name: "vf-project-boundary",
@@ -1872,10 +1878,11 @@ function createProjectBoundaryPlugin(
         try {
           const source = await sourceSnapshot.read(args.path);
           const executableModule = !isJSONModulePath(source.logicalPath);
+          const commonJS = mayBeCommonJSDependency(source.logicalPath);
           // JSON is parsed as data, never executed; see the note above.
           if (executableModule) {
             const scan = await validateHTTPImports(source.contents, allowedHosts, {
-              commonJS: mayBeCommonJSDependency(source.logicalPath),
+              commonJS,
               path: projectModuleLabel(source.logicalPath, projectDir),
             });
             await validateBundledLocalWorkerEntries({
@@ -1888,9 +1895,12 @@ function createProjectBoundaryPlugin(
               importMap: workerImportMap,
             });
           }
+          const pathPrelude = executableModule && commonJS && definesCommonJSPaths
+            ? commonJSPathPrelude(source.contents, source.logicalPath)
+            : "";
           return {
             contents: executableModule
-              ? await rewriteBundledImportMetaUrl(
+              ? pathPrelude + await rewriteBundledImportMetaUrl(
                 source.contents,
                 pathHelper.toFileUrl(source.logicalPath).href,
                 workerImportMap,
@@ -2069,22 +2079,25 @@ function buildTranspiledModuleSource(
       // rewritten to a resolvable specifier. Excluding it left a bare `import "zod"`
       // in the temp handler that Deno cannot resolve → "not a dependency and not in
       // import map" → 500. (The Node path already always-resolves zod via
-      // getNodeExternalPackagesToResolve.) On the compiled binary, keeping zod in
-      // userDeps routes it through rewriteCompiledBinaryUserDependencyImports like
-      // any other npm package, so its import resolves from the project's
-      // node_modules via the createRequire shim. zod is still force-externalized
-      // below, never bundled inline. See veryfront-issue-inbox#217.
+      // getNodeExternalPackagesToResolve.) On the compiled binary, zod is handled
+      // like any other npm package: imported from node_modules when it is ESM,
+      // bundled when it is CommonJS. Elsewhere it is force-externalized below,
+      // never bundled inline. See veryfront-issue-inbox#217.
       const userDeps = getUserDependencies(allDeps);
+      const compiled = isDeno && isCompiledBinary();
 
-      // Always externalize user npm dependencies. The bundled handler is loaded
-      // from a temp file and user deps are resolved at runtime:
+      // User npm dependencies the bundled handler resolves at runtime:
       //   - Node.js: via file:// URLs pointing to node_modules
-      //   - Deno (compiled or not): via createRequire or npm: specifiers
-      // Bundling CJS deps inline (especially complex ones like pdf-parse/pdf.js)
-      // breaks their internal global state management during esbuild's CJS→ESM
-      // conversion.
+      //   - Deno source run: via npm: specifiers
+      //   - Compiled binary: ESM dependencies via file:// URLs. A compiled
+      //     binary cannot load a CommonJS file from disk at runtime, so its
+      //     CommonJS dependencies are bundled into the handler instead, with
+      //     esbuild's Node resolution and interop (see compiled-cjs-bundling.ts).
+      const runtimeDeps = compiled
+        ? await externalEsmUserDependencies(projectDir, sourceSnapshot, userDeps)
+        : userDeps;
       const userExternals: string[] = [];
-      for (const name of userDeps.keys()) {
+      for (const name of runtimeDeps.keys()) {
         userExternals.push(name, `${name}/*`);
       }
 
@@ -2094,13 +2107,14 @@ function buildTranspiledModuleSource(
       // When esbuild bundles CJS into ESM output, these become __require() shims that
       // fail at runtime. Inject a createRequire-based shim so require() works in ESM.
       // Use projectDir as the resolve base so require() finds the project's node_modules.
+      // The compiled binary binds `require` after the build instead, from the
+      // built-ins the bundle actually requires.
       const safeProjectDir = JSON.stringify(projectDir + "/package.json");
-      const requireShim = isDeno && isCompiledBinary()
-        ? generateCompiledBinaryRequireShim(projectDir)
-        : [
-          'import { createRequire as __vf_createRequire } from "node:module";',
-          `var require = __vf_createRequire(${safeProjectDir});`,
-        ].join("\n");
+      const requireShim = compiled ? "" : [
+        'import { createRequire as __vf_createRequire } from "node:module";',
+        `var require = __vf_createRequire(${safeProjectDir});`,
+      ].join("\n");
+      const requiredBuiltins = new Set<string>();
       const routeSourceUrl = pathHelper.toFileUrl(resolvedPath).href;
       const workerShim = [
         `const __vf_routeSourceUrl = ${JSON.stringify(routeSourceUrl)};`,
@@ -2113,7 +2127,7 @@ function buildTranspiledModuleSource(
       const routeRuntimeShim = [
         requireShim,
         workerShim,
-        "export { require, Worker };",
+        compiled ? "export { Worker };" : "export { require, Worker };",
       ].join("\n");
 
       const buildOptions = typescriptDecoratorOptions
@@ -2128,13 +2142,18 @@ function buildTranspiledModuleSource(
         target: "es2022",
         jsx: "automatic",
         jsxImportSource: "react",
-        resolveExtensions: [".ts", ".tsx", ".js", ".jsx", ".mjs"],
+        resolveExtensions: compiled
+          ? [".ts", ".tsx", ".js", ".jsx", ".mjs", ".json"]
+          : [".ts", ".tsx", ".js", ".jsx", ".mjs"],
+        // Bundled CommonJS packages resolve as Node resolves them for require().
+        ...(compiled ? { mainFields: ["main", "module"], conditions: ["node"] } : {}),
         // Injection binds only free identifiers and lets esbuild rename either
         // side of a collision. A raw banner would redeclare a route import such
         // as `import { Worker } from "worker-package"` and emit invalid ESM.
         inject: [ROUTE_RUNTIME_SHIM_SPECIFIER],
         external: [
-          "zod",
+          // The compiled binary bundles a CommonJS zod like any other package.
+          ...(compiled ? [] : ["zod"]),
           "node:*",
           ...NODE_BUILTINS,
           "veryfront",
@@ -2149,6 +2168,7 @@ function buildTranspiledModuleSource(
           sourcefile: resolvedPath,
         },
         plugins: [
+          ...(compiled ? [createCompiledBuiltinPlugin(requiredBuiltins)] : []),
           createRouteRuntimeShimPlugin(routeRuntimeShim),
           createImportMapPlugin(
             projectDir,
@@ -2185,6 +2205,7 @@ function buildTranspiledModuleSource(
             resolvedPath,
             allowedHosts,
             workerImportMap,
+            compiled,
           ),
         ],
         // Only the opt-in decorator transform needs a working directory: adding
@@ -2202,10 +2223,13 @@ function buildTranspiledModuleSource(
       if (result.errors?.length) throw buildFailure(result.errors, projectDir, workingDir);
 
       logger.debug(`built handler ${projectModuleLabel(resolvedPath, projectDir)}`);
-      const js = result.outputFiles?.[0]?.text ?? "export {}";
+      const output = result.outputFiles?.[0]?.text ?? "export {}";
+      const js = compiled ? prependBuiltinRequire(output, requiredBuiltins) : output;
       logger.debug(`transpiled size ${js.length} bytes`);
 
-      return await rewriteExternalImports(js, projectDir, sourceSnapshot, userDeps);
+      // Only dependencies left external are rewritten: bundled package code
+      // may contain text that looks like an import of a bundled dependency.
+      return await rewriteExternalImports(js, projectDir, sourceSnapshot, runtimeDeps);
     },
     { "api.modulePath": modulePath, "api.projectDir": projectDir },
   );
@@ -2249,6 +2273,23 @@ async function readFileWithExtensions(
       message: `File not found: ${basePath}`,
     }),
   );
+}
+
+/**
+ * The user dependencies a compiled-binary route imports at runtime: the ESM
+ * ones. The build bundles the rest, which are CommonJS.
+ */
+async function externalEsmUserDependencies(
+  projectDir: string,
+  sourceSnapshot: ProjectSourceSnapshot,
+  userDeps: Map<string, string>,
+): Promise<Map<string, string>> {
+  const esmDeps = await resolveEsmUserDependencyLocations(projectDir, sourceSnapshot, userDeps);
+  const external = new Map<string, string>();
+  for (const [name, version] of userDeps) {
+    if (esmDeps.has(name)) external.set(name, version);
+  }
+  return external;
 }
 
 export function getUserDependencies(
@@ -2401,8 +2442,8 @@ async function importModuleFromCode(
       }
     }
 
-    // Note: user npm dependencies are externalized and loaded at runtime via
-    // a custom CJS loader (see generateCompiledBinaryRequireShim), no shims needed.
+    // Note: ESM user dependencies load from file:// URLs and CommonJS ones are
+    // bundled into the handler (see compiled-cjs-bundling.ts), no shims needed.
   }
 
   await fs.writeTextFile(tempFile, transformedCode);
