@@ -1,6 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
 import {
-  assert,
   assertEquals,
   assertStringIncludes,
   assertThrows,
@@ -9,9 +8,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { FileInfo } from "#veryfront/platform/adapters/base.ts";
 import type { FileSystem } from "#veryfront/platform/compat/fs.ts";
 import {
-  generateCompiledBinaryRequireShim,
   getNodeExternalPackagesToResolve,
-  NODE_BUILTINS,
   resolveEsmUserDependencies,
   resolveVeryfrontPackageExport,
   rewriteCompiledBinaryUserDependencyImports,
@@ -116,45 +113,12 @@ describe("external-import-rewriter", () => {
   describe("rewriteCompiledBinaryUserDependencyImports", () => {
     const deps = new Map([["lodash", "^4"]]);
 
-    it("rewrites a default import to interop require", () => {
-      const out = rewriteCompiledBinaryUserDependencyImports(
-        `import _ from "lodash";`,
-        deps,
-      );
-      assertEquals(out, `const _ = __vf_interopDefault(require("lodash"));`);
-    });
-
-    it("rewrites a namespace import to require", () => {
-      const out = rewriteCompiledBinaryUserDependencyImports(
-        `import * as _ from "lodash";`,
-        deps,
-      );
-      assertEquals(out, `const _ = require("lodash");`);
-    });
-
-    it("rewrites a named import to a destructuring require", () => {
-      const out = rewriteCompiledBinaryUserDependencyImports(
-        `import { merge } from "lodash";`,
-        deps,
-      );
-      assertStringIncludes(out, `= require("lodash")`);
-      assertStringIncludes(out, "merge");
-    });
-
-    it("rewrites a dynamic import to a resolved require promise", () => {
-      const out = rewriteCompiledBinaryUserDependencyImports(
-        `const m = import("lodash");`,
-        deps,
-      );
-      assertStringIncludes(out, `Promise.resolve(require("lodash"))`);
-    });
-
-    it("rewrites a subpath import including the subpath in require", () => {
-      const out = rewriteCompiledBinaryUserDependencyImports(
-        `import merge from "lodash/merge";`,
-        deps,
-      );
-      assertStringIncludes(out, `require("lodash/merge")`);
+    // The route build bundles CommonJS dependencies (inbox#4177), so an import
+    // of one never reaches this rewrite; it must not be turned into require().
+    it("leaves imports of CommonJS dependencies untouched", () => {
+      const code =
+        `import _ from "lodash";\nimport merge from "lodash/merge";\nconst m = import("lodash");`;
+      assertEquals(rewriteCompiledBinaryUserDependencyImports(code, deps), code);
     });
 
     it("leaves imports for packages not in userDeps untouched", () => {
@@ -380,21 +344,6 @@ describe("external-import-rewriter", () => {
 
       assertEquals(afterBuiltins, code);
       assertStringIncludes(out, `from "npm:trace_events@1.0.0"`);
-    });
-  });
-
-  describe("generateCompiledBinaryRequireShim", () => {
-    it("emits a self-contained CJS require shim referencing the project dir", () => {
-      const shim = generateCompiledBinaryRequireShim("/srv/app");
-      // Declares the require shim and embeds the project package.json path.
-      assertStringIncludes(shim, "__vf_createRequire");
-      assertStringIncludes(shim, "/srv/app/package.json");
-      // Embeds the node builtin set used for routing builtin requires.
-      assertStringIncludes(shim, JSON.stringify(NODE_BUILTINS));
-      // Defines a require function and an interop helper.
-      assertStringIncludes(shim, "var require = function(id)");
-      assertStringIncludes(shim, "__vf_interopDefault");
-      assert(shim.length > 0);
     });
   });
 

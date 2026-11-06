@@ -71,7 +71,6 @@ import { tryGetRegistryScopeId } from "#veryfront/cache/cache-key-builder.ts";
 import { getProjectEnvSnapshot } from "#veryfront/server/project-env/storage.ts";
 import { currentRequestContext } from "#veryfront/platform/request-context-access.ts";
 export {
-  generateCompiledBinaryRequireShim,
   getNodeExternalPackagesToResolve,
   loadVeryfrontExportsMap,
   resolveEsmUserDependencies,
@@ -106,8 +105,6 @@ const INLINE_MODULE_URL_SPECIFIER = /^(?:data|blob):/i;
 const MAX_TYPESCRIPT_CONFIG_BYTES = 1024 * 1024;
 const ROUTE_RUNTIME_SHIM_SPECIFIER = "veryfront:route-runtime-shim";
 const ROUTE_RUNTIME_SHIM_NAMESPACE = "veryfront-route-runtime-shim";
-
-export { toCjsDestructureBindings } from "./loader-helpers.ts";
 
 export function loadHandlerModule(options: LoadHostModuleOptions): Promise<APIRoute | null> {
   if (!isExplicitHostProjectCodeExecutionAllowed(options)) {

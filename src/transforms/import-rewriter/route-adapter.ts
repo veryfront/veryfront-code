@@ -4,10 +4,7 @@ import { serverLogger } from "#veryfront/utils";
 import { parseImports, replaceSpecifiers } from "#veryfront/transforms/esm/lexer.ts";
 import { resolveContainedPackagePath } from "./package-resolution.ts";
 import { isWithinDirectory } from "#veryfront/security/path-validation.ts";
-import {
-  resolveExportEntry as resolveRouteExportEntry,
-  toCjsDestructureBindings,
-} from "#veryfront/routing/api/module-loader/loader-helpers.ts";
+import { resolveExportEntry as resolveRouteExportEntry } from "#veryfront/routing/api/module-loader/loader-helpers.ts";
 import { rethrowProjectBoundaryViolation } from "#veryfront/routing/api/module-loader/project-source-snapshot.ts";
 
 const logger = serverLogger.component("api");
@@ -126,8 +123,7 @@ function resolveEsmEntry(pkgJson: Record<string, unknown>): string | undefined {
 /**
  * Identify the subset of user dependencies that are ESM-only and resolve each
  * to file:// URLs so the compiled-binary loader can import them as real ES
- * modules instead of transpiling them to CommonJS. CJS dependencies are omitted
- * and continue to load through the `createRequire`-based shim.
+ * modules. CommonJS dependencies are omitted: the route build bundles them.
  */
 export async function resolveEsmUserDependenciesForRoute(
   projectDir: string,
@@ -150,8 +146,7 @@ export async function resolveEsmUserDependenciesForRoute(
       // attacker-influenceable (a malicious/compromised package could set
       // "main": "../../../etc/passwd"). Reject entries that resolve outside the
       // package directory so a crafted package.json cannot turn into a file://
-      // import that escapes node_modules. This mirrors the containment guard the
-      // CJS loader shim enforces via __vf_assertContained.
+      // import that escapes node_modules.
       const entryPath = pathHelper.resolve(pathHelper.join(packageDir, entry));
       if (!isWithinDirectory(packageDir, entryPath)) {
         logger.warn(`Skipping ESM dependency ${name}: entry escapes package directory (${entry})`);
@@ -204,9 +199,9 @@ export function rewriteCompiledUserDependencyImportsForRoute(
   for (const name of userDeps.keys()) {
     const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-    // ESM-only dependencies are rewritten to real ES module file:// URLs so that
-    // import.meta, top-level await, etc. work. They must NOT be transpiled to
-    // CommonJS and evaluated via the `new Function` shim (see __vf_loadCjs).
+    // ESM dependencies are rewritten to real ES module file:// URLs so that
+    // import.meta, top-level await, etc. work. The route build bundles
+    // CommonJS dependencies, so no import of one is left to rewrite.
     const esm = esmDeps.get(name);
     if (esm) {
       // Resolve a subpath import to a contained file:// URL. The subpath comes
@@ -244,53 +239,7 @@ export function rewriteCompiledUserDependencyImportsForRoute(
         new RegExp(`import\\s*\\(\\s*["']${escaped}["']\\s*\\)`, "g"),
         () => `import("${esm.entryUrl}")`,
       );
-      continue;
     }
-
-    transformed = transformed.replace(
-      new RegExp(`import\\s+(\\w+)\\s+from\\s+["']${escaped}["']`, "g"),
-      (_, localName) => `const ${localName} = __vf_interopDefault(require("${name}"))`,
-    );
-    transformed = transformed.replace(
-      new RegExp(`import\\s+(\\{[^}]+\\})\\s+from\\s+["']${escaped}["']`, "g"),
-      (_, bindings) => `const ${toCjsDestructureBindings(bindings)} = require("${name}")`,
-    );
-    transformed = transformed.replace(
-      new RegExp(`import\\s+\\*\\s+as\\s+(\\w+)\\s+from\\s+["']${escaped}["']`, "g"),
-      (_, localName) => `const ${localName} = require("${name}")`,
-    );
-    transformed = transformed.replace(
-      new RegExp(
-        `import\\s+(\\w+)\\s*,\\s*(\\{[^}]+\\})\\s+from\\s+["']${escaped}["']`,
-        "g",
-      ),
-      (_, defaultName, bindings) => {
-        const tmp = `__vf_tmp_${defaultName}`;
-        return `const ${tmp} = require("${name}"); const ${defaultName} = __vf_interopDefault(${tmp}); const ${
-          toCjsDestructureBindings(bindings)
-        } = ${tmp}`;
-      },
-    );
-    transformed = transformed.replace(
-      new RegExp(
-        `import\\s+(\\w+|\\*\\s+as\\s+\\w+|\\{[^}]+\\})\\s+from\\s+["']${escaped}(/[^"']+)["']`,
-        "g",
-      ),
-      (_, binding, subpath) => {
-        const trimmedBinding = String(binding).trim();
-        if (trimmedBinding.startsWith("{")) {
-          return `const ${toCjsDestructureBindings(trimmedBinding)} = require("${name}${subpath}")`;
-        }
-        const name_ = trimmedBinding.startsWith("*")
-          ? trimmedBinding.replace(/\*\s+as\s+/, "")
-          : trimmedBinding;
-        return `const ${name_} = require("${name}${subpath}")`;
-      },
-    );
-    transformed = transformed.replace(
-      new RegExp(`import\\s*\\(\\s*["']${escaped}(/[^"']*)?["']\\s*\\)`, "g"),
-      (_, subpath) => `Promise.resolve(require("${name}${subpath || ""}"))`,
-    );
   }
 
   return transformed;
