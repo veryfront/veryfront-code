@@ -59,6 +59,7 @@ for ((attempt = 1; attempt <= attempts; attempt++)); do
     --env HOST=0.0.0.0 \
     --env NODE_ENV=development \
     --env PORT="$port" \
+    --env SHUTDOWN_ADMISSION_GRACE_MS=1000 \
     --entrypoint /usr/local/bin/veryfront-proxy \
     "$container_image" >/dev/null
 
@@ -93,6 +94,8 @@ for ((attempt = 1; attempt <= attempts; attempt++)); do
     exit 1
   fi
 
+  # The SIGTERM admission grace above (1s) must fit inside the 5s stop window;
+  # the production default (10s) would make docker SIGKILL the idle proxy.
   docker stop --time 5 "$container" >/dev/null
   read -r oom_killed exit_code < <(
     docker inspect --format '{{.State.OOMKilled}} {{.State.ExitCode}}' "$container"

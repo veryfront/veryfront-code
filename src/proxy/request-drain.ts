@@ -1,6 +1,7 @@
 import { getRequestTransportLifetime } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
 import { completeOnResponseBodyConsumption } from "#veryfront/platform/compat/http/response-lifecycle.ts";
-import { continueProxyShutdownPromise } from "./shutdown-intrinsics.ts";
+import { continueProxyShutdownPromise, delayProxyShutdown } from "./shutdown-intrinsics.ts";
+import { isControlPlaneRunStreamPost } from "./retry.ts";
 import { MAX_PROXY_TIMER_DELAY_MS } from "./timing.ts";
 
 export interface TrackedProxyRequest {
@@ -83,9 +84,7 @@ export class ProxyRequestDrainTracker {
       const remainingMs = deadline - performance.now();
       if (remainingMs <= 0) return false;
 
-      await new Promise<void>((resolve) =>
-        setTimeout(resolve, Math.min(pollIntervalMs, remainingMs))
-      );
+      await delayProxyShutdown(Math.min(pollIntervalMs, remainingMs));
     }
 
     return true;
@@ -141,9 +140,15 @@ export function createProxyDrainingResponse(): Response {
  * `withConnectionClose`), so the gateway reconnects through the Service, which
  * no longer routes to this terminating pod. After the window, new requests get
  * the draining response.
+ *
+ * SIGINT (a local Ctrl-C) has no gateway to wait for, so it starts with no
+ * grace window. Long-lived requests (WebSocket upgrades and SSE streams) are
+ * refused from the moment shutdown starts: they could outlive the remaining
+ * drain budget and belong on a replica that stays.
  */
 export class ProxyDrainAdmission {
   private admitUntil: number | null = null;
+  private grantedMs = 0;
 
   constructor(
     private readonly windowMs: number,
@@ -154,17 +159,36 @@ export class ProxyDrainAdmission {
     }
   }
 
-  begin(): void {
-    this.admitUntil ??= this.now() + this.windowMs;
+  begin(signal: "SIGINT" | "SIGTERM"): void {
+    if (this.admitUntil !== null) return;
+    this.grantedMs = signal === "SIGTERM" ? this.windowMs : 0;
+    this.admitUntil = this.now() + this.grantedMs;
   }
 
-  admits(): boolean {
-    return this.admitUntil === null || this.now() < this.admitUntil;
+  /** Whether a request arriving now is served (always true before `begin`). */
+  admits(request: Request, pathname: string): boolean {
+    if (this.admitUntil === null) return true;
+    if (isLongLivedProxyRequest(request, pathname)) return false;
+    return this.now() < this.admitUntil;
   }
 
-  remainingMs(): number {
-    return this.admitUntil === null ? 0 : Math.max(0, this.admitUntil - this.now());
+  /** The whole grace window granted by `begin`, in integer milliseconds. */
+  getGrantedMs(): number {
+    return this.grantedMs;
   }
+
+  /** Wait out the rest of the grace window on a timer captured before extensions load. */
+  waitForWindow(): Promise<void> {
+    const remainingMs = this.admitUntil === null ? 0 : Math.max(0, this.admitUntil - this.now());
+    return delayProxyShutdown(Math.ceil(remainingMs));
+  }
+}
+
+/** WebSocket upgrades and SSE streams hold their connection open indefinitely. */
+export function isLongLivedProxyRequest(request: Request, pathname: string): boolean {
+  if (request.headers.get("upgrade")?.toLowerCase() === "websocket") return true;
+  if (request.headers.get("accept")?.toLowerCase().includes("text/event-stream")) return true;
+  return isControlPlaneRunStreamPost(request, pathname);
 }
 
 /** Ask the HTTP/1.1 server to close the connection after this response. */

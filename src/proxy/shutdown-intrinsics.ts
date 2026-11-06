@@ -17,6 +17,7 @@ const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const hasOwnProperty = Object.prototype.hasOwnProperty;
 const nativePromiseThen = Promise.prototype.then;
 const promiseSpecies = Symbol.species;
+const setTimer = setTimeout;
 
 function hasOwn(object: PropertyDescriptor, key: PropertyKey): boolean {
   return apply(hasOwnProperty, object, [key]) as boolean;
@@ -119,5 +120,15 @@ export function resolveProxyShutdownValue<T>(
       }
     }
     resolve(value);
+  });
+}
+
+/**
+ * Resolve after `delayMs` using the timer captured at module evaluation, so a
+ * shutdown wait still settles after extension code replaces `setTimeout`.
+ */
+export function delayProxyShutdown(delayMs: number): Promise<void> {
+  return createProxyShutdownPromise<void>((resolve) => {
+    setTimer(resolve, delayMs);
   });
 }

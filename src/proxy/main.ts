@@ -21,6 +21,12 @@
  * - VERYFRONT_API_INTERNAL_USER: Basic auth user for internal API
  * - VERYFRONT_API_INTERNAL_PASS: Basic auth pass for internal API
  * - SHUTDOWN_DRAIN_TIMEOUT_MS: Time to wait for active SSE responses during shutdown
+ *   (default 25000, max 600000)
+ * - SHUTDOWN_ADMISSION_GRACE_MS: After SIGTERM, keep serving new ordinary requests
+ *   (each closing its connection) for this long while the gateway moves off the
+ *   draining pod (default 10000, max 600000, 0 disables). It is spent inside
+ *   SHUTDOWN_DRAIN_TIMEOUT_MS and capped at it, so in-flight requests get the rest
+ *   of the drain budget. SIGINT, WebSocket upgrades and SSE streams get no grace.
  * - SHUTDOWN_CLEANUP_TIMEOUT_MS: Total time allowed for post-drain cleanup
  */
 
@@ -103,7 +109,6 @@ import {
   withProxyServerTimingHeader,
 } from "./server-timing.ts";
 import { removeStickyCookieFromPublicCacheableResponse } from "./response-headers.ts";
-import { createProxyShutdownPromise } from "./shutdown-intrinsics.ts";
 import {
   closeProxyServerWithin,
   createProxyDrainingResponse,
@@ -869,10 +874,9 @@ async function router(req: Request): Promise<Response> {
     return Response.json({ service: "veryfront-proxy", status: "ok" });
   }
   if (url.pathname === PROXY_READY_PATH) return createProxyReadinessResponse(shuttingDown);
-  const isWebSocketUpgrade = req.headers.get("upgrade")?.toLowerCase() === "websocket";
   // Inside the admission grace window a draining replica still serves ordinary
-  // requests; a new long-lived WebSocket belongs on a replica that stays.
-  if (shuttingDown && (isWebSocketUpgrade || !drainAdmission.admits())) {
+  // requests; a new WebSocket or SSE stream belongs on a replica that stays.
+  if (shuttingDown && !drainAdmission.admits(req, url.pathname)) {
     return createProxyDrainingResponse();
   }
 
@@ -881,7 +885,7 @@ async function router(req: Request): Promise<Response> {
 
   try {
     let response: Response;
-    if (isWebSocketUpgrade) {
+    if (req.headers.get("upgrade")?.toLowerCase() === "websocket") {
       response = await handleWebSocketUpgrade(req, url);
     } else if (url.pathname === PROXY_ROUTING_INVALIDATION_PATH) {
       response = await handleProxyRoutingInvalidationRequest(req, {
@@ -928,12 +932,12 @@ const server = createHttpServer();
 async function shutdown(signal: "SIGINT" | "SIGTERM"): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
-  drainAdmission.begin();
+  drainAdmission.begin(signal);
 
   proxyLogger.info(`Received ${signal}, initiating graceful shutdown`, {
     inFlightRequests: proxyRequestDrainTracker.getInFlightCount(),
     drainTimeoutMs: SHUTDOWN_DRAIN_TIMEOUT_MS,
-    admissionGraceMs: SHUTDOWN_ADMISSION_GRACE_MS,
+    admissionGraceMs: drainAdmission.getGrantedMs(),
     cleanupTimeoutMs: SHUTDOWN_CLEANUP_TIMEOUT_MS,
   });
 
@@ -966,14 +970,13 @@ async function shutdown(signal: "SIGINT" | "SIGTERM"): Promise<void> {
     // New requests are admitted (closing their connections) until the grace
     // window ends, then receive the draining response. Keep this replica
     // subscribed while admitted and already-started responses finish.
-    const graceMs = drainAdmission.remainingMs();
-    if (graceMs > 0) {
-      await createProxyShutdownPromise<void>((resolve) => setTimeout(resolve, graceMs));
-    }
+    // SIGINT gets no grace window. The wait uses a timer captured before
+    // extensions load, so a replaced setTimeout cannot skip cleanup.
+    await drainAdmission.waitForWindow();
     let drained = false;
     try {
       drained = await proxyRequestDrainTracker.waitForDrain(
-        Math.max(0, SHUTDOWN_DRAIN_TIMEOUT_MS - SHUTDOWN_ADMISSION_GRACE_MS),
+        Math.max(0, SHUTDOWN_DRAIN_TIMEOUT_MS - drainAdmission.getGrantedMs()),
       );
     } catch (error) {
       reportShutdownFailure({ step: "request_drain", error, timedOut: false });

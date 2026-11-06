@@ -555,6 +555,8 @@ it("proxy release enforces the cold-start cgroup budget", async () => {
       '--memory "$memory_limit"',
       "{{.State.OOMKilled}}",
       '"/_proxy/health"',
+      // The SIGTERM admission grace must fit inside `docker stop --time 5`.
+      "--env SHUTDOWN_ADMISSION_GRACE_MS=1000",
     ]
   ) {
     assertEquals(

@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { ProxyDrainAdmission } from "./request-drain.ts";
 import { parseProxyShutdownCleanupTimeoutMs, runProxyShutdownSteps } from "./shutdown-lifecycle.ts";
 
 describe("proxy shutdown lifecycle", () => {
@@ -181,6 +182,28 @@ describe("proxy shutdown lifecycle", () => {
     }
 
     assertEquals(await settlement, []);
+  });
+
+  it("waits out the admission grace window on the timer captured before extensions load", async () => {
+    const admission = new ProxyDrainAdmission(5, () => 0);
+    admission.begin("SIGTERM");
+    const timerDescriptor = Object.getOwnPropertyDescriptor(globalThis, "setTimeout")!;
+    let wait: Promise<void> | undefined;
+    try {
+      Object.defineProperty(globalThis, "setTimeout", {
+        configurable: timerDescriptor.configurable,
+        enumerable: timerDescriptor.enumerable,
+        writable: true,
+        value: () => {
+          throw new Error("poisoned setTimeout");
+        },
+      });
+      wait = admission.waitForWindow();
+    } finally {
+      Object.defineProperty(globalThis, "setTimeout", timerDescriptor);
+    }
+
+    assertEquals(await wait, undefined);
   });
 
   it("rejects malformed shutdown step configurations", async () => {

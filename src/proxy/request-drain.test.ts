@@ -10,6 +10,7 @@ import {
   closeProxyServerWithin,
   createProxyDrainingResponse,
   createProxyReadinessResponse,
+  isLongLivedProxyRequest,
   parseProxyDrainTimeoutMs,
   PROXY_READY_PATH,
   ProxyDrainAdmission,
@@ -395,25 +396,76 @@ describe("proxy request drain", () => {
     await draining.body?.cancel();
   });
 
-  it("admits requests for the grace window after shutdown starts, then refuses them", () => {
+  it("admits requests for the grace window after SIGTERM, then refuses them", () => {
     let now = 1_000;
     const admission = new ProxyDrainAdmission(10_000, () => now);
-    assertEquals(admission.admits(), true);
-    assertEquals(admission.remainingMs(), 0);
+    const plain = new Request("http://proxy.test/page");
+    assertEquals(admission.admits(plain, "/page"), true);
+    assertEquals(admission.getGrantedMs(), 0);
 
-    admission.begin();
-    assertEquals(admission.admits(), true);
-    assertEquals(admission.remainingMs(), 10_000);
+    admission.begin("SIGTERM");
+    assertEquals(admission.admits(plain, "/page"), true);
+    assertEquals(admission.getGrantedMs(), 10_000);
 
     now += 4_000;
-    admission.begin(); // a second signal does not extend the window
-    assertEquals(admission.admits(), true);
-    assertEquals(admission.remainingMs(), 6_000);
+    admission.begin("SIGTERM"); // a second signal does not extend the window
+    admission.begin("SIGINT"); // nor does a later SIGINT cut it short
+    assertEquals(admission.admits(plain, "/page"), true);
+    assertEquals(admission.getGrantedMs(), 10_000);
 
     now += 6_000;
-    assertEquals(admission.admits(), false);
-    assertEquals(admission.remainingMs(), 0);
+    assertEquals(admission.admits(plain, "/page"), false);
     assertThrows(() => new ProxyDrainAdmission(-1), RangeError);
+  });
+
+  it("gives SIGINT no admission grace and no grace wait", async () => {
+    const admission = new ProxyDrainAdmission(60_000, () => 1_000);
+    admission.begin("SIGINT");
+    assertEquals(admission.getGrantedMs(), 0);
+    assertEquals(admission.admits(new Request("http://proxy.test/page"), "/page"), false);
+
+    // A 60s window would hold this wait open; SIGINT resolves it at once.
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    const settled = await Promise.race([
+      admission.waitForWindow().then(() => "settled"),
+      new Promise<string>((resolve) => {
+        timeoutId = setTimeout(() => resolve("pending"), 200);
+      }),
+    ]);
+    clearTimeout(timeoutId);
+    assertEquals(settled, "settled");
+  });
+
+  it("refuses new WebSocket and SSE streams from the start of the grace window", () => {
+    const admission = new ProxyDrainAdmission(10_000, () => 0);
+    const runStream = new Request("http://proxy.test/api/control-plane/runs/run_1/stream", {
+      method: "POST",
+    });
+    const eventSource = new Request("http://proxy.test/events", {
+      headers: { accept: "text/event-stream" },
+    });
+    const webSocket = new Request("http://proxy.test/ws", {
+      headers: { upgrade: "WebSocket" },
+    });
+    const runStatus = new Request("http://proxy.test/api/control-plane/runs/run_1");
+
+    // Before shutdown every request is served.
+    assertEquals(admission.admits(runStream, "/api/control-plane/runs/run_1/stream"), true);
+
+    admission.begin("SIGTERM");
+    assertEquals(admission.admits(runStream, "/api/control-plane/runs/run_1/stream"), false);
+    assertEquals(admission.admits(eventSource, "/events"), false);
+    assertEquals(admission.admits(webSocket, "/ws"), false);
+    assertEquals(admission.admits(runStatus, "/api/control-plane/runs/run_1"), true);
+
+    assertEquals(isLongLivedProxyRequest(runStream, "/api/control-plane/runs/run_1/stream"), true);
+    assertEquals(
+      isLongLivedProxyRequest(
+        new Request("http://proxy.test/api/control-plane/runs/run_1/stream"),
+        "/api/control-plane/runs/run_1/stream",
+      ),
+      false,
+    );
   });
 
   it("marks admitted drain responses to close their connection", async () => {
