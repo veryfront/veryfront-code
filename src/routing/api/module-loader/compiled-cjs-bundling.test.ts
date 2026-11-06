@@ -79,6 +79,19 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
       assertEquals(await lookup().of("/app/node_modules/typed/lib"), "commonjs");
     });
 
+    it("walks up from a path under the canonical root as well", async () => {
+      const both = new PackageTypeLookup(
+        (path) =>
+          Promise.resolve(
+            path === "/real/app/node_modules/esm/package.json"
+              ? JSON.stringify({ type: "module" })
+              : null,
+          ),
+        ["/app", "/real/app"],
+      );
+      assertEquals(await both.of("/real/app/node_modules/esm/lib/deep"), "module");
+    });
+
     it("stops at node_modules, as Node does, so a package without a manifest is CommonJS", async () => {
       assertEquals(await lookup().of("/app/node_modules/bare/lib"), undefined);
       assertEquals(await lookup().of("/app/node_modules/@scope/bare"), undefined);
@@ -143,6 +156,7 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
       "/app": "/real/app",
       "/real/app/node_modules/linked": "/real/app/packages/linked",
       "/real/app/node_modules/@s/w": "/real/app/packages/w",
+      "/real/app/node_modules/@ls": "/real/app/packages/ls",
       "/real/app/node_modules/out": "/elsewhere/out",
       "/real/app/node_modules/self": "/real/app",
       "/real/app/node_modules/inner": "/real/app/node_modules/plain",
@@ -151,6 +165,7 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
       "/real/app/node_modules": [
         { name: "linked", isDirectory: false, isSymlink: true },
         { name: "@s", isDirectory: true, isSymlink: false },
+        { name: "@ls", isDirectory: false, isSymlink: true },
         { name: "plain", isDirectory: true, isSymlink: false },
         { name: "out", isDirectory: false },
         { name: "self", isDirectory: false, isSymlink: true },
@@ -158,6 +173,7 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
         { name: "dead", isDirectory: false, isSymlink: true },
       ],
       "/real/app/node_modules/@s": [{ name: "w", isDirectory: false, isSymlink: true }],
+      "/real/app/node_modules/@ls": [{ name: "pkg", isDirectory: true, isSymlink: false }],
     };
     const fs = {
       realPath(path: string) {
@@ -177,6 +193,8 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
       assert(isDependency("/real/app/node_modules/x/index.js"));
       assert(isDependency("/real/app/packages/linked/index.js"));
       assert(isDependency("/real/app/packages/w/index.js"));
+      // A linked scope directory holds plain package directories.
+      assert(isDependency("/real/app/packages/ls/pkg/index.js"));
     });
 
     it("never counts project code, the project root or targets outside the project", async () => {
@@ -406,6 +424,29 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
       "/app/node_modules/p/cycle-b.js": "exports.seen = require('./cycle-a').early;",
       "/app/node_modules/p/throws.js": "throw new Error('boom');",
       "/app/node_modules/p/bare.js": "require('lodash');",
+      "/app/node_modules/p/dialects/mysql.js": [
+        "exports.driver = require('driver').name;",
+        "exports.sub = require('driver/extra').name;",
+        "exports.scoped = require('@s/conds');",
+        "exports.mainOnly = require('mainonly');",
+        "exports.local = require('nested');",
+      ].join("\n"),
+      "/app/node_modules/driver/package.json": JSON.stringify({
+        exports: {
+          ".": { import: "./esm.mjs", require: "./cjs.js" },
+          "./extra": "./extra.js",
+        },
+      }),
+      "/app/node_modules/driver/cjs.js": "exports.name = 'driver';",
+      "/app/node_modules/driver/extra.js": "exports.name = 'extra';",
+      "/app/node_modules/@s/conds/package.json": JSON.stringify({
+        exports: [{ browser: "./browser.js", default: "./node.js" }],
+      }),
+      "/app/node_modules/@s/conds/node.js": "module.exports = 'conds';",
+      "/app/node_modules/mainonly/package.json": JSON.stringify({ main: "lib/entry" }),
+      "/app/node_modules/mainonly/lib/entry.js": "module.exports = 'main';",
+      "/app/node_modules/p/node_modules/nested/index.js": "module.exports = 'nested';",
+      "/app/node_modules/p/sealed.js": "require('driver/hidden');",
       "/app/node_modules/p/split.js":
         "require.ensure(['./base'], function (r) { exports.base = r('./base').name; });",
     };
@@ -485,6 +526,23 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
       });
       assertEquals(ensured, { kind: "fs" });
       assertEquals(require("/app/node_modules/p/split.js"), { base: "base" });
+    });
+
+    it("looks a package up from a loaded module, as Node's require() does", () => {
+      assertEquals(require("/app/node_modules/p/dialects/mysql.js"), {
+        driver: "driver",
+        sub: "extra",
+        scoped: "conds",
+        mainOnly: "main",
+        local: "nested",
+      });
+      for (const file of ["bare", "sealed"]) {
+        assertEquals(
+          errorCode(() => require(`/app/node_modules/p/${file}.js`)),
+          "MODULE_NOT_FOUND",
+          file,
+        );
+      }
     });
 
     it("hands a cycle the exports so far, as Node does", () => {
@@ -615,6 +673,16 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
           resolveRelative,
         );
         assert(js?.includes('exports.d = "/d/p";'), String(js));
+      });
+
+      it("prepares a .jsx file as Node's .js loader would", async () => {
+        const code = await prepareCommonJSFile(
+          "exports.d = __dirname;",
+          "/d/p/view.jsx",
+          undefined,
+          resolveRelative,
+        );
+        assert(code?.includes('exports.d = "/d/p";'), String(code));
       });
 
       it("prepares a .cts file as CommonJS TypeScript", async () => {

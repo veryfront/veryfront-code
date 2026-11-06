@@ -232,10 +232,18 @@ export type ReadManifest = (path: string) => Promise<string | null>;
  */
 export class PackageTypeLookup {
   readonly #byDirectory = new Map<string, Promise<string | undefined>>();
-  readonly #root: string;
+  readonly #roots: string[];
 
-  constructor(private readonly readManifest: ReadManifest, projectDir: string) {
-    this.#root = pathHelper.resolve(projectDir);
+  /**
+   * `projectDirs` are the project root as given and as canonical: the bundler
+   * reports paths with symlinks followed.
+   */
+  constructor(
+    private readonly readManifest: ReadManifest,
+    projectDirs: string | readonly string[],
+  ) {
+    this.#roots = (typeof projectDirs === "string" ? [projectDirs] : [...projectDirs])
+      .map((directory) => pathHelper.resolve(directory));
   }
 
   of(directory: string): Promise<string | undefined> {
@@ -260,7 +268,9 @@ export class PackageTypeLookup {
       }
     }
     const parent = pathHelper.dirname(directory);
-    if (parent === directory || !isWithinDirectory(this.#root, parent)) return undefined;
+    if (parent === directory || !this.#roots.some((root) => isWithinDirectory(root, parent))) {
+      return undefined;
+    }
     return await this.of(parent);
   }
 }
@@ -293,6 +303,8 @@ async function possibleLinks(fs: DependencyRootFileSystem, modules: string): Pro
   const links: string[] = [];
   for (const entry of await directoryEntries(fs, modules)) {
     const path = pathHelper.join(modules, entry.name);
+    // A linked `@scope` directory holds plain package directories.
+    if (entry.name.startsWith("@") && entry.isSymlink !== false) links.push(path);
     const scoped = entry.name.startsWith("@")
       ? (await directoryEntries(fs, path)).map((inner) => ({
         ...inner,
@@ -400,9 +412,9 @@ export type ResolveRequireLiteral = (specifier: string) => Promise<string | null
 /**
  * A dependency file as Node would run it when Node loads it as CommonJS (a
  * `.cjs` or `.cts` file, or a `.js` or extensionless one as below), or null
- * when Node loads it as ESM: a `.mjs` file, a `.js` file in a
- * `"type": "module"` package, or a `.js` or extensionless file with ESM
- * syntax, which esbuild bundles as ESM whatever its package says.
+ * when Node loads it as ESM: a `.mjs` file, a `.js` or `.jsx` file in a
+ * `"type": "module"` package, or a `.js`, `.jsx` or extensionless file with
+ * ESM syntax, which esbuild bundles as ESM whatever its package says.
  *
  * The file is parsed, not matched as text, so strings and comments are never
  * touched. Unbound reads of `__dirname` and `__filename` become constants, so
@@ -420,7 +432,8 @@ export async function prepareCommonJSFile(
   resolve: ResolveRequireLiteral,
 ): Promise<string | null> {
   const cjsExtension = /\.c[jt]s$/i.test(filePath);
-  const jsExtension = /\.js$/i.test(filePath);
+  // Node's require() loads `.jsx` through its `.js` loader too.
+  const jsExtension = /\.jsx?$/i.test(filePath);
   // Node's require() loads a file without an extension as CommonJS, whatever
   // its package declares; a package `main` may name one.
   const extensionless = pathHelper.extname(filePath) === "";
@@ -703,12 +716,16 @@ export interface RuntimeRequire {
  * - A built-in loads under any id Node accepts.
  * - An absolute path, or a relative one inside a module this loaded, finds a
  *   file in Node's order: the path, then with `.js` or `.json`, then its
- *   `index.js` or `index.json`. Its real path must be inside the project.
+ *   `index.js` or `index.json`. A package name inside a module this loaded
+ *   is looked up in `node_modules` from that module upwards, through the
+ *   package's `exports` (`node`, `require` and `default` conditions) or
+ *   `main`. Its real path must be inside the project.
  *   JSON loads anywhere in the project; JavaScript only from the project's
  *   dependencies, as CommonJS, with its own `require`. Each loads once, as in
  *   Node's module cache. `require.resolve` returns the path it found.
- * - Anything else, a package name included, throws `MODULE_NOT_FOUND`, so
- *   optional dependencies probed in a `try` still fall back.
+ * - Anything else, a package name in route code included, throws
+ *   `MODULE_NOT_FOUND`, so optional dependencies probed in a `try` still
+ *   fall back.
  * - `require.ensure`, which code written for webpack calls, runs its callback.
  *
  * Errors name a path relative to the project, never the host path.
@@ -755,12 +772,8 @@ export function createRuntimeRequire(
   };
   const relativeId = (id: string) =>
     id === "." || id === ".." || id.startsWith("./") || id.startsWith("../");
-  const find = (id: unknown, directory: string | undefined) => {
-    if (typeof id !== "string") return null;
-    let base: string;
-    if (host.isAbsolute(id)) base = id;
-    else if (directory !== undefined && relativeId(id)) base = host.join(directory, id);
-    else return null;
+  // A file at `base` in Node's order: exact, `.js`, `.json`, then the index.
+  const findFile = (base: string) => {
     const candidates = [
       base,
       base + ".js",
@@ -773,6 +786,91 @@ export function createRuntimeRequire(
       if (found !== null) return found;
     }
     return null;
+  };
+  // The target a package's `exports` gives `require()`: the `node`, `require`
+  // and `default` conditions, in the order the package lists them.
+  const exportTarget = (value: unknown): string | null => {
+    if (typeof value === "string") return value;
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        const target = exportTarget(item);
+        if (target !== null) return target;
+      }
+      return null;
+    }
+    if (value === null || typeof value !== "object") return null;
+    for (const [condition, item] of Object.entries(value)) {
+      if (condition !== "node" && condition !== "require" && condition !== "default") continue;
+      const target = exportTarget(item);
+      if (target !== null) return target;
+    }
+    return null;
+  };
+  // A package's file for `subpath` ("" or "/sub"), as Node's require() picks it.
+  const packageFile = (packageDir: string, subpath: string) => {
+    const manifestPath = host.join(packageDir, "package.json");
+    let manifest: { exports?: unknown; main?: unknown } = {};
+    if (host.isFile(manifestPath)) {
+      try {
+        manifest = JSON.parse(host.readFileSync(manifestPath, "utf8"));
+      } catch {
+        return null; // Node rejects a malformed package.json
+      }
+    }
+    const exports = manifest.exports;
+    if (exports !== undefined && exports !== null) {
+      const key = "." + subpath;
+      const keyed = typeof exports === "object" && !Array.isArray(exports) &&
+        Object.keys(exports).some((name) => name.startsWith("."));
+      const entry = keyed
+        ? (exports as Record<string, unknown>)[key]
+        : key === "."
+        ? exports
+        : null;
+      const target = exportTarget(entry);
+      return target === null ? null : projectFile(host.join(packageDir, target));
+    }
+    if (subpath !== "") return findFile(host.join(packageDir, subpath));
+    if (typeof manifest.main === "string") {
+      const main = findFile(host.join(packageDir, manifest.main));
+      if (main !== null) return main;
+    }
+    return findFile(packageDir);
+  };
+  // A package name looked up in `node_modules` from `directory` upwards, as
+  // Node's require() does, never above the project.
+  const findPackage = (id: string, directory: string) => {
+    const parts = id.split("/");
+    const nameLength = id.startsWith("@") ? 2 : 1;
+    if (
+      parts.length < nameLength ||
+      parts.some((part) => part === "" || part === "." || part === "..")
+    ) {
+      return null;
+    }
+    const name = parts.slice(0, nameLength).join("/");
+    const subpath = parts.length > nameLength ? "/" + parts.slice(nameLength).join("/") : "";
+    let current = directory;
+    for (;;) {
+      const relative = host.relative(projectRoot, current);
+      if (relative === ".." || relative.startsWith(".." + host.sep) || host.isAbsolute(relative)) {
+        return null;
+      }
+      if (!current.endsWith(host.sep + "node_modules")) {
+        const found = packageFile(host.join(current, "node_modules", name), subpath);
+        if (found !== null) return found;
+      }
+      const parent = host.dirname(current);
+      if (parent === current) return null;
+      current = parent;
+    }
+  };
+  const find = (id: unknown, directory: string | undefined) => {
+    if (typeof id !== "string") return null;
+    if (host.isAbsolute(id)) return findFile(id);
+    if (directory === undefined) return null;
+    if (relativeId(id)) return findFile(host.join(directory, id));
+    return findPackage(id, directory);
   };
   const label = (id: unknown) =>
     typeof id === "string" && (host.isAbsolute(id) || relativeId(id))

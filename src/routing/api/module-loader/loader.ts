@@ -1923,8 +1923,12 @@ function createProjectBoundaryPlugin(
   allowedHosts: string[],
   workerImportMap: DenoImportMap | null,
   isDependencyFile: DependencyFilePredicate = noDependencyFiles,
+  canonicalProjectDir: string = projectDir,
 ): Plugin {
-  const packageTypes = new PackageTypeLookup(snapshotManifestReader(sourceSnapshot), projectDir);
+  const packageTypes = new PackageTypeLookup(snapshotManifestReader(sourceSnapshot), [
+    projectDir,
+    canonicalProjectDir,
+  ]);
   return {
     name: "vf-project-boundary",
     setup(build) {
@@ -2185,6 +2189,7 @@ function buildTranspiledModuleSource(
         'import { createRequire as __vf_createRequire } from "node:module";',
         `var require = __vf_createRequire(${safeProjectDir});`,
       ].join("\n");
+      const canonicalRoot = compiled ? await canonicalProjectRoot(projectDir) : projectDir;
       const dependencyDirs = compiled
         ? await dependencyDirectories(projectDir, {
           realPath,
@@ -2301,6 +2306,7 @@ function buildTranspiledModuleSource(
             allowedHosts,
             workerImportMap,
             isDependencyFile,
+            canonicalRoot,
           ),
         ],
         // Only the opt-in decorator transform needs a working directory: adding
@@ -2319,9 +2325,7 @@ function buildTranspiledModuleSource(
 
       logger.debug(`built handler ${projectModuleLabel(resolvedPath, projectDir)}`);
       const output = result.outputFiles?.[0]?.text ?? "export {}";
-      const js = compiled
-        ? prependRuntimeRequire(output, await canonicalProjectRoot(projectDir), dependencyDirs)
-        : output;
+      const js = compiled ? prependRuntimeRequire(output, canonicalRoot, dependencyDirs) : output;
       logger.debug(`transpiled size ${js.length} bytes`);
 
       // Only dependencies left external are rewritten. The compiled bundle

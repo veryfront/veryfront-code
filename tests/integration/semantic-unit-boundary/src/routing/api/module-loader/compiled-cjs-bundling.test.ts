@@ -371,8 +371,18 @@ describe("compiled-binary route bundling of CommonJS dependencies", () => {
           '  return require(path.join(__dirname, "dialects", name + ".js"));',
           "};",
         ].join("\n"),
-        "node_modules/dialects/dialects/pg.js":
-          'var base = require("../base");\nexports.name = base.prefix + "pg";\nexports.sep = require("path").sep;',
+        "node_modules/dialects/dialects/pg.js": [
+          'var base = require("../base");',
+          'exports.name = base.prefix + "pg";',
+          'exports.sep = require("path").sep;',
+          // Never seen by the bundler: only this computed load reaches it.
+          'exports.driver = require("driver");',
+        ].join("\n"),
+        "node_modules/driver/package.json": JSON.stringify({
+          name: "driver",
+          exports: { ".": { import: "./index.mjs", require: "./index.cjs" } },
+        }),
+        "node_modules/driver/index.cjs": 'module.exports = "driver";',
         "node_modules/dialects/base.js": 'exports.prefix = "dialect:";',
         "src/secret.js": 'module.exports = "project code";',
       });
@@ -385,7 +395,7 @@ describe("compiled-binary route bundling of CommonJS dependencies", () => {
           'try { dialects.load("../../../src/secret"); } catch (error) { project = (error as { code?: string }).code; }\n' +
           "export { project };\n",
       );
-      assertEquals(mod.pg, { name: "dialect:pg", sep: "/" });
+      assertEquals(mod.pg, { name: "dialect:pg", sep: "/", driver: "driver" });
       assertEquals(mod.again, true);
       assertEquals(mod.project, "MODULE_NOT_FOUND");
     });
