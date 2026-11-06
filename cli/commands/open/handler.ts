@@ -70,13 +70,17 @@ export async function resolveOpenProjectSlug(
   return link?.projectSlug;
 }
 
-/** The hosted web domain of the API `open` resolves the project against. */
+/**
+ * The hosted web domain of the API `open` resolves the project against.
+ * `apiUrl` only lives in `veryfront.json`, so this never imports an executable
+ * `veryfront.config.*` module.
+ */
 export async function resolveOpenCloudDomain(projectDir: string): Promise<string> {
   const { getEnvironmentConfig } = await import("veryfront/config");
-  const { readConfigFile } = await import("#cli/shared/config");
+  const { readConfigJsonFile } = await import("#cli/shared/config");
   const { getCloudDomain, resolveCliApiUrl } = await import("../../shared/constants.ts");
-  const fileConfig = await readConfigFile(projectDir);
-  return getCloudDomain(resolveCliApiUrl(getEnvironmentConfig(), fileConfig?.apiUrl));
+  const jsonConfig = await readConfigJsonFile(projectDir);
+  return getCloudDomain(resolveCliApiUrl(getEnvironmentConfig(), jsonConfig?.apiUrl));
 }
 
 /** Report the one failure `open` can hit, honoring `--json`. */

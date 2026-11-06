@@ -228,6 +228,20 @@ describe("Open Command", () => {
         });
       });
     });
+
+    it("does not execute veryfront.config.ts to find the domain", async () => {
+      await withSavedEnv(async () => {
+        await withTempProject(async (projectDir) => {
+          const marker = join(projectDir, "config-executed");
+          await Deno.writeTextFile(
+            join(projectDir, "veryfront.config.ts"),
+            `Deno.writeTextFileSync(${JSON.stringify(marker)}, "x");\nexport default {};\n`,
+          );
+          assertEquals(await resolveOpenCloudDomain(projectDir), "veryfront.com");
+          assertEquals(await Deno.stat(marker).then(() => true, () => false), false);
+        });
+      });
+    });
   });
 
   describe("parseOpenArgs", () => {
