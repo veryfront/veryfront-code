@@ -1,3 +1,4 @@
+import { requireToolApproval, snapshotToolApprovalPolicy } from "./approval.ts";
 import type { Tool, ToolConfig, ToolDiscoveryMetadata, ToolExecutionContext } from "./types.ts";
 import { readToolDiscoveryMetadata } from "./discovery-metadata.ts";
 import type { JsonSchema, Schema } from "#veryfront/extensions/schema/index.ts";
@@ -256,6 +257,7 @@ export function tool<TInput = unknown, TOutput = unknown>(
     : undefined;
   const mcp = snapshotMcpConfig(config.mcp, id);
   const discovery = readToolDiscoveryMetadata(config);
+  const approval = snapshotToolApprovalPolicy(config.approval, id);
 
   const createdTool: Tool<TInput, TOutput> = {
     id,
@@ -264,6 +266,7 @@ export function tool<TInput = unknown, TOutput = unknown>(
     ...(discovery ? { discovery } : {}),
     ...(delegatedIntegrationTools ? { delegatedIntegrationTools } : {}),
     ...(delegatedPlatformTools ? { delegatedPlatformTools } : {}),
+    ...(approval ? { approval } : {}),
     inputSchema: inputSchema as Schema<TInput>,
     inputSchemaJson,
     outputSchema: outputSchema as Schema<TOutput> | undefined,
@@ -283,6 +286,16 @@ export function tool<TInput = unknown, TOutput = unknown>(
         }
       }
 
+      if (approval) {
+        // Checked after validation so the checker sees exactly the arguments that would run.
+        const refusal = await requireToolApproval(
+          id,
+          approval,
+          validated as Record<string, unknown>,
+          context,
+        );
+        if (refusal) return refusal as TOutput;
+      }
       return await execute(validated, context);
     },
     mcp,
