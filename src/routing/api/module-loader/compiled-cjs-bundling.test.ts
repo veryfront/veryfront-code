@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
-import type { PluginBuild } from "veryfront/extensions/bundler";
+import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
+import { type PluginBuild, stop as stopBundler } from "veryfront/extensions/bundler";
 import {
   builtinModuleName,
   createCompiledBuiltinPlugin,
@@ -13,7 +13,9 @@ import {
   nodePreferredFile,
   nodeRelativeFile,
   PackageTypeLookup,
+  prepareCommonJSFile,
   prepareDependencyFile,
+  prepareModuleFile,
   prependRuntimeRequire,
   resolveLiteralCalls,
   type RuntimeRequireHost,
@@ -414,6 +416,197 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
     it("picks helper names the bundle does not already use", () => {
       const code = prependRuntimeRequire("const __vf_runtime_fs = 1;\n", "/app");
       assert(code.includes("import * as __vf_runtime___fs from"), code);
+    });
+  });
+
+  // The bundler parses each file; its service process lives across tests.
+  describe("parsing dependency files", { sanitizeOps: false, sanitizeResources: false }, () => {
+    afterAll(async () => {
+      await stopBundler();
+    });
+
+    const resolveRelative = (specifier: string) =>
+      Promise.resolve(specifier.startsWith("./") ? "/d/p/" + specifier.slice(2) + ".js" : null);
+
+    describe("prepareCommonJSFile()", () => {
+      it("binds __dirname and __filename and resolves require.resolve literals", async () => {
+        const code = await prepareCommonJSFile(
+          [
+            "exports.d = __dirname;",
+            "exports.f = __filename;",
+            'exports.a = require.resolve("./a");',
+            'exports.b = require.resolve("fs");',
+            'exports.c = require.resolve("missing");',
+            "exports.e = require.resolve(name);",
+          ].join("\n"),
+          "/d/p/index.cjs",
+          "module",
+          resolveRelative,
+        );
+        assert(code !== null);
+        for (
+          const part of [
+            'exports.d = "/d/p";',
+            'exports.f = "/d/p/index.cjs";',
+            'exports.a = "/d/p/a.js";',
+            'exports.b = "fs";',
+            'exports.c = require.resolve("missing");',
+            "exports.e = require.resolve(name);",
+          ]
+        ) {
+          assert(code.includes(part), code);
+        }
+      });
+
+      it("prepares an extensionless file and a .js file outside a module package", async () => {
+        const entry = await prepareCommonJSFile(
+          "exports.d = __dirname;",
+          "/d/p/entry",
+          "module",
+          resolveRelative,
+        );
+        assert(entry?.includes('exports.d = "/d/p";'), String(entry));
+        const js = await prepareCommonJSFile(
+          "exports.d = __dirname;",
+          "/d/p/a.js",
+          undefined,
+          resolveRelative,
+        );
+        assert(js?.includes('exports.d = "/d/p";'), String(js));
+      });
+
+      it("leaves files Node loads as ESM alone", async () => {
+        const source = "export const d = typeof __dirname;";
+        assertEquals(
+          await prepareCommonJSFile(source, "/d/p/a.js", "module", resolveRelative),
+          null,
+        );
+        assertEquals(
+          await prepareCommonJSFile(source, "/d/p/a.js", undefined, resolveRelative),
+          null,
+        );
+        assertEquals(
+          await prepareCommonJSFile(source, "/d/p/entry", undefined, resolveRelative),
+          null,
+        );
+        assertEquals(
+          await prepareCommonJSFile(source, "/d/p/a.mjs", undefined, resolveRelative),
+          null,
+        );
+      });
+    });
+
+    describe("prepareModuleFile()", () => {
+      it("makes import.meta locations constants and resolves literals", async () => {
+        const code = await prepareModuleFile(
+          'export const u = import.meta.url;\nexport const f = import.meta.filename;\nexport const d = import.meta.dirname;\nexport const a = import.meta.resolve("./a");\n',
+          "/d/p/index.mjs",
+          resolveRelative,
+        );
+        for (
+          const part of [
+            'u = "file:///d/p/index.mjs"',
+            'f = "/d/p/index.mjs"',
+            'd = "/d/p"',
+            'a = "/d/p/a.js"',
+          ]
+        ) {
+          assert(code.includes(part), code);
+        }
+        assert(!code.includes("function __vf_import_meta_resolve_"), code);
+      });
+
+      it("binds other uses to a resolver of the file, after any hashbang", async () => {
+        const code = await prepareModuleFile(
+          "#!/usr/bin/env node\nconst meta = import.meta;\nexport const r = import.meta.resolve(name);\nexport const m = meta;\n",
+          "/d/p/cli.ts",
+          resolveRelative,
+        );
+        assert(code.startsWith("#!/usr/bin/env node\nfunction __vf_import_meta_resolve_"), code);
+        assert(code.includes(createImportMetaResolve.toString()), code);
+        assert(
+          /const __vf_import_meta_resolve_\w+_meta = \{ url: "file:\/\/\/d\/p\/cli\.ts"/.test(code),
+          code,
+        );
+      });
+    });
+
+    describe("prepareDependencyFile()", () => {
+      const resolved: Record<string, { path?: string; external?: boolean; errors?: unknown[] }> = {
+        "./a": { path: "/d/node_modules/p/a.js" },
+        pkg: { path: "/d/node_modules/pkg/main.js" },
+        ext: { path: "ext", external: true },
+        project: { path: "/d/src/project.js" },
+        broken: { errors: [{ text: "x" }] },
+      };
+      const build = {
+        resolve: (specifier: string) => Promise.resolve(resolved[specifier] ?? { errors: [{}] }),
+      } as unknown as PluginBuild;
+      const input = (contents: string, logicalPath: string, withResolve = true) => ({
+        build: withResolve ? build : ({} as PluginBuild),
+        contents,
+        logicalPath,
+        resolvedPath: logicalPath,
+        packageType: undefined,
+        isDependencyFile: (path: string) => path.startsWith("/d/node_modules/"),
+        isFile: () => Promise.resolve(false),
+      });
+
+      it("resolves require.resolve literals only to dependency files", async () => {
+        const code = await prepareDependencyFile(
+          input(
+            ["./a", "ext", "project", "broken"].map((id) =>
+              `require.resolve(${JSON.stringify(id)});`
+            )
+              .join("\n"),
+            "/d/node_modules/p/index.js",
+          ),
+        );
+        for (
+          const part of [
+            '"/d/node_modules/p/a.js";',
+            'require.resolve("ext");',
+            'require.resolve("project");',
+            'require.resolve("broken");',
+          ]
+        ) {
+          assert(code.includes(part), code);
+        }
+        const unresolved = await prepareDependencyFile(
+          input('require.resolve("./a");', "/d/node_modules/p/index.js", false),
+        );
+        assert(unresolved.includes('require.resolve("./a");'), unresolved);
+      });
+
+      it("resolves import.meta.resolve literals in an ESM file", async () => {
+        const code = await prepareDependencyFile(
+          input(
+            ["fs", "./x.js", "https://e.test/m.js", "pkg", "ext"].map((id) =>
+              `import.meta.resolve(${JSON.stringify(id)});`
+            ).join("\n"),
+            "/d/node_modules/p/index.mjs",
+          ),
+        );
+        for (
+          const part of [
+            '"node:fs";',
+            '"file:///d/node_modules/p/x.js";',
+            '"https://e.test/m.js";',
+            '"file:///d/node_modules/pkg/main.js";',
+            "_resolve_",
+          ]
+        ) {
+          assert(code.includes(part), code);
+        }
+      });
+
+      it("leaves an ESM file that reads no import.meta unchanged", async () => {
+        const contents = "export const d = typeof __dirname;";
+        assertEquals(
+          await prepareDependencyFile(input(contents, "/d/node_modules/p/a.mjs")),
+          contents,
+        );
+      });
     });
   });
 });
