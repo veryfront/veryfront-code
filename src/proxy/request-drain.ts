@@ -5,12 +5,16 @@ import { normalizeProxyRoutePolicyPathname } from "./legacy-managed-agent-route-
 import { isControlPlaneRunStreamPost } from "./retry.ts";
 import { MAX_PROXY_TIMER_DELAY_MS } from "./timing.ts";
 
-// Captured before extensions activate: shutdown timing must not consult a
-// replaced Performance.prototype.now.
+// Captured before extensions activate: shutdown timing and drain reporting must
+// not consult a replaced Performance.prototype.now, Math, Number or Array.
 const apply = Reflect.apply;
 const mathCeil = Math.ceil;
 const mathFloor = Math.floor;
 const mathMax = Math.max;
+const mathMin = Math.min;
+const isSafeInteger = Number.isSafeInteger;
+const arrayFrom = Array.from;
+const mapValues = Map.prototype.values;
 const monotonicClock = performance;
 const monotonicNowMethod = performance.now;
 function monotonicNow(): number {
@@ -67,12 +71,15 @@ export class ProxyRequestDrainTracker {
   }
 
   getInFlightRequests(): TrackedProxyRequest[] {
-    return Array.from(this.inFlight.values(), (request) => ({ ...request }));
+    return arrayFrom(
+      apply(mapValues, this.inFlight, []) as MapIterator<TrackedProxyRequest>,
+      (request) => ({ ...request }),
+    );
   }
 
   async waitForDrain(timeoutMs: number, pollIntervalMs = 100): Promise<boolean> {
     if (
-      !Number.isSafeInteger(timeoutMs) ||
+      !isSafeInteger(timeoutMs) ||
       timeoutMs < 0 ||
       timeoutMs > MAX_PROXY_TIMER_DELAY_MS
     ) {
@@ -81,7 +88,7 @@ export class ProxyRequestDrainTracker {
       );
     }
     if (
-      !Number.isSafeInteger(pollIntervalMs) ||
+      !isSafeInteger(pollIntervalMs) ||
       pollIntervalMs < 1 ||
       pollIntervalMs > MAX_PROXY_TIMER_DELAY_MS
     ) {
@@ -97,7 +104,7 @@ export class ProxyRequestDrainTracker {
       const remainingMs = deadline - monotonicNow();
       if (remainingMs <= 0) return false;
 
-      await delayProxyShutdown(Math.min(pollIntervalMs, remainingMs));
+      await delayProxyShutdown(mathMin(pollIntervalMs, remainingMs));
     }
 
     return true;

@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { ProxyDrainAdmission } from "./request-drain.ts";
+import { ProxyDrainAdmission, ProxyRequestDrainTracker } from "./request-drain.ts";
 import { parseProxyShutdownCleanupTimeoutMs, runProxyShutdownSteps } from "./shutdown-lifecycle.ts";
 
 describe("proxy shutdown lifecycle", () => {
@@ -262,6 +262,37 @@ describe("proxy shutdown lifecycle", () => {
 
     assertEquals(await wait, undefined);
     assertEquals(budget, 25);
+  });
+
+  it("polls and reports the request drain with intrinsics captured before extensions load", async () => {
+    const tracker = new ProxyRequestDrainTracker();
+    tracker.start("req_1", "GET", "/slow");
+    const poisoned = () => {
+      throw new Error("poisoned intrinsic");
+    };
+    const targets = [
+      [Math, "min"],
+      [Number, "isSafeInteger"],
+      [Array, "from"],
+    ] as const;
+    const descriptors = targets.map(([owner, key]) => Object.getOwnPropertyDescriptor(owner, key)!);
+    let drained: Promise<boolean> | undefined;
+    let reported: string[] | undefined;
+    try {
+      targets.forEach(([owner, key], index) =>
+        Object.defineProperty(owner, key, { ...descriptors[index], value: poisoned })
+      );
+      drained = tracker.waitForDrain(5, 1);
+      reported = tracker.getInFlightRequests().map((request) => request.path);
+    } finally {
+      targets.forEach(([owner, key], index) =>
+        Object.defineProperty(owner, key, descriptors[index]!)
+      );
+    }
+
+    // The poll keeps waiting (and then times out) instead of rejecting.
+    assertEquals(await drained, false);
+    assertEquals(reported, ["/slow"]);
   });
 
   it("rejects malformed shutdown step configurations", async () => {
