@@ -2414,7 +2414,23 @@ function localFunctionValues(
     : branches.flatMap((branch) => localFunctionValues(branch, scope, nodeScopes, new Set(seen)));
 }
 
-function functionReturnExpressions(node: ASTNode): ASTNode[] {
+/**
+ * Return expressions per function node. The AST never changes after parsing,
+ * and value proofs ask for the same function's returns once per call site that
+ * reaches it, so an uncached walk re-reads a large closure body (lodash's
+ * `runInContext`) thousands of times.
+ */
+const functionReturnExpressionCache = new WeakMap<ASTNode, readonly ASTNode[]>();
+
+function functionReturnExpressions(node: ASTNode): readonly ASTNode[] {
+  const cached = functionReturnExpressionCache.get(node);
+  if (cached) return cached;
+  const returned = collectFunctionReturnExpressions(node);
+  functionReturnExpressionCache.set(node, returned);
+  return returned;
+}
+
+function collectFunctionReturnExpressions(node: ASTNode): readonly ASTNode[] {
   if (
     node.type === "ArrowFunctionExpression" && isNode(node.body) &&
     node.body.type !== "BlockStatement"
@@ -3024,7 +3040,7 @@ function referencedSuperPropertyNames(member: ASTNode): Set<string | null> {
 
 function classMemberValues(member: ASTNode): ASTNode[] {
   if (member.type === "ClassMethod" || member.type === "ClassPrivateMethod") {
-    if (member.kind === "get") return functionReturnExpressions(member);
+    if (member.kind === "get") return [...functionReturnExpressions(member)];
     return member.kind === "set" || member.kind === "constructor" ? [] : [member];
   }
   return ["ClassProperty", "ClassPrivateProperty", "ClassAccessorProperty"].includes(
@@ -3205,7 +3221,7 @@ function objectLiteralPropertyContribution(
 }
 
 function objectMethodValues(property: ASTNode): ASTNode[] {
-  if (property.kind === "get") return functionReturnExpressions(property);
+  if (property.kind === "get") return [...functionReturnExpressions(property)];
   if (property.kind === "set") return [];
   return [property];
 }

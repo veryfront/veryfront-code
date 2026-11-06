@@ -4161,3 +4161,32 @@ describe("routing/api/module-loader/http-validator", () => {
     });
   });
 });
+
+describe("validateHTTPImports analysis cost", () => {
+  it("reads a large closure's returns once, not once per call site", async () => {
+    // Every `make()` call below resolves its value through the return statements
+    // of one large closure. Walking that body once per call site took about 30 s
+    // for this 38 KB module; a cached walk keeps it near-linear.
+    const callSites = 300;
+    const closureBody = Array.from(
+      { length: callSites },
+      (_, index) =>
+        `  var v${index} = { a: ${index}, b: [${index}], c: function () { return ${index}; } };`,
+    ).join("\n");
+    const readers = Array.from(
+      { length: callSites },
+      (_, index) => `function read${index}(key) { var o = make(); return o.pick(key)[key]; }`,
+    ).join("\n");
+    const source = `function make() {\n${closureBody}\n` +
+      `  return { pick: function (value) { return { value: value }; } };\n}\n${readers}\n`;
+
+    const started = performance.now();
+    await assertRejects(
+      () => validateHTTPImports(source, [], { commonJS: true }),
+      Error,
+      "dynamic code generation",
+    );
+    const elapsed = performance.now() - started;
+    assert(elapsed < 5_000, `analysis took ${Math.round(elapsed)} ms`);
+  });
+});
