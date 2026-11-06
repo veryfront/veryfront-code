@@ -6089,6 +6089,94 @@ describe("route CommonJS require (#5471)", () => {
     assertEquals(await responseText(GET), "postfix child");
   });
 
+  denoIt(
+    "reads a slash after an object literal as division and after a block as a regex",
+    async () => {
+      const files = {
+        "node_modules/brace-fixture/package.json": JSON.stringify({
+          name: "brace-fixture",
+          main: "index.js",
+        }),
+        "node_modules/brace-fixture/index.js": [
+          "let p;",
+          "if (true) {}",
+          "/import('.\\/missing.mjs')/.test('');",
+          'const ratio = { value: 1 } / (p = import(".\\u002fchild.mjs"), 1);',
+          "module.exports = () => p.then((m) => m.value);",
+        ].join("\n"),
+        "node_modules/brace-fixture/child.mjs": "export const value = 'brace child';",
+      };
+      const GET = await loadCompiledRoute(
+        [
+          'import load from "brace-fixture";',
+          "export const GET = async () => new Response(await load());",
+        ].join("\n"),
+        files,
+      );
+      assertEquals(await responseText(GET), "brace child");
+    },
+  );
+
+  denoIt("resolves package imports through the requiring package's imports map", async () => {
+    const projectDir = await writeProject({
+      "node_modules/alias-fixture/package.json": JSON.stringify({
+        name: "alias-fixture",
+        main: "index.js",
+        imports: {
+          "#dep": { require: "./lib/dep.js", default: "./lib/missing.js" },
+          "#peer": "peer-fixture",
+          "#util/*": "./lib/util/*.js",
+        },
+      }),
+      "node_modules/alias-fixture/index.js": [
+        "module.exports = [",
+        "  require('#dep'),",
+        "  require('#peer'),",
+        "  require('#util/name'),",
+        "  require.resolve('#dep') === require.resolve('./lib/dep.js'),",
+        "].join(':');",
+      ].join("\n"),
+      "node_modules/alias-fixture/lib/dep.js": "module.exports = 'dep';",
+      "node_modules/alias-fixture/lib/util/name.js": "module.exports = 'util';",
+      "node_modules/peer-fixture/package.json": JSON.stringify({
+        name: "peer-fixture",
+        main: "index.js",
+      }),
+      "node_modules/peer-fixture/index.js": "module.exports = 'peer';",
+    });
+    const vfRequire = await importCompiledBinaryRequireShim(projectDir);
+
+    assertEquals(vfRequire("alias-fixture"), "dep:peer:util:true");
+    assertEquals(
+      thrownError(() => vfRequire("#undefined")).code,
+      "ERR_PACKAGE_IMPORT_NOT_DEFINED",
+    );
+  });
+
+  denoIt("continues to an ancestor node_modules when a nearer copy lacks the file", async () => {
+    const projectDir = await writeProject({
+      "node_modules/outer-fixture/package.json": JSON.stringify({
+        name: "outer-fixture",
+        main: "index.js",
+      }),
+      "node_modules/outer-fixture/index.js": "module.exports = require('shared-fixture/feature');",
+      "node_modules/outer-fixture/node_modules/shared-fixture/package.json": JSON.stringify({
+        name: "shared-fixture",
+        main: "index.js",
+      }),
+      "node_modules/outer-fixture/node_modules/shared-fixture/index.js":
+        "module.exports = 'nested';",
+      "node_modules/shared-fixture/package.json": JSON.stringify({
+        name: "shared-fixture",
+        main: "index.js",
+      }),
+      "node_modules/shared-fixture/feature.js": "module.exports = 'hoisted feature';",
+    });
+    const vfRequire = await importCompiledBinaryRequireShim(projectDir);
+
+    assertEquals(vfRequire("outer-fixture"), "hoisted feature");
+  });
+
   denoIt("loads CommonJS packages while built-in prototype methods are replaced", async () => {
     const files = {
       "node_modules/trap-fixture/package.json": JSON.stringify({

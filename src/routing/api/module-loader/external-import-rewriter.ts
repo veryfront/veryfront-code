@@ -306,13 +306,18 @@ function __vf_packageName(id) {
   if (slash !== -1 && __vf_startsWith(id, "@")) slash = __vf_indexOf(id, "/", slash + 1);
   return slash === -1 ? id : __vf_slice(id, 0, slash);
 }
-// Node's package "exports" resolution for require(): a target is undefined when nothing matched, null when the
-// package blocks the subpath. Conditions are tried in the object's key order.
+// Node's package "exports" and "imports" resolution for require(): a target is
+// undefined when nothing matched, null when the package blocks the subpath.
+// Conditions are tried in the object's key order. Only an "imports" target may
+// name another package instead of a file inside the package.
 var __vf_requireConditions = __vf_tableOf(["require", "node", "node-addons", "default"]);
-function __vf_exportsTarget(target, star) {
+function __vf_exportsTarget(target, star, allowBare) {
   if (typeof target === "string") {
-    if (!__vf_startsWith(target, "./")) return null;
     var value = star === void 0 ? target : __vf_replaceAll(target, "*", star);
+    if (!__vf_startsWith(target, "./")) {
+      var bare = allowBare && !__vf_startsWith(target, ".") && !__vf_startsWith(target, "/") && __vf_indexOf(target, ":") === -1;
+      return bare ? value : null;
+    }
     if (__vf_indexOf(value, "\\\\") !== -1) return null;
     for (var from = 2; ; ) {
       var slash = __vf_indexOf(value, "/", from);
@@ -325,7 +330,7 @@ function __vf_exportsTarget(target, star) {
   }
   if (Array.isArray(target)) {
     for (var j = 0; j < target.length; j++) {
-      var candidate = __vf_exportsTarget(target[j], star);
+      var candidate = __vf_exportsTarget(target[j], star, allowBare);
       if (typeof candidate === "string") return candidate;
     }
     return null;
@@ -334,21 +339,18 @@ function __vf_exportsTarget(target, star) {
     var conditions = Object.keys(target);
     for (var k = 0; k < conditions.length; k++) {
       if (!__vf_requireConditions[conditions[k]]) continue;
-      var resolved = __vf_exportsTarget(target[conditions[k]], star);
+      var resolved = __vf_exportsTarget(target[conditions[k]], star, allowBare);
       if (resolved !== void 0) return resolved;
     }
     return void 0;
   }
   return null;
 }
-function __vf_exportsSubpath(exportsField, subpath) {
-  var keys = exportsField && typeof exportsField === "object" && !Array.isArray(exportsField) ? Object.keys(exportsField) : [];
-  var dotKeys = 0;
-  for (var d = 0; d < keys.length; d++) if (__vf_startsWith(keys[d], ".")) dotKeys++;
-  if (dotKeys !== 0 && dotKeys !== keys.length) return null;
-  var map = dotKeys === 0 ? { ".": exportsField } : exportsField;
+// The target of the key in map that matches subpath exactly, or else of its
+// most specific "*" pattern.
+function __vf_matchSubpath(map, subpath, allowBare) {
   if (__vf_hasOwn(map, subpath) && __vf_indexOf(subpath, "*") === -1) {
-    return __vf_exportsTarget(map[subpath], void 0);
+    return __vf_exportsTarget(map[subpath], void 0, allowBare);
   }
   var bestKey = null;
   var bestPrefix = -1;
@@ -367,27 +369,54 @@ function __vf_exportsSubpath(exportsField, subpath) {
       bestStar = __vf_slice(subpath, prefix.length, subpath.length - suffix.length);
     }
   }
-  return bestKey === null ? void 0 : __vf_exportsTarget(map[bestKey], bestStar);
+  return bestKey === null ? void 0 : __vf_exportsTarget(map[bestKey], bestStar, allowBare);
+}
+function __vf_exportsSubpath(exportsField, subpath) {
+  var keys = exportsField && typeof exportsField === "object" && !Array.isArray(exportsField) ? Object.keys(exportsField) : [];
+  var dotKeys = 0;
+  for (var d = 0; d < keys.length; d++) if (__vf_startsWith(keys[d], ".")) dotKeys++;
+  if (dotKeys !== 0 && dotKeys !== keys.length) return null;
+  return __vf_matchSubpath(dotKeys === 0 ? { ".": exportsField } : exportsField, subpath, false);
+}
+// A package.json's parsed contents, or an error naming the package, not the
+// host path, when it cannot be read or parsed.
+function __vf_readManifest(manifest, name) {
+  try {
+    return JSON.parse(__vf_readText(manifest, name));
+  } catch (_) {
+    var invalid = new Error("npm package " + JSON.stringify(name) + " could not be resolved (ERR_INVALID_PACKAGE_CONFIG)");
+    invalid.code = "ERR_INVALID_PACKAGE_CONFIG";
+    throw invalid;
+  }
+}
+// A file a package's "exports" or "imports" map points to, which must exist
+// inside the project.
+function __vf_mappedFile(packageDir, target, id) {
+  var file = __vf_resolve(packageDir, target);
+  __vf_assertContained(__vf_canonicalize(file), id);
+  if (!__vf_isFile(file)) {
+    var missing = new Error("Cannot find module " + JSON.stringify(id));
+    missing.code = "MODULE_NOT_FOUND";
+    throw missing;
+  }
+  return file;
 }
 // Resolves id inside an installed package directory: through its "exports"
-// map when it has one, as Node does, otherwise by plain file lookup. Errors
-// name the id, never the host path.
+// map when it has one, as Node does, otherwise by plain file lookup, which
+// gives null when nothing matches so the lookup goes on to the next
+// node_modules. Errors name the id, never the host path.
 function __vf_resolveInPackage(id, dir, packageDir) {
   var name = __vf_packageName(id);
   var manifest = __vf_resolve(packageDir, "package.json");
-  var exportsField;
-  if (__vf_isFile(manifest)) {
-    try {
-      exportsField = JSON.parse(__vf_readText(manifest, name)).exports;
-    } catch (_) {
-      var invalid = new Error("npm package " + JSON.stringify(name) + " could not be resolved (ERR_INVALID_PACKAGE_CONFIG)");
-      invalid.code = "ERR_INVALID_PACKAGE_CONFIG";
-      throw invalid;
-    }
-  }
+  var exportsField = __vf_isFile(manifest) ? __vf_readManifest(manifest, name).exports : void 0;
   if (exportsField === void 0 || exportsField === null) {
-    // A relative id keeps host paths out of any error it raises.
-    return __vf_resolveLocal("./node_modules/" + id, dir);
+    try {
+      // A relative id keeps host paths out of any error it raises.
+      return __vf_resolveLocal("./node_modules/" + id, dir);
+    } catch (error) {
+      if (error && error.code === "MODULE_NOT_FOUND") return null;
+      throw error;
+    }
   }
   var subpath = "." + __vf_slice(id, name.length);
   var target = __vf_exportsSubpath(exportsField, subpath);
@@ -396,14 +425,30 @@ function __vf_resolveInPackage(id, dir, packageDir) {
     blocked.code = "ERR_PACKAGE_PATH_NOT_EXPORTED";
     throw blocked;
   }
-  var exported = __vf_resolve(packageDir, target);
-  __vf_assertContained(__vf_canonicalize(exported), id);
-  if (!__vf_isFile(exported)) {
-    var missing = new Error("Cannot find module " + JSON.stringify(id));
-    missing.code = "MODULE_NOT_FOUND";
-    throw missing;
+  return __vf_mappedFile(packageDir, target, id);
+}
+// A "#name" id resolves through the "imports" map of the package that contains
+// the requiring module: the nearest package.json at or above its directory,
+// inside the project.
+function __vf_resolvePackageImport(id, parentDir) {
+  for (var dir = __vf_canonicalize(parentDir); ; dir = __vf_dirname(dir)) {
+    try { __vf_assertContained(dir, id); } catch (_) { break; }
+    var manifest = __vf_resolve(dir, "package.json");
+    if (__vf_isFile(manifest)) {
+      var importsField = __vf_readManifest(manifest, id).imports;
+      var target = importsField && typeof importsField === "object" && !Array.isArray(importsField)
+        ? __vf_matchSubpath(importsField, id, true)
+        : void 0;
+      if (typeof target === "string") {
+        return __vf_startsWith(target, "./") ? __vf_mappedFile(dir, target, id) : __vf_resolveBare(target, dir);
+      }
+      break;
+    }
+    if (__vf_dirname(dir) === dir) break;
   }
-  return exported;
+  var undefinedImport = new Error("package import " + JSON.stringify(id) + " is not defined by the requiring package");
+  undefinedImport.code = "ERR_PACKAGE_IMPORT_NOT_DEFINED";
+  throw undefinedImport;
 }
 // Bare ids resolve from the requiring module's directory, as Node does, so a
 // package's own non-hoisted node_modules wins over the project root's copy.
@@ -416,26 +461,34 @@ function __vf_resolveBare(id, parentDir) {
     unknown.code = "MODULE_NOT_FOUND";
     throw unknown;
   }
+  if (__vf_startsWith(id, "#")) return __vf_resolvePackageImport(id, parentDir);
   var name = __vf_packageName(id);
+  var installed = false;
   for (var dir = __vf_resolve(parentDir); ; dir = __vf_dirname(dir)) {
     var packageDir = __vf_resolve(dir, "node_modules", name);
     var exists = false;
     try { Deno.statSync(packageDir); exists = true; } catch (_) { /* expected: not installed at this level */ }
     if (exists) {
+      installed = true;
+      var found;
       try {
-        return __vf_resolveInPackage(id, dir, packageDir);
+        found = __vf_resolveInPackage(id, dir, packageDir);
       } catch (error) {
         if (!error || error.code !== "MODULE_NOT_FOUND") throw error;
-        // Keep the code: packages probe optional dependencies with
-        // \`error.code === "MODULE_NOT_FOUND"\`.
-        var unresolved = new Error("npm package " + JSON.stringify(name) + " is installed but " + JSON.stringify(id) + " could not be resolved");
-        unresolved.code = "MODULE_NOT_FOUND";
-        throw unresolved;
+        found = void 0;
       }
+      if (typeof found === "string") return found;
+      // As in Node, a copy without the requested file defers to the next
+      // node_modules up; a copy whose "exports" target is missing does not.
+      if (found === void 0) break;
     }
     if (__vf_dirname(dir) === dir) break;
   }
-  var missing = new Error("npm package " + JSON.stringify(name) + " is not installed in this runtime's node_modules");
+  // Keep the code: packages probe optional dependencies with
+  // \`error.code === "MODULE_NOT_FOUND"\`.
+  var missing = new Error(installed
+    ? "npm package " + JSON.stringify(name) + " is installed but " + JSON.stringify(id) + " could not be resolved"
+    : "npm package " + JSON.stringify(name) + " is not installed in this runtime's node_modules");
   missing.code = "MODULE_NOT_FOUND";
   throw missing;
 }
@@ -720,12 +773,12 @@ function __vf_rewriteCjsDynamicImports(code, helperName) {
           continue;
         }
       }
-      previous = __vf_regexAfterWord[word] === true ? "(" : "word";
+      // "do" and "else" start a statement; the other listed words take an
+      // expression.
+      previous = word === "do" || word === "else" ? ";" : __vf_regexAfterWord[word] === true ? "(" : "word";
       controlWord = word === "if" || word === "while" || word === "for" || word === "with";
       continue;
     }
-    // A ")" closing an if/while/for/with condition starts a statement, where
-    // "/" begins a regex literal; any other ")" ends a value.
     // "++" and "--" after a value are postfix and end that value, so a "/"
     // after them divides; before a value they are prefix operators.
     if ((c === "+" || c === "-") && code[i + 1] === c) {
@@ -735,11 +788,32 @@ function __vf_rewriteCjsDynamicImports(code, helperName) {
       i += 2;
       continue;
     }
+    // "=>" is followed by a function body or an expression, never a value
+    // that "/" could divide.
+    if (c === "=" && code[i + 1] === ">") {
+      previous = "=>";
+      controlWord = false;
+      i += 2;
+      continue;
+    }
     if (c === "(") __vf_append(parens, controlWord);
     controlWord = false;
-    if (c === "{") __vf_append(stack, "{");
-    else if (c === "}") __vf_removeLast(stack);
-    previous = c === ")" && __vf_removeLast(parens) === true ? "(" : c;
+    if (c === "{") {
+      // A brace where a statement may start opens a block; anywhere else it
+      // opens an object literal, which ends a value when it closes.
+      var block = previous === "" || previous === ";" || previous === "{" || previous === "}" || previous === ")" ||
+        previous === "]" || previous === "word" || previous === "value" || previous === "=>";
+      __vf_append(stack, block ? "block" : "object");
+      previous = "{";
+    } else if (c === "}") {
+      previous = __vf_removeLast(stack) === "object" ? "value" : "}";
+    } else if (c === ")") {
+      // A ")" closing an if/while/for/with condition starts a statement, where
+      // "/" begins a regex literal; any other ")" ends a value.
+      previous = __vf_removeLast(parens) === true ? ";" : ")";
+    } else {
+      previous = c;
+    }
     i++;
   }
   return copied === 0 ? code : out + __vf_slice(code, copied);
