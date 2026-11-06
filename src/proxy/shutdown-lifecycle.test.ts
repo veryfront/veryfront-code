@@ -242,6 +242,7 @@ describe("proxy shutdown lifecycle", () => {
     admission.begin("SIGTERM");
     const maxDescriptor = Object.getOwnPropertyDescriptor(Math, "max")!;
     const ceilDescriptor = Object.getOwnPropertyDescriptor(Math, "ceil")!;
+    const floorDescriptor = Object.getOwnPropertyDescriptor(Math, "floor")!;
     const poisoned = () => {
       throw new Error("poisoned Math");
     };
@@ -250,15 +251,17 @@ describe("proxy shutdown lifecycle", () => {
     try {
       Object.defineProperty(Math, "max", { ...maxDescriptor, value: poisoned });
       Object.defineProperty(Math, "ceil", { ...ceilDescriptor, value: poisoned });
+      Object.defineProperty(Math, "floor", { ...floorDescriptor, value: poisoned });
       wait = admission.waitForWindow();
       budget = admission.remainingDrainBudgetMs(25);
     } finally {
       Object.defineProperty(Math, "max", maxDescriptor);
       Object.defineProperty(Math, "ceil", ceilDescriptor);
+      Object.defineProperty(Math, "floor", floorDescriptor);
     }
 
     assertEquals(await wait, undefined);
-    assertEquals(budget, 24);
+    assertEquals(budget, 25);
   });
 
   it("rejects malformed shutdown step configurations", async () => {

@@ -8,6 +8,7 @@ import { MAX_PROXY_TIMER_DELAY_MS } from "./timing.ts";
 // replaced Performance.prototype.now.
 const apply = Reflect.apply;
 const mathCeil = Math.ceil;
+const mathFloor = Math.floor;
 const mathMax = Math.max;
 const monotonicClock = performance;
 const monotonicNowMethod = performance.now;
@@ -162,6 +163,7 @@ export function createProxyDrainingResponse(): Response {
  */
 export class ProxyDrainAdmission {
   private admitUntil: number | null = null;
+  private startedAt = 0;
   private grantedMs = 0;
 
   constructor(
@@ -176,7 +178,8 @@ export class ProxyDrainAdmission {
   begin(signal: "SIGINT" | "SIGTERM"): void {
     if (this.admitUntil !== null) return;
     this.grantedMs = signal === "SIGTERM" ? this.windowMs : 0;
-    this.admitUntil = this.now() + this.grantedMs;
+    this.startedAt = this.now();
+    this.admitUntil = this.startedAt + this.grantedMs;
   }
 
   /** Whether a request arriving now is served (always true before `begin`). */
@@ -206,9 +209,13 @@ export class ProxyDrainAdmission {
     return withConnectionClose(response);
   }
 
-  /** What remains of `drainTimeoutMs` after the granted grace window. */
+  /**
+   * What remains of `drainTimeoutMs` measured from `begin`, so a grace wait
+   * that settled late (a busy event loop) does not extend the shutdown bound.
+   */
   remainingDrainBudgetMs(drainTimeoutMs: number): number {
-    return mathMax(0, drainTimeoutMs - this.grantedMs);
+    if (this.admitUntil === null) return drainTimeoutMs;
+    return mathMax(0, mathFloor(drainTimeoutMs - (this.now() - this.startedAt)));
   }
 
   /** The whole grace window granted by `begin`, in integer milliseconds. */

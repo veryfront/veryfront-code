@@ -539,11 +539,19 @@ describe("proxy request drain", () => {
     await kept2.body?.cancel();
   });
 
-  it("subtracts only the granted grace from the drain budget", () => {
-    const sigterm = new ProxyDrainAdmission(10_000, () => 0);
+  it("measures the remaining drain budget from the start of shutdown", () => {
+    let now = 1_000;
+    const sigterm = new ProxyDrainAdmission(10_000, () => now);
     sigterm.begin("SIGTERM");
+    now += 10_000;
     assertEquals(sigterm.remainingDrainBudgetMs(25_000), 15_000);
-    assertEquals(sigterm.remainingDrainBudgetMs(5_000), 0);
+    // A grace wait that settled late (busy event loop) shrinks the budget
+    // instead of extending the shutdown past the configured bound.
+    now += 2_000.5;
+    assertEquals(sigterm.remainingDrainBudgetMs(25_000), 12_999);
+    now += 20_000;
+    assertEquals(sigterm.remainingDrainBudgetMs(25_000), 0);
+
     const sigint = new ProxyDrainAdmission(10_000, () => 0);
     sigint.begin("SIGINT");
     assertEquals(sigint.remainingDrainBudgetMs(25_000), 25_000);
