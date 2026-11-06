@@ -1,6 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
-import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
+import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { type PluginBuild, stop as stopBundler } from "veryfront/extensions/bundler";
 import {
   builtinModuleName,
@@ -419,9 +419,9 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
     });
   });
 
-  // The bundler parses each file; its service process lives across tests.
-  describe("parsing dependency files", { sanitizeOps: false, sanitizeResources: false }, () => {
-    afterAll(async () => {
+  describe("parsing dependency files", () => {
+    // The bundler parses each file; its service process must not outlive a test.
+    afterEach(async () => {
       await stopBundler();
     });
 
