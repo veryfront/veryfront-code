@@ -447,10 +447,13 @@ export async function rewriteCompiledUserDependencyImportsForRoute(
       // tokenizing strings, comments and regex literals in the options.
       if (imported.se <= imported.e) continue;
       // An async arrow returns an intrinsic promise whatever route code binds
-      // to `Promise`, and the await defers loading as import() does.
-      const lazy = `(async () => { await null; return ${helperPrefix}namespace(${specifier}); })()`;
-      // The options argument is evaluated first, as import() would, and
-      // validated when the load starts, so bad options reject the promise.
+      // to `Promise`, and the await defers loading as import() does. An
+      // options argument is evaluated first and read before the await, as
+      // import() reads it before returning; a failed check rejects the
+      // promise.
+      const validate = `${helperPrefix}validateImportOptions`;
+      const load = `await null; return ${helperPrefix}namespace(${specifier});`;
+      const lazy = `(async () => { ${load} })()`;
       const optionsParam = `${helperPrefix}options`;
       const optionsStart = imported.a;
       const optionsEnd = imported.se - 1;
@@ -462,7 +465,7 @@ export async function rewriteCompiledUserDependencyImportsForRoute(
             ? rewriteRange(optionsStart, optionsEnd).trim().replace(/,$/, "").trimEnd()
             : "";
           return options
-            ? `((${optionsParam}) => (async () => { await null; ${helperPrefix}validateImportOptions(${optionsParam}, ${specifier}); return ${helperPrefix}namespace(${specifier}); })())(${options})`
+            ? `((${optionsParam}) => (async () => { ${validate}(${optionsParam}, ${specifier}); ${load} })())(${options})`
             : lazy;
         },
       });
@@ -471,7 +474,9 @@ export async function rewriteCompiledUserDependencyImportsForRoute(
 
     const statement = masked.slice(imported.ss, imported.se);
     // Import attributes are checked when the route module loads, as a native
-    // import checks them before the route runs.
+    // import checks them before the route runs. A missing `type: "json"` is not
+    // refused: the bundler drops attributes from external imports, so their
+    // absence here does not mean the route left them out.
     const attributes = staticImportAttributes(masked, imported.a, imported.se);
     const check = attributes
       ? `${helperPrefix}validateImportOptions({ with: ${attributes} }, ${specifier}); `

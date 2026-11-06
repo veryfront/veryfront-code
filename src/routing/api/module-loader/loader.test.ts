@@ -6177,6 +6177,65 @@ describe("route CommonJS require (#5471)", () => {
     assertEquals(vfRequire("outer-fixture"), "hoisted feature");
   });
 
+  denoIt("reads a slash after a function or class expression as division", async () => {
+    const files = {
+      "node_modules/expr-fixture/package.json": JSON.stringify({
+        name: "expr-fixture",
+        main: "index.js",
+      }),
+      "node_modules/expr-fixture/index.js": [
+        "let p, q;",
+        'const a = class {} / (p = import(".\\u002fchild.mjs"), 1);',
+        'const b = function () { return 1; } / (q = import(".\\u002fchild.mjs"), 1);',
+        "async function declared() {}",
+        "/import('.\\/missing.mjs')/.test('');",
+        "function plain() {}",
+        "/import('.\\/missing.mjs')/.test('');",
+        "module.exports = () => Promise.all([p, q]).then((m) => m[0].value + ':' + m[1].value);",
+      ].join("\n"),
+      "node_modules/expr-fixture/child.mjs": "export const value = 'expr';",
+    };
+    const GET = await loadCompiledRoute(
+      [
+        'import load from "expr-fixture";',
+        "export const GET = async () => new Response(await load());",
+      ].join("\n"),
+      files,
+    );
+    assertEquals(await responseText(GET), "expr:expr");
+  });
+
+  denoIt("never looks up packages above the project root", async () => {
+    const outerDir = Deno.realPathSync(await makeTempDir());
+    const projectDir = join(outerDir, "project");
+    await fs.mkdir(join(outerDir, "node_modules/host-only"), { recursive: true });
+    await fs.writeTextFile(join(outerDir, "node_modules/host-only/package.json"), "{ not json");
+    await fs.mkdir(projectDir, { recursive: true });
+    await fs.writeTextFile(join(projectDir, "package.json"), "{}");
+    const vfRequire = await importCompiledBinaryRequireShim(projectDir);
+
+    const error = thrownError(() => vfRequire("host-only"));
+    assertEquals(error.code, "MODULE_NOT_FOUND");
+    assertEquals(
+      error.message,
+      'npm package "host-only" is not installed in this runtime\'s node_modules',
+    );
+  });
+
+  denoIt("resolves an absolute id whatever search paths are given", async () => {
+    const projectDir = await writeProject({ "lib/file.js": "module.exports = 1;" });
+    const vfRequire = await importCompiledBinaryRequireShim(projectDir) as unknown as {
+      resolve: ((id: string, options?: { paths?: string[] }) => string) & {
+        paths: (request: string) => string[] | null;
+      };
+    };
+    const file = join(projectDir, "lib/file.js");
+
+    assertEquals(vfRequire.resolve(file, { paths: [] }), file);
+    assertEquals(vfRequire.resolve.paths(file), [join(projectDir, "node_modules")]);
+    assertEquals(vfRequire.resolve.paths("./lib/file.js"), [projectDir]);
+  });
+
   denoIt("loads CommonJS packages while built-in prototype methods are replaced", async () => {
     const files = {
       "node_modules/trap-fixture/package.json": JSON.stringify({
@@ -7121,6 +7180,19 @@ describe("route CommonJS require (#5471)", () => {
     assertEquals(thrownError(() => validate({ with: 1 })).name, "TypeError");
     assertEquals(thrownError(() => validate({ with: { type: 1 } })).name, "TypeError");
     assertEquals(thrownError(() => validate({ with: { other: "x" } })).name, "SyntaxError");
+    // The bundler drops attributes, so a JSON module without one still loads.
+    validate(undefined, "typed-fixture/data.json");
+    // Attributes are read once each.
+    let reads = 0;
+    validate({
+      with: {
+        get type() {
+          reads++;
+          return "json";
+        },
+      },
+    }, "typed-fixture/data.json");
+    assertEquals(reads, 1);
   });
 
   denoIt("leaves a private method named #import alone", async () => {

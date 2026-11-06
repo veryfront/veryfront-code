@@ -464,7 +464,10 @@ function __vf_resolveBare(id, parentDir) {
   if (__vf_startsWith(id, "#")) return __vf_resolvePackageImport(id, parentDir);
   var name = __vf_packageName(id);
   var installed = false;
-  for (var dir = __vf_resolve(parentDir); ; dir = __vf_dirname(dir)) {
+  // The walk stays inside the project: a host package above its root is never
+  // inspected, so whether one exists cannot change the result.
+  for (var dir = __vf_canonicalize(parentDir); ; dir = __vf_dirname(dir)) {
+    try { __vf_assertContained(dir, id); } catch (_) { break; }
     var packageDir = __vf_resolve(dir, "node_modules", name);
     var exists = false;
     try { Deno.statSync(packageDir); exists = true; } catch (_) { /* expected: not installed at this level */ }
@@ -482,7 +485,7 @@ function __vf_resolveBare(id, parentDir) {
       // node_modules up; a copy whose "exports" target is missing does not.
       if (found === void 0) break;
     }
-    if (__vf_dirname(dir) === dir) break;
+    if (dir === __vf_projectRoot || __vf_dirname(dir) === dir) break;
   }
   // Keep the code: packages probe optional dependencies with
   // \`error.code === "MODULE_NOT_FOUND"\`.
@@ -586,17 +589,25 @@ function __vf_resolveContained(id, parentDir) {
   __vf_assertContained(canonical, id);
   return canonical;
 }
+// Node's test for a request relative to the requiring directory: ".", "..",
+// or one starting "./" or "../". An absolute request is not relative.
+function __vf_isRelativeRequest(request) {
+  if (request[0] !== ".") return false;
+  var second = request[1];
+  return request.length === 1 || second === "." || second === "/" || second === "\\\\";
+}
 // require.resolve.paths(request): null for a built-in, the requiring
 // directory for a relative request, otherwise its node_modules lookup paths.
 function __vf_resolvePaths(request, parentDir) {
   if (__vf_isBuiltin(request)) return null;
-  if (__vf_isPathId(request)) return [__vf_canonicalize(parentDir)];
+  if (__vf_isRelativeRequest(request)) return [__vf_canonicalize(parentDir)];
   return __vf_nodeModulePaths(parentDir);
 }
 function __vf_resolveWithOptions(id, parentDir, options) {
   // Built-ins resolve to themselves, whatever search paths are given.
   if (__vf_isBuiltin(id)) return id;
-  if (!options || options.paths === void 0) return __vf_resolveContained(id, parentDir);
+  // An absolute id names its file whatever search paths are given.
+  if (!options || options.paths === void 0 || __vf_isAbsolute(id)) return __vf_resolveContained(id, parentDir);
   if (!Array.isArray(options.paths)) throw new TypeError("require.resolve options.paths must be an array");
   for (var i = 0; i < options.paths.length; i++) {
     try {
@@ -722,6 +733,10 @@ function __vf_rewriteCjsDynamicImports(code, helperName) {
   var stack = [];
   var parens = [];
   var controlWord = false;
+  // The nesting depth of a function or class expression whose body brace has
+  // not been seen yet, or -1. Its body is a block, but its closing brace ends
+  // a value, after which "/" divides.
+  var expressionBody = -1;
   var i = 0;
   while (i < code.length) {
     var c = code[i];
@@ -773,6 +788,18 @@ function __vf_rewriteCjsDynamicImports(code, helperName) {
           continue;
         }
       }
+      // "async function" keeps the context before "async", which decides
+      // whether the function is a declaration or an expression.
+      if (word === "async") {
+        var after = __vf_skipTrivia(code, i);
+        if (__vf_slice(code, after, after + 8) === "function" && !__vf_isWordCode(__vf_charCodeAt(code, after + 8))) continue;
+      }
+      // Where a statement may start, "function" and "class" declare; anywhere
+      // else they begin an expression.
+      if ((word === "function" || word === "class") &&
+        !(previous === "" || previous === ";" || previous === "{" || previous === "}")) {
+        expressionBody = stack.length + parens.length;
+      }
       // "do" and "else" start a statement; the other listed words take an
       // expression.
       previous = word === "do" || word === "else" ? ";" : __vf_regexAfterWord[word] === true ? "(" : "word";
@@ -803,10 +830,16 @@ function __vf_rewriteCjsDynamicImports(code, helperName) {
       // opens an object literal, which ends a value when it closes.
       var block = previous === "" || previous === ";" || previous === "{" || previous === "}" || previous === ")" ||
         previous === "]" || previous === "word" || previous === "value" || previous === "=>";
-      __vf_append(stack, block ? "block" : "object");
+      var kind = block ? "block" : "object";
+      if (block && expressionBody === stack.length + parens.length) {
+        kind = "expression";
+        expressionBody = -1;
+      }
+      __vf_append(stack, kind);
       previous = "{";
     } else if (c === "}") {
-      previous = __vf_removeLast(stack) === "object" ? "value" : "}";
+      var closed = __vf_removeLast(stack);
+      previous = closed === "object" || closed === "expression" ? "value" : "}";
     } else if (c === ")") {
       // A ")" closing an if/while/for/with condition starts a statement, where
       // "/" begins a regex literal; any other ")" ends a value.
@@ -967,30 +1000,38 @@ var namespaces = Object.create(null);
 // an object, a non-string attribute value, and attributes it does not support.
 // The only supported type is "json", and only for a JSON module.
 __vf_validateImportOptions = function (options, id) {
-  if (options === void 0) return;
-  if (options === null || (typeof options !== "object" && typeof options !== "function")) {
-    throw new TypeError("The second argument to import() must be an object");
-  }
-  var attributes = options.with;
-  if (attributes === void 0) return;
-  if (attributes === null || (typeof attributes !== "object" && typeof attributes !== "function")) {
-    throw new TypeError("The 'with' option of import() must be an object");
-  }
-  var keys = Object.keys(attributes);
-  for (var i = 0; i < keys.length; i++) {
-    if (typeof attributes[keys[i]] !== "string") {
-      throw new TypeError("Import attribute " + JSON.stringify(keys[i]) + " must be a string");
+  var type;
+  if (options !== void 0) {
+    if (options === null || (typeof options !== "object" && typeof options !== "function")) {
+      throw new TypeError("The second argument to import() must be an object");
     }
-    if (keys[i] !== "type") {
-      throw new SyntaxError("Unsupported import attribute " + JSON.stringify(keys[i]));
+    var attributes = options.with;
+    if (attributes !== void 0) {
+      if (attributes === null || (typeof attributes !== "object" && typeof attributes !== "function")) {
+        throw new TypeError("The 'with' option of import() must be an object");
+      }
+      // Each attribute is read once, as import() reads it.
+      var keys = Object.keys(attributes);
+      for (var i = 0; i < keys.length; i++) {
+        var value = attributes[keys[i]];
+        if (typeof value !== "string") {
+          throw new TypeError("Import attribute " + JSON.stringify(keys[i]) + " must be a string");
+        }
+        if (keys[i] !== "type") {
+          throw new SyntaxError("Unsupported import attribute " + JSON.stringify(keys[i]));
+        }
+        type = value;
+      }
     }
   }
-  var type = attributes.type;
-  if (type === void 0) return;
-  if (type !== "json") {
+  if (type !== void 0 && type !== "json") {
     throw new TypeError("Import attribute type " + JSON.stringify(type) + " is not supported");
   }
-  if (id !== void 0 && (__vf_isBuiltin(id) || !__vf_endsWith(__vf_resolveId(id, __VF_PROJECT_DIR__), ".json"))) {
+  if (id === void 0 || type === void 0) return;
+  // Type "json" only loads a JSON module. A JSON module without the
+  // attribute is not refused: the bundler drops attributes from external
+  // imports, so the route may well have written it.
+  if (type === "json" && (__vf_isBuiltin(id) || !__vf_endsWith(__vf_resolveId(id, __VF_PROJECT_DIR__), ".json"))) {
     throw new TypeError("Module " + JSON.stringify(id) + " is not a JSON module, but was imported with type json");
   }
 };

@@ -122,7 +122,10 @@ describe("external-import-rewriter", () => {
         `import _ from "lodash";`,
         deps,
       );
-      assertEquals(out, `const _ = __vf_interopDefault(require("lodash"));`);
+      assertEquals(
+        out,
+        `const _ = __vf_interopDefault(require("lodash"));`,
+      );
     });
 
     it("rewrites a namespace import to a namespace over require", async () => {
@@ -130,7 +133,10 @@ describe("external-import-rewriter", () => {
         `import * as _ from "lodash";`,
         deps,
       );
-      assertEquals(out, `const _ = __vf_namespace("lodash");`);
+      assertEquals(
+        out,
+        `const _ = __vf_namespace("lodash");`,
+      );
     });
 
     it("rewrites a named import to a destructuring require", async () => {
@@ -188,7 +194,7 @@ describe("external-import-rewriter", () => {
         out,
         [
           '__vf_validateImportOptions({ with: { type: "json" } }, "lodash/data.json"); const data = __vf_interopDefault(require("lodash/data.json"));',
-          'const lazy = ((__vf_options) => (async () => { await null; __vf_validateImportOptions(__vf_options, "lodash/data.json"); return __vf_namespace("lodash/data.json"); })())({ with: { type: "json" } });',
+          'const lazy = ((__vf_options) => (async () => { __vf_validateImportOptions(__vf_options, "lodash/data.json"); await null; return __vf_namespace("lodash/data.json"); })())({ with: { type: "json" } });',
         ].join("\n"),
       );
     });
@@ -200,7 +206,7 @@ describe("external-import-rewriter", () => {
       );
       assertEquals(
         out,
-        'const lazy = ((__vf_options) => (async () => { await null; __vf_validateImportOptions(__vf_options, "lodash"); return __vf_namespace("lodash"); })())({ with: { type: /[)]/.test("") ? "json" : "json" } });',
+        'const lazy = ((__vf_options) => (async () => { __vf_validateImportOptions(__vf_options, "lodash"); await null; return __vf_namespace("lodash"); })())({ with: { type: /[)]/.test("") ? "json" : "json" } });',
       );
     });
 
@@ -275,7 +281,7 @@ describe("external-import-rewriter", () => {
       assertEquals(
         out,
         [
-          'const a = ((__vf_options) => (async () => { await null; __vf_validateImportOptions(__vf_options, "lodash"); return __vf_namespace("lodash"); })())((seen = true, {}));',
+          'const a = ((__vf_options) => (async () => { __vf_validateImportOptions(__vf_options, "lodash"); await null; return __vf_namespace("lodash"); })())((seen = true, {}));',
           'const b = (async () => { await null; return __vf_namespace("lodash"); })();',
         ].join("\n"),
       );
@@ -358,7 +364,7 @@ describe("external-import-rewriter", () => {
       );
       assertEquals(
         out,
-        'const lazy = ((__vf_options) => (async () => { await null; __vf_validateImportOptions(__vf_options, "lodash"); return __vf_namespace("lodash"); })())({ with: { type: (() => { return /[)]/.test("") ? "json" : "json"; })() } });',
+        'const lazy = ((__vf_options) => (async () => { __vf_validateImportOptions(__vf_options, "lodash"); await null; return __vf_namespace("lodash"); })())({ with: { type: (() => { return /[)]/.test("") ? "json" : "json"; })() } });',
       );
     });
 
@@ -605,7 +611,10 @@ describe("external-import-rewriter", () => {
         `import x from "lodash/a<b>";`,
         new Map([["lodash", "^4"]]),
       );
-      assertEquals(out, `const x = __vf_interopDefault(require("lodash/a\\u003Cb\\u003E"));`);
+      assertEquals(
+        out,
+        `const x = __vf_interopDefault(require("lodash/a\\u003Cb\\u003E"));`,
+      );
     });
   });
 
