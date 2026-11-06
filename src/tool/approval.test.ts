@@ -320,6 +320,22 @@ describe("tool approval", () => {
     assertEquals(Object.is(executed[0], -0), false);
   });
 
+  it("never runs an approved call whose run is cancelled just after the approval resolves", async () => {
+    const executed: unknown[] = [];
+    const controller = new AbortController();
+    const gated = transferTool(executed);
+    await gated.execute({ amount: 1 }, {
+      abortSignal: controller.signal,
+      requestToolApproval: () => {
+        const decision = Promise.resolve({ approved: true, outcome: "approved" } as const);
+        // The cancellation lands after the gate's answer is read, before the call would run.
+        decision.then(() => queueMicrotask(() => controller.abort(new Error("run cancelled"))));
+        return decision;
+      },
+    }).catch(() => undefined);
+    assertEquals(executed, []);
+  });
+
   it("types a tool from a config that may carry approval as able to refuse", async () => {
     const config: ToolConfig<{ amount: number }, { ok: boolean }> = {
       id: "transfer",
@@ -969,21 +985,17 @@ describe("createInputRequestApprovalGate", () => {
     assertEquals(cancelled, ["http://api.test/input-requests/ir-1/cancel"]);
   });
 
-  it("waits on a request the API committed when its creation answer was lost", async () => {
+  it("asks again with the same key when the creation answer was lost, and waits on the committed request", async () => {
+    const keys: string[] = [];
     const replies: Array<() => Promise<Response>> = [
       () => Promise.reject(new TypeError("connection reset")),
+      () => Promise.resolve(new Response("{}", { status: 503 })),
       () =>
         Promise.resolve(
           new Response(JSON.stringify({
-            data: [{
-              input_request_id: "ir-1",
-              tool_call_id: "call-1",
-              tool_call: { name: "transfer", arguments: {} },
-              responder_rules: ASKED_RULES,
-              ...ASKED_WINDOW,
-              status: "submitted",
-              response: { values: { decision: "deny" } },
-            }],
+            input_request_id: "ir-1",
+            status: "submitted",
+            response: { values: { decision: "deny" } },
           })),
         ),
     ];
@@ -992,7 +1004,10 @@ describe("createInputRequestApprovalGate", () => {
       authToken: "maker-token",
       runId: "run-1",
       pollIntervalMs: 1,
-      fetch: () => replies.shift()!(),
+      fetch: (_input, init) => {
+        keys.push((init as SentInit).headers!["Idempotency-Key"]!);
+        return replies.shift()!();
+      },
     });
     const decision = await gate({
       toolName: "transfer",
@@ -1002,6 +1017,65 @@ describe("createInputRequestApprovalGate", () => {
     });
     assertEquals(decision.approvalId, "ir-1");
     assertEquals(decision.approved, false);
+    assertEquals(keys.length, 3);
+    assertEquals(new Set(keys).size, 1);
+  });
+
+  it("asks a second tool under the same call id for its own approval", async () => {
+    const keys: string[] = [];
+    const gate = createInputRequestApprovalGate({
+      apiUrl: "http://api.test",
+      authToken: "maker-token",
+      runId: "run-1",
+      pollIntervalMs: 1,
+      fetch: (_input, init) => {
+        keys.push((init as SentInit).headers!["Idempotency-Key"]!);
+        return Promise.resolve(
+          new Response(JSON.stringify({ input_request_id: "ir-1", status: "expired" })),
+        );
+      },
+    });
+    for (const toolName of ["create_file", "update_file"]) {
+      await gate({ toolName, toolCallId: "call-1", input: {}, policy: {} });
+    }
+    assertEquals(keys.length, 2);
+    assertEquals(keys[0] === keys[1], false);
+  });
+
+  it("expires a recovered request already past its deadline without waiting a polling interval", async () => {
+    const replies = [
+      new Response(JSON.stringify({ detail: "conflict" }), { status: 409 }),
+      new Response(JSON.stringify({
+        data: [{
+          input_request_id: "ir-1",
+          tool_call_id: "call-1",
+          tool_call: { name: "transfer", arguments: {} },
+          responder_rules: ASKED_RULES,
+          ...ASKED_WINDOW,
+          status: "open",
+        }],
+      })),
+    ];
+    const gate = createInputRequestApprovalGate({
+      apiUrl: "http://api.test",
+      authToken: "maker-token",
+      runId: "run-1",
+      pollIntervalMs: 10_000,
+      fetch: () =>
+        Promise.resolve(
+          replies.shift() ??
+            new Response(JSON.stringify({ input_request_id: "ir-1", status: "open" })),
+        ),
+    });
+    const started = Date.now();
+    const decision = await gate({
+      toolName: "transfer",
+      toolCallId: "call-1",
+      input: {},
+      policy: {},
+    });
+    assertEquals(decision.outcome, "expired");
+    assertEquals(Date.now() - started < 5_000, true);
   });
 
   it("keeps polling through transient failures", async () => {

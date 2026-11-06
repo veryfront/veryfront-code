@@ -175,6 +175,15 @@ export function snapshotToolApprovalPolicy(
 }
 
 /**
+ * Throws the run's cancellation reason when it was cancelled. An approved call checks it right
+ * before running, so a run cancelled while (or just after) the approval was pending never runs it.
+ */
+export function throwIfRunCancelled(context: ToolExecutionContext | undefined): void {
+  const signal = context?.abortSignal;
+  if (signal && apply(signalAborted, signal, [])) throw apply(signalReason, signal, []);
+}
+
+/**
  * Ask the host for a decision. Returns undefined when the call may run, or the refusal the
  * model should see instead. Fails closed when the host has no approval channel.
  */
@@ -194,12 +203,7 @@ export async function requireToolApproval(
     { toolName, toolCallId: context?.toolCallId, input, policy },
     context?.abortSignal,
   );
-  if (decision.approved === true && decision.outcome === "approved") {
-    // A run cancelled while the approval was pending never runs the call, however the gate answered.
-    const signal = context?.abortSignal;
-    if (signal && apply(signalAborted, signal, [])) throw apply(signalReason, signal, []);
-    return undefined;
-  }
+  if (decision.approved === true && decision.outcome === "approved") return undefined;
   // A decision that contradicts itself (approved, but not "approved") fails closed as a denial, and
   // both the outcome and its message come from that one normalized value.
   const outcome = decision.outcome === "approved" ? "denied" : decision.outcome;

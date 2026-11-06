@@ -138,6 +138,12 @@ describe("approval gate serialization intrinsics", () => {
       requestTimeoutMs: 5,
       fetch: (_input, init) => {
         sent.push(JSON.parse(String((init as SentInit).body)));
+        // The first answer never arrives; asked again, the request has expired.
+        if (timedOut) {
+          return Promise.resolve(
+            new Response(JSON.stringify({ input_request_id: "ir-1", status: "expired" })),
+          );
+        }
         const signal = (init as { signal: AbortSignal }).signal;
         return new Promise((_resolve, reject) => {
           signal.addEventListener("abort", () => {

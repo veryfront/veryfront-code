@@ -1,6 +1,7 @@
 import {
   requireToolApproval,
   snapshotToolApprovalPolicy,
+  throwIfRunCancelled,
   type ToolApprovalPolicy,
   type ToolApprovalRefusal,
   withToolApprovalRefusalOutput,
@@ -338,6 +339,7 @@ export function tool<TInput = unknown, TOutput = unknown>(
       const toolName = typeof this?.id === "string" && this.id.length > 0 ? this.id : id;
       const refusal = await requireToolApproval(toolName, approval, args, context);
       if (refusal) return refusal;
+      throwIfRunCancelled(context);
       return await execute(validated, context);
     },
     mcp,

@@ -162,6 +162,7 @@ export function createInputRequestApprovalGate(
     });
   const call = async (path: string, init: RequestInit = {}): Promise<unknown> => {
     const { response, body } = await send(path, init);
+    if (isTransientStatus(response.status)) throw new TransientApprovalFailure(response, body);
     if (!response.ok) throw failure(response, body);
     return body;
   };
@@ -273,10 +274,10 @@ export function createInputRequestApprovalGate(
     const occurrence = dispatched && dispatched.toolCallId === request.toolCallId
       ? dispatched.occurrenceId
       : undefined;
+    // Keyed by tool name as well: a host that runs a second tool under the same call id (a create
+    // falling back to an update, say) asks for that tool's own approval.
     const callHash = await computeHash(
-      occurrence
-        ? `${options.runId}:${toolCallId}:${occurrence}`
-        : `${options.runId}:${toolCallId}`,
+      privateJsonStringify([options.runId, toolCallId, request.toolName, occurrence ?? null])!,
     );
     const rules: ResponderRules = {
       exclude_run_starters: true,
@@ -286,7 +287,7 @@ export function createInputRequestApprovalGate(
     const open = async (): Promise<InputRequestResource> => {
       const { response, body } = await send(runRequests, {
         method: "POST",
-        // Keyed by run, tool call and its occurrence, so a retry after a lost response gets the
+        // Keyed by run, tool call, tool and occurrence, so a retry after a lost response gets the
         // committed request back instead of a conflict with it.
         headers: {
           "Idempotency-Key": `tool-approval:${callHash}`,
@@ -306,6 +307,7 @@ export function createInputRequestApprovalGate(
         }),
       });
       if (response.ok) return body as InputRequestResource;
+      if (isTransientStatus(response.status)) throw new TransientApprovalFailure(response, body);
       if (response.status !== 409 && response.status !== 422) throw failure(response, body);
       const existing = await recover(
         runRequests,
@@ -319,34 +321,39 @@ export function createInputRequestApprovalGate(
       if (!existing) throw failure(response, body);
       return existing;
     };
-    let created: InputRequestResource;
-    try {
-      created = await open();
-    } catch (error) {
-      // The API may have committed the request before its answer was lost or the run was cancelled.
-      if (!signal?.aborted && !isTransportFailure(error)) throw error;
-      const committed = await recover(
-        runRequests,
-        toolCallId,
-        request,
-        rules,
-        windowMs,
-        occurrence,
-        // A cancelled run looks it up without its dead signal.
-        signal?.aborted ? undefined : signal,
-      ).catch((recoverError) => {
-        agentLogger.warn("Could not find the tool approval request after creating it failed", {
-          error: recoverError instanceof Error ? recoverError.message : String(recoverError),
+    let created: InputRequestResource | undefined;
+    const createDeadline = expiresAt + EXPIRY_GRACE_MS;
+    for (let attempt = 0; !created; attempt++) {
+      try {
+        if (attempt > 0) await wait(pollIntervalMs, signal);
+        created = await open();
+      } catch (error) {
+        if (signal?.aborted) {
+          // The API may have committed the request before the run was cancelled: find it without
+          // the dead signal and withdraw it, as a cancellation while polling does.
+          const committed = await recover(
+            runRequests,
+            toolCallId,
+            request,
+            rules,
+            windowMs,
+            occurrence,
+          ).catch((recoverError) => {
+            agentLogger.warn("Could not find the pending tool approval to withdraw", {
+              error: recoverError instanceof Error ? recoverError.message : String(recoverError),
+            });
+            return undefined;
+          });
+          if (committed?.status === "open") await withdraw(committed.input_request_id);
+          throw error;
+        }
+        // A lost answer or a busy API: asking again with the same key returns the request the API
+        // may have committed, so the call waits on it instead of leaving it open behind a failure.
+        if (!isRetryableFailure(error) || dateNow() > createDeadline) throw error;
+        agentLogger.warn("Tool approval request failed; retrying", {
+          error: error instanceof Error ? error.message : String(error),
         });
-        return undefined;
-      });
-      // A cancelled call withdraws it, as a cancellation while polling does; a live one waits on it.
-      if (signal?.aborted) {
-        if (committed?.status === "open") await withdraw(committed.input_request_id);
-        throw error;
       }
-      if (!committed) throw error;
-      created = committed;
     }
     const id = encodeSegment(created.input_request_id);
     const expiry = created.expires_at ? dateParse(created.expires_at) : expiresAt;
@@ -355,10 +362,13 @@ export function createInputRequestApprovalGate(
     try {
       while (current.status === "open") {
         // A poll never sleeps past the request's expiry, or past the grace after it, so an expiry
-        // shorter than the polling interval still ends the wait on time.
+        // shorter than the polling interval, or one already past, still ends the wait on time.
         const now = dateNow();
         const untilDue = now < expiry ? expiry - now : deadline - now;
-        await wait(untilDue > 0 && untilDue < pollIntervalMs ? untilDue : pollIntervalMs, signal);
+        await wait(
+          untilDue <= 0 ? 0 : untilDue < pollIntervalMs ? untilDue : pollIntervalMs,
+          signal,
+        );
         const latest = await poll(`/input-requests/${id}`, signal);
         if (latest) current = latest;
         if (current.status === "open" && dateNow() > deadline) {
@@ -388,6 +398,26 @@ function positiveMs(name: string, value: number | undefined, fallback: number): 
 }
 
 /** A failure to reach the API at all (network or timeout), which a later poll may not hit. */
+/** A 429 or 5xx answer, which a later attempt may not get. */
+class TransientApprovalFailure extends Error {
+  constructor(response: Response, body: unknown) {
+    super(
+      `Approval request failed: HTTP ${response.status} ${
+        (body as { detail?: string }).detail ?? ""
+      }`.trim(),
+    );
+    this.name = "TransientApprovalFailure";
+  }
+}
+
+function isTransientStatus(status: number): boolean {
+  return status === 429 || status >= 500;
+}
+
+function isRetryableFailure(error: unknown): boolean {
+  return isTransportFailure(error) || error instanceof TransientApprovalFailure;
+}
+
 function isTransportFailure(error: unknown): boolean {
   return error instanceof TypeError ||
     (error instanceof DOMException &&
