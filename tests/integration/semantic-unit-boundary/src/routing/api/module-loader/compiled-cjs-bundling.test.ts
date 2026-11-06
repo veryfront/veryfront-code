@@ -184,6 +184,7 @@ describe("compiled-binary route bundling of CommonJS dependencies", () => {
           'var computed = path.join(__dirname, "data", "en.json");',
           "exports.computedPath = require.resolve(computed);",
           "exports.computed = require(computed).hello;",
+          "exports.cached = require(computed) === require(computed);",
           "var outside;",
           'var hosts = ["", "etc", "hosts"].join("/");',
           "try { require(hosts); } catch (error) { outside = [error.code, error.message]; }",
@@ -205,6 +206,7 @@ describe("compiled-binary route bundling of CommonJS dependencies", () => {
         missing: "MODULE_NOT_FOUND",
         computedPath: asset,
         computed: "world",
+        cached: true,
         outside: [
           "MODULE_NOT_FOUND",
           'Cannot find module "a path outside this project or missing"',

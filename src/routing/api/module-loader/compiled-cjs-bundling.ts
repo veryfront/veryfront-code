@@ -474,6 +474,8 @@ export function prependRuntimeRequire(
     // not depend on built-ins route code could replace.
     `const ${prefix}s = { ${fields.join(", ")} };`,
     `const ${prefix}_ids = { __proto__: null, ${builtinIds.join(", ")} };`,
+    // JSON a computed require() loaded, by real path, as Node's module cache keeps it.
+    `const ${prefix}_json = { __proto__: null };`,
     `const ${prefix}_missing = (label) => {`,
     '  const error = new Error("Cannot find module " + JSON.stringify(label));',
     '  error.code = "MODULE_NOT_FOUND";',
@@ -493,7 +495,10 @@ export function prependRuntimeRequire(
     "const require = (id) => {",
     `  if (typeof id === "string" && id in ${prefix}s) return ${prefix}s[id];`,
     `  const file = ${prefix}_file(id);`,
-    `  if (file !== null && file.real.endsWith(".json")) return JSON.parse(${prefix}_fs.readFileSync(file.real, "utf8"));`,
+    `  if (file !== null && file.real.endsWith(".json")) {`,
+    `    if (!(file.real in ${prefix}_json)) ${prefix}_json[file.real] = JSON.parse(${prefix}_fs.readFileSync(file.real, "utf8"));`,
+    `    return ${prefix}_json[file.real];`,
+    "  }",
     `  throw ${prefix}_missing(file !== null ? file.relative : ${prefix}_label(id));`,
     "};",
     "require.resolve = (id) => {",
