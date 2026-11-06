@@ -272,16 +272,19 @@ describe("compiled-binary route bundling of CommonJS dependencies", () => {
   it("bundles a workspace package that node_modules links to", async () => {
     await inProject(async (projectDir) => {
       await writeFiles(projectDir, {
-        "packages/ws/package.json": JSON.stringify({ name: "ws", main: "index.js" }),
-        "packages/ws/index.js":
+        "packages/linked/package.json": JSON.stringify({ name: "linked", main: "index.js" }),
+        "packages/linked/index.js":
           'exports.dir = __dirname;\nexports.self = require.resolve("./index.js");',
       });
       await mkdir(`${projectDir}/node_modules`, { recursive: true });
-      await symlink("../packages/ws", `${projectDir}/node_modules/ws`);
-      const mod = await bundleAndImport(projectDir, 'import ws from "ws";\nexport { ws };\n');
-      assertEquals(mod.ws, {
-        dir: `${projectDir}/packages/ws`,
-        self: `${projectDir}/packages/ws/index.js`,
+      await symlink("../packages/linked", `${projectDir}/node_modules/linked`);
+      const mod = await bundleAndImport(
+        projectDir,
+        'import linked from "linked";\nexport { linked };\n',
+      );
+      assertEquals(mod.linked, {
+        dir: `${projectDir}/packages/linked`,
+        self: `${projectDir}/packages/linked/index.js`,
       });
     });
   });

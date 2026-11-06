@@ -231,14 +231,59 @@ export interface DependencyRootFileSystem {
   ): AsyncIterable<{ name: string; isDirectory: boolean; isSymlink?: boolean }>;
 }
 
-async function directoryNames(fs: DependencyRootFileSystem, path: string) {
-  const names: { name: string; isDirectory: boolean; isSymlink?: boolean }[] = [];
+async function directoryEntries(fs: DependencyRootFileSystem, path: string) {
+  const entries: { name: string; isDirectory: boolean; isSymlink?: boolean }[] = [];
   try {
-    for await (const entry of fs.readDir(path)) names.push(entry);
+    for await (const entry of fs.readDir(path)) entries.push(entry);
   } catch {
     // expected: no such directory, as for an adapter-backed project
   }
-  return names;
+  return entries;
+}
+
+/**
+ * Paths in `node_modules` that may be links: package entries, including the
+ * packages inside `@scope` directories. Only a link can point outside
+ * `node_modules`; a host that does not say whether an entry is one gets every
+ * entry checked.
+ */
+async function possibleLinks(fs: DependencyRootFileSystem, modules: string): Promise<string[]> {
+  const links: string[] = [];
+  for (const entry of await directoryEntries(fs, modules)) {
+    const path = pathHelper.join(modules, entry.name);
+    const scoped = entry.name.startsWith("@")
+      ? (await directoryEntries(fs, path)).map((inner) => ({
+        ...inner,
+        path: pathHelper.join(path, inner.name),
+      }))
+      : [{ ...entry, path }];
+    for (const candidate of scoped) {
+      if (candidate.isSymlink !== false) links.push(candidate.path);
+    }
+  }
+  return links;
+}
+
+/**
+ * Directories inside the project that `node_modules` links to, as npm, Yarn
+ * and pnpm workspaces do. The project root and node_modules never count.
+ */
+async function linkedWorkspaceDirectories(
+  fs: DependencyRootFileSystem,
+  root: string,
+): Promise<string[]> {
+  const modules = pathHelper.join(root, "node_modules");
+  const targets: string[] = [];
+  for (const link of await possibleLinks(fs, modules)) {
+    const target = await fs.realPath(link).catch(() => null); // null: a dangling link
+    if (
+      target !== null && target !== link && target !== root &&
+      isWithinDirectory(root, target) && !isWithinDirectory(modules, target)
+    ) {
+      targets.push(target);
+    }
+  }
+  return targets;
 }
 
 /**
@@ -252,56 +297,20 @@ export async function createDependencyFilePredicate(
   fs: DependencyRootFileSystem,
 ): Promise<(path: string) => boolean> {
   const given = pathHelper.resolve(projectDir);
-  let canonical: string | null = null;
-  try {
-    canonical = await fs.realPath(given);
-  } catch {
-    // expected: an adapter-backed project may have no host directory
-  }
-  const prefixes = new Set(
-    [given, canonical ?? given].map((root) =>
-      pathHelper.join(root, "node_modules") + pathHelper.sep
-    ),
-  );
-
-  if (canonical !== null) {
-    const modules = pathHelper.join(canonical, "node_modules");
-    const links: string[] = [];
-    for (const entry of await directoryNames(fs, modules)) {
-      const path = pathHelper.join(modules, entry.name);
-      // Only a link can point outside node_modules; a host that does not say
-      // whether an entry is one gets every entry checked.
-      if (!entry.name.startsWith("@")) {
-        if (entry.isSymlink !== false) links.push(path);
-        continue;
-      }
-      for (const scoped of await directoryNames(fs, path)) {
-        if (scoped.isSymlink !== false) links.push(pathHelper.join(path, scoped.name));
-      }
-    }
-    for (const link of links) {
-      let target: string;
-      try {
-        target = await fs.realPath(link);
-      } catch {
-        continue; // expected: a dangling link
-      }
-      // A package linked to a directory of the project itself, as npm, Yarn
-      // and pnpm workspaces do. The project root and node_modules never count.
-      if (
-        target !== link && target !== canonical && isWithinDirectory(canonical, target) &&
-        !isWithinDirectory(modules, target)
-      ) {
-        prefixes.add(target + pathHelper.sep);
-      }
-    }
-  }
-
-  const roots = [...prefixes];
+  // null: an adapter-backed project may have no host directory
+  const canonical = await fs.realPath(given).catch(() => null);
+  const directories = [
+    pathHelper.join(given, "node_modules"),
+    ...(canonical === null ? [] : [
+      pathHelper.join(canonical, "node_modules"),
+      ...await linkedWorkspaceDirectories(fs, canonical),
+    ]),
+  ];
+  const prefixes = [...new Set(directories)].map((directory) => directory + pathHelper.sep);
   return (path) => {
     if (path === "") return false;
     const resolved = pathHelper.resolve(path);
-    return roots.some((prefix) => resolved.startsWith(prefix));
+    return prefixes.some((prefix) => resolved.startsWith(prefix));
   };
 }
 
