@@ -49,7 +49,12 @@ import {
   rewriteExternalImports,
 } from "./external-import-rewriter.ts";
 import {
+  COMPILED_RESOLVE_OPTIONS,
   createCompiledBuiltinPlugin,
+  createDependencyFilePredicate,
+  createDependencyResolvePlugin,
+  type IsFile,
+  PackageTypeLookup,
   prepareDependencyFile,
   prependRuntimeRequire,
 } from "./compiled-cjs-bundling.ts";
@@ -1307,11 +1312,6 @@ type DependencyFilePredicate = (path: string) => boolean;
 
 const noDependencyFiles: DependencyFilePredicate = () => false;
 
-/**
- * Files under the project's own node_modules, which a compiled-binary route
- * bundles. Both the given and the canonical project root count: esbuild
- * reports resolved paths with symlinks followed.
- */
 /** The project root with symlinks followed, or as given when it has none on the host. */
 async function canonicalProjectRoot(projectDir: string): Promise<string> {
   try {
@@ -1322,60 +1322,25 @@ async function canonicalProjectRoot(projectDir: string): Promise<string> {
   }
 }
 
-async function projectDependencyFiles(projectDir: string): Promise<DependencyFilePredicate> {
-  const roots = new Set([pathHelper.resolve(projectDir)]);
+/** Whether a path is a regular file on the host. */
+const hostIsFile: IsFile = async (path) => {
   try {
-    roots.add(await realPath(projectDir));
+    return (await createFileSystem().stat(path)).isFile;
   } catch {
-    // expected: an adapter-backed project may have no host directory
+    return false; // expected: no such file
   }
-  const prefixes = [...roots].map((root) => pathHelper.join(root, "node_modules") + pathHelper.sep);
-  return (path) =>
-    path !== "" && prefixes.some((prefix) => pathHelper.resolve(path).startsWith(prefix));
-}
+};
 
-/**
- * The `type` field of the package.json nearest a directory, as Node uses it to
- * decide whether a `.js` file is ESM. The walk stays inside the project.
- */
-class PackageTypeLookup {
-  readonly #byDirectory = new Map<string, Promise<string | undefined>>();
-  readonly #root: string;
-
-  constructor(private readonly sourceSnapshot: ProjectSourceSnapshot, projectDir: string) {
-    this.#root = pathHelper.resolve(projectDir);
-  }
-
-  of(directory: string): Promise<string | undefined> {
-    let found = this.#byDirectory.get(directory);
-    if (!found) {
-      found = this.#read(directory);
-      this.#byDirectory.set(directory, found);
-    }
-    return found;
-  }
-
-  async #read(directory: string): Promise<string | undefined> {
-    let manifest: string | null = null;
+/** Reads a package.json through the project snapshot, or null when there is none. */
+function snapshotManifestReader(sourceSnapshot: ProjectSourceSnapshot) {
+  return async (path: string): Promise<string | null> => {
     try {
-      manifest = await this.sourceSnapshot.readTextFile(pathHelper.join(directory, "package.json"));
+      return await sourceSnapshot.readTextFile(path);
     } catch (error) {
       if (error instanceof ProjectBoundaryViolationError) throw error;
-      // expected: no package.json here; look in the parent directory
+      return null; // expected: no package.json here
     }
-    if (manifest !== null) {
-      try {
-        const type = (JSON.parse(manifest) as { type?: unknown }).type;
-        return typeof type === "string" ? type : undefined;
-      } catch {
-        // Node rejects a malformed package.json; esbuild reports it as well.
-        return undefined;
-      }
-    }
-    const parent = pathHelper.dirname(directory);
-    if (parent === directory || !isWithinDirectory(this.#root, parent)) return undefined;
-    return await this.of(parent);
-  }
+  };
 }
 
 function createImportMapPlugin(
@@ -1955,7 +1920,7 @@ function createProjectBoundaryPlugin(
   workerImportMap: DenoImportMap | null,
   isDependencyFile: DependencyFilePredicate = noDependencyFiles,
 ): Plugin {
-  const packageTypes = new PackageTypeLookup(sourceSnapshot, projectDir);
+  const packageTypes = new PackageTypeLookup(snapshotManifestReader(sourceSnapshot), projectDir);
   return {
     name: "vf-project-boundary",
     setup(build) {
@@ -1995,6 +1960,7 @@ function createProjectBoundaryPlugin(
                 resolvedPath: args.path,
                 packageType: await packageTypes.of(pathHelper.dirname(source.logicalPath)),
                 isDependencyFile,
+                isFile: hostIsFile,
                 rewriteImportMeta: (contents, moduleUrl) =>
                   rewriteBundledImportMetaUrl(contents, moduleUrl, null),
               }),
@@ -2220,7 +2186,10 @@ function buildTranspiledModuleSource(
       ].join("\n");
       const requiredBuiltins = new Set<string>();
       const isDependencyFile = compiled
-        ? await projectDependencyFiles(projectDir)
+        ? await createDependencyFilePredicate(projectDir, {
+          realPath,
+          readDir: (path) => createFileSystem().readDir(path),
+        })
         : noDependencyFiles;
       const routeSourceUrl = pathHelper.toFileUrl(resolvedPath).href;
       const workerShim = [
@@ -2249,11 +2218,9 @@ function buildTranspiledModuleSource(
         target: "es2022",
         jsx: "automatic",
         jsxImportSource: "react",
-        resolveExtensions: compiled
-          ? [".ts", ".tsx", ".js", ".jsx", ".mjs", ".json"]
-          : [".ts", ".tsx", ".js", ".jsx", ".mjs"],
+        resolveExtensions: [".ts", ".tsx", ".js", ".jsx", ".mjs"],
         // Bundled CommonJS packages resolve as Node resolves them for require().
-        ...(compiled ? { mainFields: ["main", "module"], conditions: ["node"] } : {}),
+        ...(compiled ? COMPILED_RESOLVE_OPTIONS : {}),
         // Injection binds only free identifiers and lets esbuild rename either
         // side of a collision. A raw banner would redeclare a route import such
         // as `import { Worker } from "worker-package"` and emit invalid ESM.
@@ -2275,7 +2242,12 @@ function buildTranspiledModuleSource(
           sourcefile: resolvedPath,
         },
         plugins: [
-          ...(compiled ? [createCompiledBuiltinPlugin(requiredBuiltins)] : []),
+          ...(compiled
+            ? [
+              createCompiledBuiltinPlugin(requiredBuiltins),
+              createDependencyResolvePlugin(isDependencyFile, hostIsFile),
+            ]
+            : []),
           createRouteRuntimeShimPlugin(routeRuntimeShim),
           createImportMapPlugin(
             projectDir,

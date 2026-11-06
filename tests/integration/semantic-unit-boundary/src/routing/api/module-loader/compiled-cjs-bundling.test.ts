@@ -1,13 +1,17 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { mkdir, readFile, realpath, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, realpath, stat, symlink, writeFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { withTempDir } from "#veryfront/testing/deno-compat.ts";
 import * as esbuild from "veryfront/extensions/bundler";
 import type { Plugin } from "veryfront/extensions/bundler";
 import {
+  COMPILED_RESOLVE_OPTIONS,
   createCompiledBuiltinPlugin,
+  createDependencyFilePredicate,
+  createDependencyResolvePlugin,
+  PackageTypeLookup,
   prepareDependencyFile,
   prependRuntimeRequire,
 } from "#veryfront/routing/api/module-loader/compiled-cjs-bundling.ts";
@@ -20,25 +24,44 @@ async function writeFiles(root: string, files: Record<string, string>): Promise<
   }
 }
 
-/** The `type` of the package.json nearest a file, as the route build reads it. */
-async function packageTypeOf(filePath: string, root: string): Promise<string | undefined> {
-  for (let dir = filePath.slice(0, filePath.lastIndexOf("/")); dir.startsWith(root);) {
-    try {
-      return JSON.parse(await readFile(`${dir}/package.json`, "utf8")).type;
-    } catch {
-      dir = dir.slice(0, dir.lastIndexOf("/"));
-    }
+const isFile = async (path: string) => {
+  try {
+    return (await stat(path)).isFile();
+  } catch {
+    return false; // expected: no such file
   }
-  return undefined;
-}
+};
 
-/** Prepares node_modules files the way the compiled route build does. */
-function dependencyFilePlugin(projectDir: string): Plugin {
-  const isDependencyFile = (path: string) => path.startsWith(`${projectDir}/node_modules/`);
+const hostFs = {
+  realPath: (path: string) => realpath(path),
+  async *readDir(path: string) {
+    for (const entry of await readdir(path, { withFileTypes: true })) {
+      yield {
+        name: entry.name,
+        isDirectory: entry.isDirectory(),
+        isSymlink: entry.isSymbolicLink(),
+      };
+    }
+  },
+};
+
+/** Prepares dependency files the way the compiled route build does. */
+function dependencyFilePlugin(
+  projectDir: string,
+  isDependencyFile: (path: string) => boolean,
+): Plugin {
+  const packageTypes = new PackageTypeLookup(async (path) => {
+    try {
+      return await readFile(path, "utf8");
+    } catch {
+      return null; // expected: no package.json here
+    }
+  }, projectDir);
   return {
     name: "test-dependency-files",
     setup(build) {
-      build.onLoad({ filter: /node_modules[\\/].*\.[cm]?js$/ }, async (args) => {
+      build.onLoad({ filter: /\.[cm]?js$/ }, async (args) => {
+        if (!isDependencyFile(args.path)) return undefined;
         const contents = await readFile(args.path, "utf8");
         return {
           contents: await prepareDependencyFile({
@@ -46,8 +69,9 @@ function dependencyFilePlugin(projectDir: string): Plugin {
             contents,
             logicalPath: args.path,
             resolvedPath: args.path,
-            packageType: await packageTypeOf(args.path, projectDir),
+            packageType: await packageTypes.of(args.path.slice(0, args.path.lastIndexOf("/"))),
             isDependencyFile,
+            isFile,
             rewriteImportMeta: (source) => Promise.resolve(source),
           }),
           loader: "js",
@@ -63,6 +87,7 @@ async function bundleAndImport(
   route: string,
 ): Promise<Record<string, unknown>> {
   const requiredBuiltins = new Set<string>();
+  const isDependencyFile = await createDependencyFilePredicate(projectDir, hostFs);
   try {
     const result = await esbuild.build({
       bundle: true,
@@ -70,9 +95,7 @@ async function bundleAndImport(
       format: "esm",
       platform: "neutral",
       target: "es2022",
-      mainFields: ["main", "module"],
-      conditions: ["node"],
-      resolveExtensions: [".ts", ".js", ".mjs", ".json"],
+      ...COMPILED_RESOLVE_OPTIONS,
       logLevel: "silent",
       stdin: {
         contents: route,
@@ -80,7 +103,11 @@ async function bundleAndImport(
         resolveDir: projectDir,
         sourcefile: `${projectDir}/route.ts`,
       },
-      plugins: [createCompiledBuiltinPlugin(requiredBuiltins), dependencyFilePlugin(projectDir)],
+      plugins: [
+        createCompiledBuiltinPlugin(requiredBuiltins),
+        createDependencyResolvePlugin(isDependencyFile, isFile),
+        dependencyFilePlugin(projectDir, isDependencyFile),
+      ],
     });
     const code = prependRuntimeRequire(
       result.outputFiles?.[0]?.text ?? "",
@@ -161,6 +188,9 @@ describe("compiled-binary route bundling of CommonJS dependencies", () => {
           'var hosts = ["", "etc", "hosts"].join("/");',
           "try { require(hosts); } catch (error) { outside = [error.code, error.message]; }",
           "exports.outside = outside;",
+          "var prefixOnly;",
+          'try { require.resolve("test"); } catch (error) { prefixOnly = error.code; }',
+          "exports.prefixOnly = prefixOnly;",
         ].join("\n"),
       });
       const mod = await bundleAndImport(
@@ -179,6 +209,7 @@ describe("compiled-binary route bundling of CommonJS dependencies", () => {
           "MODULE_NOT_FOUND",
           'Cannot find module "a path outside this project or missing"',
         ],
+        prefixOnly: "MODULE_NOT_FOUND",
       });
     });
   });
@@ -201,8 +232,98 @@ describe("compiled-binary route bundling of CommonJS dependencies", () => {
       );
       // Checked in the bundle, not at runtime: Bun defines both names in ESM too.
       const code = await readFile(`${projectDir}/handler.mjs`, "utf8");
-      assert(!code.includes("function (__dirname, __filename)"), code);
       assert(code.includes("typeof __dirname") && code.includes("typeof __filename"), code);
+    });
+  });
+
+  it("parses a CommonJS file instead of matching its text", async () => {
+    await inProject(async (projectDir) => {
+      await writeFiles(projectDir, {
+        "node_modules/parsed/package.json": JSON.stringify({ name: "parsed", main: "index.js" }),
+        "node_modules/parsed/data.json": "{}",
+        "node_modules/parsed/index.js": [
+          "var text = 'require.resolve(\"./data.json\")';",
+          "/*",
+          "export default 1",
+          "*/",
+          "var __filename = 'own';",
+          "exports.text = text;",
+          "exports.dir = __dirname;",
+          "exports.file = __filename;",
+          "exports.firstArgument = arguments[0] === exports;",
+        ].join("\n"),
+      });
+      const mod = await bundleAndImport(
+        projectDir,
+        'import parsed from "parsed";\nexport { parsed };\n',
+      );
+      assertEquals(mod.parsed, {
+        text: 'require.resolve("./data.json")',
+        dir: `${projectDir}/node_modules/parsed`,
+        file: "own",
+        // No wrapper of ours: arguments are the bundler's CommonJS wrapper's.
+        firstArgument: true,
+      });
+    });
+  });
+
+  it("bundles a workspace package that node_modules links to", async () => {
+    await inProject(async (projectDir) => {
+      await writeFiles(projectDir, {
+        "packages/ws/package.json": JSON.stringify({ name: "ws", main: "index.js" }),
+        "packages/ws/index.js":
+          'exports.dir = __dirname;\nexports.self = require.resolve("./index.js");',
+      });
+      await mkdir(`${projectDir}/node_modules`, { recursive: true });
+      await symlink("../packages/ws", `${projectDir}/node_modules/ws`);
+      const mod = await bundleAndImport(projectDir, 'import ws from "ws";\nexport { ws };\n');
+      assertEquals(mod.ws, {
+        dir: `${projectDir}/packages/ws`,
+        self: `${projectDir}/packages/ws/index.js`,
+      });
+    });
+  });
+
+  it("resolves inside dependencies in Node's order", async () => {
+    await inProject(async (projectDir) => {
+      await writeFiles(projectDir, {
+        "node_modules/order/package.json": JSON.stringify({ name: "order", main: "index.js" }),
+        "node_modules/order/index.js":
+          'exports.impl = require("./impl");\nexports.data = require("./data");',
+        "node_modules/order/data.mjs": 'export default "mjs";',
+        "node_modules/order/data.json": '"json"',
+        // A workspace package resolves outside node_modules, where the
+        // bundler's own order would pick the TypeScript sibling.
+        "packages/wsorder/package.json": JSON.stringify({ name: "wsorder", main: "index.js" }),
+        "packages/wsorder/index.js": 'module.exports = require("./impl");',
+        "packages/wsorder/impl.js": 'module.exports = "js";',
+        "packages/wsorder/impl.ts": 'export default "ts";',
+        "node_modules/order/impl.js": 'module.exports = "js";',
+        "node_modules/order/impl.ts": 'export default "ts";',
+        "node_modules/modonly/package.json": JSON.stringify({ name: "modonly", module: "esm.js" }),
+        "node_modules/modonly/index.js": 'module.exports = "index";',
+        "node_modules/modonly/esm.js": 'export default "module";',
+      });
+      await symlink("../packages/wsorder", `${projectDir}/node_modules/wsorder`);
+      const mod = await bundleAndImport(
+        projectDir,
+        'import order from "order";\nimport modonly from "modonly";\nimport wsorder from "wsorder";\n' +
+          "export const picked = [order.impl, order.data, modonly, wsorder];\n",
+      );
+      assertEquals(mod.picked, ["js", "json", "index", "js"]);
+    });
+  });
+
+  it("keeps a route's own require binding when nothing is bundled", async () => {
+    await inProject(async (projectDir) => {
+      await writeFiles(projectDir, {
+        "helper.ts": 'export const require = (id: string) => "helper:" + id;\n',
+      });
+      const mod = await bundleAndImport(
+        projectDir,
+        'import { require } from "./helper.ts";\nexport const value = require("q");\n',
+      );
+      assertEquals(mod.value, "helper:q");
     });
   });
 

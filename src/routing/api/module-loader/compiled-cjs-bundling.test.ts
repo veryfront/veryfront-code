@@ -3,10 +3,10 @@ import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   builtinModuleName,
-  isCommonJSFile,
+  nodePreferredFile,
+  nodeRelativeFile,
+  PackageTypeLookup,
   prependRuntimeRequire,
-  rewriteStaticRequireResolve,
-  wrapCommonJSPaths,
 } from "./compiled-cjs-bundling.ts";
 
 describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
@@ -24,85 +24,73 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
     });
   });
 
-  describe("isCommonJSFile()", () => {
-    const file = "/app/node_modules/a/index.js";
+  describe("PackageTypeLookup", () => {
+    const manifests: Record<string, string> = {
+      "/app/package.json": JSON.stringify({ type: "module" }),
+      "/app/node_modules/typed/package.json": JSON.stringify({ type: "commonjs" }),
+    };
+    const lookup = () =>
+      new PackageTypeLookup((path) => Promise.resolve(manifests[path] ?? null), "/app");
 
-    it("follows Node's rule for extensions and the package type", async () => {
-      assertEquals(
-        await isCommonJSFile("module.exports = 1;", "/app/node_modules/a/i.cjs", "module"),
-        true,
-      );
-      assertEquals(
-        await isCommonJSFile("export default 1;", "/app/node_modules/a/i.mjs", undefined),
-        false,
-      );
-      assertEquals(await isCommonJSFile("module.exports = 1;", file, undefined), true);
-      assertEquals(await isCommonJSFile("module.exports = 1;", file, "commonjs"), true);
-      assertEquals(await isCommonJSFile("globalThis.x = typeof __dirname;", file, "module"), false);
+    it("reads the nearest package.json inside the project", async () => {
+      assertEquals(await lookup().of("/app/src/lib"), "module");
+      assertEquals(await lookup().of("/app/node_modules/typed/lib"), "commonjs");
     });
 
-    it("treats a .js file with ESM syntax as ESM, as esbuild bundles it", async () => {
-      assertEquals(await isCommonJSFile('import x from "x";\nx();', file, undefined), false);
-      assertEquals(await isCommonJSFile("export const a = 1;", file, undefined), false);
-      assertEquals(await isCommonJSFile("const u = import.meta.url;", file, undefined), false);
-      assertEquals(await isCommonJSFile('const m = import("x");', file, undefined), true);
+    it("stops at node_modules, as Node does, so a package without a manifest is CommonJS", async () => {
+      assertEquals(await lookup().of("/app/node_modules/bare/lib"), undefined);
+      assertEquals(await lookup().of("/app/node_modules/@scope/bare"), undefined);
     });
   });
 
-  describe("wrapCommonJSPaths()", () => {
-    const file = "/app/node_modules/a/index.js";
+  describe("nodePreferredFile()", () => {
+    const files = new Set(["/d/impl.js", "/d/lib/index.js", "/d/data.json"]);
+    const isFile = (path: string) => Promise.resolve(files.has(path));
 
-    it("leaves a file that does not read the wrapper bindings unchanged", () => {
-      assertEquals(wrapCommonJSPaths("module.exports = 1;", file), "module.exports = 1;");
+    it("prefers Node's extensions over a TypeScript sibling the bundler probed", async () => {
+      assertEquals(await nodePreferredFile("/d/impl.ts", "./impl", "/d", isFile), "/d/impl.js");
+      assertEquals(
+        await nodePreferredFile("/d/lib/index.tsx", "./lib", "/d", isFile),
+        "/d/lib/index.js",
+      );
+      assertEquals(await nodePreferredFile("/d/data.mjs", "./data", "/d", isFile), "/d/data.json");
     });
 
-    it("passes both bindings, so a file's own declaration shadows only its own name", () => {
-      const wrapped = wrapCommonJSPaths(
-        "var __dirname = 'custom'; module.exports = [__dirname, __filename];",
-        file,
+    it("keeps a path the import named exactly or a package chose", async () => {
+      assertEquals(await nodePreferredFile("/d/impl.ts", "./impl.ts", "/d", isFile), "/d/impl.ts");
+      assertEquals(
+        await nodePreferredFile("/d/node_modules/p/index.cjs", "p", "/d", isFile),
+        "/d/node_modules/p/index.cjs",
       );
-      const module = { exports: [] as string[] };
-      new Function("module", wrapped)(module);
-      assertEquals(module.exports, ["custom", file]);
-    });
-
-    it("keeps a hashbang first and a directive prologue in effect", () => {
-      const wrapped = wrapCommonJSPaths(
-        '#!/usr/bin/env node\n"use strict";\nmodule.exports = [__dirname, (function () { return this; })()];',
-        file,
-      );
-      assert(
-        wrapped.startsWith("#!/usr/bin/env node\n(function (__dirname, __filename) {"),
-        wrapped,
-      );
-      const module = { exports: [] as unknown[] };
-      new Function("module", wrapped.slice(wrapped.indexOf("\n") + 1))(module);
-      assertEquals(module.exports, ["/app/node_modules/a", undefined]);
+      assertEquals(await nodePreferredFile("/d/only.ts", "./only", "/d", isFile), "/d/only.ts");
     });
   });
 
-  describe("rewriteStaticRequireResolve()", () => {
-    it("replaces resolvable literals and leaves the rest for runtime", async () => {
-      const source = [
-        'const a = require.resolve("./asset.json");',
-        "const b = require.resolve('optional-missing');",
-        'const c = require.resolve("fs");',
-        'const d = notrequire.resolve("./asset.json");',
-      ].join("\n");
-      const out = await rewriteStaticRequireResolve(
-        source,
-        (specifier) =>
-          Promise.resolve(specifier === "./asset.json" ? "/app/node_modules/a/asset.json" : null),
-      );
-      assertEquals(
-        out,
-        [
-          'const a = "/app/node_modules/a/asset.json";',
-          "const b = require.resolve('optional-missing');",
-          'const c = "fs";',
-          'const d = notrequire.resolve("./asset.json");',
-        ].join("\n"),
-      );
+  describe("nodeRelativeFile()", () => {
+    const files = new Set([
+      "/d/impl.js",
+      "/d/impl.ts",
+      "/d/exact",
+      "/d/lib/index.js",
+      "/d/lib/index.ts",
+      "/d/pkg/package.json",
+      "/d/addon.node",
+    ]);
+    const isFile = (path: string) => Promise.resolve(files.has(path));
+
+    it("picks Node's candidates for an extensionless relative import", async () => {
+      assertEquals(await nodeRelativeFile("./impl", "/d", isFile), "/d/impl.js");
+      assertEquals(await nodeRelativeFile("./lib", "/d", isFile), "/d/lib/index.js");
+      assertEquals(await nodeRelativeFile("/d/impl", "/x", isFile), "/d/impl.js");
+      assertEquals(await nodeRelativeFile("./addon", "/d", isFile), "/d/addon.node");
+    });
+
+    it("leaves exact files, package directories, bare and missing imports to the bundler", async () => {
+      assertEquals(await nodeRelativeFile("./impl.ts", "/d", isFile), null);
+      assertEquals(await nodeRelativeFile("./exact", "/d", isFile), null);
+      assertEquals(await nodeRelativeFile("./pkg", "/d", isFile), null);
+      assertEquals(await nodeRelativeFile("impl", "/d", isFile), null);
+      assertEquals(await nodeRelativeFile("./missing", "/d", isFile), null);
     });
   });
 
@@ -115,6 +103,12 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
     it("picks helper names the bundle does not already use", () => {
       const code = prependRuntimeRequire("const __vf_builtin0 = 1;\n", ["path"], "/app");
       assert(code.includes("import * as __vf_builtin_0 from"), code);
+    });
+
+    it("resolves a prefix-only built-in only with its prefix", () => {
+      const code = prependRuntimeRequire("export {};\n", [], "/app");
+      assert(code.includes('"node:test": 1'), code);
+      assert(!code.includes('"test": 1'), code);
     });
   });
 });
