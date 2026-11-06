@@ -65,7 +65,8 @@ export function createInputRequestApprovalGate(
   options: InputRequestApprovalGateOptions,
 ): ToolApprovalGate {
   const doFetch = options.fetch ?? fetch;
-  const base = options.apiUrl.replace(/\/+$/, "");
+  let base = options.apiUrl;
+  while (base.endsWith("/")) base = base.slice(0, -1);
   const pollIntervalMs = positiveMs(
     "pollIntervalMs",
     options.pollIntervalMs,
@@ -85,7 +86,7 @@ export function createInputRequestApprovalGate(
       headers: {
         Authorization: `Bearer ${options.authToken}`,
         "Content-Type": "application/json",
-        ...(init.headers ?? {}),
+        ...init.headers,
       },
     });
     return { response, body: await response.json().catch(() => ({})) as unknown };
@@ -150,12 +151,13 @@ export function createInputRequestApprovalGate(
     const expiresAt = Date.now() +
       (request.policy.expiresInSeconds ?? DEFAULT_EXPIRES_IN_SECONDS) * 1000;
     const runRequests = `/runs/${encodeURIComponent(options.runId)}/input-requests`;
+    const callHash = await computeHash(`${options.runId}:${toolCallId}`);
     const { response, body } = await send(runRequests, {
       method: "POST",
       // Keyed by run and tool call, so a retry after a lost response gets the committed request
       // back instead of a conflict with it.
       headers: {
-        "Idempotency-Key": `tool-approval:${await computeHash(`${options.runId}:${toolCallId}`)}`,
+        "Idempotency-Key": `tool-approval:${callHash}`,
       },
       signal,
       body: JSON.stringify({
@@ -264,7 +266,7 @@ function canonicalJson(value: unknown): string {
   if (value !== null && typeof value === "object") {
     const record = value as Record<string, unknown>;
     return `{${
-      Object.keys(record).sort().map((key) =>
+      Object.keys(record).sort((left, right) => left.localeCompare(right)).map((key) =>
         `${JSON.stringify(key)}:${canonicalJson(record[key])}`
       )
         .join(",")

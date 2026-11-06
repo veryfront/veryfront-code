@@ -166,13 +166,7 @@ export async function requireToolApproval(
   // both the outcome and its message come from that one normalized value.
   const outcome = decision.outcome === "approved" ? "denied" : decision.outcome;
   // The model gets words it can relay; the checker's identity stays with the host's record.
-  const message = outcome === "denied"
-    ? `The approver denied the ${toolName} call${
-      decision.comment ? `: "${decision.comment}".` : "."
-    } It did not run.`
-    : outcome === "expired"
-    ? `Nobody approved the ${toolName} call in time. It did not run.`
-    : `The ${toolName} call was withdrawn before approval. It did not run.`;
+  const message = refusalMessage(toolName, outcome, decision.comment);
   return {
     status: "not_approved",
     outcome,
@@ -180,4 +174,17 @@ export async function requireToolApproval(
     ...(decision.comment ? { comment: decision.comment } : {}),
     message,
   };
+}
+
+function refusalMessage(
+  toolName: string,
+  outcome: ToolApprovalRefusal["outcome"],
+  comment: string | undefined,
+): string {
+  if (outcome === "expired") return `Nobody approved the ${toolName} call in time. It did not run.`;
+  if (outcome === "withdrawn") {
+    return `The ${toolName} call was withdrawn before approval. It did not run.`;
+  }
+  const note = comment ? `: "${comment}".` : ".";
+  return `The approver denied the ${toolName} call${note} It did not run.`;
 }
