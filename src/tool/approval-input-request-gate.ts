@@ -6,6 +6,7 @@ import { INVALID_ARGUMENT } from "#veryfront/errors";
 import { privateJsonParse, privateJsonStringify } from "#veryfront/security/private-json.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
 import { isWellFormedString } from "#veryfront/utils/is-well-formed-string.ts";
+import { getCurrentToolCallOccurrenceIdentity } from "#veryfront/runtime/tool-call-occurrence.ts";
 import { agentLogger } from "#veryfront/utils/logger/index.ts";
 import type { ToolApprovalDecision, ToolApprovalGate } from "./approval.ts";
 
@@ -36,6 +37,7 @@ interface InputRequestResource {
   status: "open" | "submitted" | "cancelled" | "expired";
   created_at?: string | null;
   expires_at?: string | null;
+  metadata?: { tool_call_occurrence?: unknown } | null;
   response?: {
     values?: Record<string, unknown>;
     // A historical response may carry no authenticated actor, only `type: "unavailable"`.
@@ -178,6 +180,17 @@ export function createInputRequestApprovalGate(
     }
     return undefined;
   };
+  /** Withdraws a dead call's pending approval. Best effort: finalizing the run also cancels it. */
+  const withdraw = (inputRequestId: string) =>
+    call(`/input-requests/${encodeSegment(inputRequestId)}/cancel`, {
+      method: "POST",
+      headers: { "Idempotency-Key": randomUUID() },
+    }).catch((cancelError) =>
+      agentLogger.warn("Could not withdraw the pending tool approval", {
+        inputRequestId,
+        error: cancelError instanceof Error ? cancelError.message : String(cancelError),
+      })
+    );
   /**
    * The request an earlier attempt at this call opened, in whatever state it is now (its response
    * was lost, or it asked with another expiry, so the key no longer replays). Only a request about
@@ -189,6 +202,7 @@ export function createInputRequestApprovalGate(
     request: { toolName: string; input: unknown },
     rules: ResponderRules,
     windowMs: number,
+    occurrence: string | undefined,
     signal?: AbortSignal,
   ) => {
     let open: InputRequestResource | undefined;
@@ -210,7 +224,9 @@ export function createInputRequestApprovalGate(
           // A request asked under another policy (a shorter step-up, say) never stands in for this one.
           sameRules(item.responder_rules, rules) &&
           // Nor does one that stayed open longer than this call's expiry allows.
-          withinWindow(item, windowMs);
+          withinWindow(item, windowMs) &&
+          // Nor one another occurrence of a reused provider call id opened.
+          item.metadata?.tool_call_occurrence === occurrence;
         if (!matches) continue;
         first ??= item;
         if (item.status === "open") open ??= item;
@@ -251,41 +267,82 @@ export function createInputRequestApprovalGate(
     const windowMs = (request.policy.expiresInSeconds ?? DEFAULT_EXPIRES_IN_SECONDS) * 1000;
     const expiresAt = dateNow() + windowMs;
     const runRequests = `/runs/${encodeSegment(options.runId)}/input-requests`;
-    const callHash = await computeHash(`${options.runId}:${toolCallId}`);
+    // A provider may reuse a call id in a later turn: the runtime's occurrence of this call tells
+    // the two apart, so a later call never replays or recovers an earlier one's approval.
+    const dispatched = getCurrentToolCallOccurrenceIdentity();
+    const occurrence = dispatched && dispatched.toolCallId === request.toolCallId
+      ? dispatched.occurrenceId
+      : undefined;
+    const callHash = await computeHash(
+      occurrence
+        ? `${options.runId}:${toolCallId}:${occurrence}`
+        : `${options.runId}:${toolCallId}`,
+    );
     const rules: ResponderRules = {
       exclude_run_starters: true,
       required_capability: "project.approvals.decide",
       ...(request.policy.stepUpSeconds ? { step_up_seconds: request.policy.stepUpSeconds } : {}),
     };
-    const { response, body } = await send(runRequests, {
-      method: "POST",
-      // Keyed by run and tool call, so a retry after a lost response gets the committed request
-      // back instead of a conflict with it.
-      headers: {
-        "Idempotency-Key": `tool-approval:${callHash}`,
-      },
-      signal,
-      body: privateJsonStringify({
-        title: `Approve ${request.toolName}`,
-        requested_responder_type: "human",
-        tool_call_id: toolCallId,
-        fields: DECISION_FIELDS,
-        responder_rules: rules,
-        tool_call: { name: request.toolName, arguments: request.input },
-        // This gate reads the decision itself; the gated call never parks for a tool result.
-        delivery: "none",
-        expires_at: apply(dateToISOString, new IntrinsicDate(expiresAt), []) as string,
-      }),
-    });
-    let created: InputRequestResource;
-    if (response.ok) {
-      created = body as InputRequestResource;
-    } else if (response.status === 409 || response.status === 422) {
-      const existing = await recover(runRequests, toolCallId, request, rules, windowMs, signal);
+    const open = async (): Promise<InputRequestResource> => {
+      const { response, body } = await send(runRequests, {
+        method: "POST",
+        // Keyed by run, tool call and its occurrence, so a retry after a lost response gets the
+        // committed request back instead of a conflict with it.
+        headers: {
+          "Idempotency-Key": `tool-approval:${callHash}`,
+        },
+        signal,
+        body: privateJsonStringify({
+          title: `Approve ${request.toolName}`,
+          requested_responder_type: "human",
+          tool_call_id: toolCallId,
+          fields: DECISION_FIELDS,
+          responder_rules: rules,
+          tool_call: { name: request.toolName, arguments: request.input },
+          // This gate reads the decision itself; the gated call never parks for a tool result.
+          delivery: "none",
+          ...(occurrence ? { metadata: { tool_call_occurrence: occurrence } } : {}),
+          expires_at: apply(dateToISOString, new IntrinsicDate(expiresAt), []) as string,
+        }),
+      });
+      if (response.ok) return body as InputRequestResource;
+      if (response.status !== 409 && response.status !== 422) throw failure(response, body);
+      const existing = await recover(
+        runRequests,
+        toolCallId,
+        request,
+        rules,
+        windowMs,
+        occurrence,
+        signal,
+      );
       if (!existing) throw failure(response, body);
-      created = existing;
-    } else {
-      throw failure(response, body);
+      return existing;
+    };
+    let created: InputRequestResource;
+    try {
+      created = await open();
+    } catch (error) {
+      // A cancellation can land after the API committed the request but before its answer arrived:
+      // find it without the dead signal and withdraw it, as a cancellation while polling does.
+      if (signal?.aborted) {
+        const committed = await recover(
+          runRequests,
+          toolCallId,
+          request,
+          rules,
+          windowMs,
+          occurrence,
+        )
+          .catch((recoverError) => {
+            agentLogger.warn("Could not find the pending tool approval to withdraw", {
+              error: recoverError instanceof Error ? recoverError.message : String(recoverError),
+            });
+            return undefined;
+          });
+        if (committed?.status === "open") await withdraw(committed.input_request_id);
+      }
+      throw error;
     }
     const id = encodeSegment(created.input_request_id);
     const expiry = created.expires_at ? dateParse(created.expires_at) : expiresAt;
@@ -308,18 +365,7 @@ export function createInputRequestApprovalGate(
       }
     } catch (error) {
       // A cancelled run withdraws its pending approval so no checker can approve a dead call.
-      if (signal?.aborted) {
-        // Best effort: finalizing the run also cancels its open requests.
-        await call(`/input-requests/${id}/cancel`, {
-          method: "POST",
-          headers: { "Idempotency-Key": randomUUID() },
-        }).catch((cancelError) =>
-          agentLogger.warn("Could not withdraw the pending tool approval", {
-            inputRequestId: created.input_request_id,
-            error: cancelError instanceof Error ? cancelError.message : String(cancelError),
-          })
-        );
-      }
+      if (signal?.aborted) await withdraw(created.input_request_id);
       throw error;
     }
     return toDecision(current);

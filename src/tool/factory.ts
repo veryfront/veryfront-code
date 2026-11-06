@@ -12,6 +12,7 @@ import { zodToJsonSchema } from "./schema/zod-json-schema.ts";
 import { agentLogger } from "#veryfront/utils";
 import { createError, getErrorMessage, INVALID_ARGUMENT, toError } from "#veryfront/errors";
 import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
+import { privateJsonParse, privateJsonStringify } from "#veryfront/security/private-json.ts";
 import { slicePrivateArray } from "#veryfront/security/private-array.ts";
 import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
 import {
@@ -327,7 +328,12 @@ export function tool<TInput = unknown, TOutput = unknown>(
           detail: `Tool "${id}" requires approval, so its arguments must be a JSON object`,
         });
       }
-      const args = snapshot.value as Record<string, unknown>;
+      // Read back from the JSON the checker is shown, so a value JSON cannot carry (-0, say) never
+      // runs as something other than what was approved.
+      const args = privateJsonParse(privateJsonStringify(snapshot.value)!) as Record<
+        string,
+        unknown
+      >;
       const validated = parse(args);
       const toolName = typeof this?.id === "string" && this.id.length > 0 ? this.id : id;
       const refusal = await requireToolApproval(toolName, approval, args, context);

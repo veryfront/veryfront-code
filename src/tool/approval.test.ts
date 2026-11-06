@@ -15,6 +15,11 @@ import { createToolsFromHostDefinitions, type HostToolSet } from "./host-tools.t
 import { wrapHostToolSetWithMcpPolicy } from "../agent/mcp-tool-policy.ts";
 import { wrapHostedChildSteeringMutationTool } from "../agent/hosted/child-steering-tools.ts";
 import { traceHostTools } from "./tracing.ts";
+import {
+  introduceToolCallOccurrence,
+  runWithToolCallOccurrenceDispatch,
+  runWithToolCallOccurrences,
+} from "#veryfront/runtime/tool-call-occurrence.ts";
 
 /** The rules the gate asks under for a policy without step-up, as the API stores them. */
 const ASKED_RULES = {
@@ -290,6 +295,29 @@ describe("tool approval", () => {
       requestToolApproval: () => Promise.resolve({ approved: true, outcome: "approved" }),
     });
     assertEquals(executed, [10]);
+  });
+
+  it("runs the arguments as the checker saw them, so -0 never runs where 0 was approved", async () => {
+    const executed: number[] = [];
+    const asked: unknown[] = [];
+    const gated = tool({
+      id: "transfer",
+      description: "Move money",
+      approval: {},
+      inputSchema: defineSchema((v) => v.object({ amount: v.number() }))(),
+      execute: (input) => {
+        executed.push(input.amount);
+        return { ok: true };
+      },
+    });
+    await gated.execute({ amount: -0 }, {
+      requestToolApproval: (request) => {
+        asked.push(JSON.stringify(request.input));
+        return Promise.resolve({ approved: true, outcome: "approved" });
+      },
+    });
+    assertEquals(asked, ['{"amount":0}']);
+    assertEquals(Object.is(executed[0], -0), false);
   });
 
   it("types a tool from a config that may carry approval as able to refuse", async () => {
@@ -853,6 +881,92 @@ describe("createInputRequestApprovalGate", () => {
     });
     assertEquals(decision.outcome, "expired");
     assertEquals(Date.now() - started < 5_000, true);
+  });
+
+  it("never recovers the approval of an earlier occurrence of a reused provider call id", async () => {
+    const keys: string[] = [];
+    const gate = createInputRequestApprovalGate({
+      apiUrl: "http://api.test",
+      authToken: "maker-token",
+      runId: "run-1",
+      pollIntervalMs: 1,
+      fetch: (_input, init) => {
+        const sent = init as SentInit;
+        if (sent.method === "POST") {
+          keys.push(sent.headers!["Idempotency-Key"]!);
+          return Promise.resolve(
+            new Response(JSON.stringify({ detail: "conflict" }), { status: 409 }),
+          );
+        }
+        return Promise.resolve(
+          new Response(JSON.stringify({
+            data: [{
+              input_request_id: "ir-earlier",
+              tool_call_id: "call_0",
+              tool_call: { name: "transfer", arguments: { amount: 1 } },
+              responder_rules: ASKED_RULES,
+              ...ASKED_WINDOW,
+              metadata: { tool_call_occurrence: "earlier-occurrence" },
+              status: "submitted",
+              response: { values: { decision: "approve" } },
+            }],
+          })),
+        );
+      },
+    });
+    const call = { id: "call_0" };
+    const decision = await runWithToolCallOccurrences(() => {
+      introduceToolCallOccurrence(call);
+      return runWithToolCallOccurrenceDispatch(
+        call,
+        () =>
+          gate({ toolName: "transfer", toolCallId: "call_0", input: { amount: 1 }, policy: {} })
+            .catch((error: unknown) => error),
+      );
+    });
+    assertEquals((decision as { approved?: boolean }).approved === true, false);
+    assertEquals(keys.length, 1);
+  });
+
+  it("withdraws a request the API committed when cancellation interrupts its creation", async () => {
+    const controller = new AbortController();
+    const cancelled: string[] = [];
+    const gate = createInputRequestApprovalGate({
+      apiUrl: "http://api.test",
+      authToken: "maker-token",
+      runId: "run-1",
+      pollIntervalMs: 1,
+      fetch: (input, init) => {
+        const url = String(input);
+        if (url.endsWith("/cancel")) {
+          cancelled.push(url);
+          return Promise.resolve(new Response("{}"));
+        }
+        if ((init as SentInit).method === "POST") {
+          // The API commits the request, then its answer stalls until the run is cancelled.
+          queueMicrotask(() => controller.abort(new Error("run cancelled")));
+          return new Promise((_resolve, reject) =>
+            init!.signal!.addEventListener("abort", () => reject(init!.signal!.reason))
+          );
+        }
+        return Promise.resolve(
+          new Response(JSON.stringify({
+            data: [{
+              input_request_id: "ir-1",
+              tool_call_id: "call-1",
+              tool_call: { name: "transfer", arguments: {} },
+              responder_rules: ASKED_RULES,
+              ...ASKED_WINDOW,
+              status: "open",
+            }],
+          })),
+        );
+      },
+    });
+    await assertRejects(() =>
+      gate({ toolName: "transfer", toolCallId: "call-1", input: {}, policy: {} }, controller.signal)
+    );
+    assertEquals(cancelled, ["http://api.test/input-requests/ir-1/cancel"]);
   });
 
   it("keeps polling through transient failures", async () => {
