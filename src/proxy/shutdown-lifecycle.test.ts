@@ -237,6 +237,30 @@ describe("proxy shutdown lifecycle", () => {
     assertEquals(admission.getGrantedMs(), 1);
   });
 
+  it("computes the grace wait and drain budget with math captured before extensions load", async () => {
+    const admission = new ProxyDrainAdmission(1, () => 0);
+    admission.begin("SIGTERM");
+    const maxDescriptor = Object.getOwnPropertyDescriptor(Math, "max")!;
+    const ceilDescriptor = Object.getOwnPropertyDescriptor(Math, "ceil")!;
+    const poisoned = () => {
+      throw new Error("poisoned Math");
+    };
+    let wait: Promise<void> | undefined;
+    let budget: number | undefined;
+    try {
+      Object.defineProperty(Math, "max", { ...maxDescriptor, value: poisoned });
+      Object.defineProperty(Math, "ceil", { ...ceilDescriptor, value: poisoned });
+      wait = admission.waitForWindow();
+      budget = admission.remainingDrainBudgetMs(25);
+    } finally {
+      Object.defineProperty(Math, "max", maxDescriptor);
+      Object.defineProperty(Math, "ceil", ceilDescriptor);
+    }
+
+    assertEquals(await wait, undefined);
+    assertEquals(budget, 24);
+  });
+
   it("rejects malformed shutdown step configurations", async () => {
     const ran: string[] = [];
     const record = (name: string) => ({

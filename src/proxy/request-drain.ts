@@ -7,6 +7,8 @@ import { MAX_PROXY_TIMER_DELAY_MS } from "./timing.ts";
 // Captured before extensions activate: shutdown timing must not consult a
 // replaced Performance.prototype.now.
 const apply = Reflect.apply;
+const mathCeil = Math.ceil;
+const mathMax = Math.max;
 const monotonicClock = performance;
 const monotonicNowMethod = performance.now;
 function monotonicNow(): number {
@@ -153,7 +155,10 @@ export function createProxyDrainingResponse(): Response {
  * SIGINT (a local Ctrl-C) has no gateway to wait for, so it starts with no
  * grace window. Long-lived requests (WebSocket upgrades and SSE streams) are
  * refused from the moment shutdown starts: they could outlive the remaining
- * drain budget and belong on a replica that stays.
+ * drain budget and belong on a replica that stays. An idempotent request
+ * admitted during the drain whose response turns out to be an SSE stream
+ * (negotiated by the response, not the Accept header) is answered with the
+ * draining response instead, so the client retries on a replica that stays.
  */
 export class ProxyDrainAdmission {
   private admitUntil: number | null = null;
@@ -181,9 +186,29 @@ export class ProxyDrainAdmission {
     return this.now() < this.admitUntil;
   }
 
-  /** Once shutdown has begun, close the connection after this response. */
-  closeIfDraining(response: Response): Response {
-    return this.admitUntil === null ? response : withConnectionClose(response);
+  /** Whether shutdown has begun. */
+  isDraining(): boolean {
+    return this.admitUntil !== null;
+  }
+
+  /**
+   * Once shutdown has begun, close the connection after this response. A GET
+   * or HEAD admitted during the drain that answers with an SSE stream gets the
+   * draining response instead: the stream could outlive the drain budget, and
+   * retrying it on another replica is safe.
+   */
+  closeIfDraining(request: Request, response: Response, admittedDuringDrain = false): Response {
+    if (this.admitUntil === null) return response;
+    if (admittedDuringDrain && isIdempotentStreamRetry(request, response)) {
+      cancelResponseBody(response);
+      return createProxyDrainingResponse();
+    }
+    return withConnectionClose(response);
+  }
+
+  /** What remains of `drainTimeoutMs` after the granted grace window. */
+  remainingDrainBudgetMs(drainTimeoutMs: number): number {
+    return mathMax(0, drainTimeoutMs - this.grantedMs);
   }
 
   /** The whole grace window granted by `begin`, in integer milliseconds. */
@@ -193,8 +218,25 @@ export class ProxyDrainAdmission {
 
   /** Wait out the rest of the grace window on a timer captured before extensions load. */
   waitForWindow(): Promise<void> {
-    const remainingMs = this.admitUntil === null ? 0 : Math.max(0, this.admitUntil - this.now());
-    return delayProxyShutdown(Math.ceil(remainingMs));
+    const remainingMs = this.admitUntil === null ? 0 : mathMax(0, this.admitUntil - this.now());
+    return delayProxyShutdown(mathCeil(remainingMs));
+  }
+}
+
+function isIdempotentStreamRetry(request: Request, response: Response): boolean {
+  const method = request.method.toUpperCase();
+  if (method !== "GET" && method !== "HEAD") return false;
+  return response.headers.get("content-type")?.toLowerCase().startsWith("text/event-stream") ??
+    false;
+}
+
+function cancelResponseBody(response: Response): void {
+  try {
+    response.body?.cancel().catch(() => {
+      // The replaced stream has no consumer left to report to.
+    });
+  } catch {
+    // A locked body is already owned elsewhere; nothing to release here.
   }
 }
 

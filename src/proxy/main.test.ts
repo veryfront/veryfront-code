@@ -56,7 +56,15 @@ describe("proxy main request URL parsing", () => {
     // only move the crash (veryfront-issue-inbox#828).
     const catchIndex = source.indexOf("proxyRequestDrainTracker.complete(requestId);");
     assertEquals(catchIndex >= 0, true);
-    const routerCatch = source.slice(catchIndex, catchIndex + 700);
+    // While draining, error responses close their connection too.
+    assertStringIncludes(
+      source.slice(catchIndex, catchIndex + 300),
+      "return drainAdmission.closeIfDraining(req, handleRouterError(req, url, error));",
+    );
+    const handlerIndex = source.indexOf("function handleRouterError(");
+    assertEquals(handlerIndex > catchIndex, true);
+    const routerCatch = source.slice(handlerIndex, handlerIndex + 1_200);
+    assertStringIncludes(routerCatch, "if (!drainAdmission.isDraining()) throw error;");
     assertStringIncludes(routerCatch, "error instanceof ProxyRequestHostError");
     assertStringIncludes(
       routerCatch,
@@ -157,8 +165,14 @@ describe("proxy main request URL parsing", () => {
     // through the Service, which no longer routes to this pod.
     assertStringIncludes(
       source,
-      "response = drainAdmission.closeIfDraining(response);\n    return proxyRequestDrainTracker.completeOnResponseEnd(requestId, req, response);",
+      "response = drainAdmission.closeIfDraining(req, response, admittedDuringDrain);\n    return proxyRequestDrainTracker.completeOnResponseEnd(requestId, req, response);",
     );
+    // Admission time, not response time, decides whether an SSE response is
+    // swapped for the draining response.
+    const admittedIndex = source.indexOf(
+      "const admittedDuringDrain = drainAdmission.isDraining();",
+    );
+    assertEquals(admittedIndex > refuseIndex && trackIndex > admittedIndex, true);
     // The signal decides the grace: SIGINT (Ctrl-C) gets none.
     assertStringIncludes(source, "shuttingDown = true;\n  drainAdmission.begin(signal);");
     assertStringIncludes(
@@ -174,7 +188,7 @@ describe("proxy main request URL parsing", () => {
     // close the server underneath in-flight responses.
     assertStringIncludes(
       source,
-      "await proxyRequestDrainTracker.waitForDrain(\n        Math.max(0, SHUTDOWN_DRAIN_TIMEOUT_MS - drainAdmission.getGrantedMs()),",
+      "await proxyRequestDrainTracker.waitForDrain(\n        drainAdmission.remainingDrainBudgetMs(SHUTDOWN_DRAIN_TIMEOUT_MS),",
       "shutdown must wait for the configured drain budget, not a zero timeout",
     );
     assertStringIncludes(

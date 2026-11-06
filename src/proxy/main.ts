@@ -879,6 +879,7 @@ async function router(req: Request): Promise<Response> {
     return createProxyDrainingResponse();
   }
 
+  const admittedDuringDrain = drainAdmission.isDraining();
   const requestId = crypto.randomUUID();
   proxyRequestDrainTracker.start(requestId, req.method, url.pathname);
 
@@ -906,22 +907,32 @@ async function router(req: Request): Promise<Response> {
     }
 
     // Read after the await: shutdown may have started while this request ran.
-    response = drainAdmission.closeIfDraining(response);
+    response = drainAdmission.closeIfDraining(req, response, admittedDuringDrain);
     return proxyRequestDrainTracker.completeOnResponseEnd(requestId, req, response);
   } catch (error) {
     proxyRequestDrainTracker.complete(requestId);
-    if (error instanceof ProxyRequestHostError) {
-      // An absolute-form request target with an empty Host header parses as a
-      // URL, but Host validation rejects it downstream ("" is not nullish, so
-      // the url.host fallback never fires). Map it to 400 here instead of
-      // letting it escape as Deno's generic 500.
-      proxyLogger.warn(`400 ${req.method} ${url.pathname}`, {
-        host: describeRejectedHostHeader(req.headers.get("host")),
-      });
-      return jsonErrorResponse(400, { error: "Bad Request" });
-    }
-    throw error;
+    // Error responses close their connection while draining too, so the
+    // gateway does not stay pinned to this pod.
+    return drainAdmission.closeIfDraining(req, handleRouterError(req, url, error));
   }
+}
+
+function handleRouterError(req: Request, url: URL, error: unknown): Response {
+  if (error instanceof ProxyRequestHostError) {
+    // An absolute-form request target with an empty Host header parses as a
+    // URL, but Host validation rejects it downstream ("" is not nullish, so
+    // the url.host fallback never fires). Map it to 400 here instead of
+    // letting it escape as Deno's generic 500.
+    proxyLogger.warn(`400 ${req.method} ${url.pathname}`, {
+      host: describeRejectedHostHeader(req.headers.get("host")),
+    });
+    return jsonErrorResponse(400, { error: "Bad Request" });
+  }
+  // Outside a drain the server's own error handling owns unexpected failures.
+  if (!drainAdmission.isDraining()) throw error;
+  captureApplicationError(error, { boundary: "proxy.request", method: req.method });
+  proxyLogger.error(`500 ${req.method} ${url.pathname}`, {}, error);
+  return jsonErrorResponse(500, { error: "Internal Server Error" });
 }
 
 // Create server before signal registration so early SIGTERM/SIGINT can close it safely.
@@ -975,7 +986,7 @@ async function shutdown(signal: "SIGINT" | "SIGTERM"): Promise<void> {
     let drained = false;
     try {
       drained = await proxyRequestDrainTracker.waitForDrain(
-        Math.max(0, SHUTDOWN_DRAIN_TIMEOUT_MS - drainAdmission.getGrantedMs()),
+        drainAdmission.remainingDrainBudgetMs(SHUTDOWN_DRAIN_TIMEOUT_MS),
       );
     } catch (error) {
       reportShutdownFailure({ step: "request_drain", error, timedOut: false });

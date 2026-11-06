@@ -470,14 +470,83 @@ describe("proxy request drain", () => {
 
   it("closes connections only once shutdown has begun", async () => {
     const admission = new ProxyDrainAdmission(10_000, () => 0);
-    const before = admission.closeIfDraining(new Response("ok"));
+    const get = new Request("http://proxy.test/page");
+    const before = admission.closeIfDraining(get, new Response("ok"));
     assertEquals(before.headers.get("connection"), null);
 
     admission.begin("SIGTERM");
-    const during = admission.closeIfDraining(new Response("ok"));
+    const during = admission.closeIfDraining(get, new Response("ok"));
     assertEquals(during.headers.get("connection"), "close");
     await before.body?.cancel();
     await during.body?.cancel();
+  });
+
+  it("closes error responses produced while draining", async () => {
+    const admission = new ProxyDrainAdmission(10_000, () => 0);
+    admission.begin("SIGTERM");
+    const error = admission.closeIfDraining(
+      new Request("http://proxy.test/page"),
+      new Response("Bad Request", { status: 400 }),
+    );
+    assertEquals(error.status, 400);
+    assertEquals(error.headers.get("connection"), "close");
+    await error.body?.cancel();
+  });
+
+  it("answers a response-negotiated SSE stream admitted during the drain with the draining response", async () => {
+    const admission = new ProxyDrainAdmission(10_000, () => 0);
+    const sse = () => {
+      let cancelled = false;
+      const body = new ReadableStream<Uint8Array>({
+        cancel() {
+          cancelled = true;
+        },
+      });
+      const response = new Response(body, {
+        headers: { "content-type": "text/event-stream; charset=utf-8" },
+      });
+      return { response, wasCancelled: () => cancelled };
+    };
+    const events = new Request("http://proxy.test/api/workflows/runs/run_1/events");
+
+    // Before shutdown an SSE response streams normally.
+    const live = sse();
+    assertEquals(admission.closeIfDraining(events, live.response), live.response);
+
+    admission.begin("SIGTERM");
+
+    // Admitted during the drain: the GET stream is retried elsewhere.
+    const fresh = sse();
+    const refused = admission.closeIfDraining(events, fresh.response, true);
+    assertEquals(refused.status, 503);
+    assertEquals(refused.headers.get("connection"), "close");
+    await Promise.resolve();
+    assertEquals(fresh.wasCancelled(), true);
+    await refused.body?.cancel();
+
+    // Started before the drain: keep streaming within the drain budget.
+    const started = sse();
+    const kept = admission.closeIfDraining(events, started.response, false);
+    assertEquals(kept.headers.get("content-type"), "text/event-stream; charset=utf-8");
+    assertEquals(kept.headers.get("connection"), "close");
+    await kept.body?.cancel();
+
+    // A POST already ran upstream, so it is not replayed by refusing it.
+    const posted = sse();
+    const post = new Request("http://proxy.test/api/chat", { method: "POST" });
+    const kept2 = admission.closeIfDraining(post, posted.response, true);
+    assertEquals(kept2.headers.get("content-type"), "text/event-stream; charset=utf-8");
+    await kept2.body?.cancel();
+  });
+
+  it("subtracts only the granted grace from the drain budget", () => {
+    const sigterm = new ProxyDrainAdmission(10_000, () => 0);
+    sigterm.begin("SIGTERM");
+    assertEquals(sigterm.remainingDrainBudgetMs(25_000), 15_000);
+    assertEquals(sigterm.remainingDrainBudgetMs(5_000), 0);
+    const sigint = new ProxyDrainAdmission(10_000, () => 0);
+    sigint.begin("SIGINT");
+    assertEquals(sigint.remainingDrainBudgetMs(25_000), 25_000);
   });
 
   it("marks admitted drain responses to close their connection", async () => {
