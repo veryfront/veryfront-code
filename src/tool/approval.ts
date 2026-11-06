@@ -6,6 +6,7 @@
  * execution context; without one the tool refuses to run.
  */
 import { INVALID_ARGUMENT, PERMISSION_DENIED } from "#veryfront/errors";
+import type { JsonSchema } from "#veryfront/extensions/schema/index.ts";
 import type { ToolExecutionContext } from "./types.ts";
 
 /** How a tool asks for approval before it runs. */
@@ -40,14 +41,43 @@ export type ToolApprovalGate = (
   signal?: AbortSignal,
 ) => Promise<ToolApprovalDecision>;
 
-/** The tool result the model sees when a call was not approved. */
+/**
+ * The tool result the model sees when a call was not approved. It names no checker: who decided
+ * stays in the approval record, never in what reaches the model provider.
+ */
 export interface ToolApprovalRefusal {
   status: "not_approved";
-  outcome: ToolApprovalDecision["outcome"];
+  outcome: Exclude<ToolApprovalDecision["outcome"], "approved">;
   tool: string;
-  checker?: { type: string; id: string };
   comment?: string;
   message: string;
+}
+
+const REFUSAL_JSON_SCHEMA: JsonSchema = Object.freeze<JsonSchema>({
+  type: "object",
+  properties: {
+    status: { const: "not_approved" },
+    outcome: { enum: ["denied", "expired", "withdrawn"] },
+    tool: { type: "string" },
+    comment: { type: "string" },
+    message: { type: "string" },
+  },
+  required: ["status", "outcome", "tool", "message"],
+  additionalProperties: false,
+});
+
+/**
+ * Widen a gated tool's declared output so a refusal is a valid result. An object contract stays an
+ * object at the root, which MCP requires to advertise it.
+ */
+export function withToolApprovalRefusal(
+  outputSchemaJson: JsonSchema | undefined,
+): JsonSchema | undefined {
+  if (outputSchemaJson === undefined) return undefined;
+  return {
+    ...(outputSchemaJson.type === "object" ? { type: "object" } : {}),
+    anyOf: [outputSchemaJson, REFUSAL_JSON_SCHEMA],
+  };
 }
 
 const MAX_STEP_UP_SECONDS = 86_400;
@@ -110,7 +140,7 @@ export async function requireToolApproval(
     context?.abortSignal,
   );
   if (decision.approved === true && decision.outcome === "approved") return undefined;
-  // The checker's identity stays in `checker` for the record; the model gets words it can relay.
+  // The model gets words it can relay; the checker's identity stays with the host's record.
   const message = decision.outcome === "denied"
     ? `The approver denied the ${toolName} call${
       decision.comment ? `: "${decision.comment}".` : "."
@@ -120,9 +150,9 @@ export async function requireToolApproval(
     : `The ${toolName} call was withdrawn before approval. It did not run.`;
   return {
     status: "not_approved",
-    outcome: decision.approved === true ? "denied" : decision.outcome,
+    // A decision that contradicts itself (approved, but not "approved") fails closed as a denial.
+    outcome: decision.outcome === "approved" ? "denied" : decision.outcome,
     tool: toolName,
-    ...(decision.checker ? { checker: decision.checker } : {}),
     ...(decision.comment ? { comment: decision.comment } : {}),
     message,
   };

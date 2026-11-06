@@ -65,8 +65,73 @@ describe("tool approval", () => {
         }),
     });
     assertEquals(executed, []);
-    assertEquals((result as unknown as { status: string }).status, "not_approved");
-    assertEquals((result as unknown as { comment: string }).comment, "Invoice not verified");
+    // The model sees the outcome and the note, never who decided.
+    assertEquals(result, {
+      status: "not_approved",
+      outcome: "denied",
+      tool: "transfer",
+      comment: "Invoice not verified",
+      message: 'The approver denied the transfer call: "Invoice not verified". It did not run.',
+    });
+  });
+
+  it("runs the arguments the checker approved, even if the caller changes its object meanwhile", async () => {
+    const executed: unknown[] = [];
+    const input = { amount: 10 };
+    const rawSchemaTool = tool({
+      id: "transfer",
+      description: "Move money",
+      approval: {},
+      inputSchema: {
+        type: "object",
+        properties: { amount: { type: "number" } },
+        required: ["amount"],
+      },
+      execute: (args) => {
+        executed.push(args);
+        return { ok: true };
+      },
+    });
+    await rawSchemaTool.execute(input, {
+      requestToolApproval: (request) => {
+        input.amount = 99_999;
+        assertEquals(request.input, { amount: 10 });
+        return Promise.resolve({ approved: true, outcome: "approved" });
+      },
+    });
+    assertEquals(executed, [{ amount: 10 }]);
+  });
+
+  it("asks under the id discovery registered an id-less tool with", async () => {
+    const asked: string[] = [];
+    const inferred = tool({
+      description: "Move money",
+      approval: {},
+      inputSchema: defineSchema((v) => v.object({ amount: v.number() }))(),
+      execute: () => ({ ok: true }),
+    });
+    const registered = { ...inferred, id: "transfer-funds" };
+    await registered.execute({ amount: 1 }, {
+      requestToolApproval: (request) => {
+        asked.push(request.toolName);
+        return Promise.resolve({ approved: true, outcome: "approved" });
+      },
+    });
+    assertEquals(asked, ["transfer-funds"]);
+  });
+
+  it("declares a refusal as a valid output, keeping an object contract an object", () => {
+    const gated = tool({
+      id: "transfer",
+      description: "Move money",
+      approval: {},
+      inputSchema: defineSchema((v) => v.object({ amount: v.number() }))(),
+      outputSchema: defineSchema((v) => v.object({ ok: v.boolean() }))(),
+      execute: () => ({ ok: true }),
+    });
+    const declared = gated.outputSchemaJson as { type?: string; anyOf?: Array<{ type?: string }> };
+    assertEquals(declared.type, "object");
+    assertEquals(declared.anyOf?.length, 2);
   });
 
   it("tells the model why the call did not run, in words it can relay", async () => {
@@ -215,5 +280,110 @@ describe("createInputRequestApprovalGate", () => {
       "POST",
     ]);
     assertEquals(typeof cancel.headers["Idempotency-Key"], "string");
+  });
+
+  it("keys the request by run and tool call, so a retry replays the committed one", async () => {
+    const keys: string[] = [];
+    const gate = createInputRequestApprovalGate({
+      apiUrl: "http://api.test",
+      authToken: "maker-token",
+      runId: "run-1",
+      pollIntervalMs: 1,
+      fetch: (_input, init) => {
+        keys.push((init as SentInit).headers?.["Idempotency-Key"] ?? "");
+        return Promise.resolve(
+          new Response(JSON.stringify({ input_request_id: "ir-1", status: "expired" })),
+        );
+      },
+    });
+    const ask = () => gate({ toolName: "transfer", toolCallId: "call-1", input: {}, policy: {} });
+    await ask();
+    await ask();
+    assertEquals(keys.length, 2);
+    assertEquals(keys[0], keys[1]);
+  });
+
+  it("waits on the request an earlier attempt opened for the same call", async () => {
+    const urls: string[] = [];
+    const replies = [
+      new Response(JSON.stringify({ detail: "Idempotency key reused" }), { status: 422 }),
+      new Response(JSON.stringify({
+        data: [{
+          input_request_id: "ir-1",
+          tool_call_id: "call-1",
+          tool_call: { name: "transfer", arguments: { to: "acme", amount: 9 } },
+          status: "open",
+        }],
+      })),
+      new Response(JSON.stringify({
+        input_request_id: "ir-1",
+        status: "submitted",
+        response: { values: { decision: "approve" } },
+      })),
+    ];
+    const gate = createInputRequestApprovalGate({
+      apiUrl: "http://api.test",
+      authToken: "maker-token",
+      runId: "run-1",
+      pollIntervalMs: 1,
+      fetch: (input) => {
+        urls.push(String(input));
+        return Promise.resolve(replies.shift()!);
+      },
+    });
+    const decision = await gate({
+      toolName: "transfer",
+      toolCallId: "call-1",
+      input: { amount: 9, to: "acme" },
+      policy: {},
+    });
+    assertEquals(decision.outcome, "approved");
+    assertEquals(urls, [
+      "http://api.test/runs/run-1/input-requests",
+      "http://api.test/runs/run-1/input-requests?status=open&limit=100",
+      "http://api.test/input-requests/ir-1",
+    ]);
+  });
+
+  it("never adopts an earlier request that asked about other arguments", async () => {
+    const replies = [
+      new Response(JSON.stringify({ detail: "conflict" }), { status: 409 }),
+      new Response(JSON.stringify({
+        data: [{
+          input_request_id: "ir-1",
+          tool_call_id: "call-1",
+          tool_call: { name: "transfer", arguments: { amount: 1 } },
+          status: "open",
+        }],
+      })),
+    ];
+    const gate = createInputRequestApprovalGate({
+      apiUrl: "http://api.test",
+      authToken: "maker-token",
+      runId: "run-1",
+      pollIntervalMs: 1,
+      fetch: () => Promise.resolve(replies.shift()!),
+    });
+    await assertRejects(
+      () => gate({ toolName: "transfer", toolCallId: "call-1", input: { amount: 9 }, policy: {} }),
+      Error,
+      "HTTP 409",
+    );
+  });
+
+  it("rejects a polling interval that would poll back to back", () => {
+    for (const pollIntervalMs of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      assertThrows(
+        () =>
+          createInputRequestApprovalGate({
+            apiUrl: "http://api.test",
+            authToken: "maker-token",
+            runId: "run-1",
+            pollIntervalMs,
+          }),
+        Error,
+        "pollIntervalMs",
+      );
+    }
   });
 });

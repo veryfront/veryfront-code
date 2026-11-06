@@ -3,6 +3,7 @@
  * on its run that someone other than the run's starter must answer, and the call waits for it.
  */
 import { INVALID_ARGUMENT } from "#veryfront/errors";
+import { computeHash } from "#veryfront/utils/hash-utils.ts";
 import { agentLogger } from "#veryfront/utils/logger/index.ts";
 import type { ToolApprovalDecision, ToolApprovalGate } from "./approval.ts";
 
@@ -19,6 +20,8 @@ export interface InputRequestApprovalGateOptions {
 
 interface InputRequestResource {
   input_request_id: string;
+  tool_call_id?: string | null;
+  tool_call?: { name: string; arguments: unknown } | null;
   status: "open" | "submitted" | "cancelled" | "expired";
   response?: {
     values?: Record<string, unknown>;
@@ -51,7 +54,13 @@ export function createInputRequestApprovalGate(
   const doFetch = options.fetch ?? fetch;
   const base = options.apiUrl.replace(/\/+$/, "");
   const pollIntervalMs = options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
-  const call = async (path: string, init: RequestInit = {}): Promise<InputRequestResource> => {
+  // Zero, negative or non-finite intervals would poll back to back and hit rate limits.
+  if (!Number.isFinite(pollIntervalMs) || pollIntervalMs <= 0) {
+    throw INVALID_ARGUMENT.create({
+      detail: "Approval pollIntervalMs must be a positive, finite number of milliseconds",
+    });
+  }
+  const send = async (path: string, init: RequestInit = {}) => {
     const response = await doFetch(`${base}${path}`, {
       ...init,
       headers: {
@@ -60,27 +69,36 @@ export function createInputRequestApprovalGate(
         ...(init.headers ?? {}),
       },
     });
-    const body = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      throw INVALID_ARGUMENT.create({
-        detail: `Approval request failed: HTTP ${response.status} ${
-          (body as { detail?: string }).detail ?? ""
-        }`.trim(),
-      });
-    }
+    return { response, body: await response.json().catch(() => ({})) as unknown };
+  };
+  const failure = (response: Response, body: unknown) =>
+    INVALID_ARGUMENT.create({
+      detail: `Approval request failed: HTTP ${response.status} ${
+        (body as { detail?: string }).detail ?? ""
+      }`.trim(),
+    });
+  const call = async (path: string, init: RequestInit = {}): Promise<InputRequestResource> => {
+    const { response, body } = await send(path, init);
+    if (!response.ok) throw failure(response, body);
     return body as InputRequestResource;
   };
 
   return async (request, signal) => {
-    const created = await call(`/runs/${encodeURIComponent(options.runId)}/input-requests`, {
+    // Hosts that do not track tool call ids still need one durable anchor per gated call.
+    const toolCallId = request.toolCallId ?? `approval-${crypto.randomUUID()}`;
+    const runRequests = `/runs/${encodeURIComponent(options.runId)}/input-requests`;
+    const { response, body } = await send(runRequests, {
       method: "POST",
-      headers: { "Idempotency-Key": crypto.randomUUID() },
+      // Keyed by run and tool call, so a retry after a lost response gets the committed request
+      // back instead of a conflict with it.
+      headers: {
+        "Idempotency-Key": `tool-approval:${await computeHash(`${options.runId}:${toolCallId}`)}`,
+      },
       signal,
       body: JSON.stringify({
         title: `Approve ${request.toolName}`,
         requested_responder_type: "human",
-        // Hosts that do not track tool call ids still need one durable anchor per gated call.
-        tool_call_id: request.toolCallId ?? `approval-${crypto.randomUUID()}`,
+        tool_call_id: toolCallId,
         fields: DECISION_FIELDS,
         responder_rules: {
           exclude_run_starters: true,
@@ -97,6 +115,27 @@ export function createInputRequestApprovalGate(
         ).toISOString(),
       }),
     });
+    let created: InputRequestResource;
+    if (response.ok) {
+      created = body as InputRequestResource;
+    } else if (response.status === 409 || response.status === 422) {
+      // An earlier attempt at this call already opened its request (its response was lost, or it
+      // asked with another expiry, so the key no longer replays). Wait on that request, but only if
+      // it asks about this exact call: an approval never carries over to other arguments.
+      const open = await call(`${runRequests}?status=open&limit=100`, { signal }) as unknown as {
+        data?: InputRequestResource[];
+      };
+      const existing = open.data?.find((item) => item.tool_call_id === toolCallId);
+      if (
+        !existing || existing.tool_call?.name !== request.toolName ||
+        canonicalJson(existing.tool_call.arguments) !== canonicalJson(request.input)
+      ) {
+        throw failure(response, body);
+      }
+      created = existing;
+    } else {
+      throw failure(response, body);
+    }
     const id = encodeURIComponent(created.input_request_id);
     let current = created;
     try {
@@ -141,6 +180,21 @@ function toDecision(request: InputRequestResource): ToolApprovalDecision {
     ...(checker ? { checker: { type: checker.type, id: checker.id } } : {}),
     ...(comment ? { comment } : {}),
   };
+}
+
+/** JSON with object keys sorted, so arguments compare equal whatever order storage returns them in. */
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (value !== null && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    return `{${
+      Object.keys(record).sort().map((key) =>
+        `${JSON.stringify(key)}:${canonicalJson(record[key])}`
+      )
+        .join(",")
+    }}`;
+  }
+  return JSON.stringify(value);
 }
 
 function wait(ms: number, signal?: AbortSignal): Promise<void> {

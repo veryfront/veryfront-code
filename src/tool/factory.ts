@@ -1,4 +1,10 @@
-import { requireToolApproval, snapshotToolApprovalPolicy } from "./approval.ts";
+import {
+  requireToolApproval,
+  snapshotToolApprovalPolicy,
+  type ToolApprovalPolicy,
+  type ToolApprovalRefusal,
+  withToolApprovalRefusal,
+} from "./approval.ts";
 import type { Tool, ToolConfig, ToolDiscoveryMetadata, ToolExecutionContext } from "./types.ts";
 import { readToolDiscoveryMetadata } from "./discovery-metadata.ts";
 import type { JsonSchema, Schema } from "#veryfront/extensions/schema/index.ts";
@@ -221,10 +227,16 @@ function markGeneratedToolId<TInput, TOutput>(tool: Tool<TInput, TOutput>): Tool
   };
 }
 
-/** Create a typed tool definition. */
+/** Create a typed tool definition. A tool declared with `approval` may return a refusal instead. */
+export function tool<TInput = unknown, TOutput = unknown>(
+  config: ToolConfig<TInput, TOutput> & { approval: ToolApprovalPolicy },
+): Tool<TInput, TOutput | ToolApprovalRefusal>;
 export function tool<TInput = unknown, TOutput = unknown>(
   config: ToolConfig<TInput, TOutput>,
-): Tool<TInput, TOutput> {
+): Tool<TInput, TOutput>;
+export function tool<TInput = unknown, TOutput = unknown>(
+  config: ToolConfig<TInput, TOutput>,
+): Tool<TInput, TOutput | ToolApprovalRefusal> {
   const explicitId = typeof config.id === "string" && config.id.length > 0 ? config.id : undefined;
   const id = explicitId ?? generateToolId();
   const inputSchema = config.inputSchema;
@@ -259,7 +271,7 @@ export function tool<TInput = unknown, TOutput = unknown>(
   const discovery = readToolDiscoveryMetadata(config);
   const approval = snapshotToolApprovalPolicy(config.approval, id);
 
-  const createdTool: Tool<TInput, TOutput> = {
+  const createdTool: Tool<TInput, TOutput | ToolApprovalRefusal> = {
     id,
     type: "function" as const,
     description: config.description,
@@ -269,9 +281,15 @@ export function tool<TInput = unknown, TOutput = unknown>(
     ...(approval ? { approval } : {}),
     inputSchema: inputSchema as Schema<TInput>,
     inputSchemaJson,
-    outputSchema: outputSchema as Schema<TOutput> | undefined,
-    outputSchemaJson,
-    execute: async (input: TInput, context?: ToolExecutionContext) => {
+    outputSchema: outputSchema as Schema<TOutput | ToolApprovalRefusal> | undefined,
+    outputSchemaJson: approval ? withToolApprovalRefusal(outputSchemaJson) : outputSchemaJson,
+    // A method, not an arrow: discovery registers a copy of an id-less tool under its file's id,
+    // and the call runs on that copy, so `this.id` is the name the checker should see.
+    async execute(
+      this: { id?: unknown } | undefined,
+      input: TInput,
+      context?: ToolExecutionContext,
+    ) {
       let validated = input;
       if (parseInput) {
         try {
@@ -287,14 +305,22 @@ export function tool<TInput = unknown, TOutput = unknown>(
       }
 
       if (approval) {
-        // Checked after validation so the checker sees exactly the arguments that would run.
-        const refusal = await requireToolApproval(
-          id,
-          approval,
-          validated as Record<string, unknown>,
-          context,
-        );
-        if (refusal) return refusal as TOutput;
+        // One JSON snapshot is both what the checker approves and what runs, so a caller still
+        // holding the original arguments cannot change them while the approval is pending.
+        const snapshot = snapshotBoundedJsonValue(validated);
+        if (
+          !snapshot.success || snapshot.value === null || typeof snapshot.value !== "object" ||
+          arrayIsArray(snapshot.value)
+        ) {
+          throw INVALID_ARGUMENT.create({
+            detail: `Tool "${id}" requires approval, so its arguments must be a JSON object`,
+          });
+        }
+        const toolName = typeof this?.id === "string" && this.id.length > 0 ? this.id : id;
+        const args = snapshot.value as Record<string, unknown>;
+        const refusal = await requireToolApproval(toolName, approval, args, context);
+        if (refusal) return refusal;
+        return await execute(args as TInput, context);
       }
       return await execute(validated, context);
     },
