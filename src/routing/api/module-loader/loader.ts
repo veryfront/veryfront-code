@@ -51,6 +51,11 @@ import {
   rewriteExternalImports,
 } from "./external-import-rewriter.ts";
 import {
+  spikeBuiltinRequirePlugin,
+  spikeOptionAEnabled,
+  spikePrependBuiltinRequire,
+} from "./spike-4177-option-a.ts";
+import {
   MAX_WORKER_MODULE_SOURCE_BYTES,
   type PreparedWorkerModule,
 } from "#veryfront/security/sandbox/worker-types.ts";
@@ -1850,6 +1855,8 @@ function createAdapterResolvePlugin(
     setup(build) {
       build.onResolve({ filter: /^\.\.?\// }, (args) => {
         if (args.namespace === "http-url" || args.namespace === "import-map") return undefined;
+        // SPIKE inbox#4177: let esbuild's Node resolution handle files inside packages.
+        if (spikeOptionAEnabled() && args.importer.includes("/node_modules/")) return undefined;
 
         const baseDir = args.importer ? pathHelper.dirname(args.importer) : args.resolveDir;
         if (!baseDir) return undefined;
@@ -2153,7 +2160,10 @@ function buildTranspiledModuleSource(
       // breaks their internal global state management during esbuild's CJS→ESM
       // conversion.
       const userExternals: string[] = [];
-      for (const name of userDeps.keys()) {
+      // SPIKE inbox#4177: option A bundles user dependencies in the compiled binary.
+      const spikeA = isDeno && isCompiledBinary() && spikeOptionAEnabled();
+      const spikeRequired = new Set<string>();
+      if (!spikeA) for (const name of userDeps.keys()) {
         userExternals.push(name, `${name}/*`);
       }
 
@@ -2170,7 +2180,7 @@ function buildTranspiledModuleSource(
         bundle: true,
         write: false,
         format: "esm",
-        platform: "neutral",
+        platform: spikeA ? "node" : "neutral",
         target: "es2022",
         jsx: "automatic",
         jsxImportSource: "react",
@@ -2195,6 +2205,7 @@ function buildTranspiledModuleSource(
           sourcefile: resolvedPath,
         },
         plugins: [
+          ...(spikeA ? [spikeBuiltinRequirePlugin(spikeRequired)] : []),
           createRouteRuntimeShimPlugin(routeRuntimeShim),
           createImportMapPlugin(
             projectDir,
@@ -2256,9 +2267,10 @@ function buildTranspiledModuleSource(
         js,
         projectDir,
         sourceSnapshot,
-        userDeps,
+        spikeA ? new Map() : userDeps,
         helperPrefix,
       );
+      if (spikeA) return spikePrependBuiltinRequire(rewritten, spikeRequired);
       return prependRouteRequirePrologue(
         rewritten,
         projectDir,

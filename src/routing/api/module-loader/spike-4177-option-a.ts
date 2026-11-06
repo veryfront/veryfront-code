@@ -139,3 +139,30 @@ function builtinRequirePrologue(ids: string[]): string {
     "",
   ].join("\n");
 }
+
+/** Smoke wiring for loader.ts: keep built-in `require` calls external and record them. */
+export function spikeBuiltinRequirePlugin(required: Set<string>): any {
+  return {
+    name: "vf-spike-builtin-require",
+    setup(b: any) {
+      b.onResolve({ filter: /.*/ }, (args: any) => {
+        const name = builtinName(args.path);
+        if (name === undefined) return undefined;
+        if (args.kind === "require-call" || args.kind === "require-resolve") {
+          required.add(args.path);
+          return { path: args.path, external: true };
+        }
+        return { path: `node:${name}`, external: true };
+      });
+    },
+  };
+}
+
+export function spikePrependBuiltinRequire(code: string, required: Set<string>): string {
+  const hashbang = code.startsWith("#!") ? code.slice(0, code.indexOf("\n") + 1) : "";
+  return hashbang + builtinRequirePrologue([...required]) + code.slice(hashbang.length);
+}
+
+export function spikeOptionAEnabled(): boolean {
+  return Deno.env.get("VF_SPIKE_4177") === "A";
+}

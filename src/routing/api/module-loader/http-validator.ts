@@ -219,6 +219,18 @@ export async function validateHTTPImports(
   allowedHosts: string[],
   options: HTTPImportValidationOptions = {},
 ): Promise<ValidatedModuleScan> {
+  // SPIKE inbox#4177: bundled dependency files skip the scan entirely; the HTTP
+  // plugin still enforces the allow-list on every remote fetch.
+  if (
+    Deno.env.get("VF_SPIKE_4177") === "A" && (options.path ?? "").includes("node_modules/")
+  ) {
+    return {
+      specifiers: [],
+      hasUnconstrainedDynamicImport: false,
+      requiresBundling: true,
+      localWorkerSpecifiers: [],
+    };
+  }
   const analysis = await analyzeSourceCapabilities(source, options);
   if (analysis === null) {
     const failure = await describeSourceParseFailure();
@@ -244,7 +256,11 @@ export async function validateHTTPImports(
       }),
     );
   }
-  if (analysis.hasDynamicCodeGeneration) {
+  // SPIKE inbox#4177: bundled CJS packages index objects by computed keys;
+  // keep host and restricted-module checks, skip only this one.
+  const spikeDependency = Deno.env.get("VF_SPIKE_4177") === "A" &&
+    (options.path ?? "").includes("node_modules/");
+  if (analysis.hasDynamicCodeGeneration && !spikeDependency) {
     throw toError(
       createError({
         type: "api",
