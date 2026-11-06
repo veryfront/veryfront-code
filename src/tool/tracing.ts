@@ -65,7 +65,6 @@ export function traceHostTools<
         // A method, so the receiver a host binds (a gated tool reads its exposed name from
         // `this.id`) reaches the original execute.
         execute(this: unknown, input: unknown, context: ToolExecutionContext | undefined) {
-          const receiver = this;
           return options.trace(getSpanName(toolName), () => {
             const attributes = options.buildAttributes?.({
               toolName,
@@ -75,7 +74,7 @@ export function traceHostTools<
             if (attributes) {
               options.setAttributes?.(attributes);
             }
-            return apply(originalExecute, receiver, [input, context]);
+            return apply(originalExecute, this, [input, context]);
           });
         },
       }),
