@@ -117,7 +117,6 @@ import {
   PROXY_READY_PATH,
   ProxyDrainAdmission,
   ProxyRequestDrainTracker,
-  withConnectionClose,
 } from "./request-drain.ts";
 import {
   createProxyRoutingInvalidationRejectionThrottle,
@@ -907,7 +906,7 @@ async function router(req: Request): Promise<Response> {
     }
 
     // Read after the await: shutdown may have started while this request ran.
-    if (shuttingDown) response = withConnectionClose(response);
+    response = drainAdmission.closeIfDraining(response);
     return proxyRequestDrainTracker.completeOnResponseEnd(requestId, req, response);
   } catch (error) {
     proxyRequestDrainTracker.complete(requestId);

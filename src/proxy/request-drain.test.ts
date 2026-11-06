@@ -468,6 +468,18 @@ describe("proxy request drain", () => {
     );
   });
 
+  it("closes connections only once shutdown has begun", async () => {
+    const admission = new ProxyDrainAdmission(10_000, () => 0);
+    const before = admission.closeIfDraining(new Response("ok"));
+    assertEquals(before.headers.get("connection"), null);
+
+    admission.begin("SIGTERM");
+    const during = admission.closeIfDraining(new Response("ok"));
+    assertEquals(during.headers.get("connection"), "close");
+    await before.body?.cancel();
+    await during.body?.cancel();
+  });
+
   it("marks admitted drain responses to close their connection", async () => {
     const mutable = withConnectionClose(new Response("ok", { headers: { "x-a": "1" } }));
     assertEquals(mutable.headers.get("connection"), "close");

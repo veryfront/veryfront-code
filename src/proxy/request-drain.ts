@@ -172,6 +172,11 @@ export class ProxyDrainAdmission {
     return this.now() < this.admitUntil;
   }
 
+  /** Once shutdown has begun, close the connection after this response. */
+  closeIfDraining(response: Response): Response {
+    return this.admitUntil === null ? response : withConnectionClose(response);
+  }
+
   /** The whole grace window granted by `begin`, in integer milliseconds. */
   getGrantedMs(): number {
     return this.grantedMs;

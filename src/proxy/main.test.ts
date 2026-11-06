@@ -157,7 +157,7 @@ describe("proxy main request URL parsing", () => {
     // through the Service, which no longer routes to this pod.
     assertStringIncludes(
       source,
-      "if (shuttingDown) response = withConnectionClose(response);\n    return proxyRequestDrainTracker.completeOnResponseEnd(requestId, req, response);",
+      "response = drainAdmission.closeIfDraining(response);\n    return proxyRequestDrainTracker.completeOnResponseEnd(requestId, req, response);",
     );
     // The signal decides the grace: SIGINT (Ctrl-C) gets none.
     assertStringIncludes(source, "shuttingDown = true;\n  drainAdmission.begin(signal);");
