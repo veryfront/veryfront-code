@@ -1531,7 +1531,7 @@ describe("Sandbox", () => {
       assertEquals(fetchCalls.length, 0);
     });
 
-    it("should throw when sandbox fails to start", async () => {
+    it("reports the workspace ID before readiness fails and attempts cleanup", async () => {
       mockTimers();
       mockFetch([
         jsonResponse({
@@ -1540,10 +1540,19 @@ describe("Sandbox", () => {
           status: "pending",
         }),
         jsonResponse({ id: "session-3", status: "error" }),
+        jsonResponse({}),
       ]);
 
+      const acknowledgements: Array<{ id: string; requests: number }> = [];
       const error = await assertRejects(
-        () => Sandbox.create({ authToken: "test-token", apiUrl: "https://api.test.com" }),
+        () =>
+          Sandbox.create({
+            authToken: "test-token",
+            apiUrl: "https://api.test.com",
+            onCreated(id) {
+              acknowledgements.push({ id, requests: fetchCalls.length });
+            },
+          }),
         VeryfrontError,
         "Sandbox failed to start",
       );
@@ -1552,6 +1561,9 @@ describe("Sandbox", () => {
         "initialization-error",
         "sandbox startup failures use the initialization error contract",
       );
+      assertEquals(acknowledgements, [{ id: "session-3", requests: 1 }]);
+      assertEquals(fetchCalls.map(({ init }) => init?.method ?? "GET"), ["POST", "GET", "DELETE"]);
+      assertEquals(fetchCalls[2]?.url, "https://api.test.com/sandboxes/session-3");
     });
 
     it("should throw when the sandbox never becomes ready within the maximum wait", async () => {

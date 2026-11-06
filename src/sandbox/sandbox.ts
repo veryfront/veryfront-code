@@ -150,7 +150,12 @@ export class Sandbox {
   }
 
   /** Create an isolated sandbox. */
-  static async create(options: SandboxOptions = {}): Promise<Sandbox> {
+  static async create(
+    options: SandboxOptions & {
+      /** Synchronously observe the acknowledged workspace ID before readiness polling. */
+      onCreated?: (id: string) => void;
+    } = {},
+  ): Promise<Sandbox> {
     const apiUrl = resolveSandboxApiUrl(options);
     const authToken = resolveSandboxAuthToken(options);
 
@@ -172,6 +177,7 @@ export class Sandbox {
     const { id, endpoint } = created;
     let session: Record<string, unknown>;
     try {
+      options.onCreated?.(id);
       session = created.status === "running" ? created : await Sandbox.#waitForReady(
         apiUrl,
         id,
