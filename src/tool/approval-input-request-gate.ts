@@ -131,7 +131,8 @@ export function createInputRequestApprovalGate(
     const matches: InputRequestResource[] = [];
     let cursor: string | undefined;
     for (let page = 0; page < MAX_RECOVERY_PAGES; page++) {
-      const query = `limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`;
+      const cursorParam = cursor ? `&cursor=${encodeURIComponent(cursor)}` : "";
+      const query = `limit=100${cursorParam}`;
       const listed = await call(`${runRequests}?${query}`, { signal }) as InputRequestPage;
       matches.push(
         ...(listed.data ?? []).filter((item) =>

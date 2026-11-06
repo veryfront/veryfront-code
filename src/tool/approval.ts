@@ -8,6 +8,7 @@
 import { INVALID_ARGUMENT, PERMISSION_DENIED } from "#veryfront/errors";
 import type { JsonSchema, Schema } from "#veryfront/extensions/schema/index.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
+import { isContractSchema } from "#veryfront/schemas/schema-input.ts";
 import type { ToolExecutionContext } from "./types.ts";
 
 /** How a tool asks for approval before it runs. */
@@ -99,6 +100,26 @@ export function withToolApprovalRefusal(
   return {
     ...(outputSchemaJson.type === "object" ? { type: "object" } : {}),
     anyOf: [outputSchemaJson, REFUSAL_JSON_SCHEMA],
+  };
+}
+
+/**
+ * A gated tool's output contracts, widened so a refusal is a valid result. A raw JSON contract has
+ * no native validator to widen, so the widened JSON stands in for it.
+ */
+export function withToolApprovalRefusalOutput<T>(
+  outputSchema: Schema<T> | undefined,
+  outputSchemaJson: JsonSchema | undefined,
+): {
+  outputSchema: Schema<T | ToolApprovalRefusal> | undefined;
+  outputSchemaJson: JsonSchema | undefined;
+} {
+  const widenedJson = withToolApprovalRefusal(outputSchemaJson);
+  return {
+    outputSchema: isContractSchema(outputSchema)
+      ? withToolApprovalRefusalSchema(outputSchema as Schema<T>)
+      : widenedJson as Schema<T | ToolApprovalRefusal> | undefined,
+    outputSchemaJson: widenedJson,
   };
 }
 

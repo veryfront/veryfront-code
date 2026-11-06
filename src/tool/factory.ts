@@ -3,8 +3,7 @@ import {
   snapshotToolApprovalPolicy,
   type ToolApprovalPolicy,
   type ToolApprovalRefusal,
-  withToolApprovalRefusal,
-  withToolApprovalRefusalSchema,
+  withToolApprovalRefusalOutput,
 } from "./approval.ts";
 import type { Tool, ToolConfig, ToolDiscoveryMetadata, ToolExecutionContext } from "./types.ts";
 import { readToolDiscoveryMetadata } from "./discovery-metadata.ts";
@@ -271,7 +270,12 @@ export function tool<TInput = unknown, TOutput = unknown>(
   const mcp = snapshotMcpConfig(config.mcp, id);
   const discovery = readToolDiscoveryMetadata(config);
   const approval = snapshotToolApprovalPolicy(config.approval, id);
-  const gatedOutputSchemaJson = approval ? withToolApprovalRefusal(outputSchemaJson) : undefined;
+  const output = approval
+    ? withToolApprovalRefusalOutput(outputSchema as Schema<TOutput> | undefined, outputSchemaJson)
+    : {
+      outputSchema: outputSchema as Schema<TOutput | ToolApprovalRefusal> | undefined,
+      outputSchemaJson,
+    };
 
   const createdTool: Tool<TInput, TOutput | ToolApprovalRefusal> = {
     id,
@@ -283,13 +287,8 @@ export function tool<TInput = unknown, TOutput = unknown>(
     ...(approval ? { approval } : {}),
     inputSchema: inputSchema as Schema<TInput>,
     inputSchemaJson,
-    // A raw JSON contract has no native validator to widen, so it is replaced by the widened JSON.
-    outputSchema: !approval
-      ? outputSchema as Schema<TOutput | ToolApprovalRefusal> | undefined
-      : isContractSchema(outputSchema)
-      ? withToolApprovalRefusalSchema(outputSchema as Schema<TOutput>)
-      : gatedOutputSchemaJson as Schema<TOutput | ToolApprovalRefusal> | undefined,
-    outputSchemaJson: approval ? gatedOutputSchemaJson : outputSchemaJson,
+    outputSchema: output.outputSchema,
+    outputSchemaJson: output.outputSchemaJson,
     // A method, not an arrow: discovery registers a copy of an id-less tool under its file's id,
     // and the call runs on that copy, so `this.id` is the name the checker should see.
     async execute(
