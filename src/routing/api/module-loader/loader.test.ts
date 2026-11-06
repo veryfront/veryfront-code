@@ -6055,6 +6055,9 @@ describe("route CommonJS require (#5471)", () => {
       const GET = await loadCompiledRoute(
         [
           'import load from "escape-fixture";',
+          "const String = null;",
+          "const parseInt = null;",
+          "export const shadowed = [String, parseInt];",
           "export const GET = async () => new Response(await load());",
         ].join("\n"),
         files,
@@ -6798,6 +6801,96 @@ describe("route CommonJS require (#5471)", () => {
     };
 
     assertEquals(vfRequire(join(dir, "abs.js")), "from root project");
+  });
+
+  denoIt("leaves regex literals after control-flow conditions alone", async () => {
+    const projectDir = await writeProject({
+      "node_modules/ctl-fixture/package.json": JSON.stringify({
+        name: "ctl-fixture",
+        main: "index.js",
+      }),
+      "node_modules/ctl-fixture/index.js": [
+        "const enabled = true;",
+        "let source = '';",
+        'if (enabled) source = /import(".\\/child.mjs")/.source;',
+        'if (enabled) /import(".\\/x.mjs")/.test("");',
+        "module.exports = source;",
+      ].join("\n"),
+    });
+    const vfRequire = await importCompiledBinaryRequireShim(projectDir);
+
+    assertEquals(vfRequire("ctl-fixture"), 'import(".\\/child.mjs")');
+  });
+
+  denoIt("gives require functions cache and resolve.paths", async () => {
+    const projectDir = await writeProject({
+      "node_modules/meta-fixture/package.json": JSON.stringify({
+        name: "meta-fixture",
+        main: "index.js",
+      }),
+      "node_modules/meta-fixture/index.js": [
+        "module.exports = {",
+        "  cached: require.cache[__filename] === module,",
+        "  relative: require.resolve.paths('./x'),",
+        "  bare: require.resolve.paths('peer'),",
+        "  builtin: require.resolve.paths('fs'),",
+        "};",
+      ].join("\n"),
+    });
+    const vfRequire = await importCompiledBinaryRequireShim(projectDir) as
+      & ((id: string) => unknown)
+      & {
+        cache: Record<string, unknown>;
+        resolve: { paths: (id: string) => string[] | null };
+      };
+
+    const meta = vfRequire("meta-fixture") as {
+      cached: boolean;
+      relative: string[];
+      bare: string[];
+      builtin: null;
+    };
+    const packageDir = join(projectDir, "node_modules", "meta-fixture");
+    assertEquals(meta.cached, true);
+    assertEquals(meta.relative, [packageDir]);
+    assertEquals(meta.bare[0], join(packageDir, "node_modules"));
+    assertEquals(meta.builtin, null);
+    assertEquals(typeof vfRequire.cache, "object");
+    assertEquals(vfRequire.resolve.paths("peer"), [join(projectDir, "node_modules")]);
+  });
+
+  denoIt("does not resolve unknown node: built-ins", async () => {
+    const projectDir = await writeProject({});
+    const vfRequire = await importCompiledBinaryRequireShim(projectDir) as
+      & ((id: string) => unknown)
+      & {
+        resolve: (id: string) => string;
+      };
+
+    assertEquals(thrownError(() => vfRequire.resolve("node:notreal")).code, "MODULE_NOT_FOUND");
+    assertEquals(vfRequire.resolve("node:fs"), "node:fs");
+  });
+
+  denoIt("validates dynamic-import options like import()", async () => {
+    const projectDir = await writeProject({});
+    const shimPath = join(projectDir, "vf-validate-shim.mjs");
+    await fs.writeTextFile(
+      shimPath,
+      `${
+        generateCompiledBinaryRequireShim(projectDir)
+      }\nexport { __vf_validateImportOptions as validate };\n`,
+    );
+    const { validate } = await import(toFileUrl(shimPath).href) as {
+      validate: (options: unknown) => void;
+    };
+
+    validate(undefined);
+    validate({});
+    validate({ with: { type: "json" } });
+    assertEquals(thrownError(() => validate(null)).name, "TypeError");
+    assertEquals(thrownError(() => validate({ with: 1 })).name, "TypeError");
+    assertEquals(thrownError(() => validate({ with: { type: 1 } })).name, "TypeError");
+    assertEquals(thrownError(() => validate({ with: { other: "x" } })).name, "SyntaxError");
   });
 
   denoIt("lets a top-level dependency require through module.parent", async () => {

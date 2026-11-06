@@ -434,14 +434,18 @@ export async function rewriteCompiledUserDependencyImportsForRoute(
       // An async arrow returns an intrinsic promise whatever route code binds
       // to `Promise`, and the await defers loading as import() does.
       const lazy = `(async () => { await null; return ${helperPrefix}namespace(${specifier}); })()`;
-      // The options argument is still evaluated, first, as import() would.
       const options = imported.a > -1
         ? masked.slice(imported.a, imported.se - 1).trim().replace(/,$/, "").trimEnd()
         : "";
+      // The options argument is evaluated first, as import() would, and
+      // validated when the load starts, so bad options reject the promise.
+      const optionsParam = `${helperPrefix}options`;
       edits.push({
         start: imported.ss,
         end: imported.se,
-        text: options ? `((${options}), ${lazy})` : lazy,
+        text: options
+          ? `((${optionsParam}) => (async () => { await null; ${helperPrefix}validateImportOptions(${optionsParam}); return ${helperPrefix}namespace(${specifier}); })())(${options})`
+          : lazy,
       });
       continue;
     }

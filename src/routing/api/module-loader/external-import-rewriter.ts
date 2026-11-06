@@ -60,10 +60,13 @@ const ROUTE_HELPER_SUFFIXES = [
   "resolve",
   "interopDefault",
   "namespace",
+  "validateImportOptions",
+  "options",
   "tmp_",
   "reexport_",
 ] as const;
-const ROUTE_HELPER_NAME = /\b__vf_(createRequire|dirname|resolve|interopDefault|namespace)\b/g;
+const ROUTE_HELPER_NAME =
+  /\b__vf_(createRequire|dirname|resolve|interopDefault|namespace|validateImportOptions)\b/g;
 
 /**
  * Choose the prefix for the route prologue's module-level helpers.
@@ -126,6 +129,7 @@ const COMPILED_BINARY_REQUIRE_SHIM_TEMPLATE = `
 import { createRequire as __vf_createRequire } from "node:module";
 import { dirname as __vf_dirname, resolve as __vf_resolve } from "node:path";
 var __vf_namespace;
+var __vf_validateImportOptions;
 var require = (function () {
 // Route code shares this module scope, so a top-level route binding named like
 // an intrinsic (\`const Set = ...\`) would shadow it here, or still be
@@ -149,6 +153,8 @@ var Object = {
 var Array = { isArray: __vf_global.Array.isArray };
 var JSON = { parse: __vf_global.JSON.parse, stringify: __vf_global.JSON.stringify };
 var Symbol = { toStringTag: __vf_global.Symbol.toStringTag };
+var String = { fromCodePoint: __vf_global.String.fromCodePoint };
+var parseInt = __vf_global.parseInt, SyntaxError = __vf_global.SyntaxError;
 var __vf_builtinRequire = __vf_createRequire(__VF_PROJECT_DIR__ + "/package.json");
 var __vf_builtinSet = new Set(__VF_BUILTIN_LIST__);
 // Every built-in this runtime provides, not only the shared list. Node's
@@ -330,6 +336,11 @@ function __vf_resolvePrefixOnlyName(id, parentDir) {
   throw missing;
 }
 function __vf_resolveBare(id, parentDir) {
+  if (id.startsWith("node:")) {
+    var unknown = new Error("Cannot find module " + JSON.stringify(id));
+    unknown.code = "MODULE_NOT_FOUND";
+    throw unknown;
+  }
   if (__vf_prefixOnlyBuiltins.has(__vf_packageName(id))) return __vf_resolvePrefixOnlyName(id, parentDir);
   try {
     return __vf_parentRequire(parentDir).resolve(id);
@@ -409,7 +420,11 @@ function __vf_resolveLocal(id, parentDir) {
   throw missing;
 }
 function __vf_isBuiltin(id) {
-  if (id.startsWith("node:")) return true;
+  // Only real built-ins are reserved under node:, as in Node.
+  if (id.startsWith("node:")) {
+    var bare = id.slice(5);
+    return __vf_builtinSet.has(bare) || __vf_prefixOnlyBuiltins.has(bare);
+  }
   // Only the runtime's own built-in ids: "fs/promises" is a built-in, while
   // "fs/plugin" resolves from an installed package named fs, as in Node.
   return __vf_builtinSet.has(id);
@@ -435,6 +450,13 @@ function __vf_resolveContained(id, parentDir) {
   var found = __vf_resolveId(id, parentDir);
   if (!__vf_isBuiltin(id) && !__vf_isBuiltin(found)) __vf_assertContained(__vf_canonicalize(found), id);
   return found;
+}
+// require.resolve.paths(request): null for a built-in, the requiring
+// directory for a relative request, otherwise its node_modules lookup paths.
+function __vf_resolvePaths(request, parentDir) {
+  if (__vf_isBuiltin(request)) return null;
+  if (__vf_isPathId(request)) return [__vf_canonicalize(parentDir)];
+  return __vf_nodeModulePaths(parentDir);
 }
 function __vf_resolveWithOptions(id, parentDir, options) {
   // Built-ins resolve to themselves, whatever search paths are given.
@@ -525,6 +547,8 @@ function __vf_rewriteCjsDynamicImports(code, helperName) {
   // identifier or literal ended, after which "/" divides.
   var previous = "";
   var stack = [];
+  var parens = [];
+  var controlWord = false;
   var i = 0;
   while (i < code.length) {
     var c = code[i];
@@ -576,11 +600,16 @@ function __vf_rewriteCjsDynamicImports(code, helperName) {
         }
       }
       previous = __vf_regexAfterWord[word] === 1 ? "(" : "word";
+      controlWord = word === "if" || word === "while" || word === "for" || word === "with";
       continue;
     }
+    // A ")" closing an if/while/for/with condition starts a statement, where
+    // "/" begins a regex literal; any other ")" ends a value.
+    if (c === "(") parens.push(controlWord);
+    controlWord = false;
     if (c === "{") stack.push("{");
     else if (c === "}") stack.pop();
-    previous = c;
+    previous = c === ")" && parens.pop() === true ? "(" : c;
     i++;
   }
   return copied === 0 ? code : out + code.slice(copied);
@@ -676,6 +705,8 @@ function __vf_loadCjs(id, parentDir, parentMod) {
   var childReq = function(childId) { return __vf_loadCjs(childId, dir, mod); };
   childReq.resolve = function(childId, options) { return __vf_resolveWithOptions(childId, dir, options); };
   childReq.ensure = function(mods, cb) { cb(); };
+  childReq.cache = __vf_cache;
+  childReq.resolve.paths = function(request) { return __vf_resolvePaths(request, dir); };
   // The CommonJS module API packages use: module.require, id, filename, path.
   mod = { exports: {}, id: resolved, filename: resolved, path: dir, loaded: false, children: [], paths: __vf_nodeModulePaths(dir), parent: parentMod, require: childReq };
   __vf_cache[resolved] = mod;
@@ -711,12 +742,36 @@ var routeModule = { exports: {}, id: __VF_PROJECT_DIR__, filename: __VF_PROJECT_
 var routeRequire = function(id) { return __vf_loadCjs(id, __VF_PROJECT_DIR__, routeModule); };
 routeRequire.resolve = function(id, options) { return __vf_resolveWithOptions(id, __VF_PROJECT_DIR__, options); };
 routeRequire.ensure = function(mods, cb) { cb(); };
+routeRequire.cache = __vf_cache;
+routeRequire.resolve.paths = function(request) { return __vf_resolvePaths(request, __vf_projectRoot); };
 routeModule.require = routeRequire;
 // One namespace per resolved module, as with ES module namespaces: repeated
 // imports of a module share it, and distinct modules never do. As with native
 // CommonJS interop, \`default\` is the whole module.exports, also for modules
 // marked __esModule.
 var namespaces = new Map();
+// import() rejects options that are not an object, a "with" value that is not
+// an object, a non-string attribute value, and attributes it does not support.
+__vf_validateImportOptions = function (options) {
+  if (options === void 0) return;
+  if (options === null || (typeof options !== "object" && typeof options !== "function")) {
+    throw new TypeError("The second argument to import() must be an object");
+  }
+  var attributes = options.with;
+  if (attributes === void 0) return;
+  if (attributes === null || (typeof attributes !== "object" && typeof attributes !== "function")) {
+    throw new TypeError("The 'with' option of import() must be an object");
+  }
+  var keys = Object.keys(attributes);
+  for (var i = 0; i < keys.length; i++) {
+    if (typeof attributes[keys[i]] !== "string") {
+      throw new TypeError("Import attribute " + JSON.stringify(keys[i]) + " must be a string");
+    }
+    if (keys[i] !== "type") {
+      throw new SyntaxError("Unsupported import attribute " + JSON.stringify(keys[i]));
+    }
+  }
+};
 __vf_namespace = function (id) {
   var key = __vf_isBuiltin(id)
     ? "builtin:" + id.replace(/^node:/, "")
