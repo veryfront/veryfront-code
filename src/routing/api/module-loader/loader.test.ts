@@ -5429,6 +5429,7 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
 async function importCompiledBinaryRequireShim(
   projectDir: string,
 ): Promise<(id: string) => unknown> {
+  if (getEnv("VF_SPIKE_4177") === "A") return spikeOptionARequire(projectDir);
   const shimPath = join(projectDir, "vf-require-shim.mjs");
   await fs.writeTextFile(
     shimPath,
@@ -5439,6 +5440,37 @@ async function importCompiledBinaryRequireShim(
   };
   return module.vfRequire;
 }
+
+// SPIKE inbox#4177 option A: the same scenarios, bundled by esbuild.
+async function spikeOptionARequire(projectDir: string): Promise<(id: string) => unknown> {
+  const { createRequire } = await import("node:module");
+  const builtinRequire = createRequire(import.meta.url);
+  const cli = new URL("./spike-4177-require-cli.ts", import.meta.url).pathname;
+  return (id: string) => {
+    const output = new Deno.Command(Deno.execPath(), {
+      args: ["run", "-A", cli, projectDir, id],
+      stdout: "piped",
+      stderr: "inherit",
+    }).outputSync();
+    const result = JSON.parse(new TextDecoder().decode(output.stdout)) as {
+      code?: string;
+      error?: string;
+    };
+    if (result.error !== undefined) {
+      const error = new Error(result.error) as Error & { code?: string };
+      if (result.error.includes("Could not resolve")) error.code = "MODULE_NOT_FOUND";
+      throw error;
+    }
+    const require = (name: string) => {
+      if (name.startsWith("node:") || builtinModules.has(name)) return builtinRequire(name);
+      const error = new Error(`Cannot find module '${name}'`) as Error & { code?: string };
+      error.code = "MODULE_NOT_FOUND";
+      throw error;
+    };
+    return new Function("require", `${result.code}\nreturn __vf_spike_out;`)(require);
+  };
+}
+const builtinModules = new Set((await import("node:module")).builtinModules);
 
 // VULN-FS-5: compiled-binary CJS loader must enforce project-root containment
 // on BOTH branches of __vf_loadCjs (relative/absolute ids AND bare-package
@@ -5734,6 +5766,20 @@ describe("route CommonJS require (#5471)", () => {
     const routePath = join(projectDir, "app", "api", "route.ts");
     const shimNamespace = "vf-test-route-runtime-shim";
     const { build } = await import("veryfront/extensions/bundler");
+    // SPIKE inbox#4177 option A: bundle user dependencies with esbuild.
+    if (getEnv("VF_SPIKE_4177") === "A") {
+      const { spikeBundleRoute } = await import("./spike-4177-option-a.ts");
+      const code = await spikeBundleRoute({
+        build,
+        projectDir,
+        routePath,
+        routeSource,
+        runtimeShim: generateRouteRuntimeShim(toFileUrl(routePath).href),
+      });
+      const spikeHandlerPath = join(projectDir, "handler.mjs");
+      await fs.writeTextFile(spikeHandlerPath, code);
+      return await import(toFileUrl(spikeHandlerPath).href);
+    }
     const result = await build({
       bundle: true,
       write: false,
