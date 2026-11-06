@@ -2,6 +2,8 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "veryfront/platform/path";
+import { _resetEnvironmentConfig } from "#veryfront/config/environment-config.ts";
+import { deleteEnv, setEnv } from "#veryfront/testing/deno-compat.ts";
 import { parseCliArgs } from "#cli/shared/args";
 import { buildUrl, parseOpenArgs } from "./command.ts";
 import { createSuccessEnvelope, setJsonMode } from "../../shared/json-output.ts";
@@ -214,6 +216,15 @@ describe("Open Command", () => {
             JSON.stringify({ apiUrl: "https://api.veryfront.org" }),
           );
           assertEquals(await resolveOpenCloudDomain(projectDir), "veryfront.org");
+          // VERYFRONT_API_URL wins over veryfront.json, as it does for deploy.
+          setEnv("VERYFRONT_API_URL", "https://api.veryfront.com");
+          _resetEnvironmentConfig();
+          try {
+            assertEquals(await resolveOpenCloudDomain(projectDir), "veryfront.com");
+          } finally {
+            deleteEnv("VERYFRONT_API_URL");
+            _resetEnvironmentConfig();
+          }
         });
       });
     });
