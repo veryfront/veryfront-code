@@ -156,6 +156,25 @@ describe("tool approval", () => {
     assertEquals(gated.outputSchema!.safeParse({ ok: "yes" }).success, false);
   });
 
+  it("widens a raw JSON output contract instead of wrapping it in a native validator", () => {
+    const contract = {
+      type: "object",
+      properties: { ok: { type: "boolean" } },
+      required: ["ok"],
+    };
+    const gated = tool({
+      id: "transfer",
+      description: "Move money",
+      approval: {},
+      inputSchema: defineSchema((v) => v.object({ amount: v.number() }))(),
+      outputSchema: contract as never,
+      execute: () => ({ ok: true }),
+    });
+    assertEquals(typeof (gated.outputSchema as { safeParse?: unknown }).safeParse, "undefined");
+    assertEquals(gated.outputSchema as unknown, gated.outputSchemaJson);
+    assertEquals((gated.outputSchemaJson as { anyOf?: unknown[] }).anyOf?.[0], contract);
+  });
+
   it("declares a refusal as a valid output, keeping an object contract an object", () => {
     const gated = tool({
       id: "transfer",
