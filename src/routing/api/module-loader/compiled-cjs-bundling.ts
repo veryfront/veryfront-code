@@ -692,6 +692,8 @@ export type CommonJSModuleBody = (
 export interface RuntimeRequire {
   (id: unknown): unknown;
   resolve(id: unknown): string;
+  /** webpack's `require.ensure`: everything is loaded already. */
+  ensure(ids: unknown, callback: (require: RuntimeRequire) => void): void;
 }
 
 /**
@@ -707,6 +709,7 @@ export interface RuntimeRequire {
  *   Node's module cache. `require.resolve` returns the path it found.
  * - Anything else, a package name included, throws `MODULE_NOT_FOUND`, so
  *   optional dependencies probed in a `try` still fall back.
+ * - `require.ensure`, which code written for webpack calls, runs its callback.
  *
  * Errors name a path relative to the project, never the host path.
  * {@link prependRuntimeRequire} embeds this function's source in the route
@@ -818,6 +821,10 @@ export function createRuntimeRequire(
       const found = find(id, directory);
       if (found === null) throw missing(label(id));
       return found.path;
+    };
+    // Code written for webpack; the callback runs at once, as nothing is split.
+    require.ensure = (_ids: unknown, callback: (require: RuntimeRequire) => void) => {
+      callback(require);
     };
     return require;
   };

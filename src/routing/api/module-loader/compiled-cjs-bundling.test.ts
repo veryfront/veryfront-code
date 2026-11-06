@@ -406,6 +406,8 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
       "/app/node_modules/p/cycle-b.js": "exports.seen = require('./cycle-a').early;",
       "/app/node_modules/p/throws.js": "throw new Error('boom');",
       "/app/node_modules/p/bare.js": "require('lodash');",
+      "/app/node_modules/p/split.js":
+        "require.ensure(['./base'], function (r) { exports.base = r('./base').name; });",
     };
     let reads = 0;
     const host: RuntimeRequireHost = {
@@ -474,6 +476,15 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
         self: true,
       });
       assert(require("/app/node_modules/p/dialects/pg.js") === dialect);
+    });
+
+    it("runs a require.ensure callback at once, at the top and in a loaded module", () => {
+      let ensured: unknown;
+      require.ensure([], (inner) => {
+        ensured = inner("fs");
+      });
+      assertEquals(ensured, { kind: "fs" });
+      assertEquals(require("/app/node_modules/p/split.js"), { base: "base" });
     });
 
     it("hands a cycle the exports so far, as Node does", () => {
