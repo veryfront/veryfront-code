@@ -306,13 +306,17 @@ function toJsStringLiteral(value: string): string {
 function matchUserDependency(
   specifier: string,
   userDeps: Map<string, string>,
-): { name: string; subpath: string } | null {
+): { name: string; subpath: string; suffix: string } | null {
+  // A query or hash is part of the module URL, not of the file path.
+  const suffixAt = specifier.search(/[?#]/);
+  const path = suffixAt === -1 ? specifier : specifier.slice(0, suffixAt);
+  const suffix = suffixAt === -1 ? "" : specifier.slice(suffixAt);
   let best: string | null = null;
   for (const name of userDeps.keys()) {
-    if (specifier !== name && !specifier.startsWith(`${name}/`)) continue;
+    if (path !== name && !path.startsWith(`${name}/`)) continue;
     if (best === null || name.length > best.length) best = name;
   }
-  return best === null ? null : { name: best, subpath: specifier.slice(best.length) };
+  return best === null ? null : { name: best, subpath: path.slice(best.length), suffix };
 }
 
 /**
@@ -363,76 +367,6 @@ function rewriteCjsReexport(
   );
 }
 
-/** Characters after which a `/` begins a regex literal rather than dividing. */
-const REGEX_PRECEDERS = new Set([..."(,=:[!&|?{};+-*%<>~^"]);
-
-/** The index just past the regex literal (and its flags) starting at `start`. */
-function findRegexLiteralEnd(code: string, start: number): number {
-  let inClass = false;
-  for (let index = start + 1; index < code.length; index++) {
-    const char = code[index]!;
-    if (char === "\n") return -1;
-    if (char === "\\") index++;
-    else if (char === "[") inClass = true;
-    else if (char === "]") inClass = false;
-    else if (char === "/" && !inClass) {
-      let end = index + 1;
-      while (end < code.length && /[a-z]/i.test(code[end]!)) end++;
-      return end;
-    }
-  }
-  return -1;
-}
-
-/**
- * The index just past the `)` closing a dynamic `import(` whose specifier ends
- * at `from`, skipping an options argument; -1 when it cannot be found.
- */
-function findDynamicImportEnd(code: string, from: number): number {
-  let depth = 0;
-  // The last significant character decides whether a `/` starts a regex
-  // literal or divides, as in the usual lexer heuristic.
-  let previous = "(";
-  for (let index = from; index < code.length; index++) {
-    const char = code[index]!;
-    if (/\s/.test(char)) continue;
-    if (char === '"' || char === "'" || char === "`") {
-      for (index++; index < code.length && code[index] !== char; index++) {
-        if (code[index] === "\\") index++;
-      }
-      previous = char;
-      continue;
-    }
-    if (char === "/" && code[index + 1] === "/") {
-      const end = code.indexOf("\n", index);
-      if (end === -1) return -1;
-      index = end;
-      continue;
-    }
-    if (char === "/" && code[index + 1] === "*") {
-      const end = code.indexOf("*/", index + 2);
-      if (end === -1) return -1;
-      index = end + 1;
-      continue;
-    }
-    if (char === "/" && REGEX_PRECEDERS.has(previous)) {
-      const end = findRegexLiteralEnd(code, index);
-      if (end === -1) return -1;
-      index = end - 1;
-      previous = "/";
-      continue;
-    }
-    previous = char;
-    if (char === "(" || char === "{" || char === "[") depth++;
-    else if (char === "}" || char === "]") depth--;
-    else if (char === ")") {
-      if (depth === 0) return index + 1;
-      depth--;
-    }
-  }
-  return -1;
-}
-
 /**
  * Rewrite a bundled compiled-binary route's user dependency imports.
  *
@@ -450,14 +384,14 @@ export async function rewriteCompiledUserDependencyImportsForRoute(
 ): Promise<string> {
   if (userDeps.size === 0) return code;
   const { masked, imports, unmask } = await parseMaskedImports(code);
-  const edits: { start: number; end: number; text: string }[] = [];
+  const edits: { start: number; end: number; text: string; static?: boolean }[] = [];
   let reexports = 0;
 
   for (const imported of imports) {
     if (typeof imported.n !== "string") continue;
     const dependency = matchUserDependency(imported.n, userDeps);
     if (!dependency) continue;
-    const { name, subpath } = dependency;
+    const { name, subpath, suffix } = dependency;
     const isDynamic = imported.d > -1;
 
     // ESM-only dependencies are rewritten to real ES module file:// URLs so that
@@ -477,6 +411,7 @@ export async function rewriteCompiledUserDependencyImportsForRoute(
         }
         url = pathHelper.toFileUrl(target).href;
       }
+      url += suffix;
       // Static specifier spans exclude the quotes; dynamic ones include them.
       edits.push({
         start: imported.s,
@@ -486,17 +421,19 @@ export async function rewriteCompiledUserDependencyImportsForRoute(
       continue;
     }
 
+    // CommonJS modules are cached by file, so a query or hash selects nothing.
     const specifier = toJsStringLiteral(name + subpath);
     const required = `require(${specifier})`;
     if (isDynamic) {
       // A dynamic import stays lazy and asynchronous: a load failure rejects
       // the returned promise instead of throwing synchronously. An options
       // argument (import attributes) is consumed: require reads JSON itself.
-      const end = findDynamicImportEnd(masked, imported.e);
-      if (end === -1) continue;
+      // The lexer reports the end of the whole import(...) expression,
+      // tokenizing strings, comments and regex literals in the options.
+      if (imported.se <= imported.e) continue;
       edits.push({
         start: imported.ss,
-        end,
+        end: imported.se,
         // An async arrow returns an intrinsic promise whatever route code binds
         // to `Promise`, and the await defers loading as import() does.
         text: `(async () => { await null; return ${helperPrefix}namespace(${specifier}); })()`,
@@ -510,11 +447,12 @@ export async function rewriteCompiledUserDependencyImportsForRoute(
         start: imported.ss,
         end: imported.se,
         text: rewriteCjsReexport(statement, specifier, imported.n, helperPrefix, reexports++),
+        static: true,
       });
       continue;
     }
     if (SIDE_EFFECT_IMPORT.test(statement)) {
-      edits.push({ start: imported.ss, end: imported.se, text: required });
+      edits.push({ start: imported.ss, end: imported.se, text: required, static: true });
       continue;
     }
     const clause = statement.match(STATIC_FROM_IMPORT)?.[1];
@@ -522,11 +460,17 @@ export async function rewriteCompiledUserDependencyImportsForRoute(
       ? null
       : rewriteCjsImportClause(clause, specifier, helperPrefix);
     if (rewritten !== null) {
-      edits.push({ start: imported.ss, end: imported.se, text: rewritten });
+      edits.push({ start: imported.ss, end: imported.se, text: rewritten, static: true });
     }
   }
 
   if (edits.length === 0) return code;
+  // A replaced declaration ended where ASI applied, but a replacement
+  // expression would let a following line starting with ( [ or a template
+  // continue it, so every static rewrite ends in its own semicolon.
+  for (const edit of edits) {
+    if (edit.static && masked[edit.end] !== ";" && !edit.text.endsWith(";")) edit.text += ";";
+  }
   edits.sort((left, right) => right.start - left.start);
   let transformed = masked;
   for (const edit of edits) {

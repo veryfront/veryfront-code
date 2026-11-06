@@ -5947,6 +5947,32 @@ describe("route CommonJS require (#5471)", () => {
     assertEquals(await responseText(GET), "esm child");
   });
 
+  denoIt("leaves import-like text in CommonJS strings and comments alone", async () => {
+    const files = {
+      "node_modules/text-fixture/package.json": JSON.stringify({
+        name: "text-fixture",
+        main: "index.js",
+      }),
+      "node_modules/text-fixture/index.js": [
+        "// import('./child.mjs') in a comment",
+        "const re = /import('.\\/x.mjs')/;",
+        "const tpl = `import('./child.mjs') ${\"import('./child.mjs')\"}`;",
+        "module.exports = [\"import('./child.mjs')\", 'import(\"./child.mjs\")', tpl, String(re.source.length > 0)].join('|');",
+      ].join("\n"),
+    };
+    const GET = await loadCompiledRoute(
+      [
+        'import text from "text-fixture";',
+        "export const GET = async () => new Response(text);",
+      ].join("\n"),
+      files,
+    );
+    assertEquals(
+      await responseText(GET),
+      "import('./child.mjs')|import(\"./child.mjs\")|import('./child.mjs') import('./child.mjs')|true",
+    );
+  });
+
   denoIt("gives CommonJS namespaces the immutability of module namespaces", async () => {
     const files = {
       "node_modules/frozen-fixture/package.json": JSON.stringify({

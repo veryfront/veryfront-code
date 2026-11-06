@@ -426,8 +426,97 @@ function __vf_resolveWithOptions(id, parentDir, options) {
 }
 // A CommonJS module evaluated through Function would resolve its own
 // import("./x.mjs") against this handler, not its file. Literal relative and
-// absolute dynamic imports are routed here instead.
-var __vf_cjsDynamicImport = /(^|[^.\\w$])import\\s*\\(\\s*(["'])(\\.{1,2}\\/[^"'\\\\\\r\\n]*|\\/[^"'\\\\\\r\\n]*)\\2\\s*\\)/g;
+// absolute dynamic imports in code (not in strings, comments, templates or
+// regex literals) are routed to a module-relative loader instead.
+var __vf_regexAfterWord = { "return": 1, "typeof": 1, "instanceof": 1, "in": 1, "of": 1, "new": 1, "delete": 1, "void": 1, "throw": 1, "case": 1, "do": 1, "else": 1, "yield": 1, "await": 1 };
+var __vf_relativeImportCall = /import\\s*\\(\\s*(["'])((?:\\.{1,2}\\/|\\/)[^"'\\\\\\r\\n]*)\\1\\s*\\)/y;
+function __vf_skipQuoted(code, i, quote) {
+  for (i++; i < code.length && code[i] !== quote; i++) {
+    if (code[i] === "\\\\") i++;
+  }
+  return i + 1;
+}
+function __vf_skipRegex(code, i) {
+  var inClass = false;
+  for (i++; i < code.length; i++) {
+    var c = code[i];
+    if (c === "\\\\") i++;
+    else if (c === "\\n") return i;
+    else if (c === "[") inClass = true;
+    else if (c === "]") inClass = false;
+    else if (c === "/" && !inClass) return i + 1;
+  }
+  return i;
+}
+function __vf_rewriteCjsDynamicImports(code) {
+  if (code.indexOf("import") === -1) return code;
+  var out = "";
+  var copied = 0;
+  // "" or a punctuator: the last significant token; "word" and "value" mean an
+  // identifier or literal ended, after which "/" divides.
+  var previous = "";
+  var stack = [];
+  var i = 0;
+  while (i < code.length) {
+    var c = code[i];
+    if (c === " " || c === "\\t" || c === "\\n" || c === "\\r") { i++; continue; }
+    if (c === "/" && code[i + 1] === "/") {
+      var lineEnd = code.indexOf("\\n", i);
+      i = lineEnd === -1 ? code.length : lineEnd;
+      continue;
+    }
+    if (c === "/" && code[i + 1] === "*") {
+      var blockEnd = code.indexOf("*/", i + 2);
+      i = blockEnd === -1 ? code.length : blockEnd + 2;
+      continue;
+    }
+    if (c === "'" || c === '"') { i = __vf_skipQuoted(code, i, c); previous = "value"; continue; }
+    if (c === "\`" || (c === "}" && stack[stack.length - 1] === "\${")) {
+      // A template, or its continuation after a substitution.
+      if (c === "}") stack.pop();
+      var substitution = false;
+      for (i++; i < code.length; i++) {
+        if (code[i] === "\\\\") { i++; continue; }
+        if (code[i] === "\`") { i++; break; }
+        if (code[i] === "$" && code[i + 1] === "{") { stack.push("\${"); i += 2; substitution = true; break; }
+      }
+      previous = substitution ? "(" : "value";
+      continue;
+    }
+    if (c === "/") {
+      if (previous === "word" || previous === "value" || previous === ")" || previous === "]") {
+        i++;
+        previous = "/";
+      } else {
+        i = __vf_skipRegex(code, i);
+        previous = "value";
+      }
+      continue;
+    }
+    if (/[A-Za-z0-9_$]/.test(c) || c.charCodeAt(0) > 127) {
+      var start = i;
+      while (i < code.length && (/[A-Za-z0-9_$]/.test(code[i]) || code.charCodeAt(i) > 127)) i++;
+      var word = code.slice(start, i);
+      if (word === "import" && previous !== ".") {
+        __vf_relativeImportCall.lastIndex = start;
+        var call = __vf_relativeImportCall.exec(code);
+        if (call) {
+          out += code.slice(copied, start) + "__vf_cjsImport(" + JSON.stringify(call[2]) + ")";
+          copied = i = __vf_relativeImportCall.lastIndex;
+          previous = ")";
+          continue;
+        }
+      }
+      previous = __vf_regexAfterWord[word] === 1 ? "(" : "word";
+      continue;
+    }
+    if (c === "{") stack.push("{");
+    else if (c === "}") stack.pop();
+    previous = c;
+    i++;
+  }
+  return copied === 0 ? code : out + code.slice(copied);
+}
 function __vf_importFrom(spec, parentDir) {
   return (async function () {
     var target = __vf_resolve(parentDir, spec);
@@ -481,9 +570,7 @@ function __vf_loadCjs(id, parentDir, parentMod) {
   // cannot contain one. Commenting it out keeps line numbers intact.
   if (code.startsWith("#!")) code = "//" + code.slice(2);
   var dir = __vf_dirname(resolved);
-  code = code.replace(__vf_cjsDynamicImport, function (_match, lead, _quote, spec) {
-    return lead + "__vf_cjsImport(" + JSON.stringify(spec) + ")";
-  });
+  code = __vf_rewriteCjsDynamicImports(code);
   var cjsImport = function (spec) { return __vf_importFrom(spec, dir); };
   var mod;
   var childReq = function(childId) { return __vf_loadCjs(childId, dir, mod); };

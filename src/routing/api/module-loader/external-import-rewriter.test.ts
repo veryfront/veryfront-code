@@ -277,6 +277,48 @@ describe("external-import-rewriter", () => {
       assertStringIncludes(out, `import("file:///srv/app/node_modules/esm-only/lazy.js")`);
     });
 
+    it("keeps query and hash suffixes off the package file path", async () => {
+      const esmDeps = new Map([
+        ["esm-only", {
+          entryUrl: "file:///srv/app/node_modules/esm-only/dist/index.mjs",
+          packageDir: "/srv/app/node_modules/esm-only",
+        }],
+      ]);
+      const out = await rewriteCompiledBinaryUserDependencyImports(
+        [
+          `import raw from "esm-only/file.js?raw#v";`,
+          `import entry from "esm-only?raw";`,
+          `import cjs from "lodash/file.js?raw#v";`,
+        ].join("\n"),
+        new Map([["esm-only", "^1"], ["lodash", "^4"]]),
+        esmDeps,
+      );
+
+      assertStringIncludes(out, `from "file:///srv/app/node_modules/esm-only/file.js?raw#v"`);
+      assertStringIncludes(out, `from "file:///srv/app/node_modules/esm-only/dist/index.mjs?raw"`);
+      assertStringIncludes(out, `require("lodash/file.js")`);
+    });
+
+    it("terminates rewritten statements so the next line cannot continue them", async () => {
+      const out = await rewriteCompiledBinaryUserDependencyImports(
+        [`import "lodash"`, `import _ from "lodash"`, "(() => {})();"].join("\n"),
+        deps,
+      );
+      assertStringIncludes(out, 'require("lodash");\n');
+      assertStringIncludes(out, 'const _ = __vf_interopDefault(require("lodash"));\n');
+    });
+
+    it("finds the end of a dynamic import whose options use a regex after a keyword", async () => {
+      const out = await rewriteCompiledBinaryUserDependencyImports(
+        `const lazy = import("lodash", { with: { type: (() => { return /[)]/.test("") ? "json" : "json"; })() } });`,
+        deps,
+      );
+      assertEquals(
+        out,
+        'const lazy = (async () => { await null; return __vf_namespace("lodash"); })();',
+      );
+    });
+
     it("leaves ESM subpath imports untouched when they escape the package directory", async () => {
       const esmDeps = new Map([
         ["esm-only", {
