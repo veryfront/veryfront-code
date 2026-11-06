@@ -458,7 +458,7 @@ describe("proxy request drain", () => {
     assertEquals(admission.admits(webSocket, "/ws"), false);
     assertEquals(admission.admits(runStatus, "/api/control-plane/runs/run_1"), true);
 
-    // useChat/useAgent POST these without Accept: text/event-stream.
+    // useChat POSTs the AG-UI stream without Accept: text/event-stream.
     const post = (path: string) =>
       new Request(`http://proxy.test${path}`, {
         method: "POST",
@@ -466,8 +466,9 @@ describe("proxy request drain", () => {
       });
     assertEquals(admission.admits(post("/api/ag-ui"), "/api/ag-ui"), false);
     assertEquals(admission.admits(post("/api/ag-ui/"), "/api/ag-ui/"), false);
-    assertEquals(admission.admits(post("/api/agents/support"), "/api/agents/support"), false);
-    // Agent metadata reads and other POSTs stay admitted.
+    // useAgent's JSON invocation, agent metadata reads and other POSTs stay
+    // admitted (served with a connection-closing response).
+    assertEquals(admission.admits(post("/api/agents/support"), "/api/agents/support"), true);
     assertEquals(
       admission.admits(new Request("http://proxy.test/api/agents/support"), "/api/agents/support"),
       true,

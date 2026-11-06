@@ -248,17 +248,14 @@ function cancelResponseBody(response: Response): void {
   }
 }
 
-const AGENT_STREAM_PATH = /^\/api\/agents\/[^/]+$/u;
-
 /**
- * Framework POST routes that answer with an SSE stream although their built-in
- * clients (`useChat`, `useAgent`) send no `Accept: text/event-stream`: the
- * AG-UI endpoint and the per-agent stream.
+ * The framework AG-UI endpoint answers with an SSE stream although its
+ * built-in `useChat` client sends no `Accept: text/event-stream`. (`useAgent`
+ * posts to `/api/agents/:id` and reads JSON, so that route stays admitted.)
  */
 function isKnownAgentStreamPost(request: Request, pathname: string): boolean {
-  if (request.method.toUpperCase() !== "POST") return false;
-  const normalized = normalizeProxyRoutePolicyPathname(pathname);
-  return normalized === "/api/ag-ui" || AGENT_STREAM_PATH.test(normalized);
+  return request.method.toUpperCase() === "POST" &&
+    normalizeProxyRoutePolicyPathname(pathname) === "/api/ag-ui";
 }
 
 /** WebSocket upgrades and SSE streams hold their connection open indefinitely. */
