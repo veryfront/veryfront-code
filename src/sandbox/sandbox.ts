@@ -150,12 +150,7 @@ export class Sandbox {
   }
 
   /** Create an isolated sandbox. */
-  static async create(
-    options: SandboxOptions & {
-      /** Synchronously observe the acknowledged workspace ID before readiness polling. */
-      onCreated?: (id: string) => void;
-    } = {},
-  ): Promise<Sandbox> {
+  static async create(options: SandboxOptions = {}): Promise<Sandbox> {
     const apiUrl = resolveSandboxApiUrl(options);
     const authToken = resolveSandboxAuthToken(options);
 

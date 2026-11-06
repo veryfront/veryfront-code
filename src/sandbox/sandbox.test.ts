@@ -31,6 +31,7 @@ import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront
 import { runWithProjectEnv } from "../server/project-env/storage.ts";
 import { VeryfrontError } from "#veryfront/errors";
 import type { CommandStreamEvent } from "./sandbox.ts";
+import type { SandboxOptions } from "./types.ts";
 import { hasTemporarySandboxPolicy } from "./response.ts";
 import { Sandbox, waitForSandboxReady } from "./sandbox.ts";
 import { LazySandbox, resolveDefaultSandboxRuntimeEndpoint } from "./lazy-sandbox.ts";
@@ -1544,15 +1545,15 @@ describe("Sandbox", () => {
       ]);
 
       const acknowledgements: Array<{ id: string; requests: number }> = [];
+      const options: SandboxOptions = {
+        authToken: "test-token",
+        apiUrl: "https://api.test.com",
+        onCreated(id) {
+          acknowledgements.push({ id, requests: fetchCalls.length });
+        },
+      };
       const error = await assertRejects(
-        () =>
-          Sandbox.create({
-            authToken: "test-token",
-            apiUrl: "https://api.test.com",
-            onCreated(id) {
-              acknowledgements.push({ id, requests: fetchCalls.length });
-            },
-          }),
+        () => Sandbox.create(options),
         VeryfrontError,
         "Sandbox failed to start",
       );
