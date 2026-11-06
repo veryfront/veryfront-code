@@ -25,7 +25,7 @@ export const PROJECT_NOT_FOUND_ERROR: ErrorEnvelope["error"] = {
 /**
  * Environment references that name a project by slug. `VERYFRONT_PROJECT_ID`
  * and `TENANT_PROJECT_ID` name it by ID instead, and `buildUrl` produces
- * `https://veryfront.com/projects/<slug>` — `push` resolves an ID through the
+ * `https://<cloud domain>/projects/<slug>` — `push` resolves an ID through the
  * API before printing that URL, which `open` cannot do without a token. So an
  * ID-only reference is skipped rather than pasted in as a slug, and resolution
  * keeps walking to the local link `push`/`deploy` wrote for that same project.
@@ -70,6 +70,15 @@ export async function resolveOpenProjectSlug(
   return link?.projectSlug;
 }
 
+/** The hosted web domain of the API `open` resolves the project against. */
+export async function resolveOpenCloudDomain(projectDir: string): Promise<string> {
+  const { getEnvironmentConfig } = await import("veryfront/config");
+  const { readConfigFile } = await import("#cli/shared/config");
+  const { getCloudDomain, resolveCliApiUrl } = await import("../../shared/constants.ts");
+  const fileConfig = await readConfigFile(projectDir);
+  return getCloudDomain(resolveCliApiUrl(getEnvironmentConfig(), fileConfig?.apiUrl));
+}
+
 /** Report the one failure `open` can hit, honoring `--json`. */
 export async function reportProjectNotFound(): Promise<void> {
   if (isJsonMode()) {
@@ -91,7 +100,7 @@ export async function handleOpenCommand(args: ParsedArgs): Promise<void> {
     return;
   }
 
-  const url = buildUrl(projectSlug, opts);
+  const url = buildUrl(projectSlug, opts, await resolveOpenCloudDomain(cwd()));
 
   if (isJsonMode()) {
     await outputJson(createSuccessEnvelope("open", { url }));
