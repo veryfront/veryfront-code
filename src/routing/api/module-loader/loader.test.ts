@@ -6089,6 +6089,80 @@ describe("route CommonJS require (#5471)", () => {
     assertEquals(await responseText(GET), "postfix child");
   });
 
+  denoIt("loads CommonJS packages while built-in prototype methods are replaced", async () => {
+    const files = {
+      "node_modules/trap-fixture/package.json": JSON.stringify({
+        name: "trap-fixture",
+        exports: { ".": "./index.js", "./lib/*": "./lib/*.js" },
+      }),
+      "node_modules/trap-fixture/index.js": [
+        "var part = require('trap-fixture/lib/part');",
+        "module.exports = function () {",
+        "  return import('.\\u002fchild.mjs').then(function (m) { return m.value + ':' + part; });",
+        "};",
+      ].join("\n"),
+      "node_modules/trap-fixture/lib/part.js": "module.exports = 'part';",
+      "node_modules/trap-fixture/child.mjs": "export const value = 'child';",
+    };
+    // The route replaces these for the whole process; every one is put back.
+    const patched: Array<[Record<PropertyKey, unknown>, PropertyKey]> = [
+      ...["slice", "startsWith", "endsWith", "indexOf", "split", "replace", "search", "charCodeAt"]
+        .map((
+          name,
+        ): [Record<PropertyKey, unknown>, PropertyKey] => [String.prototype as never, name]),
+      ...["push", "pop", "join", "filter", "slice"]
+        .map((
+          name,
+        ): [Record<PropertyKey, unknown>, PropertyKey] => [Array.prototype as never, name]),
+      [RegExp.prototype as never, "test"],
+      [RegExp.prototype as never, "exec"],
+      [RegExp.prototype as never, Symbol.replace],
+      [Function.prototype as never, "call"],
+    ];
+    const originals = patched.map(([target, key]) => target[key]);
+    const globals = globalThis as unknown as { __trapTargets: unknown };
+    globals.__trapTargets = patched;
+    try {
+      const GET = await loadCompiledRoute(
+        [
+          "export const GET = async () => {",
+          "  const traps = globalThis.__trapTargets;",
+          "  let armed = false;",
+          "  for (const [target, key] of traps) {",
+          "    const original = target[key];",
+          "    target[key] = function (...args) {",
+          "      if (armed) throw new Error('replaced ' + String(key) + ' was called');",
+          "      return Reflect.apply(original, this, args);",
+          "    };",
+          "  }",
+          // The window is synchronous, so no other code can run while the
+          // replacements are armed: loading, resolution through the exports
+          // map, the nested require and the start of the module-relative
+          // import() all run inside it.
+          "  let pending;",
+          "  armed = true;",
+          "  try {",
+          '    const load = require("trap-fixture");',
+          "    pending = load();",
+          "  } catch (error) {",
+          "    pending = Promise.resolve(error.message);",
+          "  } finally {",
+          "    armed = false;",
+          "  }",
+          "  return new Response(await pending);",
+          "};",
+        ].join("\n"),
+        files,
+      );
+      assertEquals(await responseText(GET), "child:part");
+    } finally {
+      patched.forEach(([target, key], index) => {
+        target[key] = originals[index];
+      });
+      delete (globalThis as { __trapTargets?: unknown }).__trapTargets;
+    }
+  });
+
   denoIt("caches namespaces without the mutable Map prototype", async () => {
     const files = {
       "node_modules/map-fixture/package.json": JSON.stringify({

@@ -136,7 +136,8 @@ var require = (function () {
 // uninitialized when this runs. These locals come from the global object,
 // which is reached through syntax alone.
 var __vf_global = (function () {}).constructor("return this")();
-var Deno = __vf_global.Deno, Error = __vf_global.Error, Function = __vf_global.Function;
+var __vf_Deno = __vf_global.Deno;
+var Error = __vf_global.Error, Function = __vf_global.Function;
 var TypeError = __vf_global.TypeError;
 var globalThis = __vf_global;
 // The static methods the loader calls are captured now, before route code
@@ -155,6 +156,65 @@ var JSON = { parse: __vf_global.JSON.parse, stringify: __vf_global.JSON.stringif
 var Symbol = { toStringTag: __vf_global.Symbol.toStringTag };
 var String = { fromCodePoint: __vf_global.String.fromCodePoint };
 var parseInt = __vf_global.parseInt, SyntaxError = __vf_global.SyntaxError;
+// Prototype methods are captured too, as plain functions taking the receiver
+// first, so route or package code that replaces String, Array, RegExp or
+// Function prototype methods cannot change how the loader behaves. The loader
+// uses no regular expressions and no string methods that dispatch through
+// Symbol.split, Symbol.replace or Symbol.search, which any string would reach.
+var __vf_FunctionPrototype = Function.prototype;
+var __vf_uncurry = __vf_FunctionPrototype.bind.bind(__vf_FunctionPrototype.call);
+var __vf_invoke = __vf_uncurry(__vf_FunctionPrototype.call);
+var __vf_bindTo = __vf_uncurry(__vf_FunctionPrototype.bind);
+var __vf_StringPrototype = __vf_global.String.prototype;
+var __vf_slice = __vf_uncurry(__vf_StringPrototype.slice);
+var __vf_indexOf = __vf_uncurry(__vf_StringPrototype.indexOf);
+var __vf_startsWith = __vf_uncurry(__vf_StringPrototype.startsWith);
+var __vf_endsWith = __vf_uncurry(__vf_StringPrototype.endsWith);
+var __vf_charCodeAt = __vf_uncurry(__vf_StringPrototype.charCodeAt);
+var __vf_hasOwn = __vf_uncurry(__vf_Object.prototype.hasOwnProperty);
+var __vf_hrefOf = __vf_uncurry(__vf_Object.getOwnPropertyDescriptor(__vf_global.URL.prototype, "href").get);
+var Deno = {
+  readTextFileSync: __vf_bindTo(__vf_Deno.readTextFileSync, __vf_Deno),
+  realPathSync: __vf_bindTo(__vf_Deno.realPathSync, __vf_Deno),
+  statSync: __vf_bindTo(__vf_Deno.statSync, __vf_Deno),
+};
+// Arrays are grown and shrunk by index, not with push or pop.
+function __vf_append(list, value) {
+  list[list.length] = value;
+}
+function __vf_removeLast(list) {
+  if (list.length === 0) return void 0;
+  var last = list[list.length - 1];
+  list.length = list.length - 1;
+  return last;
+}
+// Every occurrence of a literal search string replaced, without a regex.
+function __vf_replaceAll(text, search, replacement) {
+  var out = "";
+  var from = 0;
+  for (var at = __vf_indexOf(text, search); at !== -1; at = __vf_indexOf(text, search, from)) {
+    out += __vf_slice(text, from, at) + replacement;
+    from = at + search.length;
+  }
+  return out + __vf_slice(text, from);
+}
+function __vf_forwardSlashes(path) {
+  return __vf_replaceAll(path, "\\\\", "/");
+}
+// The first index of a query or hash mark, or -1.
+function __vf_suffixIndex(spec) {
+  var query = __vf_indexOf(spec, "?");
+  var hash = __vf_indexOf(spec, "#");
+  if (query === -1) return hash;
+  return hash === -1 || query < hash ? query : hash;
+}
+function __vf_isWordCode(code) {
+  return (code >= 48 && code <= 57) || (code >= 65 && code <= 90) || (code >= 97 && code <= 122) ||
+    code === 95 || code === 36 || code > 127;
+}
+function __vf_isHexCode(code) {
+  return (code >= 48 && code <= 57) || (code >= 65 && code <= 70) || (code >= 97 && code <= 102);
+}
 var __vf_builtinRequire = __vf_createRequire(__VF_PROJECT_DIR__ + "/package.json");
 // Lookup tables are null-prototype objects rather than Set or Map, so route or
 // package code that replaces a collection prototype method cannot change them.
@@ -173,14 +233,14 @@ try {
   var __vf_runtimeBuiltins = __vf_builtinRequire("node:module").builtinModules;
   for (var __vf_b = 0; __vf_b < __vf_runtimeBuiltins.length; __vf_b++) {
     var __vf_name = __vf_runtimeBuiltins[__vf_b];
-    if (__vf_name.startsWith("node:") || __vf_prefixOnlyBuiltins[__vf_name] === true) continue;
+    if (__vf_startsWith(__vf_name, "node:") || __vf_prefixOnlyBuiltins[__vf_name] === true) continue;
     __vf_builtinSet[__vf_name] = true;
   }
 } catch (_) { /* expected: fall back to the shared list */ }
 // Absolute ids include Windows drive-letter and UNC paths.
 var __vf_isAbsolute = __vf_builtinRequire("node:path").isAbsolute;
 function __vf_isPathId(id) {
-  return id.startsWith(".") || __vf_isAbsolute(id);
+  return __vf_startsWith(id, ".") || __vf_isAbsolute(id);
 }
 var __vf_projectRoot = __VF_PROJECT_ROOT__;
 // VULN-FS-5: Canonicalize the project root so containment checks using
@@ -189,8 +249,34 @@ var __vf_projectRoot = __VF_PROJECT_ROOT__;
 // module path has a different prefix than the non-canonical projectRoot and
 // legitimate dependencies would be rejected.
 try { __vf_projectRoot = Deno.realPathSync(__vf_projectRoot); } catch (_) { /* expected: projectRoot may not exist at shim init in some environments */ }
+// File URLs for module-relative import() are built from the project root's URL,
+// taken now, so no URL helper runs while route code may have replaced the
+// prototype methods such helpers call.
+var __vf_URL = __vf_global.URL;
+var __vf_separator = __vf_builtinRequire("node:path").sep;
+var __vf_projectRootHref = __vf_hrefOf(__vf_builtinRequire("node:url").pathToFileURL(__vf_projectRoot));
+var __vf_urlEscapes = Object.create(null);
+__vf_urlEscapes["%"] = "%25";
+__vf_urlEscapes["\\\\"] = "%5C";
+__vf_urlEscapes["\\n"] = "%0A";
+__vf_urlEscapes["\\r"] = "%0D";
+__vf_urlEscapes["\\t"] = "%09";
+__vf_urlEscapes["?"] = "%3F";
+__vf_urlEscapes["#"] = "%23";
+// The file URL of a canonical path already checked to be inside the project,
+// escaped as pathToFileURL escapes it.
+function __vf_fileUrl(contained) {
+  var relative = __vf_slice(contained, __vf_projectRoot.length);
+  var encoded = "";
+  for (var i = 0; i < relative.length; i++) {
+    var c = relative[i];
+    if (c === __vf_separator) encoded += "/";
+    else encoded += __vf_urlEscapes[c] !== void 0 ? __vf_urlEscapes[c] : c;
+  }
+  if (encoded !== "" && encoded[0] !== "/" && !__vf_endsWith(__vf_projectRootHref, "/")) encoded = "/" + encoded;
+  return __vf_hrefOf(new __vf_URL(__vf_projectRootHref + encoded));
+}
 var __vf_cache = Object.create(null);
-var __vf_parentRequires = Object.create(null);
 // Resolve symlinks so containment compares canonical paths. A module that does
 // not exist yet cannot be canonicalized, so fall back to its parent directory,
 // which is what carries a symlinked project root; only if that fails too is the
@@ -201,51 +287,39 @@ function __vf_canonicalize(candidate) {
   } catch (_) { /* expected: candidate may not exist */ }
   try {
     var parent = __vf_dirname(candidate);
-    return Deno.realPathSync(parent) + candidate.slice(parent.length);
+    return Deno.realPathSync(parent) + __vf_slice(candidate, parent.length);
   } catch (_) { /* expected: parent may not exist either */ }
   return __vf_resolve(candidate);
 }
 // The error names the id the code asked for, never the resolved host path.
 function __vf_assertContained(resolved, id) {
-  var norm = __vf_resolve(resolved).replace(/\\\\/g, "/");
-  var root = __vf_projectRoot.replace(/\\\\/g, "/");
+  var norm = __vf_forwardSlashes(__vf_resolve(resolved));
+  var root = __vf_forwardSlashes(__vf_projectRoot);
   // A project at a filesystem root ("/", "C:/") already ends in a separator.
-  var prefix = root.endsWith("/") ? root : root + "/";
-  if (!norm.startsWith(prefix) && norm !== root) {
+  var prefix = __vf_endsWith(root, "/") ? root : root + "/";
+  if (!__vf_startsWith(norm, prefix) && norm !== root) {
     throw new Error("CJS loader blocked path outside project: " + JSON.stringify(id));
   }
 }
-// Bare ids resolve from the requiring module's directory, as Node does, so a
-// package's own non-hoisted node_modules wins over the project root's copy.
-function __vf_parentRequire(parentDir) {
-  var cached = __vf_parentRequires[parentDir];
-  if (cached) return cached;
-  cached = __vf_createRequire(__vf_resolve(parentDir, "__vf_parent.js"));
-  __vf_parentRequires[parentDir] = cached;
-  return cached;
-}
 function __vf_packageName(id) {
-  var parts = id.split("/");
-  return id.startsWith("@") ? parts.slice(0, 2).join("/") : parts[0];
+  var slash = __vf_indexOf(id, "/");
+  if (slash !== -1 && __vf_startsWith(id, "@")) slash = __vf_indexOf(id, "/", slash + 1);
+  return slash === -1 ? id : __vf_slice(id, 0, slash);
 }
-function __vf_packageInstalled(name, parentDir) {
-  for (var dir = __vf_resolve(parentDir); ; dir = __vf_dirname(dir)) {
-    try { Deno.statSync(__vf_resolve(dir, "node_modules", name)); return true; } catch (_) { /* expected: not installed at this level */ }
-    if (__vf_dirname(dir) === dir) return false;
-  }
-}
-// Node's package "exports" resolution for require(), used where the runtime's
-// resolver cannot be: a target is undefined when nothing matched, null when the
+// Node's package "exports" resolution for require(): a target is undefined when nothing matched, null when the
 // package blocks the subpath. Conditions are tried in the object's key order.
-var __vf_requireConditions = { require: true, node: true, "node-addons": true, default: true };
+var __vf_requireConditions = __vf_tableOf(["require", "node", "node-addons", "default"]);
 function __vf_exportsTarget(target, star) {
   if (typeof target === "string") {
-    if (!target.startsWith("./")) return null;
-    var value = star === void 0 ? target : target.split("*").join(star);
-    var segments = value.slice(2).split("/");
-    for (var i = 0; i < segments.length; i++) {
-      var segment = segments[i];
-      if (segment === "" || segment === "." || segment === ".." || segment === "node_modules" || segment.indexOf("\\\\") !== -1) return null;
+    if (!__vf_startsWith(target, "./")) return null;
+    var value = star === void 0 ? target : __vf_replaceAll(target, "*", star);
+    if (__vf_indexOf(value, "\\\\") !== -1) return null;
+    for (var from = 2; ; ) {
+      var slash = __vf_indexOf(value, "/", from);
+      var segment = __vf_slice(value, from, slash === -1 ? value.length : slash);
+      if (segment === "" || segment === "." || segment === ".." || segment === "node_modules") return null;
+      if (slash === -1) break;
+      from = slash + 1;
     }
     return value;
   }
@@ -269,10 +343,11 @@ function __vf_exportsTarget(target, star) {
 }
 function __vf_exportsSubpath(exportsField, subpath) {
   var keys = exportsField && typeof exportsField === "object" && !Array.isArray(exportsField) ? Object.keys(exportsField) : [];
-  var dotKeys = keys.filter(function (key) { return key.startsWith("."); }).length;
+  var dotKeys = 0;
+  for (var d = 0; d < keys.length; d++) if (__vf_startsWith(keys[d], ".")) dotKeys++;
   if (dotKeys !== 0 && dotKeys !== keys.length) return null;
   var map = dotKeys === 0 ? { ".": exportsField } : exportsField;
-  if (Object.prototype.hasOwnProperty.call(map, subpath) && subpath.indexOf("*") === -1) {
+  if (__vf_hasOwn(map, subpath) && __vf_indexOf(subpath, "*") === -1) {
     return __vf_exportsTarget(map[subpath], void 0);
   }
   var bestKey = null;
@@ -281,15 +356,15 @@ function __vf_exportsSubpath(exportsField, subpath) {
   var patterns = Object.keys(map);
   for (var i = 0; i < patterns.length; i++) {
     var key = patterns[i];
-    var starAt = key.indexOf("*");
-    if (starAt === -1 || key.indexOf("*", starAt + 1) !== -1) continue;
-    var prefix = key.slice(0, starAt);
-    var suffix = key.slice(starAt + 1);
-    if (subpath.length < key.length || !subpath.startsWith(prefix) || !subpath.endsWith(suffix)) continue;
+    var starAt = __vf_indexOf(key, "*");
+    if (starAt === -1 || __vf_indexOf(key, "*", starAt + 1) !== -1) continue;
+    var prefix = __vf_slice(key, 0, starAt);
+    var suffix = __vf_slice(key, starAt + 1);
+    if (subpath.length < key.length || !__vf_startsWith(subpath, prefix) || !__vf_endsWith(subpath, suffix)) continue;
     if (prefix.length > bestPrefix || (prefix.length === bestPrefix && key.length > bestKey.length)) {
       bestKey = key;
       bestPrefix = prefix.length;
-      bestStar = subpath.slice(prefix.length, subpath.length - suffix.length);
+      bestStar = __vf_slice(subpath, prefix.length, subpath.length - suffix.length);
     }
   }
   return bestKey === null ? void 0 : __vf_exportsTarget(map[bestKey], bestStar);
@@ -305,14 +380,16 @@ function __vf_resolveInPackage(id, dir, packageDir) {
     try {
       exportsField = JSON.parse(__vf_readText(manifest, name)).exports;
     } catch (_) {
-      throw new Error("invalid package.json for " + JSON.stringify(name));
+      var invalid = new Error("npm package " + JSON.stringify(name) + " could not be resolved (ERR_INVALID_PACKAGE_CONFIG)");
+      invalid.code = "ERR_INVALID_PACKAGE_CONFIG";
+      throw invalid;
     }
   }
   if (exportsField === void 0 || exportsField === null) {
     // A relative id keeps host paths out of any error it raises.
     return __vf_resolveLocal("./node_modules/" + id, dir);
   }
-  var subpath = "." + id.slice(name.length);
+  var subpath = "." + __vf_slice(id, name.length);
   var target = __vf_exportsSubpath(exportsField, subpath);
   if (typeof target !== "string") {
     var blocked = new Error("npm package " + JSON.stringify(name) + " does not export " + JSON.stringify(subpath));
@@ -328,49 +405,39 @@ function __vf_resolveInPackage(id, dir, packageDir) {
   }
   return exported;
 }
-// A package named like a prefix-only built-in (test, sqlite, sea) is looked up
-// in node_modules directly: the runtime's resolver may claim the bare name.
-function __vf_resolvePrefixOnlyName(id, parentDir) {
-  for (var dir = __vf_resolve(parentDir); ; dir = __vf_dirname(dir)) {
-    var packageDir = __vf_resolve(dir, "node_modules", __vf_packageName(id));
-    var exists = false;
-    try { Deno.statSync(packageDir); exists = true; } catch (_) { /* expected: not installed at this level */ }
-    if (exists) return __vf_resolveInPackage(id, dir, packageDir);
-    if (__vf_dirname(dir) === dir) break;
-  }
-  var missing = new Error("npm package " + JSON.stringify(__vf_packageName(id)) + " is not installed in this runtime's node_modules");
-  missing.code = "MODULE_NOT_FOUND";
-  throw missing;
-}
+// Bare ids resolve from the requiring module's directory, as Node does, so a
+// package's own non-hoisted node_modules wins over the project root's copy.
+// The loader walks node_modules itself instead of asking the runtime's
+// resolver, which route code could change through built-in prototypes and
+// which may claim names of prefix-only built-ins (test, sqlite, sea).
 function __vf_resolveBare(id, parentDir) {
-  if (id.startsWith("node:")) {
+  if (__vf_startsWith(id, "node:")) {
     var unknown = new Error("Cannot find module " + JSON.stringify(id));
     unknown.code = "MODULE_NOT_FOUND";
     throw unknown;
   }
-  if (__vf_prefixOnlyBuiltins[__vf_packageName(id)] === true) return __vf_resolvePrefixOnlyName(id, parentDir);
-  try {
-    return __vf_parentRequire(parentDir).resolve(id);
-  } catch (error) {
-    // The resolver's message carries host paths in its require stack. Name
-    // only what the route asked for, and say "not installed" only when no
-    // node_modules on the lookup path has the package at all.
-    var name = __vf_packageName(id);
-    // Other resolver errors (an invalid package.json, a blocked subpath) keep
-    // their code but not their message, which names host paths.
-    if (!error || error.code !== "MODULE_NOT_FOUND") {
-      var failed = new Error("npm package " + JSON.stringify(name) + " could not be resolved" + (error && error.code ? " (" + error.code + ")" : ""));
-      if (error && error.code) failed.code = error.code;
-      throw failed;
+  var name = __vf_packageName(id);
+  for (var dir = __vf_resolve(parentDir); ; dir = __vf_dirname(dir)) {
+    var packageDir = __vf_resolve(dir, "node_modules", name);
+    var exists = false;
+    try { Deno.statSync(packageDir); exists = true; } catch (_) { /* expected: not installed at this level */ }
+    if (exists) {
+      try {
+        return __vf_resolveInPackage(id, dir, packageDir);
+      } catch (error) {
+        if (!error || error.code !== "MODULE_NOT_FOUND") throw error;
+        // Keep the code: packages probe optional dependencies with
+        // \`error.code === "MODULE_NOT_FOUND"\`.
+        var unresolved = new Error("npm package " + JSON.stringify(name) + " is installed but " + JSON.stringify(id) + " could not be resolved");
+        unresolved.code = "MODULE_NOT_FOUND";
+        throw unresolved;
+      }
     }
-    // Keep the code: packages probe optional dependencies with
-    // \`error.code === "MODULE_NOT_FOUND"\`.
-    var sanitized = new Error(__vf_packageInstalled(name, parentDir)
-      ? "npm package " + JSON.stringify(name) + " is installed but " + JSON.stringify(id) + " could not be resolved"
-      : "npm package " + JSON.stringify(name) + " is not installed in this runtime's node_modules");
-    sanitized.code = "MODULE_NOT_FOUND";
-    throw sanitized;
+    if (__vf_dirname(dir) === dir) break;
   }
+  var missing = new Error("npm package " + JSON.stringify(name) + " is not installed in this runtime's node_modules");
+  missing.code = "MODULE_NOT_FOUND";
+  throw missing;
 }
 // Relative and absolute ids resolve against the requiring module's directory,
 // probing the extensions Node probes. A missing module is reported by the id
@@ -428,8 +495,8 @@ function __vf_resolveLocal(id, parentDir) {
 }
 function __vf_isBuiltin(id) {
   // Only real built-ins are reserved under node:, as in Node.
-  if (id.startsWith("node:")) {
-    var bare = id.slice(5);
+  if (__vf_startsWith(id, "node:")) {
+    var bare = __vf_slice(id, 5);
     return __vf_builtinSet[bare] === true || __vf_prefixOnlyBuiltins[bare] === true;
   }
   // Only the runtime's own built-in ids: "fs/promises" is a built-in, while
@@ -440,12 +507,17 @@ function __vf_isBuiltin(id) {
 // root so host directories above it are never listed. The directory is
 // canonicalized first, so the walk meets the canonical root even when the
 // project was opened through a symlink.
+function __vf_isNodeModulesDir(dir) {
+  if (!__vf_endsWith(dir, "node_modules")) return false;
+  var before = dir[dir.length - 13];
+  return dir.length === 12 || before === "/" || before === "\\\\";
+}
 function __vf_nodeModulePaths(dir) {
   var paths = [];
   var start = __vf_canonicalize(dir);
   try { __vf_assertContained(start, dir); } catch (_) { return paths; }
   for (var current = start; ; current = __vf_dirname(current)) {
-    if (!/(^|[\\\\/])node_modules$/.test(current)) paths.push(__vf_resolve(current, "node_modules"));
+    if (!__vf_isNodeModulesDir(current)) __vf_append(paths, __vf_resolve(current, "node_modules"));
     if (current === __vf_projectRoot || __vf_dirname(current) === current) break;
   }
   return paths;
@@ -489,7 +561,7 @@ function __vf_resolveWithOptions(id, parentDir, options) {
 // import("./x.mjs") against this handler, not its file. Literal relative and
 // absolute dynamic imports in code (not in strings, comments, templates or
 // regex literals) are routed to a module-relative loader instead.
-var __vf_regexAfterWord = { "return": 1, "typeof": 1, "instanceof": 1, "in": 1, "of": 1, "new": 1, "delete": 1, "void": 1, "throw": 1, "case": 1, "do": 1, "else": 1, "yield": 1, "await": 1 };
+var __vf_regexAfterWord = __vf_tableOf(["return", "typeof", "instanceof", "in", "of", "new", "delete", "void", "throw", "case", "do", "else", "yield", "await"]);
 // Only "import(" and the specifier are replaced, so an options argument and
 // the closing parenthesis stay as written and reach the helper.
 function __vf_skipQuoted(code, i, quote) {
@@ -515,27 +587,64 @@ function __vf_skipTrivia(code, i) {
     var c = code[i];
     if (c === " " || c === "\\t" || c === "\\n" || c === "\\r") { i++; continue; }
     if (c === "/" && code[i + 1] === "/") {
-      var lineEnd = code.indexOf("\\n", i);
+      var lineEnd = __vf_indexOf(code, "\\n", i);
       i = lineEnd === -1 ? code.length : lineEnd;
       continue;
     }
     if (c === "/" && code[i + 1] === "*") {
-      var blockEnd = code.indexOf("*/", i + 2);
+      var blockEnd = __vf_indexOf(code, "*/", i + 2);
       i = blockEnd === -1 ? code.length : blockEnd + 2;
       continue;
     }
     return i;
   }
 }
-var __vf_simpleEscapes = { b: "\\b", f: "\\f", n: "\\n", r: "\\r", t: "\\t", v: "\\v", "0": "\\0" };
-// The value of a string literal's body, with its escapes decoded.
+var __vf_simpleEscapes = Object.create(null);
+__vf_simpleEscapes.b = "\\b";
+__vf_simpleEscapes.f = "\\f";
+__vf_simpleEscapes.n = "\\n";
+__vf_simpleEscapes.r = "\\r";
+__vf_simpleEscapes.t = "\\t";
+__vf_simpleEscapes.v = "\\v";
+__vf_simpleEscapes["0"] = "\\0";
+// The end of a run of at most max hex digits starting at start.
+function __vf_hexEnd(text, start, max) {
+  var end = start;
+  while (end < text.length && end - start < max && __vf_isHexCode(__vf_charCodeAt(text, end))) end++;
+  return end;
+}
+// The value of a string literal's body, with its escapes decoded. A malformed
+// escape keeps its character, as the specifier check only needs the prefix.
 function __vf_decodeStringBody(body) {
-  return body.replace(/\\\\(?:u\\{([0-9a-fA-F]+)\\}|u([0-9a-fA-F]{4})|x([0-9a-fA-F]{2})|(\\r\\n|[\\s\\S]))/g, function (_match, codePoint, unit, byte, other) {
-    var hex = codePoint || unit || byte;
-    if (hex) return String.fromCodePoint(parseInt(hex, 16));
-    if (other === "\\n" || other === "\\r" || other === "\\r\\n" || other === " " || other === " ") return "";
-    return __vf_simpleEscapes[other] !== void 0 ? __vf_simpleEscapes[other] : other;
-  });
+  var out = "";
+  for (var i = 0; i < body.length; i++) {
+    var c = body[i];
+    if (c !== "\\\\") { out += c; continue; }
+    if (++i >= body.length) { out += c; break; }
+    var next = body[i];
+    var end;
+    if (next === "u" && body[i + 1] === "{") {
+      end = __vf_hexEnd(body, i + 2, body.length);
+      if (end > i + 2 && body[end] === "}") {
+        out += String.fromCodePoint(parseInt(__vf_slice(body, i + 2, end), 16));
+        i = end;
+        continue;
+      }
+    } else if (next === "u" || next === "x") {
+      var digits = next === "u" ? 4 : 2;
+      end = __vf_hexEnd(body, i + 1, digits);
+      if (end === i + 1 + digits) {
+        out += String.fromCodePoint(parseInt(__vf_slice(body, i + 1, end), 16));
+        i = end - 1;
+        continue;
+      }
+    }
+    // A line continuation adds nothing to the value.
+    if (next === "\\r" && body[i + 1] === "\\n") { i++; continue; }
+    if (next === "\\n" || next === "\\r" || next === "\\u2028" || next === "\\u2029") continue;
+    out += __vf_simpleEscapes[next] !== void 0 ? __vf_simpleEscapes[next] : next;
+  }
+  return out;
 }
 // At an "import" token: the end of "import ( <string>" when the string is a
 // relative or absolute path, with comments allowed between the tokens, or null.
@@ -546,12 +655,12 @@ function __vf_matchRelativeImport(code, afterWord) {
   var quote = code[quoteAt];
   if (quote !== "'" && quote !== '"') return null;
   var end = __vf_skipQuoted(code, quoteAt, quote);
-  var spec = __vf_decodeStringBody(code.slice(quoteAt + 1, end - 1));
-  if (!/^(?:\\.{1,2}\\/|\\/)/.test(spec)) return null;
+  var spec = __vf_decodeStringBody(__vf_slice(code, quoteAt + 1, end - 1));
+  if (!__vf_startsWith(spec, "./") && !__vf_startsWith(spec, "../") && !__vf_startsWith(spec, "/")) return null;
   return { end: end, spec: spec };
 }
 function __vf_rewriteCjsDynamicImports(code, helperName) {
-  if (code.indexOf("import") === -1) return code;
+  if (__vf_indexOf(code, "import") === -1) return code;
   var out = "";
   var copied = 0;
   // "" or a punctuator: the last significant token; "word" and "value" mean an
@@ -565,24 +674,24 @@ function __vf_rewriteCjsDynamicImports(code, helperName) {
     var c = code[i];
     if (c === " " || c === "\\t" || c === "\\n" || c === "\\r") { i++; continue; }
     if (c === "/" && code[i + 1] === "/") {
-      var lineEnd = code.indexOf("\\n", i);
+      var lineEnd = __vf_indexOf(code, "\\n", i);
       i = lineEnd === -1 ? code.length : lineEnd;
       continue;
     }
     if (c === "/" && code[i + 1] === "*") {
-      var blockEnd = code.indexOf("*/", i + 2);
+      var blockEnd = __vf_indexOf(code, "*/", i + 2);
       i = blockEnd === -1 ? code.length : blockEnd + 2;
       continue;
     }
     if (c === "'" || c === '"') { i = __vf_skipQuoted(code, i, c); previous = "value"; continue; }
     if (c === "\`" || (c === "}" && stack[stack.length - 1] === "\${")) {
       // A template, or its continuation after a substitution.
-      if (c === "}") stack.pop();
+      if (c === "}") __vf_removeLast(stack);
       var substitution = false;
       for (i++; i < code.length; i++) {
         if (code[i] === "\\\\") { i++; continue; }
         if (code[i] === "\`") { i++; break; }
-        if (code[i] === "$" && code[i + 1] === "{") { stack.push("\${"); i += 2; substitution = true; break; }
+        if (code[i] === "$" && code[i + 1] === "{") { __vf_append(stack, "\${"); i += 2; substitution = true; break; }
       }
       previous = substitution ? "(" : "value";
       continue;
@@ -597,21 +706,21 @@ function __vf_rewriteCjsDynamicImports(code, helperName) {
       }
       continue;
     }
-    if (/[A-Za-z0-9_$]/.test(c) || c.charCodeAt(0) > 127) {
+    if (__vf_isWordCode(__vf_charCodeAt(code, i))) {
       var start = i;
-      while (i < code.length && (/[A-Za-z0-9_$]/.test(code[i]) || code.charCodeAt(i) > 127)) i++;
-      var word = code.slice(start, i);
+      while (i < code.length && __vf_isWordCode(__vf_charCodeAt(code, i))) i++;
+      var word = __vf_slice(code, start, i);
       // Not a property (obj.import) or a private name (this.#import).
       if (word === "import" && previous !== "." && previous !== "#") {
         var call = __vf_matchRelativeImport(code, i);
         if (call) {
-          out += code.slice(copied, start) + helperName + "(" + JSON.stringify(call.spec);
+          out += __vf_slice(code, copied, start) + helperName + "(" + JSON.stringify(call.spec);
           copied = i = call.end;
           previous = "value";
           continue;
         }
       }
-      previous = __vf_regexAfterWord[word] === 1 ? "(" : "word";
+      previous = __vf_regexAfterWord[word] === true ? "(" : "word";
       controlWord = word === "if" || word === "while" || word === "for" || word === "with";
       continue;
     }
@@ -626,31 +735,30 @@ function __vf_rewriteCjsDynamicImports(code, helperName) {
       i += 2;
       continue;
     }
-    if (c === "(") parens.push(controlWord);
+    if (c === "(") __vf_append(parens, controlWord);
     controlWord = false;
-    if (c === "{") stack.push("{");
-    else if (c === "}") stack.pop();
-    previous = c === ")" && parens.pop() === true ? "(" : c;
+    if (c === "{") __vf_append(stack, "{");
+    else if (c === "}") __vf_removeLast(stack);
+    previous = c === ")" && __vf_removeLast(parens) === true ? "(" : c;
     i++;
   }
-  return copied === 0 ? code : out + code.slice(copied);
+  return copied === 0 ? code : out + __vf_slice(code, copied);
 }
 function __vf_importFrom(spec, parentDir, options) {
   return (async function () {
     // A query or hash belongs to the module URL, not to the file path.
-    var suffixAt = spec.search(/[?#]/);
-    var path = suffixAt === -1 ? spec : spec.slice(0, suffixAt);
-    var target = __vf_resolve(parentDir, path);
-    __vf_assertContained(__vf_canonicalize(target), spec);
-    var toUrl = __vf_builtinRequire("node:url").pathToFileURL;
-    var url = toUrl(target).href + (suffixAt === -1 ? "" : spec.slice(suffixAt));
+    var suffixAt = __vf_suffixIndex(spec);
+    var path = suffixAt === -1 ? spec : __vf_slice(spec, 0, suffixAt);
+    var target = __vf_canonicalize(__vf_resolve(parentDir, path));
+    __vf_assertContained(target, spec);
+    var url = __vf_fileUrl(target) + (suffixAt === -1 ? "" : __vf_slice(spec, suffixAt));
     try {
       return options === void 0 ? await import(url) : await import(url, options);
     } catch (error) {
       // A load failure for this file names its host path; report the
       // specifier the package wrote instead.
       var message = error && typeof error.message === "string" ? error.message : "";
-      if (message.indexOf(__vf_projectRoot) === -1 && message.indexOf(toUrl(__vf_projectRoot).href) === -1) throw error;
+      if (__vf_indexOf(message, __vf_projectRoot) === -1 && __vf_indexOf(message, __vf_projectRootHref) === -1) throw error;
       var failed = new Error("cannot import " + JSON.stringify(spec) + " from a CommonJS module" + (error && error.code ? " (" + error.code + ")" : ""));
       if (error && error.code) failed.code = error.code;
       throw failed;
@@ -668,7 +776,7 @@ function __vf_readText(path, id) {
     if (error && error.code) failed.code = error.code;
     throw failed;
   }
-  return text.charCodeAt(0) === 0xFEFF ? text.slice(1) : text;
+  return __vf_charCodeAt(text, 0) === 0xFEFF ? __vf_slice(text, 1) : text;
 }
 // As in Node, every required module records the module that first required it
 // as module.parent, and each requiring module lists it once in module.children.
@@ -689,10 +797,10 @@ function __vf_loadCjs(id, parentDir, parentMod) {
   } else {
     resolved = __vf_resolveBare(id, parentDir);
   }
-  if (resolved.endsWith(".node")) {
+  if (__vf_endsWith(resolved, ".node")) {
     throw new Error("native addon " + JSON.stringify(id) + " cannot be loaded: native addons are not supported in this runtime");
   }
-  if (resolved.endsWith(".mjs")) {
+  if (__vf_endsWith(resolved, ".mjs")) {
     throw new Error("ES module file " + JSON.stringify(id) + " cannot be loaded with require: import the package by a CommonJS entry");
   }
   // VULN-FS-5: Canonicalize before asserting containment, so the candidate and
@@ -711,7 +819,7 @@ function __vf_loadCjs(id, parentDir, parentMod) {
     return __vf_cache[resolved].exports;
   }
   var code = __vf_readText(resolved, id);
-  if (resolved.endsWith(".json")) {
+  if (__vf_endsWith(resolved, ".json")) {
     var json = JSON.parse(code);
     var jsonMod = { exports: json, id: resolved, filename: resolved, loaded: true, children: [], parent: parentMod };
     __vf_cache[resolved] = jsonMod;
@@ -720,12 +828,12 @@ function __vf_loadCjs(id, parentDir, parentMod) {
   }
   // Node strips a leading hashbang from CommonJS sources; a Function body
   // cannot contain one. Commenting it out keeps line numbers intact.
-  if (code.startsWith("#!")) code = "//" + code.slice(2);
+  if (__vf_startsWith(code, "#!")) code = "//" + __vf_slice(code, 2);
   var dir = __vf_dirname(resolved);
   // The helper's name is one the package's source never mentions, so no
   // binding of the package can shadow it at a rewritten import.
   var importHelper = "__vf_cjsImport";
-  while (code.indexOf(importHelper) !== -1) importHelper += "_";
+  while (__vf_indexOf(code, importHelper) !== -1) importHelper += "_";
   code = __vf_rewriteCjsDynamicImports(code, importHelper);
   var cjsImport = function (spec, options) { return __vf_importFrom(spec, dir, options); };
   var mod;
@@ -747,7 +855,7 @@ function __vf_loadCjs(id, parentDir, parentMod) {
     // colliding with a parameter.
     var outer = new Function("global", "globalThis", "Worker", importHelper, "return function (exports, require, module, __filename, __dirname) {\\n" + code + "\\n};");
     var fn = outer(globalThis, globalThis, void 0, cjsImport);
-    fn.call(mod.exports, mod.exports, childReq, mod, resolved, dir);
+    __vf_invoke(fn, mod.exports, mod.exports, childReq, mod, resolved, dir);
   } catch (error) {
     delete __vf_cache[resolved];
     if (parentMod) {
@@ -808,13 +916,13 @@ __vf_validateImportOptions = function (options, id) {
   if (type !== "json") {
     throw new TypeError("Import attribute type " + JSON.stringify(type) + " is not supported");
   }
-  if (id !== void 0 && (__vf_isBuiltin(id) || !__vf_resolveId(id, __VF_PROJECT_DIR__).endsWith(".json"))) {
+  if (id !== void 0 && (__vf_isBuiltin(id) || !__vf_endsWith(__vf_resolveId(id, __VF_PROJECT_DIR__), ".json"))) {
     throw new TypeError("Module " + JSON.stringify(id) + " is not a JSON module, but was imported with type json");
   }
 };
 __vf_namespace = function (id) {
   var key = __vf_isBuiltin(id)
-    ? "builtin:" + id.replace(/^node:/, "")
+    ? "builtin:" + (__vf_startsWith(id, "node:") ? __vf_slice(id, 5) : id)
     : __vf_canonicalize(__vf_resolveId(id, __VF_PROJECT_DIR__));
   if (key in namespaces) return namespaces[key];
   var m = routeRequire(id);
