@@ -1,6 +1,7 @@
 import { getRequestTransportLifetime } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
 import { completeOnResponseBodyConsumption } from "#veryfront/platform/compat/http/response-lifecycle.ts";
 import { continueProxyShutdownPromise, delayProxyShutdown } from "./shutdown-intrinsics.ts";
+import { normalizeProxyRoutePolicyPathname } from "./legacy-managed-agent-route-denial.ts";
 import { isControlPlaneRunStreamPost } from "./retry.ts";
 import { MAX_PROXY_TIMER_DELAY_MS } from "./timing.ts";
 
@@ -247,11 +248,25 @@ function cancelResponseBody(response: Response): void {
   }
 }
 
+const AGENT_STREAM_PATH = /^\/api\/agents\/[^/]+$/u;
+
+/**
+ * Framework POST routes that answer with an SSE stream although their built-in
+ * clients (`useChat`, `useAgent`) send no `Accept: text/event-stream`: the
+ * AG-UI endpoint and the per-agent stream.
+ */
+function isKnownAgentStreamPost(request: Request, pathname: string): boolean {
+  if (request.method.toUpperCase() !== "POST") return false;
+  const normalized = normalizeProxyRoutePolicyPathname(pathname);
+  return normalized === "/api/ag-ui" || AGENT_STREAM_PATH.test(normalized);
+}
+
 /** WebSocket upgrades and SSE streams hold their connection open indefinitely. */
 export function isLongLivedProxyRequest(request: Request, pathname: string): boolean {
   if (request.headers.get("upgrade")?.toLowerCase() === "websocket") return true;
   if (request.headers.get("accept")?.toLowerCase().includes("text/event-stream")) return true;
-  return isControlPlaneRunStreamPost(request, pathname);
+  return isControlPlaneRunStreamPost(request, pathname) ||
+    isKnownAgentStreamPost(request, pathname);
 }
 
 /** Ask the HTTP/1.1 server to close the connection after this response. */
