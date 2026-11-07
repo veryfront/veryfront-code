@@ -440,14 +440,14 @@ describe("compiled-binary route bundling of CommonJS dependencies", () => {
         "mock/pg.js": 'module.exports = "mock";',
         "node_modules/pg/package.json": JSON.stringify({ name: "pg", main: "index.js" }),
         "node_modules/pg/index.js": 'module.exports = "pg";',
-        "packages/ws/package.json": JSON.stringify({ name: "ws", main: "index.js" }),
-        "packages/ws/index.js": 'module.exports = require("pg");',
+        "packages/workspace/package.json": JSON.stringify({ name: "workspace", main: "index.js" }),
+        "packages/workspace/index.js": 'module.exports = require("pg");',
       });
       await mkdir(`${projectDir}/node_modules`, { recursive: true });
-      await symlink("../packages/ws", `${projectDir}/node_modules/ws`);
+      await symlink("../packages/workspace", `${projectDir}/node_modules/workspace`);
       const mod = await bundleAndImport(
         projectDir,
-        'import ws from "ws";\nimport pg from "pg";\nexport const picked = [ws, pg];\n',
+        'import workspace from "workspace";\nimport pg from "pg";\nexport const picked = [workspace, pg];\n',
       );
       // The route's own import still follows the project's paths.
       assertEquals(mod.picked, ["pg", "mock"]);
