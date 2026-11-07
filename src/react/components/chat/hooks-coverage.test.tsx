@@ -334,7 +334,7 @@ describe("veryfront/chat hook behavior", () => {
             model: "test-model",
           });
           // Declaring the stream lets a draining proxy refuse it up front.
-          assertEquals(accept, "text/event-stream, text/plain;q=0.9, */*;q=0.8");
+          assertEquals(accept, "text/plain, text/event-stream;q=0.9, */*;q=0.8");
         },
       );
     } finally {
@@ -372,7 +372,7 @@ describe("veryfront/chat hook behavior", () => {
             "each stream chunk is delivered separately to onChunk",
           );
           assertEquals(completions, 1);
-          assertEquals(accept, "text/event-stream, text/plain;q=0.9, */*;q=0.8");
+          assertEquals(accept, "text/plain, text/event-stream;q=0.9, */*;q=0.8");
           const stream = current();
           flushSync(() => stream.reset());
           assertEquals(current().data, "");

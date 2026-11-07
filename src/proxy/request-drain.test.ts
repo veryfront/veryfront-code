@@ -456,6 +456,12 @@ describe("proxy request drain", () => {
     assertEquals(admission.admits(runStream, "/api/control-plane/runs/run_1/stream"), false);
     assertEquals(admission.admits(eventSource, "/events"), false);
     assertEquals(admission.admits(webSocket, "/ws"), false);
+    // useCompletion/useStreaming prefer plain text but list SSE.
+    const textPreferred = new Request("http://proxy.test/api/completion", {
+      method: "POST",
+      headers: { accept: "text/plain, text/event-stream;q=0.9, */*;q=0.8" },
+    });
+    assertEquals(admission.admits(textPreferred, "/api/completion"), false);
     assertEquals(admission.admits(runStatus, "/api/control-plane/runs/run_1"), true);
 
     // useChat POSTs the AG-UI stream without Accept: text/event-stream.
