@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { mkdir, readdir, readFile, realpath, stat, symlink, writeFile } from "node:fs/promises";
+import { relative } from "node:path";
 import process from "node:process";
 import { pathToFileURL } from "node:url";
 import { withTempDir } from "#veryfront/testing/deno-compat.ts";
@@ -15,9 +16,9 @@ import {
   createImportExternalsPlugin,
   createNativeAddonPlugin,
   dependencyDirectories,
+  dependencyJsonLoad,
   PackageTypeLookup,
   prepareDependencyFile,
-  prepareDependencyJson,
   prependRuntimeRequire,
 } from "#veryfront/routing/api/module-loader/compiled-cjs-bundling.ts";
 import { dependencyTarget } from "#veryfront/routing/api/module-loader/loader.ts";
@@ -71,7 +72,7 @@ function dependencyFilePlugin(
         if (!isDependencyFile(args.path)) return undefined;
         const contents = await readFile(args.path, "utf8");
         if (args.path.endsWith(".json")) {
-          return { contents: prepareDependencyJson(contents), loader: "js" };
+          return dependencyJsonLoad(contents, args.with);
         }
         return {
           contents: await prepareDependencyFile({
@@ -531,6 +532,104 @@ describe("compiled-binary route bundling of CommonJS dependencies", () => {
       const strips = typeof (await import("node:module")).stripTypeScriptTypes === "function";
       assertEquals(result.typed, strips ? 2 : "ERR_UNKNOWN_FILE_EXTENSION");
       assertEquals((result.bom as { kind: string }).kind, "esm");
+    });
+  });
+
+  it("keeps Node's CommonJS scoping rules for dependency files", async () => {
+    await inProject(async (projectDir) => {
+      // A `paths` entry relative to the working directory.
+      const vendor = relative(process.cwd(), `${projectDir}/vendor`);
+      await writeFiles(projectDir, {
+        "package.json": JSON.stringify({ imports: { "#config": "./config.json" } }),
+        "config.json": '{"from":"project"}',
+        "vendor/node_modules/vended/index.js": "module.exports = 'vended';",
+        "node_modules/scopes/package.json": JSON.stringify({ name: "scopes", main: "index.js" }),
+        "node_modules/scopes/index.js": [
+          // A wrapper parameter the file replaces, here with a compound assignment.
+          'require &&= require("./swap")(require);',
+          "exports.swapped = require.swapped;",
+          'exports.custom = require("./mod");',
+          'exports.jsonData = require("esmod/data.json");',
+          'exports.self = require(["self", "ref"].join("-"));',
+          // A file with no package.json of its own: its scope ends at node_modules.
+          'try { require("loose/x.js"); } catch (error) { exports.loose = error.code; }',
+          `exports.vended = require.resolve("vended", { paths: [${JSON.stringify(vendor)}] });`,
+          'try { require.resolve("vended", { paths: "x" }); } catch (error) { exports.badPaths = error.code; }',
+          'try { require.resolve("vended", { paths: [7] }); } catch (error) { exports.badEntry = error.code; }',
+          "exports.lookups = [",
+          '  require.resolve.paths("fs"),',
+          '  require.resolve.paths("./a"),',
+          '  require.resolve.paths("x")[0],',
+          "];",
+        ].join("\n"),
+        "node_modules/scopes/swap.js": [
+          "module.exports = function (original) {",
+          "  var swapped = function (id) { return original(id); };",
+          "  swapped.resolve = original.resolve;",
+          "  swapped.swapped = true;",
+          "  return swapped;",
+          "};",
+        ].join("\n"),
+        // Node runs a file with an unknown extension as CommonJS, even in a
+        // `"type": "module"` scope.
+        "node_modules/scopes/mod/package.json": JSON.stringify({
+          type: "module",
+          main: "entry.foo",
+        }),
+        "node_modules/scopes/mod/entry.foo":
+          "module.exports = [require('path').basename(__filename), arguments.length];",
+        "node_modules/loose/x.js": 'module.exports = require("#config");',
+        "node_modules/self-ref/package.json": JSON.stringify({
+          name: "self-ref",
+          exports: { ".": "./outer.js" },
+        }),
+        "node_modules/self-ref/outer.js":
+          'exports.which = "outer";\nexports.self = require(["self", "ref"].join("-")).which;',
+        "node_modules/self-ref/node_modules/self-ref/package.json": JSON.stringify({
+          name: "self-ref",
+          main: "inner.js",
+        }),
+        "node_modules/self-ref/node_modules/self-ref/inner.js": 'exports.which = "inner";',
+        "node_modules/esmod/package.json": JSON.stringify({
+          name: "esmod",
+          type: "module",
+          main: "index.js",
+          imports: { "#not-built": "./dist/later.js" },
+        }),
+        "node_modules/esmod/index.js": [
+          'import data from "./data.json" with { type: "json" };',
+          "export { data };",
+          "export const req = typeof require;",
+          'export const missing = import.meta.resolve(["#not", "built"].join("-"));',
+        ].join("\n"),
+        "node_modules/esmod/data.json": '{"kind":"json"}',
+      });
+      const mod = await bundleAndImport(
+        projectDir,
+        'import scopes from "scopes";\nimport * as esmod from "esmod";\nexport const result = { scopes, esmod: { ...esmod } };\n',
+      );
+      const { scopes, esmod } = mod.result as Record<string, Record<string, unknown>>;
+      assertEquals(scopes!.swapped, true);
+      assertEquals(scopes!.custom, ["entry.foo", 5]);
+      assertEquals(scopes!.self, { which: "outer", self: "outer" });
+      assertEquals(scopes!.loose, "MODULE_NOT_FOUND");
+      assertEquals(scopes!.vended, `${projectDir}/vendor/node_modules/vended/index.js`);
+      assertEquals(scopes!.badPaths, "ERR_INVALID_ARG_VALUE");
+      assertEquals(scopes!.badEntry, "ERR_INVALID_ARG_TYPE");
+      assertEquals(scopes!.lookups, [
+        null,
+        [`${projectDir}/node_modules/scopes`],
+        `${projectDir}/node_modules/scopes/node_modules`,
+      ]);
+      // An ES module JSON import is its own module, apart from require()'s.
+      assertEquals(esmod!.data, { kind: "json" });
+      assertEquals(scopes!.jsonData, { kind: "json" });
+      assert(esmod!.data !== scopes!.jsonData);
+      assertEquals(esmod!.req, "undefined");
+      assertEquals(
+        esmod!.missing,
+        pathToFileURL(`${projectDir}/node_modules/esmod/dist/later.js`).href,
+      );
     });
   });
 

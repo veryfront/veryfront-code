@@ -63,6 +63,7 @@ export function toEsbuildPlugin(
                 namespace: args.namespace,
                 suffix: args.suffix,
                 pluginData: args.pluginData,
+                with: args.with,
               };
               const result = await callback(loadArgs);
               if (result == null) return result ?? null;

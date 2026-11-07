@@ -56,10 +56,10 @@ import {
   createNativeAddonPlugin,
   dependencyDirectories,
   dependencyFilePredicate,
+  dependencyJsonLoad,
   type IsFile,
   PackageTypeLookup,
   prepareDependencyFile,
-  prepareDependencyJson,
   prependRuntimeRequire,
   rewriteImportSpecifiers,
 } from "./compiled-cjs-bundling.ts";
@@ -2008,11 +2008,11 @@ function createProjectBoundaryPlugin(
             });
           }
           // A dependency's JSON is a CommonJS module, which the runtime module
-          // cache shares with a computed require() of the same file.
+          // cache shares with a computed require() of the same file, unless an
+          // import with `{ type: "json" }` loads it as an ES module JSON import.
           if (!executableModule && dependency) {
             return {
-              contents: prepareDependencyJson(source.contents),
-              loader: "js",
+              ...dependencyJsonLoad(source.contents, args.with),
               resolveDir: pathHelper.dirname(source.logicalPath),
             };
           }

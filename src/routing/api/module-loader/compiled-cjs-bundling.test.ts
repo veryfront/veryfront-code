@@ -4,6 +4,7 @@ import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { type PluginBuild, stop as stopBundler, transform } from "veryfront/extensions/bundler";
 import {
   builtinModuleName,
+  codeString,
   createCompiledBuiltinPlugin,
   createDependencyFilePredicate,
   createDependencyResolvePlugin,
@@ -53,6 +54,15 @@ function errorCode(fn: () => unknown): unknown {
 }
 
 describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
+  describe("codeString()", () => {
+    it("writes a string literal that cannot end a script or a line", () => {
+      const value = "</script><!--\u2028\u2029\"'\\";
+      const literal = codeString(value);
+      assert(!/[<>\u2028\u2029]/.test(literal), literal);
+      assertEquals(new Function(`return ${literal};`)(), value);
+    });
+  });
+
   describe("builtinModuleName()", () => {
     it("names built-ins with or without the node: prefix, including subpaths", () => {
       assertEquals(builtinModuleName("fs"), "fs");
@@ -526,8 +536,37 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
       ) {
         assertEquals(await prepareDependencyFile(input(contents, path!, type)), contents);
       }
-      assertEquals(await prepareDependencyFile(input(contents, "/d/a.js", "module")), contents);
-      assertEquals(await prepareDependencyFile(input(contents, "/d/a.mjs")), contents);
+      const esm = 'export { x } from "./other";';
+      assertEquals(await prepareDependencyFile(input(esm, "/d/a.js", "module")), esm);
+      assertEquals(await prepareDependencyFile(input(esm, "/d/a.mjs")), esm);
+    });
+
+    it("prepares a file with an extension Node has no loader for as CommonJS", async () => {
+      // Node's require() runs it as CommonJS even in a `"type": "module"` scope.
+      for (const type of [undefined, "module"]) {
+        const code = await prepareDependencyFile(
+          input(
+            "module.exports = [__filename, arguments.length];",
+            "/d/node_modules/p/entry.foo",
+            type,
+          ),
+        );
+        assert(code.includes('module.exports = ["/d/node_modules/p/entry.foo", '), code);
+        assert(code.includes("return arguments;"), code);
+      }
+    });
+
+    it("gives an ES module no require binding, as Node does", async () => {
+      for (const [path, type] of [["/d/a.mjs"], ["/d/a.js", "module"], ["/d/a.mts"]]) {
+        const code = await prepareDependencyFile(
+          input("export const kind = typeof require;", path!, type),
+        );
+        const kind = new Function(
+          "require",
+          code.replace("export const kind =", "return"),
+        )(() => "route");
+        assertEquals(kind, "undefined", code);
+      }
     });
 
     it("turns dependency JSON into a CommonJS module and rejects bad JSON", () => {
@@ -682,6 +721,7 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
         "exports.id = module.id;",
         "exports.filename = module.filename;",
         "exports.path = module.path;",
+        "exports.paths = module.paths;",
         "exports.loadedDuring = module.loaded;",
         "exports.ownRequire = module.require === require;",
         "exports.cached = require.cache[__filename] === module;",
@@ -859,6 +899,7 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
       sep: "/",
       stripTypes: (source) => source.replace(/: number/g, ""),
       toFileUrl: (path) => "file://" + path,
+      cwd: () => "/app/node_modules/p",
     };
     const { require, bundled, requireFrom } = createRuntimeRequire(
       host,
@@ -890,6 +931,31 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
       assertEquals(require.resolve("/app/code.js"), "/app/code.js");
       assertEquals(require.resolve("/app/data"), "/app/data.json");
       assertEquals(require("/app/node_modules/p/dir"), { dir: true });
+    });
+
+    it("keeps Node's require.resolve paths API", () => {
+      const fromP = requireFrom("/app/node_modules/p");
+      // A relative entry resolves from the working directory.
+      assertEquals(
+        fromP.resolve("nested", { paths: ["."] }),
+        "/app/node_modules/p/node_modules/nested/index.js",
+      );
+      assertEquals(fromP.resolve("driver", { paths: ["/app"] }), "/app/node_modules/driver/cjs.js");
+      assertEquals(
+        errorCode(() => fromP.resolve("driver", { paths: "/app" })),
+        "ERR_INVALID_ARG_VALUE",
+      );
+      assertEquals(
+        errorCode(() => fromP.resolve("driver", { paths: [7] })),
+        "ERR_INVALID_ARG_TYPE",
+      );
+      assertEquals(fromP.resolve.paths("fs"), null);
+      assertEquals(fromP.resolve.paths("../x"), ["/app/node_modules/p"]);
+      assertEquals(fromP.resolve.paths("driver"), [
+        "/app/node_modules/p/node_modules",
+        "/app/node_modules",
+      ]);
+      assertEquals(errorCode(() => fromP.resolve.paths(7)), "ERR_INVALID_ARG_TYPE");
     });
 
     it("runs a dependency's JavaScript as CommonJS, once, with its own require", () => {
@@ -974,6 +1040,8 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
         id: "/app/node_modules/p/meta.js",
         filename: "/app/node_modules/p/meta.js",
         path: "/app/node_modules/p",
+        // Within the project only.
+        paths: ["/app/node_modules/p/node_modules", "/app/node_modules"],
         loadedDuring: false,
         ownRequire: true,
         cached: true,
@@ -1693,9 +1761,24 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
             "/d/node_modules/p/index.js",
           ),
         );
+        // The file assigns its own binding, never the route's.
         assert(assigned.includes('require = require("esm")(module);'), assigned);
         assert(assigned.includes("module.exports = require(name);"), assigned);
-        assert(!assigned.includes("__vf_require_from"), assigned);
+        assert(
+          assigned.includes('var require = (__vf_require_from("/d/node_modules/p"));'),
+          assigned,
+        );
+        for (const operator of ["||=", "&&=", "??=", "+="]) {
+          const compound = await prepareDependencyFile(
+            input(`require ${operator} wrap(require);`, "/d/node_modules/p/index.js"),
+          );
+          assert(compound.includes("var require = "), compound);
+        }
+        // A comparison is not an assignment.
+        const compared = await prepareDependencyFile(
+          input("module.exports = require == null;", "/d/node_modules/p/index.js"),
+        );
+        assert(!compared.includes("var require = "), compared);
         // A file that reads only `arguments`, or a CommonJS file with only
         // ES module syntax, is parsed too.
         const args = await prepareDependencyFile(

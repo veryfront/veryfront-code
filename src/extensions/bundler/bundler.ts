@@ -234,6 +234,8 @@ export interface OnLoadArgs {
   namespace: string;
   suffix?: string;
   pluginData?: unknown;
+  /** Import attributes of the import that loads the file. */
+  with?: Record<string, string>;
 }
 
 /** Result returned from an `onLoad` callback. */
