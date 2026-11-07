@@ -1397,6 +1397,37 @@ describe("executor runtime preparation", () => {
     }
   });
 
+  it("connects no granted remote tool source for a tools false agent", async () => {
+    let listCalls = 0;
+    const f = fixture({
+      config: {
+        tools: false,
+        mcpServers: [{ kind: "veryfront-studio", required: false }],
+      },
+      grant: { ...grant, remoteToolSourceIds: ["custom"] },
+      facades: {
+        remoteToolSources: new Map([[
+          "custom",
+          {
+            id: "custom",
+            listTools: () => {
+              listCalls++;
+              return Promise.reject(new Error("Synthetic listing failure"));
+            },
+            executeTool: () => Promise.reject(new Error("Unused")),
+          },
+        ]]),
+      },
+    });
+    try {
+      const result = await prepare(f.owner);
+      assert(result && typeof result === "object" && !Array.isArray(result) && result.ok === true);
+      assertEquals(listCalls, 0);
+    } finally {
+      await f.owner.close();
+    }
+  });
+
   it("cleans facades when optional Studio remote discovery fails", async () => {
     const f = fixture({
       config: {
@@ -1998,6 +2029,41 @@ describe("executor runtime preparation review regressions", () => {
       assertCleanCompletion(events);
       assertEquals(inheritedReads, 0);
       assertEquals(calls, 2);
+    } finally {
+      await f.owner.close();
+    }
+  });
+
+  it("keeps a closed selector's provider web fetch off the local host fallback", async () => {
+    let visible: Array<{ name?: string; type?: string }> = [];
+    const f = fixture({
+      config: { tools: false, providerTools: ["web_fetch"] },
+      grant: {
+        ...grant,
+        allowedToolNames: ["web_fetch"],
+        hostToolFacadeIds: ["local"],
+        models: new Map([[
+          modelId,
+          { maxOutputTokens: 200, providerToolNames: ["web_fetch"] },
+        ]]),
+      },
+      facades: {
+        hostTools: new Map([["local", { web_fetch: syntheticHostTool() }]]),
+        resolveModelRuntime: () => ({
+          ...model,
+          doStream(options) {
+            visible = ((options as ModelRuntimeCallOptions).tools ?? []).map((tool) => ({
+              name: tool.name,
+              type: tool.type,
+            }));
+            return finishStream();
+          },
+        }),
+      },
+    });
+    try {
+      await Array.fromAsync(await preparedStream(f));
+      assertEquals(visible.filter((tool) => tool.type === "function"), []);
     } finally {
       await f.owner.close();
     }

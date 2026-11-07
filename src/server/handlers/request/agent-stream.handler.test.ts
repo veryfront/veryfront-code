@@ -1558,7 +1558,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertEquals(injectedToolSchema, inputSchema);
   });
 
-  it("runs control-plane streams with request-scoped project agent config", async () => {
+  it("admits legacy knowledge selectors with canonical MCP tools and no injected tools", async () => {
     let capturedSystem: unknown;
     let capturedSkills: unknown;
     let capturedTools: unknown;
@@ -1585,12 +1585,12 @@ describe("server/handlers/request/agent-stream.handler", () => {
                 result: {
                   tools: [
                     {
-                      name: "search_knowledge",
+                      name: "veryfront__search_knowledge",
                       description: "Search project knowledge",
                       inputSchema: { type: "object", properties: {} },
                     },
                     {
-                      name: "get_file",
+                      name: "veryfront__get_file",
                       description: "Read a project file",
                       inputSchema: { type: "object", properties: {} },
                     },
@@ -1655,13 +1655,14 @@ describe("server/handlers/request/agent-stream.handler", () => {
 
       const body = createAgentStreamRequestBody({
         credentials: { authToken: "request-scoped-user-token" },
+        tools: [],
         agentConfig: {
           id: "assistant-1",
           name: "Project Assistant",
           description: "Uses project-scoped tools with skills disabled.",
           instructions: "Use project-scoped instructions.",
           skills: [],
-          tools: ["veryfront__search_knowledge", "veryfront__get_file"],
+          tools: ["search_knowledge", "get_file"],
         },
       });
       const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
@@ -3028,6 +3029,119 @@ describe("server/handlers/request/agent-stream.handler", () => {
     }
   });
 
+  it("terminates the Studio MCP session it negotiated once the run response ends", async () => {
+    const originalStudioMcpUrl = Deno.env.get("VERYFRONT_STUDIO_MCP_URL");
+    Deno.env.set("VERYFRONT_STUDIO_MCP_URL", TEST_PUBLIC_STUDIO_MCP_URL);
+    const live = new Set<string>();
+    installMockFetch(
+      ((url, init) => {
+        if (String(url) !== TEST_PUBLIC_STUDIO_MCP_URL) {
+          return Promise.resolve(new Response(null, { status: 503 }));
+        }
+        const request = observeFetchRequestInit(init);
+        const headers = new Headers(request.headers);
+        const sessionId = headers.get("Mcp-Session-Id");
+        if (request.method === "DELETE") {
+          live.delete(sessionId!);
+          return Promise.resolve(new Response(null, { status: 204 }));
+        }
+        const body = JSON.parse(String(request.body)) as { id?: string; method: string };
+        if (body.method === "initialize") {
+          live.add("studio-session");
+          return Promise.resolve(Response.json({
+            jsonrpc: "2.0",
+            id: body.id,
+            result: {
+              protocolVersion: "2025-11-25",
+              capabilities: {},
+              serverInfo: { name: "legacy-studio", version: "1" },
+            },
+          }, { headers: { "Mcp-Session-Id": "studio-session" } }));
+        }
+        if (body.method === "notifications/initialized") {
+          return Promise.resolve(new Response(null, { status: 202 }));
+        }
+        if (!sessionId) {
+          return Promise.resolve(new Response("initialize first", { status: 400 }));
+        }
+        return Promise.resolve(Response.json({
+          jsonrpc: "2.0",
+          id: body.id,
+          result: {
+            tools: [{ name: "studio_todo_write", description: "Write todos", inputSchema: {} }],
+          },
+        }));
+      }) as typeof fetch,
+    );
+    try {
+      const handler = createTestAgentStreamHandler({
+        ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
+        getAgent: (id) =>
+          id === "assistant-1"
+            ? createAgentWithConfig("assistant-1", {
+              tools: true,
+              mcpServers: [{ kind: "veryfront-studio" }],
+            })
+            : undefined,
+        getAllAgentIds: () => ["assistant-1"],
+        sessionManager: new AgentRunSessionManager(),
+        createRuntime: () => ({
+          stream: async (_messages, _context, callbacks) => {
+            callbacks?.onFinish?.({
+              text: "ok",
+              messages: [],
+              toolCalls: [],
+              status: "completed",
+              usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+            });
+            return new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.enqueue(new TextEncoder().encode("data: done\n\n"));
+                controller.close();
+              },
+            });
+          },
+        }),
+      });
+      const body = createAgentStreamRequestBody({
+        credentials: { authToken: "request-scoped-user-token" },
+        forwardedProps: {
+          clientId: "veryfront-studio",
+          veryfront: {
+            client: { id: "veryfront-studio", type: "web", platform: "browser" },
+          },
+        },
+      });
+      const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
+        requestId: "run_1",
+      });
+      const result = await handler.handle(
+        new Request("https://example.com/api/control-plane/runs/run_1/stream", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-veryfront-control-plane-jws": jws,
+          },
+          body,
+        }),
+        { ...createCtx(publicKeyPem), proxyToken: "run-scoped-token" },
+      );
+
+      assertExists(result.response);
+      assertEquals(result.response.status, 200);
+      assertEquals(live.size, 1);
+      await result.response.text();
+      for (let attempt = 0; attempt < 10 && live.size > 0; attempt++) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+      assertEquals(live.size, 0);
+    } finally {
+      restoreMockFetch();
+      if (originalStudioMcpUrl === undefined) Deno.env.delete("VERYFRONT_STUDIO_MCP_URL");
+      else Deno.env.set("VERYFRONT_STUDIO_MCP_URL", originalStudioMcpUrl);
+    }
+  });
+
   it("discovers policy-filtered Studio tools for an explicit broad selector", async () => {
     const originalStudioMcpUrl = Deno.env.get("VERYFRONT_STUDIO_MCP_URL");
     let capturedAllowedRemoteTools: string[] | undefined;
@@ -3129,13 +3243,18 @@ describe("server/handlers/request/agent-stream.handler", () => {
     installMockFetch((_url, init) => {
       requestCount += 1;
       const requestId = JSON.parse(String(observeFetchRequestInit(init).body)).id as string;
+      // Each server answers with its own tool. Session-key hashing is async, so
+      // the two discoveries may reach the transport in either order.
+      const toolName = requestId.startsWith("studio-first:")
+        ? "studio_todo_write"
+        : "studio_panel_control";
       if (requestCount === 1) {
         return new Promise<Response>((resolve) => {
-          resolveFirstRequest = () => resolve(toolResponse("studio_todo_write", requestId));
+          resolveFirstRequest = () => resolve(toolResponse(toolName, requestId));
         });
       }
       resolveFirstRequest?.();
-      return Promise.resolve(toolResponse("studio_panel_control", requestId));
+      return Promise.resolve(toolResponse(toolName, requestId));
     });
 
     try {
@@ -3824,6 +3943,112 @@ describe("server/handlers/request/agent-stream.handler", () => {
     }
   });
 
+  it("terminates the platform MCP session it negotiated once the run response ends", async () => {
+    const mcpMethods: string[] = [];
+    const live = new Set<string>();
+    try {
+      installMockFetch(
+        ((url, init) => {
+          if (!String(url).endsWith("/mcp")) {
+            return Promise.resolve(new Response(null, { status: 503 }));
+          }
+          const request = observeFetchRequestInit(init);
+          const headers = new Headers(request.headers);
+          const sessionId = headers.get("Mcp-Session-Id");
+          if (request.method === "DELETE") {
+            mcpMethods.push("DELETE");
+            live.delete(sessionId!);
+            return Promise.resolve(new Response(null, { status: 204 }));
+          }
+          const body = JSON.parse(String(request.body)) as { id?: string; method: string };
+          mcpMethods.push(body.method);
+          if (body.method === "initialize") {
+            live.add("platform-session");
+            return Promise.resolve(Response.json({
+              jsonrpc: "2.0",
+              id: body.id,
+              result: {
+                protocolVersion: "2025-11-25",
+                capabilities: {},
+                serverInfo: { name: "legacy-platform", version: "1" },
+              },
+            }, { headers: { "Mcp-Session-Id": "platform-session" } }));
+          }
+          if (body.method === "notifications/initialized") {
+            return Promise.resolve(new Response(null, { status: 202 }));
+          }
+          if (!sessionId) {
+            return Promise.resolve(new Response("initialize first", { status: 400 }));
+          }
+          return Promise.resolve(
+            Response.json({ jsonrpc: "2.0", id: body.id, result: { tools: [] } }),
+          );
+        }) as typeof fetch,
+      );
+      const handler = createTestAgentStreamHandler({
+        ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
+        getAgent: (id) =>
+          id === "assistant-1"
+            ? createAgentWithConfig("assistant-1", { tools: { get_file: true } })
+            : undefined,
+        getAllAgentIds: () => ["assistant-1"],
+        sessionManager: new AgentRunSessionManager(),
+        createRuntime: () => ({
+          stream: async (_messages, _context, callbacks) => {
+            callbacks?.onFinish?.({
+              text: "ok",
+              messages: [],
+              toolCalls: [],
+              status: "completed",
+              usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+            });
+            return new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.enqueue(new TextEncoder().encode("data: done\n\n"));
+                controller.close();
+              },
+            });
+          },
+        }),
+      });
+      const body = createAgentStreamRequestBody({
+        runId: "run-platform-session",
+        credentials: { authToken: "request-scoped-user-token" },
+      });
+      const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
+        audience: "support-agent-fork",
+        requestId: "run-platform-session",
+      });
+      const result = await handler.handle(
+        new Request("https://example.com/api/control-plane/runs/run-platform-session/stream", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-veryfront-control-plane-jws": jws,
+          },
+          body,
+        }),
+        {
+          ...createCtx(publicKeyPem),
+          proxyToken: "run-scoped-token",
+          projectSlug: "support-agent-fork",
+        },
+      );
+
+      assertExists(result.response);
+      assertEquals(result.response.status, 200);
+      assertEquals(live.size, 1);
+      await result.response.text();
+      for (let attempt = 0; attempt < 10 && live.size > 0; attempt++) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+      assertEquals(live.size, 0);
+      assertEquals(mcpMethods.at(-1), "DELETE");
+    } finally {
+      restoreMockFetch();
+    }
+  });
+
   for (
     const {
       canonical,
@@ -3877,7 +4102,11 @@ describe("server/handlers/request/agent-stream.handler", () => {
             };
           };
           if (request.method === "tools/call") {
-            assertEquals(request.params?._meta, undefined);
+            assertEquals(
+              request.params?._meta?.["io.modelcontextprotocol/protocolVersion"],
+              "2026-07-28",
+            );
+            assertEquals(request.params?._meta?.tool_call_admission, undefined);
             assertEquals(request.params?.name, "veryfront__list_uploads");
             capturedToolArguments = request.params?.arguments;
             return Promise.resolve(
@@ -3887,7 +4116,11 @@ describe("server/handlers/request/agent-stream.handler", () => {
               ),
             );
           }
-          assertEquals(request.params?._meta, undefined);
+          assertEquals(
+            request.params?._meta?.["io.modelcontextprotocol/protocolVersion"],
+            "2026-07-28",
+          );
+          assertEquals(request.params?._meta?.tool_call_admission, undefined);
           return Promise.resolve(
             new Response(
               JSON.stringify({

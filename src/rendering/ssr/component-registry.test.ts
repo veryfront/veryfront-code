@@ -43,6 +43,43 @@ async function createRegistryWithFailingComponent(
 
 describe("ComponentRegistry logic", () => {
   describe("component discovery", () => {
+    it("does not load declaration-only files as runtime components (#5461)", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.files.set(
+        "/project/components/widget.d.ts",
+        'export { value } from "../implementation/level0.ts";',
+      );
+      adapter.fs.files.set(
+        "/project/components/nested/other.d.ts",
+        'export { value } from "../../implementation/level0.ts";',
+      );
+      adapter.fs.files.set(
+        "/project/components/runtime.ts",
+        "export default function Runtime() { return null; }",
+      );
+      const loaded: string[] = [];
+      const registry = new ComponentRegistry(
+        { registerModule: () => Promise.resolve() } as unknown as VirtualModuleSystem,
+        3001,
+        adapter,
+        undefined,
+        undefined,
+        "declaration-project",
+        "branch:main",
+        (_source, filePath) => {
+          loaded.push(filePath);
+          const Component: React.ComponentType<Record<string, unknown>> = () => null;
+          return Promise.resolve(Component);
+        },
+      );
+      await registry.loadFromDirectory("/project/components", true);
+      await registry.prepareDependencySnapshot("off");
+      assertEquals(
+        loaded,
+        ["/project/components/runtime.ts"],
+        "Type declarations must not enter runtime component loading",
+      );
+    });
     it("registers only component files and resolves the project root", async () => {
       const adapter = createMockAdapter();
       adapter.fs.files.set(

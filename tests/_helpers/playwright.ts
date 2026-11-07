@@ -1,4 +1,10 @@
-import type { Browser, ConsoleMessage, Page, Request, Response } from "npm:playwright@1.61.1";
+import type {
+  Browser,
+  ConsoleMessage,
+  Page,
+  Request,
+  Response as PlaywrightResponse,
+} from "npm:playwright@1.61.1";
 import { fromFileUrl } from "#veryfront/compat/path/index.ts";
 export { findHydrationOrCspFailures } from "../../src/testing/browser-diagnostics.mjs";
 
@@ -260,7 +266,7 @@ export async function navigateBrowserPage(
   url: string,
   diagnostics: BrowserDiagnostics,
   serverLogs: string[],
-): Promise<Response | null> {
+): Promise<PlaywrightResponse | null> {
   const pending = new Set<Request>();
   const responses: { url: string; status: number }[] = [];
   const failed: { url: string; error: string | undefined }[] = [];
@@ -268,7 +274,7 @@ export async function navigateBrowserPage(
     if (pending.size < 100) pending.add(request);
   };
   const onFinished = (request: Request) => pending.delete(request);
-  const onResponse = (response: Response) => {
+  const onResponse = (response: PlaywrightResponse) => {
     if (responses.length < 100) {
       responses.push({ url: response.url().slice(0, 2048), status: response.status() });
     }

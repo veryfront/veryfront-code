@@ -167,23 +167,27 @@ export function createConnectedLocalPlatformTools(
               });
               credentials.set(childOwner, credential);
               const factory = hostedTerminalToolSourceFactory(childOwner, endpoint, createSource);
-              let source = createLivePlatformMcpSource(
-                factory({
-                  id: VERYFRONT_API_MCP_SOURCE_ID,
-                  endpoint,
-                  headers: () => {
-                    const current = childScope.runId === scope.runId
-                      ? currentAuthority?.()
-                      : undefined;
-                    return {
-                      Authorization: `Bearer ${credential()}`,
-                      ...(childScope.runId === scope.runId
-                        ? { "X-Veryfront-Run-Event-Token": current?.run_event_token ?? eventToken }
-                        : {}),
-                    };
-                  },
-                }, { id: VERYFRONT_API_MCP_SOURCE_ID, kind: "veryfront-api" }),
-              );
+              const platformSource = factory({
+                id: VERYFRONT_API_MCP_SOURCE_ID,
+                endpoint,
+                headers: () => {
+                  const current = childScope.runId === scope.runId
+                    ? currentAuthority?.()
+                    : undefined;
+                  return {
+                    Authorization: `Bearer ${credential()}`,
+                    ...(childScope.runId === scope.runId
+                      ? { "X-Veryfront-Run-Event-Token": current?.run_event_token ?? eventToken }
+                      : {}),
+                  };
+                },
+              }, { id: VERYFRONT_API_MCP_SOURCE_ID, kind: "veryfront-api" });
+              // The runtime receives this source as injected, so runtime cleanup
+              // never disposes it; revoking the owner terminates its sessions.
+              pushPrivateArray(ownerCleanup, async () => {
+                await platformSource.dispose?.();
+              });
+              let source = createLivePlatformMcpSource(platformSource);
               // The API issues this scope only for this child's sealed sandbox selection.
               let allowSandbox = false;
               try {
@@ -226,6 +230,7 @@ export function createConnectedLocalPlatformTools(
                 const mcp = source;
                 source = markTrustedPlatformSource({
                   id: mcp.id,
+                  ...(mcp.dispose ? { dispose: (context) => mcp.dispose!(context) } : {}),
                   listTools: async (context) => [
                     ...await mcp.listTools(context),
                     ...mapPrivateArray(entries(native), ([name, tool]) => ({

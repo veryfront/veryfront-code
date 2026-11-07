@@ -2,10 +2,16 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "veryfront/platform/path";
+import { _resetEnvironmentConfig } from "#veryfront/config/environment-config.ts";
+import { deleteEnv, setEnv } from "#veryfront/testing/deno-compat.ts";
 import { parseCliArgs } from "#cli/shared/args";
 import { buildUrl, parseOpenArgs } from "./command.ts";
 import { createSuccessEnvelope, setJsonMode } from "../../shared/json-output.ts";
-import { reportProjectNotFound, resolveOpenProjectSlug } from "./handler.ts";
+import {
+  reportProjectNotFound,
+  resolveOpenCloudDomain,
+  resolveOpenProjectSlug,
+} from "./handler.ts";
 
 function assertSuccess<T extends { success: boolean; data?: unknown }>(
   result: T,
@@ -133,6 +139,25 @@ describe("Open Command", () => {
       assertEquals(url, "https://my-app.staging.veryfront.com");
     });
 
+    it("builds every URL on the cloud domain it is given (#4210)", () => {
+      assertEquals(
+        buildUrl("my-app", { studio: false }, "veryfront.org"),
+        "https://veryfront.org/projects/my-app",
+      );
+      assertEquals(
+        buildUrl("my-app", { studio: true }, "veryfront.org"),
+        "https://veryfront.org/studio/my-app",
+      );
+      assertEquals(
+        buildUrl("my-app", { env: "staging", studio: false }, "veryfront.org"),
+        "https://veryfront.org/projects/my-app?panels=environments",
+      );
+      assertEquals(
+        buildUrl("my-app", { env: "staging", studio: false, site: true }, "veryfront.org"),
+        "https://my-app.staging.veryfront.org",
+      );
+    });
+
     it("keeps --site on the deployed site rather than a dashboard page", () => {
       const url = buildUrl("my-app", { studio: true, site: true });
       assertEquals(url, "https://my-app.production.veryfront.com");
@@ -178,6 +203,50 @@ describe("Open Command", () => {
       assertEquals(envelope.success, true);
       assertEquals(envelope.command, "open");
       assertEquals(envelope.data.url, "https://veryfront.com/projects/my-app");
+    });
+  });
+
+  describe("resolveOpenCloudDomain", () => {
+    it("opens veryfront.org for the staging API and veryfront.com otherwise (#4210)", async () => {
+      await withSavedEnv(async () => {
+        await withTempProject(async (projectDir) => {
+          assertEquals(await resolveOpenCloudDomain(projectDir), "veryfront.com");
+          await Deno.writeTextFile(
+            join(projectDir, "veryfront.json"),
+            JSON.stringify({ apiUrl: "https://api.veryfront.org" }),
+          );
+          assertEquals(await resolveOpenCloudDomain(projectDir), "veryfront.org");
+          // VERYFRONT_API_URL wins over veryfront.json, as it does for deploy.
+          setEnv("VERYFRONT_API_URL", "https://api.veryfront.com");
+          _resetEnvironmentConfig();
+          try {
+            assertEquals(await resolveOpenCloudDomain(projectDir), "veryfront.com");
+          } finally {
+            deleteEnv("VERYFRONT_API_URL");
+            _resetEnvironmentConfig();
+          }
+        });
+      });
+    });
+
+    it("does not execute veryfront.config.ts to find the domain", async () => {
+      await withSavedEnv(async () => {
+        await withTempProject(async (projectDir) => {
+          const marker = "__veryfrontOpenConfigExecuted";
+          await Deno.writeTextFile(
+            join(projectDir, "veryfront.config.ts"),
+            `(globalThis as Record<string, unknown>)[${
+              JSON.stringify(marker)
+            }] = true;\nexport default {};\n`,
+          );
+          try {
+            assertEquals(await resolveOpenCloudDomain(projectDir), "veryfront.com");
+            assertEquals((globalThis as Record<string, unknown>)[marker], undefined);
+          } finally {
+            delete (globalThis as Record<string, unknown>)[marker];
+          }
+        });
+      });
     });
   });
 

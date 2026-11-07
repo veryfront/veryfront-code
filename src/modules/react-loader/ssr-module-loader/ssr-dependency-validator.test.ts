@@ -16,8 +16,10 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { makeTempDir, mkdir, remove, writeTextFile } from "#veryfront/testing/deno-compat.ts";
 import {
   cachedCodeUsesResolvedDependencies,
+  importGraphNode,
   SSRDependencyValidator,
 } from "./ssr-dependency-validator.ts";
+import { MAX_TRANSFORM_DEPTH } from "./constants.ts";
 import { getCSSImportReferences, runWithCSSCollector } from "../css-import-collector.ts";
 
 describe("SSRDependencyValidator", () => {
@@ -752,6 +754,145 @@ describe("SSRDependencyValidator", () => {
       releaseSibling.resolve();
       await remove(tempDir, { recursive: true });
     }
+  });
+
+  for (
+    const [name, aImporterSource, expectCycle] of [
+      ["does not treat a hot edit that reverses an import as a cycle", "old a.ts", false],
+      ["reports a pending import loop between two transforms", "new a.ts", true],
+    ] as const
+  ) {
+    it(name, async () => {
+      // A transform of a.ts is still waiting on b.ts while another transform
+      // of b.ts imports a.ts. That is a cycle only if both see the same a.ts.
+      const projectDir = await makeTempDir({ prefix: "vf-ssr-graph-version-" });
+      const aPath = join(projectDir, "a.ts");
+      const bPath = join(projectDir, "b.ts");
+      const bTransformStarted = Promise.withResolvers<void>();
+      const releaseB = Promise.withResolvers<void>();
+      const validator = new SSRDependencyValidator(
+        async (filePath) => {
+          if (filePath === bPath) {
+            bTransformStarted.resolve();
+            await releaseB.promise;
+          }
+          return { tempPath: `${filePath}.mjs`, contentHash: "hash" };
+        },
+        () => Promise.resolve(""),
+        denoAdapter,
+        projectDir,
+      );
+      try {
+        await writeTextFile(aPath, "new a.ts");
+        await writeTextFile(bPath, "b.ts");
+
+        const aImportsB = validator.processLocalImports(
+          [{ absolutePath: bPath, specifier: "./b.ts" }],
+          aPath,
+          0,
+          createFileSystem(),
+          createDependencyHashCache(),
+          undefined,
+          undefined,
+          [aPath],
+          importGraphNode(aPath, aImporterSource),
+        );
+        await bTransformStarted.promise;
+        const bImportsA = () =>
+          validator.processLocalImports(
+            [{ absolutePath: aPath, specifier: "./a.ts" }],
+            bPath,
+            0,
+            createFileSystem(),
+            createDependencyHashCache(),
+            undefined,
+            undefined,
+            [bPath],
+            importGraphNode(bPath, "b.ts"),
+          );
+        if (expectCycle) {
+          // Rejecting, not only recording a missing dependency, makes the
+          // shared transform fail for every caller waiting on it.
+          await assertRejects(bImportsA, Error, "Circular import is not supported in SSR: a.ts");
+        } else {
+          await bImportsA();
+        }
+        releaseB.resolve();
+        await aImportsB;
+
+        assertEquals(validator.missingDependencies, []);
+      } finally {
+        releaseB.resolve();
+        await remove(projectDir, { recursive: true });
+      }
+    });
+  }
+
+  it("does not treat an ancestor edited mid-traversal as a cycle", async () => {
+    // The chain reached b.ts through an old a.ts; the a.ts b.ts now reads is
+    // a newer version with no pending imports, so nothing waits on itself.
+    const projectDir = await makeTempDir({ prefix: "vf-ssr-ancestor-edit-" });
+    const aPath = join(projectDir, "a.ts");
+    const bPath = join(projectDir, "b.ts");
+    const transformed: string[] = [];
+    const validator = new SSRDependencyValidator(
+      (filePath) => {
+        transformed.push(filePath);
+        return Promise.resolve({ tempPath: `${filePath}.mjs`, contentHash: "hash" });
+      },
+      () => Promise.resolve(""),
+      denoAdapter,
+      projectDir,
+    );
+    try {
+      await writeTextFile(aPath, "new a.ts");
+
+      await validator.processLocalImports(
+        [{ absolutePath: aPath, specifier: "./a.ts" }],
+        bPath,
+        1,
+        createFileSystem(),
+        createDependencyHashCache(),
+        undefined,
+        undefined,
+        [aPath, bPath],
+        importGraphNode(bPath, "b.ts"),
+      );
+
+      assertEquals(transformed, [aPath]);
+      assertEquals(validator.missingDependencies, []);
+    } finally {
+      await remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("fails a cached module whose import chain passes the safety bound", async () => {
+    // Returning no dependencies here once let a cached module skip validation
+    // of everything below the bound.
+    let transforms = 0;
+    const validator = new SSRDependencyValidator(
+      () => {
+        transforms++;
+        return Promise.resolve({ tempPath: "/tmp/unused.mjs", contentHash: "unused" });
+      },
+      () => Promise.resolve("/tmp/unused.mjs"),
+      denoAdapter,
+      "/project",
+    );
+
+    await assertRejects(
+      () =>
+        validator.ensureDependenciesExist(
+          'import "./child.ts";',
+          "/project/deep.ts",
+          MAX_TRANSFORM_DEPTH + 1,
+          undefined,
+          ["/project/page.tsx", "/project/deep.ts"],
+        ),
+      Error,
+      "Import chain: page.tsx -> deep.ts",
+    );
+    assertEquals(transforms, 0);
   });
 
   it("preserves terminal HTTP fetch failures from cross-project imports", async () => {

@@ -61,6 +61,92 @@ describe("GitHubReadOperations", () => {
     );
   }
 
+  describe("readTextFile cancellation", () => {
+    it("forwards the caller signal to contents and large-blob requests", async () => {
+      const controller = new AbortController();
+      const contentsSignals: Array<AbortSignal | undefined> = [];
+      const blobSignals: Array<AbortSignal | undefined> = [];
+      const ops = createOps({
+        client: {
+          getContents: (_path: string, _ref?: string, options?: { signal?: AbortSignal }) => {
+            contentsSignals.push(options?.signal);
+            return Promise.resolve({ type: "file", content: "dGVzdA==" });
+          },
+          getBlob: (_sha: string, options?: { signal?: AbortSignal }) => {
+            blobSignals.push(options?.signal);
+            return Promise.resolve({ content: "dGVzdA==", encoding: "base64" });
+          },
+        },
+        statOps: {
+          getFileEntry: (path: string) =>
+            path === "large.json" ? { sha: "sha-large", size: 2 * 1024 * 1024 } : undefined,
+        },
+      });
+
+      assertEquals(await ops.readTextFile("small.json", { signal: controller.signal }), "test");
+      assertEquals(await ops.readTextFile("large.json", { signal: controller.signal }), "test");
+      assertEquals(contentsSignals.length, 1);
+      assertEquals(contentsSignals[0] === controller.signal, true);
+      assertEquals(blobSignals.length, 1);
+      assertEquals(blobSignals[0] === controller.signal, true);
+    });
+
+    it("rejects an already-aborted read before any request", async () => {
+      const controller = new AbortController();
+      // Hold the signal before aborting. Bun 1.3.6 keeps the abort reason alive only
+      // through a live signal wrapper, so a GC between abort() and the first
+      // controller.signal read can drop the reason this test asserts on.
+      const signal = controller.signal;
+      controller.abort(new Error("eval cancelled"));
+      let requests = 0;
+      const ops = createOps({
+        client: {
+          getContents: () => {
+            requests++;
+            return Promise.resolve({ type: "file", content: "dGVzdA==" });
+          },
+        },
+      });
+
+      await assertRejects(
+        () => ops.readTextFile("cases.json", { signal }),
+        Error,
+        "eval cancelled",
+      );
+      assertEquals(requests, 0);
+    });
+
+    it("rejects with an AbortError when an aborted signal has lost its reason", async () => {
+      const controller = new AbortController();
+      const signal = controller.signal;
+      controller.abort(new Error("eval cancelled"));
+      // Simulate Bun 1.3.6 after GC collected the reason: aborted, but reason is undefined.
+      Object.defineProperty(signal, "reason", { value: undefined });
+      Object.defineProperty(signal, "throwIfAborted", {
+        value: () => {
+          throw undefined;
+        },
+      });
+      let requests = 0;
+      const ops = createOps({
+        client: {
+          getContents: () => {
+            requests++;
+            return Promise.resolve({ type: "file", content: "dGVzdA==" });
+          },
+        },
+      });
+
+      const error = await assertRejects(
+        () => ops.readTextFile("cases.json", { signal }),
+        DOMException,
+        "The operation was aborted",
+      );
+      assertEquals((error as DOMException).name, "AbortError");
+      assertEquals(requests, 0);
+    });
+  });
+
   describe("methods", () => {
     it("should be instantiable", () => {
       assertExists(createOps());

@@ -101,6 +101,30 @@ async function runNoBrandEval(script: string): Promise<unknown> {
 }
 
 describe("ext-llm-google/google-request-builder", () => {
+  it("sends canonical and zero-argument JSON schemas through parametersJsonSchema", () => {
+    const schema = {
+      type: "object",
+      properties: { enabled: { type: "boolean", const: true } },
+      oneOf: [{ properties: { enabled: {} }, required: ["enabled"] }],
+      not: { properties: { forbidden: {} }, required: ["forbidden"] },
+    };
+    const empty = { type: "object", properties: {}, additionalProperties: false };
+    const body = buildGoogleGenerateContentRequest("google", {
+      prompt: [{ role: "user", content: [{ type: "text", text: "Use the tool." }] }],
+      tools: [schema, empty].map((inputSchema, index) => ({
+        type: "function" as const,
+        name: `example_${index}`,
+        inputSchema: { jsonSchema: inputSchema },
+      })),
+    }, createWarningCollector());
+    assertEquals(body.tools, [{
+      functionDeclarations: [
+        { name: "example_0", parametersJsonSchema: schema },
+        { name: "example_1", parametersJsonSchema: empty },
+      ],
+    }]);
+  });
+
   it("preserves inline PDF bytes", () => {
     const body = buildGoogleGenerateContentRequest("google", {
       prompt: [{
@@ -401,7 +425,7 @@ describe("ext-llm-google/google-request-builder", () => {
           functionDeclarations: [{
             name: "lookup",
             description: "Look up a value",
-            parameters: { type: "object", properties: { id: { type: "string" } } },
+            parametersJsonSchema: { type: "object", properties: { id: { type: "string" } } },
           }],
         },
         { codeExecution: {} },

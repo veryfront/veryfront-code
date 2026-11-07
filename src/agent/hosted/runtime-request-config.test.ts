@@ -702,6 +702,11 @@ describe("resolveHostedRuntimeRequestConfig", () => {
       providerTools: ["web_search"],
       includeRuntimeEssentialToolsWhenEmpty: true,
     });
+    assertEquals(resolve(false, ["web_search"]), {
+      tools: [],
+      providerTools: ["web_search"],
+      includeRuntimeEssentialToolsWhenEmpty: false,
+    });
   });
 });
 
@@ -722,6 +727,23 @@ it("authored knowledge supplies its loader independently and client overrides on
       requestedTools: ["veryfront__search_knowledge", "get_file"],
     }),
     ["veryfront__search_knowledge"],
+  );
+});
+
+it("authored no-tools denies configured helpers and requested callable tools", () => {
+  const input = {
+    configuredTools: false as const,
+    configuredDelegates: ["writer"],
+    configuredSkills: ["visible-guide"],
+    configuredKnowledge: true as const,
+  };
+  assertEquals(resolveHostedRuntimeAllowedTools({ ...input, requestedTools: undefined }), []);
+  assertEquals(
+    resolveHostedRuntimeAllowedTools({
+      ...input,
+      requestedTools: ["veryfront__load_skill", "veryfront__search_knowledge", "agent_writer"],
+    }),
+    [],
   );
 });
 

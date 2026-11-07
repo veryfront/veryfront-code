@@ -27,6 +27,20 @@ const apply = Reflect.apply;
 const arrayPush = Array.prototype.push;
 const arrayIsArray = Array.isArray;
 const NativeConsole = console;
+
+/**
+ * Non-zero while this logger dispatches a record: formatting it, calling log
+ * record emitters and subscribers, and writing the line through `console`.
+ * Console interceptors use it to pass anything written during that dispatch
+ * through untouched instead of treating it as application output, so an
+ * emitter that logs cannot be captured back into the logger.
+ */
+let frameworkConsoleWriteDepth = 0;
+
+/** Whether the current `console` call is the framework logger's own write. */
+export function isFrameworkConsoleWrite(): boolean {
+  return frameworkConsoleWriteDepth > 0;
+}
 const NativeDate = Date;
 const dateToISOString = Date.prototype.toISOString;
 const NativePerformance = performance;
@@ -254,6 +268,18 @@ export function setLoggerPreset(preset: "cli" | "server"): void {
 export function setLogLevel(level: LogLevel): void {
   const config = resolveLoggerConfig();
   loggerConfig = { ...config, level };
+}
+
+/**
+ * Whether a message at `level` is written under the active configuration.
+ * Returns false when the configuration cannot be read.
+ */
+export function isLogLevelEnabled(level: LogLevel): boolean {
+  try {
+    return resolveLoggerConfig().level <= level;
+  } catch {
+    return false;
+  }
 }
 
 /** @internal Alias kept for tests. */
@@ -659,6 +685,21 @@ class ConsoleLogger implements Logger {
   }
 
   private log(
+    level: LogEntry["level"],
+    logLevel: LogLevel,
+    consoleMethod: "debug" | "log" | "warn" | "error",
+    message: string,
+    args: unknown[],
+  ): void {
+    frameworkConsoleWriteDepth++;
+    try {
+      this.dispatch(level, logLevel, consoleMethod, message, args);
+    } finally {
+      frameworkConsoleWriteDepth--;
+    }
+  }
+
+  private dispatch(
     level: LogEntry["level"],
     logLevel: LogLevel,
     consoleMethod: "debug" | "log" | "warn" | "error",

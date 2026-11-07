@@ -31,7 +31,7 @@ import type {
   ToolDefinition,
   ToolExecutionContext,
 } from "#veryfront/tool";
-import { toolRegistry } from "#veryfront/tool";
+import { type Tool, tool, toolRegistry } from "#veryfront/tool";
 import { createToolsFromHostDefinitions } from "#veryfront/tool/host-tools.ts";
 import {
   hasTrustedHostToolProvenance,
@@ -2306,6 +2306,7 @@ Deno.test("createDefaultHostedChatRuntime keeps per-run host tools out of the gl
 Deno.test("createDefaultHostedChatRuntime awaits per-run tool setup and exposes its cleanup", async () => {
   let capturedContext: DefaultHostedChatRuntimeTaskContext | undefined;
   let cleanupCalls = 0;
+  let sourceDisposals = 0;
 
   const runtime = await createDefaultHostedChatRuntime({
     sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
@@ -2329,14 +2330,71 @@ Deno.test("createDefaultHostedChatRuntime awaits per-run tool setup and exposes 
       cleanupCalls += 1;
       return Promise.resolve();
     },
-    createRemoteToolSource: emptyRemoteSource,
+    createRemoteToolSource: (config) => ({
+      ...emptyRemoteSource(config),
+      dispose: async () => {
+        sourceDisposals++;
+      },
+    }),
     preloadLatestConversationUserText: false,
   });
 
   assertExists(capturedContext);
   assertEquals(capturedContext.availableToolNames, ["bash"]);
   await runtime.cleanup();
+  await runtime.cleanup();
   assertEquals(cleanupCalls, 1);
+  assertEquals(sourceDisposals, 1);
+});
+
+it("releases owned MCP sources when definition bootstrap fails after assembly", async () => {
+  let listings = 0;
+  let disposals = 0;
+  let hostCleanup = 0;
+  const cancelled = new Error("definition bootstrap cancelled");
+  const signal = AbortSignal.abort(cancelled);
+  const error = await assertRejects(() =>
+    createDefaultHostedChatRuntime({
+      sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+      options: {
+        projectId: "project-1",
+        agentId: "agent-1",
+        authToken: "token-1",
+        instructions: "Base instructions",
+        model: "openai/gpt-5-nano",
+        allowedTools: ["veryfront__lookup_project_definitions"],
+      },
+      config: { apiUrl: "https://api.example.com", apiMcpUrl: "https://api.example.com/mcp" },
+      buildLocalTools: () => ({}),
+      createRemoteToolSource: (config) => ({
+        id: config.id ?? "owned-platform",
+        listTools: async () => {
+          listings++;
+          return [{
+            name: "veryfront__lookup_project_definitions",
+            description: "Synthetic definition lookup",
+            parameters: { type: "object", properties: {} },
+          }];
+        },
+        executeTool: async () => undefined,
+        dispose: async () => {
+          disposals++;
+          throw new Error("secondary cleanup failure");
+        },
+      }),
+      cleanup: async () => {
+        hostCleanup++;
+      },
+      projectDefinitionBootstrapEnabled: true,
+      projectDefinitionBootstrap: { allowedProjectIds: ["project-1"], authorize: () => true },
+      projectDefinitionBootstrapSignal: signal,
+      preloadLatestConversationUserText: false,
+    })
+  );
+  assertStrictEquals(error, cancelled);
+  assertEquals(listings, 1);
+  assertEquals(disposals, 1);
+  assertEquals(hostCleanup, 1);
 });
 
 Deno.test("createDefaultHostedChatRuntime cleans up after partial per-run tool setup failure", async () => {
@@ -2936,3 +2994,30 @@ for (
     }
   });
 }
+
+it("forwards the caller's alias through hosted runtime scoping, so a gated tool asks under it", async () => {
+  const gated = tool({
+    id: "transfer",
+    description: "Move money",
+    approval: {},
+    inputSchema: defineSchema((v) => v.object({ amount: v.number() }))(),
+    execute: () => ({ ok: true }),
+  });
+  const scoped = scopeHostedRuntimeTools({
+    tools: { transfer: gated as unknown as Tool },
+    taskContext: { authToken: "token", projectId: "project", branchId: null, model: "test/model" },
+    cloudContext: {
+      apiBaseUrl: "https://api.example.com",
+      apiToken: "token",
+      serviceLayer: "cloud",
+    },
+  });
+  const asked: string[] = [];
+  await Reflect.apply(scoped.transfer!.execute!, { id: "payments_transfer" }, [{ amount: 1 }, {
+    requestToolApproval: (request: { toolName: string }) => {
+      asked.push(request.toolName);
+      return Promise.resolve({ approved: true, outcome: "approved" });
+    },
+  }]);
+  assertEquals(asked, ["payments_transfer"]);
+});

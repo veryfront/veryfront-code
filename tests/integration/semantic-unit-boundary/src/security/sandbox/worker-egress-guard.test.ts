@@ -4,8 +4,11 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  assertWorkerHostEgressAllowed,
   guardedEgressFetch,
+  isInternalEgressIp,
   isInternalEgressOverrideEnabled,
+  WorkerEgressBlockedError,
 } from "#veryfront/security/sandbox/worker-egress-guard.ts";
 
 describe("worker-egress-guard isInternalEgressOverrideEnabled prototype-poisoning boundary", () => {
@@ -89,5 +92,39 @@ describe("worker-egress-guard response metadata intrinsics", () => {
     assertEquals(intercepted, false);
     assertEquals(result.url, "http://93.184.216.34/file");
     assertEquals(await result.text(), "authenticated content");
+  });
+});
+
+describe("worker egress hostname normalization intrinsics", () => {
+  it("preserves public DNS and internal-address denial after project string mutation", async () => {
+    const trim = String.prototype.trim;
+    const lower = String.prototype.toLowerCase;
+    let resolvedHost: string | undefined;
+    let internalAddress = false;
+    let denied: unknown;
+    try {
+      String.prototype.trim = String.prototype.toLowerCase = () => {
+        throw new Error("project string normalization");
+      };
+      internalAddress = isInternalEgressIp(" 127.0.0.1 ");
+      await assertWorkerHostEgressAllowed(" API.EXAMPLE ", {
+        allowedInternalHosts: [" INTRANET.EXAMPLE "],
+        resolveHost: (host) => {
+          resolvedHost = host;
+          return Promise.resolve([" 93.184.216.34 "]);
+        },
+      });
+      try {
+        await assertWorkerHostEgressAllowed(" LOCALHOST ", { allowedInternalHosts: [] });
+      } catch (error) {
+        denied = error;
+      }
+    } finally {
+      String.prototype.trim = trim;
+      String.prototype.toLowerCase = lower;
+    }
+    assertEquals(internalAddress, true);
+    assertEquals(resolvedHost, "api.example");
+    assertEquals(denied instanceof WorkerEgressBlockedError, true);
   });
 });

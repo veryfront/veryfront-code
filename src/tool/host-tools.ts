@@ -14,6 +14,7 @@ import { getRemoteToolProvenance, markRemoteToolProvenance } from "./remote-tool
 import { inheritTrustedHostToolProvenance } from "./host-tool-provenance.ts";
 import { defineOwnDataProperty } from "#veryfront/security/own-data-property.ts";
 import { inheritProviderObservedSkillBodies } from "./provider-observed-skill-bodies.ts";
+import { snapshotJsonSchemaObject } from "#veryfront/schemas/schema-input.ts";
 
 const apply = Reflect.apply;
 const arrayIsArray = Array.isArray;
@@ -44,6 +45,8 @@ export type HostToolDefinition = {
   description?: string;
   inputSchema?: unknown;
   inputSchemaJson?: JsonSchema;
+  /** Declared result contract; disclosure metadata only, without result validation. */
+  outputSchemaJson?: JsonSchema;
   /** Catalog navigation hints, without execution authority. */
   discovery?: ToolDiscoveryMetadata;
   parameters?: unknown;
@@ -120,6 +123,7 @@ function snapshotHostToolDefinition(value: unknown): Record<string, unknown> | u
     "execute",
     "inputSchema",
     "inputSchemaJson",
+    "outputSchemaJson",
     "discovery",
     "mcp",
   ];
@@ -187,6 +191,11 @@ export function createToolsFromHostDefinitions(
     const definition = snapshotHostToolDefinition(originalDefinition);
     if (!isHostToolDefinition(definition)) continue;
 
+    // A gated tool asks under the name it is exposed as, which its execute reads from `this.id`
+    // (see below); every other tool keeps its original receiver.
+    const gated = objectHasOwn(definition, "approval");
+    const receiverNamed = (name: string) =>
+      objectCreate(originalDefinition as object, { id: { value: name, enumerable: true } });
     const execute = async (input: unknown, context: ToolExecutionContext | undefined) =>
       await apply(definition.execute, originalDefinition, [
         input,
@@ -202,6 +211,9 @@ export function createToolsFromHostDefinitions(
           description: definition.description,
           inputSchema: definition.inputSchema,
           inputSchemaJson: definition.inputSchemaJson,
+          ...(definition.outputSchemaJson === undefined
+            ? {}
+            : { outputSchemaJson: definition.outputSchemaJson }),
           execute,
           mcp: definition.mcp,
           delegatedPlatformTools: definition.delegatedPlatformTools,
@@ -218,6 +230,34 @@ export function createToolsFromHostDefinitions(
           delegatedPlatformTools: definition.delegatedPlatformTools,
         };
         materializedTool = tool(config);
+        if (definition.outputSchemaJson !== undefined) {
+          // `tool()` derives output contracts from a Schema only; carry the
+          // declared JSON contract with the same bounds `dynamicTool` applies.
+          const outputSchemaJson = snapshotJsonSchemaObject(definition.outputSchemaJson);
+          if (!outputSchemaJson) {
+            throw new TypeError("outputSchemaJson must be a bounded JSON Schema object");
+          }
+          materializedTool.outputSchemaJson = outputSchemaJson;
+        }
+      }
+      if (materializedTool && gated) {
+        // The materialized tool stays gated, and a later alias of it asks under the outer name.
+        defineOwnDataProperty(materializedTool, "approval", (definition as Tool).approval, {
+          enumerable: true,
+          configurable: true,
+          writable: false,
+        });
+        materializedTool.execute = async function (
+          this: { id?: unknown } | undefined,
+          input: unknown,
+          context: ToolExecutionContext | undefined,
+        ) {
+          const name = typeof this?.id === "string" && this.id.length > 0 ? this.id : toolName;
+          return await apply(definition.execute, receiverNamed(name), [
+            input,
+            normalizeExecutionContext(toolName, context, options),
+          ]);
+        };
       }
       if (materializedTool) {
         copyToolDiscoveryMetadata(definition, materializedTool);

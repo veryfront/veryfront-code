@@ -23,8 +23,6 @@ export const parseOpenArgs = createArgParser(OpenArgsSchema, {
   projectSlug: { keys: ["project", "project-slug", "p"], type: "string" },
 });
 
-const DASHBOARD_BASE = "https://veryfront.com";
-
 /** The environment `--site` targets when `--env` is absent. */
 const DEFAULT_SITE_ENVIRONMENT = "production";
 
@@ -59,23 +57,33 @@ function assertSiteHostnameLabel(value: string, label: string): void {
 
 /**
  * The canonical Veryfront Cloud address of a deployed environment, the same
- * `https://<slug>.<environment>.veryfront.com` form `deploy` falls back to when
+ * `https://<slug>.<environment>.<cloud domain>` form `deploy` falls back to when
  * an environment carries no custom domain. `open` has no API token, so it
  * cannot look a custom domain up; a project that has one reaches the same
  * deployment through both names.
  */
-function buildSiteUrl(projectSlug: string, environment: string): string {
+function buildSiteUrl(projectSlug: string, environment: string, cloudDomain: string): string {
   assertSiteHostnameLabel(projectSlug, "project slug");
   assertSiteHostnameLabel(environment, "environment");
-  return `https://${projectSlug}.${environment}.veryfront.com`;
+  return `https://${projectSlug}.${environment}.${cloudDomain}`;
 }
 
-export function buildUrl(projectSlug: string, options: OpenOptions): string {
+/**
+ * `cloudDomain` is the hosted web environment of the API the CLI targets
+ * (`getCloudDomain`), so a staging project opens `veryfront.org`, as `deploy`
+ * prints it.
+ */
+export function buildUrl(
+  projectSlug: string,
+  options: OpenOptions,
+  cloudDomain = "veryfront.com",
+): string {
+  const dashboardBase = `https://${cloudDomain}`;
   if (options.site) {
-    return buildSiteUrl(projectSlug, options.env ?? DEFAULT_SITE_ENVIRONMENT);
+    return buildSiteUrl(projectSlug, options.env ?? DEFAULT_SITE_ENVIRONMENT, cloudDomain);
   }
   if (options.studio) {
-    return `${DASHBOARD_BASE}/studio/${projectSlug}`;
+    return `${dashboardBase}/studio/${projectSlug}`;
   }
   // Environments are a panel on the project page, not a route of their own —
   // `/projects/<slug>/environments/<name>` is a hard 404. The panel is opened
@@ -83,7 +91,7 @@ export function buildUrl(projectSlug: string, options: OpenOptions): string {
   // environment *id* (`?environments=edit:<id>`), which `open` cannot resolve
   // from a name without an API token, so the env name selects the panel only.
   if (options.env) {
-    return `${DASHBOARD_BASE}/projects/${projectSlug}?panels=environments`;
+    return `${dashboardBase}/projects/${projectSlug}?panels=environments`;
   }
-  return `${DASHBOARD_BASE}/projects/${projectSlug}`;
+  return `${dashboardBase}/projects/${projectSlug}`;
 }

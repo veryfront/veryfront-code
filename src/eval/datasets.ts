@@ -1,5 +1,5 @@
 import { isAbsolute, join } from "#veryfront/compat/path";
-import type { EvalDataset, EvalExampleInput } from "./types.ts";
+import type { EvalDataset, EvalDatasetLoadContext, EvalExampleInput } from "./types.ts";
 import {
   createEvalValidationError,
   normalizeEvalExamples,
@@ -8,6 +8,33 @@ import {
 
 function resolveDatasetPath(baseDir: string, filePath: string): string {
   return isAbsolute(filePath) ? filePath : join(baseDir, filePath);
+}
+
+/**
+ * A project file reader serves files relative to the project root only. Absolute paths would
+ * otherwise fall back to this host's disk, and `..` segments would escape the project, so both
+ * are rejected instead of being read from anywhere.
+ */
+function assertProjectRelativeDatasetPath(filePath: string): void {
+  if (isAbsolute(filePath) || /^[\\/]/.test(filePath) || /^[A-Za-z]:/.test(filePath)) {
+    // Do not echo the path: an absolute path can expose host directory layout in run failures.
+    throw createEvalValidationError(
+      "Dataset path must be relative to the project when read through the project files",
+    );
+  }
+  if (filePath.split(/[\\/]/).includes("..")) {
+    throw createEvalValidationError(
+      "Dataset path must not contain '..' segments when read through the project files",
+    );
+  }
+}
+
+function readDatasetText(context: EvalDatasetLoadContext, filePath: string): Promise<string> {
+  if (context.readTextFile) {
+    assertProjectRelativeDatasetPath(filePath);
+    return context.readTextFile(filePath);
+  }
+  return Deno.readTextFile(resolveDatasetPath(context.baseDir, filePath));
 }
 
 function parseJsonDataset(text: string, source: string): EvalExampleInput[] {
@@ -59,9 +86,8 @@ export const datasets = {
     return {
       kind: "json",
       path: datasetPath,
-      async load({ baseDir }) {
-        const resolvedPath = resolveDatasetPath(baseDir, datasetPath);
-        const text = await Deno.readTextFile(resolvedPath);
+      async load(context) {
+        const text = await readDatasetText(context, datasetPath);
         return normalizeEvalExamples(parseJsonDataset(text, datasetPath), datasetPath);
       },
     };
@@ -72,9 +98,8 @@ export const datasets = {
     return {
       kind: "jsonl",
       path: datasetPath,
-      async load({ baseDir }) {
-        const resolvedPath = resolveDatasetPath(baseDir, datasetPath);
-        const text = await Deno.readTextFile(resolvedPath);
+      async load(context) {
+        const text = await readDatasetText(context, datasetPath);
         return normalizeEvalExamples(parseJsonlDataset(text, datasetPath), datasetPath);
       },
     };

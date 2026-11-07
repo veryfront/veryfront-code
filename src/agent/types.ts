@@ -218,11 +218,12 @@ export interface AgentConfig<TOutput = any> {
   /**
    * Project tools available to this agent.
    *
+   * Set `false` to deny all callable host tools, including framework helpers.
    * Omit to expose no project tools. `true` authorizes the current scoped
    * catalog behind `veryfront__tool_search`; an explicit map exposes only those selected
    * schemas immediately.
    */
-  tools?: true | Record<string, Tool | boolean>;
+  tools?: boolean | Record<string, Tool | boolean>;
   /** Load selected tool schemas immediately or discover them through veryfront__tool_search. */
   toolLoading?: "eager" | "deferred";
   /**

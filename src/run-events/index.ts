@@ -1,12 +1,15 @@
 /**
  * The typed run event contract the Veryfront API publishes.
  *
+ * @remarks
+ *
  * Every run event surface returns rows that carry a span envelope and a
  * payload, keyed `payload` and named by a catalogued type. This module owns
  * the reader's half of that contract: the type vocabulary, display names, groups, categories and kinds, the AG-UI wire
  * names, the envelope and row schemas, and one payload schema per type.
- * Import it instead of writing the names or shapes out again. The typed
- * contract is the only one: `format=typed` is accepted and ignored
+ * Import it instead of writing the names or shapes out again.
+ *
+ * The typed contract is the only one: `format=typed` is accepted and ignored
  * (deprecated), and `format=raw` is refused, so do not send `format`.
  *
  * `RUN_EVENT_CATALOG` lists each event's `type`, display `name`, reference
@@ -14,8 +17,10 @@
  * `RUN_EVENT_CATEGORIES` and `RUN_EVENT_KINDS` supply the ordered IDs and names;
  * `RUN_EVENT_CATEGORY_HEADINGS` places the categories under the filter's
  * Interactions and System headings. These are display metadata, not fields
- * added to event payloads, and need no schema validator. The catalog includes
- * the legacy `UNKNOWN` fallback alongside current types. `getRunEventCategory`
+ * added to event payloads, and need no schema validator.
+ *
+ * The catalog includes the legacy `UNKNOWN` fallback alongside current types.
+ * `getRunEventCategory`
  * and `getRunEventKind` accept any stored type: a legacy alias resolves to its
  * current type (`RUN_EVENT_TYPE_ALIASES`) and an unrecognized type falls back to
  * `system` and `runtime`.
@@ -26,7 +31,7 @@
  * `parseTypedRunEventRow`. `register` replaces whatever is registered, so gate
  * it on `tryResolve` to leave an existing validator in place:
  *
- * ```ts
+ * ```ts title="run-event-validator.ts"
  * import { register, tryResolve } from "veryfront/extensions/contracts";
  * import { createZodAdapter } from "@veryfront/ext-schema-zod";
  *
@@ -44,7 +49,7 @@
  * @module run-events
  *
  * @example
- * ```ts
+ * ```ts title="run-event-catalog.ts"
  * import { RUN_EVENT_CATALOG, RUN_EVENT_GROUPS } from "veryfront/run-events";
  *
  * for (const group of RUN_EVENT_GROUPS) {
@@ -54,7 +59,7 @@
  * ```
  *
  * @example
- * ```ts
+ * ```ts title="read-run-events.ts"
  * import { register, tryResolve } from "veryfront/extensions/contracts";
  * import { createZodAdapter } from "@veryfront/ext-schema-zod";
  * import {

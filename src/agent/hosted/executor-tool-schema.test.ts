@@ -82,6 +82,26 @@ describe("executor tool schema", () => {
     assert(!Object.hasOwn(definition, "title"));
   });
 
+  it("preserves a declared output schema and omits an absent one", () => {
+    const source = {
+      name: "create_file",
+      description: "Create file",
+      parameters: { type: "object" },
+      outputSchema: { type: "object", properties: { path: { type: "string" } } },
+    } as const;
+    assertEquals(
+      executorToolDefinition(source, executorToolLimits()).outputSchema,
+      source.outputSchema,
+    );
+    assertEquals(
+      Object.hasOwn(
+        executorToolDefinition({ ...source, outputSchema: undefined }, executorToolLimits()),
+        "outputSchema",
+      ),
+      false,
+    );
+  });
+
   it("preserves bounded discovery metadata through executor definition validation", () => {
     const discovery = {
       version: 1 as const,

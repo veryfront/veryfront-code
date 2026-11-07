@@ -4,13 +4,8 @@ description: "Why Veryfront exposes Salesforce through a governed integration la
 order: 35
 ---
 
-Veryfront treats Salesforce as an integration behind the Veryfront tool and MCP
-control plane, rather than asking agents to connect directly to Salesforce MCP.
-
-This is not because Salesforce MCP is the wrong protocol. Salesforce MCP is a
-useful provider surface for generic Salesforce access. The reason to route
-Salesforce through Veryfront is that customer support agents need a governed
-workflow surface, not only a raw CRM protocol surface.
+Veryfront exposes Salesforce through its integration layer so project policy
+controls the accounts and tools an agent can use.
 
 For installation, OAuth, and service-account setup, see
 [Set up Salesforce](../guides/integrations/salesforce.md).
@@ -23,38 +18,24 @@ which write actions are allowed, how tool calls are audited, and how Salesforce
 context is combined with other systems such as Outlook, Gmail, Slack,
 Confluence, Zendesk, or internal knowledge.
 
-That split matters because "customer support" is rarely only Salesforce. A
-support agent may need to read an Account and open Cases, inspect email history,
-search knowledge, draft a response, add an internal case comment, and escalate
-to a human. Direct Salesforce MCP can expose Salesforce capabilities, but it
-does not by itself define the whole cross-system workflow or the Veryfront
-project policy around that workflow.
+A support agent may need Salesforce records, email history and project knowledge
+to answer one request. Veryfront applies project policy across those systems.
 
 ## Why not expose raw Salesforce MCP directly
 
-Raw provider MCP is attractive because it is broad and close to the source. For
-expert users, broad access can be useful. For production agents, broad access is
-also where most of the risk appears.
+The integration exposes customer lookup, account search, case activity,
+knowledge search and selected writes. Read-only SOQL supports queries the
+curated tools do not cover.
 
-Veryfront needs the agent-visible surface to be stable, scoped, and explainable.
-The Salesforce integration therefore exposes curated tools such as customer
-lookup, account search, case listing, case activity, knowledge search, and
-selected write actions. It also keeps a read-only SOQL escape hatch for expert
-inspection when the curated tools are not enough.
-
-This gives agents enough flexibility to work across Salesforce orgs while
-avoiding a brittle tool list full of every possible provider operation. It also
-lets Veryfront apply product policy consistently: read tools can be available by
-default, while mutating tools such as creating a case, adding a case comment, or
-updating a case can require explicit allowlisting before the agent sees or calls
-them.
+Read tools can be available by default. Writes such as creating a case, adding
+a comment or updating a case can require explicit allowlisting before an agent
+sees or calls them.
 
 ## Why this scales across Salesforce orgs
 
-Salesforce orgs differ. One org may model customers with Accounts and Contacts.
-Another may rely on Person Accounts, record types, custom fields, queues,
-entitlements, or custom objects. A tool literally named `list_customers` would
-hide those decisions behind an assumption that is often wrong.
+Salesforce orgs model customers differently: Accounts and Contacts, Person
+Accounts, custom objects or combinations of these. Tools must preserve those
+differences.
 
 Veryfront instead keeps the durable layer close to Salesforce primitives:
 Account, Contact, Case, CaseComment, Knowledge, Opportunity, Lead, object
@@ -78,12 +59,6 @@ Veryfront adds a control plane around Salesforce access:
 - Integration with agent skills, prompts, evals, metrics, traces, and run logs.
 - One agent workflow across Salesforce and non-Salesforce systems.
 
-The result is a smaller but more useful agent surface. It is not a claim that
-Veryfront should reimplement every Salesforce API. The goal is to expose the
-right Salesforce capabilities at the right abstraction level, with enough
-metadata escape hatches for consultants and advanced agents to adapt to real
-orgs.
-
 ## When direct Salesforce MCP still makes sense
 
 Direct Salesforce MCP can be the right choice for exploratory admin work, data
@@ -92,8 +67,6 @@ Salesforce. It is less suitable as the default surface for Veryfront production
 agents because it bypasses the product-level policy, observability, and
 cross-system orchestration that Veryfront provides.
 
-Veryfront can still consume external MCP servers where that is the right
-integration shape. For Salesforce, the preferred production path is the
-Veryfront Salesforce integration: curated tools first, metadata and read-only
-query escape hatches second, and explicitly enabled writes only where the
-project has chosen to allow them.
+For production agents, start with the curated integration tools. Use metadata
+and read-only queries for org-specific needs, and enable only the writes the
+project requires.

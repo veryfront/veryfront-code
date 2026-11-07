@@ -34,32 +34,23 @@ For implementation steps, see [Runs](../guides/runs.md).
 
 ## Runtime REST cutover
 
-Create hosted conversation runs with `POST /runs`, an agent target, and the
-conversation ID. The API admits and dispatches the run once and provides the
-runtime with its durable root descriptor. A hosted runtime rejects a conversation
-request without that descriptor before it writes messages or starts execution.
-Local runs without a conversation remain supported.
+Create hosted conversation runs with `POST /runs`, an agent target and the
+conversation ID. Hosted execution requires an admitted run before it can write
+messages or begin work. Local runs without a conversation remain supported.
 
-Runtime adapters keep server-issued invocation, event, terminal, and renewal
-credentials private. Canonical UUIDs route REST requests; the API validates the
-credential's signature, purpose, run binding, and current execution generation.
-Locally executed inherited children use their own admitted generation and stop
-when their confirmed lease expires or renewal is rejected. Completed runs persist
-their final output through `POST /runs/{run_id}/finalize`.
+Custom runtimes must keep execution credentials private and stop inherited
+local children when their lease expires or renewal is rejected. Persist final
+output through `POST /runs/{run_id}/finalize`.
 
-The standalone `createConversationAgentRun`, `getConversationRun`, and
-`resyncConversationRunAppendCursor` helpers no longer call the retired durable
-projection endpoints. They fail with migration guidance. Use canonical run
-admission and `getCanonicalRunStatus` for lifecycle reads. Append receipts and
-authenticated conflict headers supply append cursors; an event writer credential
-does not grant event-read access. This cutover does not preserve the old standalone
-helper contract.
+The retired `createConversationAgentRun`, `getConversationRun` and
+`resyncConversationRunAppendCursor` helpers fail with migration guidance. Use
+canonical run admission and `getCanonicalRunStatus` for lifecycle reads. Read
+append cursors from append receipts or authenticated conflict headers. An event
+writer credential does not grant event-read access.
 
-Hosted `veryfront__form_input` suspends through the API's durable checkpoint owner. The old
-turn stops after its tool call is persisted; submission resumes a new turn with
-the stored private tool result. Public input reads remain redacted for password
-fields. Only one form can wait in an execution turn; a second concurrent form
-returns a tool error so it cannot block the first form's checkpoint.
+Hosted `veryfront__form_input` pauses the turn until the user submits the form,
+then resumes in a new turn. Public input reads redact password fields. Only one
+form can wait per turn; a second concurrent form returns a tool error.
 
 Attached local child callbacks cannot yet suspend and redispatch a form. They
 return an explicit tool error before creating an input request. Standalone polling
@@ -70,8 +61,8 @@ for password input. These limits do not change public secret redaction.
 
 A hosted agent can call `veryfront__succeed_run` with final JSON `output`, or `veryfront__fail_run` with
 an `error` containing `code`, `message`, and optional JSON `details`. Use `null`
-when success has no output. These platform tools infer the current run from
-private execution authority and do not accept a run ID or status.
+when success has no output. These tools act on the current run and do not accept
+a run ID or status.
 
 An accepted outcome stops further tool and model execution. Success records
 `completed`; failure records `failed`. A rejected terminal request leaves the

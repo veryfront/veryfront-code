@@ -39,11 +39,6 @@ the AI Gateway, it does not authenticate you to a vendor.
 
 Model selection follows these rules:
 
-Hosted chat retains the route selected during trusted preparation when execution
-has no ambient API token. A managed run's private inference credential stays
-separate from its callback credential. The catalog model ID and publisher remain
-unchanged, and application-registered direct providers retain their own route.
-
 | Agent model                            | With Cloud context                                  | With a matching direct provider key                      |
 | -------------------------------------- | --------------------------------------------------- | -------------------------------------------------------- |
 | Omitted                                | Uses the Cloud default through the AI Gateway       | Uses the direct default only without Cloud context       |
@@ -71,7 +66,10 @@ models and `model: "auto"`. It is optional.
 Code outside Veryfront can use the AI Gateway through the official OpenAI and
 Anthropic clients. Create a project API key with the Write permission in Studio
 under **Settings > API Keys**. Inference requests are writes, so a Read-only key
-is refused. The key starts with `vf_` and is bound to its project.
+is refused.
+
+The key starts with `vf_` and is bound to its project.
+
 The examples read it from `VERYFRONT_API_KEY`, a name for your own code only.
 The Veryfront CLI and SDK read `VERYFRONT_API_TOKEN`, described above.
 
@@ -80,13 +78,13 @@ AI SDK, see the [AI Gateway quickstart](./ai-gateway-quickstart.md).
 
 Set the project API key in your shell before running the examples:
 
-```bash
+```bash title="Terminal"
 export VERYFRONT_API_KEY="<your-project-api-key>"
 ```
 
 Name the model as `<provider>/<model>`. List the models your key can use:
 
-```bash
+```bash title="list-gateway-models.sh"
 curl https://api.veryfront.com/ai/models \
   -H "Authorization: Bearer $VERYFRONT_API_KEY"
 ```
@@ -107,7 +105,7 @@ or `api_key`. The deployment with `is_default: true` is the default model.
 
 Install the clients for the examples you want to run:
 
-```bash
+```bash title="install-gateway-clients.sh"
 npm install openai @anthropic-ai/sdk
 ```
 
@@ -116,7 +114,7 @@ Use a model that supports Chat Completions with the OpenAI client at
 corresponding endpoints. Model identifiers can include vendors this SDK has no
 built-in entry for:
 
-```ts
+```ts title="gateway-openai.ts"
 import OpenAI from "openai";
 
 const projectApiKey = process.env.VERYFRONT_API_KEY;
@@ -135,7 +133,7 @@ const completion = await client.chat.completions.create({
 });
 ```
 
-```bash
+```bash title="gateway-chat-completions.sh"
 curl https://api.veryfront.com/ai/v1/chat/completions \
   -H "Authorization: Bearer $VERYFRONT_API_KEY" \
   -H "Content-Type: application/json" \
@@ -145,7 +143,7 @@ curl https://api.veryfront.com/ai/v1/chat/completions \
 Anthropic models also speak the Anthropic Messages protocol. The Anthropic
 client adds `/v1/messages` to its base URL:
 
-```ts
+```ts title="gateway-anthropic.ts"
 import Anthropic from "@anthropic-ai/sdk";
 
 const client = new Anthropic({
@@ -161,7 +159,7 @@ const message = await client.messages.create({
 });
 ```
 
-```bash
+```bash title="gateway-messages.sh"
 curl https://api.veryfront.com/ai/v1/messages \
   -H "Authorization: Bearer $VERYFRONT_API_KEY" \
   -H "anthropic-version: 2023-06-01" \
@@ -212,6 +210,13 @@ Set only the variables for the provider you use:
 - `GOOGLE_API_KEY` for Google.
 - `MISTRAL_API_KEY` for direct Mistral requests. Without this key, hosted Mistral models route through Veryfront Cloud when cloud bootstrap is available.
 - `OPENAI_BASE_URL` for OpenAI-compatible services.
+
+An explicit `openai/<model>` or `anthropic/<model>` uses the matching environment
+key directly, even when Cloud context is available. Use a
+`veryfront-cloud/<provider>/<model>` name to select the AI Gateway explicitly.
+Direct provider usage reports token counters, not a settled platform charge.
+The AI Gateway ledger determines platform model charges; runtime-reported
+usage alone does not establish a charge or a billing exemption.
 
 ### Keeping keys out of the project
 

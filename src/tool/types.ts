@@ -2,6 +2,7 @@
  * Tool type definitions
  */
 
+import type { ToolApprovalGate, ToolApprovalPolicy } from "./approval.ts";
 import type { JsonSchema, Schema } from "#veryfront/extensions/schema/index.ts";
 import type { BlobStorage } from "#veryfront/workflow/blob/types.ts";
 import type { ToolAnnotations } from "#veryfront/mcp/annotations.ts";
@@ -29,6 +30,12 @@ export interface ToolConfig<TInput = any, TOutput = any> {
 
   /** Platform operations requested by this wrapper; declarations do not grant authority. */
   delegatedPlatformTools?: readonly string[];
+
+  /**
+   * Require a person other than the run's initiator to approve each call before it runs
+   * (maker-checker). The host supplies the approval channel; without one the call fails.
+   */
+  approval?: ToolApprovalPolicy;
 
   /**
    * Input schema produced via `defineSchema((v) => …)` (or any
@@ -95,6 +102,8 @@ export interface ToolExecutionContext {
   projectSlug?: string;
   /** Request-scoped Veryfront auth token for project-local platform API tools */
   authToken?: string;
+  /** Host approval channel for tools declared with `approval`. */
+  requestToolApproval?: ToolApprovalGate;
   /** Invoke an admitted platform dependency without exposing its host credential. */
   executePlatformTool?: (name: string, input: Record<string, unknown>) => Promise<unknown>;
   /** Runtime-owned Veryfront API base URL for project-local platform API tools */
@@ -184,6 +193,8 @@ export interface Tool<TInput = any, TOutput = any> {
 
   /** Platform operations requested by this wrapper; declarations do not grant authority. */
   readonly delegatedPlatformTools?: readonly string[];
+  /** Approval policy; when set, every call waits for a checker. */
+  readonly approval?: ToolApprovalPolicy;
 
   /** Input schema produced by `defineSchema` (or any SchemaValidator-backed builder). */
   inputSchema: Schema<TInput>;
@@ -249,6 +260,8 @@ export interface ToolDefinition {
   name: string;
   description: string;
   parameters: JsonSchema;
+  /** Declared tool result contract, when the source provides one. */
+  outputSchema?: JsonSchema;
   /** Catalog navigation hints, without execution authority. */
   discovery?: ToolDiscoveryMetadata;
   title?: string;
@@ -262,6 +275,8 @@ export interface ToolDefinition {
  */
 export interface RemoteToolSource {
   id: string;
+  /** Release remote sessions owned by this source. */
+  dispose?(context?: ToolExecutionContext): Promise<void>;
   listTools(context?: ToolExecutionContext): Promise<ToolDefinition[]>;
   executeTool(
     toolName: string,

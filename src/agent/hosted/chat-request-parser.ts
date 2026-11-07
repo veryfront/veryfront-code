@@ -174,12 +174,16 @@ export type ParsedHostedChatRequest = {
   serverResolvedProviderReplayCheckpoints?: unknown;
   /** Grant only after replay contents match immutable run/input-response evidence or a pre-edit host-authored digest. Editable row IDs or parts alone do not prove origin; edited replacements lose the grant. */
   serverResolvedTrustedHostedHistoryMessageIds?: readonly string[];
-  /** Exact pending invocation bound to a verified envelope or signed replay digest. */
+  /**
+   * Exact pending invocation bound to a verified envelope or signed replay digest.
+   * @internal
+   */
   serverResolvedResumeToolCall?: RuntimeAgentRunInvocation["resumeToolCall"];
   /**
    * Tool exposure checkpoint from forwardedProps whose exact value matches the
    * digest carried by the verified run-event token. Set only on paths whose
    * request body is otherwise untrusted.
+   * @internal
    */
   serverResolvedToolExposureCheckpoint?: ToolExposureCheckpoint;
   /**

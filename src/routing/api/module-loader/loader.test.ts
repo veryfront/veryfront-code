@@ -3025,10 +3025,10 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
       assertEquals(output, expected, text);
       assertEquals(output.includes("/home"), false, text);
     }
-    // One linear pass: a long crafted message neither throws nor stalls.
+    // Oversized free text fails closed without throwing or stalling.
     const crafted = "/x" + ")/y".repeat(20_000);
     const started = performance.now();
-    assertEquals(free(crafted), "y");
+    assertEquals(free(crafted), "<redacted path>");
     assert(performance.now() - started < 1_000);
     // Project code has run in this realm by the time a build fails, and may
     // have replaced the string and RegExp methods redaction would call.

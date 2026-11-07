@@ -55,6 +55,24 @@ Run one eval:
 veryfront eval deep-research
 ```
 
+Run independent cases concurrently:
+
+```bash
+veryfront eval deep-research --concurrency 4
+```
+
+`--concurrency` is a positive integer and defaults to `1`. It limits active cases
+within each eval, including target execution, metrics, and checks. Suites and
+model comparisons still run their evals and models sequentially. Results remain
+in dataset and repetition order; progress reports cases as they finish.
+Programmatic callers use `runEval(definition, { adapters, concurrency: 4 })`.
+
+Use concurrency only when your targets and grading callbacks can run independently.
+Return fresh mock tools from `mockTools` for each example when they keep mutable
+state. Start with a small limit that fits your provider's rate limits. A fatal
+model-access denial stops queued cases and aborts active ones. Adapters should
+honor their signal; the record timeout can abandon work that ignores cancellation.
+
 Write machine-readable reports:
 
 ```bash
@@ -94,7 +112,7 @@ options. Name the eval when using them.
 
 An agent eval can declare the input accepted when a durable run is created:
 
-```ts
+```ts title="evals/invoice-lookup.ts"
 import { datasets, evalAgent } from "veryfront/eval";
 import { defineSchema } from "veryfront/schemas";
 
@@ -107,7 +125,9 @@ export default evalAgent({
 
 Veryfront creates the run, then validates its submitted `input` in the runtime before the eval
 executes. Invalid input fails with `INPUT_VALIDATION_FAILED` and structured `{ path, message }`
-errors. Without `inputSchema`, durable eval runs continue to accept any JSON input. The run input
+errors. Without `inputSchema`, durable eval runs continue to accept any JSON input.
+
+The run input
 is separate from each dataset example's `input`.
 
 The report and summary artifacts include `schemaVersion`. New reports also
@@ -223,9 +243,12 @@ the comparison keeps the baseline or asks for review.
 Gateway-backed runs add split input/output tokens, billable input/output tokens,
 credits, and cost source to the comparison report. The comparison Markdown
 renderer still includes legacy USD columns for historical reports; those columns
-are `not measured` for credits-only gateway usage. Its metered-USD note describes
+are `not measured` for credits-only gateway usage.
+
+Its metered-USD note describes
 the preference when both reports contain USD measurements. When both reports
 contain only gateway credit measurements, the default comparison uses credits.
+
 The framework keeps no pricing table and does not convert credits to currency.
 Direct local runs do not estimate prices in the framework.
 
@@ -260,11 +283,15 @@ Policy metrics can reference `passRate`, `failed`, `gateFailures`,
 `billableInputTokens`, `billableOutputTokens`, `costUsd`, `costCredits`, and
 `p95Ms`. Use `costCredits` for credits-only gateway runs. `costUsd` reads
 USD measurements from historical reports only; it does not fall back to credits.
+
 A `costUsd` constraint fails with `costUsd was not measured` when those
 measurements are absent, and a `costUsd` objective cannot score that report.
+
 Migrate the policy key to `costCredits` and set thresholds in credits; do not
 reuse a USD threshold as a credit amount. Use `min`, `max`, and
-`maxRegressionPct` for constraints. Use `weight` with `direction` set to
+`maxRegressionPct` for constraints.
+
+Use `weight` with `direction` set to
 `"minimize"` or `"maximize"` for objectives.
 
 Each report includes provenance metadata. Local runs record git SHA, branch,
@@ -328,12 +355,9 @@ Absolute paths are used as given and ignore the base directory.
 
 ### Grading text that was not produced by an agent
 
-`judges.llm.rubric()` grades an agent's answer to a task by default, and sends
-the task input alongside the answer. When the graded value was not produced in
-response to that input -- a stored document, a labelled corpus, a reply written
-earlier -- that framing works against you: the judge sees the same string as
-both the question and the answer and reads it as an agent that echoed its prompt
-instead of doing the work.
+`judges.llm.rubric()` grades an agent's answer against its task by default.
+Stored documents, labelled corpora and earlier replies need text grading;
+otherwise the judge treats the value as both the question and the answer.
 
 Pass `framing: "text"` for those cases:
 
@@ -400,7 +424,9 @@ metrics.ops.cost({ maxCredits: 0.5 }).budget();
 
 `metrics.ops.cost` budgets the gateway `costCredits` of a record. A credit is
 the unit of account; the framework keeps no pricing table and does not convert
-credits to a currency. `maxUsd` is removed; `metrics.ops.cost({ maxUsd })`
+credits to a currency.
+
+`maxUsd` is removed; `metrics.ops.cost({ maxUsd })`
 throws at construction and names `maxCredits`. Token and cost budgets fail
 when the measurement required by their configured limit is missing; absent
 usage evidence never passes a budget.
@@ -1007,11 +1033,6 @@ const report = await runEval(definition, {
   },
 });
 ```
-
-Braintrust should follow the same contract as a sibling
-`@veryfront/ext-eval-report-*` exporter, for example a future
-`@veryfront/ext-eval-report-braintrust`, instead of being special-cased in
-project eval definitions or the MLflow exporter.
 
 ## Discovery
 

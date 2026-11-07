@@ -910,15 +910,17 @@ function pruneLoadedToolNames(
   }
 }
 
-/** Exact advertised input contract for one authorized executable tool. */
+/** Exact advertised contracts for one authorized executable tool. */
 export type ToolExposureContract = {
   name: string;
   description: string;
   inputSchema: BoundedJsonValue;
+  /** Null means that the source did not declare an output contract. */
+  outputSchema: BoundedJsonValue | null;
 };
 
 /**
- * Read one authorized tool's bounded input contract by exact name without
+ * Read one authorized tool's bounded declared contracts by exact name without
  * executing the tool or reading accessors. Returns undefined when no
  * authorized, schema-visible tool has that name.
  */
@@ -952,7 +954,24 @@ export function readToolExposureContract(input: {
     if (!snapshot.success) {
       throw new Error("Executable tool contract exceeds safe inspection limits");
     }
-    return { name: metadata.name, description: metadata.description, inputSchema: snapshot.value };
+    const declaredOutput = ObjectGetOwnPropertyDescriptor(tool, "outputSchema");
+    if (declaredOutput && !isOwnDataPropertyDescriptor(declaredOutput)) {
+      throw new Error("Executable tool output contract is not available as data");
+    }
+    const output = declaredOutput?.value === undefined ? undefined : snapshotBoundedJsonValue(
+      declaredOutput.value,
+      TOOL_CONTRACT_MAX_BYTES,
+      TOOL_CONTRACT_MAX_BYTES,
+    );
+    if (output && !output.success) {
+      throw new Error("Executable tool output contract exceeds safe inspection limits");
+    }
+    return {
+      name: metadata.name,
+      description: metadata.description,
+      inputSchema: snapshot.value,
+      outputSchema: output?.success ? output.value : null,
+    };
   }
   return undefined;
 }
@@ -968,7 +987,7 @@ export function createToolSearchDefinition(): ToolDefinition {
   return {
     name: TOOL_SEARCH_TOOL_NAME,
     description:
-      'Find and load this run\'s executable tools. Provide exactly one of: schema (exact tool name) to read its input schema and load it; search (short phrase) to find tools without loading; inventory ("all" or "platform") to browse metadata pages; query to search and load matches. Check discovery before declaring a requested tool unavailable.',
+      'Find and load this run\'s executable tools. Provide exactly one of: schema (exact tool name) to read its input and declared output schemas and load it; search (short phrase) to find tools without loading; inventory ("all" or "platform") to browse metadata pages; query to search and load matches. Check discovery before declaring a requested tool unavailable.',
     parameters: {
       type: "object",
       additionalProperties: false,
@@ -977,7 +996,7 @@ export function createToolSearchDefinition(): ToolDefinition {
           type: "string",
           minLength: 1,
           description:
-            "Mode. One exact executable tool name. Returns its input schema and loads it for the next step.",
+            "Mode. One exact executable tool name. Returns its input schema and declared output schema, or null when absent, and loads it for the next step.",
         },
         search: {
           type: "string",

@@ -22,6 +22,9 @@ export const createOpenAIProviderEmbedding = trustedOpenAIProvider.createEmbeddi
 export const createOpenAIProviderResponses = trustedOpenAIProvider.createResponses.bind(
   trustedOpenAIProvider,
 );
+export const createOpenAIProviderDecisions = trustedOpenAIProvider.createDecisions.bind(
+  trustedOpenAIProvider,
+);
 
 const extOpenAI: ExtensionFactory = () => {
   const provider = new OpenAIProvider();

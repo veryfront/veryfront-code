@@ -1,4 +1,4 @@
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { RemoteMCPToolSourceConfig } from "#veryfront/tool/remote-mcp.ts";
 import type { RemoteToolSource } from "#veryfront/tool/types.ts";
@@ -26,6 +26,38 @@ function recorder() {
 }
 
 describe("control-plane run platform tool source", () => {
+  it("disposes every constituent source and shares discovery state between them", async () => {
+    const configs: RemoteMCPToolSourceConfig[] = [];
+    const disposed: Array<string | undefined> = [];
+    const source = createRunPlatformToolSource(
+      {
+        id: "platform",
+        endpoint: "https://api.example/mcp",
+        headers: { Authorization: "Bearer t" },
+      },
+      { token: "test-authority", runId: "run-1" },
+      (config) => {
+        configs.push(config);
+        return {
+          id: config.id ?? "platform",
+          listTools: async () => [],
+          executeTool: async () => undefined,
+          dispose: async (context) => {
+            disposed.push(context?.runId);
+          },
+        };
+      },
+    );
+    await source.dispose!({ runId: "run-1" });
+    assertEquals(disposed, ["run-1", "run-1"]);
+    const tokens = configs.map((config) =>
+      Object.getOwnPropertySymbols(config).map((key) => Reflect.get(config, key))
+    );
+    assertEquals(configs.length, 2);
+    assertEquals(tokens[0]!.length, 1);
+    assertStrictEquals(tokens[1]![0], tokens[0]![0]);
+  });
+
   it("names the finalize call beside its terminal credential so the API can close it", async () => {
     const { calls, create } = recorder();
     const source = createRunPlatformToolSource(

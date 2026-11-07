@@ -1505,6 +1505,20 @@ export interface components {
             total: string | null;
         } & unknown;
         /** @description A newly created run with resolved target and recorded trigger. */
+        CreateInputRequestResponderRules: {
+            /** @description Nobody who started the run may answer. The run starters may withdraw the request instead. */
+            exclude_run_starters?: boolean;
+            /**
+             * @description Project capability the responder must hold.
+             * @enum {string}
+             */
+            required_capability?: "project.approvals.decide";
+            /**
+             * Format: int64
+             * @description The responder must have signed in within this many seconds.
+             */
+            step_up_seconds?: number;
+        };
         CreatedRun: {
             /** @description Files produced by the run. */
             artifacts?: components["schemas"]["RunArtifact"][];
@@ -1698,10 +1712,22 @@ export interface components {
             usage?: components["schemas"]["Usage"];
         } & (unknown & unknown & unknown & unknown & unknown & unknown & unknown);
         CreateInputRequestRequest: {
+            /**
+             * @description `tool_result` hands the answer to the waiting tool call. `none` leaves the runtime to read the request.
+             * @default tool_result
+             * @enum {string}
+             */
+            delivery: "tool_result" | "none";
             description?: string;
             /** Format: date-time */
             expires_at?: string;
             fields: components["schemas"]["InputRequestField"][];
+            /**
+             * @description How the request is presented. `form` collects `fields`.
+             * @default form
+             * @enum {string}
+             */
+            kind: "form";
             metadata?: {
                 [key: string]: unknown;
             };
@@ -1710,21 +1736,39 @@ export interface components {
              * @enum {string}
              */
             requested_responder_type: "human" | "agent" | "system";
+            /** @description Who may answer. Requires a human responder; the server resolves the run starters. */
+            responder_rules?: components["schemas"]["CreateInputRequestResponderRules"];
             title: string;
+            /** @description The tool call the request is about, shown to the responder. */
+            tool_call?: components["schemas"]["InputRequestToolCall"];
             /** @description Tool invocation to request input for. Defaults to the run’s current waiting invocation. */
             tool_call_id?: string;
         };
         CreateInputRequestRequestInput: {
+            /**
+             * @description `tool_result` hands the answer to the waiting tool call. `none` leaves the runtime to read the request.
+             * @enum {string}
+             */
+            delivery?: "tool_result" | "none";
             description?: string;
             /** Format: date-time */
             expires_at?: string;
             fields: components["schemas"]["InputRequestFieldInput"][];
+            /**
+             * @description How the request is presented. `form` collects `fields`.
+             * @enum {string}
+             */
+            kind?: "form";
             metadata?: {
                 [key: string]: unknown;
             };
             /** @enum {string} */
             requested_responder_type?: "human" | "agent" | "system";
+            /** @description Who may answer. Requires a human responder; the server resolves the run starters. */
+            responder_rules?: components["schemas"]["CreateInputRequestResponderRules"];
             title: string;
+            /** @description The tool call the request is about, shown to the responder. */
+            tool_call?: components["schemas"]["InputRequestToolCall"];
             /** @description Tool invocation to request input for. Defaults to the run’s current waiting invocation. */
             tool_call_id?: string;
         };
@@ -2053,6 +2097,11 @@ export interface components {
              * @description When the request was created.
              */
             created_at: string;
+            /**
+             * @description `tool_result` hands the answer to the waiting tool call. `none` leaves the runtime to read the request.
+             * @enum {string}
+             */
+            delivery: "tool_result" | "none";
             /** @description Additional instructions for the responder. */
             description?: string;
             /**
@@ -2067,6 +2116,11 @@ export interface components {
              * @description Unique input request ID.
              */
             input_request_id: string;
+            /**
+             * @description How the request is presented. `form` collects `fields`.
+             * @enum {string}
+             */
+            kind: "form";
             /** @description Additional resource metadata. */
             metadata?: {
                 [key: string]: unknown;
@@ -2086,6 +2140,8 @@ export interface components {
              * @description When the request was submitted, cancelled or expired.
              */
             resolved_at?: string;
+            /** @description Who may answer. Absent: the run’s own access rules. */
+            responder_rules?: components["schemas"]["InputRequestResponderRules"];
             /** @description Submitted response, or null before submission or after cancellation or expiry. */
             response: components["schemas"]["InputResponse"] | null;
             /**
@@ -2100,6 +2156,8 @@ export interface components {
             status: "open" | "submitted" | "cancelled" | "expired";
             /** @description Question or decision shown to the responder. */
             title: string;
+            /** @description The tool call the request is about. */
+            tool_call?: components["schemas"]["InputRequestToolCall"];
             /** @description Tool invocation waiting for the response. */
             tool_call_id?: string;
         } & (unknown & unknown);
@@ -2214,6 +2272,30 @@ export interface components {
             required?: boolean;
             /** @enum {string} */
             type: "select" | "radio";
+        };
+        InputRequestResponderRules: {
+            /** @description Nobody who started the run may answer. The run starters may withdraw the request instead. */
+            exclude_run_starters?: boolean;
+            /** @description Users the server excluded from answering. */
+            excluded_user_ids: string[];
+            /**
+             * @description Project capability the responder must hold.
+             * @enum {string}
+             */
+            required_capability?: "project.approvals.decide";
+            /**
+             * Format: int64
+             * @description The responder must have signed in within this many seconds.
+             */
+            step_up_seconds?: number;
+        };
+        InputRequestToolCall: {
+            /** @description Arguments of that exact call. */
+            arguments: {
+                [key: string]: unknown;
+            };
+            /** @description Tool the agent wants to run. */
+            name: string;
         };
         InputRequestUpdatedPayload: {
             inputRequest: {

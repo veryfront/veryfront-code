@@ -244,15 +244,19 @@ function convertStructuredPart(part: StructuredProviderPart): AgentRuntimeMessag
         args: "input" in part ? toChildRunToolInputRecord(part.input) : {},
       };
 
-    case "tool-result":
+    case "tool-result": {
+      // This boundary owns one provider output envelope; its value is raw agent data.
+      const output = part.output;
+      const result = output.type === "error-text" ? { error: output.value } : output.value;
       return inheritToolResultSource<
         Extract<AgentRuntimeMessage["parts"][number], { type: "tool-result" }>
       >(part, {
         type: "tool-result",
         toolCallId: part.toolCallId,
         toolName: part.toolName,
-        result: "output" in part ? part.output : null,
+        result,
       });
+    }
 
     case "image":
     case "file":

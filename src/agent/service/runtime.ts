@@ -182,6 +182,7 @@ function normalizeAgentServiceTools(
   tools: RuntimeAgentMarkdownDefinition["tools"],
   deniedTools: RuntimeAgentMarkdownDefinition["deniedTools"],
 ): AgentConfig["tools"] {
+  if (tools === false) return false;
   if (!deniedTools?.length) {
     if (tools === undefined || tools === true) return tools;
     return Object.fromEntries(tools.map((toolId) => [toolId, true]));

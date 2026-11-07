@@ -242,16 +242,14 @@ export function createDependencyPinningSource(
         (options.isLocalProject === undefined && isVirtualFilesystem(options.adapter.fs)))
     ? options.adapter.fs
     : undefined;
-  const projectKey = options.projectId
-    ? `id:${options.projectId}`
-    : options.projectSlug
-    ? `slug:${options.projectSlug}`
-    : `dir:${options.projectDir}`;
-  const contentKey = options.contentSourceId
-    ? `content:${options.contentSourceId}`
-    : options.releaseId
-    ? `release:${options.releaseId}`
-    : `branch:${options.branch ?? "main"}`;
+  let projectKey: string;
+  if (options.projectId) projectKey = `id:${options.projectId}`;
+  else if (options.projectSlug) projectKey = `slug:${options.projectSlug}`;
+  else projectKey = `dir:${options.projectDir}`;
+  let contentKey: string;
+  if (options.contentSourceId) contentKey = `content:${options.contentSourceId}`;
+  else if (options.releaseId) contentKey = `release:${options.releaseId}`;
+  else contentKey = `branch:${options.branch ?? "main"}`;
 
   const snapshotStore = getSourceSnapshotStore(options);
   const source: DependencyPinningSource = {
@@ -329,7 +327,7 @@ export function withDependencyPinningSourceFileSystem(
   const original = typeof source === "object" && source !== null ? source : undefined;
   const result = snapshotFreeze({
     ...original,
-    projectDir: original ? original.projectDir : typeof source === "string" ? source : projectDir,
+    projectDir: resolveReboundProjectDirectory(original, source, projectDir),
     fs,
   });
   const store = original && snapshotApply(snapshotWeakGet, sourceSnapshotStores, [original]);
@@ -340,6 +338,16 @@ export function withDependencyPinningSourceFileSystem(
     snapshotApply(snapshotWeakSet, sourceMetadataHistoryReaders, [result, historyReader]);
   }
   return result;
+}
+
+function resolveReboundProjectDirectory(
+  original: DependencyPinningSource | undefined,
+  source: DependencyPinningSourceInput,
+  projectDir: string,
+): DependencyPinningSource["projectDir"] {
+  if (original) return original.projectDir;
+  if (typeof source === "string") return source;
+  return projectDir;
 }
 
 function ownSnapshotStore(
@@ -399,7 +407,7 @@ function snapshotRegistry(source: DependencyPinningSourceInput): DependencySnaps
 function snapshotHistoryIdentity(source: DependencyPinningSourceInput): string {
   // Hosted source identity excludes pod-local mount paths. Store-less/local
   // sources preserve directory scoping; replicated embedders supply project identity.
-  return typeof source === "object" && source !== null && source.cacheNamespace
+  return typeof source === "object" && source?.cacheNamespace
     ? source.cacheNamespace
     : normalizeDependencyPinningSource(source).cacheIdentity;
 }
@@ -712,39 +720,7 @@ export async function resolveDependencyPinningSnapshot(
   }
 
   if (dependencies !== undefined) {
-    const copiedDependencies = copyDependencyMap(dependencies);
-    const remembered = getDependencyPinningSnapshotSync(source, cacheKey);
-    if (remembered) {
-      if (
-        !remembered.dependencies ||
-        !dependencyMapsEqual(remembered.dependencies, copiedDependencies)
-      ) {
-        throw new Error(
-          `Dependency pinning snapshot key does not match supplied dependencies: ${cacheKey}`,
-        );
-      }
-      return remembered;
-    }
-
-    const configuredVersions = capturedConfiguration ?? captureConfiguredVersions(
-      normalizeDependencyPinningSource(source).config,
-    );
-    const matchesDependencyMap = `on:${hashDependencyPins(copiedDependencies)}` === cacheKey;
-    const matchesConfiguredVersions = configuredVersions !== undefined &&
-      `on:${hashDependencyPins(copiedDependencies, configuredVersions)}` === cacheKey;
-    if (!matchesDependencyMap && !matchesConfiguredVersions) {
-      throw new Error(
-        `Dependency pinning snapshot key does not match supplied dependencies: ${cacheKey}`,
-      );
-    }
-    const immutableDependencies = Object.freeze(copiedDependencies);
-    return Object.freeze({
-      cacheKey,
-      dependencies: immutableDependencies,
-      configuredVersions: matchesConfiguredVersions
-        ? freezeConfiguredVersions(configuredVersions)
-        : undefined,
-    });
+    return captureSuppliedDependencySnapshot(source, cacheKey, dependencies, capturedConfiguration);
   }
 
   if (normalizeDependencyPinningSource(source).projectDir) {
@@ -753,6 +729,47 @@ export async function resolveDependencyPinningSnapshot(
   }
 
   throw new Error(`Dependency pinning snapshot is unavailable: ${cacheKey}`);
+}
+
+function captureSuppliedDependencySnapshot(
+  source: DependencyPinningSourceInput,
+  cacheKey: string,
+  dependencies: Readonly<Record<string, string>>,
+  capturedConfiguration: DependencyPinningSnapshot["configuredVersions"],
+): DependencyPinningSnapshot {
+  const copiedDependencies = copyDependencyMap(dependencies);
+  const remembered = getDependencyPinningSnapshotSync(source, cacheKey);
+  if (remembered) {
+    if (
+      !remembered.dependencies ||
+      !dependencyMapsEqual(remembered.dependencies, copiedDependencies)
+    ) {
+      throw new Error(
+        `Dependency pinning snapshot key does not match supplied dependencies: ${cacheKey}`,
+      );
+    }
+    return remembered;
+  }
+
+  const configuredVersions = capturedConfiguration ?? captureConfiguredVersions(
+    normalizeDependencyPinningSource(source).config,
+  );
+  const matchesDependencyMap = `on:${hashDependencyPins(copiedDependencies)}` === cacheKey;
+  const matchesConfiguredVersions = configuredVersions !== undefined &&
+    `on:${hashDependencyPins(copiedDependencies, configuredVersions)}` === cacheKey;
+  if (!matchesDependencyMap && !matchesConfiguredVersions) {
+    throw new Error(
+      `Dependency pinning snapshot key does not match supplied dependencies: ${cacheKey}`,
+    );
+  }
+  const immutableDependencies = Object.freeze(copiedDependencies);
+  return Object.freeze({
+    cacheKey,
+    dependencies: immutableDependencies,
+    configuredVersions: matchesConfiguredVersions
+      ? freezeConfiguredVersions(configuredVersions)
+      : undefined,
+  });
 }
 
 /**
@@ -943,17 +960,7 @@ async function readProjectDependencyVersionsUncoalesced(
       mtimeMs !== null &&
       cached.mtimeMs === mtimeMs
     ) {
-      return {
-        react: selectReact
-          ? cached.reactDeclaration
-            ? selectReactDeclarationVersion(cached.reactDeclaration)
-            : cached.react
-          : undefined,
-        reactDeclaration: cached.reactDeclaration,
-        veryfront: cached.veryfront,
-        dependencies: undefined,
-        dependencyState: "verified",
-      };
+      return readCachedDependencyVersions(cached, selectReact);
     }
 
     let content = await readPath(packageJsonPath);
@@ -1006,34 +1013,61 @@ async function readProjectDependencyVersionsUncoalesced(
       dependencyState: "verified",
     };
   } catch (error) {
-    // Never retain transform-affecting pins after the backing package.json
-    // disappears or becomes unreadable/malformed. A later valid file will be
-    // re-read because there is no stale mtime entry to short-circuit on.
-    dependencyVersionCache.delete(source.cacheIdentity);
-    currentDependencyPinningKeys.delete(source.cacheIdentity);
-
-    if (error instanceof ReactPackageIdentityError) throw error;
-
-    // ENOENT means there is no package.json in the project dir — expected for
-    // framework-only environments.  Any other error (permission denied, malformed
-    // JSON, etc.) is logged at warn so it is visible without crashing the server.
-    const errorRecord = error !== null && typeof error === "object"
-      ? error as { code?: unknown; name?: unknown; message?: unknown }
-      : undefined;
-    const errorMessage = String(errorRecord?.message ?? error);
-    const isNotFound = errorRecord?.code === "ENOENT" ||
-      errorRecord?.name === "NotFound" ||
-      /\b(?:file|path) not found\b/i.test(errorMessage) ||
-      /\bno such file or directory\b/i.test(errorMessage);
-    if (!isNotFound) {
-      logger.warn("Failed to read project dependency versions", {
-        packageJsonPath,
-        cacheNamespace: source.cacheIdentity,
-        error: String(error),
-      });
-    }
-    return { dependencyState: isNotFound ? "absent" : "unknown" };
+    return handleDependencyVersionReadFailure(error, source, packageJsonPath);
   }
+}
+
+function readCachedDependencyVersions(
+  cached: CachedDependencyVersions,
+  selectReact: boolean,
+): DependencyVersionsResult {
+  let react: string | undefined;
+  if (selectReact) {
+    react = cached.reactDeclaration
+      ? selectReactDeclarationVersion(cached.reactDeclaration)
+      : cached.react;
+  }
+  return {
+    react,
+    reactDeclaration: cached.reactDeclaration,
+    veryfront: cached.veryfront,
+    dependencies: undefined,
+    dependencyState: "verified",
+  };
+}
+
+function handleDependencyVersionReadFailure(
+  error: unknown,
+  source: NormalizedDependencyPinningSource,
+  packageJsonPath: string,
+): DependencyVersionsResult {
+  // Never retain transform-affecting pins after the backing package.json
+  // disappears or becomes unreadable/malformed. A later valid file will be
+  // re-read because there is no stale mtime entry to short-circuit on.
+  dependencyVersionCache.delete(source.cacheIdentity);
+  currentDependencyPinningKeys.delete(source.cacheIdentity);
+
+  if (error instanceof ReactPackageIdentityError) throw error;
+
+  // ENOENT means there is no package.json in the project dir — expected for
+  // framework-only environments.  Any other error (permission denied, malformed
+  // JSON, etc.) is logged at warn so it is visible without crashing the server.
+  const errorRecord = error !== null && typeof error === "object"
+    ? error as { code?: unknown; name?: unknown; message?: unknown }
+    : undefined;
+  const errorMessage = String(errorRecord?.message ?? error);
+  const isNotFound = errorRecord?.code === "ENOENT" ||
+    errorRecord?.name === "NotFound" ||
+    /\b(?:file|path) not found\b/i.test(errorMessage) ||
+    /\bno such file or directory\b/i.test(errorMessage);
+  if (!isNotFound) {
+    logger.warn("Failed to read project dependency versions", {
+      packageJsonPath,
+      cacheNamespace: source.cacheIdentity,
+      error: String(error),
+    });
+  }
+  return { dependencyState: isNotFound ? "absent" : "unknown" };
 }
 
 export interface ProjectPackageVersionOptions {
@@ -1147,16 +1181,7 @@ export async function resolveProjectPackageVersions(
     return { react, veryfront };
   }
   if (hasEnabledDependencySnapshot(options)) {
-    const dependencies = options.dependencyPinningDependencies;
-    const capturedReact = capturedDependencyConfiguration(options)?.react?.effective;
-    return {
-      react: capturedReact !== undefined
-        ? normalizeReactVersion(capturedReact)
-        : dependencies?.react
-        ? selectReactDeclarationVersion(dependencies.react)
-        : normalizeReactVersion(undefined),
-      veryfront: dependencies?.veryfront ? stripSemverRange(dependencies.veryfront) : undefined,
-    };
+    return resolveCapturedProjectPackageVersions(options);
   }
 
   const configuredReact = getConfiguredReactVersion(options.config);
@@ -1177,6 +1202,21 @@ export async function resolveProjectPackageVersions(
   return {
     react: configuredReact ?? detectedReact ?? normalizeReactVersion(undefined),
     veryfront: configuredVeryfront ?? detectedVeryfront,
+  };
+}
+
+function resolveCapturedProjectPackageVersions(
+  options: ProjectPackageVersionOptions,
+): ResolvedProjectPackageVersions {
+  const dependencies = options.dependencyPinningDependencies;
+  const capturedReact = capturedDependencyConfiguration(options)?.react?.effective;
+  let react: string;
+  if (capturedReact !== undefined) react = normalizeReactVersion(capturedReact);
+  else if (dependencies?.react) react = selectReactDeclarationVersion(dependencies.react);
+  else react = normalizeReactVersion(undefined);
+  return {
+    react,
+    veryfront: dependencies?.veryfront ? stripSemverRange(dependencies.veryfront) : undefined,
   };
 }
 

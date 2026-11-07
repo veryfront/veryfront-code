@@ -4,8 +4,9 @@
 
 - `taskInputEvents` records the two event discriminants and four payload schemas from API #6512.
 - `agentFinalization` records [API #6952](https://github.com/veryfront/veryfront-api/pull/6952), which retains optional completed output and adds authoritative runtime `final_text`, including an empty filtered answer. Explicit null output remains valid; owner finalization cannot supply `final_text`.
+- `toolApproval` records [API #7291](https://github.com/veryfront/veryfront-api/pull/7291), which adds `kind`, `delivery`, `responder_rules` and `tool_call` to input requests so a tool approval is an ordinary form request.
 
-Both revisions record their exact source commit and OpenAPI hash. The newer released base remains intact.
+Each revision records its exact source commit and OpenAPI hash. The newer released base remains intact.
 
 `runs-api.generated.ts` is generated from the resulting OpenAPI document with the API's `renderRunsTargetArtifacts(document)` generator (openapi-typescript 7.13.0).
 
@@ -18,6 +19,8 @@ deno run --allow-read --allow-write scripts/generate-runs-task-input-contract.ts
 The generator verifies the source hash before applying the event definitions. Regenerate the TypeScript artifact with the API's `renderRunsTargetArtifacts(document)`, passing this checkout's updated `openapi.target.json` as `document`; retain its `runs-api.types.ts` output as `runs-api.generated.ts`. This preserves request input-shape generation and the newer base contract instead of replacing it with the companion branch's older base.
 
 For the finalization revision, copy only `FinalizeRunRequest`'s completed `output` description and optionality plus the optional `final_text` property from the source recorded in `agentFinalization`. Regenerate the TypeScript artifact against this checkout's document with the same API generator. Do not replace the document with the API branch's older base.
+
+For the tool approval revision, copy only the `CreateInputRequestRequest` and `InputRequest` properties and examples that the source recorded in `toolApproval` adds, with its three new component schemas.
 
 Regenerate the SDK fixtures and verify the pin:
 

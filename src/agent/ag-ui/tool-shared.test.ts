@@ -1,12 +1,17 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { toolToProviderDefinition } from "#veryfront/tool/registry.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import type { Tool } from "#veryfront/tool/types.ts";
 import type { Agent } from "../types.ts";
 import { isAgentKnowledgeTool } from "../runtime/knowledge-tools.ts";
 import { RunResumeSessionManager } from "../runtime/index.ts";
-import { type AgUiResumeValue, buildMergedAgUiTools } from "./tool-shared.ts";
+import {
+  type AgUiResumeValue,
+  buildExplicitAgUiSourceTools,
+  buildMergedAgUiTools,
+} from "./tool-shared.ts";
 
 const inputSchema = defineSchema((v) =>
   v.object({
@@ -16,6 +21,42 @@ const inputSchema = defineSchema((v) =>
 );
 
 describe("buildMergedAgUiTools", () => {
+  it("does not re-enable a no-tools agent with client tool metadata", () => {
+    const agent = { config: { tools: false } } as unknown as Agent;
+    const sessionManager = new RunResumeSessionManager<AgUiResumeValue>();
+
+    assertEquals(buildExplicitAgUiSourceTools(agent), false);
+    assertEquals(
+      buildMergedAgUiTools(agent, "run_1", [{ name: "studio_open_preview" }], sessionManager),
+      false,
+    );
+  });
+
+  it("discloses declared output schemas on injected tools", () => {
+    const outputSchema = { type: "object", properties: { opened: { type: "boolean" } } };
+    const agent = { config: {} } as unknown as Agent;
+    const sessionManager = new RunResumeSessionManager<AgUiResumeValue>();
+
+    const mergedTools = buildMergedAgUiTools(agent, "run_1", [
+      { name: "studio_open_preview", outputSchema },
+      { name: "studio_close_preview" },
+    ], sessionManager) as Record<string, Tool>;
+
+    assertEquals<unknown>(
+      toolToProviderDefinition(mergedTools.studio_open_preview!).outputSchema,
+      outputSchema,
+    );
+    assertEquals(
+      toolToProviderDefinition(mergedTools.studio_close_preview!).outputSchema,
+      undefined,
+    );
+    const malformed = buildMergedAgUiTools(agent, "run_1", [
+      { name: "studio_open_preview", outputSchema: { type: "object", value: 1n } },
+    ], sessionManager) as Record<string, Tool>;
+    assertEquals(typeof malformed.studio_open_preview?.execute, "function");
+    assertEquals(malformed.studio_open_preview?.outputSchemaJson, undefined);
+  });
+
   it("preserves concrete source tools when forwarded metadata uses the same name", async () => {
     const sourceTool: Tool = {
       id: "number-generator",

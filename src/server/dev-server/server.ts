@@ -34,6 +34,7 @@ import {
 import { isPersistentLocalCacheEnabled } from "#veryfront/cache/backend.ts";
 import { clearTranspileCache, discoverAll } from "#veryfront/discovery";
 import type { DiscoveryConfig } from "#veryfront/discovery";
+import { resolveDevAgentDirs } from "#veryfront/discovery/project-discovery-config.ts";
 import { runWithDevServerCacheDir } from "./cache-context.ts";
 import {
   sealIngressCredentials,
@@ -159,6 +160,8 @@ export class DevServer {
         },
       };
     }
+
+    this.options.onConfigResolved?.(this.appConfig);
 
     if (bootstrap.usingFSAdapter) {
       fsAdapterLog.debug(`Using ${bootstrap.fsAdapterType} backend`);
@@ -359,7 +362,7 @@ export class DevServer {
     return {
       baseDir: this.options.projectDir,
       toolDirs: discoveryConfig?.tools?.discovery?.paths ?? ["tools"],
-      agentDirs: discoveryConfig?.agents?.discovery?.paths ?? ["agents"],
+      agentDirs: resolveDevAgentDirs(this.appConfig),
       skillDirs: skillDiscoveryEnabled
         ? (discoveryConfig?.skills?.discovery?.paths ?? ["skills"])
         : [],

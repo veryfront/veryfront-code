@@ -154,6 +154,11 @@ step. `veryfront__form_input` is authorized but deferred until it is needed. Omi
 to expose no project tools. Search results contain names and descriptions, not
 input or output schemas.
 
+Set `tools: false` to deny all Veryfront-callable tools, including framework
+helpers, integration tools, and tools supplied by a run request. This setting
+does not disable explicitly configured `providerTools`, which execute in the
+selected model provider.
+
 ```ts
 // agents/assistant.ts
 import { agent } from "veryfront/agent";
@@ -172,8 +177,9 @@ separate, and execution rechecks authorization.
 `veryfront__tool_search` accepts exactly one of four mode fields. All arguments are
 top-level strings or integers:
 
-- `schema: "<exact name>"` returns one exact tool's input schema and loads it
-  for the next model step.
+- `schema: "<exact name>"` returns one exact tool's input schema and declared
+  output schema, then loads it for the next model step. A `null` output schema
+  means the tool source did not declare an output contract.
 - `search: "<phrase>"` finds tools by a short capability phrase without loading
   schemas.
 - `inventory: "all" | "platform"` browses tool metadata pages. `platform` lists
@@ -274,6 +280,7 @@ For `veryfront-cloud/*` models, the served catalogue for your project and
 credential determines which provider tools are available. Configuring a tool
 cannot grant it when the selected deployment omits it. Before the catalogue
 loads, or when its tool declaration is missing, no provider tools are offered.
+
 The gateway remains responsible for enforcing policy before dispatch. Read its
 served web-tool data-flow facts for processing recipients and boundary coverage;
 inference residency alone does not approve web search or fetch.
@@ -334,6 +341,30 @@ export default agent({
   ],
 });
 ```
+
+### HTTP MCP compatibility
+
+HTTP MCP sources send protocol version, client metadata and routing headers for
+MCP 2026-07-28 tool discovery and calls. Schema-declared `x-mcp-header`
+parameters are mirrored into request headers. Names and values that require
+encoding use the protocol's Base64 format.
+
+For a legacy server that rejects modern tool discovery with an unrecognized HTTP 400
+response, the client initializes a session and reuses its negotiated protocol
+version. Sessions are isolated by endpoint, credentials and run. A tool call for
+a new run on such an endpoint initializes its session before the call is sent. An explicit
+session-expiry HTTP 404 triggers one initialization and retry. Other failures
+do not replay tool calls.
+
+Agent runs release sessions for the MCP sources they create, including on
+failure or cancellation. Hosts retain ownership of injected sources. If you
+create a source with `createRemoteMCPToolSource`, call its optional `dispose()`
+method when you finish using it. Session termination is best effort; a server
+can reject termination with HTTP 405.
+
+This transport supports remote tool discovery and execution. It does not
+implement deprecated HTTP+SSE endpoint discovery, background subscriptions,
+or server-initiated sampling and elicitation.
 
 ## Tool configuration
 

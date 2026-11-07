@@ -283,6 +283,8 @@ it("authenticated suffix preserves real continuation and rejects gaps, foreign p
   );
   // An append near the API's 10 MiB request-body ceiling stays recoverable.
   // Its sealed continuation occupies a separate ordinary page.
+  // Match the live ownership receipt so coverage overhead cannot expire these pages.
+  const largeResponse = { ...response, leaseRemainingMs: 300_000 };
   const largePayload = { messages: [], padding: "x".repeat(10 * 1024 * 1024 - 4096) };
   const largeEvent = {
     ...stateful,
@@ -299,8 +301,8 @@ it("authenticated suffix preserves real continuation and rejects gaps, foreign p
     async () =>
       Response.json(
         ++largePage === 1
-          ? { ...response, events: [largeEvent], nextAfterEventId: 101 }
-          : { ...response, events: [], continuations: [continuation] },
+          ? { ...largeResponse, events: [largeEvent], nextAfterEventId: 101 }
+          : { ...largeResponse, events: [], continuations: [continuation] },
       ),
   );
   const largeSuffix = await readAuthenticatedRecoverySuffix({
@@ -314,18 +316,18 @@ it("authenticated suffix preserves real continuation and rejects gaps, foreign p
   assertEquals(largeRestored.runtimeContinuation, safeSnapshot.runtimeContinuation);
   await assertRejects(() =>
     read({
-      ...response,
+      ...largeResponse,
       events: [largeEvent],
       continuations: [continuation],
     })
   );
   await assertRejects(() =>
     read({
-      ...response,
+      ...largeResponse,
       events: [largeEvent, { ...largeEvent, eventId: 102 }],
     })
   );
-  const maximumPage = { ...response, events: [{ ...largeEvent, payload: { padding: "" } }] };
+  const maximumPage = { ...largeResponse, events: [{ ...largeEvent, payload: { padding: "" } }] };
   const envelopeBytes = new TextEncoder().encode(JSON.stringify(maximumPage)).byteLength;
   maximumPage.events[0]!.payload.padding = "x".repeat(
     MAX_RECOVERY_SUFFIX_SINGLE_ENTRY_PAGE_BYTES - envelopeBytes + 1,
@@ -341,7 +343,7 @@ it("authenticated suffix preserves real continuation and rejects gaps, foreign p
       readPage: async () => {
         cumulativePages++;
         return {
-          ...response,
+          ...largeResponse,
           events: [{
             ...largeEvent,
             eventId: 90 + cumulativePages,

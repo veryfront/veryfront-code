@@ -1163,6 +1163,82 @@ Deno.test("prepareHostedChatExecution forwards trusted authored runtime context 
   });
 });
 
+Deno.test("prepareHostedChatExecution keeps the closed tools selector through runtime construction", async () => {
+  let recordedOptions:
+    | {
+      allowedTools?: string[];
+      includeRuntimeEssentialToolsWhenEmpty?: boolean;
+      toolLoading?: unknown;
+      toolResultContext?: unknown;
+      knowledge?: unknown;
+      bootstrapSkill?: unknown;
+      bootstrapTools?: unknown;
+      optionalBootstrapTools?: unknown;
+      closedToolSelector?: boolean;
+    }
+    | undefined;
+
+  await prepareHostedChatExecution({
+    request: createParsedHostedChatRequest({
+      conversationId: "conversation-1",
+      projectId: "project-1",
+      durableRootRun: {
+        runId: "10000000-0000-4000-8000-000000000006",
+        messageId: "message-1",
+        latestEventId: 3,
+        latestExternalEventSequence: 2,
+      },
+      forwardedProps: {
+        runtimeOverrides: { toolLoading: "eager" },
+      },
+    }),
+    agentConfig: {
+      id: "agent-1",
+      model: "configured-model",
+      tools: false,
+      bootstrapSkill: "agent-1--startup",
+      bootstrapTools: ["veryfront__search_knowledge"],
+      optionalBootstrapTools: ["tool_search"],
+      toolLoading: "deferred",
+      toolResultContext: { maxInlineBytes: 32, previewBytes: 16 },
+      knowledge: { "knowledge/public/**": true, "knowledge/private/**": false },
+    },
+    apiUrl: "https://api.example.com",
+    abortSignal: new AbortController().signal,
+    resolveModelId: (modelId) => modelId,
+    fetchSteering: () => Promise.resolve({ instructions: "", skills: [] }),
+    buildInstructions: () => "Agent instructions",
+    createRuntime: (options) => {
+      recordedOptions = options;
+      return Promise.resolve({
+        runtimeKind: "framework",
+        modelId: options.model ?? "configured-model",
+        cleanup: () => Promise.resolve(),
+        agent: {
+          stream: () =>
+            Promise.resolve({
+              steps: Promise.resolve([]),
+              toUIMessageStream: async function* () {},
+            }),
+        },
+      });
+    },
+  });
+
+  assertEquals(recordedOptions?.allowedTools, []);
+  assertEquals(recordedOptions?.includeRuntimeEssentialToolsWhenEmpty, false);
+  // A deny-all agent must not regain the tool-result reader, deferred
+  // tool_search, knowledge search or startup tools through runtime options.
+  assertEquals(recordedOptions?.toolLoading, "eager");
+  assertEquals(recordedOptions?.toolResultContext, false);
+  assertEquals(recordedOptions?.knowledge, undefined);
+  assertEquals(recordedOptions?.bootstrapSkill, undefined);
+  assertEquals(recordedOptions?.bootstrapTools, undefined);
+  assertEquals(recordedOptions?.optionalBootstrapTools, undefined);
+  // Assembly must not add host fallbacks for provider tools (e.g. local web_fetch).
+  assertEquals(recordedOptions?.closedToolSelector, true);
+});
+
 describe("provider replay bootstrap", () => {
   it("forwards the bootstrapped gate through hosted chat execution", async () => {
     let recordedOptions: {
@@ -1830,24 +1906,13 @@ Deno.test("prepareHostedChatExecution preserves allowed remote tool history", as
       }),
   });
 
-  assertEquals(
-    result.finalMessages.some((message) =>
-      message.parts.some((part) =>
-        part.type === "tool-result" &&
-        part.toolName === "harvest__list_accounts" &&
-        "result" in part &&
-        typeof part.result === "object" &&
-        part.result !== null &&
-        "type" in part.result &&
-        part.result.type === "json" &&
-        "value" in part.result &&
-        typeof part.result.value === "object" &&
-        part.result.value !== null &&
-        "accounts" in part.result.value
-      )
-    ),
-    true,
+  const accountResult = result.finalMessages.flatMap((message) => message.parts).find((part) =>
+    part.type === "tool-result" && part.toolName === "harvest__list_accounts"
   );
+  assertEquals(accountResult && "result" in accountResult ? accountResult.result : undefined, {
+    accounts: [{ id: "acct-1", name: "Test Account", product: "harvest" }],
+    summary: { count: 1 },
+  });
 });
 
 Deno.test("prepareHostedChatExecution compacts oversized context and appends a durable event", async () => {
@@ -3059,10 +3124,7 @@ Deno.test(
           type: "tool-result",
           toolCallId: "srvtool-web-search",
           toolName: "web_search",
-          result: {
-            type: "json",
-            value: [],
-          },
+          result: [],
         },
       ],
       "checkpointed provider call and result remain available for replay validation",

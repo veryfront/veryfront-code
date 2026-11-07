@@ -1303,33 +1303,9 @@ export function createConnectedLocalWriterVerifier(
   return async (input) => {
     if (!trustedOrigin || !isSafeHostedJwtVerificationEnvironment()) return { verified: false };
     try {
-      const firstDot = ReflectApply(StringIndexOf, input.token, ["."]) as number;
-      const secondDot = ReflectApply(StringIndexOf, input.token, [".", firstDot + 1]) as number;
-      if (
-        firstDot <= 0 || secondDot <= firstDot + 1 || secondDot === input.token.length - 1 ||
-        ReflectApply(StringIndexOf, input.token, [".", secondDot + 1]) !== -1
-      ) {
-        return { verified: false };
-      }
-      const headerText = ReflectApply(StringSlice, input.token, [0, firstDot]) as string;
-      const payloadText = ReflectApply(StringSlice, input.token, [
-        firstDot + 1,
-        secondDot,
-      ]) as string;
-      const signature = ReflectApply(StringSlice, input.token, [secondDot + 1]) as string;
-      if (!headerText || !payloadText || !signature) {
-        return { verified: false };
-      }
-      const header = privateJsonParse(
-        ReflectApply(
-          BufferToString,
-          ReflectApply(BufferFrom, NativeBuffer, [headerText, "base64url"]),
-          [],
-        ),
-      );
-      if (!header || typeof header !== "object" || ArrayIsArray(header)) return { verified: false };
-      ObjectSetPrototypeOf(header, null);
-      if (header.alg !== "RS256") return { verified: false };
+      const envelope = readConnectedWriterEnvelope(input);
+      if (!envelope) return { verified: false };
+      const { headerText, payloadText, signature, header } = envelope;
       let signatureVerified = false;
       for (let attempt = 0; attempt < 2; attempt++) {
         const candidates = filterPrivateArray(
@@ -1356,36 +1332,75 @@ export function createConnectedLocalWriterVerifier(
         if (attempt === 0) keys = undefined;
       }
       if (!signatureVerified) return { verified: false };
-      const payload = privateJsonParse(
-        ReflectApply(
-          BufferToString,
-          ReflectApply(BufferFrom, NativeBuffer, [payloadText, "base64url"]),
-          [],
-        ),
-      );
-      if (!payload || typeof payload !== "object" || ArrayIsArray(payload)) {
-        return { verified: false };
-      }
-      ObjectSetPrototypeOf(payload, null);
-      const now = DateNow() / 1000;
-      if (
-        typeof payload.exp !== "number" || !NumberIsFinite(payload.exp) || payload.exp <= now ||
-        payload.agentId !== input.agentId ||
-        (payload.nbf !== undefined && payload.nbf > now) ||
-        !hasValidRunEventWriterIdentity(payload, {
-          VERYFRONT_API_URL: apiUrl,
-          SERVICE_ACCOUNT_VERYFRONT_SERVER_ID: payload.serviceAccountId,
-        }, input)
-      ) return { verified: false };
-      const dependencies = payload.platformToolDependencies === undefined
-        ? undefined
-        : readPlatformToolDependencies(payload.platformToolDependencies);
-      if (!hasValidWriterDependencyScope(dependencies, input, payload)) return { verified: false };
-      const result = { verified: true };
-      recordVerifiedWriterGrants(result, input, { agentId: payload.agentId, dependencies });
-      return result;
+      return resolveVerifiedConnectedWriterClaims(payloadText, input, apiUrl);
     } catch {
       return { verified: false };
     }
   };
+}
+
+function readConnectedWriterEnvelope(input: HostedServiceRunEventAppendTokenInput) {
+  const firstDot = ReflectApply(StringIndexOf, input.token, ["."]) as number;
+  const secondDot = ReflectApply(StringIndexOf, input.token, [".", firstDot + 1]) as number;
+  if (
+    firstDot <= 0 || secondDot <= firstDot + 1 || secondDot === input.token.length - 1 ||
+    ReflectApply(StringIndexOf, input.token, [".", secondDot + 1]) !== -1
+  ) {
+    return undefined;
+  }
+  const headerText = ReflectApply(StringSlice, input.token, [0, firstDot]) as string;
+  const payloadText = ReflectApply(StringSlice, input.token, [
+    firstDot + 1,
+    secondDot,
+  ]) as string;
+  const signature = ReflectApply(StringSlice, input.token, [secondDot + 1]) as string;
+  if (!headerText || !payloadText || !signature) {
+    return undefined;
+  }
+  const header = privateJsonParse(
+    ReflectApply(
+      BufferToString,
+      ReflectApply(BufferFrom, NativeBuffer, [headerText, "base64url"]),
+      [],
+    ),
+  );
+  if (!header || typeof header !== "object" || ArrayIsArray(header)) return undefined;
+  ObjectSetPrototypeOf(header, null);
+  if (header.alg !== "RS256") return undefined;
+  return { headerText, payloadText, signature, header };
+}
+
+function resolveVerifiedConnectedWriterClaims(
+  payloadText: string,
+  input: HostedServiceRunEventAppendTokenInput,
+  apiUrl: string,
+): HostedServiceRunEventAppendTokenResult {
+  const payload = privateJsonParse(
+    ReflectApply(
+      BufferToString,
+      ReflectApply(BufferFrom, NativeBuffer, [payloadText, "base64url"]),
+      [],
+    ),
+  );
+  if (!payload || typeof payload !== "object" || ArrayIsArray(payload)) {
+    return { verified: false };
+  }
+  ObjectSetPrototypeOf(payload, null);
+  const now = DateNow() / 1000;
+  if (
+    typeof payload.exp !== "number" || !NumberIsFinite(payload.exp) || payload.exp <= now ||
+    payload.agentId !== input.agentId ||
+    (payload.nbf !== undefined && payload.nbf > now) ||
+    !hasValidRunEventWriterIdentity(payload, {
+      VERYFRONT_API_URL: apiUrl,
+      SERVICE_ACCOUNT_VERYFRONT_SERVER_ID: payload.serviceAccountId,
+    }, input)
+  ) return { verified: false };
+  const dependencies = payload.platformToolDependencies === undefined
+    ? undefined
+    : readPlatformToolDependencies(payload.platformToolDependencies);
+  if (!hasValidWriterDependencyScope(dependencies, input, payload)) return { verified: false };
+  const result = { verified: true };
+  recordVerifiedWriterGrants(result, input, { agentId: payload.agentId, dependencies });
+  return result;
 }

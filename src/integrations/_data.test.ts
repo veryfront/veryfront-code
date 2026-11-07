@@ -42,6 +42,28 @@ function getLocalToolIds(connectorName: string, tools: { id?: string }[]): (stri
 }
 
 describe("integration endpoint specs", () => {
+  it("keeps Gmail inbox management without permanent message deletion", () => {
+    const gmail = getConnector("gmail");
+    assertEquals(gmail.auth?.scopes, ["https://www.googleapis.com/auth/gmail.modify"]);
+    const tools = getLocalToolIds("gmail", gmail.tools);
+    for (const id of ["delete_email", "batch_delete_emails", "delete_thread"]) {
+      assertEquals(tools.includes(id), false, `${id} requires withdrawn full-mail access`);
+    }
+    for (
+      const id of [
+        "trash_email",
+        "untrash_email",
+        "trash_thread",
+        "untrash_thread",
+        "send_email",
+        "create_draft",
+        "create_label",
+      ]
+    ) {
+      assert(tools.includes(id), `${id} remains available with gmail.modify`);
+    }
+  });
+
   it("keeps every generated tool summary between two and six words", () => {
     for (const connector of connectors) {
       for (const tool of connector.tools) {
@@ -135,9 +157,6 @@ describe("integration endpoint specs", () => {
       ["power-bi", "execute_dax_query", "Run read-only DAX query"],
       ["salesforce", "run_soql_query", "Run read-only SOQL query"],
       ["google-bigquery", "run_query", "Run SQL query (SELECT by default)"],
-      ["gmail", "delete_email", "Permanently delete email"],
-      ["gmail", "batch_delete_emails", "Permanently delete multiple emails"],
-      ["gmail", "delete_thread", "Permanently delete thread"],
       ["gmail", "delete_draft", "Permanently delete draft"],
       ["drive", "delete_file", "Permanently delete file"],
       ["gcp", "start_compute_instance", "Request compute instance start"],
@@ -1307,7 +1326,7 @@ describe("integration endpoint specs", () => {
       totalEndpointTools += endpointTools.length;
     }
 
-    assertEquals(totalEndpointTools, 73);
+    assertEquals(totalEndpointTools, 70);
   });
 
   it("adds endpoint specs for the newly configured integration providers", () => {
@@ -2435,6 +2454,16 @@ describe("integration endpoint specs", () => {
       return getConnectorLocalToolId("gmail", tool.id).replaceAll("_", "-");
     }).sort();
     assertEquals(toolFiles.sort(), expectedFiles);
+    const clientSource = await Deno.readTextFile(
+      new URL("../../templates/integrations/gmail/files/lib/gmail-client.ts", import.meta.url),
+    );
+    for (const method of ["deleteMessage", "batchDeleteMessages", "deleteThread"]) {
+      assertEquals(
+        clientSource.includes(method),
+        false,
+        `${method} needs withdrawn full-mail access`,
+      );
+    }
   });
 
   it("ships scaffolded Outlook tool handlers required by the request-desk demo", async () => {

@@ -8,6 +8,10 @@ import {
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import {
+  __resetOperatorVeryfrontApiOriginsForTests,
+  __runWithOutboundFetchTransportForTests,
+} from "#veryfront/security/http/outbound-fetch.ts";
 import { createIntegrationClient, IntegrationApiError } from "../../../src/integrations/client.ts";
 import type { IntegrationToolResult } from "../../../src/integrations/client-types.ts";
 
@@ -170,7 +174,9 @@ describe("explicit integration client", () => {
       const url = new URL(String(input));
       if (!isToolRoute(url.pathname)) return Response.json(project);
       assertEquals(url.searchParams.get("name"), "get_");
-      assertEquals(url.searchParams.get("order"), "asc");
+      assertEquals(url.searchParams.get("sort_by"), "name");
+      assertEquals(url.searchParams.get("sort_order"), "asc");
+      assertEquals(url.searchParams.has("order"), false);
       seen.push(url.searchParams.get("cursor") ?? "first");
       return Response.json({
         tools: [{ ...tool, name: `github__get_${seen.length}` }],
@@ -295,6 +301,34 @@ describe("explicit integration client", () => {
       }
     });
     assertEquals(requests, 1);
+  });
+
+  it("reports an egress-blocked private API as its own kind, not a transport failure", async () => {
+    let requests = 0;
+    const transport = {
+      fetch: () => {
+        requests++;
+        return Promise.resolve(Response.json(project));
+      },
+      pinnedFetch: () => {
+        requests++;
+        return Promise.resolve(Response.json(project));
+      },
+      resolveHost: () => Promise.resolve(["10.255.128.3"]),
+    };
+    __resetOperatorVeryfrontApiOriginsForTests();
+    try {
+      const error = await __runWithOutboundFetchTransportForTests(
+        transport,
+        () => assertRejects(() => createIntegrationClient(context), IntegrationApiError),
+      );
+      assertInstanceOf(error, IntegrationApiError);
+      assertEquals(error.kind, "egress_blocked");
+      assertEquals(error.outcomeUnknown, false);
+    } finally {
+      __resetOperatorVeryfrontApiOriginsForTests();
+    }
+    assertEquals(requests, 0);
   });
 
   it("reports uncertain execution without replay when dispatch fails", async () => {
@@ -893,7 +927,13 @@ describe("audited REST wire contract", () => {
       {
         method: "GET",
         path: "/integration-tools",
-        query: { integration: "github", name: "get_", order: "desc", limit: "100" },
+        query: {
+          integration: "github",
+          sort_by: "name",
+          sort_order: "desc",
+          name: "get_",
+          limit: "100",
+        },
         tool: true,
         response: { tools: [tool], page_info: { next: "tools/next" } },
       },
@@ -902,8 +942,9 @@ describe("audited REST wire contract", () => {
         path: "/integration-tools",
         query: {
           integration: "github",
+          sort_by: "name",
+          sort_order: "desc",
           name: "get_",
-          order: "desc",
           limit: "100",
           cursor: "tools/next",
         },

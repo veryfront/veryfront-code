@@ -90,6 +90,16 @@ export type {
 } from "./types.ts";
 
 export { dynamicTool, tool } from "./factory.ts";
+export { requireToolApproval } from "./approval.ts";
+export type {
+  ToolApprovalDecision,
+  ToolApprovalGate,
+  ToolApprovalPolicy,
+  ToolApprovalRefusal,
+  ToolApprovalRequest,
+} from "./approval.ts";
+export { createInputRequestApprovalGate } from "./approval-input-request-gate.ts";
+export type { InputRequestApprovalGateOptions } from "./approval-input-request-gate.ts";
 export type { DynamicToolConfig } from "./factory.ts";
 export { createSleepTool, DEFAULT_SLEEP_TOOL_MAX_SECONDS, sleepTool } from "./sleep.ts";
 export type {

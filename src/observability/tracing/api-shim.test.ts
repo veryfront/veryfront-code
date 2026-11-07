@@ -4,6 +4,7 @@ import {
   assertExists,
   assertNotStrictEquals,
   assertStrictEquals,
+  assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
@@ -91,6 +92,24 @@ describe("observability/tracing/api-shim", () => {
   });
 
   describe("global tracer provider", () => {
+    it("does not reuse a retired tracer after replacement acquisition fails", () => {
+      const fallback = getTracer("fallback");
+      const retained = publicTrace.getTracer("retained");
+      let attempts = 0;
+      setGlobalTracerProvider({
+        getTracer() {
+          attempts++;
+          if (attempts < 3) throw new Error("provider unavailable");
+          return fallback;
+        },
+      });
+
+      assertThrows(() => retained.startSpan("first"), Error, "provider unavailable");
+      assertThrows(() => retained.startSpan("second"), Error, "provider unavailable");
+      retained.startSpan("recovered").end();
+      assertEquals(attempts, 3, "failed acquisitions must not advance the cached revision");
+    });
+
     it("setGlobalTracerProvider swaps the provider used by getTracer", () => {
       const calls: Array<[string, string | undefined]> = [];
       const fakeTracer = { startSpan: () => ({}) as Span } as unknown as Tracer;
@@ -182,9 +201,10 @@ describe("observability/tracing/api-shim", () => {
           return callback(span);
         },
       } as Tracer;
-      setGlobalTracerProvider({ getTracer: () => providerTracer });
 
+      // Acquired before the provider is installed, as a module-scope tracer is.
       const publicTracer = publicTrace.getTracer("veryfront-http");
+      setGlobalTracerProvider({ getTracer: () => providerTracer });
       const publicSpan = publicTracer.startSpan("request");
 
       assertNotStrictEquals(publicTracer, providerTracer);
