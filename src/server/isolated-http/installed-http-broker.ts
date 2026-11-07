@@ -11,7 +11,7 @@ import {
   type ExecutorHttpApplicationConfiguration,
   snapshotExecutorHttpApplicationConfiguration,
 } from "./application-configuration.ts";
-import { createHostedHttpBroker } from "./hosted-http-broker.ts";
+import { createHostedHttpBroker, type HostedHttpBrokerOptions } from "./hosted-http-broker.ts";
 import type {
   HostedHttpIngressOptions,
   HostedHttpRequestAuthority,
@@ -26,6 +26,10 @@ export interface InstalledHttpBrokerOptions {
   expectedBrokerInstanceId: string;
   allocator: HostedExecutorSessionOptions["allocator"];
   connectTransport: HostedExecutorSessionOptions["connectTransport"];
+  /** Trusted observer for a newly authenticated executor, once per attachment. */
+  observeAttachment?: HostedExecutorSessionOptions["observeAttachment"];
+  /** Trusted observer for each dispatched request, including warm reuse. */
+  observeDispatch?: HostedHttpBrokerOptions["observeDispatch"];
   /** Check current project/environment/release authority against the source API on every request. */
   authorize: {
     (authority: HostedHttpRequestAuthority, signal: AbortSignal): Promise<void>;
@@ -112,8 +116,13 @@ export function createInstalledHttpBroker(options: InstalledHttpBrokerOptions) {
   const authorize = options.authorize.bind(options);
   const allocator = options.allocator;
   const connectTransport = options.connectTransport;
+  const observeAttachment = options.observeAttachment;
   const owner = new AbortController();
-  const broker = createHostedHttpBroker({ maxActive: options.maxActive, signal: owner.signal });
+  const broker = createHostedHttpBroker({
+    maxActive: options.maxActive,
+    signal: owner.signal,
+    ...(options.observeDispatch === undefined ? {} : { observeDispatch: options.observeDispatch }),
+  });
   let pendingAuthorizations = 0;
   const authorizationDrain = Promise.withResolvers<void>();
   const finishAuthorization = () => {
@@ -173,6 +182,7 @@ export function createInstalledHttpBroker(options: InstalledHttpBrokerOptions) {
         expectedImage: selected.image,
         allocator,
         connectTransport,
+        ...(observeAttachment === undefined ? {} : { observeAttachment }),
         ownerSignal: owner.signal,
       },
       installation: {

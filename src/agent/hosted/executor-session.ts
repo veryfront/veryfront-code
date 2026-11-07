@@ -59,6 +59,17 @@ export interface HostedExecutorSessionOptions {
   allocator: HostedExecutorAllocatorClient;
   /** Authenticate one connection. Snapshot the allocation key before awaiting. */
   connectTransport(options: ConnectExecutorTransportOptions): Promise<ExecutorNodeTransport>;
+  /** Trusted synchronous receipt sink, invoked after channel authentication and before readiness. */
+  observeAttachment?(
+    receipt: Readonly<{
+      allocationId: string;
+      generation: number;
+      invocationId: string;
+      podUid: string;
+      nodeName: string;
+      declaredImage: string;
+    }>,
+  ): void;
   /** Factory must release its own partial resources if construction throws. */
   createOperations(binding: Readonly<HostedExecutorBinding>, signal: AbortSignal): {
     operations: ReadonlyMap<string, ExecutorOperation>;
@@ -140,6 +151,7 @@ class Session implements HostedExecutorSession {
   readonly #expectedImage: string;
   readonly #allocator: HostedExecutorAllocatorClient;
   readonly #connect: HostedExecutorSessionOptions["connectTransport"];
+  readonly #observeAttachment: HostedExecutorSessionOptions["observeAttachment"];
   readonly #createOperations: HostedExecutorSessionOptions["createOperations"];
   readonly #clock: HostedExecutorSessionClock;
   readonly #pollInterval: number;
@@ -212,6 +224,7 @@ class Session implements HostedExecutorSession {
       release: options.allocator.release.bind(options.allocator),
     };
     this.#connect = options.connectTransport;
+    this.#observeAttachment = options.observeAttachment;
     this.#createOperations = options.createOperations;
     this.#clock = options.clock ?? createHostedExecutorSessionClock(Date.now());
     this.#pollInterval = positiveLimit(options.pollIntervalMs ?? 250, 30_000);
@@ -517,6 +530,14 @@ class Session implements HostedExecutorSession {
       void this.#track(() => this.#channel!.settled);
       void this.#channel.closed.then(() => this.#stop("channel-closed"));
       await awaitAbortable(this.#channel.ready, this.signal);
+      this.#assertActive();
+      const endpoint = this.#endpoint!;
+      this.#observeAttachment?.(Object.freeze({
+        ...channelBinding,
+        podUid: endpoint.podUid,
+        nodeName: endpoint.nodeName,
+        declaredImage: endpoint.image,
+      }));
       this.#assertActive();
       this.#cancelTimer("attachment");
       this.#isReady = true;
