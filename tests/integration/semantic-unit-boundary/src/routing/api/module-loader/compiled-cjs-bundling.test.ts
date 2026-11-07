@@ -726,6 +726,71 @@ describe("compiled-binary route bundling of CommonJS dependencies", () => {
     });
   });
 
+  it("keeps a module's own require, failed loads and malformed packages as Node does", async () => {
+    await inProject(async (projectDir) => {
+      await writeFiles(projectDir, {
+        "node_modules/later/package.json": JSON.stringify({ name: "later", main: "index.js" }),
+        "node_modules/later/index.js": [
+          'var path = require("path");',
+          "var name = (m) => m && path.basename(m.filename);",
+          "var codes = [];",
+          // A failed load leaves no child behind, bundled or computed.
+          'try { require("./throws.js"); } catch (e) { codes.push(e.message); }',
+          "try { require(['./throws2', 'js'].join('.')); } catch (e) { codes.push(e.message); }",
+          'for (var id of ["bad", "./baddir", "bad/index.js"]) {',
+          "  try { require([id].join('')); codes.push('loaded'); } catch (e) { codes.push(e.code); }",
+          "}",
+          // A direct eval in another spelling still sees the file's own require.
+          'var viaEval = (eval)("require")("./plugin.js");',
+          "exports.codes = codes;",
+          "exports.viaEval = viaEval;",
+          // A require made after the body ran still names this module.
+          "exports.load = function () {",
+          "  var loaded = require(['./lazy', 'js'].join('.'));",
+          "  return [name(require.cache[require.resolve('./lazy.js')].parent), module.children.map(name)];",
+          "};",
+        ].join("\n"),
+        "node_modules/later/throws.js": "throw new Error('bundled');",
+        "node_modules/later/throws2.js": "throw new Error('computed');",
+        "node_modules/later/lazy.js": "module.exports = 'lazy';",
+        "node_modules/later/plugin.js": "module.exports = 'plugin';",
+        "node_modules/later/baddir/package.json": "{bad",
+        "node_modules/later/baddir/index.js": "module.exports = 1;",
+        "node_modules/bad/package.json": "{bad",
+        "node_modules/bad/index.js": "module.exports = 1;",
+        "node_modules/badmeta/package.json": JSON.stringify({
+          name: "badmeta",
+          type: "module",
+          main: "index.js",
+        }),
+        "node_modules/badmeta/index.js": [
+          "let code;",
+          'try { import.meta.resolve(["bad"].join("")); code = "ok"; } catch (e) { code = e.code; }',
+          "export { code };",
+        ].join("\n"),
+      });
+      const mod = await bundleAndImport(
+        projectDir,
+        'import later from "later";\nimport { code } from "badmeta";\nexport const result = { later, lazy: later.load(), code };\n',
+      );
+      const result = mod.result as {
+        later: Record<string, unknown>;
+        lazy: unknown;
+        code: unknown;
+      };
+      assertEquals(result.later.codes, [
+        "bundled",
+        "computed",
+        "ERR_INVALID_PACKAGE_CONFIG",
+        "ERR_INVALID_PACKAGE_CONFIG",
+        "ERR_INVALID_PACKAGE_CONFIG",
+      ]);
+      assertEquals(result.later.viaEval, "plugin");
+      assertEquals(result.lazy, ["index.js", ["plugin.js", "lazy.js"]]);
+      assertEquals(result.code, "ERR_INVALID_PACKAGE_CONFIG");
+    });
+  });
+
   it("stops a linked workspace package's lookup at the copy that refuses an id", async () => {
     await inProject(async (projectDir) => {
       await writeFiles(projectDir, {

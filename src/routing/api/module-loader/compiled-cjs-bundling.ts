@@ -691,12 +691,16 @@ export async function prepareCommonJSFile(
   // of this file's directory, as in Node; so does a require.resolve call left
   // unresolved, which throws there as in Node.
   const directory = pathHelper.dirname(filePath);
-  const boundRequire = `(${BUNDLED_REQUIRE_FROM}(${codeString(directory)}))`;
+  // The module's own require when the runtime made its record, so a call it
+  // makes later still names it as the parent.
+  const boundRequire = `(${BUNDLED_REQUIRE_FROM}(${codeString(directory)}, module))`;
   // Code in a direct eval sees the file's own bindings, which no rewrite of
   // the source reaches; the file declares them, as Node's wrapper does. Its
   // requires then all run at runtime. A file that assigns to `require` also
   // keeps the name: a call is no assignment target.
-  const directEval = /\beval\s*\(/.test(contents);
+  // The parser prints every direct-eval spelling, `(eval)(x)` and comments
+  // included, as `eval(`; an indirect `(0, eval)(x)` or `eval?.(x)` stays.
+  const directEval = /(?<![\w$.])eval\(/.test(rewritten);
   // `=`, and compound assignments such as `||=`, but not a comparison.
   const assigned = new RegExp(
     `${requireMarker}\\s*(?:\\*\\*|<<|>>>?|&&|\\|\\||\\?\\?|[-+*/%&|^])?=(?!=)`,
@@ -970,8 +974,8 @@ export async function prepareDependencyFile(input: DependencyFileInput): Promise
     // Any use of require but a call with a string literal, which the bundler
     // bundles: a computed id must resolve from this file's directory.
     /\brequire\b/.test(contents.replace(LITERAL_REQUIRE_CALL, "")) ||
-    // A direct eval may read any of them.
-    /\beval\s*\(/.test(contents) ||
+    // A direct eval, in any spelling, may read any of them.
+    /\beval\b/.test(contents) ||
     // ES module syntax, which such a file must not run as.
     (forcedCommonJS && /\b(?:import|export)\b/.test(contents));
   if (!readsCommonJSNames && !importMeta) return contents;
@@ -1111,7 +1115,7 @@ export interface RuntimeRequireBinding {
    * The `require` of a bundled dependency file in `directory`, for the calls
    * the bundler left to runtime, such as a computed relative id.
    */
-  readonly requireFrom: (directory: unknown) => RuntimeRequire;
+  readonly requireFrom: (directory: unknown, module?: unknown) => RuntimeRequire;
 }
 
 /** The runtime `require` of a bundled route; see {@link createRuntimeRequire}. */
@@ -1220,7 +1224,7 @@ export function createRuntimeRequire(
     if (file !== null) return file;
     const manifest = readManifest(base);
     // Node refuses a directory whose package.json is malformed.
-    if (manifest === null) return null;
+    if (manifest === null) throw invalidConfig(base);
     const main = manifest?.main;
     if (typeof main === "string") {
       const target = host.join(base, main);
@@ -1292,6 +1296,13 @@ export function createRuntimeRequire(
     const target = conditionalTarget(map[best.pattern], valid);
     return typeof target === "string" ? target.split("*").join(best.match) : null;
   };
+  // Node's error for a malformed package.json, which it never skips.
+  const invalidConfig = (packageDir: string) =>
+    failure(
+      "Invalid package config " +
+        JSON.stringify(host.relative(projectRoot, host.join(packageDir, "package.json"))),
+      "ERR_INVALID_PACKAGE_CONFIG",
+    );
   const readManifest = (packageDir: string): Record<string, unknown> | null | undefined => {
     const manifestPath = host.join(packageDir, "package.json");
     if (!host.isFile(manifestPath)) return undefined;
@@ -1359,7 +1370,7 @@ export function createRuntimeRequire(
   // `exports` or a malformed package.json), which ends Node's search.
   const packageFile = (packageDir: string, subpath: string) => {
     const manifest = readManifest(packageDir);
-    if (manifest === null) return false;
+    if (manifest === null) throw invalidConfig(packageDir);
     const exports = manifest?.exports;
     if (exports !== undefined && exports !== null) {
       const key = "." + subpath;
@@ -1423,13 +1434,7 @@ export function createRuntimeRequire(
     let current = directory;
     while (inProject(current) && !current.endsWith(host.sep + "node_modules")) {
       const manifest = readManifest(current);
-      if (manifest === null) {
-        throw failure(
-          "Invalid package config " +
-            JSON.stringify(host.relative(projectRoot, host.join(current, "package.json"))),
-          "ERR_INVALID_PACKAGE_CONFIG",
-        );
-      }
+      if (manifest === null) throw invalidConfig(current);
       if (manifest !== undefined) return { directory: current, manifest };
       const parent = host.dirname(current);
       if (parent === current) return null;
@@ -1474,6 +1479,8 @@ export function createRuntimeRequire(
   // and directory-bound requires load. A module the runtime require runs
   // has its own require, which names it.
   let active: RuntimeModule | undefined;
+  // The module records this runtime made.
+  const records = new WeakSet<RuntimeModule>();
   // Records `child` as loaded by `parent`, once, as Node's module graph does.
   const adopt = (parent: RuntimeModule | undefined, child: RuntimeModule) => {
     if (parent !== undefined && !parent.children.includes(child)) parent.children.push(child);
@@ -1496,7 +1503,16 @@ export function createRuntimeRequire(
       children: [],
       require: require(() => module),
     };
+    records.add(module);
     return adopt(parent, module);
+  };
+  // A module whose load failed leaves the cache and its parent's children,
+  // as in Node.
+  const drop = (module: RuntimeModule) => {
+    if (modules[module.id] === module) delete modules[module.id];
+    const siblings = module.parent?.children;
+    const index = siblings?.indexOf(module) ?? -1;
+    if (index !== -1) siblings!.splice(index, 1);
   };
   const evaluate = (real: string, parent: RuntimeModule | undefined) => {
     const directory = host.dirname(real);
@@ -1526,7 +1542,7 @@ export function createRuntimeRequire(
         directory,
       );
     } catch (error) {
-      if (modules[real] === module) delete modules[real];
+      drop(module);
       throw error;
     }
     module.loaded = true;
@@ -1542,7 +1558,7 @@ export function createRuntimeRequire(
       // Node drops a byte order mark before parsing JSON.
       const exports = JSON.parse(text.charCodeAt(0) === 0xfeff ? text.slice(1) : text);
       // A complete module record, as a bundled load of the file makes.
-      const module = newModule(real, parent, () => requireFrom(host.dirname(real)));
+      const module = newModule(real, parent, (self) => create(host.dirname(real), self));
       module.exports = exports;
       module.loaded = true;
       modules[real] = module;
@@ -1654,7 +1670,11 @@ export function createRuntimeRequire(
     return require;
   };
   const byDirectory: Record<string, RuntimeRequire> = Object.create(null);
-  const requireFrom = (directory: unknown) => {
+  const requireFrom = (directory: unknown, module?: unknown) => {
+    // A record of this runtime's for a file in `directory` has its own.
+    if (records.has(module as RuntimeModule) && (module as RuntimeModule).path === directory) {
+      return (module as RuntimeModule).require;
+    }
     if (typeof directory !== "string") return create(undefined);
     return byDirectory[directory] ??= create(directory);
   };
@@ -1684,14 +1704,14 @@ export function createRuntimeRequire(
       if (real === null) return null;
       const cached = modules[real];
       if (cached !== undefined) return adopt(active, cached);
-      const module = newModule(real, active, () => requireFrom(host.dirname(real)));
+      const module = newModule(real, active, (self) => create(host.dirname(real), self));
       modules[real] = module;
       const previous = active;
       active = module;
       try {
         body.call(module.exports, module.exports, module);
       } catch (error) {
-        if (modules[real] === module) delete modules[real];
+        drop(module);
         throw error;
       } finally {
         active = previous;

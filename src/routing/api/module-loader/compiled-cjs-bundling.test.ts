@@ -1246,10 +1246,13 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
       // Node's `*` never matches the empty string.
       assertEquals(require("pat/featureX"), "featureX");
       assertEquals(errorCode(() => require("pat/feature")), "MODULE_NOT_FOUND");
-      // Nor does Node accept exports that mix subpaths and conditions, or a
-      // directory whose package.json is malformed.
+      // Nor does Node accept exports that mix subpaths and conditions. A
+      // directory whose package.json is malformed is an error, not absent.
       assertEquals(errorCode(() => require("mixed")), "MODULE_NOT_FOUND");
-      assertEquals(errorCode(() => require("/app/node_modules/p/badplug")), "MODULE_NOT_FOUND");
+      assertEquals(
+        errorCode(() => require("/app/node_modules/p/badplug")),
+        "ERR_INVALID_PACKAGE_CONFIG",
+      );
       for (
         const id of ["blocked", "blocked/escape", "blocked/nested", "blocked/badescape"]
       ) {
@@ -1266,13 +1269,15 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
 
     it("stops at the nearest copy of a package that refuses the path", () => {
       assertEquals(require("/app/node_modules/p/shadowed.js"), "nested main");
-      for (const file of ["shadow-sub", "bad-nested"]) {
-        assertEquals(
-          errorCode(() => require(`/app/node_modules/p/${file}.js`)),
-          "MODULE_NOT_FOUND",
-          file,
-        );
-      }
+      assertEquals(
+        errorCode(() => require("/app/node_modules/p/shadow-sub.js")),
+        "MODULE_NOT_FOUND",
+      );
+      // A malformed nearest copy is Node's config error, not a missing package.
+      assertEquals(
+        errorCode(() => require("/app/node_modules/p/bad-nested.js")),
+        "ERR_INVALID_PACKAGE_CONFIG",
+      );
       // From elsewhere the top-level copy still serves both.
       assertEquals(require("shadow/sub"), "top sub");
       assertEquals(require("badnested"), "top");
@@ -1349,13 +1354,17 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
         ownPattern: "lib x",
         ownPackage: { name: "extra" },
       });
-      for (const file of ["no-import", "escape-import", "broken-pkg", "outside-pattern"]) {
+      for (const file of ["no-import", "escape-import", "outside-pattern"]) {
         assertEquals(
           errorCode(() => require(`/app/node_modules/p/${file}.js`)),
           "MODULE_NOT_FOUND",
           file,
         );
       }
+      assertEquals(
+        errorCode(() => require("/app/node_modules/p/broken-pkg.js")),
+        "ERR_INVALID_PACKAGE_CONFIG",
+      );
     });
 
     it("names a project path relative to the project and hides any other", () => {
@@ -1557,12 +1566,12 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
             'exports.f = "/d/p/index.cjs";',
             'exports.a = "/d/p/a.js";',
             'exports.b = "fs";',
-            'exports.c = (__vf_require_from("/d/p")).resolve("missing");',
-            'exports.e = (__vf_require_from("/d/p")).resolve(name);',
+            'exports.c = (__vf_require_from("/d/p", module)).resolve("missing");',
+            'exports.e = (__vf_require_from("/d/p", module)).resolve(name);',
             'exports.g = require("./g");',
             'exports.h = require("./h");',
-            'exports.i = (__vf_require_from("/d/p"))("./dialects/" + name);',
-            'exports.j = typeof (__vf_require_from("/d/p"));',
+            'exports.i = (__vf_require_from("/d/p", module))("./dialects/" + name);',
+            'exports.j = typeof (__vf_require_from("/d/p", module));',
             "return require2(name);",
           ]
         ) {
@@ -1585,7 +1594,7 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
         assert(code !== null);
         assert(
           code.startsWith(
-            '"use strict";\nvar require = (__vf_require_from("/d/p")), __dirname = "/d/p", ' +
+            '"use strict";\nvar require = (__vf_require_from("/d/p", module)), __dirname = "/d/p", ' +
               '__filename = "/d/p/index.cjs";\n',
           ),
           code,
@@ -1598,6 +1607,25 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
           resolveRelative,
         );
         assert(hashbang?.startsWith("#!/usr/bin/env node\nvar require = "), String(hashbang));
+        // Every direct spelling counts; the indirect ones see globals in Node too.
+        for (const direct of ['(eval)("require")', 'eval /* c */ ("__dirname")', "((eval))(x)"]) {
+          const spelled = await prepareCommonJSFile(
+            `module.exports = ${direct};`,
+            "/d/p/index.cjs",
+            undefined,
+            resolveRelative,
+          );
+          assert(spelled?.startsWith("var require = "), String(spelled));
+        }
+        for (const indirect of ['(0, eval)("x")', 'eval?.("x")', 'obj.eval("x")']) {
+          const spelled = await prepareCommonJSFile(
+            `module.exports = [${indirect}, __filename];`,
+            "/d/p/index.cjs",
+            undefined,
+            resolveRelative,
+          );
+          assert(!spelled?.includes("var require = "), String(spelled));
+        }
       });
 
       it("prepares an extensionless file and a .js file outside a module package", async () => {
@@ -1769,9 +1797,9 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
         for (
           const part of [
             '"/d/node_modules/p/a.js";',
-            '(__vf_require_from("/d/node_modules/p")).resolve("ext");',
-            '(__vf_require_from("/d/node_modules/p")).resolve("project");',
-            '(__vf_require_from("/d/node_modules/p")).resolve("broken");',
+            '(__vf_require_from("/d/node_modules/p", module)).resolve("ext");',
+            '(__vf_require_from("/d/node_modules/p", module)).resolve("project");',
+            '(__vf_require_from("/d/node_modules/p", module)).resolve("broken");',
           ]
         ) {
           assert(code.includes(part), code);
@@ -1780,7 +1808,7 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
           input('require.resolve("./a");', "/d/node_modules/p/index.js", false),
         );
         assert(
-          unresolved.includes('(__vf_require_from("/d/node_modules/p")).resolve("./a");'),
+          unresolved.includes('(__vf_require_from("/d/node_modules/p", module)).resolve("./a");'),
           unresolved,
         );
       });
@@ -1790,7 +1818,9 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
           input('module.exports = require("./dialects/" + name);', "/d/node_modules/p/index.js"),
         );
         assert(
-          computed.includes('(__vf_require_from("/d/node_modules/p"))("./dialects/" + name)'),
+          computed.includes(
+            '(__vf_require_from("/d/node_modules/p", module))("./dialects/" + name)',
+          ),
           computed,
         );
         // A direct eval may read a name the text never spells out.
@@ -1798,6 +1828,10 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
           input('exports.d = eval("__dir" + "name");', "/d/node_modules/p/index.js"),
         );
         assert(evaluated.includes('__dirname = "/d/node_modules/p"'), evaluated);
+        const parenthesized = await prepareDependencyFile(
+          input('exports.d = (eval)("__dir" + "name");', "/d/node_modules/p/index.js"),
+        );
+        assert(parenthesized.includes('__dirname = "/d/node_modules/p"'), parenthesized);
         // An assignment to require keeps the name, which stays a valid target.
         const assigned = await prepareDependencyFile(
           input(
@@ -1809,7 +1843,7 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
         assert(assigned.includes('require = require("esm")(module);'), assigned);
         assert(assigned.includes("module.exports = require(name);"), assigned);
         assert(
-          assigned.includes('var require = (__vf_require_from("/d/node_modules/p"));'),
+          assigned.includes('var require = (__vf_require_from("/d/node_modules/p", module));'),
           assigned,
         );
         for (const operator of ["||=", "&&=", "??=", "+="]) {
