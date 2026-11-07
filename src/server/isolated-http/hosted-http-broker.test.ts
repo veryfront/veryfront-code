@@ -55,6 +55,7 @@ describe("hosted HTTP executor broker", () => {
 
   it("joins each warm dispatch to the same authenticated attachment and its own host trace", async () => {
     const f = fixture(() => new Response("app"));
+    Object.assign(f.input.installation.source, { type: "environment", environmentName: "staging" });
     const records: unknown[] = [];
     const broker = createHostedHttpBroker({
       maxActive: 1,

@@ -126,7 +126,7 @@ export interface HostedHttpGenerationExecutorOptions {
       brokerInstanceId: string;
       projectId: string;
       environmentId: string;
-      releaseId?: string;
+      releaseId: string;
       traceparent?: string;
     }>,
   ): void;
@@ -403,7 +403,7 @@ export function createHostedHttpGenerationExecutor(
                 brokerInstanceId: input.session.expectedBrokerInstanceId,
                 projectId: owner.projectId,
                 environmentId,
-                releaseId: source.type === "release" ? source.releaseId : undefined,
+                releaseId: source.releaseId,
                 traceparent: formatTraceparent(parseTraceparent(context.tracing?.traceparent)),
               }),
             );
