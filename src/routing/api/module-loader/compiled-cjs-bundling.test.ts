@@ -12,6 +12,7 @@ import {
   createImportMetaResolve,
   createNativeAddonPlugin,
   createRuntimeRequire,
+  dependencyJsonLoad,
   nodePreferredFile,
   nodeRelativeFile,
   PackageTypeLookup,
@@ -567,6 +568,24 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
         )(() => "route");
         assertEquals(kind, "undefined", code);
       }
+      // An ES module is strict: assigning the unbound name throws.
+      const assigned = await prepareDependencyFile(
+        input("export function swap() { require = () => 1; }", "/d/a.mjs"),
+      );
+      const swap = new Function(
+        '"use strict";\n' + assigned.replace("export function", "return function"),
+      )();
+      assertThrows(() => swap(), ReferenceError);
+    });
+
+    it("loads a JSON import as require()'s module unless it has a query", () => {
+      assertEquals(dependencyJsonLoad('{"a":1}', { type: "json" }).loader, "js");
+      assertEquals(dependencyJsonLoad('{"a":1}').loader, "js");
+      assertEquals(dependencyJsonLoad('\uFEFF{"a":1}', { type: "json" }, "?v=1"), {
+        contents: '{"a":1}',
+        loader: "json",
+      });
+      assertEquals(dependencyJsonLoad('{"a":1}', undefined, "?v=1").loader, "js");
     });
 
     it("turns dependency JSON into a CommonJS module and rejects bad JSON", () => {
@@ -666,6 +685,29 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
       assertEquals(resolve("fs"), "node:fs");
       assertEquals(errorCode(() => resolve("test")), "ERR_MODULE_NOT_FOUND");
       assertEquals(errorCode(() => resolve("left-pad")), "ERR_MODULE_NOT_FOUND");
+    });
+
+    it("rejects a POSIX file URL with a host, as Node does", () => {
+      assertEquals(errorCode(() => resolve("file://remote-host/x")), "ERR_INVALID_FILE_URL_HOST");
+      assertEquals(errorCode(() => resolve("//remote-host/x")), "ERR_INVALID_FILE_URL_HOST");
+      assertEquals(resolve("file://localhost/x"), "file:///x");
+      const windows = createImportMetaResolve(
+        "file:///C:/p/i.js",
+        [],
+        () => undefined,
+        undefined,
+        "win32",
+      );
+      assertEquals(windows("file://server/share/x"), "file://server/share/x");
+    });
+
+    it("reports a malformed package.json instead of a missing package", () => {
+      const malformed = createImportMetaResolve("file:///p/i.js", [], () => undefined, () => {
+        throw Object.assign(new Error("Invalid package config"), {
+          code: "ERR_INVALID_PACKAGE_CONFIG",
+        });
+      });
+      assertEquals(errorCode(() => malformed("pkg")), "ERR_INVALID_PACKAGE_CONFIG");
     });
   });
 
@@ -1681,7 +1723,9 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
         assert(code.startsWith("#!/usr/bin/env node\nfunction __vf_import_meta_resolve_"), code);
         assert(code.includes(createImportMetaResolve.toString()), code);
         assert(
-          /const __vf_import_meta_resolve_\w+_meta = \{ url: "file:\/\/\/d\/p\/cli\.ts"/.test(code),
+          // Node's shape: a null prototype, its keys in order, `main` false.
+          /const (__vf_import_meta_resolve_\w+)_meta = \{ __proto__: null, dirname: "\/d\/p", filename: "\/d\/p\/cli\.ts", main: false, resolve: \1, url: "file:\/\/\/d\/p\/cli\.ts" \};/
+            .test(code),
           code,
         );
       });

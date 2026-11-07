@@ -72,7 +72,7 @@ function dependencyFilePlugin(
         if (!isDependencyFile(args.path)) return undefined;
         const contents = await readFile(args.path, "utf8");
         if (args.path.endsWith(".json")) {
-          return dependencyJsonLoad(contents, args.with);
+          return dependencyJsonLoad(contents, args.with, args.suffix);
         }
         return {
           contents: await prepareDependencyFile({
@@ -598,7 +598,8 @@ describe("compiled-binary route bundling of CommonJS dependencies", () => {
         }),
         "node_modules/esmod/index.js": [
           'import data from "./data.json" with { type: "json" };',
-          "export { data };",
+          'import queried from "./data.json?v=1" with { type: "json" };',
+          "export { data, queried };",
           "export const req = typeof require;",
           'export const missing = import.meta.resolve(["#not", "built"].join("-"));',
         ].join("\n"),
@@ -621,14 +622,127 @@ describe("compiled-binary route bundling of CommonJS dependencies", () => {
         [`${projectDir}/node_modules/scopes`],
         `${projectDir}/node_modules/scopes/node_modules`,
       ]);
-      // An ES module JSON import is its own module, apart from require()'s.
+      // Node 24 gives a JSON import the module require() caches; one with a
+      // query is a module of its own.
       assertEquals(esmod!.data, { kind: "json" });
-      assertEquals(scopes!.jsonData, { kind: "json" });
-      assert(esmod!.data !== scopes!.jsonData);
+      assert(esmod!.data === scopes!.jsonData);
+      assertEquals(esmod!.queried, { kind: "json" });
+      assert(esmod!.queried !== esmod!.data);
       assertEquals(esmod!.req, "undefined");
       assertEquals(
         esmod!.missing,
         pathToFileURL(`${projectDir}/node_modules/esmod/dist/later.js`).href,
+      );
+    });
+  });
+
+  it("keeps Node's module graph, package scopes and import.meta", async () => {
+    await inProject(async (projectDir) => {
+      await writeFiles(projectDir, {
+        "node_modules/graph/package.json": JSON.stringify({
+          name: "graph",
+          main: "index.js",
+          exports: { ".": "./index.js", "./*": "./*" },
+          imports: { "#own": "./a.js" },
+        }),
+        "node_modules/graph/index.js": [
+          'var path = require("path");',
+          "var name = (m) => m && path.basename(m.filename);",
+          'var a = require("./a.js");',
+          'var b = require(["./b", "js"].join("."));',
+          "var children = module.children.map(name);",
+          // JSON a computed require loads first gets a complete cache entry.
+          'var json = require.resolve("./data.json");',
+          "require([json].join(''));",
+          "var entry = require.cache[json];",
+          "var badscope = require(path.join(__dirname, '..', 'badscope', 'a.cjs'));",
+          "module.exports = {",
+          "  children: children,",
+          "  aParent: name(require.cache[require.resolve('./a.js')].parent),",
+          "  cParent: name(require.cache[require.resolve('./c.js')].parent),",
+          "  bChildren: require.cache[require.resolve('./b.js')].children.map(name),",
+          "  json: [entry.loaded, name(entry), typeof entry.require, name(entry.parent)],",
+          // The caller's own package resolves before any paths.
+          "  scoped: [",
+          '    path.basename(require.resolve("graph", { paths: [] })),',
+          '    path.basename(require.resolve("#own", { paths: ["/"] })),',
+          "    path.basename(require.resolve(__filename, { paths: [] })),",
+          "  ],",
+          "  badscope: badscope,",
+          "};",
+        ].join("\n"),
+        "node_modules/graph/a.js": "module.exports = 'a';",
+        "node_modules/graph/b.js": "module.exports = require(['./c', 'js'].join('.'));",
+        "node_modules/graph/c.js": "module.exports = 'c';",
+        "node_modules/graph/data.json": '{"d":1}',
+        // A malformed scope lets its `.cjs` file run, but no id resolves from it.
+        "node_modules/badscope/package.json": "{bad",
+        "node_modules/badscope/a.cjs": [
+          "var codes = [];",
+          'for (var id of ["#x", "./b.cjs", "graph"]) {',
+          "  try { require([id].join('')); codes.push('loaded'); } catch (e) { codes.push(e.code); }",
+          "}",
+          'codes.push(typeof require("path").join);',
+          "module.exports = codes;",
+        ].join("\n"),
+        "node_modules/badscope/b.cjs": "module.exports = 'b';",
+        "node_modules/meta/package.json": JSON.stringify({
+          name: "meta",
+          type: "module",
+          main: "index.js",
+        }),
+        "node_modules/meta/index.js": [
+          "const meta = import.meta;",
+          "export const shape = [Object.getPrototypeOf(meta), meta.main, Object.keys(meta)];",
+          "const code = (f) => { try { f(); return 'ok'; } catch (e) { return e.code ?? e.name; } };",
+          'export const hosts = [code(() => import.meta.resolve("file://remote-host/x")), code(() => import.meta.resolve(["//remote-host", "x"].join("/"))), code(() => import.meta.resolve("file://localhost/x"))];',
+          "export const assign = code(() => { require = () => 1; });",
+        ].join("\n"),
+      });
+      const mod = await bundleAndImport(
+        projectDir,
+        'import graph from "graph";\nimport * as meta from "meta";\nexport const result = { graph, meta: { ...meta } };\n',
+      );
+      const { graph, meta } = mod.result as Record<string, Record<string, unknown>>;
+      assertEquals(graph!.children, ["a.js", "b.js"]);
+      assertEquals(graph!.aParent, "index.js");
+      assertEquals(graph!.cParent, "b.js");
+      assertEquals(graph!.bChildren, ["c.js"]);
+      assertEquals(graph!.json, [true, "data.json", "function", "index.js"]);
+      assertEquals(graph!.scoped, ["index.js", "a.js", "index.js"]);
+      assertEquals(graph!.badscope, [
+        "ERR_INVALID_PACKAGE_CONFIG",
+        "ERR_INVALID_PACKAGE_CONFIG",
+        "ERR_INVALID_PACKAGE_CONFIG",
+        "function",
+      ]);
+      assertEquals(meta!.shape, [null, false, ["dirname", "filename", "main", "resolve", "url"]]);
+      assertEquals(meta!.hosts, [
+        "ERR_INVALID_FILE_URL_HOST",
+        "ERR_INVALID_FILE_URL_HOST",
+        "ok",
+      ]);
+      assertEquals(meta!.assign, "ReferenceError");
+    });
+  });
+
+  it("stops a linked workspace package's lookup at the copy that refuses an id", async () => {
+    await inProject(async (projectDir) => {
+      await writeFiles(projectDir, {
+        "packages/linked/package.json": JSON.stringify({ name: "linked", main: "index.js" }),
+        "packages/linked/index.js": 'module.exports = require("q/sub");',
+        // The nearest copy does not export `./sub`; the project's would.
+        "packages/linked/node_modules/q/package.json": JSON.stringify({
+          name: "q",
+          exports: { ".": "./index.js" },
+        }),
+        "packages/linked/node_modules/q/index.js": "module.exports = 'nearest';",
+        "node_modules/q/package.json": JSON.stringify({ name: "q" }),
+        "node_modules/q/sub.js": "module.exports = 'project';",
+      });
+      await symlink("../packages/linked", `${projectDir}/node_modules/linked`);
+      await assertRejects(() =>
+        bundleAndImport(projectDir, 'import linked from "linked";\nexport { linked };\n')
       );
     });
   });

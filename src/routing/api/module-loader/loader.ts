@@ -2008,11 +2008,11 @@ function createProjectBoundaryPlugin(
             });
           }
           // A dependency's JSON is a CommonJS module, which the runtime module
-          // cache shares with a computed require() of the same file, unless an
-          // import with `{ type: "json" }` loads it as an ES module JSON import.
+          // cache shares with a computed require() and a `{ type: "json" }`
+          // import of the same file.
           if (!executableModule && dependency) {
             return {
-              ...dependencyJsonLoad(source.contents, args.with),
+              ...dependencyJsonLoad(source.contents, args.with, args.suffix),
               resolveDir: pathHelper.dirname(source.logicalPath),
             };
           }
