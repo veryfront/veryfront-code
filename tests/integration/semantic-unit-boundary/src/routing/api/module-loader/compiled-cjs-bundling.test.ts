@@ -613,7 +613,8 @@ describe("compiled-binary route bundling of CommonJS dependencies", () => {
       assertEquals(scopes!.swapped, true);
       assertEquals(scopes!.custom, ["entry.foo", 5]);
       assertEquals(scopes!.self, { which: "outer", self: "outer" });
-      assertEquals(scopes!.loose, "MODULE_NOT_FOUND");
+      // No package scope defines the `#import`; the project's own is not visible.
+      assertEquals(scopes!.loose, "ERR_PACKAGE_IMPORT_NOT_DEFINED");
       assertEquals(scopes!.vended, `${projectDir}/vendor/node_modules/vended/index.js`);
       assertEquals(scopes!.badPaths, "ERR_INVALID_ARG_VALUE");
       assertEquals(scopes!.badEntry, "ERR_INVALID_ARG_TYPE");

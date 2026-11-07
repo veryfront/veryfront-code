@@ -948,9 +948,15 @@ export function createImportMetaResolve(
     try {
       found = resolvePackage(id);
     } catch (error) {
-      // A malformed package.json is reported as it is; anything else is not
-      // found, reported below with ESM's code.
-      if ((error as { code?: unknown })?.code === "ERR_INVALID_PACKAGE_CONFIG") throw error;
+      // A package's own refusal is reported as it is, as in Node; anything
+      // else is not found, reported below with ESM's code.
+      const code = (error as { code?: unknown })?.code;
+      if (
+        code === "ERR_INVALID_PACKAGE_CONFIG" || code === "ERR_PACKAGE_PATH_NOT_EXPORTED" ||
+        code === "ERR_PACKAGE_IMPORT_NOT_DEFINED" || code === "ERR_INVALID_PACKAGE_TARGET"
+      ) {
+        throw error;
+      }
     }
     if (found !== null) return found;
     const error = new Error(
@@ -1429,16 +1435,20 @@ export function createRuntimeRequire(
   // A `./` target of a package map, which Node rejects if any later segment
   // is empty, `.`, `..` or `node_modules`, so it cannot leave its package.
   // A target is a URL path, so its escapes name the file: `%20` is a space.
-  // Its query or fragment is not part of the file's path.
+  // Its query or fragment is not part of the file's path. False for a valid
+  // target whose escapes name no file.
   const targetSegments = (target: string) => {
     if (!target.startsWith("./")) return null;
     const decoded: string[] = [];
+    let undecodable = false;
     for (const segment of target.slice(2).split(/[?#]/)[0]!.split(/[\\/]/)) {
       let name: string;
       try {
         name = decodeURIComponent(segment);
       } catch {
-        return null;
+        // Node never decodes it, so it names no file, but the target is valid.
+        undecodable = true;
+        continue;
       }
       const lower = name.toLowerCase();
       if (
@@ -1449,11 +1459,21 @@ export function createRuntimeRequire(
       }
       decoded.push(name);
     }
-    return decoded;
+    return undecodable ? false : decoded;
   };
+  // A package map's errors, as Node reports them: a broken package is never
+  // mistaken for a missing optional one.
+  const manifestLabel = (packageDir: string) =>
+    JSON.stringify(host.relative(projectRoot, host.join(packageDir, "package.json")));
   const packageTarget = (packageDir: string, target: string) => {
     const segments = targetSegments(target);
-    if (segments === null) return null;
+    if (segments === false) return null;
+    if (segments === null) {
+      throw failure(
+        "Invalid package target " + JSON.stringify(target) + " in " + manifestLabel(packageDir),
+        "ERR_INVALID_PACKAGE_TARGET",
+      );
+    }
     const path = host.join(packageDir, ...segments);
     // An import keeps the target's query or fragment in the module's URL.
     const suffix = /[?#][\s\S]*$/.exec(target)?.[0] ?? "";
@@ -1477,8 +1497,9 @@ export function createRuntimeRequire(
       host.isAbsolute(relative));
   };
   // A package's file for `subpath` ("" or "/sub"), as Node's require() picks
-  // it; false when the package is there but refuses the subpath (its
-  // `exports` or a malformed package.json), which ends Node's search.
+  // it; false when its `exports` target names no file, which ends Node's
+  // search. A subpath `exports` does not define, or a malformed package.json,
+  // throws Node's error.
   const packageFile = (packageDir: string, subpath: string) => {
     const manifest = readManifest(packageDir);
     if (manifest === null) throw invalidConfig(packageDir);
@@ -1490,13 +1511,20 @@ export function createRuntimeRequire(
         : [];
       const subpathKeys = keys.filter((name) => name.startsWith(".")).length;
       // Node rejects an `exports` object that mixes subpaths and conditions.
-      if (subpathKeys > 0 && subpathKeys !== keys.length) return false;
+      if (subpathKeys > 0 && subpathKeys !== keys.length) throw invalidConfig(packageDir);
       const target = subpathKeys > 0
         ? mapTarget(exports as Record<string, unknown>, key, validExport)
         : key === "."
         ? conditionalTarget(exports, validExport) ?? null
         : null;
-      return (target === null ? null : packageTarget(packageDir, target)) ?? false;
+      if (target === null) {
+        throw failure(
+          "Package subpath " + JSON.stringify(key) + ' is not defined by "exports" in ' +
+            manifestLabel(packageDir),
+          "ERR_PACKAGE_PATH_NOT_EXPORTED",
+        );
+      }
+      return packageTarget(packageDir, target) ?? false;
     }
     return findFile(host.join(packageDir, subpath));
   };
@@ -1557,17 +1585,26 @@ export function createRuntimeRequire(
   const packageImport = (id: string, directory: string) => {
     const scope = packageScope(directory);
     const imports = scope?.manifest.imports;
-    if (
-      scope == null || imports === null || typeof imports !== "object" || Array.isArray(imports)
-    ) {
-      return null;
-    }
-    const target = mapTarget(imports as Record<string, unknown>, id, validImport);
-    if (target === null) return null;
-    if (target.startsWith("./")) return packageTarget(scope.directory, target);
-    return target.startsWith("#") || target.startsWith("/") || target.startsWith(".")
+    const target = scope == null || imports === null || typeof imports !== "object" ||
+        Array.isArray(imports)
       ? null
-      : findPackage(target, scope.directory);
+      : mapTarget(imports as Record<string, unknown>, id, validImport);
+    if (target === null) {
+      throw failure(
+        "Package import specifier " + JSON.stringify(id) + " is not defined" +
+          (scope == null ? "" : " in " + manifestLabel(scope.directory)),
+        "ERR_PACKAGE_IMPORT_NOT_DEFINED",
+      );
+    }
+    if (target.startsWith("./")) return packageTarget(scope!.directory, target);
+    if (target.startsWith("#") || target.startsWith("/") || target.startsWith(".")) {
+      throw failure(
+        "Invalid package target " + JSON.stringify(target) + " in " +
+          manifestLabel(scope!.directory),
+        "ERR_INVALID_PACKAGE_TARGET",
+      );
+    }
+    return findPackage(target, scope!.directory);
   };
   // `self` is false for a `paths` entry, which only searches; the caller's
   // own package scope is read once, from where the call was made.

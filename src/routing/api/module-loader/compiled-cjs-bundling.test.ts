@@ -1051,13 +1051,13 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
         mainOnly: "main",
         local: "nested",
       });
-      for (const file of ["bare", "sealed"]) {
-        assertEquals(
-          errorCode(() => require(`/app/node_modules/p/${file}.js`)),
-          "MODULE_NOT_FOUND",
-          file,
-        );
-      }
+      assertEquals(errorCode(() => require("/app/node_modules/p/bare.js")), "MODULE_NOT_FOUND");
+      // A subpath the package does not export is its refusal, not a missing
+      // package, as in Node.
+      assertEquals(
+        errorCode(() => require("/app/node_modules/p/sealed.js")),
+        "ERR_PACKAGE_PATH_NOT_EXPORTED",
+      );
     });
 
     it("hands a cycle the exports so far, as Node does", () => {
@@ -1280,33 +1280,49 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
       assertEquals(requireFrom("/app/node_modules/p")("#fallback"), { name: "base" });
       // Node's `*` never matches the empty string.
       assertEquals(require("pat/featureX"), "featureX");
-      assertEquals(errorCode(() => require("pat/feature")), "MODULE_NOT_FOUND");
+      assertEquals(errorCode(() => require("pat/feature")), "ERR_PACKAGE_PATH_NOT_EXPORTED");
       // Nor does Node accept exports that mix subpaths and conditions. A
       // directory whose package.json is malformed is an error, not absent.
-      assertEquals(errorCode(() => require("mixed")), "MODULE_NOT_FOUND");
+      assertEquals(errorCode(() => require("mixed")), "ERR_INVALID_PACKAGE_CONFIG");
       assertEquals(
         errorCode(() => require("/app/node_modules/p/badplug")),
         "ERR_INVALID_PACKAGE_CONFIG",
       );
-      for (
-        const id of ["blocked", "blocked/escape", "blocked/nested", "blocked/badescape"]
-      ) {
-        assertEquals(errorCode(() => require(id)), "MODULE_NOT_FOUND", id);
+      // A null condition blocks the path; a target that leaves the package is
+      // invalid; one whose escapes Node cannot decode names no file.
+      assertEquals(errorCode(() => require("blocked")), "ERR_PACKAGE_PATH_NOT_EXPORTED");
+      for (const id of ["blocked/escape", "blocked/nested", "blocked/encoded", "blocked/empty"]) {
+        assertEquals(errorCode(() => require(id)), "ERR_INVALID_PACKAGE_TARGET", id);
       }
-      for (const id of ["blocked/encoded", "blocked/empty"]) {
-        assertEquals(errorCode(() => require(id)), "MODULE_NOT_FOUND", id);
-      }
+      assertEquals(errorCode(() => require("blocked/badescape")), "MODULE_NOT_FOUND");
       assertEquals(
         errorCode(() => require("/app/node_modules/p/escape-imports.js")),
-        "MODULE_NOT_FOUND",
+        "ERR_INVALID_PACKAGE_TARGET",
       );
+      // import.meta.resolve reports a package's refusal as it is, too.
+      for (
+        const [id, code] of [
+          ["blocked", "ERR_PACKAGE_PATH_NOT_EXPORTED"],
+          ["blocked/escape", "ERR_INVALID_PACKAGE_TARGET"],
+          ["#missing", "ERR_PACKAGE_IMPORT_NOT_DEFINED"],
+          ["mixed", "ERR_INVALID_PACKAGE_CONFIG"],
+        ]
+      ) {
+        const resolveImport = createImportMetaResolve(
+          "file:///app/node_modules/p/index.mjs",
+          [],
+          () => undefined,
+          (specifier) => requireFrom("/app/node_modules/p").resolve(specifier, asImport),
+        );
+        assertEquals(errorCode(() => resolveImport(id)), code, id);
+      }
     });
 
     it("stops at the nearest copy of a package that refuses the path", () => {
       assertEquals(require("/app/node_modules/p/shadowed.js"), "nested main");
       assertEquals(
         errorCode(() => require("/app/node_modules/p/shadow-sub.js")),
-        "MODULE_NOT_FOUND",
+        "ERR_PACKAGE_PATH_NOT_EXPORTED",
       );
       // A malformed nearest copy is Node's config error, not a missing package.
       assertEquals(
@@ -1389,12 +1405,14 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
         ownPattern: "lib x",
         ownPackage: { name: "extra" },
       });
-      for (const file of ["no-import", "escape-import", "outside-pattern"]) {
-        assertEquals(
-          errorCode(() => require(`/app/node_modules/p/${file}.js`)),
-          "MODULE_NOT_FOUND",
-          file,
-        );
+      for (
+        const [file, code] of [
+          ["no-import", "ERR_PACKAGE_IMPORT_NOT_DEFINED"],
+          ["escape-import", "ERR_INVALID_PACKAGE_TARGET"],
+          ["outside-pattern", "MODULE_NOT_FOUND"],
+        ]
+      ) {
+        assertEquals(errorCode(() => require(`/app/node_modules/p/${file}.js`)), code, file);
       }
       assertEquals(
         errorCode(() => require("/app/node_modules/p/broken-pkg.js")),
