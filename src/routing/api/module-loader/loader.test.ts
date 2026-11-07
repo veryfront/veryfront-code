@@ -15,6 +15,7 @@ import {
   bundledModuleScopeDiscriminator,
   bundlerForcesTypeScript,
   canDirectImportSpecifier,
+  compiledCommonJSDependencies,
   createNativeCommonJSPlugin,
   generateCompiledBinaryRequireShim,
   getNodeExternalPackagesToResolve,
@@ -1909,16 +1910,18 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
     });
     await writePackage("cjs-lib", { main: "index.js" });
 
-    const esmDeps = await resolveEsmUserDependencies(
-      tmpDir,
-      fs,
-      new Map([
-        ["type-module-lib", "^1.0.0"],
-        ["mjs-main-lib", "^1.0.0"],
-        ["exports-import-lib", "^1.0.0"],
-        ["cjs-lib", "^1.0.0"],
-        ["missing-lib", "^1.0.0"],
-      ]),
+    const userDeps = new Map([
+      ["type-module-lib", "^1.0.0"],
+      ["mjs-main-lib", "^1.0.0"],
+      ["exports-import-lib", "^1.0.0"],
+      ["cjs-lib", "^1.0.0"],
+      ["missing-lib", "^1.0.0"],
+    ]);
+    const esmDeps = await resolveEsmUserDependencies(tmpDir, fs, userDeps);
+    // A compiled binary loads every non-ESM dependency through native require.
+    assertEquals(
+      await compiledCommonJSDependencies(tmpDir, fs, userDeps),
+      new Set(["cjs-lib", "missing-lib"]),
     );
 
     assertEquals(esmDeps.has("type-module-lib"), true);

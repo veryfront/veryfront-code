@@ -1555,9 +1555,9 @@ const NATIVE_COMMONJS_NAMESPACE = "vf-native-cjs";
  * is not an ES module package (see resolveEsmUserDependencies), which keeps
  * loading from its file:// URL.
  */
-async function compiledCommonJSDependencies(
+export async function compiledCommonJSDependencies(
   projectDir: string,
-  fs: ProjectSourceSnapshot,
+  fs: Parameters<typeof resolveEsmUserDependencies>[1],
   userDeps: Map<string, string>,
 ): Promise<Set<string>> {
   const esmDeps = await resolveEsmUserDependencies(projectDir, fs, userDeps);
