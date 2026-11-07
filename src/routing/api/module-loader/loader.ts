@@ -2007,11 +2007,11 @@ function createProjectBoundaryPlugin(
               importMap: workerImportMap,
             });
           }
-          // A dependency's JSON registers itself, so that a computed require()
-          // of the same file returns the same object.
+          // A dependency's JSON is a CommonJS module, which the runtime module
+          // cache shares with a computed require() of the same file.
           if (!executableModule && dependency) {
             return {
-              contents: prepareDependencyJson(source.contents, args.path),
+              contents: prepareDependencyJson(source.contents),
               loader: "js",
               resolveDir: pathHelper.dirname(source.logicalPath),
             };
@@ -2391,7 +2391,7 @@ function buildTranspiledModuleSource(
       logger.debug(`built handler ${projectModuleLabel(resolvedPath, projectDir)}`);
       const output = result.outputFiles?.[0]?.text ?? "export {}";
       const js = compiled
-        ? await prependRuntimeRequire(output, canonicalRoot, dependencyDirs)
+        ? await prependRuntimeRequire(output, canonicalRoot, dependencyDirs, workingDir)
         : output;
       logger.debug(`transpiled size ${js.length} bytes`);
 

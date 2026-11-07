@@ -99,13 +99,16 @@ export function createNativeAddonPlugin(): Plugin {
 
 /**
  * Resolution options of a compiled-binary route build. Bundled packages read
- * the `node` condition and `main`, as Node does; Node never reads `module`.
+ * the `node` and `module-sync` conditions and `main`, as Node 24 does; Node
+ * never reads `module`. `node-addons` stays off, as under Node's `--no-addons`:
+ * the compiled binary cannot load a native addon, so a package's universal
+ * entry is the one it can run.
  * The extension order serves project code, and
  * {@link createDependencyResolvePlugin} restores Node's order inside packages.
  */
 export const COMPILED_RESOLVE_OPTIONS = {
   mainFields: ["main"],
-  conditions: ["node"],
+  conditions: ["node", "module-sync"],
   resolveExtensions: [".ts", ".tsx", ".js", ".jsx", ".mjs", ".json"],
 };
 
@@ -128,7 +131,9 @@ export async function nodePreferredFile(
   specifier: string,
   resolveDir: string,
   isFile: IsFile,
+  sep: string = pathHelper.sep,
 ): Promise<string> {
+  specifier = requirePath(specifier, sep);
   const relative = specifier.startsWith("./") || specifier.startsWith("../") ||
     specifier === "." || specifier === ".." || pathHelper.isAbsolute(specifier);
   const extension = pathHelper.extname(resolvedPath);
@@ -146,6 +151,18 @@ export async function nodePreferredFile(
 }
 
 const RELATIVE_SPECIFIER = /^(?:\.\.?(?:\/|$)|\/)/;
+// Also a Windows path relative to the importer; see requirePath().
+const RELATIVE_REQUIRE_FILTER = /^(?:\.\.?(?:[\\/]|$)|\/)/;
+
+/**
+ * A `require()` id with Windows separators written as `/` when the host
+ * separates paths with a backslash, where Node's require() reads `.\\x` as
+ * relative. Elsewhere, and for ES module specifiers, which are URLs, a
+ * backslash is part of a name.
+ */
+export function requirePath(specifier: string, sep: string = pathHelper.sep): string {
+  return sep === "\\" && /^\.\.?\\/.test(specifier) ? specifier.replaceAll("\\", "/") : specifier;
+}
 // A package name: not a path and not a package's own `#import`, which
 // resolves from the importer's package. A URL is told apart in the handler
 // (the bundler's filters are Go regular expressions, without lookahead).
@@ -192,6 +209,7 @@ export async function nodeRelativeFile(
 export function createDependencyResolvePlugin(
   isDependencyFile: (path: string) => boolean,
   isFile: IsFile,
+  sep: string = pathHelper.sep,
 ): Plugin {
   return {
     name: "vf-dependency-resolve",
@@ -235,10 +253,32 @@ export function createDependencyResolvePlugin(
           pluginData: result.pluginData,
         };
       });
-      build.onResolve({ filter: RELATIVE_SPECIFIER }, async (args) => {
+      build.onResolve({ filter: RELATIVE_REQUIRE_FILTER }, async (args) => {
         if (!args.importer || !isDependencyFile(args.importer)) return undefined;
-        const file = await nodeRelativeFile(args.path, args.resolveDir, isFile);
-        return file === null ? undefined : { path: file };
+        const required = args.kind === "require-call" || args.kind === "require-resolve";
+        const path = required ? requirePath(args.path, sep) : args.path;
+        if (!RELATIVE_SPECIFIER.test(path)) return undefined;
+        const file = await nodeRelativeFile(path, args.resolveDir, isFile);
+        if (file !== null) return { path: file };
+        if (path === args.path || !build.resolve) return undefined;
+        // The bundler reads `.\\x` as a package name; it resolves the path.
+        const data = args.pluginData as Record<string, unknown> | undefined;
+        if (data?.[RESOLVING_WINDOWS_PATH] === true) return undefined;
+        const result = await build.resolve(path, {
+          kind: args.kind,
+          importer: args.importer,
+          resolveDir: args.resolveDir,
+          pluginData: { [RESOLVING_WINDOWS_PATH]: true },
+        });
+        if (result.errors?.length) return { errors: result.errors };
+        return {
+          path: result.path,
+          external: result.external,
+          namespace: result.namespace,
+          suffix: result.suffix,
+          sideEffects: result.sideEffects,
+          pluginData: result.pluginData,
+        };
       });
     },
   };
@@ -325,7 +365,8 @@ export function createImportExternalsPlugin(
           // `exports`, so the import names it.
           if (args.path === name) return external;
           const file = pathHelper.join(copy.logical, pathHelper.relative(copy.real, real));
-          return { path: pathHelper.toFileUrl(file).href, external: true };
+          // A target's query or fragment is part of the module's URL, as in Node.
+          return { path: pathHelper.toFileUrl(file).href + (result.suffix ?? ""), external: true };
         }
         return {
           path: result.path,
@@ -346,6 +387,7 @@ function packageName(specifier: string): string {
 }
 
 const RESOLVING_EXTERNAL = "vfResolvingExternal";
+const RESOLVING_WINDOWS_PATH = "vfResolvingWindowsPath";
 
 /** Reads a package.json as text, or null when the directory has none. */
 export type ReadManifest = (path: string) => Promise<string | null>;
@@ -386,7 +428,9 @@ export class PackageTypeLookup {
     const manifest = await this.readManifest(pathHelper.join(directory, "package.json"));
     if (manifest !== null) {
       try {
-        const type = (JSON.parse(manifest) as { type?: unknown }).type;
+        // Node drops a byte order mark before parsing a package.json.
+        const text = manifest.charCodeAt(0) === 0xfeff ? manifest.slice(1) : manifest;
+        const type = (JSON.parse(text) as { type?: unknown }).type;
         return typeof type === "string" ? type : undefined;
       } catch {
         // Node rejects a malformed package.json; esbuild reports it as well.
@@ -545,7 +589,10 @@ export type ResolveRequireLiteral = (specifier: string) => Promise<string | null
  * The file is parsed, not matched as text, so strings and comments are never
  * touched. Unbound reads of `__dirname` and `__filename` become constants, so
  * a file's own binding of either name still wins, and nothing wraps the file:
- * its hashbang, directive prologue and `arguments` are unchanged. Each unbound
+ * its hashbang and directive prologue are unchanged, and its top-level
+ * `arguments` holds Node's five wrapper arguments. A file Node must parse as
+ * CommonJS (`.cjs`, `.cts`, or `"type": "commonjs"`) that has ES module
+ * syntax throws a `SyntaxError` when it runs, as Node throws when it loads it. Each unbound
  * `require.resolve("literal")` becomes the string Node returns: the id of a
  * built-in, or the path `resolve` finds. One that does not resolve is left for
  * runtime, where it throws `MODULE_NOT_FOUND` as Node does, so an optional
@@ -565,11 +612,15 @@ export async function prepareCommonJSFile(
   // its package declares; a package `main` may name one.
   const extensionless = pathHelper.extname(filePath) === "";
   if (!cjsExtension && !extensionless && !(jsExtension && packageType !== "module")) return null;
+  // Node parses these as CommonJS whatever their syntax: ES module syntax is
+  // a SyntaxError there, not a reason to load the file as a module.
+  const forcedCommonJS = cjsExtension || (jsExtension && packageType === "commonjs");
 
   // The source does not contain the name, so every occurrence in the output
   // is one the parser put there. It never reaches the bundle.
   const marker = await markerFor("__vf_require_resolve_", filePath, contents);
   const requireMarker = await markerFor("__vf_require_call_", filePath, contents);
+  const argumentsMarker = await markerFor("__vf_arguments_", filePath, contents);
   const result = await bundle({
     stdin: {
       contents,
@@ -586,10 +637,20 @@ export async function prepareCommonJSFile(
       require: requireMarker,
       __dirname: JSON.stringify(pathHelper.dirname(filePath)),
       __filename: JSON.stringify(filePath),
+      // Only the file's own top-level `arguments`: a function has its own.
+      arguments: argumentsMarker,
     },
   });
   const format = Object.values(result.metafile?.inputs ?? {})[0]?.format;
-  if (!cjsExtension && format === "esm") return null;
+  if (format === "esm") {
+    if (!forcedCommonJS) return null;
+    // Thrown when the file runs, as Node throws when it loads it.
+    return `throw new SyntaxError(${
+      JSON.stringify(
+        `${pathHelper.basename(filePath)} uses ES module syntax, but Node loads it as CommonJS`,
+      )
+    });\n`;
+  }
   const code = result.outputFiles?.[0]?.text;
   if (code === undefined) throw new Error(`No output for dependency file ${filePath}`);
 
@@ -619,12 +680,22 @@ export async function prepareCommonJSFile(
     )
     .replaceAll(marker, `${requireMarker}.resolve`)
     .replaceAll(requireMarker, directEval || assigned ? "require" : boundRequire);
-  if (!directEval) return prepared;
+  const wrapperArguments = prepared.includes(argumentsMarker);
+  if (!directEval && !wrapperArguments) return prepared;
   // After a hashbang and the directive prologue, so "use strict" still applies.
   const head = /^(?:#![^\n]*\n)?(?:(["'])[^"'\n]*\1;\n)*/.exec(prepared)?.[0] ?? "";
-  const bindings = `var require = ${boundRequire}, __dirname = ${JSON.stringify(directory)}, ` +
-    `__filename = ${JSON.stringify(filePath)};\n`;
-  return head + bindings + prepared.slice(head.length);
+  const bindings = directEval
+    ? `var require = ${boundRequire}, __dirname = ${JSON.stringify(directory)}, ` +
+      `__filename = ${JSON.stringify(filePath)};\n`
+    : "";
+  // The bundler's wrapper passes `exports` and `module` only; Node's passes
+  // these five, which a file may read through `arguments`.
+  const tuple = wrapperArguments
+    ? `var ${argumentsMarker} = (function () { return arguments; })(exports, ${
+      directEval || assigned ? "require" : boundRequire
+    }, module, ${JSON.stringify(filePath)}, ${JSON.stringify(directory)});\n`
+    : "";
+  return head + bindings + tuple + prepared.slice(head.length);
 }
 
 // A call of `marker` with one string literal as the bundler prints it; a
@@ -669,9 +740,10 @@ export type ResolveImportMetaLiteral = (specifier: string) => Promise<string | n
  * constants. Each `import.meta.resolve("literal")` becomes the URL `resolve`
  * finds. Any other use of `import.meta.resolve`, computed or detached, calls a
  * resolver bound to the file: it resolves URLs and relative paths against the
- * file and built-ins to their `node:` ids, and throws `ERR_MODULE_NOT_FOUND`
- * for a package name, which the bundle cannot locate at runtime. Any other
- * read of `import.meta` gets an object with these four properties.
+ * file, built-ins to their `node:` ids, and package names and the package's
+ * own `#imports` through the runtime `require`'s lookup with the `import`
+ * condition. Any other read of `import.meta` gets an object with these four
+ * properties.
  */
 export async function prepareModuleFile(
   contents: string,
@@ -713,7 +785,9 @@ export async function prepareModuleFile(
     `function ${marker}(specifier) {`,
     `  return (${createImportMetaResolve.toString()})(${JSON.stringify(url)}, ${
       JSON.stringify([...PREFIX_ONLY_BUILTINS])
-    }, (id) => globalThis.process?.getBuiltinModule?.(id))(specifier);`,
+    }, (id) => globalThis.process?.getBuiltinModule?.(id), (id) => typeof ${BUNDLED_REQUIRE_FROM} === "function" ? ${BUNDLED_REQUIRE_FROM}(${
+      JSON.stringify(pathHelper.dirname(filePath))
+    }).resolve(id, { [Symbol.for("veryfront.importConditions")]: true }) : null)(specifier);`,
     "}",
     `const ${marker}_meta = { url: ${JSON.stringify(url)}, filename: ${
       JSON.stringify(filePath)
@@ -727,8 +801,8 @@ export async function prepareModuleFile(
 /**
  * The runtime `import.meta.resolve` of a bundled dependency module at
  * `moduleUrl`: URLs and relative paths resolve against the module, built-ins
- * to their `node:` ids, and a package name throws `ERR_MODULE_NOT_FOUND`,
- * since the bundle cannot locate packages at runtime.
+ * to their `node:` ids, and a package name or `#import` to the URL
+ * `resolvePackage` finds. One it cannot find throws `ERR_MODULE_NOT_FOUND`.
  *
  * {@link prepareModuleFile} embeds this function's source in the module, so
  * it must not refer to anything outside its own body.
@@ -737,6 +811,7 @@ export function createImportMetaResolve(
   moduleUrl: string,
   prefixOnlyNames: readonly string[],
   getBuiltinModule: (id: string) => unknown,
+  resolvePackage: (id: string) => string | null = () => null,
 ): (specifier: unknown) => string {
   return (specifier) => {
     const id = String(specifier);
@@ -744,6 +819,13 @@ export function createImportMetaResolve(
     if (/^(?:\.\.?(?:\/|$)|\/)/.test(id)) return new URL(id, moduleUrl).href;
     // A bare prefix-only name such as `test` is a package, as in Node.
     if (!prefixOnlyNames.includes(id) && getBuiltinModule(id) !== undefined) return "node:" + id;
+    let found: string | null = null;
+    try {
+      found = resolvePackage(id);
+    } catch {
+      // Not found; reported below with ESM's code.
+    }
+    if (found !== null) return found;
     const error = new Error(
       "Cannot find package " + JSON.stringify(id) + " imported from a bundled dependency",
     ) as Error & { code?: string };
@@ -753,40 +835,22 @@ export function createImportMetaResolve(
 }
 
 /**
- * The name a bundled dependency module registers itself under, so that the
- * runtime `require` shares one module cache with the bundle. The route
- * module's prologue binds it; see {@link prependRuntimeRequire}.
- */
-export const BUNDLED_MODULE_REGISTRY = "__vf_register_bundled_module";
-
-/**
  * The name a bundled CommonJS dependency calls for the `require` of its own
  * directory; see {@link RuntimeRequireBinding.requireFrom}.
  */
 export const BUNDLED_REQUIRE_FROM = "__vf_require_from";
 
 /**
- * `code` with a last statement that registers its CommonJS `module` by
- * `path`. In an ES module `module` is unbound and nothing happens. A file
- * that leaves early with a top-level `return` is not registered, and a
- * computed `require()` of it runs it again.
+ * A dependency's JSON file as a CommonJS module, which the runtime `require`
+ * caches like any bundled dependency, so a computed `require()` of the same
+ * file returns the same object, as in Node. Malformed JSON fails the build, as
+ * the bundler's JSON loader would.
  */
-export function registerBundledModule(code: string, path: string): string {
-  const registry = BUNDLED_MODULE_REGISTRY;
-  return `${code}\n;typeof module === "object" && module !== null && ` +
-    `typeof ${registry} === "function" && ${registry}(${JSON.stringify(path)}, module);\n`;
-}
-
-/**
- * A dependency's JSON file as a CommonJS module that registers itself, so a
- * computed `require()` of the same file returns the same object, as in Node.
- * Malformed JSON fails the build, as the bundler's JSON loader would.
- */
-export function prepareDependencyJson(contents: string, path: string): string {
+export function prepareDependencyJson(contents: string): string {
   // Node drops a byte order mark before parsing JSON.
   const json = contents.charCodeAt(0) === 0xfeff ? contents.slice(1) : contents;
   JSON.parse(json);
-  return registerBundledModule(`module.exports = JSON.parse(${JSON.stringify(json)});`, path);
+  return `module.exports = JSON.parse(${JSON.stringify(json)});\n`;
 }
 
 /** Input for {@link prepareDependencyFile}. */
@@ -813,23 +877,23 @@ export interface DependencyFileInput {
  */
 export async function prepareDependencyFile(input: DependencyFileInput): Promise<string> {
   const { build, contents, logicalPath, resolvedPath, isDependencyFile } = input;
-  // A file Node may load as CommonJS registers its module for the runtime
-  // `require`; an ES module has no `module` to register.
-  const mayBeCommonJS = /\.c[jt]s$/i.test(logicalPath) ||
-    (/(?:\.(?:jsx?|ts)|[\\/][^.\\/]+)$/i.test(logicalPath) && input.packageType !== "module");
-  const register = (code: string) =>
-    mayBeCommonJS ? registerBundledModule(code, resolvedPath) : code;
+  // A file Node parses as CommonJS whatever its syntax.
+  const forcedCommonJS = /\.c[jt]s$/i.test(logicalPath) ||
+    (/\.(?:jsx?|ts)$/i.test(logicalPath) && input.packageType === "commonjs");
   // Most package files read none of these names; parsing them would change
   // nothing. The check is textual, so it can only send extra files to the parser.
   const importMeta = /\bimport\.meta\b/.test(contents);
   const readsCommonJSNames = contents.includes("__dirname") ||
     contents.includes("__filename") ||
+    /\barguments\b/.test(contents) ||
     // Any use of require but a call with a string literal, which the bundler
     // bundles: a computed id must resolve from this file's directory.
     /\brequire\b/.test(contents.replace(LITERAL_REQUIRE_CALL, "")) ||
     // A direct eval may read any of them.
-    /\beval\s*\(/.test(contents);
-  if (!readsCommonJSNames && !importMeta) return register(contents);
+    /\beval\s*\(/.test(contents) ||
+    // ES module syntax, which such a file must not run as.
+    (forcedCommonJS && /\b(?:import|export)\b/.test(contents));
+  if (!readsCommonJSNames && !importMeta) return contents;
   const resolveDir = pathHelper.dirname(resolvedPath);
   const dependencyPath = async (
     specifier: string,
@@ -839,15 +903,21 @@ export async function prepareDependencyFile(input: DependencyFileInput): Promise
     const result = await build.resolve(specifier, { kind, importer: resolvedPath, resolveDir });
     if (result.errors?.length || !result.path || result.external) return null;
     if (!isDependencyFile(result.path)) return null;
-    return await nodePreferredFile(result.path, specifier, resolveDir, input.isFile);
+    // Only require() reads a Windows backslash as a separator.
+    const sep = kind === "require-resolve" ? pathHelper.sep : "/";
+    return {
+      path: await nodePreferredFile(result.path, specifier, resolveDir, input.isFile, sep),
+      // A package target's query or fragment: import.meta.resolve keeps it.
+      suffix: result.suffix ?? "",
+    };
   };
   const commonJS = await prepareCommonJSFile(
     contents,
     logicalPath,
     input.packageType,
-    (specifier) => dependencyPath(specifier, "require-resolve"),
+    async (specifier) => (await dependencyPath(specifier, "require-resolve"))?.path ?? null,
   );
-  if (commonJS !== null) return registerBundledModule(commonJS, resolvedPath);
+  if (commonJS !== null) return commonJS;
   if (!importMeta) return contents;
   const moduleUrl = pathHelper.toFileUrl(logicalPath).href + (input.suffix ?? "");
   return await prepareModuleFile(contents, logicalPath, async (specifier) => {
@@ -857,8 +927,8 @@ export async function prepareDependencyFile(input: DependencyFileInput): Promise
     if (URL_SPECIFIER.test(specifier) || RELATIVE_SPECIFIER.test(specifier)) {
       return new URL(specifier, moduleUrl).href;
     }
-    const path = await dependencyPath(specifier, "import-statement");
-    return path === null ? null : pathHelper.toFileUrl(path).href;
+    const found = await dependencyPath(specifier, "import-statement");
+    return found === null ? null : pathHelper.toFileUrl(found.path).href + found.suffix;
   }, input.suffix ?? "");
 }
 
@@ -900,6 +970,10 @@ export interface RuntimeRequireHost {
   readFileSync(path: string, encoding: "utf8"): string;
   /** Compiles a CommonJS module body. */
   compile(source: string, filename: string): CommonJSModuleBody;
+  /** Node's `stripTypeScriptTypes`, when the runtime has it. */
+  stripTypes?: (source: string) => string;
+  /** A path's `file:` URL. */
+  toFileUrl(path: string): string;
   isAbsolute(path: string): boolean;
   relative(from: string, to: string): string;
   join(...paths: string[]): string;
@@ -931,10 +1005,17 @@ export interface RuntimeModule {
 export interface RuntimeRequireBinding {
   readonly require: RuntimeRequire;
   /**
-   * Records a module the bundler bundled, by real path, so that a computed
-   * `require()` of the same file returns it instead of running it again.
+   * Runs a CommonJS file the bundler bundled, named by `key` relative to the
+   * bundle's working directory, through the module cache that computed
+   * requires use, as Node's one cache: it runs once, is in `require.cache`
+   * before its body runs, leaves it if the body throws, and runs again once
+   * deleted from it. Null for a file that is not a dependency, which the
+   * bundler caches itself.
    */
-  readonly register: (path: string, module: { exports: unknown }) => void;
+  readonly bundled: (
+    key: unknown,
+    body: (exports: unknown, module: { exports: unknown }) => void,
+  ) => { exports: unknown } | null;
   /**
    * The `require` of a bundled dependency file in `directory`, for the calls
    * the bundler left to runtime, such as a computed relative id.
@@ -964,15 +1045,16 @@ export interface RuntimeRequire {
  *   `.json`, then its `index.js` or `index.json`.
  * - A package name is looked up in `node_modules` upwards, through the
  *   package's `exports` (exact keys and `*` patterns; `node`, `require` and
- *   `default` conditions) or its `main`. A `#name` reads the `imports` of the
+ *   `default` conditions, or `import` and `module-sync` for a bundled module's
+ *   `import.meta.resolve`) or its `main`. A `#name` reads the `imports` of the
  *   package that holds the module.
  *
  * Whatever it finds must have its real path inside the project, and nothing
  * looks above it. JSON loads from anywhere in the project. JavaScript loads
  * only from the project's dependencies, as CommonJS, with its own `require`
- * and `module`. A native addon or an ES module throws. Each file loads once,
- * and a module the bundle already ran is the same module; see
- * {@link RuntimeRequireBinding.register}. `require.cache` holds them by real
+ * and `module`, its TypeScript types stripped as Node 24 strips them. A native
+ * addon or an ES module throws. Each file loads once, and bundled files share
+ * the same cache; see {@link RuntimeRequireBinding.bundled}. `require.cache` holds them by real
  * path, `require.resolve` returns the path it found and takes Node's `paths`
  * option, and `require.ensure`, which code written for webpack calls, runs
  * its callback. Anything else throws `MODULE_NOT_FOUND`, so optional
@@ -987,12 +1069,16 @@ export function createRuntimeRequire(
   projectRoot: string,
   prefixOnlyNames: readonly string[],
   dependencyDirectories: readonly string[],
+  bundleRoot?: string,
 ): RuntimeRequireBinding {
   // Tables without a prototype: `in` reads only their own keys and does not
   // depend on built-ins that route code could replace later.
   const prefixOnly: Record<string, true> = Object.create(null);
   for (const name of prefixOnlyNames) prefixOnly[name] = true;
   const modules: Record<string, { exports: unknown }> = Object.create(null);
+  // Set while resolving for `import.meta.resolve`, which reads a package map's
+  // `import` condition where require() reads `require`; see `resolve`.
+  let importing = false;
   const failure = (message: string, code: string) => {
     const error = new Error(message) as Error & { code?: string };
     error.code = code;
@@ -1070,7 +1156,13 @@ export function createRuntimeRequire(
     }
     if (value === null || typeof value !== "object") return null;
     for (const [condition, item] of Object.entries(value)) {
-      if (condition !== "node" && condition !== "require" && condition !== "default") continue;
+      // `module-sync` only for an import: this require() cannot run an ES
+      // module, which is when Node turns the condition off too.
+      const active = condition === "node" || condition === "default" ||
+        (importing
+          ? condition === "import" || condition === "module-sync"
+          : condition === "require");
+      if (!active) continue;
       const target = conditionalTarget(item, valid);
       if (target !== undefined) return target;
     }
@@ -1111,7 +1203,9 @@ export function createRuntimeRequire(
     const manifestPath = host.join(packageDir, "package.json");
     if (!host.isFile(manifestPath)) return undefined;
     try {
-      const manifest = JSON.parse(host.readFileSync(manifestPath, "utf8"));
+      const text = host.readFileSync(manifestPath, "utf8");
+      // Node drops a byte order mark before parsing a package.json.
+      const manifest = JSON.parse(text.charCodeAt(0) === 0xfeff ? text.slice(1) : text);
       return manifest !== null && typeof manifest === "object" ? manifest : null;
     } catch {
       return null; // Node rejects a malformed package.json
@@ -1144,7 +1238,10 @@ export function createRuntimeRequire(
   };
   const packageTarget = (packageDir: string, target: string) => {
     const segments = targetSegments(target);
-    return segments === null ? null : projectFile(host.join(packageDir, ...segments));
+    if (segments === null) return null;
+    const found = projectFile(host.join(packageDir, ...segments));
+    // An import keeps the target's query or fragment in the module's URL.
+    return found === null ? null : { ...found, suffix: /[?#][\s\S]*$/.exec(target)?.[0] ?? "" };
   };
   const validExport = (target: string) => targetSegments(target) !== null;
   // An `imports` target may also name a package.
@@ -1158,7 +1255,15 @@ export function createRuntimeRequire(
     let current = host.dirname(file);
     while (inProject(current) && !current.endsWith(host.sep + "node_modules")) {
       const manifest = readManifest(current);
-      if (manifest !== undefined) return manifest?.type;
+      // Node refuses to load a file whose package scope is malformed.
+      if (manifest === null) {
+        throw failure(
+          "Invalid package config " +
+            JSON.stringify(host.relative(projectRoot, host.join(current, "package.json"))),
+          "ERR_INVALID_PACKAGE_CONFIG",
+        );
+      }
+      if (manifest !== undefined) return manifest.type;
       const parent = host.dirname(current);
       if (parent === current) return undefined;
       current = parent;
@@ -1201,8 +1306,10 @@ export function createRuntimeRequire(
     const nameLength = id.startsWith("@") ? 2 : 1;
     if (
       parts.length < nameLength ||
-      parts.some((part) =>
-        part === "" || part === "." || part === ".." ||
+      parts.some((part, index) =>
+        part === ".." ||
+        // The name itself; Node reads `pkg/`, `pkg//` and `pkg/.` as the package.
+        (index < nameLength && (part === "" || part === ".")) ||
         // A Windows separator would let the name walk out of node_modules.
         (host.sep !== "/" && part.includes(host.sep))
       )
@@ -1270,8 +1377,19 @@ export function createRuntimeRequire(
       require,
     };
     modules[real] = module;
-    const source = host.readFileSync(real, "utf8");
     try {
+      // Reading may fail too; the module then leaves the cache, as in Node.
+      let source = host.readFileSync(real, "utf8");
+      // Node 24 strips TypeScript's types and runs the rest as JavaScript.
+      if (/\.c?ts$/i.test(real)) {
+        if (host.stripTypes === undefined) {
+          throw failure(
+            "TypeScript is not supported here: " + JSON.stringify(host.relative(projectRoot, real)),
+            "ERR_UNKNOWN_FILE_EXTENSION",
+          );
+        }
+        source = host.stripTypes(source);
+      }
       // A hashbang is not JavaScript; Node ignores it too.
       host.compile(source.startsWith("#!") ? "//" + source : source, real).call(
         module.exports,
@@ -1282,7 +1400,7 @@ export function createRuntimeRequire(
         directory,
       );
     } catch (error) {
-      delete modules[real];
+      if (modules[real] === module) delete modules[real];
       throw error;
     }
     module.loaded = true;
@@ -1305,7 +1423,7 @@ export function createRuntimeRequire(
     if (/\.node$/i.test(real)) {
       throw failure("Native addons are not supported in API routes: " + name, "ERR_DLOPEN_FAILED");
     }
-    if (/\.m[jt]s$/i.test(real) || (/\.js$/i.test(real) && packageType(real) === "module")) {
+    if (/\.m[jt]s$/i.test(real) || (/\.(?:js|ts)$/i.test(real) && packageType(real) === "module")) {
       throw failure("require() of an ES module is not supported here: " + name, "ERR_REQUIRE_ESM");
     }
     return evaluate(real);
@@ -1333,8 +1451,22 @@ export function createRuntimeRequire(
     }) as RuntimeRequire;
     require.resolve = (id: unknown, options?: { paths?: unknown }) => {
       if (builtin(id) !== undefined) return id as string;
-      const found = findFrom(id, directory, options);
+      // A bundled module's import.meta.resolve asks with this key for its
+      // package maps' import conditions.
+      const asImport = options !== null && typeof options === "object" &&
+        (options as Record<symbol, unknown>)[Symbol.for("veryfront.importConditions")] === true;
+      importing = asImport;
+      let found: ReturnType<typeof find>;
+      try {
+        found = findFrom(id, directory, options);
+      } finally {
+        importing = false;
+      }
       if (found === null) throw missing(label(id));
+      // For an import, the module's URL, as import.meta.resolve returns it.
+      if (asImport) {
+        return host.toFileUrl(found.real) + ("suffix" in found ? found.suffix : "");
+      }
       // Node returns the real path, which also keys require.cache.
       return found.real;
     };
@@ -1346,23 +1478,55 @@ export function createRuntimeRequire(
     return require;
   };
   const byDirectory: Record<string, RuntimeRequire> = Object.create(null);
+  const requireFrom = (directory: unknown) => {
+    if (typeof directory !== "string") return create(undefined);
+    return byDirectory[directory] ??= create(directory);
+  };
+  // The real path of each bundled file, by the bundler's key; null when it
+  // is not a dependency file.
+  const bundledPaths: Record<string, string | null> = Object.create(null);
+  const bundledPath = (key: string) => {
+    if (key in bundledPaths) return bundledPaths[key]!;
+    let real: string | null = null;
+    try {
+      // The bundler names files relative to its working directory, with
+      // symlinks followed; this keys them the way computed requires do.
+      const path = host.realpathSync(host.join(bundleRoot!, key));
+      if (dependencyPrefixes.some((prefix) => path.startsWith(prefix))) real = path;
+    } catch {
+      // Not a file path, such as a key in another namespace.
+    }
+    return bundledPaths[key] = real;
+  };
   return {
     // Route code's computed ids resolve from the project, as Node's would.
     require: create(projectRoot),
-    requireFrom: (directory) => {
-      if (typeof directory !== "string") return create(undefined);
-      return byDirectory[directory] ??= create(directory);
-    },
-    // The bundler names files by their real path; this keys the module the
-    // same way even where a symlink above the project was kept.
-    register: (path, module) => {
-      let real = path;
+    requireFrom,
+    bundled: (key, body) => {
+      if (bundleRoot === undefined || typeof key !== "string") return null;
+      const real = bundledPath(key);
+      if (real === null) return null;
+      const cached = modules[real];
+      if (cached !== undefined) return cached;
+      const directory = host.dirname(real);
+      const module: RuntimeModule = {
+        exports: {},
+        id: real,
+        filename: real,
+        path: directory,
+        loaded: false,
+        children: [],
+        require: requireFrom(directory),
+      };
+      modules[real] = module;
       try {
-        real = host.realpathSync(path);
-      } catch {
-        // A file the bundler read is there; keep its own name if it is not.
+        body.call(module.exports, module.exports, module);
+      } catch (error) {
+        if (modules[real] === module) delete modules[real];
+        throw error;
       }
-      if (!(real in modules)) modules[real] = module;
+      module.loaded = true;
+      return module;
     },
   };
 }
@@ -1377,42 +1541,87 @@ function onlyHelperCalls(code: string, name: string): boolean {
   return all === calls;
 }
 
+// esbuild's helper that runs a bundled CommonJS file once, as esbuild 0.28
+// prints it. Its names may carry a numeric suffix, and a direct eval in the
+// bundle renames its locals. {@link prependRuntimeRequire} routes it through
+// the runtime module cache.
+const COMMONJS_HELPER = new RegExp(
+  [
+    "var (__commonJS\\d*) = \\((\\w+), (\\w+)\\) => function (__require\\d*)\\(\\) \\{\\n",
+    "  try \\{\\n",
+    "    return \\3 \\|\\| \\(0, \\2\\[(__getOwnPropNames\\d*)\\(\\2\\)\\[0\\]\\]\\)",
+    "\\(\\(\\3 = \\{ exports: \\{\\} \\}\\)\\.exports, \\3\\), \\3\\.exports;\\n",
+    "  \\} catch \\((\\w+)\\) \\{\\n",
+    "    throw \\3 = 0, \\6;\\n",
+    "  \\}\\n",
+    "\\};",
+  ].join(""),
+);
+
 /**
  * Binds the module-level `require` that esbuild's output calls for anything it
  * did not bundle, to {@link createRuntimeRequire}. esbuild's ESM output never
  * declares a top-level `require` (it renames a route's own binding of that
- * name), so the prologue cannot collide with route code.
+ * name), so the prologue cannot collide with route code. Each bundled
+ * CommonJS dependency then runs through the runtime module cache; see
+ * {@link RuntimeRequireBinding.bundled}. `bundleRoot` is the bundle's working
+ * directory, which its file names are relative to.
  */
 export async function prependRuntimeRequire(
   code: string,
   projectRoot: string,
   dependencyDirectories: readonly string[],
+  bundleRoot: string,
 ): Promise<string> {
   let prefix = "__vf_runtime";
   while (code.includes(prefix)) prefix += "_";
-  // Dependency code calls the helpers by fixed names, which route code may
-  // declare too. The prologue binds them under names the bundle does not use,
+  // Dependency code calls the helper by a fixed name, which route code may
+  // declare too. The prologue binds it under a name the bundle does not use,
   // and only the free references, which are dependency calls, are renamed.
-  const registry = `${prefix}_register`;
   const requireFrom = `${prefix}_require_from`;
-  const helpers: Record<string, string> = {
-    [BUNDLED_MODULE_REGISTRY]: registry,
-    [BUNDLED_REQUIRE_FROM]: requireFrom,
-  };
-  if (Object.keys(helpers).every((name) => onlyHelperCalls(code, name))) {
-    for (const [name, local] of Object.entries(helpers)) {
-      code = code.replace(new RegExp(`\\b${name}\\b`, "g"), local);
-    }
+  if (onlyHelperCalls(code, BUNDLED_REQUIRE_FROM)) {
+    code = code.replace(new RegExp(`\\b${BUNDLED_REQUIRE_FROM}\\b`, "g"), requireFrom);
   } else {
-    // Some other use of a helper's name, such as a declaration in route code:
-    // the parser tells free references apart, as the bundler does.
+    // Some other use of the name, such as a declaration in route code: the
+    // parser tells free references apart, as the bundler does.
     code = (await transform(code, {
       loader: "js",
       format: "esm",
       platform: "neutral",
       logLevel: "silent",
-      define: helpers,
+      define: { [BUNDLED_REQUIRE_FROM]: requireFrom },
     })).code;
+  }
+  const bundled = `${prefix}_bundled`;
+  if (/\bvar __commonJS\d* = /.test(code)) {
+    if (!COMMONJS_HELPER.test(code)) {
+      // Another bundler version: fail closed rather than run modules twice.
+      throw new Error("[API] handler build failed: unexpected CommonJS helper in the bundle");
+    }
+    code = code.replace(
+      COMMONJS_HELPER,
+      (
+        _whole,
+        helper: string,
+        cb: string,
+        mod: string,
+        inner: string,
+        ownNames: string,
+        error: string,
+      ) =>
+        [
+          `var ${helper} = (${cb}, ${mod}) => function ${inner}() {`,
+          `  const key = ${ownNames}(${cb})[0];`,
+          `  const managed = ${bundled}(key, ${cb}[key]);`,
+          "  if (managed !== null) return managed.exports;",
+          "  try {",
+          `    return ${mod} || (0, ${cb}[key])((${mod} = { exports: {} }).exports, ${mod}), ${mod}.exports;`,
+          `  } catch (${error}) {`,
+          `    throw ${mod} = 0, ${error};`,
+          "  }",
+          "};",
+        ].join("\n"),
+    );
   }
   const host = [
     `getBuiltinModule: (id) => ${prefix}_process.getBuiltinModule(id)`,
@@ -1421,21 +1630,24 @@ export async function prependRuntimeRequire(
     `readFileSync: ${prefix}_fs.readFileSync`,
     // Captured now: route code runs after the prologue.
     `compile: ((F) => (source) => new F("exports", "require", "module", "__filename", "__dirname", source))(Function)`,
+    `stripTypes: ${prefix}_process.getBuiltinModule("node:module")?.stripTypeScriptTypes`,
     `isAbsolute: ${prefix}_path.isAbsolute`,
     `relative: ${prefix}_path.relative`,
     `join: ${prefix}_path.join`,
     `dirname: ${prefix}_path.dirname`,
     `sep: ${prefix}_path.sep`,
+    `toFileUrl: (path) => ${prefix}_url.pathToFileURL(path).href`,
   ];
   const lines = [
     `import ${prefix}_process from "node:process";`,
     `import * as ${prefix}_fs from "node:fs";`,
     `import * as ${prefix}_path from "node:path";`,
-    `const { require, register: ${registry}, requireFrom: ${requireFrom} } = (${createRuntimeRequire.toString()})({ ${
+    `import * as ${prefix}_url from "node:url";`,
+    `const { require, bundled: ${bundled}, requireFrom: ${requireFrom} } = (${createRuntimeRequire.toString()})({ ${
       host.join(", ")
     } }, ${JSON.stringify(projectRoot)}, ${JSON.stringify([...PREFIX_ONLY_BUILTINS])}, ${
       JSON.stringify(dependencyDirectories)
-    });`,
+    }, ${JSON.stringify(bundleRoot)});`,
   ];
   // A hashbang is only valid as the first line.
   const hashbangEnd = code.startsWith("#!") ? code.indexOf("\n") + 1 : 0;

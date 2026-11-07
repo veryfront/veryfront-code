@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { mkdir, readdir, readFile, realpath, stat, symlink, writeFile } from "node:fs/promises";
+import process from "node:process";
 import { pathToFileURL } from "node:url";
 import { withTempDir } from "#veryfront/testing/deno-compat.ts";
 import * as esbuild from "veryfront/extensions/bundler";
@@ -70,7 +71,7 @@ function dependencyFilePlugin(
         if (!isDependencyFile(args.path)) return undefined;
         const contents = await readFile(args.path, "utf8");
         if (args.path.endsWith(".json")) {
-          return { contents: prepareDependencyJson(contents, args.path), loader: "js" };
+          return { contents: prepareDependencyJson(contents), loader: "js" };
         }
         return {
           contents: await prepareDependencyFile({
@@ -135,6 +136,8 @@ async function bundleAndImport(
       result.outputFiles?.[0]?.text ?? "",
       projectDir,
       await dependencyDirectories(projectDir, hostFs),
+      // The bundler names files relative to its working directory.
+      process.cwd(),
     );
     const file = `${projectDir}/handler.mjs`;
     await writeFile(file, code);
@@ -417,6 +420,117 @@ describe("compiled-binary route bundling of CommonJS dependencies", () => {
     });
   });
 
+  it("bundles a direct-eval dependency beside one that imports an external package", async () => {
+    await inProject(async (projectDir) => {
+      await writeFiles(projectDir, {
+        "node_modules/usesub/package.json": JSON.stringify({ name: "usesub", main: "index.js" }),
+        "node_modules/usesub/index.js": 'exports.load = () => import("esmsub/feature");',
+        "node_modules/esmsub/package.json": JSON.stringify({
+          name: "esmsub",
+          type: "module",
+          exports: { ".": "./index.js", "./feature": "./dist/feature.js" },
+        }),
+        "node_modules/esmsub/index.js": 'export default "root";',
+        "node_modules/esmsub/dist/feature.js": 'export default "feature";',
+        "node_modules/evaler/package.json": JSON.stringify({ name: "evaler", main: "index.js" }),
+        "node_modules/evaler/index.js": [
+          '"use strict";',
+          'exports.plugin = eval("require")("./plugin").name;',
+        ].join("\n"),
+        "node_modules/evaler/plugin.js": 'exports.name = "plugin";',
+      });
+      const mod = await bundleAndImport(
+        projectDir,
+        [
+          'import u from "usesub";',
+          'import e from "evaler";',
+          "export const evaler = e.plugin;",
+          "export const feature = (await u.load()).default;",
+        ].join("\n"),
+        ["esmsub"],
+      );
+      assertEquals({ ...mod }, { evaler: "plugin", feature: "feature" });
+    });
+  });
+
+  it("shares one module cache with computed requires while modules load", async () => {
+    await inProject(async (projectDir) => {
+      await writeFiles(projectDir, {
+        "node_modules/cyc/package.json": JSON.stringify({ name: "cyc", main: "a.js" }),
+        "node_modules/cyc/counter.js": "module.exports = { a: 0, c: 0 };",
+        "node_modules/cyc/a.js": [
+          'require("./counter").a++;',
+          "exports.early = true;",
+          // b requires this file by a computed path while it is still loading.
+          'exports.sawPartial = require("./b").sawPartial;',
+          'exports.runs = require("./counter").a;',
+          "exports.reload = () => {",
+          '  delete require.cache[require.resolve("./c")];',
+          '  return require("./c");',
+          "};",
+          'exports.first = require("./c");',
+          'exports.early2 = require(["./early", "js"].join(".")) === require("./early");',
+        ].join("\n"),
+        "node_modules/cyc/b.js": [
+          'var path = require("path");',
+          'var a = require(path.join(__dirname, "a" + ".js"));',
+          "exports.sawPartial = a.early === true && a.runs === undefined;",
+        ].join("\n"),
+        "node_modules/cyc/c.js": 'module.exports = { n: ++require("./counter").c };',
+        // A top-level return leaves early; the module is still cached.
+        "node_modules/cyc/early.js": "exports.x = 1;\nif (exports.x) return;\nexports.y = 2;",
+      });
+      const mod = await bundleAndImport(
+        projectDir,
+        'import cyc from "cyc";\nexport const result = cyc;\n',
+      );
+      const cyc = mod.result as Record<string, unknown> & { reload(): { n: number } };
+      assertEquals(cyc.sawPartial, true);
+      assertEquals(cyc.runs, 1);
+      assertEquals(cyc.first, { n: 1 });
+      assertEquals(cyc.early2, true);
+      // Deleted from require.cache, the bundled file runs again, as in Node.
+      assertEquals(cyc.reload(), { n: 2 });
+    });
+  });
+
+  it("runs dependency files the way Node 24 loads them", async () => {
+    await inProject(async (projectDir) => {
+      await writeFiles(projectDir, {
+        "node_modules/node24/package.json": JSON.stringify({ name: "node24", main: "index.js" }),
+        "node_modules/node24/index.js": [
+          'var path = require("path");',
+          "exports.wrapper = [arguments.length, typeof arguments[1], path.basename(arguments[3])];",
+          'exports.sync = require("dual").kind;',
+          'try { require("./forced.cjs"); } catch (error) { exports.forced = error.name; }',
+          'exports.typed = require(["./typed", "cts"].join("."));',
+          'exports.bom = require("./bom/x.js");',
+        ].join("\n"),
+        "node_modules/node24/forced.cjs": "export default 1;",
+        "node_modules/node24/typed.cts": "const n: number = 2;\nmodule.exports = n;",
+        // A byte order mark does not make a package.json malformed.
+        "node_modules/node24/bom/package.json": '\uFEFF{"type":"module"}',
+        "node_modules/node24/bom/x.js": "export const kind = 'esm';",
+        "node_modules/dual/package.json": JSON.stringify({
+          name: "dual",
+          exports: { ".": { "module-sync": "./sync.mjs", require: "./legacy.cjs" } },
+        }),
+        "node_modules/dual/sync.mjs": 'export const kind = "sync";',
+        "node_modules/dual/legacy.cjs": 'exports.kind = "legacy";',
+      });
+      const mod = await bundleAndImport(
+        projectDir,
+        'import node24 from "node24";\nexport const result = node24;\n',
+      );
+      const result = mod.result as Record<string, unknown>;
+      assertEquals(result.wrapper, [5, "function", "index.js"]);
+      assertEquals(result.sync, "sync");
+      assertEquals(result.forced, "SyntaxError");
+      assertEquals(result.typed, 2);
+      assertEquals((result.bom as { kind: string }).kind, "esm");
+    });
+  });
+
   it("shares one module between a bundled require and a computed one", async () => {
     await inProject(async (projectDir) => {
       await writeFiles(projectDir, {
@@ -508,7 +622,11 @@ describe("compiled-binary route bundling of CommonJS dependencies", () => {
           name: "meta",
           type: "module",
           main: "index.js",
+          // import.meta.resolve reads the import condition.
+          imports: { "#worker": { import: "./worker.mjs", require: "./worker.cjs" } },
         }),
+        "node_modules/meta/worker.mjs": "export {};",
+        "node_modules/meta/worker.cjs": "",
         "node_modules/meta/index.js": [
           "const meta = import.meta;",
           "const resolve = import.meta.resolve;",
@@ -519,11 +637,19 @@ describe("compiled-binary route bundling of CommonJS dependencies", () => {
           'export const builtin = import.meta.resolve("fs");',
           'export const computedBuiltin = resolve(["node", "path"].join(":"));',
           'export const sibling = import.meta.resolve("other");',
-          "let bare;",
-          'try { resolve(["oth", "er"].join("")); } catch (error) { bare = error.code; }',
-          "export const computedBare = bare;",
+          'export const computedBare = resolve(["oth", "er"].join(""));',
+          'export const computedImport = resolve(["#work", "er"].join(""));',
+          'export const suffixed = import.meta.resolve("suffixed/feature");',
+          "let missing;",
+          'try { resolve(["not", "installed"].join("-")); } catch (error) { missing = error.code; }',
+          "export const computedMissing = missing;",
         ].join("\n"),
         "node_modules/other/package.json": JSON.stringify({ name: "other", main: "main.js" }),
+        "node_modules/suffixed/package.json": JSON.stringify({
+          name: "suffixed",
+          exports: { "./feature": "./feature.js?mode=x" },
+        }),
+        "node_modules/suffixed/feature.js": "export {};",
         "node_modules/other/main.js": "module.exports = 1;",
       });
       const mod = await bundleAndImport(
@@ -538,7 +664,11 @@ describe("compiled-binary route bundling of CommonJS dependencies", () => {
         builtin: "node:fs",
         computedBuiltin: "node:path",
         sibling: `${base}/other/main.js`,
-        computedBare: "ERR_MODULE_NOT_FOUND",
+        computedBare: `${base}/other/main.js`,
+        computedImport: `${base}/meta/worker.mjs`,
+        // Node keeps a package target's query.
+        suffixed: `${base}/suffixed/feature.js?mode=x`,
+        computedMissing: "ERR_MODULE_NOT_FOUND",
       });
     });
   });

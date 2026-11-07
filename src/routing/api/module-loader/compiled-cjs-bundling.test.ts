@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assert, assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { type PluginBuild, stop as stopBundler, transform } from "veryfront/extensions/bundler";
 import {
@@ -19,7 +19,6 @@ import {
   prepareDependencyJson,
   prepareModuleFile,
   prependRuntimeRequire,
-  registerBundledModule,
   resolveLiteralCalls,
   rewriteImportSpecifiers,
   type RuntimeRequireHost,
@@ -122,6 +121,18 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
       assertEquals(await nodePreferredFile("/d/only.ts", "./only", "/d", isFile), "/d/only.ts");
       // Node checks the exact path before adding an extension.
       assertEquals(await nodePreferredFile("/d/entry", "./entry", "/d", isFile), "/d/entry");
+    });
+
+    it("reads a backslash-relative require() id as relative where the host does", async () => {
+      assertEquals(
+        await nodePreferredFile("/d/impl.ts", ".\\impl", "/d", isFile, "\\"),
+        "/d/impl.js",
+      );
+      // Elsewhere a backslash is part of a name, as in Node.
+      assertEquals(
+        await nodePreferredFile("/d/impl.ts", ".\\impl", "/d", isFile, "/"),
+        "/d/impl.ts",
+      );
     });
   });
 
@@ -279,6 +290,40 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
       assertEquals(await handler!(args("./impl", "/d/pages/api/route.ts")), undefined);
     });
 
+    it("reads a backslash in a require() id as a separator where the host does", async () => {
+      const withPackage = new Set([...files, "/d/node_modules/p/dir/package.json"]);
+      const resolved: unknown[] = [];
+      const hooks: ResolveHandler[] = [];
+      const build = {
+        onResolve: (_options: unknown, handler: ResolveHandler) => hooks.push(handler),
+        onLoad: () => {},
+        onDispose: () => {},
+        resolve: (path: string, options: { kind: string }) => {
+          resolved.push([path, options.kind]);
+          return Promise.resolve({ path: "/d/node_modules/p/dir/main.js", errors: [] });
+        },
+      };
+      createDependencyResolvePlugin(
+        isDependency,
+        (path) => Promise.resolve(withPackage.has(path)),
+        "\\",
+      ).setup(build as unknown as PluginBuild);
+      const handler = hooks[1]!;
+      assertEquals(await handler(args(".\\impl")), { path: "/d/node_modules/p/impl.js" });
+      // A directory whose package.json decides goes to the bundler as a path.
+      assertEquals(
+        ((await handler(args(".\\dir"))) as { path: string }).path,
+        "/d/node_modules/p/dir/main.js",
+      );
+      assertEquals(resolved, [["./dir", "require-call"]]);
+      // An import specifier is a URL: a backslash there is part of a name.
+      assertEquals(await handler({ ...args(".\\impl"), kind: "import-statement" }), undefined);
+      const [, posix] = await resolveHandlers(
+        createDependencyResolvePlugin(isDependency, isFile, "/"),
+      );
+      assertEquals(await posix!(args(".\\impl")), undefined);
+    });
+
     it("leaves a native addon found by Node's extension order to the loader", async () => {
       const [, handler] = await resolveHandlers(
         createDependencyResolvePlugin(isDependency, isFile),
@@ -398,13 +443,18 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
         onLoad: () => {},
         resolve: (path: string, options: { importer: string; pluginData: unknown }) => {
           seen.push(options.pluginData);
-          const target = path === "dual/feature"
+          const target = path === "dual/feature" || path === "dual/query"
             ? "/d/store/dual/dist/feature.js"
             : resolved[options.importer];
           return Promise.resolve(
             path === "dual/missing" || target === undefined
               ? { errors: [{ text: "Could not resolve" }] }
-              : { path: target, errors: [], namespace: "file", suffix: "" },
+              : {
+                path: target,
+                errors: [],
+                namespace: "file",
+                suffix: path === "dual/query" ? "?mode=x" : "",
+              },
           );
         },
       };
@@ -435,6 +485,11 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
         path: "file:///d/node_modules/dual/dist/feature.js",
         external: true,
       });
+      // A target's query is part of the module's URL, as in Node.
+      assertEquals(await handler!(args("/d/node_modules/q/index.js", "dual/query")), {
+        path: "file:///d/node_modules/dual/dist/feature.js?mode=x",
+        external: true,
+      });
       // Route code and the plugin's own lookup stay as before.
       assertEquals(await handler!(args("/d/src/route.ts")), external);
       // A copy that refuses the path fails the build, as Node would fail.
@@ -445,7 +500,7 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
         await handler!({ ...args("/d/node_modules/p/index.js"), pluginData: seen[0] }),
         undefined,
       );
-      assertEquals(seen.length, 4);
+      assertEquals(seen.length, 5);
     });
 
     it("registers nothing without packages", async () => {
@@ -464,59 +519,24 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
       isFile: () => Promise.resolve(false),
     });
 
-    it("registers a file that reads no CommonJS names and no import.meta, unparsed", async () => {
+    it("leaves a file that reads no CommonJS names and no import.meta as it is", async () => {
       const contents = 'module.exports = require("./other");';
-      assertEquals(
-        await prepareDependencyFile(input(contents, "/d/a.js")),
-        registerBundledModule(contents, "/d/a.js"),
-      );
-      assertEquals(
-        await prepareDependencyFile(input(contents, "/d/bin/tool")),
-        registerBundledModule(contents, "/d/bin/tool"),
-      );
-      assertEquals(
-        await prepareDependencyFile(input(contents, "/d/a.cjs", "module")),
-        registerBundledModule(contents, "/d/a.cjs"),
-      );
-      assertEquals(
-        await prepareDependencyFile(input(contents, "/d/a.ts")),
-        registerBundledModule(contents, "/d/a.ts"),
-      );
-      // An ES module has no `module` to register.
+      for (
+        const [path, type] of [["/d/a.js"], ["/d/bin/tool"], ["/d/a.cjs", "module"], ["/d/a.ts"]]
+      ) {
+        assertEquals(await prepareDependencyFile(input(contents, path!, type)), contents);
+      }
       assertEquals(await prepareDependencyFile(input(contents, "/d/a.js", "module")), contents);
       assertEquals(await prepareDependencyFile(input(contents, "/d/a.mjs")), contents);
     });
 
-    it("registers a module object by its path after the module's own code", () => {
-      const code = registerBundledModule("module.exports = 1;", '/d/"q".js');
-      const registered: unknown[] = [];
-      new Function("module", "__vf_register_bundled_module", code)(
-        { exports: 2 },
-        (path: string, module: unknown) => registered.push([path, module]),
-      );
-      assertEquals(registered, [['/d/"q".js', { exports: 1 }]]);
-      // Outside a CommonJS module, or without the registry, it does nothing.
-      const bare = registerBundledModule("", "/d/esm.js");
-      new Function("module", "__vf_register_bundled_module", bare)(undefined, () => {
-        throw new Error("registered");
-      });
-      new Function("module", bare)(null);
-      new Function("module", code)({ exports: 0 });
-    });
-
-    it("turns dependency JSON into a module that registers itself and rejects bad JSON", () => {
-      const code = prepareDependencyJson('{"a":[1]}', "/d/data.json");
-      const registered: Array<{ exports: unknown }> = [];
+    it("turns dependency JSON into a CommonJS module and rejects bad JSON", () => {
       const module = { exports: {} };
-      new Function("module", "__vf_register_bundled_module", code)(
-        module,
-        (_path: string, value: { exports: unknown }) => registered.push(value),
-      );
+      new Function("module", prepareDependencyJson('{"a":[1]}'))(module);
       assertEquals(module.exports, { a: [1] });
-      assert(registered[0] === module);
-      assertThrows(() => prepareDependencyJson("{", "/d/bad.json"), SyntaxError);
+      assertThrows(() => prepareDependencyJson("{"), SyntaxError);
       const bom = { exports: {} };
-      new Function("module", prepareDependencyJson('\uFEFF{"b":2}', "/d/bom.json"))(bom);
+      new Function("module", prepareDependencyJson('\uFEFF{"b":2}'))(bom);
       assertEquals(bom.exports, { b: 2 });
     });
 
@@ -771,8 +791,33 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
       "/app/node_modules/p/escape-imports.js": "require('#up');",
       "/app/node_modules/linked/index.js": "module.exports = 'linked';",
       "/app/node_modules/.store/linked/index.js": "module.exports = 'linked';",
+      "/app/node_modules/bommain/package.json": '\uFEFF{"main":"main.js"}',
+      "/app/node_modules/bommain/main.js": "module.exports = 'bom main';",
+      "/app/node_modules/badscope/package.json": "{",
+      "/app/node_modules/badscope/plugin.js": "module.exports = 'plugin';",
+      "/app/node_modules/badscope/p.cjs": "module.exports = 'cjs';",
+      "/app/node_modules/rootonly/package.json": JSON.stringify({ main: "main.js" }),
+      "/app/node_modules/rootonly/main.js": "module.exports = 'root';",
+      "/app/node_modules/p/flaky.js": "module.exports = 'read';",
+      "/app/node_modules/p/shared.js": "",
+      "/app/node_modules/p/fails.js": "",
+      "/app/node_modules/p/typed.cts": "const n: number = 2; module.exports = n;",
+      "/app/node_modules/p/typed.ts": "const t: number = 3; module.exports = t;",
+      "/app/node_modules/esmtype/typed.ts": "export default 1;",
+      "/app/node_modules/cond/package.json": JSON.stringify({
+        exports: {
+          ".": { "module-sync": "./sync.js", import: "./esm.js", require: "./cjs.js" },
+          "./q": "./cjs.js?mode=x",
+        },
+      }),
+      "/app/node_modules/cond/sync.js": "",
+      "/app/node_modules/cond/esm.js": "",
+      "/app/node_modules/cond/cjs.js": "module.exports = 'cjs';",
+      "/app/node_modules/b/package.json": JSON.stringify({ main: "index.js" }),
+      "/app/node_modules/b/index.js": "",
     };
     let reads = 0;
+    let unreadable = "";
     const host: RuntimeRequireHost = {
       // Like Deno's, it knows bare prefix-only names that Node does not.
       getBuiltinModule: (id) => id === "test" ? { kind: "test" } : builtins[id],
@@ -785,6 +830,7 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
           : path,
       readFileSync: (path) => {
         reads++;
+        if (path === unreadable) throw new Error("EACCES");
         return files[path]!;
       },
       compile: (source) =>
@@ -811,13 +857,19 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
       },
       dirname: (path) => path.slice(0, path.lastIndexOf("/")),
       sep: "/",
+      stripTypes: (source) => source.replace(/: number/g, ""),
+      toFileUrl: (path) => "file://" + path,
     };
-    const { require, register, requireFrom } = createRuntimeRequire(
+    const { require, bundled, requireFrom } = createRuntimeRequire(
       host,
       "/app",
       ["test"],
       ["/app/node_modules"],
+      "/app",
     );
+    const asImport = { [Symbol.for("veryfront.importConditions")]: true } as {
+      paths?: unknown;
+    };
 
     it("serves any built-in, including a computed id", () => {
       assertEquals(require("fs"), { kind: "fs" });
@@ -937,17 +989,104 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
       assertEquals(require("/app/node_modules/p/counter.js"), (first as number) + 1);
     });
 
-    it("returns a module the bundle registered, so both loads share it", () => {
-      const bundled = { exports: { bundled: true } };
-      register("/app/node_modules/p/registered.js", bundled);
-      register("/app/node_modules/p/registered.js", { exports: { second: true } });
-      // A path through a link is keyed by its real path.
-      const linked = { exports: { linked: true } };
-      register("/app/link.json", linked);
-      assert(require.cache["/outside.json"] === linked);
-      delete require.cache["/outside.json"];
-      files["/app/node_modules/p/registered.js"] = "module.exports = { evaluated: true };";
-      assert(require("/app/node_modules/p/" + "registered.js") === bundled.exports);
+    it("runs a bundled file through the module cache computed requires share", () => {
+      let runs = 0;
+      const seen: unknown[] = [];
+      const body = (exports: unknown, module: { exports: unknown }) => {
+        runs++;
+        // In the cache before its body runs, as in Node: a cycle sees it.
+        seen.push(require.cache["/app/node_modules/p/shared.js"] === module);
+        seen.push(require("/app/node_modules/p/" + "shared.js") === exports);
+        module.exports = { runs };
+      };
+      const module = bundled("node_modules/p/shared.js", body)!;
+      assertEquals(module.exports, { runs: 1 });
+      assertEquals(seen, [true, true]);
+      assert(bundled("node_modules/p/shared.js", body) === module);
+      assert(require("/app/node_modules/p/shared.js") === module.exports);
+      assertEquals(runs, 1);
+      // Deleted from the cache, it runs again on its next load.
+      delete require.cache["/app/node_modules/p/shared.js"];
+      assertEquals(bundled("node_modules/p/shared.js", body)!.exports, { runs: 2 });
+      // A body that throws leaves the cache and runs again next time.
+      let fail = true;
+      const flaky = () => {
+        if (fail) throw new Error("boom");
+      };
+      assertThrows(() => bundled("node_modules/p/fails.js", flaky), Error, "boom");
+      assert(!("/app/node_modules/p/fails.js" in require.cache));
+      fail = false;
+      assert(bundled("node_modules/p/fails.js", flaky) !== null);
+      // A file a computed require loaded first is the module the bundle gets.
+      const counter = require("/app/node_modules/p/counter.js");
+      assert(bundled("node_modules/p/counter.js", body)!.exports === counter);
+      // A link is keyed by its real path; project code is the bundler's own.
+      assert(
+        bundled("node_modules/linked/index.js", () => {}) ===
+          require.cache["/app/node_modules/.store/linked/index.js"],
+      );
+      delete require.cache["/app/node_modules/.store/linked/index.js"];
+      assertEquals(bundled("src/own.js", body), null);
+      assertEquals(bundled(7, body), null);
+    });
+
+    it("reads Node's package config: BOMs, malformed scopes and root ids", () => {
+      assertEquals(require("bommain"), "bom main");
+      assertEquals(
+        errorCode(() => require("/app/node_modules/badscope/plugin.js")),
+        "ERR_INVALID_PACKAGE_CONFIG",
+      );
+      // Node reads no package type for a .cjs file.
+      assertEquals(require("/app/node_modules/badscope/p.cjs"), "cjs");
+      for (const id of ["rootonly/", "rootonly//", "rootonly/.", "rootonly/./"]) {
+        assertEquals(require(id), "root");
+      }
+      assertEquals(errorCode(() => require("rootonly/../b")), "MODULE_NOT_FOUND");
+      assertEquals(errorCode(() => require("./rootonly")), "MODULE_NOT_FOUND");
+    });
+
+    it("drops a module whose source cannot be read, so the next load reads it again", () => {
+      unreadable = "/app/node_modules/p/flaky.js";
+      assertThrows(() => require("/app/node_modules/p/flaky.js"), Error, "EACCES");
+      unreadable = "";
+      assertEquals(require("/app/node_modules/p/flaky.js"), "read");
+    });
+
+    it("strips TypeScript's types, as Node 24 does, and refuses a TypeScript module", () => {
+      assertEquals(require("/app/node_modules/p/typed.cts"), 2);
+      assertEquals(require("/app/node_modules/p/typed.ts"), 3);
+      assertEquals(
+        errorCode(() => require("/app/node_modules/esmtype/typed.ts")),
+        "ERR_REQUIRE_ESM",
+      );
+      const { require: noStrip } = createRuntimeRequire(
+        { ...host, stripTypes: undefined },
+        "/app",
+        [],
+        ["/app/node_modules"],
+      );
+      assertEquals(
+        errorCode(() => noStrip("/app/node_modules/p/typed.cts")),
+        "ERR_UNKNOWN_FILE_EXTENSION",
+      );
+    });
+
+    it("resolves with the import conditions for import.meta.resolve", () => {
+      // require() cannot run the ES module that module-sync names.
+      assertEquals(require("cond"), "cjs");
+      assertEquals(require.resolve("cond"), "/app/node_modules/cond/cjs.js");
+      assertEquals(require.resolve("cond", asImport), "file:///app/node_modules/cond/sync.js");
+      assertEquals(require.resolve("cond/q"), "/app/node_modules/cond/cjs.js");
+      assertEquals(
+        require.resolve("cond/q", asImport),
+        "file:///app/node_modules/cond/cjs.js?mode=x",
+      );
+      assertEquals(
+        requireFrom("/app/node_modules/p").resolve("#own", asImport),
+        "file:///app/node_modules/p/base.js",
+      );
+      // The import conditions apply to that call only.
+      assertEquals(require.resolve("cond"), "/app/node_modules/cond/cjs.js");
     });
 
     it("takes Node's paths option in require.resolve", () => {
@@ -1132,18 +1271,18 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
     });
 
     it("binds require to the runtime require with the host built-ins", async () => {
-      const code = await prependRuntimeRequire("export {};\n", "/app", ["/app/node_modules"]);
+      const code = await prependRuntimeRequire("export {};\n", "/app", ["/app/node_modules"], "/w");
       assert(code.includes(createRuntimeRequire.toString()), code);
       assert(code.includes('import __vf_runtime_process from "node:process";'), code);
       assert(
         code.includes(
-          '}, "/app", ["test","test/reporters","sqlite","sea"], ["/app/node_modules"]);',
+          '}, "/app", ["test","test/reporters","sqlite","sea"], ["/app/node_modules"], "/w");',
         ),
         code,
       );
       assert(
         code.includes(
-          "const { require, register: __vf_runtime_register, requireFrom: __vf_runtime_require_from } = (",
+          "const { require, bundled: __vf_runtime_bundled, requireFrom: __vf_runtime_require_from } = (",
         ),
         code,
       );
@@ -1151,43 +1290,80 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
     });
 
     it("keeps a hashbang on the first line", async () => {
-      const code = await prependRuntimeRequire("#!/usr/bin/env node\nexport {};\n", "/app", []);
+      const code = await prependRuntimeRequire(
+        "#!/usr/bin/env node\nexport {};\n",
+        "/app",
+        [],
+        "/",
+      );
       assert(code.startsWith("#!/usr/bin/env node\nimport __vf_runtime_process from "), code);
     });
 
     it("picks helper names the bundle does not already use", async () => {
-      const code = await prependRuntimeRequire("const __vf_runtime_fs = 1;\n", "/app", []);
+      const code = await prependRuntimeRequire("const __vf_runtime_fs = 1;\n", "/app", [], "/");
       assert(code.includes("import * as __vf_runtime___fs from"), code);
     });
 
     it("renames the helper calls dependency preparation wrote", async () => {
-      const bundled = [
-        registerBundledModule("module.exports = 1;", "/app/node_modules/p/a.js"),
-        'var r = __vf_require_from("/app/node_modules/p")("./x");',
-      ].join("\n");
-      const code = await prependRuntimeRequire(bundled, "/app", []);
-      const body = code.slice(code.indexOf(bundled.slice(0, 20)));
-      assert(!/\b__vf_(?:register_bundled_module|require_from)\b/.test(body), body);
+      const bundled = 'var r = __vf_require_from("/app/node_modules/p")("./x");';
+      const code = await prependRuntimeRequire(bundled, "/app", [], "/");
+      const body = code.slice(code.indexOf("var r = "));
+      assert(!/\b__vf_require_from\b/.test(body), body);
       assert(body.includes('__vf_runtime_require_from("/app/node_modules/p")'), body);
-      assert(body.includes('__vf_runtime_register("/app/node_modules/p/a.js", module)'), body);
     });
 
-    it("keeps a route's own declaration of a helper name and still binds the helpers", async () => {
+    it("keeps a route's own declaration of the helper name and still binds the helper", async () => {
       const bundled = [
         "const __vf_require_from = (id) => 'route:' + id;",
-        "function __vf_register_bundled_module() { return 'route'; }",
-        "export const own = [__vf_require_from('a'), __vf_register_bundled_module()];",
+        "export const own = __vf_require_from('a');",
       ].join("\n");
-      const code = await prependRuntimeRequire(bundled, "/app", []);
+      const code = await prependRuntimeRequire(bundled, "/app", [], "/");
       // It must parse: a clashing prologue binding is a redeclaration error.
       // (Bun cannot import a data URL this long, so the check parses it.)
       await transform(code, { loader: "js", format: "esm", logLevel: "silent" });
-      // The route keeps its own names; the prologue binds the helpers elsewhere.
+      // The route keeps its own name; the prologue binds the helper elsewhere.
       const text = code.replaceAll('"', "'");
       assert(text.includes("const __vf_require_from = (id) => 'route:' + id;"));
-      assert(text.includes("[__vf_require_from('a'), __vf_register_bundled_module()]"));
-      assert(/register: (\w+)/.exec(text)?.[1] !== "__vf_register_bundled_module");
+      assert(text.includes("own = __vf_require_from('a')"), text);
       assert(/requireFrom: (\w+)/.exec(text)?.[1] !== "__vf_require_from");
+    });
+
+    // esbuild 0.28 prints its CommonJS helper like this.
+    const helper = (inner: string, error = "e") =>
+      [
+        `var __commonJS = (cb, mod) => function ${inner}() {`,
+        "  try {",
+        "    return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;",
+        `  } catch (${error}) {`,
+        `    throw mod = 0, ${error};`,
+        "  }",
+        "};",
+      ].join("\n");
+
+    it("runs bundled CommonJS files through the runtime module cache", async () => {
+      // A direct eval in the bundle makes the bundler rename the helper's locals.
+      for (const [inner, error] of [["__require", "e"], ["__require2", "e2"]]) {
+        const code = await prependRuntimeRequire(helper(inner!, error) + "\n", "/app", [], "/w");
+        assert(code.includes(`  } catch (${error}) {\n    throw mod = 0, ${error};`), code);
+        assert(code.includes(`var __commonJS = (cb, mod) => function ${inner}() {`), code);
+        assert(code.includes("const managed = __vf_runtime_bundled(key, cb[key]);"), code);
+        // A file the runtime does not manage keeps the bundler's own cache.
+        assert(code.includes("return mod || (0, cb[key])((mod = { exports: {} })"), code);
+      }
+    });
+
+    it("fails the build on a CommonJS helper it does not know", async () => {
+      await assertRejects(
+        () =>
+          prependRuntimeRequire(
+            "var __commonJS = (cb, mod) => () => mod || cb();\n",
+            "/app",
+            [],
+            "/",
+          ),
+        Error,
+        "unexpected CommonJS helper",
+      );
     });
   });
 
@@ -1201,6 +1377,50 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
       Promise.resolve(specifier.startsWith("./") ? "/d/p/" + specifier.slice(2) + ".js" : null);
 
     describe("prepareCommonJSFile()", () => {
+      it("gives top-level arguments Node's five wrapper arguments", async () => {
+        const code = await prepareCommonJSFile(
+          [
+            '"use strict";',
+            "exports.req = arguments[1];",
+            "exports.rest = [arguments.length, arguments[3], arguments[4]];",
+            "exports.inner = (function () { return arguments[0]; })('own');",
+            "exports.arrow = (() => arguments[2] === module)();",
+          ].join("\n"),
+          "/d/p/index.js",
+          undefined,
+          () => Promise.resolve(null),
+        );
+        assert(code !== null);
+        assert(code.startsWith('"use strict";\nvar __vf_arguments_'), code);
+        const module = { exports: {} as Record<string, unknown> };
+        const requireFrom = (directory: string) => ({ directory });
+        new Function("exports", "module", "__vf_require_from", code)(
+          module.exports,
+          module,
+          requireFrom,
+        );
+        assertEquals(module.exports, {
+          req: { directory: "/d/p" },
+          rest: [5, "/d/p/index.js", "/d/p"],
+          inner: "own",
+          arrow: true,
+        });
+      });
+
+      it("throws a SyntaxError when a file Node parses as CommonJS has ES module syntax", async () => {
+        const esm = "export const a = __dirname;";
+        for (const [path, type] of [["/d/p/a.cjs"], ["/d/p/a.js", "commonjs"], ["/d/p/a.cts"]]) {
+          const code = await prepareCommonJSFile(esm, path!, type, () => Promise.resolve(null));
+          assert(code !== null, path);
+          assertThrows(() => new Function(code)(), SyntaxError, "uses ES module syntax", path);
+        }
+        // Without a declared type, the syntax decides, as Node's detection does.
+        assertEquals(
+          await prepareCommonJSFile(esm, "/d/p/a.js", undefined, () => Promise.resolve(null)),
+          null,
+        );
+      });
+
       it("binds __dirname and __filename and resolves require.resolve literals", async () => {
         const code = await prepareCommonJSFile(
           [
@@ -1400,8 +1620,12 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
     });
 
     describe("prepareDependencyFile()", () => {
-      const resolved: Record<string, { path?: string; external?: boolean; errors?: unknown[] }> = {
+      const resolved: Record<
+        string,
+        { path?: string; external?: boolean; errors?: unknown[]; suffix?: string }
+      > = {
         "./a": { path: "/d/node_modules/p/a.js" },
+        "pkg/q": { path: "/d/node_modules/pkg/q.js", suffix: "?mode=x" },
         pkg: { path: "/d/node_modules/pkg/main.js" },
         ext: { path: "ext", external: true },
         project: { path: "/d/src/project.js" },
@@ -1472,18 +1696,28 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
         assert(assigned.includes('require = require("esm")(module);'), assigned);
         assert(assigned.includes("module.exports = require(name);"), assigned);
         assert(!assigned.includes("__vf_require_from"), assigned);
+        // A file that reads only `arguments`, or a CommonJS file with only
+        // ES module syntax, is parsed too.
+        const args = await prepareDependencyFile(
+          input("module.exports = arguments.length;", "/d/node_modules/p/index.js"),
+        );
+        assert(args.includes("return arguments;"), args);
+        const forced = await prepareDependencyFile(
+          input("export default 1;", "/d/node_modules/p/index.cjs"),
+        );
+        assert(forced.includes("SyntaxError"), forced);
         // Literal calls alone leave nothing for runtime, so nothing is parsed.
         const literal = "module.exports = [require(\"./a\"), require( 'b' )];";
         assertEquals(
           await prepareDependencyFile(input(literal, "/d/node_modules/p/index.js")),
-          registerBundledModule(literal, "/d/node_modules/p/index.js"),
+          literal,
         );
       });
 
       it("resolves import.meta.resolve literals in an ESM file", async () => {
         const code = await prepareDependencyFile(
           input(
-            ["fs", "./x.js", "https://e.test/m.js", "pkg", "ext"].map((id) =>
+            ["fs", "./x.js", "https://e.test/m.js", "pkg", "ext", "pkg/q"].map((id) =>
               `import.meta.resolve(${JSON.stringify(id)});`
             ).join("\n"),
             "/d/node_modules/p/index.mjs",
@@ -1495,6 +1729,8 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
             '"file:///d/node_modules/p/x.js";',
             '"https://e.test/m.js";',
             '"file:///d/node_modules/pkg/main.js";',
+            // A package target's query stays in the URL, as in Node.
+            '"file:///d/node_modules/pkg/q.js?mode=x";',
             "_resolve_",
           ]
         ) {
