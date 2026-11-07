@@ -242,8 +242,8 @@ export function startProductionServerWithDependencies(
 ): Promise<ServerHandle> {
   const suppliedBootstrap = options.bootstrapResult;
   const suppliedProviderSource = suppliedBootstrap?.nodeWebSocketServerProvider;
-  const suppliedNodeWebSocketServerProvider = suppliedProviderSource === undefined
-    ? undefined
+  const suppliedNodeWebSocketServerProvider = suppliedProviderSource == null
+    ? suppliedProviderSource
     : snapshotNodeWebSocketServerProvider(suppliedProviderSource);
   let ownedBootstrap: BootstrapResult | undefined;
   let ownedBootstrapDisposal: Promise<void> | undefined;

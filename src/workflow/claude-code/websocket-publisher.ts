@@ -696,9 +696,9 @@ function releaseUnpublishedRun(
 /** Create a WebSocket handler for HTTP upgrade requests. */
 export function createWebSocketHandler(
   config: WebSocketHandlerConfig,
-): (req: Request) => Response {
+): (req: Request) => WebSocketUpgradeResult["response"] {
   const { registry } = config;
-  return (req: Request): Response => {
+  return (req: Request): WebSocketUpgradeResult["response"] => {
     const runId = config.getRunId(req);
     if (!runId) {
       return new Response("Missing runId", { status: 400 });

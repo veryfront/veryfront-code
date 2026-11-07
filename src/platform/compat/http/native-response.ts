@@ -1,3 +1,4 @@
+import { type HttpHandlerResponse, isWebSocketUpgradeResponse } from "../../adapters/base.ts";
 /**
  * Shared helpers for bridging polyfilled `Response` objects to native ones
  * required by `Deno.serve`.
@@ -81,9 +82,12 @@ export function getNativeDeno(): typeof Deno | undefined {
  * into a fresh native `Response`.
  */
 export function toNativeResponse(
-  response: Response,
+  response: HttpHandlerResponse,
   NativeResponse: typeof Response,
 ): Response {
+  if (isWebSocketUpgradeResponse(response)) {
+    throw new TypeError("A branded WebSocket response requires its owning HTTP transport");
+  }
   // If already native (compiled binary or WebSocket upgrade), return as-is.
   if (response instanceof NativeResponse) return response;
   // Re-wrap polyfilled Response as native Response.
