@@ -435,11 +435,11 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
         path: "file:///d/node_modules/dual/dist/feature.js",
         external: true,
       });
-      // Route code, a failed resolution and the plugin's own lookup stay as before.
+      // Route code and the plugin's own lookup stay as before.
       assertEquals(await handler!(args("/d/src/route.ts")), external);
+      // A copy that refuses the path fails the build, as Node would fail.
       assertEquals(await handler!(args("/d/node_modules/p/index.js", "dual/missing")), {
-        path: "dual/missing",
-        external: true,
+        errors: [{ text: "Could not resolve" }],
       });
       assertEquals(
         await handler!({ ...args("/d/node_modules/p/index.js"), pluginData: seen[0] }),
@@ -477,6 +477,10 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
       assertEquals(
         await prepareDependencyFile(input(contents, "/d/a.cjs", "module")),
         registerBundledModule(contents, "/d/a.cjs"),
+      );
+      assertEquals(
+        await prepareDependencyFile(input(contents, "/d/a.ts")),
+        registerBundledModule(contents, "/d/a.ts"),
       );
       // An ES module has no `module` to register.
       assertEquals(await prepareDependencyFile(input(contents, "/d/a.js", "module")), contents);
@@ -517,8 +521,9 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
     });
 
     it("leaves files that are neither JavaScript nor CommonJS alone", async () => {
+      // Node loads no `.tsx` file.
       const contents = "export const d = __dirname;";
-      assertEquals(await prepareDependencyFile(input(contents, "/d/a.ts")), contents);
+      assertEquals(await prepareDependencyFile(input(contents, "/d/a.tsx")), contents);
     });
   });
 
@@ -680,6 +685,7 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
           "#dep": "driver/extra",
           "#outside": "../escape.js",
           "#up": "./../sibling.js",
+          "#fallback": ["../invalid.js", "./base.js"],
         },
       }),
       "/app/node_modules/p/lib/x.js": "module.exports = 'lib x';",
@@ -721,10 +727,24 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
           "./empty": "./a//b.js",
           "./ok": { import: "./esm.mjs", node: { require: "./ok.js" } },
           "./space": "./a%20b.js",
+          "./arrinvalid": ["../invalid", "./later.js"],
+          "./query": "./ok.js?mode=x",
+          "./fragment": "./ok.js#part",
           "./badescape": "./%E0%A4%A.js",
         },
       }),
       "/app/node_modules/blocked/a b.js": "module.exports = 'space';",
+      "/app/node_modules/mixed/package.json": JSON.stringify({
+        exports: { ".": "./ok.js", default: "./ok.js" },
+      }),
+      "/app/node_modules/mixed/ok.js": "module.exports = 'ok';",
+      "/app/node_modules/pat/package.json": JSON.stringify({
+        exports: { "./feature*": "./feature*.js" },
+      }),
+      "/app/node_modules/pat/feature.js": "module.exports = 'feature';",
+      "/app/node_modules/pat/featureX.js": "module.exports = 'featureX';",
+      "/app/node_modules/p/badplug/package.json": "{",
+      "/app/node_modules/p/badplug/index.js": "module.exports = 'index';",
       "/app/node_modules/shadow/package.json": JSON.stringify({
         exports: { ".": "./main.js", "./sub": "./sub.js" },
       }),
@@ -967,8 +987,20 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
       assertEquals(require("blocked/ok"), "ok");
       // In an array a null falls through to the next item, as in Node.
       assertEquals(require("blocked/later"), "later");
-      // A target's escapes name the file.
+      // A target's escapes name the file; its query or fragment does not.
       assertEquals(require("blocked/space"), "space");
+      assertEquals(require("blocked/query"), "ok");
+      assertEquals(require.resolve("blocked/fragment"), "/app/node_modules/blocked/ok.js");
+      // An invalid item in an array falls through too.
+      assertEquals(require("blocked/arrinvalid"), "later");
+      assertEquals(requireFrom("/app/node_modules/p")("#fallback"), { name: "base" });
+      // Node's `*` never matches the empty string.
+      assertEquals(require("pat/featureX"), "featureX");
+      assertEquals(errorCode(() => require("pat/feature")), "MODULE_NOT_FOUND");
+      // Nor does Node accept exports that mix subpaths and conditions, or a
+      // directory whose package.json is malformed.
+      assertEquals(errorCode(() => require("mixed")), "MODULE_NOT_FOUND");
+      assertEquals(errorCode(() => require("/app/node_modules/p/badplug")), "MODULE_NOT_FOUND");
       for (
         const id of ["blocked", "blocked/escape", "blocked/nested", "blocked/badescape"]
       ) {
@@ -1021,6 +1053,39 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
       assertEquals(errorCode(() => requireFrom(7)("./pg")), "MODULE_NOT_FOUND");
     });
 
+    it("treats a backslash-relative id as relative where the host separator is one", () => {
+      const winFiles: Record<string, string> = {
+        "C:\\app\\node_modules\\p\\plugin.js": "module.exports = 'plugin';",
+      };
+      const win: RuntimeRequireHost = {
+        ...host,
+        isFile: (path) => path in winFiles,
+        realpathSync: (path) => path,
+        readFileSync: (path) => winFiles[path]!,
+        isAbsolute: (path) => /^[A-Z]:\\/.test(path),
+        relative: (from, to) =>
+          to.startsWith(from + "\\") ? to.slice(from.length + 1) : to === from ? "" : "..\\x",
+        join: (...paths) => {
+          const parts: string[] = [];
+          for (const part of paths.join("\\").split(/[\\/]/)) {
+            if (part === "..") parts.pop();
+            else if (part !== "." && part !== "") parts.push(part);
+          }
+          return parts.join("\\");
+        },
+        dirname: (path) => path.slice(0, path.lastIndexOf("\\")),
+        sep: "\\",
+      };
+      const { requireFrom: from } = createRuntimeRequire(win, "C:\\app", [], [
+        "C:\\app\\node_modules",
+      ]);
+      const own = from("C:\\app\\node_modules\\p\\lib");
+      assertEquals(own("..\\plugin"), "plugin");
+      assertEquals(own.resolve("..\\plugin.js"), "C:\\app\\node_modules\\p\\plugin.js");
+      // Nor can a backslash smuggle a path into a package name.
+      assertEquals(errorCode(() => own("x\\..\\..\\plugin")), "MODULE_NOT_FOUND");
+    });
+
     it("rejects a native addon and an ES module with Node's codes", () => {
       assertEquals(errorCode(() => require("/app/node_modules/p/addon.node")), "ERR_DLOPEN_FAILED");
       assertEquals(errorCode(() => require("/app/node_modules/p/esm.mjs")), "ERR_REQUIRE_ESM");
@@ -1061,8 +1126,13 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
   });
 
   describe("prependRuntimeRequire()", () => {
-    it("binds require to the runtime require with the host built-ins", () => {
-      const code = prependRuntimeRequire("export {};\n", "/app", ["/app/node_modules"]);
+    // A name clash makes the bundler parse the bundle; its service must stop.
+    afterEach(async () => {
+      await stopBundler();
+    });
+
+    it("binds require to the runtime require with the host built-ins", async () => {
+      const code = await prependRuntimeRequire("export {};\n", "/app", ["/app/node_modules"]);
       assert(code.includes(createRuntimeRequire.toString()), code);
       assert(code.includes('import __vf_runtime_process from "node:process";'), code);
       assert(
@@ -1073,21 +1143,46 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
       );
       assert(
         code.includes(
-          "const { require, register: __vf_register_bundled_module, requireFrom: __vf_require_from } = (",
+          "const { require, register: __vf_runtime_register, requireFrom: __vf_runtime_require_from } = (",
         ),
         code,
       );
       assert(code.endsWith("\nexport {};\n"), code);
     });
 
-    it("keeps a hashbang on the first line", () => {
-      const code = prependRuntimeRequire("#!/usr/bin/env node\nexport {};\n", "/app", []);
+    it("keeps a hashbang on the first line", async () => {
+      const code = await prependRuntimeRequire("#!/usr/bin/env node\nexport {};\n", "/app", []);
       assert(code.startsWith("#!/usr/bin/env node\nimport __vf_runtime_process from "), code);
     });
 
-    it("picks helper names the bundle does not already use", () => {
-      const code = prependRuntimeRequire("const __vf_runtime_fs = 1;\n", "/app", []);
+    it("picks helper names the bundle does not already use", async () => {
+      const code = await prependRuntimeRequire("const __vf_runtime_fs = 1;\n", "/app", []);
       assert(code.includes("import * as __vf_runtime___fs from"), code);
+    });
+
+    it("renames the helper calls dependency preparation wrote", async () => {
+      const bundled = [
+        registerBundledModule("module.exports = 1;", "/app/node_modules/p/a.js"),
+        'var r = __vf_require_from("/app/node_modules/p")("./x");',
+      ].join("\n");
+      const code = await prependRuntimeRequire(bundled, "/app", []);
+      const body = code.slice(code.indexOf(bundled.slice(0, 20)));
+      assert(!/\b__vf_(?:register_bundled_module|require_from)\b/.test(body), body);
+      assert(body.includes('__vf_runtime_require_from("/app/node_modules/p")'), body);
+      assert(body.includes('__vf_runtime_register("/app/node_modules/p/a.js", module)'), body);
+    });
+
+    it("keeps a route's own declaration of a helper name and still binds the helpers", async () => {
+      const bundled = [
+        "const __vf_require_from = (id) => 'route:' + id;",
+        "function __vf_register_bundled_module() { return 'route'; }",
+        "export const own = [__vf_require_from('a'), __vf_register_bundled_module()];",
+      ].join("\n");
+      const code = await prependRuntimeRequire(bundled, "/app", []);
+      // It must parse and evaluate: the prologue's bindings do not clash.
+      const url = "data:text/javascript;base64," + btoa(code);
+      const mod = await import(url);
+      assertEquals(mod.own, ["route:a", "route"]);
     });
   });
 
@@ -1195,6 +1290,34 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
           resolveRelative,
         );
         assert(code?.includes('exports.d = "/d/p";'), String(code));
+      });
+
+      it("prepares a .ts file by its package type and syntax, as Node 24 loads it", async () => {
+        const commonJS = await prepareCommonJSFile(
+          "const n: number = 1;\nexports.d = __dirname + n;",
+          "/d/p/index.ts",
+          undefined,
+          resolveRelative,
+        );
+        assert(commonJS?.includes('exports.d = "/d/p" + n;'), String(commonJS));
+        assertEquals(
+          await prepareCommonJSFile(
+            "exports.d = __dirname;",
+            "/d/p/index.ts",
+            "module",
+            resolveRelative,
+          ),
+          null,
+        );
+        assertEquals(
+          await prepareCommonJSFile(
+            "export const d: string = __dirname;",
+            "/d/p/esm.ts",
+            undefined,
+            resolveRelative,
+          ),
+          null,
+        );
       });
 
       it("prepares a .cts file as CommonJS TypeScript", async () => {

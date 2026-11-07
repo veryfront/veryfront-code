@@ -25,7 +25,7 @@
  * @module routing/api/module-loader/compiled-cjs-bundling
  */
 import { builtinModules } from "node:module";
-import { build as bundle } from "veryfront/extensions/bundler";
+import { build as bundle, transform } from "veryfront/extensions/bundler";
 import type { Plugin, PluginBuild } from "veryfront/extensions/bundler";
 import * as pathHelper from "#veryfront/compat/path";
 import { isWithinDirectory } from "#veryfront/security/path-validation.ts";
@@ -310,7 +310,10 @@ export function createImportExternalsPlugin(
           resolveDir: args.resolveDir,
           pluginData: { [RESOLVING_EXTERNAL]: true },
         });
-        if (result.errors?.length || !result.path || result.external) return external;
+        // The nearest copy refusing the path is Node's answer, even if the
+        // project's copy would serve it.
+        if (result.errors?.length) return { errors: result.errors };
+        if (!result.path || result.external) return external;
         const name = packageName(args.path);
         const real = (await options.realPath(result.path)) ?? result.path;
         const copy = (await topLevelDirectories(name)).find((directory) =>
@@ -556,7 +559,8 @@ export async function prepareCommonJSFile(
 ): Promise<string | null> {
   const cjsExtension = /\.c[jt]s$/i.test(filePath);
   // Node's require() loads `.jsx` through its `.js` loader too.
-  const jsExtension = /\.jsx?$/i.test(filePath);
+  // Node 24 loads `.ts` by the same rules, with its types stripped.
+  const jsExtension = /\.(?:jsx?|ts)$/i.test(filePath);
   // Node's require() loads a file without an extension as CommonJS, whatever
   // its package declares; a package `main` may name one.
   const extensionless = pathHelper.extname(filePath) === "";
@@ -812,7 +816,7 @@ export async function prepareDependencyFile(input: DependencyFileInput): Promise
   // A file Node may load as CommonJS registers its module for the runtime
   // `require`; an ES module has no `module` to register.
   const mayBeCommonJS = /\.c[jt]s$/i.test(logicalPath) ||
-    (/(?:\.jsx?|[\\/][^.\\/]+)$/i.test(logicalPath) && input.packageType !== "module");
+    (/(?:\.(?:jsx?|ts)|[\\/][^.\\/]+)$/i.test(logicalPath) && input.packageType !== "module");
   const register = (code: string) =>
     mayBeCommonJS ? registerBundledModule(code, resolvedPath) : code;
   // Most package files read none of these names; parsing them would change
@@ -1016,8 +1020,10 @@ export function createRuntimeRequire(
     if (relative === "" || up || host.isAbsolute(relative)) return null;
     return { path, real, relative };
   };
+  // A path relative to the requiring file; on Windows a backslash separates too.
   const relativeId = (id: string) =>
-    id === "." || id === ".." || id.startsWith("./") || id.startsWith("../");
+    id === "." || id === ".." || id.startsWith("./") || id.startsWith("../") ||
+    id.startsWith("." + host.sep) || id.startsWith(".." + host.sep);
   const first = (candidates: string[]) => {
     for (const candidate of candidates) {
       const found = projectFile(candidate);
@@ -1033,7 +1039,10 @@ export function createRuntimeRequire(
   const findFile = (base: string) => {
     const file = asFile(base);
     if (file !== null) return file;
-    const main = readManifest(base)?.main;
+    const manifest = readManifest(base);
+    // Node refuses a directory whose package.json is malformed.
+    if (manifest === null) return null;
+    const main = manifest?.main;
     if (typeof main === "string") {
       const target = host.join(base, main);
       const found = asFile(target) ?? asIndex(target);
@@ -1045,21 +1054,24 @@ export function createRuntimeRequire(
   // `node`, `require` and `default` conditions, in the order it lists them.
   // null blocks the path, even when a later condition would match; undefined
   // means no condition matched.
-  const conditionalTarget = (value: unknown): string | null | undefined => {
+  const conditionalTarget = (
+    value: unknown,
+    valid: (target: string) => boolean = () => true,
+  ): string | null | undefined => {
     if (typeof value === "string") return value;
     if (Array.isArray(value)) {
-      // As in Node, the first item that resolves to a target wins; a null or
-      // unmatched item falls through to the next.
+      // As in Node, the first item that resolves to a valid target wins; a
+      // null, unmatched or invalid item falls through to the next.
       for (const item of value) {
-        const target = conditionalTarget(item);
-        if (typeof target === "string") return target;
+        const target = conditionalTarget(item, valid);
+        if (typeof target === "string" && valid(target)) return target;
       }
       return null;
     }
     if (value === null || typeof value !== "object") return null;
     for (const [condition, item] of Object.entries(value)) {
       if (condition !== "node" && condition !== "require" && condition !== "default") continue;
-      const target = conditionalTarget(item);
+      const target = conditionalTarget(item, valid);
       if (target !== undefined) return target;
     }
     return undefined;
@@ -1067,8 +1079,14 @@ export function createRuntimeRequire(
   // A key of a package's `exports` or `imports` map, as Node matches it: an
   // exact key, else the `*` pattern with the longest prefix, whose match
   // replaces each `*` in the target.
-  const mapTarget = (map: Record<string, unknown>, key: string): string | null => {
-    if (!key.includes("*") && Object.hasOwn(map, key)) return conditionalTarget(map[key]) ?? null;
+  const mapTarget = (
+    map: Record<string, unknown>,
+    key: string,
+    valid: (target: string) => boolean,
+  ): string | null => {
+    if (!key.includes("*") && Object.hasOwn(map, key)) {
+      return conditionalTarget(map[key], valid) ?? null;
+    }
     let best: { pattern: string; match: string } | null = null;
     for (const pattern of Object.keys(map)) {
       const star = pattern.indexOf("*");
@@ -1086,7 +1104,7 @@ export function createRuntimeRequire(
       if (longer) best = { pattern, match: key.slice(prefix.length, key.length - suffix.length) };
     }
     if (best === null) return null;
-    const target = conditionalTarget(map[best.pattern]);
+    const target = conditionalTarget(map[best.pattern], valid);
     return typeof target === "string" ? target.split("*").join(best.match) : null;
   };
   const readManifest = (packageDir: string): Record<string, unknown> | null | undefined => {
@@ -1102,10 +1120,11 @@ export function createRuntimeRequire(
   // A `./` target of a package map, which Node rejects if any later segment
   // is empty, `.`, `..` or `node_modules`, so it cannot leave its package.
   // A target is a URL path, so its escapes name the file: `%20` is a space.
-  const packageTarget = (packageDir: string, target: string) => {
+  // Its query or fragment is not part of the file's path.
+  const targetSegments = (target: string) => {
     if (!target.startsWith("./")) return null;
     const decoded: string[] = [];
-    for (const segment of target.slice(2).split(/[\\/]/)) {
+    for (const segment of target.slice(2).split(/[?#]/)[0]!.split(/[\\/]/)) {
       let name: string;
       try {
         name = decodeURIComponent(segment);
@@ -1121,8 +1140,18 @@ export function createRuntimeRequire(
       }
       decoded.push(name);
     }
-    return projectFile(host.join(packageDir, ...decoded));
+    return decoded;
   };
+  const packageTarget = (packageDir: string, target: string) => {
+    const segments = targetSegments(target);
+    return segments === null ? null : projectFile(host.join(packageDir, ...segments));
+  };
+  const validExport = (target: string) => targetSegments(target) !== null;
+  // An `imports` target may also name a package.
+  const validImport = (target: string) =>
+    validExport(target) ||
+    !(target.startsWith(".") || target.startsWith("/") || target.startsWith("#") ||
+      /^[a-z][a-z0-9+.-]*:/i.test(target));
   // The `type` of the package.json that scopes a file, as Node reads it: the
   // nearest one, never past a `node_modules` directory or the project.
   const packageType = (file: string) => {
@@ -1150,12 +1179,16 @@ export function createRuntimeRequire(
     const exports = manifest?.exports;
     if (exports !== undefined && exports !== null) {
       const key = "." + subpath;
-      const keyed = typeof exports === "object" && !Array.isArray(exports) &&
-        Object.keys(exports).some((name) => name.startsWith("."));
-      const target = keyed
-        ? mapTarget(exports as Record<string, unknown>, key)
+      const keys = typeof exports === "object" && !Array.isArray(exports)
+        ? Object.keys(exports)
+        : [];
+      const subpathKeys = keys.filter((name) => name.startsWith(".")).length;
+      // Node rejects an `exports` object that mixes subpaths and conditions.
+      if (subpathKeys > 0 && subpathKeys !== keys.length) return false;
+      const target = subpathKeys > 0
+        ? mapTarget(exports as Record<string, unknown>, key, validExport)
         : key === "."
-        ? conditionalTarget(exports) ?? null
+        ? conditionalTarget(exports, validExport) ?? null
         : null;
       return (target === null ? null : packageTarget(packageDir, target)) ?? false;
     }
@@ -1168,7 +1201,11 @@ export function createRuntimeRequire(
     const nameLength = id.startsWith("@") ? 2 : 1;
     if (
       parts.length < nameLength ||
-      parts.some((part) => part === "" || part === "." || part === "..")
+      parts.some((part) =>
+        part === "" || part === "." || part === ".." ||
+        // A Windows separator would let the name walk out of node_modules.
+        (host.sep !== "/" && part.includes(host.sep))
+      )
     ) {
       return null;
     }
@@ -1195,7 +1232,7 @@ export function createRuntimeRequire(
       if (manifest !== undefined) {
         const imports = manifest?.imports;
         if (imports === null || typeof imports !== "object" || Array.isArray(imports)) return null;
-        const target = mapTarget(imports as Record<string, unknown>, id);
+        const target = mapTarget(imports as Record<string, unknown>, id, validImport);
         if (target === null) return null;
         if (target.startsWith("./")) return packageTarget(current, target);
         return target.startsWith("#") || target.startsWith("/") || target.startsWith(".")
@@ -1330,19 +1367,53 @@ export function createRuntimeRequire(
   };
 }
 
+// Whether every occurrence of `name` in `code` is a call that dependency
+// preparation wrote: `name("...")`, or the `typeof name === "function"` guard.
+function onlyHelperCalls(code: string, name: string): boolean {
+  const all = code.match(new RegExp(`\\b${name}\\b`, "g"))?.length ?? 0;
+  const calls = code.match(
+    new RegExp(`\\b${name}\\("|\\btypeof ${name} === "function"`, "g"),
+  )?.length ?? 0;
+  return all === calls;
+}
+
 /**
  * Binds the module-level `require` that esbuild's output calls for anything it
  * did not bundle, to {@link createRuntimeRequire}. esbuild's ESM output never
  * declares a top-level `require` (it renames a route's own binding of that
  * name), so the prologue cannot collide with route code.
  */
-export function prependRuntimeRequire(
+export async function prependRuntimeRequire(
   code: string,
   projectRoot: string,
   dependencyDirectories: readonly string[],
-): string {
+): Promise<string> {
   let prefix = "__vf_runtime";
   while (code.includes(prefix)) prefix += "_";
+  // Dependency code calls the helpers by fixed names, which route code may
+  // declare too. The prologue binds them under names the bundle does not use,
+  // and only the free references, which are dependency calls, are renamed.
+  const registry = `${prefix}_register`;
+  const requireFrom = `${prefix}_require_from`;
+  const helpers: Record<string, string> = {
+    [BUNDLED_MODULE_REGISTRY]: registry,
+    [BUNDLED_REQUIRE_FROM]: requireFrom,
+  };
+  if (Object.keys(helpers).every((name) => onlyHelperCalls(code, name))) {
+    for (const [name, local] of Object.entries(helpers)) {
+      code = code.replace(new RegExp(`\\b${name}\\b`, "g"), local);
+    }
+  } else {
+    // Some other use of a helper's name, such as a declaration in route code:
+    // the parser tells free references apart, as the bundler does.
+    code = (await transform(code, {
+      loader: "js",
+      format: "esm",
+      platform: "neutral",
+      logLevel: "silent",
+      define: helpers,
+    })).code;
+  }
   const host = [
     `getBuiltinModule: (id) => ${prefix}_process.getBuiltinModule(id)`,
     `isFile: (path) => { try { return ${prefix}_fs.statSync(path).isFile(); } catch { return false; } }`,
@@ -1360,7 +1431,7 @@ export function prependRuntimeRequire(
     `import ${prefix}_process from "node:process";`,
     `import * as ${prefix}_fs from "node:fs";`,
     `import * as ${prefix}_path from "node:path";`,
-    `const { require, register: ${BUNDLED_MODULE_REGISTRY}, requireFrom: ${BUNDLED_REQUIRE_FROM} } = (${createRuntimeRequire.toString()})({ ${
+    `const { require, register: ${registry}, requireFrom: ${requireFrom} } = (${createRuntimeRequire.toString()})({ ${
       host.join(", ")
     } }, ${JSON.stringify(projectRoot)}, ${JSON.stringify([...PREFIX_ONLY_BUILTINS])}, ${
       JSON.stringify(dependencyDirectories)

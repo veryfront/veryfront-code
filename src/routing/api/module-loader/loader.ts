@@ -1328,6 +1328,26 @@ async function canonicalProjectRoot(projectDir: string): Promise<string> {
 }
 
 /** Whether a path is a regular file on the host. */
+/**
+ * A project resolver's target that is an installed dependency file, as a
+ * file-namespace result: there the project boundary prepares it as a
+ * dependency, and it is the same module the dependency's own imports reach.
+ * Undefined for any other target, which the resolver's namespace loads.
+ */
+export async function dependencyTarget(
+  path: string,
+  suffix: string | undefined,
+  isDependencyFile: DependencyFilePredicate,
+): Promise<{ path: string; suffix?: string } | undefined> {
+  if (!isDependencyFile(path)) return undefined;
+  for (const extension of [...FILE_EXTENSIONS, ".cjs", ".json"]) {
+    if (await hostIsFile(path + extension)) {
+      return suffix ? { path: path + extension, suffix } : { path: path + extension };
+    }
+  }
+  return undefined;
+}
+
 /** A path with symlinks followed, or null when it does not exist. */
 async function hostRealPath(path: string): Promise<string | null> {
   try {
@@ -1383,7 +1403,7 @@ function createImportMapPlugin(
   return {
     name: "import-map",
     setup(build) {
-      build.onResolve({ filter: /.*/ }, (args) => {
+      build.onResolve({ filter: /.*/ }, async (args) => {
         if (args.path.startsWith("node:")) return { path: args.path, external: true };
         // A dependency resolves its own imports as Node does: the project's
         // import map does not apply inside node_modules.
@@ -1470,6 +1490,12 @@ function createImportMapPlugin(
           `Import map resolved: ${args.path} -> ${projectModuleLabel(absolutePath, projectDir)}`,
         );
 
+        const dependency = await dependencyTarget(
+          absolutePath,
+          moduleSuffixOfSpecifier(resolvedPath),
+          isDependencyFile,
+        );
+        if (dependency) return dependency;
         return {
           path: absolutePath,
           namespace: "import-map",
@@ -1796,7 +1822,7 @@ function createProjectAliasPlugin(
   return {
     name: "vf-project-alias",
     setup(build) {
-      build.onResolve({ filter: /^@\// }, (args) => {
+      build.onResolve({ filter: /^@\// }, async (args) => {
         // `@/` names a project file only in project code, never in a dependency.
         if (isDependencyFile(args.importer)) return undefined;
         const aliasedPath = args.path.slice(2);
@@ -1810,6 +1836,12 @@ function createProjectAliasPlugin(
           return { errors: [{ text: `Project alias escapes project: ${args.path}` }] };
         }
 
+        const dependency = await dependencyTarget(
+          absolutePath,
+          moduleSuffixOfSpecifier(aliasedPath),
+          isDependencyFile,
+        );
+        if (dependency) return dependency;
         return {
           path: absolutePath,
           namespace: "vf-project-alias",
@@ -1844,7 +1876,7 @@ function createAdapterResolvePlugin(
   return {
     name: "vf-adapter-resolve",
     setup(build) {
-      build.onResolve({ filter: /^\.\.?\// }, (args) => {
+      build.onResolve({ filter: /^\.\.?\// }, async (args) => {
         if (args.namespace === "http-url" || args.namespace === "import-map") return undefined;
         // Node resolves a dependency's relative imports, including directory
         // indexes and .json files; the project boundary still loads them.
@@ -1872,6 +1904,12 @@ function createAdapterResolvePlugin(
             args.importer ? projectModuleLabel(args.importer, projectDir) : "stdin"
           }) -> ${projectModuleLabel(absolutePath, projectDir)}`,
         );
+        const dependency = await dependencyTarget(
+          absolutePath,
+          moduleSuffixOfSpecifier(args.path),
+          isDependencyFile,
+        );
+        if (dependency) return dependency;
         return {
           path: absolutePath,
           namespace: "vf-adapter",
@@ -2352,7 +2390,9 @@ function buildTranspiledModuleSource(
 
       logger.debug(`built handler ${projectModuleLabel(resolvedPath, projectDir)}`);
       const output = result.outputFiles?.[0]?.text ?? "export {}";
-      const js = compiled ? prependRuntimeRequire(output, canonicalRoot, dependencyDirs) : output;
+      const js = compiled
+        ? await prependRuntimeRequire(output, canonicalRoot, dependencyDirs)
+        : output;
       logger.debug(`transpiled size ${js.length} bytes`);
 
       // Only dependencies left external are rewritten. The compiled bundle

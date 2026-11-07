@@ -19,6 +19,7 @@ import {
   prepareDependencyJson,
   prependRuntimeRequire,
 } from "#veryfront/routing/api/module-loader/compiled-cjs-bundling.ts";
+import { dependencyTarget } from "#veryfront/routing/api/module-loader/loader.ts";
 
 async function writeFiles(root: string, files: Record<string, string>): Promise<void> {
   for (const [relative, contents] of Object.entries(files)) {
@@ -130,7 +131,7 @@ async function bundleAndImport(
         dependencyFilePlugin(projectDir, isDependencyFile),
       ],
     });
-    const code = prependRuntimeRequire(
+    const code = await prependRuntimeRequire(
       result.outputFiles?.[0]?.text ?? "",
       projectDir,
       await dependencyDirectories(projectDir, hostFs),
@@ -723,6 +724,42 @@ describe("compiled-binary route bundling of CommonJS dependencies", () => {
       assertEquals(
         mod.worker,
         pathToFileURL(`${projectDir}/node_modules/hashed/worker.js`).href,
+      );
+    });
+  });
+
+  it("hands a project resolver's target inside a dependency to the file namespace", async () => {
+    await inProject(async (projectDir) => {
+      await writeFiles(projectDir, {
+        "node_modules/pkg/lib/index.js": "module.exports = __dirname;",
+        "node_modules/pkg/data.json": "{}",
+        "src/own.ts": "export {};",
+      });
+      const isDependencyFile = await createDependencyFilePredicate(projectDir, hostFs);
+      assertEquals(
+        await dependencyTarget(`${projectDir}/node_modules/pkg/lib/index`, "?v", isDependencyFile),
+        { path: `${projectDir}/node_modules/pkg/lib/index.js`, suffix: "?v" },
+      );
+      assertEquals(
+        await dependencyTarget(
+          `${projectDir}/node_modules/pkg/data.json`,
+          undefined,
+          isDependencyFile,
+        ),
+        { path: `${projectDir}/node_modules/pkg/data.json` },
+      );
+      // Project files and missing files stay with the resolver's own namespace.
+      assertEquals(
+        await dependencyTarget(`${projectDir}/src/own`, undefined, isDependencyFile),
+        undefined,
+      );
+      assertEquals(
+        await dependencyTarget(
+          `${projectDir}/node_modules/pkg/missing`,
+          undefined,
+          isDependencyFile,
+        ),
+        undefined,
       );
     });
   });
