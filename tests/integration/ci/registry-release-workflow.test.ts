@@ -856,7 +856,7 @@ printf '%064d  %s\n' 0 "$1"
       );
       assertEquals(
         npmPinStep.run,
-        'npm install --global "npm@${NPM_CLI_VERSION}"',
+        'npm install --global --ignore-scripts "npm@${NPM_CLI_VERSION}"',
       );
       assert(
         jobSteps.indexOf(npmPinStep) < jobSteps.indexOf(publishStep),
