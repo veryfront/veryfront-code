@@ -371,14 +371,74 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
     it("keeps imports of the packages external and leaves require() to the bundler", async () => {
       const [handler] = await resolveHandlers(createImportExternalsPlugin(["dual", "@s/p.js"]));
       for (const kind of ["import-statement", "dynamic-import"]) {
-        assertEquals(handler!({ path: "dual/sub", kind }), { path: "dual/sub", external: true });
+        assertEquals(await handler!({ path: "dual/sub", kind }), {
+          path: "dual/sub",
+          external: true,
+        });
       }
-      assertEquals(handler!({ path: "@s/p.js", kind: "import-statement" }), {
+      assertEquals(await handler!({ path: "@s/p.js", kind: "import-statement" }), {
         path: "@s/p.js",
         external: true,
       });
-      assertEquals(handler!({ path: "dual", kind: "require-call" }), undefined);
-      assertEquals(handler!({ path: "dual", kind: "require-resolve" }), undefined);
+      assertEquals(await handler!({ path: "dual", kind: "require-call" }), undefined);
+      assertEquals(await handler!({ path: "dual", kind: "require-resolve" }), undefined);
+    });
+
+    it("bundles a dependency's nested copy instead of the project's external one", async () => {
+      // /d/node_modules/dual links to /d/store/dual; p holds its own copy.
+      const resolved: Record<string, string> = {
+        "/d/src/route.ts": "/d/store/dual/index.js",
+        "/d/node_modules/p/index.js": "/d/node_modules/p/node_modules/dual/index.js",
+        "/d/node_modules/q/index.js": "/d/store/dual/index.js",
+      };
+      const registered: ResolveHandler[] = [];
+      const seen: unknown[] = [];
+      const build = {
+        onResolve: (_options: unknown, handler: ResolveHandler) => registered.push(handler),
+        onLoad: () => {},
+        resolve: (path: string, options: { importer: string; pluginData: unknown }) => {
+          seen.push(options.pluginData);
+          const target = resolved[options.importer];
+          return Promise.resolve(
+            path === "dual/missing" || target === undefined
+              ? { errors: [{ text: "Could not resolve" }] }
+              : { path: target, errors: [], namespace: "file", suffix: "" },
+          );
+        },
+      };
+      await createImportExternalsPlugin(["dual"], {
+        isDependencyFile: (path) => path.startsWith("/d/node_modules/"),
+        nodeModules: ["/d/node_modules", "/d/node_modules"],
+        realPath: (path) =>
+          Promise.resolve(path === "/d/node_modules/dual" ? "/d/store/dual" : path),
+      }).setup(build as unknown as PluginBuild);
+      const [handler] = registered;
+      const args = (importer: string, path = "dual") => ({
+        path,
+        importer,
+        kind: "import-statement",
+        resolveDir: importer.slice(0, importer.lastIndexOf("/")),
+      });
+      const external = { path: "dual", external: true };
+      assertEquals(await handler!(args("/d/node_modules/p/index.js")), {
+        path: "/d/node_modules/p/node_modules/dual/index.js",
+        namespace: "file",
+        suffix: "",
+        sideEffects: undefined,
+        pluginData: undefined,
+      });
+      assertEquals(await handler!(args("/d/node_modules/q/index.js")), external);
+      // Route code, a failed resolution and the plugin's own lookup stay as before.
+      assertEquals(await handler!(args("/d/src/route.ts")), external);
+      assertEquals(await handler!(args("/d/node_modules/p/index.js", "dual/missing")), {
+        path: "dual/missing",
+        external: true,
+      });
+      assertEquals(
+        await handler!({ ...args("/d/node_modules/p/index.js"), pluginData: seen[0] }),
+        undefined,
+      );
+      assertEquals(seen.length, 3);
     });
 
     it("registers nothing without packages", async () => {
@@ -612,6 +672,7 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
           "#lib/*": "./lib/*.js",
           "#dep": "driver/extra",
           "#outside": "../escape.js",
+          "#up": "./../sibling.js",
         },
       }),
       "/app/node_modules/p/lib/x.js": "module.exports = 'lib x';",
@@ -643,13 +704,37 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
       "/app/node_modules/p/binding.node": "",
       "/app/node_modules/sibling.js": "module.exports = 'file beside the package';",
       "/app/node_modules/sibling/index.js": "module.exports = 'package';",
+      "/app/node_modules/blocked/package.json": JSON.stringify({
+        exports: {
+          ".": { node: null, default: "./fallback.js" },
+          "./later": [null, "./later.js"],
+          "./escape": "./../sibling/index.js",
+          "./nested": "./node_modules/x.js",
+          "./encoded": "./%2e%2e/sibling/index.js",
+          "./empty": "./a//b.js",
+          "./ok": { import: "./esm.mjs", node: { require: "./ok.js" } },
+        },
+      }),
+      "/app/node_modules/blocked/fallback.js": "module.exports = 'fallback';",
+      "/app/node_modules/blocked/later.js": "module.exports = 'later';",
+      "/app/node_modules/blocked/node_modules/x.js": "module.exports = 'x';",
+      "/app/node_modules/blocked/a/b.js": "module.exports = 'b';",
+      "/app/node_modules/blocked/ok.js": "module.exports = 'ok';",
+      "/app/node_modules/p/escape-imports.js": "require('#up');",
+      "/app/node_modules/linked/index.js": "module.exports = 'linked';",
+      "/app/node_modules/.store/linked/index.js": "module.exports = 'linked';",
     };
     let reads = 0;
     const host: RuntimeRequireHost = {
       // Like Deno's, it knows bare prefix-only names that Node does not.
       getBuiltinModule: (id) => id === "test" ? { kind: "test" } : builtins[id],
       isFile: (path) => path in files,
-      realpathSync: (path) => path === "/app/link.json" ? "/outside.json" : path,
+      realpathSync: (path) =>
+        path === "/app/link.json"
+          ? "/outside.json"
+          : path === "/app/node_modules/linked/index.js"
+          ? "/app/node_modules/.store/linked/index.js"
+          : path,
       readFileSync: (path) => {
         reads++;
         return files[path]!;
@@ -679,7 +764,7 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
       dirname: (path) => path.slice(0, path.lastIndexOf("/")),
       sep: "/",
     };
-    const { require, register } = createRuntimeRequire(
+    const { require, register, requireFrom } = createRuntimeRequire(
       host,
       "/app",
       ["test"],
@@ -850,6 +935,36 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
       assertEquals(require("sibling"), "file beside the package");
     });
 
+    it("stops at a null condition and keeps package targets inside the package", () => {
+      assertEquals(require("blocked/ok"), "ok");
+      for (const id of ["blocked", "blocked/later", "blocked/escape", "blocked/nested"]) {
+        assertEquals(errorCode(() => require(id)), "MODULE_NOT_FOUND", id);
+      }
+      for (const id of ["blocked/encoded", "blocked/empty"]) {
+        assertEquals(errorCode(() => require(id)), "MODULE_NOT_FOUND", id);
+      }
+      assertEquals(
+        errorCode(() => require("/app/node_modules/p/escape-imports.js")),
+        "MODULE_NOT_FOUND",
+      );
+    });
+
+    it("resolves to the real path that keys require.cache", () => {
+      const resolved = require.resolve("linked");
+      assertEquals(resolved, "/app/node_modules/.store/linked/index.js");
+      assertEquals(require("linked"), "linked");
+      assertEquals((require.cache[resolved] as { exports: unknown }).exports, "linked");
+    });
+
+    it("gives a bundled file the require of its own directory, once per directory", () => {
+      const own = requireFrom("/app/node_modules/p/dialects");
+      assert(requireFrom("/app/node_modules/p/dialects") === own);
+      assertEquals((own("./" + "pg") as { base: string }).base, "base");
+      assertEquals(own.resolve("../" + "base"), "/app/node_modules/p/base.js");
+      assertEquals(own("nested"), "nested");
+      assertEquals(errorCode(() => requireFrom(7)("./pg")), "MODULE_NOT_FOUND");
+    });
+
     it("rejects a native addon and an ES module with Node's codes", () => {
       assertEquals(errorCode(() => require("/app/node_modules/p/addon.node")), "ERR_DLOPEN_FAILED");
       assertEquals(errorCode(() => require("/app/node_modules/p/esm.mjs")), "ERR_REQUIRE_ESM");
@@ -901,7 +1016,9 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
         code,
       );
       assert(
-        code.includes("const { require, register: __vf_register_bundled_module } = ("),
+        code.includes(
+          "const { require, register: __vf_register_bundled_module, requireFrom: __vf_require_from } = (",
+        ),
         code,
       );
       assert(code.endsWith("\nexport {};\n"), code);
@@ -937,6 +1054,11 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
             'exports.b = require.resolve("fs");',
             'exports.c = require.resolve("missing");',
             "exports.e = require.resolve(name);",
+            'exports.g = require("./g");',
+            "exports.h = require(`./h`);",
+            'exports.i = require("./dialects/" + name);',
+            "exports.j = typeof require;",
+            "exports.k = function (require) { return require(name); };",
           ].join("\n"),
           "/d/p/index.cjs",
           "module",
@@ -949,8 +1071,13 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
             'exports.f = "/d/p/index.cjs";',
             'exports.a = "/d/p/a.js";',
             'exports.b = "fs";',
-            'exports.c = require.resolve("missing");',
-            "exports.e = require.resolve(name);",
+            'exports.c = (__vf_require_from("/d/p")).resolve("missing");',
+            'exports.e = (__vf_require_from("/d/p")).resolve(name);',
+            'exports.g = require("./g");',
+            'exports.h = require("./h");',
+            'exports.i = (__vf_require_from("/d/p"))("./dialects/" + name);',
+            'exports.j = typeof (__vf_require_from("/d/p"));',
+            "return require2(name);",
           ]
         ) {
           assert(code.includes(part), code);
@@ -1092,9 +1219,9 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
         for (
           const part of [
             '"/d/node_modules/p/a.js";',
-            'require.resolve("ext");',
-            'require.resolve("project");',
-            'require.resolve("broken");',
+            '(__vf_require_from("/d/node_modules/p")).resolve("ext");',
+            '(__vf_require_from("/d/node_modules/p")).resolve("project");',
+            '(__vf_require_from("/d/node_modules/p")).resolve("broken");',
           ]
         ) {
           assert(code.includes(part), code);
@@ -1102,7 +1229,36 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
         const unresolved = await prepareDependencyFile(
           input('require.resolve("./a");', "/d/node_modules/p/index.js", false),
         );
-        assert(unresolved.includes('require.resolve("./a");'), unresolved);
+        assert(
+          unresolved.includes('(__vf_require_from("/d/node_modules/p")).resolve("./a");'),
+          unresolved,
+        );
+      });
+
+      it("parses a file whose only CommonJS name is a computed require", async () => {
+        const computed = await prepareDependencyFile(
+          input('module.exports = require("./dialects/" + name);', "/d/node_modules/p/index.js"),
+        );
+        assert(
+          computed.includes('(__vf_require_from("/d/node_modules/p"))("./dialects/" + name)'),
+          computed,
+        );
+        // An assignment to require keeps the name, which stays a valid target.
+        const assigned = await prepareDependencyFile(
+          input(
+            'require = require("esm")(module);\nmodule.exports = require(name);',
+            "/d/node_modules/p/index.js",
+          ),
+        );
+        assert(assigned.includes('require = require("esm")(module);'), assigned);
+        assert(assigned.includes("module.exports = require(name);"), assigned);
+        assert(!assigned.includes("__vf_require_from"), assigned);
+        // Literal calls alone leave nothing for runtime, so nothing is parsed.
+        const literal = "module.exports = [require(\"./a\"), require( 'b' )];";
+        assertEquals(
+          await prepareDependencyFile(input(literal, "/d/node_modules/p/index.js")),
+          registerBundledModule(literal, "/d/node_modules/p/index.js"),
+        );
       });
 
       it("resolves import.meta.resolve literals in an ESM file", async () => {

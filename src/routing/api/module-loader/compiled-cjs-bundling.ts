@@ -151,6 +151,7 @@ const RELATIVE_SPECIFIER = /^(?:\.\.?(?:\/|$)|\/)/;
 // (the bundler's filters are Go regular expressions, without lookahead).
 const BARE_SPECIFIER = /^[^./#]/;
 const URL_SPECIFIER = /^[a-z][a-z0-9+.-]*:/i;
+const LITERAL_REQUIRE_CALL = /\brequire\s*\(\s*(["'])[^"'\\\n]*\1\s*\)/g;
 const IN_NODE_MODULES = /[\\/]node_modules[\\/]/;
 const FROM_NODE_MODULES = "vfFromNodeModules";
 
@@ -243,30 +244,91 @@ export function createDependencyResolvePlugin(
   };
 }
 
+/** How {@link createImportExternalsPlugin} tells a nested copy of a package apart. */
+export interface ImportExternalsOptions {
+  /** Whether an importer is an installed dependency file. */
+  readonly isDependencyFile: (path: string) => boolean;
+  /** The project's top-level `node_modules` directories, as given and canonical. */
+  readonly nodeModules: readonly string[];
+  /** A path with symlinks followed, or null when it does not exist. */
+  readonly realPath: (path: string) => Promise<string | null>;
+}
+
 /**
  * Keeps the given packages external for `import` and `import()` only. A
  * package that loads from disk as ESM may also export CommonJS to `require`;
  * a `require()` of it from a bundled dependency bundles that CommonJS entry,
- * since the runtime `require` cannot load packages. Must run where esbuild's
- * own resolution would apply: after the project's import map and aliases.
+ * since the runtime `require` cannot load packages. With `options`, an import
+ * from a dependency stays external only if it resolves to the project's
+ * top-level copy; a nested copy the dependency holds is bundled instead.
+ * Must run where esbuild's own resolution would apply: after the project's
+ * import map and aliases.
  */
-export function createImportExternalsPlugin(names: Iterable<string>): Plugin {
+export function createImportExternalsPlugin(
+  names: Iterable<string>,
+  options?: ImportExternalsOptions,
+): Plugin {
   const escaped = [...names].map((name) => name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
   const filter = new RegExp(`^(?:${escaped.join("|")})(?:/.*)?$`);
+  // The real directory of each top-level package, which the external import
+  // loads at runtime.
+  const topLevel = new Map<string, Promise<string[]>>();
+  const topLevelDirectories = (name: string) => {
+    let directories = topLevel.get(name);
+    if (directories === undefined) {
+      directories = Promise.all(
+        (options?.nodeModules ?? []).map((root) => options!.realPath(pathHelper.join(root, name))),
+      ).then((paths) => paths.filter((path): path is string => path !== null));
+      topLevel.set(name, directories);
+    }
+    return directories;
+  };
   return {
     name: "vf-import-externals",
     setup(build) {
       if (escaped.length === 0) return;
-      build.onResolve(
-        { filter },
-        (args) =>
-          args.kind === "import-statement" || args.kind === "dynamic-import"
-            ? { path: args.path, external: true }
-            : undefined,
-      );
+      build.onResolve({ filter }, async (args) => {
+        if (args.kind !== "import-statement" && args.kind !== "dynamic-import") return undefined;
+        const data = args.pluginData as Record<string, unknown> | undefined;
+        if (data?.[RESOLVING_EXTERNAL] === true) return undefined;
+        const external = { path: args.path, external: true };
+        // A dependency may hold its own copy in a nested node_modules, which
+        // Node loads for it instead of the project's.
+        if (
+          !options || !build.resolve || !args.importer || !options.isDependencyFile(args.importer)
+        ) {
+          return external;
+        }
+        const result = await build.resolve(args.path, {
+          kind: args.kind,
+          importer: args.importer,
+          resolveDir: args.resolveDir,
+          pluginData: { [RESOLVING_EXTERNAL]: true },
+        });
+        if (result.errors?.length || !result.path || result.external) return external;
+        const name = packageName(args.path);
+        const real = (await options.realPath(result.path)) ?? result.path;
+        const directories = await topLevelDirectories(name);
+        if (directories.some((directory) => isWithinDirectory(directory, real))) return external;
+        return {
+          path: result.path,
+          namespace: result.namespace,
+          suffix: result.suffix,
+          sideEffects: result.sideEffects,
+          pluginData: result.pluginData,
+        };
+      });
     },
   };
 }
+
+// The package a bare specifier names: its first segment, or two when scoped.
+function packageName(specifier: string): string {
+  const parts = specifier.split("/");
+  return parts.slice(0, specifier.startsWith("@") ? 2 : 1).join("/");
+}
+
+const RESOLVING_EXTERNAL = "vfResolvingExternal";
 
 /** Reads a package.json as text, or null when the directory has none. */
 export type ReadManifest = (path: string) => Promise<string | null>;
@@ -489,6 +551,7 @@ export async function prepareCommonJSFile(
   // The source does not contain the name, so every occurrence in the output
   // is one the parser put there. It never reaches the bundle.
   const marker = await markerFor("__vf_require_resolve_", filePath, contents);
+  const requireMarker = await markerFor("__vf_require_call_", filePath, contents);
   const result = await bundle({
     stdin: {
       contents,
@@ -502,6 +565,7 @@ export async function prepareCommonJSFile(
     logLevel: "silent",
     define: {
       "require.resolve": marker,
+      require: requireMarker,
       __dirname: JSON.stringify(pathHelper.dirname(filePath)),
       __filename: JSON.stringify(filePath),
     },
@@ -517,8 +581,32 @@ export async function prepareCommonJSFile(
     async (specifier) =>
       builtinModuleName(specifier) === undefined ? await resolve(specifier) : specifier,
   );
-  // A call left unresolved throws at runtime, as in Node.
-  return rewritten.replaceAll(marker, "require.resolve");
+  // A literal require() goes back to the bundler, which bundles it. Any other
+  // use of `require`, such as a computed id, runs at runtime with the require
+  // of this file's directory, as in Node; so does a require.resolve call left
+  // unresolved, which throws there as in Node.
+  // A file that assigns to `require` keeps the name: a call is no target.
+  const assigned = new RegExp(`${requireMarker}\\s*=(?!=)`).test(rewritten);
+  const ownRequire = assigned
+    ? "require"
+    : `(${BUNDLED_REQUIRE_FROM}(${JSON.stringify(pathHelper.dirname(filePath))}))`;
+  return rewritten
+    .replace(
+      literalRequire(requireMarker),
+      (_whole, double, single, template) =>
+        `require(${JSON.stringify(double ?? single ?? template)})`,
+    )
+    .replaceAll(marker, `${requireMarker}.resolve`)
+    .replaceAll(requireMarker, ownRequire);
+}
+
+// A call of `marker` with one string literal as the bundler prints it; a
+// template literal only without substitutions.
+function literalRequire(marker: string): RegExp {
+  return new RegExp(
+    `${marker}\\((?:"([^"\\\\\\n]*)"|'([^'\\\\\\n]*)'|\`([^\`\\\\\\n$]*)\`)\\)`,
+    "g",
+  );
 }
 
 /**
@@ -645,6 +733,12 @@ export function createImportMetaResolve(
 export const BUNDLED_MODULE_REGISTRY = "__vf_register_bundled_module";
 
 /**
+ * The name a bundled CommonJS dependency calls for the `require` of its own
+ * directory; see {@link RuntimeRequireBinding.requireFrom}.
+ */
+export const BUNDLED_REQUIRE_FROM = "__vf_require_from";
+
+/**
  * `code` with a last statement that registers its CommonJS `module` by
  * `path`. In an ES module `module` is unbound and nothing happens. A file
  * that leaves early with a top-level `return` is not registered, and a
@@ -703,7 +797,9 @@ export async function prepareDependencyFile(input: DependencyFileInput): Promise
   const importMeta = /\bimport\.meta\b/.test(contents);
   const readsCommonJSNames = contents.includes("__dirname") ||
     contents.includes("__filename") ||
-    (contents.includes("require") && contents.includes("resolve"));
+    // Any use of require but a call with a string literal, which the bundler
+    // bundles: a computed id must resolve from this file's directory.
+    /\brequire\b/.test(contents.replace(LITERAL_REQUIRE_CALL, ""));
   if (!readsCommonJSNames && !importMeta) return register(contents);
   const resolveDir = pathHelper.dirname(resolvedPath);
   const dependencyPath = async (
@@ -728,10 +824,8 @@ export async function prepareDependencyFile(input: DependencyFileInput): Promise
   return await prepareModuleFile(contents, logicalPath, async (specifier) => {
     const builtin = builtinModuleName(specifier);
     if (builtin !== undefined) return "node:" + builtin;
-    if (
-      URL_SPECIFIER.test(specifier) || RELATIVE_SPECIFIER.test(specifier) ||
-      specifier.startsWith("?") || specifier.startsWith("#")
-    ) {
+    // A `#name` resolves through the package's own `imports`, below.
+    if (URL_SPECIFIER.test(specifier) || RELATIVE_SPECIFIER.test(specifier)) {
       return new URL(specifier, moduleUrl).href;
     }
     const path = await dependencyPath(specifier, "import-statement");
@@ -812,6 +906,11 @@ export interface RuntimeRequireBinding {
    * `require()` of the same file returns it instead of running it again.
    */
   readonly register: (path: string, module: { exports: unknown }) => void;
+  /**
+   * The `require` of a bundled dependency file in `directory`, for the calls
+   * the bundler left to runtime, such as a computed relative id.
+   */
+  readonly requireFrom: (directory: unknown) => RuntimeRequire;
 }
 
 /** The runtime `require` of a bundled route; see {@link createRuntimeRequire}. */
@@ -919,12 +1018,15 @@ export function createRuntimeRequire(
   };
   // The target a package's `exports` or `imports` gives `require()`: the
   // `node`, `require` and `default` conditions, in the order it lists them.
-  const conditionalTarget = (value: unknown): string | null => {
+  // null blocks the path, even when a later condition would match; undefined
+  // means no condition matched.
+  const conditionalTarget = (value: unknown): string | null | undefined => {
     if (typeof value === "string") return value;
     if (Array.isArray(value)) {
+      // As in Node, the first item that resolves wins, a null one included.
       for (const item of value) {
         const target = conditionalTarget(item);
-        if (target !== null) return target;
+        if (target !== undefined) return target;
       }
       return null;
     }
@@ -932,15 +1034,15 @@ export function createRuntimeRequire(
     for (const [condition, item] of Object.entries(value)) {
       if (condition !== "node" && condition !== "require" && condition !== "default") continue;
       const target = conditionalTarget(item);
-      if (target !== null) return target;
+      if (target !== undefined) return target;
     }
-    return null;
+    return undefined;
   };
   // A key of a package's `exports` or `imports` map, as Node matches it: an
   // exact key, else the `*` pattern with the longest prefix, whose match
   // replaces each `*` in the target.
   const mapTarget = (map: Record<string, unknown>, key: string): string | null => {
-    if (!key.includes("*") && Object.hasOwn(map, key)) return conditionalTarget(map[key]);
+    if (!key.includes("*") && Object.hasOwn(map, key)) return conditionalTarget(map[key]) ?? null;
     let best: { pattern: string; match: string } | null = null;
     for (const pattern of Object.keys(map)) {
       const star = pattern.indexOf("*");
@@ -959,7 +1061,7 @@ export function createRuntimeRequire(
     }
     if (best === null) return null;
     const target = conditionalTarget(map[best.pattern]);
-    return target === null ? null : target.split("*").join(best.match);
+    return typeof target === "string" ? target.split("*").join(best.match) : null;
   };
   const readManifest = (packageDir: string): Record<string, unknown> | null | undefined => {
     const manifestPath = host.join(packageDir, "package.json");
@@ -970,6 +1072,24 @@ export function createRuntimeRequire(
     } catch {
       return null; // Node rejects a malformed package.json
     }
+  };
+  // A `./` target of a package map, which Node rejects if any later segment
+  // is empty, `.`, `..` or `node_modules`, so it cannot leave its package.
+  const packageTarget = (packageDir: string, target: string) => {
+    if (!target.startsWith("./")) return null;
+    const segments = target.slice(2).split(/[\\/]/);
+    const invalid = segments.some((segment) => {
+      let decoded = segment;
+      try {
+        decoded = decodeURIComponent(segment);
+      } catch {
+        return true;
+      }
+      const lower = decoded.toLowerCase();
+      return lower === "" || lower === "." || lower === ".." || lower === "node_modules" ||
+        /[\\/]/.test(decoded);
+    });
+    return invalid ? null : projectFile(host.join(packageDir, target));
   };
   const inProject = (directory: string) => {
     const relative = host.relative(projectRoot, directory);
@@ -988,10 +1108,9 @@ export function createRuntimeRequire(
       const target = keyed
         ? mapTarget(exports as Record<string, unknown>, key)
         : key === "."
-        ? conditionalTarget(exports)
+        ? conditionalTarget(exports) ?? null
         : null;
-      if (target === null || !target.startsWith("./")) return null;
-      return projectFile(host.join(packageDir, target));
+      return target === null ? null : packageTarget(packageDir, target);
     }
     return findFile(host.join(packageDir, subpath));
   };
@@ -1030,7 +1149,7 @@ export function createRuntimeRequire(
         if (imports === null || typeof imports !== "object" || Array.isArray(imports)) return null;
         const target = mapTarget(imports as Record<string, unknown>, id);
         if (target === null) return null;
-        if (target.startsWith("./")) return projectFile(host.join(current, target));
+        if (target.startsWith("./")) return packageTarget(current, target);
         return target.startsWith("#") || target.startsWith("/") || target.startsWith(".")
           ? null
           : findPackage(target, current);
@@ -1131,7 +1250,8 @@ export function createRuntimeRequire(
       if (builtin(id) !== undefined) return id as string;
       const found = findFrom(id, directory, options);
       if (found === null) throw missing(label(id));
-      return found.path;
+      // Node returns the real path, which also keys require.cache.
+      return found.real;
     };
     require.cache = modules;
     // Code written for webpack; the callback runs at once, as nothing is split.
@@ -1140,9 +1260,14 @@ export function createRuntimeRequire(
     };
     return require;
   };
+  const byDirectory: Record<string, RuntimeRequire> = Object.create(null);
   return {
     // Route code's computed ids resolve from the project, as Node's would.
     require: create(projectRoot),
+    requireFrom: (directory) => {
+      if (typeof directory !== "string") return create(undefined);
+      return byDirectory[directory] ??= create(directory);
+    },
     // The bundler names files by their real path; this keys the module the
     // same way even where a symlink above the project was kept.
     register: (path, module) => {
@@ -1187,7 +1312,7 @@ export function prependRuntimeRequire(
     `import ${prefix}_process from "node:process";`,
     `import * as ${prefix}_fs from "node:fs";`,
     `import * as ${prefix}_path from "node:path";`,
-    `const { require, register: ${BUNDLED_MODULE_REGISTRY} } = (${createRuntimeRequire.toString()})({ ${
+    `const { require, register: ${BUNDLED_MODULE_REGISTRY}, requireFrom: ${BUNDLED_REQUIRE_FROM} } = (${createRuntimeRequire.toString()})({ ${
       host.join(", ")
     } }, ${JSON.stringify(projectRoot)}, ${JSON.stringify([...PREFIX_ONLY_BUILTINS])}, ${
       JSON.stringify(dependencyDirectories)

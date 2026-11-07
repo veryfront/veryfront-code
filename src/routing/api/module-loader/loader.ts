@@ -1328,6 +1328,15 @@ async function canonicalProjectRoot(projectDir: string): Promise<string> {
 }
 
 /** Whether a path is a regular file on the host. */
+/** A path with symlinks followed, or null when it does not exist. */
+async function hostRealPath(path: string): Promise<string | null> {
+  try {
+    return await realPath(path);
+  } catch {
+    return null; // expected: no such file
+  }
+}
+
 const hostIsFile: IsFile = async (path) => {
   try {
     return (await createFileSystem().stat(path)).isFile;
@@ -2301,7 +2310,14 @@ function buildTranspiledModuleSource(
             ? [
               // After the import map, so that a project can map a built-in name.
               createCompiledBuiltinPlugin(() => true),
-              createImportExternalsPlugin(runtimeDeps.keys()),
+              createImportExternalsPlugin(runtimeDeps.keys(), {
+                isDependencyFile,
+                nodeModules: [
+                  pathHelper.join(projectDir, "node_modules"),
+                  pathHelper.join(canonicalRoot, "node_modules"),
+                ],
+                realPath: hostRealPath,
+              }),
             ]
             : []),
           createHTTPPlugin({

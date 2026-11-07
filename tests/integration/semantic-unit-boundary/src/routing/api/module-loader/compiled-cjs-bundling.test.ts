@@ -116,7 +116,17 @@ async function bundleAndImport(
         createCompiledBuiltinPlugin(isDependencyFile),
         createDependencyResolvePlugin(isDependencyFile, isFile),
         createCompiledBuiltinPlugin(() => true),
-        createImportExternalsPlugin(importExternals),
+        createImportExternalsPlugin(importExternals, {
+          isDependencyFile,
+          nodeModules: [`${projectDir}/node_modules`],
+          realPath: async (path) => {
+            try {
+              return await realpath(path);
+            } catch {
+              return null; // expected: no such package
+            }
+          },
+        }),
         dependencyFilePlugin(projectDir, isDependencyFile),
       ],
     });
@@ -569,6 +579,98 @@ describe("compiled-binary route bundling of CommonJS dependencies", () => {
       assertEquals(mod.user, "cjs");
       const code = await readFile(`${projectDir}/handler.mjs`, "utf8");
       assert(code.includes('import("dual")'), code);
+    });
+  });
+
+  it("bundles a dependency's own copy of a package the project keeps external", async () => {
+    await inProject(async (projectDir) => {
+      const esm = (value: string) => ({
+        "package.json": JSON.stringify({ name: "esmpkg", type: "module", main: "index.js" }),
+        "index.js": `export default ${JSON.stringify(value)};`,
+      });
+      const files: Record<string, string> = {
+        "node_modules/user/package.json": JSON.stringify({
+          name: "user",
+          type: "module",
+          main: "index.js",
+        }),
+        "node_modules/user/index.js": 'export { default } from "esmpkg";',
+        "node_modules/other/package.json": JSON.stringify({
+          name: "other",
+          type: "module",
+          main: "index.js",
+        }),
+        "node_modules/other/index.js": 'export const load = () => import("esmpkg");',
+      };
+      for (const [name, contents] of Object.entries(esm("top"))) {
+        files[`node_modules/esmpkg/${name}`] = contents;
+      }
+      for (const [name, contents] of Object.entries(esm("nested"))) {
+        files[`node_modules/user/node_modules/esmpkg/${name}`] = contents;
+      }
+      await writeFiles(projectDir, files);
+      const mod = await bundleAndImport(
+        projectDir,
+        'import user from "user";\nexport { user };\nexport { load } from "other";\n',
+        ["esmpkg"],
+      );
+      assertEquals(mod.user, "nested");
+      const code = await readFile(`${projectDir}/handler.mjs`, "utf8");
+      // The dependency without its own copy still imports the project's.
+      assert(code.includes('import("esmpkg")'), code);
+      assert(!code.includes('"top"'), code);
+    });
+  });
+
+  it("resolves a computed relative require from the bundled file's directory", async () => {
+    await inProject(async (projectDir) => {
+      await writeFiles(projectDir, {
+        "node_modules/loader/package.json": JSON.stringify({
+          name: "loader",
+          main: "lib/index.js",
+        }),
+        "node_modules/loader/lib/index.js": [
+          "var name = ['p', 'g'].join('');",
+          'exports.dialect = require("./dialects/" + name).name;',
+          'exports.path = require.resolve("./dialects/" + name);',
+          "exports.kind = typeof require;",
+          'exports.static = require("./dialects/base").name;',
+        ].join("\n"),
+        "node_modules/loader/lib/dialects/pg.js": 'exports.name = "pg";',
+        "node_modules/loader/lib/dialects/base.js": 'exports.name = "base";',
+        // A project file at the same relative path must not be picked.
+        "dialects/pg.js": 'exports.name = "project";',
+      });
+      const mod = await bundleAndImport(
+        projectDir,
+        'import loader from "loader";\nexport { loader };\n',
+      );
+      assertEquals(mod.loader, {
+        dialect: "pg",
+        path: `${projectDir}/node_modules/loader/lib/dialects/pg.js`,
+        kind: "function",
+        static: "base",
+      });
+    });
+  });
+
+  it("resolves a dependency's import.meta.resolve of its own #import", async () => {
+    await inProject(async (projectDir) => {
+      await writeFiles(projectDir, {
+        "node_modules/hashed/package.json": JSON.stringify({
+          name: "hashed",
+          type: "module",
+          main: "index.js",
+          imports: { "#worker": "./worker.js" },
+        }),
+        "node_modules/hashed/index.js": 'export const worker = import.meta.resolve("#worker");',
+        "node_modules/hashed/worker.js": "export {};",
+      });
+      const mod = await bundleAndImport(projectDir, 'export * from "hashed";\n');
+      assertEquals(
+        mod.worker,
+        pathToFileURL(`${projectDir}/node_modules/hashed/worker.js`).href,
+      );
     });
   });
 
