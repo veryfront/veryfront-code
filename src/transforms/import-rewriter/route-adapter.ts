@@ -6,7 +6,6 @@ import { resolveContainedPackagePath } from "./package-resolution.ts";
 import { isWithinDirectory } from "#veryfront/security/path-validation.ts";
 import {
   resolveExportEntry as resolveRouteExportEntry,
-  toCjsDestructureBindings,
 } from "#veryfront/routing/api/module-loader/loader-helpers.ts";
 import { rethrowProjectBoundaryViolation } from "#veryfront/routing/api/module-loader/project-source-snapshot.ts";
 
@@ -205,91 +204,46 @@ export function rewriteCompiledUserDependencyImportsForRoute(
     const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
     // ESM-only dependencies are rewritten to real ES module file:// URLs so that
-    // import.meta, top-level await, etc. work. They must NOT be transpiled to
-    // CommonJS and evaluated via the `new Function` shim (see __vf_loadCjs).
+    // import.meta, top-level await, etc. work. A CommonJS dependency never
+    // reaches this point: it is bundled as a module that loads it through the
+    // runtime's own require (see createNativeCommonJSPlugin).
     const esm = esmDeps.get(name);
-    if (esm) {
-      // Resolve a subpath import to a contained file:// URL. The subpath comes
-      // from the handler source; reject any that escape the package directory
-      // (e.g. "pkg/../../secret") by leaving the import untouched so it fails to
-      // resolve rather than reading outside node_modules.
-      const subpathUrl = (subpath: string, original: string): string | null => {
-        const target = resolveContainedPackagePath(esm.packageDir, "." + subpath);
-        if (!target) {
-          logger.warn(`Skipping ESM subpath import that escapes package directory: ${original}`);
-          return null;
-        }
-        return pathHelper.toFileUrl(target).href;
-      };
+    if (!esm) continue;
 
-      transformed = transformed.replace(
-        new RegExp(`from\\s+["']${escaped}(/[^"']+)["']`, "g"),
-        (match, subpath) => {
-          const url = subpathUrl(subpath, match);
-          return url ? `from "${url}"` : match;
-        },
-      );
-      transformed = transformed.replace(
-        new RegExp(`from\\s+["']${escaped}["']`, "g"),
-        () => `from "${esm.entryUrl}"`,
-      );
-      transformed = transformed.replace(
-        new RegExp(`import\\s*\\(\\s*["']${escaped}(/[^"']+)["']\\s*\\)`, "g"),
-        (match, subpath) => {
-          const url = subpathUrl(subpath, match);
-          return url ? `import("${url}")` : match;
-        },
-      );
-      transformed = transformed.replace(
-        new RegExp(`import\\s*\\(\\s*["']${escaped}["']\\s*\\)`, "g"),
-        () => `import("${esm.entryUrl}")`,
-      );
-      continue;
-    }
+    // Resolve a subpath import to a contained file:// URL. The subpath comes
+    // from the handler source; reject any that escape the package directory
+    // (e.g. "pkg/../../secret") by leaving the import untouched so it fails to
+    // resolve rather than reading outside node_modules.
+    const subpathUrl = (subpath: string, original: string): string | null => {
+      const target = resolveContainedPackagePath(esm.packageDir, "." + subpath);
+      if (!target) {
+        logger.warn(`Skipping ESM subpath import that escapes package directory: ${original}`);
+        return null;
+      }
+      return pathHelper.toFileUrl(target).href;
+    };
 
     transformed = transformed.replace(
-      new RegExp(`import\\s+(\\w+)\\s+from\\s+["']${escaped}["']`, "g"),
-      (_, localName) => `const ${localName} = __vf_interopDefault(require("${name}"))`,
-    );
-    transformed = transformed.replace(
-      new RegExp(`import\\s+(\\{[^}]+\\})\\s+from\\s+["']${escaped}["']`, "g"),
-      (_, bindings) => `const ${toCjsDestructureBindings(bindings)} = require("${name}")`,
-    );
-    transformed = transformed.replace(
-      new RegExp(`import\\s+\\*\\s+as\\s+(\\w+)\\s+from\\s+["']${escaped}["']`, "g"),
-      (_, localName) => `const ${localName} = require("${name}")`,
-    );
-    transformed = transformed.replace(
-      new RegExp(
-        `import\\s+(\\w+)\\s*,\\s*(\\{[^}]+\\})\\s+from\\s+["']${escaped}["']`,
-        "g",
-      ),
-      (_, defaultName, bindings) => {
-        const tmp = `__vf_tmp_${defaultName}`;
-        return `const ${tmp} = require("${name}"); const ${defaultName} = __vf_interopDefault(${tmp}); const ${
-          toCjsDestructureBindings(bindings)
-        } = ${tmp}`;
+      new RegExp(`from\\s+["']${escaped}(/[^"']+)["']`, "g"),
+      (match, subpath) => {
+        const url = subpathUrl(subpath, match);
+        return url ? `from "${url}"` : match;
       },
     );
     transformed = transformed.replace(
-      new RegExp(
-        `import\\s+(\\w+|\\*\\s+as\\s+\\w+|\\{[^}]+\\})\\s+from\\s+["']${escaped}(/[^"']+)["']`,
-        "g",
-      ),
-      (_, binding, subpath) => {
-        const trimmedBinding = String(binding).trim();
-        if (trimmedBinding.startsWith("{")) {
-          return `const ${toCjsDestructureBindings(trimmedBinding)} = require("${name}${subpath}")`;
-        }
-        const name_ = trimmedBinding.startsWith("*")
-          ? trimmedBinding.replace(/\*\s+as\s+/, "")
-          : trimmedBinding;
-        return `const ${name_} = require("${name}${subpath}")`;
+      new RegExp(`from\\s+["']${escaped}["']`, "g"),
+      () => `from "${esm.entryUrl}"`,
+    );
+    transformed = transformed.replace(
+      new RegExp(`import\\s*\\(\\s*["']${escaped}(/[^"']+)["']\\s*\\)`, "g"),
+      (match, subpath) => {
+        const url = subpathUrl(subpath, match);
+        return url ? `import("${url}")` : match;
       },
     );
     transformed = transformed.replace(
-      new RegExp(`import\\s*\\(\\s*["']${escaped}(/[^"']*)?["']\\s*\\)`, "g"),
-      (_, subpath) => `Promise.resolve(require("${name}${subpath || ""}"))`,
+      new RegExp(`import\\s*\\(\\s*["']${escaped}["']\\s*\\)`, "g"),
+      () => `import("${esm.entryUrl}")`,
     );
   }
 
