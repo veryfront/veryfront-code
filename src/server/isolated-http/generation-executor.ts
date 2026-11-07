@@ -16,6 +16,10 @@ import {
   sameHostedExecutorOwner,
 } from "#veryfront/agent/hosted/executor-session-schema.ts";
 import { verifyHostedRuntimeSourceBinding } from "#veryfront/agent/hosted/runtime-source-binding.ts";
+import {
+  formatTraceparent,
+  parseTraceparent,
+} from "#veryfront/observability/tracing/traceparent.ts";
 import { normalizeDynamicDenyHeaders } from "#veryfront/security/http/application-request.ts";
 import { completeOnResponseBodyConsumption } from "#veryfront/platform/compat/http/response-lifecycle.ts";
 import type { RenderGenerationExecutor } from "#veryfront/rendering/render-generation.ts";
@@ -119,6 +123,10 @@ export interface HostedHttpGenerationExecutorOptions {
   observeDispatch?(
     receipt: Readonly<{
       attachment: Parameters<NonNullable<HostedExecutorSessionOptions["observeAttachment"]>>[0];
+      brokerInstanceId: string;
+      projectId: string;
+      environmentId: string;
+      releaseId?: string;
       traceparent?: string;
     }>,
   ): void;
@@ -387,8 +395,17 @@ export function createHostedHttpGenerationExecutor(
           signal.throwIfAborted();
           if (observeDispatch) {
             if (!attachment) throw new Error("HTTP executor attachment receipt is unavailable");
+            const { owner, source, environmentId } = input.installation;
+            if (owner.scopeKind !== "project") throw new Error("HTTP executor owner is unverified");
             observeDispatch(
-              Object.freeze({ attachment, traceparent: context.tracing?.traceparent }),
+              Object.freeze({
+                attachment,
+                brokerInstanceId: input.session.expectedBrokerInstanceId,
+                projectId: owner.projectId,
+                environmentId,
+                releaseId: source.type === "release" ? source.releaseId : undefined,
+                traceparent: formatTraceparent(parseTraceparent(context.tracing?.traceparent)),
+              }),
             );
             signal.throwIfAborted();
           }

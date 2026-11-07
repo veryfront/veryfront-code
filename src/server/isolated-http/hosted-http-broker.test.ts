@@ -65,17 +65,33 @@ describe("hosted HTTP executor broker", () => {
       "00-33333333333333333333333333333333-4444444444444444-01",
     ];
     try {
-      for (const traceparent of traces) {
+      for (const [index, traceparent] of traces.entries()) {
         const response = await broker.fetch(
           new Request("https://app.example/api", { headers: { traceparent: "untrusted" } }),
-          { ...f.input, tracing: { traceparent, onRecords() {} } },
+          {
+            ...f.input,
+            tracing: {
+              traceparent: index === 0 ? traceparent : traceparent + "-private",
+              onRecords() {},
+            },
+          },
         );
         assertEquals(await response.text(), "app");
       }
       assertEquals(f.calls.filter((call) => call === "allocate").length, 1);
       const attachment = (records[0] as { attachment: unknown }).attachment;
       assertExists(attachment);
-      assertEquals(records, traces.map((traceparent) => ({ attachment, traceparent })));
+      assertEquals(
+        records,
+        traces.map((traceparent) => ({
+          attachment,
+          brokerInstanceId: "broker-a",
+          projectId: "project-a",
+          environmentId: "environment-a",
+          releaseId: "release-a",
+          traceparent,
+        })),
+      );
     } finally {
       await broker.shutdown();
       await broker.settled;
