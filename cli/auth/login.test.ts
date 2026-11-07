@@ -3733,6 +3733,7 @@ describe("Missing-auth hint for VERYFRONT_API_KEY", () => {
     jsonMode: boolean,
     apiKeyEnvFile?: string,
     storedToken?: string,
+    veryfrontJson?: Record<string, unknown>,
   ): Promise<{ result: unknown; output: string[] }> {
     const dir = await makeTempDir({ prefix: "whoami-api-key-" });
     const env = createTestEnvironmentConfig({
@@ -3761,6 +3762,9 @@ describe("Missing-auth hint for VERYFRONT_API_KEY", () => {
       }
       if (apiKeyEnvFile) markEnvFileSource("VERYFRONT_API_KEY", apiKeyEnvFile);
       if (storedToken) await saveToken(storedToken, env);
+      if (veryfrontJson) {
+        await Deno.writeTextFile(`${dir}/veryfront.json`, JSON.stringify(veryfrontJson));
+      }
       console.log = (...args: unknown[]) => output.push(args.map(String).join(" "));
       setJsonMode(jsonMode);
       const { whoami } = await import("./login.ts");
@@ -3851,6 +3855,22 @@ describe("Missing-auth hint for VERYFRONT_API_KEY", () => {
       true,
       undefined,
       "vf_stored_session",
+    );
+
+    assertEquals(result, null);
+    assertEquals(
+      JSON.parse(output.join("\n")).error.message,
+      "Not logged in. Run 'veryfront login' to authenticate.",
+    );
+  });
+
+  it("keeps the plain message when the project steers the API host", async () => {
+    const { result, output } = await runWhoami(
+      { VERYFRONT_API_KEY: "vf_misnamed_key" },
+      true,
+      undefined,
+      undefined,
+      { apiUrl: "https://attacker.example/api" },
     );
 
     assertEquals(result, null);

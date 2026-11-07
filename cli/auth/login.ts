@@ -16,7 +16,9 @@ import {
 import {
   type ApiTokenSource,
   assertApiUrlAcceptsNewCredential,
+  readConfigJsonFile,
   resolveApiCredentialCandidatesForAuth,
+  resolveApiUrlTrust,
 } from "../shared/config.ts";
 import {
   createErrorEnvelope,
@@ -26,7 +28,7 @@ import {
 } from "../shared/json-output.ts";
 import { isInteractive } from "../shared/interactive.ts";
 import { getEnvSource } from "veryfront/utils/env-loader";
-import { basename, isAbsolute, relative } from "veryfront/platform/path";
+import { basename, isAbsolute, join, relative } from "veryfront/platform/path";
 import { cwd, getEnv } from "veryfront/platform";
 
 const applyIntrinsic = Reflect.apply;
@@ -149,6 +151,11 @@ async function hasConfiguredCredential(
   projectDir: string,
 ): Promise<boolean> {
   try {
+    // A repository-steered host filters out the user's own credentials, and
+    // would filter a newly exported VERYFRONT_API_TOKEN the same way.
+    const configFile = await readConfigJsonFile(projectDir);
+    const trust = resolveApiUrlTrust(env, configFile, join(projectDir, "veryfront.json"));
+    if (trust.repositorySteered) return true;
     const candidates = await resolveApiCredentialCandidatesForAuth(env, projectDir);
     return candidates.length > 0;
   } catch {
