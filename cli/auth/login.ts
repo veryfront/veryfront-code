@@ -139,7 +139,7 @@ export async function misnamedApiKeyHint(
   env: EnvironmentConfig = getEnvironmentConfig(),
   projectDir: string = cwd(),
 ): Promise<string | undefined> {
-  if (!getEnv("VERYFRONT_API_KEY")) return undefined;
+  if (!getEnv("VERYFRONT_API_KEY")?.trim()) return undefined;
   if (getEnvSource("VERYFRONT_API_KEY").source !== "process") return undefined;
   if (getEnv("VERYFRONT_API_TOKEN")?.trim() || getEnv("VERYFRONT_API_TOKEN_FILE")?.trim()) {
     return undefined;
@@ -153,11 +153,18 @@ async function hasConfiguredCredential(
   projectDir: string,
 ): Promise<boolean> {
   try {
-    // A repository-steered host filters out the user's own credentials, and
-    // would filter a newly exported VERYFRONT_API_TOKEN the same way.
+    // A host steered by the project's environment files filters out the
+    // user's own credentials, and would filter a newly exported
+    // VERYFRONT_API_TOKEN the same way. A veryfront.json apiUrl alone does
+    // not: shell credentials still validate against the operator's host.
     const configFile = await readConfigJsonFile(projectDir);
     const trust = resolveApiUrlTrust(env, configFile, join(projectDir, "veryfront.json"));
-    if (trust.repositorySteered) return true;
+    if (
+      trust.repositorySteered &&
+      (trust.steeringEnvFile !== undefined || trust.steeringConfigFile === undefined)
+    ) {
+      return true;
+    }
     const candidates = await resolveApiCredentialCandidatesForAuth(env, projectDir);
     return candidates.length > 0;
   } catch {

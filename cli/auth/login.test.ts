@@ -3735,12 +3735,14 @@ describe("Missing-auth hint for VERYFRONT_API_KEY", () => {
     apiKeyEnvFile?: string,
     storedToken?: string,
     apiUrlFromProjectEnv = false,
+    veryfrontJson?: Record<string, unknown>,
   ): Promise<{ result: unknown; output: string[] }> {
     const dir = await makeTempDir({ prefix: "whoami-api-key-" });
     const env = createTestEnvironmentConfig({
       homeDir: dir,
       xdgConfigHome: dir,
-      apiBaseUrl: "https://auth.example.test",
+      // veryfront.json steering only applies under the default API base.
+      apiBaseUrl: veryfrontJson ? undefined : "https://auth.example.test",
       apiUrl: undefined,
       apiToken: vars.VERYFRONT_API_TOKEN,
       ...(vars.VERYFRONT_API_URL ? { apiUrl: vars.VERYFRONT_API_URL } : {}),
@@ -3766,6 +3768,9 @@ describe("Missing-auth hint for VERYFRONT_API_KEY", () => {
       if (apiKeyEnvFile) markEnvFileSource("VERYFRONT_API_KEY", apiKeyEnvFile);
       if (storedToken) await saveToken(storedToken, env);
       if (apiUrlFromProjectEnv) markEnvFileSource("VERYFRONT_API_URL", `${dir}/.env`);
+      if (veryfrontJson) {
+        await Deno.writeTextFile(`${dir}/veryfront.json`, JSON.stringify(veryfrontJson));
+      }
       console.log = (...args: unknown[]) => output.push(args.map(String).join(" "));
       setJsonMode(jsonMode);
       const { whoami } = await import("./login.ts");
@@ -3835,6 +3840,30 @@ describe("Missing-auth hint for VERYFRONT_API_KEY", () => {
       JSON.parse(output.join("\n")).error.message,
       "Not logged in. Run 'veryfront login' to authenticate.",
     );
+  });
+
+  it("leaves the hint out for a whitespace-only VERYFRONT_API_KEY", async () => {
+    const { result, output } = await runWhoami({ VERYFRONT_API_KEY: "   " }, true);
+
+    assertEquals(result, null);
+    assertEquals(
+      JSON.parse(output.join("\n")).error.message,
+      "Not logged in. Run 'veryfront login' to authenticate.",
+    );
+  });
+
+  it("keeps the hint when only veryfront.json names another API host", async () => {
+    const { result, output } = await runWhoami(
+      { VERYFRONT_API_KEY: "vf_misnamed_key" },
+      true,
+      undefined,
+      undefined,
+      false,
+      { apiUrl: "https://project.example/api" },
+    );
+
+    assertEquals(result, null);
+    assertEquals(JSON.parse(output.join("\n")).error.message, `Not logged in. ${API_KEY_HINT}`);
   });
 
   it("treats a whitespace-only VERYFRONT_API_TOKEN as unset", async () => {
