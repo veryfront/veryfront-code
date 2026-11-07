@@ -305,9 +305,11 @@ describe("veryfront/chat hook behavior", () => {
 
   it("useCompletion streams text and reports the completed value", async () => {
     let requestBody: unknown;
+    let accept: string | null = null;
     let finished = "";
     const restoreFetch = replaceFetch(async (_input, init) => {
       requestBody = JSON.parse(String(observeFetchRequestInit(init).body));
+      accept = new Headers(observeFetchRequestInit(init).headers).get("accept");
       return chunkedResponse(["Generated ", "answer"]);
     });
     try {
@@ -331,6 +333,8 @@ describe("veryfront/chat hook behavior", () => {
             prompt: "Write an answer",
             model: "test-model",
           });
+          // Declaring the stream lets a draining proxy refuse it up front.
+          assertEquals(accept, "text/plain, text/event-stream;q=0.9, */*;q=0.8");
         },
       );
     } finally {
@@ -341,7 +345,11 @@ describe("veryfront/chat hook behavior", () => {
   it("useStreaming accumulates chunks and reports completion", async () => {
     const chunks: string[] = [];
     let completions = 0;
-    const restoreFetch = replaceFetch(async () => chunkedResponse(["streamed ", "value"]));
+    let accept: string | null = null;
+    const restoreFetch = replaceFetch(async (_input, init) => {
+      accept = new Headers(observeFetchRequestInit(init).headers).get("accept");
+      return chunkedResponse(["streamed ", "value"]);
+    });
     try {
       await exerciseAsync(
         () =>
@@ -364,6 +372,7 @@ describe("veryfront/chat hook behavior", () => {
             "each stream chunk is delivered separately to onChunk",
           );
           assertEquals(completions, 1);
+          assertEquals(accept, "text/plain, text/event-stream;q=0.9, */*;q=0.8");
           const stream = current();
           flushSync(() => stream.reset());
           assertEquals(current().data, "");

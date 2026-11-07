@@ -42,6 +42,17 @@ const STATIC_ENV: Record<string, string> = {
   PROJECT_CIRCUIT_RESET_MS: "15000",
 };
 
+/**
+ * Local split mode has no Kubernetes gateway to move off the proxy, and its
+ * signal handler forwards SIGTERM, so the proxy skips the rollout admission
+ * grace and exits as soon as in-flight requests finish.
+ */
+export function buildSplitModeProxyEnvForTests(
+  env: Record<string, string>,
+): Record<string, string> {
+  return { ...env, SHUTDOWN_ADMISSION_GRACE_MS: "0" };
+}
+
 export function buildSplitModeEnvForTests(
   userEnv: Record<string, string>,
   productionServerPort: number,
@@ -179,7 +190,7 @@ export async function runSplitMode(options: SplitModeOptions): Promise<void> {
   // Start proxy
   const proxyProcess = startProcess(
     [...veryfront, "serve", "--mode=proxy", `--port=${proxyPort}`],
-    env,
+    buildSplitModeProxyEnvForTests(env),
     `proxy on :${proxyPort}`,
   );
 

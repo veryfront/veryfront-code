@@ -476,6 +476,8 @@ it("compiled proxy smoke covers cache and observability providers", async () => 
       "run_smoke sentry",
       "VERYFRONT_ERROR_REPORTER=sentry",
       "SENTRY_DSN=https://public@example.com/1",
+      // Five SIGTERMed probes must not each wait out the 10s admission grace.
+      "SHUTDOWN_ADMISSION_GRACE_MS=0",
     ]
   ) {
     assertEquals(
@@ -555,6 +557,8 @@ it("proxy release enforces the cold-start cgroup budget", async () => {
       '--memory "$memory_limit"',
       "{{.State.OOMKilled}}",
       '"/_proxy/health"',
+      // The SIGTERM admission grace must fit inside `docker stop --time 5`.
+      "--env SHUTDOWN_ADMISSION_GRACE_MS=1000",
     ]
   ) {
     assertEquals(

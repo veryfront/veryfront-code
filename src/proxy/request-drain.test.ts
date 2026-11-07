@@ -9,8 +9,13 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   closeProxyServerWithin,
   createProxyDrainingResponse,
+  createProxyReadinessResponse,
+  isLongLivedProxyRequest,
   parseProxyDrainTimeoutMs,
+  PROXY_READY_PATH,
+  ProxyDrainAdmission,
   ProxyRequestDrainTracker,
+  withConnectionClose,
 } from "./request-drain.ts";
 
 describe("proxy request drain", () => {
@@ -376,6 +381,230 @@ describe("proxy request drain", () => {
     assertEquals(response.headers.get("retry-after"), "1");
     assertEquals(response.headers.get("cache-control"), "no-store");
     assertEquals(response.headers.get("x-content-type-options"), "nosniff");
+  });
+
+  it("reports ready until shutdown starts, then fails readiness with the draining response", async () => {
+    assertEquals(PROXY_READY_PATH, "/_proxy/ready");
+    const ready = createProxyReadinessResponse(false);
+    assertEquals(ready.status, 200);
+    assertEquals(ready.headers.get("cache-control"), "no-store");
+    assertEquals(await ready.json(), { service: "veryfront-proxy", status: "ready" });
+
+    const draining = createProxyReadinessResponse(true);
+    assertEquals(draining.status, 503);
+    assertEquals(draining.headers.get("retry-after"), "1");
+    await draining.body?.cancel();
+  });
+
+  it("admits requests for the grace window after SIGTERM, then refuses them", () => {
+    let now = 1_000;
+    const admission = new ProxyDrainAdmission(10_000, () => now);
+    const plain = new Request("http://proxy.test/page");
+    assertEquals(admission.admits(plain, "/page"), true);
+    assertEquals(admission.getGrantedMs(), 0);
+
+    admission.begin("SIGTERM");
+    assertEquals(admission.admits(plain, "/page"), true);
+    assertEquals(admission.getGrantedMs(), 10_000);
+
+    now += 4_000;
+    admission.begin("SIGTERM"); // a second signal does not extend the window
+    admission.begin("SIGINT"); // nor does a later SIGINT cut it short
+    assertEquals(admission.admits(plain, "/page"), true);
+    assertEquals(admission.getGrantedMs(), 10_000);
+
+    now += 6_000;
+    assertEquals(admission.admits(plain, "/page"), false);
+    assertThrows(() => new ProxyDrainAdmission(-1), RangeError);
+  });
+
+  it("gives SIGINT no admission grace and no grace wait", async () => {
+    const admission = new ProxyDrainAdmission(60_000, () => 1_000);
+    admission.begin("SIGINT");
+    assertEquals(admission.getGrantedMs(), 0);
+    assertEquals(admission.admits(new Request("http://proxy.test/page"), "/page"), false);
+
+    // A 60s window would hold this wait open; SIGINT resolves it at once.
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    const settled = await Promise.race([
+      admission.waitForWindow().then(() => "settled"),
+      new Promise<string>((resolve) => {
+        timeoutId = setTimeout(() => resolve("pending"), 200);
+      }),
+    ]);
+    clearTimeout(timeoutId);
+    assertEquals(settled, "settled");
+  });
+
+  it("refuses new WebSocket and SSE streams from the start of the grace window", () => {
+    const admission = new ProxyDrainAdmission(10_000, () => 0);
+    const runStream = new Request("http://proxy.test/api/control-plane/runs/run_1/stream", {
+      method: "POST",
+    });
+    const eventSource = new Request("http://proxy.test/events", {
+      headers: { accept: "text/event-stream" },
+    });
+    const webSocket = new Request("http://proxy.test/ws", {
+      headers: { upgrade: "WebSocket" },
+    });
+    const runStatus = new Request("http://proxy.test/api/control-plane/runs/run_1");
+
+    // Before shutdown every request is served.
+    assertEquals(admission.admits(runStream, "/api/control-plane/runs/run_1/stream"), true);
+
+    admission.begin("SIGTERM");
+    assertEquals(admission.admits(runStream, "/api/control-plane/runs/run_1/stream"), false);
+    assertEquals(admission.admits(eventSource, "/events"), false);
+    assertEquals(admission.admits(webSocket, "/ws"), false);
+    // useCompletion/useStreaming prefer plain text but list SSE.
+    const textPreferred = new Request("http://proxy.test/api/completion", {
+      method: "POST",
+      headers: { accept: "text/plain, text/event-stream;q=0.9, */*;q=0.8" },
+    });
+    assertEquals(admission.admits(textPreferred, "/api/completion"), false);
+    assertEquals(admission.admits(runStatus, "/api/control-plane/runs/run_1"), true);
+
+    // useChat POSTs the AG-UI stream without Accept: text/event-stream.
+    const post = (path: string) =>
+      new Request(`http://proxy.test${path}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+      });
+    assertEquals(admission.admits(post("/api/ag-ui"), "/api/ag-ui"), false);
+    assertEquals(admission.admits(post("/api/ag-ui/"), "/api/ag-ui/"), false);
+    // useAgent's JSON invocation, agent metadata reads and other POSTs stay
+    // admitted (served with a connection-closing response).
+    assertEquals(admission.admits(post("/api/agents/support"), "/api/agents/support"), true);
+    assertEquals(
+      admission.admits(new Request("http://proxy.test/api/agents/support"), "/api/agents/support"),
+      true,
+    );
+    assertEquals(admission.admits(post("/api/agents"), "/api/agents"), true);
+    assertEquals(admission.admits(post("/api/forms/contact"), "/api/forms/contact"), true);
+
+    assertEquals(isLongLivedProxyRequest(runStream, "/api/control-plane/runs/run_1/stream"), true);
+    assertEquals(
+      isLongLivedProxyRequest(
+        new Request("http://proxy.test/api/control-plane/runs/run_1/stream"),
+        "/api/control-plane/runs/run_1/stream",
+      ),
+      false,
+    );
+  });
+
+  it("closes connections only once shutdown has begun", async () => {
+    const admission = new ProxyDrainAdmission(10_000, () => 0);
+    const get = new Request("http://proxy.test/page");
+    const before = admission.closeIfDraining(get, new Response("ok"));
+    assertEquals(before.headers.get("connection"), null);
+
+    admission.begin("SIGTERM");
+    const during = admission.closeIfDraining(get, new Response("ok"));
+    assertEquals(during.headers.get("connection"), "close");
+    await before.body?.cancel();
+    await during.body?.cancel();
+  });
+
+  it("closes error responses produced while draining", async () => {
+    const admission = new ProxyDrainAdmission(10_000, () => 0);
+    admission.begin("SIGTERM");
+    const error = admission.closeIfDraining(
+      new Request("http://proxy.test/page"),
+      new Response("Bad Request", { status: 400 }),
+    );
+    assertEquals(error.status, 400);
+    assertEquals(error.headers.get("connection"), "close");
+    await error.body?.cancel();
+  });
+
+  it("answers a response-negotiated SSE stream admitted during the drain with the draining response", async () => {
+    const admission = new ProxyDrainAdmission(10_000, () => 0);
+    const sse = () => {
+      let cancelled = false;
+      const body = new ReadableStream<Uint8Array>({
+        cancel() {
+          cancelled = true;
+        },
+      });
+      const response = new Response(body, {
+        headers: { "content-type": "text/event-stream; charset=utf-8" },
+      });
+      return { response, wasCancelled: () => cancelled };
+    };
+    const events = new Request("http://proxy.test/api/workflows/runs/run_1/events");
+
+    // Before shutdown an SSE response streams normally.
+    const live = sse();
+    assertEquals(admission.closeIfDraining(events, live.response), live.response);
+
+    admission.begin("SIGTERM");
+
+    // Admitted during the drain: the GET stream is retried elsewhere.
+    const fresh = sse();
+    const refused = admission.closeIfDraining(events, fresh.response, true);
+    assertEquals(refused.status, 503);
+    assertEquals(refused.headers.get("connection"), "close");
+    await Promise.resolve();
+    assertEquals(fresh.wasCancelled(), true);
+    await refused.body?.cancel();
+
+    // Started before the drain: keep streaming within the drain budget.
+    const started = sse();
+    const kept = admission.closeIfDraining(events, started.response, false);
+    assertEquals(kept.headers.get("content-type"), "text/event-stream; charset=utf-8");
+    assertEquals(kept.headers.get("connection"), "close");
+    await kept.body?.cancel();
+
+    // A POST already ran upstream, so it is not replayed by refusing it.
+    const posted = sse();
+    const post = new Request("http://proxy.test/api/chat", { method: "POST" });
+    const kept2 = admission.closeIfDraining(post, posted.response, true);
+    assertEquals(kept2.headers.get("content-type"), "text/event-stream; charset=utf-8");
+    await kept2.body?.cancel();
+  });
+
+  it("measures the remaining drain budget from the start of shutdown", () => {
+    let now = 1_000;
+    const sigterm = new ProxyDrainAdmission(10_000, () => now);
+    sigterm.begin("SIGTERM");
+    now += 10_000;
+    assertEquals(sigterm.remainingDrainBudgetMs(25_000), 15_000);
+    // A grace wait that settled late (busy event loop) shrinks the budget
+    // instead of extending the shutdown past the configured bound.
+    now += 2_000.5;
+    assertEquals(sigterm.remainingDrainBudgetMs(25_000), 12_999);
+    now += 20_000;
+    assertEquals(sigterm.remainingDrainBudgetMs(25_000), 0);
+
+    const sigint = new ProxyDrainAdmission(10_000, () => 0);
+    sigint.begin("SIGINT");
+    assertEquals(sigint.remainingDrainBudgetMs(25_000), 25_000);
+  });
+
+  it("marks admitted drain responses to close their connection", async () => {
+    const mutable = withConnectionClose(new Response("ok", { headers: { "x-a": "1" } }));
+    assertEquals(mutable.headers.get("connection"), "close");
+    assertEquals(mutable.headers.get("x-a"), "1");
+
+    const upstream = Response.redirect("https://example.com/next", 307);
+    const rebuilt = withConnectionClose(upstream);
+    assertEquals(rebuilt.status, 307);
+    assertEquals(rebuilt.headers.get("location"), "https://example.com/next");
+    assertEquals(rebuilt.headers.get("connection"), "close");
+    await rebuilt.body?.cancel();
+    await mutable.body?.cancel();
+  });
+
+  it("parses the admission grace with its own variable name", () => {
+    assertEquals(
+      parseProxyDrainTimeoutMs(undefined, 10_000, "SHUTDOWN_ADMISSION_GRACE_MS"),
+      10_000,
+    );
+    assertThrows(
+      () => parseProxyDrainTimeoutMs("x", 10_000, "SHUTDOWN_ADMISSION_GRACE_MS"),
+      TypeError,
+      "SHUTDOWN_ADMISSION_GRACE_MS",
+    );
   });
 
   it("bounds server close when an adapter keeps waiting on open connections", async () => {

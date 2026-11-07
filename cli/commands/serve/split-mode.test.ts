@@ -5,7 +5,12 @@ import "#veryfront/schemas/_test-setup.ts";
 
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { buildSplitModeEnvForTests, runSplitMode, waitForPort } from "./split-mode.ts";
+import {
+  buildSplitModeEnvForTests,
+  buildSplitModeProxyEnvForTests,
+  runSplitMode,
+  waitForPort,
+} from "./split-mode.ts";
 
 describe("serve-split command", () => {
   describe("runSplitMode", () => {
@@ -37,6 +42,16 @@ describe("serve-split command", () => {
       assertEquals(env.VERYFRONT_TRUST_FORWARDED_HEADERS, "1");
       assertEquals(env.VERYFRONT_SERVER_URL, "http://localhost:3000");
       assertEquals(env.CACHE_TYPE, undefined);
+    });
+
+    it("starts the proxy child without the rollout admission grace", () => {
+      const env = buildSplitModeEnvForTests({ SHUTDOWN_ADMISSION_GRACE_MS: "10000" }, 3000);
+      const proxyEnv = buildSplitModeProxyEnvForTests(env);
+
+      assertEquals(proxyEnv.SHUTDOWN_ADMISSION_GRACE_MS, "0");
+      assertEquals(proxyEnv.VERYFRONT_SERVER_URL, "http://localhost:3000");
+      // The production server child keeps the shared environment unchanged.
+      assertEquals(env.SHUTDOWN_ADMISSION_GRACE_MS, "10000");
     });
   });
 

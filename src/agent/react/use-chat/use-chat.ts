@@ -256,6 +256,10 @@ function useChatState(options: UseChatOptions): ResettableUseChatResult {
           // discovers configured and origin-specific cookie names.
           headers: csrfMutationHeaders(api, {
             headers: {
+              // The reply is an SSE stream. Saying so lets a draining proxy
+              // send the chat to a replica that stays, whatever `api` path the
+              // app configured.
+              Accept: "text/event-stream",
               "Content-Type": "application/json",
               ...options.headers,
             },
