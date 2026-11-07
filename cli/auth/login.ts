@@ -126,9 +126,16 @@ const MISNAMED_API_KEY_HINT_LINES = [
  * Studio's key page tells users to export `VERYFRONT_API_KEY`, which the CLI
  * does not read. When that is the only one set, missing-auth messages name the
  * variable the CLI does read instead of a bare "Not logged in".
+ *
+ * The hint only applies to a key the user exported themselves. A key loaded
+ * from a project `.env` belongs to whoever wrote the checkout, so it is never
+ * suggested as the user's own credential. A token file, when set, is the
+ * effective credential, and setting the variable would not change that.
  */
 export function misnamedApiKeyHint(): string | undefined {
-  if (!getEnv("VERYFRONT_API_KEY") || getEnv("VERYFRONT_API_TOKEN")) return undefined;
+  if (!getEnv("VERYFRONT_API_KEY")) return undefined;
+  if (getEnvSource("VERYFRONT_API_KEY").source !== "process") return undefined;
+  if (getEnv("VERYFRONT_API_TOKEN") || getEnv("VERYFRONT_API_TOKEN_FILE")) return undefined;
   return MISNAMED_API_KEY_HINT_LINES.join(" ");
 }
 
