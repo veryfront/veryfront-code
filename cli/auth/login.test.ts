@@ -3720,10 +3720,7 @@ describe("Interactive sign-in completion", () => {
   });
 });
 
-describe("Missing-auth hint for VERYFRONT_API_KEY", {
-  sanitizeOps: false,
-  sanitizeResources: false,
-}, () => {
+describe("Missing-auth hint for VERYFRONT_API_KEY", () => {
   const API_KEY_HINT = "VERYFRONT_API_KEY is set, but the CLI reads VERYFRONT_API_TOKEN. " +
     "Set VERYFRONT_API_TOKEN to the same key, or run 'veryfront login'.";
 
