@@ -105,9 +105,10 @@ export function wrapHostToolSetWithMcpPolicy(
     const execute = definition.execute;
     wrapped[toolName] = {
       ...definition,
-      execute: (toolInput: unknown, execOptions?: ToolExecutionContext) => {
+      execute(this: unknown, toolInput: unknown, execOptions?: ToolExecutionContext) {
         gate.assertAllowed(toolName);
-        return execute(toolInput, execOptions);
+        // The receiver a host binds carries a gated tool's exposed name (`this.id`).
+        return ReflectApply(execute, this, [toolInput, execOptions]);
       },
     };
   }

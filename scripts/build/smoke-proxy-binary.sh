@@ -31,7 +31,8 @@ run_smoke() {
   shift 3
   local log_file="${tmp_dir}/${name}.log"
 
-  env PORT="$port" HOST=127.0.0.1 NODE_ENV=development "$@" \
+  # Each probe SIGTERMs an idle proxy; skip the rollout admission grace.
+  env PORT="$port" HOST=127.0.0.1 NODE_ENV=development SHUTDOWN_ADMISSION_GRACE_MS=0 "$@" \
     "$binary" >"$log_file" 2>&1 &
   proxy_pid=$!
 

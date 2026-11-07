@@ -172,6 +172,7 @@ export class Sandbox {
     const { id, endpoint } = created;
     let session: Record<string, unknown>;
     try {
+      options.onCreated?.(id);
       session = created.status === "running" ? created : await Sandbox.#waitForReady(
         apiUrl,
         id,

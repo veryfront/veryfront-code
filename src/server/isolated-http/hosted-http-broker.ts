@@ -64,6 +64,8 @@ export interface HostedHttpInput {
 
 /** Admission and lifetime limits of the hosted HTTP broker's warm executors. */
 export interface HostedHttpBrokerOptions extends HostedExecutorSessionPoolOptions {
+  observeDispatch?:
+    import("./generation-executor.ts").HostedHttpGenerationExecutorOptions["observeDispatch"];
   /** Requests one executor serves at once. Default 8, maximum 16. */
   maxConcurrentRequestsPerExecutor?: number;
   /** Retire an executor after this long without a request in flight. Default 60 seconds, maximum 1 hour. */
@@ -176,6 +178,7 @@ function bounded(value: number, minimum: number, maximum: number, name: string):
  * executor with the same identity is refused, never rebound.
  */
 export function createHostedHttpBroker(options: HostedHttpBrokerOptions) {
+  const observeDispatch = options.observeDispatch;
   const sessions = createHostedExecutorSessionPool(options);
   const perExecutor = bounded(
     options.maxConcurrentRequestsPerExecutor ?? 8,
@@ -530,6 +533,7 @@ export function createHostedHttpBroker(options: HostedHttpBrokerOptions) {
         input,
         sessions,
         context: (value) => contexts.get(value),
+        ...(observeDispatch === undefined ? {} : { observeDispatch }),
         idleTimeoutMs,
         retireBeforeDeadlineMs: drainTimeoutMs,
       });

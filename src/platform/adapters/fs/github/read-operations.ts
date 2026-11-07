@@ -1,6 +1,6 @@
 import { buildGitHubBytesCacheKey, buildGitHubContentCacheKey } from "#veryfront/cache";
 import { createError, toError } from "#veryfront/errors";
-import { logger } from "#veryfront/utils";
+import { logger, throwIfAborted } from "#veryfront/utils";
 import type { FileCache } from "../cache/file-cache.ts";
 import type { GitHubApiClient, GitHubRequestOptions } from "./github-api-client.ts";
 import type { GitHubStatOperations } from "./stat-operations.ts";
@@ -37,7 +37,8 @@ export class GitHubReadOperations {
   }
 
   async readTextFile(path: string, options: GitHubRequestOptions = {}): Promise<string> {
-    options.signal?.throwIfAborted();
+    // Not `signal.throwIfAborted()`: Bun 1.3.6 can lose the reason and throw `undefined`.
+    throwIfAborted(options.signal);
     const normalizedPath = normalizeGitHubPath(path, this.projectDir);
     const cacheKey = buildGitHubContentCacheKey(
       buildGitHubCacheRef(this.config),

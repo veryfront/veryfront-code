@@ -46,23 +46,6 @@ export function resolveExportEntry(entry: unknown): string | undefined {
   return undefined;
 }
 
-export function toCjsDestructureBindings(bindings: string): string {
-  const inner = bindings.trim().replace(/^\{\s*/, "").trimEnd().replace(/\}$/, "");
-  if (!inner) return "{}";
-
-  const converted = inner
-    .split(",")
-    .map((part) => part.trim())
-    .filter(Boolean)
-    .map((part) => {
-      const aliasMatch = part.match(/^([A-Za-z_$][\w$]*)\s+as\s+([A-Za-z_$][\w$]*)$/);
-      if (aliasMatch) return `${aliasMatch[1]}: ${aliasMatch[2]}`;
-      return part;
-    });
-
-  return `{ ${converted.join(", ")} }`;
-}
-
 export function getLoaderForFile(filePath: string): "tsx" | "jsx" | "ts" | "js" | "json" {
   const ext = filePath.split(".").pop() ?? "";
   return EXT_TO_LOADER[ext] ?? "js";

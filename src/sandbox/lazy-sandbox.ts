@@ -49,7 +49,7 @@ type CommandFetchAttempt<T> =
 const anyAbortSignal = AbortSignal.any.bind(AbortSignal);
 
 /** Options accepted by lazy sandbox. */
-export interface LazySandboxOptions extends SandboxOptions {
+export interface LazySandboxOptions extends Omit<SandboxOptions, "onCreated"> {
   /**
    * Optional existing sandbox session to attach to instead of creating a new one.
    * Attached sessions are detached, not deleted, on close unless deleteOnClose is true.

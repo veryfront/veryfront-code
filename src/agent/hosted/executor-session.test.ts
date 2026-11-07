@@ -639,7 +639,10 @@ describe("hosted executor session", () => {
   }
 
   it("observes preparation without attaching until the allocator supplies a ready endpoint", async () => {
-    const f = fixture();
+    const attachments: Parameters<
+      NonNullable<HostedExecutorSessionOptions["observeAttachment"]>
+    >[0][] = [];
+    const f = fixture({ observeAttachment: (receipt) => void attachments.push(receipt) });
     const endpoint = f.returned.endpoint!;
     f.returned.phase = "preparing";
     delete f.returned.endpoint;
@@ -650,10 +653,20 @@ describe("hosted executor session", () => {
     f.time.advanceBy(100);
     await tick();
     assertEquals(f.calls, ["allocate", "observe"]);
+    assertEquals(attachments, []);
     f.returned.phase = "ready";
     f.returned.endpoint = endpoint;
     f.time.advanceBy(100);
     await session.ready;
+    assertEquals(attachments, [{
+      allocationId: binding.allocationId,
+      generation: binding.generation,
+      invocationId: binding.invocationId,
+      podUid: endpoint.podUid,
+      nodeName: endpoint.nodeName,
+      declaredImage: image,
+    }]);
+    assert(Object.isFrozen(attachments[0]));
     assertEquals(f.calls.filter((call) => call === "allocate").length, 1);
     assertEquals(f.calls.filter((call) => call === "connect").length, 1);
     await session.close();
@@ -758,7 +771,12 @@ describe("hosted executor session", () => {
   });
 
   it("does not repeat a failed authenticated attachment or expose its error details", async () => {
-    const f = fixture();
+    let attachments = 0;
+    const f = fixture({
+      observeAttachment: () => {
+        attachments++;
+      },
+    });
     let attempts = 0;
     f.options.connectTransport = () => {
       attempts++;
@@ -770,6 +788,7 @@ describe("hosted executor session", () => {
     f.time.advanceBy(1000);
     await tick();
     assertEquals(attempts, 1);
+    assertEquals(attachments, 0);
     assertEquals(f.calls.includes("operations"), false);
     assertEquals(f.allocatedKey, new Uint8Array(32));
     assertEquals(f.time.pendingWaitCount, 0);

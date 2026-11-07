@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { ProxyDrainAdmission, ProxyRequestDrainTracker } from "./request-drain.ts";
 import { parseProxyShutdownCleanupTimeoutMs, runProxyShutdownSteps } from "./shutdown-lifecycle.ts";
 
 describe("proxy shutdown lifecycle", () => {
@@ -181,6 +182,117 @@ describe("proxy shutdown lifecycle", () => {
     }
 
     assertEquals(await settlement, []);
+  });
+
+  it("waits out the admission grace window on the timer captured before extensions load", async () => {
+    const admission = new ProxyDrainAdmission(5, () => 0);
+    admission.begin("SIGTERM");
+    const timerDescriptor = Object.getOwnPropertyDescriptor(globalThis, "setTimeout")!;
+    let wait: Promise<void> | undefined;
+    try {
+      Object.defineProperty(globalThis, "setTimeout", {
+        configurable: timerDescriptor.configurable,
+        enumerable: timerDescriptor.enumerable,
+        writable: true,
+        value: () => {
+          throw new Error("poisoned setTimeout");
+        },
+      });
+      wait = admission.waitForWindow();
+    } finally {
+      Object.defineProperty(globalThis, "setTimeout", timerDescriptor);
+    }
+
+    assertEquals(await wait, undefined);
+  });
+
+  it("starts and waits out the admission grace on the clock captured before extensions load", async () => {
+    const admission = new ProxyDrainAdmission(1);
+    // Deno defines `now` on Performance.prototype; Bun on the instance.
+    const nowOwner: object = Object.hasOwn(performance, "now")
+      ? performance
+      : Performance.prototype;
+    const nowDescriptor = Object.getOwnPropertyDescriptor(nowOwner, "now")!;
+    let wait: Promise<void> | undefined;
+    let admitsStream: boolean | undefined;
+    try {
+      Object.defineProperty(nowOwner, "now", {
+        ...nowDescriptor,
+        value: () => {
+          throw new Error("poisoned performance.now");
+        },
+      });
+      admission.begin("SIGTERM");
+      admitsStream = admission.admits(
+        new Request("http://proxy.test/events", { headers: { accept: "text/event-stream" } }),
+        "/events",
+      );
+      wait = admission.waitForWindow();
+    } finally {
+      Object.defineProperty(nowOwner, "now", nowDescriptor);
+    }
+
+    assertEquals(admitsStream, false);
+    assertEquals(await wait, undefined);
+    assertEquals(admission.getGrantedMs(), 1);
+  });
+
+  it("computes the grace wait and drain budget with math captured before extensions load", async () => {
+    const admission = new ProxyDrainAdmission(1, () => 0);
+    admission.begin("SIGTERM");
+    const maxDescriptor = Object.getOwnPropertyDescriptor(Math, "max")!;
+    const ceilDescriptor = Object.getOwnPropertyDescriptor(Math, "ceil")!;
+    const floorDescriptor = Object.getOwnPropertyDescriptor(Math, "floor")!;
+    const poisoned = () => {
+      throw new Error("poisoned Math");
+    };
+    let wait: Promise<void> | undefined;
+    let budget: number | undefined;
+    try {
+      Object.defineProperty(Math, "max", { ...maxDescriptor, value: poisoned });
+      Object.defineProperty(Math, "ceil", { ...ceilDescriptor, value: poisoned });
+      Object.defineProperty(Math, "floor", { ...floorDescriptor, value: poisoned });
+      wait = admission.waitForWindow();
+      budget = admission.remainingDrainBudgetMs(25);
+    } finally {
+      Object.defineProperty(Math, "max", maxDescriptor);
+      Object.defineProperty(Math, "ceil", ceilDescriptor);
+      Object.defineProperty(Math, "floor", floorDescriptor);
+    }
+
+    assertEquals(await wait, undefined);
+    assertEquals(budget, 25);
+  });
+
+  it("polls and reports the request drain with intrinsics captured before extensions load", async () => {
+    const tracker = new ProxyRequestDrainTracker();
+    tracker.start("req_1", "GET", "/slow");
+    const poisoned = () => {
+      throw new Error("poisoned intrinsic");
+    };
+    const targets = [
+      [Math, "min"],
+      [Number, "isSafeInteger"],
+      [Array, "from"],
+    ] as const;
+    const descriptors = targets.map(([owner, key]) => Object.getOwnPropertyDescriptor(owner, key)!);
+    let drained: Promise<boolean> | undefined;
+    let reported: string[] | undefined;
+    try {
+      targets.forEach(([owner, key], index) =>
+        Object.defineProperty(owner, key, { ...descriptors[index], value: poisoned })
+      );
+      drained = tracker.waitForDrain(5, 1);
+      reported = tracker.getInFlightRequests().map((request) => request.path);
+    } finally {
+      targets.forEach(([owner, key], index) =>
+        Object.defineProperty(owner, key, descriptors[index]!)
+      );
+    }
+
+    // The poll keeps waiting (and then times out) instead of rejecting.
+    assertEquals(await drained, false);
+    assertEquals(reported, ["/slow"]);
   });
 
   it("rejects malformed shutdown step configurations", async () => {

@@ -780,6 +780,80 @@ export function GET() {
     });
   });
 
+  it("should load CommonJS dependencies in compiled-binary API routes (#5471)", async () => {
+    // A pg-shaped CommonJS package: a lazily required nested dependency, a
+    // Node built-in, a default export that is an instance, and a subpath.
+    const projectDir = await createTestProject(
+      "api-cjs-deps-test",
+      `
+export default function Home() {
+  return <div>Home Page</div>;
+}
+`,
+      {
+        "node_modules/cjs-db/package.json": JSON.stringify({ name: "cjs-db", main: "./lib" }),
+        "node_modules/cjs-db/lib/index.js": `
+const EventEmitter = require("events").EventEmitter;
+class Pool extends EventEmitter {}
+function Db() { this.Pool = Pool; }
+Object.defineProperty(Db.prototype, "native", {
+  get() { return require("cjs-db-types").name; },
+});
+module.exports = new Db();
+module.exports.defaults = { port: 5432 };
+`,
+        "node_modules/cjs-db/lib/extra.js": `module.exports = { name: "extra" };`,
+        "node_modules/cjs-db/node_modules/cjs-db-types/package.json": JSON.stringify({
+          name: "cjs-db-types",
+        }),
+        "node_modules/cjs-db/node_modules/cjs-db-types/index.js":
+          `exports.name = "types:" + typeof module.parent;`,
+        "pages/api/db.ts": `
+import db, { defaults } from "cjs-db";
+import * as namespace from "cjs-db";
+import extra from "cjs-db/lib/extra.js";
+
+export async function GET() {
+  const dynamic = await import("cjs-db");
+  return Response.json({
+    pool: typeof db.Pool,
+    emitter: typeof new db.Pool().on,
+    native: db.native,
+    port: defaults.port,
+    namespace: typeof namespace.default.Pool,
+    extra: extra.name,
+    dynamic: typeof dynamic.default.Pool,
+  });
+}
+`,
+      },
+    );
+    const packageJsonPath = join(projectDir, "package.json");
+    const packageJson = JSON.parse(await Deno.readTextFile(packageJsonPath));
+    packageJson.dependencies["cjs-db"] = "1.0.0";
+    await Deno.writeTextFile(packageJsonPath, JSON.stringify(packageJson, null, 2));
+
+    await withServer(projectDir, async (server) => {
+      const response = await fetch(`http://127.0.0.1:${server.port}/api/db`);
+      const body = await response.text();
+
+      assertEquals(
+        response.status,
+        200,
+        `Should return 200\nResponse body: ${body}\n${server.logs.join("").slice(-16000)}`,
+      );
+      assertEquals(JSON.parse(body), {
+        pool: "function",
+        emitter: "function",
+        native: "types:object",
+        port: 5432,
+        namespace: "function",
+        extra: "extra",
+        dynamic: "function",
+      });
+    });
+  });
+
   it("fails closed when API isolation conflicts with a broad host execution grant", async () => {
     const projectDir = await createTestProject(
       "isolation-fail-closed-test",

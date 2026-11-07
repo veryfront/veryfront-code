@@ -262,6 +262,28 @@ describe("tool-helpers", () => {
       assertEquals(result, { text: "CHILDSELF" });
     });
 
+    it("asks for approval under the name a tool is configured as, not its own id", async () => {
+      toolRegistryInternal.clearAll();
+      const asked: string[] = [];
+      const gated = tool({
+        id: "move",
+        description: "Move money",
+        approval: {},
+        inputSchema: defineSchema((v) => v.object({ amount: v.number() }))(),
+        execute: () => ({ ok: true }),
+      });
+
+      await executeConfiguredTool("transfer", { amount: 1 }, { transfer: gated }, {
+        toolCallId: "tool-1",
+        requestToolApproval: (request) => {
+          asked.push(request.toolName);
+          return Promise.resolve({ approved: true, outcome: "approved" });
+        },
+      });
+
+      assertEquals(asked, ["transfer"]);
+    });
+
     it("falls back to the registry when no inline tool is configured", async () => {
       toolRegistryInternal.clearAll();
 

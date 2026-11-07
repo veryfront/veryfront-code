@@ -38,6 +38,8 @@ export interface SandboxCapabilitiesOptions extends SandboxClientOptions {
 export interface SandboxOptions extends SandboxClientOptions {
   /** Read the current credential before each request when the host renews it. */
   getAuthToken?: () => string;
+  /** Synchronously observe the acknowledged workspace ID before readiness polling. */
+  onCreated?: (id: string) => void;
   /** Cancel sandbox provisioning and readiness polling. */
   signal?: AbortSignal;
   /** Project UUID or slug used for billing. */

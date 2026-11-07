@@ -46,6 +46,7 @@ import {
   generateCompiledBinaryRequireShim,
   NODE_BUILTINS,
   readProjectDependencies,
+  resolveEsmUserDependencies,
   rewriteExternalImports,
 } from "./external-import-rewriter.ts";
 import {
@@ -101,8 +102,6 @@ const INLINE_MODULE_URL_SPECIFIER = /^(?:data|blob):/i;
 const MAX_TYPESCRIPT_CONFIG_BYTES = 1024 * 1024;
 const ROUTE_RUNTIME_SHIM_SPECIFIER = "veryfront:route-runtime-shim";
 const ROUTE_RUNTIME_SHIM_NAMESPACE = "veryfront-route-runtime-shim";
-
-export { toCjsDestructureBindings } from "./loader-helpers.ts";
 
 export function loadHandlerModule(options: LoadHostModuleOptions): Promise<APIRoute | null> {
   if (!isExplicitHostProjectCodeExecutionAllowed(options)) {
@@ -1549,6 +1548,48 @@ function createRouteRuntimeShimPlugin(contents: string): Plugin {
   };
 }
 
+const NATIVE_COMMONJS_NAMESPACE = "vf-native-cjs";
+
+/**
+ * The user dependencies a compiled binary loads as CommonJS: every one that
+ * is not an ES module package (see resolveEsmUserDependencies), which keeps
+ * loading from its file:// URL.
+ */
+export async function compiledCommonJSDependencies(
+  projectDir: string,
+  fs: Parameters<typeof resolveEsmUserDependencies>[1],
+  userDeps: Map<string, string>,
+): Promise<Set<string>> {
+  const esmDeps = await resolveEsmUserDependencies(projectDir, fs, userDeps);
+  return new Set([...userDeps.keys()].filter((name) => !esmDeps.has(name)));
+}
+
+/**
+ * Bundles each CommonJS dependency the route imports as a one-line module
+ * that loads it through the runtime's own `require` (see
+ * generateCompiledBinaryRequireShim), so the bundler's interop gives default,
+ * named, namespace and dynamic imports their usual meaning. The dependency's
+ * own files are never bundled or rewritten.
+ */
+export function createNativeCommonJSPlugin(packages: Iterable<string>): Plugin {
+  const names = new Set(packages);
+  return {
+    name: "vf-native-cjs",
+    setup(build) {
+      build.onResolve({ filter: /^[^./]/ }, (args) => {
+        const parts = args.path.split("/");
+        const name = args.path.startsWith("@") ? parts.slice(0, 2).join("/") : parts[0]!;
+        if (!names.has(name)) return undefined;
+        return { path: args.path, namespace: NATIVE_COMMONJS_NAMESPACE };
+      });
+      build.onLoad({ filter: /.*/, namespace: NATIVE_COMMONJS_NAMESPACE }, (args) => ({
+        contents: `module.exports = __vf_native_require(${JSON.stringify(args.path)});`,
+        loader: "js",
+      }));
+    },
+  };
+}
+
 async function validateBundledLocalWorkerEntries(options: {
   sourceSnapshot: ProjectSourceSnapshot;
   projectDir: string;
@@ -2070,9 +2111,9 @@ function buildTranspiledModuleSource(
       // in the temp handler that Deno cannot resolve → "not a dependency and not in
       // import map" → 500. (The Node path already always-resolves zod via
       // getNodeExternalPackagesToResolve.) On the compiled binary, keeping zod in
-      // userDeps routes it through rewriteCompiledBinaryUserDependencyImports like
-      // any other npm package, so its import resolves from the project's
-      // node_modules via the createRequire shim. zod is still force-externalized
+      // userDeps routes it through the native-CommonJS bundle plugin (or the ESM
+      // file:// rewrite) like any other npm package, so its import resolves from
+      // the project's node_modules. zod is still force-externalized
       // below, never bundled inline. See veryfront-issue-inbox#217.
       const userDeps = getUserDependencies(allDeps);
 
@@ -2083,8 +2124,16 @@ function buildTranspiledModuleSource(
       // Bundling CJS deps inline (especially complex ones like pdf-parse/pdf.js)
       // breaks their internal global state management during esbuild's CJS→ESM
       // conversion.
+      // A compiled binary loads a CommonJS dependency through the runtime's own
+      // require (see createNativeCommonJSPlugin); ESM dependencies stay external
+      // and load from file:// URLs.
+      const compiledBinary = isDeno && isCompiledBinary();
+      const commonJSDeps = compiledBinary
+        ? await compiledCommonJSDependencies(projectDir, sourceSnapshot, userDeps)
+        : new Set<string>();
       const userExternals: string[] = [];
       for (const name of userDeps.keys()) {
+        if (commonJSDeps.has(name)) continue;
         userExternals.push(name, `${name}/*`);
       }
 
@@ -2095,12 +2144,10 @@ function buildTranspiledModuleSource(
       // fail at runtime. Inject a createRequire-based shim so require() works in ESM.
       // Use projectDir as the resolve base so require() finds the project's node_modules.
       const safeProjectDir = JSON.stringify(projectDir + "/package.json");
-      const requireShim = isDeno && isCompiledBinary()
-        ? generateCompiledBinaryRequireShim(projectDir)
-        : [
-          'import { createRequire as __vf_createRequire } from "node:module";',
-          `var require = __vf_createRequire(${safeProjectDir});`,
-        ].join("\n");
+      const requireShim = compiledBinary ? generateCompiledBinaryRequireShim(projectDir) : [
+        'import { createRequire as __vf_createRequire } from "node:module";',
+        `var require = __vf_createRequire(${safeProjectDir});`,
+      ].join("\n");
       const routeSourceUrl = pathHelper.toFileUrl(resolvedPath).href;
       const workerShim = [
         `const __vf_routeSourceUrl = ${JSON.stringify(routeSourceUrl)};`,
@@ -2113,7 +2160,9 @@ function buildTranspiledModuleSource(
       const routeRuntimeShim = [
         requireShim,
         workerShim,
-        "export { require, Worker };",
+        compiledBinary
+          ? "export { require, Worker, __vf_native_require };"
+          : "export { require, Worker };",
       ].join("\n");
 
       const buildOptions = typescriptDecoratorOptions
@@ -2150,6 +2199,7 @@ function buildTranspiledModuleSource(
         },
         plugins: [
           createRouteRuntimeShimPlugin(routeRuntimeShim),
+          ...(commonJSDeps.size > 0 ? [createNativeCommonJSPlugin(commonJSDeps)] : []),
           createImportMapPlugin(
             projectDir,
             sourceSnapshot,

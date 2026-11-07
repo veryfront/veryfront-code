@@ -4,6 +4,9 @@ import { somePrivateArray } from "#veryfront/security/private-array.ts";
 import type { ToolExecutionContext } from "#veryfront/tool";
 import { toChildRunToolInputRecord } from "../child-run/execution-support.ts";
 
+/** Forwards the receiver a host binds, so a gated tool reads its exposed name from `this.id`. */
+const apply = Reflect.apply;
+
 const TEXT_PROJECT_ARTIFACT_CUE_PATTERN =
   /\b(markdown|reference document|research report|report|write-up|writeup|save it to the project|save everything to the project|save the results to the project|compile everything into a single well-structured markdown file)\b/i;
 const TEXT_PROJECT_ARTIFACT_PATH_PATTERN = /(?:^|[\s`"'(])(?:[\w./-]+\/)?[\w.-]+\.md\b/i;
@@ -65,10 +68,11 @@ export function withHostedChildRerunnableFileWriteFallbacks(input: {
     ...input.tools,
     [createToolName]: inheritTrustedHostToolProvenance(createFileTool, {
       ...createFileTool,
-      execute: async (toolInput: unknown, execOptions?: ToolExecutionContext) => {
+      async execute(this: unknown, toolInput: unknown, execOptions?: ToolExecutionContext) {
         const normalizedToolInput = toChildRunToolInputRecord(toolInput);
-        const result = await createFileExecute(toolInput, execOptions);
-        if (!isHostedChildCreateFileAlreadyExistsResult(result)) {
+        const result = await apply(createFileExecute, this, [toolInput, execOptions]);
+        // A refused create never writes, whatever the checker's note says.
+        if (isApprovalRefusal(result) || !isHostedChildCreateFileAlreadyExistsResult(result)) {
           return result;
         }
 
@@ -91,15 +95,18 @@ export function withHostedChildRerunnableFileWriteFallbacks(input: {
           },
         );
 
-        return updateFileExecute(
+        // The fallback is the update tool's own call, under the name it is exposed as.
+        return apply(updateFileExecute, { id: updateToolName }, [
           {
             project_reference: projectReference,
             ...(typeof branchId === "string" ? { branch_id: branchId } : {}),
             path,
             content,
           },
+          // The create's own call: the approval gate keys a gated update by its tool name too, so it
+          // asks for the update's own approval, never reusing the create's.
           execOptions,
-        );
+        ]);
       },
     }),
   };
@@ -164,6 +171,10 @@ export function normalizeHostedChildArtifactPath(path: string): string | null {
   }
 
   return normalizedPath;
+}
+
+function isApprovalRefusal(result: unknown): boolean {
+  return isRecord(result) && result.status === "not_approved";
 }
 
 function isHostedChildCreateFileAlreadyExistsResultAtDepth(
