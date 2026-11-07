@@ -3837,6 +3837,16 @@ describe("Missing-auth hint for VERYFRONT_API_KEY", () => {
     );
   });
 
+  it("treats a whitespace-only VERYFRONT_API_TOKEN as unset", async () => {
+    const { result, output } = await runWhoami({
+      VERYFRONT_API_KEY: "vf_misnamed_key",
+      VERYFRONT_API_TOKEN: "   ",
+    }, true);
+
+    assertEquals(result, null);
+    assertEquals(JSON.parse(output.join("\n")).error.message, `Not logged in. ${API_KEY_HINT}`);
+  });
+
   it("keeps the plain message when VERYFRONT_API_KEY comes from a project .env", async () => {
     const { result, output } = await runWhoami(
       { VERYFRONT_API_KEY: "vf_checkout_key" },

@@ -141,7 +141,9 @@ export async function misnamedApiKeyHint(
 ): Promise<string | undefined> {
   if (!getEnv("VERYFRONT_API_KEY")) return undefined;
   if (getEnvSource("VERYFRONT_API_KEY").source !== "process") return undefined;
-  if (getEnv("VERYFRONT_API_TOKEN") || getEnv("VERYFRONT_API_TOKEN_FILE")) return undefined;
+  if (getEnv("VERYFRONT_API_TOKEN")?.trim() || getEnv("VERYFRONT_API_TOKEN_FILE")?.trim()) {
+    return undefined;
+  }
   if (await hasConfiguredCredential(env, projectDir)) return undefined;
   return MISNAMED_API_KEY_HINT_LINES.join(" ");
 }
