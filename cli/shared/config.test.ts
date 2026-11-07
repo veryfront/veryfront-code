@@ -2072,3 +2072,53 @@ Deno.test("API management client keeps credentials on the supplied host transpor
     assertEquals(requests, 1);
   });
 });
+
+describe("missing-auth hint for VERYFRONT_API_KEY", () => {
+  const API_KEY_HINT = "VERYFRONT_API_KEY is set, but the CLI reads VERYFRONT_API_TOKEN. " +
+    "Set VERYFRONT_API_TOKEN to the same key, or run 'veryfront login'.";
+
+  async function withOnlyApiKeySet(fn: (env: EnvironmentConfig) => Promise<void>): Promise<void> {
+    const configHome = await makeTempDir();
+    const originalKey = Deno.env.get("VERYFRONT_API_KEY");
+    const originalToken = Deno.env.get("VERYFRONT_API_TOKEN");
+    try {
+      Deno.env.set("VERYFRONT_API_KEY", "vf_misnamed_key");
+      Deno.env.delete("VERYFRONT_API_TOKEN");
+      await fn(createMockEnv({
+        projectSlug: "test-project",
+        homeDir: configHome,
+        xdgConfigHome: configHome,
+      }));
+    } finally {
+      restoreEnv("VERYFRONT_API_KEY", originalKey);
+      restoreEnv("VERYFRONT_API_TOKEN", originalToken);
+      await Deno.remove(configHome, { recursive: true });
+    }
+  }
+
+  it("names VERYFRONT_API_TOKEN when a non-interactive command has no token", async () => {
+    await withOnlyApiKeySet(async (env) => {
+      await assertRejects(
+        () => resolveConfig(env.homeDir!, env),
+        Error,
+        `Missing API token. ${API_KEY_HINT}`,
+      );
+    });
+  });
+
+  it("names VERYFRONT_API_TOKEN when a JSON-mode command cannot authenticate", async () => {
+    const { setJsonMode } = await import("./json-output.ts");
+    await withOnlyApiKeySet(async (env) => {
+      setJsonMode(true);
+      try {
+        await assertRejects(
+          () => resolveConfigWithAuth(env.homeDir!, env),
+          Error,
+          `Authentication required for this operation. ${API_KEY_HINT}`,
+        );
+      } finally {
+        setJsonMode(false);
+      }
+    });
+  });
+});

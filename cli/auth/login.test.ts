@@ -3719,3 +3719,140 @@ describe("Interactive sign-in completion", () => {
     }
   });
 });
+
+describe("Missing-auth hint for VERYFRONT_API_KEY", () => {
+  const API_KEY_HINT = "VERYFRONT_API_KEY is set, but the CLI reads VERYFRONT_API_TOKEN. " +
+    "Set VERYFRONT_API_TOKEN to the same key, or run 'veryfront login'.";
+
+  async function runWhoami(
+    vars: {
+      VERYFRONT_API_KEY?: string;
+      VERYFRONT_API_TOKEN?: string;
+      VERYFRONT_API_TOKEN_FILE?: string;
+    },
+    jsonMode: boolean,
+    apiKeyEnvFile?: string,
+  ): Promise<{ result: unknown; output: string[] }> {
+    const dir = await makeTempDir({ prefix: "whoami-api-key-" });
+    const env = createTestEnvironmentConfig({
+      homeDir: dir,
+      xdgConfigHome: dir,
+      apiBaseUrl: "https://auth.example.test",
+      apiUrl: undefined,
+      apiToken: vars.VERYFRONT_API_TOKEN,
+    });
+    const names = [
+      "VERYFRONT_API_KEY",
+      "VERYFRONT_API_TOKEN",
+      "VERYFRONT_API_TOKEN_FILE",
+    ] as const;
+    const originals = names.map((name) => getEnv(name));
+    const originalLog = console.log;
+    const output: string[] = [];
+    const { markEnvFileSource, markProcessEnvSource } = await import(
+      "veryfront/utils/env-loader"
+    );
+    try {
+      for (const name of names) {
+        const value = vars[name];
+        if (value === undefined) deleteEnv(name);
+        else setEnv(name, value);
+      }
+      if (apiKeyEnvFile) markEnvFileSource("VERYFRONT_API_KEY", apiKeyEnvFile);
+      console.log = (...args: unknown[]) => output.push(args.map(String).join(" "));
+      setJsonMode(jsonMode);
+      const { whoami } = await import("./login.ts");
+      const { withCwd } = await import("#veryfront/testing/cwd.ts");
+      const result = await withMockFetch(
+        () => Promise.resolve(new Response(null, { status: 401 })),
+        () => withCwd(dir, () => whoami(env)),
+      );
+      return { result, output };
+    } finally {
+      setJsonMode(false);
+      console.log = originalLog;
+      markProcessEnvSource("VERYFRONT_API_KEY");
+      names.forEach((name, index) => {
+        const original = originals[index];
+        if (original === undefined) deleteEnv(name);
+        else setEnv(name, original);
+      });
+      await remove(dir, { recursive: true });
+    }
+  }
+
+  it("names VERYFRONT_API_TOKEN in whoami output when only VERYFRONT_API_KEY is set", async () => {
+    const { result, output } = await runWhoami({ VERYFRONT_API_KEY: "vf_misnamed_key" }, false);
+    const text = output.join("\n");
+
+    assertEquals(result, null);
+    assertStringIncludes(text, "Not logged in");
+    assertStringIncludes(
+      text,
+      "VERYFRONT_API_KEY is set, but the CLI reads VERYFRONT_API_TOKEN.",
+    );
+    assertStringIncludes(
+      text,
+      "Set VERYFRONT_API_TOKEN to the same key, or run 'veryfront login'.",
+    );
+    assertEquals(text.includes("Run 'veryfront login' to authenticate"), false);
+    assertEquals(text.includes("vf_misnamed_key"), false);
+  });
+
+  it("puts the hint in the whoami JSON envelope when only VERYFRONT_API_KEY is set", async () => {
+    const { result, output } = await runWhoami({ VERYFRONT_API_KEY: "vf_misnamed_key" }, true);
+
+    assertEquals(result, null);
+    assertEquals(JSON.parse(output.join("\n")), {
+      success: false,
+      command: "whoami",
+      error: {
+        code: "AUTHENTICATION_ERROR",
+        slug: "authentication-required",
+        registrySlug: "authentication-required",
+        message: `Not logged in. ${API_KEY_HINT}`,
+        context: { authenticated: false },
+      },
+    });
+  });
+
+  it("keeps the plain message when VERYFRONT_API_TOKEN is also set", async () => {
+    const { result, output } = await runWhoami({
+      VERYFRONT_API_KEY: "vf_misnamed_key",
+      VERYFRONT_API_TOKEN: "vf_rejected_token",
+    }, true);
+
+    assertEquals(result, null);
+    assertEquals(
+      JSON.parse(output.join("\n")).error.message,
+      "Not logged in. Run 'veryfront login' to authenticate.",
+    );
+  });
+
+  it("keeps the plain message when VERYFRONT_API_KEY comes from a project .env", async () => {
+    const { result, output } = await runWhoami(
+      { VERYFRONT_API_KEY: "vf_checkout_key" },
+      true,
+      "/srv/checkout/.env",
+    );
+
+    assertEquals(result, null);
+    assertEquals(
+      JSON.parse(output.join("\n")).error.message,
+      "Not logged in. Run 'veryfront login' to authenticate.",
+    );
+  });
+
+  it("keeps the plain message when VERYFRONT_API_TOKEN_FILE supplies the credential", async () => {
+    const { result, output } = await runWhoami({
+      VERYFRONT_API_KEY: "vf_misnamed_key",
+      VERYFRONT_API_TOKEN_FILE: "/run/secrets/veryfront-token",
+    }, true);
+
+    assertEquals(result, null);
+    assertEquals(
+      JSON.parse(output.join("\n")).error.message,
+      "Not logged in. Run 'veryfront login' to authenticate.",
+    );
+  });
+});
