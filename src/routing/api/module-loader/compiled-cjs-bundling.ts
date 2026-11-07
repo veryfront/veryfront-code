@@ -29,7 +29,11 @@ import { build as bundle, transform } from "veryfront/extensions/bundler";
 import type { Plugin, PluginBuild } from "veryfront/extensions/bundler";
 import * as pathHelper from "#veryfront/compat/path";
 import { isWithinDirectory } from "#veryfront/security/path-validation.ts";
-import { parseImports, replaceSpecifiers } from "#veryfront/transforms/esm/lexer.ts";
+import {
+  parseImports,
+  parseMaskedImports,
+  replaceSpecifiers,
+} from "#veryfront/transforms/esm/lexer.ts";
 
 // Names Node accepts only with the `node:` prefix. A bare `test` is an npm package.
 const PREFIX_ONLY_BUILTINS = new Set(["test", "test/reporters", "sqlite", "sea"]);
@@ -705,11 +709,18 @@ export async function prepareCommonJSFile(
   const assigned = new RegExp(
     `${requireMarker}\\s*(?:\\*\\*|<<|>>>?|&&|\\|\\||\\?\\?|[-+*/%&|^])?=(?!=)`,
   ).test(rewritten);
+  // A literal require is marked as this module's own, so one a callback
+  // makes after the file's body has finished still names it as the parent.
+  const ownedRequire = (specifier: string) =>
+    directEval || assigned
+      ? `require(${JSON.stringify(specifier)})`
+      : `${BUNDLED_REQUIRE_FROM}(${codeString(directory)}, module, true)(require(${
+        JSON.stringify(specifier)
+      }))`;
   const prepared = rewritten
     .replace(
       literalRequire(requireMarker),
-      (_whole, double, single, template) =>
-        `require(${JSON.stringify(double ?? single ?? template)})`,
+      (_whole, double, single, template) => ownedRequire(double ?? single ?? template),
     )
     .replaceAll(marker, `${requireMarker}.resolve`)
     .replaceAll(requireMarker, directEval || assigned ? "require" : boundRequire);
@@ -826,11 +837,7 @@ export async function prepareModuleFile(
     // The resolver is a declaration, so it is hoisted: a cyclic import may
     // call into the file before its body runs.
     `function ${marker}(specifier) {`,
-    `  return (${createImportMetaResolve.toString()})(${codeString(url)}, ${
-      JSON.stringify([...PREFIX_ONLY_BUILTINS])
-    }, (id) => globalThis.process?.getBuiltinModule?.(id), (id) => typeof ${BUNDLED_REQUIRE_FROM} === "function" ? ${BUNDLED_REQUIRE_FROM}(${
-      codeString(pathHelper.dirname(filePath))
-    }).resolve(id, { [Symbol.for("veryfront.importConditions")]: true }) : null, globalThis.process?.platform)(specifier);`,
+    `  return ${importResolver(url, filePath)}(specifier);`,
     "}",
     // Node's import.meta of an imported module: a null prototype, and
     // `main` false.
@@ -843,6 +850,64 @@ export async function prepareModuleFile(
   // A hashbang is only valid as the first line.
   const hashbangEnd = rewritten.startsWith("#!") ? rewritten.indexOf("\n") + 1 : 0;
   return rewritten.slice(0, hashbangEnd) + prologue + "\n" + rewritten.slice(hashbangEnd);
+}
+
+// The source of an expression that is the runtime `import.meta.resolve` of
+// the dependency file at `filePath`, whose URL is `url`; see
+// {@link createImportMetaResolve}.
+function importResolver(url: string, filePath: string): string {
+  return `(${createImportMetaResolve.toString()})(${codeString(url)}, ${
+    JSON.stringify([...PREFIX_ONLY_BUILTINS])
+  }, (id) => globalThis.process?.getBuiltinModule?.(id), (id) => typeof ${BUNDLED_REQUIRE_FROM} === "function" ? ${BUNDLED_REQUIRE_FROM}(${
+    codeString(pathHelper.dirname(filePath))
+  }).resolve(id, { [Symbol.for("veryfront.importConditions")]: true }) : null, globalThis.process?.platform)`;
+}
+
+/**
+ * `code`, a dependency file, with each `import()` the bundler cannot follow
+ * bound to the file: its specifier resolves as `import.meta.resolve` in the
+ * file would (see {@link createImportMetaResolve}), so a relative path loads
+ * the file's sibling and a package name the file's own dependency, not
+ * whatever the route bundle's location would give. A specifier that does not
+ * resolve rejects the import, as Node's does. A literal specifier, and a
+ * relative template or concatenation the bundler expands into the files it
+ * matches, stay for the bundler.
+ */
+export async function bindDynamicImports(
+  code: string,
+  filePath: string,
+  url: string,
+): Promise<string> {
+  if (!/\bimport\s*\(/.test(code)) return code;
+  const { masked, imports, unmask } = await parseMaskedImports(code);
+  const computed = imports.filter((entry) =>
+    // A dynamic import whose specifier is no literal.
+    entry.d >= 0 && entry.n === undefined &&
+    !/^\s*(["'`])\.\.?\//.test(masked.slice(entry.s, entry.e))
+  );
+  if (computed.length === 0) return code;
+  const marker = await markerFor("__vf_dynamic_import_", filePath, code);
+  let result = masked;
+  for (const entry of [...computed].sort((a, b) => b.s - a.s)) {
+    result = result.slice(0, entry.s) + `${marker}(${result.slice(entry.s, entry.e)})` +
+      result.slice(entry.e);
+  }
+  // A declaration at the end, so it is hoisted without displacing a hashbang
+  // or a directive prologue. A specifier that fails to resolve becomes one
+  // whose conversion to a string throws, so `import()` rejects with the error
+  // rather than throwing it.
+  const resolver = [
+    "",
+    `function ${marker}(specifier) {`,
+    "  try {",
+    `    return ${importResolver(url, filePath)}(specifier);`,
+    "  } catch (error) {",
+    "    return { toString() { throw error; } };",
+    "  }",
+    "}",
+    "",
+  ].join("\n");
+  return unmask(result) + resolver;
 }
 
 /**
@@ -957,6 +1022,14 @@ export interface DependencyFileInput {
  * dependencies.
  */
 export async function prepareDependencyFile(input: DependencyFileInput): Promise<string> {
+  return await bindDynamicImports(
+    await prepareDependencySource(input),
+    input.logicalPath,
+    pathHelper.toFileUrl(input.logicalPath).href + (input.suffix ?? ""),
+  );
+}
+
+async function prepareDependencySource(input: DependencyFileInput): Promise<string> {
   const { build, contents, logicalPath, resolvedPath, isDependencyFile } = input;
   // A file Node parses as CommonJS whatever its syntax.
   const forcedCommonJS = /\.c[jt]s$/i.test(logicalPath) ||
@@ -978,7 +1051,10 @@ export async function prepareDependencyFile(input: DependencyFileInput): Promise
     /\beval\b/.test(contents) ||
     // ES module syntax, which such a file must not run as.
     (forcedCommonJS && /\b(?:import|export)\b/.test(contents));
-  if (!readsCommonJSNames && !importMeta) return contents;
+  // A literal require, which the bundler bundles; a CommonJS file marks it as
+  // its own, see prepareCommonJSFile.
+  const literalRequires = /\brequire\s*\(\s*["'`]/.test(contents);
+  if (!readsCommonJSNames && !importMeta && !literalRequires) return contents;
   const resolveDir = pathHelper.dirname(resolvedPath);
   const dependencyPath = async (
     specifier: string,
@@ -1003,6 +1079,8 @@ export async function prepareDependencyFile(input: DependencyFileInput): Promise
     async (specifier) => (await dependencyPath(specifier, "require-resolve"))?.path ?? null,
   );
   if (commonJS !== null) return commonJS;
+  // An ES module's literal require stays for the bundler, as it was.
+  if (!readsCommonJSNames && !importMeta) return contents;
   if (!importMeta && !/\brequire\b/.test(contents)) return contents;
   const moduleUrl = pathHelper.toFileUrl(logicalPath).href + (input.suffix ?? "");
   return await prepareModuleFile(contents, logicalPath, async (specifier) => {
@@ -1115,7 +1193,15 @@ export interface RuntimeRequireBinding {
    * The `require` of a bundled dependency file in `directory`, for the calls
    * the bundler left to runtime, such as a computed relative id.
    */
-  readonly requireFrom: (directory: unknown, module?: unknown) => RuntimeRequire;
+  readonly requireFrom: {
+    (directory: unknown, module?: unknown): RuntimeRequire;
+    /**
+     * With `bind`, marks the bundled literal require that the caller makes
+     * next as `module`'s own, and returns a function that hands back its
+     * result: `requireFrom(directory, module, true)(require("./lazy"))`.
+     */
+    (directory: unknown, module: unknown, bind: true): <T>(value: T) => T;
+  };
 }
 
 /** The runtime `require` of a bundled route; see {@link createRuntimeRequire}. */
@@ -1181,6 +1267,31 @@ export function createRuntimeRequire(
     error.code = code;
     return error;
   };
+  // Node's argument checks throw a TypeError, before any lookup, so code that
+  // catches `MODULE_NOT_FOUND` never mistakes a wrong argument for a missing
+  // optional dependency.
+  const invalidArgument = (message: string, code: string) => {
+    const error = new TypeError(message) as TypeError & { code?: string };
+    error.code = code;
+    return error;
+  };
+  const received = (value: unknown) =>
+    value === null || value === undefined
+      ? "Received " + value
+      : typeof value === "function"
+      ? "Received function " + ((value as { name?: string }).name || "<anonymous>")
+      : typeof value === "object"
+      ? "Received an instance of " +
+        ((value as { constructor?: { name?: string } }).constructor?.name || "Object")
+      : "Received type " + typeof value + " (" + String(value) + ")";
+  function requireString(value: unknown, name: string): asserts value is string {
+    if (typeof value !== "string") {
+      throw invalidArgument(
+        'The "' + name + '" argument must be of type string. ' + received(value),
+        "ERR_INVALID_ARG_TYPE",
+      );
+    }
+  }
   const dependencyPrefixes = dependencyDirectories.map((directory) => directory + host.sep);
   const builtin = (id: unknown) => {
     // A bare prefix-only name such as `test` is an npm package, as in Node.
@@ -1479,6 +1590,11 @@ export function createRuntimeRequire(
   // and directory-bound requires load. A module the runtime require runs
   // has its own require, which names it.
   let active: RuntimeModule | undefined;
+  // The module whose literal require is about to run, set by `requireFrom`
+  // with `bind` just before the call: a call a module's callback makes after
+  // its body has finished still names that module as the parent. The next
+  // load takes it.
+  let pending: RuntimeModule | undefined;
   // The module records this runtime made.
   const records = new WeakSet<RuntimeModule>();
   // Records `child` as loaded by `parent`, once, as Node's module graph does.
@@ -1623,13 +1739,24 @@ export function createRuntimeRequire(
   // A require() for `directory`; `owner` is the module it belongs to, if any.
   const create = (directory: string | undefined, owner?: () => RuntimeModule) => {
     const require = ((id: unknown) => {
+      // A literal require bound to its module names that module as the parent.
+      const parent = owner?.() ?? pending ?? active;
+      pending = undefined;
+      requireString(id, "id");
+      if (id === "") {
+        throw invalidArgument(
+          "The argument 'id' must be a non-empty string. Received ''",
+          "ERR_INVALID_ARG_VALUE",
+        );
+      }
       const module = builtin(id);
       if (module !== undefined) return module;
       const found = find(id, directory);
       if (found === null) throw missing(label(id));
-      return load(found, owner?.() ?? active);
+      return load(found, parent);
     }) as RuntimeRequire;
     const resolve = (id: unknown, options?: { paths?: unknown }) => {
+      requireString(id, "request");
       if (builtin(id) !== undefined) return id as string;
       // A bundled module's import.meta.resolve asks with this key for its
       // package maps' import conditions.
@@ -1654,9 +1781,7 @@ export function createRuntimeRequire(
     // the module's own for a path, and its `node_modules` chain, within the
     // project, for a package.
     const resolvePaths = (request: unknown) => {
-      if (typeof request !== "string") {
-        throw failure("The request must be of type string", "ERR_INVALID_ARG_TYPE");
-      }
+      requireString(request, "request");
       if (builtin(request) !== undefined) return null;
       if (directory === undefined) return [];
       return relativeId(request) ? [directory] : lookupPaths(directory);
@@ -1670,14 +1795,25 @@ export function createRuntimeRequire(
     return require;
   };
   const byDirectory: Record<string, RuntimeRequire> = Object.create(null);
-  const requireFrom = (directory: unknown, module?: unknown) => {
-    // A record of this runtime's for a file in `directory` has its own.
-    if (records.has(module as RuntimeModule) && (module as RuntimeModule).path === directory) {
-      return (module as RuntimeModule).require;
+  // Hands back a literal require's result, and drops an owner it left unused,
+  // such as for an ES module the bundler loads itself.
+  const settle = <T>(value: T) => {
+    pending = undefined;
+    return value;
+  };
+  const requireFrom = ((directory: unknown, module?: unknown, bind?: unknown) => {
+    // A record of this runtime's for a file in `directory`.
+    const own = records.has(module as RuntimeModule) &&
+      (module as RuntimeModule).path === directory;
+    // `bind`: the bundled literal require that follows belongs to `module`.
+    if (bind === true) {
+      pending = own ? module as RuntimeModule : undefined;
+      return settle;
     }
+    if (own) return (module as RuntimeModule).require;
     if (typeof directory !== "string") return create(undefined);
     return byDirectory[directory] ??= create(directory);
-  };
+  }) as RuntimeRequireBinding["requireFrom"];
   // The real path of each bundled file, by the bundler's key; null when it
   // is not a dependency file.
   const bundledPaths: Record<string, string | null> = Object.create(null);
@@ -1699,12 +1835,15 @@ export function createRuntimeRequire(
     require: create(projectRoot),
     requireFrom,
     bundled: (key, body) => {
+      // The module whose literal require this is, when it is no longer running.
+      const parent = pending ?? active;
+      pending = undefined;
       if (bundleRoot === undefined || typeof key !== "string") return null;
       const real = bundledPath(key);
       if (real === null) return null;
       const cached = modules[real];
-      if (cached !== undefined) return adopt(active, cached);
-      const module = newModule(real, active, (self) => create(host.dirname(real), self));
+      if (cached !== undefined) return adopt(parent, cached);
+      const module = newModule(real, parent, (self) => create(host.dirname(real), self));
       modules[real] = module;
       const previous = active;
       active = module;

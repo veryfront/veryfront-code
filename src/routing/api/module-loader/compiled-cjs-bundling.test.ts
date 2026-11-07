@@ -3,6 +3,7 @@ import { assert, assertEquals, assertRejects, assertThrows } from "#veryfront/te
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { type PluginBuild, stop as stopBundler, transform } from "veryfront/extensions/bundler";
 import {
+  bindDynamicImports,
   builtinModuleName,
   codeString,
   createCompiledBuiltinPlugin,
@@ -531,7 +532,7 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
     });
 
     it("leaves a file that reads no CommonJS names and no import.meta as it is", async () => {
-      const contents = 'module.exports = require("./other");';
+      const contents = 'module.exports = exports.name = "other";';
       for (
         const [path, type] of [["/d/a.js"], ["/d/bin/tool"], ["/d/a.cjs", "module"], ["/d/a.ts"]]
       ) {
@@ -540,6 +541,28 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
       const esm = 'export { x } from "./other";';
       assertEquals(await prepareDependencyFile(input(esm, "/d/a.js", "module")), esm);
       assertEquals(await prepareDependencyFile(input(esm, "/d/a.mjs")), esm);
+      // So do imports the bundler follows or expands: literals, and relative
+      // templates and concatenations.
+      const imports = [
+        'export const a = () => import("./a.js");',
+        "export const b = (n) => import(`./locale/${n}.js`);",
+        'export const c = (n) => import("../locale/" + n);',
+      ].join("\n");
+      assertEquals(await prepareDependencyFile(input(imports, "/d/a.mjs")), imports);
+    });
+
+    it("binds an import() the bundler cannot follow to the file", async () => {
+      const code = await bindDynamicImports(
+        'export const load = (id) => import(id, { with: { type: "json" } });\n' +
+          "export const text = 'import(id)';",
+        "/d/node_modules/p/a.mjs",
+        "file:///d/node_modules/p/a.mjs",
+      );
+      const marker = /import\((__vf_dynamic_import_\w+)\(id\), \{ with/.exec(code)?.[1];
+      assert(marker !== undefined, code);
+      // Strings are not code; the resolver is a hoisted declaration at the end.
+      assert(code.includes("export const text = 'import(id)';\nfunction " + marker), code);
+      assert(code.includes('"file:///d/node_modules/p/a.mjs"'), code);
     });
 
     it("prepares a file with an extension Node has no loader for as CommonJS", async () => {
@@ -1058,7 +1081,6 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
         const id of [
           "left-pad",
           "./missing.json",
-          42,
           "/app/code.js",
           "/app/link.json",
           "/app",
@@ -1068,6 +1090,19 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
         assertEquals(errorCode(() => require(id)), "MODULE_NOT_FOUND", String(id));
       }
       assertEquals(errorCode(() => require.resolve("/app/missing.js")), "MODULE_NOT_FOUND");
+      // A wrong argument is Node's TypeError, never a missing module that an
+      // optional dependency's fallback would catch.
+      for (const id of [42, undefined, null, {}, () => {}]) {
+        assertThrows(() => require(id), TypeError, 'The "id" argument must be of type string');
+        assertEquals(errorCode(() => require(id)), "ERR_INVALID_ARG_TYPE", String(id));
+        assertThrows(
+          () => require.resolve(id),
+          TypeError,
+          'The "request" argument must be of type string',
+        );
+        assertEquals(errorCode(() => require.resolve(id)), "ERR_INVALID_ARG_TYPE", String(id));
+      }
+      assertEquals(errorCode(() => require("")), "ERR_INVALID_ARG_VALUE");
     });
 
     it("resolves a relative id from the project root", () => {
@@ -1568,8 +1603,8 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
             'exports.b = "fs";',
             'exports.c = (__vf_require_from("/d/p", module)).resolve("missing");',
             'exports.e = (__vf_require_from("/d/p", module)).resolve(name);',
-            'exports.g = require("./g");',
-            'exports.h = require("./h");',
+            'exports.g = __vf_require_from("/d/p", module, true)(require("./g"));',
+            'exports.h = __vf_require_from("/d/p", module, true)(require("./h"));',
             'exports.i = (__vf_require_from("/d/p", module))("./dialects/" + name);',
             'exports.j = typeof (__vf_require_from("/d/p", module));',
             "return require2(name);",
@@ -1867,12 +1902,17 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
           input("export default 1;", "/d/node_modules/p/index.cjs"),
         );
         assert(forced.includes("SyntaxError"), forced);
-        // Literal calls alone leave nothing for runtime, so nothing is parsed.
+        // Literal calls stay for the bundler, each marked as this module's
+        // own, so one a callback makes later still names it as the parent.
         const literal = "module.exports = [require(\"./a\"), require( 'b' )];";
         assertEquals(
           await prepareDependencyFile(input(literal, "/d/node_modules/p/index.js")),
-          literal,
+          'module.exports = [__vf_require_from("/d/node_modules/p", module, true)(require("./a")), ' +
+            '__vf_require_from("/d/node_modules/p", module, true)(require("b"))];\n',
         );
+        // An ES module's literal require stays for the bundler, as it was.
+        const mixed = 'import x from "./x";\nexport default [x, require("./other")];';
+        assertEquals(await prepareDependencyFile(input(mixed, "/d/node_modules/p/a.js")), mixed);
       });
 
       it("resolves import.meta.resolve literals in an ESM file", async () => {

@@ -791,6 +791,73 @@ describe("compiled-binary route bundling of CommonJS dependencies", () => {
     });
   });
 
+  it("binds a dependency's later literal requires and computed imports to the dependency", async () => {
+    await inProject(async (projectDir) => {
+      await writeFiles(projectDir, {
+        "node_modules/deferred/package.json": JSON.stringify({
+          name: "deferred",
+          main: "index.js",
+        }),
+        "node_modules/deferred/index.js": [
+          'var path = require("path");',
+          "var name = (m) => m && path.basename(m.filename);",
+          // A literal require made after the body ran: bundled, yet still this
+          // module's child.
+          "exports.lazy = function () {",
+          '  require("./lazy.js");',
+          "  return [name(require.cache[require.resolve('./lazy.js')].parent), module.children.map(name)];",
+          "};",
+          // Node checks the argument before any lookup.
+          "exports.codes = function () {",
+          "  var codes = [];",
+          "  for (var value of [7, undefined, {}]) {",
+          "    try { require(value); codes.push('loaded'); } catch (e) { codes.push(e.name + ' ' + e.code); }",
+          "    try { require.resolve(value); codes.push('resolved'); } catch (e) { codes.push(e.name + ' ' + e.code); }",
+          "  }",
+          "  try { require(''); } catch (e) { codes.push(e.name + ' ' + e.code); }",
+          "  return codes;",
+          "};",
+          // Imports the bundler cannot follow resolve from this file.
+          "exports.load = function (id) { return import(id); };",
+        ].join("\n"),
+        "node_modules/deferred/lazy.js": "module.exports = 'lazy';",
+        "node_modules/deferred/plugin.mjs": "export default 'plugin';",
+        "node_modules/deferred/node_modules/inner/package.json": JSON.stringify({
+          name: "inner",
+          type: "module",
+          exports: "./main.js",
+        }),
+        "node_modules/deferred/node_modules/inner/main.js": "export default 'inner';",
+      });
+      const mod = await bundleAndImport(
+        projectDir,
+        'import deferred from "deferred";\nexport { deferred };\n',
+      );
+      const deferred = mod.deferred as {
+        lazy: () => unknown;
+        codes: () => unknown;
+        load: (id: unknown) => Promise<{ default: unknown }>;
+      };
+      assertEquals(deferred.lazy(), ["index.js", ["lazy.js"]]);
+      assertEquals(deferred.codes(), [
+        "TypeError ERR_INVALID_ARG_TYPE",
+        "TypeError ERR_INVALID_ARG_TYPE",
+        "TypeError ERR_INVALID_ARG_TYPE",
+        "TypeError ERR_INVALID_ARG_TYPE",
+        "TypeError ERR_INVALID_ARG_TYPE",
+        "TypeError ERR_INVALID_ARG_TYPE",
+        "TypeError ERR_INVALID_ARG_VALUE",
+      ]);
+      assertEquals((await deferred.load("./plugin.mjs")).default, "plugin");
+      assertEquals((await deferred.load("inner")).default, "inner");
+      // One that does not resolve rejects, as Node's import() does.
+      const missing = deferred.load("missing-package");
+      assert(missing instanceof Promise);
+      const error = await missing.then(() => null, (reason) => reason);
+      assertEquals((error as { code?: unknown }).code, "ERR_MODULE_NOT_FOUND");
+    });
+  });
+
   it("stops a linked workspace package's lookup at the copy that refuses an id", async () => {
     await inProject(async (projectDir) => {
       await writeFiles(projectDir, {
