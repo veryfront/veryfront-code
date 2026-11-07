@@ -51,105 +51,49 @@ export async function readProjectDependencies(
 }
 
 /**
- * Generates a CJS module loader shim for compiled Deno binaries.
+ * The `require` of a route in a compiled Deno binary: the runtime's own
+ * `createRequire`, bound to the project, so CommonJS dependencies load with
+ * the runtime's resolution and module cache (`exports`, `#imports`, nested
+ * `node_modules`, `module.parent`, Node's error codes).
  *
- * In compiled binaries, `createRequire()` can resolve module paths and load
- * built-in modules (fs, path, etc.), but cannot load CJS files from disk
- * (loadMaybeCjs fails with "path not found"). This shim works around that
- * limitation by using `Deno.readTextFileSync` to read CJS files and
- * `new Function` to evaluate them in a proper CJS wrapper with require,
- * exports, module, __filename, and __dirname bindings.
+ * The route's own requires, and each CommonJS dependency the route imports
+ * (see {@link createNativeCommonJSPlugin}), resolve first and load only a file
+ * whose real path is inside the project (VULN-FS-5): a symlinked
+ * `node_modules` entry cannot pull in code from outside it. Requires a
+ * dependency makes itself are the runtime's own, as on every other runtime.
+ *
+ * `__vf_native_require` is the loader that the dependency wrappers call.
  */
 export function generateCompiledBinaryRequireShim(projectDir: string): string {
-  const builtinSet = JSON.stringify(NODE_BUILTINS);
-  const safeProjectDir = JSON.stringify(projectDir + "/package.json");
+  const safeManifest = JSON.stringify(projectDir + "/package.json");
   const safeProjectRoot = JSON.stringify(pathHelper.resolve(projectDir));
 
   return `
 import { createRequire as __vf_createRequire } from "node:module";
-import { dirname as __vf_dirname, resolve as __vf_resolve } from "node:path";
-var __vf_builtinRequire = __vf_createRequire(${safeProjectDir});
-var __vf_builtinSet = new Set(${builtinSet});
+import { realpathSync as __vf_realpathSync } from "node:fs";
+import { isAbsolute as __vf_isAbsolute, sep as __vf_sep } from "node:path";
+var __vf_nativeRequire = __vf_createRequire(${safeManifest});
+// VULN-FS-5: compare canonical paths, so a project reached through a symlink
+// still contains its own dependencies.
 var __vf_projectRoot = ${safeProjectRoot};
-// VULN-FS-5: Canonicalize the project root so containment checks using
-// Deno.realPathSync(resolved) compare canonical-vs-canonical. Without this,
-// when the project itself is opened via a symlink, the realpath'd resolved
-// module path has a different prefix than the non-canonical projectRoot and
-// legitimate dependencies would be rejected.
-try { __vf_projectRoot = Deno.realPathSync(__vf_projectRoot); } catch (_) { /* expected: projectRoot may not exist at shim init in some environments */ }
-var __vf_cache = Object.create(null);
-// Resolve symlinks so containment compares canonical paths. A module that does
-// not exist yet cannot be canonicalized, so fall back to its parent directory,
-// which is what carries a symlinked project root; only if that fails too is the
-// plain resolved path used.
-function __vf_canonicalize(candidate) {
-  try {
-    return Deno.realPathSync(candidate);
-  } catch (_) { /* expected: candidate may not exist */ }
-  try {
-    var parent = __vf_dirname(candidate);
-    return Deno.realPathSync(parent) + candidate.slice(parent.length);
-  } catch (_) { /* expected: parent may not exist either */ }
-  return __vf_resolve(candidate);
-}
-function __vf_assertContained(resolved) {
-  var norm = __vf_resolve(resolved).replace(/\\\\/g, "/");
-  var root = __vf_projectRoot.replace(/\\\\/g, "/");
-  if (!norm.startsWith(root + "/") && norm !== root) {
-    throw new Error("CJS loader blocked path outside project: " + resolved);
+try { __vf_projectRoot = __vf_realpathSync(__vf_projectRoot); } catch (_) { /* expected: the root may not exist yet */ }
+function __vf_contained(id, options) {
+  var resolved = __vf_nativeRequire.resolve(id, options);
+  // A built-in resolves to its name.
+  if (!__vf_isAbsolute(resolved)) return resolved;
+  var real = __vf_realpathSync(resolved);
+  if (real !== __vf_projectRoot && !real.startsWith(__vf_projectRoot + __vf_sep)) {
+    throw new Error("CJS loader blocked path outside project: " + JSON.stringify(String(id)));
   }
+  return real;
 }
-function __vf_loadCjs(id, parentDir) {
-  if (id.startsWith("node:")) return __vf_builtinRequire(id);
-  if (__vf_builtinSet.has(id)) return __vf_builtinRequire(id);
-  var slashIdx = id.indexOf("/");
-  if (slashIdx > 0 && __vf_builtinSet.has(id.slice(0, slashIdx))) return __vf_builtinRequire(id);
-  var resolved;
-  if (id.startsWith(".") || id.startsWith("/")) {
-    resolved = __vf_resolve(parentDir, id);
-    if (!resolved.match(/\\.[a-zA-Z0-9]+$/)) {
-      var exts = [".js", ".cjs", ".json", "/index.js", "/index.cjs", "/index.json"];
-      for (var i = 0; i < exts.length; i++) {
-        try { Deno.statSync(resolved + exts[i]); resolved += exts[i]; break; } catch (_) { /* expected: probing file extensions */ }
-      }
-    }
-  } else {
-    resolved = __vf_builtinRequire.resolve(id);
-  }
-  // VULN-FS-5: Canonicalize before asserting containment, so the candidate and
-  // the already-canonical project root are compared like with like, then assert
-  // once. Checking the non-canonical path first rejected dependencies genuinely
-  // inside a project whose root is reached through a symlink, which is the
-  // ordinary case for package managers, CI checkouts and macOS /tmp.
-  // Canonicalizing first also keeps the guard against symlinked node_modules
-  // entries pointing outside the root: the escape is only visible once resolved.
-  resolved = __vf_canonicalize(resolved);
-  __vf_assertContained(resolved);
-  if (resolved in __vf_cache) return __vf_cache[resolved];
-  var code = Deno.readTextFileSync(resolved);
-  if (resolved.endsWith(".json")) {
-    var json = JSON.parse(code);
-    __vf_cache[resolved] = json;
-    return json;
-  }
-  var mod = { exports: {} };
-  __vf_cache[resolved] = mod.exports;
-  var dir = __vf_dirname(resolved);
-  var childReq = function(childId) { return __vf_loadCjs(childId, dir); };
-  childReq.resolve = function(childId) {
-    if (childId.startsWith(".") || childId.startsWith("/")) return __vf_resolve(dir, childId);
-    return __vf_builtinRequire.resolve(childId);
-  };
-  childReq.ensure = function(mods, cb) { cb(); };
-  var fn = new Function("exports", "require", "module", "__filename", "__dirname", "global", "globalThis", "Worker", code);
-  fn(mod.exports, childReq, mod, resolved, dir, globalThis, globalThis, undefined);
-  __vf_cache[resolved] = mod.exports;
-  return mod.exports;
+function __vf_native_require(id) {
+  return __vf_nativeRequire(__vf_contained(id));
 }
-function __vf_interopDefault(m) { return m && m.__esModule && m.default !== undefined ? m.default : m; }
-var require = function(id) { return __vf_loadCjs(id, ${JSON.stringify(projectDir)}); };
-require.resolve = function(id) { return __vf_builtinRequire.resolve(id); };
-require.ensure = function(mods, cb) { cb(); };
+var require = function (id) { return __vf_native_require(id); };
+require.resolve = function (id, options) { return __vf_contained(id, options); };
+require.resolve.paths = __vf_nativeRequire.resolve.paths;
+require.cache = __vf_nativeRequire.cache;
 `.trim();
 }
 

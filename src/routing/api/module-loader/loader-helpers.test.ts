@@ -5,7 +5,6 @@ import {
   FILE_EXTENSIONS,
   getLoaderForFile,
   resolveExportEntry,
-  toCjsDestructureBindings,
   validateModulePath,
 } from "./loader-helpers.ts";
 
@@ -32,15 +31,6 @@ describe("routing/api/module-loader helpers", () => {
     assertEquals(resolveExportEntry({ import: "./esm.js" }), "./esm.js");
     assertEquals(resolveExportEntry({ default: { default: "./nested.js" } }), "./nested.js");
     assertEquals(resolveExportEntry({ require: "./cjs.js" }), undefined);
-  });
-
-  it("converts CJS destructuring bindings", () => {
-    assertEquals(
-      toCjsDestructureBindings("{ parse as parsePdf, version }"),
-      "{ parse: parsePdf, version }",
-    );
-    assertEquals(toCjsDestructureBindings("{ foo, bar }"), "{ foo, bar }");
-    assertEquals(toCjsDestructureBindings("{   }"), "{}");
   });
 
   it("returns the expected file loaders and extensions", () => {

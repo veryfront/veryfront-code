@@ -53,6 +53,52 @@ describe("hosted HTTP executor broker", () => {
     }
   });
 
+  it("joins each warm dispatch to the same authenticated attachment and its own host trace", async () => {
+    const f = fixture(() => new Response("app"));
+    Object.assign(f.input.installation.source, { type: "environment", environmentName: "staging" });
+    const records: unknown[] = [];
+    const broker = createHostedHttpBroker({
+      maxActive: 1,
+      observeDispatch: (receipt) => void records.push(receipt),
+    });
+    const traces = [
+      "00-11111111111111111111111111111111-2222222222222222-01",
+      "00-33333333333333333333333333333333-4444444444444444-01",
+    ];
+    try {
+      for (const [index, traceparent] of traces.entries()) {
+        const response = await broker.fetch(
+          new Request("https://app.example/api", { headers: { traceparent: "untrusted" } }),
+          {
+            ...f.input,
+            tracing: {
+              traceparent: index === 0 ? traceparent : traceparent + "-private",
+              onRecords() {},
+            },
+          },
+        );
+        assertEquals(await response.text(), "app");
+      }
+      assertEquals(f.calls.filter((call) => call === "allocate").length, 1);
+      const attachment = (records[0] as { attachment: unknown }).attachment;
+      assertExists(attachment);
+      assertEquals(
+        records,
+        traces.map((traceparent) => ({
+          attachment,
+          brokerInstanceId: "broker-a",
+          projectId: "project-a",
+          environmentId: "environment-a",
+          releaseId: "release-a",
+          traceparent,
+        })),
+      );
+    } finally {
+      await broker.shutdown();
+      await broker.settled;
+    }
+  });
+
   it("delivers only the matched application snapshot through the allocation channel", async () => {
     let appValue: string | undefined;
     const setup = fixture(() => new Response(appValue), async (peer, installed) => {

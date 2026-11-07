@@ -1,4 +1,4 @@
-import { logger } from "#veryfront/utils";
+import { createAbortError, logger, throwIfAborted } from "#veryfront/utils";
 import { CONFIG_INVALID } from "#veryfront/errors";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
 import type { ResolveFileOptions } from "../../base.ts";
@@ -24,9 +24,9 @@ const LOG_PREFIX = "[GitHubFSAdapter]";
  */
 function waitUnlessAborted<T>(work: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
   if (!signal) return work;
-  signal.throwIfAborted();
+  throwIfAborted(signal);
   return new Promise<T>((resolve, reject) => {
-    const onAbort = () => reject(signal.reason);
+    const onAbort = () => reject(createAbortError(signal.reason));
     signal.addEventListener("abort", onAbort, { once: true });
     work.then(
       (value) => {

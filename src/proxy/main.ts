@@ -25,6 +25,12 @@ import {
  * - VERYFRONT_API_INTERNAL_USER: Basic auth user for internal API
  * - VERYFRONT_API_INTERNAL_PASS: Basic auth pass for internal API
  * - SHUTDOWN_DRAIN_TIMEOUT_MS: Time to wait for active SSE responses during shutdown
+ *   (default 25000, max 600000)
+ * - SHUTDOWN_ADMISSION_GRACE_MS: After SIGTERM, keep serving new ordinary requests
+ *   (each closing its connection) for this long while the gateway moves off the
+ *   draining pod (default 10000, max 600000, 0 disables). It is spent inside
+ *   SHUTDOWN_DRAIN_TIMEOUT_MS and capped at it, so in-flight requests get the rest
+ *   of the drain budget. SIGINT, WebSocket upgrades and SSE streams get no grace.
  * - SHUTDOWN_CLEANUP_TIMEOUT_MS: Total time allowed for post-drain cleanup
  */
 
@@ -110,7 +116,10 @@ import { removeStickyCookieFromPublicCacheableResponse } from "./response-header
 import {
   closeProxyServerWithin,
   createProxyDrainingResponse,
+  createProxyReadinessResponse,
   parseProxyDrainTimeoutMs,
+  PROXY_READY_PATH,
+  ProxyDrainAdmission,
   ProxyRequestDrainTracker,
 } from "./request-drain.ts";
 import {
@@ -217,6 +226,17 @@ const SHUTDOWN_DRAIN_TIMEOUT_MS = parseProxyDrainTimeoutMs(
   getEnv("SHUTDOWN_DRAIN_TIMEOUT_MS"),
   DEFAULT_SHUTDOWN_DRAIN_TIMEOUT_MS,
 );
+// New requests are still admitted for this long after SIGTERM (within the
+// drain budget) while the gateway moves its pooled connections off this pod.
+const DEFAULT_SHUTDOWN_ADMISSION_GRACE_MS = 10_000;
+const SHUTDOWN_ADMISSION_GRACE_MS = Math.min(
+  parseProxyDrainTimeoutMs(
+    getEnv("SHUTDOWN_ADMISSION_GRACE_MS"),
+    DEFAULT_SHUTDOWN_ADMISSION_GRACE_MS,
+    "SHUTDOWN_ADMISSION_GRACE_MS",
+  ),
+  SHUTDOWN_DRAIN_TIMEOUT_MS,
+);
 const SHUTDOWN_CLEANUP_TIMEOUT_MS = parseProxyShutdownCleanupTimeoutMs(
   getEnv("SHUTDOWN_CLEANUP_TIMEOUT_MS"),
   DEFAULT_PROXY_SHUTDOWN_CLEANUP_TIMEOUT_MS,
@@ -237,6 +257,7 @@ if (isProduction() && routingInvalidationSecretBytes < 32) {
 }
 const proxyRequestDrainTracker = new ProxyRequestDrainTracker();
 let shuttingDown = false;
+const drainAdmission = new ProxyDrainAdmission(SHUTDOWN_ADMISSION_GRACE_MS);
 
 const { createAuthProvider } = await importFirstPartyExtensionModule<AuthJwtExtensionModule>(
   "ext-auth-jwt",
@@ -855,8 +876,14 @@ async function router(req: Request): Promise<HttpHandlerResponse> {
   if (url.pathname === "/_proxy/health") {
     return Response.json({ service: "veryfront-proxy", status: "ok" });
   }
-  if (shuttingDown) return createProxyDrainingResponse();
+  if (url.pathname === PROXY_READY_PATH) return createProxyReadinessResponse(shuttingDown);
+  // Inside the admission grace window a draining replica still serves ordinary
+  // requests; a new WebSocket or SSE stream belongs on a replica that stays.
+  if (shuttingDown && !drainAdmission.admits(req, url.pathname)) {
+    return createProxyDrainingResponse();
+  }
 
+  const admittedDuringDrain = drainAdmission.isDraining();
   const requestId = crypto.randomUUID();
   proxyRequestDrainTracker.start(requestId, req.method, url.pathname);
 
@@ -887,21 +914,33 @@ async function router(req: Request): Promise<HttpHandlerResponse> {
       proxyRequestDrainTracker.complete(requestId);
       return response;
     }
+    // Read after the await: shutdown may have started while this request ran.
+    response = drainAdmission.closeIfDraining(req, response, admittedDuringDrain);
     return proxyRequestDrainTracker.completeOnResponseEnd(requestId, req, response);
   } catch (error) {
     proxyRequestDrainTracker.complete(requestId);
-    if (error instanceof ProxyRequestHostError) {
-      // An absolute-form request target with an empty Host header parses as a
-      // URL, but Host validation rejects it downstream ("" is not nullish, so
-      // the url.host fallback never fires). Map it to 400 here instead of
-      // letting it escape as Deno's generic 500.
-      proxyLogger.warn(`400 ${req.method} ${url.pathname}`, {
-        host: describeRejectedHostHeader(req.headers.get("host")),
-      });
-      return jsonErrorResponse(400, { error: "Bad Request" });
-    }
-    throw error;
+    // Error responses close their connection while draining too, so the
+    // gateway does not stay pinned to this pod.
+    return drainAdmission.closeIfDraining(req, handleRouterError(req, url, error));
   }
+}
+
+function handleRouterError(req: Request, url: URL, error: unknown): Response {
+  if (error instanceof ProxyRequestHostError) {
+    // An absolute-form request target with an empty Host header parses as a
+    // URL, but Host validation rejects it downstream ("" is not nullish, so
+    // the url.host fallback never fires). Map it to 400 here instead of
+    // letting it escape as Deno's generic 500.
+    proxyLogger.warn(`400 ${req.method} ${url.pathname}`, {
+      host: describeRejectedHostHeader(req.headers.get("host")),
+    });
+    return jsonErrorResponse(400, { error: "Bad Request" });
+  }
+  // Outside a drain the server's own error handling owns unexpected failures.
+  if (!drainAdmission.isDraining()) throw error;
+  captureApplicationError(error, { boundary: "proxy.request", method: req.method });
+  proxyLogger.error(`500 ${req.method} ${url.pathname}`, {}, error);
+  return jsonErrorResponse(500, { error: "Internal Server Error" });
 }
 
 // Create server before signal registration so early SIGTERM/SIGINT can close it safely.
@@ -911,10 +950,12 @@ const server = createHttpServer();
 async function shutdown(signal: "SIGINT" | "SIGTERM"): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
+  drainAdmission.begin(signal);
 
   proxyLogger.info(`Received ${signal}, initiating graceful shutdown`, {
     inFlightRequests: proxyRequestDrainTracker.getInFlightCount(),
     drainTimeoutMs: SHUTDOWN_DRAIN_TIMEOUT_MS,
+    admissionGraceMs: drainAdmission.getGrantedMs(),
     cleanupTimeoutMs: SHUTDOWN_CLEANUP_TIMEOUT_MS,
   });
 
@@ -944,11 +985,17 @@ async function shutdown(signal: "SIGINT" | "SIGTERM"): Promise<void> {
   };
 
   try {
-    // New requests receive the draining response after shuttingDown is set.
-    // Keep this replica subscribed while already-started responses finish.
+    // New requests are admitted (closing their connections) until the grace
+    // window ends, then receive the draining response. Keep this replica
+    // subscribed while admitted and already-started responses finish.
+    // SIGINT gets no grace window. The wait uses a timer captured before
+    // extensions load, so a replaced setTimeout cannot skip cleanup.
+    await drainAdmission.waitForWindow();
     let drained = false;
     try {
-      drained = await proxyRequestDrainTracker.waitForDrain(SHUTDOWN_DRAIN_TIMEOUT_MS);
+      drained = await proxyRequestDrainTracker.waitForDrain(
+        drainAdmission.remainingDrainBudgetMs(SHUTDOWN_DRAIN_TIMEOUT_MS),
+      );
     } catch (error) {
       reportShutdownFailure({ step: "request_drain", error, timedOut: false });
     }

@@ -93,6 +93,10 @@ describe("GitHubReadOperations", () => {
 
     it("rejects an already-aborted read before any request", async () => {
       const controller = new AbortController();
+      // Hold the signal before aborting. Bun 1.3.6 keeps the abort reason alive only
+      // through a live signal wrapper, so a GC between abort() and the first
+      // controller.signal read can drop the reason this test asserts on.
+      const signal = controller.signal;
       controller.abort(new Error("eval cancelled"));
       let requests = 0;
       const ops = createOps({
@@ -105,10 +109,40 @@ describe("GitHubReadOperations", () => {
       });
 
       await assertRejects(
-        () => ops.readTextFile("cases.json", { signal: controller.signal }),
+        () => ops.readTextFile("cases.json", { signal }),
         Error,
         "eval cancelled",
       );
+      assertEquals(requests, 0);
+    });
+
+    it("rejects with an AbortError when an aborted signal has lost its reason", async () => {
+      const controller = new AbortController();
+      const signal = controller.signal;
+      controller.abort(new Error("eval cancelled"));
+      // Simulate Bun 1.3.6 after GC collected the reason: aborted, but reason is undefined.
+      Object.defineProperty(signal, "reason", { value: undefined });
+      Object.defineProperty(signal, "throwIfAborted", {
+        value: () => {
+          throw undefined;
+        },
+      });
+      let requests = 0;
+      const ops = createOps({
+        client: {
+          getContents: () => {
+            requests++;
+            return Promise.resolve({ type: "file", content: "dGVzdA==" });
+          },
+        },
+      });
+
+      const error = await assertRejects(
+        () => ops.readTextFile("cases.json", { signal }),
+        DOMException,
+        "The operation was aborted",
+      );
+      assertEquals((error as DOMException).name, "AbortError");
       assertEquals(requests, 0);
     });
   });

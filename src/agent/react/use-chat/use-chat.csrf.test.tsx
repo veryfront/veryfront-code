@@ -101,6 +101,17 @@ describe("react/agent/useChat CSRF double-submit", () => {
     }
   });
 
+  it("declares the SSE reply on every chat endpoint, custom paths included", async () => {
+    const restoreDom = installDom();
+    try {
+      const headers = await captureSendHeaders({ api: "/api/support-chat" });
+      assertEquals(headers.get("accept"), "text/event-stream");
+      assertEquals(headers.get("content-type"), "application/json");
+    } finally {
+      restoreDom();
+    }
+  });
+
   it("leaves the header alone when the page has no CSRF cookie", async () => {
     const restoreDom = installDom();
     try {

@@ -3,7 +3,10 @@ import {
   getExecutorHttpInstallSchema,
   parseExecutorInstallation,
 } from "#veryfront/agent/hosted/executor-runtime-install-schema.ts";
-import type { HostedExecutorSession } from "#veryfront/agent/hosted/executor-session.ts";
+import type {
+  HostedExecutorSession,
+  HostedExecutorSessionOptions,
+} from "#veryfront/agent/hosted/executor-session.ts";
 import type { HostedExecutorSessionPool } from "#veryfront/agent/hosted/executor-session-pool.ts";
 import {
   getHostedExecutorAllocationRequestSchema,
@@ -13,6 +16,10 @@ import {
   sameHostedExecutorOwner,
 } from "#veryfront/agent/hosted/executor-session-schema.ts";
 import { verifyHostedRuntimeSourceBinding } from "#veryfront/agent/hosted/runtime-source-binding.ts";
+import {
+  formatTraceparent,
+  parseTraceparent,
+} from "#veryfront/observability/tracing/traceparent.ts";
 import { normalizeDynamicDenyHeaders } from "#veryfront/security/http/application-request.ts";
 import { completeOnResponseBodyConsumption } from "#veryfront/platform/compat/http/response-lifecycle.ts";
 import type { RenderGenerationExecutor } from "#veryfront/rendering/render-generation.ts";
@@ -112,6 +119,17 @@ export interface HostedHttpGenerationExecutorOptions {
   sessions: Pick<HostedExecutorSessionPool, "start">;
   /** Look up the broker's data for an admitted request. */
   context(request: Request): HostedHttpGenerationRequest | undefined;
+  /** Trusted synchronous observer of a request about to use an authenticated attachment. */
+  observeDispatch?(
+    receipt: Readonly<{
+      attachment: Parameters<NonNullable<HostedExecutorSessionOptions["observeAttachment"]>>[0];
+      brokerInstanceId: string;
+      projectId: string;
+      environmentId: string;
+      releaseId: string;
+      traceparent?: string;
+    }>,
+  ): void;
   /** Stop admitting requests after this long without one in flight. */
   idleTimeoutMs: number;
   /**
@@ -206,6 +224,10 @@ export function createHostedHttpGenerationExecutor(
   let released = false;
   let stopping: Promise<void> | undefined;
   let observation: Promise<unknown> | undefined;
+  const observeDispatch = options.observeDispatch;
+  let attachment:
+    | Parameters<NonNullable<HostedExecutorSessionOptions["observeAttachment"]>>[0]
+    | undefined;
 
   function retire(): void {
     if (retired) return;
@@ -224,6 +246,12 @@ export function createHostedHttpGenerationExecutor(
     }
     const started = sessions.start({
       ...input.session,
+      ...(observeDispatch === undefined ? {} : {
+        observeAttachment(receipt) {
+          attachment = receipt;
+          input.session.observeAttachment?.(receipt);
+        },
+      }),
       request: allocation,
       // The session is shared by every request of this generation. Only the generation
       // owns its lifetime; a caller's owner signal bounds that caller's request alone.
@@ -363,7 +391,26 @@ export function createHostedHttpGenerationExecutor(
         const current = session!;
         const signal = AbortSignal.any([request.signal, current.signal, lifetime.signal]);
         const owned = new Request(request, { signal });
-        const response = await current.runOwned(() => client!.fetch(owned, context.tracing));
+        const response = await current.runOwned(() => {
+          signal.throwIfAborted();
+          if (observeDispatch) {
+            if (!attachment) throw new Error("HTTP executor attachment receipt is unavailable");
+            const { owner, source, environmentId } = input.installation;
+            if (owner.scopeKind !== "project") throw new Error("HTTP executor owner is unverified");
+            observeDispatch(
+              Object.freeze({
+                attachment,
+                brokerInstanceId: input.session.expectedBrokerInstanceId,
+                projectId: owner.projectId,
+                environmentId,
+                releaseId: source.releaseId,
+                traceparent: formatTraceparent(parseTraceparent(context.tracing?.traceparent)),
+              }),
+            );
+            signal.throwIfAborted();
+          }
+          return client!.fetch(owned, context.tracing);
+        });
         return completeOnResponseBodyConsumption(
           response,
           finish,

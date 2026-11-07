@@ -143,12 +143,13 @@ describe("import rewrite compatibility golden tests", () => {
       rewriteCompiledBinaryVeryfrontImports(`import { x } from "veryfront/agent";`),
       `import { x } from "./_vf_agent.mjs";`,
     );
-    assertStringIncludes(
+    // CommonJS dependencies are left for the native-require bundle plugin.
+    assertEquals(
       rewriteCompiledBinaryUserDependencyImports(
         `const m = import("lodash/merge");`,
         new Map([["lodash", "^4"]]),
       ),
-      `Promise.resolve(require("lodash/merge"))`,
+      `const m = import("lodash/merge");`,
     );
     assertEquals(
       rewriteDenoNodeBuiltinImports(`import { readFile } from "fs";`),

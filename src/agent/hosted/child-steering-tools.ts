@@ -14,6 +14,9 @@ import {
   type ProjectSteeringPaths,
 } from "../project/steering-mutation.ts";
 
+/** Forwards the receiver a host binds, so a gated tool reads its exposed name from `this.id`. */
+const apply = Reflect.apply;
+
 /** Handler for hosted child steering mutation. */
 export type HostedChildSteeringMutationHandler = (
   mutation: ProjectSteeringMutationResult,
@@ -54,9 +57,9 @@ export function wrapHostedChildSteeringMutationTool(
 
   return inheritTrustedHostToolProvenance(input.toolDefinition, {
     ...input.toolDefinition,
-    execute: async (toolInput: unknown, execOptions?: ToolExecutionContext) => {
+    async execute(this: unknown, toolInput: unknown, execOptions?: ToolExecutionContext) {
       const normalizedToolInput = toChildRunToolInputRecord(toolInput);
-      const result = await originalExecute(toolInput, execOptions);
+      const result = await apply(originalExecute, this, [toolInput, execOptions]);
       if (isSuccessfulProjectSteeringMutationResult(result)) {
         const mutation = getProjectSteeringMutation({
           toolName: input.toolName,
@@ -89,9 +92,9 @@ export function wrapHostedChildProjectSwitchTool(
   const originalExecute = toolDefinition.execute;
   input.tools[toolName] = inheritTrustedHostToolProvenance(toolDefinition, {
     ...toolDefinition,
-    execute: async (toolInput: unknown, execOptions?: ToolExecutionContext) => {
+    async execute(this: unknown, toolInput: unknown, execOptions?: ToolExecutionContext) {
       const normalizedToolInput = toChildRunToolInputRecord(toolInput);
-      const result = await originalExecute(toolInput, execOptions);
+      const result = await apply(originalExecute, this, [toolInput, execOptions]);
       const projectReference = normalizedToolInput.project_reference;
       const confirmedProject = typeof projectReference === "string"
         ? getConfirmedProjectContextSwitch(result, projectReference)

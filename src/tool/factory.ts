@@ -1,3 +1,11 @@
+import {
+  requireToolApproval,
+  snapshotToolApprovalPolicy,
+  throwIfRunCancelled,
+  type ToolApprovalPolicy,
+  type ToolApprovalRefusal,
+  withToolApprovalRefusalOutput,
+} from "./approval.ts";
 import type { Tool, ToolConfig, ToolDiscoveryMetadata, ToolExecutionContext } from "./types.ts";
 import { readToolDiscoveryMetadata } from "./discovery-metadata.ts";
 import type { JsonSchema, Schema } from "#veryfront/extensions/schema/index.ts";
@@ -5,6 +13,7 @@ import { zodToJsonSchema } from "./schema/zod-json-schema.ts";
 import { agentLogger } from "#veryfront/utils";
 import { createError, getErrorMessage, INVALID_ARGUMENT, toError } from "#veryfront/errors";
 import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
+import { privateJsonParse, privateJsonStringify } from "#veryfront/security/private-json.ts";
 import { slicePrivateArray } from "#veryfront/security/private-array.ts";
 import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
 import {
@@ -220,10 +229,20 @@ function markGeneratedToolId<TInput, TOutput>(tool: Tool<TInput, TOutput>): Tool
   };
 }
 
-/** Create a typed tool definition. */
+/** Create a typed tool definition. A tool declared with `approval` may return a refusal instead. */
+export function tool<TInput = unknown, TOutput = unknown>(
+  config: ToolConfig<TInput, TOutput> & { approval: ToolApprovalPolicy },
+): Tool<TInput, TOutput | ToolApprovalRefusal>;
+export function tool<TInput = unknown, TOutput = unknown>(
+  config: ToolConfig<TInput, TOutput> & { approval?: undefined },
+): Tool<TInput, TOutput>;
+/** A config that may carry `approval` (one typed as `ToolConfig`, say) may return a refusal too. */
 export function tool<TInput = unknown, TOutput = unknown>(
   config: ToolConfig<TInput, TOutput>,
-): Tool<TInput, TOutput> {
+): Tool<TInput, TOutput | ToolApprovalRefusal>;
+export function tool<TInput = unknown, TOutput = unknown>(
+  config: ToolConfig<TInput, TOutput>,
+): Tool<TInput, TOutput | ToolApprovalRefusal> {
   const explicitId = typeof config.id === "string" && config.id.length > 0 ? config.id : undefined;
   const id = explicitId ?? generateToolId();
   const inputSchema = config.inputSchema;
@@ -256,23 +275,37 @@ export function tool<TInput = unknown, TOutput = unknown>(
     : undefined;
   const mcp = snapshotMcpConfig(config.mcp, id);
   const discovery = readToolDiscoveryMetadata(config);
+  const approval = snapshotToolApprovalPolicy(config.approval, id);
+  const output = approval
+    ? withToolApprovalRefusalOutput(outputSchema as Schema<TOutput> | undefined, outputSchemaJson)
+    : {
+      outputSchema: outputSchema as Schema<TOutput | ToolApprovalRefusal> | undefined,
+      outputSchemaJson,
+    };
 
-  const createdTool: Tool<TInput, TOutput> = {
+  const createdTool: Tool<TInput, TOutput | ToolApprovalRefusal> = {
     id,
     type: "function" as const,
     description: config.description,
     ...(discovery ? { discovery } : {}),
     ...(delegatedIntegrationTools ? { delegatedIntegrationTools } : {}),
     ...(delegatedPlatformTools ? { delegatedPlatformTools } : {}),
+    ...(approval ? { approval } : {}),
     inputSchema: inputSchema as Schema<TInput>,
     inputSchemaJson,
-    outputSchema: outputSchema as Schema<TOutput> | undefined,
-    outputSchemaJson,
-    execute: async (input: TInput, context?: ToolExecutionContext) => {
-      let validated = input;
-      if (parseInput) {
+    outputSchema: output.outputSchema,
+    outputSchemaJson: output.outputSchemaJson,
+    // A method, not an arrow: discovery registers a copy of an id-less tool under its file's id,
+    // and the call runs on that copy, so `this.id` is the name the checker should see.
+    async execute(
+      this: { id?: unknown } | undefined,
+      input: TInput,
+      context?: ToolExecutionContext,
+    ) {
+      const parse = (value: unknown): TInput => {
+        if (!parseInput) return value as TInput;
         try {
-          validated = parseInput(input) as TInput;
+          return parseInput(value) as TInput;
         } catch (error) {
           throw toError(
             createError({
@@ -281,8 +314,32 @@ export function tool<TInput = unknown, TOutput = unknown>(
             }),
           );
         }
-      }
+      };
+      if (!approval) return await execute(parse(input), context);
 
+      // One JSON snapshot of the arguments as called is what the checker approves, so a caller still
+      // holding them cannot change them while the approval is pending. It is parsed once, before
+      // asking, and that parse is what runs: a stateful transform cannot change the approved call.
+      const snapshot = snapshotBoundedJsonValue(input);
+      if (
+        !snapshot.success || snapshot.value === null || typeof snapshot.value !== "object" ||
+        arrayIsArray(snapshot.value)
+      ) {
+        throw INVALID_ARGUMENT.create({
+          detail: `Tool "${id}" requires approval, so its arguments must be a JSON object`,
+        });
+      }
+      // Read back from the JSON the checker is shown, so a value JSON cannot carry (-0, say) never
+      // runs as something other than what was approved.
+      const args = privateJsonParse(privateJsonStringify(snapshot.value)!) as Record<
+        string,
+        unknown
+      >;
+      const validated = parse(args);
+      const toolName = typeof this?.id === "string" && this.id.length > 0 ? this.id : id;
+      const refusal = await requireToolApproval(toolName, approval, args, context);
+      if (refusal) return refusal;
+      throwIfRunCancelled(context);
       return await execute(validated, context);
     },
     mcp,

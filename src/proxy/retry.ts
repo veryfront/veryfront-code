@@ -101,7 +101,7 @@ function isIdempotentMethod(method: string): boolean {
   return normalized === "GET" || normalized === "HEAD" || normalized === "OPTIONS";
 }
 
-function isControlPlaneRunStreamPost(request: Request, pathname: string): boolean {
+export function isControlPlaneRunStreamPost(request: Request, pathname: string): boolean {
   return request.method.toUpperCase() === "POST" &&
     CONTROL_PLANE_RUN_STREAM_PATH.test(pathname);
 }

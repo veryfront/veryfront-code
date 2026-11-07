@@ -66,11 +66,16 @@ describe("installed HTTP broker", () => {
   });
   it("uses the configured bounded lifetime for long requests and streams", async () => {
     const f = createHostedHttpFixture(() => new Response("A"));
+    let attachments = 0;
+    const observeAttachment = () => {
+      attachments++;
+    };
     const options = {
       installations: [{ image: f.input.session.expectedImage, configuration }],
       expectedBrokerInstanceId: "broker-a",
       allocator: f.input.session.allocator,
       connectTransport: f.input.session.connectTransport,
+      observeAttachment,
       maxActive: 1,
       authorize: async () => {},
       requestLifetimeMs: 180_000,
@@ -79,6 +84,8 @@ describe("installed HTTP broker", () => {
     try {
       const startedAt = Date.now();
       const input = await b.hostedHttp.resolve(authority, new AbortController().signal);
+      assertEquals(input.session.observeAttachment, observeAttachment);
+      assertEquals(attachments, 0);
       const finishedAt = Date.now();
       const { hardDeadlineAt, prepareDeadlineAt } = input.session.request;
       // Lifetimes start after authorization, which can cross a clock tick.
