@@ -61,7 +61,12 @@ export function useStreaming(options: UseStreamingOptions): UseStreamingResult {
           // so this POST has to echo the configured CSRF cookie the document
           // response issued or the server answers 403.
           headers: csrfMutationHeaders(options.url, {
-            headers: { "Content-Type": "application/json" },
+            headers: {
+              // Streamed reply. Listing SSE lets a draining proxy send it to a
+              // replica that stays.
+              Accept: "text/event-stream, text/plain;q=0.9, */*;q=0.8",
+              "Content-Type": "application/json",
+            },
           }),
           body: body ? JSON.stringify(body) : undefined,
           signal: abortController.signal,

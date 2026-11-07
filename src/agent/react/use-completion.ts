@@ -77,6 +77,9 @@ export function useCompletion(options: UseCompletionOptions): UseCompletionResul
           // header itself through `options.headers` keeps its own value.
           headers: csrfMutationHeaders(options.api, {
             headers: {
+              // Streamed reply (SSE or plain text). Listing SSE lets a
+              // draining proxy send it to a replica that stays.
+              Accept: "text/event-stream, text/plain;q=0.9, */*;q=0.8",
               "Content-Type": "application/json",
               ...options.headers,
             },
