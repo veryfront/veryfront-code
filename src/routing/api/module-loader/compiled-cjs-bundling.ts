@@ -272,13 +272,18 @@ export function createImportExternalsPlugin(
   const filter = new RegExp(`^(?:${escaped.join("|")})(?:/.*)?$`);
   // The real directory of each top-level package, which the external import
   // loads at runtime.
-  const topLevel = new Map<string, Promise<string[]>>();
+  type Copy = { readonly logical: string; readonly real: string };
+  const topLevel = new Map<string, Promise<Copy[]>>();
   const topLevelDirectories = (name: string) => {
     let directories = topLevel.get(name);
     if (directories === undefined) {
       directories = Promise.all(
-        (options?.nodeModules ?? []).map((root) => options!.realPath(pathHelper.join(root, name))),
-      ).then((paths) => paths.filter((path): path is string => path !== null));
+        (options?.nodeModules ?? []).map(async (root) => {
+          const logical = pathHelper.join(root, name);
+          const real = await options!.realPath(logical);
+          return real === null ? null : { logical, real };
+        }),
+      ).then((copies) => copies.filter((copy): copy is Copy => copy !== null));
       topLevel.set(name, directories);
     }
     return directories;
@@ -308,8 +313,17 @@ export function createImportExternalsPlugin(
         if (result.errors?.length || !result.path || result.external) return external;
         const name = packageName(args.path);
         const real = (await options.realPath(result.path)) ?? result.path;
-        const directories = await topLevelDirectories(name);
-        if (directories.some((directory) => isWithinDirectory(directory, real))) return external;
+        const copy = (await topLevelDirectories(name)).find((directory) =>
+          isWithinDirectory(directory.real, real)
+        );
+        if (copy !== undefined) {
+          // The import rewrite maps a subpath onto the package directory as
+          // written; the file this one resolved to honours the package's
+          // `exports`, so the import names it.
+          if (args.path === name) return external;
+          const file = pathHelper.join(copy.logical, pathHelper.relative(copy.real, real));
+          return { path: pathHelper.toFileUrl(file).href, external: true };
+        }
         return {
           path: result.path,
           namespace: result.namespace,
@@ -585,19 +599,28 @@ export async function prepareCommonJSFile(
   // use of `require`, such as a computed id, runs at runtime with the require
   // of this file's directory, as in Node; so does a require.resolve call left
   // unresolved, which throws there as in Node.
-  // A file that assigns to `require` keeps the name: a call is no target.
+  const directory = pathHelper.dirname(filePath);
+  const boundRequire = `(${BUNDLED_REQUIRE_FROM}(${JSON.stringify(directory)}))`;
+  // Code in a direct eval sees the file's own bindings, which no rewrite of
+  // the source reaches; the file declares them, as Node's wrapper does. Its
+  // requires then all run at runtime. A file that assigns to `require` also
+  // keeps the name: a call is no assignment target.
+  const directEval = /\beval\s*\(/.test(contents);
   const assigned = new RegExp(`${requireMarker}\\s*=(?!=)`).test(rewritten);
-  const ownRequire = assigned
-    ? "require"
-    : `(${BUNDLED_REQUIRE_FROM}(${JSON.stringify(pathHelper.dirname(filePath))}))`;
-  return rewritten
+  const prepared = rewritten
     .replace(
       literalRequire(requireMarker),
       (_whole, double, single, template) =>
         `require(${JSON.stringify(double ?? single ?? template)})`,
     )
     .replaceAll(marker, `${requireMarker}.resolve`)
-    .replaceAll(requireMarker, ownRequire);
+    .replaceAll(requireMarker, directEval || assigned ? "require" : boundRequire);
+  if (!directEval) return prepared;
+  // After a hashbang and the directive prologue, so "use strict" still applies.
+  const head = /^(?:#![^\n]*\n)?(?:(["'])[^"'\n]*\1;\n)*/.exec(prepared)?.[0] ?? "";
+  const bindings = `var require = ${boundRequire}, __dirname = ${JSON.stringify(directory)}, ` +
+    `__filename = ${JSON.stringify(filePath)};\n`;
+  return head + bindings + prepared.slice(head.length);
 }
 
 // A call of `marker` with one string literal as the bundler prints it; a
@@ -799,7 +822,9 @@ export async function prepareDependencyFile(input: DependencyFileInput): Promise
     contents.includes("__filename") ||
     // Any use of require but a call with a string literal, which the bundler
     // bundles: a computed id must resolve from this file's directory.
-    /\brequire\b/.test(contents.replace(LITERAL_REQUIRE_CALL, ""));
+    /\brequire\b/.test(contents.replace(LITERAL_REQUIRE_CALL, "")) ||
+    // A direct eval may read any of them.
+    /\beval\s*\(/.test(contents);
   if (!readsCommonJSNames && !importMeta) return register(contents);
   const resolveDir = pathHelper.dirname(resolvedPath);
   const dependencyPath = async (
@@ -1023,10 +1048,11 @@ export function createRuntimeRequire(
   const conditionalTarget = (value: unknown): string | null | undefined => {
     if (typeof value === "string") return value;
     if (Array.isArray(value)) {
-      // As in Node, the first item that resolves wins, a null one included.
+      // As in Node, the first item that resolves to a target wins; a null or
+      // unmatched item falls through to the next.
       for (const item of value) {
         const target = conditionalTarget(item);
-        if (target !== undefined) return target;
+        if (typeof target === "string") return target;
       }
       return null;
     }
@@ -1075,31 +1101,52 @@ export function createRuntimeRequire(
   };
   // A `./` target of a package map, which Node rejects if any later segment
   // is empty, `.`, `..` or `node_modules`, so it cannot leave its package.
+  // A target is a URL path, so its escapes name the file: `%20` is a space.
   const packageTarget = (packageDir: string, target: string) => {
     if (!target.startsWith("./")) return null;
-    const segments = target.slice(2).split(/[\\/]/);
-    const invalid = segments.some((segment) => {
-      let decoded = segment;
+    const decoded: string[] = [];
+    for (const segment of target.slice(2).split(/[\\/]/)) {
+      let name: string;
       try {
-        decoded = decodeURIComponent(segment);
+        name = decodeURIComponent(segment);
       } catch {
-        return true;
+        return null;
       }
-      const lower = decoded.toLowerCase();
-      return lower === "" || lower === "." || lower === ".." || lower === "node_modules" ||
-        /[\\/]/.test(decoded);
-    });
-    return invalid ? null : projectFile(host.join(packageDir, target));
+      const lower = name.toLowerCase();
+      if (
+        lower === "" || lower === "." || lower === ".." || lower === "node_modules" ||
+        /[\\/]/.test(name)
+      ) {
+        return null;
+      }
+      decoded.push(name);
+    }
+    return projectFile(host.join(packageDir, ...decoded));
+  };
+  // The `type` of the package.json that scopes a file, as Node reads it: the
+  // nearest one, never past a `node_modules` directory or the project.
+  const packageType = (file: string) => {
+    let current = host.dirname(file);
+    while (inProject(current) && !current.endsWith(host.sep + "node_modules")) {
+      const manifest = readManifest(current);
+      if (manifest !== undefined) return manifest?.type;
+      const parent = host.dirname(current);
+      if (parent === current) return undefined;
+      current = parent;
+    }
+    return undefined;
   };
   const inProject = (directory: string) => {
     const relative = host.relative(projectRoot, directory);
     return !(relative === ".." || relative.startsWith(".." + host.sep) ||
       host.isAbsolute(relative));
   };
-  // A package's file for `subpath` ("" or "/sub"), as Node's require() picks it.
+  // A package's file for `subpath` ("" or "/sub"), as Node's require() picks
+  // it; false when the package is there but refuses the subpath (its
+  // `exports` or a malformed package.json), which ends Node's search.
   const packageFile = (packageDir: string, subpath: string) => {
     const manifest = readManifest(packageDir);
-    if (manifest === null) return null;
+    if (manifest === null) return false;
     const exports = manifest?.exports;
     if (exports !== undefined && exports !== null) {
       const key = "." + subpath;
@@ -1110,7 +1157,7 @@ export function createRuntimeRequire(
         : key === "."
         ? conditionalTarget(exports) ?? null
         : null;
-      return target === null ? null : packageTarget(packageDir, target);
+      return (target === null ? null : packageTarget(packageDir, target)) ?? false;
     }
     return findFile(host.join(packageDir, subpath));
   };
@@ -1131,6 +1178,7 @@ export function createRuntimeRequire(
     while (inProject(current)) {
       if (!current.endsWith(host.sep + "node_modules")) {
         const found = packageFile(host.join(current, "node_modules", name), subpath);
+        if (found === false) return null;
         if (found !== null) return found;
       }
       const parent = host.dirname(current);
@@ -1220,7 +1268,7 @@ export function createRuntimeRequire(
     if (/\.node$/i.test(real)) {
       throw failure("Native addons are not supported in API routes: " + name, "ERR_DLOPEN_FAILED");
     }
-    if (/\.m[jt]s$/i.test(real)) {
+    if (/\.m[jt]s$/i.test(real) || (/\.js$/i.test(real) && packageType(real) === "module")) {
       throw failure("require() of an ES module is not supported here: " + name, "ERR_REQUIRE_ESM");
     }
     return evaluate(real);

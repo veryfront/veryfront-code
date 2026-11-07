@@ -398,7 +398,9 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
         onLoad: () => {},
         resolve: (path: string, options: { importer: string; pluginData: unknown }) => {
           seen.push(options.pluginData);
-          const target = resolved[options.importer];
+          const target = path === "dual/feature"
+            ? "/d/store/dual/dist/feature.js"
+            : resolved[options.importer];
           return Promise.resolve(
             path === "dual/missing" || target === undefined
               ? { errors: [{ text: "Could not resolve" }] }
@@ -428,6 +430,11 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
         pluginData: undefined,
       });
       assertEquals(await handler!(args("/d/node_modules/q/index.js")), external);
+      // A subpath names the file the package's exports map it to.
+      assertEquals(await handler!(args("/d/node_modules/q/index.js", "dual/feature")), {
+        path: "file:///d/node_modules/dual/dist/feature.js",
+        external: true,
+      });
       // Route code, a failed resolution and the plugin's own lookup stay as before.
       assertEquals(await handler!(args("/d/src/route.ts")), external);
       assertEquals(await handler!(args("/d/node_modules/p/index.js", "dual/missing")), {
@@ -438,7 +445,7 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
         await handler!({ ...args("/d/node_modules/p/index.js"), pluginData: seen[0] }),
         undefined,
       );
-      assertEquals(seen.length, 3);
+      assertEquals(seen.length, 4);
     });
 
     it("registers nothing without packages", async () => {
@@ -713,8 +720,29 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
           "./encoded": "./%2e%2e/sibling/index.js",
           "./empty": "./a//b.js",
           "./ok": { import: "./esm.mjs", node: { require: "./ok.js" } },
+          "./space": "./a%20b.js",
+          "./badescape": "./%E0%A4%A.js",
         },
       }),
+      "/app/node_modules/blocked/a b.js": "module.exports = 'space';",
+      "/app/node_modules/shadow/package.json": JSON.stringify({
+        exports: { ".": "./main.js", "./sub": "./sub.js" },
+      }),
+      "/app/node_modules/shadow/main.js": "module.exports = 'top main';",
+      "/app/node_modules/shadow/sub.js": "module.exports = 'top sub';",
+      "/app/node_modules/p/node_modules/shadow/package.json": JSON.stringify({
+        exports: { ".": "./main.js" },
+      }),
+      "/app/node_modules/p/node_modules/shadow/main.js": "module.exports = 'nested main';",
+      "/app/node_modules/p/node_modules/badnested/package.json": "{",
+      "/app/node_modules/badnested/package.json": JSON.stringify({ main: "index.js" }),
+      "/app/node_modules/badnested/index.js": "module.exports = 'top';",
+      "/app/node_modules/p/shadowed.js": "module.exports = require('shadow');",
+      "/app/node_modules/p/shadow-sub.js": "require('shadow/sub');",
+      "/app/node_modules/p/bad-nested.js": "require('badnested');",
+      "/app/node_modules/esmtype/package.json": JSON.stringify({ type: "module" }),
+      "/app/node_modules/esmtype/index.js": "export default 1;",
+      "/app/node_modules/esmtype/legacy.cjs": "module.exports = 'cjs';",
       "/app/node_modules/blocked/fallback.js": "module.exports = 'fallback';",
       "/app/node_modules/blocked/later.js": "module.exports = 'later';",
       "/app/node_modules/blocked/node_modules/x.js": "module.exports = 'x';",
@@ -937,7 +965,13 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
 
     it("stops at a null condition and keeps package targets inside the package", () => {
       assertEquals(require("blocked/ok"), "ok");
-      for (const id of ["blocked", "blocked/later", "blocked/escape", "blocked/nested"]) {
+      // In an array a null falls through to the next item, as in Node.
+      assertEquals(require("blocked/later"), "later");
+      // A target's escapes name the file.
+      assertEquals(require("blocked/space"), "space");
+      for (
+        const id of ["blocked", "blocked/escape", "blocked/nested", "blocked/badescape"]
+      ) {
         assertEquals(errorCode(() => require(id)), "MODULE_NOT_FOUND", id);
       }
       for (const id of ["blocked/encoded", "blocked/empty"]) {
@@ -947,6 +981,28 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
         errorCode(() => require("/app/node_modules/p/escape-imports.js")),
         "MODULE_NOT_FOUND",
       );
+    });
+
+    it("stops at the nearest copy of a package that refuses the path", () => {
+      assertEquals(require("/app/node_modules/p/shadowed.js"), "nested main");
+      for (const file of ["shadow-sub", "bad-nested"]) {
+        assertEquals(
+          errorCode(() => require(`/app/node_modules/p/${file}.js`)),
+          "MODULE_NOT_FOUND",
+          file,
+        );
+      }
+      // From elsewhere the top-level copy still serves both.
+      assertEquals(require("shadow/sub"), "top sub");
+      assertEquals(require("badnested"), "top");
+    });
+
+    it("rejects a .js file its package declares an ES module", () => {
+      assertEquals(
+        errorCode(() => require("/app/node_modules/esmtype/index.js")),
+        "ERR_REQUIRE_ESM",
+      );
+      assertEquals(require("/app/node_modules/esmtype/legacy.cjs"), "cjs");
     });
 
     it("resolves to the real path that keys require.cache", () => {
@@ -1082,6 +1138,36 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
         ) {
           assert(code.includes(part), code);
         }
+      });
+
+      it("declares the CommonJS names in a file a direct eval may read", async () => {
+        const code = await prepareCommonJSFile(
+          [
+            '"use strict";',
+            'exports.p = eval("require")("./p");',
+            'exports.s = require("./s");',
+            'exports.d = eval("__dirname");',
+          ].join("\n"),
+          "/d/p/index.cjs",
+          undefined,
+          resolveRelative,
+        );
+        assert(code !== null);
+        assert(
+          code.startsWith(
+            '"use strict";\nvar require = (__vf_require_from("/d/p")), __dirname = "/d/p", ' +
+              '__filename = "/d/p/index.cjs";\n',
+          ),
+          code,
+        );
+        assert(code.includes('exports.s = require("./s");'), code);
+        const hashbang = await prepareCommonJSFile(
+          '#!/usr/bin/env node\neval("x");',
+          "/d/p/bin.cjs",
+          undefined,
+          resolveRelative,
+        );
+        assert(hashbang?.startsWith("#!/usr/bin/env node\nvar require = "), String(hashbang));
       });
 
       it("prepares an extensionless file and a .js file outside a module package", async () => {
@@ -1243,6 +1329,11 @@ describe("routing/api/module-loader/compiled-cjs-bundling (inbox#4177)", () => {
           computed.includes('(__vf_require_from("/d/node_modules/p"))("./dialects/" + name)'),
           computed,
         );
+        // A direct eval may read a name the text never spells out.
+        const evaluated = await prepareDependencyFile(
+          input('exports.d = eval("__dir" + "name");', "/d/node_modules/p/index.js"),
+        );
+        assert(evaluated.includes('__dirname = "/d/node_modules/p"'), evaluated);
         // An assignment to require keeps the name, which stays a valid target.
         const assigned = await prepareDependencyFile(
           input(

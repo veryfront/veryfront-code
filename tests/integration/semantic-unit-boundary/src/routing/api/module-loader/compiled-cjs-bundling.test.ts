@@ -654,6 +654,59 @@ describe("compiled-binary route bundling of CommonJS dependencies", () => {
     });
   });
 
+  it("gives a dependency that uses direct eval its own CommonJS names", async () => {
+    await inProject(async (projectDir) => {
+      await writeFiles(projectDir, {
+        "node_modules/evaler/package.json": JSON.stringify({ name: "evaler", main: "index.js" }),
+        "node_modules/evaler/index.js": [
+          '"use strict";',
+          'exports.plugin = eval("require")("./plugin").name;',
+          'exports.dir = eval("__dirname");',
+          'exports.file = eval("__filename");',
+          'exports.json = require("./data.json").v;',
+          "exports.strict = (function () { return this; })() === undefined;",
+        ].join("\n"),
+        "node_modules/evaler/plugin.js": 'exports.name = "plugin";',
+        "node_modules/evaler/data.json": '{"v":1}',
+        "plugin.js": 'exports.name = "project";',
+      });
+      const mod = await bundleAndImport(
+        projectDir,
+        'import evaler from "evaler";\nexport { evaler };\n',
+      );
+      assertEquals(mod.evaler, {
+        plugin: "plugin",
+        dir: `${projectDir}/node_modules/evaler`,
+        file: `${projectDir}/node_modules/evaler/index.js`,
+        json: 1,
+        strict: true,
+      });
+    });
+  });
+
+  it("imports the file an external package's exports map a subpath to", async () => {
+    await inProject(async (projectDir) => {
+      await writeFiles(projectDir, {
+        "node_modules/esmpkg/package.json": JSON.stringify({
+          name: "esmpkg",
+          type: "module",
+          exports: { ".": "./index.js", "./feature": "./dist/feature.js" },
+        }),
+        "node_modules/esmpkg/index.js": 'export default "root";',
+        "node_modules/esmpkg/dist/feature.js": 'export default "feature";',
+        "node_modules/other/package.json": JSON.stringify({
+          name: "other",
+          type: "module",
+          main: "index.js",
+        }),
+        "node_modules/other/index.js": 'export const load = () => import("esmpkg/feature");',
+      });
+      const mod = await bundleAndImport(projectDir, 'export { load } from "other";\n', ["esmpkg"]);
+      const feature = await (mod.load as () => Promise<{ default: string }>)();
+      assertEquals(feature.default, "feature");
+    });
+  });
+
   it("resolves a dependency's import.meta.resolve of its own #import", async () => {
     await inProject(async (projectDir) => {
       await writeFiles(projectDir, {
