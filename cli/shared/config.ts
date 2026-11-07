@@ -713,7 +713,7 @@ async function resolveConfigBase(
   if (!apiToken && interactive && allowAuthPrompt) {
     const userInfo = await ensureAuthenticated(env, dir, authOptions);
     if (!userInfo) {
-      const hint = misnamedApiKeyHint();
+      const hint = await misnamedApiKeyHint(env, dir);
       throw new Error(`Authentication required for this operation.${hint ? ` ${hint}` : ""}`);
     }
     apiToken = (await readToken(env)) ?? null;
@@ -722,10 +722,10 @@ async function resolveConfigBase(
   }
 
   if (!apiToken) {
+    const hint = await misnamedApiKeyHint(env, dir);
     throw new Error(
       `Missing API token. ${
-        misnamedApiKeyHint() ??
-          "Run 'veryfront login' or set VERYFRONT_API_TOKEN environment variable"
+        hint ?? "Run 'veryfront login' or set VERYFRONT_API_TOKEN environment variable"
       }`,
     );
   }

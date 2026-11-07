@@ -2081,9 +2081,11 @@ describe("missing-auth hint for VERYFRONT_API_KEY", () => {
     const configHome = await makeTempDir();
     const originalKey = Deno.env.get("VERYFRONT_API_KEY");
     const originalToken = Deno.env.get("VERYFRONT_API_TOKEN");
+    const originalTokenFile = Deno.env.get("VERYFRONT_API_TOKEN_FILE");
     try {
       Deno.env.set("VERYFRONT_API_KEY", "vf_misnamed_key");
       Deno.env.delete("VERYFRONT_API_TOKEN");
+      Deno.env.delete("VERYFRONT_API_TOKEN_FILE");
       await fn(createMockEnv({
         projectSlug: "test-project",
         homeDir: configHome,
@@ -2092,6 +2094,7 @@ describe("missing-auth hint for VERYFRONT_API_KEY", () => {
     } finally {
       restoreEnv("VERYFRONT_API_KEY", originalKey);
       restoreEnv("VERYFRONT_API_TOKEN", originalToken);
+      restoreEnv("VERYFRONT_API_TOKEN_FILE", originalTokenFile);
       await Deno.remove(configHome, { recursive: true });
     }
   }

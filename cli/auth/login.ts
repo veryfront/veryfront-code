@@ -129,14 +129,32 @@ const MISNAMED_API_KEY_HINT_LINES = [
  *
  * The hint only applies to a key the user exported themselves. A key loaded
  * from a project `.env` belongs to whoever wrote the checkout, so it is never
- * suggested as the user's own credential. A token file, when set, is the
- * effective credential, and setting the variable would not change that.
+ * suggested as the user's own credential. When any credential is configured
+ * (a token file, a stored login, a `veryfront.json` token), the failure is
+ * about that credential, so the hint stays out of the way.
  */
-export function misnamedApiKeyHint(): string | undefined {
+export async function misnamedApiKeyHint(
+  env: EnvironmentConfig = getEnvironmentConfig(),
+  projectDir: string = cwd(),
+): Promise<string | undefined> {
   if (!getEnv("VERYFRONT_API_KEY")) return undefined;
   if (getEnvSource("VERYFRONT_API_KEY").source !== "process") return undefined;
   if (getEnv("VERYFRONT_API_TOKEN") || getEnv("VERYFRONT_API_TOKEN_FILE")) return undefined;
+  if (await hasConfiguredCredential(env, projectDir)) return undefined;
   return MISNAMED_API_KEY_HINT_LINES.join(" ");
+}
+
+async function hasConfiguredCredential(
+  env: EnvironmentConfig,
+  projectDir: string,
+): Promise<boolean> {
+  try {
+    const candidates = await resolveApiCredentialCandidatesForAuth(env, projectDir);
+    return candidates.length > 0;
+  } catch {
+    // Unknown credential state: the hint is optional, so leave it out.
+    return true;
+  }
 }
 
 const DEFAULT_EXISTING_SESSION_TIMEOUT_MS = 5_000;
@@ -159,14 +177,16 @@ function loginIdentityData(
   return { ...identity, source: displayedSource };
 }
 
-async function outputLoginAuthenticationRequiredJson(): Promise<void> {
+async function outputLoginAuthenticationRequiredJson(
+  env: EnvironmentConfig,
+  projectDir: string,
+): Promise<void> {
+  const hint = await misnamedApiKeyHint(env, projectDir);
   await outputJson(createErrorEnvelope("login", {
     code: "AUTHENTICATION_ERROR",
     slug: "authentication-required",
     registrySlug: "authentication-required",
-    message: `Not logged in. ${
-      misnamedApiKeyHint() ?? "Set VERYFRONT_API_TOKEN or run in interactive mode."
-    }`,
+    message: `Not logged in. ${hint ?? "Set VERYFRONT_API_TOKEN or run in interactive mode."}`,
   }));
 }
 
@@ -909,7 +929,7 @@ export async function login(
     if (existing === "failure-output") return null;
     if (existing) return existing;
     if (isJsonMode()) {
-      await outputLoginAuthenticationRequiredJson();
+      await outputLoginAuthenticationRequiredJson(env, projectDir);
       return null;
     }
   }
@@ -922,10 +942,9 @@ export async function login(
   await assertApiUrlAcceptsNewCredential(env, projectDir);
 
   if (!isInteractive() && (method === undefined || method === "token")) {
+    const hint = await misnamedApiKeyHint(env, projectDir);
     cliLogger.error(
-      `Not logged in. ${
-        misnamedApiKeyHint() ?? "Set VERYFRONT_API_TOKEN or run in interactive mode."
-      }`,
+      `Not logged in. ${hint ?? "Set VERYFRONT_API_TOKEN or run in interactive mode."}`,
     );
     return null;
   }
@@ -964,10 +983,9 @@ async function requestInteractiveAuthentication(
   validationOptions: CredentialValidationOptions,
 ): Promise<AuthIdentity | null> {
   if (!isTTY() || !isInteractive()) {
+    const hint = await misnamedApiKeyHint(env, projectDir);
     cliLogger.error(
-      `Not logged in. ${
-        misnamedApiKeyHint() ?? "Set VERYFRONT_API_TOKEN or run in interactive mode."
-      }`,
+      `Not logged in. ${hint ?? "Set VERYFRONT_API_TOKEN or run in interactive mode."}`,
     );
     return null;
   }
@@ -1118,12 +1136,13 @@ export async function whoami(
     if (candidate.authoritative) break;
   }
 
+  const hint = candidates.length > 0 ? undefined : await misnamedApiKeyHint(env);
   if (isJsonMode()) {
     await outputJson(createErrorEnvelope("whoami", {
       code: "AUTHENTICATION_ERROR",
       slug: "authentication-required",
       registrySlug: "authentication-required",
-      message: `Not logged in. ${misnamedApiKeyHint() ?? "Run 'veryfront login' to authenticate."}`,
+      message: `Not logged in. ${hint ?? "Run 'veryfront login' to authenticate."}`,
       context: { authenticated: false },
     }));
     return null;
@@ -1131,9 +1150,7 @@ export async function whoami(
 
   console.log();
   console.log("  " + error("✗") + " Not logged in");
-  const hintLines = misnamedApiKeyHint()
-    ? MISNAMED_API_KEY_HINT_LINES
-    : ["Run 'veryfront login' to authenticate"];
+  const hintLines = hint ? MISNAMED_API_KEY_HINT_LINES : ["Run 'veryfront login' to authenticate"];
   for (const line of hintLines) console.log("  " + dim(line));
 
   return null;
