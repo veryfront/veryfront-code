@@ -503,7 +503,7 @@ describe("compiled-binary route bundling of CommonJS dependencies", () => {
           "exports.wrapper = [arguments.length, typeof arguments[1], path.basename(arguments[3])];",
           'exports.sync = require("dual").kind;',
           'try { require("./forced.cjs"); } catch (error) { exports.forced = error.name; }',
-          'exports.typed = require(["./typed", "cts"].join("."));',
+          'try { exports.typed = require(["./typed", "cts"].join(".")); } catch (error) { exports.typed = error.code; }',
           'exports.bom = require("./bom/x.js");',
         ].join("\n"),
         "node_modules/node24/forced.cjs": "export default 1;",
@@ -526,7 +526,10 @@ describe("compiled-binary route bundling of CommonJS dependencies", () => {
       assertEquals(result.wrapper, [5, "function", "index.js"]);
       assertEquals(result.sync, "sync");
       assertEquals(result.forced, "SyntaxError");
-      assertEquals(result.typed, 2);
+      // Deno, which the compiled binary runs on, strips types as Node 24 does; a
+      // runtime without the stripper refuses the file instead of running it.
+      const strips = typeof (await import("node:module")).stripTypeScriptTypes === "function";
+      assertEquals(result.typed, strips ? 2 : "ERR_UNKNOWN_FILE_EXTENSION");
       assertEquals((result.bom as { kind: string }).kind, "esm");
     });
   });
