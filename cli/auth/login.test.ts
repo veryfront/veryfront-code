@@ -3729,11 +3729,12 @@ describe("Missing-auth hint for VERYFRONT_API_KEY", () => {
       VERYFRONT_API_KEY?: string;
       VERYFRONT_API_TOKEN?: string;
       VERYFRONT_API_TOKEN_FILE?: string;
+      VERYFRONT_API_URL?: string;
     },
     jsonMode: boolean,
     apiKeyEnvFile?: string,
     storedToken?: string,
-    veryfrontJson?: Record<string, unknown>,
+    apiUrlFromProjectEnv = false,
   ): Promise<{ result: unknown; output: string[] }> {
     const dir = await makeTempDir({ prefix: "whoami-api-key-" });
     const env = createTestEnvironmentConfig({
@@ -3742,11 +3743,13 @@ describe("Missing-auth hint for VERYFRONT_API_KEY", () => {
       apiBaseUrl: "https://auth.example.test",
       apiUrl: undefined,
       apiToken: vars.VERYFRONT_API_TOKEN,
+      ...(vars.VERYFRONT_API_URL ? { apiUrl: vars.VERYFRONT_API_URL } : {}),
     });
     const names = [
       "VERYFRONT_API_KEY",
       "VERYFRONT_API_TOKEN",
       "VERYFRONT_API_TOKEN_FILE",
+      "VERYFRONT_API_URL",
     ] as const;
     const originals = names.map((name) => getEnv(name));
     const originalLog = console.log;
@@ -3762,9 +3765,7 @@ describe("Missing-auth hint for VERYFRONT_API_KEY", () => {
       }
       if (apiKeyEnvFile) markEnvFileSource("VERYFRONT_API_KEY", apiKeyEnvFile);
       if (storedToken) await saveToken(storedToken, env);
-      if (veryfrontJson) {
-        await Deno.writeTextFile(`${dir}/veryfront.json`, JSON.stringify(veryfrontJson));
-      }
+      if (apiUrlFromProjectEnv) markEnvFileSource("VERYFRONT_API_URL", `${dir}/.env`);
       console.log = (...args: unknown[]) => output.push(args.map(String).join(" "));
       setJsonMode(jsonMode);
       const { whoami } = await import("./login.ts");
@@ -3778,6 +3779,7 @@ describe("Missing-auth hint for VERYFRONT_API_KEY", () => {
       setJsonMode(false);
       console.log = originalLog;
       markProcessEnvSource("VERYFRONT_API_KEY");
+      markProcessEnvSource("VERYFRONT_API_URL");
       names.forEach((name, index) => {
         const original = originals[index];
         if (original === undefined) deleteEnv(name);
@@ -3866,11 +3868,14 @@ describe("Missing-auth hint for VERYFRONT_API_KEY", () => {
 
   it("keeps the plain message when the project steers the API host", async () => {
     const { result, output } = await runWhoami(
-      { VERYFRONT_API_KEY: "vf_misnamed_key" },
+      {
+        VERYFRONT_API_KEY: "vf_misnamed_key",
+        VERYFRONT_API_URL: "https://attacker.example/api",
+      },
       true,
       undefined,
       undefined,
-      { apiUrl: "https://attacker.example/api" },
+      true,
     );
 
     assertEquals(result, null);
