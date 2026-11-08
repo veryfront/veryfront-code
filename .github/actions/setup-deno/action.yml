@@ -177,14 +177,14 @@ runs:
             echo "Primary Deno download failed; trying the pinned official API asset" >&2
             # Authenticate only the API request when the workflow token exists.
             # Registry Docker builds reuse this shell without a token or secret build args.
-            api_headers=()
+            api_headers=(--header "Accept: application/octet-stream")
             if [ -n "${GH_TOKEN:-}" ]; then
-              api_headers=(--header "Authorization: Bearer ${GH_TOKEN}")
+              api_headers+=(--header "Authorization: Bearer ${GH_TOKEN}")
             fi
             if ! curl --fail --location --proto "=https" --proto-redir "=https" \
                 --show-error --retry 0 --remove-on-error \
                 --connect-timeout 20 --max-time "${remaining_seconds}" \
-                --header "Accept: application/octet-stream" "${api_headers[@]}" \
+                "${api_headers[@]}" \
                 "https://api.github.com/repos/denoland/deno/releases/assets/568461950" \
                 --output "${zip_path}"; then
               echo "Failed to download Deno archive for ${archive}" >&2

@@ -451,9 +451,10 @@ describe("setup-deno installer resilience", () => {
     assertStringIncludes(fallback, '--proto "=https"');
     assertStringIncludes(fallback, '--proto-redir "=https"');
     assertStringIncludes(
-      fallback,
-      '--header "Accept: application/octet-stream"',
+      install,
+      'api_headers=(--header "Accept: application/octet-stream")',
     );
+    assertStringIncludes(fallback, '"${api_headers[@]}"');
     assert(
       install.indexOf("actual_sha256=") >
         install.indexOf("releases/assets/568461950"),
