@@ -125,7 +125,8 @@ runs:
           mkdir -p "${deno_dir}"
           zip_path="${deno_dir}/deno.zip"
 
-          # This download is REQUIRED -- there is no fallback, so its retry
+          # This download is required; only the pinned Linux asset has an official
+          # API fallback within the same 270-second total budget. Its retry
           # budget is the only thing between an upstream blip and a red job,
           # and setup-deno runs in every job (~30 per merge_group).
           #
@@ -150,6 +151,7 @@ runs:
           # simply gone fails at 150+120s -- 4.5 minutes, inside the tightest
           # setup-deno job (10 min) so the error says what went wrong instead
           # of timing out the job.
+          download_deadline=$((SECONDS + 270))
           if ! curl --fail --location --proto "=https" --proto-redir "=https" \
             --show-error --retry 20 --retry-delay 8 \
             --retry-all-errors \
@@ -158,8 +160,24 @@ runs:
             --connect-timeout 20 --max-time 120 \
             "https://github.com/denoland/deno/releases/download/v${version}/${archive}" \
             --output "${zip_path}"; then
-            echo "Failed to download Deno archive for ${archive}" >&2
-            exit 1
+            # GitHub's browser-download redirect can fail while its official
+            # asset API still serves the identical archive. No credentials or
+            # downloaded checksum enter this trust boundary. Do not grant the
+            # fallback another retry window after the primary spent its budget.
+            remaining_seconds=$((download_deadline - SECONDS))
+            if [ "${remaining_seconds}" -gt 120 ]; then remaining_seconds=120; fi
+            if [ "${version}" != "2.9.7" ] || \
+              [ "${archive}" != "deno-x86_64-unknown-linux-gnu.zip" ] || \
+              [ "${remaining_seconds}" -le 0 ] || \
+              ! curl --fail --location --proto "=https" --proto-redir "=https" \
+                --show-error --retry 0 --remove-on-error \
+                --connect-timeout 20 --max-time "${remaining_seconds}" \
+                --header "Accept: application/octet-stream" \
+                "https://api.github.com/repos/denoland/deno/releases/assets/568461950" \
+                --output "${zip_path}"; then
+              echo "Failed to download Deno archive for ${archive}" >&2
+              exit 1
+            fi
           fi
 
           actual_sha256="$(compute_sha256 "${zip_path}")"

@@ -208,6 +208,9 @@ while [ "$#" -gt 0 ]; do
 done
 
 case "\${url}" in
+  https://api.github.com/repos/denoland/deno/releases/assets/568461950)
+    [ "\${VF_TEST_LINUX_FALLBACK}" = "enabled" ] || exit 22
+    fault="none"; fault_seconds=0 ;;
   *.zip) fault="\${VF_TEST_ZIP_FAULT}"; fault_seconds="\${VF_TEST_ZIP_FAULT_SECONDS}" ;;
   *)
     # The pinned digests live in the repository, so the installer has exactly
@@ -305,9 +308,16 @@ async function stubPinnedInstallerScript(): Promise<string> {
 }
 
 async function runInstaller(
-  { archive = "ok", archiveOutage }: {
+  {
+    archive = "ok",
+    archiveOutage,
+    linuxFallback = false,
+    expiredBudget = false,
+  }: {
     archive?: ArchiveMode;
     archiveOutage?: Outage;
+    linuxFallback?: boolean;
+    expiredBudget?: boolean;
   } = {},
 ): Promise<InstallerResult> {
   const root = await Deno.makeTempDir({ prefix: "setup-deno-installer-" });
@@ -317,6 +327,13 @@ async function runInstaller(
     await Deno.mkdir(`${root}/runner-temp`);
     await Deno.writeTextFile(`${bin}/curl`, CURL_STUB, { mode: 0o755 });
     await Deno.writeTextFile(`${bin}/unzip`, UNZIP_STUB, { mode: 0o755 });
+    if (linuxFallback) {
+      await Deno.writeTextFile(
+        `${bin}/uname`,
+        '#!/usr/bin/env bash\nif [ "$1" = "-s" ]; then echo Linux; else echo x86_64; fi\n',
+        { mode: 0o755 },
+      );
+    }
     await Deno.writeTextFile(
       `${root}/install.sh`,
       await stubPinnedInstallerScript(),
@@ -331,9 +348,18 @@ async function runInstaller(
         `export RUNNER_TEMP="${root}/runner-temp"`,
         `export GITHUB_PATH="${root}/github-path"`,
         `export VF_TEST_ARCHIVE_MODE="${archive}"`,
+        `export VF_TEST_LINUX_FALLBACK="${
+          linuxFallback ? "enabled" : "disabled"
+        }"`,
         `export VF_TEST_ARCHIVE_BODY="${STUB_ARCHIVE_BODY}"`,
         `export VF_TEST_ZIP_FAULT="${archiveOutage?.kind ?? "none"}"`,
         `export VF_TEST_ZIP_FAULT_SECONDS="${archiveOutage?.seconds ?? 0}"`,
+        ...(expiredBudget
+          ? [
+            'curl() { local status=0; command curl "$@" || status=$?; if [ "$status" -ne 0 ]; then SECONDS=$((SECONDS + 300)); fi; return "$status"; }',
+            "export -f curl",
+          ]
+          : []),
         `exec bash "${root}/install.sh"`,
         "",
       ].join("\n"),
@@ -355,6 +381,71 @@ async function runInstaller(
 }
 
 describe("setup-deno installer resilience", () => {
+  it("refuses even an available official fallback after the shared deadline expires", async () => {
+    const result = await runInstaller({
+      linuxFallback: true,
+      expiredBudget: true,
+      archiveOutage: { kind: "http-503", seconds: "forever" },
+    });
+    assert(
+      result.code !== 0,
+      "expired primary budget must not grant another download window",
+    );
+    assertStringIncludes(result.stderr, "Failed to download Deno archive");
+    assertEquals(result.stdout.includes("deno 2.9.7 (stub)"), false);
+  });
+
+  it("bounds the Linux fallback inside the original total deadline without a second retry window", async () => {
+    const install = await installerScript();
+    const fallback = curlInvocation(
+      install,
+      "https://api.github.com/repos/denoland/deno/releases/assets/568461950",
+    );
+    assertStringIncludes(install, "download_deadline=$((SECONDS + 270))");
+    assertStringIncludes(
+      install,
+      "remaining_seconds=$((download_deadline - SECONDS))",
+    );
+    assertStringIncludes(install, '[ "${version}" != "2.9.7" ]');
+    assertStringIncludes(
+      install,
+      '[ "${archive}" != "deno-x86_64-unknown-linux-gnu.zip" ]',
+    );
+    assertStringIncludes(install, '[ "${remaining_seconds}" -le 0 ]');
+    assertEquals(curlNumber(fallback, "--retry"), 0);
+    assertStringIncludes(fallback, '--max-time "${remaining_seconds}"');
+    assertStringIncludes(fallback, '--proto "=https"');
+    assertStringIncludes(fallback, '--proto-redir "=https"');
+    assertStringIncludes(
+      fallback,
+      '--header "Accept: application/octet-stream"',
+    );
+    assert(
+      install.indexOf("actual_sha256=") >
+        install.indexOf("releases/assets/568461950"),
+    );
+  });
+
+  it("recovers a failed canonical Linux download using only the pinned official API asset", async () => {
+    const result = await runInstaller({
+      linuxFallback: true,
+      archiveOutage: { kind: "http-503", seconds: "forever" },
+    });
+    assertEquals(result.code, 0, result.stderr);
+    assertStringIncludes(result.stdout, "deno 2.9.7 (stub)");
+  });
+
+  it("rejects corrupt bytes from the official API fallback before executing Deno", async () => {
+    const result = await runInstaller({
+      linuxFallback: true,
+      archive: "corrupt",
+      archiveOutage: { kind: "http-503", seconds: "forever" },
+    });
+    assert(result.code !== 0);
+    assertStringIncludes(result.stderr, "Deno archive checksum mismatch");
+    assertEquals(result.stdout.includes("deno 2.9.7 (stub)"), false);
+  });
+
   // The happy path doubles as the single-download contract: the curl stub
   // hard-fails any URL other than the archive, so this passing proves the
   // installer no longer fetches the unpublished checksums.txt manifest or the
@@ -626,12 +717,15 @@ describe("setup-deno CI contract", () => {
     // checksum may be downloaded at all — Deno publishes no checksums.txt
     // manifest (the URL 404s on every real release), and the per-archive
     // .sha256sum assets ship from the same origin as the archives themselves,
-    // so fetching either would add no integrity. The archive is the one and
-    // only URL the installer may touch.
+    // so fetching either would add no integrity. Both allowed URLs serve the
+    // same pinned archive; neither can replace its local checksum anchor.
     assertEquals(
       install.match(/https:\/\/[^\s"']+/g),
-      ["https://github.com/denoland/deno/releases/download/v${version}/${archive}"],
-      "the installer must download exactly one URL: the pinned-version archive",
+      [
+        "https://github.com/denoland/deno/releases/download/v${version}/${archive}",
+        "https://api.github.com/repos/denoland/deno/releases/assets/568461950",
+      ],
+      "only the pinned archive and its pinned official API asset may be downloaded",
     );
     assertEquals(
       install.includes("falling back"),
