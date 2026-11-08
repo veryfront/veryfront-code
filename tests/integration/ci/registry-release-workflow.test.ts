@@ -1308,13 +1308,22 @@ printf '%064d  %s\n' 0 "$1"
       String(buildStep.run),
       "FROM node:24-bookworm-slim@sha256:5cbc7caba8c2c0f0bca675d1b61b9f2857e1cf1853c6164ee9dd409501a936e7",
     );
+    assertStringIncludes(String(buildStep.run), "COPY install-deno.sh /tmp/install-deno.sh");
     assertStringIncludes(
       String(buildStep.run),
-      "c6527f24f4b16031d3ae4fa9f658d5f11534c8d84ce7dc8502420280919c3490  /tmp/deno.zip",
+      "GITHUB_PATH=/tmp/deno-path bash /tmp/install-deno.sh",
+    );
+    const denoInstaller = await Deno.readTextFile(
+      new URL("../../../.github/actions/setup-deno/action.yml", import.meta.url),
+    );
+    assertStringIncludes(denoInstaller, 'version="2.9.7"');
+    assertStringIncludes(
+      denoInstaller,
+      "c6527f24f4b16031d3ae4fa9f658d5f11534c8d84ce7dc8502420280919c3490",
     );
     assertStringIncludes(
-      String(buildStep.run),
-      "https://github.com/denoland/deno/releases/download/v2.9.7/deno-x86_64-unknown-linux-gnu.zip",
+      denoInstaller,
+      "https://api.github.com/repos/denoland/deno/releases/assets/568461950",
     );
     assertStringIncludes(String(buildStep.run), 'build_context="$(mktemp -d)"');
     assertStringIncludes(String(buildStep.run), "RUN mkdir /registry && chown 1000:1000 /registry");

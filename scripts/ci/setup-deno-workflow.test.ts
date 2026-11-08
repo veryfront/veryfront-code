@@ -194,6 +194,7 @@ retries=0
 retry_delay=0
 retry_max_time=0
 retry_all_errors=0
+authorization=0
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --retry) retries="$2"; shift 2 ;;
@@ -202,6 +203,8 @@ while [ "$#" -gt 0 ]; do
     --retry-all-errors) retry_all_errors=1; shift ;;
     --output) output="$2"; shift 2 ;;
     --write-out) shift 2 ;;
+    "Authorization: Bearer fixture-not-a-credential") authorization=1; shift ;;
+    Authorization:*) exit 98 ;;
     https://*) url="$1"; shift ;;
     *) shift ;;
   esac
@@ -210,8 +213,10 @@ done
 case "\${url}" in
   https://api.github.com/repos/denoland/deno/releases/assets/568461950)
     [ "\${VF_TEST_LINUX_FALLBACK}" = "enabled" ] || exit 22
+    [ "\${authorization}" = "\${VF_TEST_EXPECT_AUTH}" ] || exit 97
     fault="none"; fault_seconds=0 ;;
-  *.zip) fault="\${VF_TEST_ZIP_FAULT}"; fault_seconds="\${VF_TEST_ZIP_FAULT_SECONDS}" ;;
+  *.zip) [ "\${authorization}" = 0 ] || exit 96
+    fault="\${VF_TEST_ZIP_FAULT}"; fault_seconds="\${VF_TEST_ZIP_FAULT_SECONDS}" ;;
   *)
     # The pinned digests live in the repository, so the installer has exactly
     # one legitimate download: the archive. Any other fetch — the unpublished
@@ -294,8 +299,8 @@ async function sha256Hex(text: string): Promise<string> {
  * (rather than the comparison) keeps the fail-closed comparison itself, and
  * everything around it, exactly as committed.
  */
-async function stubPinnedInstallerScript(): Promise<string> {
-  const install = await installerScript();
+async function stubPinnedInstallerScript(install = ""): Promise<string> {
+  install ||= await installerScript();
   const pins = install.match(/archive_sha256="[0-9a-f]{64}"/g) ?? [];
   assert(
     pins.length > 0,
@@ -313,11 +318,15 @@ async function runInstaller(
     archiveOutage,
     linuxFallback = false,
     expiredBudget = false,
+    apiAuth = false,
+    install,
   }: {
     archive?: ArchiveMode;
     archiveOutage?: Outage;
     linuxFallback?: boolean;
     expiredBudget?: boolean;
+    apiAuth?: boolean;
+    install?: string;
   } = {},
 ): Promise<InstallerResult> {
   const root = await Deno.makeTempDir({ prefix: "setup-deno-installer-" });
@@ -336,7 +345,7 @@ async function runInstaller(
     }
     await Deno.writeTextFile(
       `${root}/install.sh`,
-      await stubPinnedInstallerScript(),
+      await stubPinnedInstallerScript(install),
     );
     await Deno.writeTextFile(`${root}/github-path`, "");
     // Exporting inside the wrapper keeps the test free of --allow-env.
@@ -347,6 +356,8 @@ async function runInstaller(
         `export PATH="${bin}:\${PATH}"`,
         `export RUNNER_TEMP="${root}/runner-temp"`,
         `export GITHUB_PATH="${root}/github-path"`,
+        `export GH_TOKEN="${apiAuth ? "fixture-not-a-credential" : ""}"`,
+        `export VF_TEST_EXPECT_AUTH="${apiAuth ? "1" : "0"}"`,
         `export VF_TEST_ARCHIVE_MODE="${archive}"`,
         `export VF_TEST_LINUX_FALLBACK="${
           linuxFallback ? "enabled" : "disabled"
@@ -381,6 +392,29 @@ async function runInstaller(
 }
 
 describe("setup-deno installer resilience", () => {
+  it("authenticates only the official API fallback and never logs the token", async () => {
+    const result = await runInstaller({
+      apiAuth: true,
+      linuxFallback: true,
+      archiveOutage: { kind: "http-503", seconds: "forever" },
+    });
+    assertEquals(result.code, 0, result.stderr);
+    assertEquals(
+      (result.stdout + result.stderr).includes("fixture-not-a-credential"),
+      false,
+    );
+    const install = await installerScript();
+    assertEquals(install.includes("--location-trusted"), false);
+    const action = await parseYamlFile(ACTION_PATH);
+    const steps = asSteps(asRecord(action.runs, "action runs").steps, "steps");
+    const step = steps.find((step) => step.name === "Install pinned Deno");
+    assert(step);
+    assertEquals(
+      asRecord(step.env, "installer env").GH_TOKEN,
+      "${{ github.token }}",
+    );
+  });
+
   it("refuses even an available official fallback after the shared deadline expires", async () => {
     const result = await runInstaller({
       linuxFallback: true,
@@ -433,6 +467,10 @@ describe("setup-deno installer resilience", () => {
     });
     assertEquals(result.code, 0, result.stderr);
     assertStringIncludes(result.stdout, "deno 2.9.7 (stub)");
+    assertStringIncludes(
+      result.stderr,
+      "Primary Deno download failed; trying the pinned official API asset",
+    );
   });
 
   it("rejects corrupt bytes from the official API fallback before executing Deno", async () => {
@@ -1506,5 +1544,224 @@ describe("compiler runtime security", () => {
   });
   it("still accepts a known prime", () => {
     assertEquals(checkPrimeSync(17881n), true);
+  });
+});
+
+async function bunInstallerScript(): Promise<string> {
+  const workflow = await parseYamlFile(".github/workflows/ci-public-pool.yml");
+  const jobs = asRecord(workflow.jobs, "public jobs");
+  const scripts = ["tests-bun", "tests-runtime-critical-flow"].map((name) => {
+    const steps = asSteps(asRecord(jobs[name], name).steps, name);
+    const step = steps.find((step) => step.name === "Install pinned Bun");
+    assert(
+      step,
+      `${name} must embed its pinned installer for older caller checkouts`,
+    );
+    return String(step.run);
+  });
+  assertEquals(scripts[0], scripts[1]);
+  return scripts[0];
+}
+
+async function runBunInstaller(
+  mode: "ok" | "corrupt" | "transport" | "version",
+) {
+  const root = await Deno.makeTempDir({ prefix: "setup-bun-proof-" });
+  try {
+    const bin = `${root}/bin`;
+    await Deno.mkdir(`${root}/package/bin`, { recursive: true });
+    await Deno.mkdir(bin);
+    await Deno.writeTextFile(
+      `${root}/package/bin/bun`,
+      `#!/usr/bin/env bash\necho '${mode === "version" ? "9.9.9" : "1.3.6"}'\n`,
+      { mode: 0o755 },
+    );
+    const packed = await new Deno.Command("bash", {
+      args: [
+        "-c",
+        'tar -czf "$1" -C "$2" package/bin/bun',
+        "fixture",
+        `${root}/fixture.tgz`,
+        root,
+      ],
+    }).output();
+    assertEquals(packed.code, 0);
+    const bytes = await Deno.readFile(`${root}/fixture.tgz`);
+    const hash = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
+    const digest = Array.from(hash).map((v) => v.toString(16).padStart(2, "0"))
+      .join("");
+    const script = (await bunInstallerScript()).replace(
+      "1f5df33674ab591d4fa96cb6cd6f94ada36bb4e5ba8090958b8e63a8d8e997bb",
+      digest,
+    );
+    await Deno.writeTextFile(`${root}/install.sh`, script);
+    await Deno.writeTextFile(
+      `${bin}/uname`,
+      '#!/usr/bin/env bash\nif [ "$1" = -s ]; then echo Linux; else echo x86_64; fi\n',
+      { mode: 0o755 },
+    );
+    await Deno.writeTextFile(
+      `${bin}/curl`,
+      `#!/usr/bin/env bash
+set -eu
+case "$*" in *https://registry.npmjs.org/@oven/bun-linux-x64/-/bun-linux-x64-1.3.6.tgz*) ;; *) exit 99 ;; esac
+${mode === "transport" ? "exit 22" : ""}
+while [ "$1" != --output ]; do shift; done
+${
+        mode === "corrupt"
+          ? 'printf tampered > "$2"'
+          : `cp '${root}/fixture.tgz' "$2"`
+      }
+`,
+      { mode: 0o755 },
+    );
+    await Deno.writeTextFile(
+      `${root}/wrapper.sh`,
+      `#!/usr/bin/env bash
+export PATH="${bin}:$PATH"
+export RUNNER_TEMP="${root}"
+export GITHUB_PATH="${root}/github-path"
+exec bash '${root}/install.sh'
+`,
+    );
+    const result = await new Deno.Command("bash", {
+      args: [`${root}/wrapper.sh`],
+      stdout: "piped",
+      stderr: "piped",
+    }).output();
+    let exposed = false;
+    try {
+      exposed = (await Deno.readTextFile(`${root}/github-path`)).includes(
+        "veryfront-bun-1.3.6",
+      );
+    } catch (error) {
+      if (!(error instanceof Deno.errors.NotFound)) throw error;
+    }
+    return {
+      code: result.code,
+      stderr: new TextDecoder().decode(result.stderr),
+      exposed,
+    };
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+}
+
+describe("official Bun npm bootstrap", () => {
+  it("routes both Bun jobs through the same pinned installer after Node setup", async () => {
+    const workflow = await parseYamlFile(
+      ".github/workflows/ci-public-pool.yml",
+    );
+    const jobs = asRecord(workflow.jobs, "public jobs");
+    for (const name of ["tests-bun", "tests-runtime-critical-flow"]) {
+      const steps = asSteps(asRecord(jobs[name], name).steps, name);
+      const index = steps.findIndex((step) =>
+        step.name === "Install pinned Bun"
+      );
+      assert(index > 0);
+      assertStringIncludes(
+        String(steps[index - 1].uses),
+        "actions/setup-node@",
+      );
+      assertEquals(steps[index]["timeout-minutes"], 5);
+    }
+    const action = await bunInstallerScript();
+    assertEquals(action.includes("GITHUB_WORKSPACE"), false);
+    assertStringIncludes(action, '--proto "=https" --proto-redir "=https"');
+    assertStringIncludes(action, "--max-time 60");
+    assertStringIncludes(action, "--retry-max-time 120");
+    assertStringIncludes(action, "--retry 2");
+    assertStringIncludes(
+      action,
+      "1f5df33674ab591d4fa96cb6cd6f94ada36bb4e5ba8090958b8e63a8d8e997bb",
+    );
+    assertEquals(action.includes("npm install"), false);
+  });
+
+  it("installs a verified npm archive with real hashing and extraction", async () => {
+    const result = await runBunInstaller("ok");
+    assertEquals(result.code, 0, result.stderr);
+    assertEquals(result.exposed, true);
+  });
+
+  it("never exposes Bun after transport, checksum or version failure", async () => {
+    for (const mode of ["transport", "corrupt", "version"] as const) {
+      const result = await runBunInstaller(mode);
+      assert(result.code !== 0, mode);
+      assertEquals(result.exposed, false, mode);
+      if (mode === "corrupt") {
+        assertStringIncludes(result.stderr, "checksum mismatch");
+      }
+      if (mode === "version") {
+        assertStringIncludes(result.stderr, "version mismatch");
+      }
+    }
+  });
+});
+
+describe("registry Docker Deno bootstrap", () => {
+  it("copies the authoritative installer into both actual generated Dockerfiles", async () => {
+    const workflow = await parseYamlFile(".github/workflows/cicd.yml");
+    const jobs = asRecord(workflow.jobs, "CI jobs");
+    let count = 0;
+    for (const value of Object.values(jobs)) {
+      const job = asRecord(value, "job");
+      if (!Array.isArray(job.steps)) continue;
+      for (const step of asSteps(job.steps, "steps")) {
+        if (step.name !== "Build registry validation image") continue;
+        count++;
+        const source = String(step.run);
+        const beforeDocker = source.split("          FROM")[0];
+        // Execute the actual shell context generator, stopping before Docker.
+        const root = await Deno.makeTempDir({ prefix: "registry-deno-proof-" });
+        try {
+          const prefix = source.slice(
+            0,
+            source.indexOf('cat > "$build_context/Dockerfile"'),
+          );
+          const code =
+            `${prefix}\ncp "$build_context/install-deno.sh" '${root}/generated.sh'\n`;
+          const result = await new Deno.Command("bash", {
+            args: ["-c", code],
+            stdout: "piped",
+            stderr: "piped",
+          }).output();
+          assertEquals(result.code, 0, new TextDecoder().decode(result.stderr));
+          assertEquals(
+            (await Deno.readTextFile(`${root}/generated.sh`)).trimEnd(),
+            (await installerScript()).trimEnd(),
+          );
+          const generated = await Deno.readTextFile(`${root}/generated.sh`);
+          const recovered = await runInstaller({
+            install: generated,
+            linuxFallback: true,
+            archiveOutage: { kind: "http-503", seconds: "forever" },
+          });
+          assertEquals(recovered.code, 0, recovered.stderr);
+          const corrupt = await runInstaller({
+            install: generated,
+            linuxFallback: true,
+            archive: "corrupt",
+            archiveOutage: { kind: "http-503", seconds: "forever" },
+          });
+          assert(corrupt.code !== 0);
+          assertStringIncludes(corrupt.stderr, "checksum mismatch");
+          assertStringIncludes(
+            source,
+            "COPY install-deno.sh /tmp/install-deno.sh",
+          );
+          assertStringIncludes(
+            source,
+            "GITHUB_PATH=/tmp/deno-path bash /tmp/install-deno.sh",
+          );
+          assertEquals(beforeDocker.includes("releases/download"), false);
+        } finally {
+          await Deno.remove(root, { recursive: true });
+        }
+      }
+    }
+    assertEquals(count, 2);
+    // The exact same generated shell is exercised against canonical failure,
+    // official fallback success and corrupt fallback rejection above.
   });
 });

@@ -363,9 +363,38 @@ jobs:
         with:
           node-version: "24"
           package-manager-cache: false
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
-        with:
-          bun-version: "1.3.6"
+      - name: Install pinned Bun
+        timeout-minutes: 5
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$(uname -s)" != Linux ] || [ "$(uname -m)" != x86_64 ]; then
+            echo "Unsupported Bun install platform" >&2
+            exit 1
+          fi
+          bun_dir="${RUNNER_TEMP}/veryfront-bun-1.3.6"
+          mkdir -p "${bun_dir}"
+          archive="$(mktemp "${RUNNER_TEMP}/bun-archive.XXXXXX")"
+          trap 'rm -f "${archive}"' EXIT
+          # This is Bun's official npm distribution. Its binary is byte-identical
+          # to bun-v1.3.6/bun-linux-x64.zip; the digest is reviewed in this repo.
+          curl --fail --location --proto "=https" --proto-redir "=https" \
+            --show-error --remove-on-error --connect-timeout 20 --max-time 60 \
+            --retry 2 --retry-delay 8 --retry-all-errors --retry-max-time 120 \
+            "https://registry.npmjs.org/@oven/bun-linux-x64/-/bun-linux-x64-1.3.6.tgz" \
+            --output "${archive}"
+          actual_sha256="$(node -e "const fs=require('node:fs');const crypto=require('node:crypto');process.stdout.write(crypto.createHash('sha256').update(fs.readFileSync(0)).digest('hex'))" < "${archive}")"
+          if [ "${actual_sha256}" != "1f5df33674ab591d4fa96cb6cd6f94ada36bb4e5ba8090958b8e63a8d8e997bb" ]; then
+            echo "Bun archive checksum mismatch" >&2
+            exit 1
+          fi
+          tar -xzf "${archive}" -C "${bun_dir}" --strip-components=2 package/bin/bun
+          chmod +x "${bun_dir}/bun"
+          if [ "$("${bun_dir}/bun" --version)" != "1.3.6" ]; then
+            echo "Bun version mismatch" >&2
+            exit 1
+          fi
+          echo "${bun_dir}" >> "${GITHUB_PATH}"
       - uses: ./.github/actions/restore-npm-workspace
       - name: Run Bun runtime suite
         run: node --test tests/bun/runner-args.test.mjs tests/bun/workspace-packages.test.mjs && node ./tests/bun/run-tests.mjs --suite=runtime:bun
@@ -393,10 +422,39 @@ jobs:
         with:
           node-version: "24"
           package-manager-cache: false
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+      - name: Install pinned Bun
         if: ${{ inputs.runtime == 'bun' }}
-        with:
-          bun-version: "1.3.6"
+        timeout-minutes: 5
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$(uname -s)" != Linux ] || [ "$(uname -m)" != x86_64 ]; then
+            echo "Unsupported Bun install platform" >&2
+            exit 1
+          fi
+          bun_dir="${RUNNER_TEMP}/veryfront-bun-1.3.6"
+          mkdir -p "${bun_dir}"
+          archive="$(mktemp "${RUNNER_TEMP}/bun-archive.XXXXXX")"
+          trap 'rm -f "${archive}"' EXIT
+          # This is Bun's official npm distribution. Its binary is byte-identical
+          # to bun-v1.3.6/bun-linux-x64.zip; the digest is reviewed in this repo.
+          curl --fail --location --proto "=https" --proto-redir "=https" \
+            --show-error --remove-on-error --connect-timeout 20 --max-time 60 \
+            --retry 2 --retry-delay 8 --retry-all-errors --retry-max-time 120 \
+            "https://registry.npmjs.org/@oven/bun-linux-x64/-/bun-linux-x64-1.3.6.tgz" \
+            --output "${archive}"
+          actual_sha256="$(node -e "const fs=require('node:fs');const crypto=require('node:crypto');process.stdout.write(crypto.createHash('sha256').update(fs.readFileSync(0)).digest('hex'))" < "${archive}")"
+          if [ "${actual_sha256}" != "1f5df33674ab591d4fa96cb6cd6f94ada36bb4e5ba8090958b8e63a8d8e997bb" ]; then
+            echo "Bun archive checksum mismatch" >&2
+            exit 1
+          fi
+          tar -xzf "${archive}" -C "${bun_dir}" --strip-components=2 package/bin/bun
+          chmod +x "${bun_dir}/bun"
+          if [ "$("${bun_dir}/bun" --version)" != "1.3.6" ]; then
+            echo "Bun version mismatch" >&2
+            exit 1
+          fi
+          echo "${bun_dir}" >> "${GITHUB_PATH}"
       - name: Download canonical npm compatibility artifact
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:

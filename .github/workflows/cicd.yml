@@ -2402,20 +2402,22 @@ jobs:
             rm -rf "$build_context"
           }
           trap cleanup EXIT INT TERM
+          awk '/^    - name: Install pinned Deno$/ { found=1; next }
+               found && /^      run: \|$/ { body=1; next }
+               body && /^        / { sub(/^        /, ""); print; next }
+               body && /^$/ { print; next }
+               body { exit }' .github/actions/setup-deno/action.yml > "$build_context/install-deno.sh"
+          test -s "$build_context/install-deno.sh"
           cat > "$build_context/Dockerfile" <<'DOCKERFILE'
           FROM node:24-bookworm-slim@sha256:5cbc7caba8c2c0f0bca675d1b61b9f2857e1cf1853c6164ee9dd409501a936e7
           RUN apt-get update \
             && apt-get install -y --no-install-recommends ca-certificates curl jq unzip \
             && rm -rf /var/lib/apt/lists/*
-          RUN curl --fail --location --silent --show-error \
-                https://github.com/denoland/deno/releases/download/v2.9.7/deno-x86_64-unknown-linux-gnu.zip \
-                --output /tmp/deno.zip \
-            && echo 'c6527f24f4b16031d3ae4fa9f658d5f11534c8d84ce7dc8502420280919c3490  /tmp/deno.zip' \
-                | sha256sum --check --strict \
-            && unzip -q /tmp/deno.zip -d /usr/local/bin \
-            && chmod 0755 /usr/local/bin/deno \
+          COPY install-deno.sh /tmp/install-deno.sh
+          RUN RUNNER_TEMP=/tmp GITHUB_PATH=/tmp/deno-path bash /tmp/install-deno.sh \
+            && cp /tmp/deno-2.9.7-x86_64-unknown-linux-gnu/deno /usr/local/bin/deno \
             && /usr/local/bin/deno --version \
-            && rm /tmp/deno.zip
+            && rm -rf /tmp/deno-2.9.7-x86_64-unknown-linux-gnu /tmp/install-deno.sh /tmp/deno-path
           RUN mkdir /registry && chown 1000:1000 /registry
           WORKDIR /registry
           DOCKERFILE
@@ -2540,20 +2542,22 @@ jobs:
             rm -rf "$build_context"
           }
           trap cleanup EXIT INT TERM
+          awk '/^    - name: Install pinned Deno$/ { found=1; next }
+               found && /^      run: \|$/ { body=1; next }
+               body && /^        / { sub(/^        /, ""); print; next }
+               body && /^$/ { print; next }
+               body { exit }' .github/actions/setup-deno/action.yml > "$build_context/install-deno.sh"
+          test -s "$build_context/install-deno.sh"
           cat > "$build_context/Dockerfile" <<'DOCKERFILE'
           FROM node:24-bookworm-slim@sha256:5cbc7caba8c2c0f0bca675d1b61b9f2857e1cf1853c6164ee9dd409501a936e7
           RUN apt-get update \
             && apt-get install -y --no-install-recommends ca-certificates curl jq unzip \
             && rm -rf /var/lib/apt/lists/*
-          RUN curl --fail --location --silent --show-error \
-                https://github.com/denoland/deno/releases/download/v2.9.7/deno-x86_64-unknown-linux-gnu.zip \
-                --output /tmp/deno.zip \
-            && echo 'c6527f24f4b16031d3ae4fa9f658d5f11534c8d84ce7dc8502420280919c3490  /tmp/deno.zip' \
-                | sha256sum --check --strict \
-            && unzip -q /tmp/deno.zip -d /usr/local/bin \
-            && chmod 0755 /usr/local/bin/deno \
+          COPY install-deno.sh /tmp/install-deno.sh
+          RUN RUNNER_TEMP=/tmp GITHUB_PATH=/tmp/deno-path bash /tmp/install-deno.sh \
+            && cp /tmp/deno-2.9.7-x86_64-unknown-linux-gnu/deno /usr/local/bin/deno \
             && /usr/local/bin/deno --version \
-            && rm /tmp/deno.zip
+            && rm -rf /tmp/deno-2.9.7-x86_64-unknown-linux-gnu /tmp/install-deno.sh /tmp/deno-path
           RUN mkdir /registry && chown 1000:1000 /registry
           WORKDIR /registry
           DOCKERFILE
