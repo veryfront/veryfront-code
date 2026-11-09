@@ -1751,7 +1751,7 @@ function toolSearchLoadedNextStep(matches: readonly ToolSearchMatch[]): string {
     names += `${listed === 0 ? "" : ", "}"${match.name}"`;
     listed += 1;
   }
-  return `Loaded tools: ${names}. Call the loaded tool that fits the request in the next step to complete it.`;
+  return `Loaded tools: ${names}. Use the tool definitions supplied on the next model call. Call the matching loaded tool directly; no separate schema lookup is needed.`;
 }
 
 type FrameworkToolSearchResult =

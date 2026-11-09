@@ -527,7 +527,7 @@ it("veryfront__tool_search hit names the loaded tools and asks the model to call
       read_release_marker: noopTool("read_release_marker", "Read the release marker"),
     }),
     [
-      'Loaded tools: "list_files". Call the loaded tool that fits the request in the next step to complete it.',
+      'Loaded tools: "list_files". Use the tool definitions supplied on the next model call. Call the matching loaded tool directly; no separate schema lookup is needed.',
     ],
   );
 });

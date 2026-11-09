@@ -877,12 +877,23 @@ describe("runtime inference critical-flow CI contract", () => {
     );
     assert(
       steps.some((step) =>
-        step.uses ===
-          "oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6" &&
-        yamlRecord(step.with, "setup-bun with")["bun-version"] === "1.3.6"
+        step.name === "Install pinned Bun" &&
+        step["timeout-minutes"] === 5
       ),
       "Runtime critical-flow job should install Bun 1.3.6 for the Bun lane",
     );
+    const bunSetup = steps.find((step) => step.name === "Install pinned Bun");
+    assert(bunSetup);
+    assertStringIncludes(
+      String(bunSetup.run),
+      "https://registry.npmjs.org/@oven/bun-linux-x64/-/bun-linux-x64-1.3.6.tgz",
+    );
+    assertStringIncludes(
+      String(bunSetup.run),
+      "1f5df33674ab591d4fa96cb6cd6f94ada36bb4e5ba8090958b8e63a8d8e997bb",
+    );
+    assertStringIncludes(String(bunSetup.run), '!= "1.3.6"');
+
     assert(
       steps.some((step) =>
         step.name === "Run runtime critical flow" &&
