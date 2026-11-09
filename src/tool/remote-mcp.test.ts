@@ -23,6 +23,7 @@ import {
   shareRemoteMCPProtocolState,
 } from "./remote-mcp.ts";
 import { getToolResultError } from "./result.ts";
+import type { JsonSchema } from "./schema/json-schema.ts";
 import { VERSION } from "#veryfront/utils/version-constant.ts";
 import { FakeTime } from "#std/testing/time";
 import { createToolsFromRemoteDefinitions } from "./remote-source-tools.ts";
@@ -96,7 +97,7 @@ describe("tool/remote-mcp", () => {
       id: "contracts",
       endpoint: "https://93.184.216.34/mcp",
     });
-    const inputSchema = { type: "object", properties: { path: { type: "string" } } };
+    const inputSchema: JsonSchema = { type: "object", properties: { path: { type: "string" } } };
     const oversizedOutputSchema = {
       type: "object",
       description: "x".repeat(16_385),
