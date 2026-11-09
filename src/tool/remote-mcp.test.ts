@@ -23,6 +23,7 @@ import {
   shareRemoteMCPProtocolState,
 } from "./remote-mcp.ts";
 import { getToolResultError } from "./result.ts";
+import type { JsonSchema } from "./schema/json-schema.ts";
 import { VERSION } from "#veryfront/utils/version-constant.ts";
 import { FakeTime } from "#std/testing/time";
 import { createToolsFromRemoteDefinitions } from "./remote-source-tools.ts";
@@ -89,6 +90,51 @@ describe("tool/remote-mcp", () => {
         inputSchema: { type: "object" },
         outputSchema: null,
       });
+    });
+  });
+  it("keeps a tool whose declared output schema cannot be disclosed", async () => {
+    const source = createRemoteMCPToolSource({
+      id: "contracts",
+      endpoint: "https://93.184.216.34/mcp",
+    });
+    const inputSchema: JsonSchema = { type: "object", properties: { path: { type: "string" } } };
+    const oversizedOutputSchema = {
+      type: "object",
+      description: "x".repeat(16_385),
+    };
+    await withMockFetch(async (_url, init) => {
+      const body = JSON.parse(String(observeFetchRequestInit(init).body));
+      return Response.json({
+        jsonrpc: "2.0",
+        id: body.id,
+        result: {
+          tools: [
+            {
+              name: "get_project_capabilities",
+              description: "Read capabilities",
+              inputSchema,
+              outputSchema: oversizedOutputSchema,
+            },
+            {
+              name: "get_run",
+              description: "Read run",
+              inputSchema,
+              outputSchema: ["not", "a", "schema"],
+            },
+            { name: "create_file", description: "Create file", inputSchema },
+          ],
+        },
+      });
+    }, async () => {
+      assertEquals(await source.listTools(), [
+        {
+          name: "get_project_capabilities",
+          description: "Read capabilities",
+          parameters: inputSchema,
+        },
+        { name: "get_run", description: "Read run", parameters: inputSchema },
+        { name: "create_file", description: "Create file", parameters: inputSchema },
+      ]);
     });
   });
   it("preserves discovery metadata on every page without adding it to calls", async () => {

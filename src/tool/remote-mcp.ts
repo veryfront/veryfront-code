@@ -11,6 +11,7 @@ import {
 import { createPrivateSet } from "#veryfront/security/private-set.ts";
 import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
 import { NETWORK_ERROR, TIMEOUT_ERROR } from "#veryfront/errors";
+import { agentLogger } from "#veryfront/utils/logger/index.ts";
 import { readMcpToolDiscoveryMetadata } from "./discovery-metadata.ts";
 import { getApiBaseUrlEnv } from "#veryfront/config/env.ts";
 import type { ToolAnnotations } from "#veryfront/mcp/types.ts";
@@ -261,11 +262,7 @@ function isJsonStructureWithin(
   return true;
 }
 
-function normalizeParameters(
-  schema: unknown,
-  toolName: string,
-  kind: "input" | "output" = "input",
-): JsonSchema {
+function snapshotToolSchema(schema: unknown): Record<string, unknown> | undefined {
   const snapshot = snapshotBoundedJsonValue(schema);
   if (
     !snapshot.success ||
@@ -277,16 +274,35 @@ function normalizeParameters(
     ) ||
     serializedByteLength(snapshot.value) > MAX_REMOTE_MCP_TOOL_SCHEMA_BYTES
   ) {
+    return undefined;
+  }
+  return snapshot.value;
+}
+
+function normalizeParameters(schema: unknown, toolName: string): JsonSchema {
+  const snapshot = snapshotToolSchema(schema);
+  if (!snapshot) {
     throw protocolError(
-      `Remote MCP tools/list returned a malformed ${kind} schema for tool "${toolName}"`,
+      `Remote MCP tools/list returned a malformed input schema for tool "${toolName}"`,
     );
   }
 
-  if (kind === "input" && Object.keys(snapshot.value).length === 0) {
+  if (Object.keys(snapshot).length === 0) {
     return { type: "object", properties: {} };
   }
 
-  return snapshot.value;
+  return snapshot;
+}
+
+// Output schemas are disclosure metadata, so one that cannot be kept must not reject the catalog.
+function normalizeOutputSchema(schema: unknown, toolName: string): JsonSchema | undefined {
+  const snapshot = snapshotToolSchema(schema);
+  if (!snapshot) {
+    agentLogger.warn("Ignoring a remote MCP tool output schema that cannot be disclosed", {
+      toolName,
+    });
+  }
+  return snapshot;
 }
 
 function normalizeToolDefinition(entry: unknown, index: number): ToolDefinition {
@@ -307,13 +323,14 @@ function normalizeToolDefinition(entry: unknown, index: number): ToolDefinition 
     );
   }
 
+  const outputSchema = entry.outputSchema === undefined
+    ? undefined
+    : normalizeOutputSchema(entry.outputSchema, entry.name);
   const definition: ToolDefinition = {
     name: entry.name,
     description: entry.description,
     parameters: normalizeParameters(entry.inputSchema, entry.name),
-    ...(entry.outputSchema === undefined
-      ? {}
-      : { outputSchema: normalizeParameters(entry.outputSchema, entry.name, "output") }),
+    ...(outputSchema === undefined ? {} : { outputSchema }),
   };
 
   // Navigation hints only. Invalid metadata is ignored rather than rejecting the tool.
