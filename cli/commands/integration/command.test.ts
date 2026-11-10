@@ -157,3 +157,98 @@ describe("complete CLI collection output", () => {
     });
   }
 });
+
+describe("tools for an unconnected integration", () => {
+  const catalogTools = [
+    {
+      id: "slack__list_channels",
+      name: "List Channels",
+      description: "List channels",
+      requires_write: false,
+      input_schema: { type: "object" },
+    },
+    {
+      id: "slack__send_message",
+      name: "Send Message",
+      description: "Send a message",
+      requires_write: true,
+      input_schema: { type: "object" },
+    },
+  ];
+  // deno-lint-ignore require-yield
+  async function* none() {
+    return;
+  }
+  const options = {
+    subcommand: "tools" as const,
+    target: "slack",
+    scope: "user" as const,
+    noBrowser: false,
+    timeout: 300,
+  };
+
+  it("lists the catalog tools and says how to connect when the project has no connection", async () => {
+    const client = {
+      listTools: none,
+      listConnections: none,
+      getIntegration: () =>
+        Promise.resolve({
+          name: "slack",
+          auth: {},
+          credential_requirement: {},
+          tools: catalogTools,
+        }),
+    } as unknown as IntegrationClient;
+
+    const result = await runIntegrationOperation(options, client);
+
+    assertEquals(result, {
+      tools: [],
+      connected: false,
+      catalog_tools: catalogTools,
+      next_step:
+        "Connect slack first: run veryfront integration connect slack, then run this command again.",
+    });
+  });
+
+  it("filters the catalog tools with --search", async () => {
+    const client = {
+      listTools: none,
+      listConnections: none,
+      getIntegration: () =>
+        Promise.resolve({
+          name: "slack",
+          auth: {},
+          credential_requirement: {},
+          tools: catalogTools,
+        }),
+    } as unknown as IntegrationClient;
+
+    const result = await runIntegrationOperation({ ...options, search: "send" }, client) as {
+      catalog_tools: unknown[];
+    };
+
+    assertEquals(result.catalog_tools, [catalogTools[1]]);
+  });
+
+  it("keeps an empty list unchanged when a connection exists", async () => {
+    async function* connected() {
+      yield {
+        id: "11111111-1111-4111-8111-111111111111",
+        integration: "slack",
+        connection_generation_id: "22222222-2222-4222-8222-222222222222",
+        scope: "user",
+        status: "connected",
+      };
+    }
+    const client = {
+      listTools: none,
+      listConnections: connected,
+      getIntegration: () => {
+        throw new Error("must not read the catalog for a connected integration");
+      },
+    } as unknown as IntegrationClient;
+
+    assertEquals(await runIntegrationOperation(options, client), { tools: [] });
+  });
+});

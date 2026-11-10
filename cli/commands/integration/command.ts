@@ -63,6 +63,39 @@ export function requireIntegrationTarget(options: IntegrationCommandOptions): st
   }
   return options.target;
 }
+/**
+ * Explain an empty tool list for an integration the project has not connected.
+ *
+ * The project tool list holds only the tools of connected integrations, so an
+ * unconnected one answers with no tools although the catalog defines them.
+ * Additive fields keep `tools` meaning "callable now" for existing consumers.
+ */
+async function describeUnconnectedTools(
+  client: IntegrationClient,
+  target: string,
+  search: string | undefined,
+): Promise<Record<string, unknown>> {
+  const connections = await collectIntegrationRows(client.listConnections(target));
+  if (connections.some((row) => row.status === "connected")) return {};
+
+  const details = await client.getIntegration(target);
+  const needle = search?.toLowerCase();
+  const catalogTools = (Array.isArray(details.tools) ? details.tools : []).filter((tool) => {
+    if (!tool || typeof tool !== "object" || Array.isArray(tool)) return false;
+    if (!needle) return true;
+    const { id, name } = tool as Record<string, unknown>;
+    return [id, name].some((value) =>
+      typeof value === "string" && value.toLowerCase().includes(needle)
+    );
+  });
+  return {
+    connected: false,
+    catalog_tools: catalogTools,
+    next_step:
+      `Connect ${target} first: run veryfront integration connect ${target}, then run this command again.`,
+  };
+}
+
 export async function runIntegrationOperation(
   options: IntegrationCommandOptions,
   client: IntegrationClient,
@@ -80,10 +113,13 @@ export async function runIntegrationOperation(
       return client.getIntegration(target);
     case "connections":
       return { connections: await collectIntegrationRows(client.listConnections(target)) };
-    case "tools":
-      return {
-        tools: await collectIntegrationRows(client.listTools(target, { name: options.search })),
-      };
+    case "tools": {
+      const tools = await collectIntegrationRows(
+        client.listTools(target, { name: options.search }),
+      );
+      if (tools.length > 0) return { tools };
+      return { tools, ...await describeUnconnectedTools(client, target, options.search) };
+    }
     case "status": {
       if (options.toolName) {
         return {
