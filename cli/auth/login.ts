@@ -131,6 +131,8 @@ export async function misnamedApiKeyHint(
   env: EnvironmentConfig = getEnvironmentConfig(),
   projectDir: string = cwd(),
 ): Promise<string | undefined> {
+  // Reads the raw variables rather than `env`: the question is which names the
+  // user exported, which the resolved config no longer records.
   if (!getEnv("VERYFRONT_API_KEY")?.trim()) return undefined;
   if (getEnvSource("VERYFRONT_API_KEY").source !== "process") return undefined;
   if (getEnv("VERYFRONT_API_TOKEN")?.trim() || getEnv("VERYFRONT_API_TOKEN_FILE")?.trim()) {
@@ -138,6 +140,14 @@ export async function misnamedApiKeyHint(
   }
   if (await hasConfiguredCredential(env, projectDir)) return undefined;
   return MISNAMED_API_KEY_HINT_LINES.join(" ");
+}
+
+async function notLoggedInMessage(
+  env: EnvironmentConfig,
+  projectDir: string,
+): Promise<string> {
+  const hint = await misnamedApiKeyHint(env, projectDir);
+  return `Not logged in. ${hint ?? "Set VERYFRONT_API_TOKEN or run in interactive mode."}`;
 }
 
 async function hasConfiguredCredential(
@@ -197,12 +207,11 @@ async function outputLoginAuthenticationRequiredJson(
   env: EnvironmentConfig,
   projectDir: string,
 ): Promise<void> {
-  const hint = await misnamedApiKeyHint(env, projectDir);
   await outputJson(createErrorEnvelope("login", {
     code: "AUTHENTICATION_ERROR",
     slug: "authentication-required",
     registrySlug: "authentication-required",
-    message: `Not logged in. ${hint ?? "Set VERYFRONT_API_TOKEN or run in interactive mode."}`,
+    message: await notLoggedInMessage(env, projectDir),
   }));
 }
 
@@ -958,10 +967,7 @@ export async function login(
   await assertApiUrlAcceptsNewCredential(env, projectDir);
 
   if (!isInteractive() && (method === undefined || method === "token")) {
-    const hint = await misnamedApiKeyHint(env, projectDir);
-    cliLogger.error(
-      `Not logged in. ${hint ?? "Set VERYFRONT_API_TOKEN or run in interactive mode."}`,
-    );
+    cliLogger.error(await notLoggedInMessage(env, projectDir));
     return null;
   }
 
@@ -999,10 +1005,7 @@ async function requestInteractiveAuthentication(
   validationOptions: CredentialValidationOptions,
 ): Promise<AuthIdentity | null> {
   if (!isTTY() || !isInteractive()) {
-    const hint = await misnamedApiKeyHint(env, projectDir);
-    cliLogger.error(
-      `Not logged in. ${hint ?? "Set VERYFRONT_API_TOKEN or run in interactive mode."}`,
-    );
+    cliLogger.error(await notLoggedInMessage(env, projectDir));
     return null;
   }
 

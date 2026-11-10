@@ -3736,6 +3736,7 @@ describe("Missing-auth hint for VERYFRONT_API_KEY", () => {
     storedToken?: string,
     apiUrlFromProjectEnv = false,
     veryfrontJson?: Record<string, unknown>,
+    command: "whoami" | "login" = "whoami",
   ): Promise<{ result: unknown; output: string[] }> {
     const dir = await makeTempDir({ prefix: "whoami-api-key-" });
     const env = createTestEnvironmentConfig({
@@ -3773,11 +3774,11 @@ describe("Missing-auth hint for VERYFRONT_API_KEY", () => {
       }
       console.log = (...args: unknown[]) => output.push(args.map(String).join(" "));
       setJsonMode(jsonMode);
-      const { whoami } = await import("./login.ts");
+      const { login, whoami } = await import("./login.ts");
       const { withCwd } = await import("#veryfront/testing/cwd.ts");
       const result = await withMockFetch(
         () => Promise.resolve(new Response(null, { status: 401 })),
-        () => withCwd(dir, () => whoami(env)),
+        () => withCwd(dir, () => command === "login" ? login(undefined, env) : whoami(env)),
       );
       return { result, output };
     } finally {
@@ -3827,6 +3828,27 @@ describe("Missing-auth hint for VERYFRONT_API_KEY", () => {
         context: { authenticated: false },
       },
     });
+  });
+
+  it("puts the hint in the login JSON envelope when only VERYFRONT_API_KEY is set", async () => {
+    const { result, output } = await runWhoami(
+      { VERYFRONT_API_KEY: "vf_misnamed_key" },
+      true,
+      undefined,
+      undefined,
+      false,
+      undefined,
+      "login",
+    );
+
+    assertEquals(result, null);
+    assertEquals(JSON.parse(output.join("\n")).error, {
+      code: "AUTHENTICATION_ERROR",
+      slug: "authentication-required",
+      registrySlug: "authentication-required",
+      message: `Not logged in. ${API_KEY_HINT}`,
+    });
+    assertEquals(output.join("\n").includes("vf_misnamed_key"), false);
   });
 
   it("keeps the plain message when VERYFRONT_API_TOKEN is also set", async () => {
