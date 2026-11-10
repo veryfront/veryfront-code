@@ -1831,3 +1831,37 @@ it("retained trusted legacy-only platform sources expose canonical names", async
     assertEquals(executions, ["veryfront__get_file"]);
   }
 });
+
+it("names the missing Veryfront API MCP value and where the server reads it", () => {
+  const cases = [
+    { apiToken: "server-token", projectSlug: undefined, missing: "VERYFRONT_PROJECT_SLUG" },
+    { apiToken: undefined, projectSlug: "server-project", missing: "VERYFRONT_API_TOKEN" },
+  ];
+  for (const { apiToken, projectSlug, missing } of cases) {
+    const error = assertThrows(
+      () =>
+        getRuntimeRemoteToolSources(
+          {
+            id: "assistant",
+            system: "Use the Veryfront tools.",
+            mcpServers: [{ kind: "veryfront-api", toolPolicy: { allow: ["list_agents"] } }],
+          },
+          {
+            getVeryfrontBootstrap: () => ({
+              apiBaseUrl: "https://api.example/",
+              apiToken,
+              projectSlug,
+              hasRequestContext: false,
+              usesVeryfrontFs: false,
+            }),
+          },
+        ),
+      VeryfrontError,
+    );
+    const message = (error as VeryfrontError).message;
+    assertEquals(message.includes(`${missing} is not set`), true, message);
+    assertEquals(message.includes("environment of the server process"), true, message);
+    assertEquals(message.includes("not from project environment variables"), true, message);
+    assertEquals(/[\u2013\u2014]/.test(message), false, message);
+  }
+});

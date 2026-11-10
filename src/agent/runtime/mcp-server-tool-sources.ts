@@ -419,6 +419,29 @@ export function bindRemoteToolSourceToProject(
   });
 }
 
+/**
+ * Name the missing identity value and where it is read.
+ *
+ * The values come from the host process through `getVeryfrontCloudHostBootstrap`,
+ * never from the project's own environment variables, so a developer who set
+ * them on the project must learn that they are read elsewhere.
+ */
+function missingVeryfrontApiMcpIdentityMessage(
+  missingToken: boolean,
+  missingSlug: boolean,
+): string {
+  const missing = [
+    ...(missingToken ? ["VERYFRONT_API_TOKEN"] : []),
+    ...(missingSlug ? ["VERYFRONT_PROJECT_SLUG"] : []),
+  ];
+  const subject = missing.length > 1 ? `${missing.join(" and ")} are` : `${missing[0]} is`;
+  return `Veryfront API MCP cannot start: ${subject} not set. ` +
+    "It reads VERYFRONT_API_TOKEN (or VERYFRONT_API_TOKEN_FILE, or your veryfront login session) " +
+    "and VERYFRONT_PROJECT_SLUG from the environment of the server process that runs the agent, " +
+    "not from project environment variables. " +
+    `Set ${missing.join(" and ")} there, for example in the shell that runs veryfront dev.`;
+}
+
 function createVeryfrontApiMcpServerToolSource(
   server: AgentVeryfrontMcpServerConfig,
   dependencies: RuntimeMcpServerToolSourceDependencies,
@@ -432,8 +455,7 @@ function createVeryfrontApiMcpServerToolSource(
       return undefined;
     }
     throw CONFIG_INVALID.create({
-      detail:
-        "Veryfront API MCP requires server-side VERYFRONT_API_TOKEN and VERYFRONT_PROJECT_SLUG.",
+      detail: missingVeryfrontApiMcpIdentityMessage(!authToken, !projectId),
     });
   }
 
