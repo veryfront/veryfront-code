@@ -25,7 +25,7 @@ import {
   buildSandboxCreateInput,
 } from "./create-input.ts";
 import { INITIALIZATION_ERROR, TIMEOUT_ERROR } from "#veryfront/errors";
-import { createSandboxHttpError } from "./http-error.ts";
+import { createSandboxHttpError, withMissingProjectSelectorHint } from "./http-error.ts";
 import { LazySandbox, type LazySandboxOptions } from "./lazy-sandbox.ts";
 import { fetchSandboxUrl, resolveSandboxApiUrl, resolveSandboxAuthToken } from "./config.ts";
 import {
@@ -165,7 +165,10 @@ export class Sandbox {
     });
 
     if (!res.ok) {
-      throw await createSandboxHttpError(res, "Failed to create sandbox");
+      throw withMissingProjectSelectorHint(
+        await createSandboxHttpError(res, "Failed to create sandbox"),
+        options,
+      );
     }
 
     const created = await res.json();
