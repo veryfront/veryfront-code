@@ -891,7 +891,7 @@ describe("security/http/csrf/csrf-handler", () => {
         headers: { authorization: "bearer <TOKEN>" },
       });
       const result = await handler.handle(req, createCtx(true));
-      assertEquals(result.continue, true);
+      assertEquals(result.continue, true, "the scheme name is case-insensitive");
     });
 
     it("lets a wrong bearer reach the route so the route answers 401", async () => {
@@ -900,14 +900,14 @@ describe("security/http/csrf/csrf-handler", () => {
         headers: { authorization: "Bearer <WRONG_TOKEN>" },
       });
       const result = await handler.handle(req, createCtx(true));
-      assertEquals(result.continue, true);
-      assertEquals(result.response, undefined);
+      assertEquals(result.continue, true, "the handler does not judge the token");
+      assertEquals(result.response, undefined, "no CSRF 403 is served");
     });
 
     it("still rejects a request that carries neither a bearer nor a cookie", async () => {
       const req = new Request("http://localhost/api/mcp", { method: "POST" });
       const result = await handler.handle(req, createCtx(true));
-      assertEquals(result.response?.status, 403);
+      assertEquals(result.response?.status, 403, "no credential at all stays refused");
     });
 
     it("still rejects an empty bearer and other authorization schemes", async () => {
@@ -928,7 +928,7 @@ describe("security/http/csrf/csrf-handler", () => {
         headers: { cookie: `__Host-vf_csrf=${token}` },
       });
       const result = await handler.handle(req, createCtx(true));
-      assertEquals(result.response?.status, 403);
+      assertEquals(result.response?.status, 403, "a cookie session needs the header");
     });
 
     it("keeps the double-submit check when a bearer rides along with a cookie session", async () => {
@@ -937,7 +937,11 @@ describe("security/http/csrf/csrf-handler", () => {
         method: "POST",
         headers: { authorization: "Bearer <TOKEN>", cookie: `__Host-vf_csrf=${token}` },
       });
-      assertEquals((await handler.handle(withoutHeader, createCtx(true))).response?.status, 403);
+      assertEquals(
+        (await handler.handle(withoutHeader, createCtx(true))).response?.status,
+        403,
+        "a bearer does not excuse a cookie session from the header",
+      );
 
       const withHeader = new Request("http://localhost/api/mcp", {
         method: "POST",
@@ -947,7 +951,11 @@ describe("security/http/csrf/csrf-handler", () => {
           "x-csrf-token": token,
         },
       });
-      assertEquals((await handler.handle(withHeader, createCtx(true))).continue, true);
+      assertEquals(
+        (await handler.handle(withHeader, createCtx(true))).continue,
+        true,
+        "a cookie session with the matching header passes",
+      );
     });
 
     it("keeps the double-submit check when any other cookie is present", async () => {
@@ -956,7 +964,7 @@ describe("security/http/csrf/csrf-handler", () => {
         headers: { authorization: "Bearer <TOKEN>", cookie: "session=<SESSION_ID>" },
       });
       const result = await handler.handle(req, createCtx(true));
-      assertEquals(result.response?.status, 403);
+      assertEquals(result.response?.status, 403, "any cookie may be the route's credential");
     });
 
     it("keeps the check for a cross-site browser request that adds a bearer", async () => {
@@ -979,7 +987,7 @@ describe("security/http/csrf/csrf-handler", () => {
         headers: { authorization: "Bearer <TOKEN>", origin: "https://attacker.example" },
       });
       const result = await handler.handle(req, createCtx(true));
-      assertEquals(result.response?.status, 403);
+      assertEquals(result.response?.status, 403, "a foreign Origin keeps the check");
     });
 
     it("passes a same-origin browser request that carries a bearer and no cookie", async () => {
@@ -992,7 +1000,63 @@ describe("security/http/csrf/csrf-handler", () => {
         },
       });
       const result = await handler.handle(req, createCtx(true));
-      assertEquals(result.continue, true);
+      assertEquals(result.continue, true, "a same-origin page may use a bearer");
+    });
+
+    it("treats a whitespace-only cookie header as no cookie", async () => {
+      const req = new Request("http://localhost/api/mcp", {
+        method: "POST",
+        headers: { authorization: "Bearer <TOKEN>", cookie: "   " },
+      });
+      const result = await handler.handle(req, createCtx(true));
+      assertEquals(result.continue, true, "an empty cookie header carries no credential");
+    });
+
+    it("passes a user-initiated navigation and reads Sec-Fetch-Site case-insensitively", async () => {
+      const cases: Array<[string, boolean]> = [
+        ["none", true],
+        ["Same-Origin", true],
+        ["Cross-Site", false],
+        ["SAME-SITE", false],
+      ];
+      for (const [site, passes] of cases) {
+        const req = new Request("http://localhost/api/mcp", {
+          method: "POST",
+          headers: { authorization: "Bearer <TOKEN>", "sec-fetch-site": site },
+        });
+        const result = await handler.handle(req, createCtx(true));
+        assertEquals(result.continue, passes, `Sec-Fetch-Site: ${site}`);
+        if (!passes) assertEquals(result.response?.status, 403, `Sec-Fetch-Site: ${site}`);
+      }
+    });
+
+    it("keeps the check for an opaque origin such as a sandboxed frame", async () => {
+      const req = new Request("http://localhost/api/mcp", {
+        method: "POST",
+        headers: { authorization: "Bearer <TOKEN>", origin: "null" },
+      });
+      const result = await handler.handle(req, createCtx(true));
+      assertEquals(result.response?.status, 403, "Origin: null is not the server's origin");
+    });
+
+    it("applies the same rule to a local development context", async () => {
+      const bearer = loopbackRequest("/api/mcp", { authorization: "Bearer <TOKEN>" });
+      assertEquals(
+        (await handler.handle(bearer, localCtx())).continue,
+        true,
+        "a cookieless bearer reaches the route under veryfront dev",
+      );
+
+      const crossSite = loopbackRequest("/api/ag-ui", {
+        authorization: "Bearer <TOKEN>",
+        origin: "https://attacker.example",
+        "sec-fetch-site": "cross-site",
+      });
+      assertEquals(
+        (await handler.handle(crossSite, localCtx())).response?.status,
+        403,
+        "a cross-site page cannot reach a local route with an invented bearer",
+      );
     });
 
     it("keeps the cookie check on the server action route when a bearer is present", async () => {
@@ -1001,7 +1065,7 @@ describe("security/http/csrf/csrf-handler", () => {
         headers: { authorization: "Bearer <TOKEN>", cookie: "session=<SESSION_ID>" },
       });
       const result = await handler.handle(req, createCtx(true));
-      assertEquals(result.response?.status, 403);
+      assertEquals(result.response?.status, 403, "server actions keep the cookie check");
     });
   });
 
