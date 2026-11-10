@@ -226,6 +226,31 @@ function privateAddressEgressBlock(message: string): WorkerEgressBlockedError {
   return error;
 }
 
+// The subset of private-address blocks that the hostname allowlist can lift:
+// a DNS hostname (not an IP literal or localhost name) whose answer contained a
+// private address.
+const allowlistablePrivateAddressEgressBlocks = new NativeWeakSet<object>();
+
+function allowlistablePrivateAddressEgressBlock(message: string): WorkerEgressBlockedError {
+  const error = privateAddressEgressBlock(message);
+  IntrinsicReflectApply(WeakSetPrototypeAdd, allowlistablePrivateAddressEgressBlocks, [error]);
+  return error;
+}
+
+/**
+ * True when the guard blocked a DNS hostname because its answer contained a
+ * private address, which listing the hostname in
+ * `VERYFRONT_WORKER_ALLOWED_INTERNAL_HOSTS` lifts.
+ */
+export function isAllowlistablePrivateAddressEgressBlock(error: unknown): boolean {
+  return typeof error === "object" && error !== null &&
+    IntrinsicReflectApply(
+      WeakSetPrototypeHas,
+      allowlistablePrivateAddressEgressBlocks,
+      [error],
+    ) as boolean;
+}
+
 /**
  * True when the guard blocked a destination because it is, or its DNS answer
  * contains, a private or otherwise non-global address. Proxy connection
@@ -584,7 +609,7 @@ async function resolveWorkerHostEgressAddresses(
       isInternalEgressIp(normalizedAddress) &&
       !allowedResolvedAddresses.includes(normalizedAddress)
     ) {
-      throw privateAddressEgressBlock(
+      throw allowlistablePrivateAddressEgressBlock(
         `Worker network egress blocked for host: ${hostname}`,
       );
     }

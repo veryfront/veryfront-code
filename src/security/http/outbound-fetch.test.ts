@@ -800,6 +800,76 @@ describe("createVeryfrontApiOriginBoundOutboundFetch", () => {
     });
   });
 
+  it("names the allowlist variable when a hostname resolves to a private address", async () => {
+    __resetOperatorVeryfrontApiOriginsForTests();
+    await withEnv({ VERYFRONT_API_URL: STAGING_API }, async () => {
+      await withPrivateDns(async (seen) => {
+        for (
+          const request of [
+            () => createVeryfrontApiOriginBoundOutboundFetch(STAGING_API)(`${STAGING_API}/health`),
+            () => guardedOutboundFetch(`${STAGING_API}/health`),
+          ]
+        ) {
+          const error = await assertRejects(request, OutboundRequestBlockedError) as Error;
+          assertEquals(
+            error.message.startsWith(
+              "Outbound network egress blocked for host: api.staging.example.",
+            ),
+            true,
+            error.message,
+          );
+          assertEquals(
+            error.message.includes("VERYFRONT_WORKER_ALLOWED_INTERNAL_HOSTS"),
+            true,
+            error.message,
+          );
+        }
+        assertEquals(seen, []);
+      });
+    });
+  });
+
+  it("lets the named allowlist variable through for that exact hostname only", async () => {
+    __resetOperatorVeryfrontApiOriginsForTests();
+    await withEnv(
+      {
+        VERYFRONT_API_URL: STAGING_API,
+        VERYFRONT_WORKER_ALLOWED_INTERNAL_HOSTS: "api.staging.example",
+      },
+      async () => {
+        await withPrivateDns(async (seen) => {
+          const response = await createVeryfrontApiOriginBoundOutboundFetch(STAGING_API)(
+            `${STAGING_API}/health`,
+          );
+          assertEquals(response.status, 200);
+          await assertRejects(
+            () => guardedOutboundFetch("https://other.staging.example/health"),
+            OutboundRequestBlockedError,
+            "egress blocked",
+          );
+          assertEquals(seen, [`${STAGING_API}/health`]);
+        });
+      },
+    );
+  });
+
+  it("does not suggest the allowlist for blocks it cannot lift", async () => {
+    await withPrivateDns(async () => {
+      // IP literals and localhost names are never honoured on the allowlist.
+      for (const url of ["https://10.0.0.1/health", "http://localhost.localhost/health"]) {
+        const error = await assertRejects(
+          () => guardedOutboundFetch(url),
+          OutboundRequestBlockedError,
+        ) as Error;
+        assertEquals(
+          error.message.includes("VERYFRONT_WORKER_ALLOWED_INTERNAL_HOSTS"),
+          false,
+          `${url}: ${error.message}`,
+        );
+      }
+    });
+  });
+
   it("ignores API URLs that carry credentials or a non-HTTP scheme", async () => {
     for (const value of ["https://user:secret@api.staging.example", "ftp://api.staging.example"]) {
       await withSealedOrigins({ VERYFRONT_API_URL: value }, async () => {
