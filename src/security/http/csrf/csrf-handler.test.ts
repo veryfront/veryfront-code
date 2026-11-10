@@ -869,6 +869,106 @@ describe("security/http/csrf/csrf-handler", () => {
     });
   });
 
+  describe("bearer-authenticated callers", () => {
+    const methods = ["POST", "PUT", "PATCH", "DELETE"];
+
+    it("passes a mutating request that carries a bearer token and no cookie", async () => {
+      for (const method of methods) {
+        for (const path of ["/api/mcp", "/api/ag-ui", "/no/route/here"]) {
+          const req = new Request(`http://localhost${path}`, {
+            method,
+            headers: { authorization: "Bearer <TOKEN>" },
+          });
+          const result = await handler.handle(req, createCtx(true));
+          assertEquals(result.continue, true, `${method} ${path}`);
+        }
+      }
+    });
+
+    it("accepts the bearer scheme in any letter case", async () => {
+      const req = new Request("http://localhost/api/mcp", {
+        method: "POST",
+        headers: { authorization: "bearer <TOKEN>" },
+      });
+      const result = await handler.handle(req, createCtx(true));
+      assertEquals(result.continue, true);
+    });
+
+    it("lets a wrong bearer reach the route so the route answers 401", async () => {
+      const req = new Request("http://localhost/api/mcp", {
+        method: "POST",
+        headers: { authorization: "Bearer <WRONG_TOKEN>" },
+      });
+      const result = await handler.handle(req, createCtx(true));
+      assertEquals(result.continue, true);
+      assertEquals(result.response, undefined);
+    });
+
+    it("still rejects a request that carries neither a bearer nor a cookie", async () => {
+      const req = new Request("http://localhost/api/mcp", { method: "POST" });
+      const result = await handler.handle(req, createCtx(true));
+      assertEquals(result.response?.status, 403);
+    });
+
+    it("still rejects an empty bearer and other authorization schemes", async () => {
+      for (const authorization of ["Bearer", "Bearer ", "Basic <CREDENTIALS>", "<TOKEN>"]) {
+        const req = new Request("http://localhost/api/mcp", {
+          method: "POST",
+          headers: { authorization },
+        });
+        const result = await handler.handle(req, createCtx(true));
+        assertEquals(result.response?.status, 403, authorization);
+      }
+    });
+
+    it("still rejects a CSRF cookie without the matching header", async () => {
+      const { token } = generateCsrfToken({ secure: false });
+      const req = new Request("http://localhost/api/mcp", {
+        method: "POST",
+        headers: { cookie: `__Host-vf_csrf=${token}` },
+      });
+      const result = await handler.handle(req, createCtx(true));
+      assertEquals(result.response?.status, 403);
+    });
+
+    it("keeps the double-submit check when a bearer rides along with a cookie session", async () => {
+      const { token } = generateCsrfToken({ secure: false });
+      const withoutHeader = new Request("http://localhost/api/mcp", {
+        method: "POST",
+        headers: { authorization: "Bearer <TOKEN>", cookie: `__Host-vf_csrf=${token}` },
+      });
+      assertEquals((await handler.handle(withoutHeader, createCtx(true))).response?.status, 403);
+
+      const withHeader = new Request("http://localhost/api/mcp", {
+        method: "POST",
+        headers: {
+          authorization: "Bearer <TOKEN>",
+          cookie: `__Host-vf_csrf=${token}`,
+          "x-csrf-token": token,
+        },
+      });
+      assertEquals((await handler.handle(withHeader, createCtx(true))).continue, true);
+    });
+
+    it("keeps the double-submit check when any other cookie is present", async () => {
+      const req = new Request("http://localhost/api/mcp", {
+        method: "POST",
+        headers: { authorization: "Bearer <TOKEN>", cookie: "session=<SESSION_ID>" },
+      });
+      const result = await handler.handle(req, createCtx(true));
+      assertEquals(result.response?.status, 403);
+    });
+
+    it("keeps the cookie check on the server action route when a bearer is present", async () => {
+      const req = new Request("http://localhost/_veryfront/rsc/action", {
+        method: "POST",
+        headers: { authorization: "Bearer <TOKEN>", cookie: "session=<SESSION_ID>" },
+      });
+      const result = await handler.handle(req, createCtx(true));
+      assertEquals(result.response?.status, 403);
+    });
+  });
+
   describe("custom configuration", () => {
     it("should use custom cookieName and headerName", async () => {
       const ctx = createCtx({ cookieName: "my_csrf", headerName: "x-my-csrf" });
