@@ -111,14 +111,6 @@ export interface CredentialValidationOptions {
   transport?: typeof fetch;
 }
 
-/**
- * How long the bare-`login` preflight will wait on a credential check.
- *
- * That check is best-effort: it exists only to say "already logged in" instead
- * of prompting. A connection the API accepts but never answers would otherwise
- * block sign-in forever, so the check is bounded and a timeout simply falls
- * through to the normal flow.
- */
 const MISNAMED_API_KEY_HINT_LINES = [
   "VERYFRONT_API_KEY is set, but the CLI reads VERYFRONT_API_TOKEN.",
   "Set VERYFRONT_API_TOKEN to the same key, or run 'veryfront login'.",
@@ -173,6 +165,14 @@ async function hasConfiguredCredential(
   }
 }
 
+/**
+ * How long the bare-`login` preflight will wait on a credential check.
+ *
+ * That check is best-effort: it exists only to say "already logged in" instead
+ * of prompting. A connection the API accepts but never answers would otherwise
+ * block sign-in forever, so the check is bounded and a timeout simply falls
+ * through to the normal flow.
+ */
 const DEFAULT_EXISTING_SESSION_TIMEOUT_MS = 5_000;
 const DEFAULT_OAUTH_BROWSER_LAUNCH_TIMEOUT_MS = 10_000;
 let existingSessionTimeoutMs = DEFAULT_EXISTING_SESSION_TIMEOUT_MS;
