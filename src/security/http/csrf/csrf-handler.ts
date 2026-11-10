@@ -7,9 +7,10 @@
  * resolves that default identically in local development and in production, so
  * a browser mutation that passes locally passes after deploy.
  *
- * A request that carries an `Authorization: Bearer` token and no cookie is not
- * checked. It holds no ambient credential for a cross-site request to use, and
- * the route's own auth answers it.
+ * A request that carries an `Authorization: Bearer` token and no cookie, and is
+ * not a browser request from another site or origin, is not checked. It holds
+ * no ambient credential for a cross-site request to use, and the route's own
+ * auth answers it.
  *
  * ## Server Actions integration
  *
@@ -135,6 +136,14 @@ function isFrameworkLocalControlSurface(method: string, pathname: string): boole
  * the CSRF cookie: project-configured and origin-isolated names make that
  * unreliable, and refusing on any cookie is the conservative side.
  *
+ * A browser request from another site keeps the check too. A project that
+ * allows any origin in its CORS policy lets a hostile page pass the preflight
+ * for `authorization`, and that page could then send any bearer value with no
+ * cookie to a route that has no auth of its own, such as a local development
+ * endpoint that spends the developer's Cloud session. Browsers always send
+ * `Sec-Fetch-Site` and `Origin` on such a request and page script cannot set
+ * either. A non-browser caller sends neither.
+ *
  * The token is not validated here. A wrong bearer must reach the route so the
  * route answers 401 instead of this handler answering 403.
  */
@@ -143,7 +152,18 @@ function isCookielessBearerRequest(req: Request): boolean {
   if (!authorization || !/^bearer\s+\S/i.test(authorization)) return false;
 
   const cookie = req.headers.get("cookie");
-  return cookie === null || cookie.trim() === "";
+  if (cookie !== null && cookie.trim() !== "") return false;
+
+  const fetchSite = req.headers.get("sec-fetch-site")?.trim().toLowerCase();
+  if (fetchSite && fetchSite !== "same-origin" && fetchSite !== "none") return false;
+
+  const origin = req.headers.get("origin");
+  if (origin === null) return true;
+  try {
+    return origin === browserFacingOrigin(req, isProxyTopologyTrusted());
+  } catch {
+    return false;
+  }
 }
 
 function csrfValidationOptions(csrfConfig: CsrfSetting, req: Request) {

@@ -959,6 +959,42 @@ describe("security/http/csrf/csrf-handler", () => {
       assertEquals(result.response?.status, 403);
     });
 
+    it("keeps the check for a cross-site browser request that adds a bearer", async () => {
+      // A project with permissive CORS lets a hostile page pass the preflight for
+      // `authorization`. Without this, that page could reach an unauthenticated
+      // route on the developer's machine with any bearer value.
+      for (const site of ["cross-site", "same-site"]) {
+        const req = new Request("http://localhost/api/ag-ui", {
+          method: "POST",
+          headers: { authorization: "Bearer <TOKEN>", "sec-fetch-site": site },
+        });
+        const result = await handler.handle(req, createCtx(true));
+        assertEquals(result.response?.status, 403, site);
+      }
+    });
+
+    it("keeps the check for a bearer request from a foreign origin", async () => {
+      const req = new Request("http://localhost/api/ag-ui", {
+        method: "POST",
+        headers: { authorization: "Bearer <TOKEN>", origin: "https://attacker.example" },
+      });
+      const result = await handler.handle(req, createCtx(true));
+      assertEquals(result.response?.status, 403);
+    });
+
+    it("passes a same-origin browser request that carries a bearer and no cookie", async () => {
+      const req = new Request("http://localhost/api/mcp", {
+        method: "POST",
+        headers: {
+          authorization: "Bearer <TOKEN>",
+          origin: "http://localhost",
+          "sec-fetch-site": "same-origin",
+        },
+      });
+      const result = await handler.handle(req, createCtx(true));
+      assertEquals(result.continue, true);
+    });
+
     it("keeps the cookie check on the server action route when a bearer is present", async () => {
       const req = new Request("http://localhost/_veryfront/rsc/action", {
         method: "POST",
