@@ -645,6 +645,16 @@ export function buildHostedChatRequestForwardedPropsFromRuntimeAgentInvocation(
   return Object.keys(forwardedProps).length > 0 ? forwardedProps : undefined;
 }
 
+/** Whether the caller attached its own definition of `toolName` to the run's request tools. */
+export function hostedChatRequestIncludesTool(
+  forwardedProps: HostedChatRequest["forwardedProps"],
+  toolName: string,
+): boolean {
+  const runtimeTools = forwardedProps?.runtimeTools;
+  return Array.isArray(runtimeTools) &&
+    runtimeTools.some((runtimeTool) => isRecord(runtimeTool) && runtimeTool.name === toolName);
+}
+
 /** Builds hosted chat request input from runtime agent invocation. */
 export function buildHostedChatRequestInputFromRuntimeAgentInvocation(
   input: RuntimeAgentRunInvocation,

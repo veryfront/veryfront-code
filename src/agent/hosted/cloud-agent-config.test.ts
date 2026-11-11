@@ -1,4 +1,10 @@
-import { assert, assertEquals, assertNotEquals } from "#veryfront/testing/assert.ts";
+import {
+  assert,
+  assertEquals,
+  assertNotEquals,
+  assertRejects,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import type { CreateSandboxBashTool } from "#veryfront/sandbox";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { tool } from "#veryfront/tool";
@@ -239,5 +245,73 @@ describe("cloud agent service runtime options", () => {
     assertEquals("veryfront__load_skill" in tools, true);
     assertEquals("veryfront__sleep" in tools, true);
     assertEquals("veryfront__web_fetch" in tools, true);
+  });
+
+  describe("web_fetch ownership", () => {
+    function buildWebFetchTools(forwardedProps?: Record<string, unknown>) {
+      const context = createNodeVeryfrontCloudAgentServiceContext({
+        serviceName: "test-agent-service",
+        createBashTool: () => Promise.resolve({ tools: {} }),
+        env: {
+          VERYFRONT_API_URL: "https://api.example.test",
+          NODE_ENV: "test",
+          PORT: "3180",
+          ALLOWED_ORIGINS: "https://studio.example.test",
+        },
+      });
+      context.skillDocumentParserProvider = createStdYamlSkillDocumentParserProvider();
+      return buildLocalTools(
+        context,
+        {
+          projectId: "project-1",
+          authToken: "token",
+          instructions: "Synthetic instructions",
+          allowDelegation: false,
+        },
+        {
+          authToken: "token",
+          agentId: "agent-1",
+          projectId: "project-1",
+          branchId: null,
+          model: "anthropic/claude-sonnet-4-6",
+        },
+        forwardedProps === undefined ? undefined : { forwardedProps },
+      );
+    }
+
+    async function webFetchErrorFor(forwardedProps?: Record<string, unknown>): Promise<Error> {
+      const webFetch = buildWebFetchTools(forwardedProps).web_fetch;
+      assert(webFetch && typeof webFetch.execute === "function");
+      // A loopback URL keeps the test offline: the local fetch path refuses it at its egress guard.
+      const error = await assertRejects(() =>
+        Promise.resolve(webFetch.execute!({ url: "http://127.0.0.1/page" }))
+      );
+      assert(error instanceof Error);
+      return error;
+    }
+
+    it("does not fetch locally when the request tools include web_fetch", async () => {
+      const error = await webFetchErrorFor({
+        runtimeTools: [{ name: "web_fetch", description: "API-owned web_fetch" }],
+      });
+
+      assertStringIncludes(error.message, "executed by the Veryfront API");
+    });
+
+    it("still offers web_fetch to the model when the API owns it", () => {
+      const tools = buildWebFetchTools({ runtimeTools: [{ name: "web_fetch" }] });
+
+      assertEquals(typeof tools.web_fetch?.description, "string");
+      assertEquals(hasTrustedHostToolProvenance(tools.web_fetch), true);
+      assertEquals("veryfront__web_fetch" in tools, true);
+    });
+
+    it("fetches locally when the request tools do not include web_fetch", async () => {
+      for (const forwardedProps of [undefined, { runtimeTools: [{ name: "web_search" }] }]) {
+        const error = await webFetchErrorFor(forwardedProps);
+
+        assertEquals(error.name, "WorkerEgressBlockedError");
+      }
+    });
   });
 });
