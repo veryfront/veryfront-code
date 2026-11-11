@@ -9,11 +9,14 @@ import {
 describe("shared/inference-setup", () => {
   const text = inferenceSetupOptionLines().join("\n");
 
-  it("names the Cloud AI Gateway path and says it publishes nothing", () => {
+  it("names the Cloud AI Gateway path and discloses the source sync", () => {
     assertStringIncludes(text, "Veryfront Cloud AI Gateway");
     assertStringIncludes(text, "veryfront login");
     assertStringIncludes(text, 'answer Yes to "Use Veryfront Cloud?"');
-    assertStringIncludes(text, "publishes nothing");
+    // Linked dev uploads the source to the Cloud preview at startup
+    // (createConnectedDevSourceSync), so the copy must say so.
+    assertStringIncludes(text, "syncs your source to its Cloud preview");
+    assertEquals(text.includes("publishes nothing"), false);
   });
 
   it("names the account-level provider keys for OpenAI and Anthropic", () => {
@@ -32,7 +35,7 @@ describe("shared/inference-setup", () => {
     assertStringIncludes(text, ".env");
   });
 
-  it("does not send the reader to push, which publishes the source", () => {
+  it("points at the dev prompt, not push, as the way to gateway inference", () => {
     assertEquals(text.includes("veryfront push"), false);
   });
 

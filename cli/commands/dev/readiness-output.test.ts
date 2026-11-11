@@ -37,11 +37,13 @@ Deno.test("remote connection and local-only readiness remain explicit", () => {
   assertEquals(output.includes("✓ Connected"), false);
 });
 
-Deno.test("the not-linked line says how to link without publishing", () => {
+Deno.test("the not-linked line says how to link and discloses the source sync", () => {
   const output = devReadinessLines({ appUrl: "http://localhost:3000" }).join("\n");
   assertStringIncludes(output, "Not linked");
   assertStringIncludes(output, 'answer Yes to "Use Veryfront Cloud?"');
-  assertStringIncludes(output, "publishes nothing");
-  // `veryfront push` publishes the source; linking for inference does not need it.
+  // Linked dev uploads the source to the Cloud preview at startup.
+  assertStringIncludes(output, "syncs your source to a Cloud preview");
+  assertEquals(output.includes("publishes nothing"), false);
+  // The dev prompt, not push, is the direct way to gateway inference in local dev.
   assertEquals(output.includes("veryfront push"), false);
 });
