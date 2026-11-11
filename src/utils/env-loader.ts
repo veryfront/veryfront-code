@@ -4,6 +4,7 @@ import {
   __resetVeryfrontApiKeyAliasForTests,
   clearEnvFileValueSource,
   clearEnvFileValueSources,
+  deleteEnv,
   getEnv,
   markEnvFileValue,
   setEnv,
@@ -365,11 +366,16 @@ function isBlank(value: string | undefined): boolean {
  */
 function applyVeryfrontApiKeyAlias(): void {
   settleVeryfrontApiKeyAlias();
+  // A token file supplies the credential ahead of the token variable. An alias
+  // would attach the key's `.env` provenance to the token file's secret, so a
+  // repository-steered API URL could receive it. A token file can also appear
+  // in a later load (`dev --project` reads the project's `.env` after the
+  // cwd's), so an alias applied earlier is removed too.
+  if (!isBlank(readExistingEnv(VERYFRONT_API_TOKEN_FILE_ENV))) {
+    revokeVeryfrontApiKeyAlias();
+    return;
+  }
   if (!isBlank(readExistingEnv(VERYFRONT_API_TOKEN_ENV))) return;
-  // A token file supplies the credential ahead of the token variable. Copying
-  // the key here would attach the key's `.env` provenance to the token file's
-  // secret, so a repository-steered API URL could receive it.
-  if (!isBlank(readExistingEnv(VERYFRONT_API_TOKEN_FILE_ENV))) return;
   const apiKey = readExistingEnv(VERYFRONT_API_KEY_ENV);
   if (apiKey === undefined || isBlank(apiKey)) return;
 
@@ -390,6 +396,15 @@ function applyVeryfrontApiKeyAlias(): void {
     clearEnvFileValueSource(VERYFRONT_API_TOKEN_ENV);
   }
   veryfrontApiTokenAliasValue = apiKey;
+}
+
+/** Remove the credential copied from `VERYFRONT_API_KEY`, with its provenance. */
+function revokeVeryfrontApiKeyAlias(): void {
+  if (isVeryfrontApiTokenFromKey()) {
+    deleteEnv(VERYFRONT_API_TOKEN_ENV);
+    markProcessEnvSource(VERYFRONT_API_TOKEN_ENV);
+  }
+  veryfrontApiTokenAliasValue = undefined;
 }
 
 /** The variable the user set for the credential now in `VERYFRONT_API_TOKEN`, for messages. */

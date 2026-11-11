@@ -718,6 +718,29 @@ describe("env-loader", () => {
       }
     });
 
+    it("clears an earlier key alias when a later load brings a token file", async () => {
+      // `veryfront dev --project` loads the cwd .env first, then the project's.
+      const TOKEN_FILE = "VERYFRONT_API_TOKEN_FILE";
+      const savedTokenFile = getEnv(TOKEN_FILE);
+      const projectDir = `${tempDir}/project`;
+      try {
+        await writeEnvFile(".env", `${KEY}=<KEY_FROM_CWD_FILE>`);
+        await loadEnv({ cwd: tempDir });
+        assertEquals(getEnv(TOKEN), "<KEY_FROM_CWD_FILE>", "the first load aliases the key");
+
+        await Deno.mkdir(projectDir);
+        await writeTextFile(`${projectDir}/.env`, `${TOKEN_FILE}=${tempDir}/token-file`);
+        await loadAdditionalEnv({ cwd: projectDir });
+
+        assertEquals(getEnv(TOKEN), undefined, "the alias is removed once a token file is set");
+        assertEquals(getEnvSource(TOKEN), { source: "unset" }, "no stale provenance remains");
+        assertEquals(isVeryfrontApiTokenFromKey(), false);
+      } finally {
+        if (savedTokenFile === undefined) deleteEnv(TOKEN_FILE);
+        else setEnv(TOKEN_FILE, savedTokenFile);
+      }
+    });
+
     it("keeps an exported VERYFRONT_API_TOKEN when both names are set", async () => {
       setEnv(TOKEN, "<TOKEN_FROM_SHELL>");
       setEnv(KEY, "<KEY_FROM_SHELL>");
