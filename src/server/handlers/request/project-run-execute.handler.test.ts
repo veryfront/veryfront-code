@@ -59,6 +59,7 @@ import { createAgentServiceEvalAdapter } from "#veryfront/eval/agent-service.ts"
 import { runEval as runEvalDefinition } from "#veryfront/eval/runner.ts";
 import { datasets, evalAgent, evalDataset, type EvalReport, metrics } from "veryfront/eval";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
+import { EVAL_LOAD_FAILED } from "#veryfront/errors/error-registry/agent.ts";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 import { runWithExactSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
@@ -6034,6 +6035,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
   }
 
   it("reports a clear error when task:eval names an unknown eval", async () => {
+    // No `resolveEvalById` override: the handler's own default resolves the miss.
     const handler = new ProjectRunExecuteHandler(createDeps({ runTask: runTaskDefinition }));
     const { request, publicKeyPem } = await signedRequest(
       "/api/control-plane/runs/run_task_eval_missing/execute",
@@ -6045,15 +6047,89 @@ describe("server/handlers/request/project-run-execute.handler", () => {
         config: { eval_id: "eval:missing" },
       },
     );
+    const ctx = createCtx(publicKeyPem);
+    ctx.adapter = { ...ctx.adapter, fs: { exists: async () => false } } as never;
 
-    const result = await handler.handle(request, createCtx(publicKeyPem));
+    const result = await handler.handle(request, ctx);
 
     assertExists(result.response);
     assertEquals(await result.response.json(), {
       success: false,
-      error: "Eval not found: eval:missing",
+      error:
+        "Eval not found: eval:missing. Veryfront looks for it in evals/missing.eval.ts (or a .tsx, .js or .jsx file at that path), exported with evalAgent, evalTool or evalDataset. Ensure the file is in the source this run uses, or use the ID that the evals list shows.",
       logs: null,
       duration_ms: 0,
+    });
+  });
+
+  describe("task:eval when the eval lookup misses", () => {
+    async function executeEval(deps: Partial<ProjectRunExecuteHandlerDeps>, evalId: string) {
+      const handler = new ProjectRunExecuteHandler(createDeps({
+        runTask: runTaskDefinition,
+        findEvalById: async () => null,
+        ...deps,
+      }));
+      const { request, publicKeyPem } = await signedRequest(
+        "/api/control-plane/runs/run_task_eval_lookup/execute",
+        {
+          runId: "run_task_eval_lookup",
+          kind: "task",
+          target: "task:eval",
+          projectId: "proj-1",
+          config: { eval_id: evalId },
+        },
+        { "x-token": "project-runtime-token" },
+      );
+      const result = await handler.handle(request, createCtx(publicKeyPem));
+      assertExists(result.response);
+      return await result.response.json();
+    }
+
+    it("reports the load error that resolveEvalById names", async () => {
+      const message =
+        "Eval eval:by-hand failed to load from evals/by-hand.eval.ts: Eval description must be a non-empty string. Fix the file, then run the eval again.";
+      const lookups: string[] = [];
+
+      const body = await executeEval({
+        resolveEvalById: async (evalId) => {
+          lookups.push(evalId);
+          throw EVAL_LOAD_FAILED.create({ detail: message });
+        },
+      }, "eval:by-hand");
+
+      assertEquals(lookups, ["eval:by-hand"], "the miss is resolved once, for the requested id");
+      assertEquals(body, { success: false, error: message, logs: null, duration_ms: 0 });
+    });
+
+    it("runs the eval when the second lookup finds it", async () => {
+      const body = await executeEval({
+        resolveEvalById: async (evalId) => ({
+          id: evalId,
+          name: "By hand",
+          filePath: "evals/by-hand.eval.ts",
+          exportName: "default",
+          definition: evalAgent({
+            id: evalId,
+            target: "agent:researcher",
+            dataset: datasets.inline([{ id: "q1", input: "France capital?" }]),
+            metrics: [metrics.answer.contains({ text: "Paris" })],
+          }),
+        }),
+      }, "eval:by-hand");
+
+      assertEquals(body.success, true, JSON.stringify(body));
+    });
+
+    it("does not report an unrelated lookup failure as a missing eval", async () => {
+      const body = await executeEval({
+        resolveEvalById: async () => {
+          throw new Error("<UNEXPECTED_FAILURE>");
+        },
+      }, "eval:by-hand");
+
+      assertEquals(body.success, false);
+      assertEquals(String(body.error).includes("Eval not found"), false);
+      assertEquals(String(body.error).includes("failed to load"), false);
     });
   });
 

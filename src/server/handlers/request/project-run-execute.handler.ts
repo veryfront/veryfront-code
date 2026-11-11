@@ -47,6 +47,7 @@ import {
   TIMEOUT_ERROR,
   VeryfrontError,
 } from "#veryfront/errors";
+import { EVAL_LOAD_FAILED, EVAL_NOT_FOUND } from "#veryfront/errors/error-registry/agent.ts";
 import {
   formatSchemaValidationErrors,
   INPUT_VALIDATION_FAILED_CODE,
@@ -146,7 +147,7 @@ import {
   parseSerializedRunOutput,
   serializeRunOutput,
 } from "#veryfront/task/run-output-limit.ts";
-import { type DiscoveredEval, findEvalById } from "#veryfront/eval/discovery.ts";
+import { type DiscoveredEval, findEvalById, resolveEvalById } from "#veryfront/eval/discovery.ts";
 import { runEval } from "#veryfront/eval/runner.ts";
 import {
   type AgentServiceEvalAdapterConfig,
@@ -571,6 +572,20 @@ export interface ProjectRunExecuteHandlerDeps {
       allowHostProjectCodeExecution?: boolean;
     },
   ): Promise<DiscoveredEval | null>;
+  /**
+   * Resolve an eval after a `findEvalById` miss, throwing `eval-not-found` or
+   * `eval-load-failed` with the cause. Defaults to `resolveEvalById`.
+   */
+  resolveEvalById?(
+    evalId: string,
+    options: {
+      projectDir: string;
+      adapter: RuntimeAdapter;
+      config?: VeryfrontConfig;
+      debug?: boolean;
+      allowHostProjectCodeExecution?: boolean;
+    },
+  ): Promise<DiscoveredEval>;
   createWorkflowClient(
     config: WorkflowClientConfig | undefined,
     options: { projectId: string } & ProjectWorkflowRedisTargetScope,
@@ -5188,21 +5203,33 @@ async function executeEvalRun(
     ? createKnowledgeEventLogger(progressLogs, "Eval progress logs were truncated")
     : undefined;
   await deps.ensureProjectDiscovery(ctx);
-  const evalItem = await deps.findEvalById(evalId, {
+  const evalLookup = {
     projectDir: ctx.projectDir,
     adapter: ctx.adapter,
     config: ctx.config,
     debug: ctx.debug,
     allowHostProjectCodeExecution: ctx.allowHostProjectCodeExecution,
-  });
+  };
+  let evalItem = await deps.findEvalById(evalId, evalLookup);
 
   if (!evalItem) {
-    return {
-      success: false,
-      error: `Eval not found: ${evalId}`,
-      logs: null,
-      duration_ms: 0,
-    };
+    // Discovery skips files that fail to load. Resolve again to name the cause.
+    try {
+      evalItem = await (deps.resolveEvalById ?? resolveEvalById)(evalId, evalLookup);
+    } catch (error) {
+      if (
+        !(error instanceof VeryfrontError) ||
+        (error.slug !== EVAL_NOT_FOUND.slug && error.slug !== EVAL_LOAD_FAILED.slug)
+      ) {
+        throw error;
+      }
+      return {
+        success: false,
+        error: error.message,
+        logs: null,
+        duration_ms: 0,
+      };
+    }
   }
 
   if (evalItem.definition.inputSchema !== undefined) {
