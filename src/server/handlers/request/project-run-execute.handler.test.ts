@@ -12005,6 +12005,90 @@ describe("project run inference credential header", () => {
     }
   });
 
+  it("records a delegated child's rejected model request with its status and safe cause", async () => {
+    const privateDetail = "Private provider wording <REDACTED> <PROMPT>";
+    const rejection =
+      "The model provider rejected the request with HTTP 400 (invalid_request_error, invalid_value, parameter max_tokens).";
+    const cases = [
+      { error: rejection, expected: { code: "PROVIDER_REQUEST_REJECTED", message: rejection } },
+      // The code alone never forwards text: anything off the grammar stays private.
+      { error: `${rejection} ${privateDetail}`, expected: { message: "Provider stream failed" } },
+      {
+        error: "The model provider rejected the request with HTTP 400 (<REDACTED>).",
+        expected: { message: "Provider stream failed" },
+      },
+      {
+        error: "The model provider rejected the request with HTTP 500.",
+        expected: { message: "Provider stream failed" },
+      },
+    ];
+    for (const { error, expected } of cases) {
+      const code = "PROVIDER_REQUEST_REJECTED";
+      const runId = "run_nested_private_failure";
+      const canonicalRunId = "11111111-1111-4111-8111-111111111111";
+      const projectId = "22222222-2222-4222-8222-222222222222";
+      const appended: Record<string, unknown>[] = [];
+      const handler = new ProjectRunExecuteHandler(createDeps({
+        runTask: async () => {
+          await executeLocalChild({
+            agentId: "nested-finalization-failure",
+            input: "test",
+            toolName: "invoke_agent",
+            toolInput: {},
+            execute: async (control) => {
+              assertExists(control?.onEvent);
+              await control.onEvent({
+                type: "error",
+                error,
+                code,
+              });
+              return { text: "done", toolCalls: 0, status: "completed" };
+            },
+          });
+          return { success: true, result: "done", durationMs: 0 };
+        },
+      }));
+      const signed = await signedRequest(`/api/control-plane/runs/${runId}/execute`, {
+        ...taskBody,
+        runId,
+        canonicalRunId,
+        projectId,
+      }, {
+        "X-Veryfront-Inference-Token": INFERENCE_TOKEN,
+        "x-veryfront-run-event-token": createProjectRunEventToken({
+          runId,
+          projectId,
+          canonicalRunId,
+        }),
+      });
+      const ctx = createCtx(signed.publicKeyPem);
+      ctx.projectId = projectId;
+      const result = await withEnv(
+        { VERYFRONT_API_BASE_URL: "https://api.veryfront.com" },
+        () =>
+          withMockFetch(async (_input, init) => {
+            const payload = requestJsonBody(init);
+            assert(Array.isArray(payload?.events));
+            appended.push(...payload.events);
+            return Response.json({
+              run_id: canonicalRunId,
+              latest_event_id: appended.length,
+              appended_count: payload.events.length,
+            });
+          }, () => handler.handle(signed.request, ctx)),
+      );
+      assertExists(result.response);
+      assertEquals((await result.response.json()).success, true);
+      const errors = appended.filter((event) =>
+        event.type === "RUNTIME_EVENT_RECORDED" && event.kind === "agent_error"
+      );
+      assertEquals(errors.length, 1);
+      assertEquals(errors[0]?.value, expected, error);
+      assertEquals(JSON.stringify(appended).includes("<REDACTED>"), false, error);
+      assertEquals(JSON.stringify(appended).includes("<PROMPT>"), false, error);
+    }
+  });
+
   it("applies backpressure when streamed runtime observation appends stall", async () => {
     const runId = "run_stream_observation_backpressure";
     const canonicalRunId = "11111111-1111-4111-8111-111111111111";

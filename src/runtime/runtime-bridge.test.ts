@@ -28,6 +28,7 @@ import {
   requestStream,
 } from "#veryfront/provider/runtime-loader.ts";
 import { runWithMandatoryRunEventSink } from "./run-event-sink-context.ts";
+import { buildProviderError } from "#veryfront/provider/runtime-loader/provider-http.ts";
 import { generateText, streamText } from "./runtime-bridge.ts";
 import {
   bindRuntimeObservationWriterCapability,
@@ -865,6 +866,76 @@ describe("runtime-bridge", () => {
       value: { message: "Provider stream failed" },
     });
     assertEquals(JSON.stringify(events).includes(privateDetail), false);
+  });
+
+  it("records the status and safe cause of a rejected model request for a workflow agent step", async () => {
+    // A workflow `step(..., { agent })` child and a delegated child both record
+    // this event in their run. A provider 400 must name its status and the
+    // allowlisted protocol fields instead of "Provider stream failed".
+    for (const mode of ["generate", "stream"] as const) {
+      const events: AgentRunEvent[] = [];
+      const rejection = await buildProviderError(
+        "anthropic",
+        new Response(
+          JSON.stringify({
+            type: "error",
+            error: {
+              type: "invalid_request_error",
+              code: "invalid_value",
+              param: "max_tokens",
+              message: "Private provider wording <REDACTED>",
+            },
+          }),
+          { status: 400, headers: { "content-type": "application/json" } },
+        ),
+      );
+      const fail = async (): Promise<never> => {
+        throw rejection;
+      };
+      const messages = [{ role: "user" as const, content: "<PROMPT>" }];
+
+      const rejected = await assertRejects(
+        async () =>
+          await runWithMandatoryRunEventSink(
+            (event) => {
+              events.push(event);
+            },
+            () =>
+              mode === "generate"
+                ? generateText({
+                  model: createGenerateModel("test", "test/rejected-generate", fail),
+                  messages,
+                })
+                : collectAsync(
+                  streamText({
+                    model: createStreamModel("test", "test/rejected-stream", fail),
+                    messages,
+                  }).fullStream,
+                ),
+          ),
+        ProviderRequestError,
+      );
+
+      assertEquals((rejected as ProviderRequestError).status, 400, `${mode}: provider status`);
+      const recorded = events.filter((event) => event.type === "RUNTIME_EVENT_RECORDED");
+      assertEquals(recorded, [{
+        type: "RUNTIME_EVENT_RECORDED",
+        runtime: "veryfront",
+        kind: "agent_error",
+        value: {
+          message:
+            "The model provider rejected the request with HTTP 400 (invalid_request_error, invalid_value, parameter max_tokens).",
+          code: "PROVIDER_REQUEST_REJECTED",
+        },
+      }], `${mode}: the run records the status and the safe cause`);
+      const serialized = JSON.stringify(recorded);
+      assertEquals(
+        serialized.includes("<REDACTED>"),
+        false,
+        `${mode}: provider wording stays private`,
+      );
+      assertEquals(serialized.includes("<PROMPT>"), false, `${mode}: the prompt stays private`);
+    }
   });
 
   it("records a sanitized nonterminal stream dispatch failure after mandatory context persistence", async () => {
