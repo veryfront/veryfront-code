@@ -769,7 +769,10 @@ export async function runKnowledgeParsers(input: {
       const stem = (extension ? fileName.slice(0, -extension.length) : fileName).trim() ||
         fileName;
       const description = file.description ?? `Parsed from ${fileName}`;
-      const heading = findFirstH1(content);
+      // Only Markdown output has headings; in code and plain text `#` starts a comment.
+      const isMarkdown = definition.sourceType === "md" || definition.sourceType === "mdx" ||
+        parsed.stats.engine === "kreuzberg";
+      const heading = isMarkdown ? findFirstH1(content) : undefined;
       const title = heading ?? stem;
       const sourceReference = file.sourceReference ?? fileName;
       const resource = file.resource ?? sourceReference;
