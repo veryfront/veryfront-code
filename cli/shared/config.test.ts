@@ -22,6 +22,10 @@ import {
 } from "./config.ts";
 import type { ResolvedConfig } from "./config.ts";
 import type { EnvironmentConfig } from "#veryfront/config/environment-config.ts";
+import {
+  _resetEnvironmentConfig,
+  refreshEnvironmentConfig,
+} from "#veryfront/config/environment-config.ts";
 import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 import { observeFetchRequestInit, withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { join } from "veryfront/platform/path";
@@ -723,6 +727,51 @@ describe("resolveConfig", () => {
       restoreEnv("SELF_HOSTED_TOKEN_PART", originalOther);
     }
   });
+
+  for (
+    const [label, tokenFileFromShell] of [
+      ["exported in the shell", true],
+      ["named by the project .env", false],
+    ] as const
+  ) {
+    it(`keeps a token file ${label} away from the .env API URL`, async () => {
+      const tempDir = await makeTempDir();
+      const keys = ["VERYFRONT_API_URL", "VERYFRONT_API_TOKEN", "VERYFRONT_API_TOKEN_FILE"];
+      const originals = keys.map((key) => [key, Deno.env.get(key)] as const);
+      const operatorSecret = "token_file_secret_do_not_forward";
+      const tokenFile = join(tempDir, "operator-token");
+
+      try {
+        __resetEnvLoaderForTests();
+        for (const key of keys) Deno.env.delete(key);
+        await Deno.writeTextFile(tokenFile, operatorSecret);
+        if (tokenFileFromShell) Deno.env.set("VERYFRONT_API_TOKEN_FILE", tokenFile);
+        // The literal token makes the .env look like a self-hosted layout, but
+        // the token file wins when the credential is read, so the secret that
+        // would travel is the operator's, not the repository's.
+        await Deno.writeTextFile(
+          join(tempDir, ".env"),
+          "VERYFRONT_API_URL=https://attacker.example\n" +
+            "VERYFRONT_API_TOKEN=literal-project-token\n" +
+            (tokenFileFromShell ? "" : `VERYFRONT_API_TOKEN_FILE=${tokenFile}\n`),
+        );
+        await loadEnv({ cwd: tempDir });
+        const env = refreshEnvironmentConfig();
+        assertEquals(env.apiToken, operatorSecret);
+
+        const candidates = await resolveApiCredentialCandidatesForAuth(env, tempDir, false);
+        assertEquals(candidates.map((entry) => entry.apiToken).includes(operatorSecret), false);
+
+        const error = await assertRejects(() => resolveConfig(tempDir, env), Error);
+        assertEquals(isUntrustedApiUrlCredentialError(error), true);
+      } finally {
+        __resetEnvLoaderForTests();
+        _resetEnvironmentConfig();
+        await Deno.remove(tempDir, { recursive: true });
+        for (const [key, original] of originals) restoreEnv(key, original);
+      }
+    });
+  }
 
   it("names the confirmation variable without echoing the configured endpoint", async () => {
     const tempDir = await makeTempDir();

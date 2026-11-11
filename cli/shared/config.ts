@@ -410,6 +410,19 @@ function describeUntrustedApiUrl(trust: ApiUrlTrust): string {
 }
 
 /**
+ * Where the effective API token came from.
+ *
+ * A token file wins over `VERYFRONT_API_TOKEN` when the credential is read, so
+ * the source of `VERYFRONT_API_TOKEN` says nothing about the secret actually
+ * sent. A token file belongs to the operator even when a project `.env` names
+ * its path: the repository chose which file to read, never its contents.
+ */
+function getApiTokenSource(): ReturnType<typeof getEnvSource> {
+  if (getEnv("VERYFRONT_API_TOKEN_FILE") !== undefined) return { source: "process" };
+  return getEnvSource("VERYFRONT_API_TOKEN");
+}
+
+/**
  * True when `candidate` may be sent to a repository-steered host.
  *
  * Only credentials the same repository supplied qualify: a `veryfront.json`
@@ -427,7 +440,7 @@ function isRepositorySuppliedCredential(
   const endpointSource = trust.steeringEnvKey ? getEnvSource(trust.steeringEnvKey) : undefined;
   if (endpointSource?.source === "env-file" && endpointSource.expandedFromProcessEnv) return false;
 
-  const tokenSource = getEnvSource("VERYFRONT_API_TOKEN");
+  const tokenSource = getApiTokenSource();
   if (tokenSource.source !== "env-file" || tokenSource.file !== trust.steeringEnvFile) return false;
 
   // `loadEnv` expands `$NAME` against the real process environment, so an entry
@@ -484,7 +497,7 @@ async function resolveApiCredentialCandidates(
       (applyIntrinsic(stringTrim, env.apiToken, []) as string)
     ? env.apiToken
     : undefined;
-  const envSource = envToken ? getEnvSource("VERYFRONT_API_TOKEN") : { source: "unset" as const };
+  const envSource = envToken ? getApiTokenSource() : { source: "unset" as const };
   const storedToken = await readToken(env);
   const candidates: ApiCredentialCandidate[] = [];
 
@@ -651,7 +664,7 @@ export async function resolveApiCredentialForFallback(
   // then the veryfront.json apiToken.
   const envToken = getApiTokenEnv(env);
   if (envToken) {
-    const envSource = getEnvSource("VERYFRONT_API_TOKEN");
+    const envSource = getApiTokenSource();
     candidates.push({
       apiToken: envToken,
       apiTokenSource: envSource.source === "env-file" ? "env-file" : "env",
