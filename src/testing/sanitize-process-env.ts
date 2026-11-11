@@ -1,6 +1,7 @@
 /** Remove credentials and provider routing from the real test-process environment. */
 const TEST_SENSITIVE_ENV_KEYS = [
   "VERYFRONT_API_TOKEN",
+  "VERYFRONT_API_KEY",
   "VERYFRONT_API_BASE_URL",
   "VERYFRONT_API_URL",
   "VERYFRONT_PUBLIC_API_BASE_URL",

@@ -2296,6 +2296,81 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
       }
     });
 
+    it("tells you to unset VERYFRONT_API_KEY when the key supplied the credential", async () => {
+      const originalFetch = globalThis.fetch;
+      const originalLog = console.log;
+      const originalPrompt = globalThis.prompt;
+      const savedToken = getEnv("VERYFRONT_API_TOKEN");
+      const savedKey = getEnv("VERYFRONT_API_KEY");
+      const { __resetEnvLoaderForTests, loadEnv } = await import("veryfront/utils/env-loader");
+      const envDir = await makeTempDir({ prefix: "login-api-key-hints-" });
+      const rejectedKey = () => Promise.resolve(new Response(null, { status: 401 }));
+      const responses: Array<() => Promise<Response>> = [
+        rejectedKey,
+        () => Promise.reject(new DOMException("deadline exceeded", "TimeoutError")),
+        () => Promise.resolve(Response.json({ id: "key-user", email: "key-user@example.com" })),
+        rejectedKey,
+      ];
+      const printedByCase: string[] = [];
+
+      try {
+        for (const [index, respond] of responses.entries()) {
+          const output: string[] = [];
+          deleteEnv("VERYFRONT_API_TOKEN");
+          setEnv("VERYFRONT_API_KEY", "vf_test_key_credential");
+          __resetEnvLoaderForTests();
+          await loadEnv({ cwd: envDir });
+          globalThis.fetch = (() => respond()) as typeof fetch;
+          console.log = (message?: unknown) => output.push(String(message));
+          globalThis.prompt = (() => "replacement-token") as typeof prompt;
+
+          const { ensureAuthenticated, login } = await import("./login.ts");
+          const env = { ...testEnv, apiToken: getEnv("VERYFRONT_API_TOKEN") };
+          // The last case runs the silent-validation path, which warns instead of prompting.
+          if (index === responses.length - 1) await ensureAuthenticated(env, envDir);
+          else await login(undefined, env);
+          printedByCase.push(output.join("\n"));
+        }
+      } finally {
+        globalThis.prompt = originalPrompt;
+        console.log = originalLog;
+        globalThis.fetch = originalFetch;
+        __resetEnvLoaderForTests();
+        if (savedToken === undefined) deleteEnv("VERYFRONT_API_TOKEN");
+        else setEnv("VERYFRONT_API_TOKEN", savedToken);
+        if (savedKey === undefined) deleteEnv("VERYFRONT_API_KEY");
+        else setEnv("VERYFRONT_API_KEY", savedKey);
+        resetInteractiveMode();
+        await safeDeleteToken();
+        await remove(envDir, { recursive: true });
+      }
+
+      const [rejected, unavailable, existing, warned] = printedByCase;
+      assertStringIncludes(rejected!, "VERYFRONT_API_KEY was rejected by the Veryfront API.");
+      assertStringIncludes(
+        rejected!,
+        "Unset VERYFRONT_API_KEY or replace the variable before signing in with another method.",
+      );
+      assertStringIncludes(
+        unavailable!,
+        "Timed out while checking VERYFRONT_API_KEY with the Veryfront API.",
+      );
+      assertStringIncludes(
+        unavailable!,
+        "Unset VERYFRONT_API_KEY before signing in with another method.",
+      );
+      assertStringIncludes(existing!, "Using VERYFRONT_API_KEY; no stored login was created.");
+      assertStringIncludes(
+        existing!,
+        "Unset VERYFRONT_API_KEY before using another login method, or replace the variable to switch tokens.",
+      );
+      assertStringIncludes(warned!, "Warning: VERYFRONT_API_KEY is invalid");
+      for (const printed of printedByCase) {
+        assertEquals(printed.includes("VERYFRONT_API_TOKEN"), false, "the user set only the key");
+        assertEquals(printed.includes("vf_test_key_credential"), false, "the key is never printed");
+      }
+    });
+
     it("stops under an unavailable shell environment token in human mode", async () => {
       const originalFetch = globalThis.fetch;
       const originalLog = console.log;

@@ -8,7 +8,7 @@ transport, rather than supplying a second fetch implementation to the SDK.
 import { createRunsApiTransport, createRunsSdk } from "veryfront/runs/target";
 
 const token = Deno.env.get("VERYFRONT_API_KEY");
-if (!token) throw new Error("Set VERYFRONT_API_TOKEN");
+if (!token) throw new Error("Set VERYFRONT_API_KEY");
 const apiUrl = Deno.env.get("VERYFRONT_API_URL");
 if (!apiUrl) throw new Error("Set VERYFRONT_API_URL to your API origin");
 const transport = createRunsApiTransport({ baseUrl: apiUrl, getToken: () => token });

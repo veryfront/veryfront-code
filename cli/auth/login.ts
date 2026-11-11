@@ -564,7 +564,7 @@ function writeAuthoritativeCredentialRejectedMessage(
     console.log(
       "  " +
         dim(
-          "Unset VERYFRONT_API_TOKEN or replace the variable before signing in with another method.",
+          `Unset ${veryfrontApiCredentialEnvName()} or replace the variable before signing in with another method.`,
         ),
     );
     if (hasConfigToken) writeEnvironmentConfigFileSwitchingGuidance();
@@ -578,7 +578,9 @@ function writeAuthoritativeCredentialRejectedMessage(
 }
 
 function credentialSourceForDisplay(source: "config-file" | "environment"): string {
-  return source === "environment" ? "VERYFRONT_API_TOKEN" : "apiToken from veryfront.json";
+  return source === "environment"
+    ? veryfrontApiCredentialEnvName()
+    : "apiToken from veryfront.json";
 }
 
 function writeAuthoritativeCredentialUnavailableMessage(
@@ -606,7 +608,7 @@ function writeAuthoritativeCredentialUnavailableMessage(
 
   if (source === "environment") {
     console.log(
-      "  " + dim("Unset VERYFRONT_API_TOKEN before signing in with another method."),
+      "  " + dim(`Unset ${veryfrontApiCredentialEnvName()} before signing in with another method.`),
     );
     if (hasConfigToken) writeEnvironmentConfigFileSwitchingGuidance();
     return;
@@ -642,22 +644,23 @@ function writeExistingSession(
   // the case `whoami` now names, so the session ends at the directory
   // boundary. Say so rather than let them discover it elsewhere.
   if (source === "environment") {
+    const envName = veryfrontApiCredentialEnvName();
     if (hasStoredToken) {
       console.log(
-        "  " + dim("Using VERYFRONT_API_TOKEN; it takes precedence over a stored credential."),
+        "  " + dim(`Using ${envName}; it takes precedence over a stored credential.`),
       );
       console.log(
         "  " +
           dim(
-            "Unset VERYFRONT_API_TOKEN before attempting to use the stored credential, or replace the variable to switch tokens.",
+            `Unset ${envName} before attempting to use the stored credential, or replace the variable to switch tokens.`,
           ),
       );
     } else {
-      console.log("  " + dim("Using VERYFRONT_API_TOKEN; no stored login was created."));
+      console.log("  " + dim(`Using ${envName}; no stored login was created.`));
       console.log(
         "  " +
           dim(
-            "Unset VERYFRONT_API_TOKEN before using another login method, or replace the variable to switch tokens.",
+            `Unset ${envName} before using another login method, or replace the variable to switch tokens.`,
           ),
       );
     }
@@ -924,7 +927,7 @@ export async function login(
 
 function warnRejectedCredentialSource(source: ApiTokenSource, humanOutput: boolean): void {
   if (source === "env" && humanOutput) {
-    console.log("  " + warning("Warning: VERYFRONT_API_TOKEN is invalid"));
+    console.log("  " + warning(`Warning: ${veryfrontApiCredentialEnvName()} is invalid`));
   }
   if (source === "config-file" && humanOutput) {
     console.log("  " + warning("Warning: apiToken from veryfront.json is invalid"));
