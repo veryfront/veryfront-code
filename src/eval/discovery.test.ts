@@ -514,6 +514,24 @@ describe("eval/discovery", () => {
       assertEquals(error.message.includes("<CAUSE>"), false);
     });
 
+    it("names the error when the evals directory cannot be read", async () => {
+      const adapter = createRuntimeAdapter({ "/project/evals/by-hand.eval.ts": "" });
+      adapter.fs.exists = () => Promise.reject(new Error("Permission denied: /project/evals"));
+
+      const error = await rejection(resolveEvalById("eval:by-hand", {
+        projectDir: "/project",
+        adapter,
+        moduleLoader: async () => ({ default: evalDefinition() }),
+      }));
+
+      assertEquals(error.slug, "eval-load-failed");
+      assertEquals(
+        error.message,
+        "Eval eval:by-hand could not be loaded because the evals directory could not be read: Permission denied: evals. Fix the cause, then run the eval again.",
+        "a directory failure is not reported as a missing eval",
+      );
+    });
+
     it("keeps findEvalById returning null for a file that does not load", async () => {
       const found = await findEvalById("eval:by-hand", {
         projectDir: "/project",

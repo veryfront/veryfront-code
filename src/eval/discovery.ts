@@ -288,6 +288,18 @@ export async function resolveEvalById(
     });
   }
 
+  const directoryError = errors.find((entry) => entry.filePath === baseDir);
+  if (directoryError) {
+    const cause = sanitizeBoundedDiagnosticText(
+      withoutProjectRoot(directoryError.error, options.projectDir),
+    ).replace(/\.$/, "");
+    throw EVAL_LOAD_FAILED.create({
+      detail:
+        `Eval ${evalId} could not be loaded because the evals directory could not be read: ${cause}. Fix the cause, then run the eval again.`,
+      context: { evalId },
+    });
+  }
+
   const fileError = errors.find((entry) =>
     entry.filePath !== baseDir && deriveEvalId(entry.filePath, baseDir) === evalId
   );
