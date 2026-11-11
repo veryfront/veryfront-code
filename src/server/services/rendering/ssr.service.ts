@@ -55,6 +55,9 @@ import {
 
 const logger = serverLogger.component("ssr-service");
 
+/** Non-standard status for a request the client abandoned; no client reads it. */
+const CLIENT_CLOSED_REQUEST_STATUS = 499;
+
 /**
  * Provides a renderer for a given handler context.
  * Extracted to allow dependency injection in tests.
@@ -411,6 +414,23 @@ export class SSRService implements SSRServiceLike {
     nonce?: string,
     inheritedResponseMetadata: DataResponseMetadata = {},
   ): SSRRenderResult {
+    // The request signal aborts when the client disconnects, or when the
+    // runtime's request timeout fires (it composes the client signal with its
+    // own). Whatever the render threw after that is the abort surfacing, not a
+    // defect in the page, and nothing reads this result: the client is gone,
+    // or the timeout manager has already logged the timeout and sent its 504.
+    // So say so in one dim line: no error report, no stack, no overlay entry.
+    if (request.signal?.aborted) {
+      logger.debug("Render stopped: request aborted", { slug, projectSlug: ctx.projectSlug });
+      return {
+        status: CLIENT_CLOSED_REQUEST_STATUS,
+        html: "",
+        isStreaming: false,
+        cacheStrategy: "no-cache",
+        slug,
+      };
+    }
+
     const attachedResponseMetadata = error instanceof Error
       ? getAttachedDataResponseMetadata(error)
       : {};
