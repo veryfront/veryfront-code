@@ -356,6 +356,42 @@ describe("templates/coding-agent file tools", () => {
       );
     });
 
+    it("answers not found for a returned not-found result, and surfaces other returned errors", async () => {
+      const project = hostedProject(sampleProject());
+      const answer = (result: Record<string, unknown>, name = "veryfront__get_file") => ({
+        ...project.context,
+        executePlatformTool: (called: string, input: Record<string, unknown>) =>
+          called === name
+            ? Promise.resolve(result)
+            : project.context.executePlatformTool!(called, input),
+      });
+      assertEquals(
+        await readFile.execute(
+          { path: "app/page.tsx" },
+          answer({ isError: true, message: "File not found: app/page.tsx" }),
+        ),
+        { error: "File not found: app/page.tsx" },
+      );
+      await assertRejects(
+        () =>
+          readFile.execute(
+            { path: "app/page.tsx" },
+            answer({ isError: true, message: "<PLATFORM_FAILURE>" }),
+          ),
+        Error,
+        "<PLATFORM_FAILURE>",
+      );
+      await assertRejects(
+        () =>
+          editFile.execute(
+            { path: "app/page.tsx", search: "hi", replace: "hello" },
+            answer({ isError: true, message: "<SAVE_FAILURE>" }, "veryfront__update_file"),
+          ),
+        Error,
+        "<SAVE_FAILURE>",
+      );
+    });
+
     it("surfaces a returned listing error instead of reporting a missing directory", async () => {
       const context: ToolExecutionContext = {
         executePlatformTool: () =>

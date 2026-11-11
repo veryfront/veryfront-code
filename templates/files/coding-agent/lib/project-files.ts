@@ -232,13 +232,17 @@ export function hostedProjectFiles(
         if (isNotFound(error)) return { notFound: true };
         throw error;
       }
-      // A returned error result for a read is the platform's not-found answer.
+      if (result.isError === true && isNotFound(result)) return { notFound: true };
+      assertNotErrorResult(result, "veryfront__get_file");
       return typeof result.content === "string" ? { content: result.content } : { notFound: true };
     },
     async write(path, content) {
       const file = projectPath(path);
       if (file === null) throw new Error(`Path escapes project directory: ${path}`);
-      await execute("veryfront__update_file", { ...scope, path: file, content });
+      assertNotErrorResult(
+        record(await execute("veryfront__update_file", { ...scope, path: file, content })),
+        "veryfront__update_file",
+      );
     },
     notFoundHint() {
       return Promise.resolve("");
