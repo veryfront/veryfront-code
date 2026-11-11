@@ -10,7 +10,7 @@ Tasks are user-defined functions in `tasks/`. Run them locally with `veryfront t
 
 - A Veryfront project with the `tasks/` directory available (see
   [Create project](../getting-started/create-project.md)).
-- For cloud execution: a `VERYFRONT_API_TOKEN` and a project reference
+- For cloud execution: a `VERYFRONT_API_KEY` and a project reference
   (see [Configuration](./configuration.md)).
 
 ## Quick start
@@ -332,7 +332,7 @@ ID:
 import { VeryfrontRunsClient } from "veryfront/runs";
 
 const runs = new VeryfrontRunsClient({
-  authToken: process.env.VERYFRONT_API_TOKEN,
+  authToken: process.env.VERYFRONT_API_KEY,
   projectReference: "my-project",
 });
 

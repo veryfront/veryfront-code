@@ -1,13 +1,14 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertNotEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { deleteEnv, getEnv, setEnv } from "#veryfront/platform/compat/process.ts";
+import { deleteEnv, getEnv, getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { makeTempDir, remove, writeTextFile } from "#veryfront/testing/deno-compat.ts";
 import {
   __resetEnvLoaderForTests,
   __setEnvLoaderExistingEnvReaderForTests,
   __setEnvLoaderOsTypeForTests,
   getEnvSource,
+  isVeryfrontApiTokenFromKey,
   loadAdditionalEnv,
   loadEnv,
   markConfigFileSource,
@@ -653,6 +654,128 @@ describe("env-loader", () => {
         else setEnv("LOG_FORMAT", previousLogFormat);
         __resetLoggerConfigForTests();
       }
+    });
+  });
+
+  describe("VERYFRONT_API_KEY as the user-facing credential name", () => {
+    const TOKEN = "VERYFRONT_API_TOKEN";
+    const KEY = "VERYFRONT_API_KEY";
+    let saved: Record<string, string | undefined>;
+
+    beforeEach(() => {
+      saved = { [TOKEN]: getEnv(TOKEN), [KEY]: getEnv(KEY) };
+      deleteEnv(TOKEN);
+      deleteEnv(KEY);
+    });
+
+    afterEach(() => {
+      for (const [name, value] of Object.entries(saved)) {
+        if (value === undefined) deleteEnv(name);
+        else setEnv(name, value);
+      }
+    });
+
+    it("uses a .env VERYFRONT_API_KEY as the token, with the file's provenance", async () => {
+      await writeEnvFile(".env", `${KEY}=<KEY_FROM_FILE>`);
+
+      await loadEnv({ cwd: tempDir });
+
+      assertEquals(getEnv(TOKEN), "<KEY_FROM_FILE>", "the key becomes the CLI credential");
+      assertEquals(
+        getEnvSource(TOKEN),
+        { source: "env-file", file: `${tempDir}/.env`, expandedFromProcessEnv: false },
+        "trust rules see the same origin as the key",
+      );
+      assertEquals(isVeryfrontApiTokenFromKey(), true, "messages can name the key variable");
+    });
+
+    it("uses an exported VERYFRONT_API_KEY as the token with process provenance", async () => {
+      setEnv(KEY, "<KEY_FROM_SHELL>");
+
+      await loadEnv({ cwd: tempDir });
+
+      assertEquals(getEnv(TOKEN), "<KEY_FROM_SHELL>");
+      assertEquals(getEnvSource(TOKEN), { source: "process" }, "a shell key is a shell credential");
+    });
+
+    it("keeps an exported VERYFRONT_API_TOKEN when both names are set", async () => {
+      setEnv(TOKEN, "<TOKEN_FROM_SHELL>");
+      setEnv(KEY, "<KEY_FROM_SHELL>");
+
+      await loadEnv({ cwd: tempDir });
+
+      assertEquals(getEnv(TOKEN), "<TOKEN_FROM_SHELL>", "VERYFRONT_API_TOKEN wins");
+      assertEquals(isVeryfrontApiTokenFromKey(), false);
+    });
+
+    it("keeps a .env VERYFRONT_API_TOKEN over a shell VERYFRONT_API_KEY", async () => {
+      setEnv(KEY, "<KEY_FROM_SHELL>");
+      await writeEnvFile(".env", `${TOKEN}=<TOKEN_FROM_FILE>`);
+
+      await loadEnv({ cwd: tempDir });
+
+      assertEquals(getEnv(TOKEN), "<TOKEN_FROM_FILE>", "an explicit token is never replaced");
+    });
+
+    it("treats a blank VERYFRONT_API_TOKEN as unset", async () => {
+      setEnv(TOKEN, "   ");
+      setEnv(KEY, "<KEY_FROM_SHELL>");
+
+      await loadEnv({ cwd: tempDir });
+
+      assertEquals(getEnv(TOKEN), "<KEY_FROM_SHELL>", "a blank export does not block the key");
+    });
+
+    it("ignores a blank VERYFRONT_API_KEY", async () => {
+      setEnv(KEY, "  ");
+
+      await loadEnv({ cwd: tempDir });
+
+      assertEquals(getEnv(TOKEN), undefined, "a blank key is not a credential");
+    });
+
+    it("carries the expansion taint of a key that names a shell variable", async () => {
+      const outer = createKey("OUTER_SECRET");
+      setEnv(outer, "<SHELL_SECRET>");
+      await writeEnvFile(".env", `${KEY}=$${outer}`);
+
+      await loadEnv({ cwd: tempDir });
+
+      assertEquals(
+        getEnvSource(TOKEN),
+        { source: "env-file", file: `${tempDir}/.env`, expandedFromProcessEnv: true },
+        "a repository that only names a shell secret does not own it",
+      );
+      cleanupKeys(outer);
+    });
+
+    it("applies to a project directory loaded after startup", async () => {
+      const projectDir = await makeTempDir({ prefix: "env-loader-project-" });
+      try {
+        await writeTextFile(`${projectDir}/.env`, `${KEY}=<KEY_FROM_PROJECT>`);
+        await loadEnv({ cwd: tempDir });
+        assertEquals(getEnv(TOKEN), undefined, "the startup directory has no key");
+
+        await loadAdditionalEnv({ cwd: projectDir });
+
+        assertEquals(getEnv(TOKEN), "<KEY_FROM_PROJECT>");
+        assertEquals(getEnvSource(TOKEN).source, "env-file");
+      } finally {
+        await remove(projectDir, { recursive: true });
+      }
+    });
+
+    it("does not bring back a token the CLI removed after loading", async () => {
+      setEnv(KEY, "<KEY_FROM_SHELL>");
+      await loadEnv({ cwd: tempDir });
+
+      // Trust rules delete the token when it must not reach a repository-steered API URL.
+      deleteEnv(TOKEN);
+      markProcessEnvSource(TOKEN);
+
+      assertEquals(getEnv(TOKEN), undefined);
+      assertEquals(getHostEnv(TOKEN), undefined, "host reads do not fall back to the key");
+      assertEquals(isVeryfrontApiTokenFromKey(), false);
     });
   });
 

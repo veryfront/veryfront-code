@@ -836,7 +836,7 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
             code: "AUTHENTICATION_ERROR",
             slug: "authentication-required",
             registrySlug: "authentication-required",
-            message: "Not logged in. Set VERYFRONT_API_TOKEN or run in interactive mode.",
+            message: "Not logged in. Set VERYFRONT_API_KEY or run in interactive mode.",
           },
         });
         assertEquals(output.join("\n").includes("Enter your API token"), false);
@@ -1202,7 +1202,7 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
           code: "AUTHENTICATION_ERROR",
           slug: "authentication-required",
           registrySlug: "authentication-required",
-          message: "Not logged in. Set VERYFRONT_API_TOKEN or run in interactive mode.",
+          message: "Not logged in. Set VERYFRONT_API_KEY or run in interactive mode.",
         });
         assertEquals(requestedAuth, ["Bearer env-invalid-token"]);
         assertEquals(output.join("\n").includes("stored@example.com"), false);
@@ -1487,7 +1487,7 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
           code: "AUTHENTICATION_ERROR",
           slug: "authentication-required",
           registrySlug: "authentication-required",
-          message: "Not logged in. Set VERYFRONT_API_TOKEN or run in interactive mode.",
+          message: "Not logged in. Set VERYFRONT_API_KEY or run in interactive mode.",
         });
         assertEquals(requestedAuth, ["Bearer config-invalid-token"]);
         assertEquals(output.join("\n").includes("stored@example.com"), false);
@@ -3148,7 +3148,8 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
               code: "AUTHENTICATION_ERROR",
               slug: "authentication-required",
               registrySlug: "authentication-required",
-              message: "Not logged in. Run 'veryfront login' to authenticate.",
+              message:
+                "Not logged in. Run 'veryfront login', or set VERYFRONT_API_KEY to an API key.",
               context: { authenticated: false },
             },
           });
@@ -3316,7 +3317,8 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
             code: "AUTHENTICATION_ERROR",
             slug: "authentication-required",
             registrySlug: "authentication-required",
-            message: "Not logged in. Run 'veryfront login' to authenticate.",
+            message:
+              "Not logged in. Run 'veryfront login', or set VERYFRONT_API_KEY to an API key.",
             context: { authenticated: false },
           },
         });
@@ -3450,6 +3452,100 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
         ),
         ".env",
       );
+    });
+
+    it("names VERYFRONT_API_KEY when the key supplied the credential", async () => {
+      const originalLog = console.log;
+      const output: string[] = [];
+      const { __resetEnvLoaderForTests, loadEnv } = await import("veryfront/utils/env-loader");
+      const envDir = await makeTempDir({ prefix: "whoami-api-key-" });
+      const savedKey = getEnv("VERYFRONT_API_KEY");
+
+      try {
+        deleteEnv("VERYFRONT_API_TOKEN");
+        deleteEnv("VERYFRONT_API_KEY");
+        __resetEnvLoaderForTests();
+        await Deno.writeTextFile(`${envDir}/.env`, "VERYFRONT_API_KEY=vf_test_file_key\n");
+        await loadEnv({ cwd: envDir });
+        console.log = (message?: unknown) => output.push(String(message));
+
+        await withMockFetch(
+          () =>
+            Promise.resolve(
+              new Response(JSON.stringify({ data: [], page_info: {} }), {
+                status: 200,
+                headers: { "content-type": "application/json" },
+              }),
+            ),
+          async () => {
+            const { whoami } = await import("./login.ts");
+            await whoami({
+              ...testEnv,
+              apiBaseUrl: "https://auth.example.test",
+              apiUrl: undefined,
+              apiToken: getEnv("VERYFRONT_API_TOKEN"),
+            });
+          },
+        );
+
+        const printed = output.join("\n");
+        assertStringIncludes(printed, "(via VERYFRONT_API_KEY from .env)");
+        assertEquals(printed.includes("VERYFRONT_API_TOKEN"), false, "the user set only the key");
+        assertEquals(printed.includes("vf_test_file_key"), false, "the key is never printed");
+      } finally {
+        console.log = originalLog;
+        __resetEnvLoaderForTests();
+        deleteEnv("VERYFRONT_API_TOKEN");
+        if (savedKey === undefined) deleteEnv("VERYFRONT_API_KEY");
+        else setEnv("VERYFRONT_API_KEY", savedKey);
+        await remove(envDir, { recursive: true });
+      }
+    });
+
+    it("names VERYFRONT_API_KEY for an exported key", async () => {
+      const originalLog = console.log;
+      const output: string[] = [];
+      const { __resetEnvLoaderForTests, loadEnv } = await import("veryfront/utils/env-loader");
+      const envDir = await makeTempDir({ prefix: "whoami-api-key-shell-" });
+      const savedKey = getEnv("VERYFRONT_API_KEY");
+
+      try {
+        deleteEnv("VERYFRONT_API_TOKEN");
+        setEnv("VERYFRONT_API_KEY", "vf_test_shell_key");
+        __resetEnvLoaderForTests();
+        await loadEnv({ cwd: envDir });
+        console.log = (message?: unknown) => output.push(String(message));
+
+        await withMockFetch(
+          () =>
+            Promise.resolve(
+              new Response(JSON.stringify({ data: [], page_info: {} }), {
+                status: 200,
+                headers: { "content-type": "application/json" },
+              }),
+            ),
+          async () => {
+            const { whoami } = await import("./login.ts");
+            await whoami({
+              ...testEnv,
+              apiBaseUrl: "https://auth.example.test",
+              apiUrl: undefined,
+              apiToken: getEnv("VERYFRONT_API_TOKEN"),
+            });
+          },
+        );
+
+        const printed = output.join("\n");
+        assertStringIncludes(printed, "(via VERYFRONT_API_KEY)");
+        assertEquals(printed.includes("vf_test_shell_key"), false, "the key is never printed");
+      } finally {
+        console.log = originalLog;
+        __resetEnvLoaderForTests();
+        deleteEnv("VERYFRONT_API_TOKEN");
+        if (savedKey === undefined) deleteEnv("VERYFRONT_API_KEY");
+        else setEnv("VERYFRONT_API_KEY", savedKey);
+        await remove(envDir, { recursive: true });
+      }
     });
 
     it("does not attribute an injected API token to a different loaded .env token", async () => {

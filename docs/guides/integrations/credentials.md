@@ -15,12 +15,12 @@ one performs the other.
 
 | Step                   | Proves                                   | How                                                                                             |
 | ---------------------- | ---------------------------------------- | ----------------------------------------------------------------------------------------------- |
-| Platform login         | Who you are in Veryfront                 | `veryfront login`, a Veryfront API key in `VERYFRONT_API_TOKEN`, or a Studio session            |
+| Platform login         | Who you are in Veryfront                 | `veryfront login`, a Veryfront API key in `VERYFRONT_API_KEY`, or a Studio session            |
 | Provider authorization | Which provider account Veryfront may use | OAuth consent through `veryfront integration connect`, a `connectUrl`, or Studio's connect card |
 | Project credentials    | Which provider key a project uses        | Project environment variables named by the connector catalog                                    |
 
 `veryfront integration connect` requires an existing platform credential, either
-a login session or `VERYFRONT_API_TOKEN`, and never starts a platform login. Signing in to Veryfront with Google does not connect Gmail; the
+a login session or `VERYFRONT_API_KEY`, and never starts a platform login. Signing in to Veryfront with Google does not connect Gmail; the
 Gmail connection is a separate consent with its own scopes, even for the same
 Google account. A Veryfront API token never reaches the provider, and a provider
 token never authenticates you to Veryfront.

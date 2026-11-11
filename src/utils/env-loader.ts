@@ -1,11 +1,14 @@
 import { refreshLoggerConfig, serverLogger } from "./logger/logger.ts";
 import { sanitizeUrlCredentials } from "./logger/redact.ts";
 import {
+  __resetVeryfrontApiKeyAliasForTests,
   clearEnvFileValueSource,
   clearEnvFileValueSources,
   getEnv,
   markEnvFileValue,
   setEnv,
+  settleVeryfrontApiKeyAlias,
+  VERYFRONT_API_KEY_ENV,
 } from "#veryfront/platform/compat/process/env.ts";
 import { cwd as getCwd, getOsType } from "#veryfront/platform/compat/process/lifecycle.ts";
 import { isNotFoundError, readTextFile } from "#veryfront/platform/compat/fs.ts";
@@ -31,6 +34,7 @@ const mapGet = Map.prototype.get;
 const mapSet = Map.prototype.set;
 const mapClear = Map.prototype.clear;
 const stringToLowerCase = String.prototype.toLowerCase;
+const stringTrim = String.prototype.trim;
 let envLoaded = false;
 // One load per directory, kept while it runs so concurrent callers await the
 // same read. The CLI loads the cwd before a command knows its project, and
@@ -183,6 +187,7 @@ async function readEnvDirFiles(cwd: string, options: EnvDirLoadOptions): Promise
     }
   }
 
+  applyVeryfrontApiKeyAlias();
   envLoaded = true;
   refreshLoggerConfig();
   if (loadedCount === 0) return;
@@ -336,7 +341,61 @@ export function supportsEnvFiles(): boolean {
 
 /** Mark environment variables as loaded so subsequent calls to `loadEnv` are skipped. */
 export function markEnvLoaded(): void {
+  applyVeryfrontApiKeyAlias();
   envLoaded = true;
+}
+
+const VERYFRONT_API_TOKEN_ENV = "VERYFRONT_API_TOKEN";
+let veryfrontApiTokenAliasValue: string | undefined;
+
+function isBlank(value: string | undefined): boolean {
+  return value === undefined || (applyIntrinsic(stringTrim, value, []) as string) === "";
+}
+
+/**
+ * Let `VERYFRONT_API_KEY`, the name Veryfront tells users to set, supply the
+ * credential the CLI and runtime read from `VERYFRONT_API_TOKEN`.
+ *
+ * Runs after each env load and copies the key only when the token is unset or
+ * blank, so an exported or file-provided `VERYFRONT_API_TOKEN` always wins.
+ * The copy keeps the key's provenance: a key from a project `.env` file is
+ * judged by exactly the rules that file's `VERYFRONT_API_TOKEN` would be,
+ * including the expansion taint of a value that names a shell variable.
+ */
+function applyVeryfrontApiKeyAlias(): void {
+  settleVeryfrontApiKeyAlias();
+  if (!isBlank(readExistingEnv(VERYFRONT_API_TOKEN_ENV))) return;
+  const apiKey = readExistingEnv(VERYFRONT_API_KEY_ENV);
+  if (apiKey === undefined || isBlank(apiKey)) return;
+
+  setEnv(VERYFRONT_API_TOKEN_ENV, apiKey);
+  clearEnvSourceAliases(VERYFRONT_API_TOKEN_ENV);
+  const keySource = getEnvSource(VERYFRONT_API_KEY_ENV);
+  if (keySource.source === "env-file") {
+    markEnvFileValue(VERYFRONT_API_TOKEN_ENV);
+    applyIntrinsic(mapSet, envSources, [
+      VERYFRONT_API_TOKEN_ENV,
+      {
+        file: keySource.file,
+        source: "env-file",
+        expandedFromProcessEnv: keySource.expandedFromProcessEnv,
+      },
+    ]);
+  } else {
+    clearEnvFileValueSource(VERYFRONT_API_TOKEN_ENV);
+  }
+  veryfrontApiTokenAliasValue = apiKey;
+}
+
+/** The variable the user set for the credential now in `VERYFRONT_API_TOKEN`, for messages. */
+export function veryfrontApiCredentialEnvName(): string {
+  return isVeryfrontApiTokenFromKey() ? VERYFRONT_API_KEY_ENV : VERYFRONT_API_TOKEN_ENV;
+}
+
+/** True while the credential in `VERYFRONT_API_TOKEN` is the one copied from `VERYFRONT_API_KEY`. */
+export function isVeryfrontApiTokenFromKey(): boolean {
+  return veryfrontApiTokenAliasValue !== undefined &&
+    readExistingEnv(VERYFRONT_API_TOKEN_ENV) === veryfrontApiTokenAliasValue;
 }
 
 /** Check whether environment variables have already been loaded from `.env` files. */
@@ -461,6 +520,8 @@ export function __resetEnvLoaderForTests(): void {
   clearEnvFileValueSources();
   osTypeOverride = undefined;
   existingEnvReaderOverride = undefined;
+  veryfrontApiTokenAliasValue = undefined;
+  __resetVeryfrontApiKeyAliasForTests();
 }
 
 export function __setEnvLoaderOsTypeForTests(os: string | undefined): void {
