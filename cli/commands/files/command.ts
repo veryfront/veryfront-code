@@ -197,6 +197,32 @@ export async function getRemoteFile(
   return getFileContent(client, projectSlug, normalizeProjectFilePath(remotePath), MAIN_SOURCE);
 }
 
+/** Reads a file at its exact path; `undefined` when it does not exist, `""` when it is binary. */
+export async function readRemoteFileIfExists(
+  client: ApiClient,
+  projectSlug: string,
+  remotePath: string,
+  destination?: RemoteFileWriteDestination,
+  signal?: AbortSignal,
+): Promise<string | undefined> {
+  const params: Record<string, string> = { exact_path: "true" };
+  if (destination?.branch !== undefined) params.ref = `branch:${destination.branch}`;
+  else if (destination?.branchId !== undefined) params.branch_id = destination.branchId;
+  try {
+    const file = await client.get<{ content?: unknown }>(
+      `/projects/${projectSlug}/files/${encodeURIComponent(normalizeProjectFilePath(remotePath))}`,
+      params,
+      signal ? { signal } : undefined,
+    );
+    return typeof file.content === "string" ? file.content : "";
+  } catch (error) {
+    if (error && typeof error === "object" && "status" in error && error.status === 404) {
+      return undefined;
+    }
+    throw error;
+  }
+}
+
 export interface PublishedFileReceipt {
   path: string;
   file_id?: string;

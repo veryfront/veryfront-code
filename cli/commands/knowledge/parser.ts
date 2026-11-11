@@ -35,8 +35,13 @@ export interface KnowledgeParserResult {
 export interface KnowledgeParserInput {
   filePath: string;
   description?: string;
+  /** Exact output name; otherwise the name comes from the title. */
   slug?: string;
   sourceReference?: string;
+  /** The file name the user gave the source; defaults to the local file name. */
+  sourceName?: string;
+  /** The OKF `resource`: the path the user uploaded; defaults to `sourceReference`. */
+  resource?: string;
   okfRelativePath?: string;
   okfRole?: "companion";
 }
@@ -180,35 +185,72 @@ function yamlQuote(value: unknown): string {
   return JSON.stringify(value == null ? "" : String(value));
 }
 
-function isAbsoluteProvenanceUrl(source: string): boolean {
-  try {
-    const url = new URL(source);
-    return url.protocol === "http:" || url.protocol === "https:";
-  } catch {
-    return false;
-  }
+/** The same OKF shape Studio's chat ingest asks for; `source`, `source_type`, `added` are extensions. */
+function buildFrontmatter(input: {
+  title: string;
+  description: string;
+  resource: string;
+  tags: string[];
+  source: string;
+  sourceType: string;
+}): string {
+  const now = new Date().toISOString();
+  return [
+    "---",
+    `type: ${yamlQuote("Document")}`,
+    `title: ${yamlQuote(input.title)}`,
+    `description: ${yamlQuote(input.description)}`,
+    `resource: ${yamlQuote(input.resource)}`,
+    `tags: ${JSON.stringify(input.tags)}`,
+    `timestamp: ${yamlQuote(now)}`,
+    `source: ${yamlQuote(input.source)}`,
+    `source_type: ${yamlQuote(input.sourceType)}`,
+    `added: ${yamlQuote(now)}`,
+    "generated:",
+    `  by: ${yamlQuote(`veryfront/${VERSION}`)}`,
+    "---",
+  ].join("\n");
 }
 
-function buildFrontmatter(source: string, sourceType: string, description: string): string {
-  const generatedBy = `veryfront/${VERSION}`;
-  const lines = [
-    "---",
-    `type: ${yamlQuote("Generated Document")}`,
-    `source: ${yamlQuote(source)}`,
-    `source_type: ${yamlQuote(sourceType)}`,
-    `description: ${yamlQuote(description)}`,
-    "generated:",
-    `  by: ${yamlQuote(generatedBy)}`,
-  ];
-  if (isAbsoluteProvenanceUrl(source)) {
-    lines.push(
-      "sources:",
-      "  - id: source",
-      `    resource: ${yamlQuote(source)}`,
-    );
+/** The first ATX H1 outside fenced code, if any. */
+function findFirstH1(markdown: string): string | undefined {
+  let fence: string | undefined;
+  for (const line of markdown.split("\n")) {
+    const marker = /^ {0,3}(`{3,}|~{3,})/.exec(line)?.[1];
+    if (marker) {
+      if (!fence) fence = marker;
+      else if (marker[0] === fence[0] && marker.length >= fence.length) fence = undefined;
+      continue;
+    }
+    if (fence) continue;
+    const heading = /^ {0,3}#[ \t]+(.+?)(?:[ \t]+#+)?[ \t]*$/.exec(line)?.[1]?.trim();
+    if (heading) return heading;
   }
-  lines.push("---");
-  return lines.join("\n");
+  return undefined;
+}
+
+/** A slug from a title, without a leading list number such as "20. ". */
+function slugifyTitle(title: string): string {
+  return slugifyKnowledgeValue(title.replace(/^\d+[.)]\s+/, ""));
+}
+
+/** Write a new file `<slug>.md`, adding `-2`, `-3` when the run already wrote that name. */
+async function writeNewKnowledgeFile(
+  outputDir: string,
+  slug: string,
+  markdown: string,
+  signal?: AbortSignal,
+): Promise<{ slug: string; path: string }> {
+  for (let attempt = 1;; attempt += 1) {
+    const candidate = attempt === 1 ? slug : `${slug}-${attempt}`;
+    const path = join(outputDir, `${candidate}.md`);
+    try {
+      await Deno.writeTextFile(path, markdown, { createNew: true, signal });
+      return { slug: candidate, path };
+    } catch (error) {
+      if (!(error instanceof Deno.errors.AlreadyExists)) throw error;
+    }
+  }
 }
 
 function validateOkfBundleRelativePath(path: string): string {
@@ -630,26 +672,12 @@ async function defaultExtractDocumentText(
   );
 }
 
-export async function runKnowledgeParser(input: {
-  filePath: string;
-  outputDir: string;
-  description?: string;
-  slug?: string;
-  sourceReference?: string;
-  okfRelativePath?: string;
-  okfRole?: "companion";
-}, deps: RunKnowledgeParsersDeps = {}): Promise<KnowledgeParserResult> {
-  const [result] = await runKnowledgeParsers({
-    files: [{
-      filePath: input.filePath,
-      description: input.description,
-      slug: input.slug,
-      sourceReference: input.sourceReference,
-      okfRelativePath: input.okfRelativePath,
-      okfRole: input.okfRole,
-    }],
-    outputDir: input.outputDir,
-  }, deps);
+export async function runKnowledgeParser(
+  input: KnowledgeParserInput & { outputDir: string },
+  deps: RunKnowledgeParsersDeps = {},
+): Promise<KnowledgeParserResult> {
+  const { outputDir, ...file } = input;
+  const [result] = await runKnowledgeParsers({ files: [file], outputDir }, deps);
 
   if (!result) {
     throw new Error("knowledge ingest parser returned no results");
@@ -722,28 +750,46 @@ export async function runKnowledgeParsers(input: {
       const parsed = await definition.parse(file.filePath, parserDeps);
       deps.signal?.throwIfAborted();
       const content = cleanText(parsed.content);
-      const fileName = basename(file.filePath);
+      const fileName = file.sourceName ?? basename(file.filePath);
       const extension = extname(fileName);
-      const stem = extension ? fileName.slice(0, -extension.length) : fileName;
-      const slug = file.slug ?? slugifyKnowledgeValue(stem);
-      const description = file.description ?? `Parsed from ${basename(file.filePath)}`;
-      const title = titleizeFilename(file.filePath);
-      const outputPath = join(input.outputDir, `${slug}.md`);
+      const stem = (extension ? fileName.slice(0, -extension.length) : fileName).trim() ||
+        fileName;
+      const description = file.description ?? `Parsed from ${fileName}`;
+      const heading = findFirstH1(content);
+      const title = heading ?? stem;
+      const sourceReference = file.sourceReference ?? fileName;
       const markdown = [
-        buildFrontmatter(
-          file.sourceReference ?? basename(file.filePath),
-          definition.sourceType,
+        buildFrontmatter({
+          title,
           description,
-        ),
+          resource: file.resource ?? sourceReference,
+          tags: sourceReference.startsWith("uploads/")
+            ? ["upload", definition.sourceType]
+            : [definition.sourceType],
+          source: fileName,
+          sourceType: definition.sourceType,
+        }),
         "",
-        `# ${title}`,
-        "",
+        ...(heading ? [] : [`# ${title}`, ""]),
         content,
         "",
       ].join("\n");
 
       deps.signal?.throwIfAborted();
-      await Deno.writeTextFile(outputPath, markdown, { signal: deps.signal });
+      let slug: string;
+      let outputPath: string;
+      if (file.slug) {
+        slug = file.slug;
+        outputPath = join(input.outputDir, `${slug}.md`);
+        await Deno.writeTextFile(outputPath, markdown, { signal: deps.signal });
+      } else {
+        ({ slug, path: outputPath } = await writeNewKnowledgeFile(
+          input.outputDir,
+          slugifyTitle(title),
+          markdown,
+          deps.signal,
+        ));
+      }
       results.push({
         success: true,
         source_path: file.filePath,

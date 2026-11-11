@@ -136,6 +136,20 @@ function canonicalKnowledgeIndexResponse(
   return undefined;
 }
 
+/** Answers knowledge ingest's exact-path read of a target file: the published content, else 404. */
+function knowledgeTargetReadResponse(
+  url: string,
+  published: ReadonlyMap<string, string> = new Map(),
+): Response | undefined {
+  const parsed = new URL(url);
+  if (parsed.searchParams.get("exact_path") !== "true") return undefined;
+  const path = decodeURIComponent(parsed.pathname.split("/files/")[1] ?? "");
+  const content = published.get(path);
+  return content === undefined
+    ? Response.json({ error: "File not found" }, { status: 404 })
+    : Response.json({ path, content });
+}
+
 async function canonicalKnowledgePublicationResponse(
   path: string,
   init: RequestInit | undefined,
@@ -3777,6 +3791,8 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       const result = await withMockFetch(
         async (input, init) => {
           const url = input instanceof Request ? input.url : String(input);
+          const targetRead = knowledgeTargetReadResponse(url);
+          if (targetRead) return targetRead;
           if (new URL(url).pathname === `/runs/${body.canonicalRunId}/events`) {
             assertEquals(
               new Headers(observeFetchRequestInit(init).headers).get("authorization"),
@@ -3898,6 +3914,8 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       });
       await withMockFetch(async (input, init) => {
         const url = input instanceof Request ? input.url : String(input);
+        const targetRead = knowledgeTargetReadResponse(url);
+        if (targetRead) return targetRead;
         const observation = respondObservation(url, init);
         if (observation) return observation;
         if (url.endsWith("/cancellation-ack")) {
@@ -4112,6 +4130,8 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       };
       await withMockFetch(async (input, init) => {
         const url = input instanceof Request ? input.url : String(input);
+        const targetRead = knowledgeTargetReadResponse(url, outputs);
+        if (targetRead) return targetRead;
         const observation = respondObservation?.(url, init);
         if (observation) return observation;
         const indexed = canonicalKnowledgeIndexResponse(url, init, publishedChecksums);
@@ -4179,7 +4199,12 @@ describe("server/handlers/request/project-run-execute.handler", () => {
         assertEquals(retried.success, true, JSON.stringify(retried));
         assertEquals(retried.result.summary.ingested_count, 3);
         assertEquals(outputs.size, 3);
-        for (const [path, content] of previous) assertEquals(outputs.get(path), content);
+        // A retry rewrites the same document; only its ingest time moves.
+        const withoutIngestTime = (content?: string) =>
+          content?.replace(/^(timestamp|added): .*$/gm, "$1: <ingest time>");
+        for (const [path, content] of previous) {
+          assertEquals(withoutIngestTime(outputs.get(path)), withoutIngestTime(content));
+        }
         for (const name of sources) {
           assertStringIncludes(
             outputs.get(`knowledge/${name}.md`) ?? "",
