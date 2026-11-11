@@ -630,6 +630,10 @@ export function buildMergedTools(
     return { ...merged, ...injectedTools };
   }
 
+  const declaresExternalMcpServer =
+    agent.config.mcpServers?.some((server) =>
+      isRecord(server) && Object.hasOwn(server, "transport")
+    ) === true;
   const merged: Record<string, Tool | boolean> = {};
   for (const [toolName, entry] of Object.entries(agent.config.tools)) {
     if (entry === true) {
@@ -651,6 +655,12 @@ export function buildMergedTools(
       } else if (sourceAllowedRemoteToolNames.includes(`veryfront__${toolName}`)) {
         // Platform discovery publishes canonical names for legacy boolean selectors.
         merged[`veryfront__${toolName}`] = true;
+      } else if (declaresExternalMcpServer) {
+        // No local, forwarded or platform tool serves this name, but the agent's
+        // own external MCP server may: the runtime lists it per step. Keep the
+        // selection so the step resolves it there, or reports it as unknown,
+        // exactly as a local run does, instead of dropping it silently here.
+        merged[toolName] = true;
       }
       continue;
     }

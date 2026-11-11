@@ -269,6 +269,23 @@ for third-party servers.
 This service startup config uses `endpoint` and `headers`. Per-agent config in
 `agent({ mcpServers })` uses `transport`, `auth`, and `toolPolicy`.
 
+An agent exposes every tool of its MCP server that the server's `toolPolicy`
+allows. To use some of a server's tools, name them in `tools`. The agent then
+exposes only the named tools of that server. Set a name to `false` to exclude
+it, or set `tools: false` to turn off every tool.
+
+```ts
+import { agent } from "veryfront/agent";
+
+export default agent({
+  id: "wiki-assistant",
+  system: "Answer questions about open source projects.",
+  mcpServers: [
+    { id: "deepwiki", transport: { type: "http", url: "https://mcp.deepwiki.com/mcp" } },
+  ],
+});
+```
+
 ```ts
 import {
   startNodeVeryfrontCloudAgentService,

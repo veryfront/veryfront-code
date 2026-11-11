@@ -52,6 +52,7 @@ import {
   type SourceIntegrationPolicyManifest,
 } from "#veryfront/integrations/source-policy.ts";
 import { compareStrings } from "#veryfront/utils/compare.ts";
+import { getRuntimeDefaultExposedMcpSources } from "./mcp-server-tool-sources.ts";
 
 const trustedPlatformDefinitions = createPrivateWeakStore<object, true>();
 const platformWrapperInvocation = new AsyncLocalStorage<object>();
@@ -190,6 +191,7 @@ const intrinsicHasOwn = Object.hasOwn;
 const intrinsicObjectCreate = Object.create;
 const intrinsicIsArray = Array.isArray;
 const intrinsicArrayPush = Array.prototype.push;
+const intrinsicArraySlice = Array.prototype.slice;
 const intrinsicArrayIncludes = Array.prototype.includes;
 const intrinsicStringStartsWith = String.prototype.startsWith;
 
@@ -378,6 +380,8 @@ async function getRemoteToolDefinitions(options?: {
   onIntegrationToolDiscovery?: (result: RemoteIntegrationToolDiscoveryResult) => void;
   onIntegrationCatalogDiscovered?: () => void;
   discoveredIntegrationToolNames?: Set<string>;
+  /** Observe the definitions each source contributed, after the ceiling and de-duplication. */
+  onSourceDefinitions?: (source: RemoteToolSource, definitions: ToolDefinition[]) => void;
 }): Promise<ToolDefinition[]> {
   const remoteToolContext = options?.remoteToolContext;
   const definitions: ToolDefinition[] = [];
@@ -407,7 +411,12 @@ async function getRemoteToolDefinitions(options?: {
     const source = sources[index]!;
     try {
       const sourceDefs = await source.listTools(remoteToolContext);
+      const firstContributed = definitions.length;
       appendSourceDefinitions(source, sourceDefs, addDefinition);
+      options?.onSourceDefinitions?.(
+        source,
+        intrinsicReflectApply(intrinsicArraySlice, definitions, [firstContributed]),
+      );
     } catch (error) {
       options?.onSourceListFailure?.();
       logger.warn("Failed to fetch remote tool definitions from source", {
@@ -782,6 +791,65 @@ function isUnavailableOptionalRemoteTool(
 }
 
 /**
+ * Tools of the agent's own third-party MCP servers that the `tools` map does not select by name.
+ *
+ * Configuring a server selects its tools: each server's `toolPolicy` limits what it exposes, and
+ * the host's remote-tool ceiling still applies. A `tools` map that names at least one tool of a
+ * server keeps that server to the named tools, and a name set to `false` stays excluded. Project
+ * integrations and inherited sources are never added this way.
+ */
+function selectDefaultExposedMcpToolDefinitions(input: {
+  defaultExposedSources: readonly RemoteToolSource[];
+  definitionsBySource: ReadonlyMap<RemoteToolSource, ToolDefinition[]>;
+  toolsConfig: Record<string, ToolConfigEntry> | undefined;
+}): ToolDefinition[] {
+  const selected: ToolDefinition[] = [];
+  for (let index = 0; index < input.defaultExposedSources.length; index++) {
+    if (!intrinsicHasOwn(input.defaultExposedSources, index)) continue;
+    const definitions = input.definitionsBySource.get(input.defaultExposedSources[index]!) ?? [];
+    let namedByToolsMap = false;
+    for (const definition of definitions) {
+      if (input.toolsConfig?.[definition.name] === true) namedByToolsMap = true;
+    }
+    if (namedByToolsMap) continue;
+    for (const definition of definitions) {
+      if (input.toolsConfig?.[definition.name] === false) continue;
+      intrinsicReflectApply(intrinsicArrayPush, selected, [definition]);
+    }
+  }
+  return selected;
+}
+
+async function getDefaultExposedMcpToolDefinitions(
+  options: Parameters<typeof getAvailableTools>[1],
+): Promise<ToolDefinition[]> {
+  if (options?.strictConfiguredToolsOnly === true) return [];
+  const defaultExposedSources = getRuntimeDefaultExposedMcpSources(options?.remoteToolSources);
+  if (defaultExposedSources.length === 0) return [];
+  const definitionsBySource = createPrivateMap<RemoteToolSource, ToolDefinition[]>();
+  await getRemoteToolDefinitions({
+    includeIntegrationTools: false,
+    allowedRemoteToolNames: options?.allowedRemoteToolNames,
+    remoteToolSources: [...defaultExposedSources],
+    remoteToolContext: options?.remoteToolContext,
+    onSourceDefinitions: (source, definitions) => definitionsBySource.set(source, definitions),
+  });
+  const definitions = selectDefaultExposedMcpToolDefinitions({
+    defaultExposedSources,
+    definitionsBySource,
+    toolsConfig: undefined,
+  });
+  const sourceIntegrationPolicy = options?.sourceIntegrationPolicy ??
+    { schemaVersion: 1, mode: "unrestricted" } as const;
+  for (const definition of definitions) logToolDefinition(definition.name, definition);
+  return filterToolDefinitions(
+    definitions,
+    (definition) =>
+      isAllowedBySourcePolicy(definition.name, sourceIntegrationPolicy, undefined, definitions),
+  );
+}
+
+/**
  * Get available tools based on agent configuration.
  * When tools === true, loads all tools from registry.
  * Otherwise loads specific tools from config.
@@ -809,6 +877,7 @@ export async function getAvailableTools(
     callerAgentId?: string;
   },
 ): Promise<ToolDefinition[]> {
+  if (toolsConfig === undefined) return await getDefaultExposedMcpToolDefinitions(options);
   if (!toolsConfig) return [];
   const sourceIntegrationPolicy = options?.sourceIntegrationPolicy ??
     { schemaVersion: 1, mode: "unrestricted" } as const;
@@ -867,10 +936,12 @@ export async function getAvailableTools(
   let integrationDiscovery: RemoteIntegrationToolDiscoveryResult | undefined;
   let integrationCatalogDiscovered = false;
   let sourceListFailed = false;
+  const definitionsBySource = createPrivateMap<RemoteToolSource, ToolDefinition[]>();
   const remoteDefs = strictConfiguredToolsOnly ? [] : await getRemoteToolDefinitions({
     onSourceListFailure: () => {
       sourceListFailed = true;
     },
+    onSourceDefinitions: (source, definitions) => definitionsBySource.set(source, definitions),
     discoveredIntegrationToolNames,
     onIntegrationCatalogDiscovered: () => {
       integrationCatalogDiscovered = true;
@@ -1047,6 +1118,19 @@ export async function getAvailableTools(
   }
 
   appendRequestedRemoteDefinitions();
+
+  if (!strictConfiguredToolsOnly) {
+    const defaultExposedDefinitions = selectDefaultExposedMcpToolDefinitions({
+      defaultExposedSources: getRuntimeDefaultExposedMcpSources(options?.remoteToolSources),
+      definitionsBySource,
+      toolsConfig,
+    });
+    for (const definition of defaultExposedDefinitions) {
+      if (hasToolDefinitionName(tools, definition.name)) continue;
+      logToolDefinition(definition.name, definition);
+      intrinsicReflectApply(intrinsicArrayPush, tools, [definition]);
+    }
+  }
 
   if (unresolvedConfiguredToolNames.length > 0) {
     // Enumerate only tools visible to the caller — never another agent's

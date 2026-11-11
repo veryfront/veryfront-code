@@ -76,6 +76,23 @@ const runtimeOwnedMcpSources = createPrivateWeakStore<
   readonly RemoteToolSource[]
 >();
 
+/**
+ * Sources built from the agent's own third-party `mcpServers` entries, keyed by
+ * the run's source list. An agent that configures such a server and no `tools`
+ * map exposes that server's tools, limited by the server's `toolPolicy`.
+ */
+const runtimeDefaultExposedMcpSources = createPrivateWeakStore<
+  readonly RemoteToolSource[],
+  readonly RemoteToolSource[]
+>();
+
+/** Return the sources whose tools an agent without a `tools` map exposes by default. */
+export function getRuntimeDefaultExposedMcpSources(
+  sources: readonly RemoteToolSource[] | undefined,
+): readonly RemoteToolSource[] {
+  return sources === undefined ? [] : runtimeDefaultExposedMcpSources.get(sources) ?? [];
+}
+
 /** Release only sources created for this loop; inherited sources belong to their caller. */
 export function createRuntimeMcpSourceCleanup(
   sources: readonly RemoteToolSource[] | undefined,
@@ -586,9 +603,12 @@ export function getRuntimeRemoteToolSources(
   // request-scoped credentials) is never replaced — it keeps exclusive
   // ownership of its id, and the child stays inside the host's boundary.
   const selfServedFirstPartyIds = createPrivateSet<string>();
+  const defaultExposedSources: RemoteToolSource[] = [];
   const configuredSources = flatMapPrivateArray(configuredServers, (server) => {
     if (isHttpMcpServerConfig(server)) {
-      return [createMcpServerToolSource(server)];
+      const source = createMcpServerToolSource(server);
+      pushPrivateArray(defaultExposedSources, source);
+      return [source];
     }
     if (server.kind === "veryfront-api") {
       const sourceId = getFirstPartyMcpSourceId(server);
@@ -705,6 +725,7 @@ export function getRuntimeRemoteToolSources(
 
   if (remoteToolSources.length > 0) {
     runtimeOwnedMcpSources.set(remoteToolSources, configuredSources);
+    runtimeDefaultExposedMcpSources.set(remoteToolSources, defaultExposedSources);
     return remoteToolSources;
   }
 
