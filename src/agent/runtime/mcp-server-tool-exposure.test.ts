@@ -143,4 +143,26 @@ describe("agent mcpServers tool exposure (local generate path)", () => {
       );
     });
   });
+
+  it("judges a server's selection from its own catalog, before names are de-duplicated", async () => {
+    await withMockMcpServer(WIKI_MCP_TOOLS, async ({ url }) => {
+      const names = await toolsSentToModel({
+        id: "mcp-server-shared-name",
+        tools: { ask_wiki_question: true },
+        mcpServers: [
+          {
+            id: "wiki-a",
+            transport: { type: "http", url },
+            toolPolicy: { allow: ["ask_wiki_question"] },
+          },
+          { id: "wiki-b", transport: { type: "http", url } },
+        ],
+      });
+      assertEquals(
+        names,
+        ["ask_wiki_question"],
+        "the second server also publishes the named tool, so it stays limited to it",
+      );
+    });
+  });
 });

@@ -242,31 +242,6 @@ export function getExplicitlyDeniedToolNames(agent: Agent): ReadonlySet<string> 
   );
 }
 
-/**
- * Carry the agent's explicit `false` tool entries into each external MCP
- * server's `toolPolicy.deny`. The merged run tool map drops `false` entries,
- * and an external server exposes every tool its policy allows unless the map
- * selects some of them, so without this a denied server tool would reach the
- * model in a hosted run.
- */
-function withDeniedToolsOnExternalMcpServers(
-  mcpServers: Agent["config"]["mcpServers"],
-  deniedToolNames: ReadonlySet<string>,
-): Agent["config"]["mcpServers"] {
-  if (!mcpServers || deniedToolNames.size === 0) return mcpServers;
-  return mcpServers.map((server) =>
-    isRecord(server) && Object.hasOwn(server, "transport")
-      ? {
-        ...server,
-        toolPolicy: {
-          ...server.toolPolicy,
-          deny: [...new _Set([...(server.toolPolicy?.deny ?? []), ...deniedToolNames])],
-        },
-      }
-      : server
-  );
-}
-
 function hasTrustedAgentToolDeclaration(agent: Agent, toolName: string): boolean {
   const configuredTools = agent.config.tools;
   if (configuredTools === true) {
@@ -1809,14 +1784,8 @@ export async function createRuntimeAgentStreamResponse(
         model: executionModel,
         system: createProviderAwareAgentSystemResolver(resolveSystemPrompt),
         tools: mergedTools,
-        ...(agent.config.mcpServers !== undefined && explicitlyDeniedToolNames.size > 0
-          ? {
-            mcpServers: withDeniedToolsOnExternalMcpServers(
-              agent.config.mcpServers,
-              explicitlyDeniedToolNames,
-            ),
-          }
-          : {}),
+        // Default MCP exposure follows the authored selection, not the merged map.
+        __vfAuthoredTools: agent.config.tools,
         ...(managedRecovery?.snapshot
           ? { __vfToolExposureCheckpoint: managedRecovery.snapshot.toolExposureCheckpoint }
           : {}),

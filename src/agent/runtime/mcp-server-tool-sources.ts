@@ -60,6 +60,12 @@ export type RuntimeRemoteToolConfig = {
   __vfSourceIntegrationPolicy?: SourceIntegrationPolicyManifest;
   __vfUnavailableOptionalRemoteToolNames?: string[];
   __vfUnavailableOptionalRemoteToolPrefixes?: string[];
+  /**
+   * The agent's authored `tools`, before a hosted run merges injected tools,
+   * drops `false` entries or applies a run allowlist. Default MCP exposure is
+   * decided from this selection, never from the run's filtered map.
+   */
+  __vfAuthoredTools?: AgentConfig["tools"];
 };
 
 /** Canonical source id for the Veryfront API MCP server. */
@@ -76,21 +82,56 @@ const runtimeOwnedMcpSources = createPrivateWeakStore<
   readonly RemoteToolSource[]
 >();
 
+/** The agent's own external MCP servers and its authored tool selection for one run. */
+export interface RuntimeDefaultExposedMcpSelection {
+  /** Sources built from the agent's own third-party `mcpServers` entries. */
+  readonly sources: readonly RemoteToolSource[];
+  /** `tools: true` selects every tool by other means, so nothing is added by default. */
+  readonly selectsEveryTool: boolean;
+  /** Names the authored `tools` map selects (`true` or a tool). */
+  readonly selectedToolNames: ReadonlySet<string>;
+  /** Names the authored `tools` map sets to `false`. */
+  readonly deniedToolNames: ReadonlySet<string>;
+}
+
 /**
- * Sources built from the agent's own third-party `mcpServers` entries, keyed by
- * the run's source list. An agent that configures such a server and no `tools`
- * map exposes that server's tools, limited by the server's `toolPolicy`.
+ * Default MCP exposure per run, keyed by the run's source list. An external
+ * server whose tools the authored map does not name exposes every tool its
+ * `toolPolicy` allows.
  */
-const runtimeDefaultExposedMcpSources = createPrivateWeakStore<
+const runtimeDefaultExposedMcpSelections = createPrivateWeakStore<
   readonly RemoteToolSource[],
-  readonly RemoteToolSource[]
+  RuntimeDefaultExposedMcpSelection
 >();
 
-/** Return the sources whose tools an agent without a `tools` map exposes by default. */
-export function getRuntimeDefaultExposedMcpSources(
+/** Return the run's default MCP exposure, if the agent configured external servers. */
+export function getRuntimeDefaultExposedMcpSelection(
   sources: readonly RemoteToolSource[] | undefined,
-): readonly RemoteToolSource[] {
-  return sources === undefined ? [] : runtimeDefaultExposedMcpSources.get(sources) ?? [];
+): RuntimeDefaultExposedMcpSelection | undefined {
+  return sources === undefined ? undefined : runtimeDefaultExposedMcpSelections.get(sources);
+}
+
+function createDefaultExposedMcpSelection(
+  sources: readonly RemoteToolSource[],
+  authoredTools: AgentConfig["tools"],
+): RuntimeDefaultExposedMcpSelection {
+  const selectedToolNames = createPrivateSet<string>();
+  const deniedToolNames = createPrivateSet<string>();
+  if (authoredTools !== null && typeof authoredTools === "object") {
+    const names = Object.keys(authoredTools);
+    for (let index = 0; index < names.length; index++) {
+      const name = names[index]!;
+      const entry = authoredTools[name];
+      if (entry === false) deniedToolNames.add(name);
+      else if (entry !== undefined) selectedToolNames.add(name);
+    }
+  }
+  return {
+    sources,
+    selectsEveryTool: authoredTools === true,
+    selectedToolNames,
+    deniedToolNames,
+  };
 }
 
 /** Release only sources created for this loop; inherited sources belong to their caller. */
@@ -725,7 +766,17 @@ export function getRuntimeRemoteToolSources(
 
   if (remoteToolSources.length > 0) {
     runtimeOwnedMcpSources.set(remoteToolSources, configuredSources);
-    runtimeDefaultExposedMcpSources.set(remoteToolSources, defaultExposedSources);
+    if (defaultExposedSources.length > 0) {
+      runtimeDefaultExposedMcpSelections.set(
+        remoteToolSources,
+        createDefaultExposedMcpSelection(
+          defaultExposedSources,
+          hasOwn(runtimeConfig, "__vfAuthoredTools")
+            ? runtimeConfig.__vfAuthoredTools
+            : config.tools,
+        ),
+      );
+    }
     return remoteToolSources;
   }
 
