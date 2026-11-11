@@ -73,11 +73,25 @@ export function requireIntegrationTarget(options: IntegrationCommandOptions): st
  * The explanation is advisory: if either lookup fails, the command returns the
  * empty list as before instead of failing.
  */
+function shellArgument(value: string): string {
+  return /^[\w@%+=:,./-]+$/.test(value) ? value : `'${value.replaceAll("'", `'"'"'`)}'`;
+}
+
+/** The `connect` command for the project this command selected. */
+function connectCommand(options: IntegrationCommandOptions, target: string): string {
+  const selection = [
+    ...(options.projectReference ? ["--project", shellArgument(options.projectReference)] : []),
+    ...(options.projectDir ? ["--project-dir", shellArgument(options.projectDir)] : []),
+  ];
+  return ["veryfront integration connect", target, ...selection].join(" ");
+}
+
 async function describeUnconnectedTools(
   client: IntegrationClient,
+  options: IntegrationCommandOptions,
   target: string,
-  search: string | undefined,
 ): Promise<Record<string, unknown>> {
+  const search = options.search;
   const connections = await collectIntegrationRows(client.listConnections(target));
   if (connections.some((row) => row.status === "connected")) return {};
 
@@ -94,8 +108,9 @@ async function describeUnconnectedTools(
   return {
     connected: false,
     catalog_tools: catalogTools,
-    next_step:
-      `Connect ${target} first: run veryfront integration connect ${target}, then run this command again.`,
+    next_step: `Connect ${target} first: run ${
+      connectCommand(options, target)
+    }, then run this command again.`,
   };
 }
 
@@ -123,7 +138,7 @@ export async function runIntegrationOperation(
       if (tools.length > 0) return { tools };
       let unconnected: Record<string, unknown> = {};
       try {
-        unconnected = await describeUnconnectedTools(client, target, options.search);
+        unconnected = await describeUnconnectedTools(client, options, target);
       } catch {
         // Advisory only: keep the result the command returned before.
       }

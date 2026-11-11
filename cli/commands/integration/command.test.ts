@@ -211,6 +211,32 @@ describe("tools for an unconnected integration", () => {
     });
   });
 
+  it("names the selected project in the connect hint", async () => {
+    const client = {
+      listTools: none,
+      listConnections: none,
+      getIntegration: () =>
+        Promise.resolve({ name: "slack", auth: {}, credential_requirement: {}, tools: [] }),
+    } as unknown as IntegrationClient;
+
+    const cases: Array<[Partial<typeof options> & Record<string, string>, string]> = [
+      [
+        { projectReference: "acme-support" },
+        "Connect slack first: run veryfront integration connect slack --project acme-support, then run this command again.",
+      ],
+      [
+        { projectDir: "/work/My App" },
+        "Connect slack first: run veryfront integration connect slack --project-dir '/work/My App', then run this command again.",
+      ],
+    ];
+    for (const [selection, expected] of cases) {
+      const result = await runIntegrationOperation({ ...options, ...selection }, client) as {
+        next_step: string;
+      };
+      assertEquals(result.next_step, expected, "the hint connects the project this command used");
+    }
+  });
+
   it("filters the catalog tools with --search", async () => {
     const client = {
       listTools: none,
