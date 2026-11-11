@@ -1,13 +1,6 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { cwd, readTextFile, realPath, resolve, writeTextFile } from "veryfront/fs";
-
-/** True when `target` is the same as, or nested under, `root` (both canonical). */
-function isWithin(root: string, target: string): boolean {
-  const r = root.replace(/\\/g, "/");
-  const t = target.replace(/\\/g, "/");
-  return t === r || t.startsWith(`${r}/`);
-}
+import { notFoundMessage, projectFiles } from "../lib/project-files.ts";
 
 export default tool({
   id: "edit-file",
@@ -17,28 +10,23 @@ export default tool({
     search: v.string().describe("Exact string to find in the file"),
     replace: v.string().describe("String to replace it with"),
   }))(),
-  execute: async ({ path, search, replace }) => {
-    let projectDir: string;
-    let absolute: string;
-    try {
-      // Canonicalize both sides so a symlink that points outside the project
-      // is resolved to its real target before the containment check.
-      projectDir = await realPath(cwd());
-      absolute = await realPath(resolve(projectDir, path));
-    } catch {
-      return { error: `File not found: ${path}` };
-    }
-    if (!isWithin(projectDir, absolute)) {
+  // On Veryfront Cloud the project's files are read and saved through these platform operations.
+  delegatedPlatformTools: ["veryfront__get_file", "veryfront__update_file"],
+  execute: async ({ path, search, replace }, context) => {
+    const source = projectFiles(context);
+    const file = await source.read(path);
+    if ("escapes" in file) {
       return { error: `Path escapes project directory: ${path}` };
     }
+    if ("notFound" in file) {
+      return { error: await notFoundMessage(source, `File not found: ${path}`) };
+    }
 
-    const content = await readTextFile(absolute);
-    if (!content.includes(search)) {
+    if (!file.content.includes(search)) {
       return { error: "Search string not found in file" };
     }
 
-    const updated = content.replace(search, replace);
-    await writeTextFile(absolute, updated);
+    await source.write(path, file.content.replace(search, replace));
     return { path, success: true };
   },
 });
