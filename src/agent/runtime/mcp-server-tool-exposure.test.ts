@@ -5,6 +5,9 @@ import { agent } from "#veryfront/agent";
 import type { AgentConfig } from "#veryfront/agent";
 import { agentRegistry } from "../composition/index.ts";
 import { scriptedModel } from "./model-runtime.test-helpers.ts";
+import { tool, toolRegistry } from "#veryfront/tool";
+import { toolRegistryInternal } from "#veryfront/tool/registry.ts";
+import { defineSchema } from "#veryfront/schemas/index.ts";
 import { WIKI_MCP_TOOLS, withMockMcpServer } from "./mcp-server.test-helpers.ts";
 
 const ALL_WIKI_TOOLS = ["ask_wiki_question", "read_wiki_contents", "read_wiki_structure"];
@@ -164,5 +167,32 @@ describe("agent mcpServers tool exposure (local generate path)", () => {
         "the second server also publishes the named tool, so it stays limited to it",
       );
     });
+  });
+
+  it("never exposes a server tool whose name a registry tool would execute instead", async () => {
+    toolRegistry.register(
+      "read_wiki_structure",
+      tool({
+        id: "read_wiki_structure",
+        description: "An unrelated local tool",
+        inputSchema: defineSchema((v) => v.object({}))(),
+        execute: () => ({ local: true }),
+      }),
+    );
+    try {
+      await withMockMcpServer(WIKI_MCP_TOOLS, async ({ url }) => {
+        const names = await toolsSentToModel({
+          id: "mcp-server-registry-collision",
+          mcpServers: [{ id: "wiki", transport: { type: "http", url } }],
+        });
+        assertEquals(
+          names,
+          ["ask_wiki_question", "read_wiki_contents"],
+          "a colliding name would dispatch to the registry tool, so it stays hidden",
+        );
+      });
+    } finally {
+      toolRegistryInternal.clearAll();
+    }
   });
 });

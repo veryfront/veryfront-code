@@ -817,6 +817,7 @@ interface SourceDefinitions {
 function selectDefaultExposedMcpToolDefinitions(
   selection: RuntimeDefaultExposedMcpSelection | undefined,
   definitionsBySource: ReadonlyMap<RemoteToolSource, SourceDefinitions>,
+  callerAgentId: string | undefined,
 ): ToolDefinition[] {
   const selected: ToolDefinition[] = [];
   if (selection === undefined || selection.selectsEveryTool) return selected;
@@ -834,6 +835,9 @@ function selectDefaultExposedMcpToolDefinitions(
     if (selectedByName) continue;
     for (const definition of definitions.contributed) {
       if (selection.deniedToolNames.has(definition.name)) continue;
+      // Execution resolves a registry tool before remote sources, so a colliding
+      // name would run that tool instead of the advertised server tool.
+      if (resolveVisibleRegistryTool(definition.name, callerAgentId)) continue;
       intrinsicReflectApply(intrinsicArrayPush, selected, [definition]);
     }
   }
@@ -854,7 +858,11 @@ async function getDefaultExposedMcpToolDefinitions(
     remoteToolContext: options?.remoteToolContext,
     onSourceDefinitions: (source, definitions) => definitionsBySource.set(source, definitions),
   });
-  const definitions = selectDefaultExposedMcpToolDefinitions(selection, definitionsBySource);
+  const definitions = selectDefaultExposedMcpToolDefinitions(
+    selection,
+    definitionsBySource,
+    options?.callerAgentId,
+  );
   const sourceIntegrationPolicy = options?.sourceIntegrationPolicy ??
     { schemaVersion: 1, mode: "unrestricted" } as const;
   for (const definition of definitions) logToolDefinition(definition.name, definition);
@@ -1139,6 +1147,7 @@ export async function getAvailableTools(
     const defaultExposedDefinitions = selectDefaultExposedMcpToolDefinitions(
       getRuntimeDefaultExposedMcpSelection(options?.remoteToolSources),
       definitionsBySource,
+      options?.callerAgentId,
     );
     for (const definition of defaultExposedDefinitions) {
       if (hasToolDefinitionName(tools, definition.name)) continue;
