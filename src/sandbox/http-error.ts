@@ -109,3 +109,38 @@ export async function createSandboxHttpError(
     context: sandboxProblemContext(problem, truncated),
   });
 }
+
+/** The API's detail when a sandbox create call selects no project. */
+const MISSING_PROJECT_DETAIL =
+  "project_id (or an environment_id that belongs to a project) is required to create a sandbox session";
+const MISSING_PROJECT_SELECTOR_HINT =
+  "Pass projectReference (REST field project_reference) with the project slug or ID, or environmentId for an environment that belongs to a project.";
+
+/**
+ * @internal Name the SDK option when the API rejects a create call that selected no project.
+ *
+ * The API words this failure with its own field name, `project_id`, which is neither the SDK option
+ * nor the REST field. Other failures pass through unchanged.
+ */
+export function withMissingProjectSelectorHint(
+  error: VeryfrontError,
+  selection: { projectReference?: string; environmentId?: string },
+): VeryfrontError {
+  if (selection.projectReference || selection.environmentId) return error;
+  const problem = error.context && typeof error.context === "object"
+    ? ownValue(error.context, "responseProblem")
+    : undefined;
+  if (
+    !problem || ownValue(problem, "status") !== 400 ||
+    ownValue(problem, "slug") !== "validation-failed"
+  ) {
+    return error;
+  }
+  const detail = ownValue(problem, "detail");
+  if (detail !== MISSING_PROJECT_DETAIL) return error;
+  return REQUEST_ERROR.create({
+    status: 400,
+    detail: `${error.message} ${MISSING_PROJECT_SELECTOR_HINT}`,
+    context: error.context,
+  });
+}
