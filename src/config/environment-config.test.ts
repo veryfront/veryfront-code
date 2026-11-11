@@ -97,6 +97,21 @@ describe("EnvironmentConfig", () => {
         expect(apiTokenWith({ VERYFRONT_API_TOKEN: "<TOKEN>", VERYFRONT_API_KEY: "<KEY>" }))
           .toBe("<TOKEN>");
         expect(apiTokenWith({ VERYFRONT_API_KEY: "  " })).toBeUndefined();
+        expect(
+          apiTokenWith({ VERYFRONT_API_TOKEN: "   ", VERYFRONT_API_KEY: "<KEY>" }),
+          "a blank token is unset, as getHostEnv and the env loader treat it",
+        ).toBe("<KEY>");
+
+        // A project scope reads its own variables. Its VERYFRONT_API_KEY is a
+        // project value, and the host key is out of its reach: neither becomes
+        // the snapshot token.
+        apiTokenWith({ VERYFRONT_API_KEY: "<HOST_KEY>" });
+        runWithProjectEnv({ VERYFRONT_API_KEY: "<PROJECT_KEY>" }, () => {
+          expect(refreshEnvironmentConfig().apiToken).toBeUndefined();
+        });
+        runWithProjectEnv({}, () => {
+          expect(refreshEnvironmentConfig().apiToken).toBeUndefined();
+        });
         const tokenFile = Deno.makeTempFileSync({ prefix: "vf-token-file-" });
         try {
           Deno.writeTextFileSync(tokenFile, "<TOKEN_FROM_FILE>");
