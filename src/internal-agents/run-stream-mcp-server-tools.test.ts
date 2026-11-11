@@ -121,4 +121,26 @@ describe("internal-agents/run-stream mcpServers tool exposure (hosted path)", ()
       );
     });
   });
+
+  it("keeps an authored false entry excluded when the map names none of the server's tools", async () => {
+    for (const injectedTools of [undefined, []]) {
+      await withMockMcpServer(WIKI_MCP_TOOLS, async ({ url }) => {
+        const names = await toolsSentToModelInHostedRun(
+          {
+            id: "hosted-mcp-server-denied-only",
+            tools: { ask_wiki_question: false },
+            mcpServers: [{ id: "wiki", transport: { type: "http", url } }],
+          },
+          injectedTools,
+        );
+        const expected = ["read_wiki_contents", "read_wiki_structure"];
+        assertEquals(
+          names,
+          injectedTools === undefined ? ["form_input", ...expected].sort() : expected,
+          `the denied tool never reaches the model (client tools: ${injectedTools ?? "default"})`,
+        );
+      });
+      agentRegistry.clearAll();
+    }
+  });
 });
