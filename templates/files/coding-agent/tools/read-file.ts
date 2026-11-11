@@ -1,13 +1,6 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { cwd, readTextFile, realPath, resolve } from "veryfront/fs";
-
-/** True when `target` is the same as, or nested under, `root` (both canonical). */
-function isWithin(root: string, target: string): boolean {
-  const r = root.replace(/\\/g, "/");
-  const t = target.replace(/\\/g, "/");
-  return t === r || t.startsWith(`${r}/`);
-}
+import { notFoundMessage, projectFiles } from "../lib/project-files.ts";
 
 export default tool({
   id: "read-file",
@@ -15,21 +8,17 @@ export default tool({
   inputSchema: defineSchema((v) => v.object({
     path: v.string().describe("File path relative to the project root"),
   }))(),
-  execute: async ({ path }) => {
-    let projectDir: string;
-    let absolute: string;
-    try {
-      // Canonicalize both sides so a symlink that points outside the project
-      // is resolved to its real target before the containment check.
-      projectDir = await realPath(cwd());
-      absolute = await realPath(resolve(projectDir, path));
-    } catch {
-      return { error: `File not found: ${path}` };
-    }
-    if (!isWithin(projectDir, absolute)) {
+  // On Veryfront Cloud the project's files are read through this platform operation.
+  delegatedPlatformTools: ["veryfront__get_file"],
+  execute: async ({ path }, context) => {
+    const source = projectFiles(context);
+    const file = await source.read(path);
+    if ("escapes" in file) {
       return { error: `Path escapes project directory: ${path}` };
     }
-    const content = await readTextFile(absolute);
-    return { path, content };
+    if ("notFound" in file) {
+      return { error: await notFoundMessage(source, `File not found: ${path}`) };
+    }
+    return { path, content: file.content };
   },
 });

@@ -1,13 +1,6 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { cwd, readDir, realPath, resolve } from "veryfront/fs";
-
-/** True when `target` is the same as, or nested under, `root` (both canonical). */
-function isWithin(root: string, target: string): boolean {
-  const r = root.replace(/\\/g, "/");
-  const t = target.replace(/\\/g, "/");
-  return t === r || t.startsWith(`${r}/`);
-}
+import { notFoundMessage, projectFiles } from "../lib/project-files.ts";
 
 export default tool({
   id: "list-files",
@@ -22,27 +15,19 @@ export default tool({
       .optional()
       .describe("Filter by file extensions (e.g. ['.ts', '.tsx'])"),
   }))(),
-  execute: async ({ directory, extensions }) => {
-    let projectDir: string;
-    let absolute: string;
-    try {
-      // Canonicalize both sides so a symlink that points outside the project
-      // is resolved to its real target before the containment check.
-      projectDir = await realPath(cwd());
-      absolute = await realPath(resolve(projectDir, directory));
-    } catch {
-      return { error: `Directory not found: ${directory}` };
-    }
-    if (!isWithin(projectDir, absolute)) {
+  // On Veryfront Cloud the project's files are read through this platform operation.
+  delegatedPlatformTools: ["veryfront__list_files"],
+  execute: async ({ directory, extensions }, context) => {
+    const source = projectFiles(context);
+    const listing = await source.list(directory);
+    if ("escapes" in listing) {
       return { error: `Path escapes project directory: ${directory}` };
     }
-
-    // `readDir` streams entries, so collect the files before filtering.
-    let files: string[] = [];
-    for await (const entry of readDir(absolute)) {
-      if (entry.isFile) files.push(entry.name);
+    if ("notFound" in listing) {
+      return { error: await notFoundMessage(source, `Directory not found: ${directory}`) };
     }
 
+    let files = listing.files;
     if (extensions?.length) {
       files = files.filter((file) => extensions.some((ext) => file.endsWith(ext)));
     }
