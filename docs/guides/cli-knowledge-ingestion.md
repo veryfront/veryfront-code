@@ -168,7 +168,12 @@ veryfront knowledge ingest --path ./contracts --all --recursive --json
 ```
 
 Each source document becomes its own markdown file in the project knowledge
-tree.
+tree. The file is named after the document's first `#` heading, or its file
+name when it has none: `# Create a team account` becomes
+`knowledge/create-a-team-account.md`. If that path already holds a document
+from another source, the new file gets a short suffix such as `-2`. Ingesting
+the same source again updates its existing file. Pass `--slug` to set the name
+of a single source yourself.
 
 Use `--path ... --all` only when you want everything under that uploads prefix
 or local directory. For an exact file list, pass the file paths as positional
@@ -201,8 +206,8 @@ With `--json`, the command returns a machine-readable run result with
       "source": "uploads/demo/notes.txt",
       "localSourcePath": "<LOCAL_SOURCE_PATH>",
       "outputPath": "<OUTPUT_PATH>",
-      "remotePath": "knowledge/demo-notes.md",
-      "slug": "demo-notes",
+      "remotePath": "knowledge/notes.md",
+      "slug": "notes",
       "sourceType": "txt",
       "summary": "Converted document to markdown (87 chars).",
       "stats": {
