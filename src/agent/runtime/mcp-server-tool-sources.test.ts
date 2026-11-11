@@ -7,7 +7,13 @@ import { executeConfiguredTool } from "#veryfront/agent/runtime/tool-helpers.ts"
 import { agent } from "#veryfront/agent";
 import { markTrustedPlatformSource } from "#veryfront/tool/platform-source-provenance.ts";
 import { listProjectScopedRemoteToolNames } from "#veryfront/tool/project-scoped-remote-tools.ts";
-import { assertEquals, assertExists, assertRejects, assertThrows } from "@std/assert";
+import {
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertStringIncludes,
+  assertThrows,
+} from "@std/assert";
 import { it } from "#veryfront/testing/bdd.ts";
 import type {
   RemoteMCPToolSourceConfig,
@@ -26,7 +32,7 @@ import {
   VERYFRONT_API_MCP_SOURCE_ID,
   VERYFRONT_STUDIO_MCP_SOURCE_ID,
 } from "./mcp-server-tool-sources.ts";
-import { VeryfrontError } from "#veryfront/errors";
+import { CONFIG_INVALID, VeryfrontError } from "#veryfront/errors";
 import { runWithExactRuntimeRemoteToolSources } from "./remote-tool-source-context.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { scriptedModel } from "./model-runtime.test-helpers.ts";
@@ -1829,5 +1835,74 @@ it("retained trusted legacy-only platform sources expose canonical names", async
       await assertRejects(async () => await retained.executeTool(name, {}));
     }
     assertEquals(executions, ["veryfront__get_file"]);
+  }
+});
+
+it("names the missing Veryfront API MCP value and where the server reads it", () => {
+  const cases = [
+    {
+      apiToken: "<TOKEN>",
+      projectSlug: undefined,
+      expected: "VERYFRONT_PROJECT_SLUG is not set",
+      fix: "Set VERYFRONT_PROJECT_SLUG there",
+    },
+    {
+      apiToken: undefined,
+      projectSlug: "<PROJECT_SLUG>",
+      expected: "VERYFRONT_API_TOKEN is not set",
+      fix: "Set VERYFRONT_API_TOKEN there",
+    },
+    {
+      apiToken: "   ",
+      projectSlug: "<PROJECT_SLUG>",
+      expected: "VERYFRONT_API_TOKEN is not set",
+      fix: "Set VERYFRONT_API_TOKEN there",
+    },
+    {
+      apiToken: undefined,
+      projectSlug: undefined,
+      expected: "VERYFRONT_API_TOKEN and VERYFRONT_PROJECT_SLUG are not set",
+      fix: "Set VERYFRONT_API_TOKEN and VERYFRONT_PROJECT_SLUG there",
+    },
+  ];
+  for (const { apiToken, projectSlug, expected, fix } of cases) {
+    const label = `token=${JSON.stringify(apiToken)} slug=${JSON.stringify(projectSlug)}`;
+    const error = assertThrows(
+      () =>
+        getRuntimeRemoteToolSources(
+          {
+            id: "assistant",
+            system: "Use the Veryfront tools.",
+            mcpServers: [{ kind: "veryfront-api", toolPolicy: { allow: ["list_agents"] } }],
+          },
+          {
+            getVeryfrontBootstrap: () => ({
+              apiBaseUrl: "https://api.example/",
+              apiToken,
+              projectSlug,
+              hasRequestContext: false,
+              usesVeryfrontFs: false,
+            }),
+          },
+        ),
+      VeryfrontError,
+    ) as VeryfrontError;
+    assertEquals(error.slug, CONFIG_INVALID.slug, `${label}: keeps the config error slug`);
+    assertStringIncludes(error.message, expected, label);
+    assertStringIncludes(error.message, "environment of the server process", label);
+    assertStringIncludes(error.message, "not from project environment variables", label);
+    assertStringIncludes(error.message, fix, label);
+    assertEquals(error.message.includes("<TOKEN>"), false, `${label}: never echoes the token`);
+    assertStringIncludes(
+      error.message,
+      "VERYFRONT_API_TOKEN_FILE",
+      `${label}: names the token file`,
+    );
+    assertStringIncludes(
+      error.message,
+      "veryfront login session",
+      `${label}: names the login session`,
+    );
+    assertEquals(/[\u2013\u2014]/.test(error.message), false, `${label}: no en or em dash`);
   }
 });
