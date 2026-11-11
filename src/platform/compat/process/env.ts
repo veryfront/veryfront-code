@@ -249,9 +249,9 @@ export function getHostEnv(key: string): string | undefined {
   // the host environment is still reported verbatim.
   const secret = getHostSecret(key);
   if (secret !== undefined) return secret;
-  if (key === VERYFRONT_API_TOKEN_ENV && !veryfrontApiKeyAliasSettled && !hasApiTokenFile()) {
-    const apiKey = readHostProcessEnv(VERYFRONT_API_KEY_ENV);
-    if (apiKey !== undefined && apply(stringTrim, apiKey, []) !== "") return apiKey;
+  if (key === VERYFRONT_API_TOKEN_ENV) {
+    const apiKey = readUnloadedVeryfrontApiKey(readHostProcessEnv);
+    if (apiKey !== undefined) return apiKey;
   }
   return value;
 }
@@ -259,10 +259,26 @@ export function getHostEnv(key: string): string | undefined {
 const VERYFRONT_API_TOKEN_ENV = "VERYFRONT_API_TOKEN";
 const VERYFRONT_API_TOKEN_FILE_ENV = "VERYFRONT_API_TOKEN_FILE";
 
-/** A nonblank token file selector supplies the credential ahead of the key. */
-function hasApiTokenFile(): boolean {
-  const selector = readHostProcessEnv(VERYFRONT_API_TOKEN_FILE_ENV);
-  return selector !== undefined && apply(stringTrim, selector, []) !== "";
+function isNonBlank(value: string | undefined): value is string {
+  return value !== undefined && apply(stringTrim, value, []) !== "";
+}
+
+/**
+ * `VERYFRONT_API_KEY` as the credential, for a process the env loader has not
+ * resolved, such as a script using the SDK. Every reader of the token slot
+ * uses this one rule, so a key-only process behaves like a token-only one.
+ *
+ * Returns nothing once the loader resolved the key (a token it removed on
+ * purpose stays removed) or while a token file is set (the token file is the
+ * credential).
+ */
+export function readUnloadedVeryfrontApiKey(
+  readEnv: (key: string) => string | undefined,
+): string | undefined {
+  if (veryfrontApiKeyAliasSettled) return undefined;
+  if (isNonBlank(readEnv(VERYFRONT_API_TOKEN_FILE_ENV))) return undefined;
+  const apiKey = readEnv(VERYFRONT_API_KEY_ENV);
+  return isNonBlank(apiKey) ? apiKey : undefined;
 }
 
 /**

@@ -73,6 +73,54 @@ describe("EnvironmentConfig", () => {
       expect(retrieved).toBe(initialized);
     });
 
+    it("reads VERYFRONT_API_KEY like the token only before env files load", () => {
+      // An SDK script never runs the env loader. Its key must resolve like an
+      // exported token, so every consumer picks the same endpoint for both.
+      const names = [
+        "VERYFRONT_API_TOKEN",
+        "VERYFRONT_API_TOKEN_FILE",
+        "VERYFRONT_API_KEY",
+      ] as const;
+      const saved = names.map((name) => [name, Deno.env.get(name)] as const);
+      const apiTokenWith = (values: Partial<Record<(typeof names)[number], string>>) => {
+        for (const name of names) {
+          const value = values[name];
+          if (value === undefined) deleteEnv(name);
+          else setEnv(name, value);
+        }
+        return refreshEnvironmentConfig().apiToken;
+      };
+
+      try {
+        __resetEnvLoaderForTests();
+        expect(apiTokenWith({ VERYFRONT_API_KEY: "<KEY>" })).toBe("<KEY>");
+        expect(apiTokenWith({ VERYFRONT_API_TOKEN: "<TOKEN>", VERYFRONT_API_KEY: "<KEY>" }))
+          .toBe("<TOKEN>");
+        expect(apiTokenWith({ VERYFRONT_API_KEY: "  " })).toBeUndefined();
+        const tokenFile = Deno.makeTempFileSync({ prefix: "vf-token-file-" });
+        try {
+          Deno.writeTextFileSync(tokenFile, "<TOKEN_FROM_FILE>");
+          expect(
+            apiTokenWith({ VERYFRONT_API_TOKEN_FILE: tokenFile, VERYFRONT_API_KEY: "<KEY>" }),
+            "a token file is the credential, never the key",
+          ).toBe("<TOKEN_FROM_FILE>");
+        } finally {
+          Deno.removeSync(tokenFile);
+        }
+
+        // Once the loader resolved the key, a token it removed stays removed.
+        markEnvLoaded();
+        expect(apiTokenWith({ VERYFRONT_API_KEY: "<KEY>" })).toBeUndefined();
+      } finally {
+        __resetEnvLoaderForTests();
+        for (const [name, value] of saved) {
+          if (value === undefined) deleteEnv(name);
+          else setEnv(name, value);
+        }
+        _resetEnvironmentConfig();
+      }
+    });
+
     it("keeps early snapshots immutable and uncached until environment loading completes", async () => {
       __resetEnvLoaderForTests();
       const originalWarn = logger.warn;

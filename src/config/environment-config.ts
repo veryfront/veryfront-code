@@ -1,6 +1,10 @@
 import { privateTextTrim } from "#veryfront/security/private-text.ts";
 import { replacePrivateRegExp, testPrivateRegExp } from "#veryfront/security/private-regexp.ts";
-import { getEnv, getHostEnv } from "#veryfront/platform/compat/process/env.ts";
+import {
+  getEnv,
+  getHostEnv,
+  readUnloadedVeryfrontApiKey,
+} from "#veryfront/platform/compat/process/env.ts";
 import { getHostTelemetryEnv } from "#veryfront/observability/tracing/telemetry-env.ts";
 import { isTruthyEnvValue } from "#veryfront/utils/constants/env.ts";
 import { DEFAULT_DEV_SERVER_PORT, MAX_PORT, MIN_PORT } from "#veryfront/utils/constants/network.ts";
@@ -171,7 +175,8 @@ function readEnvSnapshot(
       DEFAULTS.apiBaseUrl,
     apiUrl,
     apiToken: readVeryfrontApiTokenFile(readEnv("VERYFRONT_API_TOKEN_FILE")) ??
-      (readEnv("VERYFRONT_API_TOKEN") || undefined),
+      (readEnv("VERYFRONT_API_TOKEN") || undefined) ??
+      readUnloadedVeryfrontApiKey(readEnv),
     projectSlug: readEnv("VERYFRONT_PROJECT_SLUG") || undefined,
 
     homeDir: readEnv("HOME") || readEnv("USERPROFILE") || undefined,
