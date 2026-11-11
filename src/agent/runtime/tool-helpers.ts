@@ -794,8 +794,8 @@ function isUnavailableOptionalRemoteTool(
  * Tools of the agent's own third-party MCP servers that the `tools` map does not select by name.
  *
  * Configuring a server selects its tools: each server's `toolPolicy` limits what it exposes, and
- * the host's remote-tool ceiling still applies. A `tools` map that names at least one tool of a
- * server keeps that server to the named tools, and a name set to `false` stays excluded. Project
+ * the host's remote-tool ceiling still applies. A `tools` map that selects at least one tool of a
+ * server by name (`true` or a tool) keeps that server to the named tools, and a name set to `false` stays excluded. Project
  * integrations and inherited sources are never added this way.
  */
 function selectDefaultExposedMcpToolDefinitions(input: {
@@ -809,7 +809,10 @@ function selectDefaultExposedMcpToolDefinitions(input: {
     const definitions = input.definitionsBySource.get(input.defaultExposedSources[index]!) ?? [];
     let namedByToolsMap = false;
     for (const definition of definitions) {
-      if (input.toolsConfig?.[definition.name] === true) namedByToolsMap = true;
+      // Any selecting entry counts: a hosted run can replace an authored `true`
+      // with a concrete wrapper for the same name.
+      const entry = input.toolsConfig?.[definition.name];
+      if (entry !== undefined && entry !== false) namedByToolsMap = true;
     }
     if (namedByToolsMap) continue;
     for (const definition of definitions) {

@@ -143,4 +143,22 @@ describe("internal-agents/run-stream mcpServers tool exposure (hosted path)", ()
       agentRegistry.clearAll();
     }
   });
+
+  it("keeps the selection when the run injects a tool the map names", async () => {
+    await withMockMcpServer(WIKI_MCP_TOOLS, async ({ url }) => {
+      const names = await toolsSentToModelInHostedRun(
+        {
+          id: "hosted-mcp-server-injected-selection",
+          tools: { ask_wiki_question: true },
+          mcpServers: [{ id: "wiki", transport: { type: "http", url } }],
+        },
+        [{ name: "ask_wiki_question", description: "Ask the wiki a question" }],
+      );
+      assertEquals(
+        names,
+        ["ask_wiki_question"],
+        "an injected wrapper for a named tool still selects only that tool of the server",
+      );
+    });
+  });
 });
