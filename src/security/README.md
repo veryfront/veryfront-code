@@ -78,7 +78,10 @@ cookie unreadable to the already-open HTTP app. The default header is
 Cookie/header names and token lifetimes are
 bounded both in configuration and at the public helper boundary.
 State-changing requests are checked unless an exact, schema-validated exclusion
-applies.
+applies, or the request is a cookieless bearer request: it sends
+`Authorization: Bearer`, no `Cookie` header, and no `Sec-Fetch-Site` or
+`Origin` that marks it as cross-site or cross-origin. That request carries no
+ambient credential, so the route's own auth decides it.
 
 Use `csrfMutationHeaders` for a browser mutation that does not use a Veryfront
 client hook. The helper adds the default CSRF header for same-origin requests

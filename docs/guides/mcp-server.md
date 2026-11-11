@@ -37,7 +37,14 @@ export const OPTIONS = handler;
 
 Mount the handler on your application-owned MCP route. All auto-discovered tools, prompts, and resources are then exposed through the app-facing MCP transport.
 
-MCP clients are not browsers, so they hold no CSRF cookie to echo. Exclude the route from the CSRF check, or every `POST` receives `403`:
+MCP clients are not browsers, so they hold no CSRF cookie to echo. Veryfront
+skips the CSRF check for a request that sends `Authorization: Bearer` and no
+cookie, unless a browser marks it as coming from another site or origin. An MCP
+client that authenticates with a bearer token therefore needs no CSRF
+configuration. The `auth` field below decides whether the token is valid.
+
+If your client also sends cookies, the double-submit check applies again. In
+that case, exclude the route:
 
 ```ts
 export default {
@@ -49,7 +56,7 @@ export default {
 };
 ```
 
-The route stays protected by the `auth` field below, which is what authenticates an MCP client. See [Security headers and CSP](./security-headers.md) for the CSRF contract.
+See [Send authenticated browser mutations](./csrf-requests.md) for the CSRF contract.
 
 Export a local token and start the dev server:
 
