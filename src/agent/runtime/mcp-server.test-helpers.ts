@@ -1,13 +1,13 @@
 /**
- * A local MCP server over HTTP for agent tool-exposure tests.
+ * An in-process MCP server over HTTP for agent tool-exposure tests.
  *
- * Listens on 127.0.0.1 with an OS-assigned port, answers JSON-RPC `initialize`,
- * `tools/list` and `tools/call`, and records every method it receives.
+ * Answers JSON-RPC `initialize`, `tools/list` and `tools/call` inside the fetch
+ * stub, and records every method it receives. No socket is opened, so the
+ * helper runs the same on Deno, Node and Bun.
  *
  * Agents address it by a public host name. `withMockFetch` moves the guarded
  * outbound transport and its host resolver for the duration of the callback, so
- * the egress guard runs without DNS, and the stub forwards each request to the
- * local server. The server is shut down afterwards and every global is restored.
+ * the egress guard runs without DNS. Every global is restored afterwards.
  */
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 
@@ -31,56 +31,42 @@ export async function withMockMcpServer<T>(
   fn: (server: MockMcpServer) => Promise<T>,
 ): Promise<T> {
   const requests: string[] = [];
-  const server = Deno.serve(
-    { hostname: "127.0.0.1", port: 0, onListen: () => {} },
-    async (request) => {
-      const body = await request.json() as {
-        id?: string | number;
-        method?: string;
-        params?: { name?: string };
-      };
-      const method = body.method ?? "";
-      requests.push(method === "tools/call" ? `${method} ${body.params?.name ?? ""}` : method);
-      if (body.id === undefined) return new Response(null, { status: 202 });
-      const result = method === "initialize"
-        ? {
-          protocolVersion: "2025-03-26",
-          capabilities: { tools: {} },
-          serverInfo: { name: "mock-mcp", version: "1.0.0" },
-        }
-        : method === "tools/list"
-        ? {
-          tools: tools.map((tool) => ({
-            name: tool.name,
-            description: tool.description,
-            inputSchema: { type: "object", properties: {} },
-          })),
-        }
-        : method === "tools/call"
-        ? { content: [{ type: "text", text: `called ${body.params?.name ?? ""}` }] }
-        : {};
-      return Response.json({ jsonrpc: "2.0", id: body.id, result });
-    },
-  );
-  const localUrl = `http://127.0.0.1:${server.addr.port}/mcp`;
-  const realFetch = globalThis.fetch;
-  const forwardToLocalServer = ((input: string | URL | Request, init?: RequestInit) => {
+  const answer = async (request: Request): Promise<Response> => {
+    const body = await request.json() as {
+      id?: string | number;
+      method?: string;
+      params?: { name?: string };
+    };
+    const method = body.method ?? "";
+    requests.push(method === "tools/call" ? `${method} ${body.params?.name ?? ""}` : method);
+    if (body.id === undefined) return new Response(null, { status: 202 });
+    const result = method === "initialize"
+      ? {
+        protocolVersion: "2025-03-26",
+        capabilities: { tools: {} },
+        serverInfo: { name: "mock-mcp", version: "1.0.0" },
+      }
+      : method === "tools/list"
+      ? {
+        tools: tools.map((tool) => ({
+          name: tool.name,
+          description: tool.description,
+          inputSchema: { type: "object", properties: {} },
+        })),
+      }
+      : method === "tools/call"
+      ? { content: [{ type: "text", text: `called ${body.params?.name ?? ""}` }] }
+      : {};
+    return Response.json({ jsonrpc: "2.0", id: body.id, result });
+  };
+  const serveInProcess = ((input: string | URL | Request, init?: RequestInit) => {
     const requested = new URL(input instanceof Request ? input.url : String(input));
     if (requested.href !== MOCK_MCP_URL) {
       return Promise.reject(new Error(`Unexpected outbound request to ${requested.origin}`));
     }
-    return realFetch(localUrl, {
-      method: init?.method ?? "POST",
-      headers: init?.headers,
-      body: init?.body,
-      signal: init?.signal,
-    });
+    return answer(new Request(input, init));
   }) as typeof fetch;
-  try {
-    return await withMockFetch(forwardToLocalServer, () => fn({ url: MOCK_MCP_URL, requests }));
-  } finally {
-    await server.shutdown();
-  }
+  return await withMockFetch(serveInProcess, () => fn({ url: MOCK_MCP_URL, requests }));
 }
 
 /** The tools the mock MCP server publishes in these tests. */
