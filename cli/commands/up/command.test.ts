@@ -1,5 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertInstanceOf,
+  assertRejects,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
@@ -13,7 +18,8 @@ import type { ParsedArgs } from "#cli/shared/types";
 import { normalizeProjectSlug } from "#cli/shared/slug";
 import { capitalizeSeparatedWords } from "veryfront/utils/case-utils";
 import { resetInteractiveMode, setNonInteractive } from "../../shared/interactive.ts";
-import { setJsonMode } from "../../shared/json-output.ts";
+import { createErrorEnvelope, formatJsonOutput, setJsonMode } from "../../shared/json-output.ts";
+import { classifyCliError, safeJsonErrorContext } from "../../router.ts";
 import { stripAnsi } from "../../ui/ansi.ts";
 import { setLoggerPreset } from "#cli/logger-config";
 import type {
@@ -269,6 +275,31 @@ describe("Up Command", () => {
       const result = parseUpArgs(createArgs({ "dry-run": true }));
       assertSuccess(result);
       assertEquals(result.data.dryRun, true);
+    });
+
+    it("should parse --name as the name of the project up creates", () => {
+      const result = parseUpArgs(createArgs({ name: "Support Desk" }));
+      assertSuccess(result);
+      assertEquals(result.data.name, "Support Desk", "the name is kept as typed");
+    });
+
+    it("should leave --name unset when the flag is absent", () => {
+      const result = parseUpArgs(createArgs());
+      assertSuccess(result);
+      assertEquals(result.data.name, undefined, "the folder name stays the default");
+    });
+
+    it("should reject a --name that cannot produce a project slug", () => {
+      for (const name of ["", "   ", "!!!", "---"]) {
+        const result = parseUpArgs(createArgs({ name }));
+        assertEquals(result.success, false, `--name ${JSON.stringify(name)} is rejected`);
+        if (result.success) continue;
+        assertStringIncludes(
+          result.error.message,
+          "--name must contain at least one letter (a to z) or digit",
+          `--name ${JSON.stringify(name)} names the rule`,
+        );
+      }
     });
 
     it("should parse multiple flags", () => {
@@ -745,6 +776,240 @@ describe("Up Command", () => {
         _resetEnvironmentConfig();
         await Deno.remove(projectDir, { recursive: true });
       }
+    });
+
+    describe("project slug collisions", () => {
+      const COLLISION_PROBLEM = {
+        status: 409,
+        slug: "conflict",
+        detail: 'Project slug "customer-support" is already in use.',
+      };
+
+      /**
+       * A project folder named `customer-support` under a fresh temp parent,
+       * so the inferred slug is fixed regardless of the temp directory name.
+       */
+      async function withCustomerSupportDir(
+        run: (projectDir: string, homeDir: string) => Promise<void>,
+      ): Promise<void> {
+        const parentDir = await Deno.makeTempDir();
+        const projectDir = join(parentDir, "customer-support");
+        try {
+          await Deno.mkdir(projectDir);
+          await Deno.writeTextFile(join(projectDir, "package.json"), "{}");
+          setNonInteractive(true);
+          await run(projectDir, parentDir);
+        } finally {
+          resetInteractiveMode();
+          await Deno.remove(parentDir, { recursive: true });
+        }
+      }
+
+      /** Answers the auth check, records every project create, rejects anything else. */
+      function projectCreateFetch(
+        respond: () => Response,
+        creates: unknown[],
+      ): typeof fetch {
+        return (async (input: string | URL | Request, init?: RequestInit) => {
+          const request = input instanceof Request ? input : new Request(input, init);
+          const url = new URL(request.url);
+          if (request.method === "GET" && url.pathname === "/me") return identityResponse();
+          if (request.method === "POST" && url.pathname === "/projects") {
+            creates.push(await request.clone().json());
+            return respond();
+          }
+          throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
+        }) as typeof fetch;
+      }
+
+      it("reports a taken slug as project-slug-taken and names the --name fix", async () => {
+        await withCustomerSupportDir(async (projectDir, homeDir) => {
+          const creates: unknown[] = [];
+          const { deployProject, requests } = recordingDeployProject(VERIFIED_OUTCOME);
+
+          const error = await assertRejects(
+            () =>
+              captureLog(() =>
+                withMockFetch(
+                  projectCreateFetch(
+                    () => Response.json(COLLISION_PROBLEM, { status: 409 }),
+                    creates,
+                  ),
+                  () =>
+                    upCommand(
+                      { projectDir, force: false, dryRun: false },
+                      authenticatedEnv(homeDir),
+                      { deployProject },
+                    ),
+                )
+              ),
+            VeryfrontError,
+          );
+          assertInstanceOf(error, VeryfrontError, "the failure is a typed Veryfront error");
+
+          assertEquals(
+            creates,
+            [{ slug: "customer-support", name: "Customer Support" }],
+            "up tries the folder slug once and does not silently pick another",
+          );
+          assertEquals(requests.length, 0, "nothing is pushed or published after the collision");
+          assertEquals(error.slug, "project-slug-taken", "the collision has its own registry slug");
+          assertEquals(error.exitCode, 1, "a taken slug is a runtime failure, not a usage error");
+          assertEquals(
+            error.message,
+            'Project slug "customer-support" is already in use. Project slugs are unique across Veryfront. Run veryfront up --name <name> to create the project under a different name.',
+            "the message names the slug and the exact command that avoids it",
+          );
+        });
+      });
+
+      it("keeps the JSON error envelope schema-valid for a taken slug", async () => {
+        await withCustomerSupportDir(async (projectDir, homeDir) => {
+          const { deployProject } = recordingDeployProject(VERIFIED_OUTCOME);
+
+          const error = await assertRejects(
+            () =>
+              captureLog(() =>
+                withMockFetch(
+                  projectCreateFetch(() => Response.json(COLLISION_PROBLEM, { status: 409 }), []),
+                  () =>
+                    upCommand(
+                      { projectDir, force: false, dryRun: false },
+                      authenticatedEnv(homeDir),
+                      { deployProject },
+                    ),
+                )
+              ),
+            VeryfrontError,
+          );
+          assertInstanceOf(error, VeryfrontError, "the failure is a typed Veryfront error");
+
+          // The router builds the --json envelope from exactly these pieces.
+          const classification = classifyCliError(error);
+          const envelope = createErrorEnvelope("up", {
+            code: classification.code,
+            slug: classification.slug,
+            registrySlug: error.slug,
+            message: error.detail ?? error.message,
+            context: safeJsonErrorContext(error.context, error),
+          });
+
+          assertEquals(envelope.success, false, "the envelope reports failure");
+          assertEquals(envelope.error.code, "RUNTIME_ERROR", "a collision is a runtime error");
+          assertEquals(
+            envelope.error.slug,
+            "command-failed",
+            "the stable slug stays one of the two router classifications",
+          );
+          assertEquals(
+            envelope.error.registrySlug,
+            "project-slug-taken",
+            "the additive registrySlug carries the finer classification",
+          );
+          assertEquals(classification.exitCode, 1, "the process exits with 1");
+          assertStringIncludes(envelope.error.message, "veryfront up --name <name>");
+          assertEquals(
+            JSON.parse(formatJsonOutput(envelope)),
+            {
+              success: false,
+              command: "up",
+              error: {
+                code: "RUNTIME_ERROR",
+                slug: "command-failed",
+                registrySlug: "project-slug-taken",
+                message: error.detail ?? error.message,
+              },
+            },
+            "the serialized envelope carries no unsafe context and no extra fields",
+          );
+        });
+      });
+
+      it("keeps other project creation failures as they were", async () => {
+        await withCustomerSupportDir(async (projectDir, homeDir) => {
+          const { deployProject } = recordingDeployProject(VERIFIED_OUTCOME);
+
+          const error = await assertRejects(
+            () =>
+              captureLog(() =>
+                withMockFetch(
+                  projectCreateFetch(
+                    () => Response.json({ error: "internal" }, { status: 500 }),
+                    [],
+                  ),
+                  () =>
+                    upCommand(
+                      { projectDir, force: false, dryRun: false },
+                      authenticatedEnv(homeDir),
+                      { deployProject },
+                    ),
+                )
+              ),
+            Error,
+            "Project creation failed:",
+          );
+
+          assertEquals(
+            error instanceof VeryfrontError,
+            false,
+            "a non-collision failure is not reclassified as project-slug-taken",
+          );
+        });
+      });
+
+      it("creates the project from --name instead of the folder name", async () => {
+        await withCustomerSupportDir(async (projectDir, homeDir) => {
+          const creates: unknown[] = [];
+          const { deployProject, requests } = recordingDeployProject(VERIFIED_OUTCOME);
+
+          await captureLog(() =>
+            withMockFetch(
+              projectCreateFetch(
+                () => Response.json({ id: "project-1", slug: "acme-support" }),
+                creates,
+              ),
+              () =>
+                upCommand(
+                  { projectDir, name: "ACME Support", force: false, dryRun: false },
+                  authenticatedEnv(homeDir),
+                  { deployProject },
+                ),
+            )
+          );
+
+          assertEquals(
+            creates,
+            [{ slug: "acme-support", name: "ACME Support" }],
+            "the slug comes from --name and the name is sent as typed",
+          );
+          assertEquals(requests.length, 1, "the created project is then published");
+        });
+      });
+
+      it("ignores --name for a directory that is already linked", async () => {
+        const projectDir = await createLinkedProjectDir();
+        const { deployProject, requests } = recordingDeployProject(VERIFIED_OUTCOME);
+
+        try {
+          setNonInteractive(true);
+          await captureLog(() =>
+            withMockFetch(
+              authCheckOnlyFetch(),
+              () =>
+                upCommand(
+                  { projectDir, name: "ACME Support" },
+                  authenticatedEnv(projectDir),
+                  { deployProject },
+                ),
+            )
+          );
+
+          assertEquals(requests.length, 1, "the linked project is published without a create call");
+        } finally {
+          resetInteractiveMode();
+          await Deno.remove(projectDir, { recursive: true });
+        }
+      });
     });
 
     it("deploys a pulled local project link without creating a project", async () => {

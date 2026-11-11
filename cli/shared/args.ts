@@ -373,7 +373,7 @@ const COMMAND_VALUE_ARG_KEYS: Readonly<Record<string, readonly string[]>> = {
   styles: ["subcommand", "config"],
   task: ["name", "config"],
   test: ["filter"],
-  up: CommonArgs.projectDir.keys,
+  up: [...CommonArgs.projectDir.keys, "name"],
   uploads: [
     ...CommonArgs.projectSlug.keys,
     ...CommonArgs.projectDir.keys,

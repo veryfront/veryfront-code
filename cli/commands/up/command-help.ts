@@ -7,6 +7,10 @@ export const upHelp: CommandHelp = {
   usage: "veryfront up [options]",
   options: [
     {
+      flag: "--name <name>",
+      description: "Name of the project to create; its slug comes from this name",
+    },
+    {
       flag: "-f, --force",
       description: "Accept the inferred project name",
     },
@@ -15,9 +19,15 @@ export const upHelp: CommandHelp = {
       description: "Preview without executing",
     },
   ],
-  examples: ["veryfront up", "veryfront up --dry-run", "veryfront up --force"],
+  examples: [
+    "veryfront up",
+    'veryfront up --name "Support Desk"',
+    "veryfront up --dry-run",
+    "veryfront up --force",
+  ],
   notes: [
     "Links or creates the project, pushes the local source to main, and publishes its preview",
+    "--name applies only when up creates the project; the folder name is used otherwise",
     "Use veryfront push for subsequent preview updates",
     "Run veryfront deploy when the preview is ready for production",
   ],

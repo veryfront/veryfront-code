@@ -16,7 +16,7 @@ import {
   resolveConfigWithAuthDetails,
   type ResolvedConfig,
 } from "#cli/shared/config";
-import { reserveProjectSlug } from "#cli/shared/reserve-slug";
+import { ProjectSlugConflictError, reserveProjectSlug } from "#cli/shared/reserve-slug";
 import { normalizeProjectSlug } from "#cli/shared/slug";
 import {
   inferProjectSlugFromDirectory,
@@ -38,6 +38,7 @@ import { createStreamErrorResult, isJsonMode, streamJsonLine } from "../../share
 import {
   AUTHENTICATION_REQUIRED,
   DEPLOYMENT_ERROR,
+  PROJECT_SLUG_TAKEN,
   PROJECT_SOURCE_EMPTY,
   VeryfrontError,
 } from "veryfront/errors";
@@ -45,6 +46,9 @@ import {
 export const getUpArgsSchema = defineSchema((v) =>
   v.object({
     projectDir: v.string().optional(),
+    name: v.string()
+      .regex(/[a-z0-9]/i, "--name must contain at least one letter (a to z) or digit")
+      .optional(),
     force: v.boolean().default(false),
     dryRun: v.boolean().default(false),
   })
@@ -56,6 +60,7 @@ export type UpOptions = InferSchema<ReturnType<typeof getUpArgsSchema>>;
 
 export const parseUpArgs = createArgParser(UpArgsSchema, {
   projectDir: CommonArgs.projectDir,
+  name: { keys: ["name"], type: "string" },
   force: CommonArgs.force,
   dryRun: CommonArgs.dryRun,
 });
@@ -288,12 +293,16 @@ export async function upCommand(
       console.log("  Creating project...");
     }
 
-    let slug = context.suggestedSlug;
+    let projectName = options.name?.trim() || undefined;
+    let slug = projectName ? normalizeProjectSlug(projectName) : context.suggestedSlug;
 
-    if (!jsonOutput && isInteractive() && isTTY() && !force) {
+    if (!projectName && !jsonOutput && isInteractive() && isTTY() && !force) {
       const response = await promptUser(`Project name [${slug}]:`);
       const trimmed = response.trim();
-      if (trimmed) slug = normalizeProjectSlug(trimmed);
+      if (trimmed) {
+        projectName = trimmed;
+        slug = normalizeProjectSlug(trimmed);
+      }
     }
 
     const projectSpinner = dryRun || jsonOutput
@@ -322,7 +331,7 @@ export async function upCommand(
               context.config.apiToken,
               env,
               context.config.apiUrl,
-              options,
+              { ...options, ...(projectName ? { name: projectName } : {}) },
             );
             return { slug: reserved.slug, projectId: reserved.projectId };
           },
@@ -343,6 +352,14 @@ export async function upCommand(
       }
     } catch (error) {
       projectSpinner.stop();
+      if (error instanceof ProjectSlugConflictError) {
+        throw PROJECT_SLUG_TAKEN.create({
+          detail:
+            `${error.message} Project slugs are unique across Veryfront. Run veryfront up --name <name> to create the project under a different name.`,
+          context: { projectSlug: error.slug },
+          cause: error,
+        });
+      }
       const message = error instanceof Error ? error.message : String(error);
       throw new Error(`Project creation failed: ${message}`, { cause: error });
     }
