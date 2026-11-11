@@ -211,30 +211,40 @@ describe("tools for an unconnected integration", () => {
     });
   });
 
-  it("names the selected project in the connect hint", async () => {
+  it("names the resolved project by slug, never by local path, in the connect hint", async () => {
     const client = {
+      project: { id: "33333333-3333-4333-8333-333333333333", slug: "acme-support" },
       listTools: none,
       listConnections: none,
       getIntegration: () =>
         Promise.resolve({ name: "slack", auth: {}, credential_requirement: {}, tools: [] }),
     } as unknown as IntegrationClient;
 
-    const cases: Array<[Partial<typeof options> & Record<string, string>, string]> = [
-      [
-        { projectReference: "acme-support" },
-        "Connect slack first: run veryfront integration connect slack --project acme-support, then run this command again.",
-      ],
-      [
-        { projectDir: "/work/My App" },
-        "Connect slack first: run veryfront integration connect slack --project-dir '/work/My App', then run this command again.",
-      ],
-    ];
-    for (const [selection, expected] of cases) {
-      const result = await runIntegrationOperation({ ...options, ...selection }, client) as {
-        next_step: string;
-      };
-      assertEquals(result.next_step, expected, "the hint connects the project this command used");
-    }
+    const result = await runIntegrationOperation(
+      { ...options, projectDir: "/Users/someone/work/app" },
+      client,
+    ) as { next_step: string };
+
+    assertEquals(
+      result.next_step,
+      "Connect slack first: run veryfront integration connect slack --project acme-support, then run this command again.",
+    );
+  });
+
+  it("gives no connect hint for a project-credentials connector", async () => {
+    const client = {
+      listTools: none,
+      listConnections: none,
+      getIntegration: () =>
+        Promise.resolve({
+          name: "stripe",
+          auth: { type: "api_key" },
+          credential_requirement: { mode: "project_credentials" },
+          tools: catalogTools,
+        }),
+    } as unknown as IntegrationClient;
+
+    assertEquals(await runIntegrationOperation(options, client), { tools: [] });
   });
 
   it("filters the catalog tools with --search", async () => {

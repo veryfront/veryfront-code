@@ -64,6 +64,13 @@ export function requireIntegrationTarget(options: IntegrationCommandOptions): st
   return options.target;
 }
 
+/** The `connect` command for the project the client resolved, by slug, never by local path. */
+function connectCommand(client: IntegrationClient, target: string): string {
+  const slug = client.project?.slug;
+  const selection = slug && /^[a-z0-9][a-z0-9-]*$/.test(slug) ? ` --project ${slug}` : "";
+  return `veryfront integration connect ${target}${selection}`;
+}
+
 /**
  * Explain an empty tool list for an integration the project has not connected.
  *
@@ -71,21 +78,9 @@ export function requireIntegrationTarget(options: IntegrationCommandOptions): st
  * unconnected one answers with no tools although the catalog defines them.
  * Additive fields keep `tools` meaning "callable now" for existing consumers.
  * The explanation is advisory: if either lookup fails, the command returns the
- * empty list as before instead of failing.
+ * empty list as before instead of failing. A project-credentials connector is
+ * set up with environment variables, not `connect`, so it gets no hint.
  */
-function shellArgument(value: string): string {
-  return /^[\w@%+=:,./-]+$/.test(value) ? value : `'${value.replaceAll("'", `'"'"'`)}'`;
-}
-
-/** The `connect` command for the project this command selected. */
-function connectCommand(options: IntegrationCommandOptions, target: string): string {
-  const selection = [
-    ...(options.projectReference ? ["--project", shellArgument(options.projectReference)] : []),
-    ...(options.projectDir ? ["--project-dir", shellArgument(options.projectDir)] : []),
-  ];
-  return ["veryfront integration connect", target, ...selection].join(" ");
-}
-
 async function describeUnconnectedTools(
   client: IntegrationClient,
   options: IntegrationCommandOptions,
@@ -96,6 +91,7 @@ async function describeUnconnectedTools(
   if (connections.some((row) => row.status === "connected")) return {};
 
   const details = await client.getIntegration(target);
+  if (details.credential_requirement?.mode === "project_credentials") return {};
   const needle = search?.toLowerCase();
   const catalogTools = (Array.isArray(details.tools) ? details.tools : []).filter((tool) => {
     if (!tool || typeof tool !== "object" || Array.isArray(tool)) return false;
@@ -109,7 +105,7 @@ async function describeUnconnectedTools(
     connected: false,
     catalog_tools: catalogTools,
     next_step: `Connect ${target} first: run ${
-      connectCommand(options, target)
+      connectCommand(client, target)
     }, then run this command again.`,
   };
 }
