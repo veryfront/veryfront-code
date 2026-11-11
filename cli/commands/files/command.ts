@@ -251,12 +251,13 @@ export async function putRemoteFileFromLocal(
   signal?.throwIfAborted();
   const content = await fs.readTextFile(localPath);
   signal?.throwIfAborted();
+  // A retried guarded write would see its own committed version and report a conflict.
   const result = await client.put<PublishedFileReceipt>(destinationUrl, {
     content,
     ...(metadata ? { metadata } : {}),
     ...(expected && "absent" in expected ? { expected_absent: true } : {}),
     ...(expected && "versionId" in expected ? { expected_version_id: expected.versionId } : {}),
-  }, signal ? { signal, retryPolicy: "none" } : undefined);
+  }, signal || expected ? { ...(signal ? { signal } : {}), retryPolicy: "none" } : undefined);
   signal?.throwIfAborted();
   return {
     path: result.path ?? normalizeProjectFilePath(remotePath),

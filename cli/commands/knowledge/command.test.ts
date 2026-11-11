@@ -2247,6 +2247,26 @@ describe("runKnowledgeParser", () => {
     }
   });
 
+  it("titles a code file from its file name, not a leading comment", async () => {
+    const tempDir = await makeTempDir({ prefix: "veryfront-knowledge-parser-code-" });
+    const outputDir = join(tempDir, "knowledge-output");
+    const filePath = join(tempDir, "run_benchmark.py");
+
+    try {
+      await Deno.writeTextFile(filePath, "# Copyright notice\nprint('hi')\n");
+      const result = await runKnowledgeParser({ filePath, outputDir });
+
+      assertEquals(result.title, "run_benchmark");
+      assertEquals(result.slug, "run-benchmark");
+      assertStringIncludes(
+        await Deno.readTextFile(result.sandbox_output_path),
+        "\n# run_benchmark\n",
+      );
+    } finally {
+      await Deno.remove(tempDir, { recursive: true }).catch(() => undefined);
+    }
+  });
+
   it("uses an absolute URL source as the OKF resource", async () => {
     const tempDir = await makeTempDir({ prefix: "veryfront-knowledge-parser-url-" });
     const filePath = join(tempDir, "source.txt");
