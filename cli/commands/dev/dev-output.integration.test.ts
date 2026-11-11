@@ -17,7 +17,7 @@ import {
   waitForPromiseWithTimeout,
 } from "../../../tests/_helpers/server.ts";
 import { VERSION } from "#cli/utils";
-import { PROVIDER_KEY_ENV_NAMES } from "../../shared/inference-setup.ts";
+import { NO_INFERENCE_HEADING, PROVIDER_KEY_ENV_NAMES } from "../../shared/inference-setup.ts";
 
 const NOISY_DEFAULT_FRAGMENTS = [
   "Initializing caches...",
@@ -596,7 +596,7 @@ describe(
 
           const output = run.output();
           assertStringIncludes(output, "App ready");
-          assertStringIncludes(output, "No inference set up yet");
+          assertStringIncludes(output, NO_INFERENCE_HEADING);
           assertStringIncludes(output, "veryfront login");
           assertStringIncludes(output, "Use Veryfront Cloud?");
           for (const name of PROVIDER_KEY_ENV_NAMES) assertStringIncludes(output, name);
@@ -628,7 +628,7 @@ describe(
           assertStringIncludes(output, "Inference");
           assertStringIncludes(output, "OpenAI direct");
           assert(
-            !output.includes("No inference set up yet"),
+            !output.includes(NO_INFERENCE_HEADING),
             `a configured key must not be reported as missing\nOutput:\n${output}`,
           );
         });

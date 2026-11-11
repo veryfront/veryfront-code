@@ -26,6 +26,15 @@ export function advertisesCloudGateway(options: readonly string[]): boolean {
   );
 }
 
+/**
+ * Whether any listed option can serve a model request. A stored login without a
+ * linked project is listed so the reader sees the missing setup, but the
+ * gateway refuses model requests without a project.
+ */
+export function hasUsableInference(options: readonly string[]): boolean {
+  return options.some((option) => option !== CLOUD_GATEWAY_PROJECT_REQUIRED_LABEL);
+}
+
 /** Return the inference paths the current dev process can use without exposing credentials. */
 export function listInferenceOptions(environment: InferenceEnvironment): string[] {
   const options: string[] = [];

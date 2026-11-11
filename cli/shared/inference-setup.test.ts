@@ -1,6 +1,10 @@
 import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { inferenceSetupOptionLines, PROVIDER_KEY_ENV_NAMES } from "./inference-setup.ts";
+import {
+  inferenceSetupOptionLines,
+  NO_INFERENCE_HEADING,
+  PROVIDER_KEY_ENV_NAMES,
+} from "./inference-setup.ts";
 
 describe("shared/inference-setup", () => {
   const text = inferenceSetupOptionLines().join("\n");
@@ -30,6 +34,15 @@ describe("shared/inference-setup", () => {
 
   it("does not send the reader to push, which publishes the source", () => {
     assertEquals(text.includes("veryfront push"), false);
+  });
+
+  it("states what is missing without claiming no model can run", () => {
+    // A project can run `local/...` models or a provider it registers in code,
+    // which the CLI cannot see, so the heading names what was checked.
+    assertEquals(
+      NO_INFERENCE_HEADING,
+      "No provider key or linked Cloud project found. To use hosted models, choose one:",
+    );
   });
 
   it("follows the public copy rules", () => {

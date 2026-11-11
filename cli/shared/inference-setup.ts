@@ -15,6 +15,14 @@ export const PROVIDER_KEY_ENV_NAMES = [
   "MISTRAL_API_KEY",
 ] as const;
 
+/**
+ * Heading for the setup hint. It names what was checked instead of claiming no
+ * model can run: a project can use `local/...` models, or a provider it
+ * registers in code, which the CLI cannot see.
+ */
+export const NO_INFERENCE_HEADING =
+  "No provider key or linked Cloud project found. To use hosted models, choose one:";
+
 /** The two ways to get inference, as indented list lines without a heading. */
 export function inferenceSetupOptionLines(): string[] {
   const keyNames = `${PROVIDER_KEY_ENV_NAMES.slice(0, -1).join(", ")}, or ${
