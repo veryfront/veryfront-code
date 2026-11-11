@@ -698,6 +698,26 @@ describe("env-loader", () => {
       assertEquals(getEnvSource(TOKEN), { source: "process" }, "a shell key is a shell credential");
     });
 
+    it("does not alias a .env VERYFRONT_API_KEY while VERYFRONT_API_TOKEN_FILE is set", async () => {
+      // The token file wins the credential value, so the key's .env provenance
+      // must not attach to the token file's secret.
+      const TOKEN_FILE = "VERYFRONT_API_TOKEN_FILE";
+      const savedTokenFile = getEnv(TOKEN_FILE);
+      try {
+        setEnv(TOKEN_FILE, `${tempDir}/token-file`);
+        await writeEnvFile(".env", `${KEY}=<KEY_FROM_FILE>`);
+
+        await loadEnv({ cwd: tempDir });
+
+        assertEquals(getEnv(TOKEN), undefined, "the key is not copied into the token slot");
+        assertEquals(getEnvSource(TOKEN).source !== "env-file", true);
+        assertEquals(isVeryfrontApiTokenFromKey(), false);
+      } finally {
+        if (savedTokenFile === undefined) deleteEnv(TOKEN_FILE);
+        else setEnv(TOKEN_FILE, savedTokenFile);
+      }
+    });
+
     it("keeps an exported VERYFRONT_API_TOKEN when both names are set", async () => {
       setEnv(TOKEN, "<TOKEN_FROM_SHELL>");
       setEnv(KEY, "<KEY_FROM_SHELL>");

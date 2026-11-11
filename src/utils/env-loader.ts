@@ -346,6 +346,7 @@ export function markEnvLoaded(): void {
 }
 
 const VERYFRONT_API_TOKEN_ENV = "VERYFRONT_API_TOKEN";
+const VERYFRONT_API_TOKEN_FILE_ENV = "VERYFRONT_API_TOKEN_FILE";
 let veryfrontApiTokenAliasValue: string | undefined;
 
 function isBlank(value: string | undefined): boolean {
@@ -365,6 +366,10 @@ function isBlank(value: string | undefined): boolean {
 function applyVeryfrontApiKeyAlias(): void {
   settleVeryfrontApiKeyAlias();
   if (!isBlank(readExistingEnv(VERYFRONT_API_TOKEN_ENV))) return;
+  // A token file supplies the credential ahead of the token variable. Copying
+  // the key here would attach the key's `.env` provenance to the token file's
+  // secret, so a repository-steered API URL could receive it.
+  if (!isBlank(readExistingEnv(VERYFRONT_API_TOKEN_FILE_ENV))) return;
   const apiKey = readExistingEnv(VERYFRONT_API_KEY_ENV);
   if (apiKey === undefined || isBlank(apiKey)) return;
 
