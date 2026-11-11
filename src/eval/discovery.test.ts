@@ -532,6 +532,40 @@ describe("eval/discovery", () => {
       );
     });
 
+    it("names the error when the evals directory cannot be listed", async () => {
+      const adapter = createRuntimeAdapter({ "/project/evals/by-hand.eval.ts": "" });
+      adapter.fs.readDir = () => {
+        throw new Error("Permission denied: /project/evals");
+      };
+
+      const error = await rejection(resolveEvalById("eval:by-hand", {
+        projectDir: "/project",
+        adapter,
+        moduleLoader: async () => ({ default: evalDefinition() }),
+      }));
+
+      assertEquals(error.slug, "eval-load-failed");
+      assertEquals(
+        error.message,
+        "Eval eval:by-hand could not be loaded because the evals directory could not be read: Permission denied: evals. Fix the cause, then run the eval again.",
+        "a listing failure is not reported as a missing eval",
+      );
+    });
+
+    it("removes a native Windows project path from the load error", async () => {
+      for (const projectPath of ["C:\\work\\app", "c:/work/app", "file:///C:/work/app"]) {
+        const error = await rejection(resolveEvalById("eval:by-hand", {
+          projectDir: "C:\\work\\app",
+          adapter: createRuntimeAdapter({ "C:/work/app/evals/by-hand.eval.ts": "" }),
+          moduleLoader: async () => {
+            throw new Error(`Failed to read ${projectPath}\\evals\\by-hand.eval.ts: <CAUSE>`);
+          },
+        }));
+        assertEquals(error.slug, "eval-load-failed");
+        assertEquals(error.message.includes("work"), false, `${projectPath} is removed`);
+      }
+    });
+
     it("keeps findEvalById returning null for a file that does not load", async () => {
       const found = await findEvalById("eval:by-hand", {
         projectDir: "/project",

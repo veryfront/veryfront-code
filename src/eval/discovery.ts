@@ -11,6 +11,7 @@ import { isEvalDefinition } from "./factory.ts";
 import type { EvalDefinition } from "./types.ts";
 import { compareStrings } from "#veryfront/utils/compare.ts";
 import { sanitizeBoundedDiagnosticText } from "#veryfront/errors/diagnostic-policy.ts";
+import { redactPathFromText } from "#veryfront/utils/logger/redact.ts";
 import { EVAL_LOAD_FAILED, EVAL_NOT_FOUND } from "#veryfront/errors/error-registry/agent.ts";
 
 const EVAL_FILE_EXTENSIONS = [".ts", ".tsx", ".js", ".jsx"] as const;
@@ -253,9 +254,24 @@ function toProjectRelativePath(path: string, projectDir: string): string {
   return normalized.replace(/^\/+/, "");
 }
 
+/** Remove the project root, in any separator, case or `file:` URL form, from error text. */
 function withoutProjectRoot(text: string, projectDir: string): string {
   const root = projectRoot(projectDir);
-  return root && root !== "." ? text.replaceAll(`${root}/`, "") : text;
+  return root && root !== "." ? redactPathFromText(text, `${root}/`, "") : text;
+}
+
+/** Read the first entry of the evals directory, so a listing failure is not silent. */
+async function readEvalsDirError(
+  baseDir: string,
+  adapter: RuntimeAdapter,
+): Promise<string | undefined> {
+  try {
+    if (!await adapter.fs.exists(baseDir)) return undefined;
+    for await (const _entry of adapter.fs.readDir(baseDir)) break;
+    return undefined;
+  } catch (error) {
+    return toErrorMessage(error);
+  }
 }
 
 /**
@@ -288,10 +304,12 @@ export async function resolveEvalById(
     });
   }
 
-  const directoryError = errors.find((entry) => entry.filePath === baseDir);
-  if (directoryError) {
+  // collectFiles skips a directory it cannot list, so check the evals directory itself.
+  const directoryError = errors.find((entry) => entry.filePath === baseDir)?.error ??
+    await readEvalsDirError(baseDir, options.adapter);
+  if (directoryError !== undefined) {
     const cause = sanitizeBoundedDiagnosticText(
-      withoutProjectRoot(directoryError.error, options.projectDir),
+      withoutProjectRoot(directoryError, options.projectDir),
     ).replace(/\.$/, "");
     throw EVAL_LOAD_FAILED.create({
       detail:
