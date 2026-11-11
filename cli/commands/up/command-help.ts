@@ -27,7 +27,7 @@ export const upHelp: CommandHelp = {
   ],
   notes: [
     "Links or creates the project, pushes the local source to main, and publishes its preview",
-    "--name applies only when up creates the project; the folder name is used otherwise",
+    "--name applies only when up creates the project. Without it, up uses the package.json name, or the folder name when there is none. A linked project keeps its name",
     "Use veryfront push for subsequent preview updates",
     "Run veryfront deploy when the preview is ready for production",
   ],
