@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#std/assert";
+import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   parseGatewayProblemBody,
@@ -178,7 +178,7 @@ describe("chat/provider-errors", () => {
       );
     }
     for (
-      const [status, retryable] of [[400, false], [429, true], [500, true], [503, true]] as const
+      const [status, retryable] of [[429, true], [500, true], [503, true]] as const
     ) {
       const cause = new ProviderRequestError({
         provider: "anthropic",
@@ -192,6 +192,91 @@ describe("chat/provider-errors", () => {
       );
       assertEquals(cause.status, status);
       assertEquals(cause.retryable, retryable);
+    }
+  });
+
+  it("names the HTTP status and safe protocol fields of an unrecognised provider rejection", async () => {
+    const response = new Response(
+      JSON.stringify({
+        error: {
+          type: "invalid_request_error",
+          code: "invalid_value",
+          param: "max_tokens",
+          message: "Private provider wording <REDACTED> <PROMPT>",
+        },
+      }),
+      { status: 400, headers: { "content-type": "application/json" } },
+    );
+    const failure = await buildProviderError("openai", response);
+    const parsed = parseProviderError(createRuntimeProviderStreamFailure(failure));
+
+    assertEquals(
+      parsed,
+      {
+        code: "PROVIDER_REQUEST_REJECTED",
+        message:
+          "The model provider rejected the request with HTTP 400 (invalid_request_error, invalid_value, parameter max_tokens).",
+        status: 400,
+      },
+      "the status and the allowlisted fields name the rejection",
+    );
+    assertEquals(parsed.message.includes("<REDACTED>"), false, "provider wording stays private");
+    assertEquals(parsed.message.includes("<PROMPT>"), false, "the prompt stays private");
+  });
+
+  it("names the HTTP status of a rejection whose body carries no safe fields", () => {
+    for (const status of [400, 404, 422]) {
+      const cause = new ProviderRequestError({
+        provider: "anthropic",
+        status,
+        retryable: false,
+        message: "Private provider diagnostic <TOKEN>",
+      });
+      assertEquals(
+        parseProviderError(new Error("Provider stream failed", { cause })),
+        {
+          code: "PROVIDER_REQUEST_REJECTED",
+          message: `The model provider rejected the request with HTTP ${status}.`,
+          status,
+        },
+        `HTTP ${status}`,
+      );
+    }
+  });
+
+  it("keeps transient 4xx statuses out of the terminal rejection code", () => {
+    // 408 and 425 describe timing, not a wrong request: the same request can succeed later.
+    for (const status of [408, 425]) {
+      const cause = new ProviderRequestError({
+        provider: "openai",
+        status,
+        retryable: false,
+        message: "Private provider diagnostic <TOKEN>",
+      });
+      assertEquals(
+        parseProviderError(new Error("Provider stream failed", { cause })),
+        { code: "EXTERNAL_SERVICE_ERROR", message: "LLM provider service error" },
+        `HTTP ${status} stays a generic service error`,
+      );
+    }
+  });
+
+  it("keeps authentication, billing and rate-limit statuses out of the rejection code", () => {
+    for (const status of [401, 402, 403, 429]) {
+      const cause = new ProviderRequestError({
+        provider: "openai",
+        status,
+        retryable: status === 429,
+        message: "Private provider diagnostic <TOKEN>",
+      });
+      // Gateway provenance skips the native authentication mapping, so this
+      // also proves 401 and 403 do not fall through to the rejection code.
+      Object.defineProperty(cause, "viaVeryfrontGateway", { value: true });
+      assertEquals(
+        parseProviderError(cause).code === "PROVIDER_REQUEST_REJECTED",
+        false,
+        `HTTP ${status} keeps its own classification`,
+      );
     }
   });
 
@@ -707,9 +792,11 @@ describe("chat/provider-errors", () => {
           { status: 400 },
         ),
       );
+      // Not a workspace or usage limit: only the status and the allowlisted type.
       assertEquals(parseProviderError(error), {
-        code: "EXTERNAL_SERVICE_ERROR",
-        message: "LLM provider service error",
+        code: "PROVIDER_REQUEST_REJECTED",
+        message: "The model provider rejected the request with HTTP 400 (invalid_request_error).",
+        status: 400,
       });
     }
   });
@@ -1145,9 +1232,11 @@ describe("chat/provider-errors", () => {
 
         assertEquals(error.responseBody, undefined);
         assertEquals(JSON.stringify(error).includes("<TOKEN>"), false);
+        // Only the status reaches the message: "UNKNOWN" is not an allowlisted field.
         assertEquals(parseProviderError(error), {
-          code: "EXTERNAL_SERVICE_ERROR",
-          message: "LLM provider service error",
+          code: "PROVIDER_REQUEST_REJECTED",
+          message: "The model provider rejected the request with HTTP 400.",
+          status: 400,
         });
       });
 

@@ -8,6 +8,10 @@ import {
   ProviderRateLimitError,
   ProviderStreamProtocolError,
 } from "#veryfront/provider/runtime-loader/provider-http.ts";
+import {
+  formatProviderRequestRejection,
+  PROVIDER_REQUEST_REJECTED_CODE,
+} from "#veryfront/provider/runtime-loader/provider-error-diagnostic.ts";
 import { readRuntimeCost } from "#veryfront/provider/runtime-usage.ts";
 import {
   ACCOUNT_MODEL_DENIED_ERROR,
@@ -691,6 +695,35 @@ function classifyProviderErrorMessage(
   return null;
 }
 
+/**
+ * Name an unrecognised 4xx rejection by its status and the provider's
+ * allowlisted protocol fields (`type`, `code`, `param`).
+ *
+ * A rejected request fails the same way on every retry, and the generic
+ * service error hides which request was wrong. The provider's own wording
+ * stays private: only fields that `recordProviderErrorDiagnostic` already
+ * validated against a fixed allowlist reach the message. Authentication,
+ * billing and rate-limit statuses keep their own classifications, and the
+ * timing statuses 408 and 425 stay generic service errors.
+ */
+function classifyProviderRequestRejection(error: unknown): ParsedProviderError | null {
+  if (!(error instanceof ProviderError)) return null;
+  const status = error.status;
+  if (
+    typeof status !== "number" || status < 400 || status > 499 ||
+    status === 401 || status === 402 || status === 403 || status === 429 ||
+    // Timing statuses, not a wrong request: the same request can succeed later.
+    status === 408 || status === 425
+  ) {
+    return null;
+  }
+  return {
+    code: PROVIDER_REQUEST_REJECTED_CODE,
+    message: formatProviderRequestRejection(status, error),
+    status,
+  };
+}
+
 function parseProviderErrorInner(
   error: unknown,
   seen: WeakSet<object>,
@@ -744,6 +777,9 @@ function parseProviderErrorInner(
 
   const messageError = classifyProviderErrorMessage(error, parseProblemBody);
   if (messageError) return messageError;
+
+  const rejection = classifyProviderRequestRejection(error);
+  if (rejection) return rejection;
 
   return DEFAULT_EXTERNAL_SERVICE_ERROR;
 }

@@ -666,9 +666,11 @@ describe("provider-http", () => {
       );
 
       assertEquals(err.responseBody, undefined);
+      // The rejection is named by status only: "api_error" is not an allowlisted field.
       assertEquals(parseProviderError(err), {
-        code: "EXTERNAL_SERVICE_ERROR",
-        message: "LLM provider service error",
+        code: "PROVIDER_REQUEST_REJECTED",
+        message: "The model provider rejected the request with HTTP 400.",
+        status: 400,
       });
       assertEquals(JSON.stringify(err).includes("<TOKEN>"), false);
     });

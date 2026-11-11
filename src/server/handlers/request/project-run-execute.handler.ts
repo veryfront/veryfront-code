@@ -1,4 +1,8 @@
 import {
+  PROVIDER_REQUEST_REJECTED_CODE,
+  readProviderRequestRejectionMessage,
+} from "#veryfront/provider/runtime-loader/provider-error-diagnostic.ts";
+import {
   observeProjectRunCancellation,
   readRunStopObserverExpiry,
 } from "./project-run-cancellation-observer.ts";
@@ -275,6 +279,11 @@ function resolveProjectRunObservationError(
   if (typeof payload.code === "string") {
     const providerFailure = PROJECT_RUN_PUBLIC_PROVIDER_FAILURES.get(payload.code);
     if (providerFailure) return providerFailure;
+    if (payload.code === PROVIDER_REQUEST_REJECTED_CODE) {
+      // Rebuilt from the status and allowlisted fields only, never forwarded as given.
+      const message = readProviderRequestRejectionMessage(payload.message);
+      if (message) return { code: PROVIDER_REQUEST_REJECTED_CODE, message };
+    }
     if (payload.code === "EMPTY_ASSISTANT_OUTPUT") {
       return {
         code: "EMPTY_ASSISTANT_OUTPUT",

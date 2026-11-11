@@ -1,4 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { buildProviderError } from "#veryfront/provider/runtime-loader/provider-http.ts";
 import { AGENT_CONTEXT_WINDOW_EXCEEDED } from "#veryfront/errors";
 import {
   assert,
@@ -4992,6 +4993,43 @@ describe("resolveRelayableExecutionFailure", () => {
     assertEquals(
       resolveRuntimeExecutionErrorEvent(createRuntimeProviderStreamFailure(unclassified)),
       { type: "error", error: "Provider stream failed" },
+    );
+  });
+
+  it("names the status of a rejected model request instead of a bare stream failure", async () => {
+    // A delegated child agent reports this event back to its parent as the tool
+    // result, so a provider 400 must not reach the parent as "Provider stream failed".
+    const rejected = await buildProviderError(
+      "anthropic",
+      new Response(
+        JSON.stringify({
+          type: "error",
+          error: {
+            type: "invalid_request_error",
+            message: "Private provider wording <REDACTED> <PROMPT>",
+          },
+        }),
+        { status: 400, headers: { "content-type": "application/json" } },
+      ),
+    );
+    const failure = createRuntimeProviderStreamFailure(rejected);
+    const event = resolveRuntimeExecutionErrorEvent(failure);
+
+    assertEquals(event, {
+      type: "error",
+      error: "The model provider rejected the request with HTTP 400 (invalid_request_error).",
+      code: "PROVIDER_REQUEST_REJECTED",
+    }, "the delegated tool result names the status and the safe cause");
+    assertEquals(
+      JSON.stringify(event).includes("<REDACTED>"),
+      false,
+      "provider wording stays private",
+    );
+    assertEquals(JSON.stringify(event).includes("<PROMPT>"), false, "the prompt stays private");
+    assertEquals(
+      resolveRelayableExecutionFailure(failure)?.code,
+      "PROVIDER_REQUEST_REJECTED",
+      "the run error relays the classified cause",
     );
   });
 });
