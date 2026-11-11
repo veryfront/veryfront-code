@@ -2117,6 +2117,63 @@ describe("tool/remote-mcp", () => {
       });
     }
 
+    // The body @modelcontextprotocol/sdk 1.x returns for a protocol version it
+    // does not support; the server rejects the request before running it.
+    const unsupportedVersion = (version: string | null) =>
+      Response.json({
+        jsonrpc: "2.0",
+        error: {
+          code: -32000,
+          message: `Bad Request: Unsupported protocol version: ${version} ` +
+            "(supported versions: 2025-11-25, 2025-06-18, 2025-03-26, 2024-11-05, 2024-10-07)",
+        },
+        id: null,
+      }, { status: 400 });
+
+    it("initializes and retries a fresh call the server rejected for its protocol version", async () => {
+      const server = legacyFixture();
+      await withMockFetch(async (input, init) => {
+        const request = observe(input, init);
+        const version = request.headers.get("MCP-Protocol-Version");
+        if (request.body?.method === "tools/call" && version === "2026-07-28") {
+          server.requests.push(request);
+          return unsupportedVersion(version);
+        }
+        return await server.fetch(input, init);
+      }, async () => {
+        const source = createRemoteMCPToolSource({ endpoint: ENDPOINT });
+        assertEquals(await source.executeTool("ping", {}, { runId: "run-a" }), "pong");
+        assertEquals(await source.executeTool("ping", {}, { runId: "run-b" }), "pong");
+      });
+      assertEquals(server.requests.map((r) => r.body?.method ?? r.method), [
+        "tools/call",
+        "initialize",
+        "notifications/initialized",
+        "tools/call",
+        // The endpoint is now known as legacy: the next run initializes first.
+        "initialize",
+        "notifications/initialized",
+        "tools/call",
+      ]);
+    });
+
+    it("retries an unsupported-version call at most once", async () => {
+      const server = legacyFixture();
+      let calls = 0;
+      await withMockFetch(async (input, init) => {
+        const request = observe(input, init);
+        if (request.body?.method === "tools/call") {
+          calls++;
+          return unsupportedVersion(request.headers.get("MCP-Protocol-Version"));
+        }
+        return await server.fetch(input, init);
+      }, async () => {
+        const source = createRemoteMCPToolSource({ endpoint: ENDPOINT });
+        await assertRejects(() => source.executeTool("ping", {}), Error, "400");
+      });
+      assertEquals(calls, 2);
+    });
+
     it("does not fall back on recognized modern errors", async () => {
       const methods: string[] = [];
       await withMockFetch(async (input, init) => {
