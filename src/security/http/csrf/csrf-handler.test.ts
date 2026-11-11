@@ -1066,6 +1066,16 @@ describe("security/http/csrf/csrf-handler", () => {
       });
       const result = await handler.handle(req, createCtx(true));
       assertEquals(result.response?.status, 403, "server actions keep the cookie check");
+
+      const cookieless = new Request("http://localhost/_veryfront/rsc/action", {
+        method: "POST",
+        headers: { authorization: "Bearer <TOKEN>" },
+      });
+      assertEquals(
+        (await handler.handle(cookieless, createCtx(true))).continue,
+        true,
+        "a cookieless bearer action skips the check like any other route",
+      );
     });
   });
 

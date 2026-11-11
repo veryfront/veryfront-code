@@ -15,8 +15,9 @@
  * ## Server Actions integration
  *
  * When `security.csrf` is enabled, Server Action POSTs to `/_veryfront/rsc/action`
- * are **not** exempt and require a valid CSRF token. Client-side code that calls
- * Server Actions must:
+ * have no route exemption and require a valid CSRF token whenever they carry a
+ * cookie. Only a cookieless bearer request, as described above, skips the
+ * check. Browser code that calls Server Actions must:
  *
  * 1. Import `csrfMutationHeaders` from `veryfront/index.client`
  * 2. Use it to include the CSRF token on every POST
