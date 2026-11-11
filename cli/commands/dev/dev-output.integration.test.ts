@@ -17,6 +17,7 @@ import {
   waitForPromiseWithTimeout,
 } from "../../../tests/_helpers/server.ts";
 import { VERSION } from "#cli/utils";
+import { PROVIDER_KEY_ENV_NAMES } from "../../shared/inference-setup.ts";
 
 const NOISY_DEFAULT_FRAGMENTS = [
   "Initializing caches...",
@@ -574,6 +575,62 @@ describe(
               `default dev output should not include "${fragment}"\nOutput:\n${output}`,
             );
           }
+        });
+      },
+    );
+
+    it(
+      "names both ways to get inference when the project has none",
+      { timeout: TEST_TIMEOUTS.E2E },
+      async () => {
+        await withTestContext("dev-output-no-inference", async (context) => {
+          await scaffoldMinimalProject(context.projectDir);
+          await ensureVeryfrontDevCliBootstrapCached(context.projectDir);
+          const port = await context.allocatePort();
+          // No login, no linked project, and no provider key in the child env.
+          const run = startVeryfrontDev(context.projectDir, port);
+          context.addCleanup(run.stop);
+
+          await requestPageAndApi(port, run.request, run.output);
+          await run.stop();
+
+          const output = run.output();
+          assertStringIncludes(output, "App ready");
+          assertStringIncludes(output, "No inference set up yet");
+          assertStringIncludes(output, "veryfront login");
+          assertStringIncludes(output, "Use Veryfront Cloud?");
+          for (const name of PROVIDER_KEY_ENV_NAMES) assertStringIncludes(output, name);
+          assert(
+            !output.includes("veryfront push"),
+            `inference setup must not send the reader to push\nOutput:\n${output}`,
+          );
+        });
+      },
+    );
+
+    it(
+      "reports a configured provider key and no setup hint",
+      { timeout: TEST_TIMEOUTS.E2E },
+      async () => {
+        await withTestContext("dev-output-provider-key", async (context) => {
+          await scaffoldMinimalProject(context.projectDir);
+          await ensureVeryfrontDevCliBootstrapCached(context.projectDir);
+          const port = await context.allocatePort();
+          const run = startVeryfrontDev(context.projectDir, port, [], {
+            OPENAI_API_KEY: "<API_KEY>",
+          });
+          context.addCleanup(run.stop);
+
+          await requestPageAndApi(port, run.request, run.output);
+          await run.stop();
+
+          const output = run.output();
+          assertStringIncludes(output, "Inference");
+          assertStringIncludes(output, "OpenAI direct");
+          assert(
+            !output.includes("No inference set up yet"),
+            `a configured key must not be reported as missing\nOutput:\n${output}`,
+          );
         });
       },
     );

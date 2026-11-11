@@ -57,6 +57,7 @@ import {
 } from "./connected-dev.ts";
 import { saveSharedProjectAssociation } from "../../shared/project-link.ts";
 import { chooseCloudProject } from "../../shared/cloud-project.ts";
+import { inferenceSetupOptionLines } from "../../shared/inference-setup.ts";
 import { createCloudOnboardingTransport } from "../../shared/cloud-onboarding-transport.ts";
 import { isInteractive } from "../../shared/interactive.ts";
 import {
@@ -627,6 +628,12 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
             `  ${dim("Default model")} ${brand(displayOptions.defaultModel)} (configured)`,
           );
         }
+      }
+      // With no inference path, the first agent message fails. Say so here,
+      // with both fixes, instead of leaving the reader to find out in chat.
+      if (inferenceOptions.length === 0) {
+        console.log(`  ${warning("!")} No inference set up yet. To use agents, choose one:`);
+        for (const line of inferenceSetupOptionLines()) console.log(`    ${line}`);
       }
       // The banner reports configured paths, and it must not block Ready on a
       // network round-trip (see `void authReady` above). But an expired stored

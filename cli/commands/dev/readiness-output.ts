@@ -34,7 +34,7 @@ export function devReadinessLines(options: {
   } else {
     lines.push(
       "    Execution       This machine",
-      "    Veryfront       Not linked. Run veryfront push to create or link a project for gateway inference and Studio runs.",
+      '    Veryfront       Not linked. For gateway inference and Studio runs, restart veryfront dev and answer Yes to "Use Veryfront Cloud?". This publishes nothing.',
     );
   }
   return lines;

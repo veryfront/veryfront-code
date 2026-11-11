@@ -5,7 +5,7 @@ import { deleteEnv, getEnv, setEnv } from "#cli/process-env";
 import { _resetEnvironmentConfig } from "#veryfront/config/environment-config.ts";
 import { makeTempDirWithOptions } from "#veryfront/testing/deno-compat.ts";
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { it } from "#veryfront/testing/bdd.ts";
 import { saveSharedProjectAssociation } from "../../../../cli/shared/project-link.ts";
 
@@ -94,14 +94,22 @@ it("asks Yes/No before project selection and skips Cloud setup on No", async () 
   const { chooseCloudProject } = await import("../../../../cli/shared/cloud-project.ts");
   const directory = await makeTempDirWithOptions();
   const prompts: Array<{ question: string; labels: string[] }> = [];
+  const printed: string[] = [];
+  const originalLog = console.log;
+  console.log = (...args: unknown[]) => void printed.push(args.map(String).join(" "));
   try {
-    await chooseCloudProject(directory, (question, options) => {
+    const choice = await chooseCloudProject(directory, (question, options) => {
       prompts.push({ question, labels: options.map((option) => option.label) });
       return Promise.resolve("no");
     });
+    // Only the caller knows whether inference is already configured (a key in
+    // .env), so the caller, not this prompt, says what the reader needs next.
+    assertEquals(choice, "declined");
+    assertEquals(printed, []);
     assertEquals(prompts, [{ question: "Use Veryfront Cloud?", labels: ["Yes", "No"] }]);
     assertEquals(await Array.fromAsync(Deno.readDir(directory)), []);
   } finally {
+    console.log = originalLog;
     await Deno.remove(directory, { recursive: true });
   }
 });
@@ -109,10 +117,11 @@ it("asks Yes/No before project selection and skips Cloud setup on No", async () 
 it("asks new or existing project only after choosing Yes", async () => {
   const { chooseCloudProject } = await import("../../../../cli/shared/cloud-project.ts");
   const prompts: Array<{ question: string; labels: string[] }> = [];
-  await chooseCloudProject("unused", (question, options) => {
+  const choice = await chooseCloudProject("unused", (question, options) => {
     prompts.push({ question, labels: options.map((option) => option.label) });
     return Promise.resolve(prompts.length === 1 ? "yes" : null);
   });
+  assertEquals(choice, "cancelled");
   assertEquals(prompts, [
     { question: "Use Veryfront Cloud?", labels: ["Yes", "No"] },
     {
@@ -131,10 +140,11 @@ it("creates a cloud project without uploading local source", async () => {
         return Promise.resolve(Response.json({ id: "cloud-new" }, { status: 201 }));
       }) as typeof fetch,
       async () => {
-        await chooseCloudProject(directory, (_question, _options) =>
+        const choice = await chooseCloudProject(directory, (_question, _options) =>
           Promise.resolve(
             requests.length ? null : _question === "Use Veryfront Cloud?" ? "yes" : "new",
           ));
+        assertEquals(choice, "linked");
       },
     );
     assertEquals(requests.map((request) => [new URL(request.url).pathname, request.method]), [[
@@ -192,7 +202,7 @@ it("leaves local source unassociated when the cloud project list is empty", asyn
     await withMockFetch(
       (() => Promise.resolve(Response.json({ data: [], page_info: {} }))) as typeof fetch,
       async () => {
-        await assertRejects(
+        const error = await assertRejects(
           () =>
             chooseCloudProject(
               directory,
@@ -202,6 +212,10 @@ it("leaves local source unassociated when the cloud project list is empty", asyn
           Error,
           "No cloud projects found",
         );
+        assert(error instanceof Error);
+        // `veryfront push` publishes the source; creating a project here does not.
+        assert(!error.message.includes("veryfront push"), error.message);
+        assert(error.message.includes('"Create a new cloud project"'), error.message);
       },
     );
     assertEquals(await readProjectLink(directory), null);
@@ -219,7 +233,7 @@ it("keeps the local project unassociated when cloud project selection is cancell
           Response.json({ data: [{ id: "cloud-one", slug: "shared" }], page_info: {} }),
         )) as typeof fetch,
       async () => {
-        await chooseCloudProject(directory, (question) =>
+        const choice = await chooseCloudProject(directory, (question) =>
           Promise.resolve(
             question === "Use Veryfront Cloud?"
               ? "yes"
@@ -227,6 +241,7 @@ it("keeps the local project unassociated when cloud project selection is cancell
               ? "existing"
               : null,
           ));
+        assertEquals(choice, "cancelled");
       },
     );
     assertEquals(await readProjectLink(directory), null);

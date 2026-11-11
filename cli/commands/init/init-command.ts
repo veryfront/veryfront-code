@@ -22,6 +22,7 @@ import { runInteractiveWizard, shouldRunWizard } from "./interactive-wizard.ts";
 import { isTTY } from "#cli/utils";
 import { isInteractive } from "../../shared/interactive.ts";
 import { chooseCloudProject } from "../../shared/cloud-project.ts";
+import { inferenceSetupOptionLines } from "../../shared/inference-setup.ts";
 import { DEFAULT_TEMPLATE } from "./catalog.ts";
 
 type StructureNode = {
@@ -265,16 +266,23 @@ export async function initCommand(
       observer: installObserver,
       beforeGitInitialization: async (projectDir) => {
         if (!quiet && !options.deploy && isTTY() && isInteractive()) {
+          let linked = false;
           try {
-            await chooseCloudProject(projectDir);
+            linked = await chooseCloudProject(projectDir) === "linked";
           } catch (error) {
             log(
               `  Cloud setup could not finish: ${
                 error instanceof Error ? error.message : "Unknown error"
               }`,
             );
+          }
+          if (!linked) {
+            // One log entry, so the logger marks the block once, not every line.
             log(
-              "  Your local project is ready. Run veryfront push to create or link a Cloud project later.",
+              [
+                "  Your local project is ready. To use agents, set up inference in one of these ways:",
+                ...inferenceSetupOptionLines().map((line) => `    ${line}`),
+              ].join("\n"),
             );
           }
         }

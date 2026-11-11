@@ -36,3 +36,12 @@ Deno.test("remote connection and local-only readiness remain explicit", () => {
   assertStringIncludes(output, "Not linked");
   assertEquals(output.includes("✓ Connected"), false);
 });
+
+Deno.test("the not-linked line says how to link without publishing", () => {
+  const output = devReadinessLines({ appUrl: "http://localhost:3000" }).join("\n");
+  assertStringIncludes(output, "Not linked");
+  assertStringIncludes(output, 'answer Yes to "Use Veryfront Cloud?"');
+  assertStringIncludes(output, "publishes nothing");
+  // `veryfront push` publishes the source; linking for inference does not need it.
+  assertEquals(output.includes("veryfront push"), false);
+});
