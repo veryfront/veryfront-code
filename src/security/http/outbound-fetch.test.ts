@@ -830,10 +830,6 @@ describe("createVeryfrontApiOriginBoundOutboundFetch", () => {
       async () => {
         await withPrivateDns(async (seen) => {
           await assertHintedBlock(
-            () => createVeryfrontApiOriginBoundOutboundFetch(STAGING_API)(`${STAGING_API}/health`),
-            "api.staging.example",
-          );
-          await assertHintedBlock(
             () => guardedOutboundFetch(`${STAGING_API}/health`),
             "api.staging.example",
           );
@@ -841,6 +837,78 @@ describe("createVeryfrontApiOriginBoundOutboundFetch", () => {
         });
       },
     );
+  });
+
+  it("names the origin allowlist, not the worker host list, for an origin-bound transport", async () => {
+    __resetOperatorVeryfrontApiOriginsForTests();
+    await withEnv(
+      {
+        VERYFRONT_API_URL: STAGING_API,
+        VERYFRONT_WORKER_ALLOWED_INTERNAL_HOSTS: "",
+        [HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS_ENV]: "",
+      },
+      async () => {
+        await withPrivateDns(async (seen) => {
+          for (
+            const request of [
+              () =>
+                createVeryfrontApiOriginBoundOutboundFetch(STAGING_API)(`${STAGING_API}/health`),
+              () => createOriginBoundOutboundFetch(STAGING_API)(`${STAGING_API}/health`),
+            ]
+          ) {
+            const error = await assertRejects(
+              request,
+              OutboundRequestBlockedError,
+              `Outbound network egress blocked for host: api.staging.example. The host resolves to a private network address. If you trust this origin, add ${STAGING_API} to ${HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS_ENV}`,
+            ) as Error;
+            assertEquals(
+              error.message.includes(ALLOWLIST_HINT),
+              false,
+              `the worker-wide host list is not suggested: ${error.message}`,
+            );
+          }
+          assertEquals(seen, [], "a blocked request never reaches the transport");
+        });
+      },
+    );
+    // Following the hint lifts the block for that origin.
+    await withEnv(
+      { VERYFRONT_API_URL: STAGING_API, [HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS_ENV]: STAGING_API },
+      async () => {
+        await withPrivateDns(async (seen) => {
+          const response = await createVeryfrontApiOriginBoundOutboundFetch(STAGING_API)(
+            `${STAGING_API}/health`,
+          );
+          assertEquals(response.status, 200, "the listed origin reaches the transport");
+          assertEquals(seen, [`${STAGING_API}/health`]);
+        });
+      },
+    );
+  });
+
+  it("formats the hint without consulting a replaced String.prototype.endsWith", async () => {
+    const originalEndsWith = String.prototype.endsWith;
+    await withEnv({ VERYFRONT_WORKER_ALLOWED_INTERNAL_HOSTS: "" }, async () => {
+      await withPrivateDns(async () => {
+        let rejection: unknown;
+        // Only the boundary's own message trips the replacement; the guard's
+        // hostname checks are out of scope for this test.
+        String.prototype.endsWith = function (this: string, ...args) {
+          if (String(this).startsWith("Outbound network egress blocked")) {
+            throw new Error("project code ran inside the host boundary");
+          }
+          return Reflect.apply(originalEndsWith, this, args);
+        };
+        try {
+          await guardedOutboundFetch(`${STAGING_API}/health`);
+        } catch (error) {
+          rejection = error;
+        } finally {
+          String.prototype.endsWith = originalEndsWith;
+        }
+        await assertHintedBlock(() => Promise.reject(rejection), "api.staging.example");
+      });
+    });
   });
 
   it("lets the named allowlist variable through for the exact hostname only", async () => {
