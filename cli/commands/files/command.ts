@@ -197,24 +197,30 @@ export async function getRemoteFile(
   return getFileContent(client, projectSlug, normalizeProjectFilePath(remotePath), MAIN_SOURCE);
 }
 
-/** Reads a file at its exact path; `undefined` when it does not exist, `""` when it is binary. */
+/** A guard for a file write: the path must still be absent, or still at this version. */
+export type RemoteFileWriteExpectation = { absent: true } | { versionId: string };
+
+/** Reads a file at its exact path; `undefined` when it does not exist. Binary content reads as `""`. */
 export async function readRemoteFileIfExists(
   client: ApiClient,
   projectSlug: string,
   remotePath: string,
   destination?: RemoteFileWriteDestination,
   signal?: AbortSignal,
-): Promise<string | undefined> {
+): Promise<{ content: string; versionId?: string } | undefined> {
   const params: Record<string, string> = { exact_path: "true" };
   if (destination?.branch !== undefined) params.ref = `branch:${destination.branch}`;
   else if (destination?.branchId !== undefined) params.branch_id = destination.branchId;
   try {
-    const file = await client.get<{ content?: unknown }>(
+    const file = await client.get<{ content?: unknown; version_id?: unknown }>(
       `/projects/${projectSlug}/files/${encodeURIComponent(normalizeProjectFilePath(remotePath))}`,
       params,
       signal ? { signal } : undefined,
     );
-    return typeof file.content === "string" ? file.content : "";
+    return {
+      content: typeof file.content === "string" ? file.content : "",
+      ...(typeof file.version_id === "string" ? { versionId: file.version_id } : {}),
+    };
   } catch (error) {
     if (error && typeof error === "object" && "status" in error && error.status === 404) {
       return undefined;
@@ -238,6 +244,7 @@ export async function putRemoteFileFromLocal(
   signal?: AbortSignal,
   destination?: RemoteFileWriteDestination,
   metadata?: Record<string, unknown>,
+  expected?: RemoteFileWriteExpectation,
 ): Promise<PublishedFileReceipt> {
   const destinationUrl = buildRemoteFileUrl(projectSlug, remotePath, destination);
   const fs = createFileSystem();
@@ -247,6 +254,8 @@ export async function putRemoteFileFromLocal(
   const result = await client.put<PublishedFileReceipt>(destinationUrl, {
     content,
     ...(metadata ? { metadata } : {}),
+    ...(expected && "absent" in expected ? { expected_absent: true } : {}),
+    ...(expected && "versionId" in expected ? { expected_version_id: expected.versionId } : {}),
   }, signal ? { signal, retryPolicy: "none" } : undefined);
   signal?.throwIfAborted();
   return {

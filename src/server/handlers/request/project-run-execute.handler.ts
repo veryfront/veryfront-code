@@ -4971,7 +4971,7 @@ async function executeKnowledgeIngestRun(input: {
               input.signal,
             ),
           indexKnowledgeDocument: indexCanonical,
-          uploadKnowledgeFile: (remotePath, localPath, metadata, storageKind) =>
+          uploadKnowledgeFile: (remotePath, localPath, metadata, storageKind, expected) =>
             storageKind === "binary"
               ? putBinaryKnowledgeAsset({
                 client,
@@ -4990,6 +4990,7 @@ async function executeKnowledgeIngestRun(input: {
                 input.signal,
                 outputDestination,
                 metadata,
+                expected,
               ),
           signal: input.signal,
         });

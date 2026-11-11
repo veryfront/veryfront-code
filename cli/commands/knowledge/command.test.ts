@@ -929,6 +929,7 @@ describe("ingestResolvedSources", () => {
       "knowledge/contracts-q1-2.md": '---\ntype: "Document"\nresource: "q1.pdf"\n---\n',
     };
     const reads: string[] = [];
+    const writes: unknown[] = [];
     const result = await ingestResolvedSources(
       [createUploadSource("uploads/contracts/q1.pdf")],
       createKnowledgeCommandArgs(),
@@ -939,10 +940,14 @@ describe("ingestResolvedSources", () => {
         runParser: async () => createParserSuccess(),
         readRemoteKnowledgeFile: async (path) => {
           reads.push(path);
-          return remote[path];
+          const content = remote[path];
+          return content === undefined ? undefined : { content, versionId: "v-other" };
         },
         indexKnowledgeDocument: async (input) => createIndexReceipt(input.published.path),
-        uploadKnowledgeFile: async (remotePath) => ({ path: remotePath }),
+        uploadKnowledgeFile: async (remotePath, _local, _metadata, _kind, expected) => {
+          writes.push({ remotePath, expected });
+          return { path: remotePath };
+        },
       },
     );
 
@@ -951,11 +956,15 @@ describe("ingestResolvedSources", () => {
       "knowledge/contracts-q1-2.md",
       "knowledge/contracts-q1-3.md",
     ]);
-    assertEquals(result.ingested[0]?.remotePath, "knowledge/contracts-q1-3.md");
+    assertEquals(writes, [{
+      remotePath: "knowledge/contracts-q1-3.md",
+      expected: { absent: true },
+    }]);
     assertEquals(result.ingested[0]?.slug, "contracts-q1-3");
   });
 
-  it("updates the knowledge file when it already holds the same source", async () => {
+  it("updates the knowledge file it already wrote for the same source at that version", async () => {
+    const writes: unknown[] = [];
     const result = await ingestResolvedSources(
       [createUploadSource("uploads/contracts/q1.pdf")],
       createKnowledgeCommandArgs(),
@@ -964,14 +973,58 @@ describe("ingestResolvedSources", () => {
         projectSlug: "my-project",
         outputDir: "/workspace/knowledge",
         runParser: async () => createParserSuccess(),
-        readRemoteKnowledgeFile: async () =>
-          '---\ntype: "Document"\nresource: "uploads/contracts/q1.pdf"\n---\n',
+        readRemoteKnowledgeFile: async () => ({
+          content: '---\ntype: "Document"\nresource: "uploads/contracts/q1.pdf"\n---\n',
+          versionId: "v-1",
+        }),
         indexKnowledgeDocument: async (input) => createIndexReceipt(input.published.path),
-        uploadKnowledgeFile: async (remotePath) => ({ path: remotePath }),
+        uploadKnowledgeFile: async (remotePath, _local, _metadata, _kind, expected) => {
+          writes.push({ remotePath, expected });
+          return { path: remotePath };
+        },
       },
     );
 
     assertEquals(result.ingested[0]?.remotePath, "knowledge/contracts-q1.md");
+    assertEquals(writes, [{
+      remotePath: "knowledge/contracts-q1.md",
+      expected: { versionId: "v-1" },
+    }]);
+  });
+
+  it("chooses again when another run takes the path between the read and the write", async () => {
+    const remote = new Map<string, string>();
+    const writes: string[] = [];
+    const result = await ingestResolvedSources(
+      [createUploadSource("uploads/contracts/q1.pdf")],
+      createKnowledgeCommandArgs(),
+      {
+        client: createMockClient(),
+        projectSlug: "my-project",
+        outputDir: "/workspace/knowledge",
+        runParser: async () => createParserSuccess(),
+        readRemoteKnowledgeFile: async (path) => {
+          const content = remote.get(path);
+          return content === undefined ? undefined : { content, versionId: "v-other" };
+        },
+        indexKnowledgeDocument: async (input) => createIndexReceipt(input.published.path),
+        uploadKnowledgeFile: async (remotePath, _local, _metadata, _kind, expected) => {
+          writes.push(remotePath);
+          if (remotePath === "knowledge/contracts-q1.md") {
+            assertEquals(expected, { absent: true });
+            remote.set(remotePath, '---\nresource: "uploads/other/q1.pdf"\n---\n');
+            throw Object.assign(new Error("File was created after absence was observed"), {
+              status: 409,
+            });
+          }
+          return { path: remotePath };
+        },
+      },
+    );
+
+    assertEquals(result.failed, []);
+    assertEquals(writes, ["knowledge/contracts-q1.md", "knowledge/contracts-q1-2.md"]);
+    assertEquals(result.ingested[0]?.remotePath, "knowledge/contracts-q1-2.md");
   });
 
   it("preserves generic custom destinations without claiming a canonical knowledge index", async () => {

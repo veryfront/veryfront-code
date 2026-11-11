@@ -2,6 +2,7 @@ import { INVALID_ARGUMENT } from "veryfront/errors";
 import { createFileSystem } from "veryfront/platform";
 import { basename, join, normalize, relative } from "veryfront/platform/path";
 import { inspectOkfDocument } from "veryfront/knowledge";
+import type { RemoteFileWriteExpectation } from "../files/command.ts";
 import { classifyKnowledgeDirectoryPath, classifyKnowledgeSourcePath } from "./source-policy.ts";
 import type {
   KnowledgeIngestFailedFileResult,
@@ -283,23 +284,35 @@ export function buildKnowledgeSourceFileName(source: KnowledgeSource): string {
 
 const MAX_KNOWLEDGE_PATH_SUFFIX = 100;
 
+/** A remote path for a generated document and the guard its write must hold. */
+export interface ClaimedKnowledgePath {
+  remotePath: string;
+  expected?: RemoteFileWriteExpectation;
+}
+
 /**
  * Pick the remote Markdown path for a generated document. A path already holding
  * another source's document gets a short `-2`, `-3` suffix instead of being overwritten.
+ * The returned guard makes the write fail if the path changed after it was read.
  */
 export async function claimGeneratedKnowledgePath(input: {
   remotePath: string;
   resource: string;
-  readRemoteFile?: (remotePath: string) => Promise<string | undefined>;
-}): Promise<string> {
-  if (!input.readRemoteFile) return input.remotePath;
+  readRemoteFile?: (
+    remotePath: string,
+  ) => Promise<{ content: string; versionId?: string } | undefined>;
+}): Promise<ClaimedKnowledgePath> {
+  if (!input.readRemoteFile) return { remotePath: input.remotePath };
   const stem = input.remotePath.replace(/\.md$/i, "");
   for (let attempt = 1; attempt <= MAX_KNOWLEDGE_PATH_SUFFIX; attempt += 1) {
     const candidate = attempt === 1 ? input.remotePath : `${stem}-${attempt}.md`;
     const existing = await input.readRemoteFile(candidate);
-    if (existing === undefined) return candidate;
-    if (inspectOkfDocument(candidate, existing).metadata.resource === input.resource) {
-      return candidate;
+    if (existing === undefined) return { remotePath: candidate, expected: { absent: true } };
+    if (
+      existing.versionId &&
+      inspectOkfDocument(candidate, existing.content).metadata.resource === input.resource
+    ) {
+      return { remotePath: candidate, expected: { versionId: existing.versionId } };
     }
   }
   throw new Error(`No free knowledge path for ${input.remotePath}`);

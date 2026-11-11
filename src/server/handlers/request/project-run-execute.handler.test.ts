@@ -147,7 +147,7 @@ function knowledgeTargetReadResponse(
   const content = published.get(path);
   return content === undefined
     ? Response.json({ error: "File not found" }, { status: 404 })
-    : Response.json({ path, content });
+    : Response.json({ path, content, version_id: canonicalKnowledgeFixtureReceipt.version_id });
 }
 
 async function canonicalKnowledgePublicationResponse(
