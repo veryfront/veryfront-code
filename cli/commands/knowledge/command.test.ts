@@ -2117,6 +2117,39 @@ describe("runKnowledgeParser", () => {
     }
   });
 
+  it("reuses the output name when the same source is parsed again", async () => {
+    const tempDir = await makeTempDir({ prefix: "veryfront-knowledge-parser-repeat-" });
+    const outputDir = join(tempDir, "knowledge-output");
+    const filePath = join(tempDir, "a.md");
+
+    try {
+      await Deno.writeTextFile(filePath, "# Overview\n\nText.");
+      const first = await runKnowledgeParser({ filePath, outputDir, resource: "a.md" });
+      const second = await runKnowledgeParser({ filePath, outputDir, resource: "a.md" });
+
+      assertEquals([first.slug, second.slug], ["overview", "overview"]);
+    } finally {
+      await Deno.remove(tempDir, { recursive: true }).catch(() => undefined);
+    }
+  });
+
+  it("keeps a slug from a long H1 within a short file name", async () => {
+    const tempDir = await makeTempDir({ prefix: "veryfront-knowledge-parser-long-" });
+    const outputDir = join(tempDir, "knowledge-output");
+    const filePath = join(tempDir, "a.md");
+
+    try {
+      await Deno.writeTextFile(filePath, `# ${"long title ".repeat(30)}\n\nText.`);
+      const result = await runKnowledgeParser({ filePath, outputDir });
+
+      assert(result.slug.length <= 80, result.slug);
+      assertEquals(result.slug.endsWith("-"), false);
+      assertStringIncludes(await Deno.readTextFile(result.sandbox_output_path), "Text.");
+    } finally {
+      await Deno.remove(tempDir, { recursive: true }).catch(() => undefined);
+    }
+  });
+
   it("uses an absolute URL source as the OKF resource", async () => {
     const tempDir = await makeTempDir({ prefix: "veryfront-knowledge-parser-url-" });
     const filePath = join(tempDir, "source.txt");

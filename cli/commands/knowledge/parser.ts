@@ -229,26 +229,39 @@ function findFirstH1(markdown: string): string | undefined {
   return undefined;
 }
 
-/** A slug from a title, without a leading list number such as "20. ". */
+const MAX_TITLE_SLUG_LENGTH = 80;
+
+/** A short slug from a title, without a leading list number such as "20. ". */
 function slugifyTitle(title: string): string {
-  return slugifyKnowledgeValue(title.replace(/^\d+[.)]\s+/, ""));
+  const slug = slugifyKnowledgeValue(title.replace(/^\d+[.)]\s+/, ""));
+  return slug.slice(0, MAX_TITLE_SLUG_LENGTH).replace(/-+$/, "") || "document";
 }
 
-/** Write a new file `<slug>.md`, adding `-2`, `-3` when the run already wrote that name. */
-async function writeNewKnowledgeFile(
+/**
+ * Write `<slug>.md`, adding `-2`, `-3` when that name holds another source's document.
+ * A file that already holds the same resource is rewritten under its name.
+ */
+async function writeKnowledgeFile(
   outputDir: string,
   slug: string,
+  resource: string,
   markdown: string,
   signal?: AbortSignal,
 ): Promise<{ slug: string; path: string }> {
   for (let attempt = 1;; attempt += 1) {
     const candidate = attempt === 1 ? slug : `${slug}-${attempt}`;
     const path = join(outputDir, `${candidate}.md`);
+    let existing: string;
     try {
+      existing = await Deno.readTextFile(path);
+    } catch (error) {
+      if (!(error instanceof Deno.errors.NotFound)) throw error;
       await Deno.writeTextFile(path, markdown, { createNew: true, signal });
       return { slug: candidate, path };
-    } catch (error) {
-      if (!(error instanceof Deno.errors.AlreadyExists)) throw error;
+    }
+    if (inspectOkfDocument(path, existing).metadata.resource === resource) {
+      await Deno.writeTextFile(path, markdown, { signal });
+      return { slug: candidate, path };
     }
   }
 }
@@ -758,11 +771,12 @@ export async function runKnowledgeParsers(input: {
       const heading = findFirstH1(content);
       const title = heading ?? stem;
       const sourceReference = file.sourceReference ?? fileName;
+      const resource = file.resource ?? sourceReference;
       const markdown = [
         buildFrontmatter({
           title,
           description,
-          resource: file.resource ?? sourceReference,
+          resource,
           tags: sourceReference.startsWith("uploads/")
             ? ["upload", definition.sourceType]
             : [definition.sourceType],
@@ -783,9 +797,10 @@ export async function runKnowledgeParsers(input: {
         outputPath = join(input.outputDir, `${slug}.md`);
         await Deno.writeTextFile(outputPath, markdown, { signal: deps.signal });
       } else {
-        ({ slug, path: outputPath } = await writeNewKnowledgeFile(
+        ({ slug, path: outputPath } = await writeKnowledgeFile(
           input.outputDir,
           slugifyTitle(title),
+          resource,
           markdown,
           deps.signal,
         ));
