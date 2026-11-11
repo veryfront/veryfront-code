@@ -741,6 +741,39 @@ describe("env-loader", () => {
       }
     });
 
+    it("lets a later project .env token replace an earlier key alias", async () => {
+      // `veryfront dev --project` loads the cwd first, then the project. An
+      // alias is not a value the user set, so it must not block the token.
+      const projectDir = `${tempDir}/project`;
+      setEnv(KEY, "<KEY_FROM_SHELL>");
+      await loadEnv({ cwd: tempDir });
+      assertEquals(getEnv(TOKEN), "<KEY_FROM_SHELL>", "the first load aliases the key");
+
+      await Deno.mkdir(projectDir);
+      await writeTextFile(`${projectDir}/.env`, `${TOKEN}=<PROJECT_TOKEN>`);
+      await loadAdditionalEnv({ cwd: projectDir });
+
+      assertEquals(getEnv(TOKEN), "<PROJECT_TOKEN>", "an explicit token wins over the key");
+      assertEquals(getEnvSource(TOKEN), {
+        source: "env-file",
+        file: `${projectDir}/.env`,
+        expandedFromProcessEnv: false,
+      });
+      assertEquals(isVeryfrontApiTokenFromKey(), false);
+    });
+
+    it("still keeps a real earlier token over a later project .env token", async () => {
+      const projectDir = `${tempDir}/project`;
+      setEnv(TOKEN, "<TOKEN_FROM_SHELL>");
+      await loadEnv({ cwd: tempDir });
+
+      await Deno.mkdir(projectDir);
+      await writeTextFile(`${projectDir}/.env`, `${TOKEN}=<PROJECT_TOKEN>`);
+      await loadAdditionalEnv({ cwd: projectDir });
+
+      assertEquals(getEnv(TOKEN), "<TOKEN_FROM_SHELL>", "the shell keeps precedence");
+    });
+
     it("keeps an exported VERYFRONT_API_TOKEN when both names are set", async () => {
       setEnv(TOKEN, "<TOKEN_FROM_SHELL>");
       setEnv(KEY, "<KEY_FROM_SHELL>");

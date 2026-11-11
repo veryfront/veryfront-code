@@ -105,6 +105,20 @@ function startEnvDirLoad(cwd: string, options: EnvDirLoadOptions): Promise<void>
   return load;
 }
 
+/**
+ * The value an env load must respect for `key`. A token copied from
+ * `VERYFRONT_API_KEY` is derived, not set by the user, so a later file's
+ * explicit `VERYFRONT_API_TOKEN` replaces it, as it would without the alias.
+ */
+function readExistingValueForLoad(key: string): string | undefined {
+  const existing = readExistingEnv(key);
+  if (existing === undefined) return undefined;
+  const isTokenSlot = envLoaderOsType() === "windows"
+    ? applyIntrinsic(stringToLowerCase, key, []) === "veryfront_api_token"
+    : key === VERYFRONT_API_TOKEN_ENV;
+  return isTokenSlot && isVeryfrontApiTokenFromKey() ? undefined : existing;
+}
+
 /** Whether a value already in the environment must stay, given the load mode. */
 function keepsExistingValue(
   existing: string | undefined,
@@ -145,8 +159,9 @@ async function readEnvDirFiles(cwd: string, options: EnvDirLoadOptions): Promise
       for (const [key, { value, expandedFromProcessEnv }] of Object.entries(vars)) {
         const foldedKey = foldKey(key);
         const setByThisLoad = keysSetByThisLoad.has(foldedKey);
-        if (keepsExistingValue(readExistingEnv(key), setByThisLoad, options)) continue;
+        if (keepsExistingValue(readExistingValueForLoad(key), setByThisLoad, options)) continue;
 
+        if (foldedKey === foldKey(VERYFRONT_API_TOKEN_ENV)) veryfrontApiTokenAliasValue = undefined;
         setEnv(key, value);
         keysSetByThisLoad.add(foldedKey);
         markEnvFileValue(key);
