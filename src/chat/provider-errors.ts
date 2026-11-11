@@ -703,14 +703,17 @@ function classifyProviderErrorMessage(
  * service error hides which request was wrong. The provider's own wording
  * stays private: only fields that `recordProviderErrorDiagnostic` already
  * validated against a fixed allowlist reach the message. Authentication,
- * billing and rate-limit statuses keep their own classifications.
+ * billing and rate-limit statuses keep their own classifications, and the
+ * timing statuses 408 and 425 stay generic service errors.
  */
 function classifyProviderRequestRejection(error: unknown): ParsedProviderError | null {
   if (!(error instanceof ProviderError)) return null;
   const status = error.status;
   if (
     typeof status !== "number" || status < 400 || status > 499 ||
-    status === 401 || status === 402 || status === 403 || status === 429
+    status === 401 || status === 402 || status === 403 || status === 429 ||
+    // Timing statuses, not a wrong request: the same request can succeed later.
+    status === 408 || status === 425
   ) {
     return null;
   }

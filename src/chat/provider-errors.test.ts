@@ -244,6 +244,23 @@ describe("chat/provider-errors", () => {
     }
   });
 
+  it("keeps transient 4xx statuses out of the terminal rejection code", () => {
+    // 408 and 425 describe timing, not a wrong request: the same request can succeed later.
+    for (const status of [408, 425]) {
+      const cause = new ProviderRequestError({
+        provider: "openai",
+        status,
+        retryable: false,
+        message: "Private provider diagnostic <TOKEN>",
+      });
+      assertEquals(
+        parseProviderError(new Error("Provider stream failed", { cause })),
+        { code: "EXTERNAL_SERVICE_ERROR", message: "LLM provider service error" },
+        `HTTP ${status} stays a generic service error`,
+      );
+    }
+  });
+
   it("keeps authentication, billing and rate-limit statuses out of the rejection code", () => {
     for (const status of [401, 402, 403, 429]) {
       const cause = new ProviderRequestError({
