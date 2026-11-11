@@ -6087,7 +6087,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
 
     it("reports the load error that resolveEvalById names", async () => {
       const message =
-        "Eval eval:by-hand failed to load from evals/by-hand.eval.ts: Eval description must be a non-empty string. Fix the file, then run the eval again.";
+        "Eval eval:by-hand failed to load from evals/by-hand.eval.ts: answer.contains text must be a non-empty string. Fix the file, then run the eval again.";
       const lookups: string[] = [];
 
       const body = await executeEval({

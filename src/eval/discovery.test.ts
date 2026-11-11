@@ -428,12 +428,12 @@ describe("eval/discovery", () => {
             "eval:by-hand",
             async () => {
               throw new Error(
-                "Failed to read /project/evals/by-hand.eval.ts: Eval description must be a non-empty string",
+                "Failed to read /project/evals/by-hand.eval.ts: answer.contains text must be a non-empty string",
               );
             },
           ),
         VeryfrontError,
-        "Eval eval:by-hand failed to load from evals/by-hand.eval.ts: Failed to read evals/by-hand.eval.ts: Eval description must be a non-empty string. Fix the file, then run the eval again.",
+        "Eval eval:by-hand failed to load from evals/by-hand.eval.ts: Failed to read evals/by-hand.eval.ts: answer.contains text must be a non-empty string. Fix the file, then run the eval again.",
       );
       const error = await rejection(resolveLocal(
         { "/project/evals/by-hand.eval.ts": "" },

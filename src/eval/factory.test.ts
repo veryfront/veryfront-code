@@ -66,14 +66,34 @@ describe("eval/factory", () => {
     assertThrows(
       () =>
         evalAgent({
-          id: "eval:blank-description",
+          id: "eval:numeric-description",
           target: "agent:researcher",
           dataset: datasets.inline([{ id: "q1", input: "hello" }]),
-          description: "   ",
+          description: 42 as never,
         }),
       Error,
-      "Eval description must be a non-empty string",
+      "Eval description must be a string",
     );
+  });
+
+  it("treats an empty description as no description", () => {
+    // The Veryfront API writes `description: ""` for an eval made in Studio with
+    // the Description field left empty.
+    for (const description of ["", "   "]) {
+      for (const define of [evalAgent, evalTool]) {
+        const definition = define({
+          id: "eval:empty-description",
+          target: define === evalAgent ? "agent:researcher" : "tool:lookup_order",
+          dataset: datasets.inline([{ id: "q1", input: "hello" }]),
+          description,
+        });
+        assertEquals(
+          Object.hasOwn(definition, "description"),
+          false,
+          `description ${JSON.stringify(description)} is dropped`,
+        );
+      }
+    }
   });
 
   it("creates a first-class tool eval definition", async () => {

@@ -107,6 +107,20 @@ describe("eval source resolution from a project directory", () => {
     );
   });
 
+  it("resolves the source Studio writes when the description is left empty", async () => {
+    await resolveInProject(
+      {
+        "evals/by-hand.eval.ts": EVAL_SOURCE.replace("  target:", '  description: "",\n  target:'),
+      },
+      "eval:by-hand",
+      async (resolve) => {
+        const found = await resolve();
+        assertEquals(found.id, "eval:by-hand");
+        assertEquals(Object.hasOwn(found.definition, "description"), false);
+      },
+    );
+  });
+
   it("resolves a nested eval file without the .eval suffix", async () => {
     await resolveInProject(
       { "evals/rag/retrieval.ts": EVAL_SOURCE },
