@@ -157,3 +157,237 @@ describe("complete CLI collection output", () => {
     });
   }
 });
+
+describe("tools for an unconnected integration", () => {
+  const catalogTools = [
+    {
+      id: "slack__list_channels",
+      name: "List Channels",
+      description: "List channels",
+      requires_write: false,
+      input_schema: { type: "object" },
+    },
+    {
+      id: "slack__send_message",
+      name: "Send Message",
+      description: "Send a message",
+      requires_write: true,
+      input_schema: { type: "object" },
+    },
+  ];
+  // deno-lint-ignore require-yield
+  async function* none() {
+    return;
+  }
+  const options = {
+    subcommand: "tools" as const,
+    target: "slack",
+    scope: "user" as const,
+    noBrowser: false,
+    timeout: 300,
+  };
+
+  it("lists the catalog tools and says how to connect when the project has no connection", async () => {
+    const client = {
+      listTools: none,
+      listConnections: none,
+      getIntegration: () =>
+        Promise.resolve({
+          name: "slack",
+          auth: {},
+          credential_requirement: {},
+          tools: catalogTools,
+        }),
+    } as unknown as IntegrationClient;
+
+    const result = await runIntegrationOperation(options, client);
+
+    assertEquals(result, {
+      tools: [],
+      connected: false,
+      catalog_tools: catalogTools,
+      next_step:
+        "Connect slack first: run veryfront integration connect slack, then run this command again.",
+    });
+  });
+
+  it("names the resolved project by slug, never by local path, in the connect hint", async () => {
+    const client = {
+      project: { id: "33333333-3333-4333-8333-333333333333", slug: "acme-support" },
+      listTools: none,
+      listConnections: none,
+      getIntegration: () =>
+        Promise.resolve({ name: "slack", auth: {}, credential_requirement: {}, tools: [] }),
+    } as unknown as IntegrationClient;
+
+    const result = await runIntegrationOperation(
+      { ...options, projectDir: "/Users/someone/work/app" },
+      client,
+    ) as { next_step: string };
+
+    assertEquals(
+      result.next_step,
+      "Connect slack first: run veryfront integration connect slack --project acme-support, then run this command again.",
+    );
+  });
+
+  it("gives no connect hint for a project-credentials connector", async () => {
+    const client = {
+      listTools: none,
+      listConnections: none,
+      getIntegration: () =>
+        Promise.resolve({
+          name: "stripe",
+          auth: { type: "api_key" },
+          credential_requirement: { mode: "project_credentials" },
+          tools: catalogTools,
+        }),
+    } as unknown as IntegrationClient;
+
+    assertEquals(await runIntegrationOperation(options, client), { tools: [] });
+  });
+
+  it("filters the catalog tools with --search", async () => {
+    const client = {
+      listTools: none,
+      listConnections: none,
+      getIntegration: () =>
+        Promise.resolve({
+          name: "slack",
+          auth: {},
+          credential_requirement: {},
+          tools: catalogTools,
+        }),
+    } as unknown as IntegrationClient;
+
+    const result = await runIntegrationOperation({ ...options, search: "send" }, client) as {
+      catalog_tools: unknown[];
+    };
+
+    assertEquals(result.catalog_tools, [catalogTools[1]]);
+  });
+
+  it("keeps an empty list unchanged when a connection exists", async () => {
+    async function* connected() {
+      yield {
+        id: "11111111-1111-4111-8111-111111111111",
+        integration: "slack",
+        connection_generation_id: "22222222-2222-4222-8222-222222222222",
+        scope: "user",
+        status: "connected",
+      };
+    }
+    let catalogReads = 0;
+    const client = {
+      listTools: none,
+      listConnections: connected,
+      getIntegration: () => {
+        catalogReads++;
+        return Promise.reject(new Error("unexpected catalog read"));
+      },
+    } as unknown as IntegrationClient;
+
+    assertEquals(await runIntegrationOperation(options, client), { tools: [] });
+    assertEquals(catalogReads, 0, "a connected integration does not read the catalog");
+  });
+
+  it("returns the tool list alone when the project has tools", async () => {
+    const tool = { id: "slack__send_message", name: "Send Message" };
+    async function* someTools() {
+      yield tool;
+    }
+    let extraReads = 0;
+    const client = {
+      listTools: someTools,
+      listConnections: () => {
+        extraReads++;
+        return none();
+      },
+      getIntegration: () => {
+        extraReads++;
+        return Promise.reject(new Error("unexpected catalog read"));
+      },
+    } as unknown as IntegrationClient;
+
+    assertEquals(await runIntegrationOperation(options, client), { tools: [tool] });
+    assertEquals(extraReads, 0, "a non-empty list makes no extra requests");
+  });
+
+  it("treats an expired connection as not connected", async () => {
+    async function* expired() {
+      yield {
+        id: "11111111-1111-4111-8111-111111111111",
+        integration: "slack",
+        connection_generation_id: "22222222-2222-4222-8222-222222222222",
+        scope: "user",
+        status: "expired",
+      };
+    }
+    const client = {
+      listTools: none,
+      listConnections: expired,
+      getIntegration: () =>
+        Promise.resolve({
+          name: "slack",
+          auth: {},
+          credential_requirement: {},
+          tools: catalogTools,
+        }),
+    } as unknown as IntegrationClient;
+
+    const result = await runIntegrationOperation(options, client) as Record<string, unknown>;
+
+    assertEquals(result.connected, false, "an expired connection cannot run tools");
+    assertEquals(result.catalog_tools, catalogTools, "the catalog tools are listed");
+  });
+
+  it("keeps the previous output when the connection or catalog lookup fails", async () => {
+    const failures: Array<[string, Partial<Record<string, unknown>>]> = [
+      ["connections", {
+        listConnections: () => {
+          throw new Error("connections unavailable");
+        },
+      }],
+      ["catalog", {
+        getIntegration: () => Promise.reject(new Error("catalog unavailable")),
+      }],
+    ];
+    for (const [name, override] of failures) {
+      const client = {
+        listTools: none,
+        listConnections: none,
+        getIntegration: () =>
+          Promise.resolve({ name: "slack", auth: {}, credential_requirement: {}, tools: [] }),
+        ...override,
+      } as unknown as IntegrationClient;
+
+      assertEquals(
+        await runIntegrationOperation(options, client),
+        { tools: [] },
+        `a failed ${name} lookup does not turn a successful tools call into an error`,
+      );
+    }
+  });
+
+  it("drops malformed catalog rows and matches --search case-insensitively", async () => {
+    const client = {
+      listTools: none,
+      listConnections: none,
+      getIntegration: () =>
+        Promise.resolve({
+          name: "slack",
+          auth: {},
+          credential_requirement: {},
+          tools: [null, "slack__send_message", [catalogTools[1]], ...catalogTools],
+        }),
+    } as unknown as IntegrationClient;
+
+    const all = await runIntegrationOperation(options, client) as { catalog_tools: unknown[] };
+    assertEquals(all.catalog_tools, catalogTools, "only object rows are listed");
+
+    const searched = await runIntegrationOperation({ ...options, search: "SEND" }, client) as {
+      catalog_tools: unknown[];
+    };
+    assertEquals(searched.catalog_tools, [catalogTools[1]], "search ignores letter case");
+  });
+});

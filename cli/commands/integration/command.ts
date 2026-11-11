@@ -63,6 +63,53 @@ export function requireIntegrationTarget(options: IntegrationCommandOptions): st
   }
   return options.target;
 }
+
+/** The `connect` command for the project the client resolved, by slug, never by local path. */
+function connectCommand(client: IntegrationClient, target: string): string {
+  const slug = client.project?.slug;
+  const selection = slug && /^[a-z0-9][a-z0-9-]*$/.test(slug) ? ` --project ${slug}` : "";
+  return `veryfront integration connect ${target}${selection}`;
+}
+
+/**
+ * Explain an empty tool list for an integration the project has not connected.
+ *
+ * The project tool list holds only the tools of connected integrations, so an
+ * unconnected one answers with no tools although the catalog defines them.
+ * Additive fields keep `tools` meaning "callable now" for existing consumers.
+ * The explanation is advisory: if either lookup fails, the command returns the
+ * empty list as before instead of failing. A project-credentials connector is
+ * set up with environment variables, not `connect`, so it gets no hint.
+ */
+async function describeUnconnectedTools(
+  client: IntegrationClient,
+  options: IntegrationCommandOptions,
+  target: string,
+): Promise<Record<string, unknown>> {
+  const search = options.search;
+  const connections = await collectIntegrationRows(client.listConnections(target));
+  if (connections.some((row) => row.status === "connected")) return {};
+
+  const details = await client.getIntegration(target);
+  if (details.credential_requirement?.mode === "project_credentials") return {};
+  const needle = search?.toLowerCase();
+  const catalogTools = (Array.isArray(details.tools) ? details.tools : []).filter((tool) => {
+    if (!tool || typeof tool !== "object" || Array.isArray(tool)) return false;
+    if (!needle) return true;
+    const { id, name } = tool as Record<string, unknown>;
+    return [id, name].some((value) =>
+      typeof value === "string" && value.toLowerCase().includes(needle)
+    );
+  });
+  return {
+    connected: false,
+    catalog_tools: catalogTools,
+    next_step: `Connect ${target} first: run ${
+      connectCommand(client, target)
+    }, then run this command again.`,
+  };
+}
+
 export async function runIntegrationOperation(
   options: IntegrationCommandOptions,
   client: IntegrationClient,
@@ -80,10 +127,19 @@ export async function runIntegrationOperation(
       return client.getIntegration(target);
     case "connections":
       return { connections: await collectIntegrationRows(client.listConnections(target)) };
-    case "tools":
-      return {
-        tools: await collectIntegrationRows(client.listTools(target, { name: options.search })),
-      };
+    case "tools": {
+      const tools = await collectIntegrationRows(
+        client.listTools(target, { name: options.search }),
+      );
+      if (tools.length > 0) return { tools };
+      let unconnected: Record<string, unknown> = {};
+      try {
+        unconnected = await describeUnconnectedTools(client, options, target);
+      } catch {
+        // Advisory only: keep the result the command returned before.
+      }
+      return { tools, ...unconnected };
+    }
     case "status": {
       if (options.toolName) {
         return {
