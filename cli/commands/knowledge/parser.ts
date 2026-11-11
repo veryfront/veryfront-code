@@ -212,10 +212,11 @@ function buildFrontmatter(input: {
   ].join("\n");
 }
 
-/** The first ATX H1 outside fenced code, if any. */
+/** The first ATX H1 outside fenced code and leading YAML frontmatter, if any. */
 function findFirstH1(markdown: string): string | undefined {
   let fence: string | undefined;
-  for (const line of markdown.split("\n")) {
+  const body = markdown.replace(/^---\n[\s\S]*?\n---(?:\n|$)/, "");
+  for (const line of body.split("\n")) {
     const marker = /^ {0,3}(`{3,}|~{3,})/.exec(line)?.[1];
     if (marker) {
       if (!fence) fence = marker;

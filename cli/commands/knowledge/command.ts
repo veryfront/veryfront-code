@@ -1017,8 +1017,12 @@ export async function ingestResolvedSources(
             claim.expected,
           );
         } catch (error) {
-          // Another writer took the path after it was read: choose again.
-          if (!claim.expected || attempt >= MAX_PATH_CLAIM_ATTEMPTS || !isConflict(error)) {
+          // Another source took a free path after it was read: choose again. A conflict on
+          // this source's own document means a newer write won, so it must not be overwritten.
+          if (
+            !claim.expected || !("absent" in claim.expected) ||
+            attempt >= MAX_PATH_CLAIM_ATTEMPTS || !isConflict(error)
+          ) {
             throw error;
           }
         }
