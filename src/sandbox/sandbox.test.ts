@@ -1232,6 +1232,18 @@ describe("Sandbox", () => {
         assertStringIncludes(error.message, "ttl_hours must be positive");
       });
 
+      it("leaves another validation failure that mentions project_id unchanged", async () => {
+        mockFetch([jsonResponse(missingProjectProblem("project_id must be a UUID"), 400)]);
+
+        const error = (await assertRejects(
+          () => Sandbox.create({ authToken: "<TOKEN>", apiUrl: "https://api.test.com" }),
+          VeryfrontError,
+        )) as VeryfrontError;
+
+        assertEquals(error.message.includes("projectReference"), false, "no hint");
+        assertStringIncludes(error.message, "project_id must be a UUID");
+      });
+
       it("leaves a different status with the same wording unchanged", async () => {
         mockFetch([jsonResponse({ ...missingProjectProblem(), status: 422 }, 422)]);
 

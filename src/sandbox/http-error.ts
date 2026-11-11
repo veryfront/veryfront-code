@@ -110,6 +110,9 @@ export async function createSandboxHttpError(
   });
 }
 
+/** The API's detail when a sandbox create call selects no project. */
+const MISSING_PROJECT_DETAIL =
+  "project_id (or an environment_id that belongs to a project) is required to create a sandbox session";
 const MISSING_PROJECT_SELECTOR_HINT =
   "Pass projectReference (REST field project_reference) with the project slug or ID, or environmentId for an environment that belongs to a project.";
 
@@ -134,7 +137,7 @@ export function withMissingProjectSelectorHint(
     return error;
   }
   const detail = ownValue(problem, "detail");
-  if (typeof detail !== "string" || !detail.includes("project_id")) return error;
+  if (detail !== MISSING_PROJECT_DETAIL) return error;
   return REQUEST_ERROR.create({
     status: 400,
     detail: `${error.message} ${MISSING_PROJECT_SELECTOR_HINT}`,
