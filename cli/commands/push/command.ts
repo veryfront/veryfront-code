@@ -47,6 +47,7 @@ import {
   INVALID_ARGUMENT,
   PREVIEW_HOSTNAME_TOO_LONG,
   PROJECT_LINK_STALE,
+  PROJECT_SLUG_TAKEN,
   PUSH_CONFLICT,
   sanitizeTerminalDiagnosticText,
   VeryfrontError,
@@ -405,10 +406,12 @@ function gitProvenanceError(source?: GitSource): Error {
 function projectSlugConflictError(
   error: ProjectSlugConflictError,
   source: ProjectReferenceSource,
-): Error {
-  return new Error(
-    `${error.message} ${slugConflictAction(source)}, then run veryfront push again.`,
-  );
+): VeryfrontError {
+  return PROJECT_SLUG_TAKEN.create({
+    detail: `${error.message} ${slugConflictAction(source)}, then run veryfront push again.`,
+    context: { projectSlug: error.slug },
+    cause: error,
+  });
 }
 
 async function sourceFilesForGitTracking(

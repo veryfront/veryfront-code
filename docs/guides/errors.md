@@ -774,6 +774,14 @@ Linked project not found.
 - **CLI exit code:** 1
 - **What to do:** Run veryfront whoami to check which account is signed in, or remove .veryfront/project.json to unlink this directory and let veryfront push create and link a project for the signed-in account
 
+### project-slug-taken
+
+Project slug already in use.
+
+- **HTTP status:** 409
+- **CLI exit code:** 1
+- **What to do:** Choose a slug no other project uses, then run the command again. With veryfront up, pass --name \<name>
+
 ## Agents
 
 Raised while running an agent, tool, or workflow.

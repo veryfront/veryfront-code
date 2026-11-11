@@ -1461,6 +1461,64 @@ describe("push receipt source snapshot", () => {
     });
   });
 
+  it("reports a taken slug for a configured reference as project-slug-taken", async () => {
+    const envKeys = [
+      "VERYFRONT_API_TOKEN",
+      "VERYFRONT_API_URL",
+      "VERYFRONT_API_BASE_URL",
+      "VERYFRONT_PROJECT_SLUG",
+      "TENANT_PROJECT_SLUG",
+      "VERYFRONT_PROJECT_ID",
+      "TENANT_PROJECT_ID",
+    ];
+    const savedEnv = envKeys.map((key) => Deno.env.get(key));
+
+    await withGitProject(async ({ projectDir }) => {
+      const createSlugs: string[] = [];
+
+      try {
+        Deno.env.set("VERYFRONT_API_TOKEN", "<TOKEN>");
+        Deno.env.set("VERYFRONT_API_URL", "https://control.example.test");
+        Deno.env.delete("VERYFRONT_API_BASE_URL");
+        for (const key of envKeys.slice(3)) Deno.env.delete(key);
+        Deno.env.set("VERYFRONT_PROJECT_SLUG", "taken-slug");
+        await Deno.writeTextFile(`${projectDir}/package.json`, "{}\n");
+        _resetEnvironmentConfig();
+
+        const mock = (async (input: string | URL | Request, init?: RequestInit) => {
+          const request = input instanceof Request ? input : new Request(input, init);
+          const url = new URL(request.url);
+          if (request.method === "POST" && url.pathname === "/projects") {
+            createSlugs.push((await request.json() as { slug: string }).slug);
+            return Response.json({ error: "slug taken" }, { status: 409 });
+          }
+          if (url.pathname.startsWith("/projects/taken-slug")) {
+            return Response.json({ error: "not found" }, { status: 404 });
+          }
+          throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
+        }) as typeof fetch;
+
+        const error = await withMockFetch(
+          mock,
+          () => assertRejects(() => pushCommand({ projectDir, quiet: true }), VeryfrontError),
+        );
+        assertInstanceOf(error, VeryfrontError, "the failure is a typed Veryfront error");
+
+        assertEquals(createSlugs, ["taken-slug"], "push tries the configured slug once");
+        assertEquals(error.slug, "project-slug-taken", "the collision has its own registry slug");
+        assertEquals(error.exitCode, 1, "a taken slug is a runtime failure, not a usage error");
+        assertEquals(
+          error.message,
+          'Project slug "taken-slug" is already in use. Update or remove VERYFRONT_PROJECT_SLUG, then run veryfront push again.',
+          "the message names where the slug came from and how to change it",
+        );
+      } finally {
+        envKeys.forEach((key, index) => restoreEnv(key, savedEnv[index]));
+        _resetEnvironmentConfig();
+      }
+    });
+  });
+
   it("persists an accepted inferred slug before uploading project files", async () => {
     const originalFetch = globalThis.fetch;
     const envKeys = [

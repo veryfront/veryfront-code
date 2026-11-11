@@ -182,6 +182,22 @@ export const CONFIG_NOT_DEPLOYABLE = defineError({
   exitCode: 2,
 });
 
+/**
+ * The project slug the CLI tried to create is already in use. Project slugs are
+ * unique across Veryfront, so another account often already owns the slug of a
+ * common folder name. The detail names the slug and the fix for the command that
+ * raised it.
+ */
+export const PROJECT_SLUG_TAKEN = defineError({
+  slug: "project-slug-taken",
+  category: "DEPLOY",
+  status: 409,
+  title: "Project slug already in use",
+  suggestion:
+    "Choose a slug no other project uses, then run the command again. With veryfront up, pass --name <name>",
+  exitCode: 1,
+});
+
 /** Registry fragment for DEPLOY errors (slug → definition). */
 export const DEPLOY_REGISTRY = {
   "config-not-deployable": CONFIG_NOT_DEPLOYABLE,
@@ -202,4 +218,5 @@ export const DEPLOY_REGISTRY = {
   "preview-hostname-too-long": PREVIEW_HOSTNAME_TOO_LONG,
   "branch-not-found": BRANCH_NOT_FOUND,
   "project-link-stale": PROJECT_LINK_STALE,
+  "project-slug-taken": PROJECT_SLUG_TAKEN,
 } as const;
