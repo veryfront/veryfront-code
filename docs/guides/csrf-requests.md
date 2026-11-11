@@ -31,10 +31,12 @@ const response = await fetch("/api/cases", {
 
 Veryfront's own client hooks send the header for you. That covers `useChat`, `useAgent`, `useStreaming`, `useCompletion`, the upload hooks, and the workflow hooks. Reach for the helper when you write the request yourself.
 
-A machine client can satisfy the double-submit check by sending any matching
-cookie/header pair together with its real authentication, as the curl examples
-in this documentation do. Use `excludePaths` only when the entire route is
-intentionally outside browser CSRF protection, such as a dedicated webhook
+A machine client that authenticates with `Authorization: Bearer` and sends no
+cookie needs no CSRF token. See [What Veryfront exempts](#what-veryfront-exempts).
+Any other machine client can satisfy the double-submit check by sending a
+matching cookie/header pair together with its real authentication, as the curl
+examples in this documentation do. Use `excludePaths` only when the entire route
+is intentionally outside browser CSRF protection, such as a dedicated webhook
 receiver, and authenticate that route independently.
 
 ### Choose your own names
@@ -94,6 +96,7 @@ This is the only supported opt-out, and it applies in every environment. It stop
 
 - The CSP report endpoint, for the reason given in [Violation reports](./security-headers.md#violation-reports).
 - Signed platform dispatches. Control-plane operations and channel invocations carry a signed envelope that the receiving handler verifies, and hold no cookie to echo.
+- Cookieless bearer requests. A request that sends `Authorization: Bearer <token>` and no `Cookie` header skips the check, because it carries no credential a browser attaches on its own. Veryfront does not validate the token here; your route's own auth must. The exemption does not apply when the request sends any cookie, when `Sec-Fetch-Site` is `cross-site` or `same-site`, or when an `Origin` header names a different origin, including `null`. A permissive CORS policy therefore cannot let another site skip the check by adding a bearer header.
 - Two framework-owned local development surfaces: the client log endpoint at `/_veryfront/log` and the dashboard API under `/_dev/api/`. Both admit only a direct loopback connection from a canonical local-development host, and the dashboard requires its own port-scoped session token on top of that. Your own routes get no such exemption, in development or anywhere else.
 
 
