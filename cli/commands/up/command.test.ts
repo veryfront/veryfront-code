@@ -792,7 +792,7 @@ describe("Up Command", () => {
       async function withCustomerSupportDir(
         run: (projectDir: string, homeDir: string) => Promise<void>,
       ): Promise<void> {
-        const parentDir = await Deno.makeTempDir();
+        const parentDir = await makeTempDir();
         const projectDir = join(parentDir, "customer-support");
         try {
           await Deno.mkdir(projectDir);
