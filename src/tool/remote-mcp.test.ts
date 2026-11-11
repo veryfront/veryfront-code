@@ -2174,6 +2174,53 @@ describe("tool/remote-mcp", () => {
       assertEquals(calls, 2);
     });
 
+    for (
+      const [label, body] of [
+        ["another -32000 message", {
+          jsonrpc: "2.0",
+          error: { code: -32000, message: "Bad Request: upstream rejected the call" },
+          id: null,
+        }],
+        ["the phrase under another code", {
+          jsonrpc: "2.0",
+          error: {
+            code: -32603,
+            message: "Bad Request: Unsupported protocol version: 2026-07-28 ",
+          },
+          id: null,
+        }],
+        ["the phrase with a request id", {
+          jsonrpc: "2.0",
+          error: {
+            code: -32000,
+            message: "Bad Request: Unsupported protocol version: 2026-07-28 ",
+          },
+          id: "remote-mcp:call",
+        }],
+        ["the phrase for another version", {
+          jsonrpc: "2.0",
+          error: {
+            code: -32000,
+            message: "Bad Request: Unsupported protocol version: 2099-01-01 ",
+          },
+          id: null,
+        }],
+      ] as const
+    ) {
+      it(`does not replay a 400 call with ${label}`, async () => {
+        const methods: string[] = [];
+        await withMockFetch(async (input, init) => {
+          const request = observe(input, init);
+          methods.push(request.body!.method);
+          return Response.json(body, { status: 400 });
+        }, async () => {
+          const source = createRemoteMCPToolSource({ endpoint: ENDPOINT });
+          await assertRejects(() => source.executeTool("ping", {}), Error, "400");
+        });
+        assertEquals(methods, ["tools/call"]);
+      });
+    }
+
     it("does not fall back on recognized modern errors", async () => {
       const methods: string[] = [];
       await withMockFetch(async (input, init) => {

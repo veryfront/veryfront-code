@@ -948,11 +948,17 @@ async function postJsonRpc(
         modernError = isRecord(payload) && isRecord(payload.error) &&
           (payload.error.code === -32020 || payload.error.code === -32021 ||
             payload.error.code === -32022 || payload.error.code === -32601);
-        // A legacy server rejects an unknown MCP-Protocol-Version before it
-        // handles the request, so the request never ran.
-        unsupportedVersion = response.status === 400 && isRecord(payload) &&
-          isRecord(payload.error) && typeof payload.error.message === "string" &&
-          testPrivateRegExp(/\bunsupported protocol version\b/i, payload.error.message);
+        // The MCP SDK transport rejects an unknown MCP-Protocol-Version with
+        // this exact envelope before it dispatches the message, so the request
+        // never ran. Anything looser could be a failure after a side effect.
+        const sentVersion = reflectApply(HeadersPrototypeGet, headers, ["MCP-Protocol-Version"]);
+        unsupportedVersion = response.status === 400 && typeof sentVersion === "string" &&
+          isRecord(payload) && payload.id === null && isRecord(payload.error) &&
+          payload.error.code === -32000 && typeof payload.error.message === "string" &&
+          privateTextStartsWith(
+            payload.error.message,
+            `Bad Request: Unsupported protocol version: ${sentVersion} `,
+          );
       } catch { /* Legacy servers can return plain text errors. */ }
       throw new RemoteMCPHttpError(response.status, modernError, unsupportedVersion);
     }
