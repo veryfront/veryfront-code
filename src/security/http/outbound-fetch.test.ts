@@ -800,73 +800,128 @@ describe("createVeryfrontApiOriginBoundOutboundFetch", () => {
     });
   });
 
+  const ALLOWLIST_HINT = "VERYFRONT_WORKER_ALLOWED_INTERNAL_HOSTS";
+
+  /** Assert a private-DNS block whose message names the allowlist variable. */
+  async function assertHintedBlock(request: () => Promise<Response>, host: string): Promise<void> {
+    const error = await assertRejects(
+      request,
+      OutboundRequestBlockedError,
+      `Outbound network egress blocked for host: ${host}. The host resolves to a private network address. If you trust this host, add it to ${ALLOWLIST_HINT}`,
+    ) as Error;
+    assertEquals(
+      error.message.split(ALLOWLIST_HINT).length,
+      2,
+      `the hint names the variable exactly once for ${host}: ${error.message}`,
+    );
+  }
+
   it("names the allowlist variable when a hostname resolves to a private address", async () => {
     __resetOperatorVeryfrontApiOriginsForTests();
-    await withEnv({ VERYFRONT_API_URL: STAGING_API }, async () => {
-      await withPrivateDns(async (seen) => {
-        for (
-          const request of [
+    await withEnv(
+      { VERYFRONT_API_URL: STAGING_API, VERYFRONT_WORKER_ALLOWED_INTERNAL_HOSTS: "" },
+      async () => {
+        await withPrivateDns(async (seen) => {
+          await assertHintedBlock(
             () => createVeryfrontApiOriginBoundOutboundFetch(STAGING_API)(`${STAGING_API}/health`),
+            "api.staging.example",
+          );
+          await assertHintedBlock(
             () => guardedOutboundFetch(`${STAGING_API}/health`),
-          ]
-        ) {
-          const error = await assertRejects(request, OutboundRequestBlockedError) as Error;
-          assertEquals(
-            error.message.startsWith(
-              "Outbound network egress blocked for host: api.staging.example.",
-            ),
-            true,
-            error.message,
+            "api.staging.example",
           );
-          assertEquals(
-            error.message.includes("VERYFRONT_WORKER_ALLOWED_INTERNAL_HOSTS"),
-            true,
-            error.message,
-          );
-        }
-        assertEquals(seen, []);
-      });
-    });
+          assertEquals(seen, [], "a blocked request never reaches the transport");
+        });
+      },
+    );
   });
 
-  it("lets the named allowlist variable through for that exact hostname only", async () => {
+  it("lets the named allowlist variable through for the exact hostname only", async () => {
     __resetOperatorVeryfrontApiOriginsForTests();
     await withEnv(
       {
         VERYFRONT_API_URL: STAGING_API,
-        VERYFRONT_WORKER_ALLOWED_INTERNAL_HOSTS: "api.staging.example",
+        // Mixed case and padding in the entry are normalized before the exact match.
+        VERYFRONT_WORKER_ALLOWED_INTERNAL_HOSTS: " API.Staging.Example ",
       },
       async () => {
         await withPrivateDns(async (seen) => {
           const response = await createVeryfrontApiOriginBoundOutboundFetch(STAGING_API)(
             `${STAGING_API}/health`,
           );
-          assertEquals(response.status, 200);
-          await assertRejects(
-            () => guardedOutboundFetch("https://other.staging.example/health"),
-            OutboundRequestBlockedError,
-            "egress blocked",
+          assertEquals(response.status, 200, "the listed hostname reaches the transport");
+
+          const mixedCase = await guardedOutboundFetch("https://API.STAGING.EXAMPLE/health");
+          assertEquals(mixedCase.status, 200, "URL hostnames are case-insensitive");
+
+          // A subdomain, a parent domain, a sibling and the trailing-dot form are
+          // distinct hostnames: the allowlist does not cover them, and each still
+          // gets the hint naming the variable.
+          for (
+            const host of [
+              "sub.api.staging.example",
+              "staging.example",
+              "other.staging.example",
+              "api.staging.example.",
+            ]
+          ) {
+            await assertHintedBlock(() => guardedOutboundFetch(`https://${host}/health`), host);
+          }
+          assertEquals(
+            seen,
+            [`${STAGING_API}/health`, `${STAGING_API}/health`],
+            "only the two requests to the listed hostname reach the transport",
           );
-          assertEquals(seen, [`${STAGING_API}/health`]);
         });
       },
     );
   });
 
   it("does not suggest the allowlist for blocks it cannot lift", async () => {
-    await withPrivateDns(async () => {
-      // IP literals and localhost names are never honoured on the allowlist.
-      for (const url of ["https://10.0.0.1/health", "http://localhost.localhost/health"]) {
-        const error = await assertRejects(
-          () => guardedOutboundFetch(url),
-          OutboundRequestBlockedError,
-        ) as Error;
-        assertEquals(
-          error.message.includes("VERYFRONT_WORKER_ALLOWED_INTERNAL_HOSTS"),
-          false,
-          `${url}: ${error.message}`,
-        );
-      }
+    await withEnv({ VERYFRONT_WORKER_ALLOWED_INTERNAL_HOSTS: "" }, async () => {
+      await withPrivateDns(async (seen) => {
+        // IP literals and localhost names are never honoured on the allowlist.
+        for (
+          const url of [
+            "https://10.0.0.1/health",
+            "https://[fd00::1]/health",
+            "http://localhost:8080/health",
+            "http://app.localhost/health",
+          ]
+        ) {
+          const error = await assertRejects(
+            () => guardedOutboundFetch(url),
+            OutboundRequestBlockedError,
+            "Outbound network egress blocked for internal host: ",
+          ) as Error;
+          assertEquals(
+            error.message.includes(ALLOWLIST_HINT),
+            false,
+            `no allowlist hint for ${url}: ${error.message}`,
+          );
+        }
+        assertEquals(seen, [], "a blocked request never reaches the transport");
+      });
+    });
+  });
+
+  it("does not suggest the allowlist when listing the IP literal is attempted", async () => {
+    await withEnv({ VERYFRONT_WORKER_ALLOWED_INTERNAL_HOSTS: "10.0.0.1,localhost" }, async () => {
+      await withPrivateDns(async (seen) => {
+        for (const url of ["https://10.0.0.1/health", "http://localhost:8080/health"]) {
+          const error = await assertRejects(
+            () => guardedOutboundFetch(url),
+            OutboundRequestBlockedError,
+            "Outbound network egress blocked for internal host: ",
+          ) as Error;
+          assertEquals(
+            error.message.includes(ALLOWLIST_HINT),
+            false,
+            `an allowlisted IP literal or localhost name stays blocked without a hint: ${url}`,
+          );
+        }
+        assertEquals(seen, [], "a blocked request never reaches the transport");
+      });
     });
   });
 
