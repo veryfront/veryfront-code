@@ -47,6 +47,20 @@ function isNotGranted(error: unknown): boolean {
   return record(error).slug === "permission-denied";
 }
 
+/** True for a platform answer that the file does not exist, thrown or returned. */
+function isNotFound(error: unknown): boolean {
+  const { slug, status, message } = record(error);
+  return slug === "resource-not-found" || slug === "not-found" || status === 404 ||
+    (typeof message === "string" && /not found/i.test(message));
+}
+
+/** Throw a platform operation's returned error result instead of reading it as data. */
+function assertNotErrorResult(result: Record<string, unknown>, name: string): void {
+  if (result.isError !== true) return;
+  const message = typeof result.message === "string" ? result.message : `${name} failed`;
+  throw new Error(message);
+}
+
 /**
  * Use `hosted` until it refuses its first operation as not granted, then `local`.
  *
@@ -192,6 +206,7 @@ export function hostedProjectFiles(
             ...(cursor ? { cursor } : {}),
           }),
         );
+        assertNotErrorResult(result, "veryfront__list_files");
         const entries = Array.isArray(result.data) ? result.data : [];
         for (const entry of entries) {
           // Every entry is a file; `type` is its kind (page, component, function or file).
@@ -213,9 +228,11 @@ export function hostedProjectFiles(
       try {
         result = record(await execute("veryfront__get_file", { ...scope, path: file }));
       } catch (error) {
-        if (isNotGranted(error)) throw error;
-        return { notFound: true };
+        // Only a missing file is not found; other failures (network, server, cancellation) surface.
+        if (isNotFound(error)) return { notFound: true };
+        throw error;
       }
+      // A returned error result for a read is the platform's not-found answer.
       return typeof result.content === "string" ? { content: result.content } : { notFound: true };
     },
     async write(path, content) {

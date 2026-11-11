@@ -340,6 +340,34 @@ describe("templates/coding-agent file tools", () => {
       assertEquals(project.files["app/page.tsx"], PAGE);
     });
 
+    it("surfaces a read failure instead of reporting a missing file", async () => {
+      const context: ToolExecutionContext = {
+        executePlatformTool: () => Promise.reject(new Error("<PLATFORM_FAILURE>")),
+      };
+      await assertRejects(
+        () => readFile.execute({ path: "app/page.tsx" }, context),
+        Error,
+        "<PLATFORM_FAILURE>",
+      );
+      await assertRejects(
+        () => editFile.execute({ path: "app/page.tsx", search: "a", replace: "b" }, context),
+        Error,
+        "<PLATFORM_FAILURE>",
+      );
+    });
+
+    it("surfaces a returned listing error instead of reporting a missing directory", async () => {
+      const context: ToolExecutionContext = {
+        executePlatformTool: () =>
+          Promise.resolve({ isError: true, message: "<PLATFORM_FAILURE>" }),
+      };
+      await assertRejects(
+        () => listFiles.execute({ directory: "app" }, context),
+        Error,
+        "<PLATFORM_FAILURE>",
+      );
+    });
+
     it("surfaces a listing failure instead of reporting an empty directory", async () => {
       const context: ToolExecutionContext = {
         executePlatformTool: () => Promise.reject(new Error("<PLATFORM_FAILURE>")),
