@@ -1,3 +1,4 @@
+import { joinPrivateArray, pushPrivateArray } from "#veryfront/security/private-array.ts";
 import { testPrivateRegExp } from "#veryfront/security/private-regexp.ts";
 /** Safe, bounded fields from a provider's structured request rejection. */
 export interface ProviderErrorDiagnostic {
@@ -89,11 +90,13 @@ export const PROVIDER_REQUEST_REJECTED_CODE = "PROVIDER_REQUEST_REJECTED";
 
 const REJECTION_PREFIX = "The model provider rejected the request with HTTP ";
 const PARAMETER_PREFIX = "parameter ";
+const PART_SEPARATOR = ", ";
+const MAX_PARTS = 3;
+const rejectionStatus = /^4\d\d$/;
 const stringSlice = String.prototype.slice;
-const stringSplit = String.prototype.split;
+const stringIndexOf = String.prototype.indexOf;
 const stringStartsWith = String.prototype.startsWith;
 const stringEndsWith = String.prototype.endsWith;
-const arrayJoin = Array.prototype.join;
 const numberParseInt = Number.parseInt;
 
 function isAllowlistedParam(param: string): boolean {
@@ -104,18 +107,40 @@ function isAllowlistedParam(param: string): boolean {
 }
 
 function describeDiagnostic(diagnostic: ProviderErrorDiagnostic): string[] {
+  // Private array helpers: project code can replace Array.prototype methods.
   const parts: string[] = [];
-  if (diagnostic.type !== undefined) parts.push(diagnostic.type);
+  if (diagnostic.type !== undefined) pushPrivateArray(parts, diagnostic.type);
   if (diagnostic.code !== undefined && diagnostic.code !== diagnostic.type) {
-    parts.push(diagnostic.code);
+    pushPrivateArray(parts, diagnostic.code);
   }
-  if (diagnostic.param !== undefined) parts.push(`${PARAMETER_PREFIX}${diagnostic.param}`);
+  if (diagnostic.param !== undefined) {
+    pushPrivateArray(parts, `${PARAMETER_PREFIX}${diagnostic.param}`);
+  }
   return parts;
+}
+
+/**
+ * Split on the separator without String.prototype.split, which dispatches
+ * through a replaceable Symbol.split. Returns undefined past the part limit.
+ */
+function splitRejectionParts(inner: string): string[] | undefined {
+  const parts: string[] = [];
+  let start = 0;
+  while (parts.length < MAX_PARTS) {
+    const end = apply(stringIndexOf, inner, [PART_SEPARATOR, start]) as number;
+    if (end === -1) {
+      pushPrivateArray(parts, apply(stringSlice, inner, [start]) as string);
+      return parts;
+    }
+    pushPrivateArray(parts, apply(stringSlice, inner, [start, end]) as string);
+    start = end + PART_SEPARATOR.length;
+  }
+  return undefined;
 }
 
 function formatRejection(status: number, parts: readonly string[]): string {
   return parts.length > 0
-    ? `${REJECTION_PREFIX}${status} (${apply(arrayJoin, parts, [", "]) as string}).`
+    ? `${REJECTION_PREFIX}${status} (${joinPrivateArray(parts, PART_SEPARATOR)}).`
     : `${REJECTION_PREFIX}${status}.`;
 }
 
@@ -145,7 +170,7 @@ export function readProviderRequestRejectionMessage(message: unknown): string | 
   }
   const rest = apply(stringSlice, message, [REJECTION_PREFIX.length, -1]) as string;
   const statusText = apply(stringSlice, rest, [0, 3]) as string;
-  if (!/^4\d\d$/.test(statusText)) return undefined;
+  if (!testPrivateRegExp(rejectionStatus, statusText)) return undefined;
   const status = numberParseInt(statusText, 10);
   const tail = apply(stringSlice, rest, [3]) as string;
   if (tail === "") return formatRejection(status, []);
@@ -155,9 +180,11 @@ export function readProviderRequestRejectionMessage(message: unknown): string | 
     return undefined;
   }
   const inner = apply(stringSlice, tail, [2, -1]) as string;
-  const parts = apply(stringSplit, inner, [", "]) as string[];
-  if (parts.length === 0 || parts.length > 3) return undefined;
-  for (const part of parts) {
+  const parts = splitRejectionParts(inner);
+  if (parts === undefined) return undefined;
+  // Indexed, not for...of: project code can replace Array.prototype[Symbol.iterator].
+  for (let index = 0; index < parts.length; index++) {
+    const part = parts[index]!;
     if (apply(stringStartsWith, part, [PARAMETER_PREFIX]) === true) {
       if (!isAllowlistedParam(apply(stringSlice, part, [PARAMETER_PREFIX.length]) as string)) {
         return undefined;
