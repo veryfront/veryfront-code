@@ -426,6 +426,21 @@ describe("VERYFRONT_API_KEY for processes that never load env files", () => {
     });
   });
 
+  it("does not read the key while a token file is set", () => {
+    // The token file is the renewable credential and wins in every resolver.
+    const TOKEN_FILE = "VERYFRONT_API_TOKEN_FILE";
+    const savedTokenFile = getEnv(TOKEN_FILE);
+    try {
+      withCredentialEnv({ [TOKEN]: undefined, [KEY]: "<KEY>" }, () => {
+        setEnv(TOKEN_FILE, "/run/secrets/<TOKEN_FILE>");
+        assertEquals(getHostEnv(TOKEN), undefined, "a stale key must not beat the token file");
+      });
+    } finally {
+      if (savedTokenFile === undefined) deleteEnv(TOKEN_FILE);
+      else setEnv(TOKEN_FILE, savedTokenFile);
+    }
+  });
+
   it("ignores a blank key", () => {
     withCredentialEnv({ [TOKEN]: undefined, [KEY]: "  " }, () => {
       assertEquals(getHostEnv(TOKEN), undefined);

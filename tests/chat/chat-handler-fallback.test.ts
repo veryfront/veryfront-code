@@ -121,7 +121,7 @@ describe("ag-ui handler 503 setup response", () => {
       assertEquals(body.code, "NO_AI_AVAILABLE");
       assertEquals(
         body.error,
-        "No model credentials configured. Run veryfront login or set VERYFRONT_API_TOKEN, OPENAI_API_KEY, ANTHROPIC_API_KEY, or GOOGLE_API_KEY.",
+        "No model credentials configured. Run veryfront login or set VERYFRONT_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY, or GOOGLE_API_KEY.",
       );
       // System prompt must NOT be sent to the client (security: C2)
       assertEquals(body.systemPrompt, undefined);

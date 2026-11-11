@@ -249,7 +249,7 @@ export function getHostEnv(key: string): string | undefined {
   // the host environment is still reported verbatim.
   const secret = getHostSecret(key);
   if (secret !== undefined) return secret;
-  if (key === VERYFRONT_API_TOKEN_ENV && !veryfrontApiKeyAliasSettled) {
+  if (key === VERYFRONT_API_TOKEN_ENV && !veryfrontApiKeyAliasSettled && !hasApiTokenFile()) {
     const apiKey = readHostProcessEnv(VERYFRONT_API_KEY_ENV);
     if (apiKey !== undefined && apply(stringTrim, apiKey, []) !== "") return apiKey;
   }
@@ -257,6 +257,13 @@ export function getHostEnv(key: string): string | undefined {
 }
 
 const VERYFRONT_API_TOKEN_ENV = "VERYFRONT_API_TOKEN";
+const VERYFRONT_API_TOKEN_FILE_ENV = "VERYFRONT_API_TOKEN_FILE";
+
+/** A nonblank token file selector supplies the credential ahead of the key. */
+function hasApiTokenFile(): boolean {
+  const selector = readHostProcessEnv(VERYFRONT_API_TOKEN_FILE_ENV);
+  return selector !== undefined && apply(stringTrim, selector, []) !== "";
+}
 
 /**
  * The name Veryfront tells users to set for their API key.

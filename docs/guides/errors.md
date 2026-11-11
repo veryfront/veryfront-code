@@ -963,7 +963,7 @@ Unknown/unclassified error.
 Authentication required.
 
 - **HTTP status:** 401
-- **What to do:** Set VERYFRONT_API_TOKEN or run 'veryfront login'
+- **What to do:** Set VERYFRONT_API_KEY or run 'veryfront login'
 
 ### permission-denied
 

@@ -301,6 +301,24 @@ describe("Config Command", () => {
       }
     });
 
+    it("names VERYFRONT_API_KEY when the key supplied the token", async () => {
+      const { __resetEnvLoaderForTests, loadEnv } = await import("veryfront/utils/env-loader");
+      const envDir = await Deno.makeTempDir({ prefix: "config-api-key-" });
+      await withSavedEnv([...CONFIG_ENV_KEYS, "VERYFRONT_API_KEY"], async () => {
+        try {
+          Deno.env.delete("VERYFRONT_API_TOKEN");
+          Deno.env.set("VERYFRONT_API_KEY", "test-key");
+          __resetEnvLoaderForTests();
+          await loadEnv({ cwd: envDir });
+
+          assertEquals(getEnvOverrides(), ["apiToken (VERYFRONT_API_KEY)"]);
+        } finally {
+          __resetEnvLoaderForTests();
+          await Deno.remove(envDir, { recursive: true });
+        }
+      });
+    });
+
     it("returns empty array when no overrides set", async () => {
       await withSavedEnv(CONFIG_ENV_KEYS, () => {
         const overrides = getEnvOverrides();
