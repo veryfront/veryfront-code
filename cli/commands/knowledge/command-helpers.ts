@@ -1,6 +1,7 @@
 import { INVALID_ARGUMENT } from "veryfront/errors";
 import { createFileSystem } from "veryfront/platform";
-import { basename, extname, join, normalize, relative } from "veryfront/platform/path";
+import { basename, join, normalize, relative } from "veryfront/platform/path";
+import { inspectOkfDocument } from "veryfront/knowledge";
 import { classifyKnowledgeDirectoryPath, classifyKnowledgeSourcePath } from "./source-policy.ts";
 import type {
   KnowledgeIngestFailedFileResult,
@@ -15,11 +16,6 @@ export type KnowledgeSource =
 export interface KnowledgeSourceCollection {
   sources: KnowledgeSource[];
   skipped: KnowledgeIngestSkippedFileResult[];
-}
-
-function slugify(value: string): string {
-  return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|(?<!-)-+$/g, "") ||
-    "document";
 }
 
 const CHAT_UPLOAD_PREFIX_RE =
@@ -270,48 +266,43 @@ export function buildSourceReference(source: KnowledgeSource): string {
     : source.localPath;
 }
 
-export function buildSuggestedSlug(source: KnowledgeSource, index: number): string {
-  const normalized = normalize(
-    source.kind === "upload" ? source.uploadPath : source.localPath,
-  ).replaceAll("\\", "/");
+/** Studio stages Add Knowledge uploads under `_knowledge-ingest/<batch>/`; the rest is the user's path. */
+const KNOWLEDGE_INGEST_STAGING_RE = /^uploads\/_knowledge-ingest\/[^/]+\/(.+)$/;
 
-  let stripped: string;
-  if (source.kind === "upload") {
-    stripped = normalized
-      .replace(/^\/workspace\/uploads\//, "")
-      .replace(/^\/workspace\//, "")
-      .replace(/^uploads\//, "")
-      .replace(/\.[^.]+$/, "");
-  } else if (normalized.startsWith("/workspace/uploads/")) {
-    stripped = normalized.replace(/^\/workspace\/uploads\//, "").replace(/\.[^.]+$/, "");
-  } else if (normalized.startsWith("/workspace/")) {
-    stripped = normalized.replace(/^\/workspace\//, "").replace(/\.[^.]+$/, "");
-  } else if (normalized.startsWith("/")) {
-    stripped = basename(normalized, extname(normalized));
-  } else {
-    stripped = normalized.replace(/\.[^.]+$/, "");
-  }
-
-  const lastSlash = stripped.lastIndexOf("/");
-  if (lastSlash >= 0) {
-    const dir = stripped.slice(0, lastSlash + 1);
-    const file = stripChatUploadPrefix(stripped.slice(lastSlash + 1));
-    stripped = file ? `${dir}${file}` : stripped;
-  } else {
-    stripped = stripChatUploadPrefix(stripped) || stripped;
-  }
-
-  return slugify(stripped || basename(normalized, extname(normalized)) || `document-${index + 1}`);
+/** The OKF `resource`: the path the user uploaded, or the local path. */
+export function buildKnowledgeResource(source: KnowledgeSource): string {
+  const reference = buildSourceReference(source);
+  return KNOWLEDGE_INGEST_STAGING_RE.exec(reference)?.[1] ?? reference;
 }
 
-export function ensureUniqueSlugs(sources: KnowledgeSource[]): string[] {
-  const counts = new Map<string, number>();
-  return sources.map((source, index) => {
-    const baseSlug = buildSuggestedSlug(source, index);
-    const nextCount = (counts.get(baseSlug) ?? 0) + 1;
-    counts.set(baseSlug, nextCount);
-    return nextCount === 1 ? baseSlug : `${baseSlug}-${nextCount}`;
-  });
+/** The file name the user gave the source, without a chat upload prefix. */
+export function buildKnowledgeSourceFileName(source: KnowledgeSource): string {
+  const name = basename(source.kind === "upload" ? source.uploadPath : source.localPath);
+  return stripChatUploadPrefix(name) || name;
+}
+
+const MAX_KNOWLEDGE_PATH_SUFFIX = 100;
+
+/**
+ * Pick the remote Markdown path for a generated document. A path already holding
+ * another source's document gets a short `-2`, `-3` suffix instead of being overwritten.
+ */
+export async function claimGeneratedKnowledgePath(input: {
+  remotePath: string;
+  resource: string;
+  readRemoteFile?: (remotePath: string) => Promise<string | undefined>;
+}): Promise<string> {
+  if (!input.readRemoteFile) return input.remotePath;
+  const stem = input.remotePath.replace(/\.md$/i, "");
+  for (let attempt = 1; attempt <= MAX_KNOWLEDGE_PATH_SUFFIX; attempt += 1) {
+    const candidate = attempt === 1 ? input.remotePath : `${stem}-${attempt}.md`;
+    const existing = await input.readRemoteFile(candidate);
+    if (existing === undefined) return candidate;
+    if (inspectOkfDocument(candidate, existing).metadata.resource === input.resource) {
+      return candidate;
+    }
+  }
+  throw new Error(`No free knowledge path for ${input.remotePath}`);
 }
 
 export function deriveKnowledgeRemotePath(

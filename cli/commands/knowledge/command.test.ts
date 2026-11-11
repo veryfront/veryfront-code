@@ -14,12 +14,11 @@ import { VeryfrontError } from "veryfront/errors";
 import { parseCliArgs } from "../../shared/args.ts";
 import type { ParsedArgs } from "#cli/shared/types";
 import {
-  buildSuggestedSlug,
+  buildKnowledgeResource,
   collectKnowledgeSources,
   createKnowledgeIngestResult,
   deriveKnowledgeRemotePath,
   deriveOkfBundleRelativePath,
-  ensureUniqueSlugs,
   formatKnowledgeUploadSource,
   ingestResolvedSources,
   isLikelyLocalPath,
@@ -43,6 +42,7 @@ import {
 } from "./command.test-helpers.ts";
 import type { Logger } from "#veryfront/utils";
 import { VERSION } from "#cli/utils";
+import type { KnowledgeParserInput } from "./parser.ts";
 
 type LoggedEvent = {
   level: string;
@@ -873,6 +873,107 @@ describe("collectKnowledgeSources", () => {
 });
 
 describe("ingestResolvedSources", () => {
+  it("passes the uploaded file name and path to the parser without a path-derived slug", async () => {
+    const inputs: KnowledgeParserInput[] = [];
+    const uploadPath = "uploads/_knowledge-ingest/20261110201703921-e763c00b/20. Create.md";
+    await ingestResolvedSources(
+      [
+        createUploadSource(uploadPath),
+        createUploadSource(
+          "uploads/chat-11111111-2222-3333-4444-555555555555-1700000000000-xyz99-agents.md",
+        ),
+      ],
+      createKnowledgeCommandArgs(),
+      {
+        client: createMockClient(),
+        projectSlug: "my-project",
+        outputDir: "/workspace/knowledge",
+        runParser: async (input) => {
+          inputs.push(input);
+          return createParserSuccess();
+        },
+        indexKnowledgeDocument: async (input) => createIndexReceipt(input.published.path),
+        uploadKnowledgeFile: async (remotePath) => ({ path: remotePath }),
+      },
+    );
+
+    assertEquals(
+      inputs.map(({ slug, sourceName, resource, sourceReference }) => ({
+        slug,
+        sourceName,
+        resource,
+        sourceReference,
+      })),
+      [
+        {
+          slug: undefined,
+          sourceName: "20. Create.md",
+          resource: "20. Create.md",
+          sourceReference: uploadPath,
+        },
+        {
+          slug: undefined,
+          sourceName: "agents.md",
+          resource:
+            "uploads/chat-11111111-2222-3333-4444-555555555555-1700000000000-xyz99-agents.md",
+          sourceReference:
+            "uploads/chat-11111111-2222-3333-4444-555555555555-1700000000000-xyz99-agents.md",
+        },
+      ],
+    );
+  });
+
+  it("adds a short suffix instead of overwriting another source's knowledge file", async () => {
+    const remote: Record<string, string> = {
+      "knowledge/contracts-q1.md": '---\ntype: "Document"\nresource: "uploads/other/q1.pdf"\n---\n',
+      "knowledge/contracts-q1-2.md": '---\ntype: "Document"\nresource: "q1.pdf"\n---\n',
+    };
+    const reads: string[] = [];
+    const result = await ingestResolvedSources(
+      [createUploadSource("uploads/contracts/q1.pdf")],
+      createKnowledgeCommandArgs(),
+      {
+        client: createMockClient(),
+        projectSlug: "my-project",
+        outputDir: "/workspace/knowledge",
+        runParser: async () => createParserSuccess(),
+        readRemoteKnowledgeFile: async (path) => {
+          reads.push(path);
+          return remote[path];
+        },
+        indexKnowledgeDocument: async (input) => createIndexReceipt(input.published.path),
+        uploadKnowledgeFile: async (remotePath) => ({ path: remotePath }),
+      },
+    );
+
+    assertEquals(reads, [
+      "knowledge/contracts-q1.md",
+      "knowledge/contracts-q1-2.md",
+      "knowledge/contracts-q1-3.md",
+    ]);
+    assertEquals(result.ingested[0]?.remotePath, "knowledge/contracts-q1-3.md");
+    assertEquals(result.ingested[0]?.slug, "contracts-q1-3");
+  });
+
+  it("updates the knowledge file when it already holds the same source", async () => {
+    const result = await ingestResolvedSources(
+      [createUploadSource("uploads/contracts/q1.pdf")],
+      createKnowledgeCommandArgs(),
+      {
+        client: createMockClient(),
+        projectSlug: "my-project",
+        outputDir: "/workspace/knowledge",
+        runParser: async () => createParserSuccess(),
+        readRemoteKnowledgeFile: async () =>
+          '---\ntype: "Document"\nresource: "uploads/contracts/q1.pdf"\n---\n',
+        indexKnowledgeDocument: async (input) => createIndexReceipt(input.published.path),
+        uploadKnowledgeFile: async (remotePath) => ({ path: remotePath }),
+      },
+    );
+
+    assertEquals(result.ingested[0]?.remotePath, "knowledge/contracts-q1.md");
+  });
+
   it("preserves generic custom destinations without claiming a canonical knowledge index", async () => {
     for (const knowledgePath of ["knowledge", "docs/imports/acme", "knowledge-sibling"]) {
       let indexCalls = 0;
@@ -1229,41 +1330,6 @@ describe("ingestResolvedSources", () => {
     assertEquals(hasProgressCallback, false);
   });
 
-  it("uses basename-only slugs for absolute local paths outside /workspace", async () => {
-    let parserSlug: string | undefined;
-
-    await ingestResolvedSources(
-      [createLocalSource("/var/folders/random/report.pdf")],
-      createKnowledgeCommandArgs(),
-      {
-        client: createMockClient(),
-        projectSlug: "my-project",
-        outputDir: "/workspace/knowledge",
-        runParser: async (input) => {
-          parserSlug = input.slug;
-          return {
-            success: true,
-            source_path: "/var/folders/random/report.pdf",
-            source_filename: "report.pdf",
-            source_type: "pdf",
-            slug: input.slug ?? "report",
-            sandbox_output_path: "/workspace/knowledge/report.md",
-            suggested_project_path: "knowledge/report.md",
-            description: "Parsed from report.pdf",
-            title: "Report",
-            summary: "Extracted 1 page(s).",
-            stats: { pages: 1 },
-            warnings: [],
-          };
-        },
-        indexKnowledgeDocument: async (input) => createIndexReceipt(input.published.path),
-        uploadKnowledgeFile: async (remotePath) => ({ path: remotePath }),
-      },
-    );
-
-    assertEquals(parserSlug, "report");
-  });
-
   it("uses each local file path as the source reference for walked directories", async () => {
     const results = await ingestResolvedSources(
       [createLocalSource("/workspace/contracts", "/workspace/contracts/run_benchmark.py")],
@@ -1348,7 +1414,7 @@ describe("ingestResolvedSources", () => {
             source_path: input.filePath,
             source_filename: "run_benchmark.py",
             source_type: "txt",
-            slug: input.slug ?? "run-benchmark",
+            slug: "run-benchmark",
             sandbox_output_path: "/workspace/knowledge/run-benchmark.md",
             suggested_project_path: "knowledge/run-benchmark.md",
             description: "Parsed from run_benchmark.py",
@@ -1373,7 +1439,7 @@ describe("ingestResolvedSources", () => {
       localSourcePath: "/workspace/contracts/run_benchmark.py",
       outputPath: "/workspace/knowledge/run-benchmark.md",
       remotePath: "knowledge/run-benchmark.md",
-      slug: "contracts-run-benchmark",
+      slug: "run-benchmark",
       sourceType: "txt",
       summary: "Parsed as text.",
       stats: { lines: 1 },
@@ -1508,83 +1574,29 @@ describe("stripChatUploadPrefix", () => {
   });
 });
 
-describe("buildSuggestedSlug", () => {
-  it("uses the original filename for uploads with a chat prefix", () => {
-    const slug = buildSuggestedSlug(
-      {
-        kind: "upload",
-        input: "uploads/chat-909d3dbc-5a9a-4156-97e4-bcceb5c2ec0d-1773942180291-fv1qg5-agents.md",
-        uploadPath:
-          "uploads/chat-909d3dbc-5a9a-4156-97e4-bcceb5c2ec0d-1773942180291-fv1qg5-agents.md",
-        localPath:
-          "/workspace/uploads/chat-909d3dbc-5a9a-4156-97e4-bcceb5c2ec0d-1773942180291-fv1qg5-agents.md",
-      },
-      0,
+describe("buildKnowledgeResource", () => {
+  it("uses the path the user uploaded, not the Studio ingest staging folder", () => {
+    assertEquals(
+      buildKnowledgeResource(
+        createUploadSource("uploads/_knowledge-ingest/20261110201703921-e763c00b/guides/a b.md"),
+      ),
+      "guides/a b.md",
     );
-    assertEquals(slug, "agents");
+    assertEquals(
+      buildKnowledgeResource(createUploadSource("_knowledge-ingest/batch-1/brief.pdf")),
+      "brief.pdf",
+    );
   });
 
-  it("preserves clean upload filenames without a chat prefix", () => {
-    const slug = buildSuggestedSlug(
-      {
-        kind: "upload",
-        input: "uploads/contracts/q1.pdf",
-        uploadPath: "uploads/contracts/q1.pdf",
-        localPath: "/workspace/uploads/contracts/q1.pdf",
-      },
-      0,
+  it("keeps other upload paths and local paths", () => {
+    assertEquals(
+      buildKnowledgeResource(createUploadSource("contracts/q1.pdf")),
+      "uploads/contracts/q1.pdf",
     );
-    assertEquals(slug, "contracts-q1");
-  });
-
-  it("strips the chat prefix from nested upload paths", () => {
-    const slug = buildSuggestedSlug(
-      {
-        kind: "upload",
-        input:
-          "uploads/docs/chat-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee-1700000000000-abc12-readme.txt",
-        uploadPath:
-          "uploads/docs/chat-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee-1700000000000-abc12-readme.txt",
-        localPath:
-          "/workspace/uploads/docs/chat-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee-1700000000000-abc12-readme.txt",
-      },
-      0,
+    assertEquals(
+      buildKnowledgeResource(createLocalSource("/workspace/docs/a.md")),
+      "/workspace/docs/a.md",
     );
-    assertEquals(slug, "docs-readme");
-  });
-
-  it("uses basename only for absolute local paths outside /workspace", () => {
-    const slug = buildSuggestedSlug(
-      {
-        kind: "local",
-        input: "/var/folders/random/AGENTS.md",
-        localPath: "/var/folders/random/AGENTS.md",
-      },
-      0,
-    );
-    assertEquals(slug, "agents");
-  });
-});
-
-describe("ensureUniqueSlugs", () => {
-  it("appends a numeric suffix for duplicate slugs", () => {
-    const slugs = ensureUniqueSlugs([
-      {
-        kind: "upload",
-        input: "uploads/chat-909d3dbc-5a9a-4156-97e4-bcceb5c2ec0d-1773942180291-fv1qg5-agents.md",
-        uploadPath: "chat-909d3dbc-5a9a-4156-97e4-bcceb5c2ec0d-1773942180291-fv1qg5-agents.md",
-        localPath:
-          "/workspace/uploads/chat-909d3dbc-5a9a-4156-97e4-bcceb5c2ec0d-1773942180291-fv1qg5-agents.md",
-      },
-      {
-        kind: "upload",
-        input: "uploads/chat-11111111-2222-3333-4444-555555555555-1700000000000-xyz99-agents.md",
-        uploadPath: "chat-11111111-2222-3333-4444-555555555555-1700000000000-xyz99-agents.md",
-        localPath:
-          "/workspace/uploads/chat-11111111-2222-3333-4444-555555555555-1700000000000-xyz99-agents.md",
-      },
-    ]);
-    assertEquals(slugs, ["agents", "agents-2"]);
   });
 });
 
@@ -2000,7 +2012,7 @@ it("rejects OKF bundle paths that escape the declared root before writing", () =
 });
 
 describe("runKnowledgeParser", () => {
-  it("writes knowledge markdown for plain-text documents without spawning python", async () => {
+  it("writes OKF Document frontmatter and titles a document without an H1 from its file name", async () => {
     const tempDir = await makeTempDir({ prefix: "veryfront-knowledge-parser-test-" });
     const filePath = join(tempDir, "q1-report.txt");
     const outputDir = join(tempDir, "knowledge-output");
@@ -2018,27 +2030,94 @@ describe("runKnowledgeParser", () => {
 
       assertEquals(result.slug, "q1-report");
       assertEquals(result.source_type, "txt");
+      assertEquals(result.title, "q1-report");
       assertEquals(result.sandbox_output_path, join(outputDir, "q1-report.md"));
 
       const markdown = await Deno.readTextFile(result.sandbox_output_path);
-      assertStringIncludes(markdown, 'type: "Generated Document"');
-      assertStringIncludes(markdown, 'source: "uploads/contracts/q1-report.txt"');
-      assertStringIncludes(markdown, 'description: "Quarterly performance summary"');
-      assertStringIncludes(markdown, "generated:");
-      assertStringIncludes(markdown, `by: "veryfront/${VERSION}"`);
-      // The upload is not copied beside this concept, so it cannot be a
-      // standardized relative provenance resource.
-      assertEquals(markdown.includes("sources:"), false);
-      assertEquals(markdown.includes("resource:"), false);
-      assertEquals(markdown.includes("added:"), false);
-      assertStringIncludes(markdown, "# Q1 Report");
+      const frontmatter = markdown.split("\n---\n")[0]!;
+      assertStringIncludes(frontmatter, 'type: "Document"');
+      assertStringIncludes(frontmatter, 'title: "q1-report"');
+      assertStringIncludes(frontmatter, 'description: "Quarterly performance summary"');
+      assertStringIncludes(frontmatter, 'resource: "uploads/contracts/q1-report.txt"');
+      assertStringIncludes(frontmatter, 'tags: ["upload","txt"]');
+      assertStringIncludes(frontmatter, 'source: "q1-report.txt"');
+      assertStringIncludes(frontmatter, 'source_type: "txt"');
+      assertStringIncludes(frontmatter, `by: "veryfront/${VERSION}"`);
+      const timestamp = frontmatter.match(/^timestamp: "([^"]+)"$/m)?.[1];
+      const added = frontmatter.match(/^added: "([^"]+)"$/m)?.[1];
+      assertEquals(new Date(timestamp ?? "").toISOString(), timestamp);
+      assertEquals(added, timestamp);
+      assertEquals(markdown.includes("Generated Document"), false);
+      assertStringIncludes(markdown, "\n# q1-report\n");
       assertStringIncludes(markdown, "Quarterly revenue increased 12% year over year.");
     } finally {
       await Deno.remove(tempDir, { recursive: true }).catch(() => undefined);
     }
   });
 
-  it("retains standardized source provenance for absolute URLs", async () => {
+  it("titles and names a Studio upload from its own H1 without a synthetic heading", async () => {
+    const tempDir = await makeTempDir({ prefix: "veryfront-knowledge-parser-h1-" });
+    const fileName = "20. Create an account, invite a member.md";
+    const filePath = join(
+      tempDir,
+      "chat-11111111-2222-3333-4444-555555555555-1700000000000-xyz99-a.md",
+    );
+    const outputDir = join(tempDir, "knowledge-output");
+
+    try {
+      await Deno.writeTextFile(
+        filePath,
+        "```md\n# Not the title\n```\n\n# 20. Create a team account and invite a member\n\nOpen Settings.",
+      );
+
+      const result = await runKnowledgeParser({
+        filePath,
+        outputDir,
+        sourceName: fileName,
+        resource: fileName,
+        sourceReference: `uploads/_knowledge-ingest/20261110201703921-e763c00b/${fileName}`,
+      });
+
+      assertEquals(result.title, "20. Create a team account and invite a member");
+      assertEquals(result.slug, "create-a-team-account-and-invite-a-member");
+      assertEquals(
+        result.sandbox_output_path,
+        join(outputDir, "create-a-team-account-and-invite-a-member.md"),
+      );
+      const markdown = await Deno.readTextFile(result.sandbox_output_path);
+      assertStringIncludes(markdown, 'title: "20. Create a team account and invite a member"');
+      assertStringIncludes(markdown, `resource: ${JSON.stringify(fileName)}`);
+      assertStringIncludes(markdown, `source: ${JSON.stringify(fileName)}`);
+      assertStringIncludes(markdown, `description: ${JSON.stringify(`Parsed from ${fileName}`)}`);
+      assertEquals(markdown.includes("_knowledge-ingest"), false);
+      assertEquals(markdown.match(/^# /gm)?.length, 2);
+      assertEquals(markdown.includes("# 20. Create An Account"), false);
+    } finally {
+      await Deno.remove(tempDir, { recursive: true }).catch(() => undefined);
+    }
+  });
+
+  it("adds a short suffix when two documents in one run share a title", async () => {
+    const tempDir = await makeTempDir({ prefix: "veryfront-knowledge-parser-collide-" });
+    const outputDir = join(tempDir, "knowledge-output");
+
+    try {
+      const paths = [join(tempDir, "a.md"), join(tempDir, "b.md")];
+      for (const path of paths) await Deno.writeTextFile(path, "# Overview\n\nText.");
+
+      const results = await runKnowledgeParsers({
+        files: paths.map((filePath) => ({ filePath })),
+        outputDir,
+      });
+
+      assertEquals(results.map((result) => result.slug), ["overview", "overview-2"]);
+      assertEquals(await Deno.readTextFile(join(outputDir, "overview.md")) !== "", true);
+    } finally {
+      await Deno.remove(tempDir, { recursive: true }).catch(() => undefined);
+    }
+  });
+
+  it("uses an absolute URL source as the OKF resource", async () => {
     const tempDir = await makeTempDir({ prefix: "veryfront-knowledge-parser-url-" });
     const filePath = join(tempDir, "source.txt");
     const outputDir = join(tempDir, "knowledge-output");
@@ -2054,10 +2133,9 @@ describe("runKnowledgeParser", () => {
       });
 
       const markdown = await Deno.readTextFile(result.sandbox_output_path);
-      assertStringIncludes(markdown, 'source: "https://example.com/source.txt"');
-      assertStringIncludes(markdown, "sources:");
-      assertStringIncludes(markdown, "  - id: source");
       assertStringIncludes(markdown, 'resource: "https://example.com/source.txt"');
+      assertStringIncludes(markdown, 'tags: ["txt"]');
+      assertEquals(markdown.includes("sources:"), false);
     } finally {
       await Deno.remove(tempDir, { recursive: true }).catch(() => undefined);
     }
@@ -2107,9 +2185,10 @@ describe("runKnowledgeParser", () => {
       }]);
 
       const markdown = await Deno.readTextFile(result.sandbox_output_path);
-      assertStringIncludes(markdown, 'source: "uploads/offers/offer.pdf"');
+      assertStringIncludes(markdown, 'resource: "uploads/offers/offer.pdf"');
+      assertStringIncludes(markdown, 'source: "offer.pdf"');
       assertStringIncludes(markdown, 'description: "Offer PDF"');
-      assertStringIncludes(markdown, "# Offer");
+      assertStringIncludes(markdown, "\n# offer\n");
       assertStringIncludes(markdown, "Kreuzberg PDF text");
     } finally {
       await Deno.remove(tempDir, { recursive: true }).catch(() => undefined);
@@ -2195,7 +2274,7 @@ describe("runKnowledgeParser", () => {
       assertEquals(outputFiles.sort(), ["manual.md"]);
 
       const markdown = await Deno.readTextFile(result.sandbox_output_path);
-      assertStringIncludes(markdown, "# Manual");
+      assertStringIncludes(markdown, "\n# manual\n");
       assertStringIncludes(markdown, "Page one text");
       assertStringIncludes(markdown, "Page two text");
     } finally {
