@@ -31,7 +31,9 @@ On Veryfront Cloud, the runtime does not run from the project folder. The tools
 read and edit the project's files through the platform file operations
 (`veryfront__list_files`, `veryfront__get_file`, and `veryfront__update_file`),
 which each tool declares in `delegatedPlatformTools`. An agent run on Veryfront
-Cloud grants them. Outside an agent run, for example in a task, the tools answer
-that the runtime has no local copy of the project files.
+Cloud grants them, and reads and saves the run's preview branch, else `main`.
+When a run does not grant them, for example in a task, the tools use the folder
+they run from, and answer that the runtime has no local copy of the project
+files when that folder is not the project.
 
 This starter is not production-ready.

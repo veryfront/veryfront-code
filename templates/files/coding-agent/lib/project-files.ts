@@ -21,11 +21,58 @@ export interface ProjectFiles {
 
 type ExecutePlatformTool = NonNullable<ToolExecutionContext["executePlatformTool"]>;
 
-/** Pick the hosted file operations when the run grants them, else the local folder. */
-export function projectFiles(context?: ToolExecutionContext): ProjectFiles {
+/**
+ * Use the hosted file operations when the run grants them, else the local folder.
+ *
+ * The agent runtime offers `executePlatformTool` to every tool that declares
+ * `delegatedPlatformTools`, including under `veryfront dev` and in runs that
+ * admit no platform operation. There the first call is refused with
+ * `permission-denied`, and the tools fall back to the folder they run from.
+ */
+export function projectFiles(context?: ToolExecutionContext, root: string = cwd()): ProjectFiles {
+  const local = localProjectFiles(root);
   const execute = context?.executePlatformTool;
-  if (execute) return hostedProjectFiles(execute, context?.projectSlug ?? context?.projectId);
-  return localProjectFiles(cwd());
+  if (!execute) return local;
+  const branch = typeof context?.branch === "string" && context.branch !== "main"
+    ? context.branch
+    : undefined;
+  return withLocalFallback(
+    hostedProjectFiles(execute, context?.projectSlug ?? context?.projectId, branch),
+    local,
+  );
+}
+
+/** True for the runtime's refusal of a platform operation this run does not admit. */
+function isNotGranted(error: unknown): boolean {
+  return record(error).slug === "permission-denied";
+}
+
+/**
+ * Use `hosted` until it refuses its first operation as not granted, then `local`.
+ *
+ * Once a hosted operation has succeeded the choice is fixed, so a refused save
+ * after a hosted read surfaces instead of writing to the runtime's own folder.
+ */
+function withLocalFallback(hosted: ProjectFiles, local: ProjectFiles): ProjectFiles {
+  let source: ProjectFiles | undefined;
+  async function run<T>(operation: (files: ProjectFiles) => Promise<T>): Promise<T> {
+    if (source) return await operation(source);
+    try {
+      const result = await operation(hosted);
+      source = hosted;
+      return result;
+    } catch (error) {
+      if (!isNotGranted(error)) throw error;
+      source = local;
+      return await operation(local);
+    }
+  }
+  return {
+    list: (directory) => run((files) => files.list(directory)),
+    read: (path) => run((files) => files.read(path)),
+    write: (path, content) => run((files) => files.write(path, content)),
+    notFoundHint: () => (source ?? hosted).notFoundHint(),
+  };
 }
 
 /** True when `target` is the same as, or nested under, `root` (both canonical). */
@@ -120,8 +167,13 @@ const MAX_LIST_PAGES = 50;
 export function hostedProjectFiles(
   execute: ExecutePlatformTool,
   projectReference?: string,
+  branch?: string,
 ): ProjectFiles {
-  const scope = projectReference ? { project_reference: projectReference } : {};
+  // Read and save the content the run is on: its preview branch, else `main`.
+  const scope = {
+    ...(projectReference ? { project_reference: projectReference } : {}),
+    ...(branch ? { branch_id: branch } : {}),
+  };
 
   return {
     async list(directory) {
@@ -142,10 +194,9 @@ export function hostedProjectFiles(
         );
         const entries = Array.isArray(result.data) ? result.data : [];
         for (const entry of entries) {
-          const { path, type } = record(entry);
-          if (typeof path === "string" && (type === undefined || type === "file")) {
-            files.push(path.slice(path.lastIndexOf("/") + 1));
-          }
+          // Every entry is a file; `type` is its kind (page, component, function or file).
+          const { path } = record(entry);
+          if (typeof path === "string") files.push(path.slice(path.lastIndexOf("/") + 1));
         }
         const next = record(result.page_info).next;
         if (typeof next !== "string" || next === "") break;
@@ -161,7 +212,8 @@ export function hostedProjectFiles(
       let result: Record<string, unknown>;
       try {
         result = record(await execute("veryfront__get_file", { ...scope, path: file }));
-      } catch {
+      } catch (error) {
+        if (isNotGranted(error)) throw error;
         return { notFound: true };
       }
       return typeof result.content === "string" ? { content: result.content } : { notFound: true };

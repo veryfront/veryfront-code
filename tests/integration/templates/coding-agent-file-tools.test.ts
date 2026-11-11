@@ -33,6 +33,7 @@ const TOOLS_DIR = new URL("tools/", TEMPLATE_DIR);
 const LIB_URL = new URL("lib/project-files.ts", TEMPLATE_DIR);
 const REPO_CONFIG = fromFileUrl(new URL("../../../deno.json", import.meta.url));
 const SCHEMA_SETUP_URL = new URL("../../../src/schemas/_test-setup.ts", import.meta.url);
+const TOOL_HELPERS_URL = new URL("../../../src/agent/runtime/tool-helpers.ts", import.meta.url);
 
 /** The sentence a tool adds when its process runs outside the project. */
 const NO_LOCAL_COPY =
@@ -50,6 +51,8 @@ function loadProjectFilesModule(): Promise<
 /**
  * Run the shipped tools in a child process whose working directory is `cwd`.
  *
+ * Each call goes through the agent runtime's tool executor, as in an agent
+ * run that admits no platform operation (for example under `veryfront dev`).
  * Returns each call's result in order. The child is denied network access and
  * may write only inside `cwd`.
  */
@@ -63,11 +66,14 @@ async function runToolsFrom(
     script,
     [
       `import ${JSON.stringify(SCHEMA_SETUP_URL.href)};`,
+      `import { executeConfiguredTool } from ${JSON.stringify(TOOL_HELPERS_URL.href)};`,
       "const calls = JSON.parse(Deno.args[0]);",
       "const results = [];",
       "for (const [url, input] of calls) {",
       "  const { default: tool } = await import(url);",
-      "  results.push(await tool.execute(input));",
+      "  results.push(",
+      "    await executeConfiguredTool(tool.id, input, { [tool.id]: tool }, { agentId: \"coder\" }),",
+      "  );",
       "}",
       "console.log(JSON.stringify(results));",
     ].join("\n"),

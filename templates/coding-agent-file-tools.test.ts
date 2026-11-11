@@ -19,6 +19,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { ToolExecutionContext } from "#veryfront/tool/types.ts";
+import { PERMISSION_DENIED } from "#veryfront/errors";
 import listFiles from "./files/coding-agent/tools/list-files.ts";
 import readFile from "./files/coding-agent/tools/read-file.ts";
 import editFile from "./files/coding-agent/tools/edit-file.ts";
@@ -70,7 +71,7 @@ function hostedProject(
         return Promise.resolve({
           data: matches.slice(start, start + pageSize).map((file) => ({
             path: file,
-            type: "file",
+            type: fileKind(file),
           })),
           page_info: { next },
         });
@@ -93,6 +94,23 @@ function hostedProject(
     executePlatformTool,
   };
   return { calls, context, files };
+}
+
+/** The platform's file kind for a path, as `veryfront__list_files` reports it. */
+function fileKind(path: string): string {
+  if (path.startsWith("app/api/") || path.startsWith("pages/api/")) return "function";
+  if (path.startsWith("pages/")) return "page";
+  if (path.startsWith("components/")) return "component";
+  return "file";
+}
+
+/** The runtime's refusal of an operation the run does not admit. */
+function notAdmitted(name: string): Promise<never> {
+  return Promise.reject(
+    PERMISSION_DENIED.create({
+      detail: `Platform operation "${name}" is not admitted for this wrapper invocation`,
+    }),
+  );
 }
 
 function sampleProject(): Record<string, string> {
@@ -158,6 +176,51 @@ describe("templates/coding-agent file tools", () => {
         count: 5,
       });
       assertEquals(calls.map((call) => call.input.cursor), [undefined, "2", "4"]);
+    });
+
+    it("lists files of every kind, including pages, components and API routes", async () => {
+      const { context } = hostedProject({
+        "components/Button.tsx": "",
+        "pages/index.tsx": "",
+        "app/api/ag-ui/route.ts": "",
+      });
+      assertEquals(await listFiles.execute({ directory: "components" }, context), {
+        directory: "components",
+        files: ["Button.tsx"],
+        count: 1,
+      });
+      assertEquals(await listFiles.execute({ directory: "pages" }, context), {
+        directory: "pages",
+        files: ["index.tsx"],
+        count: 1,
+      });
+      assertEquals(await listFiles.execute({ directory: "app/api/ag-ui" }, context), {
+        directory: "app/api/ag-ui",
+        files: ["route.ts"],
+        count: 1,
+      });
+    });
+
+    it("reads and saves the run's preview branch, and main otherwise", async () => {
+      const onBranch = hostedProject(sampleProject(), { context: { branch: "<BRANCH_ID>" } });
+      await listFiles.execute({ directory: "app" }, onBranch.context);
+      await editFile.execute(
+        { path: "app/page.tsx", search: "hi", replace: "hello" },
+        onBranch.context,
+      );
+      assertEquals(
+        onBranch.calls.map((call) => call.input.branch_id),
+        ["<BRANCH_ID>", "<BRANCH_ID>", "<BRANCH_ID>"],
+      );
+
+      for (const branch of [undefined, null, "main"]) {
+        const onMain = hostedProject(sampleProject(), { context: { branch } });
+        await readFile.execute({ path: "README.md" }, onMain.context);
+        assertEquals(onMain.calls[0]!.input, {
+          project_reference: "<PROJECT_SLUG>",
+          path: "README.md",
+        }, String(branch));
+      }
     });
 
     it("scopes calls to the run's project slug, then its ID, and otherwise to the current project", async () => {
@@ -260,6 +323,23 @@ describe("templates/coding-agent file tools", () => {
       assertEquals(project.files["app/page.tsx"], PAGE);
     });
 
+    it("surfaces a refused save after a platform read instead of saving elsewhere", async () => {
+      const project = hostedProject(sampleProject());
+      const context: ToolExecutionContext = {
+        ...project.context,
+        executePlatformTool: (name, input) =>
+          name === "veryfront__update_file"
+            ? notAdmitted(name)
+            : project.context.executePlatformTool!(name, input),
+      };
+      await assertRejects(
+        () => editFile.execute({ path: "app/page.tsx", search: "hi", replace: "hello" }, context),
+        Error,
+        "is not admitted",
+      );
+      assertEquals(project.files["app/page.tsx"], PAGE);
+    });
+
     it("surfaces a listing failure instead of reporting an empty directory", async () => {
       const context: ToolExecutionContext = {
         executePlatformTool: () => Promise.reject(new Error("<PLATFORM_FAILURE>")),
@@ -269,6 +349,28 @@ describe("templates/coding-agent file tools", () => {
         Error,
         "<PLATFORM_FAILURE>",
       );
+    });
+  });
+
+  describe("in a run that admits no platform file operation", () => {
+    it("falls back to the folder it runs from, and says when that is not the project", async () => {
+      const { projectFiles, notFoundMessage } = await loadProjectFilesModule();
+      const calls: string[] = [];
+      const context: ToolExecutionContext = {
+        executePlatformTool: (name) => {
+          calls.push(name);
+          return notAdmitted(name);
+        },
+      };
+      // A folder that does not exist stands in for a runtime folder without the project.
+      const files = projectFiles(context, "/vf-coding-agent-no-such-folder");
+      assertEquals(await files.list("app"), { notFound: true });
+      assertEquals(await files.read("app/page.tsx"), { notFound: true });
+      assertEquals(
+        await notFoundMessage(files, "Directory not found: app"),
+        "Directory not found: app. This runtime has no local copy of the project files. Run the agent with `veryfront dev` in the project folder, or from an agent run on Veryfront Cloud.",
+      );
+      assertEquals(calls, ["veryfront__list_files"], "the platform is not asked again");
     });
   });
 });
