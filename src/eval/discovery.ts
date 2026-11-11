@@ -10,6 +10,9 @@ import { collectFiles } from "#veryfront/utils/file-discovery.ts";
 import { isEvalDefinition } from "./factory.ts";
 import type { EvalDefinition } from "./types.ts";
 import { compareStrings } from "#veryfront/utils/compare.ts";
+import { sanitizeBoundedDiagnosticText } from "#veryfront/errors/diagnostic-policy.ts";
+import { redactPathFromText } from "#veryfront/utils/logger/redact.ts";
+import { EVAL_LOAD_FAILED, EVAL_NOT_FOUND } from "#veryfront/errors/error-registry/agent.ts";
 
 const EVAL_FILE_EXTENSIONS = [".ts", ".tsx", ".js", ".jsx"] as const;
 const EVAL_IGNORE_PATTERNS = [
@@ -238,4 +241,123 @@ export async function findEvalById(
 ): Promise<DiscoveredEval | null> {
   const result = await discoverEvals(options);
   return result.evals.find((item) => item.id === evalId) ?? null;
+}
+
+/** Remove trailing `/` characters without a backtracking regular expression. */
+function stripTrailingSlashes(value: string): string {
+  let end = value.length;
+  while (end > 0 && value.charCodeAt(end - 1) === 47) end -= 1;
+  return value.slice(0, end);
+}
+
+function projectRoot(projectDir: string): string {
+  return stripTrailingSlashes(stripFileProtocol(projectDir));
+}
+
+function toProjectRelativePath(path: string, projectDir: string): string {
+  const normalized = stripFileProtocol(path);
+  const root = projectRoot(projectDir);
+  if (root && normalized.startsWith(`${root}/`)) return normalized.slice(root.length + 1);
+  return normalized.replace(/^\/+/, "");
+}
+
+const MACHINE_PATH_PATTERN =
+  /file:\/\/[^\s'"`()<>]+|\b[A-Za-z]:[\\/][^\s'"`()<>]*|(?<![\w.:/\\-])\/[^\s'"`()<>]+/g;
+
+/**
+ * Make error text safe to return: the project root becomes project-relative, in
+ * any separator, case or `file:` URL form, and any other absolute path or file
+ * URL (for example a transpiler temp module) is redacted.
+ */
+function withoutMachinePaths(text: string, projectDir: string): string {
+  const root = projectRoot(projectDir);
+  const relative = root && root !== "." ? redactPathFromText(text, `${root}/`, "") : text;
+  return relative.replace(MACHINE_PATH_PATTERN, "<absolute-path>");
+}
+
+/** Read the first entry of the evals directory, so a listing failure is not silent. */
+async function readEvalsDirError(
+  baseDir: string,
+  adapter: RuntimeAdapter,
+): Promise<string | undefined> {
+  try {
+    if (!await adapter.fs.exists(baseDir)) return undefined;
+    const listing = adapter.fs.readDir(baseDir)[Symbol.asyncIterator]();
+    try {
+      await listing.next();
+    } finally {
+      await listing.return?.();
+    }
+    return undefined;
+  } catch (error) {
+    return toErrorMessage(error);
+  }
+}
+
+/**
+ * Discover and return one eval definition by ID, or throw an error that says why not.
+ *
+ * Discovery skips an eval file that fails to load, so `findEvalById` alone cannot
+ * tell a missing file from a broken one. This throws `eval-load-failed` when the
+ * ID points at a file that exists but does not load, or that more than one file
+ * declares, and `eval-not-found` otherwise. Messages use project-relative paths.
+ */
+export async function resolveEvalById(
+  evalId: string,
+  options: EvalDiscoveryOptions,
+): Promise<DiscoveredEval> {
+  const evalsDir = options.evalsDir ?? "evals";
+  const baseDir = resolveEvalsBaseDir(options.projectDir, evalsDir, options.config);
+  const { evals, errors } = await discoverEvals(options);
+  const found = evals.find((item) => item.id === evalId);
+  if (found) return found;
+
+  const duplicates = errors
+    .filter((entry) => entry.error.startsWith(`Duplicate eval id "${evalId}" `))
+    .map((entry) => toProjectRelativePath(entry.filePath, options.projectDir));
+  if (duplicates.length > 0) {
+    throw EVAL_LOAD_FAILED.create({
+      detail: `Eval ${evalId} is declared by more than one file: ${
+        duplicates.join(", ")
+      }. Give each eval a unique id, then run the eval again.`,
+      context: { evalId, filePaths: duplicates },
+    });
+  }
+
+  // collectFiles skips a directory it cannot list, so check the evals directory itself.
+  const directoryError = errors.find((entry) => entry.filePath === baseDir)?.error ??
+    await readEvalsDirError(baseDir, options.adapter);
+  if (directoryError !== undefined) {
+    const cause = sanitizeBoundedDiagnosticText(
+      withoutMachinePaths(directoryError, options.projectDir),
+    ).replace(/\.$/, "");
+    throw EVAL_LOAD_FAILED.create({
+      detail:
+        `Eval ${evalId} could not be loaded because the evals directory could not be read: ${cause}. Fix the cause, then run the eval again.`,
+      context: { evalId },
+    });
+  }
+
+  const fileError = errors.find((entry) =>
+    entry.filePath !== baseDir && deriveEvalId(entry.filePath, baseDir) === evalId
+  );
+  if (fileError) {
+    const filePath = toProjectRelativePath(fileError.filePath, options.projectDir);
+    const cause = sanitizeBoundedDiagnosticText(
+      withoutMachinePaths(fileError.error, options.projectDir),
+    ).replace(/\.$/, "");
+    throw EVAL_LOAD_FAILED.create({
+      detail:
+        `Eval ${evalId} failed to load from ${filePath}: ${cause}. Fix the file, then run the eval again.`,
+      context: { evalId, filePath },
+    });
+  }
+
+  const name = evalId.startsWith("eval:") ? evalId.slice("eval:".length) : evalId;
+  const expectedPath = `${stripTrailingSlashes(evalsDir)}/${name}.eval.ts`;
+  throw EVAL_NOT_FOUND.create({
+    detail:
+      `Eval not found: ${evalId}. Veryfront looks for it in ${expectedPath} (or a .tsx, .js or .jsx file at that path), exported with evalAgent, evalTool or evalDataset. Ensure the file is in the source this run uses, or use the ID that the evals list shows.`,
+    context: { evalId, expectedPath },
+  });
 }

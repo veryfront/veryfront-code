@@ -78,6 +78,18 @@ function normalizeOptionalLabel(value: unknown, label: string): string | undefin
   return normalizeEvalString(value, label);
 }
 
+/**
+ * An empty description means no description. The Veryfront API writes
+ * `description: ""` for an eval made in Studio with the field left empty.
+ */
+function normalizeOptionalDescription(value: unknown): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string") {
+    throw createEvalValidationError("Eval description must be a string");
+  }
+  return value.trim() || undefined;
+}
+
 function createEvalDefinition(
   targetKind: EvalTargetKind,
   input: EvalAgentInput | EvalToolInput,
@@ -85,7 +97,7 @@ function createEvalDefinition(
   const target = normalizeEvalString(input.target, "Eval target");
   const id = normalizeOptionalLabel(input.id, "Eval id") ?? "";
   const name = normalizeOptionalLabel(input.name, "Eval name") ?? (id || target);
-  const description = normalizeOptionalLabel(input.description, "Eval description");
+  const description = normalizeOptionalDescription(input.description);
   const tags = input.tags === undefined ? [] : normalizeEvalStringList(input.tags, "Eval tags");
 
   return {

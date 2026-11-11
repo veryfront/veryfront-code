@@ -933,6 +933,20 @@ Eval record timed out.
 - **HTTP status:** 504
 - **What to do:** The limit covers the whole record: target execution, tools, model requests, metrics, and checks. Run the eval again with LOG_LEVEL=DEBUG to see which phase stopped making progress, and check the record report for the phase that did not finish. If the record legitimately needs longer, raise the limit with --record-timeout \<seconds>, or pass --record-timeout 0 to disable it.
 
+### eval-not-found
+
+Eval not found.
+
+- **HTTP status:** 404
+- **What to do:** Put the eval in evals/\<name>.eval.ts with an export made by evalAgent, evalTool or evalDataset, ensure the file is in the source the run uses, then run the eval again with the ID that the evals list shows.
+
+### eval-load-failed
+
+Eval file failed to load.
+
+- **HTTP status:** 422
+- **What to do:** Fix the error the message names in the eval file, then run the eval again.
+
 ## General
 
 Raised anywhere; these are not specific to one subsystem.

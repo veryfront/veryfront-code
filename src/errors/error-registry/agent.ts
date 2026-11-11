@@ -234,6 +234,31 @@ export const EVAL_RECORD_TIMEOUT = defineError({
     "The limit covers the whole record: target execution, tools, model requests, metrics, and checks. Run the eval again with LOG_LEVEL=DEBUG to see which phase stopped making progress, and check the record report for the phase that did not finish. If the record legitimately needs longer, raise the limit with --record-timeout <seconds>, or pass --record-timeout 0 to disable it.",
 });
 
+/**
+ * An eval run named an eval ID that no file in the project's evals directory
+ * defines.
+ */
+export const EVAL_NOT_FOUND = defineError({
+  slug: "eval-not-found",
+  category: "AGENT",
+  status: 404,
+  title: "Eval not found",
+  suggestion:
+    "Put the eval in evals/<name>.eval.ts with an export made by evalAgent, evalTool or evalDataset, ensure the file is in the source the run uses, then run the eval again with the ID that the evals list shows.",
+});
+
+/**
+ * An eval run named an eval whose file exists but does not load, or whose ID
+ * more than one file declares.
+ */
+export const EVAL_LOAD_FAILED = defineError({
+  slug: "eval-load-failed",
+  category: "AGENT",
+  status: 422,
+  title: "Eval file failed to load",
+  suggestion: "Fix the error the message names in the eval file, then run the eval again.",
+});
+
 /** Registry fragment for AGENT errors (slug → definition). */
 export const AGENT_REGISTRY = {
   "agent-error": AGENT_ERROR,
@@ -257,4 +282,6 @@ export const AGENT_REGISTRY = {
   "eval-model-inference-policy-denied": EVAL_MODEL_INFERENCE_POLICY_DENIED,
   "eval-inference-policy-denied": EVAL_INFERENCE_POLICY_DENIED,
   "eval-record-timeout": EVAL_RECORD_TIMEOUT,
+  "eval-not-found": EVAL_NOT_FOUND,
+  "eval-load-failed": EVAL_LOAD_FAILED,
 } as const;
