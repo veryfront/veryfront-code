@@ -430,16 +430,18 @@ function missingVeryfrontApiMcpIdentityMessage(
   missingToken: boolean,
   missingSlug: boolean,
 ): string {
-  const missing = [
-    ...(missingToken ? ["VERYFRONT_API_TOKEN"] : []),
-    ...(missingSlug ? ["VERYFRONT_PROJECT_SLUG"] : []),
-  ];
-  const subject = missing.length > 1 ? `${missing.join(" and ")} are` : `${missing[0]} is`;
+  // Plain conditionals: project code can replace Array.prototype methods.
+  const names = missingToken && missingSlug
+    ? "VERYFRONT_API_TOKEN and VERYFRONT_PROJECT_SLUG"
+    : missingToken
+    ? "VERYFRONT_API_TOKEN"
+    : "VERYFRONT_PROJECT_SLUG";
+  const subject = missingToken && missingSlug ? `${names} are` : `${names} is`;
   return `Veryfront API MCP cannot start: ${subject} not set. ` +
-    "It reads VERYFRONT_API_TOKEN (or your veryfront login session) " +
-    "and VERYFRONT_PROJECT_SLUG from the environment of the server process that runs the agent, " +
-    "not from project environment variables. " +
-    `Set ${missing.join(" and ")} there, for example in the shell that runs veryfront dev.`;
+    "It reads VERYFRONT_API_TOKEN or VERYFRONT_API_TOKEN_FILE, and VERYFRONT_PROJECT_SLUG, " +
+    "from the environment of the server process that runs the agent, not from project " +
+    "environment variables. A veryfront login session in that process also supplies the token. " +
+    `Set ${names} there, for example in the shell that runs veryfront dev.`;
 }
 
 function createVeryfrontApiMcpServerToolSource(
