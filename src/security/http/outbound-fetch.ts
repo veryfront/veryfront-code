@@ -527,7 +527,7 @@ async function fetchWithBoundaryErrors(
       const message = error.message.replace(/^Worker\s+/u, "Outbound ");
       throw new OutboundRequestBlockedError(
         isAllowlistablePrivateAddressEgressBlock(error)
-          ? `${message}. ${PRIVATE_DNS_ANSWER_HINT}`
+          ? `${message}${message.endsWith(".") ? "" : "."} ${PRIVATE_DNS_ANSWER_HINT}`
           : message,
         { cause: error },
       );

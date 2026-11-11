@@ -807,8 +807,15 @@ describe("createVeryfrontApiOriginBoundOutboundFetch", () => {
     const error = await assertRejects(
       request,
       OutboundRequestBlockedError,
-      `Outbound network egress blocked for host: ${host}. The host resolves to a private network address. If you trust this host, add it to ${ALLOWLIST_HINT}`,
+      `Outbound network egress blocked for host: ${host}${
+        host.endsWith(".") ? "" : "."
+      } The host resolves to a private network address. If you trust this host, add it to ${ALLOWLIST_HINT}`,
     ) as Error;
+    assertEquals(
+      error.message.includes(".."),
+      false,
+      `no doubled sentence period for ${host}: ${error.message}`,
+    );
     assertEquals(
       error.message.split(ALLOWLIST_HINT).length,
       2,
