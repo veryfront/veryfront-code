@@ -583,6 +583,64 @@ describe("eval/discovery", () => {
       );
     });
 
+    it("reads only the first evals directory entry and closes the listing", async () => {
+      const adapter = createRuntimeAdapter({ "/project/evals/by-hand.eval.ts": "" });
+      const listDiscovery = adapter.fs.readDir.bind(adapter.fs);
+      let probeListings = 0;
+      let probeClosed = 0;
+      adapter.fs.readDir = (path: string) => {
+        if (path !== "/project/evals") return listDiscovery(path);
+        probeListings += 1;
+        // Discovery lists the directory first; only the second listing is the probe.
+        if (probeListings === 1) return listDiscovery(path);
+        return (async function* () {
+          try {
+            yield { name: "by-hand.eval.ts", isFile: true, isDirectory: false, isSymlink: false };
+            throw new Error("a second entry must not be read");
+          } finally {
+            probeClosed += 1;
+          }
+        })();
+      };
+
+      const error = await rejection(resolveEvalById("eval:missing", {
+        projectDir: "/project",
+        adapter,
+        moduleLoader: async () => ({ default: evalDefinition() }),
+      }));
+
+      assertEquals(error.slug, "eval-not-found", "a readable directory is not a load failure");
+      assertEquals(probeListings, 2, "the directory probe lists the directory once");
+      assertEquals(probeClosed, 1, "the probe closes the listing after the first entry");
+    });
+
+    it("ignores trailing slashes in the project and evals directories", async () => {
+      const missing = await rejection(resolveEvalById("eval:missing", {
+        projectDir: "/project///",
+        evalsDir: "evals//",
+        adapter: createRuntimeAdapter({ "/project/evals/by-hand.eval.ts": "" }),
+        moduleLoader: async () => ({ default: evalDefinition() }),
+      }));
+      assertEquals(
+        (missing.context as { expectedPath?: string }).expectedPath,
+        "evals/missing.eval.ts",
+        "the expected path has a single separator",
+      );
+
+      const broken = await rejection(resolveEvalById("eval:by-hand", {
+        projectDir: "/project///",
+        adapter: createRuntimeAdapter({ "/project/evals/by-hand.eval.ts": "" }),
+        moduleLoader: async () => {
+          throw new Error("Failed to read /project/evals/by-hand.eval.ts: <CAUSE>");
+        },
+      }));
+      assertEquals(
+        broken.message,
+        "Eval eval:by-hand failed to load from evals/by-hand.eval.ts: Failed to read evals/by-hand.eval.ts: <CAUSE>. Fix the file, then run the eval again.",
+        "the project root is removed even when projectDir ends in slashes",
+      );
+    });
+
     it("keeps findEvalById returning null for a file that does not load", async () => {
       const found = await findEvalById("eval:by-hand", {
         projectDir: "/project",

@@ -243,8 +243,15 @@ export async function findEvalById(
   return result.evals.find((item) => item.id === evalId) ?? null;
 }
 
+/** Remove trailing `/` characters without a backtracking regular expression. */
+function stripTrailingSlashes(value: string): string {
+  let end = value.length;
+  while (end > 0 && value.charCodeAt(end - 1) === 47) end -= 1;
+  return value.slice(0, end);
+}
+
 function projectRoot(projectDir: string): string {
-  return stripFileProtocol(projectDir).replace(/\/+$/, "");
+  return stripTrailingSlashes(stripFileProtocol(projectDir));
 }
 
 function toProjectRelativePath(path: string, projectDir: string): string {
@@ -275,7 +282,12 @@ async function readEvalsDirError(
 ): Promise<string | undefined> {
   try {
     if (!await adapter.fs.exists(baseDir)) return undefined;
-    for await (const _entry of adapter.fs.readDir(baseDir)) break;
+    const listing = adapter.fs.readDir(baseDir)[Symbol.asyncIterator]();
+    try {
+      await listing.next();
+    } finally {
+      await listing.return?.();
+    }
     return undefined;
   } catch (error) {
     return toErrorMessage(error);
@@ -342,7 +354,7 @@ export async function resolveEvalById(
   }
 
   const name = evalId.startsWith("eval:") ? evalId.slice("eval:".length) : evalId;
-  const expectedPath = `${evalsDir.replace(/\/+$/, "")}/${name}.eval.ts`;
+  const expectedPath = `${stripTrailingSlashes(evalsDir)}/${name}.eval.ts`;
   throw EVAL_NOT_FOUND.create({
     detail:
       `Eval not found: ${evalId}. Veryfront looks for it in ${expectedPath} (or a .tsx, .js or .jsx file at that path), exported with evalAgent, evalTool or evalDataset. Ensure the file is in the source this run uses, or use the ID that the evals list shows.`,
