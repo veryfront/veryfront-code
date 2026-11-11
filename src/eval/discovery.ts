@@ -254,10 +254,18 @@ function toProjectRelativePath(path: string, projectDir: string): string {
   return normalized.replace(/^\/+/, "");
 }
 
-/** Remove the project root, in any separator, case or `file:` URL form, from error text. */
-function withoutProjectRoot(text: string, projectDir: string): string {
+const MACHINE_PATH_PATTERN =
+  /file:\/\/[^\s'"`()<>]+|\b[A-Za-z]:[\\/][^\s'"`()<>]*|(?<![\w.:/\\-])\/[^\s'"`()<>]+/g;
+
+/**
+ * Make error text safe to return: the project root becomes project-relative, in
+ * any separator, case or `file:` URL form, and any other absolute path or file
+ * URL (for example a transpiler temp module) is redacted.
+ */
+function withoutMachinePaths(text: string, projectDir: string): string {
   const root = projectRoot(projectDir);
-  return root && root !== "." ? redactPathFromText(text, `${root}/`, "") : text;
+  const relative = root && root !== "." ? redactPathFromText(text, `${root}/`, "") : text;
+  return relative.replace(MACHINE_PATH_PATTERN, "<absolute-path>");
 }
 
 /** Read the first entry of the evals directory, so a listing failure is not silent. */
@@ -309,7 +317,7 @@ export async function resolveEvalById(
     await readEvalsDirError(baseDir, options.adapter);
   if (directoryError !== undefined) {
     const cause = sanitizeBoundedDiagnosticText(
-      withoutProjectRoot(directoryError, options.projectDir),
+      withoutMachinePaths(directoryError, options.projectDir),
     ).replace(/\.$/, "");
     throw EVAL_LOAD_FAILED.create({
       detail:
@@ -324,7 +332,7 @@ export async function resolveEvalById(
   if (fileError) {
     const filePath = toProjectRelativePath(fileError.filePath, options.projectDir);
     const cause = sanitizeBoundedDiagnosticText(
-      withoutProjectRoot(fileError.error, options.projectDir),
+      withoutMachinePaths(fileError.error, options.projectDir),
     ).replace(/\.$/, "");
     throw EVAL_LOAD_FAILED.create({
       detail:

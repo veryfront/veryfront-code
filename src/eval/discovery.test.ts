@@ -566,6 +566,23 @@ describe("eval/discovery", () => {
       }
     });
 
+    it("redacts machine paths outside the project from the load error", async () => {
+      const error = await rejection(resolveLocal(
+        { "/project/evals/by-hand.eval.ts": "" },
+        "eval:by-hand",
+        async () => {
+          throw new Error(
+            "boom at file:///tmp/vf-discovery-1/module.mjs:3 via /var/folders/x/y.ts and C:\\Temp\\z.mjs in evals/by-hand.eval.ts",
+          );
+        },
+      ));
+
+      assertEquals(
+        error.message,
+        "Eval eval:by-hand failed to load from evals/by-hand.eval.ts: boom at <absolute-path> via <absolute-path> and <absolute-path> in evals/by-hand.eval.ts. Fix the file, then run the eval again.",
+      );
+    });
+
     it("keeps findEvalById returning null for a file that does not load", async () => {
       const found = await findEvalById("eval:by-hand", {
         projectDir: "/project",
