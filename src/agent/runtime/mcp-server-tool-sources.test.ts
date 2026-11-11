@@ -1893,6 +1893,12 @@ it("names the missing Veryfront API MCP value and where the server reads it", ()
     assertStringIncludes(error.message, "not from project environment variables", label);
     assertStringIncludes(error.message, fix, label);
     assertEquals(error.message.includes("<TOKEN>"), false, `${label}: never echoes the token`);
+    // This bootstrap reads VERYFRONT_API_TOKEN only; a token file is not a source here.
+    assertEquals(
+      error.message.includes("VERYFRONT_API_TOKEN_FILE"),
+      false,
+      `${label}: names only sources this bootstrap reads`,
+    );
     assertEquals(/[\u2013\u2014]/.test(error.message), false, `${label}: no en or em dash`);
   }
 });

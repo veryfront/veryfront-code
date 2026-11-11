@@ -436,7 +436,7 @@ function missingVeryfrontApiMcpIdentityMessage(
   ];
   const subject = missing.length > 1 ? `${missing.join(" and ")} are` : `${missing[0]} is`;
   return `Veryfront API MCP cannot start: ${subject} not set. ` +
-    "It reads VERYFRONT_API_TOKEN (or VERYFRONT_API_TOKEN_FILE, or your veryfront login session) " +
+    "It reads VERYFRONT_API_TOKEN (or your veryfront login session) " +
     "and VERYFRONT_PROJECT_SLUG from the environment of the server process that runs the agent, " +
     "not from project environment variables. " +
     `Set ${missing.join(" and ")} there, for example in the shell that runs veryfront dev.`;
