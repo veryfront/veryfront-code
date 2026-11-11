@@ -184,8 +184,8 @@ export const CONFIG_NOT_DEPLOYABLE = defineError({
 
 /**
  * The project slug the CLI tried to create is already in use. Project slugs are
- * unique across Veryfront, so a common folder name can belong to another
- * account's project. The detail names the slug and the fix for the command that
+ * unique across Veryfront, so another account often already owns the slug of a
+ * common folder name. The detail names the slug and the fix for the command that
  * raised it.
  */
 export const PROJECT_SLUG_TAKEN = defineError({
