@@ -35,6 +35,13 @@ describe("shared/inference-setup", () => {
     assertStringIncludes(text, ".env");
   });
 
+  it("says a non-OpenAI key also needs a matching agent model", () => {
+    // The default agent model is openai/gpt-5-nano, so an Anthropic, Google, or
+    // Mistral key alone fails with default-model-credential-mismatch.
+    assertStringIncludes(text, "set OPENAI_API_KEY in .env, which works with the default model");
+    assertStringIncludes(text, 'set your agent\'s model to "auto" or "<provider>/<model>"');
+  });
+
   it("points at the dev prompt, not push, as the way to gateway inference", () => {
     assertEquals(text.includes("veryfront push"), false);
   });

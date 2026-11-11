@@ -17,7 +17,11 @@ import {
   waitForPromiseWithTimeout,
 } from "../../../tests/_helpers/server.ts";
 import { VERSION } from "#cli/utils";
-import { NO_INFERENCE_HEADING, PROVIDER_KEY_ENV_NAMES } from "../../shared/inference-setup.ts";
+import {
+  DEV_ENV_RESTART_LINE,
+  NO_INFERENCE_HEADING,
+  PROVIDER_KEY_ENV_NAMES,
+} from "../../shared/inference-setup.ts";
 
 const NOISY_DEFAULT_FRAGMENTS = [
   "Initializing caches...",
@@ -600,6 +604,8 @@ describe(
           assertStringIncludes(output, "veryfront login");
           assertStringIncludes(output, "Use Veryfront Cloud?");
           for (const name of PROVIDER_KEY_ENV_NAMES) assertStringIncludes(output, name);
+          // dev reads .env once at startup, so a new key needs a restart.
+          assertStringIncludes(output, DEV_ENV_RESTART_LINE);
           assert(
             !output.includes("veryfront push"),
             `inference setup must not send the reader to push\nOutput:\n${output}`,

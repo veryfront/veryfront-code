@@ -61,7 +61,11 @@ import {
 } from "./connected-dev.ts";
 import { saveSharedProjectAssociation } from "../../shared/project-link.ts";
 import { chooseCloudProject } from "../../shared/cloud-project.ts";
-import { inferenceSetupOptionLines, NO_INFERENCE_HEADING } from "../../shared/inference-setup.ts";
+import {
+  DEV_ENV_RESTART_LINE,
+  inferenceSetupOptionLines,
+  NO_INFERENCE_HEADING,
+} from "../../shared/inference-setup.ts";
 import { createCloudOnboardingTransport } from "../../shared/cloud-onboarding-transport.ts";
 import { isInteractive } from "../../shared/interactive.ts";
 import {
@@ -639,6 +643,7 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
       if (!hasUsableInference(inferenceOptions)) {
         console.log(`  ${warning("!")} ${NO_INFERENCE_HEADING}`);
         for (const line of inferenceSetupOptionLines()) console.log(`    ${line}`);
+        console.log(`    ${DEV_ENV_RESTART_LINE}`);
       }
       // The banner reports configured paths, and it must not block Ready on a
       // network round-trip (see `void authReady` above). But an expired stored
