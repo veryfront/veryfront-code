@@ -2117,6 +2117,110 @@ describe("tool/remote-mcp", () => {
       });
     }
 
+    // The body @modelcontextprotocol/sdk 1.x returns for a protocol version it
+    // does not support; the server rejects the request before running it.
+    const unsupportedVersion = (version: string | null) =>
+      Response.json({
+        jsonrpc: "2.0",
+        error: {
+          code: -32000,
+          message: `Bad Request: Unsupported protocol version: ${version} ` +
+            "(supported versions: 2025-11-25, 2025-06-18, 2025-03-26, 2024-11-05, 2024-10-07)",
+        },
+        id: null,
+      }, { status: 400 });
+
+    it("initializes and retries a fresh call the server rejected for its protocol version", async () => {
+      const server = legacyFixture();
+      await withMockFetch(async (input, init) => {
+        const request = observe(input, init);
+        const version = request.headers.get("MCP-Protocol-Version");
+        if (request.body?.method === "tools/call" && version === "2026-07-28") {
+          server.requests.push(request);
+          return unsupportedVersion(version);
+        }
+        return await server.fetch(input, init);
+      }, async () => {
+        const source = createRemoteMCPToolSource({ endpoint: ENDPOINT });
+        assertEquals(await source.executeTool("ping", {}, { runId: "run-a" }), "pong");
+        assertEquals(await source.executeTool("ping", {}, { runId: "run-b" }), "pong");
+      });
+      assertEquals(server.requests.map((r) => r.body?.method ?? r.method), [
+        "tools/call",
+        "initialize",
+        "notifications/initialized",
+        "tools/call",
+        // The endpoint is now known as legacy: the next run initializes first.
+        "initialize",
+        "notifications/initialized",
+        "tools/call",
+      ]);
+    });
+
+    it("retries an unsupported-version call at most once", async () => {
+      const server = legacyFixture();
+      let calls = 0;
+      await withMockFetch(async (input, init) => {
+        const request = observe(input, init);
+        if (request.body?.method === "tools/call") {
+          calls++;
+          return unsupportedVersion(request.headers.get("MCP-Protocol-Version"));
+        }
+        return await server.fetch(input, init);
+      }, async () => {
+        const source = createRemoteMCPToolSource({ endpoint: ENDPOINT });
+        await assertRejects(() => source.executeTool("ping", {}), Error, "400");
+      });
+      assertEquals(calls, 2);
+    });
+
+    for (
+      const [label, body] of [
+        ["another -32000 message", {
+          jsonrpc: "2.0",
+          error: { code: -32000, message: "Bad Request: upstream rejected the call" },
+          id: null,
+        }],
+        ["the phrase under another code", {
+          jsonrpc: "2.0",
+          error: {
+            code: -32603,
+            message: "Bad Request: Unsupported protocol version: 2026-07-28 ",
+          },
+          id: null,
+        }],
+        ["the phrase with a request id", {
+          jsonrpc: "2.0",
+          error: {
+            code: -32000,
+            message: "Bad Request: Unsupported protocol version: 2026-07-28 ",
+          },
+          id: "remote-mcp:call",
+        }],
+        ["the phrase for another version", {
+          jsonrpc: "2.0",
+          error: {
+            code: -32000,
+            message: "Bad Request: Unsupported protocol version: 2099-01-01 ",
+          },
+          id: null,
+        }],
+      ] as const
+    ) {
+      it(`does not replay a 400 call with ${label}`, async () => {
+        const methods: string[] = [];
+        await withMockFetch(async (input, init) => {
+          const request = observe(input, init);
+          methods.push(request.body!.method);
+          return Response.json(body, { status: 400 });
+        }, async () => {
+          const source = createRemoteMCPToolSource({ endpoint: ENDPOINT });
+          await assertRejects(() => source.executeTool("ping", {}), Error, "400");
+        });
+        assertEquals(methods, ["tools/call"]);
+      });
+    }
+
     it("does not fall back on recognized modern errors", async () => {
       const methods: string[] = [];
       await withMockFetch(async (input, init) => {
