@@ -60,6 +60,12 @@ export type RuntimeRemoteToolConfig = {
   __vfSourceIntegrationPolicy?: SourceIntegrationPolicyManifest;
   __vfUnavailableOptionalRemoteToolNames?: string[];
   __vfUnavailableOptionalRemoteToolPrefixes?: string[];
+  /**
+   * The agent's authored `tools`, before a hosted run merges injected tools,
+   * drops `false` entries or applies a run allowlist. Default MCP exposure is
+   * decided from this selection, never from the run's filtered map.
+   */
+  __vfAuthoredTools?: AgentConfig["tools"];
 };
 
 /** Canonical source id for the Veryfront API MCP server. */
@@ -75,6 +81,58 @@ const runtimeOwnedMcpSources = createPrivateWeakStore<
   readonly RemoteToolSource[],
   readonly RemoteToolSource[]
 >();
+
+/** The agent's own external MCP servers and its authored tool selection for one run. */
+export interface RuntimeDefaultExposedMcpSelection {
+  /** Sources built from the agent's own third-party `mcpServers` entries. */
+  readonly sources: readonly RemoteToolSource[];
+  /** `tools: true` selects every tool by other means, so nothing is added by default. */
+  readonly selectsEveryTool: boolean;
+  /** Names the authored `tools` map selects (`true` or a tool). */
+  readonly selectedToolNames: ReadonlySet<string>;
+  /** Names the authored `tools` map sets to `false`. */
+  readonly deniedToolNames: ReadonlySet<string>;
+}
+
+/**
+ * Default MCP exposure per run, keyed by the run's source list. An external
+ * server whose tools the authored map does not name exposes every tool its
+ * `toolPolicy` allows.
+ */
+const runtimeDefaultExposedMcpSelections = createPrivateWeakStore<
+  readonly RemoteToolSource[],
+  RuntimeDefaultExposedMcpSelection
+>();
+
+/** Return the run's default MCP exposure, if the agent configured external servers. */
+export function getRuntimeDefaultExposedMcpSelection(
+  sources: readonly RemoteToolSource[] | undefined,
+): RuntimeDefaultExposedMcpSelection | undefined {
+  return sources === undefined ? undefined : runtimeDefaultExposedMcpSelections.get(sources);
+}
+
+function createDefaultExposedMcpSelection(
+  sources: readonly RemoteToolSource[],
+  authoredTools: AgentConfig["tools"],
+): RuntimeDefaultExposedMcpSelection {
+  const selectedToolNames = createPrivateSet<string>();
+  const deniedToolNames = createPrivateSet<string>();
+  if (authoredTools !== null && typeof authoredTools === "object") {
+    const names = Object.keys(authoredTools);
+    for (let index = 0; index < names.length; index++) {
+      const name = names[index]!;
+      const entry = authoredTools[name];
+      if (entry === false) deniedToolNames.add(name);
+      else if (entry !== undefined) selectedToolNames.add(name);
+    }
+  }
+  return {
+    sources,
+    selectsEveryTool: authoredTools === true,
+    selectedToolNames,
+    deniedToolNames,
+  };
+}
 
 /** Release only sources created for this loop; inherited sources belong to their caller. */
 export function createRuntimeMcpSourceCleanup(
@@ -610,9 +668,12 @@ export function getRuntimeRemoteToolSources(
   // request-scoped credentials) is never replaced — it keeps exclusive
   // ownership of its id, and the child stays inside the host's boundary.
   const selfServedFirstPartyIds = createPrivateSet<string>();
+  const defaultExposedSources: RemoteToolSource[] = [];
   const configuredSources = flatMapPrivateArray(configuredServers, (server) => {
     if (isHttpMcpServerConfig(server)) {
-      return [createMcpServerToolSource(server)];
+      const source = createMcpServerToolSource(server);
+      pushPrivateArray(defaultExposedSources, source);
+      return [source];
     }
     if (server.kind === "veryfront-api") {
       const sourceId = getFirstPartyMcpSourceId(server);
@@ -729,6 +790,17 @@ export function getRuntimeRemoteToolSources(
 
   if (remoteToolSources.length > 0) {
     runtimeOwnedMcpSources.set(remoteToolSources, configuredSources);
+    if (defaultExposedSources.length > 0) {
+      runtimeDefaultExposedMcpSelections.set(
+        remoteToolSources,
+        createDefaultExposedMcpSelection(
+          defaultExposedSources,
+          hasOwn(runtimeConfig, "__vfAuthoredTools")
+            ? runtimeConfig.__vfAuthoredTools
+            : config.tools,
+        ),
+      );
+    }
     return remoteToolSources;
   }
 
