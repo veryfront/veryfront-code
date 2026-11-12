@@ -52,6 +52,19 @@ describe("runs/runtime-env", () => {
     );
   });
 
+  it("reserves credential names in any letter case", () => {
+    // On Windows the env loader case-folds names, so a project .env entry
+    // spelled in lower case supplies the same credential.
+    for (const key of ["veryfront_api_key", "Veryfront_Api_Token", "tenant_secret"]) {
+      assertEquals(isReservedTaskEnvKey(key), true, key);
+    }
+    assertEquals(
+      buildTaskContextEnv({ SAFE_VALUE: "ok", veryfront_api_key: "<KEY>" }),
+      { SAFE_VALUE: "ok" },
+    );
+    assertEquals(isReservedTaskEnvKey("VERYFRONT_API_KEY_HINT"), false);
+  });
+
   it("builds task context env from visible and allowlisted injected values", () => {
     assertEquals(
       buildTaskContextEnv(

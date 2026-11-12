@@ -2297,7 +2297,6 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
     });
 
     it("tells you to unset VERYFRONT_API_KEY when the key supplied the credential", async () => {
-      const originalFetch = globalThis.fetch;
       const originalLog = console.log;
       const originalPrompt = globalThis.prompt;
       const savedToken = getEnv("VERYFRONT_API_TOKEN");
@@ -2320,21 +2319,21 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
           setEnv("VERYFRONT_API_KEY", "vf_test_key_credential");
           __resetEnvLoaderForTests();
           await loadEnv({ cwd: envDir });
-          globalThis.fetch = (() => respond()) as typeof fetch;
           console.log = (message?: unknown) => output.push(String(message));
           globalThis.prompt = (() => "replacement-token") as typeof prompt;
 
           const { ensureAuthenticated, login } = await import("./login.ts");
           const env = { ...testEnv, apiToken: getEnv("VERYFRONT_API_TOKEN") };
-          // The last case runs the silent-validation path, which warns instead of prompting.
-          if (index === responses.length - 1) await ensureAuthenticated(env, envDir);
-          else await login(undefined, env);
+          await withMockFetch(() => respond(), async () => {
+            // The last case runs the silent-validation path, which warns instead of prompting.
+            if (index === responses.length - 1) await ensureAuthenticated(env, envDir);
+            else await login(undefined, env);
+          });
           printedByCase.push(output.join("\n"));
         }
       } finally {
         globalThis.prompt = originalPrompt;
         console.log = originalLog;
-        globalThis.fetch = originalFetch;
         __resetEnvLoaderForTests();
         if (savedToken === undefined) deleteEnv("VERYFRONT_API_TOKEN");
         else setEnv("VERYFRONT_API_TOKEN", savedToken);

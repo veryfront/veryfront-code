@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "veryfront/platform/path";
+import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 import { createSuccessEnvelope } from "../../shared/json-output.ts";
 import { detectConfigSource, getConfigCommandData, getEnvOverrides } from "./handler.ts";
 
@@ -303,7 +304,7 @@ describe("Config Command", () => {
 
     it("names VERYFRONT_API_KEY when the key supplied the token", async () => {
       const { __resetEnvLoaderForTests, loadEnv } = await import("veryfront/utils/env-loader");
-      const envDir = await Deno.makeTempDir({ prefix: "config-api-key-" });
+      const envDir = await makeTempDir({ prefix: "config-api-key-" });
       await withSavedEnv([...CONFIG_ENV_KEYS, "VERYFRONT_API_KEY"], async () => {
         try {
           Deno.env.delete("VERYFRONT_API_TOKEN");
