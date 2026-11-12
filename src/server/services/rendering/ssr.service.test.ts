@@ -1279,26 +1279,31 @@ describe("server/services/rendering/ssr.service", () => {
             [makeCtx(), undefined],
           ] as const;
           for (const [ctx, reason] of cases) {
-            const abort = new AbortController();
-            const adapter = createMockRendererAdapter({
-              renderPage: () => {
-                abort.abort(reason);
-                throw abort.signal.reason;
-              },
-            });
-            const service = new SSRService({
-              rendererProvider: createMockRendererProvider(adapter),
-            });
-            const url = new URL("http://localhost/test-page");
+            for (const wrap of [false, true]) {
+              const abort = new AbortController();
+              const adapter = createMockRendererAdapter({
+                renderPage: () => {
+                  abort.abort(reason);
+                  // The pipeline can rethrow the abort wrapped in its own error.
+                  throw wrap
+                    ? new Error("Render pipeline stopped", { cause: abort.signal.reason })
+                    : abort.signal.reason;
+                },
+              });
+              const service = new SSRService({
+                rendererProvider: createMockRendererProvider(adapter),
+              });
+              const url = new URL("http://localhost/test-page");
 
-            const result = await service.renderPage(
-              ctx,
-              makeRenderOptions({ request: new Request(url, { signal: abort.signal }) }),
-            );
+              const result = await service.renderPage(
+                ctx,
+                makeRenderOptions({ request: new Request(url, { signal: abort.signal }) }),
+              );
 
-            assertEquals(result.status, 499);
-            assertEquals(result.failure, undefined);
-            assertEquals(result.cacheStrategy, "no-cache");
+              assertEquals(result.status, 499);
+              assertEquals(result.failure, undefined);
+              assertEquals(result.cacheStrategy, "no-cache");
+            }
           }
 
           assertEquals(captured.length, 0, "an aborted request is not an application error");
@@ -1309,6 +1314,47 @@ describe("server/services/rendering/ssr.service", () => {
             false,
             "an aborted request must not log a stack trace",
           );
+        } finally {
+          unsubscribe();
+          setApplicationErrorReporter(undefined);
+        }
+      });
+
+      it("still reports a genuine failure that lands after the request aborted", async () => {
+        // The abort must own the error. A renderer that fails for its own
+        // reason after the deadline passed is still a defect worth reporting.
+        const captured: unknown[] = [];
+        setApplicationErrorReporter({
+          capture(error) {
+            captured.push(error);
+            return "event-id";
+          },
+          flush: () => Promise.resolve(true),
+        });
+        const entries: LogEntry[] = [];
+        const unsubscribe = __subscribeLogRecordEmitter((entry) => entries.push(entry));
+        try {
+          const abort = new AbortController();
+          const adapter = createMockRendererAdapter({
+            renderPage: () => {
+              abort.abort(new DOMException("HTTP client disconnected", "AbortError"));
+              throw new Error("Renderer initialization failed");
+            },
+          });
+          const service = new SSRService({
+            rendererProvider: createMockRendererProvider(adapter),
+          });
+          const url = new URL("http://localhost/test-page");
+
+          const result = await service.renderPage(
+            makeCtx(),
+            makeRenderOptions({ request: new Request(url, { signal: abort.signal }) }),
+          );
+
+          assertEquals(result.status, 500);
+          assertEquals(result.failure?.kind, "runtime");
+          assertEquals(captured.length, 1);
+          assertEquals(entries.some((entry) => entry.level === "error"), true);
         } finally {
           unsubscribe();
           setApplicationErrorReporter(undefined);

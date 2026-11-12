@@ -59,6 +59,30 @@ const logger = serverLogger.component("ssr-service");
 const CLIENT_CLOSED_REQUEST_STATUS = 499;
 
 /**
+ * True when the request has aborted and `error` is that abort's own reason, or
+ * wraps it through `cause` or `errors`. Matches by identity, never by message,
+ * so an unrelated failure that lands after the abort is still reported.
+ */
+function isCausedByRequestAbort(error: unknown, signal: AbortSignal | undefined): boolean {
+  if (!signal?.aborted) return false;
+  const reason: unknown = signal.reason;
+  if (reason === undefined || reason === null) return false;
+
+  const seen = new Set<unknown>();
+  const stack: unknown[] = [error];
+  while (stack.length > 0) {
+    const current = stack.pop();
+    if (current === reason) return true;
+    if (!current || typeof current !== "object" || seen.has(current)) continue;
+    seen.add(current);
+    stack.push((current as { cause?: unknown }).cause);
+    const aggregated = (current as { errors?: unknown }).errors;
+    if (Array.isArray(aggregated)) stack.push(...aggregated);
+  }
+  return false;
+}
+
+/**
  * Provides a renderer for a given handler context.
  * Extracted to allow dependency injection in tests.
  */
@@ -416,11 +440,12 @@ export class SSRService implements SSRServiceLike {
   ): SSRRenderResult {
     // The request signal aborts when the client disconnects, or when the
     // runtime's request timeout fires (it composes the client signal with its
-    // own). Whatever the render threw after that is the abort surfacing, not a
-    // defect in the page, and nothing reads this result: the client is gone,
-    // or the timeout manager has already logged the timeout and sent its 504.
-    // So say so in one dim line: no error report, no stack, no overlay entry.
-    if (request.signal?.aborted) {
+    // own). An error the abort caused is not a defect in the page, and nothing
+    // reads this result: the client is gone, or the timeout manager has already
+    // logged the timeout and sent its 504. So say so in one dim line: no error
+    // report, no stack, no overlay entry. Any other error, even one that lands
+    // after the abort, is still reported below.
+    if (isCausedByRequestAbort(error, request.signal)) {
       logger.debug("Render stopped: request aborted", { slug, projectSlug: ctx.projectSlug });
       return {
         status: CLIENT_CLOSED_REQUEST_STATUS,
