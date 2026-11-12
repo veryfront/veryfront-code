@@ -5,12 +5,17 @@ import "#veryfront/schemas/_test-setup.ts";
  * Tests the init command types and options validation.
  */
 
-import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { exists, makeTempDir, remove } from "#veryfront/testing/deno-compat.ts";
 import { join } from "veryfront/platform/path";
 import { stripAnsi } from "../../ui/ansi.ts";
-import { initCommand } from "./init-command.ts";
+import { initCommand, offerCloudProjectAfterInit } from "./init-command.ts";
 import type { InitOptions, InitTemplate } from "./types.ts";
 
 describe("InitCommand Types", () => {
@@ -322,5 +327,37 @@ describe("initCommand into the current directory", () => {
     } finally {
       await remove(parentDir, { recursive: true }).catch(() => {});
     }
+  });
+});
+
+describe("offerCloudProjectAfterInit", () => {
+  async function run(choose: () => Promise<"linked" | "declined" | "cancelled">) {
+    const logged: string[] = [];
+    await offerCloudProjectAfterInit("/unused", (message) => logged.push(message), choose);
+    return logged;
+  }
+
+  it("prints nothing more once the folder is linked", async () => {
+    assertEquals(await run(() => Promise.resolve("linked")), []);
+  });
+
+  for (const choice of ["declined", "cancelled"] as const) {
+    it(`names both ways to get inference, in one log entry, when ${choice}`, async () => {
+      const logged = await run(() => Promise.resolve(choice));
+      assertEquals(logged.length, 1);
+      assertStringIncludes(logged[0]!, "set up inference in one of these ways");
+      assertStringIncludes(logged[0]!, "Veryfront Cloud AI Gateway");
+      assertStringIncludes(logged[0]!, "OPENAI_API_KEY");
+      assertEquals(logged[0]!.includes("veryfront push"), false);
+      // init does not run dev, so it does not say to restart it.
+      assertEquals(logged[0]!.includes("restart veryfront dev"), false);
+    });
+  }
+
+  it("names the failure, then both ways to get inference, when Cloud setup throws", async () => {
+    const logged = await run(() => Promise.reject(new Error("Network unavailable")));
+    assertEquals(logged.length, 2);
+    assertEquals(logged[0], "  Cloud setup could not finish: Network unavailable");
+    assertStringIncludes(logged[1]!, "set up inference in one of these ways");
   });
 });

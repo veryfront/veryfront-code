@@ -36,7 +36,7 @@ import { createDevLogController } from "./log-controller.ts";
 import { findAvailablePort, isPortAvailable, isPortInUseError } from "./port-fallback.ts";
 import {
   advertisesCloudGateway,
-  hasUsableInference,
+  devInferenceHintLines,
   listInferenceOptions,
 } from "./inference-status.ts";
 import {
@@ -61,11 +61,6 @@ import {
 } from "./connected-dev.ts";
 import { saveSharedProjectAssociation } from "../../shared/project-link.ts";
 import { chooseCloudProject } from "../../shared/cloud-project.ts";
-import {
-  DEV_ENV_RESTART_LINE,
-  inferenceSetupOptionLines,
-  NO_INFERENCE_HEADING,
-} from "../../shared/inference-setup.ts";
 import { createCloudOnboardingTransport } from "../../shared/cloud-onboarding-transport.ts";
 import { isInteractive } from "../../shared/interactive.ts";
 import {
@@ -637,14 +632,9 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
           );
         }
       }
-      // With no usable inference path, the first agent message to a hosted
-      // model fails. Say so here, with both fixes, instead of leaving the reader
-      // to find out in chat.
-      if (!hasUsableInference(inferenceOptions)) {
-        console.log(`  ${warning("!")} ${NO_INFERENCE_HEADING}`);
-        for (const line of inferenceSetupOptionLines()) console.log(`    ${line}`);
-        console.log(`    ${DEV_ENV_RESTART_LINE}`);
-      }
+      const [hintHeading, ...hintLines] = devInferenceHintLines(inferenceOptions);
+      if (hintHeading) console.log(`  ${warning("!")} ${hintHeading}`);
+      for (const line of hintLines) console.log(`    ${line}`);
       // The banner reports configured paths, and it must not block Ready on a
       // network round-trip (see `void authReady` above). But an expired stored
       // session still has a nonempty token, so the gateway would be advertised

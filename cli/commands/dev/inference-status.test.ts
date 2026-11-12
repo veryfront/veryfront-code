@@ -3,9 +3,15 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   advertisesCloudGateway,
+  devInferenceHintLines,
   hasUsableInference,
   listInferenceOptions,
 } from "./inference-status.ts";
+import {
+  DEV_ENV_RESTART_LINE,
+  inferenceSetupOptionLines,
+  NO_INFERENCE_HEADING,
+} from "../../shared/inference-setup.ts";
 
 describe("commands/dev/inference-status", () => {
   it("reports the Veryfront Cloud AI Gateway whenever a token can reach it", () => {
@@ -92,5 +98,20 @@ describe("commands/dev/inference-status", () => {
       ),
       true,
     );
+  });
+
+  it("prints no setup hint when an option can serve a model", () => {
+    assertEquals(devInferenceHintLines(listInferenceOptions({ openaiApiKey: "<API_KEY>" })), []);
+    assertEquals(
+      devInferenceHintLines(listInferenceOptions({ apiToken: "<TOKEN>", projectSlug: "app" })),
+      [],
+    );
+  });
+
+  it("prints the heading, both options, and the restart line when none can", () => {
+    const expected = [NO_INFERENCE_HEADING, ...inferenceSetupOptionLines(), DEV_ENV_RESTART_LINE];
+    assertEquals(devInferenceHintLines(listInferenceOptions({})), expected);
+    // A stored login without a linked project cannot serve a model either.
+    assertEquals(devInferenceHintLines(listInferenceOptions({ apiToken: "<TOKEN>" })), expected);
   });
 });
