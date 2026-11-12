@@ -240,6 +240,61 @@ describe("project runs CLI fixture mapping", () => {
     assertEquals(result.requests.length, 1);
   });
 
+  it("takes the project from --project, -p or --project-slug as the help lists", async () => {
+    for (const flag of ["--project", "-p", "--project-slug"]) {
+      const { requests } = await execute(
+        ["project", "runs", "project-list", flag, "my-project"],
+        [fixtureResponse("listProjectRuns")],
+      );
+      assertEquals(requests[0]!.url, "https://api.example.test/projects/my-project/runs", flag);
+    }
+    const { requests } = await execute(
+      [
+        "project",
+        "runs",
+        "project-list",
+        "--project",
+        "my-project",
+        "--project-reference",
+        "my-project",
+      ],
+      [fixtureResponse("listProjectRuns")],
+    );
+    assertEquals(requests[0]!.url, "https://api.example.test/projects/my-project/runs");
+  });
+
+  it("rejects a project flag that disagrees or that the command cannot use", async () => {
+    const cases: Array<[string[], string]> = [
+      [
+        ["project", "runs", "project-list", "--project", "a", "--project-reference", "b"],
+        "--project and --project-reference name different projects.",
+      ],
+      [
+        ["project", "runs", "list", "--project", "my-project"],
+        "veryfront project runs project-list --project <slug>",
+      ],
+      [
+        ["project", "runs", "list", "-p", "my-project"],
+        "veryfront project runs project-list --project <slug>",
+      ],
+      [["project", "runs", "get", "--run-id", "r1", "-x"], "Unknown option -x."],
+    ];
+    for (const [args, message] of cases) {
+      const fixture = createFixtureTransport([]);
+      await assertRejects(
+        () =>
+          runProjectRuns(
+            parseCliArgs(args),
+            createRunsSdk({ transport: fixture.transport }),
+            () => Promise.resolve(),
+          ),
+        VeryfrontError,
+        message,
+      );
+      assertEquals(fixture.requests.length, 0);
+    }
+  });
+
   it("rejects usage mistakes before any SDK request", async () => {
     for (
       const args of [
