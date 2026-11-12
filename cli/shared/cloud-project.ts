@@ -7,27 +7,29 @@ import { saveSharedProjectAssociation } from "./project-link.ts";
 import { reserveProjectSlug } from "./reserve-slug.ts";
 import { select } from "../utils/terminal-select.ts";
 
+/**
+ * How the reader answered: linked a project, declined Cloud, or dismissed a
+ * prompt. A caller reports what the reader needs next, because only the caller
+ * knows whether inference is already configured.
+ */
+export type CloudProjectChoice = "linked" | "declined" | "cancelled";
+
 /** Associate source without publishing it; new login credentials stay in the private login store. */
 export async function chooseCloudProject(
   projectDir: string,
   prompt: typeof select = select,
   options: { timeoutMs?: number } = {},
-): Promise<void> {
+): Promise<CloudProjectChoice> {
   const useCloud = await prompt("Use Veryfront Cloud?", [
     { value: "yes", label: "Yes" },
     { value: "no", label: "No" },
   ], 0);
-  if (useCloud !== "yes") {
-    console.log(
-      "  Your local project is ready. Cloud inference and Studio runs require a linked cloud project. Run veryfront push whenever you are ready.",
-    );
-    return;
-  }
+  if (useCloud !== "yes") return "declined";
   const mode = await prompt("Choose a cloud project:", [
     { value: "new", label: "Create a new cloud project" },
     { value: "existing", label: "Use an existing cloud project" },
   ], 0);
-  if (!mode) return;
+  if (!mode) return "cancelled";
 
   const env = getEnvironmentConfig();
   const authOptions = {
@@ -65,7 +67,9 @@ export async function chooseCloudProject(
       cursor = response.page_info?.next;
     } while (cursor);
     if (!projects.length) {
-      throw new Error("No cloud projects found. Run veryfront push to create one.");
+      throw new Error(
+        'No cloud projects found. Run veryfront dev again and choose "Create a new cloud project".',
+      );
     }
     const id = await prompt(
       "Select a cloud project:",
@@ -76,7 +80,7 @@ export async function chooseCloudProject(
       })),
       0,
     );
-    if (!id) return;
+    if (!id) return "cancelled";
     project = projects.find((entry) => entry.id === id)!;
   }
   await persistProjectLink(projectDir, config, project);
@@ -84,4 +88,5 @@ export async function chooseCloudProject(
   console.log(
     `  ✓ Linked local project to cloud project ${project.slug}. npm run dev syncs source automatically; veryfront push syncs without starting dev.`,
   );
+  return "linked";
 }

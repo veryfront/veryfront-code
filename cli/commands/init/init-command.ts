@@ -21,7 +21,8 @@ import { promptForEnvVars } from "../../utils/env-prompt.ts";
 import { runInteractiveWizard, shouldRunWizard } from "./interactive-wizard.ts";
 import { isTTY } from "#cli/utils";
 import { isInteractive } from "../../shared/interactive.ts";
-import { chooseCloudProject } from "../../shared/cloud-project.ts";
+import { chooseCloudProject, type CloudProjectChoice } from "../../shared/cloud-project.ts";
+import { inferenceSetupOptionLines } from "../../shared/inference-setup.ts";
 import { DEFAULT_TEMPLATE } from "./catalog.ts";
 
 type StructureNode = {
@@ -167,6 +168,34 @@ function validateInitProjectName(name: string): string | null {
 }
 
 /**
+ * Offer to link the new project to Veryfront Cloud. When the folder stays
+ * unlinked (No, a dismissed prompt, or a failed setup), name both ways to get
+ * inference. The advice does not claim a key is missing.
+ */
+export async function offerCloudProjectAfterInit(
+  projectDir: string,
+  log: (message: string) => void,
+  choose: (projectDir: string) => Promise<CloudProjectChoice> = chooseCloudProject,
+): Promise<void> {
+  let linked = false;
+  try {
+    linked = await choose(projectDir) === "linked";
+  } catch (error) {
+    log(
+      `  Cloud setup could not finish: ${error instanceof Error ? error.message : "Unknown error"}`,
+    );
+  }
+  if (linked) return;
+  // One log entry, so the logger marks the block once, not every line.
+  log(
+    [
+      "  Your local project is ready. To use agents, set up inference in one of these ways:",
+      ...inferenceSetupOptionLines().map((line) => `    ${line}`),
+    ].join("\n"),
+  );
+}
+
+/**
  * Initializes a new Veryfront project with the specified template
  */
 export async function initCommand(
@@ -265,18 +294,7 @@ export async function initCommand(
       observer: installObserver,
       beforeGitInitialization: async (projectDir) => {
         if (!quiet && !options.deploy && isTTY() && isInteractive()) {
-          try {
-            await chooseCloudProject(projectDir);
-          } catch (error) {
-            log(
-              `  Cloud setup could not finish: ${
-                error instanceof Error ? error.message : "Unknown error"
-              }`,
-            );
-            log(
-              "  Your local project is ready. Run veryfront push to create or link a Cloud project later.",
-            );
-          }
+          await offerCloudProjectAfterInit(projectDir, log);
         }
       },
       resolveEnvironmentFiles: (variables, values) =>
