@@ -373,6 +373,30 @@ describe("npm package publishing", () => {
     });
   }
 
+  it("reports a root-package OIDC rejection without printing npm debug output", async () => {
+    const output = await runBash(
+      [
+        "set -euo pipefail",
+        'source "$SCRIPT_PATH"',
+        "npm() {",
+        '  [[ "$1 $2" == "publish --loglevel=verbose" ]] || return 99',
+        '  echo "npm verbose oidc Failed token exchange request with body message: fixture-private-response" >&2',
+        '  echo "npm http fetch POST https://example.invalid/fixture-private-url 404" >&2',
+        '  echo "npm error code E404" >&2',
+        "  return 42",
+        "}",
+        "publish_npm_package_with_retry recover veryfront fixture.tgz",
+      ].join("\n"),
+      { GITHUB_ACTIONS: "true" },
+    );
+
+    const stdout = decoder.decode(output.stdout);
+    assertEquals(output.code, 42, stdout);
+    assertStringIncludes(stdout, "npm OIDC exchange failed for veryfront");
+    assertStringIncludes(stdout, "npm error code E404");
+    assertEquals(stdout.includes("fixture-private"), false);
+  });
+
   for (const publishFunction of ["run_rc_publish", "run_release_publish"]) {
     it(`blocks ${publishFunction} before publish when canonical artifact verification fails`, async () => {
       await withTempDir(async (stateDir) => {

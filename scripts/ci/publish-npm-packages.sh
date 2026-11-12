@@ -301,8 +301,24 @@ publish_npm_package_with_retry() {
       fi
     fi
 
-    PUBLISH_OUTPUT="$(npm publish "${PUBLISH_SPEC}" "$@" 2>&1)" \
+    local -a npm_publish=(npm publish)
+    if [[ "${GITHUB_ACTIONS:-}" == "true" && "${PUBLISH_PACKAGE_NAME}" == "veryfront" ]]; then
+      npm_publish+=(--loglevel=verbose)
+    fi
+    PUBLISH_OUTPUT="$("${npm_publish[@]}" "${PUBLISH_SPEC}" "$@" 2>&1)" \
       && PUBLISH_STATUS=0 || PUBLISH_STATUS=$?
+    if [[ "${#npm_publish[@]}" -gt 2 ]]; then
+      # npm 11 reports exchange results only in verbose output. Emit fixed
+      # messages because the registry response and request URLs are untrusted.
+      if [[ "${PUBLISH_OUTPUT}" == *"npm verbose oidc Successfully retrieved and set token"* ]]; then
+        echo "::notice::npm OIDC exchange succeeded for veryfront"
+      elif [[ "${PUBLISH_OUTPUT}" == *"npm verbose oidc Failed token exchange request"* ||               "${PUBLISH_OUTPUT}" == *"npm verbose oidc Failed because token exchange"* ]]; then
+        echo "::warning::npm OIDC exchange failed for veryfront"
+      else
+        echo "::notice::npm OIDC exchange outcome unavailable for veryfront"
+      fi
+      PUBLISH_OUTPUT="$(printf '%s\n' "${PUBLISH_OUTPUT}" | sed -E '/^npm (verbose|http|silly|timing|info)( |$)/d')"
+    fi
     SANITIZED_PUBLISH_OUTPUT="$(sanitize_npm_lookup_output "${PUBLISH_OUTPUT}")"
     if [[ -n "${SANITIZED_PUBLISH_OUTPUT}" ]]; then
       printf '%s\n' "${SANITIZED_PUBLISH_OUTPUT}"
