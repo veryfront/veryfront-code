@@ -20,4 +20,17 @@ describe("withoutHostBinaryInfraEnv", () => {
 
     assertEquals(sanitized, { KEEP_ME: "1" });
   });
+
+  it("removes the blocked names in any letter case", () => {
+    // Windows environment names are case-insensitive, so a child process
+    // reads veryfront_api_key as the credential.
+    const sanitized = withoutHostBinaryInfraEnv({
+      KEEP_ME: "1",
+      veryfront_api_key: "<KEY>",
+      Veryfront_Api_Token: "<TOKEN>",
+      redis_url: "redis://localhost:6379",
+    });
+
+    assertEquals(sanitized, { KEEP_ME: "1" });
+  });
 });

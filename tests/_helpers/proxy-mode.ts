@@ -19,8 +19,11 @@ export function withoutHostBinaryInfraEnv(
   env: Record<string, string>,
 ): Record<string, string> {
   const sanitized = { ...env };
-  for (const key of HOST_BINARY_TEST_ENV_BLOCKLIST) {
-    delete sanitized[key];
+  // Windows environment names are case-insensitive, so a credential spelled
+  // veryfront_api_key would survive an exact-case delete. Match by folded name.
+  const blocked = new Set<string>(HOST_BINARY_TEST_ENV_BLOCKLIST);
+  for (const key of Object.keys(sanitized)) {
+    if (blocked.has(key.toUpperCase())) delete sanitized[key];
   }
   return sanitized;
 }
