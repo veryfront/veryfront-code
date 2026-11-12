@@ -301,13 +301,15 @@ publish_npm_package_with_retry() {
       fi
     fi
 
-    local -a npm_publish=(npm publish)
+    local publish_loglevel="${NPM_CONFIG_LOGLEVEL:-notice}"
+    local diagnose_oidc=false
     if [[ "${GITHUB_ACTIONS:-}" == "true" && "${PUBLISH_PACKAGE_NAME}" == "veryfront" ]]; then
-      npm_publish+=(--loglevel=verbose)
+      publish_loglevel=verbose
+      diagnose_oidc=true
     fi
-    PUBLISH_OUTPUT="$("${npm_publish[@]}" "${PUBLISH_SPEC}" "$@" 2>&1)" \
+    PUBLISH_OUTPUT="$(NPM_CONFIG_LOGLEVEL="${publish_loglevel}" npm publish "${PUBLISH_SPEC}" "$@" 2>&1)" \
       && PUBLISH_STATUS=0 || PUBLISH_STATUS=$?
-    if [[ "${#npm_publish[@]}" -gt 2 ]]; then
+    if [[ "${diagnose_oidc}" == "true" ]]; then
       # npm 11 reports exchange results only in verbose output. Emit fixed
       # messages because the registry response and request URLs are untrusted.
       if [[ "${PUBLISH_OUTPUT}" == *"npm verbose oidc Successfully retrieved and set token"* ]]; then

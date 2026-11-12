@@ -379,7 +379,7 @@ describe("npm package publishing", () => {
         "set -euo pipefail",
         'source "$SCRIPT_PATH"',
         "npm() {",
-        '  [[ "$1 $2" == "publish --loglevel=verbose" ]] || return 99',
+        '  [[ "$1" == "publish" && "$NPM_CONFIG_LOGLEVEL" == "verbose" ]] || return 99',
         '  echo "npm verbose oidc Failed token exchange request with body message: fixture-private-response" >&2',
         '  echo "npm http fetch POST https://example.invalid/fixture-private-url 404" >&2',
         '  echo "npm error code E404" >&2',
