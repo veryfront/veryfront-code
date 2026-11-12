@@ -112,16 +112,8 @@ describe("EnvironmentConfig", () => {
         runWithProjectEnv({}, () => {
           expect(refreshEnvironmentConfig().apiToken).toBeUndefined();
         });
-        const tokenFile = Deno.makeTempFileSync({ prefix: "vf-token-file-" });
-        try {
-          Deno.writeTextFileSync(tokenFile, "<TOKEN_FROM_FILE>");
-          expect(
-            apiTokenWith({ VERYFRONT_API_TOKEN_FILE: tokenFile, VERYFRONT_API_KEY: "<KEY>" }),
-            "a token file is the credential, never the key",
-          ).toBe("<TOKEN_FROM_FILE>");
-        } finally {
-          Deno.removeSync(tokenFile);
-        }
+        // A set token file beats the key: "does not read the key while a token
+        // file is set" in src/platform/compat/process/env.test.ts covers it.
 
         // Once the loader resolved the key, a token it removed stays removed.
         markEnvLoaded();
