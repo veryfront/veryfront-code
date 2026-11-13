@@ -2140,6 +2140,28 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
     }
   });
 
+  it("revalidates standalone production modules with a synthetic release ID", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-standalone-module-cache-" });
+    try {
+      await Deno.mkdir(`${projectDir}/components`, { recursive: true });
+      await Deno.writeTextFile(`${projectDir}/components/App.ts`, "export const value = 1;");
+      for (const method of ["GET", "HEAD"]) {
+        const response = await serveProductionModule(
+          new Request(
+            `http://localhost:3000/_vf_modules/components/App.js?vf_release=standalone-dev&vf_runtime=${VERSION}`,
+            { method },
+          ),
+          projectDir,
+          "standalone-dev",
+        );
+        assertEquals(response.status, 200);
+        assertEquals(response.headers.get("cache-control"), "no-cache");
+      }
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
   it("withholds the shared-cache directive from release modules of a gated project", async () => {
     const projectDir = await Deno.makeTempDir({ prefix: "vf-release-module-auth-" });
 
