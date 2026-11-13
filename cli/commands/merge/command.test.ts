@@ -16,6 +16,7 @@ import {
   writePushReceipt,
 } from "../../shared/deployment-provenance.ts";
 import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
+import { computeContentDigest, readSyncTarget, writeSyncTarget } from "../../sync/state.ts";
 import type { ParsedArgs } from "#cli/shared/types";
 
 function createMockClient(
@@ -400,7 +401,10 @@ describe("recordMergeInPushReceipt", () => {
     });
   }
 
-  function filesClient(files: ReadonlyArray<{ path: string; content: string }>, urls: string[]) {
+  function filesClient(
+    files: ReadonlyArray<{ path: string; content: string; version_id?: string }>,
+    urls: string[],
+  ) {
     return createMockClient({
       get: (url) => {
         urls.push(url);
@@ -427,6 +431,64 @@ describe("recordMergeInPushReceipt", () => {
       assertEquals(recorded, true);
       assertEquals(urls, ["/projects/support-desk/files"]);
       assertEquals(await readPushReceipt(projectDir), { ...pushed, branch: "main" });
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("records main's sync baseline so the next push from this directory does not conflict", async () => {
+    // A push to new-headline recorded its baseline for that branch only. After
+    // the merge main holds the same files, so a later edit pushed to main must
+    // compare against them, not against main's pre-merge baseline.
+    const projectDir = await makeTempDir();
+    try {
+      const pushed = await writeBranchReceipt(projectDir, "new-headline");
+      const scope = { controlPlane: CONTROL_PLANE, projectId: pushed.projectId };
+      const branchFiles: Record<string, { digest: string }> = {};
+      for (const file of PUSHED_FILES) {
+        branchFiles[file.path] = { digest: await computeContentDigest(file.content) };
+      }
+      await writeSyncTarget(projectDir, {
+        ...scope,
+        projectSlug: "support-desk",
+        branch: "new-headline",
+        files: branchFiles,
+      });
+      await writeSyncTarget(projectDir, {
+        ...scope,
+        projectSlug: "support-desk",
+        branch: "main",
+        files: { "app/page.tsx": { digest: await computeContentDigest("pre-merge\n") } },
+      });
+      const mainFiles = PUSHED_FILES.map((file, index) => ({
+        ...file,
+        version_id: `main-version-${index}`,
+      }));
+
+      await recordMergeInPushReceipt({
+        client: filesClient(mainFiles, []),
+        controlPlane: CONTROL_PLANE,
+        projectSlug: "support-desk",
+        projectDir,
+        sourceBranch: "new-headline",
+        targetBranch: "main",
+      });
+
+      const expected: Record<string, { digest: string; versionId: string }> = {};
+      for (const file of mainFiles) {
+        expected[file.path] = {
+          digest: await computeContentDigest(file.content),
+          versionId: file.version_id,
+        };
+      }
+      assertEquals(
+        (await readSyncTarget(projectDir, { ...scope, branch: "main" }))?.files,
+        expected,
+      );
+      assertEquals(
+        (await readSyncTarget(projectDir, { ...scope, branch: "new-headline" }))?.files,
+        branchFiles,
+      );
     } finally {
       await Deno.remove(projectDir, { recursive: true });
     }
@@ -473,6 +535,14 @@ describe("recordMergeInPushReceipt", () => {
 
       assertEquals(recorded, false);
       assertEquals(await readPushReceipt(projectDir), pushed);
+      assertEquals(
+        await readSyncTarget(projectDir, {
+          controlPlane: CONTROL_PLANE,
+          projectId: pushed.projectId,
+          branch: "main",
+        }),
+        null,
+      );
     } finally {
       await Deno.remove(projectDir, { recursive: true });
     }

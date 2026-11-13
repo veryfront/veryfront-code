@@ -23,6 +23,12 @@ import {
   writePushReceipt,
 } from "../../shared/deployment-provenance.ts";
 import { listAllFiles, type PullSource } from "../pull/command.ts";
+import {
+  computeContentDigest,
+  readSyncTarget,
+  type SyncFileSnapshot,
+  writeSyncTarget,
+} from "../../sync/state.ts";
 
 /**
  * Schema factory for merge command arguments
@@ -197,6 +203,34 @@ export async function recordMergeInPushReceipt(input: {
     files.map(({ path, content }) => ({ path, content })),
   );
   if (targetDigest !== receipt.sourceDigest) return false;
+
+  // The push recorded its conflict baseline for the source branch only. The
+  // target now holds the same files, so it inherits that baseline's paths with
+  // the target's own digests and versions. Otherwise the next push of a local
+  // edit to the target compares against its pre-merge baseline and conflicts.
+  const scope = { controlPlane: receipt.controlPlane, projectId: receipt.projectId };
+  const sourceBaseline = await readSyncTarget(input.projectDir, {
+    ...scope,
+    branch: input.sourceBranch,
+  });
+  if (sourceBaseline) {
+    const targetFiles = new Map(files.map((file) => [file.path, file]));
+    const baseline: Record<string, SyncFileSnapshot> = {};
+    for (const path of Object.keys(sourceBaseline.files)) {
+      const file = targetFiles.get(path);
+      if (!file) continue;
+      baseline[path] = {
+        digest: await computeContentDigest(file.content),
+        ...(file.version_id ? { versionId: file.version_id } : {}),
+      };
+    }
+    await writeSyncTarget(input.projectDir, {
+      ...scope,
+      projectSlug: receipt.projectSlug,
+      branch: input.targetBranch,
+      files: baseline,
+    });
+  }
 
   await writePushReceipt(input.projectDir, { ...receipt, branch: input.targetBranch });
   return true;
