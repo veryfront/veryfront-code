@@ -494,6 +494,34 @@ describe("recordMergeInPushReceipt", () => {
     }
   });
 
+  it("matches a project selected by id, as VERYFRONT_PROJECT_ID selects it", async () => {
+    // The config resolver puts the UUID in projectSlug for an id reference,
+    // while the receipt records the resolved slug and the id.
+    for (const projectId of [undefined, "550e8400-e29b-41d4-a716-446655440000"]) {
+      const projectDir = await makeTempDir();
+      try {
+        const pushed = await writeBranchReceipt(projectDir, "new-headline");
+        const urls: string[] = [];
+
+        const recorded = await recordMergeInPushReceipt({
+          client: filesClient(PUSHED_FILES, urls),
+          controlPlane: CONTROL_PLANE,
+          projectSlug: pushed.projectId,
+          projectId,
+          projectDir,
+          sourceBranch: "new-headline",
+          targetBranch: "main",
+        });
+
+        assertEquals(recorded, true);
+        assertEquals(urls, [`/projects/${pushed.projectId}/files`]);
+        assertEquals((await readPushReceipt(projectDir))?.branch, "main");
+      } finally {
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    }
+  });
+
   it("reads a non-main target from its branch", async () => {
     const projectDir = await makeTempDir();
     try {
@@ -552,6 +580,12 @@ describe("recordMergeInPushReceipt", () => {
     const cases = [
       { sourceBranch: "other-branch", projectSlug: "support-desk", controlPlane: CONTROL_PLANE },
       { sourceBranch: "new-headline", projectSlug: "other-project", controlPlane: CONTROL_PLANE },
+      {
+        sourceBranch: "new-headline",
+        projectSlug: "support-desk",
+        projectId: "660e8400-e29b-41d4-a716-446655440000",
+        controlPlane: CONTROL_PLANE,
+      },
       {
         sourceBranch: "new-headline",
         projectSlug: "support-desk",

@@ -176,10 +176,27 @@ export function getMergePreview(
  * target that also holds changes this directory never pushed keeps the receipt
  * as it was, and the deploy refuses with the push that fixes it.
  */
+/**
+ * Whether the receipt was written for the project this merge ran against.
+ *
+ * `VERYFRONT_PROJECT_ID` puts the project id where the slug usually goes,
+ * while a push records the resolved slug and id, so either may match.
+ */
+function receiptNamesProject(
+  receipt: { projectId: string; projectSlug: string },
+  project: { projectSlug: string; projectId?: string },
+): boolean {
+  if (project.projectId !== undefined) return receipt.projectId === project.projectId;
+  return receipt.projectSlug === project.projectSlug || receipt.projectId === project.projectSlug;
+}
+
 export async function recordMergeInPushReceipt(input: {
   client: ApiClient;
   controlPlane: string;
+  /** The reference the API calls use: a slug, or a project id when one selects it. */
   projectSlug: string;
+  /** The resolved project id, when the configuration knows it. */
+  projectId?: string;
   projectDir: string;
   sourceBranch: string;
   targetBranch: string;
@@ -188,7 +205,7 @@ export async function recordMergeInPushReceipt(input: {
   if (
     !receipt ||
     receipt.branch !== input.sourceBranch ||
-    receipt.projectSlug !== input.projectSlug ||
+    !receiptNamesProject(receipt, input) ||
     normalizeControlPlane(receipt.controlPlane) !== normalizeControlPlane(input.controlPlane)
   ) {
     return false;
@@ -312,6 +329,7 @@ export async function mergeCommand(options: MergeOptions): Promise<void> {
       client,
       controlPlane: config.apiUrl,
       projectSlug: config.projectSlug,
+      projectId: config.projectId,
       projectDir,
       sourceBranch: branch,
       targetBranch: targetName,
