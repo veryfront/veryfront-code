@@ -47,6 +47,33 @@ describe("eval/studio", () => {
     }
   });
 
+  it("preserves environment contexts through source documents and patches", () => {
+    const example = { id: "case", input: "hi", environmentContext: "selected node: Header" };
+    const definition = evalAgent({
+      target: "agent:researcher",
+      environmentContext: "active tab: app/page.tsx",
+      dataset: [example, { id: "plain", input: "hi" }],
+    });
+    const document = createEvalSourceDocument({
+      id: "eval:context",
+      name: "Context",
+      filePath: "evals/context.eval.ts",
+      exportName: "default",
+      definition,
+    });
+
+    assertEquals(document.environmentContext, "active tab: app/page.tsx");
+    assertEquals(document.dataset.examples, [example, { id: "plain", input: "hi" }]);
+    assertEquals(getEvalSourceDocumentSchema().parse(document), document);
+    const patch = {
+      kind: "eval-source-patch" as const,
+      id: document.id,
+      source: document.source,
+      fields: { environmentContext: "active tab: app/layout.tsx", dataset: document.dataset },
+    };
+    assertEquals(getEvalSourcePatchSchema().parse(patch), patch);
+  });
+
   it("creates a source document Studio can render as an edit form", () => {
     const definition = evalAgent({
       id: "eval:deep-research",

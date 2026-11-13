@@ -48,6 +48,7 @@ export const getEvalSourceExampleSchema = defineSchema((v) =>
     expectedOutcome: v.enum(["success", "error"] as const).optional(),
     reference: v.unknown().optional(),
     metadata: v.record(v.string(), v.unknown()).optional(),
+    environmentContext: v.string().optional(),
   })
 );
 
@@ -176,6 +177,7 @@ export const getEvalSourceDocumentSchema = defineSchema((v) =>
     description: v.string().optional(),
     targetKind: getEvalTargetKindSchema(),
     target: v.string(),
+    environmentContext: v.string().optional(),
     source: getEvalSourceReferenceSchema(),
     dataset: getEvalSourceDatasetSchema(),
     metrics: v.array(getEvalSourceMetricSchema()),
@@ -198,6 +200,7 @@ export const getEvalSourcePatchSchema = defineSchema((v) =>
       name: v.string().optional(),
       description: v.string().optional(),
       target: v.string().optional(),
+      environmentContext: v.string().optional(),
       dataset: getEvalSourceDatasetSchema().optional(),
       repetitions: v.number().int().positive().optional(),
       tags: v.array(v.string()).optional(),
@@ -294,6 +297,9 @@ function copyExample(example: EvalExample): EvalExample {
     ...(example.expectedOutcome ? { expectedOutcome: example.expectedOutcome } : {}),
     ...(example.reference !== undefined ? { reference: example.reference } : {}),
     ...(example.metadata ? { metadata: { ...example.metadata } } : {}),
+    ...(example.environmentContext === undefined
+      ? {}
+      : { environmentContext: example.environmentContext }),
   };
 }
 
@@ -336,6 +342,9 @@ export function createEvalSourceDocument(
     ...(definition.description ? { description: definition.description } : {}),
     targetKind: definition.targetKind,
     target: definition.target,
+    ...(definition.environmentContext === undefined
+      ? {}
+      : { environmentContext: definition.environmentContext }),
     source: {
       filePath: discovered.filePath,
       exportName: discovered.exportName,

@@ -160,6 +160,7 @@ import {
 } from "#veryfront/eval/agent-service.ts";
 import { bindTrustedLocalEvalFetch } from "#veryfront/eval/agent-service/trusted-fetch.ts";
 import { type AgUiRuntimeRestrictions, createAgUiHandler } from "#veryfront/agent/ag-ui/handler.ts";
+import { runWithEvalEnvironmentContext } from "#veryfront/agent/runtime/eval-environment-context-scope.ts";
 import { hostedChatRuntimeOverridesSchema } from "#veryfront/agent/hosted/chat-request.ts";
 import { resolveConversationRunTargets } from "#veryfront/agent/conversation/durable-contracts.ts";
 import type {
@@ -3999,8 +4000,25 @@ function createLocalEvalAgentFetch(input: {
       context: { runIdBindsToolAuthorization: false },
       ...(runtimeRestrictions ? { runtimeRestrictions } : {}),
     });
-    return await handler(request);
+    // The generic AG-UI handler does not read the eval's environment context,
+    // so render it for this agent the way a local CLI eval does.
+    const environmentContext = readEvalAgentEnvironmentContext(init);
+    return environmentContext === undefined
+      ? await handler(request)
+      : await runWithEvalEnvironmentContext(agent.id, environmentContext, () => handler(request));
   };
+}
+
+/** The eval or example environment context an agent-service eval request forwards. */
+function readEvalAgentEnvironmentContext(init: RequestInit | undefined): string | undefined {
+  if (typeof init?.body !== "string") return undefined;
+  try {
+    const body = JSON.parse(init.body) as Partial<AgentServiceEvalRequestBody> | null;
+    const value = body?.forwardedProps?.veryfront?.environmentContext;
+    return typeof value === "string" && value.trim() !== "" ? value : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 interface DurableEvalAgentFetchInput extends
@@ -4089,6 +4107,7 @@ function createDurableEvalAgentRunBody(
     }
     return { type: "main_branch" };
   }
+  const environmentContext = request.forwardedProps?.veryfront?.environmentContext;
   return {
     project_id: input.projectId,
     target: { type: "agent", id: input.agentId },
@@ -4102,7 +4121,12 @@ function createDurableEvalAgentRunBody(
       // account's owner is attribution, not authority to own a conversation.
       conversation_mode: "none",
       tools: request.tools,
-      context: request.context,
+      // Durable runs read the environment context from the `studio_context`
+      // item, the same item a Studio message carries.
+      context: environmentContext === undefined ? request.context : [
+        ...request.context,
+        { type: "json", title: "studio_context", data: { environmentContext } },
+      ],
       forwarded_props: createDurableEvalAgentForwardedProps(input, request),
     },
   };

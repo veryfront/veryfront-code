@@ -698,6 +698,10 @@ value replaces the agent's own `environmentContext` for that case. The text must
 be a non-empty string. Local CLI evals render it for the target agent only;
 delegated child agents keep their own configuration. Live agent-service evals
 forward it to the endpoint as `forwardedProps.veryfront.environmentContext`.
+Evals that Veryfront runs for a project apply it too: a local runtime renders it
+for the target agent, and a durable run receives it as the `studio_context`
+item that a Studio message carries. Studio source documents and patches keep
+both the eval and the example values.
 
 ## Live agent-service evals
 
