@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { makeTempDirWithOptions } from "#veryfront/testing/deno-compat.ts";
 import {
   __resetOperatorVeryfrontApiOriginsForTests,
   __runWithOutboundFetchTransportForTests,
@@ -58,7 +59,7 @@ describe("schedule and webhook trust the operator-exported Veryfront API origin"
   });
 
   it("schedule run --remote reaches a private staging API", async () => {
-    const projectDir = await Deno.makeTempDir({ prefix: "vf-schedule-private-api-" });
+    const projectDir = await makeTempDirWithOptions({ prefix: "vf-schedule-private-api-" });
     const { requests, transport } = privateApiTransport(() => Response.json({ data: [] }));
     try {
       await __runWithOutboundFetchTransportForTests(
@@ -86,7 +87,7 @@ describe("schedule and webhook trust the operator-exported Veryfront API origin"
     ] as const
   ) {
     it(`${command} seals the origin before it loads project code`, async () => {
-      const projectDir = await Deno.makeTempDir({ prefix: `vf-${command}-private-api-` });
+      const projectDir = await makeTempDirWithOptions({ prefix: `vf-${command}-private-api-` });
       const { requests, transport } = privateApiTransport(() => Response.json({}));
       try {
         await handle({ _: [command, "list"], "project-dir": projectDir });
