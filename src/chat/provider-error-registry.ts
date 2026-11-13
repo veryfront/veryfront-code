@@ -77,9 +77,16 @@ export const PROVIDER_STREAM_PROTOCOL_ERROR = {
   status: 502,
 } as const;
 
+/**
+ * The gateway refused the request's project. It accepts a request that names
+ * no project and bills the credential's account, so this code means the
+ * request named none where one is required, or named one that does not exist
+ * or that the credential cannot use.
+ */
 export const GATEWAY_PROJECT_REQUIRED_ERROR = {
   code: "GATEWAY_PROJECT_REQUIRED",
-  message: "A project is required to use Veryfront-managed AI inference",
+  message:
+    "Veryfront-managed AI inference refused the project: the request named none, or one that does not exist or that this credential cannot use",
   status: 400,
 } as const;
 

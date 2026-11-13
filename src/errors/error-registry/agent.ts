@@ -127,14 +127,16 @@ export const EVAL_MODEL_ACCESS_DENIED = defineError({
 });
 
 /**
- * An eval stopped because the Veryfront Cloud gateway rejected its model
- * requests for naming no project (HTTP 400, `gateway_project_required`).
+ * An eval stopped because the Veryfront Cloud gateway refused the project of
+ * its model requests (HTTP 400, `gateway_project_required`): none was sent
+ * where one is required, or the configured one does not exist or the
+ * credential cannot use it.
  */
 export const EVAL_PROJECT_REQUIRED = defineError({
   slug: "eval-project-required",
   category: "AGENT",
   status: 400,
-  title: "No project for eval model requests",
+  title: "No usable project for eval model requests",
   suggestion:
     "Set VERYFRONT_PROJECT_SLUG in .env or projectSlug in veryfront.config.ts to a project you can edit, then run veryfront eval again",
 });
