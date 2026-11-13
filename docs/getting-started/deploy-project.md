@@ -19,7 +19,7 @@ also uses the AI Gateway, follow the [Cloud quickstart](./cloud-quickstart.md).
 veryfront login
 ```
 
-For CI, set `VERYFRONT_API_TOKEN` instead. See
+For CI, set `VERYFRONT_API_KEY` instead. See
 [Configuration](../guides/configuration.md).
 
 ## Push a preview
@@ -55,7 +55,7 @@ veryfront open --site
 deployed site.
 
 Veryfront Cloud environments are protected by default. An unauthenticated
-request is redirected to sign-in, and `VERYFRONT_API_TOKEN` does not open a
+request is redirected to sign-in, and `VERYFRONT_API_KEY` does not open a
 protected environment on its own. Deploy exchanges it for a short-lived
 environment access token, probes the environment with that, and reports
 `urlVerification: "served"` in `--json` output once the app answers. To make the

@@ -279,7 +279,7 @@ function createAgUiRequestErrorResponse(error: unknown): Response {
       {
         code: vfError?.type === "no_ai_available" ? "NO_AI_AVAILABLE" : "NO_MODEL_CREDENTIALS",
         error:
-          "No model credentials configured. Run veryfront login or set VERYFRONT_API_TOKEN, OPENAI_API_KEY, ANTHROPIC_API_KEY, or GOOGLE_API_KEY.",
+          "No model credentials configured. Run veryfront login or set VERYFRONT_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY, or GOOGLE_API_KEY.",
       },
       { status: 503 },
     );

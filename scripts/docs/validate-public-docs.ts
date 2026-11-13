@@ -647,8 +647,8 @@ const DEPLOY_ACCESS_COVERAGE: CoveragePage[] = [
       },
       {
         label:
-          "state that VERYFRONT_API_TOKEN does not open a protected environment",
-        pattern: /VERYFRONT_API_TOKEN[^.]{0,120}does not open/i,
+          "state that VERYFRONT_API_KEY does not open a protected environment",
+        pattern: /VERYFRONT_API_(?:KEY|TOKEN)[^.]{0,120}does not open/i,
       },
       {
         label: "name the Studio switch that makes an environment public",

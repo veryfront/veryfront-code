@@ -3,6 +3,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import { fromFileUrl } from "#std/path";
 import {
+  __resetVeryfrontApiKeyAliasForTests,
   captureHostApiEnvironment,
   captureHostApiOrigin,
   clearEnvFileValueSources,
@@ -19,6 +20,7 @@ import {
   resetHostApiOriginSnapshot,
   setEnv,
   setHostSecret,
+  settleVeryfrontApiKeyAlias,
 } from "./env.ts";
 import { createProjectScopedDenoEnvView } from "./scoped-process-env.ts";
 
@@ -381,5 +383,114 @@ describe("host environment access", () => {
       JSON.parse(new TextDecoder().decode(output.stdout).trim()),
       [null, null],
     );
+  });
+});
+
+describe("VERYFRONT_API_KEY for processes that never load env files", () => {
+  const TOKEN = "VERYFRONT_API_TOKEN";
+  const KEY = "VERYFRONT_API_KEY";
+
+  function withCredentialEnv(values: Record<string, string | undefined>, fn: () => void): void {
+    const saved = { [TOKEN]: getEnv(TOKEN), [KEY]: getEnv(KEY) };
+    try {
+      __resetVeryfrontApiKeyAliasForTests();
+      for (const [name, value] of Object.entries(values)) {
+        if (value === undefined) deleteEnv(name);
+        else setEnv(name, value);
+      }
+      fn();
+    } finally {
+      __resetVeryfrontApiKeyAliasForTests();
+      for (const [name, value] of Object.entries(saved)) {
+        if (value === undefined) deleteEnv(name);
+        else setEnv(name, value);
+      }
+    }
+  }
+
+  it("reads the key as the credential when no token is set", () => {
+    withCredentialEnv({ [TOKEN]: undefined, [KEY]: "<KEY>" }, () => {
+      assertEquals(getHostEnv(TOKEN), "<KEY>", "an SDK script needs only VERYFRONT_API_KEY");
+    });
+  });
+
+  it("prefers VERYFRONT_API_TOKEN when both are set", () => {
+    withCredentialEnv({ [TOKEN]: "<TOKEN>", [KEY]: "<KEY>" }, () => {
+      assertEquals(getHostEnv(TOKEN), "<TOKEN>");
+    });
+  });
+
+  it("reads the key when the token is blank", () => {
+    withCredentialEnv({ [TOKEN]: "  ", [KEY]: "<KEY>" }, () => {
+      assertEquals(getHostEnv(TOKEN), "<KEY>");
+    });
+  });
+
+  it("does not read the key while a token file is set", () => {
+    // The token file is the renewable credential and wins in every resolver.
+    const TOKEN_FILE = "VERYFRONT_API_TOKEN_FILE";
+    const savedTokenFile = getEnv(TOKEN_FILE);
+    try {
+      withCredentialEnv({ [TOKEN]: undefined, [KEY]: "<KEY>" }, () => {
+        setEnv(TOKEN_FILE, "/run/secrets/<TOKEN_FILE>");
+        assertEquals(getHostEnv(TOKEN), undefined, "a stale key must not beat the token file");
+      });
+    } finally {
+      if (savedTokenFile === undefined) deleteEnv(TOKEN_FILE);
+      else setEnv(TOKEN_FILE, savedTokenFile);
+    }
+  });
+
+  it("does not read the key while a blank token file selector is set (it fails closed)", () => {
+    const TOKEN_FILE = "VERYFRONT_API_TOKEN_FILE";
+    const savedTokenFile = getEnv(TOKEN_FILE);
+    try {
+      withCredentialEnv({ [TOKEN]: undefined, [KEY]: "<KEY>" }, () => {
+        setEnv(TOKEN_FILE, "  ");
+        assertEquals(
+          getHostEnv(TOKEN),
+          undefined,
+          "a blank token file selector must not fall back to the key",
+        );
+      });
+    } finally {
+      if (savedTokenFile === undefined) deleteEnv(TOKEN_FILE);
+      else setEnv(TOKEN_FILE, savedTokenFile);
+    }
+  });
+
+  it("ignores a blank key", () => {
+    withCredentialEnv({ [TOKEN]: undefined, [KEY]: "  " }, () => {
+      assertEquals(getHostEnv(TOKEN), undefined);
+    });
+  });
+
+  it("keeps a registered host credential ahead of the key", () => {
+    withCredentialEnv({ [TOKEN]: undefined, [KEY]: "<KEY>" }, () => {
+      setHostSecret(TOKEN, "<STORED_LOGIN>");
+      try {
+        assertEquals(getHostEnv(TOKEN), "<STORED_LOGIN>");
+      } finally {
+        deleteHostSecret(TOKEN);
+      }
+    });
+  });
+
+  it("stops falling back once the env loader has resolved the key", () => {
+    withCredentialEnv({ [TOKEN]: undefined, [KEY]: "<KEY>" }, () => {
+      settleVeryfrontApiKeyAlias();
+      assertEquals(
+        getHostEnv(TOKEN),
+        undefined,
+        "a token the CLI removed on purpose does not come back through the key",
+      );
+    });
+  });
+
+  it("does not affect other variables or project-reachable reads", () => {
+    withCredentialEnv({ [TOKEN]: undefined, [KEY]: "<KEY>" }, () => {
+      assertEquals(getEnv(TOKEN), undefined, "getEnv is unchanged");
+      assertEquals(getHostEnv("VERYFRONT_API_URL_NOT_SET_FOR_TEST"), undefined);
+    });
   });
 });

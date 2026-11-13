@@ -78,6 +78,10 @@ const getAgentServiceConfigSchema = defineSchema<AgentServiceConfig>((v) => {
     VERYFRONT_API_URL: v.string().url().default("https://api.veryfront.com"),
     VERYFRONT_PUBLIC_API_BASE_URL: v.string().url().optional(),
     VERYFRONT_API_TOKEN: v.string().min(1).optional(),
+    // The name Veryfront tells users to set; the token wins when both are set (see `env-loader`).
+    VERYFRONT_API_KEY: v.string().min(1).optional(),
+    // Read only to tell whether a token file is the credential: then the key never stands in for it.
+    VERYFRONT_API_TOKEN_FILE: v.string().optional(),
     VERYFRONT_PROJECT_ID: v.string().min(1).optional(),
     VERYFRONT_AGENT_SERVICE_URL: v.string().url().optional(),
     VERYFRONT_AGENT_SERVICE_KEY: v.string().min(1).max(128).optional(),
@@ -127,7 +131,9 @@ const getAgentServiceConfigSchema = defineSchema<AgentServiceConfig>((v) => {
     VERYFRONT_API_URL: env.VERYFRONT_API_URL,
     VERYFRONT_PUBLIC_API_BASE_URL: env.VERYFRONT_PUBLIC_API_BASE_URL,
     VERYFRONT_MCP_URL: buildVeryfrontMcpUrl(env.VERYFRONT_API_URL),
-    VERYFRONT_API_TOKEN: env.VERYFRONT_API_TOKEN,
+    // Token first, then the key; any token file selector (a blank one included) is the credential, so no key.
+    VERYFRONT_API_TOKEN: env.VERYFRONT_API_TOKEN ??
+      (env.VERYFRONT_API_TOKEN_FILE === undefined ? env.VERYFRONT_API_KEY : undefined),
     VERYFRONT_PROJECT_ID: env.VERYFRONT_PROJECT_ID,
     VERYFRONT_AGENT_SERVICE_URL: env.VERYFRONT_AGENT_SERVICE_URL,
     VERYFRONT_AGENT_SERVICE_KEY: env.VERYFRONT_AGENT_SERVICE_KEY,

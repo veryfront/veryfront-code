@@ -1849,20 +1849,20 @@ it("names the missing Veryfront API MCP value and where the server reads it", ()
     {
       apiToken: undefined,
       projectSlug: "<PROJECT_SLUG>",
-      expected: "VERYFRONT_API_TOKEN is not set",
-      fix: "Set VERYFRONT_API_TOKEN there",
+      expected: "VERYFRONT_API_KEY is not set",
+      fix: "Set VERYFRONT_API_KEY there",
     },
     {
       apiToken: "   ",
       projectSlug: "<PROJECT_SLUG>",
-      expected: "VERYFRONT_API_TOKEN is not set",
-      fix: "Set VERYFRONT_API_TOKEN there",
+      expected: "VERYFRONT_API_KEY is not set",
+      fix: "Set VERYFRONT_API_KEY there",
     },
     {
       apiToken: undefined,
       projectSlug: undefined,
-      expected: "VERYFRONT_API_TOKEN and VERYFRONT_PROJECT_SLUG are not set",
-      fix: "Set VERYFRONT_API_TOKEN and VERYFRONT_PROJECT_SLUG there",
+      expected: "VERYFRONT_API_KEY and VERYFRONT_PROJECT_SLUG are not set",
+      fix: "Set VERYFRONT_API_KEY and VERYFRONT_PROJECT_SLUG there",
     },
   ];
   for (const { apiToken, projectSlug, expected, fix } of cases) {

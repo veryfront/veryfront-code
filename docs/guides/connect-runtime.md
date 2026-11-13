@@ -31,7 +31,7 @@ Set these values in your project environment:
 
 ```bash
 export VERYFRONT_API_URL="https://api.example.com"
-export VERYFRONT_API_TOKEN="<TOKEN>"
+export VERYFRONT_API_KEY="<API_KEY>"
 export VERYFRONT_PROJECT_ID="<PROJECT_ID>"
 ```
 
@@ -61,7 +61,7 @@ const assistant = agent({
 
 export async function POST(request: Request): Promise<Response> {
   const apiUrl = getEnv("VERYFRONT_API_URL")?.replace(/\/$/, "");
-  const token = getEnv("VERYFRONT_API_TOKEN");
+  const token = getEnv("VERYFRONT_API_KEY");
   const projectId = getEnv("VERYFRONT_PROJECT_ID");
   if (!apiUrl || !token || !projectId) {
     return Response.json({ error: "Missing runtime connection settings" }, { status: 503 });
@@ -210,7 +210,7 @@ Use the registered worker's implementation kind and worker key. A bare
    veryfront dev
    ```
 
-2. In another terminal with `VERYFRONT_API_TOKEN` set, execute the agent:
+2. In another terminal with `VERYFRONT_API_KEY` set, execute the agent:
 
    ```bash
    RUNTIME_URL=http://localhost:3000
@@ -222,7 +222,7 @@ Use the registered worker's implementation kind and worker key. A bare
      -X POST "$RUNTIME_URL/api/runtime" \
      -b "$RUNTIME_COOKIE_JAR" \
      -H "x-csrf-token: $RUNTIME_CSRF_TOKEN" \
-     -H "Authorization: Bearer $VERYFRONT_API_TOKEN"
+     -H "Authorization: Bearer $VERYFRONT_API_KEY"
    rm "$RUNTIME_COOKIE_JAR"
    ```
 
@@ -244,7 +244,7 @@ project's API origin.
    ```bash
    curl --fail-with-body --silent --show-error \
      "$VERYFRONT_API_URL/runs/$RUN_ID" \
-     -H "Authorization: Bearer $VERYFRONT_API_TOKEN"
+     -H "Authorization: Bearer $VERYFRONT_API_KEY"
    ```
 
    Verify `status` is `completed`, `conversation_id` matches the returned conversation, and
@@ -255,7 +255,7 @@ project's API origin.
    ```bash
    curl --fail-with-body --silent --show-error \
      "$VERYFRONT_API_URL/runs/$RUN_ID/events" \
-     -H "Authorization: Bearer $VERYFRONT_API_TOKEN"
+     -H "Authorization: Bearer $VERYFRONT_API_KEY"
    ```
 
    Verify the assistant message start, content, and end events are present.

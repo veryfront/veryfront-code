@@ -78,6 +78,7 @@ import {
   type EnvironmentAccessTarget,
 } from "./control-plane.ts";
 import type { DeployResult, LiveSourceResult } from "./result.ts";
+import { veryfrontApiCredentialEnvName } from "veryfront/utils/env-loader";
 
 export interface DeployProjectRequest {
   projectDir: string;
@@ -1710,7 +1711,7 @@ function getProbeCredentialRemedy(
 ): string {
   const again = retryInstruction(retry);
   if (source === "env") {
-    return `VERYFRONT_API_TOKEN is set in this shell and is resolved ahead of any stored session, so veryfront login does not change what the probe sends. Open the URL signed in, or unset that variable, run veryfront login, and ${again}, to confirm the app responds.`;
+    return `${veryfrontApiCredentialEnvName()} is set in this shell and is resolved ahead of any stored session, so veryfront login does not change what the probe sends. Open the URL signed in, or unset that variable, run veryfront login, and ${again}, to confirm the app responds.`;
   }
   if (source === "config-file") {
     return `The apiToken in veryfront.json is resolved ahead of any stored session, so veryfront login does not change what the probe sends. Open the URL signed in, or remove that token, run veryfront login, and ${again}, to confirm the app responds.`;

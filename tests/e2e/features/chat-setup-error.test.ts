@@ -70,7 +70,7 @@ export const POST = createAgUiHandler("test-assistant");
       assertEquals(body.code, "NO_MODEL_CREDENTIALS");
       assertEquals(
         body.error,
-        "No model credentials configured. Run veryfront login or set VERYFRONT_API_TOKEN, OPENAI_API_KEY, ANTHROPIC_API_KEY, or GOOGLE_API_KEY.",
+        "No model credentials configured. Run veryfront login or set VERYFRONT_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY, or GOOGLE_API_KEY.",
       );
       assertEquals(body.systemPrompt, undefined);
     }, {

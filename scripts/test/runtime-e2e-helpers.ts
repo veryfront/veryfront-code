@@ -589,6 +589,7 @@ export function getDevServerEnvironment(
     REVALIDATION_PER_PROJECT_LIMIT: "0",
     SSR_TRANSFORM_PER_PROJECT_LIMIT: "0",
     VERYFRONT_API_TOKEN: "",
+    VERYFRONT_API_KEY: "",
     VF_DISABLE_LRU_INTERVAL: "1",
     ...overrides,
   };

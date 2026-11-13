@@ -29,7 +29,7 @@ export const envHelp: CommandHelp = {
     "veryfront env token --env production --json",
   ],
   notes: [
-    "Requires VERYFRONT_API_TOKEN or an authenticated Veryfront login",
+    "Requires VERYFRONT_API_KEY or an authenticated Veryfront login",
     "The token is bound to one project and environment and expires after the API-provided lifetime",
     "Human output contains only the credential. Capture it with command substitution instead of pasting it into another command",
   ],

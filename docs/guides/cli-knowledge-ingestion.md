@@ -62,7 +62,7 @@ veryfront knowledge ingest --path ./bundle --all --okf-bundle --project my-proje
 Authenticate with the CLI and set the target project:
 
 ```bash
-export VERYFRONT_API_TOKEN=<TOKEN>
+export VERYFRONT_API_KEY=<API_KEY>
 export VERYFRONT_PROJECT_SLUG=my-project
 ```
 
@@ -272,7 +272,7 @@ deno run -A cli/main.ts knowledge ingest uploads/contracts/q1.pdf --json
 
 ### `Missing API token`
 
-Set `VERYFRONT_API_TOKEN`, run `veryfront login`, or use a local CLI config with
+Set `VERYFRONT_API_KEY`, run `veryfront login`, or use a local CLI config with
 a saved token.
 
 ### `Could not determine project slug`

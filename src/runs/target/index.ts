@@ -12,7 +12,7 @@
  * const runs = createRunsSdk({
  *   transport: createRunsApiTransport({
  *     baseUrl: "<RUNS_API_ORIGIN>",
- *     getToken: () => process.env.VERYFRONT_API_TOKEN!,
+ *     getToken: () => process.env.VERYFRONT_API_KEY!,
  *   }),
  * });
  *
