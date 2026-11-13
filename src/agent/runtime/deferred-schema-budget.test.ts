@@ -93,6 +93,61 @@ it("keeps a just-used schema and a newly activated schema awaiting its first cal
   assertEquals(justLoaded.evictedNames, []);
 });
 
+it("protects a requested state-loaded schema that a names result reports as available", () => {
+  const state = createToolExposureState(["create_agent"]);
+  const plan = createToolExposurePlan({
+    authorized: [definition("load_skill"), definition("create_agent", 6_000)],
+    mode: "deferred",
+    state,
+    bootstrapToolNames: new Set(["load_skill"]),
+  });
+  const inspect = (candidate: typeof plan) => ({
+    fits: !candidate.visible.some((tool) => tool.name === "create_agent"),
+    outputExceeded: false,
+    estimatedInputTokens: candidate.visible.some((tool) => tool.name === "create_agent")
+      ? 13_250
+      : 11_500,
+  });
+  const searchTurn = (result: Record<string, unknown>): Message[] => [{
+    id: "search-call",
+    role: "assistant",
+    parts: [{
+      type: "tool-call",
+      toolCallId: "search",
+      toolName: "veryfront__tool_search",
+      args: {},
+    }],
+  }, {
+    id: "search-result",
+    role: "tool",
+    parts: [{
+      type: "tool-result",
+      toolCallId: "search",
+      toolName: "veryfront__tool_search",
+      result,
+    }],
+  }];
+  const available = [{
+    name: "create_agent",
+    description: "Read create_agent",
+    status: "available",
+  }];
+
+  const names = fitDeferredToolSchemasToBudget({
+    plan,
+    sourceMessages: searchTurn({ matches: available, notFound: [], notLoaded: [] }),
+    inspect,
+  });
+  assertEquals(names.evictedNames, []);
+  // A phrase query's available match makes no such promise.
+  const query = fitDeferredToolSchemasToBudget({
+    plan,
+    sourceMessages: searchTurn({ matches: available }),
+    inspect,
+  });
+  assertEquals(query.evictedNames, ["create_agent"]);
+});
+
 it("protects every schema returned by the most recent search batch", () => {
   const state = createToolExposureState(["older", "first", "second"]);
   const plan = createToolExposurePlan({

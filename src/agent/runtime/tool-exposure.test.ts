@@ -1179,6 +1179,24 @@ it("exact names reject accessor and Proxy lists without running them", () => {
   assertEquals(reads, 0);
 });
 
+it("exact names load one tool per requested name across case variants", () => {
+  const state = createToolExposureState();
+  const result = loadToolExposureNames({
+    names: ["Get_Release"],
+    authorized: [
+      definition("get_release", "Read a release"),
+      definition("GET_RELEASE", "Read a release"),
+      definition("Get_Release", "Read a release"),
+    ],
+    available: [definition("get_RELEASE", "Read a release")],
+    state,
+  });
+
+  assertEquals(result.matches.map((match) => match.name), ["Get_Release"]);
+  assertEquals(result.notLoaded, []);
+  assertEquals([...state.loadedToolNames], ["Get_Release"]);
+});
+
 it("exact names accept one to five non-empty names", () => {
   assertEquals(parseToolSearchNames(["get_release", " get_release ", "create_release"]), [
     "get_release",

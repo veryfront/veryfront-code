@@ -1365,12 +1365,18 @@ export function loadToolExposureNames(input: {
       pushPrivateArray(notFound, name);
       continue;
     }
+    // One requested name loads one tool. Matching ignores ASCII case, so prefer
+    // the exact spelling, then the first deterministic variant.
+    let match = exact[0]!;
     for (let matchIndex = 0; matchIndex < exact.length; matchIndex++) {
-      const match = exact[matchIndex]!;
-      if (setHas(seen, match.name)) continue;
-      ReflectApply(SetAdd, seen, [match.name]);
-      pushPrivateArray(found, match);
+      if (exact[matchIndex]!.name === name) {
+        match = exact[matchIndex]!;
+        break;
+      }
     }
+    if (setHas(seen, match.name)) continue;
+    ReflectApply(SetAdd, seen, [match.name]);
+    pushPrivateArray(found, match);
   }
 
   // A requested tool that is visible only because an earlier search loaded it
