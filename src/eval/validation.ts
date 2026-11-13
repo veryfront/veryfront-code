@@ -54,6 +54,22 @@ export function normalizeEvalString(value: unknown, label: string): string {
   return value.trim();
 }
 
+/**
+ * Validate an optional `environmentContext`: the host facts an agent eval sends
+ * as `<environment_context>`, the way Studio does. Blank text is rejected
+ * rather than dropped, so a typo cannot silently run without the context.
+ */
+export function normalizeEvalEnvironmentContext(
+  value: unknown,
+  label: string,
+): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string" || value.trim() === "") {
+    throw createEvalValidationError(`${label} environmentContext must be a non-empty string`);
+  }
+  return value;
+}
+
 export function assertCanonicalEvalString(
   value: unknown,
   label: string,
@@ -152,6 +168,10 @@ export function normalizeEvalExamples(
     }
 
     assertMetadata(example.metadata, `${source}[${index}]`);
+    const environmentContext = normalizeEvalEnvironmentContext(
+      example.environmentContext,
+      `${source}[${index}]`,
+    );
 
     return {
       id,
@@ -159,6 +179,7 @@ export function normalizeEvalExamples(
       ...(example.expectedOutcome ? { expectedOutcome: example.expectedOutcome } : {}),
       ...(Object.hasOwn(example, "reference") ? { reference: example.reference } : {}),
       ...(example.metadata ? { metadata: { ...example.metadata } } : {}),
+      ...(environmentContext === undefined ? {} : { environmentContext }),
     };
   });
 }

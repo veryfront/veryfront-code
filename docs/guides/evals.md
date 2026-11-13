@@ -667,6 +667,38 @@ allowlist for that `generate()` request. There is no `stream()` equivalent for
 request-scoped mock tools. Live AG-UI agent-service evals reject definitions
 with `mockTools` before sending a request to the hosted endpoint.
 
+## Environment context for agent evals
+
+Use `environmentContext` when an agent eval must see the host facts that Studio
+sends with every message, such as the open tabs or a selected node. The agent
+receives the text in an `<environment_context>` block, the same block a Studio
+message produces.
+
+```ts
+import { datasets, evalAgent, metrics } from "veryfront/eval";
+
+export default evalAgent({
+  target: "agent:support",
+  environmentContext: "<studio_tabs>\nactive: app/page.tsx\n</studio_tabs>",
+  dataset: datasets.inline([
+    { id: "hi", input: "hi" },
+    {
+      id: "selected-node",
+      input: "Make this bigger",
+      environmentContext:
+        "<studio_tabs>\nactive: app/page.tsx\n</studio_tabs>\nselected node: Header",
+    },
+  ]),
+  metrics: [metrics.ops.tokens({ maxInput: 3_000 }).gate()],
+});
+```
+
+An example's `environmentContext` replaces the eval's value, and the eval's
+value replaces the agent's own `environmentContext` for that case. The text must
+be a non-empty string. Local CLI evals render it for the target agent only;
+delegated child agents keep their own configuration. Live agent-service evals
+forward it to the endpoint as `forwardedProps.veryfront.environmentContext`.
+
 ## Live agent-service evals
 
 Use the `veryfront/eval/agent-service` subpath, documented under
