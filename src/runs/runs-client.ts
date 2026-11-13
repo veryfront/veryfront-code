@@ -8,7 +8,11 @@ import {
 } from "#veryfront/platform/adapters/veryfront-api-client/retry-handler.ts";
 import { API_CLIENT_ERROR } from "#veryfront/platform/adapters/veryfront-api-client/types.ts";
 import type { Schema } from "#veryfront/extensions/schema/index.ts";
-import { INVALID_ARGUMENT } from "#veryfront/errors/index.ts";
+import {
+  INVALID_ARGUMENT,
+  RESOURCE_NOT_FOUND,
+  SCHEDULE_CONFIG_INVALID,
+} from "#veryfront/errors/index.ts";
 import { getProjectSchema } from "#veryfront/platform/adapters/veryfront-api-client/schemas/index.ts";
 import type { ResolvedTriggerTarget } from "#veryfront/trigger/target.ts";
 import {
@@ -26,7 +30,10 @@ import {
   RunListSchema,
   RunSchema,
   ScheduleReferenceListSchema,
+  ScheduleReferenceResponseSchema,
   type ScheduleRunCreateResponse,
+  type SourceSchedule,
+  SourceScheduleListSchema,
 } from "./schemas.ts";
 
 const DEFAULT_MAX_RETRIES = 3;
@@ -124,6 +131,20 @@ export interface CreateScheduleRunFromSourceInput extends ProjectScopedOptions {
   sourceTriggerId: string;
   runName?: string;
   idempotencyKey?: string;
+}
+
+/** Input for activating pushed source-defined schedules. */
+export interface ActivateSourceSchedulesInput extends ProjectScopedOptions {
+  /** The schedule to activate. Omit it to activate every schedule in the pushed source. */
+  sourceTriggerId?: string;
+}
+
+/** A source-defined schedule after activation, with the status the API reports. */
+export interface ActivatedSourceSchedule {
+  scheduleId: string;
+  sourceTriggerId: string;
+  name: string;
+  status: "active" | "paused" | "deleting";
 }
 
 /** Cloud schedule metadata returned with an accepted source-triggered run. */
@@ -426,10 +447,15 @@ export class VeryfrontRunsClient {
       candidate.source_trigger_id === input.sourceTriggerId
     );
     if (!schedule) {
-      throw API_CLIENT_ERROR.create({
-        detail:
-          `Active source schedule "${input.sourceTriggerId}" not found in project "${projectReference}". Push the source schedule before running it remotely.`,
-        status: 404,
+      const source = await this.listSourceSchedules(projectReference);
+      const pushed = source.schedules.some((candidate) =>
+        candidate.source_trigger_id === input.sourceTriggerId
+      );
+      if (!pushed) assertNoScheduleSourceErrors(source, projectReference);
+      throw RESOURCE_NOT_FOUND.create({
+        detail: pushed
+          ? scheduleNotActiveDetail(input.sourceTriggerId)
+          : scheduleNotPushedDetail(input.sourceTriggerId, projectReference),
       });
     }
 
@@ -443,6 +469,60 @@ export class VeryfrontRunsClient {
       scheduleRun,
       timeoutSeconds: schedule.timeout_seconds,
       target: schedule.target,
+    };
+  }
+
+  /**
+   * Activate schedules declared in the project's pushed source, the same call
+   * Studio's Activate makes. A schedule activated before keeps its current
+   * status, so a paused one stays paused.
+   */
+  async activateSourceSchedules(
+    input: ActivateSourceSchedulesInput = {},
+  ): Promise<ActivatedSourceSchedule[]> {
+    const projectReference = this.resolveProjectReference(input.projectReference);
+    const source = await this.listSourceSchedules(projectReference);
+    const selected = input.sourceTriggerId === undefined
+      ? source.schedules
+      : source.schedules.filter((candidate) =>
+        candidate.source_trigger_id === input.sourceTriggerId
+      );
+    // A schedule file that failed to load is missing from `data`: say why
+    // before claiming it was never pushed, and activate nothing for --all.
+    if (input.sourceTriggerId === undefined || selected.length === 0) {
+      assertNoScheduleSourceErrors(source, projectReference);
+    }
+    if (input.sourceTriggerId !== undefined && selected.length === 0) {
+      throw RESOURCE_NOT_FOUND.create({
+        detail: scheduleNotPushedDetail(input.sourceTriggerId, projectReference),
+      });
+    }
+
+    const activated: ActivatedSourceSchedule[] = [];
+    for (const sourceSchedule of selected) {
+      const { schedule } = await this.requestJson(
+        `/projects/${encodeURIComponent(projectReference)}/schedules`,
+        ScheduleReferenceResponseSchema,
+        { method: "POST", body: sourceScheduleActivationBody(sourceSchedule) },
+      );
+      activated.push({
+        scheduleId: schedule.id,
+        sourceTriggerId: sourceSchedule.source_trigger_id,
+        name: schedule.name,
+        status: schedule.status,
+      });
+    }
+    return activated;
+  }
+
+  private async listSourceSchedules(projectReference: string): Promise<PushedScheduleSource> {
+    const listed = await this.requestJson(
+      `/projects/${encodeURIComponent(projectReference)}/source-schedules`,
+      SourceScheduleListSchema,
+    );
+    return {
+      schedules: listed.data,
+      errors: listed.diagnostics.filter((diagnostic) => diagnostic.source_kind === "schedule"),
     };
   }
 
@@ -643,6 +723,66 @@ export class VeryfrontRunsClient {
     );
     return schema.parse(raw);
   }
+}
+
+interface PushedScheduleSource {
+  schedules: SourceSchedule[];
+  errors: Array<{ source_path: string; message: string }>;
+}
+
+const MAX_REPORTED_SCHEDULE_SOURCE_ERRORS = 3;
+
+function assertNoScheduleSourceErrors(
+  source: PushedScheduleSource,
+  projectReference: string,
+): void {
+  if (source.errors.length === 0) return;
+  const shown = source.errors.slice(0, MAX_REPORTED_SCHEDULE_SOURCE_ERRORS)
+    .map((error) => `${error.source_path}: ${error.message}`);
+  const hidden = source.errors.length - shown.length;
+  throw SCHEDULE_CONFIG_INVALID.create({
+    detail: `The pushed schedule source in project "${projectReference}" has errors: ${
+      shown.join("; ")
+    }${hidden > 0 ? ` (and ${hidden} more)` : ""}. Fix the file, then run \`veryfront push\`.`,
+  });
+}
+
+function scheduleNotActiveDetail(sourceTriggerId: string): string {
+  return `Schedule "${sourceTriggerId}" is pushed but not active. Run \`veryfront schedule activate ${sourceTriggerId}\`, or open Orchestration > Triggers in Studio and select Activate.`;
+}
+
+function scheduleNotPushedDetail(sourceTriggerId: string, projectReference: string): string {
+  return `Schedule "${sourceTriggerId}" is not in the source pushed to project "${projectReference}". Run \`veryfront push\`, then \`veryfront schedule activate ${sourceTriggerId}\`.`;
+}
+
+/** The create-schedule body that activates one source-defined schedule. */
+function sourceScheduleActivationBody(schedule: SourceSchedule): Record<string, unknown> {
+  const { target } = schedule;
+  return {
+    name: schedule.name,
+    target: target.kind === "agent"
+      ? {
+        kind: target.kind,
+        id: target.id,
+        ...(target.conversation_mode ? { conversation_mode: target.conversation_mode } : {}),
+        ...(target.conversation_id ? { conversation_id: target.conversation_id } : {}),
+      }
+      : { kind: target.kind, id: target.id },
+    schedule: schedule.schedule,
+    timezone: schedule.timezone,
+    runtime_target_kind: schedule.runtime_target_kind,
+    runtime_target_environment_id: schedule.runtime_target_environment_id,
+    runtime_target_branch_id: schedule.runtime_target_branch_id,
+    config: schedule.config,
+    timeout_seconds: schedule.timeout_seconds,
+    backoff_limit: schedule.backoff_limit,
+    concurrency_policy: schedule.concurrency_policy,
+    ...(schedule.max_runs === undefined ? {} : { max_runs: schedule.max_runs }),
+    definition_source: "source",
+    source_trigger_id: schedule.source_trigger_id,
+    source_path: schedule.source_path,
+    source_hash: schedule.source_hash,
+  };
 }
 
 /** Create a runs client. */

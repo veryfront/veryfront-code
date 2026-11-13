@@ -103,6 +103,50 @@ function makeRun(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function sourceSchedule(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "weekday-digest",
+    name: "Weekday digest",
+    description: null,
+    target: {
+      kind: "agent",
+      id: "assistant",
+      conversation_mode: "create_new",
+      conversation_id: null,
+    },
+    schedule: "0 9 * * 1-5",
+    timezone: "UTC",
+    runtime_target_kind: "main_branch",
+    runtime_target_environment_id: null,
+    runtime_target_branch_id: null,
+    config: { prompt: "Write the digest." },
+    timeout_seconds: 300,
+    backoff_limit: 3,
+    concurrency_policy: "Forbid",
+    max_runs: null,
+    health: null,
+    definition_source: "source",
+    source_trigger_id: "weekday-digest",
+    source_path: "schedules/weekday-digest.ts",
+    source_hash: "source-hash",
+    edit_mode: "structured",
+    ...overrides,
+  };
+}
+
+function storedSchedule(overrides: Record<string, unknown> = {}) {
+  return {
+    id: scheduleId,
+    name: "Weekday digest",
+    status: "active",
+    target: { kind: "agent", id: "assistant", conversation_mode: "create_new" },
+    definition_source: "source",
+    source_trigger_id: "weekday-digest",
+    timeout_seconds: 300,
+    ...overrides,
+  };
+}
+
 describe("VeryfrontRunsClient", () => {
   it("preserves canonical credential provenance and historical missing triggers", async () => {
     for (
@@ -625,12 +669,13 @@ describe("VeryfrontRunsClient", () => {
     });
   }
 
-  it("does not create a run when the pushed source schedule is missing", async () => {
+  it("names the push step when the schedule is not in the pushed source", async () => {
     mockFetch([
       jsonResponse({
         data: [],
         source_schedules: [],
       }),
+      jsonResponse({ data: [], diagnostics: [] }),
     ]);
     const client = createTestClient();
 
@@ -640,14 +685,35 @@ describe("VeryfrontRunsClient", () => {
           sourceTriggerId: "missing-schedule",
         }),
       Error,
-      'Active source schedule "missing-schedule" not found in project "dreamy-haven".',
+      'Schedule "missing-schedule" is not in the source pushed to project "dreamy-haven". Run `veryfront push`, then `veryfront schedule activate missing-schedule`.',
     );
 
-    assertEquals(fetchCalls.length, 1);
+    assertEquals(fetchCalls.length, 2);
     assertEquals(
       call(0).url,
       "https://93.184.216.34/projects/dreamy-haven/schedules?status=active&source_trigger_id=missing-schedule",
     );
+    assertEquals(call(1).url, "https://93.184.216.34/projects/dreamy-haven/source-schedules");
+  });
+
+  it("names the activate step when the pushed schedule is not active", async () => {
+    mockFetch([
+      jsonResponse({ data: [] }),
+      jsonResponse({ data: [sourceSchedule()], diagnostics: [] }),
+    ]);
+    const client = createTestClient();
+
+    const error = await assertRejects(
+      () => client.createScheduleRunFromSource({ sourceTriggerId: "weekday-digest" }),
+      Error,
+    ) as Error;
+
+    assertEquals(
+      error.message,
+      'Schedule "weekday-digest" is pushed but not active. Run `veryfront schedule activate weekday-digest`, or open Orchestration > Triggers in Studio and select Activate.',
+    );
+    assertEquals((error as { slug?: string }).slug, "resource-not-found");
+    assertEquals(fetchCalls.length, 2, "no run is created for an inactive schedule");
   });
 
   it("matches a listed schedule that is not listed first", async () => {
@@ -713,6 +779,10 @@ describe("VeryfrontRunsClient", () => {
           timeout_seconds: 1800,
         }],
       }),
+      jsonResponse({
+        data: [sourceSchedule({ source_trigger_id: "process-job-submissions" })],
+        diagnostics: [],
+      }),
     ]);
     const client = createTestClient();
 
@@ -722,10 +792,10 @@ describe("VeryfrontRunsClient", () => {
           sourceTriggerId: "process-job-submissions",
         }),
       Error,
-      'Active source schedule "process-job-submissions" not found in project "dreamy-haven".',
+      'Schedule "process-job-submissions" is pushed but not active.',
     );
 
-    assertEquals(fetchCalls.length, 1);
+    assertEquals(fetchCalls.length, 2);
   });
 
   it("does not trust a manually defined schedule returned by the source filter", async () => {
@@ -744,6 +814,10 @@ describe("VeryfrontRunsClient", () => {
           timeout_seconds: 1800,
         }],
       }),
+      jsonResponse({
+        data: [sourceSchedule({ source_trigger_id: "process-job-submissions" })],
+        diagnostics: [],
+      }),
     ]);
     const client = new VeryfrontRunsClient({
       apiUrl: "https://93.184.216.34",
@@ -757,13 +831,143 @@ describe("VeryfrontRunsClient", () => {
           sourceTriggerId: "process-job-submissions",
         }),
       Error,
-      'Active source schedule "process-job-submissions" not found in project "dreamy-haven".',
+      'Schedule "process-job-submissions" is pushed but not active.',
     );
 
     assertEquals(
       fetchCalls.length,
-      1,
+      2,
       "a manually defined schedule must not be triggered as a source schedule",
+    );
+  });
+
+  it("activates a pushed source schedule with the definition Studio sends", async () => {
+    mockFetch([
+      jsonResponse({ data: [sourceSchedule()], diagnostics: [] }),
+      jsonResponse({ schedule: storedSchedule() }, 201),
+    ]);
+
+    const activated = await createTestClient().activateSourceSchedules({
+      sourceTriggerId: "weekday-digest",
+    });
+
+    assertEquals(activated, [{
+      scheduleId,
+      sourceTriggerId: "weekday-digest",
+      name: "Weekday digest",
+      status: "active",
+    }]);
+    assertEquals(call(0).url, "https://93.184.216.34/projects/dreamy-haven/source-schedules");
+    assertEquals(call(1).url, "https://93.184.216.34/projects/dreamy-haven/schedules");
+    assertEquals(call(1).init?.method, "POST");
+    assertEquals(jsonBody(1), {
+      name: "Weekday digest",
+      target: { kind: "agent", id: "assistant", conversation_mode: "create_new" },
+      schedule: "0 9 * * 1-5",
+      timezone: "UTC",
+      runtime_target_kind: "main_branch",
+      runtime_target_environment_id: null,
+      runtime_target_branch_id: null,
+      config: { prompt: "Write the digest." },
+      timeout_seconds: 300,
+      backoff_limit: 3,
+      concurrency_policy: "Forbid",
+      max_runs: null,
+      definition_source: "source",
+      source_trigger_id: "weekday-digest",
+      source_path: "schedules/weekday-digest.ts",
+      source_hash: "source-hash",
+    });
+  });
+
+  it("activates every pushed source schedule when no id is given", async () => {
+    mockFetch([
+      jsonResponse({
+        data: [
+          sourceSchedule(),
+          sourceSchedule({
+            id: "nightly-sync",
+            name: "Nightly sync",
+            target: { kind: "task", id: "sync" },
+            source_trigger_id: "nightly-sync",
+            source_path: "schedules/nightly-sync.ts",
+          }),
+        ],
+        diagnostics: [],
+      }),
+      jsonResponse({ schedule: storedSchedule() }, 201),
+      jsonResponse(
+        {
+          schedule: storedSchedule({
+            id: "44444444-4444-4444-8444-444444444444",
+            name: "Nightly sync",
+            status: "paused",
+            target: { kind: "task", id: "sync" },
+            source_trigger_id: "nightly-sync",
+          }),
+        },
+        201,
+      ),
+    ]);
+
+    const activated = await createTestClient().activateSourceSchedules();
+
+    assertEquals(activated.map(({ sourceTriggerId, status }) => ({ sourceTriggerId, status })), [
+      { sourceTriggerId: "weekday-digest", status: "active" },
+      { sourceTriggerId: "nightly-sync", status: "paused" },
+    ]);
+    assertEquals((jsonBody(2) as { target: unknown }).target, { kind: "task", id: "sync" });
+  });
+
+  it("names the push step when the schedule to activate is not in the pushed source", async () => {
+    mockFetch([jsonResponse({ data: [sourceSchedule()], diagnostics: [] })]);
+
+    await assertRejects(
+      () => createTestClient().activateSourceSchedules({ sourceTriggerId: "missing-schedule" }),
+      Error,
+      'Schedule "missing-schedule" is not in the source pushed to project "dreamy-haven". Run `veryfront push`, then `veryfront schedule activate missing-schedule`.',
+    );
+    assertEquals(fetchCalls.length, 1, "nothing is activated");
+  });
+
+  it("reports the pushed source's schedule errors instead of claiming nothing was pushed", async () => {
+    const diagnostics = [
+      {
+        kind: "source_trigger_discovery_error",
+        source_kind: "schedule",
+        source_path: "schedules/weekday-digest.ts",
+        source_id: "weekday-digest",
+        code: "invalid_definition",
+        message: "cron expression is invalid",
+      },
+      {
+        kind: "source_agent_discovery_error",
+        source_kind: "agent",
+        source_path: "agents/broken.ts",
+        code: "parse_error",
+        message: "unexpected token",
+      },
+    ];
+    const message =
+      'The pushed schedule source in project "dreamy-haven" has errors: schedules/weekday-digest.ts: cron expression is invalid. Fix the file, then run `veryfront push`.';
+
+    mockFetch([jsonResponse({ data: [], diagnostics })]);
+    const targeted = await assertRejects(
+      () => createTestClient().activateSourceSchedules({ sourceTriggerId: "weekday-digest" }),
+      Error,
+    ) as Error & { slug?: string };
+    assertEquals(targeted.message, message);
+    assertEquals(targeted.slug, "schedule-config-invalid");
+
+    mockFetch([jsonResponse({ data: [sourceSchedule({ id: "nightly-sync" })], diagnostics })]);
+    await assertRejects(() => createTestClient().activateSourceSchedules(), Error, message);
+    assertEquals(fetchCalls.length, 1, "--all activates nothing while the source has errors");
+
+    mockFetch([jsonResponse({ data: [] }), jsonResponse({ data: [], diagnostics })]);
+    await assertRejects(
+      () => createTestClient().createScheduleRunFromSource({ sourceTriggerId: "weekday-digest" }),
+      Error,
+      message,
     );
   });
 
