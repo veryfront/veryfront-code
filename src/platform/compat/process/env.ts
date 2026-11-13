@@ -270,13 +270,15 @@ function isNonBlank(value: string | undefined): value is string {
  *
  * Returns nothing once the loader resolved the key (a token it removed on
  * purpose stays removed) or while a token file is set (the token file is the
- * credential).
+ * credential, even blank: a blank selector fails closed in the token file resolver).
  */
 export function readUnloadedVeryfrontApiKey(
   readEnv: (key: string) => string | undefined,
 ): string | undefined {
   if (veryfrontApiKeyAliasSettled) return undefined;
-  if (isNonBlank(readEnv(VERYFRONT_API_TOKEN_FILE_ENV))) return undefined;
+  // Any defined token file selector is authoritative, a blank one included: the token file resolver rejects it,
+  // and a misconfigured renewable credential must fail closed, never fall back to the key.
+  if (readEnv(VERYFRONT_API_TOKEN_FILE_ENV) !== undefined) return undefined;
   const apiKey = readEnv(VERYFRONT_API_KEY_ENV);
   return isNonBlank(apiKey) ? apiKey : undefined;
 }

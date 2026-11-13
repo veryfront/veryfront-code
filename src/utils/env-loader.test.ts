@@ -718,6 +718,24 @@ describe("env-loader", () => {
       }
     });
 
+    it("does not alias VERYFRONT_API_KEY while VERYFRONT_API_TOKEN_FILE is set but blank", async () => {
+      // A blank selector is still a selector: the token file resolver rejects it, so the credential fails closed.
+      const TOKEN_FILE = "VERYFRONT_API_TOKEN_FILE";
+      const savedTokenFile = getEnv(TOKEN_FILE);
+      try {
+        setEnv(TOKEN_FILE, "");
+        setEnv(KEY, "<KEY_FROM_SHELL>");
+
+        await loadEnv({ cwd: tempDir });
+
+        assertEquals(getEnv(TOKEN), undefined, "the key is not copied into the token slot");
+        assertEquals(isVeryfrontApiTokenFromKey(), false);
+      } finally {
+        if (savedTokenFile === undefined) deleteEnv(TOKEN_FILE);
+        else setEnv(TOKEN_FILE, savedTokenFile);
+      }
+    });
+
     it("clears an earlier key alias when a later load brings a token file", async () => {
       // `veryfront dev --project` loads the cwd .env first, then the project's.
       const TOKEN_FILE = "VERYFRONT_API_TOKEN_FILE";

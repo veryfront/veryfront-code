@@ -386,7 +386,9 @@ function applyVeryfrontApiKeyAlias(): void {
   // repository-steered API URL could receive it. A token file can also appear
   // in a later load (`dev --project` reads the project's `.env` after the
   // cwd's), so an alias applied earlier is removed too.
-  if (!isBlank(readExistingEnv(VERYFRONT_API_TOKEN_FILE_ENV))) {
+  // Any defined selector, a blank one included, is authoritative: the token file resolver rejects a blank path, so
+  // the credential fails closed instead of falling back to the key.
+  if (readExistingEnv(VERYFRONT_API_TOKEN_FILE_ENV) !== undefined) {
     revokeVeryfrontApiKeyAlias();
     return;
   }
