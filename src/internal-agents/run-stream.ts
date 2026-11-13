@@ -3,6 +3,7 @@ import {
   SOURCE_SNAPSHOT_SSE_EVENT_NAME,
 } from "./source-observation.ts";
 import { getProjectEventWriter } from "./project-event-writer.ts";
+import { runWithEvalEnvironmentContext } from "#veryfront/agent/runtime/eval-environment-context-scope.ts";
 import {
   chainPrivatePromise,
   observePrivatePromise,
@@ -171,6 +172,8 @@ import {
 } from "#veryfront/agent/runtime/skill-policy-enforcement.ts";
 import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
 import type { AgentManualPause } from "#veryfront/agent/runtime/manual-pause.ts";
+
+const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 
 const getAnyObjectSchema = defineSchema((v) => v.record(v.string(), v.unknown()));
 const anyObjectSchema = lazySchema(getAnyObjectSchema) as Schema<Record<string, unknown>>;
@@ -1433,6 +1436,16 @@ function createProviderReplayCheckpointRelay(): {
   };
 }
 
+/** The eval or example environment context a durable eval run forwards. */
+function readForwardedEvalEnvironmentContext(
+  forwardedProps: RuntimeRunAgentInput["forwardedProps"],
+): string | undefined {
+  const veryfront = forwardedProps?.veryfront;
+  if (!veryfront || typeof veryfront !== "object" || Array.isArray(veryfront)) return undefined;
+  const value = ObjectGetOwnPropertyDescriptor(veryfront, "environmentContext")?.value;
+  return typeof value === "string" && value.trim() !== "" ? value : undefined;
+}
+
 export async function createRuntimeAgentStreamResponse(
   input: RuntimeRunAgentInput,
   agent: Agent,
@@ -1731,14 +1744,24 @@ export async function createRuntimeAgentStreamResponse(
       resolveAgentSystem(agent.config.system, undefined),
     );
     const effectiveAgentSystem = getEffectiveAgentSystem(agent);
-    const resolveSystemPrompt = async (providerOptionKey?: string) => {
-      const authoredSystem = await authoredSystemPromise;
-      const resolvedBaseSystem = await resolveAgentSystemFromResolvedBase(
+    const evalEnvironmentContext = readForwardedEvalEnvironmentContext(input.forwardedProps);
+    const resolveBaseSystem = async (providerOptionKey?: string) =>
+      resolveAgentSystemFromResolvedBase(
         effectiveAgentSystem,
-        authoredSystem,
+        await authoredSystemPromise,
         providerOptionKey,
         { preserveRuntimeContextMarker: true },
       );
+    const resolveSystemPrompt = async (providerOptionKey?: string) => {
+      // An eval's environment context replaces the agent's configured one, as
+      // it does in a local eval. Studio's own context item keeps its precedence.
+      const resolvedBaseSystem = evalEnvironmentContext === undefined
+        ? await resolveBaseSystem(providerOptionKey)
+        : await runWithEvalEnvironmentContext(
+          agent.id,
+          evalEnvironmentContext,
+          () => resolveBaseSystem(providerOptionKey),
+        );
       return composeInternalAgentRunSystemPrompt({
         agent: { ...agent, config: { ...agent.config, model: executionModel } },
         resolvedBaseSystem,

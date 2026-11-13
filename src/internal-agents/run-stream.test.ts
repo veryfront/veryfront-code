@@ -2048,6 +2048,64 @@ describe("internal-agents/run-stream", () => {
     assertStringIncludes(prompt, "- outlook__send_email");
   });
 
+  it("lets a durable eval's environment context replace the agent's configured one", async () => {
+    const sessionManager = new AgentRunSessionManager();
+    const systems: Agent["config"]["system"][] = [];
+    const runtimeAgent = createAgent({
+      id: "eval-context-agent",
+      model: "anthropic/claude-opus-4-6",
+      skills: false,
+      environmentContext: "Factory environment context.",
+      system: "You are Custom Agent.",
+    });
+    const run = (forwardedProps: Record<string, unknown>) =>
+      createRuntimeAgentStreamResponse(
+        {
+          agentId: runtimeAgent.id,
+          threadId: crypto.randomUUID(),
+          runId: `run_eval_context_agent_${systems.length}`,
+          messages: [],
+          tools: [],
+          context: [{
+            type: "json",
+            title: "studio_context",
+            data: { environmentContext: "active tab: app/page.tsx" },
+          }],
+          forwardedProps,
+        } as Parameters<typeof createRuntimeAgentStreamResponse>[0],
+        runtimeAgent,
+        {
+          sessionManager,
+          projectAgentSandbox: { projectId: "project-1" },
+          createRuntime: (agent) => {
+            systems.push(agent.config.system);
+            return {
+              stream: async () =>
+                new ReadableStream<Uint8Array>({
+                  start(controller) {
+                    controller.close();
+                  },
+                }),
+            };
+          },
+        },
+      );
+
+    await run({ veryfront: { environmentContext: "active tab: app/page.tsx" } });
+    await run({});
+
+    const evalPrompt = flattenSystemInstructions(
+      await resolveTestAgentSystem(systems[0]) as Parameters<typeof flattenSystemInstructions>[0],
+    );
+    assertStringIncludes(evalPrompt, "active tab: app/page.tsx");
+    assertEquals(evalPrompt.includes("Factory environment context."), false);
+    // Without the eval override, the configured context keeps its precedence.
+    const studioPrompt = flattenSystemInstructions(
+      await resolveTestAgentSystem(systems[1]) as Parameters<typeof flattenSystemInstructions>[0],
+    );
+    assertStringIncludes(studioPrompt, "Factory environment context.");
+  });
+
   it("preserves an agent factory marker through internal runtime dispatch", async () => {
     const sessionManager = new AgentRunSessionManager();
     let capturedSystem: Agent["config"]["system"] | undefined;
