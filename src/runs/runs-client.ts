@@ -8,7 +8,11 @@ import {
 } from "#veryfront/platform/adapters/veryfront-api-client/retry-handler.ts";
 import { API_CLIENT_ERROR } from "#veryfront/platform/adapters/veryfront-api-client/types.ts";
 import type { Schema } from "#veryfront/extensions/schema/index.ts";
-import { INVALID_ARGUMENT, RESOURCE_NOT_FOUND } from "#veryfront/errors/index.ts";
+import {
+  INVALID_ARGUMENT,
+  RESOURCE_NOT_FOUND,
+  SCHEDULE_CONFIG_INVALID,
+} from "#veryfront/errors/index.ts";
 import { getProjectSchema } from "#veryfront/platform/adapters/veryfront-api-client/schemas/index.ts";
 import type { ResolvedTriggerTarget } from "#veryfront/trigger/target.ts";
 import {
@@ -443,10 +447,11 @@ export class VeryfrontRunsClient {
       candidate.source_trigger_id === input.sourceTriggerId
     );
     if (!schedule) {
-      const sourceSchedules = await this.listSourceSchedules(projectReference);
-      const pushed = sourceSchedules.some((candidate) =>
+      const source = await this.listSourceSchedules(projectReference);
+      const pushed = source.schedules.some((candidate) =>
         candidate.source_trigger_id === input.sourceTriggerId
       );
+      if (!pushed) assertNoScheduleSourceErrors(source, projectReference);
       throw RESOURCE_NOT_FOUND.create({
         detail: pushed
           ? scheduleNotActiveDetail(input.sourceTriggerId)
@@ -476,12 +481,17 @@ export class VeryfrontRunsClient {
     input: ActivateSourceSchedulesInput = {},
   ): Promise<ActivatedSourceSchedule[]> {
     const projectReference = this.resolveProjectReference(input.projectReference);
-    const sourceSchedules = await this.listSourceSchedules(projectReference);
+    const source = await this.listSourceSchedules(projectReference);
     const selected = input.sourceTriggerId === undefined
-      ? sourceSchedules
-      : sourceSchedules.filter((candidate) =>
+      ? source.schedules
+      : source.schedules.filter((candidate) =>
         candidate.source_trigger_id === input.sourceTriggerId
       );
+    // A schedule file that failed to load is missing from `data`: say why
+    // before claiming it was never pushed, and activate nothing for --all.
+    if (input.sourceTriggerId === undefined || selected.length === 0) {
+      assertNoScheduleSourceErrors(source, projectReference);
+    }
     if (input.sourceTriggerId !== undefined && selected.length === 0) {
       throw RESOURCE_NOT_FOUND.create({
         detail: scheduleNotPushedDetail(input.sourceTriggerId, projectReference),
@@ -505,12 +515,15 @@ export class VeryfrontRunsClient {
     return activated;
   }
 
-  private async listSourceSchedules(projectReference: string): Promise<SourceSchedule[]> {
+  private async listSourceSchedules(projectReference: string): Promise<PushedScheduleSource> {
     const listed = await this.requestJson(
       `/projects/${encodeURIComponent(projectReference)}/source-schedules`,
       SourceScheduleListSchema,
     );
-    return listed.data;
+    return {
+      schedules: listed.data,
+      errors: listed.diagnostics.filter((diagnostic) => diagnostic.source_kind === "schedule"),
+    };
   }
 
   async list(options: ListRunsOptions = {}): Promise<RunList> {
@@ -710,6 +723,28 @@ export class VeryfrontRunsClient {
     );
     return schema.parse(raw);
   }
+}
+
+interface PushedScheduleSource {
+  schedules: SourceSchedule[];
+  errors: Array<{ source_path: string; message: string }>;
+}
+
+const MAX_REPORTED_SCHEDULE_SOURCE_ERRORS = 3;
+
+function assertNoScheduleSourceErrors(
+  source: PushedScheduleSource,
+  projectReference: string,
+): void {
+  if (source.errors.length === 0) return;
+  const shown = source.errors.slice(0, MAX_REPORTED_SCHEDULE_SOURCE_ERRORS)
+    .map((error) => `${error.source_path}: ${error.message}`);
+  const hidden = source.errors.length - shown.length;
+  throw SCHEDULE_CONFIG_INVALID.create({
+    detail: `The pushed schedule source in project "${projectReference}" has errors: ${
+      shown.join("; ")
+    }${hidden > 0 ? ` (and ${hidden} more)` : ""}. Fix the file, then run \`veryfront push\`.`,
+  });
 }
 
 function scheduleNotActiveDetail(sourceTriggerId: string): string {

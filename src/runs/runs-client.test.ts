@@ -930,6 +930,47 @@ describe("VeryfrontRunsClient", () => {
     assertEquals(fetchCalls.length, 1, "nothing is activated");
   });
 
+  it("reports the pushed source's schedule errors instead of claiming nothing was pushed", async () => {
+    const diagnostics = [
+      {
+        kind: "source_trigger_discovery_error",
+        source_kind: "schedule",
+        source_path: "schedules/weekday-digest.ts",
+        source_id: "weekday-digest",
+        code: "invalid_definition",
+        message: "cron expression is invalid",
+      },
+      {
+        kind: "source_agent_discovery_error",
+        source_kind: "agent",
+        source_path: "agents/broken.ts",
+        code: "parse_error",
+        message: "unexpected token",
+      },
+    ];
+    const message =
+      'The pushed schedule source in project "dreamy-haven" has errors: schedules/weekday-digest.ts: cron expression is invalid. Fix the file, then run `veryfront push`.';
+
+    mockFetch([jsonResponse({ data: [], diagnostics })]);
+    const targeted = await assertRejects(
+      () => createTestClient().activateSourceSchedules({ sourceTriggerId: "weekday-digest" }),
+      Error,
+    ) as Error & { slug?: string };
+    assertEquals(targeted.message, message);
+    assertEquals(targeted.slug, "schedule-config-invalid");
+
+    mockFetch([jsonResponse({ data: [sourceSchedule({ id: "nightly-sync" })], diagnostics })]);
+    await assertRejects(() => createTestClient().activateSourceSchedules(), Error, message);
+    assertEquals(fetchCalls.length, 1, "--all activates nothing while the source has errors");
+
+    mockFetch([jsonResponse({ data: [] }), jsonResponse({ data: [], diagnostics })]);
+    await assertRejects(
+      () => createTestClient().createScheduleRunFromSource({ sourceTriggerId: "weekday-digest" }),
+      Error,
+      message,
+    );
+  });
+
   it("creates every knowledge ingest task-run variant", async () => {
     mockFetch([
       jsonResponse(makeRun(), 202),

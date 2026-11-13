@@ -201,9 +201,24 @@ const getSourceScheduleSchema = defineSchema((v) =>
   })
 );
 
-/** Source-schedule list response, read from the canonical `data` list key. */
+/** One source discovery problem the API reports beside the declared schedules. */
+const getSourceDiagnosticSchema = defineSchema((v) =>
+  v.object({
+    source_kind: v.string(),
+    source_path: v.string(),
+    message: v.string(),
+  })
+);
+
+/**
+ * Source-schedule list response, read from the canonical `data` list key, with
+ * the discovery diagnostics for definitions that failed to load.
+ */
 export const getSourceScheduleListSchema = defineSchema((v) =>
-  v.object({ data: v.array(getSourceScheduleSchema()) })
+  v.object({
+    data: v.array(getSourceScheduleSchema()),
+    diagnostics: v.array(getSourceDiagnosticSchema()).default([]),
+  })
 );
 
 export const getCancelRunResponseSchema = defineSchema((v) =>
