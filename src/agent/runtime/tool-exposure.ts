@@ -25,7 +25,10 @@ import { readToolDiscoveryMetadata } from "#veryfront/tool/discovery-metadata.ts
 import { parseIntegrationToolIdentity } from "#veryfront/integrations/source-policy.ts";
 import type { RuntimeToolLoadingMode } from "./runtime-tool-config.ts";
 import { isRuntimeProviderSchemaHiddenTool } from "./local-tool.ts";
-import { isOwnDataPropertyDescriptor } from "./data-property-descriptor.ts";
+import {
+  isOwnDataPropertyDescriptor,
+  snapshotOwnDataPropertyArray,
+} from "./data-property-descriptor.ts";
 import { hasTrustedPlatformPolicyToolDefinition } from "./skill-policy-enforcement.ts";
 import { isProviderNativeToolExposureDefinition } from "./provider-native-tool-inventory.ts";
 
@@ -1261,7 +1264,7 @@ export function searchToolExposure(input: {
 export type ToolNamesLoadResult = ToolSearchResult & {
   /** Requested names that match no authorized executable tool, in request order. */
   notFound: string[];
-  /** Matched deferred tools left unloaded by the current tool limit, in request order. */
+  /** Matched tools the current tool limit leaves out of the next step, in request order. */
   notLoaded: string[];
 };
 
@@ -1270,14 +1273,24 @@ export type ToolNamesLoadResult = ToolSearchResult & {
  * tool names. Surrounding whitespace is trimmed and duplicates collapse.
  */
 export function parseToolSearchNames(value: unknown): string[] {
-  if (!ArrayIsArray(value) || value.length === 0 || value.length > TOOL_SEARCH_RESULT_LIMIT) {
-    throw new Error(
-      `veryfront__tool_search names requires a list of 1 to ${TOOL_SEARCH_RESULT_LIMIT} exact tool names; split a longer list into several calls`,
-    );
+  const listError = new Error(
+    `veryfront__tool_search names requires a list of 1 to ${TOOL_SEARCH_RESULT_LIMIT} exact tool names; split a longer list into several calls`,
+  );
+  // Read entries as data only: an accessor or Proxy must not run during validation.
+  let entries: readonly unknown[];
+  try {
+    entries = snapshotOwnDataPropertyArray(value, {
+      label: "veryfront__tool_search names",
+      maximumEntries: TOOL_SEARCH_RESULT_LIMIT,
+      mapValue: (entry) => entry,
+    });
+  } catch {
+    throw listError;
   }
+  if (entries.length === 0) throw listError;
   const names: string[] = [];
-  for (let index = 0; index < value.length; index++) {
-    const entry = hasOwn(value, index) ? value[index] : undefined;
+  for (let index = 0; index < entries.length; index++) {
+    const entry = entries[index];
     const name = typeof entry === "string" ? privateTextTrim(entry) : "";
     if (!name || !isUtf8LengthWithin(name, TOOL_SEARCH_NAME_MAX_BYTES)) {
       throw new Error(
@@ -1338,6 +1351,9 @@ export function loadToolExposureNames(input: {
     authorized: input.authorized,
     available: input.available ?? [],
     includeParameterDescriptions: false,
+    // Exact names must resolve anywhere inventory can list them, so read the
+    // whole catalog. Each entry reads only bounded name and description metadata.
+    candidateLimit: Number.POSITIVE_INFINITY,
   });
   const seen = createPrivateSet<string>();
   const found: ToolSearchMatch[] = [];
@@ -1357,9 +1373,20 @@ export function loadToolExposureNames(input: {
     }
   }
 
+  // A requested tool that is visible only because an earlier search loaded it
+  // takes a loaded slot too. Refresh it first and keep its slot, so loading the
+  // other requested names never evicts it.
+  const stateBacked = createPrivateSet<string>();
+  for (let index = 0; index < found.length; index++) {
+    const match = found[index]!;
+    if (match.status !== "available" || !input.state.loadedToolNames.has(match.name)) continue;
+    ReflectApply(SetAdd, stateBacked, [match.name]);
+    input.state.loadedToolNames.delete(match.name);
+    input.state.loadedToolNames.add(match.name);
+  }
   const loadLimit = input.maxLoadedTools === undefined
     ? TOOL_SEARCH_RESULT_LIMIT
-    : Math.min(TOOL_SEARCH_RESULT_LIMIT, input.maxLoadedTools);
+    : Math.max(0, Math.min(TOOL_SEARCH_RESULT_LIMIT, input.maxLoadedTools - stateBacked.size));
   let loading = 0;
   for (let index = 0; index < found.length; index++) {
     const match = found[index]!;
@@ -1370,13 +1397,18 @@ export function loadToolExposureNames(input: {
   }
   retainNewestLoadedToolNames(input.state, input.maxLoadedTools);
 
+  // Report from the final exposure state, so nothing is called available or
+  // loaded that the next model call does not carry.
   const matches: ToolSearchMatch[] = [];
   const notLoaded: string[] = [];
   let loadedCount = 0;
   for (let index = 0; index < found.length; index++) {
     const match = found[index]!;
-    if (match.status === "available") pushPrivateArray(matches, match);
-    else if (input.state.loadedToolNames.has(match.name)) {
+    if (match.status === "available") {
+      if (!setHas(stateBacked, match.name) || input.state.loadedToolNames.has(match.name)) {
+        pushPrivateArray(matches, match);
+      } else pushPrivateArray(notLoaded, match.name);
+    } else if (input.state.loadedToolNames.has(match.name)) {
       pushPrivateArray(matches, match);
       loadedCount += 1;
     } else pushPrivateArray(notLoaded, match.name);

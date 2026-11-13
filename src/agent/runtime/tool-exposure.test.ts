@@ -1118,6 +1118,67 @@ it("exact names stay within the loaded-tool limit and report what did not load",
   assertEquals(state.loadedToolNames.size, 2);
 });
 
+it("exact names keep a requested state-loaded tool when loading another at capacity", () => {
+  const authorized = [
+    definition("old_tool", "Old tool"),
+    definition("newer_tool", "Newer tool"),
+    definition("new_tool", "New tool"),
+  ];
+  const state = createToolExposureState(["old_tool", "newer_tool"]);
+  const visible = authorized.slice(0, 2);
+  const result = loadToolExposureNames({
+    names: ["old_tool", "new_tool"],
+    authorized: [authorized[2]!],
+    available: visible,
+    state,
+    maxLoadedTools: 2,
+  });
+
+  assertEquals(result.matches.map((match) => [match.name, match.status]), [
+    ["old_tool", "available"],
+    ["new_tool", "loaded"],
+  ]);
+  assertEquals(result.notLoaded, []);
+  assertEquals([...state.loadedToolNames], ["old_tool", "new_tool"]);
+});
+
+it("exact names resolve past the ranked-search candidate limit", () => {
+  const authorized = Array.from(
+    { length: 4_100 },
+    (_, index) => definition(`catalog_tool_${String(index).padStart(4, "0")}`, "Catalog tool"),
+  );
+  const result = loadToolExposureNames({
+    names: ["catalog_tool_4099"],
+    authorized,
+    state: createToolExposureState(),
+  });
+
+  assertEquals(result.matches.map((match) => match.name), ["catalog_tool_4099"]);
+  assertEquals(result.notFound, []);
+});
+
+it("exact names reject accessor and Proxy lists without running them", () => {
+  let reads = 0;
+  const accessor: unknown[] = ["get_release"];
+  Object.defineProperty(accessor, 1, {
+    enumerable: true,
+    get() {
+      reads++;
+      return "create_release";
+    },
+  });
+  const proxy = new Proxy(["get_release"], {
+    get(target, key, receiver) {
+      reads++;
+      return Reflect.get(target, key, receiver);
+    },
+  });
+  for (const invalid of [accessor, proxy]) {
+    assertThrows(() => parseToolSearchNames(invalid), Error, "veryfront__tool_search names");
+  }
+  assertEquals(reads, 0);
+});
+
 it("exact names accept one to five non-empty names", () => {
   assertEquals(parseToolSearchNames(["get_release", " get_release ", "create_release"]), [
     "get_release",
