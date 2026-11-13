@@ -152,6 +152,18 @@ The platform reports the schedule as stale when it has not succeeded within
 that budget, and as failed after a newer terminal failure. Health settings are
 not sent to the target as run input.
 
+## Activate a pushed schedule
+
+A pushed schedule runs on its timer only after you activate it:
+
+```sh
+veryfront schedule activate daily-support-triage
+```
+
+Use `veryfront schedule activate --all` to activate every schedule in the
+pushed source. A schedule activated before keeps its current status, so a
+paused schedule stays paused until you resume it in Studio.
+
 ## Run a pushed schedule on demand
 
 Use remote mode when the schedule needs the same hosted tools, integrations,
@@ -161,7 +173,7 @@ delegation, and durable run context as its cloud recurrence:
 veryfront schedule run daily-support-triage --remote --json
 ```
 
-Push the source schedule first. Remote runs use the pushed definition and do
+Push and activate the source schedule first. Remote runs use the pushed definition and do
 not execute `veryfront.config.ts`, `veryfront.config.js`, or
 `veryfront.config.mjs` from the checkout.
 Provide the project reference through `veryfront.json`, the local
