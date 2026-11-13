@@ -270,7 +270,7 @@ cd veryfront-code
 deno run -A cli/main.ts knowledge ingest uploads/contracts/q1.pdf --json
 ```
 
-### `Missing API token`
+### `authentication-required`
 
 Set `VERYFRONT_API_TOKEN`, run `veryfront login`, or use a local CLI config with
 a saved token.
