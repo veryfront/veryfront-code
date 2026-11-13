@@ -5,6 +5,7 @@ import {
   INGRESS_API_TOKEN_HEADER,
   readIngressCredential,
 } from "#veryfront/security/http/ingress-credentials.ts";
+import { ENVIRONMENT_ACCESS_TOKEN_USE } from "./proxy-access-control.ts";
 
 const MAX_AUTH_COOKIE_HEADER_CODE_UNITS = 64 * 1024;
 const MAX_USER_TOKEN_CODE_UNITS = 64 * 1024;
@@ -125,6 +126,33 @@ export function isMissingProxyProjectError(error: unknown): boolean {
   }
 }
 
+/**
+ * Whether a cookie token says it is an environment access token.
+ *
+ * The API mints these for the access gate and refuses them as a session, so a
+ * preview that forwards one as its project credential fails to read the
+ * project after the gate has let the request through. The claim is read
+ * without verifying the signature: it only selects the service token for the
+ * project read, never lets a request past the gate, which verifies the token
+ * and checks its binding and owner on its own.
+ */
+function claimsEnvironmentAccess(token: string): boolean {
+  const segments = token.split(".");
+  if (segments.length !== 3) return false;
+  try {
+    const base64 = segments[1]!.replaceAll("-", "+").replaceAll("_", "/");
+    const payload: unknown = JSON.parse(
+      atob(base64.padEnd(Math.ceil(base64.length / 4) * 4, "=")),
+    );
+    if (typeof payload !== "object" || payload === null || Array.isArray(payload)) return false;
+    const descriptor = Object.getOwnPropertyDescriptor(payload, "tokenUse");
+    return descriptor !== undefined && "value" in descriptor &&
+      descriptor.value === ENVIRONMENT_ACCESS_TOKEN_USE;
+  } catch {
+    return false;
+  }
+}
+
 export async function resolveProxyRequestToken(
   options: ResolveProxyRequestTokenOptions,
 ): Promise<ResolvedProxyRequestToken> {
@@ -158,7 +186,10 @@ export async function resolveProxyRequestToken(
       pathname: url.pathname,
       scope,
     });
-  } else if (scope === "preview" && userToken && useUserTokenForPreview) {
+  } else if (
+    scope === "preview" && userToken && useUserTokenForPreview &&
+    !claimsEnvironmentAccess(userToken)
+  ) {
     token = userToken;
     tokenSource = "user";
     logger?.debug("Using user auth token for preview");
