@@ -7,6 +7,7 @@ import {
   assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { makeTempDirWithOptions } from "#veryfront/testing/deno-compat.ts";
 import { clearProjectAgentRuntimeRegistries } from "../../../src/agent/project/agent-runtime.ts";
 import { _resetEnvironmentConfig } from "#veryfront/config/environment-config.ts";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
@@ -297,6 +298,140 @@ describe("schedule command", () => {
       await stopEsbuild();
       await Deno.remove(projectDir, { recursive: true });
       await Deno.remove(configHome, { recursive: true });
+    }
+  });
+
+  it("activates a pushed schedule without importing local runtime source", async () => {
+    const projectDir = await makeTempDirWithOptions({ prefix: "vf-schedule-activate-" });
+    const configHome = await makeTempDirWithOptions({
+      prefix: "vf-schedule-activate-config-home-",
+    });
+    const requests: Array<{ url: string; init?: RequestInit }> = [];
+    const responses = [
+      jsonResponse({
+        data: [{
+          id: "weekday-digest",
+          name: "Weekday digest",
+          description: null,
+          target: { kind: "agent", id: "assistant" },
+          schedule: "0 9 * * 1-5",
+          timezone: "UTC",
+          runtime_target_kind: "main_branch",
+          runtime_target_environment_id: null,
+          runtime_target_branch_id: null,
+          config: { prompt: "Write the digest." },
+          timeout_seconds: 300,
+          backoff_limit: 3,
+          concurrency_policy: "Forbid",
+          max_runs: null,
+          definition_source: "source",
+          source_trigger_id: "weekday-digest",
+          source_path: "schedules/weekday-digest.ts",
+          source_hash: "source-hash",
+        }],
+        diagnostics: [],
+      }),
+      jsonResponse({
+        schedule: {
+          id: scheduleId,
+          name: "Weekday digest",
+          status: "active",
+          target: { kind: "agent", id: "assistant" },
+          definition_source: "source",
+          source_trigger_id: "weekday-digest",
+          timeout_seconds: 300,
+        },
+      }, 201),
+    ];
+    const output: string[] = [];
+    const sentinelKey = `__vfScheduleConfigExecuted_${crypto.randomUUID().replace(/-/g, "")}`;
+    const globals = globalThis as unknown as Record<string, unknown>;
+
+    try {
+      await Deno.writeTextFile(
+        `${projectDir}/veryfront.config.ts`,
+        `globalThis[${JSON.stringify(sentinelKey)}] = true;\nexport default {};\n`,
+      );
+      await Deno.writeTextFile(
+        `${projectDir}/veryfront.json`,
+        JSON.stringify({
+          apiUrl: TEST_PUBLIC_API_ORIGIN,
+          apiToken: "config-token",
+          projectSlug: "json-only-project",
+        }) + "\n",
+      );
+      Deno.env.delete("VERYFRONT_API_URL");
+      Deno.env.delete("VERYFRONT_API_TOKEN");
+      Deno.env.delete("VERYFRONT_PROJECT_SLUG");
+      Deno.env.set("XDG_CONFIG_HOME", configHome);
+      _resetEnvironmentConfig();
+      setJsonMode(true);
+      console.log = (...args: unknown[]) => output.push(args.map(String).join(" "));
+      installMockFetch(
+        (async (input: string | URL | Request, init?: RequestInit) => {
+          const url = typeof input === "string"
+            ? input
+            : input instanceof URL
+            ? input.toString()
+            : input.url;
+          requests.push({ url, init });
+          const response = responses.shift();
+          if (!response) throw new Error(`Unexpected request: ${url}`);
+          return response;
+        }) as typeof fetch,
+      );
+
+      await handleScheduleCommand({
+        _: ["schedule", "activate", "weekday-digest"],
+        "project-dir": projectDir,
+        json: true,
+      } as ParsedArgs);
+
+      assertEquals(
+        sentinelKey in globals,
+        false,
+        "activation must not execute veryfront.config.ts",
+      );
+      assertEquals(requests.map((request) => `${request.init?.method ?? "GET"} ${request.url}`), [
+        `GET ${TEST_PUBLIC_API_ORIGIN}/projects/json-only-project/source-schedules`,
+        `POST ${TEST_PUBLIC_API_ORIGIN}/projects/json-only-project/schedules`,
+      ]);
+      assertEquals(JSON.parse(output.at(-1) ?? "{}"), {
+        success: true,
+        command: "schedule",
+        data: {
+          action: "activate",
+          schedules: [{
+            scheduleId,
+            sourceTriggerId: "weekday-digest",
+            name: "Weekday digest",
+            status: "active",
+          }],
+        },
+      });
+    } finally {
+      delete globals[sentinelKey];
+      await Deno.remove(projectDir, { recursive: true });
+      await Deno.remove(configHome, { recursive: true });
+    }
+  });
+
+  it("requires exactly one of a schedule id or --all to activate", async () => {
+    for (
+      const args of [
+        { _: ["schedule", "activate"] },
+        { _: ["schedule", "activate", "weekday-digest"], all: true },
+      ]
+    ) {
+      const error = await assertRejects(
+        () => handleScheduleCommand(args as ParsedArgs),
+        VeryfrontError,
+      ) as VeryfrontError;
+      assertEquals(error.slug, "invalid-argument");
+      assertEquals(
+        error.message,
+        "Usage: veryfront schedule activate <id>, or veryfront schedule activate --all",
+      );
     }
   });
 

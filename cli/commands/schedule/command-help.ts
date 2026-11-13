@@ -3,8 +3,8 @@ import type { CommandHelp } from "../../help/types.ts";
 export const scheduleHelp: CommandHelp = {
   name: "schedule",
   category: "ai",
-  description: "List or run source-defined schedules",
-  usage: "veryfront schedule <list|run> [options]",
+  description: "List, run, or activate source-defined schedules",
+  usage: "veryfront schedule <list|run|activate> [options]",
   options: [
     {
       flag: "--input <file>",
@@ -14,6 +14,10 @@ export const scheduleHelp: CommandHelp = {
       flag: "--remote",
       description:
         "Run the pushed schedule in Veryfront Cloud; uses explicit project references or package/directory inference when no module config exists, and cannot be combined with --input (run only)",
+    },
+    {
+      flag: "--all",
+      description: "Activate every schedule in the pushed source (activate only)",
     },
     {
       flag: "-d, --dir <path>",
@@ -34,5 +38,7 @@ export const scheduleHelp: CommandHelp = {
     "veryfront schedule run daily-triage",
     "veryfront schedule run daily-triage --input fixtures/priority-queue.json --json",
     "veryfront schedule run daily-triage --remote --json",
+    "veryfront schedule activate daily-triage",
+    "veryfront schedule activate --all --json",
   ],
 };
