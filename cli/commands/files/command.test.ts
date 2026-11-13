@@ -18,6 +18,51 @@ import {
 } from "./command.ts";
 import type { ApiClient } from "#cli/shared/config";
 import type { ParsedArgs } from "#cli/shared/types";
+import { _resetEnvironmentConfig } from "#veryfront/config/environment-config.ts";
+import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import { join } from "veryfront/platform/path";
+
+const PROJECT_ENVIRONMENT_NAMES = [
+  "VERYFRONT_API_URL",
+  "VERYFRONT_API_TOKEN",
+  "VERYFRONT_PROJECT_SLUG",
+  "TENANT_PROJECT_SLUG",
+  "VERYFRONT_PROJECT_ID",
+  "TENANT_PROJECT_ID",
+  "XDG_CONFIG_HOME",
+] as const;
+
+/** Runs `fn` in an empty folder named `code`, with a token and no project reference. */
+async function withUnlinkedFolder(
+  fn: (projectDir: string, requests: string[]) => Promise<void>,
+): Promise<void> {
+  const root = await makeTempDir({ prefix: "vf-files-unlinked-" });
+  const projectDir = join(root, "code");
+  await Deno.mkdir(projectDir);
+  const original = Object.fromEntries(
+    PROJECT_ENVIRONMENT_NAMES.map((name) => [name, Deno.env.get(name)]),
+  );
+  const requests: string[] = [];
+  try {
+    for (const name of PROJECT_ENVIRONMENT_NAMES) Deno.env.delete(name);
+    Deno.env.set("VERYFRONT_API_TOKEN", "test-token");
+    Deno.env.set("XDG_CONFIG_HOME", root);
+    _resetEnvironmentConfig();
+    await withMockFetch((input) => {
+      const url = input instanceof Request ? input.url : String(input);
+      requests.push(new URL(url).pathname);
+      return Promise.resolve(Response.json({ data: [] }));
+    }, () => fn(projectDir, requests));
+  } finally {
+    for (const name of PROJECT_ENVIRONMENT_NAMES) {
+      const value = original[name];
+      if (value === undefined) Deno.env.delete(name);
+      else Deno.env.set(name, value);
+    }
+    _resetEnvironmentConfig();
+    await Deno.remove(root, { recursive: true });
+  }
+}
 
 function createMockClient(overrides: {
   get?: (path: string, params?: Record<string, string>) => Promise<unknown>;
@@ -281,5 +326,58 @@ describe("filesCommand", () => {
       assertInstanceOf(error, VeryfrontError);
       assertEquals(error.slug, "invalid-argument");
     }
+  });
+
+  it("stops before the API when no project is linked to the folder", async () => {
+    await withUnlinkedFolder(async (projectDir, requests) => {
+      const cases: ParsedArgs[] = [
+        { _: ["files", "list"] },
+        { _: ["files", "get", "app/page.tsx"] },
+        { _: ["files", "put", "app/page.tsx"], from: join(projectDir, "page.tsx") },
+        { _: ["files", "delete", "app/page.tsx"] },
+      ];
+      await Deno.writeTextFile(join(projectDir, "page.tsx"), "export default 1;\n");
+      for (const args of cases) {
+        const error = await assertRejects(
+          () => filesCommand({ ...args, "project-dir": projectDir }),
+          VeryfrontError,
+        );
+        assertEquals(error.slug, "invalid-argument");
+        assertEquals(
+          error.message,
+          "No project is linked to this folder. Pass `--project <slug>` (the slug is on the project's Settings page), or run `veryfront pull <slug>` to link one.",
+        );
+      }
+      assertEquals(requests, []);
+    });
+  });
+
+  it("uses the project linked to the folder", async () => {
+    await withUnlinkedFolder(async (projectDir, requests) => {
+      await Deno.mkdir(join(projectDir, ".veryfront"));
+      await Deno.writeTextFile(
+        join(projectDir, ".veryfront", "project.json"),
+        JSON.stringify({
+          version: 1,
+          controlPlane: "https://api.veryfront.com",
+          projectId: "linked-project-id",
+          projectSlug: "linked-project",
+        }),
+      );
+      await filesCommand({ _: ["files", "list"], "project-dir": projectDir, json: true });
+      assertEquals(requests, ["/projects/linked-project/files"]);
+    });
+  });
+
+  it("uses --project in a folder with no linked project", async () => {
+    await withUnlinkedFolder(async (projectDir, requests) => {
+      await filesCommand({
+        _: ["files", "list"],
+        "project-dir": projectDir,
+        project: "support-desk",
+        json: true,
+      });
+      assertEquals(requests, ["/projects/support-desk/files"]);
+    });
   });
 });
