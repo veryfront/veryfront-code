@@ -10,7 +10,7 @@ import type { InferSchema } from "veryfront/extensions/schema";
 import { basename, join } from "veryfront/platform/path";
 import { createFileSystem, cwd, getEnv } from "veryfront/platform";
 import { type EnvironmentConfig, getApiTokenEnv, getEnvironmentConfig } from "veryfront/config";
-import { getEnvSource } from "veryfront/utils/env-loader";
+import { getEnvSource, veryfrontApiCredentialEnvName } from "veryfront/utils/env-loader";
 import { cliLogger, VERSION } from "#cli/utils";
 import { readToken } from "../auth/token-store.ts";
 import { ensureAuthenticated } from "../auth/login.ts";
@@ -398,7 +398,7 @@ function describeUntrustedApiUrl(trust: ApiUrlTrust): string {
     endpointSource.expandedFromProcessEnv;
   const repositoryCredential = trust.steeringEnvFile === undefined
     ? "Add a matching apiToken to the same veryfront.json"
-    : `Add a literal VERYFRONT_API_TOKEN to the same ${basename(trust.steeringEnvFile)} file`;
+    : `Add a literal VERYFRONT_API_KEY to the same ${basename(trust.steeringEnvFile)} file`;
   const confirmationKey = trust.steeringEnvKey ?? "VERYFRONT_API_URL";
   const remedy = endpointExpandedFromProcess
     ? `Replace ${confirmationKey} with a literal endpoint in the same file, or, if you trust the `
@@ -449,6 +449,15 @@ function isRepositorySuppliedCredential(
   // which secret to name; it never owned the secret itself.
   return !tokenSource.expandedFromProcessEnv;
 }
+
+/**
+ * The error a management command throws when no credential is available.
+ *
+ * Exported so callers that classify it (such as the MCP deploy tool) match this
+ * constant instead of copying its wording.
+ */
+export const MISSING_API_CREDENTIAL_MESSAGE =
+  "Missing API key. Run 'veryfront login' or set VERYFRONT_API_KEY.";
 
 function apiBaseUrlForRequest(apiUrl: string): string {
   const normalized = trimTrailingSlashes(apiUrl);
@@ -732,9 +741,7 @@ async function resolveConfigBase(
   }
 
   if (!apiToken) {
-    throw new Error(
-      "Missing API token. Run 'veryfront login' or set VERYFRONT_API_TOKEN environment variable",
-    );
+    throw new Error(MISSING_API_CREDENTIAL_MESSAGE);
   }
 
   let projectSlug: string | null | undefined;
@@ -936,7 +943,7 @@ export function createApiClient(
     if (config.apiTokenSource !== "env-file") return message;
     if (status !== 401 && status !== 403 && status !== 404) return message;
 
-    return `${message}. VERYFRONT_API_TOKEN was loaded from a project .env file. For management commands, run 'veryfront login' and remove or rename the project runtime token, or pass a management token explicitly in the shell.`;
+    return `${message}. ${veryfrontApiCredentialEnvName()} was loaded from a project .env file. For management commands, run 'veryfront login' and remove or rename the project runtime token, or pass a management token explicitly in the shell.`;
   }
 
   async function requestOnce<T>(

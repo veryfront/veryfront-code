@@ -12,7 +12,7 @@ The sandbox client talks to an authenticated sandbox API. You need either Veryfr
 
 - A reachable `/sandboxes` API and credentials for that API.
 - Outside a scoped Veryfront Cloud request, set both `VERYFRONT_API_URL` and
-  `VERYFRONT_API_TOKEN`, or pass `apiUrl` and `authToken` explicitly.
+  `VERYFRONT_API_KEY`, or pass `apiUrl` and `authToken` explicitly.
 - A reachable network from the process that calls `Sandbox.create()`.
 
 ## Create a sandbox
@@ -23,7 +23,7 @@ set both the API URL and credentials. The client has no default API URL:
 
 ```bash
 export VERYFRONT_API_URL="<API_URL>"
-export VERYFRONT_API_TOKEN="<TOKEN>"
+export VERYFRONT_API_KEY="<API_KEY>"
 ```
 
 Inside a scoped Veryfront Cloud request, the client uses the request’s API URL

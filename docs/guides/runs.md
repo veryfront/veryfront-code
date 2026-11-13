@@ -24,7 +24,7 @@ runs through the built-in eval task.
 
 ## Prerequisites
 
-- A Veryfront Cloud project and a `VERYFRONT_API_TOKEN`. Set
+- A Veryfront Cloud project and a `VERYFRONT_API_KEY`. Set
   `VERYFRONT_PROJECT_ID` or `VERYFRONT_PROJECT_SLUG` to identify the project
   (see [Configuration](./configuration.md)).
 - A task, workflow, or eval definition the run should execute.
@@ -37,7 +37,7 @@ Use the runs SDK for one-off task, workflow, and eval execution:
 import { createRunsClient } from "veryfront/runs";
 
 const runs = createRunsClient({
-  authToken: process.env.VERYFRONT_API_TOKEN,
+  authToken: process.env.VERYFRONT_API_KEY,
   projectReference: "dreamy-haven",
 });
 ```
@@ -75,7 +75,7 @@ task that needs a nullable input should wrap it, for example
 import { createRunsClient } from "veryfront/runs";
 
 const runs = createRunsClient({
-  authToken: process.env.VERYFRONT_API_TOKEN,
+  authToken: process.env.VERYFRONT_API_KEY,
   projectReference: "dreamy-haven",
 });
 
@@ -258,7 +258,7 @@ import {
 const sdk = createRunsSdk({
   transport: createRunsApiTransport({
     baseUrl: "<RUNS_API_ORIGIN>",
-    getToken: () => process.env.VERYFRONT_API_TOKEN!,
+    getToken: () => process.env.VERYFRONT_API_KEY!,
   }),
 });
 

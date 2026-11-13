@@ -1,6 +1,11 @@
 import { privateTextTrim } from "#veryfront/security/private-text.ts";
 import { replacePrivateRegExp, testPrivateRegExp } from "#veryfront/security/private-regexp.ts";
-import { getEnv, getHostEnv } from "#veryfront/platform/compat/process/env.ts";
+import {
+  getEnv,
+  getHostEnv,
+  getTrustedProjectEnvSnapshot,
+  readUnloadedVeryfrontApiKey,
+} from "#veryfront/platform/compat/process/env.ts";
 import { getHostTelemetryEnv } from "#veryfront/observability/tracing/telemetry-env.ts";
 import { isTruthyEnvValue } from "#veryfront/utils/constants/env.ts";
 import { DEFAULT_DEV_SERVER_PORT, MAX_PORT, MIN_PORT } from "#veryfront/utils/constants/network.ts";
@@ -136,6 +141,20 @@ function parseBoundedInteger(
 type EnvReader = (key: string) => string | undefined;
 const readEmptyEnv: EnvReader = () => undefined;
 
+/**
+ * The exported token, or `VERYFRONT_API_KEY` when the token is unset or blank
+ * in a process the env loader has not resolved. A blank token with no key is
+ * returned as before.
+ */
+function readApiTokenOrKey(readEnv: EnvReader, readHostEnv: EnvReader): string | undefined {
+  const token = readEnv("VERYFRONT_API_TOKEN") || undefined;
+  if (token !== undefined && privateTextTrim(token) !== "") return token;
+  // A project scope reads its own variables: its VERYFRONT_API_KEY is a
+  // project value, never the host credential, so it must not become the token.
+  if (getTrustedProjectEnvSnapshot() !== undefined) return token;
+  return readUnloadedVeryfrontApiKey(readHostEnv) ?? token;
+}
+
 function readEnvSnapshot(
   readEnv: EnvReader = getEnv,
   readHostEnv: EnvReader = getHostEnv,
@@ -171,7 +190,7 @@ function readEnvSnapshot(
       DEFAULTS.apiBaseUrl,
     apiUrl,
     apiToken: readVeryfrontApiTokenFile(readEnv("VERYFRONT_API_TOKEN_FILE")) ??
-      (readEnv("VERYFRONT_API_TOKEN") || undefined),
+      readApiTokenOrKey(readEnv, readHostEnv),
     projectSlug: readEnv("VERYFRONT_PROJECT_SLUG") || undefined,
 
     homeDir: readEnv("HOME") || readEnv("USERPROFILE") || undefined,

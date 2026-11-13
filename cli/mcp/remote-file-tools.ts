@@ -175,7 +175,7 @@ async function apiRequest<T>(
         status: 403,
       };
     }
-    return { ok: false, error: "No API token available. Set VERYFRONT_API_TOKEN.", status: 401 };
+    return { ok: false, error: "No API token available. Set VERYFRONT_API_KEY.", status: 401 };
   }
 
   const token = candidate.apiToken;

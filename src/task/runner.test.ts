@@ -380,8 +380,10 @@ describe("src/task/runner", () => {
             SERVICENOW_USERNAME: "automation@example.com",
             AI_GATEWAY_TOKEN: "project-token",
             VERYFRONT_API_TOKEN: "should-be-filtered",
+            VERYFRONT_API_KEY: "should-be-filtered",
           }),
           VERYFRONT_API_TOKEN: "tenant-token",
+          VERYFRONT_API_KEY: "developer-key",
           TENANT_TOKEN: "raw-tenant-token",
         },
       });
@@ -391,6 +393,7 @@ describe("src/task/runner", () => {
       assertEquals(receivedEnv.SERVICENOW_USERNAME, "automation@example.com");
       assertEquals(receivedEnv.AI_GATEWAY_TOKEN, "project-token");
       assertEquals(receivedEnv.VERYFRONT_API_TOKEN, undefined);
+      assertEquals(receivedEnv.VERYFRONT_API_KEY, undefined);
       assertEquals(receivedEnv.TENANT_TOKEN, undefined);
       assertEquals(receivedEnv.VERYFRONT_TASK_ENV_JSON, undefined);
     });

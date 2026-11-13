@@ -490,13 +490,14 @@ function missingVeryfrontApiMcpIdentityMessage(
 ): string {
   // Plain conditionals: project code can replace Array.prototype methods.
   const names = missingToken && missingSlug
-    ? "VERYFRONT_API_TOKEN and VERYFRONT_PROJECT_SLUG"
+    ? "VERYFRONT_API_KEY and VERYFRONT_PROJECT_SLUG"
     : missingToken
-    ? "VERYFRONT_API_TOKEN"
+    ? "VERYFRONT_API_KEY"
     : "VERYFRONT_PROJECT_SLUG";
   const subject = missingToken && missingSlug ? `${names} are` : `${names} is`;
   return `Veryfront API MCP cannot start: ${subject} not set. ` +
-    "It reads VERYFRONT_API_TOKEN or VERYFRONT_API_TOKEN_FILE, and VERYFRONT_PROJECT_SLUG, " +
+    "It reads VERYFRONT_API_KEY (or VERYFRONT_API_TOKEN or VERYFRONT_API_TOKEN_FILE), and " +
+    "VERYFRONT_PROJECT_SLUG, " +
     "from the environment of the server process that runs the agent, not from project " +
     "environment variables. A veryfront login session in that process also supplies the token. " +
     `Set ${names} there, for example in the shell that runs veryfront dev.`;

@@ -162,7 +162,7 @@ export const EVAL_MODEL_UNAUTHORIZED = defineError({
   status: 401,
   title: "Veryfront Cloud rejected the eval credential",
   suggestion:
-    "Run `veryfront login` to refresh your session, or set VERYFRONT_API_TOKEN to a valid token, then run the eval again",
+    "Run `veryfront login` to refresh your session, or set VERYFRONT_API_KEY to a valid API key, then run the eval again",
 });
 
 /**

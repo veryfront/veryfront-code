@@ -82,9 +82,9 @@ keeps an API origin you already exported:
 
 ```bash
 export VERYFRONT_API_URL="${VERYFRONT_API_URL:-https://api.veryfront.com}"
-export VERYFRONT_API_TOKEN="<TOKEN>"
+export VERYFRONT_API_KEY="<API_KEY>"
 export VERYFRONT_PROJECT="<PROJECT_SLUG>"
-AUTH="Authorization: Bearer $VERYFRONT_API_TOKEN"
+AUTH="Authorization: Bearer $VERYFRONT_API_KEY"
 PROJECT="x-veryfront-project-slug: $VERYFRONT_PROJECT"
 ```
 
@@ -342,7 +342,7 @@ one connection and reports `providerRevoked`.
 
 ### Call with the CLI
 
-The CLI uses your `veryfront login` session or `VERYFRONT_API_TOKEN`, and
+The CLI uses your `veryfront login` session or `VERYFRONT_API_KEY`, and
 `VERYFRONT_API_URL` when it is set in your shell:
 
 ```bash

@@ -1110,7 +1110,7 @@ describe("Guide: build-a-rag-app.md", () => {
     assertStringIncludes(guide, "OCR is not a separate step.");
     assertStringIncludes(guide, "chunkOptions");
     assertStringIncludes(guide, "maxChars: 2000");
-    assertStringIncludes(guide, "VERYFRONT_API_TOKEN");
+    assertStringIncludes(guide, "VERYFRONT_API_KEY");
     assertStringIncludes(guide, "AI Gateway");
   });
 });

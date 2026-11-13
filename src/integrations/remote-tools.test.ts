@@ -2,7 +2,11 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { deleteEnv, getEnv, setEnv } from "#veryfront/compat/process.ts";
-import { deleteHostSecret, setHostSecret } from "#veryfront/platform/compat/process/env.ts";
+import {
+  __resetVeryfrontApiKeyAliasForTests,
+  deleteHostSecret,
+  setHostSecret,
+} from "#veryfront/platform/compat/process/env.ts";
 import { refreshEnvironmentConfig } from "#veryfront/config/environment-config.ts";
 import { runWithExactSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
@@ -36,6 +40,7 @@ const ENV_KEYS = [
   "VERYFRONT_API_BASE_URL",
   "VERYFRONT_API_URL",
   "VERYFRONT_API_TOKEN",
+  "VERYFRONT_API_KEY",
   "VERYFRONT_PROJECT_SLUG",
 ] as const;
 
@@ -166,6 +171,33 @@ describe("integrations/remote-tools", () => {
       VERYFRONT_PROJECT_SLUG: "case-demo",
     });
     assertEquals(getRemoteIntegrationProjectTarget(), undefined);
+  });
+
+  it("routes an SDK key exactly like an exported token", async () => {
+    // A script that never loads env files may set only VERYFRONT_API_KEY. It
+    // must reach the same endpoint a token-configured script does, even when
+    // GraphQL (`VERYFRONT_API_URL`) and REST (`VERYFRONT_API_BASE_URL`) differ.
+    __resetVeryfrontApiKeyAliasForTests();
+    const requestFor = async (credential: Record<string, string>) => {
+      setRemoteToolEnv({
+        VERYFRONT_API_URL: "https://graphql.test/graphql",
+        VERYFRONT_API_BASE_URL: "https://rest.test/api",
+        ...credential,
+      });
+      let request = { url: "", authorization: "" };
+      await withMockFetch(async (input, init) => {
+        const sent = new Request(input, init);
+        request = { url: sent.url, authorization: sent.headers.get("Authorization") ?? "" };
+        return Response.json({ tools: [] });
+      }, () => getRemoteIntegrationToolDiscovery());
+      return request;
+    };
+
+    const withToken = await requestFor({ VERYFRONT_API_TOKEN: "<CREDENTIAL>" });
+    const withKey = await requestFor({ VERYFRONT_API_KEY: "<CREDENTIAL>" });
+
+    assertEquals(withToken.url, "https://rest.test/api/integration-tools");
+    assertEquals(withKey, withToken);
   });
 
   it("discovers integration tools from a host-private stored login token", async () => {

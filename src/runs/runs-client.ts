@@ -595,7 +595,7 @@ export class VeryfrontRunsClient {
     }
     throw API_CLIENT_ERROR.create({
       detail:
-        "Runs auth not configured. Set VERYFRONT_API_TOKEN, provide request-scoped Veryfront credentials, or pass authToken explicitly.",
+        "Runs auth not configured. Set VERYFRONT_API_KEY, provide request-scoped Veryfront credentials, or pass authToken explicitly.",
       status: 401,
     });
   }
