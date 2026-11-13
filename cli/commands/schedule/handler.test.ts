@@ -7,6 +7,7 @@ import {
   assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { makeTempDirWithOptions } from "#veryfront/testing/deno-compat.ts";
 import { clearProjectAgentRuntimeRegistries } from "../../../src/agent/project/agent-runtime.ts";
 import { _resetEnvironmentConfig } from "#veryfront/config/environment-config.ts";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
@@ -301,8 +302,10 @@ describe("schedule command", () => {
   });
 
   it("activates a pushed schedule without importing local runtime source", async () => {
-    const projectDir = await Deno.makeTempDir({ prefix: "vf-schedule-activate-" });
-    const configHome = await Deno.makeTempDir({ prefix: "vf-schedule-activate-config-home-" });
+    const projectDir = await makeTempDirWithOptions({ prefix: "vf-schedule-activate-" });
+    const configHome = await makeTempDirWithOptions({
+      prefix: "vf-schedule-activate-config-home-",
+    });
     const requests: Array<{ url: string; init?: RequestInit }> = [];
     const responses = [
       jsonResponse({
