@@ -25,6 +25,7 @@ import {
   trimTrailingSlashes,
 } from "./constants.ts";
 import { readProjectLink, readProjectLinkForControlPlane } from "./project-link.ts";
+import { AUTHENTICATION_REQUIRED } from "veryfront/errors";
 import { isConnectionRefusedError, isRetryableConnectionError } from "../../src/proxy/retry.ts";
 
 // Delays for exponential backoff with jitter: attempt 1 = ~300ms, 2 = ~1s, 3 = ~3s
@@ -695,6 +696,17 @@ export async function resolveApiCredentialForFallback(
   return { apiUrl: trust.apiUrl, apiToken: candidate?.apiToken ?? null };
 }
 
+/**
+ * A command that needs a credential and has none. The message carries the fix
+ * for JSON and MCP callers; the terminal shows the same fix as the registry
+ * suggestion, so the error sets no separate detail.
+ */
+function missingCredentialError() {
+  return AUTHENTICATION_REQUIRED.create({
+    message: `No Veryfront credential found. ${AUTHENTICATION_REQUIRED.suggestion}.`,
+  });
+}
+
 async function resolveConfigBase(
   projectDir: string | undefined,
   env: EnvironmentConfig,
@@ -725,16 +737,14 @@ async function resolveConfigBase(
 
   if (!apiToken && interactive && allowAuthPrompt) {
     const userInfo = await ensureAuthenticated(env, dir, authOptions);
-    if (!userInfo) throw new Error("Authentication required for this operation.");
+    if (!userInfo) throw missingCredentialError();
     apiToken = (await readToken(env)) ?? null;
     apiTokenSource = apiToken ? "token-store" : undefined;
     if (!apiToken) throw new Error("Authentication failed. Please try again.");
   }
 
   if (!apiToken) {
-    throw new Error(
-      "Missing API token. Run 'veryfront login' or set VERYFRONT_API_TOKEN environment variable",
-    );
+    throw missingCredentialError();
   }
 
   let projectSlug: string | null | undefined;
