@@ -2814,6 +2814,48 @@ describe("pullCommand", () => {
     }
   });
 
+  it("classes a missing credential in the --projects fallback as authentication-required", async () => {
+    const tempDir = await Deno.makeTempDir();
+    const configHome = await Deno.makeTempDir();
+    const names = [
+      "VERYFRONT_API_TOKEN",
+      "VERYFRONT_API_URL",
+      "VERYFRONT_PROJECT_SLUG",
+      "TENANT_PROJECT_SLUG",
+      "TENANT_PROJECT_ID",
+      "XDG_CONFIG_HOME",
+    ];
+    const original = Object.fromEntries(names.map((name) => [name, Deno.env.get(name)]));
+    let requests = 0;
+
+    try {
+      await Deno.writeTextFile(
+        join(tempDir, "veryfront.json"),
+        JSON.stringify({ projects: ["alpha", "beta"] }),
+      );
+      for (const name of names) Deno.env.delete(name);
+      Deno.env.set("XDG_CONFIG_HOME", configHome);
+      _resetEnvironmentConfig();
+
+      await withMockFetch(() => {
+        requests++;
+        return Promise.resolve(Response.json({ data: [], page_info: {} }));
+      }, async () => {
+        const error = await assertRejects(
+          () => pullCommand({ projectDir: tempDir, quiet: true }),
+          Error,
+        );
+        assertEquals((error as { slug?: string }).slug, "authentication-required");
+      });
+      assertEquals(requests, 0);
+    } finally {
+      for (const name of names) restoreEnv(name, original[name]);
+      _resetEnvironmentConfig();
+      await Deno.remove(tempDir, { recursive: true });
+      await Deno.remove(configHome, { recursive: true });
+    }
+  });
+
   it("uses explicit env API base URL before veryfront.json apiUrl in the --projects fallback", async () => {
     const tempDir = await Deno.makeTempDir();
     const originalFetch = globalThis.fetch;
