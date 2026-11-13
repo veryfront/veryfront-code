@@ -16,6 +16,13 @@ import { CommonArgs, createArgParser } from "#cli/shared/args";
 import { confirmPrompt, logInfo, logSuccess } from "#cli/utils";
 import { createSpinner } from "#cli/ui";
 import { BRANCH_NOT_FOUND } from "veryfront/errors";
+import {
+  computeSourceDigest,
+  normalizeControlPlane,
+  readPushReceipt,
+  writePushReceipt,
+} from "../../shared/deployment-provenance.ts";
+import { listAllFiles, type PullSource } from "../pull/command.ts";
 
 /**
  * Schema factory for merge command arguments
@@ -152,6 +159,50 @@ export function getMergePreview(
 }
 
 /**
+ * Record a merge in this directory's push receipt.
+ *
+ * `veryfront deploy` promotes only the branch the receipt names, so after
+ * `veryfront merge new-headline` it refused main even though main held the
+ * merged change (veryfront/veryfront-issue-inbox#4363). The receipt moves to
+ * the target only when the target's tree is now exactly the source the receipt
+ * describes, which keeps its proof intact: the deploy still verifies the
+ * release against that digest and this directory against its local digest. A
+ * target that also holds changes this directory never pushed keeps the receipt
+ * as it was, and the deploy refuses with the push that fixes it.
+ */
+export async function recordMergeInPushReceipt(input: {
+  client: ApiClient;
+  controlPlane: string;
+  projectSlug: string;
+  projectDir: string;
+  sourceBranch: string;
+  targetBranch: string;
+}): Promise<boolean> {
+  const receipt = await readPushReceipt(input.projectDir);
+  if (
+    !receipt ||
+    receipt.branch !== input.sourceBranch ||
+    receipt.projectSlug !== input.projectSlug ||
+    normalizeControlPlane(receipt.controlPlane) !== normalizeControlPlane(input.controlPlane)
+  ) {
+    return false;
+  }
+
+  const target: PullSource = input.targetBranch === "main"
+    ? { type: "main" }
+    : { type: "branch", name: input.targetBranch };
+  const files = await listAllFiles(input.client, input.projectSlug, target);
+  if (files.some((file) => typeof file.content !== "string")) return false;
+  const targetDigest = await computeSourceDigest(
+    files.map(({ path, content }) => ({ path, content })),
+  );
+  if (targetDigest !== receipt.sourceDigest) return false;
+
+  await writePushReceipt(input.projectDir, { ...receipt, branch: input.targetBranch });
+  return true;
+}
+
+/**
  * Merge a branch into main (or another branch)
  */
 export async function mergeCommand(options: MergeOptions): Promise<void> {
@@ -159,7 +210,8 @@ export async function mergeCommand(options: MergeOptions): Promise<void> {
 
   let spinner = createSpinner("Resolving configuration...");
 
-  const config = await resolveConfigWithAuth(cwd());
+  const projectDir = cwd();
+  const config = await resolveConfigWithAuth(projectDir);
   const client = createApiClient(config);
 
   spinner.update(`Looking up branch "${branch}"...`);
@@ -218,6 +270,21 @@ export async function mergeCommand(options: MergeOptions): Promise<void> {
   spinner = createSpinner(`Merging "${branch}" into ${targetName}...`);
 
   const result = await mergeBranch(client, config.projectSlug, sourceBranch.id, targetBranchId);
+
+  // The merge already happened, so a receipt that cannot be updated is not a
+  // merge failure: it stays as it was, and the deploy names the push to run.
+  try {
+    await recordMergeInPushReceipt({
+      client,
+      controlPlane: config.apiUrl,
+      projectSlug: config.projectSlug,
+      projectDir,
+      sourceBranch: branch,
+      targetBranch: targetName,
+    });
+  } catch (error) {
+    cliLogger.debug("Could not record the merge in the push receipt", error);
+  }
 
   spinner.stop();
 

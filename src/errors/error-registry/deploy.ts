@@ -94,6 +94,21 @@ export const PUSH_RECEIPT_MISSING = defineError({
   suggestion: "Run: veryfront push --branch main first",
 });
 
+/**
+ * The push receipt in this directory names a different branch than the one the
+ * deploy targets, so the source the deploy would promote was never pushed from
+ * here. `veryfront merge` leaves this state when it cannot prove the target
+ * branch now holds the pushed source. The detail names both branches and the
+ * push that fixes it.
+ */
+export const PUSH_BRANCH_MISMATCH = defineError({
+  slug: "push-branch-mismatch",
+  category: "DEPLOY",
+  status: 409,
+  title: "Latest push is for a different branch",
+  suggestion: "Run veryfront push --branch <branch> for the branch you deploy, then deploy again",
+});
+
 export const PUSH_CONFLICT = defineError({
   slug: "push-conflict",
   category: "DEPLOY",
@@ -212,6 +227,7 @@ export const DEPLOY_REGISTRY = {
   "release-build-timeout": RELEASE_BUILD_TIMEOUT,
   "deployment-verification-timeout": DEPLOYMENT_VERIFICATION_TIMEOUT,
   "push-receipt-missing": PUSH_RECEIPT_MISSING,
+  "push-branch-mismatch": PUSH_BRANCH_MISMATCH,
   "push-conflict": PUSH_CONFLICT,
   "sync-state-invalid": SYNC_STATE_INVALID,
   "source-digest-mismatch": SOURCE_DIGEST_MISMATCH,
