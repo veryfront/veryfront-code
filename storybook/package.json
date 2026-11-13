@@ -25,6 +25,7 @@
     "vite": "^6.4.5"
   },
   "overrides": {
-    "minimatch": "^11.0.1"
+    "minimatch": "^11.0.1",
+    "glob": "^14.0.0"
   }
 }
