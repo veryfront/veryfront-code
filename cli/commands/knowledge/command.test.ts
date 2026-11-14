@@ -992,6 +992,35 @@ describe("ingestResolvedSources", () => {
     }]);
   });
 
+  it("updates a legacy knowledge file at its current version", async () => {
+    const writes: unknown[] = [];
+    const result = await ingestResolvedSources(
+      [createUploadSource("uploads/contracts/q1.pdf")],
+      createKnowledgeCommandArgs(),
+      {
+        client: createMockClient(),
+        projectSlug: "my-project",
+        outputDir: "/workspace/knowledge",
+        runParser: async () => createParserSuccess(),
+        readRemoteKnowledgeFile: async () => ({
+          content: '---\ntype: "Generated Document"\nsource: "uploads/contracts/q1.pdf"\n---\n',
+          versionId: "v-1",
+        }),
+        indexKnowledgeDocument: async (input) => createIndexReceipt(input.published.path),
+        uploadKnowledgeFile: async (remotePath, _local, _metadata, _kind, expected) => {
+          writes.push({ remotePath, expected });
+          return { path: remotePath };
+        },
+      },
+    );
+
+    assertEquals(result.ingested[0]?.remotePath, "knowledge/contracts-q1.md");
+    assertEquals(writes, [{
+      remotePath: "knowledge/contracts-q1.md",
+      expected: { versionId: "v-1" },
+    }]);
+  });
+
   it("fails instead of overwriting a newer write of the same source", async () => {
     const writes: string[] = [];
     const result = await ingestResolvedSources(
@@ -1054,6 +1083,41 @@ describe("ingestResolvedSources", () => {
     assertEquals(result.failed, []);
     assertEquals(writes, ["knowledge/contracts-q1.md", "knowledge/contracts-q1-2.md"]);
     assertEquals(result.ingested[0]?.remotePath, "knowledge/contracts-q1-2.md");
+  });
+
+  it("keeps the winner when the same source claims an absent path concurrently", async () => {
+    const remote = new Map<string, string>();
+    const writes: string[] = [];
+    const result = await ingestResolvedSources(
+      [createUploadSource("uploads/contracts/q1.pdf")],
+      createKnowledgeCommandArgs(),
+      {
+        client: createMockClient(),
+        projectSlug: "my-project",
+        outputDir: "/workspace/knowledge",
+        runParser: async () => createParserSuccess(),
+        readRemoteKnowledgeFile: async (path) => {
+          const content = remote.get(path);
+          return content === undefined ? undefined : { content, versionId: "v-other" };
+        },
+        indexKnowledgeDocument: async (input) => createIndexReceipt(input.published.path),
+        uploadKnowledgeFile: async (remotePath, _local, _metadata, _kind, expected) => {
+          writes.push(remotePath);
+          if (remotePath === "knowledge/contracts-q1.md") {
+            assertEquals(expected, { absent: true });
+            remote.set(remotePath, '---\nresource: "uploads/contracts/q1.pdf"\n---\n');
+            throw Object.assign(new Error("File was created after absence was observed"), {
+              status: 409,
+            });
+          }
+          return { path: remotePath };
+        },
+      },
+    );
+
+    assertEquals(result.failed.length, 1);
+    assertEquals(writes, ["knowledge/contracts-q1.md"]);
+    assertEquals(result.ingested, []);
   });
 
   it("preserves generic custom destinations without claiming a canonical knowledge index", async () => {
@@ -2149,7 +2213,7 @@ describe("runKnowledgeParser", () => {
     try {
       await Deno.writeTextFile(
         filePath,
-        "```md\n# Not the title\n```\n\n# 20. Create a team account and invite a member\n\nOpen Settings.",
+        "```md\n```not-a-close\n# Not the title\n```\n\n# 20. Create a team account and invite a member\n\nOpen Settings.",
       );
 
       const result = await runKnowledgeParser({

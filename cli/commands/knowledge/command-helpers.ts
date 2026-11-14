@@ -298,6 +298,8 @@ export interface ClaimedKnowledgePath {
 export async function claimGeneratedKnowledgePath(input: {
   remotePath: string;
   resource: string;
+  legacySource: string;
+  absenceConflicts: ReadonlyMap<string, unknown>;
   readRemoteFile?: (
     remotePath: string,
   ) => Promise<{ content: string; versionId?: string } | undefined>;
@@ -307,11 +309,17 @@ export async function claimGeneratedKnowledgePath(input: {
   for (let attempt = 1; attempt <= MAX_KNOWLEDGE_PATH_SUFFIX; attempt += 1) {
     const candidate = attempt === 1 ? input.remotePath : `${stem}-${attempt}.md`;
     const existing = await input.readRemoteFile(candidate);
-    if (existing === undefined) return { remotePath: candidate, expected: { absent: true } };
+    const metadata = existing && inspectOkfDocument(candidate, existing.content).metadata;
+    const legacySource = metadata?.resource === undefined ? metadata?.source : undefined;
+    const sameSource = metadata?.resource === input.resource || legacySource === input.legacySource;
     if (
-      existing.versionId &&
-      inspectOkfDocument(candidate, existing.content).metadata.resource === input.resource
+      input.absenceConflicts.has(candidate) &&
+      (sameSource || (typeof metadata?.resource !== "string" && typeof legacySource !== "string"))
     ) {
+      throw input.absenceConflicts.get(candidate);
+    }
+    if (!existing) return { remotePath: candidate, expected: { absent: true } };
+    if (existing.versionId && sameSource) {
       return { remotePath: candidate, expected: { versionId: existing.versionId } };
     }
   }
