@@ -999,11 +999,14 @@ export async function ingestResolvedSources(
       const claimsPath = okfRelativePath === undefined && !options.slug;
       let remotePath = derivedRemotePath;
       let uploaded: PublishedFileReceipt | undefined;
+      const absenceConflicts = new Map<string, unknown>();
       for (let attempt = 1; !uploaded; attempt += 1) {
         const claim = claimsPath
           ? await commandHelpers.claimGeneratedKnowledgePath({
             remotePath: derivedRemotePath,
             resource: commandHelpers.buildKnowledgeResource(source),
+            legacySource: commandHelpers.buildSourceReference(source),
+            absenceConflicts,
             readRemoteFile: deps.readRemoteKnowledgeFile,
           })
           : { remotePath: derivedRemotePath };
@@ -1025,6 +1028,7 @@ export async function ingestResolvedSources(
           ) {
             throw error;
           }
+          absenceConflicts.set(remotePath, error);
         }
       }
       if (remotePath !== derivedRemotePath) {

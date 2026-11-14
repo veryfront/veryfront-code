@@ -220,7 +220,10 @@ function findFirstH1(markdown: string): string | undefined {
     const marker = /^ {0,3}(`{3,}|~{3,})/.exec(line)?.[1];
     if (marker) {
       if (!fence) fence = marker;
-      else if (marker[0] === fence[0] && marker.length >= fence.length) fence = undefined;
+      else if (
+        marker[0] === fence[0] && marker.length >= fence.length &&
+        /^ {0,3}(?:`{3,}|~{3,})[ \t]*$/.test(line)
+      ) fence = undefined;
       continue;
     }
     if (fence) continue;
