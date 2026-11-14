@@ -85,6 +85,7 @@ import {
   trustOperatorConfiguredVeryfrontApiOrigins,
 } from "#cli/outbound-fetch";
 
+const MISSING_PROJECT_NOTICE = "No Veryfront project is configured";
 const originalApiToken = Deno.env.get("VERYFRONT_API_TOKEN");
 const originalApiBaseUrl = Deno.env.get("VERYFRONT_API_BASE_URL");
 const originalProjectSlug = Deno.env.get("VERYFRONT_PROJECT_SLUG");
@@ -733,7 +734,7 @@ describe("eval CLI command helpers", () => {
         cliLogger.warn = originalWarn;
       }
 
-      assertEquals(warnings.filter((line) => line.includes("gateway_project_required")), []);
+      assertEquals(warnings.filter((line) => line.includes(MISSING_PROJECT_NOTICE)), []);
     }, { prefix: "vf-eval-list-no-project-" });
   });
 
@@ -2626,12 +2627,18 @@ describe("eval CLI command helpers", () => {
     }
   });
 
-  it("warns before the run when a Veryfront token has no project to bill", () => {
+  it("says where model calls bill before the run when a Veryfront token has no project", () => {
     const warning = formatMissingEvalProjectWarning({ apiToken: "token" });
 
-    assertEquals(typeof warning, "string");
-    assertEquals(warning?.includes("gateway_project_required"), true);
-    assertEquals(warning?.includes("VERYFRONT_PROJECT_SLUG"), true);
+    // The gateway accepts a call that names no project and bills the account,
+    // so the notice must not predict a rejection the run never meets.
+    assertEquals(
+      warning,
+      "No Veryfront project is configured, so veryfront-cloud model calls use your account's credits " +
+        "without a project. To bill a project, set VERYFRONT_PROJECT_SLUG in .env or add projectSlug to " +
+        "veryfront.config.ts.",
+    );
+    assertEquals(warning?.includes("reject"), false);
     assertEquals(warning?.includes("veryfront link"), false);
     assertEquals(
       formatMissingEvalProjectWarning({ apiToken: "token", projectSlug: "eval-project" }),
@@ -2954,7 +2961,8 @@ describe("eval CLI command helpers", () => {
       {
         kind: "project-required",
         code: "gateway_project_required",
-        message: "A project is required to use Veryfront-managed AI inference",
+        message:
+          "Veryfront-managed AI inference refused the project: the request named none, or one that does not exist or that this credential cannot use",
       },
       undefined,
     );
@@ -3035,7 +3043,8 @@ describe("eval CLI command helpers", () => {
       {
         kind: "project-required",
         code: "gateway_project_required",
-        message: "A project is required to use Veryfront-managed AI inference",
+        message:
+          "Veryfront-managed AI inference refused the project: the request named none, or one that does not exist or that this credential cannot use",
       },
       undefined,
     );
@@ -3571,7 +3580,7 @@ describe("eval CLI command helpers", () => {
         cliLogger.warn = originalWarn;
       }
 
-      assertEquals(warnings.filter((line) => line.includes("gateway_project_required")), []);
+      assertEquals(warnings.filter((line) => line.includes(MISSING_PROJECT_NOTICE)), []);
     }, { prefix: "vf-eval-dataset-no-project-" });
   });
 
@@ -3615,7 +3624,7 @@ describe("eval CLI command helpers", () => {
       }
 
       assertEquals(
-        warnings.filter((line) => line.includes("gateway_project_required")).length,
+        warnings.filter((line) => line.includes(MISSING_PROJECT_NOTICE)).length,
         1,
       );
     }, { prefix: "vf-eval-judged-no-project-" });
@@ -3662,7 +3671,7 @@ describe("eval CLI command helpers", () => {
         cliLogger.warn = originalWarn;
       }
 
-      assertEquals(warnings.filter((line) => line.includes("gateway_project_required")), []);
+      assertEquals(warnings.filter((line) => line.includes(MISSING_PROJECT_NOTICE)), []);
     }, { prefix: "vf-eval-json-no-project-" });
   });
 });

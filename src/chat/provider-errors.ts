@@ -216,8 +216,8 @@ function parseKnownProblemBodyInternal(
     return null;
   }
 
-  // The Veryfront Cloud gateway rejects a request that names no project with
-  // this structured code. Its wording is fixed locally, never copied.
+  // The Veryfront Cloud gateway refuses a request's project with this
+  // structured code. Its wording is fixed locally, never copied.
   if (getOwnDataProperty(body, "code") === "gateway_project_required") {
     return { ...GATEWAY_PROJECT_REQUIRED_ERROR };
   }
