@@ -28,6 +28,7 @@ import { createNoopSpinner, createSpinner } from "#cli/ui";
 import { isInteractive } from "../../shared/interactive.ts";
 import { getEnvironmentConfig } from "veryfront/config";
 import {
+  AUTHENTICATION_REQUIRED,
   ERROR_REGISTRY,
   type ErrorSlug,
   getErrorBySlug,
@@ -1081,6 +1082,10 @@ export function pullCommand(options: PullOptions = {}): Promise<void> {
           const env = getEnvironmentConfig();
           const { apiUrl, apiToken } = await resolveApiCredentialForFallback(env, configFile);
           if (!apiToken) {
+            // No credential anywhere: keep the resolver's classification.
+            if (error instanceof VeryfrontError && error.slug === AUTHENTICATION_REQUIRED.slug) {
+              throw error;
+            }
             throw new Error(
               "VERYFRONT_API_TOKEN environment variable or apiToken in veryfront.json is required when using --projects",
             );

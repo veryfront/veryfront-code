@@ -1,11 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { _resetEnvironmentConfig } from "#veryfront/config/environment-config.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { COMMANDS } from "./help/command-definitions.ts";
 import { parseLoginMethod } from "./auth/utils.ts";
 import { classifyCliError, routeCommand, safeJsonErrorContext } from "./router.ts";
-import { INVALID_ARGUMENT, UNKNOWN_ERROR } from "veryfront/errors";
+import { AUTHENTICATION_REQUIRED, INVALID_ARGUMENT, UNKNOWN_ERROR } from "veryfront/errors";
 import { cliLogger, VERSION } from "./utils/index.ts";
 import { setJsonMode } from "./shared/json-output.ts";
 import { isInteractive, resetInteractiveMode } from "./shared/interactive.ts";
@@ -802,9 +802,65 @@ describe("cli/router helpers", () => {
         assertEquals(parsed.command, "schedule");
         assertEquals(parsed.error.code, "RUNTIME_ERROR");
         assertEquals(parsed.error.slug, "command-failed");
-        assertEquals(parsed.error.registrySlug, "unknown-error");
-        assertEquals(parsed.error.message, "Authentication required for this operation.");
+        assertEquals(parsed.error.registrySlug, "authentication-required");
+        assertEquals(
+          parsed.error.message,
+          `No Veryfront credential found. ${AUTHENTICATION_REQUIRED.suggestion}.`,
+        );
         assertEquals(consoleErrorOutput, []);
+      } finally {
+        for (const name of environmentNames) {
+          const value = originalEnvironment[name];
+          if (value === undefined) Deno.env.delete(name);
+          else Deno.env.set(name, value);
+        }
+        _resetEnvironmentConfig();
+        restoreAll();
+        await Deno.remove(projectDir, { recursive: true });
+        await Deno.remove(configHome, { recursive: true });
+      }
+    });
+
+    it("names the missing credential and its fix in terminal output", async () => {
+      const projectDir = await Deno.makeTempDir({ prefix: "vf-human-auth-" });
+      const configHome = await Deno.makeTempDir({ prefix: "vf-human-auth-config-" });
+      const environmentNames = [
+        "VERYFRONT_API_URL",
+        "VERYFRONT_API_TOKEN",
+        "VERYFRONT_PROJECT_SLUG",
+        "XDG_CONFIG_HOME",
+        "NO_COLOR",
+      ] as const;
+      const originalEnvironment = Object.fromEntries(
+        environmentNames.map((name) => [name, Deno.env.get(name)]),
+      ) as Record<(typeof environmentNames)[number], string | undefined>;
+
+      stubExit();
+      stubConsole();
+      try {
+        await Deno.writeTextFile(
+          `${projectDir}/veryfront.json`,
+          JSON.stringify({ projectSlug: "human-auth-project" }),
+        );
+        Deno.env.delete("VERYFRONT_API_URL");
+        Deno.env.delete("VERYFRONT_API_TOKEN");
+        Deno.env.delete("VERYFRONT_PROJECT_SLUG");
+        Deno.env.set("XDG_CONFIG_HOME", configHome);
+        Deno.env.set("NO_COLOR", "1");
+        _resetEnvironmentConfig();
+
+        const code = await runAndCaptureExit({
+          _: ["schedule", "run", "process-job-submissions"],
+          "project-dir": projectDir,
+          remote: true,
+          "no-color": true,
+        } as ParsedArgs);
+        assertEquals(code, 1);
+        const output = consoleErrorOutput.join("\n");
+        assertStringIncludes(output, "[authentication-required] Authentication required");
+        assertStringIncludes(output, `Suggestion: ${AUTHENTICATION_REQUIRED.suggestion}`);
+        assertEquals(output.includes("unknown-error"), false);
+        assertEquals(output.includes("Check logs"), false);
       } finally {
         for (const name of environmentNames) {
           const value = originalEnvironment[name];
