@@ -15,7 +15,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { exists, makeTempDir, remove } from "#veryfront/testing/deno-compat.ts";
 import { join } from "veryfront/platform/path";
 import { stripAnsi } from "../../ui/ansi.ts";
-import { initCommand, offerCloudProjectAfterInit } from "./init-command.ts";
+import { initCommand, newProjectEnv, offerCloudProjectAfterInit } from "./init-command.ts";
 import type { InitOptions, InitTemplate } from "./types.ts";
 
 describe("InitCommand Types", () => {
@@ -331,9 +331,17 @@ describe("initCommand into the current directory", () => {
 });
 
 describe("offerCloudProjectAfterInit", () => {
-  async function run(choose: () => Promise<"linked" | "declined" | "cancelled">) {
+  async function run(
+    choose: () => Promise<"linked" | "declined" | "cancelled">,
+    environment: Record<string, string> = {},
+  ) {
     const logged: string[] = [];
-    await offerCloudProjectAfterInit("/unused", (message) => logged.push(message), choose);
+    await offerCloudProjectAfterInit(
+      "/unused",
+      (message) => logged.push(message),
+      choose,
+      (name) => environment[name],
+    );
     return logged;
   }
 
@@ -353,6 +361,45 @@ describe("offerCloudProjectAfterInit", () => {
       assertEquals(logged[0]!.includes("restart veryfront dev"), false);
     });
   }
+
+  it("prints no setup advice when an OpenAI key is already set", async () => {
+    // The scaffolded agents leave their model unset, so the default OpenAI
+    // model serves them with this key, the same check the dev banner makes.
+    assertEquals(
+      await run(() => Promise.resolve("declined"), { OPENAI_API_KEY: "<API_KEY>" }),
+      [],
+    );
+  });
+
+  it("counts a key init wrote to the new .env", async () => {
+    const env = newProjectEnv({ OPENAI_API_KEY: "<API_KEY>" }, () => undefined);
+    const logged: string[] = [];
+    await offerCloudProjectAfterInit(
+      "/unused",
+      (message) => logged.push(message),
+      () => Promise.resolve("declined"),
+      env,
+    );
+    assertEquals(logged, []);
+  });
+
+  it("ranks the shell's value above the written one, and skips a blank written value", () => {
+    const shell = { OPENAI_API_KEY: "<SHELL_KEY>" } as Record<string, string>;
+    const env = newProjectEnv(
+      { OPENAI_API_KEY: "<WRITTEN_KEY>", ANTHROPIC_API_KEY: " " },
+      (name) => shell[name],
+    );
+    assertEquals(env("OPENAI_API_KEY"), "<SHELL_KEY>");
+    assertEquals(env("ANTHROPIC_API_KEY"), undefined);
+  });
+
+  it("still names both ways when only a key the scaffolded agents cannot use is set", async () => {
+    const logged = await run(() => Promise.resolve("declined"), {
+      ANTHROPIC_API_KEY: "<API_KEY>",
+    });
+    assertEquals(logged.length, 1);
+    assertStringIncludes(logged[0]!, "set up inference in one of these ways");
+  });
 
   it("names the failure, then both ways to get inference, when Cloud setup throws", async () => {
     const logged = await run(() => Promise.reject(new Error("Network unavailable")));

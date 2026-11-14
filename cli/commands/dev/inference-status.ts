@@ -12,6 +12,46 @@ export interface InferenceEnvironment {
   anthropicApiKey?: string;
   googleApiKey?: string;
   mistralApiKey?: string;
+  /** The variable `googleApiKey` came from. Defaults to `GOOGLE_API_KEY`. */
+  googleApiKeyName?: "GOOGLE_API_KEY" | "GOOGLE_GENERATIVE_AI_API_KEY";
+  /**
+   * The model each registered agent sets, `undefined` for one that sets none.
+   * Omit it when the agents are not known.
+   */
+  agentModels?: readonly (string | undefined)[];
+  /** The application registered its own `openai` model provider. */
+  defaultModelProviderRegistered?: boolean;
+}
+
+/**
+ * The provider keys and endpoint the runtime reads, through `read`, in the
+ * shape {@link listInferenceOptions} takes. A Google key keeps the name of the
+ * variable that held it, in the runtime's order.
+ */
+export function readProviderKeys(
+  read: (name: string) => string | undefined,
+): Pick<
+  InferenceEnvironment,
+  | "openaiApiKey"
+  | "openaiBaseUrl"
+  | "anthropicApiKey"
+  | "googleApiKey"
+  | "googleApiKeyName"
+  | "mistralApiKey"
+> {
+  // Same order and test as getGoogleGenAICredentialEnvName in the runtime.
+  const googleApiKeyName = read("GOOGLE_API_KEY")
+    ? "GOOGLE_API_KEY"
+    : read("GOOGLE_GENERATIVE_AI_API_KEY")
+    ? "GOOGLE_GENERATIVE_AI_API_KEY"
+    : undefined;
+  return {
+    openaiApiKey: read("OPENAI_API_KEY"),
+    openaiBaseUrl: read("OPENAI_BASE_URL"),
+    anthropicApiKey: read("ANTHROPIC_API_KEY"),
+    ...(googleApiKeyName ? { googleApiKey: read(googleApiKeyName), googleApiKeyName } : {}),
+    mistralApiKey: read("MISTRAL_API_KEY"),
+  };
 }
 
 const CLOUD_GATEWAY_LABEL = "Veryfront Cloud AI Gateway";
@@ -39,6 +79,31 @@ export function advertisesCloudGateway(options: readonly string[]): boolean {
  */
 export function hasUsableInference(options: readonly string[]): boolean {
   return options.some((option) => option !== CLOUD_GATEWAY_PROJECT_REQUIRED_LABEL);
+}
+
+/**
+ * Provider keys the default model cannot use. An agent with no model runs the
+ * default OpenAI model, and the runtime refuses to swap in another provider's
+ * key (`default-model-credential-mismatch`). So when an agent leaves its model
+ * unset, and neither the gateway, an OpenAI key, nor an application `openai`
+ * provider can serve the default, an Anthropic, Google, or Mistral key serves
+ * none of that agent's default requests. The keys still serve a
+ * request that picks a model of their provider, so callers warn rather than
+ * drop them.
+ */
+export function defaultModelMismatchKeys(environment: InferenceEnvironment): string[] {
+  const { agentModels } = environment;
+  // One agent with no model is enough: a sibling's model does not run it.
+  const someAgentUsesDefault = agentModels?.some((model) => model === undefined) === true;
+  const defaultModelServed = (isSet(environment.apiToken) && isSet(environment.projectSlug)) ||
+    isSet(environment.openaiApiKey) || environment.defaultModelProviderRegistered === true;
+  if (!someAgentUsesDefault || defaultModelServed) return [];
+
+  const keys: string[] = [];
+  if (isSet(environment.anthropicApiKey)) keys.push("ANTHROPIC_API_KEY");
+  if (isSet(environment.googleApiKey)) keys.push(environment.googleApiKeyName ?? "GOOGLE_API_KEY");
+  if (isSet(environment.mistralApiKey)) keys.push("MISTRAL_API_KEY");
+  return keys;
 }
 
 /** Return the inference paths the current dev process can use without exposing credentials. */

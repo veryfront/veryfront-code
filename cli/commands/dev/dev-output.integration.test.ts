@@ -18,6 +18,7 @@ import {
 } from "../../../tests/_helpers/server.ts";
 import { VERSION } from "#cli/utils";
 import {
+  defaultModelKeyMismatchLine,
   DEV_ENV_RESTART_LINE,
   NO_INFERENCE_HEADING,
   PROVIDER_KEY_ENV_NAMES,
@@ -637,6 +638,41 @@ describe(
             !output.includes(NO_INFERENCE_HEADING),
             `a configured key must not be reported as missing\nOutput:\n${output}`,
           );
+        });
+      },
+    );
+
+    it(
+      "warns when the default model cannot use the only provider key",
+      { timeout: TEST_TIMEOUTS.E2E },
+      async () => {
+        await withTestContext("dev-output-unused-provider-key", async (context) => {
+          await scaffoldMinimalProject(context.projectDir);
+          // An agent with no model runs the default OpenAI model, which an
+          // Anthropic key cannot serve.
+          await mkdir(join(context.projectDir, "agents"), { recursive: true });
+          await writeTextFile(
+            join(context.projectDir, "agents", "assistant.ts"),
+            `import { agent } from "veryfront/agent";
+
+export default agent({ id: "assistant", system: "Answer briefly." });
+`,
+          );
+          await ensureVeryfrontDevCliBootstrapCached(context.projectDir);
+          const port = await context.allocatePort();
+          const run = startVeryfrontDev(context.projectDir, port, [], {
+            ANTHROPIC_API_KEY: "<API_KEY>",
+          });
+          context.addCleanup(run.stop);
+
+          await requestPageAndApi(port, run.request, run.output);
+          await run.stop();
+
+          const output = run.output();
+          assertStringIncludes(output, "App ready");
+          // A request can still pick an Anthropic model, so the key stays listed.
+          assertStringIncludes(output, "Anthropic direct");
+          assertStringIncludes(output, defaultModelKeyMismatchLine(["ANTHROPIC_API_KEY"]));
         });
       },
     );

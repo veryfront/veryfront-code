@@ -23,6 +23,13 @@ import { isTTY } from "#cli/utils";
 import { isInteractive } from "../../shared/interactive.ts";
 import { chooseCloudProject, type CloudProjectChoice } from "../../shared/cloud-project.ts";
 import { inferenceSetupOptionLines } from "../../shared/inference-setup.ts";
+import {
+  defaultModelMismatchKeys,
+  hasUsableInference,
+  listInferenceOptions,
+  readProviderKeys,
+} from "../dev/inference-status.ts";
+import { processEnvValue } from "../dev/display-options.ts";
 import { DEFAULT_TEMPLATE } from "./catalog.ts";
 
 type StructureNode = {
@@ -168,14 +175,40 @@ function validateInitProjectName(name: string): string | null {
 }
 
 /**
+ * The provider settings `veryfront dev` in the new folder will see, as far as
+ * `init` knows them: the shell's own values, then the values `init` wrote to
+ * the new `.env`. A value the invoking folder's `.env` loaded into this process
+ * does not count, since `dev` in the new folder never loads that file. Other
+ * env files are not read: a key `init` cannot see only leaves the advice in.
+ */
+export function newProjectEnv(
+  writtenValues: Readonly<Record<string, string>>,
+  hostValue: (name: string) => string | undefined = processEnvValue,
+): (name: string) => string | undefined {
+  return (name) => hostValue(name) ?? (writtenValues[name]?.trim() || undefined);
+}
+
+/**
+ * Whether the new project can already reach a model without Cloud: the check
+ * the `dev` banner makes. The scaffolded agents set no model, so a key counts
+ * only when the default model can use it.
+ */
+function newProjectHasInference(env: (name: string) => string | undefined): boolean {
+  const environment = { ...readProviderKeys(env), agentModels: [undefined] };
+  return hasUsableInference(listInferenceOptions(environment)) &&
+    defaultModelMismatchKeys(environment).length === 0;
+}
+
+/**
  * Offer to link the new project to Veryfront Cloud. When the folder stays
- * unlinked (No, a dismissed prompt, or a failed setup), name both ways to get
- * inference. The advice does not claim a key is missing.
+ * unlinked (No, a dismissed prompt, or a failed setup) and no provider key can
+ * serve the scaffolded agents, name both ways to get inference.
  */
 export async function offerCloudProjectAfterInit(
   projectDir: string,
   log: (message: string) => void,
   choose: (projectDir: string) => Promise<CloudProjectChoice> = chooseCloudProject,
+  env: (name: string) => string | undefined = newProjectEnv({}),
 ): Promise<void> {
   let linked = false;
   try {
@@ -186,6 +219,7 @@ export async function offerCloudProjectAfterInit(
     );
   }
   if (linked) return;
+  if (newProjectHasInference(env)) return;
   // One log entry, so the logger marks the block once, not every line.
   log(
     [
@@ -277,6 +311,8 @@ export async function initCommand(
     },
   };
 
+  // The values written to the new `.env`, for the inference check after it.
+  let writtenEnvValues: Record<string, string> = {};
   const result = await createProject(
     {
       name: projectName,
@@ -294,14 +330,22 @@ export async function initCommand(
       observer: installObserver,
       beforeGitInitialization: async (projectDir) => {
         if (!quiet && !options.deploy && isTTY() && isInteractive()) {
-          await offerCloudProjectAfterInit(projectDir, log);
+          await offerCloudProjectAfterInit(
+            projectDir,
+            log,
+            chooseCloudProject,
+            newProjectEnv(writtenEnvValues),
+          );
         }
       },
-      resolveEnvironmentFiles: (variables, values) =>
-        promptForEnvVars(variables, {
+      resolveEnvironmentFiles: async (variables, values) => {
+        const resolved = await promptForEnvVars(variables, {
           skipPrompt: options.skipEnvPrompt,
           prefilledValues: values,
-        }),
+        });
+        writtenEnvValues = resolved.values;
+        return resolved;
+      },
     },
   );
 
