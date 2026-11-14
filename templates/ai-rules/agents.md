@@ -26,6 +26,8 @@ Use these folders as runtime boundaries. Create folders only when the feature ne
 
 Prefer Veryfront scaffold tools over hand-written boilerplate. Keep app routes, agents, tools, workflows, and skills in their expected folders.
 
+If you do not have the `veryfront` skill yet, install it once with `npx skills add veryfront/skills -y`. It routes you to the docs page for each Veryfront task.
+
 ## Inference
 
 Agent routes need model inference. Use a provider API key such as `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`, configure an OpenAI-compatible local server, or run `veryfront login` to use the optional Veryfront Cloud gateway.

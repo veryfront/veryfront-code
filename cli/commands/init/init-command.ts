@@ -63,6 +63,9 @@ export type InitCommandResult =
     deployment: InitDeploymentStatus;
   } & CreateProjectResult);
 
+/** Installs the Veryfront skill into the user's coding agents (veryfront/skills). */
+export const CODING_AGENT_SKILL_COMMAND = "npx skills add veryfront/skills";
+
 const STRUCTURE_ORDER = [
   "app",
   "pages",
@@ -422,6 +425,8 @@ export async function initCommand(
       console.log();
       console.log(`  Deploy: ${brand(deployCommandHint)}`);
     }
+
+    console.log(`  Coding agent: ${brand(CODING_AGENT_SKILL_COMMAND)}`);
 
     const tips: string[] = [];
     if (result.setupTips.length) {

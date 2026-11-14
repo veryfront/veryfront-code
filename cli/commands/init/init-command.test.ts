@@ -62,6 +62,33 @@ describe("InitCommand Types", () => {
       }
     });
 
+    it("prints the command that installs the Veryfront skill into coding agents", async () => {
+      const parentDir = await makeTempDir({ prefix: "veryfront-init-skill-" });
+      const name = `skill-target-${crypto.randomUUID()}`;
+      const output: string[] = [];
+      const originalLog = console.log;
+
+      try {
+        console.log = (...args: unknown[]) => output.push(args.map(String).join(" "));
+
+        await initCommand({
+          name,
+          parentDir,
+          template: "minimal",
+          skipInstall: true,
+          skipEnvPrompt: true,
+        });
+
+        const expectedLine = "  Coding agent: npx skills add veryfront/skills";
+        assertEquals(output.map(stripAnsi).includes(expectedLine), true);
+        const agentsGuide = await Deno.readTextFile(join(parentDir, name, "AGENTS.md"));
+        assertEquals(agentsGuide.includes("`npx skills add veryfront/skills -y`"), true);
+      } finally {
+        console.log = originalLog;
+        await remove(parentDir, { recursive: true }).catch(() => {});
+      }
+    });
+
     it("prints the verified URL returned by the composed deployment", async () => {
       const parentDir = await makeTempDir({ prefix: "veryfront-init-deploy-" });
       const name = `deployed-target-${crypto.randomUUID()}`;
