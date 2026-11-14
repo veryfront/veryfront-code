@@ -24,6 +24,7 @@ import {
   assertEvalTimerDuration,
   assertFiniteEvalNumber,
   createEvalValidationError,
+  normalizeEvalEnvironmentContext,
   normalizeEvalString,
   normalizeEvalStringList,
   stringifyEvalError,
@@ -85,6 +86,7 @@ export interface AgentServiceEvalForwardedProps {
   conversationId?: string;
   branchId?: string;
   model?: string;
+  environmentContext?: string;
   runtimeOverrides?: {
     allowedTools?: string[];
     maxSteps?: number;
@@ -104,6 +106,8 @@ export interface BuildAgentServiceEvalRequestBodyInput {
   allowedTools?: string[];
   forceRuntimeOverrides?: boolean;
   maxSteps?: number;
+  /** Host facts the agent service renders as `<environment_context>`. */
+  environmentContext?: string;
 }
 
 /** AG-UI request body sent to an agent-service endpoint. */
@@ -287,6 +291,11 @@ function createVeryfrontForwardedProps(
   if (overrides.model !== null) {
     veryfront.model = normalizeEvalString(overrides.model, "Agent-service eval model");
   }
+  const environmentContext = normalizeEvalEnvironmentContext(
+    input.environmentContext,
+    "Agent-service eval",
+  );
+  if (environmentContext !== undefined) veryfront.environmentContext = environmentContext;
 
   const shouldForwardRuntimeOverrides = allowedTools !== undefined ||
     overrides.forceRuntimeOverrides ||
@@ -902,6 +911,8 @@ export function createAgentServiceEvalAdapter(
         allowedTools: config.allowedTools,
         forceRuntimeOverrides: config.forceRuntimeOverrides,
         maxSteps: config.maxSteps,
+        environmentContext: context.example.environmentContext ??
+          context.definition.environmentContext,
       });
       const parseOptions: ParseAgUiSseResponseOptions = {
         ...(config.progressThrottleMs !== undefined

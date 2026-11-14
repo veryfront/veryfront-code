@@ -70,6 +70,9 @@ function createDatasetHashInput(dataset: EvalDataset, examples: EvalExample[]) {
       ...(example.expectedOutcome ? { expectedOutcome: example.expectedOutcome } : {}),
       ...(Object.hasOwn(example, "reference") ? { reference: example.reference } : {}),
       ...(example.metadata ? { metadata: example.metadata } : {}),
+      ...(example.environmentContext === undefined
+        ? {}
+        : { environmentContext: example.environmentContext }),
     })),
   };
 }

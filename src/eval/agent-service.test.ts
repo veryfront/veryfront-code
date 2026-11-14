@@ -734,6 +734,40 @@ describe("eval/agent-service", () => {
     assertEquals(requestBody?.forwardedProps, undefined);
   });
 
+  it("forwards the eval or example environment context to the agent service", async () => {
+    const forwarded: unknown[] = [];
+    const adapter = createAgentServiceEvalAdapter({
+      authToken: "token",
+      fetch: async (_input, init) => {
+        forwarded.push(JSON.parse(String(init?.body)).forwardedProps);
+        return createSseResponse([
+          { event: "RunStarted", data: { runId: "run_context" } },
+          { event: "RunFinished", data: {} },
+        ]);
+      },
+    });
+
+    const definition = evalAgent({
+      id: "eval:context",
+      target: "agent:researcher",
+      environmentContext: "active tab: app/page.tsx",
+      dataset: datasets.inline([
+        { id: "eval-context", input: "hi" },
+        { id: "example-context", input: "hi", environmentContext: "selected node: Header" },
+      ]),
+    });
+    await runEval(definition, {
+      adapters: { agent: adapter },
+      now: () => new Date("2026-06-20T10:00:00.000Z"),
+    });
+
+    // Records can run concurrently, so compare without relying on request order.
+    assertEquals(forwarded.map((props) => JSON.stringify(props)).toSorted(), [
+      JSON.stringify({ veryfront: { environmentContext: "active tab: app/page.tsx" } }),
+      JSON.stringify({ veryfront: { environmentContext: "selected node: Header" } }),
+    ]);
+  });
+
   it("reads usage amounts sent as decimal strings", async () => {
     const adapter = createAgentServiceEvalAdapter({
       endpoint: "http://127.0.0.1:4311/api/ag-ui",
