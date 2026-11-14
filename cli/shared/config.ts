@@ -13,7 +13,7 @@ import { type EnvironmentConfig, getApiTokenEnv, getEnvironmentConfig } from "ve
 import { getEnvSource } from "veryfront/utils/env-loader";
 import { cliLogger, VERSION } from "#cli/utils";
 import { readToken } from "../auth/token-store.ts";
-import { ensureAuthenticated } from "../auth/login.ts";
+import { ensureAuthenticated, misnamedApiKeyHint } from "../auth/login.ts";
 import {
   API_URL_ENV_KEYS,
   type ApiUrlEnvKey,
@@ -725,15 +725,21 @@ async function resolveConfigBase(
 
   if (!apiToken && interactive && allowAuthPrompt) {
     const userInfo = await ensureAuthenticated(env, dir, authOptions);
-    if (!userInfo) throw new Error("Authentication required for this operation.");
+    if (!userInfo) {
+      const hint = await misnamedApiKeyHint(env, dir);
+      throw new Error(`Authentication required for this operation.${hint ? ` ${hint}` : ""}`);
+    }
     apiToken = (await readToken(env)) ?? null;
     apiTokenSource = apiToken ? "token-store" : undefined;
     if (!apiToken) throw new Error("Authentication failed. Please try again.");
   }
 
   if (!apiToken) {
+    const hint = await misnamedApiKeyHint(env, dir);
     throw new Error(
-      "Missing API token. Run 'veryfront login' or set VERYFRONT_API_TOKEN environment variable",
+      `Missing API token. ${
+        hint ?? "Run 'veryfront login' or set VERYFRONT_API_TOKEN environment variable"
+      }`,
     );
   }
 

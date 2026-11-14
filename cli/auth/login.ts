@@ -16,7 +16,9 @@ import {
 import {
   type ApiTokenSource,
   assertApiUrlAcceptsNewCredential,
+  readConfigJsonFile,
   resolveApiCredentialCandidatesForAuth,
+  resolveApiUrlTrust,
 } from "../shared/config.ts";
 import {
   createErrorEnvelope,
@@ -26,7 +28,7 @@ import {
 } from "../shared/json-output.ts";
 import { isInteractive } from "../shared/interactive.ts";
 import { getEnvSource } from "veryfront/utils/env-loader";
-import { basename, isAbsolute, relative } from "veryfront/platform/path";
+import { basename, isAbsolute, join, relative } from "veryfront/platform/path";
 import { cwd, getEnv } from "veryfront/platform";
 
 const applyIntrinsic = Reflect.apply;
@@ -109,6 +111,70 @@ export interface CredentialValidationOptions {
   transport?: typeof fetch;
 }
 
+const MISNAMED_API_KEY_HINT_LINES = [
+  "VERYFRONT_API_KEY is set, but the CLI reads VERYFRONT_API_TOKEN.",
+  "Set VERYFRONT_API_TOKEN to the same key, or run 'veryfront login'.",
+] as const;
+
+/**
+ * Studio's key page tells users to export `VERYFRONT_API_KEY`, which the CLI
+ * does not read. When that is the only one set, missing-auth messages name the
+ * variable the CLI does read instead of a bare "Not logged in".
+ *
+ * The hint only applies to a key the user exported themselves. A key loaded
+ * from a project `.env` belongs to whoever wrote the checkout, so it is never
+ * suggested as the user's own credential. When any credential is configured
+ * (a token file, a stored login, a `veryfront.json` token), the failure is
+ * about that credential, so the hint stays out of the way.
+ */
+export async function misnamedApiKeyHint(
+  env: EnvironmentConfig = getEnvironmentConfig(),
+  projectDir: string = cwd(),
+): Promise<string | undefined> {
+  // Reads the raw variables rather than `env`: the question is which names the
+  // user exported, which the resolved config no longer records.
+  if (!getEnv("VERYFRONT_API_KEY")?.trim()) return undefined;
+  if (getEnvSource("VERYFRONT_API_KEY").source !== "process") return undefined;
+  if (getEnv("VERYFRONT_API_TOKEN")?.trim() || getEnv("VERYFRONT_API_TOKEN_FILE")?.trim()) {
+    return undefined;
+  }
+  if (await hasConfiguredCredential(env, projectDir)) return undefined;
+  return MISNAMED_API_KEY_HINT_LINES.join(" ");
+}
+
+async function notLoggedInMessage(
+  env: EnvironmentConfig,
+  projectDir: string,
+): Promise<string> {
+  const hint = await misnamedApiKeyHint(env, projectDir);
+  return `Not logged in. ${hint ?? "Set VERYFRONT_API_TOKEN or run in interactive mode."}`;
+}
+
+async function hasConfiguredCredential(
+  env: EnvironmentConfig,
+  projectDir: string,
+): Promise<boolean> {
+  try {
+    // A host steered by the project's environment files filters out the
+    // user's own credentials, and would filter a newly exported
+    // VERYFRONT_API_TOKEN the same way. A veryfront.json apiUrl alone does
+    // not: shell credentials still validate against the operator's host.
+    const configFile = await readConfigJsonFile(projectDir);
+    const trust = resolveApiUrlTrust(env, configFile, join(projectDir, "veryfront.json"));
+    if (
+      trust.repositorySteered &&
+      (trust.steeringEnvFile !== undefined || trust.steeringConfigFile === undefined)
+    ) {
+      return true;
+    }
+    const candidates = await resolveApiCredentialCandidatesForAuth(env, projectDir);
+    return candidates.length > 0;
+  } catch {
+    // Unknown credential state: the hint is optional, so leave it out.
+    return true;
+  }
+}
+
 /**
  * How long the bare-`login` preflight will wait on a credential check.
  *
@@ -137,12 +203,15 @@ function loginIdentityData(
   return { ...identity, source: displayedSource };
 }
 
-async function outputLoginAuthenticationRequiredJson(): Promise<void> {
+async function outputLoginAuthenticationRequiredJson(
+  env: EnvironmentConfig,
+  projectDir: string,
+): Promise<void> {
   await outputJson(createErrorEnvelope("login", {
     code: "AUTHENTICATION_ERROR",
     slug: "authentication-required",
     registrySlug: "authentication-required",
-    message: "Not logged in. Set VERYFRONT_API_TOKEN or run in interactive mode.",
+    message: await notLoggedInMessage(env, projectDir),
   }));
 }
 
@@ -885,7 +954,7 @@ export async function login(
     if (existing === "failure-output") return null;
     if (existing) return existing;
     if (isJsonMode()) {
-      await outputLoginAuthenticationRequiredJson();
+      await outputLoginAuthenticationRequiredJson(env, projectDir);
       return null;
     }
   }
@@ -898,7 +967,7 @@ export async function login(
   await assertApiUrlAcceptsNewCredential(env, projectDir);
 
   if (!isInteractive() && (method === undefined || method === "token")) {
-    cliLogger.error("Not logged in. Set VERYFRONT_API_TOKEN or run in interactive mode.");
+    cliLogger.error(await notLoggedInMessage(env, projectDir));
     return null;
   }
 
@@ -936,7 +1005,7 @@ async function requestInteractiveAuthentication(
   validationOptions: CredentialValidationOptions,
 ): Promise<AuthIdentity | null> {
   if (!isTTY() || !isInteractive()) {
-    cliLogger.error("Not logged in. Set VERYFRONT_API_TOKEN or run in interactive mode.");
+    cliLogger.error(await notLoggedInMessage(env, projectDir));
     return null;
   }
 
@@ -1086,12 +1155,13 @@ export async function whoami(
     if (candidate.authoritative) break;
   }
 
+  const hint = candidates.length > 0 ? undefined : await misnamedApiKeyHint(env);
   if (isJsonMode()) {
     await outputJson(createErrorEnvelope("whoami", {
       code: "AUTHENTICATION_ERROR",
       slug: "authentication-required",
       registrySlug: "authentication-required",
-      message: "Not logged in. Run 'veryfront login' to authenticate.",
+      message: `Not logged in. ${hint ?? "Run 'veryfront login' to authenticate."}`,
       context: { authenticated: false },
     }));
     return null;
@@ -1099,7 +1169,8 @@ export async function whoami(
 
   console.log();
   console.log("  " + error("✗") + " Not logged in");
-  console.log("  " + dim("Run 'veryfront login' to authenticate"));
+  const hintLines = hint ? MISNAMED_API_KEY_HINT_LINES : ["Run 'veryfront login' to authenticate"];
+  for (const line of hintLines) console.log("  " + dim(line));
 
   return null;
 }

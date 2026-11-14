@@ -336,14 +336,18 @@ export async function initCommand(
       }
     } else {
       const { chdir } = await import("#cli/process-lifecycle");
-      const { ensureAuthenticated } = await import("../../auth/index.ts");
+      const { ensureAuthenticated, misnamedApiKeyHint } = await import("../../auth/index.ts");
       const { deployCommand } = await import("../deploy/index.ts");
       const authResult = await ensureAuthenticated(undefined, createdProjectDir);
 
       if (!authResult) {
-        deployment = { status: "failed", message: AUTH_REQUIRED_DEPLOY_MESSAGE };
+        const hint = await misnamedApiKeyHint(undefined, createdProjectDir);
+        const message = hint
+          ? `${AUTH_REQUIRED_DEPLOY_MESSAGE} ${hint}`
+          : AUTH_REQUIRED_DEPLOY_MESSAGE;
+        deployment = { status: "failed", message };
         if (!quiet) console.log();
-        log(`  Authentication required for --deploy. ${manualDeployHint}`);
+        log(`  ${message} ${manualDeployHint}`);
       } else {
         if (!quiet) console.log();
         log(`  Deploying project...`);

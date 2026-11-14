@@ -326,6 +326,51 @@ describe("init command integration", () => {
       }
     });
 
+    it("names VERYFRONT_API_TOKEN when --json --deploy has only VERYFRONT_API_KEY", async () => {
+      const parentDir = await makeTempDir({ prefix: "veryfront-init-json-deploy-key-" });
+      const name = `json-deploy-key-${randomSuffix()}`;
+      const hint = "Authentication required for --deploy. " +
+        "VERYFRONT_API_KEY is set, but the CLI reads VERYFRONT_API_TOKEN. " +
+        "Set VERYFRONT_API_TOKEN to the same key, or run 'veryfront login'.";
+
+      try {
+        const result = await runInitCommand([
+          name,
+          "--json",
+          "--deploy",
+          "--skip-install",
+          "--no-color",
+        ], {
+          cwd: parentDir,
+          env: {
+            VERYFRONT_API_KEY: "vf_misnamed_key",
+            VERYFRONT_API_TOKEN: "",
+            XDG_CONFIG_HOME: join(parentDir, "xdg"),
+            VERYFRONT_NO_UPDATE_CHECK: "1",
+            CI: "1",
+            NO_COLOR: "1",
+          },
+        });
+        const stdout = (result.stdout ?? "").trim();
+        const parsed = JSON.parse(stdout) as {
+          error: {
+            message: string;
+            context?: { localProject?: { deployment: { status: string; message: string } } };
+          };
+        };
+
+        assertEquals(result.code, 1, stdout + (result.stderr ?? ""));
+        assertEquals(parsed.error.message, hint);
+        assertEquals(parsed.error.context?.localProject?.deployment, {
+          status: "failed",
+          message: hint,
+        });
+        assertEquals(stdout.includes("vf_misnamed_key"), false);
+      } finally {
+        await remove(parentDir, { recursive: true }).catch(() => {});
+      }
+    });
+
     it("does not run the setup wizard for --json in a TTY", async () => {
       if (Deno.build.os === "windows") return;
 
