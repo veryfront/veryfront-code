@@ -13,7 +13,6 @@ import {
   markConfigFileSource,
   markEnvLoaded,
   markProcessEnvSource,
-  readEnvDirValues,
   supportsEnvFiles,
 } from "./env-loader.ts";
 import { __resetLoggerConfigForTests, type LogEntry, serverLogger } from "./logger/logger.ts";
@@ -654,29 +653,6 @@ describe("env-loader", () => {
         else setEnv("LOG_FORMAT", previousLogFormat);
         __resetLoggerConfigForTests();
       }
-    });
-  });
-
-  describe("readEnvDirValues", () => {
-    it("reads a directory's env files in loadEnv's order without setting them", async () => {
-      const key = createKey("READ");
-      const empty = createKey("EMPTY");
-      const quoted = createKey("QUOTED");
-      await writeEnvFile(".env", `${key}=base\n${empty}=""\n${quoted}="a b"`);
-      await writeEnvFile(".env.local", `${key}=local`);
-
-      const values = await readEnvDirValues(tempDir);
-
-      // .env.local ranks above .env, and quotes are parsed as loadEnv does.
-      assertEquals(values[key], "local");
-      assertEquals(values[empty], "");
-      assertEquals(values[quoted], "a b");
-      assertEquals(getEnv(key), undefined);
-      assertEquals(getEnvSource(key).source, "unset");
-    });
-
-    it("returns nothing for a directory without env files", async () => {
-      assertEquals(await readEnvDirValues(tempDir), {});
     });
   });
 

@@ -15,7 +15,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { exists, makeTempDir, remove } from "#veryfront/testing/deno-compat.ts";
 import { join } from "veryfront/platform/path";
 import { stripAnsi } from "../../ui/ansi.ts";
-import { initCommand, offerCloudProjectAfterInit } from "./init-command.ts";
+import { initCommand, newProjectEnv, offerCloudProjectAfterInit } from "./init-command.ts";
 import type { InitOptions, InitTemplate } from "./types.ts";
 
 describe("InitCommand Types", () => {
@@ -371,50 +371,26 @@ describe("offerCloudProjectAfterInit", () => {
     );
   });
 
-  it("reads the key from the generated .env", async () => {
-    const projectDir = await makeTempDir({ prefix: "veryfront-init-env-" });
-    try {
-      await Deno.writeTextFile(join(projectDir, ".env"), "OPENAI_API_KEY=<API_KEY>\n");
-      const logged: string[] = [];
-      await offerCloudProjectAfterInit(
-        projectDir,
-        (message) => logged.push(message),
-        () => Promise.resolve("declined"),
-        () => undefined,
-      );
-      assertEquals(logged, []);
-    } finally {
-      await remove(projectDir, { recursive: true });
-    }
+  it("counts a key init wrote to the new .env", async () => {
+    const env = newProjectEnv({ OPENAI_API_KEY: "<API_KEY>" }, () => undefined);
+    const logged: string[] = [];
+    await offerCloudProjectAfterInit(
+      "/unused",
+      (message) => logged.push(message),
+      () => Promise.resolve("declined"),
+      env,
+    );
+    assertEquals(logged, []);
   });
 
-  async function adviceForEnvFiles(files: Record<string, string>): Promise<string[]> {
-    const projectDir = await makeTempDir({ prefix: "veryfront-init-env-" });
-    try {
-      for (const [name, content] of Object.entries(files)) {
-        await Deno.writeTextFile(join(projectDir, name), content);
-      }
-      const logged: string[] = [];
-      await offerCloudProjectAfterInit(
-        projectDir,
-        (message) => logged.push(message),
-        () => Promise.resolve("declined"),
-        () => undefined,
-      );
-      return logged;
-    } finally {
-      await remove(projectDir, { recursive: true });
-    }
-  }
-
-  it("parses the env files as dev loads them", async () => {
-    // An empty quoted value is empty, as dev's loader reads it.
-    assertEquals((await adviceForEnvFiles({ ".env": 'OPENAI_API_KEY=""\n' })).length, 1);
-    // .env.local is loaded by dev too, above .env.
-    assertEquals(
-      await adviceForEnvFiles({ ".env": "# none\n", ".env.local": "OPENAI_API_KEY=<API_KEY>\n" }),
-      [],
+  it("ranks the shell's value above the written one, and skips a blank written value", () => {
+    const shell = { OPENAI_API_KEY: "<SHELL_KEY>" } as Record<string, string>;
+    const env = newProjectEnv(
+      { OPENAI_API_KEY: "<WRITTEN_KEY>", ANTHROPIC_API_KEY: " " },
+      (name) => shell[name],
     );
+    assertEquals(env("OPENAI_API_KEY"), "<SHELL_KEY>");
+    assertEquals(env("ANTHROPIC_API_KEY"), undefined);
   });
 
   it("still names both ways when only a key the scaffolded agents cannot use is set", async () => {

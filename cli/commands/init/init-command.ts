@@ -10,7 +10,6 @@ import { createTransientSpinner } from "../../ui/progress.ts";
 import { INVALID_ARGUMENT } from "veryfront/errors";
 import type { InitOptions, InitRuntime, InitTemplate } from "./types.ts";
 import { cwd } from "veryfront/platform";
-import { readEnvDirValues } from "veryfront/utils/env-loader";
 import { getDlxCommand, getInstallCommand, getRunCommand } from "../../utils/package-manager.ts";
 import {
   createProject,
@@ -176,15 +175,17 @@ function validateInitProjectName(name: string): string | null {
 }
 
 /**
- * The values `veryfront dev` in the new folder will see: the shell's own,
- * then the folder's env files, parsed and ranked as `dev` loads them.
+ * The provider settings `veryfront dev` in the new folder will see, as far as
+ * `init` knows them: the shell's own values, then the values `init` wrote to
+ * the new `.env`. A value the invoking folder's `.env` loaded into this process
+ * does not count, since `dev` in the new folder never loads that file. Other
+ * env files are not read: a key `init` cannot see only leaves the advice in.
  */
-async function readNewProjectEnv(
-  projectDir: string,
-  hostValue: (name: string) => string | undefined,
-): Promise<(name: string) => string | undefined> {
-  const values = await readEnvDirValues(projectDir);
-  return (name) => hostValue(name) ?? values[name];
+export function newProjectEnv(
+  writtenValues: Readonly<Record<string, string>>,
+  hostValue: (name: string) => string | undefined = processEnvValue,
+): (name: string) => string | undefined {
+  return (name) => hostValue(name) ?? (writtenValues[name]?.trim() || undefined);
 }
 
 /**
@@ -207,9 +208,7 @@ export async function offerCloudProjectAfterInit(
   projectDir: string,
   log: (message: string) => void,
   choose: (projectDir: string) => Promise<CloudProjectChoice> = chooseCloudProject,
-  // The shell's own values: `dev` in the new folder loads only that folder's
-  // `.env`, so a value the cwd's `.env` supplied to this process does not count.
-  hostValue: (name: string) => string | undefined = processEnvValue,
+  env: (name: string) => string | undefined = newProjectEnv({}),
 ): Promise<void> {
   let linked = false;
   try {
@@ -220,7 +219,7 @@ export async function offerCloudProjectAfterInit(
     );
   }
   if (linked) return;
-  if (newProjectHasInference(await readNewProjectEnv(projectDir, hostValue))) return;
+  if (newProjectHasInference(env)) return;
   // One log entry, so the logger marks the block once, not every line.
   log(
     [
@@ -312,6 +311,8 @@ export async function initCommand(
     },
   };
 
+  // The values written to the new `.env`, for the inference check after it.
+  let writtenEnvValues: Record<string, string> = {};
   const result = await createProject(
     {
       name: projectName,
@@ -329,14 +330,22 @@ export async function initCommand(
       observer: installObserver,
       beforeGitInitialization: async (projectDir) => {
         if (!quiet && !options.deploy && isTTY() && isInteractive()) {
-          await offerCloudProjectAfterInit(projectDir, log);
+          await offerCloudProjectAfterInit(
+            projectDir,
+            log,
+            chooseCloudProject,
+            newProjectEnv(writtenEnvValues),
+          );
         }
       },
-      resolveEnvironmentFiles: (variables, values) =>
-        promptForEnvVars(variables, {
+      resolveEnvironmentFiles: async (variables, values) => {
+        const resolved = await promptForEnvVars(variables, {
           skipPrompt: options.skipEnvPrompt,
           prefilledValues: values,
-        }),
+        });
+        writtenEnvValues = resolved.values;
+        return resolved;
+      },
     },
   );
 
