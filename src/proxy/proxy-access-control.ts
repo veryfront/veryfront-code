@@ -25,7 +25,7 @@ export interface ProxyPrincipal {
   environmentAccess?: { projectId: string; environmentId: string };
 }
 
-const ENVIRONMENT_ACCESS_TOKEN_USE = "environment_access";
+export const ENVIRONMENT_ACCESS_TOKEN_USE = "environment_access";
 const ENVIRONMENT_GATE_AUDIENCE = "environment-gate";
 
 function hasGateAudience(payload: unknown): boolean {

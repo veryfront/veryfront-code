@@ -9,6 +9,27 @@ import {
 } from "./proxy-token-resolution.ts";
 import { OAuthTokenRequestError } from "./oauth-client.ts";
 
+function base64Url(value: unknown): string {
+  return btoa(JSON.stringify(value)).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
+}
+
+function fakeJwt(payload: Record<string, unknown>): string {
+  return `${base64Url({ alg: "RS256", typ: "JWT" })}.${base64Url(payload)}.signature`;
+}
+
+function resolvePreview(cookie: string) {
+  return resolveProxyRequestToken({
+    req: new Request("https://my-project.preview.veryfront.com/", { headers: { cookie } }),
+    url: new URL("https://my-project.preview.veryfront.com/"),
+    scope: "preview",
+    host: "my-project.preview.veryfront.com",
+    projectSlug: "my-project",
+    config: { apiClientId: "client", apiClientSecret: "secret" },
+    tokenManager: { getToken: () => Promise.resolve("oauth-token") },
+    tokenFetchErrorMessage: "Token fetch failed",
+  });
+}
+
 describe("proxy/proxy-token-resolution", () => {
   it("extracts one bounded visible auth cookie and rejects ambiguous or malformed values", () => {
     assertEquals(extractUserToken("other=x; authToken=user%2Dtoken"), "user-token");
@@ -101,6 +122,35 @@ describe("proxy/proxy-token-resolution", () => {
     assertEquals(result.token, "oauth-token");
     assertEquals(result.userToken, "user-cookie-token");
     assertEquals(result.tokenSource, "service");
+  });
+
+  it("reads a preview with a service token when the cookie is an environment access token", async () => {
+    // `veryfront up` probes a protected Preview with a token the API minted for
+    // the gate. The API refuses that token as a session, so forwarding it as the
+    // preview's project credential failed the render with 401 after the gate
+    // had already let it through (veryfront/veryfront-issue-inbox#4301).
+    const environmentAccessToken = fakeJwt({
+      userId: "user-1",
+      projectId: "project-1",
+      environmentId: "environment-1",
+      aud: "environment-gate",
+      tokenUse: "environment_access",
+    });
+    const result = await resolvePreview(`authToken=${environmentAccessToken}`);
+
+    assertEquals(result.token, "oauth-token");
+    assertEquals(result.tokenSource, "service");
+    // The gate still verifies this token and checks its binding and owner.
+    assertEquals(result.userToken, environmentAccessToken);
+  });
+
+  it("keeps a signed-in user's session token as the preview credential", async () => {
+    const sessionToken = fakeJwt({ userId: "user-1" });
+    const result = await resolvePreview(`authToken=${sessionToken}`);
+
+    assertEquals(result.token, sessionToken);
+    assertEquals(result.tokenSource, "user");
+    assertEquals(result.userToken, sessionToken);
   });
 
   it("classifies both documented missing-project statuses", () => {
