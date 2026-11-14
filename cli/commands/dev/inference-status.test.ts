@@ -3,16 +3,17 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   advertisesCloudGateway,
+  defaultModelMismatchKeys,
   devInferenceHintLines,
   hasUsableInference,
   listInferenceOptions,
-  providerKeysNoAgentCanUse,
+  readProviderKeys,
 } from "./inference-status.ts";
 import {
+  defaultModelKeyMismatchLine,
   DEV_ENV_RESTART_LINE,
   inferenceSetupOptionLines,
   NO_INFERENCE_HEADING,
-  unusedProviderKeyHeading,
 } from "../../shared/inference-setup.ts";
 
 describe("commands/dev/inference-status", () => {
@@ -118,75 +119,83 @@ describe("commands/dev/inference-status", () => {
   });
 
   describe("agents that leave their model unset", () => {
-    // An agent with no model runs openai/gpt-5-nano. Without the gateway or an
-    // OpenAI key, its first request fails with default-model-credential-mismatch,
-    // so another provider's key serves none of these agents.
+    // An agent with no model runs openai/gpt-5-nano. Without the gateway, an
+    // OpenAI key, or an application openai provider, its default request fails
+    // with default-model-credential-mismatch.
     const anthropicOnly = { anthropicApiKey: "<API_KEY>", agentModels: [undefined, undefined] };
 
-    it("does not report a key that no agent can use", () => {
-      assertEquals(providerKeysNoAgentCanUse(anthropicOnly), ["ANTHROPIC_API_KEY"]);
-      assertEquals(listInferenceOptions(anthropicOnly), []);
-      assertEquals(hasUsableInference(listInferenceOptions(anthropicOnly)), false);
+    it("names a key the default model cannot use", () => {
+      assertEquals(defaultModelMismatchKeys(anthropicOnly), ["ANTHROPIC_API_KEY"]);
       assertEquals(
-        providerKeysNoAgentCanUse({
+        defaultModelMismatchKeys({
           googleApiKey: "<API_KEY>",
           mistralApiKey: "<API_KEY>",
           agentModels: [undefined],
         }),
         ["GOOGLE_API_KEY", "MISTRAL_API_KEY"],
       );
-    });
-
-    it("names the unused key and the default model's key in the hint", () => {
       assertEquals(
-        devInferenceHintLines(
-          listInferenceOptions(anthropicOnly),
-          providerKeysNoAgentCanUse(anthropicOnly),
-        ),
-        [
-          unusedProviderKeyHeading(["ANTHROPIC_API_KEY"]),
-          ...inferenceSetupOptionLines(),
-          DEV_ENV_RESTART_LINE,
-        ],
-      );
-      assertEquals(
-        unusedProviderKeyHeading(["ANTHROPIC_API_KEY"]),
-        'ANTHROPIC_API_KEY is set, but your agents set no model, so they use the default "openai/gpt-5-nano", which needs OPENAI_API_KEY. To use hosted models, choose one:',
-      );
-      assertEquals(
-        unusedProviderKeyHeading(["GOOGLE_API_KEY", "MISTRAL_API_KEY"]).startsWith(
-          "GOOGLE_API_KEY and MISTRAL_API_KEY are set, but",
-        ),
-        true,
+        defaultModelKeyMismatchLine(["ANTHROPIC_API_KEY"]),
+        'Agents that set no model use "openai/gpt-5-nano", which needs OPENAI_API_KEY. To use ANTHROPIC_API_KEY, set the agent\'s model to "auto" or "<provider>/<model>".',
       );
     });
 
-    it("keeps the key when an agent sets a model or auto", () => {
+    it("still lists the key, because a request can pick a model of its provider", () => {
+      // AgentStreamInput.model and the AG-UI body accept a per-request model.
+      assertEquals(listInferenceOptions(anthropicOnly), ["Anthropic direct"]);
+      assertEquals(devInferenceHintLines(listInferenceOptions(anthropicOnly)), []);
+    });
+
+    it("names nothing when an agent sets a model or auto", () => {
       for (const model of ["anthropic/claude-sonnet-4-6", "auto", ""]) {
-        const environment = { anthropicApiKey: "<API_KEY>", agentModels: [undefined, model] };
-        assertEquals(providerKeysNoAgentCanUse(environment), []);
-        assertEquals(listInferenceOptions(environment), ["Anthropic direct"]);
+        assertEquals(
+          defaultModelMismatchKeys({
+            anthropicApiKey: "<API_KEY>",
+            agentModels: [undefined, model],
+          }),
+          [],
+        );
       }
     });
 
-    it("keeps the key when the default model can run", () => {
+    it("names nothing when the default model can run", () => {
       for (
         const environment of [
           { ...anthropicOnly, openaiApiKey: "<API_KEY>" },
           { ...anthropicOnly, apiToken: "<TOKEN>", projectSlug: "support-agent" },
+          { ...anthropicOnly, defaultModelProviderRegistered: true },
         ]
       ) {
-        assertEquals(providerKeysNoAgentCanUse(environment), []);
-        assertEquals(listInferenceOptions(environment).includes("Anthropic direct"), true);
+        assertEquals(defaultModelMismatchKeys(environment), []);
       }
     });
 
-    it("keeps the key when the agents are not known", () => {
+    it("names nothing when the agents are not known", () => {
       for (const agentModels of [undefined, []]) {
-        const environment = { anthropicApiKey: "<API_KEY>", agentModels };
-        assertEquals(providerKeysNoAgentCanUse(environment), []);
-        assertEquals(listInferenceOptions(environment), ["Anthropic direct"]);
+        assertEquals(defaultModelMismatchKeys({ anthropicApiKey: "<API_KEY>", agentModels }), []);
       }
+    });
+
+    it("names the Google variable that is actually set", () => {
+      const read = (values: Record<string, string>) => (name: string) => values[name];
+      const generative = readProviderKeys(read({ GOOGLE_GENERATIVE_AI_API_KEY: "<API_KEY>" }));
+      assertEquals(generative.googleApiKeyName, "GOOGLE_GENERATIVE_AI_API_KEY");
+      assertEquals(
+        defaultModelMismatchKeys({ ...generative, agentModels: [undefined] }),
+        ["GOOGLE_GENERATIVE_AI_API_KEY"],
+      );
+      // The runtime reads GOOGLE_API_KEY first, and skips an empty one.
+      assertEquals(
+        readProviderKeys(read({ GOOGLE_API_KEY: "<API_KEY>", GOOGLE_GENERATIVE_AI_API_KEY: "x" }))
+          .googleApiKeyName,
+        "GOOGLE_API_KEY",
+      );
+      assertEquals(
+        readProviderKeys(read({ GOOGLE_API_KEY: "", GOOGLE_GENERATIVE_AI_API_KEY: "<API_KEY>" }))
+          .googleApiKeyName,
+        "GOOGLE_GENERATIVE_AI_API_KEY",
+      );
+      assertEquals(readProviderKeys(read({})).googleApiKey, undefined);
     });
   });
 });

@@ -9,7 +9,7 @@ import { brand, dim } from "#cli/ui";
 import { createTransientSpinner } from "../../ui/progress.ts";
 import { INVALID_ARGUMENT } from "veryfront/errors";
 import type { InitOptions, InitRuntime, InitTemplate } from "./types.ts";
-import { createFileSystem, cwd, getEnv } from "veryfront/platform";
+import { createFileSystem, cwd } from "veryfront/platform";
 import { join } from "veryfront/platform/path";
 import { getDlxCommand, getInstallCommand, getRunCommand } from "../../utils/package-manager.ts";
 import {
@@ -24,7 +24,13 @@ import { isTTY } from "#cli/utils";
 import { isInteractive } from "../../shared/interactive.ts";
 import { chooseCloudProject, type CloudProjectChoice } from "../../shared/cloud-project.ts";
 import { inferenceSetupOptionLines } from "../../shared/inference-setup.ts";
-import { hasUsableInference, listInferenceOptions } from "../dev/inference-status.ts";
+import {
+  defaultModelMismatchKeys,
+  hasUsableInference,
+  listInferenceOptions,
+  readProviderKeys,
+} from "../dev/inference-status.ts";
+import { processEnvValue } from "../dev/display-options.ts";
 import { DEFAULT_TEMPLATE } from "./catalog.ts";
 
 type StructureNode = {
@@ -170,12 +176,13 @@ function validateInitProjectName(name: string): string | null {
 }
 
 /**
- * A lookup over the `.env` that `createProject` just wrote, falling back to the
- * environment `veryfront dev` also reads. The file holds only the
- * `NAME=value` lines and comments `promptForEnvVars` writes.
+ * A lookup over the `.env` that `createProject` just wrote, falling back to
+ * `hostValue`. The file holds only the `NAME=value` lines and comments
+ * `promptForEnvVars` writes.
  */
 async function readNewProjectEnv(
   projectDir: string,
+  hostValue: (name: string) => string | undefined,
 ): Promise<(name: string) => string | undefined> {
   const values = new Map<string, string>();
   const fs = createFileSystem();
@@ -187,23 +194,18 @@ async function readNewProjectEnv(
       values.set(line.slice(0, separator).trim(), line.slice(separator + 1).trim());
     }
   }
-  return (name) => values.get(name) || getEnv(name);
+  return (name) => values.get(name) || hostValue(name);
 }
 
 /**
- * Whether the new project can already reach a model without Cloud: the same
- * check the `dev` banner makes. The scaffolded agents set no model, so only a
- * key the default model can use counts.
+ * Whether the new project can already reach a model without Cloud: the check
+ * the `dev` banner makes. The scaffolded agents set no model, so a key counts
+ * only when the default model can use it.
  */
 function newProjectHasInference(env: (name: string) => string | undefined): boolean {
-  return hasUsableInference(listInferenceOptions({
-    openaiApiKey: env("OPENAI_API_KEY"),
-    openaiBaseUrl: env("OPENAI_BASE_URL"),
-    anthropicApiKey: env("ANTHROPIC_API_KEY"),
-    googleApiKey: env("GOOGLE_API_KEY") ?? env("GOOGLE_GENERATIVE_AI_API_KEY"),
-    mistralApiKey: env("MISTRAL_API_KEY"),
-    agentModels: [undefined],
-  }));
+  const environment = { ...readProviderKeys(env), agentModels: [undefined] };
+  return hasUsableInference(listInferenceOptions(environment)) &&
+    defaultModelMismatchKeys(environment).length === 0;
 }
 
 /**
@@ -215,7 +217,9 @@ export async function offerCloudProjectAfterInit(
   projectDir: string,
   log: (message: string) => void,
   choose: (projectDir: string) => Promise<CloudProjectChoice> = chooseCloudProject,
-  env?: (name: string) => string | undefined,
+  // The shell's own values: `dev` in the new folder loads only that folder's
+  // `.env`, so a value the cwd's `.env` supplied to this process does not count.
+  hostValue: (name: string) => string | undefined = processEnvValue,
 ): Promise<void> {
   let linked = false;
   try {
@@ -226,7 +230,7 @@ export async function offerCloudProjectAfterInit(
     );
   }
   if (linked) return;
-  if (newProjectHasInference(env ?? await readNewProjectEnv(projectDir))) return;
+  if (newProjectHasInference(await readNewProjectEnv(projectDir, hostValue))) return;
   // One log entry, so the logger marks the block once, not every line.
   log(
     [

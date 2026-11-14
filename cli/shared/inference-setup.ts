@@ -32,15 +32,17 @@ export const NO_INFERENCE_HEADING =
 export const DEFAULT_AGENT_MODEL_NAME = "openai/gpt-5-nano";
 
 /**
- * Heading for the setup hint when a provider key is set but every agent leaves
- * its model unset: the default model needs an OpenAI key, so the first request
- * would fail with `default-model-credential-mismatch`.
+ * The `dev` banner warning for provider keys the default model cannot use:
+ * every agent sets no model, and neither the gateway nor an OpenAI key can
+ * serve the default, so the first request fails with
+ * `default-model-credential-mismatch`. The keys stay listed under Inference:
+ * a request can still pick a model of their provider.
  */
-export function unusedProviderKeyHeading(keyNames: readonly string[]): string {
+export function defaultModelKeyMismatchLine(keyNames: readonly string[]): string {
   const names = keyNames.length > 1
-    ? `${keyNames.slice(0, -1).join(", ")} and ${keyNames.at(-1)} are`
-    : `${keyNames[0]} is`;
-  return `${names} set, but your agents set no model, so they use the default "${DEFAULT_AGENT_MODEL_NAME}", which needs OPENAI_API_KEY. To use hosted models, choose one:`;
+    ? `${keyNames.slice(0, -1).join(", ")} or ${keyNames.at(-1)}`
+    : keyNames[0];
+  return `Agents that set no model use "${DEFAULT_AGENT_MODEL_NAME}", which needs OPENAI_API_KEY. To use ${names}, set the agent's model to "auto" or "<provider>/<model>".`;
 }
 
 /**
@@ -57,7 +59,7 @@ export function inferenceSetupOptionLines(): string[] {
     '- Veryfront Cloud AI Gateway: run veryfront login, then run veryfront dev and answer Yes to "Use Veryfront Cloud?". This links a Cloud project, and veryfront dev syncs your source to its Cloud preview.',
     "  To use your own OpenAI or Anthropic key through the gateway, store it in Studio under Account settings > Provider keys.",
     `- Your own key, on this machine: set ${defaultKey} in .env, which works with the default model.`,
-    // The default agent model is DEFAULT_AGENT_MODEL_NAME; another provider's key
+    // The default agent model is openai/gpt-5-nano; another provider's key
     // alone fails with default-model-credential-mismatch.
     `  For ${otherKeyNames}, also set your agent's model to "auto" or "<provider>/<model>".`,
   ];

@@ -17,6 +17,8 @@ import { exists, makeTempDir, readTextFile, remove, stat } from "#veryfront/test
 import { runCommand } from "#veryfront/compat/process.ts";
 import { STARTER_TEMPLATE_NAMES } from "../../../templates/types.ts";
 import type { InitOptions } from "./types.ts";
+import { offerCloudProjectAfterInit } from "./init-command.ts";
+import { markEnvFileSource, markProcessEnvSource } from "veryfront/utils/env-loader";
 
 const TEST_DIR = await makeTempDir({ prefix: "veryfront-init-test-" });
 const EXPECTED_FAVICON = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
@@ -1310,5 +1312,42 @@ describe("init command integration", () => {
       assertEquals(result.stdout?.includes("\x1b["), false);
       assertEquals(result.stderr?.includes("\x1b["), false);
     });
+  });
+});
+
+describe("init inference advice and the invoking folder's environment", () => {
+  const key = "OPENAI_API_KEY";
+
+  async function adviceFor(source: "env-file" | "process"): Promise<string[]> {
+    const projectDir = await makeTempDir({ prefix: "veryfront-init-env-" });
+    const previous = Deno.env.get(key);
+    Deno.env.set(key, "<API_KEY>");
+    if (source === "env-file") markEnvFileSource(key, join(projectDir, "..", ".env"));
+    try {
+      const logged: string[] = [];
+      await offerCloudProjectAfterInit(
+        projectDir,
+        (message) => logged.push(message),
+        () => Promise.resolve("declined"),
+      );
+      return logged;
+    } finally {
+      markProcessEnvSource(key);
+      if (previous === undefined) Deno.env.delete(key);
+      else Deno.env.set(key, previous);
+      await remove(projectDir, { recursive: true });
+    }
+  }
+
+  it("does not count a key the current folder's .env supplied", async () => {
+    // `veryfront init child` inside a project: the CLI loaded that project's
+    // `.env` into this process, but `dev` in the new folder loads only its own.
+    const logged = await adviceFor("env-file");
+    assertEquals(logged.length, 1);
+    assertEquals(logged[0]!.includes("set up inference in one of these ways"), true);
+  });
+
+  it("counts a key the shell sets", async () => {
+    assertEquals(await adviceFor("process"), []);
   });
 });

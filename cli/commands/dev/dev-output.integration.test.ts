@@ -18,10 +18,10 @@ import {
 } from "../../../tests/_helpers/server.ts";
 import { VERSION } from "#cli/utils";
 import {
+  defaultModelKeyMismatchLine,
   DEV_ENV_RESTART_LINE,
   NO_INFERENCE_HEADING,
   PROVIDER_KEY_ENV_NAMES,
-  unusedProviderKeyHeading,
 } from "../../shared/inference-setup.ts";
 
 const NOISY_DEFAULT_FRAGMENTS = [
@@ -643,7 +643,7 @@ describe(
     );
 
     it(
-      "does not report a key that no agent can use",
+      "warns when the default model cannot use the only provider key",
       { timeout: TEST_TIMEOUTS.E2E },
       async () => {
         await withTestContext("dev-output-unused-provider-key", async (context) => {
@@ -670,11 +670,9 @@ export default agent({ id: "assistant", system: "Answer briefly." });
 
           const output = run.output();
           assertStringIncludes(output, "App ready");
-          assertStringIncludes(output, unusedProviderKeyHeading(["ANTHROPIC_API_KEY"]));
-          assert(
-            !output.includes("Anthropic direct"),
-            `a key no agent can use must not be reported as inference\nOutput:\n${output}`,
-          );
+          // A request can still pick an Anthropic model, so the key stays listed.
+          assertStringIncludes(output, "Anthropic direct");
+          assertStringIncludes(output, defaultModelKeyMismatchLine(["ANTHROPIC_API_KEY"]));
         });
       },
     );

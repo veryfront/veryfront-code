@@ -380,6 +380,7 @@ describe("offerCloudProjectAfterInit", () => {
         projectDir,
         (message) => logged.push(message),
         () => Promise.resolve("declined"),
+        () => undefined,
       );
       assertEquals(logged, []);
     } finally {
