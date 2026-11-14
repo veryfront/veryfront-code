@@ -14,6 +14,7 @@ import {
   createEvalValidationError,
   isEvalArray,
   isEvalRecord,
+  normalizeEvalEnvironmentContext,
   normalizeEvalString,
   normalizeEvalStringList,
 } from "./validation.ts";
@@ -99,6 +100,9 @@ function createEvalDefinition(
   const name = normalizeOptionalLabel(input.name, "Eval name") ?? (id || target);
   const description = normalizeOptionalDescription(input.description);
   const tags = input.tags === undefined ? [] : normalizeEvalStringList(input.tags, "Eval tags");
+  const environmentContext = "environmentContext" in input
+    ? normalizeEvalEnvironmentContext(input.environmentContext, "Eval")
+    : undefined;
 
   return {
     kind: "eval",
@@ -117,6 +121,7 @@ function createEvalDefinition(
       : {}),
     ...("input" in input && input.input ? { input: input.input } : {}),
     ...("mockTools" in input && input.mockTools ? { mockTools: input.mockTools } : {}),
+    ...(environmentContext === undefined ? {} : { environmentContext }),
     ...(input.check ? { check: input.check } : {}),
   };
 }
@@ -158,5 +163,7 @@ export function isEvalDefinition(value: unknown): value is EvalDefinition {
     value.tags.every((tag) => typeof tag === "string" && tag.trim() !== "") &&
     isEvalRecord(value.metadata) &&
     (value.input === undefined || typeof value.input === "function") &&
+    (value.environmentContext === undefined ||
+      (typeof value.environmentContext === "string" && value.environmentContext.trim() !== "")) &&
     (value.check === undefined || typeof value.check === "function");
 }

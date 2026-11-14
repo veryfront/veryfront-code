@@ -59,9 +59,9 @@ export interface EvalReportExportRedaction {
   includeDatasetPath?: boolean;
   /**
    * Include the deterministic dataset content hash. Defaults to false. The hash is computed
-   * over every example's id, input, expectedOutcome (when declared), reference, and metadata
-   * without a salt. It identifies dataset content across projects and runs and can be brute-forced
-   * for low-entropy datasets.
+   * over every example's id, input, expectedOutcome (when declared), reference, metadata, and
+   * environmentContext (when declared) without a salt. It identifies dataset content across
+   * projects and runs and can be brute-forced for low-entropy datasets.
    */
   includeDatasetHash?: boolean;
   /** Record and export context metadata keys that can be exported. Defaults to none. */
@@ -147,6 +147,11 @@ export interface EvalExample {
   input: unknown;
   reference?: unknown;
   metadata?: Record<string, unknown>;
+  /**
+   * Host facts sent to an agent target as `<environment_context>`, the way Studio sends them.
+   * Replaces the eval's and the agent's own `environmentContext` for this example.
+   */
+  environmentContext?: string;
 }
 
 /** Dataset example shape accepted by eval definitions. */
@@ -157,6 +162,11 @@ export type EvalExampleInput = {
   input: unknown;
   reference?: unknown;
   metadata?: Record<string, unknown>;
+  /**
+   * Host facts sent to an agent target as `<environment_context>`, the way Studio sends them.
+   * Replaces the eval's and the agent's own `environmentContext` for this example.
+   */
+  environmentContext?: string;
 };
 
 /** Context passed to dataset loaders. */
@@ -458,6 +468,8 @@ export interface EvalDefinition {
     context?: EvalToolInputContext,
   ) => EvalMaybePromise<unknown>;
   mockTools?: EvalMockTools;
+  /** Host facts sent to an agent target as `<environment_context>`. */
+  environmentContext?: string;
   check?: (context: EvalCheckContext) => EvalMaybePromise<void>;
 }
 
@@ -475,6 +487,11 @@ export interface EvalAgentInput {
   /** Optional run input contract, enforced before this eval executes. */
   inputSchema?: Schema<unknown> | Record<string, unknown>;
   mockTools?: EvalMockTools;
+  /**
+   * Host facts sent to the agent as `<environment_context>` for every example, the way Studio
+   * sends them. Replaces the agent's own `environmentContext`; an example's value replaces this.
+   */
+  environmentContext?: string;
   check?: (context: EvalCheckContext) => EvalMaybePromise<void>;
 }
 

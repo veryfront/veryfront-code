@@ -1026,6 +1026,54 @@ describe("eval CLI command helpers", () => {
     assertEquals(observed.at(-1), ["local_mock"]);
   });
 
+  it("sends the eval or example environment context as the agent's environment_context", async () => {
+    const model = scriptedModel(
+      [{ text: "eval" }, { text: "example" }, { text: "outside" }],
+      { modelId: "hosted/eval-environment-context", only: "generate" },
+    );
+    const assistant = createAgent({
+      id: "eval-environment-context",
+      model: "hosted/eval-environment-context",
+      system: "Answer briefly.",
+      skills: false,
+      environmentContext: "configured context",
+      resolveModelTransport: () => ({ model }),
+    });
+    const definition = evalAgent({
+      id: "eval:environment-context",
+      target: "agent:eval-environment-context",
+      environmentContext: "<studio_tabs>\nactive: app/page.tsx\n</studio_tabs>",
+      dataset: [{ id: "one", input: "hi" }],
+    });
+    const adapter = createAgentAdapter(assistant, createEvalOptions());
+    const systemText = (call: number) =>
+      JSON.stringify(
+        (model.calls[call]?.prompt as Array<{ role: string; content: unknown }>)
+          .filter((message) => message.role === "system"),
+      );
+
+    await adapter({ definition, example: { id: "one", input: "hi" }, repetition: 1 });
+    await adapter({
+      definition,
+      example: { id: "two", input: "hi", environmentContext: "selected node: Header" },
+      repetition: 1,
+    });
+    await assistant.generate({ input: "outside eval" });
+
+    assertStringIncludes(
+      systemText(0),
+      "<environment_context>\\n<studio_tabs>\\nactive: app/page.tsx\\n</studio_tabs>\\n</environment_context>",
+    );
+    assertEquals(systemText(0).includes("configured context"), false);
+    assertStringIncludes(
+      systemText(1),
+      "<environment_context>\\nselected node: Header\\n</environment_context>",
+    );
+    assertEquals(systemText(1).includes("studio_tabs"), false);
+    assertStringIncludes(systemText(2), "configured context");
+    assertEquals(systemText(2).includes("studio_tabs"), false);
+  });
+
   it("binds one runtime identity to each example repetition and its mock tools", async () => {
     const generatedIds: unknown[] = [];
     const bindings: unknown[] = [];

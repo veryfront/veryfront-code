@@ -6908,6 +6908,75 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     }
   });
 
+  it("renders the eval environment context for local source agent runs", async () => {
+    const model = scriptedModel([{ text: "Paris" }], { modelId: "hosted/eval-context" });
+    const sourceAgent = agent({
+      id: "context-researcher",
+      model: "hosted/eval-context",
+      system: "Answer briefly.",
+      skills: false,
+      environmentContext: "configured context",
+      resolveModelTransport: () => ({ model }),
+    });
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: runTaskDefinition,
+      findEvalById: async (target) =>
+        target === "eval:context"
+          ? {
+            id: "eval:context",
+            name: "Studio context",
+            filePath: "evals/context.eval.ts",
+            exportName: "default",
+            definition: evalAgent({
+              id: "eval:context",
+              target: "agent:context-researcher",
+              environmentContext: "active tab: app/page.tsx",
+              dataset: datasets.inline([{ id: "q1", input: "France capital?" }]),
+            }),
+          }
+          : null,
+      runEval: runEvalDefinition,
+      createEvalAgentAdapter: (config) =>
+        createAgentServiceEvalAdapter({ ...config, requestTimeoutMs: 250 }),
+    }));
+    const body = {
+      runId: "run_eval_context_agent",
+      kind: "task",
+      target: "task:eval",
+      projectId: "proj-1",
+      runtimeAgUiEndpoint: "http://localhost:4311/api/ag-ui",
+      config: { eval_id: "eval:context" },
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_eval_context_agent/execute",
+      body,
+      { "x-token": "runtime-token" },
+      "http://localhost:4311",
+    );
+    try {
+      const result = await withEnvValue(
+        "PORT",
+        "4311",
+        () => handler.handle(request, createCtx(publicKeyPem)),
+      );
+
+      assertExists(result.response);
+      assertEquals((await result.response.json()).success, true);
+      const system = JSON.stringify(
+        (model.calls[0]?.prompt as Array<{ role: string }>).filter((message) =>
+          message.role === "system"
+        ),
+      );
+      assertStringIncludes(
+        system,
+        "<environment_context>\\nactive tab: app/page.tsx\\n</environment_context>",
+      );
+      assertEquals(system.includes("configured context"), false);
+    } finally {
+      agentRegistry.delete("context-researcher");
+    }
+  });
+
   it("applies forwarded eval tool restrictions to local source agent runs", async () => {
     let sourceAgentStreamCalls = 0;
     let observedToolNames: string[] = [];
@@ -7492,6 +7561,97 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       runtime: { type: "preview_branch", id: branchId },
     });
     assertEquals(previewInput.forwarded_props, agentInput.forwarded_props);
+  });
+
+  it("sends the eval environment context as the durable run's studio_context item", async () => {
+    const requests: Array<{ pathname: string; body: Record<string, unknown> | null }> = [];
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: runTaskDefinition,
+      findEvalById: async (target) =>
+        target === "eval:context"
+          ? {
+            id: "eval:context",
+            name: "Studio context",
+            filePath: "evals/context.eval.ts",
+            exportName: "default",
+            definition: evalAgent({
+              id: "eval:context",
+              target: "agent:researcher",
+              environmentContext: "active tab: app/page.tsx",
+              dataset: datasets.inline([{ id: "q1", input: "France capital?" }]),
+            }),
+          }
+          : null,
+      runEval: runEvalDefinition,
+      createEvalAgentAdapter: (config) =>
+        createAgentServiceEvalAdapter({ ...config, requestTimeoutMs: 250 }),
+    }));
+    const body = {
+      runId: "run_eval_durable_context",
+      canonicalRunId: "88888888-8888-4888-8888-888888888888",
+      kind: "task",
+      target: "task:eval",
+      projectId: "55555555-5555-4555-8555-555555555555",
+      runtimeAgUiEndpoint: "https://demo-project.preview.veryfront.org/api/ag-ui",
+      config: { eval_id: "eval:context" },
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_eval_durable_context/execute",
+      body,
+      { "x-token": "runtime-token" },
+      "https://veryfront.org",
+    );
+    await withEnvValue(
+      "VERYFRONT_API_BASE_URL",
+      "https://api.example.test/",
+      () =>
+        withMockFetch(
+          async (input, init) => {
+            const url = new URL(String(input));
+            const method = observeFetchRequestInit(init).method ?? "GET";
+            requests.push({ pathname: url.pathname, body: requestJsonBody(init) });
+            if (method === "POST" && url.pathname.endsWith("/runs")) {
+              return Response.json({ id: "77777777-7777-4777-8777-777777777777" }, {
+                status: 202,
+              });
+            }
+            if (method === "GET" && url.pathname.endsWith("/stream")) {
+              return new Response(
+                [
+                  { type: "RUN_STARTED", runId: "eval-child-run" },
+                  { type: "RUN_FINISHED", runId: "eval-child-run" },
+                ].map((payload, index) =>
+                  `id: ${index + 1}\nevent: ${payload.type}\ndata: ${
+                    JSON.stringify({
+                      event_id: index + 1,
+                      event_type: payload.type,
+                      payload,
+                      is_error: false,
+                      created_at: "2026-10-04T20:00:00.000Z",
+                    })
+                  }\n\n`
+                ).join(""),
+                { headers: { "content-type": "text/event-stream" } },
+              );
+            }
+            return new Response("not found", { status: 404 });
+          },
+          () =>
+            handler.handle(request, {
+              ...createCtx(publicKeyPem),
+              projectId: "55555555-5555-4555-8555-555555555555",
+            }),
+        ),
+    );
+
+    const config = requests[0]?.body?.config as Record<string, unknown>;
+    assertEquals(config.context, [
+      {
+        type: "json",
+        title: "studio_context",
+        data: { environmentContext: "active tab: app/page.tsx" },
+      },
+    ]);
   });
 
   it("forwards managed AG-UI endpoint host context when localizing from a generic control-plane host", async () => {
