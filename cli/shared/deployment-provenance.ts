@@ -3,7 +3,7 @@ import { createFileSystem, getEnv } from "veryfront/platform";
 import { runCommand } from "#cli/process-command";
 import { isNotFoundError, lstat, realPath } from "veryfront/fs";
 import { dirname, isAbsolute, join, relative } from "veryfront/platform/path";
-import { DEPLOYMENT_ERROR } from "veryfront/errors";
+import { DEPLOYMENT_ERROR, PUSH_BRANCH_MISMATCH } from "veryfront/errors";
 import type { ApiClient } from "./config.ts";
 
 const RECEIPT_VERSION = 2 as const;
@@ -858,11 +858,11 @@ export function validatePushReceipt(
     throw new Error("The latest push targeted a different project. Run veryfront push again.");
   }
   if (receipt.branch !== expected.branch) {
-    throw new Error(
-      `The latest push is for branch "${receipt.branch}", but deploy targets "${expected.branch}". ` +
-        `Run veryfront deploy --branch ${receipt.branch} to deploy the latest push, ` +
-        `or veryfront push --branch ${expected.branch} to preview ${expected.branch} first.`,
-    );
+    throw PUSH_BRANCH_MISMATCH.create({
+      detail:
+        `The latest push is for branch "${receipt.branch}", but deploy targets "${expected.branch}". ` +
+        `Run veryfront push --branch ${expected.branch} to push this directory to ${expected.branch}, then deploy again.`,
+    });
   }
   if (expected.commitSha && receipt.commitSha !== expected.commitSha.toLowerCase()) {
     throw new Error(

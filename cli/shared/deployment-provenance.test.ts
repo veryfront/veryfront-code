@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 
 import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { VeryfrontError } from "veryfront/errors";
 import { deleteEnv, getEnv, makeTempDir, setEnv } from "#veryfront/testing/deno-compat.ts";
 import {
   clearPushReceipt,
@@ -251,8 +252,13 @@ describe("validatePushReceipt", () => {
       Error,
       "different project",
     );
+  });
 
-    await assertRejects(
+  it("refuses a push to another branch as a classified error that names the push to run", async () => {
+    // veryfront merge feature-x leaves the receipt naming feature-x, so a
+    // deploy of main lands here. It is an expected, explained state, not an
+    // unknown error, and its one fix is to push the branch being deployed.
+    const error = await assertRejects(
       () =>
         Promise.resolve().then(() =>
           validatePushReceipt(RECEIPT, {
@@ -264,10 +270,13 @@ describe("validatePushReceipt", () => {
             clean: true,
           })
         ),
-      Error,
+      VeryfrontError,
+    );
+    assertEquals(error.slug, "push-branch-mismatch");
+    assertEquals(
+      error.detail,
       'The latest push is for branch "main", but deploy targets "feature-x". ' +
-        "Run veryfront deploy --branch main to deploy the latest push, " +
-        "or veryfront push --branch feature-x to preview feature-x first.",
+        "Run veryfront push --branch feature-x to push this directory to feature-x, then deploy again.",
     );
   });
 
