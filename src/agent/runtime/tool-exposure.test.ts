@@ -7,6 +7,8 @@ import {
   createToolExposureState,
   createToolSearchDefinition,
   listToolExposure,
+  loadToolExposureNames,
+  parseToolSearchNames,
   readToolExposureContract,
   restoreToolExposureState,
   searchToolExposure,
@@ -601,30 +603,38 @@ it("veryfront__tool_search tells the model to search before declaring a requeste
     "domain",
     "inventory",
     "limit",
+    "names",
     "query",
     "resource",
     "schema",
     "search",
   ]);
   assertEquals(properties.query?.maxLength, undefined);
+  // The model must know when several exact names beat one query per tool.
+  assert(search.description.includes("names"));
+  assert(properties.names?.description?.includes("two or more exact tool names"));
 });
 
-it("veryfront__tool_search parameters are flat top-level scalars", () => {
+it("veryfront__tool_search parameters are flat top-level scalars or string lists", () => {
   // Nested mode objects such as {"search":{"query":"..."}} led Claude models
   // to stream invalid JSON under fine-grained tool streaming.
   const parameters = createToolSearchDefinition().parameters as {
     properties: Record<string, Record<string, unknown>>;
   };
   for (const [name, property] of Object.entries(parameters.properties)) {
+    const isStringList = property.type === "array";
     assert(
-      property.type === "string" || property.type === "integer",
-      `${name} must be a scalar, received ${String(property.type)}`,
+      property.type === "string" || property.type === "integer" || isStringList,
+      `${name} must be a scalar or string list, received ${String(property.type)}`,
     );
-    for (const nested of ["properties", "items", "oneOf", "anyOf", "allOf"]) {
+    if (isStringList) assertEquals(property.items, { type: "string", minLength: 1 }, name);
+    for (const nested of ["properties", "oneOf", "anyOf", "allOf"]) {
       assertEquals(Object.hasOwn(property, nested), false, `${name}.${nested}`);
     }
+    if (!isStringList) assertEquals(Object.hasOwn(property, "items"), false, `${name}.items`);
   }
   assertEquals(parameters.properties.inventory?.enum, ["all", "platform"]);
+  assertEquals(parameters.properties.names?.maxItems, 5);
 });
 
 it("veryfront__tool_search raw parameter schema declares no root combinator", () => {
@@ -1047,6 +1057,168 @@ it("authorized search matches load for the next step", () => {
     next.visible.map((tool) => tool.name),
     ["get_release", "load_skill", TOOL_SEARCH_TOOL_NAME],
   );
+});
+
+it("exact names load several tools in one call and name the unknown ones", () => {
+  const state = createToolExposureState();
+  const result = loadToolExposureNames({
+    names: ["get_release", "archive_release", "release", "get_releases"],
+    authorized: catalog,
+    available: [definition("list_files", "List project files")],
+    state,
+  });
+
+  // Exact names never fall back to substring or phrase matching.
+  assertEquals(result.matches.map((match) => [match.name, match.status]), [
+    ["get_release", "loaded"],
+    ["archive_release", "loaded"],
+  ]);
+  assertEquals(result.loadedCount, 2);
+  assertEquals(result.notFound, ["release", "get_releases"]);
+  assertEquals(result.notLoaded, []);
+  assertEquals([...state.loadedToolNames], ["get_release", "archive_release"]);
+  assertEquals(
+    createToolExposurePlan({ authorized: catalog, mode: "deferred", state }).visible
+      .map((tool) => tool.name),
+    ["archive_release", "get_release", "load_skill", TOOL_SEARCH_TOOL_NAME],
+  );
+});
+
+it("exact names report available tools and keep platform aliases and integration ids exact", () => {
+  const state = createToolExposureState();
+  const result = loadToolExposureNames({
+    names: ["read_marker", "veryfront__get_release", "jira__list_projects", "get_release"],
+    authorized: [...catalog, ...integrationDiscoveryCatalog()],
+    available: [definition("read_marker", "Read the release marker")],
+    state,
+  });
+
+  assertEquals(result.matches.map((match) => [match.name, match.status]), [
+    ["read_marker", "available"],
+    ["get_release", "loaded"],
+  ]);
+  // A missing integration action never loads its catalog reader as a stand-in.
+  assertEquals(result.notFound, ["jira__list_projects"]);
+  assertEquals(result.loadedCount, 1);
+  assertEquals([...state.loadedToolNames], ["get_release"]);
+});
+
+it("exact names stay within the loaded-tool limit and report what did not load", () => {
+  const state = createToolExposureState();
+  const result = loadToolExposureNames({
+    names: ["get_release", "create_release", "archive_release"],
+    authorized: catalog,
+    state,
+    maxLoadedTools: 2,
+  });
+
+  assertEquals(result.matches.map((match) => match.name), ["get_release", "create_release"]);
+  assertEquals(result.notLoaded, ["archive_release"]);
+  assertEquals(result.notFound, []);
+  assertEquals(state.loadedToolNames.size, 2);
+});
+
+it("exact names keep a requested state-loaded tool when loading another at capacity", () => {
+  const authorized = [
+    definition("old_tool", "Old tool"),
+    definition("newer_tool", "Newer tool"),
+    definition("new_tool", "New tool"),
+  ];
+  const state = createToolExposureState(["old_tool", "newer_tool"]);
+  const visible = authorized.slice(0, 2);
+  const result = loadToolExposureNames({
+    names: ["old_tool", "new_tool"],
+    authorized: [authorized[2]!],
+    available: visible,
+    state,
+    maxLoadedTools: 2,
+  });
+
+  assertEquals(result.matches.map((match) => [match.name, match.status]), [
+    ["old_tool", "available"],
+    ["new_tool", "loaded"],
+  ]);
+  assertEquals(result.notLoaded, []);
+  assertEquals([...state.loadedToolNames], ["old_tool", "new_tool"]);
+});
+
+it("exact names resolve past the ranked-search candidate limit", () => {
+  const authorized = Array.from(
+    { length: 4_100 },
+    (_, index) => definition(`catalog_tool_${String(index).padStart(4, "0")}`, "Catalog tool"),
+  );
+  const result = loadToolExposureNames({
+    names: ["catalog_tool_4099"],
+    authorized,
+    state: createToolExposureState(),
+  });
+
+  assertEquals(result.matches.map((match) => match.name), ["catalog_tool_4099"]);
+  assertEquals(result.notFound, []);
+});
+
+it("exact names reject accessor and Proxy lists without running them", () => {
+  let reads = 0;
+  const accessor: unknown[] = ["get_release"];
+  Object.defineProperty(accessor, 1, {
+    enumerable: true,
+    get() {
+      reads++;
+      return "create_release";
+    },
+  });
+  const proxy = new Proxy(["get_release"], {
+    get(target, key, receiver) {
+      reads++;
+      return Reflect.get(target, key, receiver);
+    },
+  });
+  for (const invalid of [accessor, proxy]) {
+    assertThrows(() => parseToolSearchNames(invalid), Error, "veryfront__tool_search names");
+  }
+  assertEquals(reads, 0);
+});
+
+it("exact names load one tool per requested name across case variants", () => {
+  const state = createToolExposureState();
+  const result = loadToolExposureNames({
+    names: ["Get_Release"],
+    authorized: [
+      definition("get_release", "Read a release"),
+      definition("GET_RELEASE", "Read a release"),
+      definition("Get_Release", "Read a release"),
+    ],
+    available: [definition("get_RELEASE", "Read a release")],
+    state,
+  });
+
+  assertEquals(result.matches.map((match) => match.name), ["Get_Release"]);
+  assertEquals(result.notLoaded, []);
+  assertEquals([...state.loadedToolNames], ["Get_Release"]);
+});
+
+it("exact names accept one to five non-empty names", () => {
+  assertEquals(parseToolSearchNames(["get_release", " get_release ", "create_release"]), [
+    "get_release",
+    "create_release",
+  ]);
+  for (
+    const invalid of [
+      [],
+      ["a", "b", "c", "d", "e", "f"],
+      ["get_release", ""],
+      ["get_release", 3],
+      "get_release",
+      [`${"x".repeat(257)}`],
+    ]
+  ) {
+    assertThrows(
+      () => parseToolSearchNames(invalid),
+      Error,
+      "veryfront__tool_search names",
+      JSON.stringify(invalid).slice(0, 40),
+    );
+  }
 });
 
 it("form_input activation survives a private checkpoint and current-authorization restore", () => {

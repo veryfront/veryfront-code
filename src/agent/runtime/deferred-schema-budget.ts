@@ -36,9 +36,13 @@ function protectedToolNames(messages: readonly Message[], plan: ToolExposurePlan
     if (modelStepSinceSearch) awaitingFirstUse.clear();
     modelStepSinceSearch = false;
     unknownSearchCalls.delete(part.toolCallId);
+    // A `names` result (it carries `notFound`) promises every match for the next
+    // step, including requested tools an earlier search already loaded.
+    const promisesAvailable = "notFound" in result && Array.isArray(result.notFound);
     for (const match of result.matches) {
       if (
-        match && typeof match === "object" && match.status === "loaded" &&
+        match && typeof match === "object" &&
+        (match.status === "loaded" || (promisesAvailable && match.status === "available")) &&
         typeof match.name === "string"
       ) awaitingFirstUse.add(match.name);
     }

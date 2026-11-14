@@ -72,8 +72,8 @@ mechanism.
 
 ### `veryfront__tool_search`
 
-Provide exactly one of four mode fields. Every argument is a top-level string or
-integer:
+Provide exactly one of five mode fields. Every argument is a top-level string,
+integer, or list of strings:
 
 - `{"schema":"veryfront__get_agent"}` returns the exact input schema and declared output
   schema of one authorized executable tool and loads it for the next model step.
@@ -95,13 +95,19 @@ integer:
 
   Pass `nextPageInput` unchanged to browse the next page. A null `nextPageInput`
   means the inventory is complete. `nextCursor` remains for compatibility.
+- `{"names":["veryfront__get_run","veryfront__list_run_events"]}` loads one to five
+  exact authorized executable tools for the next model step in one call. Names
+  resolve as an exact `query` name does, without its phrase fallback or catalog
+  guidance. Visible tools return as `available`. Unknown names return in
+  `notFound`, and matched tools that the step's tool limit leaves unloaded return
+  in `notLoaded`.
 - `{"query":"veryfront__get_agent"}` searches and loads matching authorized executable
   tools. Their input schemas become visible on the next model step.
 
 The `veryfront__tool_search` parameter schema declares no root `oneOf`, `anyOf`, or `allOf`
 because some providers reject root combinators. It also has no nested argument
 objects: under fine-grained tool streaming, models emitted invalid JSON for
-nested mode objects. The runtime rejects calls that provide zero or several mode
+nested mode objects. `names` is a flat list of strings, not an object. The runtime rejects calls that provide zero or several mode
 fields with an error naming the fields received. It also rejects `domain`,
 `resource`, `cursor`, or `limit` without `inventory`.
 

@@ -25,7 +25,10 @@ import { readToolDiscoveryMetadata } from "#veryfront/tool/discovery-metadata.ts
 import { parseIntegrationToolIdentity } from "#veryfront/integrations/source-policy.ts";
 import type { RuntimeToolLoadingMode } from "./runtime-tool-config.ts";
 import { isRuntimeProviderSchemaHiddenTool } from "./local-tool.ts";
-import { isOwnDataPropertyDescriptor } from "./data-property-descriptor.ts";
+import {
+  isOwnDataPropertyDescriptor,
+  snapshotOwnDataPropertyArray,
+} from "./data-property-descriptor.ts";
 import { hasTrustedPlatformPolicyToolDefinition } from "./skill-policy-enforcement.ts";
 import { isProviderNativeToolExposureDefinition } from "./provider-native-tool-inventory.ts";
 
@@ -980,14 +983,14 @@ export function readToolExposureContract(input: {
  * Create the framework `veryfront__tool_search` definition without exposing catalog
  * schemas. The root schema has no `oneOf`, `anyOf`, or `allOf` because some
  * providers reject root combinators; the runtime enforces exactly one mode.
- * Every field is a top-level scalar: nested argument objects led models to
- * stream invalid JSON under fine-grained tool streaming.
+ * Every field is a top-level scalar or a flat list of strings: nested argument
+ * objects led models to stream invalid JSON under fine-grained tool streaming.
  */
 export function createToolSearchDefinition(): ToolDefinition {
   return {
     name: TOOL_SEARCH_TOOL_NAME,
     description:
-      'Find and load this run\'s executable tools. Provide exactly one of: schema (exact tool name) to read its input and declared output schemas and load it; search (short phrase) to find tools without loading; inventory ("all" or "platform") to browse metadata pages; query to search and load matches. Check discovery before declaring a requested tool unavailable.',
+      'Find and load this run\'s executable tools. Provide exactly one of: schema (exact tool name) to read its input and declared output schemas and load it; search (short phrase) to find tools without loading; inventory ("all" or "platform") to browse metadata pages; names to load several exact tools; query to search and load matches. Check discovery before declaring a requested tool unavailable.',
     parameters: {
       type: "object",
       additionalProperties: false,
@@ -1034,6 +1037,14 @@ export function createToolSearchDefinition(): ToolDefinition {
           minimum: 1,
           maximum: 20,
           description: "Inventory only. Metadata entries per page, default 10.",
+        },
+        names: {
+          type: "array",
+          items: { type: "string", minLength: 1 },
+          minItems: 1,
+          maxItems: TOOL_SEARCH_RESULT_LIMIT,
+          description:
+            `Mode. Use when you need two or more exact tool names: loads up to ${TOOL_SEARCH_RESULT_LIMIT} of them for the next step in one call. Names never match by phrase; unknown names are returned in notFound. Use query for one name or a capability phrase.`,
         },
         query: {
           type: "string",
@@ -1246,6 +1257,175 @@ export function searchToolExposure(input: {
     resultCount: loadedMatches.length,
     loadedCount: loadedMatches.length,
     miss: loadedMatches.length === 0,
+  };
+}
+
+/** Exact-name load output: matched tools plus the requested names that did not load. */
+export type ToolNamesLoadResult = ToolSearchResult & {
+  /** Requested names that match no authorized executable tool, in request order. */
+  notFound: string[];
+  /** Matched tools the current tool limit leaves out of the next step, in request order. */
+  notLoaded: string[];
+};
+
+/**
+ * Validate the `names` mode argument: one to five distinct, non-empty exact
+ * tool names. Surrounding whitespace is trimmed and duplicates collapse.
+ */
+export function parseToolSearchNames(value: unknown): string[] {
+  const listError = new Error(
+    `veryfront__tool_search names requires a list of 1 to ${TOOL_SEARCH_RESULT_LIMIT} exact tool names; split a longer list into several calls`,
+  );
+  // Read entries as data only: an accessor or Proxy must not run during validation.
+  let entries: readonly unknown[];
+  try {
+    entries = snapshotOwnDataPropertyArray(value, {
+      label: "veryfront__tool_search names",
+      maximumEntries: TOOL_SEARCH_RESULT_LIMIT,
+      mapValue: (entry) => entry,
+    });
+  } catch {
+    throw listError;
+  }
+  if (entries.length === 0) throw listError;
+  const names: string[] = [];
+  for (let index = 0; index < entries.length; index++) {
+    const entry = entries[index];
+    const name = typeof entry === "string" ? privateTextTrim(entry) : "";
+    if (!name || !isUtf8LengthWithin(name, TOOL_SEARCH_NAME_MAX_BYTES)) {
+      throw new Error(
+        `veryfront__tool_search names entries must be non-empty tool name strings of at most ${TOOL_SEARCH_NAME_MAX_BYTES} UTF-8 bytes`,
+      );
+    }
+    if (!somePrivateArray(names, (existing) => existing === name)) pushPrivateArray(names, name);
+  }
+  return names;
+}
+
+/**
+ * Resolve one exact name the way `query` resolves an exact name, without its
+ * phrase fallback or catalog guidance: only the named tool itself, or the local
+ * tool a `veryfront__` alias names, can satisfy it.
+ */
+function findExactNameMatches(
+  name: string,
+  candidates: readonly SearchableTool[],
+): ToolSearchMatch[] {
+  const literalName = privateTextToLowerCase(name);
+  const canonical = parseCanonicalIntegrationQuery(name);
+  if (canonical === null) {
+    return sortSearchItems(
+      mapPrivateArray(
+        filterPrivateArray(
+          candidates,
+          (candidate) => privateTextToLowerCase(candidate.name) === literalName,
+        ),
+        toSearchMatch,
+      ),
+      compareToolSearchMatches,
+    );
+  }
+  const localAlias = canonical.namespace === PLATFORM_TOOL_NAMESPACE
+    ? privateTextSlice(literalName, PLATFORM_TOOL_NAMESPACE.length + 2)
+    : null;
+  return filterPrivateArray(rankCanonicalToolMatches(canonical, candidates), (match) => {
+    const matchName = privateTextToLowerCase(match.name);
+    return matchName === literalName || matchName === localAlias;
+  });
+}
+
+/**
+ * Load several exact tool names in one call, within the same five-tool result
+ * limit as `query`. Names never match by substring or phrase. Visible tools are
+ * reported as available; unknown names are returned in `notFound`.
+ */
+export function loadToolExposureNames(input: {
+  names: readonly string[];
+  authorized: readonly ToolDefinition[];
+  available?: readonly ToolDefinition[];
+  state: ToolExposureState;
+  maxLoadedTools?: number;
+}): ToolNamesLoadResult {
+  const names = parseToolSearchNames(input.names);
+  const candidates = collectSearchCandidates({
+    authorized: input.authorized,
+    available: input.available ?? [],
+    includeParameterDescriptions: false,
+    // Exact names must resolve anywhere inventory can list them, so read the
+    // whole catalog. Each entry reads only bounded name and description metadata.
+    candidateLimit: Number.POSITIVE_INFINITY,
+  });
+  const seen = createPrivateSet<string>();
+  const found: ToolSearchMatch[] = [];
+  const notFound: string[] = [];
+  for (let index = 0; index < names.length; index++) {
+    const name = names[index]!;
+    const exact = findExactNameMatches(name, candidates);
+    if (exact.length === 0) {
+      pushPrivateArray(notFound, name);
+      continue;
+    }
+    // One requested name loads one tool. Matching ignores ASCII case, so prefer
+    // the exact spelling, then the first deterministic variant.
+    let match = exact[0]!;
+    for (let matchIndex = 0; matchIndex < exact.length; matchIndex++) {
+      if (exact[matchIndex]!.name === name) {
+        match = exact[matchIndex]!;
+        break;
+      }
+    }
+    if (setHas(seen, match.name)) continue;
+    ReflectApply(SetAdd, seen, [match.name]);
+    pushPrivateArray(found, match);
+  }
+
+  // A requested tool that is visible only because an earlier search loaded it
+  // takes a loaded slot too. Refresh it first and keep its slot, so loading the
+  // other requested names never evicts it.
+  const stateBacked = createPrivateSet<string>();
+  for (let index = 0; index < found.length; index++) {
+    const match = found[index]!;
+    if (match.status !== "available" || !input.state.loadedToolNames.has(match.name)) continue;
+    ReflectApply(SetAdd, stateBacked, [match.name]);
+    input.state.loadedToolNames.delete(match.name);
+    input.state.loadedToolNames.add(match.name);
+  }
+  const loadLimit = input.maxLoadedTools === undefined
+    ? TOOL_SEARCH_RESULT_LIMIT
+    : Math.max(0, Math.min(TOOL_SEARCH_RESULT_LIMIT, input.maxLoadedTools - stateBacked.size));
+  let loading = 0;
+  for (let index = 0; index < found.length; index++) {
+    const match = found[index]!;
+    if (match.status !== "loaded" || loading === loadLimit) continue;
+    loading += 1;
+    input.state.loadedToolNames.delete(match.name);
+    input.state.loadedToolNames.add(match.name);
+  }
+  retainNewestLoadedToolNames(input.state, input.maxLoadedTools);
+
+  // Report from the final exposure state, so nothing is called available or
+  // loaded that the next model call does not carry.
+  const matches: ToolSearchMatch[] = [];
+  const notLoaded: string[] = [];
+  let loadedCount = 0;
+  for (let index = 0; index < found.length; index++) {
+    const match = found[index]!;
+    if (match.status === "available") {
+      if (!setHas(stateBacked, match.name) || input.state.loadedToolNames.has(match.name)) {
+        pushPrivateArray(matches, match);
+      } else pushPrivateArray(notLoaded, match.name);
+    } else if (input.state.loadedToolNames.has(match.name)) {
+      pushPrivateArray(matches, match);
+      loadedCount += 1;
+    } else pushPrivateArray(notLoaded, match.name);
+  }
+  return {
+    matches,
+    resultCount: matches.length,
+    loadedCount,
+    miss: matches.length === 0,
+    notFound,
+    notLoaded,
   };
 }
 
