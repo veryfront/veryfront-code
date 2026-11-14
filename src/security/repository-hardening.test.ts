@@ -144,7 +144,6 @@ describe("repository hardening", () => {
         "External fork pull requests",
         "GitHub App release credentials",
         "VERYFRONT_RELEASE_APP_CLIENT_ID",
-        "VERYFRONT_DOCS_APP_CLIENT_ID",
         "HOMEBREW_TAP_APP_CLIENT_ID",
         "GH_PAT_VERYFRONT",
         "GH_PAT_HOMEBREW_TAP",
@@ -270,38 +269,32 @@ describe("repository hardening", () => {
   });
 
   it("uses scoped GitHub App tokens instead of release PATs", async () => {
-    const releaseWorkflow = await readText(".github/workflows/cicd.yml");
-    const docsWorkflow = await readText(".github/workflows/sync-docs.yml");
-    const workflows = `${releaseWorkflow}\n${docsWorkflow}`;
+    const workflow = await readText(".github/workflows/cicd.yml");
 
-    assertEquals(workflows.includes("GH_PAT_"), false);
-    assertEquals(workflows.includes("HOMEBREW_TAP_PAT"), false);
+    assertEquals(workflow.includes("GH_PAT_"), false);
+    assertEquals(workflow.includes("HOMEBREW_TAP_PAT"), false);
 
     for (
       const required of [
         CREATE_APP_TOKEN_ACTION,
         "client-id: ${{ vars.VERYFRONT_RELEASE_APP_CLIENT_ID }}",
         "private-key: ${{ secrets.VERYFRONT_RELEASE_APP_PRIVATE_KEY }}",
-        "client-id: ${{ vars.VERYFRONT_DOCS_APP_CLIENT_ID }}",
-        "private-key: ${{ secrets.VERYFRONT_DOCS_APP_PRIVATE_KEY }}",
         "client-id: ${{ vars.HOMEBREW_TAP_APP_CLIENT_ID }}",
         "private-key: ${{ secrets.HOMEBREW_TAP_APP_PRIVATE_KEY }}",
         "repositories: |",
         "veryfront-server",
         "veryfront-job-runner",
         "veryfront-sandbox",
-        "veryfront-docs",
         "homebrew-tap",
         "permission-contents: write",
         "permission-pull-requests: write",
         "steps.release-app-token.outputs.token",
-        "steps.docs-app-token.outputs.token",
         "steps.homebrew-app-token.outputs.token",
       ]
     ) {
       assert(
-        workflows.includes(required),
-        `expected workflows to use ${required}`,
+        workflow.includes(required),
+        `expected workflow to use ${required}`,
       );
     }
   });
