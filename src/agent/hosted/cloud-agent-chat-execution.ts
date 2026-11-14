@@ -23,7 +23,8 @@ import {
   buildScheduleTraceAttributes,
 } from "./trace-attributes.ts";
 import { createHostedFormInputTool } from "./form-input-tool.ts";
-import { createHostedWebFetchTool } from "./web-fetch-tool.ts";
+import { createApiOwnedHostedWebFetchTool, createHostedWebFetchTool } from "./web-fetch-tool.ts";
+import { hostedChatRequestIncludesTool } from "./chat-request.ts";
 import { type HostedChatRuntimeCreationResult } from "./chat-runtime-contract.ts";
 import type { HostedConversationRootRunContext } from "../conversation/root-run-lifecycle.ts";
 import { type AgentRuntimeMessage } from "../runtime/message-adapter.ts";
@@ -154,6 +155,7 @@ export function buildLocalTools(
   context: NodeVeryfrontCloudAgentServiceContext,
   options: DefaultHostedChatRuntimeCreationOptions,
   taskContext: DefaultHostedChatRuntimeTaskContext,
+  request?: Pick<ParsedHostedChatRequest, "forwardedProps">,
 ): HostToolSet {
   const config = context.infrastructure.getConfig();
   const projectTools = getDiscoveredHostTools({ agentId: taskContext.agentId });
@@ -167,7 +169,11 @@ export function buildLocalTools(
     },
     load_skill: createLoadSkillTool(context, taskContext),
     sleep: sleepTool,
-    web_fetch: createHostedWebFetchTool(),
+    // When the API attaches its own web_fetch it intercepts the call and applies
+    // its checks, so the host offers the definition but must never fetch itself.
+    web_fetch: hostedChatRequestIncludesTool(request?.forwardedProps, "web_fetch")
+      ? createApiOwnedHostedWebFetchTool()
+      : createHostedWebFetchTool(),
   });
   const tools = withPlatformHostToolAliases(platformTools, projectTools);
 
@@ -292,7 +298,8 @@ export async function createAgentRuntime(
     apiUrl: config.VERYFRONT_API_URL,
     authToken: options.authToken,
     createBashTool: context.options.createBashTool,
-    buildBaseTools: (taskContext) => buildLocalTools(context, options, taskContext),
+    buildBaseTools: (taskContext) =>
+      buildLocalTools(context, options, taskContext, terminalRequest),
   });
 
   let cleanupPromise: Promise<void> | undefined;
