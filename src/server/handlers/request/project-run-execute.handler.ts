@@ -4822,7 +4822,9 @@ async function executeKnowledgeIngestRun(input: {
       runKnowledgeParser,
     } = await import("#cli/commands/knowledge/command");
     const { downloadUploadToFile } = await import("#cli/commands/uploads/command");
-    const { putRemoteFileFromLocal } = await import("#cli/commands/files/command");
+    const { putRemoteFileFromLocal, readRemoteFileIfExists } = await import(
+      "#cli/commands/files/command"
+    );
     const { putBinaryKnowledgeAsset } = await import(
       "../../../../cli/commands/knowledge/binary-assets.ts"
     );
@@ -4984,8 +4986,16 @@ async function executeKnowledgeIngestRun(input: {
             progressBridge,
           ),
           destinationBranch: outputDestination?.branchId ?? "main",
+          readRemoteKnowledgeFile: (remotePath) =>
+            readRemoteFileIfExists(
+              client,
+              projectReference,
+              remotePath,
+              outputDestination,
+              input.signal,
+            ),
           indexKnowledgeDocument: indexCanonical,
-          uploadKnowledgeFile: (remotePath, localPath, metadata, storageKind) =>
+          uploadKnowledgeFile: (remotePath, localPath, metadata, storageKind, expected) =>
             storageKind === "binary"
               ? putBinaryKnowledgeAsset({
                 client,
@@ -5004,6 +5014,7 @@ async function executeKnowledgeIngestRun(input: {
                 input.signal,
                 outputDestination,
                 metadata,
+                expected,
               ),
           signal: input.signal,
         });

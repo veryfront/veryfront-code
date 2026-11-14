@@ -197,6 +197,38 @@ export async function getRemoteFile(
   return getFileContent(client, projectSlug, normalizeProjectFilePath(remotePath), MAIN_SOURCE);
 }
 
+/** A guard for a file write: the path must still be absent, or still at this version. */
+export type RemoteFileWriteExpectation = { absent: true } | { versionId: string };
+
+/** Reads a file at its exact path; `undefined` when it does not exist. Binary content reads as `""`. */
+export async function readRemoteFileIfExists(
+  client: ApiClient,
+  projectSlug: string,
+  remotePath: string,
+  destination?: RemoteFileWriteDestination,
+  signal?: AbortSignal,
+): Promise<{ content: string; versionId?: string } | undefined> {
+  const params: Record<string, string> = { exact_path: "true" };
+  if (destination?.branch !== undefined) params.ref = `branch:${destination.branch}`;
+  else if (destination?.branchId !== undefined) params.branch_id = destination.branchId;
+  try {
+    const file = await client.get<{ content?: unknown; version_id?: unknown }>(
+      `/projects/${projectSlug}/files/${encodeURIComponent(normalizeProjectFilePath(remotePath))}`,
+      params,
+      signal ? { signal } : undefined,
+    );
+    return {
+      content: typeof file.content === "string" ? file.content : "",
+      ...(typeof file.version_id === "string" ? { versionId: file.version_id } : {}),
+    };
+  } catch (error) {
+    if (error && typeof error === "object" && "status" in error && error.status === 404) {
+      return undefined;
+    }
+    throw error;
+  }
+}
+
 export interface PublishedFileReceipt {
   path: string;
   file_id?: string;
@@ -212,16 +244,20 @@ export async function putRemoteFileFromLocal(
   signal?: AbortSignal,
   destination?: RemoteFileWriteDestination,
   metadata?: Record<string, unknown>,
+  expected?: RemoteFileWriteExpectation,
 ): Promise<PublishedFileReceipt> {
   const destinationUrl = buildRemoteFileUrl(projectSlug, remotePath, destination);
   const fs = createFileSystem();
   signal?.throwIfAborted();
   const content = await fs.readTextFile(localPath);
   signal?.throwIfAborted();
+  // A retried guarded write would see its own committed version and report a conflict.
   const result = await client.put<PublishedFileReceipt>(destinationUrl, {
     content,
     ...(metadata ? { metadata } : {}),
-  }, signal ? { signal, retryPolicy: "none" } : undefined);
+    ...(expected && "absent" in expected ? { expected_absent: true } : {}),
+    ...(expected && "versionId" in expected ? { expected_version_id: expected.versionId } : {}),
+  }, signal || expected ? { ...(signal ? { signal } : {}), retryPolicy: "none" } : undefined);
   signal?.throwIfAborted();
   return {
     path: result.path ?? normalizeProjectFilePath(remotePath),
