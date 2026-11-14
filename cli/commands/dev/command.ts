@@ -14,6 +14,8 @@ import { startDevServer } from "veryfront/server";
 import { clearAllLocalCaches } from "veryfront/transforms/mdx-cache";
 import { isPersistentLocalCacheEnabled } from "veryfront/cache";
 import { validateProviderConfig } from "veryfront/discovery";
+import { agentRegistry } from "#veryfront/agent/composition/index.ts";
+import { getAgentExecutionConfig } from "#veryfront/agent/runtime/execution-config.ts";
 import { brand, dim, error as errorColor, warning } from "#cli/ui";
 import { exitProcess, isTTY, isVerbose, registerTerminationSignals } from "#cli/utils";
 import { DEV_SHORTCUTS, shortcutsBlock } from "../../ui/components/shortcuts.ts";
@@ -38,6 +40,7 @@ import {
   advertisesCloudGateway,
   devInferenceHintLines,
   listInferenceOptions,
+  providerKeysNoAgentCanUse,
 } from "./inference-status.ts";
 import {
   findUnconnectedIntegrationLines,
@@ -602,7 +605,7 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
         const runtimeId = getConnectedLocalRuntime()?.runtimeId;
         if (runtimeId) console.log(`    ${dim("Runtime")} ${runtimeId}`);
       }
-      const inferenceOptions = listInferenceOptions({
+      const inferenceEnvironment = {
         apiToken: runtimeAuth.apiToken,
         projectSlug: runtimeAuth.projectSlug,
         openaiApiKey: getEnv("OPENAI_API_KEY"),
@@ -610,7 +613,14 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
         anthropicApiKey: getEnv("ANTHROPIC_API_KEY"),
         googleApiKey: getEnv("GOOGLE_API_KEY") ?? getEnv("GOOGLE_GENERATIVE_AI_API_KEY"),
         mistralApiKey: getEnv("MISTRAL_API_KEY"),
-      });
+        // Primitive discovery registers the project's agents before Ready. The
+        // execution config keeps an omitted model omitted; the public config
+        // already holds the default it resolves to.
+        agentModels: [...agentRegistry.getAll().values()].map((agent) =>
+          getAgentExecutionConfig(agent.config).model
+        ),
+      };
+      const inferenceOptions = listInferenceOptions(inferenceEnvironment);
       if (inferenceOptions.length > 0) {
         console.log(
           `  ${dim("Inference")} ${
@@ -632,7 +642,10 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
           );
         }
       }
-      const [hintHeading, ...hintLines] = devInferenceHintLines(inferenceOptions);
+      const [hintHeading, ...hintLines] = devInferenceHintLines(
+        inferenceOptions,
+        providerKeysNoAgentCanUse(inferenceEnvironment),
+      );
       if (hintHeading) console.log(`  ${warning("!")} ${hintHeading}`);
       for (const line of hintLines) console.log(`    ${line}`);
       // The banner reports configured paths, and it must not block Ready on a

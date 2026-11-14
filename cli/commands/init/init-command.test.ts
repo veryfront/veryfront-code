@@ -331,9 +331,17 @@ describe("initCommand into the current directory", () => {
 });
 
 describe("offerCloudProjectAfterInit", () => {
-  async function run(choose: () => Promise<"linked" | "declined" | "cancelled">) {
+  async function run(
+    choose: () => Promise<"linked" | "declined" | "cancelled">,
+    environment: Record<string, string> = {},
+  ) {
     const logged: string[] = [];
-    await offerCloudProjectAfterInit("/unused", (message) => logged.push(message), choose);
+    await offerCloudProjectAfterInit(
+      "/unused",
+      (message) => logged.push(message),
+      choose,
+      (name) => environment[name],
+    );
     return logged;
   }
 
@@ -353,6 +361,39 @@ describe("offerCloudProjectAfterInit", () => {
       assertEquals(logged[0]!.includes("restart veryfront dev"), false);
     });
   }
+
+  it("prints no setup advice when an OpenAI key is already set", async () => {
+    // The scaffolded agents leave their model unset, so the default OpenAI
+    // model serves them with this key, the same check the dev banner makes.
+    assertEquals(
+      await run(() => Promise.resolve("declined"), { OPENAI_API_KEY: "<API_KEY>" }),
+      [],
+    );
+  });
+
+  it("reads the key from the generated .env", async () => {
+    const projectDir = await makeTempDir({ prefix: "veryfront-init-env-" });
+    try {
+      await Deno.writeTextFile(join(projectDir, ".env"), "OPENAI_API_KEY=<API_KEY>\n");
+      const logged: string[] = [];
+      await offerCloudProjectAfterInit(
+        projectDir,
+        (message) => logged.push(message),
+        () => Promise.resolve("declined"),
+      );
+      assertEquals(logged, []);
+    } finally {
+      await remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("still names both ways when only a key the scaffolded agents cannot use is set", async () => {
+    const logged = await run(() => Promise.resolve("declined"), {
+      ANTHROPIC_API_KEY: "<API_KEY>",
+    });
+    assertEquals(logged.length, 1);
+    assertStringIncludes(logged[0]!, "set up inference in one of these ways");
+  });
 
   it("names the failure, then both ways to get inference, when Cloud setup throws", async () => {
     const logged = await run(() => Promise.reject(new Error("Network unavailable")));

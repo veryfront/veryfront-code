@@ -1,9 +1,12 @@
 import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { DEFAULT_AGENT_MODEL } from "#veryfront/agent/runtime/model-resolution.ts";
 import {
+  DEFAULT_AGENT_MODEL_NAME,
   inferenceSetupOptionLines,
   NO_INFERENCE_HEADING,
   PROVIDER_KEY_ENV_NAMES,
+  unusedProviderKeyHeading,
 } from "./inference-setup.ts";
 
 describe("shared/inference-setup", () => {
@@ -55,7 +58,15 @@ describe("shared/inference-setup", () => {
     );
   });
 
+  it("names the model the runtime gives an agent with no model", () => {
+    assertEquals(DEFAULT_AGENT_MODEL_NAME, DEFAULT_AGENT_MODEL);
+  });
+
   it("follows the public copy rules", () => {
     assert(!/[–—]/.test(text), "copy must not use en or em dashes");
+    assert(
+      !/[–—]/.test(unusedProviderKeyHeading(["ANTHROPIC_API_KEY"])),
+      "copy must not use en or em dashes",
+    );
   });
 });
