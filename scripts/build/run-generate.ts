@@ -45,6 +45,13 @@ export interface GeneratorUnit {
 
 export const UNITS: GeneratorUnit[] = [
   {
+    name: "portable-websocket-runtime",
+    commands: [["deno", "run", "--frozen", "-A", "extensions/ext-node-websocket-ws/scripts/prebundle.ts"]],
+    inputRoots: ["extensions/ext-node-websocket-ws"],
+    inputFiles: ["deno.lock", "deno.json"],
+    outputs: ["extensions/ext-node-websocket-ws/src/portable-runtime.generated.js"],
+  },
+  {
     name: "yaml-runtime",
     commands: [["deno", "run", "--frozen", "-A", "extensions/ext-yaml/scripts/prebundle.ts"]],
     inputRoots: ["extensions/ext-yaml"],

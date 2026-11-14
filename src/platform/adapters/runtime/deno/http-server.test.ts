@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import {
   assertEquals,
+  assertInstanceOf,
   assertRejects,
   assertStrictEquals,
   assertStringIncludes,
@@ -377,6 +378,48 @@ describe("Deno HTTP server lifecycle", () => {
     // The raw OS-level signature is preserved for Sentry correlation rather
     // than swallowed.
     assertStrictEquals(error.cause, lookupFailure);
+  });
+
+  it("sanitizes the selected transport getaddrinfo failure without exposing its cause", async () => {
+    const hostname = "private-bind-regression.invalid";
+    const error = await assertRejects(
+      () =>
+        createDenoServerWithRuntime({
+          serve() {
+            throw Object.assign(new Error(`getaddrinfo ENOTFOUND ${hostname}`), {
+              code: "ENOTFOUND",
+              syscall: "getaddrinfo",
+            });
+          },
+        }, () =>
+          new Response("ok"), { hostname, port: 4321 }),
+      Error,
+      "could not be resolved",
+    );
+    assertInstanceOf(error, Error);
+    assertEquals("slug" in error && error.slug, "initialization-error");
+    assertEquals(error.message.includes(hostname), false);
+    assertEquals(String(error.cause).includes(hostname), false);
+  });
+
+  it("sanitizes the selected transport address-in-use cause", async () => {
+    const hostname = "private-bind-regression.invalid";
+    const error = await assertRejects(
+      () =>
+        createDenoServerWithRuntime({
+          serve() {
+            throw Object.assign(new Error(`listen EADDRINUSE ${hostname}:4321`), {
+              code: "EADDRINUSE",
+            });
+          },
+        }, () =>
+          new Response("ok"), { hostname, port: 4321 }),
+      Error,
+      "Address already in use: port 4321",
+    );
+    assertInstanceOf(error, Error);
+    assertEquals(error.message.includes(hostname), false);
+    assertEquals(String(error.cause).includes(hostname), false);
   });
 
   it("names a loopback bind host that fails DNS resolution", async () => {

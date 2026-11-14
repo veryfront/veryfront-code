@@ -1,4 +1,9 @@
+import type { HttpHandlerResponse } from "../../adapters/base.ts";
+import type { NodeWebSocketServerProvider } from "#veryfront/extensions/websocket";
+
 export interface ServeOptions {
+  /** Deno: undefined preserves implicit WS support; null explicitly disables it. */
+  nodeWebSocketServerProvider?: Readonly<NodeWebSocketServerProvider> | null;
   port?: number;
   hostname?: string;
   signal?: AbortSignal;
@@ -11,7 +16,7 @@ export interface ServeOptions {
   onRuntimeError?: (error: Error) => void | Promise<void>;
 }
 
-export type Handler = (request: Request) => Response | Promise<Response>;
+export type Handler = (request: Request) => HttpHandlerResponse | Promise<HttpHandlerResponse>;
 
 export interface HttpServer {
   /**
@@ -28,7 +33,7 @@ export interface HttpServer {
 
 export interface WebSocketUpgradeResult {
   socket: WebSocket;
-  response: Response;
+  response: HttpHandlerResponse;
 }
 
 export interface WebSocketUpgradeOptions {

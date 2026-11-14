@@ -22,6 +22,14 @@
  */
 
 import {
+  getWebSocketUpgradeIdleTimeout,
+  isDenoWebSocketResponse,
+  recordNodeWebSocketUpgradeRequest,
+  recordWebSocketBufferedAmount,
+  revokeNodeWebSocketUpgradeRequest,
+} from "#veryfront/platform/adapters/runtime/shared/http-upgrade-provenance.ts";
+
+import {
   DevServer,
   type DevServerHandler,
   type DevServerOptions,
@@ -218,7 +226,8 @@ const _nativeGlobal = new Function("return this")() as typeof globalThis;
 const _NativeResponse: typeof Response = _nativeGlobal.Response;
 
 function toNativeResponse(res: Response): Response {
-  if (res instanceof _NativeResponse) return res;
+  // The serving transport must receive its exact registered upgrade signal.
+  if (isWebSocketUpgradeResponse(res) || res instanceof _NativeResponse) return res;
   // TS narrows to `never` after the instanceof check because it can't see the
   // runtime class divergence between DNT's polyfill Response and native Response.
   const src = res as Response;
@@ -309,7 +318,7 @@ export async function createHandler(
 
   const upgrade = (server: unknown) => {
     if (disposalStarted) throw new Error("Veryfront handler is already shutting down");
-    if (nodeWebSocketServerProvider === undefined) {
+    if (nodeWebSocketServerProvider == null) {
       throw new Error(NODE_WEBSOCKET_SERVER_PROVIDER_MISSING_MESSAGE);
     }
     const httpServer = server as import("node:http").Server;
@@ -384,13 +393,19 @@ export async function createHandler(
           }
           if (webSocketKey) headersRecord["sec-websocket-key"] = webSocketKey;
           headersRecord[upgradeRegistry.NODE_WEBSOCKET_UPGRADE_ID_HEADER] = requestId;
-          const upgradeResponse = await internalFetch(
-            new Request(url.toString(), {
-              method: "GET",
-              headers: headersRecord,
-              signal: requestAbort.signal,
-            }),
-          );
+          const webRequest = new Request(url.toString(), {
+            method: "GET",
+            headers: headersRecord,
+            signal: requestAbort.signal,
+          });
+          recordNodeWebSocketUpgradeRequest(webRequest, requestId);
+          const upgradeResponse = await (async () => {
+            try {
+              return await internalFetch(webRequest);
+            } finally {
+              revokeNodeWebSocketUpgradeRequest(webRequest);
+            }
+          })();
           if (!isWebSocketUpgradeResponse(upgradeResponse)) {
             rejectWebSocketUpgrade(
               requestId,
@@ -415,6 +430,18 @@ export async function createHandler(
             return;
           }
 
+          if (
+            (getWebSocketUpgradeIdleTimeout(upgradeResponse) ?? 0) > 0 &&
+            !nodeWebSocketServerProvider.supportsIdleTimeout
+          ) {
+            throw new Error("WebSocket provider does not support the requested idle timeout");
+          }
+          if (
+            isDenoWebSocketResponse(upgradeResponse) &&
+            !nodeWebSocketServerProvider.getBufferedAmount
+          ) {
+            throw new Error("Deno WebSocket provider must expose its transport buffered amount");
+          }
           if (!wsServer) {
             const candidate = captureNodeWebSocketServer(
               nodeWebSocketServerProvider.createServer(
@@ -439,6 +466,8 @@ export async function createHandler(
             head,
             (ws: NodeWebSocketConnection) => {
               releaseTrackedSocket();
+              const getBufferedAmount = nodeWebSocketServerProvider.getBufferedAmount;
+              if (getBufferedAmount) recordWebSocketBufferedAmount(ws, () => getBufferedAmount(ws));
               if (!upgradeRegistry.resolveWebSocketUpgrade(requestId, ws)) {
                 if (ws.terminate) ws.terminate();
                 else ws.close();

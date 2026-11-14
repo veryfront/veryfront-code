@@ -1,6 +1,6 @@
-import type { ServeOptions, Server } from "../../base.ts";
+import type { HttpHandlerResponse, ServeOptions, Server } from "../../base.ts";
 
-type RequestHandler = (request: Request) => Promise<Response> | Response;
+type RequestHandler = (request: Request) => Promise<HttpHandlerResponse> | HttpHandlerResponse;
 type ServerFactory = (
   handler: RequestHandler,
   options: ServeOptions,

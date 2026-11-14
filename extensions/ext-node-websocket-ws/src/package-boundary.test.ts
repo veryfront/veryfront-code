@@ -18,6 +18,10 @@ Deno.test("ws extension is auto-activated and owns every third-party dependency"
   }]);
   assertEquals(manifest.imports.ws, "npm:ws@8.21.1");
   assertEquals(manifest.imports["@types/ws"], "npm:@types/ws@8.18.1");
+  assertEquals(manifest.exports, {
+    ".": "./src/index.ts",
+    "./portable": "./src/portable.ts",
+  });
 });
 
 Deno.test("ws contracts stay behind the dedicated Node-only package subpath", () => {

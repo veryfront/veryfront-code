@@ -1,4 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { assertEquals, assertRejects, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createServeHandler, ManagedServerRegistry } from "./server-lifecycle.ts";
@@ -13,7 +14,7 @@ describe("platform/adapters/runtime/shared/server-lifecycle", () => {
       const registry = new ManagedServerRegistry();
 
       const createServer = async (
-        _handler: (request: Request) => Promise<Response> | Response,
+        _handler: Parameters<RuntimeAdapter["serve"]>[0],
         _options: unknown,
       ) => {
         return fakeServer;

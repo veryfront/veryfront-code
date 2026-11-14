@@ -43,6 +43,32 @@ function createBootstrap(adapter: RuntimeAdapter, dispose: () => void): Bootstra
 }
 
 describe("production server bootstrap ownership", () => {
+  for (const provider of [undefined, null]) {
+    it(`preserves the supplied WebSocket provider policy ${provider}`, async () => {
+      const adapter = createAdapter();
+      const serve = adapter.serve;
+      let observed: unknown = "listener not called";
+      adapter.serve = (handler, options) => {
+        observed = options.nodeWebSocketServerProvider;
+        return serve(handler, options);
+      };
+      const bootstrapResult = createBootstrap(adapter, () => {});
+      if (provider === null) bootstrapResult.nodeWebSocketServerProvider = null;
+      const server = await startProductionServerWithDependencies({
+        projectDir: "/app",
+        port: 0,
+        adapter,
+        bootstrapResult,
+        unhandledRejectionGuard: false,
+      }, { bootstrap: () => Promise.reject(new Error("unexpected bootstrap")) });
+      try {
+        assertEquals(observed, provider);
+      } finally {
+        await server.stop();
+      }
+    });
+  }
+
   for (const enabled of [true, false]) {
     it(`uses supplied bootstrap recycle policy ${enabled} over the obsolete parent policy`, async () => {
       const parentAdapter = createAdapter();

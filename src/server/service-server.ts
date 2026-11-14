@@ -4,6 +4,8 @@ import {
   createNodeServerWithStartupOwner,
   type NodeServer,
 } from "#veryfront/platform/adapters/runtime/node/http-server.ts";
+import { createDenoServer } from "#veryfront/platform/adapters/runtime/deno/http-server.ts";
+import { needsDenoNodeHttpTransport } from "#veryfront/platform/adapters/runtime/deno/http-transport.ts";
 import type { NodeWebSocketServerProvider } from "#veryfront/extensions/websocket";
 
 /** Public API contract for veryfront service server fetch. */
@@ -53,7 +55,7 @@ export type StartNodeVeryfrontServerOptions = {
   signals?: readonly NodeJS.Signals[];
   hardShutdownTimeoutMs?: number;
   /** Extension-provided Node WebSocket implementation; upgrades fail closed when omitted. */
-  nodeWebSocketServerProvider?: Readonly<NodeWebSocketServerProvider>;
+  nodeWebSocketServerProvider?: Readonly<NodeWebSocketServerProvider> | null;
 };
 
 /** Options accepted by start veryfront server. */
@@ -64,8 +66,8 @@ export type StartVeryfrontServerOptions = {
   logger?: VeryfrontServiceServerLogger;
   signals?: readonly NodeJS.Signals[];
   hardShutdownTimeoutMs?: number;
-  /** Used only when the selected runtime is Node.js. */
-  nodeWebSocketServerProvider?: Readonly<NodeWebSocketServerProvider>;
+  /** Used by Node.js and affected Deno HTTP transports. */
+  nodeWebSocketServerProvider?: Readonly<NodeWebSocketServerProvider> | null;
 };
 
 /** Public API contract for veryfront service server runtime kind. */
@@ -446,7 +448,15 @@ async function startDenoVeryfrontServer(
   const logger = options.logger ?? serverLogger.component("service-server");
   const bindAddress = options.bindAddress ?? "0.0.0.0";
   const abortController = new AbortController();
-  const server = deno.serve({
+  const fallback = needsDenoNodeHttpTransport()
+    ? await createDenoServer(options.runtime.fetch, {
+      port: options.port,
+      hostname: bindAddress,
+      signal: abortController.signal,
+      nodeWebSocketServerProvider: options.nodeWebSocketServerProvider,
+    })
+    : undefined;
+  const server = fallback ? { addr: fallback.addr, shutdown: () => fallback.stop() } : deno.serve({
     port: options.port,
     hostname: bindAddress,
     signal: abortController.signal,

@@ -16,6 +16,10 @@ import {
   rejectWebSocketUpgrade,
   resolveWebSocketUpgrade,
 } from "./http-server.ts";
+import {
+  getWebSocketUpgradeIdleTimeout,
+  recordNodeWebSocketUpgradeRequest,
+} from "../shared/http-upgrade-provenance.ts";
 import { NodeServerAdapter, NodeWebSocket } from "./websocket-adapter.ts";
 import type { WSWebSocket } from "./types.ts";
 
@@ -48,7 +52,7 @@ function websocketRequest(
   protocols?: string,
   transportId?: string,
 ): Request {
-  return new Request("http://localhost/_ws", {
+  const request = new Request("http://localhost/_ws", {
     headers: {
       connection: "Upgrade",
       upgrade: "websocket",
@@ -58,6 +62,8 @@ function websocketRequest(
       ...(transportId ? { [NODE_WEBSOCKET_UPGRADE_ID_HEADER]: transportId } : {}),
     },
   });
+  recordNodeWebSocketUpgradeRequest(request, transportId ?? key);
+  return request;
 }
 
 describe("NodeServerAdapter WebSocket upgrade", () => {
@@ -504,4 +510,156 @@ describe("NodeWebSocket EventTarget compatibility", () => {
     ws.emit("close", 1000, Buffer.from("done"));
     assertEquals(socket.readyState, NodeWebSocket.CLOSED);
   });
+});
+
+describe("NodeWebSocket Deno idle timeout parity", () => {
+  it("closes an incompatible provider transport without terminate support", () => {
+    const events: string[] = [];
+    const socket = new NodeWebSocket(30);
+    const ws = createMockWs();
+    ws.close = (code) => events.push(`transport-close:${code}`);
+    socket.onerror = () => events.push("error");
+    socket.onclose = () => events.push("close");
+    socket._attachRealSocket(ws);
+    assertEquals(events, ["transport-close:1011", "error", "close"]);
+    assertEquals(socket.readyState, NodeWebSocket.CLOSED);
+  });
+
+  it("settles an incompatible provider even when its close callback fails", () => {
+    const socket = new NodeWebSocket(30);
+    const ws = createMockWs();
+    const failure = new Error("provider close failed");
+    let closed = false;
+    ws.close = () => {
+      throw failure;
+    };
+    socket.onclose = () => closed = true;
+    assertStrictEquals(assertThrows(() => socket._attachRealSocket(ws)), failure);
+    assertEquals(closed, true);
+    assertEquals(socket.readyState, NodeWebSocket.CLOSED);
+  });
+
+  it("terminates the transport once when heartbeat ping throws", async () => {
+    const socket = new NodeWebSocket(0.02);
+    const ws = createMockWs();
+    const events: string[] = [];
+    ws.ping = () => {
+      events.push("ping");
+      throw new Error("heartbeat transport failed");
+    };
+    ws.terminate = () => {
+      events.push("terminate");
+      ws.emit("close", 1006);
+    };
+    socket.onerror = () => events.push("error");
+    socket.onclose = (event) => events.push(`close:${event.code}`);
+    socket._attachRealSocket(ws);
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    assertEquals(events, ["ping", "error", "terminate", "close:1006"]);
+    assertEquals(socket.readyState, 3);
+  });
+
+  it("emits one unclean 1001 timeout after ping, without outgoing-send reset", async () => {
+    const socket = new NodeWebSocket(0.04);
+    const ws = createMockWs();
+    const events: string[] = [];
+    ws.ping = () => {
+      events.push("ping");
+    };
+    ws.terminate = () => {
+      events.push("terminate");
+      ws.emit("close", 1006);
+    };
+    ws.close = (code, reason) => {
+      events.push(`wire:${code}:${reason}`);
+    };
+    socket.onerror = () => {
+      events.push("error");
+    };
+    socket.onclose = (event) => {
+      events.push(`close:${event.code}:${event.wasClean}:${event.reason}`);
+    };
+    socket._attachRealSocket(ws);
+    const outgoing = setInterval(() => socket.readyState === 1 && socket.send("outgoing"), 5);
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      assertEquals(events, [
+        "ping",
+        "wire:1001:No response from ping frame.",
+        "error",
+        "close:1001:false:No response from ping frame.",
+        "terminate",
+      ]);
+      assertEquals(socket.readyState, 3);
+    } finally {
+      clearInterval(outgoing);
+      socket.close();
+    }
+  });
+
+  it("resets heartbeat on incoming messages and pong, and disposes on close", async () => {
+    const socket = new NodeWebSocket(0.08);
+    const ws = createMockWs();
+    let pings = 0;
+    ws.ping = () => {
+      pings++;
+    };
+    ws.terminate = () => {};
+    socket._attachRealSocket(ws);
+    const activity = setInterval(() => {
+      ws.emit("message", Buffer.from("incoming"), false);
+      ws.emit("pong");
+    }, 10);
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 110));
+      assertEquals(pings, 0);
+      ws.emit("close", 1000);
+    } finally {
+      clearInterval(activity);
+      socket.close();
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assertEquals(pings, 0);
+  });
+
+  it("zero timeout requires no heartbeat capability", () => {
+    const { socket } = attach();
+    assertEquals(socket.readyState, 1);
+    socket.close();
+  });
+
+  it("rejects a connection lacking heartbeat termination support", () => {
+    const socket = new NodeWebSocket(30);
+    const events: string[] = [];
+    socket.onerror = () => {
+      events.push("error");
+    };
+    socket.onclose = () => {
+      events.push("close");
+    };
+    socket._attachRealSocket(createMockWs());
+    assertEquals(events, ["error", "close"]);
+    assertEquals(socket.readyState, 3);
+  });
+});
+
+Deno.test("Deno policy preserves default thirty-second heartbeat, zero and header rejection", () => {
+  const adapter = new NodeServerAdapter(true);
+  for (
+    const [id, options, expected] of [
+      ["deno-default", undefined, 30],
+      ["deno-zero", { idleTimeout: 0 }, 0],
+      ["deno-explicit", { idleTimeout: 12 }, 12],
+    ] as const
+  ) {
+    const { response } = adapter.upgradeWebSocket(
+      websocketRequest(undefined, undefined, id),
+      options,
+    );
+    assertEquals(getWebSocketUpgradeIdleTimeout(response), expected);
+    rejectWebSocketUpgrade(id, new Error("test cleanup"));
+  }
+  assertThrows(() =>
+    adapter.upgradeWebSocket(websocketRequest(), { headers: { "x-custom": "value" } })
+  );
 });
