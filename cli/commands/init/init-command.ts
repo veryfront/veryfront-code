@@ -9,8 +9,8 @@ import { brand, dim } from "#cli/ui";
 import { createTransientSpinner } from "../../ui/progress.ts";
 import { INVALID_ARGUMENT } from "veryfront/errors";
 import type { InitOptions, InitRuntime, InitTemplate } from "./types.ts";
-import { createFileSystem, cwd } from "veryfront/platform";
-import { join } from "veryfront/platform/path";
+import { cwd } from "veryfront/platform";
+import { readEnvDirValues } from "veryfront/utils/env-loader";
 import { getDlxCommand, getInstallCommand, getRunCommand } from "../../utils/package-manager.ts";
 import {
   createProject,
@@ -176,25 +176,15 @@ function validateInitProjectName(name: string): string | null {
 }
 
 /**
- * A lookup over the `.env` that `createProject` just wrote, falling back to
- * `hostValue`. The file holds only the `NAME=value` lines and comments
- * `promptForEnvVars` writes.
+ * The values `veryfront dev` in the new folder will see: the shell's own,
+ * then the folder's env files, parsed and ranked as `dev` loads them.
  */
 async function readNewProjectEnv(
   projectDir: string,
   hostValue: (name: string) => string | undefined,
 ): Promise<(name: string) => string | undefined> {
-  const values = new Map<string, string>();
-  const fs = createFileSystem();
-  const envPath = join(projectDir, ".env");
-  if (await fs.exists(envPath)) {
-    for (const line of (await fs.readTextFile(envPath)).split("\n")) {
-      const separator = line.indexOf("=");
-      if (line.startsWith("#") || separator <= 0) continue;
-      values.set(line.slice(0, separator).trim(), line.slice(separator + 1).trim());
-    }
-  }
-  return (name) => values.get(name) || hostValue(name);
+  const values = await readEnvDirValues(projectDir);
+  return (name) => hostValue(name) ?? values[name];
 }
 
 /**

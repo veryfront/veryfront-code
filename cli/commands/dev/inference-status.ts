@@ -84,20 +84,20 @@ export function hasUsableInference(options: readonly string[]): boolean {
 /**
  * Provider keys the default model cannot use. An agent with no model runs the
  * default OpenAI model, and the runtime refuses to swap in another provider's
- * key (`default-model-credential-mismatch`). So when every agent leaves its
- * model unset, and neither the gateway, an OpenAI key, nor an application
- * `openai` provider can serve the default, an Anthropic, Google, or Mistral key
- * serves none of those agents' default requests. The keys still serve a
+ * key (`default-model-credential-mismatch`). So when an agent leaves its model
+ * unset, and neither the gateway, an OpenAI key, nor an application `openai`
+ * provider can serve the default, an Anthropic, Google, or Mistral key serves
+ * none of that agent's default requests. The keys still serve a
  * request that picks a model of their provider, so callers warn rather than
  * drop them.
  */
 export function defaultModelMismatchKeys(environment: InferenceEnvironment): string[] {
   const { agentModels } = environment;
-  const defaultModelOnly = agentModels !== undefined && agentModels.length > 0 &&
-    agentModels.every((model) => model === undefined);
+  // One agent with no model is enough: a sibling's model does not run it.
+  const someAgentUsesDefault = agentModels?.some((model) => model === undefined) === true;
   const defaultModelServed = (isSet(environment.apiToken) && isSet(environment.projectSlug)) ||
     isSet(environment.openaiApiKey) || environment.defaultModelProviderRegistered === true;
-  if (!defaultModelOnly || defaultModelServed) return [];
+  if (!someAgentUsesDefault || defaultModelServed) return [];
 
   const keys: string[] = [];
   if (isSet(environment.anthropicApiKey)) keys.push("ANTHROPIC_API_KEY");

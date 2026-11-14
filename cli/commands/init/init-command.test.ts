@@ -388,6 +388,35 @@ describe("offerCloudProjectAfterInit", () => {
     }
   });
 
+  async function adviceForEnvFiles(files: Record<string, string>): Promise<string[]> {
+    const projectDir = await makeTempDir({ prefix: "veryfront-init-env-" });
+    try {
+      for (const [name, content] of Object.entries(files)) {
+        await Deno.writeTextFile(join(projectDir, name), content);
+      }
+      const logged: string[] = [];
+      await offerCloudProjectAfterInit(
+        projectDir,
+        (message) => logged.push(message),
+        () => Promise.resolve("declined"),
+        () => undefined,
+      );
+      return logged;
+    } finally {
+      await remove(projectDir, { recursive: true });
+    }
+  }
+
+  it("parses the env files as dev loads them", async () => {
+    // An empty quoted value is empty, as dev's loader reads it.
+    assertEquals((await adviceForEnvFiles({ ".env": 'OPENAI_API_KEY=""\n' })).length, 1);
+    // .env.local is loaded by dev too, above .env.
+    assertEquals(
+      await adviceForEnvFiles({ ".env": "# none\n", ".env.local": "OPENAI_API_KEY=<API_KEY>\n" }),
+      [],
+    );
+  });
+
   it("still names both ways when only a key the scaffolded agents cannot use is set", async () => {
     const logged = await run(() => Promise.resolve("declined"), {
       ANTHROPIC_API_KEY: "<API_KEY>",

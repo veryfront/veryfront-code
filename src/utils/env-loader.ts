@@ -114,10 +114,37 @@ function keepsExistingValue(
   return Boolean(existing);
 }
 
+/** A directory's env files, lowest rank first. */
+function envDirFiles(cwd: string): string[] {
+  const env = getEnv("NODE_ENV") ?? getEnv("DENO_ENV") ?? "development";
+  return [`${cwd}/.env`, `${cwd}/.env.${env}`, `${cwd}/.env.local`];
+}
+
+/**
+ * Read the values a directory's env files hold, ranked as {@link loadEnv}
+ * ranks them, without changing the environment or its provenance. A caller
+ * can check what a later process in that directory will load.
+ */
+export async function readEnvDirValues(cwd: string): Promise<Record<string, string>> {
+  const values: Record<string, string> = {};
+  for (const file of envDirFiles(cwd)) {
+    let content: string;
+    try {
+      content = await readTextFile(file);
+    } catch {
+      // A file loadEnv cannot read contributes nothing there either.
+      continue;
+    }
+    for (const [key, { value }] of Object.entries(parseEnvFile(content, values))) {
+      values[key] = value;
+    }
+  }
+  return values;
+}
+
 async function readEnvDirFiles(cwd: string, options: EnvDirLoadOptions): Promise<void> {
   const { debug } = options;
-  const env = getEnv("NODE_ENV") ?? getEnv("DENO_ENV") ?? "development";
-  const envFiles = [`${cwd}/.env`, `${cwd}/.env.${env}`, `${cwd}/.env.local`];
+  const envFiles = envDirFiles(cwd);
   // Everything this load tracks per key is keyed by the case-folded name where
   // the environment ignores case (Windows). A later file's `api_url` then
   // replaces an earlier file's `API_URL` in the precedence check, in the

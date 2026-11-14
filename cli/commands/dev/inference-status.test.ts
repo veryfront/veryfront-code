@@ -146,16 +146,24 @@ describe("commands/dev/inference-status", () => {
       assertEquals(devInferenceHintLines(listInferenceOptions(anthropicOnly)), []);
     });
 
-    it("names nothing when an agent sets a model or auto", () => {
+    it("names nothing when every agent sets a model or auto", () => {
       for (const model of ["anthropic/claude-sonnet-4-6", "auto", ""]) {
         assertEquals(
-          defaultModelMismatchKeys({
-            anthropicApiKey: "<API_KEY>",
-            agentModels: [undefined, model],
-          }),
+          defaultModelMismatchKeys({ anthropicApiKey: "<API_KEY>", agentModels: [model, model] }),
           [],
         );
       }
+    });
+
+    it("names the key when one agent sets no model beside one that does", () => {
+      // The configured sibling does not make the omitted agent runnable.
+      assertEquals(
+        defaultModelMismatchKeys({
+          anthropicApiKey: "<API_KEY>",
+          agentModels: ["anthropic/claude-sonnet-4-6", undefined],
+        }),
+        ["ANTHROPIC_API_KEY"],
+      );
     });
 
     it("names nothing when the default model can run", () => {

@@ -33,8 +33,8 @@ export const DEFAULT_AGENT_MODEL_NAME = "openai/gpt-5-nano";
 
 /**
  * The `dev` banner warning for provider keys the default model cannot use:
- * every agent sets no model, and neither the gateway nor an OpenAI key can
- * serve the default, so the first request fails with
+ * an agent sets no model, and neither the gateway nor an OpenAI key can serve
+ * the default, so the first request fails with
  * `default-model-credential-mismatch`. The keys stay listed under Inference:
  * a request can still pick a model of their provider.
  */
