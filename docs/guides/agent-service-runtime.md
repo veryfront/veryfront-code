@@ -63,7 +63,7 @@ HTTP 200 SSE responses. Error responses omit it.
 - At least one agent in `agents/` that the service should expose (see
   [Agents](./agents.md)).
 - A deployment target you can run a long-running Node process on.
-- For Veryfront Cloud registration: `VERYFRONT_API_TOKEN`,
+- For Veryfront Cloud registration: `VERYFRONT_API_KEY`,
   `VERYFRONT_PROJECT_ID` or `VERYFRONT_PROJECT_SLUG`, and a publicly
   reachable `VERYFRONT_AGENT_SERVICE_URL`. See
   [Configuration](./configuration.md) for the full list.
@@ -146,13 +146,13 @@ For non-standard project layouts, configure discovery paths in
 ## Configure registration
 
 Control-plane registration is convention-first. In `auto` mode, the service
-registers only when `VERYFRONT_API_TOKEN` and
+registers only when `VERYFRONT_API_KEY` and
 `VERYFRONT_AGENT_SERVICE_URL` are present. Registration also requires the
 immutable `runtimeSource` binding described below.
 
 ```bash
 VERYFRONT_API_URL=https://api.example.com
-VERYFRONT_API_TOKEN=<TOKEN>
+VERYFRONT_API_KEY=<API_KEY>
 VERYFRONT_PROJECT_ID=<PROJECT_ID>
 VERYFRONT_AGENT_SERVICE_URL=https://agent.example.com
 VERYFRONT_AGENT_SERVICE_REGISTRATION=auto
