@@ -443,8 +443,8 @@ describe("up end to end", () => {
     assertEquals(
       run.failure,
       'Preview publish failed: The latest push is for branch "feature-x", but deploy targets ' +
-        '"main". Run veryfront deploy --branch feature-x to deploy the latest push, or veryfront ' +
-        "push --branch main to preview main first.",
+        '"main". Run veryfront push --branch main to push this directory to main, then deploy ' +
+        "again.",
     );
     assertEquals(run.projectCreates, 0);
     assertEquals(run.uploadedPaths, []);

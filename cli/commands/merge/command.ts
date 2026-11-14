@@ -16,6 +16,19 @@ import { CommonArgs, createArgParser } from "#cli/shared/args";
 import { confirmPrompt, logInfo, logSuccess } from "#cli/utils";
 import { createSpinner } from "#cli/ui";
 import { BRANCH_NOT_FOUND } from "veryfront/errors";
+import {
+  computeSourceDigest,
+  normalizeControlPlane,
+  readPushReceipt,
+  writePushReceipt,
+} from "../../shared/deployment-provenance.ts";
+import { listAllFiles, type PullSource } from "../pull/command.ts";
+import {
+  computeContentDigest,
+  readSyncTarget,
+  type SyncFileSnapshot,
+  writeSyncTarget,
+} from "../../sync/state.ts";
 
 /**
  * Schema factory for merge command arguments
@@ -152,6 +165,95 @@ export function getMergePreview(
 }
 
 /**
+ * Record a merge in this directory's push receipt.
+ *
+ * `veryfront deploy` promotes only the branch the receipt names, so after
+ * `veryfront merge new-headline` it refused main even though main held the
+ * merged change (veryfront/veryfront-issue-inbox#4363). The receipt moves to
+ * the target only when the target's tree is now exactly the source the receipt
+ * describes, which keeps its proof intact: the deploy still verifies the
+ * release against that digest and this directory against its local digest. A
+ * target that also holds changes this directory never pushed keeps the receipt
+ * as it was, and the deploy refuses with the push that fixes it.
+ */
+/**
+ * Whether the receipt was written for the project this merge ran against.
+ *
+ * `VERYFRONT_PROJECT_ID` puts the project id where the slug usually goes,
+ * while a push records the resolved slug and id, so either may match.
+ */
+function receiptNamesProject(
+  receipt: { projectId: string; projectSlug: string },
+  project: { projectSlug: string; projectId?: string },
+): boolean {
+  if (project.projectId !== undefined) return receipt.projectId === project.projectId;
+  return receipt.projectSlug === project.projectSlug || receipt.projectId === project.projectSlug;
+}
+
+export async function recordMergeInPushReceipt(input: {
+  client: ApiClient;
+  controlPlane: string;
+  /** The reference the API calls use: a slug, or a project id when one selects it. */
+  projectSlug: string;
+  /** The resolved project id, when the configuration knows it. */
+  projectId?: string;
+  projectDir: string;
+  sourceBranch: string;
+  targetBranch: string;
+}): Promise<boolean> {
+  const receipt = await readPushReceipt(input.projectDir);
+  if (
+    !receipt ||
+    receipt.branch !== input.sourceBranch ||
+    !receiptNamesProject(receipt, input) ||
+    normalizeControlPlane(receipt.controlPlane) !== normalizeControlPlane(input.controlPlane)
+  ) {
+    return false;
+  }
+
+  const target: PullSource = input.targetBranch === "main"
+    ? { type: "main" }
+    : { type: "branch", name: input.targetBranch };
+  const files = await listAllFiles(input.client, input.projectSlug, target);
+  if (files.some((file) => typeof file.content !== "string")) return false;
+  const targetDigest = await computeSourceDigest(
+    files.map(({ path, content }) => ({ path, content })),
+  );
+  if (targetDigest !== receipt.sourceDigest) return false;
+
+  // The push recorded its conflict baseline for the source branch only. The
+  // target now holds the same files, so it inherits that baseline's paths with
+  // the target's own digests and versions. Otherwise the next push of a local
+  // edit to the target compares against its pre-merge baseline and conflicts.
+  const scope = { controlPlane: receipt.controlPlane, projectId: receipt.projectId };
+  const sourceBaseline = await readSyncTarget(input.projectDir, {
+    ...scope,
+    branch: input.sourceBranch,
+  });
+  if (sourceBaseline) {
+    const targetFiles = new Map(files.map((file) => [file.path, file]));
+    const baseline: Record<string, SyncFileSnapshot> = {};
+    for (const path of Object.keys(sourceBaseline.files)) {
+      const file = targetFiles.get(path);
+      if (!file) continue;
+      baseline[path] = {
+        digest: await computeContentDigest(file.content),
+        ...(file.version_id ? { versionId: file.version_id } : {}),
+      };
+    }
+    await writeSyncTarget(input.projectDir, {
+      ...scope,
+      projectSlug: receipt.projectSlug,
+      branch: input.targetBranch,
+      files: baseline,
+    });
+  }
+
+  await writePushReceipt(input.projectDir, { ...receipt, branch: input.targetBranch });
+  return true;
+}
+
+/**
  * Merge a branch into main (or another branch)
  */
 export async function mergeCommand(options: MergeOptions): Promise<void> {
@@ -159,7 +261,8 @@ export async function mergeCommand(options: MergeOptions): Promise<void> {
 
   let spinner = createSpinner("Resolving configuration...");
 
-  const config = await resolveConfigWithAuth(cwd());
+  const projectDir = cwd();
+  const config = await resolveConfigWithAuth(projectDir);
   const client = createApiClient(config);
 
   spinner.update(`Looking up branch "${branch}"...`);
@@ -218,6 +321,22 @@ export async function mergeCommand(options: MergeOptions): Promise<void> {
   spinner = createSpinner(`Merging "${branch}" into ${targetName}...`);
 
   const result = await mergeBranch(client, config.projectSlug, sourceBranch.id, targetBranchId);
+
+  // The merge already happened, so a receipt that cannot be updated is not a
+  // merge failure: it stays as it was, and the deploy names the push to run.
+  try {
+    await recordMergeInPushReceipt({
+      client,
+      controlPlane: config.apiUrl,
+      projectSlug: config.projectSlug,
+      projectId: config.projectId,
+      projectDir,
+      sourceBranch: branch,
+      targetBranch: targetName,
+    });
+  } catch (error) {
+    cliLogger.debug("Could not record the merge in the push receipt", error);
+  }
 
   spinner.stop();
 
