@@ -301,17 +301,19 @@ async function stableServiceKey(input: {
   return `${input.serviceName}:${hash}`.slice(0, 128);
 }
 
-function requireExplicitRegistrationValue(
-  value: string | undefined,
-  envName: string,
-): string {
+function requireExplicitRegistrationValue(value: string | undefined, detail: string): string {
   if (!value) {
-    throw CONFIG_INVALID.create({
-      detail: `${envName} is required when VERYFRONT_AGENT_SERVICE_REGISTRATION=enabled`,
-    });
+    throw CONFIG_INVALID.create({ detail });
   }
   return value;
 }
+
+/**
+ * The credential slot is `VERYFRONT_API_TOKEN`, but the name operators set is
+ * `VERYFRONT_API_KEY`, so the error names that one.
+ */
+const MISSING_REGISTRATION_CREDENTIAL =
+  "Agent service registration is enabled but no credential is set: set VERYFRONT_API_KEY to an API key.";
 
 /** Input payload for resolve agent service registration. */
 export async function resolveAgentServiceRegistrationInput(
@@ -320,12 +322,12 @@ export async function resolveAgentServiceRegistrationInput(
   const config = agentServiceRegistrationConfigSchema.parse(options.config);
   const enabled = config.VERYFRONT_AGENT_SERVICE_REGISTRATION === "enabled";
   const token = enabled
-    ? requireExplicitRegistrationValue(config.VERYFRONT_API_TOKEN, "VERYFRONT_API_TOKEN")
+    ? requireExplicitRegistrationValue(config.VERYFRONT_API_TOKEN, MISSING_REGISTRATION_CREDENTIAL)
     : config.VERYFRONT_API_TOKEN;
   const serviceUrl = enabled
     ? requireExplicitRegistrationValue(
       config.VERYFRONT_AGENT_SERVICE_URL,
-      "VERYFRONT_AGENT_SERVICE_URL",
+      "VERYFRONT_AGENT_SERVICE_URL is required when VERYFRONT_AGENT_SERVICE_REGISTRATION=enabled",
     )
     : config.VERYFRONT_AGENT_SERVICE_URL;
 

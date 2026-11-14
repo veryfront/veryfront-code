@@ -198,7 +198,7 @@ describe("agent/agent-service-registration", () => {
   });
 
   it("fails explicit registration when required connection settings are missing", async () => {
-    await assertRejects(
+    const missingCredential = await assertRejects(
       () =>
         resolveAgentServiceRegistrationInput({
           config: {
@@ -217,8 +217,10 @@ describe("agent/agent-service-registration", () => {
           runtime: "node",
         }),
       Error,
-      "VERYFRONT_API_TOKEN is required",
+      "Agent service registration is enabled but no credential is set: set VERYFRONT_API_KEY to an API key.",
     );
+    // Setup guidance names the one credential name, never the deprecated one.
+    assertEquals(missingCredential.message.includes("VERYFRONT_API_TOKEN"), false);
 
     await assertRejects(
       () =>
