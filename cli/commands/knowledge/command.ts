@@ -23,7 +23,7 @@ import {
   type RemoteFileWriteExpectation,
 } from "../files/command.ts";
 import * as commandHelpers from "./command-helpers.ts";
-import { createRunUserLogger, type Logger, serverLogger } from "veryfront/utils";
+import { computeHash, createRunUserLogger, type Logger, serverLogger } from "veryfront/utils";
 import type { DocumentExtractionProgressEvent } from "veryfront/extensions/compat";
 import { writeRunResultIfConfigured } from "../../utils/write-run-result.ts";
 import { inspectOkfDocument } from "veryfront/knowledge";
@@ -828,6 +828,12 @@ export async function ingestResolvedSources(
       expected?: RemoteFileWriteExpectation,
     ) => Promise<PublishedFileReceipt>;
     destinationBranch?: string;
+    /** Resolves a source's current canonical document in the selected writable scope. */
+    findRemoteKnowledgeSource?: (input: {
+      rootPath: string;
+      resource: string;
+      legacySource: string;
+    }) => Promise<{ path: string; versionId: string } | undefined>;
     /** Reads a remote knowledge file, or `undefined` when it does not exist. */
     readRemoteKnowledgeFile?: (
       remotePath: string,
@@ -1004,16 +1010,39 @@ export async function ingestResolvedSources(
       const uploadMetadata = options.okfBundle
         ? buildOkfBundleUploadMetadata(options.knowledgePath)
         : undefined;
+      const resource = commandHelpers.buildKnowledgeResource(source);
+      const legacySource = commandHelpers.buildSourceReference(source);
+      const rootPath = normalizeKnowledgeInputPath(options.knowledgePath).replace(/\/+$/, "");
+      const findSource =
+        claimsPath && (rootPath === "knowledge" || rootPath.startsWith("knowledge/"))
+          ? deps.findRemoteKnowledgeSource
+          : undefined;
+      const currentSource = await findSource?.({ rootPath, resource, legacySource });
+      const newSourcePath = findSource && !currentSource
+        ? `${rootPath}/source-${await computeHash(resource)}.md`
+        : undefined;
+      if (
+        currentSource &&
+        (normalizeKnowledgeInputPath(currentSource.path) !== currentSource.path ||
+          !currentSource.path.startsWith(`${rootPath}/`) ||
+          !currentSource.path.toLowerCase().endsWith(".md"))
+      ) {
+        throw new Error("Source lookup returned a path outside the requested Markdown scope");
+      }
       let remotePath = derivedRemotePath;
       let uploaded: PublishedFileReceipt | undefined;
       const absenceConflicts = new Map<string, unknown>();
       for (let attempt = 1; !uploaded; attempt += 1) {
-        const claim = claimsPath
+        const claim = currentSource
+          ? { remotePath: currentSource.path, expected: { versionId: currentSource.versionId } }
+          : newSourcePath
+          ? { remotePath: newSourcePath, expected: { absent: true as const } }
+          : claimsPath
           ? await commandHelpers.claimGeneratedKnowledgePath({
             remotePath: derivedRemotePath,
             preferredRemotePath,
-            resource: commandHelpers.buildKnowledgeResource(source),
-            legacySource: commandHelpers.buildSourceReference(source),
+            resource,
+            legacySource,
             absenceConflicts,
             readRemoteFile: deps.readRemoteKnowledgeFile,
           })
@@ -1031,7 +1060,7 @@ export async function ingestResolvedSources(
           // Another source took a free path after it was read: choose again. A conflict on
           // this source's own document means a newer write won, so it must not be overwritten.
           if (
-            !claim.expected || !("absent" in claim.expected) ||
+            newSourcePath || !claim.expected || !("absent" in claim.expected) ||
             attempt >= MAX_PATH_CLAIM_ATTEMPTS || !isConflict(error)
           ) {
             throw error;
@@ -1177,6 +1206,13 @@ export async function knowledgeCommand(args: ParsedArgs): Promise<void> {
             projectSlug: config.projectSlug,
             outputDir,
             runParser: runKnowledgeParser,
+            findRemoteKnowledgeSource: (source) =>
+              commandHelpers.findRemoteKnowledgeIngestSource({
+                ...source,
+                client,
+                projectSlug: config.projectSlug,
+                branch: options.branch,
+              }),
             readRemoteKnowledgeFile: (remotePath) =>
               readRemoteFileIfExists(client, config.projectSlug, remotePath, {
                 branch: options.branch,

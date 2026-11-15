@@ -42,6 +42,7 @@ import {
 } from "./command.test-helpers.ts";
 import type { Logger } from "#veryfront/utils";
 import { VERSION } from "#cli/utils";
+import { findRemoteKnowledgeIngestSource } from "./command-helpers.ts";
 import type { KnowledgeParserInput } from "./parser.ts";
 
 type LoggedEvent = {
@@ -62,6 +63,39 @@ function createMemoryEventLogger(events: LoggedEvent[]): Logger {
   };
   return logger;
 }
+
+describe("findRemoteKnowledgeIngestSource", () => {
+  it("addresses the selected branch and rejects unresolved and malformed responses", async () => {
+    let body: unknown = { status: "matched", path: "knowledge/earlier.md", version_id: "version" };
+    const client = createMockClient({
+      post: async (url, requestBody) => {
+        assertEquals(url, "/projects/project%2Fslug/knowledge/ingest-source?ref=branch%3Afeature");
+        assertEquals(requestBody, {
+          root_path: "knowledge",
+          resource: "uploads/source.md",
+          legacy_source: "source.md",
+        });
+        return body;
+      },
+    });
+    const lookup = () =>
+      findRemoteKnowledgeIngestSource({
+        client,
+        projectSlug: "project/slug",
+        branch: "feature",
+        rootPath: "knowledge",
+        resource: "uploads/source.md",
+        legacySource: "source.md",
+      });
+    assertEquals(await lookup(), { path: "knowledge/earlier.md", versionId: "version" });
+    body = { status: "absent" };
+    assertEquals(await lookup(), undefined);
+    body = { status: "unresolved" };
+    await assertRejects(lookup, Error, "Cannot establish");
+    body = { status: "matched", path: "knowledge/earlier.md" };
+    await assertRejects(lookup, Error, "Invalid knowledge source lookup response");
+  });
+});
 
 describe("normalizeKnowledgeInputPath", () => {
   it("normalizes safe upload paths", () => {
@@ -923,6 +957,103 @@ describe("ingestResolvedSources", () => {
     );
   });
 
+  it("uses the current source path and version even when its title changed", async () => {
+    const tempDir = await makeTempDir({ prefix: "veryfront-knowledge-source-lookup-" });
+    try {
+      const localPath = join(tempDir, "article.md");
+      await Deno.writeTextFile(localPath, "# New heading\n\nUpdated content.");
+      const writes: unknown[] = [];
+      let lookupPath = "knowledge/old-heading.md";
+      const ingest = () =>
+        ingestResolvedSources(
+          [createUploadSource("uploads/article.md", localPath)],
+          createKnowledgeCommandArgs(),
+          {
+            client: createMockClient(),
+            projectSlug: "my-project",
+            outputDir: join(tempDir, "fresh"),
+            runParser: runKnowledgeParser,
+            findRemoteKnowledgeSource: async (source) => {
+              assertEquals(source.resource, "uploads/article.md");
+              assertEquals(source.rootPath, "knowledge");
+              return { path: lookupPath, versionId: "original-version" };
+            },
+            readRemoteKnowledgeFile: async () => {
+              throw new Error("An existing source should bypass filename allocation");
+            },
+            indexKnowledgeDocument: async (input) => createIndexReceipt(input.published.path),
+            uploadKnowledgeFile: async (path, _local, _metadata, _kind, expected) => {
+              writes.push({ path, expected });
+              return { path };
+            },
+          },
+        );
+      const result = await ingest();
+      assertEquals(result.failed, []);
+      assertEquals(result.ingested.map(({ remotePath }) => remotePath), [
+        "knowledge/old-heading.md",
+      ]);
+      assertEquals(writes, [
+        { path: "knowledge/old-heading.md", expected: { versionId: "original-version" } },
+      ]);
+      for (const path of ["knowledge-other/article.md", "knowledge/nested/../article.md"]) {
+        lookupPath = path;
+        const rejected = await ingest();
+        assertEquals(rejected.ingested, []);
+        assertEquals(rejected.failed.length, 1);
+        assertEquals(writes.length, 1);
+      }
+    } finally {
+      await Deno.remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("admits one first publication when the same source arrives with different titles", async () => {
+    const tempDir = await makeTempDir({ prefix: "veryfront-knowledge-source-claim-" });
+    const writes: string[] = [];
+    const committed = new Set<string>();
+    const bothLookups = Promise.withResolvers<void>();
+    let lookupCount = 0;
+    try {
+      const ingest = async (title: string) => {
+        const localPath = join(tempDir, `${title}.md`);
+        await Deno.writeTextFile(localPath, `# ${title}\n\nContent.`);
+        return ingestResolvedSources(
+          [createUploadSource("uploads/same-source.md", localPath)],
+          createKnowledgeCommandArgs(),
+          {
+            client: createMockClient(),
+            projectSlug: "my-project",
+            outputDir: join(tempDir, title),
+            runParser: runKnowledgeParser,
+            findRemoteKnowledgeSource: async () => {
+              if (++lookupCount === 2) bothLookups.resolve();
+              await bothLookups.promise;
+              return undefined;
+            },
+            indexKnowledgeDocument: async (input) => createIndexReceipt(input.published.path),
+            uploadKnowledgeFile: async (path, _local, _metadata, _kind, expected) => {
+              writes.push(path);
+              assertEquals(expected, { absent: true });
+              if (committed.has(path)) {
+                throw Object.assign(new Error("Already created"), { status: 409 });
+              }
+              committed.add(path);
+              return { path };
+            },
+          },
+        );
+      };
+      const results = await Promise.all([ingest("First title"), ingest("Second title")]);
+      assertEquals(writes.length, 2);
+      assertEquals(committed.size, 1);
+      assertEquals(results.flatMap((result) => result.ingested).length, 1);
+      assertEquals(results.flatMap((result) => result.failed).length, 1);
+    } finally {
+      await Deno.remove(tempDir, { recursive: true }).catch(() => undefined);
+    }
+  });
+
   it("reuses existing remote paths when same-title sources arrive in reverse order", async () => {
     const tempDir = await makeTempDir({ prefix: "veryfront-knowledge-remote-suffix-" });
     const a = join(tempDir, "a.md");
@@ -1000,12 +1131,29 @@ describe("ingestResolvedSources", () => {
       assertEquals(remote.size, 101);
       assertEquals(reads, 201);
 
+      const original = remote.get("knowledge/overview.md");
+      assert(original);
       remote.delete("knowledge/overview.md");
       const updated = await ingestResolvedSources(sources.slice(1, 2), args, deps);
       assertEquals(updated.failed, []);
       assertEquals(updated.ingested.map((item) => item.remotePath), ["knowledge/overview-2.md"]);
       assertEquals(remote.size, 100);
       assertEquals(remote.has("knowledge/overview.md"), false);
+
+      remote.set("knowledge/overview.md", original);
+      const latePath = join(tempDir, "late.md");
+      await Deno.writeTextFile(latePath, "# Overview\n\nLate source.");
+      const lateSource = createUploadSource("uploads/late.md", latePath);
+      const freshDeps = { ...deps, outputDir: join(tempDir, "fresh") };
+      const added = await ingestResolvedSources([lateSource], args, freshDeps);
+      assertEquals(added.failed, []);
+      const [result] = added.ingested;
+      assert(result);
+      assertStringIncludes(result.remotePath, "knowledge/overview-source-");
+      const retried = await ingestResolvedSources([lateSource], args, freshDeps);
+      assertEquals(retried.failed, []);
+      assertEquals(retried.ingested.map(({ remotePath }) => remotePath), [result.remotePath]);
+      assertEquals(remote.size, 102);
     } finally {
       await Deno.remove(tempDir, { recursive: true }).catch(() => undefined);
     }

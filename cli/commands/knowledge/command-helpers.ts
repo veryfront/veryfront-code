@@ -1,7 +1,9 @@
+import type { ApiClient } from "#cli/shared/config";
 import { INVALID_ARGUMENT } from "veryfront/errors";
 import { createFileSystem } from "veryfront/platform";
 import { basename, join, normalize, relative } from "veryfront/platform/path";
 import { inspectOkfDocument } from "veryfront/knowledge";
+import { computeHash } from "veryfront/utils";
 import type { RemoteFileWriteExpectation } from "../files/command.ts";
 import { classifyKnowledgeDirectoryPath, classifyKnowledgeSourcePath } from "./source-policy.ts";
 import type {
@@ -282,6 +284,47 @@ export function buildKnowledgeSourceFileName(source: KnowledgeSource): string {
   return stripChatUploadPrefix(name) || name;
 }
 
+/** Query a writable branch for a current document with this exact source identity. */
+export async function findRemoteKnowledgeIngestSource(input: {
+  client: ApiClient;
+  projectSlug: string;
+  branch?: string;
+  branchId?: string;
+  rootPath: string;
+  resource: string;
+  legacySource: string;
+  signal?: AbortSignal;
+}): Promise<{ path: string; versionId: string } | undefined> {
+  const query = new URLSearchParams();
+  if (input.branch !== undefined) query.set("ref", `branch:${input.branch}`);
+  if (input.branchId !== undefined) query.set("branch_id", input.branchId);
+  const suffix = query.size ? `?${query}` : "";
+  input.signal?.throwIfAborted();
+  const result = await input.client.post<unknown>(
+    `/projects/${encodeURIComponent(input.projectSlug)}/knowledge/ingest-source${suffix}`,
+    {
+      root_path: input.rootPath,
+      resource: input.resource,
+      legacy_source: input.legacySource,
+    },
+    input.signal ? { signal: input.signal } : undefined,
+  );
+  input.signal?.throwIfAborted();
+  if (result && typeof result === "object" && "status" in result) {
+    if (result.status === "absent") return undefined;
+    if (result.status === "unresolved") {
+      throw new Error("Cannot establish the current destination for this knowledge source");
+    }
+    if (
+      result.status === "matched" && "path" in result && typeof result.path === "string" &&
+      "version_id" in result && typeof result.version_id === "string" && result.version_id
+    ) {
+      return { path: result.path, versionId: result.version_id };
+    }
+  }
+  throw new Error("Invalid knowledge source lookup response");
+}
+
 const MAX_KNOWLEDGE_PATH_SUFFIX = 100;
 
 /** A remote path for a generated document and the guard its write must hold. */
@@ -321,8 +364,15 @@ export async function claimGeneratedKnowledgePath(input: {
     }
   }
   const stem = input.remotePath.replace(/\.md$/i, "");
-  for (let attempt = 1; attempt <= MAX_KNOWLEDGE_PATH_SUFFIX; attempt += 1) {
-    const candidate = attempt === 1 ? input.remotePath : `${stem}-${attempt}.md`;
+  for (let attempt = 1; attempt <= MAX_KNOWLEDGE_PATH_SUFFIX + 1; attempt += 1) {
+    let candidate = input.remotePath;
+    if (attempt > MAX_KNOWLEDGE_PATH_SUFFIX) {
+      // A crowded title can still accept another source without an unbounded probe.
+      const sourceDigest = await computeHash(input.resource);
+      candidate = `${stem}-source-${sourceDigest.slice(0, 16)}.md`;
+    } else if (attempt > 1) {
+      candidate = `${stem}-${attempt}.md`;
+    }
     const { existing, metadata, legacySource, sameSource } = await readCandidate(candidate);
     if (
       input.absenceConflicts.has(candidate) &&

@@ -4804,6 +4804,9 @@ async function executeKnowledgeIngestRun(input: {
     const { putBinaryKnowledgeAsset } = await import(
       "../../../../cli/commands/knowledge/binary-assets.ts"
     );
+    const { findRemoteKnowledgeIngestSource } = await import(
+      "../../../../cli/commands/knowledge/command-helpers.ts"
+    );
     const { indexKnowledgeDocument } = await import(
       "../../../../cli/commands/knowledge/indexing.ts"
     );
@@ -4962,6 +4965,14 @@ async function executeKnowledgeIngestRun(input: {
             progressBridge,
           ),
           destinationBranch: outputDestination?.branchId ?? "main",
+          findRemoteKnowledgeSource: (source) =>
+            findRemoteKnowledgeIngestSource({
+              ...source,
+              client,
+              projectSlug: projectReference,
+              branchId: outputDestination?.branchId,
+              signal: input.signal,
+            }),
           readRemoteKnowledgeFile: (remotePath) =>
             readRemoteFileIfExists(
               client,

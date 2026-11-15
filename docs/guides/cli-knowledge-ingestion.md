@@ -167,13 +167,11 @@ To recurse through a local directory:
 veryfront knowledge ingest --path ./contracts --all --recursive --json
 ```
 
-Each source document becomes its own markdown file in the project knowledge
-tree. The file is named after the document's first `#` heading, or its file
-name when it has none: `# Create a team account` becomes
-`knowledge/create-a-team-account.md`. If that path already holds a document
-from another source, the new file gets a short suffix such as `-2`. Ingesting
-the same source again updates its existing file. Pass `--slug` to set the name
-of a single source yourself.
+Each source becomes a Markdown document. Its title comes from the first
+level-one heading, with the filename as the fallback. In canonical knowledge
+directories, a new document gets a stable path derived from its source identity.
+Re-ingesting that source updates its existing document after a title change.
+Pass `--slug` to set the path for a single source yourself.
 
 Use `--path ... --all` only when you want everything under that uploads prefix
 or local directory. For an exact file list, pass the file paths as positional
@@ -206,8 +204,8 @@ With `--json`, the command returns a machine-readable run result with
       "source": "uploads/demo/notes.txt",
       "localSourcePath": "<LOCAL_SOURCE_PATH>",
       "outputPath": "<OUTPUT_PATH>",
-      "remotePath": "knowledge/notes.md",
-      "slug": "notes",
+      "remotePath": "knowledge/source-<SOURCE_HASH>.md",
+      "slug": "source-<SOURCE_HASH>",
       "sourceType": "txt",
       "summary": "Converted document to markdown (87 chars).",
       "stats": {
