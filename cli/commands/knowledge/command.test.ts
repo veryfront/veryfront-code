@@ -923,6 +923,94 @@ describe("ingestResolvedSources", () => {
     );
   });
 
+  it("reuses existing remote paths when same-title sources arrive in reverse order", async () => {
+    const tempDir = await makeTempDir({ prefix: "veryfront-knowledge-remote-suffix-" });
+    const a = join(tempDir, "a.md");
+    const b = join(tempDir, "b.md");
+    const writes: unknown[] = [];
+    const remote = new Map([
+      ["knowledge/overview.md", "uploads/a.md"],
+      ["knowledge/overview-2.md", "uploads/b.md"],
+    ]);
+    try {
+      await Deno.writeTextFile(a, "# Overview\n\nFirst source.");
+      await Deno.writeTextFile(b, "# Overview\n\nSecond source.");
+      const result = await ingestResolvedSources(
+        [createUploadSource("uploads/b.md", b), createUploadSource("uploads/a.md", a)],
+        createKnowledgeCommandArgs(),
+        {
+          client: createMockClient(),
+          projectSlug: "my-project",
+          outputDir: join(tempDir, "output"),
+          runParser: runKnowledgeParser,
+          readRemoteKnowledgeFile: async (path) => {
+            const resource = remote.get(path);
+            if (!resource) return undefined;
+            return { content: `---\nresource: ${resource}\n---\n`, versionId: resource };
+          },
+          indexKnowledgeDocument: async (input) => createIndexReceipt(input.published.path),
+          uploadKnowledgeFile: async (path, _local, _metadata, _kind, expected) => {
+            writes.push({ path, expected });
+            return { path };
+          },
+        },
+      );
+      assertEquals(result.failed, []);
+      assertEquals(result.ingested.map((item) => item.slug), ["overview-2", "overview"]);
+      assertEquals(writes, [
+        { path: "knowledge/overview-2.md", expected: { versionId: "uploads/b.md" } },
+        { path: "knowledge/overview.md", expected: { versionId: "uploads/a.md" } },
+      ]);
+    } finally {
+      await Deno.remove(tempDir, { recursive: true }).catch(() => undefined);
+    }
+  });
+
+  it("allocates more than 100 same-title paths and preserves a retained suffix after deletion", async () => {
+    const tempDir = await makeTempDir({ prefix: "veryfront-knowledge-remote-many-" });
+    const remote = new Map<string, string>();
+    let reads = 0;
+    const deps: Parameters<typeof ingestResolvedSources>[2] = {
+      client: createMockClient(),
+      projectSlug: "my-project",
+      outputDir: join(tempDir, "output"),
+      runParser: runKnowledgeParser,
+      readRemoteKnowledgeFile: async (path: string) => {
+        reads += 1;
+        const content = remote.get(path);
+        return content === undefined ? undefined : { content, versionId: path };
+      },
+      indexKnowledgeDocument: async (input) => createIndexReceipt(input.published.path),
+      uploadKnowledgeFile: async (path: string, local: string) => {
+        remote.set(path, await Deno.readTextFile(local));
+        return { path };
+      },
+    };
+    try {
+      const sources = [];
+      for (let index = 1; index <= 101; index += 1) {
+        const name = `source-${index}.md`;
+        const path = join(tempDir, name);
+        await Deno.writeTextFile(path, "# Overview\n\nText.");
+        sources.push(createUploadSource(`uploads/${name}`, path));
+      }
+      const args = createKnowledgeCommandArgs();
+      const initial = await ingestResolvedSources(sources, args, deps);
+      assertEquals(initial.failed, []);
+      assertEquals(remote.size, 101);
+      assertEquals(reads, 201);
+
+      remote.delete("knowledge/overview.md");
+      const updated = await ingestResolvedSources(sources.slice(1, 2), args, deps);
+      assertEquals(updated.failed, []);
+      assertEquals(updated.ingested.map((item) => item.remotePath), ["knowledge/overview-2.md"]);
+      assertEquals(remote.size, 100);
+      assertEquals(remote.has("knowledge/overview.md"), false);
+    } finally {
+      await Deno.remove(tempDir, { recursive: true }).catch(() => undefined);
+    }
+  });
+
   it("adds a short suffix instead of overwriting another source's knowledge file", async () => {
     const remote: Record<string, string> = {
       "knowledge/contracts-q1.md": '---\ntype: "Document"\nresource: "uploads/other/q1.pdf"\n---\n',
@@ -2274,6 +2362,31 @@ describe("runKnowledgeParser", () => {
       const second = await runKnowledgeParser({ filePath, outputDir, resource: "a.md" });
 
       assertEquals([first.slug, second.slug], ["overview", "overview"]);
+    } finally {
+      await Deno.remove(tempDir, { recursive: true }).catch(() => undefined);
+    }
+  });
+
+  it("preserves generated documents titled Index or Log through OKF bundle parsing", async () => {
+    const tempDir = await makeTempDir({ prefix: "veryfront-knowledge-parser-reserved-" });
+    const outputDir = join(tempDir, "knowledge-output");
+    const filePath = join(tempDir, "notes.md");
+
+    try {
+      for (const title of ["Index", "Log"]) {
+        await Deno.writeTextFile(filePath, `# ${title}\n\nText.`);
+        const generated = await runKnowledgeParser({ filePath, outputDir });
+        assertEquals(generated.title, title);
+        assertEquals(generated.slug, `${title.toLowerCase()}-document`);
+
+        const preserved = await runKnowledgeParser({
+          filePath: generated.sandbox_output_path,
+          outputDir: join(tempDir, "bundle"),
+          okfRelativePath: `${generated.slug}.md`,
+        });
+        assertEquals(preserved.document_kind, "okf_concept");
+        assertEquals(preserved.okf?.envelope_conforms, true);
+      }
     } finally {
       await Deno.remove(tempDir, { recursive: true }).catch(() => undefined);
     }

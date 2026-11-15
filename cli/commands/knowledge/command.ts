@@ -989,6 +989,8 @@ export async function ingestResolvedSources(
     let failureReason: KnowledgeIngestFailureReason = "upload_error";
     try {
       const okfRelativePath = okfRelativePaths.get(source);
+      // A pinned --slug and OKF bundle paths are exact; derived names must not overwrite another source.
+      const claimsPath = okfRelativePath === undefined && !options.slug;
       const derivedRemotePath = okfRelativePath === undefined
         ? deriveKnowledgeRemotePath(
           parser.sandbox_output_path,
@@ -996,11 +998,16 @@ export async function ingestResolvedSources(
           options.knowledgePath,
         )
         : deriveOkfBundleRemotePath(okfRelativePath, options.knowledgePath);
+      const preferredRemotePath = claimsPath && parser.preferred_slug
+        ? deriveKnowledgeRemotePath(
+          join(deps.outputDir, `${parser.preferred_slug}.md`),
+          deps.outputDir,
+          options.knowledgePath,
+        )
+        : undefined;
       const uploadMetadata = options.okfBundle
         ? buildOkfBundleUploadMetadata(options.knowledgePath)
         : undefined;
-      // A pinned --slug and OKF bundle paths are exact; derived names must not overwrite another source.
-      const claimsPath = okfRelativePath === undefined && !options.slug;
       let remotePath = derivedRemotePath;
       let uploaded: PublishedFileReceipt | undefined;
       const absenceConflicts = new Map<string, unknown>();
@@ -1008,6 +1015,7 @@ export async function ingestResolvedSources(
         const claim = claimsPath
           ? await commandHelpers.claimGeneratedKnowledgePath({
             remotePath: derivedRemotePath,
+            preferredRemotePath,
             resource: commandHelpers.buildKnowledgeResource(source),
             legacySource: commandHelpers.buildSourceReference(source),
             absenceConflicts,

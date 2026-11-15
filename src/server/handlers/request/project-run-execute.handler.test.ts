@@ -4155,6 +4155,16 @@ describe("server/handlers/request/project-run-execute.handler", () => {
         assertEquals(destination.searchParams.get("branch_id"), "branch-retained", url);
         const path = decodeURIComponent(destination.pathname.split("/files/")[1] ?? "");
         assertStringIncludes(path, "knowledge/");
+        const publication = requestJsonBody(init);
+        if (outputs.has(path)) {
+          assertEquals(
+            publication?.required_version_id,
+            canonicalKnowledgeFixtureReceipt.version_id,
+          );
+          assertEquals(publication?.expected_version_id, undefined);
+        } else {
+          assertEquals(publication?.expected_absent, true);
+        }
         attempts.push(path);
         if (firstAttempt && path.endsWith("second.md")) {
           if (cancel) {
