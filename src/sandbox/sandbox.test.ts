@@ -1275,6 +1275,44 @@ describe("Sandbox", () => {
       assertEquals(headerValue(fetchCalls, 0, "Authorization"), "Bearer vf_env_token");
     });
 
+    it("uses VERYFRONT_API_KEY when no token or authToken is set", async () => {
+      setEnv("VERYFRONT_API_KEY", "<API_KEY>");
+      setEnv("VERYFRONT_API_URL", "https://api.test.com");
+      mockFetch([
+        jsonResponse({
+          id: "session-env-key",
+          endpoint: "https://sandbox.example.com",
+          status: "running",
+        }),
+      ]);
+
+      const sandbox = await Sandbox.create();
+
+      assertEquals(sandbox.id, "session-env-key");
+      assertEquals(
+        headerValue(fetchCalls, 0, "Authorization"),
+        "Bearer <API_KEY>",
+        "the name Studio prints is enough for the SDK",
+      );
+    });
+
+    it("prefers VERYFRONT_API_TOKEN over VERYFRONT_API_KEY", async () => {
+      setEnv("VERYFRONT_API_TOKEN", "<API_TOKEN>");
+      setEnv("VERYFRONT_API_KEY", "<API_KEY>");
+      setEnv("VERYFRONT_API_URL", "https://api.test.com");
+      mockFetch([
+        jsonResponse({
+          id: "session-env-both",
+          endpoint: "https://sandbox.example.com",
+          status: "running",
+        }),
+      ]);
+
+      await Sandbox.create();
+
+      assertEquals(headerValue(fetchCalls, 0, "Authorization"), "Bearer <API_TOKEN>");
+    });
+
     it("prefers a scoped cloud credential over ambient host auth", async () => {
       setEnv("VERYFRONT_API_TOKEN", "ambient-host-token");
       setEnv("VERYFRONT_API_URL", "https://api.test.com");

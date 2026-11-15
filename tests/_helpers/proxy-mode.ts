@@ -5,6 +5,7 @@ MCowBQYDK2VwAyEAfhOk6ZikxNjGIMFLYW4kpA+Kf01Delncn1qTke0Ifcg=
 const HOST_BINARY_TEST_ENV_BLOCKLIST = [
   "VERYFRONT_API_BASE_URL",
   "VERYFRONT_API_TOKEN",
+  "VERYFRONT_API_KEY",
   "VF_CACHE_BACKEND",
   "VF_DISK_CACHE_DIR",
   "REDIS_URL",
@@ -18,8 +19,11 @@ export function withoutHostBinaryInfraEnv(
   env: Record<string, string>,
 ): Record<string, string> {
   const sanitized = { ...env };
-  for (const key of HOST_BINARY_TEST_ENV_BLOCKLIST) {
-    delete sanitized[key];
+  // Windows environment names are case-insensitive, so a credential spelled
+  // veryfront_api_key would survive an exact-case delete. Match by folded name.
+  const blocked = new Set<string>(HOST_BINARY_TEST_ENV_BLOCKLIST);
+  for (const key of Object.keys(sanitized)) {
+    if (blocked.has(key.toUpperCase())) delete sanitized[key];
   }
   return sanitized;
 }

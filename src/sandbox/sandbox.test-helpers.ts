@@ -5,6 +5,7 @@ export type MockResponseEntry =
 
 export const SANDBOX_ENV_KEYS = [
   "VERYFRONT_API_TOKEN",
+  "VERYFRONT_API_KEY",
   "VERYFRONT_API_URL",
   "KUBERNETES_SERVICE_HOST",
 ] as const;

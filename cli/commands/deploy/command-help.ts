@@ -44,7 +44,7 @@ export const deployHelp: CommandHelp = {
     "veryfront deploy --project my-app --environment production",
   ],
   notes: [
-    "Requires VERYFRONT_API_TOKEN or an authenticated Veryfront login",
+    "Requires VERYFRONT_API_KEY or an authenticated Veryfront login",
     "Creates or links a project when veryfront.json is not present",
     "Promotes main when --branch is omitted",
     "Pushes main before the first deploy when no verified push exists",

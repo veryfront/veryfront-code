@@ -5,13 +5,14 @@ import "#veryfront/schemas/_test-setup.ts";
  */
 
 import { assertEquals, assertInstanceOf, assertRejects } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
   assertApiUrlAcceptsNewCredential,
   createApiClient,
   ENVIRONMENT_PROJECT_REFERENCE_NAMES,
   isRetryableApiReadError,
   isUntrustedApiUrlCredentialError,
+  MISSING_API_CREDENTIAL_MESSAGE,
   readConfigFile,
   resolveApiCredentialCandidatesForAuth,
   resolveConfig,
@@ -106,7 +107,7 @@ describe("resolveConfig", () => {
     await assertRejects(
       () => resolveConfig("/tmp/test-dir", env),
       Error,
-      "Missing API token",
+      MISSING_API_CREDENTIAL_MESSAGE,
     );
   });
 
@@ -660,7 +661,7 @@ describe("resolveConfig", () => {
       assertInstanceOf(error, Error);
       assertEquals(error.message.includes(ciSecret), false);
       assertEquals(error.message.includes("attacker.example"), false);
-      assertEquals(error.message.includes("Add a literal VERYFRONT_API_TOKEN"), false);
+      assertEquals(error.message.includes("Add a literal VERYFRONT_API_KEY"), false);
     } finally {
       __resetEnvLoaderForTests();
       await Deno.remove(tempDir, { recursive: true });
@@ -736,7 +737,12 @@ describe("resolveConfig", () => {
   ) {
     it(`keeps a token file ${label} away from the .env API URL`, async () => {
       const tempDir = await makeTempDir();
-      const keys = ["VERYFRONT_API_URL", "VERYFRONT_API_TOKEN", "VERYFRONT_API_TOKEN_FILE"];
+      const keys = [
+        "VERYFRONT_API_URL",
+        "VERYFRONT_API_TOKEN",
+        "VERYFRONT_API_KEY",
+        "VERYFRONT_API_TOKEN_FILE",
+      ];
       const originals = keys.map((key) => [key, Deno.env.get(key)] as const);
       const operatorSecret = "token_file_secret_do_not_forward";
       const tokenFile = join(tempDir, "operator-token");
@@ -772,6 +778,115 @@ describe("resolveConfig", () => {
       }
     });
   }
+  describe("VERYFRONT_API_KEY under the same repository trust rules", () => {
+    const saved: Record<string, string | undefined> = {};
+    const names = ["VERYFRONT_API_URL", "VERYFRONT_API_TOKEN", "VERYFRONT_API_KEY", "GITHUB_TOKEN"];
+    let tempDir: string;
+
+    beforeEach(async () => {
+      tempDir = await makeTempDir();
+      for (const name of names) {
+        saved[name] = Deno.env.get(name);
+        Deno.env.delete(name);
+      }
+      __resetEnvLoaderForTests();
+    });
+
+    afterEach(async () => {
+      __resetEnvLoaderForTests();
+      await Deno.remove(tempDir, { recursive: true });
+      for (const name of names) restoreEnv(name, saved[name]);
+    });
+
+    it("accepts a literal key written beside the API URL, like a literal token", async () => {
+      await Deno.writeTextFile(
+        join(tempDir, ".env"),
+        "VERYFRONT_API_URL=https://api.self-hosted.test\nVERYFRONT_API_KEY=<FILE_KEY>\n",
+      );
+      await loadEnv({ cwd: tempDir });
+      assertEquals(Deno.env.get("VERYFRONT_API_TOKEN"), "<FILE_KEY>", "the key fills the token");
+
+      const config = await resolveConfig(
+        tempDir,
+        createMockEnv({
+          apiUrl: "https://api.self-hosted.test",
+          apiToken: "<FILE_KEY>",
+          projectSlug: "test-project",
+        }),
+      );
+
+      assertEquals(config.apiUrl, "https://api.self-hosted.test");
+      assertEquals(config.apiToken, "<FILE_KEY>", "the repository supplied both URL and key");
+    });
+
+    it("refuses a .env key that expands a shell secret for the steered endpoint", async () => {
+      const ciSecret = "ghs_shell_secret_do_not_forward";
+      Deno.env.set("GITHUB_TOKEN", ciSecret);
+      await Deno.writeTextFile(
+        join(tempDir, ".env"),
+        "VERYFRONT_API_URL=https://attacker.example\nVERYFRONT_API_KEY=$GITHUB_TOKEN\n",
+      );
+      await loadEnv({ cwd: tempDir });
+
+      const error = await assertRejects(
+        () =>
+          resolveConfig(
+            tempDir,
+            createMockEnv({
+              apiUrl: "https://attacker.example",
+              apiToken: ciSecret,
+              projectSlug: "test-project",
+            }),
+          ),
+        Error,
+      );
+
+      assertEquals(isUntrustedApiUrlCredentialError(error), true, "the expansion stays tainted");
+      assertEquals(
+        (error as Error).message.includes(ciSecret),
+        false,
+        "the secret is never echoed",
+      );
+    });
+
+    it("never sends a shell key to a repository-steered endpoint", async () => {
+      Deno.env.set("VERYFRONT_API_KEY", "<SHELL_KEY>");
+      await Deno.writeTextFile(
+        join(tempDir, ".env"),
+        "VERYFRONT_API_URL=https://attacker.example\n",
+      );
+      await loadEnv({ cwd: tempDir });
+
+      const error = await assertRejects(
+        () =>
+          resolveConfig(
+            tempDir,
+            createMockEnv({
+              apiUrl: "https://attacker.example",
+              apiToken: "<SHELL_KEY>",
+              projectSlug: "test-project",
+            }),
+          ),
+        Error,
+      );
+
+      assertEquals(isUntrustedApiUrlCredentialError(error), true, "a shell key is the developer's");
+      assertEquals((error as Error).message.includes("<SHELL_KEY>"), false);
+    });
+
+    it("keeps an exported key on the default host when the repository steers nothing", async () => {
+      Deno.env.set("VERYFRONT_API_KEY", "<SHELL_KEY>");
+      await loadEnv({ cwd: tempDir });
+
+      const config = await resolveConfig(
+        tempDir,
+        createMockEnv({ apiToken: "<SHELL_KEY>", projectSlug: "test-project" }),
+      );
+
+      assertEquals(config.apiToken, "<SHELL_KEY>");
+      assertEquals(config.apiTokenSource, "env", "an exported key is a shell credential");
+    });
+  });
 
   it("names the confirmation variable without echoing the configured endpoint", async () => {
     const tempDir = await makeTempDir();
@@ -1983,7 +2098,7 @@ describe("nonprompting management configuration", () => {
             createMockEnv({ xdgConfigHome: dir, projectSlug: "chosen" }),
           ),
         Error,
-        "Missing API token",
+        MISSING_API_CREDENTIAL_MESSAGE,
       );
     });
   });

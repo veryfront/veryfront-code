@@ -68,7 +68,7 @@ describe("cli/auth exit codes", () => {
         code: "AUTHENTICATION_ERROR",
         slug: "authentication-required",
         registrySlug: "authentication-required",
-        message: "Not logged in. Run 'veryfront login' to authenticate.",
+        message: "Not logged in. Run 'veryfront login', or set VERYFRONT_API_KEY to an API key.",
         context: { authenticated: false },
       },
     });

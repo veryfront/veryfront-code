@@ -1082,7 +1082,7 @@ export function pullCommand(options: PullOptions = {}): Promise<void> {
           const { apiUrl, apiToken } = await resolveApiCredentialForFallback(env, configFile);
           if (!apiToken) {
             throw new Error(
-              "VERYFRONT_API_TOKEN environment variable or apiToken in veryfront.json is required when using --projects",
+              "VERYFRONT_API_KEY or apiToken in veryfront.json is required when using --projects",
             );
           }
 
