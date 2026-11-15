@@ -231,6 +231,33 @@ describe("eval/agent-service", () => {
     });
   });
 
+  it("forwards an environment context without other forwarded props", () => {
+    const body = buildAgentServiceEvalRequestBody({
+      exampleId: "smoke",
+      input: "List files",
+      environmentContext: "active tab: app/page.tsx",
+    });
+
+    assertEquals(body.forwardedProps, {
+      veryfront: { environmentContext: "active tab: app/page.tsx" },
+    });
+  });
+
+  it("rejects a blank environment context in the agent-service request", () => {
+    for (const environmentContext of ["", "   "]) {
+      assertThrows(
+        () =>
+          buildAgentServiceEvalRequestBody({
+            exampleId: "smoke",
+            input: "List files",
+            environmentContext,
+          }),
+        Error,
+        "Agent-service eval environmentContext must be a non-empty string",
+      );
+    }
+  });
+
   it("does not clear allowed tools for maxSteps-only runtime overrides", () => {
     const body = buildAgentServiceEvalRequestBody({
       exampleId: "smoke",

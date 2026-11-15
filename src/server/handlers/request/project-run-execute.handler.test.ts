@@ -6962,18 +6962,16 @@ describe("server/handlers/request/project-run-execute.handler", () => {
 
       assertExists(result.response);
       assertEquals((await result.response.json()).success, true);
-      const system = JSON.stringify(
-        (model.calls[0]?.prompt as Array<{ role: string }>).filter((message) =>
-          message.role === "system"
-        ),
-      );
+      const [call] = model.calls;
+      assertExists(call);
+      const system = JSON.stringify(call.prompt.filter((message) => message.role === "system"));
       assertStringIncludes(
         system,
         "<environment_context>\\nactive tab: app/page.tsx\\n</environment_context>",
       );
       assertEquals(system.includes("configured context"), false);
     } finally {
-      agentRegistry.delete("context-researcher");
+      agentRegistry.delete(sourceAgent.id);
     }
   });
 
@@ -7336,6 +7334,8 @@ describe("server/handlers/request/project-run-execute.handler", () => {
         "none",
       );
       const agentInput = createRequest?.body?.config as Record<string, unknown>;
+      // Without an eval environment context, no studio_context item is added.
+      assertEquals(agentInput.context, []);
       assertEquals(agentInput.forwarded_props, {
         prompt: "France capital?",
         runtimeOverrides: {
@@ -7652,6 +7652,12 @@ describe("server/handlers/request/project-run-execute.handler", () => {
         data: { environmentContext: "active tab: app/page.tsx" },
       },
     ]);
+    // The durable runtime replaces the agent's configured context with this value.
+    assertEquals(
+      (config.forwarded_props as { veryfront?: Record<string, unknown> }).veryfront
+        ?.environmentContext,
+      "active tab: app/page.tsx",
+    );
   });
 
   it("forwards managed AG-UI endpoint host context when localizing from a generic control-plane host", async () => {

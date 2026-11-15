@@ -1,4 +1,4 @@
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { it } from "#veryfront/testing/bdd.ts";
 import {
   readEvalEnvironmentContext,
@@ -33,4 +33,23 @@ it("ends the eval environment context when the case settles", async () => {
   resume();
 
   assertEquals(await detached, undefined);
+});
+
+it("ends the eval environment context when the case fails", async () => {
+  let resume!: () => void;
+  const resumed = new Promise<void>((resolve) => resume = resolve);
+  let detached: Promise<string | undefined> | undefined;
+  await assertRejects(
+    () =>
+      runWithEvalEnvironmentContext("assistant", "selected node: Header", () => {
+        detached = resumed.then(() => readEvalEnvironmentContext("assistant"));
+        return Promise.reject(new Error("case failed"));
+      }),
+    Error,
+    "case failed",
+  );
+  resume();
+
+  assertEquals(await detached, undefined);
+  assertEquals(readEvalEnvironmentContext("assistant"), undefined);
 });

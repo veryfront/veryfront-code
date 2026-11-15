@@ -7,7 +7,12 @@ import {
 } from "#veryfront/tool/host-tool-provenance.ts";
 import { skillRegistryInternal } from "#veryfront/skill/registry.ts";
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { FakeTime } from "#std/testing/time";
 import {
@@ -2093,17 +2098,25 @@ describe("internal-agents/run-stream", () => {
 
     await run({ veryfront: { environmentContext: "active tab: app/page.tsx" } });
     await run({});
+    await run({ veryfront: { environmentContext: "   " } });
+    await run({ veryfront: { environmentContext: 3 } });
 
-    const evalPrompt = flattenSystemInstructions(
-      await resolveTestAgentSystem(systems[0]) as Parameters<typeof flattenSystemInstructions>[0],
-    );
+    const prompts = await Promise.all(systems.map(async (system) =>
+      flattenSystemInstructions(
+        await resolveTestAgentSystem(system) as Parameters<typeof flattenSystemInstructions>[0],
+      )
+    ));
+    const [evalPrompt, ...configuredPrompts] = prompts;
+    assertExists(evalPrompt);
     assertStringIncludes(evalPrompt, "active tab: app/page.tsx");
     assertEquals(evalPrompt.includes("Factory environment context."), false);
-    // Without the eval override, the configured context keeps its precedence.
-    const studioPrompt = flattenSystemInstructions(
-      await resolveTestAgentSystem(systems[1]) as Parameters<typeof flattenSystemInstructions>[0],
-    );
-    assertStringIncludes(studioPrompt, "Factory environment context.");
+    assertEquals(evalPrompt.split("<environment_context>").length, 2);
+    // Without a usable eval override, the configured context keeps its precedence.
+    assertEquals(configuredPrompts.length, 3);
+    for (const prompt of configuredPrompts) {
+      assertStringIncludes(prompt, "Factory environment context.");
+      assertEquals(prompt.split("<environment_context>").length, 2);
+    }
   });
 
   it("preserves an agent factory marker through internal runtime dispatch", async () => {
