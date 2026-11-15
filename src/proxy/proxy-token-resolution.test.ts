@@ -13,11 +13,14 @@ function base64Url(value: unknown): string {
   return btoa(JSON.stringify(value)).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
 }
 
-function fakeJwt(payload: Record<string, unknown>): string {
+function fakeJwt(payload: unknown): string {
   return `${base64Url({ alg: "RS256", typ: "JWT" })}.${base64Url(payload)}.signature`;
 }
 
-function resolvePreview(cookie: string) {
+function resolvePreview(
+  cookie: string,
+  overrides: Partial<Parameters<typeof resolveProxyRequestToken>[0]> = {},
+) {
   return resolveProxyRequestToken({
     req: new Request("https://my-project.preview.veryfront.com/", { headers: { cookie } }),
     url: new URL("https://my-project.preview.veryfront.com/"),
@@ -27,8 +30,17 @@ function resolvePreview(cookie: string) {
     config: { apiClientId: "client", apiClientSecret: "secret" },
     tokenManager: { getToken: () => Promise.resolve("oauth-token") },
     tokenFetchErrorMessage: "Token fetch failed",
+    ...overrides,
   });
 }
+
+const ENVIRONMENT_ACCESS_CLAIMS = {
+  userId: "user-1",
+  projectId: "project-1",
+  environmentId: "environment-1",
+  aud: "environment-gate",
+  tokenUse: "environment_access",
+};
 
 describe("proxy/proxy-token-resolution", () => {
   it("extracts one bounded visible auth cookie and rejects ambiguous or malformed values", () => {
@@ -151,6 +163,83 @@ describe("proxy/proxy-token-resolution", () => {
     assertEquals(result.token, sessionToken);
     assertEquals(result.tokenSource, "user");
     assertEquals(result.userToken, sessionToken);
+  });
+
+  it("never forwards an environment access token when no service token is available", async () => {
+    const accessToken = fakeJwt(ENVIRONMENT_ACCESS_CLAIMS);
+    const cookie = `authToken=${accessToken}`;
+    const noOAuthClient = { apiClientId: "", apiClientSecret: "" };
+
+    const staticFallback = await resolvePreview(cookie, {
+      config: { ...noOAuthClient, apiToken: "static-token" },
+    });
+    assertEquals(staticFallback.token, "static-token");
+    assertEquals(staticFallback.tokenSource, "static");
+
+    const noCredential = await resolvePreview(cookie, { config: noOAuthClient });
+    assertEquals(noCredential.token, undefined);
+    assertEquals(noCredential.tokenSource, undefined);
+    assertEquals(noCredential.userToken, accessToken);
+
+    const outage = new OAuthTokenRequestError(500, "{}");
+    const loggedErrors: string[] = [];
+    const failedMint = await resolvePreview(cookie, {
+      tokenManager: { getToken: () => Promise.reject(outage) },
+      logger: {
+        debug: () => {},
+        info: () => {},
+        warn: () => {},
+        error: (message) => loggedErrors.push(message),
+      },
+    });
+    assertEquals(failedMint.token, undefined);
+    assertEquals(failedMint.tokenFetchError, outage);
+    assertEquals(loggedErrors, ["Token fetch failed"]);
+  });
+
+  it("prefers a signed control-plane token over an environment access cookie", async () => {
+    const accessToken = fakeJwt(ENVIRONMENT_ACCESS_CLAIMS);
+    const result = await resolvePreview(`authToken=${accessToken}`, {
+      req: new Request("https://my-project.preview.veryfront.com/", {
+        headers: { cookie: `authToken=${accessToken}`, "x-token": "signed-control-plane-token" },
+      }),
+      tokenManager: { getToken: () => Promise.reject(new Error("must not mint")) },
+      allowSignedInternalControlPlaneToken: true,
+      signedInternalControlPlaneRequest: true,
+    });
+
+    assertEquals(result.token, "signed-control-plane-token");
+    assertEquals(result.tokenSource, "signed-internal");
+    assertEquals(result.userToken, accessToken);
+  });
+
+  it("gives a forged environment access claim the same credential as no cookie", async () => {
+    const forged = fakeJwt({ tokenUse: "environment_access" });
+    const withClaim = await resolvePreview(`authToken=${forged}`);
+    const anonymous = await resolvePreview("");
+
+    assertEquals(withClaim.token, anonymous.token);
+    assertEquals(withClaim.tokenSource, anonymous.tokenSource);
+  });
+
+  it("keeps the session credential for tokens that do not claim environment access", async () => {
+    const payload = btoa(JSON.stringify(ENVIRONMENT_ACCESS_CLAIMS));
+    const cases: Record<string, string> = {
+      "another token use": fakeJwt({ ...ENVIRONMENT_ACCESS_CLAIMS, tokenUse: "session" }),
+      "a non-string token use": fakeJwt({ tokenUse: ["environment_access"] }),
+      "a nested token use": fakeJwt({ claims: { tokenUse: "environment_access" } }),
+      "an array payload": fakeJwt(["environment_access"]),
+      "two segments": `header.${payload}`,
+      "four segments": `header.${payload}.signature.extra`,
+      "an undecodable payload": "header.!!!.signature",
+      "a non-JSON payload": `header.${btoa("not json")}.signature`,
+      "an opaque token": "opaque-session-token",
+    };
+    for (const [label, token] of Object.entries(cases)) {
+      const result = await resolvePreview(`authToken=${token}`);
+      assertEquals(result.token, token, label);
+      assertEquals(result.tokenSource, "user", label);
+    }
   });
 
   it("classifies both documented missing-project statuses", () => {
