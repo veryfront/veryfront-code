@@ -6,6 +6,7 @@ import {
   clearEnvFileValueSources,
   deleteEnv,
   getEnv,
+  getTrustedProjectEnvSnapshot,
   markEnvFileValue,
   setEnv,
   settleVeryfrontApiKeyAlias,
@@ -419,8 +420,15 @@ function isBlank(value: string | undefined): boolean {
  * Every env-file loader calls this once its files are in, after writing each
  * entry through {@link startEnvFileLoad}, so the alias reads one provenance
  * record whichever loader ran.
+ *
+ * A host-process rule only: inside a project environment scope (an installed
+ * application bootstrapping under `runWithTrustedProjectEnv`, or any
+ * `runWithProjectEnv`) every read and write here lands in the project's
+ * variables, whose `VERYFRONT_API_KEY` is project data, never the framework's
+ * credential. The alias neither copies it nor settles the host process there.
  */
 export function applyVeryfrontApiKeyAlias(): void {
+  if (getTrustedProjectEnvSnapshot() !== undefined) return;
   settleVeryfrontApiKeyAlias();
   // A token file supplies the credential ahead of the token variable. An alias
   // would attach the key's `.env` provenance to the token file's secret, so a
