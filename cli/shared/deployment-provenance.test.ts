@@ -1,6 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
 
-import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertInstanceOf,
+  assertRejects,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { VeryfrontError } from "veryfront/errors";
 import { deleteEnv, getEnv, makeTempDir, setEnv } from "#veryfront/testing/deno-compat.ts";
@@ -270,8 +275,8 @@ describe("validatePushReceipt", () => {
             clean: true,
           })
         ),
-      VeryfrontError,
     );
+    assertInstanceOf(error, VeryfrontError);
     assertEquals(error.slug, "push-branch-mismatch");
     assertEquals(
       error.detail,

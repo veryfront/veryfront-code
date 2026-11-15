@@ -165,18 +165,6 @@ export function getMergePreview(
 }
 
 /**
- * Record a merge in this directory's push receipt.
- *
- * `veryfront deploy` promotes only the branch the receipt names, so after
- * `veryfront merge new-headline` it refused main even though main held the
- * merged change (veryfront/veryfront-issue-inbox#4363). The receipt moves to
- * the target only when the target's tree is now exactly the source the receipt
- * describes, which keeps its proof intact: the deploy still verifies the
- * release against that digest and this directory against its local digest. A
- * target that also holds changes this directory never pushed keeps the receipt
- * as it was, and the deploy refuses with the push that fixes it.
- */
-/**
  * Whether the receipt was written for the project this merge ran against.
  *
  * `VERYFRONT_PROJECT_ID` puts the project id where the slug usually goes,
@@ -190,6 +178,18 @@ function receiptNamesProject(
   return receipt.projectSlug === project.projectSlug || receipt.projectId === project.projectSlug;
 }
 
+/**
+ * Record a merge in this directory's push receipt.
+ *
+ * `veryfront deploy` promotes only the branch the receipt names, so after
+ * `veryfront merge new-headline` it refused main even though main held the
+ * merged change (veryfront/veryfront-issue-inbox#4363). The receipt moves to
+ * the target only when the target's tree is now exactly the source the receipt
+ * describes, which keeps its proof intact: the deploy still verifies the
+ * release against that digest and this directory against its local digest. A
+ * target that also holds changes this directory never pushed keeps the receipt
+ * as it was, and the deploy refuses with the push that fixes it.
+ */
 export async function recordMergeInPushReceipt(input: {
   client: ApiClient;
   controlPlane: string;
