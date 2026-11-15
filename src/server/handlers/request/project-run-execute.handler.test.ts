@@ -3792,6 +3792,13 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       const result = await withMockFetch(
         async (input, init) => {
           const url = input instanceof Request ? input.url : String(input);
+          if (new URL(url).pathname.endsWith("/knowledge/ingest-source")) {
+            return Response.json({
+              status: "matched",
+              path: "knowledge/topic.md",
+              version_id: canonicalKnowledgeFixtureReceipt.version_id,
+            });
+          }
           const targetRead = knowledgeTargetReadResponse(url);
           if (targetRead) return targetRead;
           if (new URL(url).pathname === `/runs/${body.canonicalRunId}/events`) {
@@ -3915,6 +3922,13 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       });
       await withMockFetch(async (input, init) => {
         const url = input instanceof Request ? input.url : String(input);
+        if (new URL(url).pathname.endsWith("/knowledge/ingest-source")) {
+          return Response.json({
+            status: "matched",
+            path: "knowledge/topic.md",
+            version_id: canonicalKnowledgeFixtureReceipt.version_id,
+          });
+        }
         const targetRead = knowledgeTargetReadResponse(url);
         if (targetRead) return targetRead;
         const observation = respondObservation(url, init);
@@ -4096,6 +4110,13 @@ describe("server/handlers/request/project-run-execute.handler", () => {
   for (const cancel of [false, true]) {
     it(`executes retained-source ingestion through publication and full retry (cancel: ${cancel})`, async () => {
       const sources = ["first", "second", "third"];
+      const paths = new Map(
+        await Promise.all(
+          sources.map(async (name) =>
+            [name, `knowledge/source-${await computeHash(`uploads/${name}.md`)}.md`] as const
+          ),
+        ),
+      );
       const outputs = new Map<string, string>();
       const publishedChecksums = new Map<string, string>();
       const attempts: string[] = [];
@@ -4131,6 +4152,19 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       };
       await withMockFetch(async (input, init) => {
         const url = input instanceof Request ? input.url : String(input);
+        if (new URL(url).pathname.endsWith("/knowledge/ingest-source")) {
+          assertEquals(new URL(url).searchParams.get("branch_id"), "branch-retained");
+          const resource = requestJsonBody(init)?.resource;
+          const name = sources.find((source) => resource === `uploads/${source}.md`);
+          assertExists(name);
+          const path = paths.get(name);
+          assertExists(path);
+          return Response.json(
+            outputs.has(path)
+              ? { status: "matched", path, version_id: canonicalKnowledgeFixtureReceipt.version_id }
+              : { status: "absent" },
+          );
+        }
         const targetRead = knowledgeTargetReadResponse(url, outputs);
         if (targetRead) return targetRead;
         const observation = respondObservation?.(url, init);
@@ -4166,7 +4200,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
           assertEquals(publication?.expected_absent, true);
         }
         attempts.push(path);
-        if (firstAttempt && path.endsWith("second.md")) {
+        if (firstAttempt && path === paths.get("second")) {
           if (cancel) {
             const signal = observeFetchRequestInit(init).signal;
             assertExists(signal);
@@ -4195,7 +4229,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
         assertEquals(failed.success, false);
         if (cancel) {
           assertStringIncludes(failed.error, "Run cancelled");
-          assertEquals(attempts, ["knowledge/first.md", "knowledge/second.md"]);
+          assertEquals(attempts, [paths.get("first"), paths.get("second")]);
           assertEquals(outputs.size, 1);
           assertEquals(stoppedAcknowledgements, 1);
         } else {
@@ -4218,7 +4252,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
         }
         for (const name of sources) {
           assertStringIncludes(
-            outputs.get(`knowledge/${name}.md`) ?? "",
+            outputs.get(paths.get(name) ?? "") ?? "",
             `Retained source ${name}.`,
           );
         }
