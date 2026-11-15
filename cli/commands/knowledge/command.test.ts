@@ -11,6 +11,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 import { basename, dirname, join } from "veryfront/platform/path";
 import { VeryfrontError } from "veryfront/errors";
+import { inspectOkfDocument } from "veryfront/knowledge";
 import { parseCliArgs } from "../../shared/args.ts";
 import type { ParsedArgs } from "#cli/shared/types";
 import {
@@ -1008,6 +1009,152 @@ describe("ingestResolvedSources", () => {
     }
   });
 
+  it("reuses a canonical document stored with the previous local resource spelling", async () => {
+    const writes: unknown[] = [];
+    const lookups: string[] = [];
+    const result = await ingestResolvedSources(
+      [createLocalSource("./contracts/q1.txt")],
+      createKnowledgeCommandArgs(),
+      {
+        client: createMockClient(),
+        projectSlug: "my-project",
+        outputDir: "/workspace/knowledge",
+        runParser: async () => createParserSuccess(),
+        findRemoteKnowledgeSource: async ({ resource }) => {
+          lookups.push(resource);
+          return resource === "./contracts/q1.txt"
+            ? { path: "knowledge/previous-title.md", versionId: "prior-version" }
+            : undefined;
+        },
+        indexKnowledgeDocument: async (input) => createIndexReceipt(input.published.path),
+        uploadKnowledgeFile: async (path, _local, _metadata, _kind, expected) => {
+          writes.push({ path, expected });
+          return { path };
+        },
+      },
+    );
+
+    assertEquals(result.failed, []);
+    assertEquals(lookups, ["./contracts/q1.txt"]);
+    assertEquals(writes, [{
+      path: "knowledge/previous-title.md",
+      expected: { versionId: "prior-version" },
+    }]);
+  });
+
+  it("keeps local and remote uploads separate in canonical and custom destinations", async () => {
+    const tempDir = await makeTempDir({ prefix: "veryfront-knowledge-local-upload-" });
+    const cwd = Deno.cwd();
+    try {
+      await Deno.mkdir(join(tempDir, "uploads"));
+      await Deno.writeTextFile(join(tempDir, "uploads/article.md"), "# Overview\n\nLocal article.");
+      const downloadedPath = join(tempDir, "downloaded.md");
+      await Deno.writeTextFile(downloadedPath, "# Overview\n\nRemote article.");
+      Deno.chdir(tempDir);
+
+      for (const knowledgePath of ["knowledge", "docs/imports"]) {
+        const options = createKnowledgeCommandArgs({
+          knowledgePath,
+          sources: ["uploads/article.md", "./uploads/article.md"],
+        });
+        const client = createMockClient();
+        const collection = await collectKnowledgeSources(options, {
+          client,
+          projectSlug: "my-project",
+          downloadUploads: async (paths) =>
+            paths.map((uploadPath) => ({ uploadPath, localPath: downloadedPath })),
+        });
+        assertEquals(collection.sources.map(({ kind }) => kind), ["upload", "local"]);
+
+        const remote = new Map<string, string>();
+        const result = await ingestResolvedSources(collection.sources, options, {
+          client,
+          projectSlug: "my-project",
+          outputDir: join(tempDir, knowledgePath),
+          runParser: runKnowledgeParser,
+          findRemoteKnowledgeSource: async ({ resource }) => {
+            for (const [path, content] of remote) {
+              if (inspectOkfDocument(path, content).metadata.resource === resource) {
+                return { path, versionId: path };
+              }
+            }
+          },
+          readRemoteKnowledgeFile: async (path) => {
+            const content = remote.get(path);
+            return content === undefined ? undefined : { content, versionId: path };
+          },
+          indexKnowledgeDocument: async (input) => createIndexReceipt(input.published.path),
+          uploadKnowledgeFile: async (path, file, _metadata, _kind, expected) => {
+            assertEquals(expected, { absent: true });
+            remote.set(path, await Deno.readTextFile(file));
+            return { path };
+          },
+        });
+
+        assertEquals(result.failed, []);
+        assertEquals(remote.size, 2);
+        const contentsByResource = new Map(
+          [...remote].map(([path, content]) => [
+            inspectOkfDocument(path, content).metadata.resource,
+            content,
+          ]),
+        );
+        assertStringIncludes(contentsByResource.get("uploads/article.md") ?? "", "Remote article.");
+        assertStringIncludes(
+          contentsByResource.get("./uploads/article.md") ?? "",
+          "Local article.",
+        );
+      }
+    } finally {
+      Deno.chdir(cwd);
+      await Deno.remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("reuses a nested custom suffix written by the previous allocator", async () => {
+    const tempDir = await makeTempDir({ prefix: "veryfront-knowledge-custom-suffix-" });
+    try {
+      const outputDir = join(tempDir, "generated");
+      const localPath = join(tempDir, "article.md");
+      await Deno.mkdir(outputDir);
+      await Deno.writeTextFile(join(outputDir, "overview.md"), '---\nresource: "other.md"\n---\n');
+      await Deno.writeTextFile(localPath, "# Overview\n\nUpdated article.");
+      const retainedPath = "docs/imports/overview-2-2.md";
+      const remote = new Map([
+        ["docs/imports/overview.md", '---\nresource: "uploads/first.md"\n---\n'],
+        ["docs/imports/overview-2.md", '---\nresource: "uploads/second.md"\n---\n'],
+        [retainedPath, '---\nresource: "uploads/article.md"\n---\n'],
+      ]);
+
+      const result = await ingestResolvedSources(
+        [createUploadSource("uploads/article.md", localPath)],
+        createKnowledgeCommandArgs({ knowledgePath: "docs/imports" }),
+        {
+          client: createMockClient(),
+          projectSlug: "my-project",
+          outputDir,
+          runParser: runKnowledgeParser,
+          readRemoteKnowledgeFile: async (path) => {
+            const content = remote.get(path);
+            return content === undefined ? undefined : { content, versionId: path };
+          },
+          uploadKnowledgeFile: async (path, file, _metadata, _kind, expected) => {
+            assertEquals(expected, { versionId: retainedPath });
+            remote.set(path, await Deno.readTextFile(file));
+            return { path };
+          },
+        },
+      );
+
+      assertEquals(result.failed, []);
+      assertEquals(result.ingested.map(({ remotePath }) => remotePath), [retainedPath]);
+      assertEquals(remote.size, 3);
+      assertStringIncludes(remote.get(retainedPath) ?? "", "Updated article.");
+    } finally {
+      await Deno.remove(tempDir, { recursive: true });
+    }
+  });
+
   it("admits one first publication when the same source arrives with different titles", async () => {
     const tempDir = await makeTempDir({ prefix: "veryfront-knowledge-source-claim-" });
     const writes: string[] = [];
@@ -1957,6 +2104,11 @@ describe("stripChatUploadPrefix", () => {
 });
 
 describe("buildKnowledgeResource", () => {
+  it("preserves local paths that resemble the remote upload staging folder", () => {
+    const path = "uploads/_knowledge-ingest/batch-1/brief.pdf";
+    assertEquals(buildKnowledgeResource(createLocalSource(path)), path);
+  });
+
   it("uses the path the user uploaded, not the Studio ingest staging folder", () => {
     assertEquals(
       buildKnowledgeResource(

@@ -274,6 +274,8 @@ const KNOWLEDGE_INGEST_STAGING_RE = /^uploads\/_knowledge-ingest\/[^/]+\/(.+)$/;
 
 /** The OKF `resource`: the path the user uploaded, or the local path. */
 export function buildKnowledgeResource(source: KnowledgeSource): string {
+  // Local path spelling distinguishes an explicit disk path from an upload reference.
+  if (source.kind === "local") return source.localPath;
   const reference = buildSourceReference(source);
   return KNOWLEDGE_INGEST_STAGING_RE.exec(reference)?.[1] ?? reference;
 }
