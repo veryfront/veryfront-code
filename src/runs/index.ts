@@ -23,6 +23,8 @@
  */
 
 export {
+  type ActivatedSourceSchedule,
+  type ActivateSourceSchedulesInput,
   type CreateEvalRunInput,
   createRunsClient,
   type CreateScheduleRunFromSourceInput,
