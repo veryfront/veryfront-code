@@ -256,7 +256,7 @@ export async function putRemoteFileFromLocal(
     content,
     ...(metadata ? { metadata } : {}),
     ...(expected && "absent" in expected ? { expected_absent: true } : {}),
-    ...(expected && "versionId" in expected ? { expected_version_id: expected.versionId } : {}),
+    ...(expected && "versionId" in expected ? { required_version_id: expected.versionId } : {}),
   }, signal || expected ? { ...(signal ? { signal } : {}), retryPolicy: "none" } : undefined);
   signal?.throwIfAborted();
   return {

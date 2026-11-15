@@ -15,6 +15,8 @@ export interface KnowledgeParserResult {
   source_filename: string;
   source_type: string;
   slug: string;
+  /** Title-derived stem before local temporary file collisions. */
+  preferred_slug?: string;
   sandbox_output_path: string;
   suggested_project_path: string;
   description: string;
@@ -237,8 +239,10 @@ const MAX_TITLE_SLUG_LENGTH = 80;
 
 /** A short slug from a title, without a leading list number such as "20. ". */
 function slugifyTitle(title: string): string {
-  const slug = slugifyKnowledgeValue(title.replace(/^\d+[.)]\s+/, ""));
-  return slug.slice(0, MAX_TITLE_SLUG_LENGTH).replace(/-+$/, "") || "document";
+  const slug = slugifyKnowledgeValue(title.replace(/^\d+[.)]\s+/, ""))
+    .slice(0, MAX_TITLE_SLUG_LENGTH).replace(/-+$/, "") || "document";
+  // OKF reserves index.md and log.md for bundle structure.
+  return slug === "index" || slug === "log" ? `${slug}-document` : slug;
 }
 
 /**
@@ -797,6 +801,7 @@ export async function runKnowledgeParsers(input: {
       ].join("\n");
 
       deps.signal?.throwIfAborted();
+      const preferredSlug = file.slug ?? slugifyTitle(title);
       let slug: string;
       let outputPath: string;
       if (file.slug) {
@@ -806,7 +811,7 @@ export async function runKnowledgeParsers(input: {
       } else {
         ({ slug, path: outputPath } = await writeKnowledgeFile(
           input.outputDir,
-          slugifyTitle(title),
+          preferredSlug,
           resource,
           markdown,
           deps.signal,
@@ -818,6 +823,7 @@ export async function runKnowledgeParsers(input: {
         source_filename: basename(file.filePath),
         source_type: definition.sourceType,
         slug,
+        preferred_slug: preferredSlug,
         sandbox_output_path: outputPath,
         suggested_project_path: `knowledge/${slug}.md`,
         description,

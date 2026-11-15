@@ -297,6 +297,7 @@ export interface ClaimedKnowledgePath {
  */
 export async function claimGeneratedKnowledgePath(input: {
   remotePath: string;
+  preferredRemotePath?: string;
   resource: string;
   legacySource: string;
   absenceConflicts: ReadonlyMap<string, unknown>;
@@ -305,13 +306,24 @@ export async function claimGeneratedKnowledgePath(input: {
   ) => Promise<{ content: string; versionId?: string } | undefined>;
 }): Promise<ClaimedKnowledgePath> {
   if (!input.readRemoteFile) return { remotePath: input.remotePath };
+  const readRemoteFile = input.readRemoteFile;
+  const readCandidate = async (path: string) => {
+    const existing = await readRemoteFile(path);
+    const metadata = existing && inspectOkfDocument(path, existing.content).metadata;
+    const legacySource = metadata?.resource === undefined ? metadata?.source : undefined;
+    const sameSource = metadata?.resource === input.resource || legacySource === input.legacySource;
+    return { existing, metadata, legacySource, sameSource };
+  };
+  if (input.preferredRemotePath && input.preferredRemotePath !== input.remotePath) {
+    const { existing, sameSource } = await readCandidate(input.preferredRemotePath);
+    if (existing?.versionId && sameSource) {
+      return { remotePath: input.preferredRemotePath, expected: { versionId: existing.versionId } };
+    }
+  }
   const stem = input.remotePath.replace(/\.md$/i, "");
   for (let attempt = 1; attempt <= MAX_KNOWLEDGE_PATH_SUFFIX; attempt += 1) {
     const candidate = attempt === 1 ? input.remotePath : `${stem}-${attempt}.md`;
-    const existing = await input.readRemoteFile(candidate);
-    const metadata = existing && inspectOkfDocument(candidate, existing.content).metadata;
-    const legacySource = metadata?.resource === undefined ? metadata?.source : undefined;
-    const sameSource = metadata?.resource === input.resource || legacySource === input.legacySource;
+    const { existing, metadata, legacySource, sameSource } = await readCandidate(candidate);
     if (
       input.absenceConflicts.has(candidate) &&
       (sameSource || (typeof metadata?.resource !== "string" && typeof legacySource !== "string"))
