@@ -3,6 +3,7 @@ import { resolveConfigWithAuthNoModule } from "#cli/shared/config";
 import { withProjectSourceContext } from "#cli/shared/project-source-context";
 import type { ParsedArgs } from "#cli/shared/types";
 import { cliLogger, exitProcess } from "#cli/utils";
+import { trustOperatorConfiguredVeryfrontApiOrigins } from "#cli/outbound-fetch";
 import { createSuccessEnvelope, isJsonMode, outputJson } from "../../shared/json-output.ts";
 import { defineSchema, lazySchema } from "veryfront/schemas";
 import {
@@ -501,6 +502,9 @@ async function activateRemoteSchedules(
 }
 
 export async function handleScheduleCommand(args: ParsedArgs): Promise<void> {
+  // A local command: trust the shell-exported Veryfront API origin, such as a
+  // staging API that resolves to a private address, before project code loads.
+  trustOperatorConfiguredVeryfrontApiOrigins();
   const opts: ScheduleArgs = parseArgsOrThrow(parseScheduleArgs, "schedule", args);
   const projectDir = opts.projectDir ?? Deno.cwd();
 
