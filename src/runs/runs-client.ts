@@ -15,6 +15,7 @@ import {
 } from "#veryfront/errors/index.ts";
 import { getProjectSchema } from "#veryfront/platform/adapters/veryfront-api-client/schemas/index.ts";
 import type { ResolvedTriggerTarget } from "#veryfront/trigger/target.ts";
+import { isTriggerId } from "#veryfront/trigger/validation.ts";
 import {
   createRunsSdk,
   type RunsCallOptions,
@@ -430,6 +431,7 @@ export class VeryfrontRunsClient {
   async createScheduleRunFromSource(
     input: CreateScheduleRunFromSourceInput,
   ): Promise<CreateScheduleRunFromSourceResult> {
+    assertSourceTriggerId(input.sourceTriggerId);
     const projectReference = this.resolveProjectReference(input.projectReference);
     const listed = await this.requestJson(
       withQuery(
@@ -480,6 +482,7 @@ export class VeryfrontRunsClient {
   async activateSourceSchedules(
     input: ActivateSourceSchedulesInput = {},
   ): Promise<ActivatedSourceSchedule[]> {
+    if (input.sourceTriggerId !== undefined) assertSourceTriggerId(input.sourceTriggerId);
     const projectReference = this.resolveProjectReference(input.projectReference);
     const source = await this.listSourceSchedules(projectReference);
     const selected = input.sourceTriggerId === undefined
@@ -745,6 +748,17 @@ function assertNoScheduleSourceErrors(
       shown.join("; ")
     }${hidden > 0 ? ` (and ${hidden} more)` : ""}. Fix the file, then run \`veryfront push\`.`,
   });
+}
+
+/**
+ * Error details below put the id in a copyable `veryfront schedule activate`
+ * command, so only a canonical trigger id, which has no shell syntax, may
+ * reach them.
+ */
+function assertSourceTriggerId(sourceTriggerId: string): void {
+  if (!isTriggerId(sourceTriggerId)) {
+    throw INVALID_ARGUMENT.create({ detail: `Invalid schedule id: "${sourceTriggerId}".` });
+  }
 }
 
 function scheduleNotActiveDetail(sourceTriggerId: string): string {

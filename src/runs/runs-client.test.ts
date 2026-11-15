@@ -930,6 +930,26 @@ describe("VeryfrontRunsClient", () => {
     assertEquals(fetchCalls.length, 1, "nothing is activated");
   });
 
+  it("rejects a source trigger id that is not a trigger id before any request", async () => {
+    const sourceTriggerId = "missing; touch /tmp/owned";
+    mockFetch([
+      jsonResponse({ data: [], diagnostics: [] }),
+      jsonResponse({ data: [], diagnostics: [] }),
+    ]);
+    const client = createTestClient();
+
+    for (
+      const attempt of [
+        () => client.activateSourceSchedules({ sourceTriggerId }),
+        () => client.createScheduleRunFromSource({ sourceTriggerId }),
+      ]
+    ) {
+      const error = await assertRejects(attempt, Error) as Error;
+      assertEquals(error.message, `Invalid schedule id: "${sourceTriggerId}".`);
+    }
+    assertEquals(fetchCalls.length, 0, "an invalid id never reaches the API or a printed command");
+  });
+
   it("reports the pushed source's schedule errors instead of claiming nothing was pushed", async () => {
     const diagnostics = [
       {

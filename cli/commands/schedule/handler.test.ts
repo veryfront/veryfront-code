@@ -18,6 +18,7 @@ import { setJsonMode } from "../../shared/json-output.ts";
 import type { ParsedArgs } from "../../shared/types.ts";
 import {
   createLocalScheduleTimeout,
+  describeActivatedSchedule,
   formatRemoteScheduleRunOutput,
   handleScheduleCommand,
   normalizeLocalScheduleInput,
@@ -414,6 +415,22 @@ describe("schedule command", () => {
       await Deno.remove(projectDir, { recursive: true });
       await Deno.remove(configHome, { recursive: true });
     }
+  });
+
+  it("tells the user what each activation status means", () => {
+    const schedule = { scheduleId, sourceTriggerId: "weekday-digest", name: "Weekday digest" };
+    assertEquals(
+      describeActivatedSchedule({ ...schedule, status: "active" }),
+      'Schedule "weekday-digest" is active.',
+    );
+    assertEquals(
+      describeActivatedSchedule({ ...schedule, status: "paused" }),
+      'Schedule "weekday-digest" was activated before and is paused. Resume it in Orchestration > Triggers in Studio.',
+    );
+    assertEquals(
+      describeActivatedSchedule({ ...schedule, status: "deleting" }),
+      'Schedule "weekday-digest" is being deleted. Run `veryfront schedule activate weekday-digest` after the deletion finishes.',
+    );
   });
 
   it("requires exactly one of a schedule id or --all to activate", async () => {

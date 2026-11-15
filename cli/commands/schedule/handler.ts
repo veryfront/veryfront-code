@@ -14,6 +14,7 @@ import {
 } from "veryfront/errors";
 import type { InferSchema } from "veryfront/extensions/schema";
 import {
+  type ActivatedSourceSchedule,
   createRunsClient,
   type CreateScheduleRunFromSourceResult,
   type VeryfrontRunsClient,
@@ -492,12 +493,19 @@ async function activateRemoteSchedules(
     );
     return;
   }
-  for (const schedule of schedules) {
-    cliLogger.info(
-      schedule.status === "active"
-        ? `Schedule "${schedule.sourceTriggerId}" is active.`
-        : `Schedule "${schedule.sourceTriggerId}" was activated before and is ${schedule.status}. Resume it in Orchestration > Triggers in Studio.`,
-    );
+  for (const schedule of schedules) cliLogger.info(describeActivatedSchedule(schedule));
+}
+
+/** The line `veryfront schedule activate` prints for one schedule. */
+export function describeActivatedSchedule(schedule: ActivatedSourceSchedule): string {
+  const id = schedule.sourceTriggerId;
+  switch (schedule.status) {
+    case "active":
+      return `Schedule "${id}" is active.`;
+    case "paused":
+      return `Schedule "${id}" was activated before and is paused. Resume it in Orchestration > Triggers in Studio.`;
+    case "deleting":
+      return `Schedule "${id}" is being deleted. Run \`veryfront schedule activate ${id}\` after the deletion finishes.`;
   }
 }
 
