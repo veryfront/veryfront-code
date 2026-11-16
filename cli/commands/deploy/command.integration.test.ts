@@ -1989,7 +1989,7 @@ it("plans the project an embedding command creates, such as init --deploy", asyn
 });
 
 it("exits 2 with a usage error for an unlinked folder in JSON mode", async () => {
-  const projectDir = await Deno.makeTempDir();
+  const projectDir = await makeTempDir();
   const envKeys = [
     "VERYFRONT_API_TOKEN",
     "VERYFRONT_API_URL",
@@ -2057,7 +2057,7 @@ it("exits 2 with a usage error for an unlinked folder in JSON mode", async () =>
 });
 
 it("refuses an inferred first deploy without creating a project or a link", async () => {
-  const projectDir = await Deno.makeTempDir();
+  const projectDir = await makeTempDir();
   const envKeys = [
     "VERYFRONT_API_TOKEN",
     "VERYFRONT_API_URL",
