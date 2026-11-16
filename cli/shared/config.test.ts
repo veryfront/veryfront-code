@@ -2243,6 +2243,7 @@ Deno.test("API management client keeps credentials on the supplied host transpor
 describe("resolveLinkedProjectConfigWithAuth", () => {
   const ENV_NAMES = [
     "VERYFRONT_API_URL",
+    "VERYFRONT_API_BASE_URL",
     "VERYFRONT_API_KEY",
     "VERYFRONT_API_TOKEN",
     "VERYFRONT_API_TOKEN_FILE",
