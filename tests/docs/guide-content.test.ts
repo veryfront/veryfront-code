@@ -1198,6 +1198,10 @@ describe("guide content contracts", () => {
       guide.includes('return `getEnv("VERYFRONT_API_TOKEN")`'),
       false,
     );
+    assertEquals(
+      guide.includes('return `getEnv("VERYFRONT_API_KEY")`'),
+      false,
+    );
   });
 
   it("documents the MCP session header for post-init tool calls", async () => {

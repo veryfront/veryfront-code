@@ -396,7 +396,7 @@ export const POST = createAgUiHandler("researcher");
       assertEquals(researchChatJson.code, "NO_MODEL_CREDENTIALS");
       assertEquals(
         researchChatJson.error,
-        "No model credentials configured. Run veryfront login or set VERYFRONT_API_TOKEN, OPENAI_API_KEY, ANTHROPIC_API_KEY, or GOOGLE_API_KEY.",
+        "No model credentials configured. Run veryfront login or set VERYFRONT_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY, or GOOGLE_API_KEY.",
       );
 
       expectServer(server).withoutErrors();
@@ -626,7 +626,7 @@ export const POST = createAgUiHandler("assistant");
       assertEquals(chatJson.code, "NO_MODEL_CREDENTIALS");
       assertEquals(
         chatJson.error,
-        "No model credentials configured. Run veryfront login or set VERYFRONT_API_TOKEN, OPENAI_API_KEY, ANTHROPIC_API_KEY, or GOOGLE_API_KEY.",
+        "No model credentials configured. Run veryfront login or set VERYFRONT_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY, or GOOGLE_API_KEY.",
       );
 
       expectServer(server).withoutErrors();
@@ -752,7 +752,7 @@ Use this skill when writing polished copy.
       assertEquals(chatJson.code, "NO_MODEL_CREDENTIALS");
       assertEquals(
         chatJson.error,
-        "No model credentials configured. Run veryfront login or set VERYFRONT_API_TOKEN, OPENAI_API_KEY, ANTHROPIC_API_KEY, or GOOGLE_API_KEY.",
+        "No model credentials configured. Run veryfront login or set VERYFRONT_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY, or GOOGLE_API_KEY.",
       );
 
       expectServer(server).withoutErrors();

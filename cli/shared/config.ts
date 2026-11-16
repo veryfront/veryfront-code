@@ -10,7 +10,7 @@ import type { InferSchema } from "veryfront/extensions/schema";
 import { basename, join } from "veryfront/platform/path";
 import { createFileSystem, cwd, getEnv } from "veryfront/platform";
 import { type EnvironmentConfig, getApiTokenEnv, getEnvironmentConfig } from "veryfront/config";
-import { getEnvSource } from "veryfront/utils/env-loader";
+import { getEnvSource, veryfrontApiCredentialEnvName } from "veryfront/utils/env-loader";
 import { cliLogger, VERSION } from "#cli/utils";
 import { readToken } from "../auth/token-store.ts";
 import { ensureAuthenticated } from "../auth/login.ts";
@@ -399,7 +399,7 @@ function describeUntrustedApiUrl(trust: ApiUrlTrust): string {
     endpointSource.expandedFromProcessEnv;
   const repositoryCredential = trust.steeringEnvFile === undefined
     ? "Add a matching apiToken to the same veryfront.json"
-    : `Add a literal VERYFRONT_API_TOKEN to the same ${basename(trust.steeringEnvFile)} file`;
+    : `Add a literal VERYFRONT_API_KEY to the same ${basename(trust.steeringEnvFile)} file`;
   const confirmationKey = trust.steeringEnvKey ?? "VERYFRONT_API_URL";
   const remedy = endpointExpandedFromProcess
     ? `Replace ${confirmationKey} with a literal endpoint in the same file, or, if you trust the `
@@ -450,6 +450,16 @@ function isRepositorySuppliedCredential(
   // which secret to name; it never owned the secret itself.
   return !tokenSource.expandedFromProcessEnv;
 }
+
+/**
+ * The message of the `authentication-required` error a management command
+ * throws when no credential is available.
+ *
+ * Exported so callers that classify it (such as the MCP deploy tool) match this
+ * constant instead of copying its wording.
+ */
+export const MISSING_API_CREDENTIAL_MESSAGE =
+  `No Veryfront credential found. ${AUTHENTICATION_REQUIRED.suggestion}.`;
 
 function apiBaseUrlForRequest(apiUrl: string): string {
   const normalized = trimTrailingSlashes(apiUrl);
@@ -702,9 +712,7 @@ export async function resolveApiCredentialForFallback(
  * suggestion, so the error sets no separate detail.
  */
 function missingCredentialError() {
-  return AUTHENTICATION_REQUIRED.create({
-    message: `No Veryfront credential found. ${AUTHENTICATION_REQUIRED.suggestion}.`,
-  });
+  return AUTHENTICATION_REQUIRED.create({ message: MISSING_API_CREDENTIAL_MESSAGE });
 }
 
 async function resolveConfigBase(
@@ -946,7 +954,7 @@ export function createApiClient(
     if (config.apiTokenSource !== "env-file") return message;
     if (status !== 401 && status !== 403 && status !== 404) return message;
 
-    return `${message}. VERYFRONT_API_TOKEN was loaded from a project .env file. For management commands, run 'veryfront login' and remove or rename the project runtime token, or pass a management token explicitly in the shell.`;
+    return `${message}. ${veryfrontApiCredentialEnvName()} was loaded from a project .env file. For management commands, run 'veryfront login' and remove or rename the project runtime token, or pass a management token explicitly in the shell.`;
   }
 
   async function requestOnce<T>(

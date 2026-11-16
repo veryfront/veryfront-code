@@ -1087,7 +1087,7 @@ export function pullCommand(options: PullOptions = {}): Promise<void> {
               throw error;
             }
             throw new Error(
-              "VERYFRONT_API_TOKEN environment variable or apiToken in veryfront.json is required when using --projects",
+              "VERYFRONT_API_KEY or apiToken in veryfront.json is required when using --projects",
             );
           }
 
