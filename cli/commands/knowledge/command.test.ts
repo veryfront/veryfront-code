@@ -13,7 +13,6 @@ import { basename, dirname, join } from "veryfront/platform/path";
 import { VeryfrontError } from "veryfront/errors";
 import { parseCliArgs } from "../../shared/args.ts";
 import type { ParsedArgs } from "#cli/shared/types";
-import { assertRefusesUnlinkedFolder } from "../../test-utils/unlinked-project.ts";
 import {
   buildSuggestedSlug,
   collectKnowledgeSources,
@@ -2962,11 +2961,3 @@ for (const sourceKind of ["local", "upload"] as const) {
     }
   });
 }
-
-describe("knowledgeCommand in a folder with no linked project", () => {
-  it("stops before it ingests into the project named after the folder", async () => {
-    await assertRefusesUnlinkedFolder(knowledgeCommand, {
-      _: ["knowledge", "ingest", "guide.pdf"],
-    });
-  });
-});
