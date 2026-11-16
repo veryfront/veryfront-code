@@ -44,6 +44,7 @@ import {
   readPushReceipt,
   writePushReceipt,
 } from "../../shared/deployment-provenance.ts";
+import { resetInteractiveMode, setAutoConfirm } from "../../shared/interactive.ts";
 import { setJsonMode } from "../../shared/json-output.ts";
 import { readProjectLink, writeProjectLink } from "../../shared/project-link.ts";
 import type { InferredProjectChoice } from "../../shared/project-resolution.ts";
@@ -1964,6 +1965,28 @@ describe("push in a folder with no linked project", () => {
     });
   }
 
+  /** Run `test` with stdout as a terminal, answering every prompt with `answer`. */
+  async function withTerminalAnswer(
+    answer: string,
+    test: (questions: string[]) => Promise<void>,
+  ): Promise<void> {
+    const questions: string[] = [];
+    const originalPrompt = globalThis.prompt;
+    const ownIsTerminal = Object.getOwnPropertyDescriptor(Deno.stdout, "isTerminal");
+    globalThis.prompt = (message?: string) => {
+      questions.push(stripAnsi(message ?? ""));
+      return answer;
+    };
+    Object.defineProperty(Deno.stdout, "isTerminal", { value: () => true, configurable: true });
+    try {
+      await test(questions);
+    } finally {
+      globalThis.prompt = originalPrompt;
+      if (ownIsTerminal) Object.defineProperty(Deno.stdout, "isTerminal", ownIsTerminal);
+      else delete (Deno.stdout as { isTerminal?: unknown }).isTerminal;
+    }
+  }
+
   it("stops before any request when nobody can be asked", async () => {
     await withUnlinkedProject(async (projectDir, requests) => {
       for (const dryRun of [false, true]) {
@@ -2052,6 +2075,106 @@ describe("push in a folder with no linked project", () => {
         request.method === "GET" && url.pathname === "/projects/my-project"
           ? Response.json({ error: "not found" }, { status: 404 })
           : null,
+    );
+  });
+
+  it("asks in a terminal and stops with nothing created when the answer is no", async () => {
+    await withUnlinkedProject(
+      (projectDir, requests) =>
+        withTerminalAnswer("n", async (questions) => {
+          const error = await assertRejects(() => pushCommand({ projectDir }), VeryfrontError);
+
+          assertInstanceOf(error, VeryfrontError);
+          assertEquals(error.exitCode, 2);
+          assertEquals(error.message, UNLINKED_MESSAGE);
+          assertEquals(error.context, { inferredSlug: "my-project", declined: true });
+          assertEquals(questions, [
+            'No Veryfront project is linked to this folder. Create project "my-project"? [y/N] ',
+          ]);
+          assertEquals(requests, ["GET /projects/my-project"]);
+          assertEquals(await readProjectLink(projectDir), null);
+        }),
+      (request, url) =>
+        request.method === "GET" && url.pathname === "/projects/my-project"
+          ? Response.json({ error: "not found" }, { status: 404 })
+          : null,
+    );
+  });
+
+  it("asks in a terminal and pushes to the existing project once the answer is yes", async () => {
+    const uploaded = new Map<string, string>();
+    await withUnlinkedProject(
+      (projectDir, requests) =>
+        withTerminalAnswer("y", async (questions) => {
+          // `force` skips the remote-conflict check, whose spinner replaces the
+          // running one without stopping it in a terminal.
+          await pushCommand({ projectDir, force: true });
+
+          assertEquals(questions, [
+            'No Veryfront project is linked to this folder. Push to your existing project "my-project"? [y/N] ',
+          ]);
+          assertEquals(requests.includes("POST /projects"), false);
+          assertEquals(uploaded.has("package.json"), true);
+          const link = await readProjectLink(projectDir);
+          assertEquals(link?.projectId, "project-123");
+          assertEquals(link?.projectSlug, "my-project");
+        }),
+      async (request, url) => {
+        if (request.method === "GET" && url.pathname === "/projects/my-project") {
+          return Response.json({ id: "project-123", slug: "my-project" });
+        }
+        if (request.method === "GET" && url.pathname === "/projects/project-123/files") {
+          return Response.json({
+            data: [...uploaded].map(([path, content], index) => ({
+              path,
+              content,
+              version_id: `00000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
+            })),
+            page_info: {},
+          });
+        }
+        if (request.method === "PUT" && url.pathname.startsWith("/projects/project-123/files/")) {
+          const body = await request.json() as { content: string };
+          uploaded.set(decodeURIComponent(url.pathname.split("/").at(-1) ?? ""), body.content);
+          return Response.json({});
+        }
+        if (request.method === "GET" && url.pathname === "/projects/project-123") {
+          return Response.json({ id: "project-123", slug: "my-project" });
+        }
+        return null;
+      },
+    );
+  });
+
+  it("does not ask under --yes, --quiet or JSON mode, even in a terminal", async () => {
+    const modes: Array<{ name: string; quiet: boolean; enter: () => void }> = [
+      // The router turns `--yes` into auto-confirm, which must not answer this.
+      { name: "--yes", quiet: false, enter: () => setAutoConfirm(true) },
+      { name: "--quiet", quiet: true, enter: () => {} },
+      { name: "--json", quiet: false, enter: () => setJsonMode(true) },
+    ];
+    await withUnlinkedProject((projectDir, requests) =>
+      withTerminalAnswer("y", async (questions) => {
+        for (const mode of modes) {
+          mode.enter();
+          try {
+            const error = await assertRejects(
+              () => pushCommand({ projectDir, quiet: mode.quiet }),
+              VeryfrontError,
+            );
+            assertInstanceOf(error, VeryfrontError);
+            assertEquals(error.exitCode, 2, mode.name);
+            assertEquals(error.message, UNLINKED_MESSAGE, mode.name);
+            assertEquals(error.context, { inferredSlug: "my-project", declined: false }, mode.name);
+          } finally {
+            resetInteractiveMode();
+            setJsonMode(false);
+          }
+        }
+        assertEquals(questions, []);
+        assertEquals(requests, []);
+        assertEquals(await readProjectLink(projectDir), null);
+      })
     );
   });
 });

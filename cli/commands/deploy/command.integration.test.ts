@@ -7,10 +7,13 @@ import { it } from "#veryfront/testing/bdd.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 import { computeSourceDigest, writePushReceipt } from "../../shared/deployment-provenance.ts";
+import { resetInteractiveMode, setAutoConfirm } from "../../shared/interactive.ts";
 import { setJsonMode } from "../../shared/json-output.ts";
 import { readProjectLink, writeProjectLink } from "../../shared/project-link.ts";
+import type { InferredProjectChoice } from "../../shared/project-resolution.ts";
 import { computeContentDigest, writeSyncTarget } from "../../sync/state.ts";
 import { deployCommand } from "./command.ts";
+import { initCommand } from "../init/init-command.ts";
 import { createDeployProject, type DeployProject } from "../../shared/deployment/deploy-project.ts";
 import type { DeploymentRoutingConvergence } from "../../shared/deployment/control-plane.ts";
 import { stripAnsi } from "../../ui/ansi.ts";
@@ -2101,6 +2104,436 @@ it("refuses an inferred first deploy without creating a project or a link", asyn
     );
     assertEquals(requests, []);
     assertEquals(await readProjectLink(projectDir), null);
+    await assertRejects(
+      () => Deno.stat(`${projectDir}/veryfront.json`),
+      Deno.errors.NotFound,
+    );
+  } finally {
+    envKeys.forEach((key, index) => {
+      const value = savedEnv[index];
+      if (value === undefined) Deno.env.delete(key);
+      else Deno.env.set(key, value);
+    });
+    _resetEnvironmentConfig();
+    await Deno.remove(projectDir, { recursive: true });
+  }
+});
+
+const UNLINKED_DEPLOY_MESSAGE =
+  "No Veryfront project is linked to this folder. Run veryfront up to create one, or pass --project <slug> to deploy an existing project.";
+
+/** Run `fn` in a committed folder that names `packageName` and links no project. */
+async function withUnlinkedDeployDir(
+  packageName: string,
+  fn: (projectDir: string) => Promise<void>,
+): Promise<void> {
+  const projectDir = await makeTempDir();
+  const envKeys = [
+    // See withDeployEnv: the temp repository below is not the CI checkout.
+    "GITHUB_SHA",
+    "VERYFRONT_API_TOKEN",
+    "VERYFRONT_API_URL",
+    "VERYFRONT_PROJECT_SLUG",
+    "VERYFRONT_PROJECT_ID",
+  ];
+  const savedEnv = envKeys.map((key) => Deno.env.get(key));
+
+  try {
+    Deno.env.delete("GITHUB_SHA");
+    await Deno.writeTextFile(`${projectDir}/.gitignore`, ".veryfront/\n");
+    await Deno.writeTextFile(`${projectDir}/package.json`, `{"name":"${packageName}"}\n`);
+    await Deno.writeTextFile(`${projectDir}/app.ts`, PUSHED_SOURCE);
+    await commitProject(projectDir);
+    Deno.env.set("VERYFRONT_API_TOKEN", "test-token");
+    Deno.env.set("VERYFRONT_API_URL", "https://control.example.test/api");
+    Deno.env.delete("VERYFRONT_PROJECT_SLUG");
+    Deno.env.delete("VERYFRONT_PROJECT_ID");
+    _resetEnvironmentConfig();
+
+    await fn(projectDir);
+  } finally {
+    envKeys.forEach((key, index) => {
+      const value = savedEnv[index];
+      if (value === undefined) Deno.env.delete(key);
+      else Deno.env.set(key, value);
+    });
+    _resetEnvironmentConfig();
+    await Deno.remove(projectDir, { recursive: true });
+  }
+}
+
+/** Run `fn` with stdout as a terminal, answering every prompt with `answer`. */
+async function withTerminalAnswer(
+  answer: string,
+  fn: (questions: string[]) => Promise<void>,
+): Promise<void> {
+  const questions: string[] = [];
+  const originalPrompt = globalThis.prompt;
+  const originalLog = console.log;
+  const ownIsTerminal = Object.getOwnPropertyDescriptor(Deno.stdout, "isTerminal");
+  globalThis.prompt = (message?: string) => {
+    questions.push(stripAnsi(message ?? ""));
+    return answer;
+  };
+  console.log = () => {};
+  Object.defineProperty(Deno.stdout, "isTerminal", { value: () => true, configurable: true });
+  try {
+    await fn(questions);
+  } finally {
+    globalThis.prompt = originalPrompt;
+    console.log = originalLog;
+    if (ownIsTerminal) Object.defineProperty(Deno.stdout, "isTerminal", ownIsTerminal);
+    else delete (Deno.stdout as { isTerminal?: unknown }).isTerminal;
+  }
+}
+
+it("dry-runs the bootstrap push into the existing project the operator confirmed", async () => {
+  await withUnlinkedDeployDir("my-project", async (projectDir) => {
+    const requests: string[] = [];
+    const choices: InferredProjectChoice[] = [];
+
+    await withMockFetch(
+      createDeployFetchHandler({ requests, sourceDigest: "sha256:unused" }),
+      () =>
+        deployCommand({
+          projectDir,
+          branch: "main",
+          env: "production",
+          dryRun: true,
+          force: false,
+          quiet: true,
+          deployProject: boundedDeployProject(),
+          inferredProject: (choice) => {
+            choices.push(choice);
+            return Promise.resolve(true);
+          },
+        }),
+    );
+
+    // Asked once, by deploy. The dry-run push it runs must not refuse the
+    // same folder name the operator just confirmed.
+    assertEquals(choices, [{
+      slug: "my-project",
+      existing: { id: PROJECT_ID, slug: "my-project" },
+    }]);
+    assertEquals(
+      requests.some((request) => request.startsWith(`GET /api/projects/${PROJECT_ID}/files?`)),
+      true,
+    );
+    assertEquals(requests.some((request) => !request.startsWith("GET ")), false);
+    assertEquals(await readProjectLink(projectDir), null);
+  });
+});
+
+it("asks in a terminal before it creates the project named after the folder, and stops on no", async () => {
+  await withUnlinkedDeployDir("unlinked-app", async (projectDir) => {
+    const requests: string[] = [];
+    await withTerminalAnswer("n", async (questions) => {
+      const error = await withMockFetch((input: string | URL | Request, init?: RequestInit) => {
+        const request = input instanceof Request ? input : new Request(input, init);
+        requests.push(`${request.method} ${new URL(request.url).pathname}`);
+        return Promise.resolve(Response.json({ message: "not found" }, { status: 404 }));
+      }, () =>
+        assertRejects(
+          () =>
+            deployCommand({
+              projectDir,
+              branch: "main",
+              env: "production",
+              dryRun: false,
+              force: true,
+              quiet: false,
+            }),
+          VeryfrontError,
+        ));
+
+      assertInstanceOf(error, VeryfrontError);
+      assertEquals(error.exitCode, 2);
+      assertEquals(error.message, UNLINKED_DEPLOY_MESSAGE);
+      assertEquals(error.context, { inferredSlug: "unlinked-app", declined: true });
+      assertEquals(questions, [
+        'No Veryfront project is linked to this folder. Create project "unlinked-app"? [y/N] ',
+      ]);
+      assertEquals(requests, ["GET /api/projects/unlinked-app"]);
+      assertEquals(await readProjectLink(projectDir), null);
+    });
+  });
+});
+
+it("does not ask under --yes or --quiet, even in a terminal", async () => {
+  await withUnlinkedDeployDir("unlinked-app", async (projectDir) => {
+    const requests: string[] = [];
+    const modes: Array<{ name: string; quiet: boolean; enter: () => void }> = [
+      // The router turns `--yes` into auto-confirm, which must not answer this.
+      { name: "--yes", quiet: false, enter: () => setAutoConfirm(true) },
+      { name: "--quiet", quiet: true, enter: () => {} },
+    ];
+    await withTerminalAnswer("y", async (questions) => {
+      await withMockFetch((input: string | URL | Request, init?: RequestInit) => {
+        const request = input instanceof Request ? input : new Request(input, init);
+        requests.push(`${request.method} ${new URL(request.url).pathname}`);
+        return Promise.resolve(Response.json({ message: "not found" }, { status: 404 }));
+      }, async () => {
+        for (const mode of modes) {
+          mode.enter();
+          try {
+            const error = await assertRejects(
+              () =>
+                deployCommand({
+                  projectDir,
+                  branch: "main",
+                  env: "production",
+                  dryRun: false,
+                  force: true,
+                  quiet: mode.quiet,
+                }),
+              VeryfrontError,
+            );
+            assertInstanceOf(error, VeryfrontError);
+            assertEquals(error.message, UNLINKED_DEPLOY_MESSAGE, mode.name);
+            assertEquals(
+              error.context,
+              { inferredSlug: "unlinked-app", declined: false },
+              mode.name,
+            );
+          } finally {
+            resetInteractiveMode();
+          }
+        }
+      });
+      assertEquals(questions, []);
+      assertEquals(requests, []);
+      assertEquals(await readProjectLink(projectDir), null);
+    });
+  });
+});
+
+it("init --deploy creates the cloud project for the folder it scaffolded", async () => {
+  const parentDir = await makeTempDir({ prefix: "veryfront-init-deploy-create-" });
+  const name = `deploy-create-${crypto.randomUUID()}`;
+  const envKeys = [
+    "VERYFRONT_API_TOKEN",
+    "VERYFRONT_API_URL",
+    "VERYFRONT_PROJECT_SLUG",
+    "VERYFRONT_PROJECT_ID",
+  ];
+  const savedEnv = envKeys.map((key) => Deno.env.get(key));
+  const requests: string[] = [];
+
+  try {
+    Deno.env.set("VERYFRONT_API_TOKEN", "test-token");
+    Deno.env.set("VERYFRONT_API_URL", "https://control.example.test/api");
+    Deno.env.delete("VERYFRONT_PROJECT_SLUG");
+    Deno.env.delete("VERYFRONT_PROJECT_ID");
+    _resetEnvironmentConfig();
+
+    const result = await withMockFetch((input: string | URL | Request, init?: RequestInit) => {
+      const request = input instanceof Request ? input : new Request(input, init);
+      const { pathname } = new URL(request.url);
+      requests.push(`${request.method} ${pathname}`);
+      if (request.method === "GET" && pathname === "/api/me") {
+        return Promise.resolve(Response.json({ id: "user-1", email: "cli@example.test" }));
+      }
+      // Stop at the create: reaching it is what this test pins.
+      return Promise.resolve(Response.json({ message: "unavailable" }, { status: 503 }));
+    }, () =>
+      initCommand({
+        name,
+        parentDir,
+        template: "minimal",
+        skipInstall: true,
+        skipEnvPrompt: true,
+        deploy: true,
+        quiet: true,
+      }));
+
+    // The scaffolded folder links no project yet, so a deploy that did not
+    // create it would stop at the unlinked-folder refusal, before any
+    // project request.
+    assertEquals(requests.includes("POST /api/projects"), true);
+    assertEquals(result.cancelled, false);
+    if (!result.cancelled) assertEquals(result.deployment?.status, "failed");
+  } finally {
+    envKeys.forEach((key, index) => {
+      const value = savedEnv[index];
+      if (value === undefined) Deno.env.delete(key);
+      else Deno.env.set(key, value);
+    });
+    _resetEnvironmentConfig();
+    await Deno.remove(parentDir, { recursive: true });
+  }
+});
+
+it("creates the project an embedding command creates, under an alternative slug on conflict", async () => {
+  const projectDir = await makeTempDir();
+  const envKeys = [
+    // See withDeployEnv: the temp repository below is not the CI checkout.
+    "GITHUB_SHA",
+    "VERYFRONT_API_TOKEN",
+    "VERYFRONT_API_URL",
+    "VERYFRONT_PROJECT_SLUG",
+    "VERYFRONT_PROJECT_ID",
+  ];
+  const savedEnv = envKeys.map((key) => Deno.env.get(key));
+  const createSlugs: string[] = [];
+  let environmentUrlReads = 0;
+  let inferredProjectLookups = 0;
+
+  try {
+    Deno.env.delete("GITHUB_SHA");
+    await Deno.writeTextFile(`${projectDir}/.gitignore`, ".veryfront/\n");
+    await Deno.writeTextFile(`${projectDir}/package.json`, '{"name":"taken-app"}\n');
+    await Deno.writeTextFile(`${projectDir}/app.ts`, "export const value = 1;\n");
+    const actualSha = await commitProject(projectDir);
+    const sourceDigest = await computeSourceDigest([
+      { path: "app.ts", content: "export const value = 1;\n" },
+    ]);
+
+    Deno.env.set("VERYFRONT_API_TOKEN", "test-token");
+    Deno.env.set("VERYFRONT_API_URL", "https://control.example.test/api");
+    Deno.env.delete("VERYFRONT_PROJECT_SLUG");
+    Deno.env.delete("VERYFRONT_PROJECT_ID");
+    _resetEnvironmentConfig();
+
+    await withMockFetch(async (input: string | URL | Request, init?: RequestInit) => {
+      const request = input instanceof Request ? input : new Request(input, init);
+      const url = new URL(request.url);
+
+      if (
+        request.method === "GET" &&
+        url.hostname.endsWith(".production.veryfront.com")
+      ) {
+        environmentUrlReads++;
+        return new Response("ready");
+      }
+      if (request.method === "GET" && url.pathname === "/api/projects/taken-app") {
+        inferredProjectLookups++;
+        return Response.json({ message: "not found" }, { status: 404 });
+      }
+      if (request.method === "POST" && url.pathname === "/api/projects") {
+        const body = await request.json() as { slug: string };
+        createSlugs.push(body.slug);
+        if (body.slug === "taken-app") {
+          return Response.json({ error: "taken" }, { status: 409 });
+        }
+        assertEquals(/^taken-app-[a-z0-9]{6}$/.test(body.slug), true);
+        await writePushReceipt(projectDir, {
+          controlPlane: "https://control.example.test/api",
+          projectId: PROJECT_ID,
+          projectSlug: body.slug,
+          branch: "main",
+          commitSha: actualSha,
+          sourceDigest,
+          clean: true,
+          pushedAt: "2026-07-10T09:20:00.000Z",
+        });
+        return Response.json({ id: PROJECT_ID }, { status: 201 });
+      }
+      if (request.method === "GET" && url.pathname.endsWith("/environments")) {
+        return Response.json({
+          data: [{
+            id: ENVIRONMENT_ID,
+            name: "production",
+            project_id: PROJECT_ID,
+            protected: false,
+            deployment: {
+              id: DEPLOYMENT_ID,
+              release: { id: RELEASE_ID, name: `github-main-${actualSha}` },
+            },
+          }],
+        });
+      }
+      if (request.method === "POST" && url.pathname.endsWith("/releases")) {
+        return Response.json({
+          id: RELEASE_ID,
+          name: `github-main-${actualSha}`,
+          version: "0.0.41",
+          project_id: PROJECT_ID,
+        }, { status: 201 });
+      }
+      if (request.method === "GET" && url.pathname.endsWith(`/releases/${RELEASE_ID}`)) {
+        return Response.json({
+          id: RELEASE_ID,
+          name: `github-main-${actualSha}`,
+          version: "0.0.41",
+          project_id: PROJECT_ID,
+        });
+      }
+      if (
+        request.method === "GET" &&
+        url.pathname.endsWith(`/releases/${RELEASE_ID}/files`)
+      ) {
+        return Response.json({
+          data: [{
+            path: "app.ts",
+            data: JSON.stringify({ body: "export const value = 1;\n", path: "app.ts" }),
+          }],
+          page_info: {},
+        });
+      }
+      if (
+        request.method === "GET" &&
+        url.pathname.endsWith(`/releases/${RELEASE_ID}/asset-manifest`)
+      ) {
+        return Response.json({
+          state: "ready",
+          manifest_version: 1,
+          manifest: {
+            schemaVersion: RELEASE_ASSET_MANIFEST_SCHEMA_VERSION,
+            projectId: PROJECT_ID,
+            releaseId: RELEASE_ID,
+            releaseVersion: 41,
+            manifestVersion: 1,
+            builderVersion: "test",
+            sourceContentHash: sourceDigest.slice("sha256:".length),
+            createdAt: "2026-07-10T09:20:00.000Z",
+            assetBasePath: "/_vf/assets",
+            modules: {},
+            css: [],
+            routes: {},
+            dependencyMode: "source",
+            dependencies: {},
+          },
+        });
+      }
+      if (request.method === "POST" && url.pathname.endsWith("/deployments")) {
+        return Response.json({
+          id: DEPLOYMENT_ID,
+          release_id: RELEASE_ID,
+          environment_id: ENVIRONMENT_ID,
+          routing_convergence: { status: "converged", acknowledged: 1, recipients: 1 },
+        }, { status: 201 });
+      }
+      if (request.method === "GET" && url.pathname.endsWith(`/deployments/${DEPLOYMENT_ID}`)) {
+        return Response.json({
+          id: DEPLOYMENT_ID,
+          release_id: RELEASE_ID,
+          environment_id: ENVIRONMENT_ID,
+        });
+      }
+      return Response.json({ message: "not found" }, { status: 404 });
+    }, () =>
+      deployCommand({
+        projectDir,
+        branch: "main",
+        env: "production",
+        releaseName: `github-main-${actualSha}`,
+        dryRun: false,
+        force: true,
+        quiet: true,
+        skipSourcePush: true,
+        // init --deploy creates the project for the folder it scaffolded.
+        inferredProject: "create",
+      }));
+
+    assertEquals(createSlugs.length, 2);
+    assertEquals(inferredProjectLookups, 0);
+    assertEquals(environmentUrlReads, 0);
+    assertEquals(createSlugs[0], "taken-app");
+    assertEquals(/^taken-app-[a-z0-9]{6}$/.test(createSlugs[1] ?? ""), true);
+    const link = await readProjectLink(projectDir);
+    assertEquals(link?.projectId, PROJECT_ID);
+    assertEquals(link?.projectSlug, createSlugs[1]);
     await assertRejects(
       () => Deno.stat(`${projectDir}/veryfront.json`),
       Deno.errors.NotFound,
