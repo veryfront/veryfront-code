@@ -15,6 +15,7 @@ import type { DeploymentRoutingConvergence } from "../../shared/deployment/contr
 import { stripAnsi } from "../../ui/ansi.ts";
 import { setVerboseMode } from "../../utils/index.ts";
 import { RELEASE_ASSET_MANIFEST_SCHEMA_VERSION } from "veryfront/release-assets";
+import { MISSING_API_CREDENTIAL_MESSAGE } from "../../shared/config.ts";
 
 /**
  * The real Deploy Execution module with test-bounded polling: these suites
@@ -2574,4 +2575,85 @@ it("preserves explicit project ids during deploy project lookup", async () => {
     _resetEnvironmentConfig();
     await Deno.remove(projectDir, { recursive: true });
   }
+});
+
+it("streams a missing credential as an authentication-required result and exits 1", async () => {
+  const projectDir = await makeTempDir({ prefix: "vf-deploy-json-auth-" });
+  const configHome = await makeTempDir({ prefix: "vf-deploy-json-auth-config-" });
+  const names = [
+    "VERYFRONT_API_TOKEN",
+    "VERYFRONT_API_TOKEN_FILE",
+    "VERYFRONT_API_KEY",
+    "VERYFRONT_API_URL",
+    "VERYFRONT_PROJECT_SLUG",
+    "VERYFRONT_PROJECT_ID",
+    "TENANT_PROJECT_SLUG",
+    "TENANT_PROJECT_ID",
+    "XDG_CONFIG_HOME",
+  ];
+  const original = Object.fromEntries(names.map((name) => [name, Deno.env.get(name)]));
+  const originalExit = Deno.exit;
+  const originalLog = console.log;
+  const output: string[] = [];
+  let requests = 0;
+
+  try {
+    await Deno.writeTextFile(
+      `${projectDir}/veryfront.json`,
+      JSON.stringify({ projectSlug: "deploy-json-auth-project" }),
+    );
+    for (const name of names) Deno.env.delete(name);
+    Deno.env.set("XDG_CONFIG_HOME", configHome);
+    _resetEnvironmentConfig();
+    setJsonMode(true);
+    console.log = (...args: unknown[]) => {
+      output.push(args.map(String).join(" "));
+    };
+    Deno.exit = ((code?: number): never => {
+      throw new Error(`Deno.exit(${code ?? 0})`);
+    }) as typeof Deno.exit;
+
+    await withMockFetch(() => {
+      requests++;
+      return Promise.resolve(new Response(null, { status: 500 }));
+    }, () =>
+      assertRejects(
+        () =>
+          deployCommand({
+            projectDir,
+            branch: "main",
+            env: "production",
+            dryRun: false,
+            force: false,
+            quiet: false,
+            deployProject: boundedDeployProject(),
+          }),
+        Error,
+        "Deno.exit(1)",
+      ));
+  } finally {
+    Deno.exit = originalExit;
+    console.log = originalLog;
+    setJsonMode(false);
+    for (const name of names) {
+      const value = original[name];
+      if (value === undefined) Deno.env.delete(name);
+      else Deno.env.set(name, value);
+    }
+    _resetEnvironmentConfig();
+    await Deno.remove(projectDir, { recursive: true });
+    await Deno.remove(configHome, { recursive: true });
+  }
+
+  assertEquals(requests, 0);
+  assertEquals(JSON.parse(output.at(-1) ?? "{}"), {
+    type: "result",
+    success: false,
+    error: MISSING_API_CREDENTIAL_MESSAGE,
+    errorDetails: {
+      code: "RUNTIME_ERROR",
+      slug: "authentication-required",
+      message: MISSING_API_CREDENTIAL_MESSAGE,
+    },
+  });
 });
