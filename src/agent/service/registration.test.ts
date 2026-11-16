@@ -218,7 +218,7 @@ describe("agent/agent-service-registration", () => {
         }),
       Error,
       "Agent service registration is enabled but no credential is set: set VERYFRONT_API_KEY to an API key.",
-    );
+    ) as Error;
     // Setup guidance names the one credential name, never the deprecated one.
     assertEquals(missingCredential.message.includes("VERYFRONT_API_TOKEN"), false);
 
