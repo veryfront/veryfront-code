@@ -782,7 +782,7 @@ export class VeryfrontCloudBlobStorage implements BlobStorage {
     if (!apiToken) {
       throw CONFIG_INVALID.create({
         detail:
-          "VeryfrontCloudBlobStorage requires auth. Set VERYFRONT_API_TOKEN, provide request-scoped Veryfront credentials, or pass apiToken explicitly.",
+          "VeryfrontCloudBlobStorage requires auth. Set VERYFRONT_API_KEY, provide request-scoped Veryfront credentials, or pass apiToken explicitly.",
       });
     }
 

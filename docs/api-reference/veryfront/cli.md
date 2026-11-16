@@ -76,7 +76,7 @@ The CLI groups commands by category. Each command supports `--help` for its full
 | `veryfront eval`      | List, run, and export discovered eval definitions |
 | `veryfront issues`    | File-based issue tracking (SDLC conventions)      |
 | `veryfront mcp`       | Start MCP server for coding agents                |
-| `veryfront schedule`  | List or run source-defined schedules              |
+| `veryfront schedule`  | List, run, or activate source-defined schedules   |
 | `veryfront schedules` | List source-defined schedules                     |
 | `veryfront skills`    | List and inspect available agent skills           |
 | `veryfront task`      | Run a task from the tasks/ directory              |

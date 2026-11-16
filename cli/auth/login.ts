@@ -25,7 +25,11 @@ import {
   outputJson,
 } from "../shared/json-output.ts";
 import { isInteractive } from "../shared/interactive.ts";
-import { getEnvSource } from "veryfront/utils/env-loader";
+import {
+  getEnvSource,
+  isVeryfrontApiTokenFromKey,
+  veryfrontApiCredentialEnvName,
+} from "veryfront/utils/env-loader";
 import { basename, isAbsolute, relative } from "veryfront/platform/path";
 import { cwd, getEnv } from "veryfront/platform";
 
@@ -68,12 +72,15 @@ export function formatEnvSourcePathForDisplay(file: string, currentCwd = cwd()):
 }
 
 function describeApiTokenSource(token: string): string {
+  // The name the user actually set: `VERYFRONT_API_KEY` fills the token slot
+  // when only the key is set, and the user never typed `VERYFRONT_API_TOKEN`.
+  const name = isVeryfrontApiTokenFromKey() ? "VERYFRONT_API_KEY" : "VERYFRONT_API_TOKEN";
   const origin = getEnvSource("VERYFRONT_API_TOKEN");
   if (origin.source !== "env-file" || getEnv("VERYFRONT_API_TOKEN") !== token) {
-    return "(via VERYFRONT_API_TOKEN)";
+    return `(via ${name})`;
   }
 
-  return `(via VERYFRONT_API_TOKEN from ${formatEnvSourcePathForDisplay(origin.file)})`;
+  return `(via ${name} from ${formatEnvSourcePathForDisplay(origin.file)})`;
 }
 
 type BrowserAuthMethod = "google" | "github" | "microsoft";
@@ -142,7 +149,7 @@ async function outputLoginAuthenticationRequiredJson(): Promise<void> {
     code: "AUTHENTICATION_ERROR",
     slug: "authentication-required",
     registrySlug: "authentication-required",
-    message: "Not logged in. Set VERYFRONT_API_TOKEN or run in interactive mode.",
+    message: "Not logged in. Set VERYFRONT_API_KEY or run in interactive mode.",
   }));
 }
 
@@ -539,7 +546,9 @@ function writeConfigFileSwitchingGuidance(): void {
 function writeEnvironmentConfigFileSwitchingGuidance(): void {
   console.log(
     "  " +
-      dim("Remove or replace apiToken in veryfront.json after unsetting VERYFRONT_API_TOKEN."),
+      dim(
+        `Remove or replace apiToken in veryfront.json after unsetting ${veryfrontApiCredentialEnvName()}.`,
+      ),
   );
 }
 
@@ -549,11 +558,13 @@ function writeAuthoritativeCredentialRejectedMessage(
 ): void {
   console.log();
   if (source === "environment") {
-    console.log("  " + error("✗") + " VERYFRONT_API_TOKEN was rejected by the Veryfront API.");
+    console.log(
+      "  " + error("✗") + ` ${veryfrontApiCredentialEnvName()} was rejected by the Veryfront API.`,
+    );
     console.log(
       "  " +
         dim(
-          "Unset VERYFRONT_API_TOKEN or replace the variable before signing in with another method.",
+          `Unset ${veryfrontApiCredentialEnvName()} or replace the variable before signing in with another method.`,
         ),
     );
     if (hasConfigToken) writeEnvironmentConfigFileSwitchingGuidance();
@@ -567,7 +578,9 @@ function writeAuthoritativeCredentialRejectedMessage(
 }
 
 function credentialSourceForDisplay(source: "config-file" | "environment"): string {
-  return source === "environment" ? "VERYFRONT_API_TOKEN" : "apiToken from veryfront.json";
+  return source === "environment"
+    ? veryfrontApiCredentialEnvName()
+    : "apiToken from veryfront.json";
 }
 
 function writeAuthoritativeCredentialUnavailableMessage(
@@ -595,7 +608,7 @@ function writeAuthoritativeCredentialUnavailableMessage(
 
   if (source === "environment") {
     console.log(
-      "  " + dim("Unset VERYFRONT_API_TOKEN before signing in with another method."),
+      "  " + dim(`Unset ${veryfrontApiCredentialEnvName()} before signing in with another method.`),
     );
     if (hasConfigToken) writeEnvironmentConfigFileSwitchingGuidance();
     return;
@@ -631,22 +644,23 @@ function writeExistingSession(
   // the case `whoami` now names, so the session ends at the directory
   // boundary. Say so rather than let them discover it elsewhere.
   if (source === "environment") {
+    const envName = veryfrontApiCredentialEnvName();
     if (hasStoredToken) {
       console.log(
-        "  " + dim("Using VERYFRONT_API_TOKEN; it takes precedence over a stored credential."),
+        "  " + dim(`Using ${envName}; it takes precedence over a stored credential.`),
       );
       console.log(
         "  " +
           dim(
-            "Unset VERYFRONT_API_TOKEN before attempting to use the stored credential, or replace the variable to switch tokens.",
+            `Unset ${envName} before attempting to use the stored credential, or replace the variable to switch tokens.`,
           ),
       );
     } else {
-      console.log("  " + dim("Using VERYFRONT_API_TOKEN; no stored login was created."));
+      console.log("  " + dim(`Using ${envName}; no stored login was created.`));
       console.log(
         "  " +
           dim(
-            "Unset VERYFRONT_API_TOKEN before using another login method, or replace the variable to switch tokens.",
+            `Unset ${envName} before using another login method, or replace the variable to switch tokens.`,
           ),
       );
     }
@@ -898,7 +912,7 @@ export async function login(
   await assertApiUrlAcceptsNewCredential(env, projectDir);
 
   if (!isInteractive() && (method === undefined || method === "token")) {
-    cliLogger.error("Not logged in. Set VERYFRONT_API_TOKEN or run in interactive mode.");
+    cliLogger.error("Not logged in. Set VERYFRONT_API_KEY or run in interactive mode.");
     return null;
   }
 
@@ -913,7 +927,7 @@ export async function login(
 
 function warnRejectedCredentialSource(source: ApiTokenSource, humanOutput: boolean): void {
   if (source === "env" && humanOutput) {
-    console.log("  " + warning("Warning: VERYFRONT_API_TOKEN is invalid"));
+    console.log("  " + warning(`Warning: ${veryfrontApiCredentialEnvName()} is invalid`));
   }
   if (source === "config-file" && humanOutput) {
     console.log("  " + warning("Warning: apiToken from veryfront.json is invalid"));
@@ -936,7 +950,7 @@ async function requestInteractiveAuthentication(
   validationOptions: CredentialValidationOptions,
 ): Promise<AuthIdentity | null> {
   if (!isTTY() || !isInteractive()) {
-    cliLogger.error("Not logged in. Set VERYFRONT_API_TOKEN or run in interactive mode.");
+    cliLogger.error("Not logged in. Set VERYFRONT_API_KEY or run in interactive mode.");
     return null;
   }
 
@@ -1091,7 +1105,7 @@ export async function whoami(
       code: "AUTHENTICATION_ERROR",
       slug: "authentication-required",
       registrySlug: "authentication-required",
-      message: "Not logged in. Run 'veryfront login' to authenticate.",
+      message: "Not logged in. Run 'veryfront login', or set VERYFRONT_API_KEY to an API key.",
       context: { authenticated: false },
     }));
     return null;
@@ -1099,7 +1113,7 @@ export async function whoami(
 
   console.log();
   console.log("  " + error("✗") + " Not logged in");
-  console.log("  " + dim("Run 'veryfront login' to authenticate"));
+  console.log("  " + dim("Run 'veryfront login', or set VERYFRONT_API_KEY to an API key"));
 
   return null;
 }

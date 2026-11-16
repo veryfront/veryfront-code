@@ -48,7 +48,7 @@ async function withUnlinkedFolder(
   const requests: string[] = [];
   try {
     for (const name of PROJECT_ENVIRONMENT_NAMES) Deno.env.delete(name);
-    if (options.token !== false) Deno.env.set("VERYFRONT_API_TOKEN", "test-token");
+    if (options.token !== false) Deno.env.set("VERYFRONT_API_KEY", "test-token");
     Deno.env.set("XDG_CONFIG_HOME", root);
     _resetEnvironmentConfig();
     await withMockFetch((input) => {

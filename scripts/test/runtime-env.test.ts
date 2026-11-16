@@ -20,6 +20,16 @@ describe("runtime test process environment", () => {
     assertEquals(env.PATH, "/test/bin");
   });
 
+  it("scrubs the VERYFRONT_API_KEY alias the CLI and SDK accept as a credential", () => {
+    const env = buildRuntimeTestProcessEnv({
+      VERYFRONT_API_KEY: "test-only-provider-key",
+      PATH: "/test/bin",
+    });
+
+    assertEquals(env.VERYFRONT_API_KEY, undefined);
+    assertEquals(env.PATH, "/test/bin");
+  });
+
   it("applies the runtime test contract", () => {
     const parentEnv = Object.fromEntries([
       ...PROVIDER_ENV_KEYS.map((key) => [key, "test-only-provider-key"]),

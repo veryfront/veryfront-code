@@ -382,11 +382,11 @@ describe("Up Command", () => {
         assertEquals(JSON.parse(output[0]!), {
           type: "result",
           success: false,
-          error: "Not authenticated. Set VERYFRONT_API_TOKEN or run veryfront login.",
+          error: "Not authenticated. Set VERYFRONT_API_KEY or run veryfront login.",
           errorDetails: {
             code: "RUNTIME_ERROR",
             slug: "authentication-required",
-            message: "Not authenticated. Set VERYFRONT_API_TOKEN or run veryfront login.",
+            message: "Not authenticated. Set VERYFRONT_API_KEY or run veryfront login.",
           },
         });
       } finally {

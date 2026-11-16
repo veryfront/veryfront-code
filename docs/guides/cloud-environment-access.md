@@ -41,7 +41,7 @@ A non-browser client can still authenticate by sending the `authToken` cookie
 with a project member's session token. Store that token as a secret and account
 for its expiration.
 
-`VERYFRONT_API_TOKEN` does not open a protected environment on its own. It
+`VERYFRONT_API_KEY` does not open a protected environment on its own. It
 authenticates the CLI against the Cloud API, not requests to the deployed app.
 Exchange it for an environment access token for the key owner instead. The gate
 accepts it for five minutes, and the Cloud API refuses it as a session.
