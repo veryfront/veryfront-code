@@ -167,6 +167,60 @@ export const getScheduleReferenceListSchema = defineSchema((v) =>
   v.object({ data: v.array(getScheduleReferenceSchema()) })
 );
 
+/** Create-schedule response: the schedule an activation created or kept. */
+export const getScheduleReferenceResponseSchema = defineSchema((v) =>
+  v.object({ schedule: getScheduleReferenceSchema() })
+);
+
+/**
+ * One schedule declared in a project's pushed source, with the fields the
+ * create-schedule endpoint needs to activate it.
+ */
+const getSourceScheduleSchema = defineSchema((v) =>
+  v.object({
+    name: v.string(),
+    target: v.object({
+      kind: v.enum(["task", "workflow", "agent"] as const),
+      id: v.string(),
+      conversation_mode: v.enum(["create_new", "existing", "none"] as const).optional(),
+      conversation_id: v.string().nullable().optional(),
+    }),
+    schedule: v.string(),
+    timezone: v.string(),
+    runtime_target_kind: v.enum(["main_branch", "environment", "preview_branch"] as const),
+    runtime_target_environment_id: v.string().nullable(),
+    runtime_target_branch_id: v.string().nullable(),
+    config: v.record(v.string(), v.unknown()),
+    timeout_seconds: v.number().int().positive(),
+    backoff_limit: v.number().int().nonnegative(),
+    concurrency_policy: v.string(),
+    max_runs: v.number().int().positive().nullable().optional(),
+    source_trigger_id: v.string().min(1),
+    source_path: v.string().min(1),
+    source_hash: v.string().min(1),
+  })
+);
+
+/** One source discovery problem the API reports beside the declared schedules. */
+const getSourceDiagnosticSchema = defineSchema((v) =>
+  v.object({
+    source_kind: v.string(),
+    source_path: v.string(),
+    message: v.string(),
+  })
+);
+
+/**
+ * Source-schedule list response, read from the canonical `data` list key, with
+ * the discovery diagnostics for definitions that failed to load.
+ */
+export const getSourceScheduleListSchema = defineSchema((v) =>
+  v.object({
+    data: v.array(getSourceScheduleSchema()),
+    diagnostics: v.array(getSourceDiagnosticSchema()).default([]),
+  })
+);
+
 export const getCancelRunResponseSchema = defineSchema((v) =>
   v.object({
     cancelled: v.boolean(),
@@ -221,6 +275,12 @@ export const ScheduleRunCreateResponseSchema = lazySchema(getScheduleRunCreateRe
  * Each source-schedule `timeout_seconds` value is a positive integer.
  */
 export const ScheduleReferenceListSchema = lazySchema(getScheduleReferenceListSchema);
+/** Zod schema for the schedule a source-schedule activation returns. */
+export const ScheduleReferenceResponseSchema = lazySchema(getScheduleReferenceResponseSchema);
+/** Zod schema for the schedules declared in a project's pushed source. */
+export const SourceScheduleListSchema = lazySchema(getSourceScheduleListSchema);
+/** One schedule declared in a project's pushed source. */
+export type SourceSchedule = InferSchema<ReturnType<typeof getSourceScheduleSchema>>;
 /** Zod schema for a cancel-run response. */
 export const CancelRunResponseSchema = lazySchema(getCancelRunResponseSchema);
 /** Zod schema for a run event whose `event_id` is a non-negative integer. */

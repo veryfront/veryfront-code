@@ -2,8 +2,9 @@ import { CommonArgs, createArgParser, parseArgsOrThrow } from "#cli/shared/args"
 import { resolveConfigWithAuthNoModule } from "#cli/shared/config";
 import { withProjectSourceContext } from "#cli/shared/project-source-context";
 import type { ParsedArgs } from "#cli/shared/types";
-import { exitProcess } from "#cli/utils";
+import { cliLogger, exitProcess } from "#cli/utils";
 import { trustOperatorConfiguredVeryfrontApiOrigins } from "#cli/outbound-fetch";
+import { createSuccessEnvelope, isJsonMode, outputJson } from "../../shared/json-output.ts";
 import { defineSchema, lazySchema } from "veryfront/schemas";
 import {
   DEPLOYMENT_ERROR,
@@ -13,6 +14,7 @@ import {
 } from "veryfront/errors";
 import type { InferSchema } from "veryfront/extensions/schema";
 import {
+  type ActivatedSourceSchedule,
   createRunsClient,
   type CreateScheduleRunFromSourceResult,
   type VeryfrontRunsClient,
@@ -46,11 +48,12 @@ const MAX_TIMER_DELAY_SECONDS = Math.floor(MAX_HOST_TIMER_DELAY_MS / 1_000);
 
 const getScheduleArgsSchema = defineSchema((v) =>
   v.object({
-    action: v.enum(["run", "list"]).optional(),
+    action: v.enum(["run", "list", "activate"]).optional(),
     id: v.string().optional(),
     input: v.string().optional(),
     projectDir: v.string().optional(),
     remote: v.boolean().default(false),
+    all: v.boolean().default(false),
     debug: v.boolean().default(false),
   })
 );
@@ -65,6 +68,7 @@ const parseScheduleArgs = createArgParser(ScheduleArgsSchema, {
   input: { keys: ["input"], type: "string" },
   projectDir: CommonArgs.projectDir,
   remote: { keys: ["remote"], type: "boolean" },
+  all: { keys: ["all"], type: "boolean" },
   debug: { keys: ["debug"], type: "boolean" },
 });
 
@@ -455,6 +459,56 @@ async function runRemoteSchedule(
   });
 }
 
+async function activateRemoteSchedules(
+  projectDir: string,
+  opts: ScheduleArgs,
+): Promise<void> {
+  if (opts.all === (opts.id !== undefined)) {
+    throw INVALID_ARGUMENT.create({
+      detail: "Usage: veryfront schedule activate <id>, or veryfront schedule activate --all",
+    });
+  }
+  if (opts.id !== undefined && !isTriggerId(opts.id)) {
+    throw INVALID_ARGUMENT.create({ detail: `Invalid schedule id: "${opts.id}".` });
+  }
+  // Activation reads the pushed source; like remote runs it never imports
+  // veryfront.config.ts/.js from the checkout.
+  const cliConfig = await resolveConfigWithAuthNoModule(projectDir);
+  const client = createRunsClient({
+    apiUrl: cliConfig.apiUrl,
+    authToken: cliConfig.apiToken,
+    projectReference: cliConfig.projectSlug,
+  });
+  const schedules = await client.activateSourceSchedules(
+    opts.id === undefined ? {} : { sourceTriggerId: opts.id },
+  );
+
+  if (isJsonMode()) {
+    await outputJson(createSuccessEnvelope("schedule", { action: "activate", schedules }));
+    return;
+  }
+  if (schedules.length === 0) {
+    cliLogger.info(
+      "No schedules found in the pushed source. Add one under schedules/, then run `veryfront push`.",
+    );
+    return;
+  }
+  for (const schedule of schedules) cliLogger.info(describeActivatedSchedule(schedule));
+}
+
+/** The line `veryfront schedule activate` prints for one schedule. */
+export function describeActivatedSchedule(schedule: ActivatedSourceSchedule): string {
+  const id = schedule.sourceTriggerId;
+  switch (schedule.status) {
+    case "active":
+      return `Schedule "${id}" is active.`;
+    case "paused":
+      return `Schedule "${id}" was activated before and is paused. Resume it in Orchestration > Triggers in Studio.`;
+    case "deleting":
+      return `Schedule "${id}" is being deleted. Run \`veryfront schedule activate ${id}\` after the deletion finishes.`;
+  }
+}
+
 export async function handleScheduleCommand(args: ParsedArgs): Promise<void> {
   // A local command: trust the shell-exported Veryfront API origin, such as a
   // staging API that resolves to a private address, before project code loads.
@@ -465,6 +519,11 @@ export async function handleScheduleCommand(args: ParsedArgs): Promise<void> {
   // Dispatch "list" (also the default when no action is given)
   if (!opts.action || opts.action === "list") {
     await handleScheduleList(projectDir);
+    return;
+  }
+
+  if (opts.action === "activate") {
+    await activateRemoteSchedules(projectDir, opts);
     return;
   }
 

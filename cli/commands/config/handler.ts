@@ -1,5 +1,6 @@
 import type { ParsedArgs } from "#cli/shared/types";
 import { getEnv } from "veryfront/platform";
+import { veryfrontApiCredentialEnvName } from "veryfront/utils/env-loader";
 import {
   ENVIRONMENT_PROJECT_REFERENCE_NAMES,
   resolveEnvironmentProjectReference,
@@ -43,7 +44,10 @@ export function getEnvOverrides(): string[] {
     if (getEnv(envVar)) overrides.push(`projectSlug (${envVar})`);
   }
   for (const [field, envVar] of Object.entries(ENV_OVERRIDES)) {
-    if (getEnv(envVar)) overrides.push(`${field} (${envVar})`);
+    if (!getEnv(envVar)) continue;
+    // Name the variable the user set: VERYFRONT_API_KEY can fill the token slot.
+    const name = envVar === "VERYFRONT_API_TOKEN" ? veryfrontApiCredentialEnvName() : envVar;
+    overrides.push(`${field} (${name})`);
   }
   return overrides;
 }

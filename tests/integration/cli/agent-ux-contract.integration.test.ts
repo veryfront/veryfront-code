@@ -256,7 +256,7 @@ describe("CLI agent UX contract", () => {
         code: "AUTHENTICATION_ERROR",
         slug: "authentication-required",
         registrySlug: "authentication-required",
-        message: "Not logged in. Run 'veryfront login' to authenticate.",
+        message: "Not logged in. Run 'veryfront login', or set VERYFRONT_API_KEY to an API key.",
         context: { authenticated: false },
       },
     });

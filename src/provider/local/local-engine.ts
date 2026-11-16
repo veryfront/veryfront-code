@@ -260,7 +260,7 @@ export async function getTransformers(): Promise<TransformersModule> {
         type: "no_ai_available",
         message:
           "Local AI model unavailable. Install @huggingface/transformers alongside veryfront " +
-          "(npm installs), or run veryfront login, set VERYFRONT_API_TOKEN, or configure " +
+          "(npm installs), or run veryfront login, set VERYFRONT_API_KEY, or configure " +
           "OPENAI_API_KEY, ANTHROPIC_API_KEY, or GOOGLE_API_KEY to use a cloud provider. " +
           "Native ONNX Runtime is not supported in compiled binaries.",
       }),
@@ -385,7 +385,7 @@ const textGenerationPipelines = createPipelineCache<TextGenerationPipeline, Loca
             type: "no_ai_available",
             message:
               "Local AI model unavailable. Native ONNX Runtime is not supported in this environment " +
-              "(e.g. compiled binaries). Run veryfront login, set VERYFRONT_API_TOKEN, or " +
+              "(e.g. compiled binaries). Run veryfront login, set VERYFRONT_API_KEY, or " +
               "configure OPENAI_API_KEY, ANTHROPIC_API_KEY, or GOOGLE_API_KEY to use a cloud provider.",
           }),
         );
@@ -429,7 +429,7 @@ const conditionalGenerationRuntimes = createPipelineCache<
             type: "no_ai_available",
             message:
               "Local AI model unavailable. Native ONNX Runtime is not supported in this environment " +
-              "(e.g. compiled binaries). Run veryfront login, set VERYFRONT_API_TOKEN, or " +
+              "(e.g. compiled binaries). Run veryfront login, set VERYFRONT_API_KEY, or " +
               "configure OPENAI_API_KEY, ANTHROPIC_API_KEY, or GOOGLE_API_KEY to use a cloud provider.",
           }),
         );

@@ -68,6 +68,21 @@ export interface LoadOptions {
  * double-quoted `\n`, `\r`, and `\t` escapes are expanded.
  */
 export function parse(content: string): Record<string, string> {
+  return resolveParsedValues(parseAssignments(content)).values;
+}
+
+/** Parsed dotenv values with the keys whose value expanded a host variable. */
+export interface ParsedDotenv {
+  values: Record<string, string>;
+  /**
+   * Keys whose value took part of itself from the host environment through
+   * `$NAME` interpolation, directly or through another key in the file. The
+   * file chose the shape, the host supplied the value.
+   */
+  expandedFromProcessEnv: ReadonlySet<string>;
+}
+
+function parseAssignments(content: string): Map<string, ParsedValue> {
   if (typeof content !== "string") {
     throw new TypeError("Dotenv content must be a string");
   }
@@ -141,7 +156,7 @@ export function parse(content: string): Record<string, string> {
     });
   }
 
-  return resolveParsedValues(parsed);
+  return parsed;
 }
 
 /**
@@ -153,13 +168,24 @@ export function parse(content: string): Record<string, string> {
 export async function load(
   options: LoadOptions = {},
 ): Promise<Record<string, string>> {
+  const { values } = await loadWithProvenance(options);
+  return values;
+}
+
+/**
+ * {@link load}, also reporting which keys expanded a host variable, for a
+ * loader that records where each value came from.
+ */
+export async function loadWithProvenance(
+  options: LoadOptions = {},
+): Promise<ParsedDotenv> {
   const envPath = options.envPath === undefined ? ".env" : options.envPath;
   const result = envPath === null || envPath === ""
-    ? createEnvRecord()
-    : parse(await readEnvFile(envPath) ?? "");
+    ? { values: createEnvRecord(), expandedFromProcessEnv: new Set<string>() }
+    : resolveParsedValues(parseAssignments(await readEnvFile(envPath) ?? ""));
 
   if (options.export === true) {
-    exportMissingValues(result);
+    exportMissingValues(result.values);
   }
 
   return result;
@@ -245,20 +271,29 @@ function expandDoubleQuotedCharacters(value: string): string {
 
 function resolveParsedValues(
   parsed: ReadonlyMap<string, ParsedValue>,
-): Record<string, string> {
+): ParsedDotenv {
   const result = createEnvRecord();
   const resolved = new Map<string, string>();
   const resolving: string[] = [];
+  const expandedFromProcessEnv = new Set<string>();
   let expandedCharacters = 0;
 
   for (const key of parsed.keys()) {
     result[key] = resolveLocalValue(key, 0);
   }
-  return result;
+  return { values: result, expandedFromProcessEnv };
+
+  /** Every key still resolving reads the value being expanded, so all of them carry its taint. */
+  function taintResolving(): void {
+    for (const resolvingKey of resolving) expandedFromProcessEnv.add(resolvingKey);
+  }
 
   function resolveLocalValue(key: string, depth: number): string {
     const cached = resolved.get(key);
-    if (cached !== undefined) return cached;
+    if (cached !== undefined) {
+      if (expandedFromProcessEnv.has(key)) taintResolving();
+      return cached;
+    }
 
     const cycleIndex = resolving.indexOf(key);
     if (cycleIndex !== -1) {
@@ -297,7 +332,9 @@ function resolveParsedValues(
 
   function resolveVariable(key: string, depth: number): string | undefined {
     if (parsed.has(key)) return resolveLocalValue(key, depth);
-    return getHostEnv(key);
+    const hostValue = getHostEnv(key);
+    if (hostValue !== undefined) taintResolving();
+    return hostValue;
   }
 }
 

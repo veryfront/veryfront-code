@@ -9,7 +9,7 @@ import {
   MAX_ENV_FILE_LINES,
   MAX_ENV_VALUE_CHARACTERS,
 } from "./dotenv-limits.ts";
-import { load, parse } from "./dotenv.ts";
+import { load, loadWithProvenance, parse } from "./dotenv.ts";
 
 describe("platform/compat/std/dotenv", () => {
   let tempDirectory = "";
@@ -171,6 +171,39 @@ describe("platform/compat/std/dotenv", () => {
     } finally {
       deleteEnv(existingKey);
       deleteEnv(missingKey);
+    }
+  });
+
+  it("reports the keys whose value expanded a host variable, directly or through another key", async () => {
+    const hostKey = uniqueKey("HOST");
+    const path = join(tempDirectory, "provenance.env");
+    setEnv(hostKey, "from-host");
+    await writeTextFile(
+      path,
+      [
+        `FROM_HOST=\${${hostKey}}`,
+        "THROUGH_KEY=$FROM_HOST",
+        "THROUGH_CACHED_KEY=$FROM_HOST",
+        "LITERAL=value",
+        "LOCAL_REFERENCE=$LITERAL",
+        "MISSING_HOST=${DOES_NOT_EXIST}",
+        "DEFAULTED=${DOES_NOT_EXIST:-fallback}",
+        `QUOTED='\${${hostKey}}'`,
+      ].join("\n"),
+    );
+
+    try {
+      const { values, expandedFromProcessEnv } = await loadWithProvenance({ envPath: path });
+
+      assertEquals(values.THROUGH_CACHED_KEY, "from-host");
+      assertEquals([...expandedFromProcessEnv].sort(), [
+        "FROM_HOST",
+        "THROUGH_CACHED_KEY",
+        "THROUGH_KEY",
+      ]);
+      assertEquals(await load({ envPath: path }), values);
+    } finally {
+      deleteEnv(hostKey);
     }
   });
 
