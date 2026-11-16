@@ -10,6 +10,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { VeryfrontError } from "veryfront/errors";
 import type { ApiClient } from "#cli/shared/config";
 import type { ParsedArgs } from "#cli/shared/types";
+import { assertRefusesUnlinkedFolder } from "../../test-utils/unlinked-project.ts";
 import {
   buildProjectDeleteUrl,
   deleteRemoteProject,
@@ -102,5 +103,11 @@ describe("cli/commands/project", () => {
       assertStringIncludes(String(error), "Unknown project subcommand: delet");
       assertEquals((error as { exitCode?: number }).exitCode, 2);
     });
+  });
+});
+
+describe("projectCommand in a folder with no linked project", () => {
+  it("stops before it deletes the project named after the folder", async () => {
+    await assertRefusesUnlinkedFolder(projectCommand, { _: ["project", "delete"], force: true });
   });
 });
