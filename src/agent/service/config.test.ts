@@ -119,11 +119,13 @@ describe("agent/agent-service-config", () => {
       );
     }
     // Any token file selector, a blank one included, is the credential: the key never stands in for it.
-    assertEquals(
-      parseHostedAgentServiceConfig({ VERYFRONT_API_TOKEN_FILE: "", VERYFRONT_API_KEY: "key-1" })
-        .VERYFRONT_API_TOKEN,
-      undefined,
-    );
+    const withTokenFile = parseHostedAgentServiceConfig({
+      VERYFRONT_API_TOKEN_FILE: "",
+      VERYFRONT_API_KEY: "key-1",
+    });
+    assertEquals(withTokenFile.VERYFRONT_API_TOKEN, undefined);
+    // Registration reads the selector to say why the key was not used.
+    assertEquals(withTokenFile.VERYFRONT_API_TOKEN_FILE, "");
   });
 
   it("parses optional host-owned model stream budgets", () => {

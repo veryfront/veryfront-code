@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import {
   assert,
   assertEquals,
+  assertInstanceOf,
   assertRejects,
   assertStrictEquals,
 } from "#veryfront/testing/assert.ts";
@@ -218,9 +219,35 @@ describe("agent/agent-service-registration", () => {
         }),
       Error,
       "Agent service registration is enabled but no credential is set: set VERYFRONT_API_KEY to an API key.",
-    ) as Error;
+    );
+    assertInstanceOf(missingCredential, Error);
     // Setup guidance names the one credential name, never the deprecated one.
     assertEquals(missingCredential.message.includes("VERYFRONT_API_TOKEN"), false);
+
+    // A token file selector keeps VERYFRONT_API_KEY from being read, so the
+    // guidance says to unset it before the key can work.
+    await assertRejects(
+      () =>
+        resolveAgentServiceRegistrationInput({
+          config: {
+            VERYFRONT_API_URL: "https://api.example.com",
+            VERYFRONT_API_TOKEN: undefined,
+            VERYFRONT_API_TOKEN_FILE: "/run/secrets/veryfront-token",
+            VERYFRONT_PROJECT_ID: undefined,
+            VERYFRONT_AGENT_SERVICE_URL: undefined,
+            VERYFRONT_AGENT_SERVICE_KEY: undefined,
+            VERYFRONT_AGENT_SERVICE_REGISTRATION: "enabled",
+            VERYFRONT_AGENT_SERVICE_HEARTBEAT_INTERVAL_MS: 30_000,
+            VERYFRONT_AGENT_SERVICE_REGION: undefined,
+          },
+          serviceName: "docs-agent",
+          agentId: "support",
+          version: undefined,
+          runtime: "node",
+        }),
+      Error,
+      "Agent service registration is enabled but no credential is set: VERYFRONT_API_TOKEN_FILE is set, so VERYFRONT_API_KEY is not read. Unset VERYFRONT_API_TOKEN_FILE and set VERYFRONT_API_KEY to an API key.",
+    );
 
     await assertRejects(
       () =>

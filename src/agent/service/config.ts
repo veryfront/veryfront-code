@@ -22,6 +22,11 @@ export type AgentServiceConfig = {
   VERYFRONT_PUBLIC_API_BASE_URL?: string;
   VERYFRONT_MCP_URL: string;
   VERYFRONT_API_TOKEN?: string;
+  /**
+   * The token file selector, when set. It makes the token file the credential,
+   * so `VERYFRONT_API_KEY` is not read.
+   */
+  VERYFRONT_API_TOKEN_FILE?: string;
   VERYFRONT_PROJECT_ID?: string;
   VERYFRONT_AGENT_SERVICE_URL?: string;
   VERYFRONT_AGENT_SERVICE_KEY?: string;
@@ -139,6 +144,7 @@ const getAgentServiceConfigSchema = defineSchema<AgentServiceConfig>((v) => {
     // Token first, then the key; any token file selector (a blank one included) is the credential, so no key.
     VERYFRONT_API_TOKEN: present(env.VERYFRONT_API_TOKEN) ??
       (env.VERYFRONT_API_TOKEN_FILE === undefined ? present(env.VERYFRONT_API_KEY) : undefined),
+    VERYFRONT_API_TOKEN_FILE: env.VERYFRONT_API_TOKEN_FILE,
     VERYFRONT_PROJECT_ID: env.VERYFRONT_PROJECT_ID,
     VERYFRONT_AGENT_SERVICE_URL: env.VERYFRONT_AGENT_SERVICE_URL,
     VERYFRONT_AGENT_SERVICE_KEY: env.VERYFRONT_AGENT_SERVICE_KEY,
