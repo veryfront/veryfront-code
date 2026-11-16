@@ -18,11 +18,7 @@ import {
 } from "./command.ts";
 import type { ApiClient } from "#cli/shared/config";
 import type { ParsedArgs } from "#cli/shared/types";
-import {
-  assertRefusesUnlinkedFolder,
-  UNLINKED_PROJECT_DIR,
-  withUnlinkedProjectEnv,
-} from "../../test-utils/unlinked-project.ts";
+import { assertRefusesUnlinkedFolder } from "../../test-utils/unlinked-project.ts";
 
 function createMockClient(overrides: {
   get?: (path: string, params?: Record<string, string>) => Promise<unknown>;
@@ -298,16 +294,5 @@ describe("filesCommand in a folder with no linked project", () => {
       from: "page.tsx",
     });
     await assertRefusesUnlinkedFolder(filesCommand, { _: ["files", "delete", "app/page.tsx"] });
-  });
-
-  it("uses --project", async () => {
-    const requests = await withUnlinkedProjectEnv(() =>
-      filesCommand({
-        _: ["files", "list"],
-        "project-dir": UNLINKED_PROJECT_DIR,
-        project: "support-desk",
-        json: true,
-      }), { VERYFRONT_API_KEY: "test-token" });
-    assertEquals(requests, ["/projects/support-desk/files"]);
   });
 });

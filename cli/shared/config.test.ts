@@ -2299,6 +2299,14 @@ describe("resolveLinkedProjectConfigWithAuth", () => {
     }, { VERYFRONT_API_KEY: "test-token" });
   });
 
+  it("keeps an empty explicit reference instead of the linked project", async () => {
+    await withUnlinkedFolder(async (dir) => {
+      await writeRawProjectLink(dir);
+      const config = await resolveLinkedProjectConfigWithAuth(dir, "");
+      assertEquals(config.projectSlug, "");
+    }, { VERYFRONT_API_KEY: "test-token" });
+  });
+
   it("uses the project the environment names", async () => {
     await withUnlinkedFolder(async (dir) => {
       const config = await resolveLinkedProjectConfigWithAuth(dir);

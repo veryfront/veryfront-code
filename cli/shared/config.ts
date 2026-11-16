@@ -911,7 +911,11 @@ export async function resolveLinkedProjectConfigWithAuth(
   projectDir?: string,
   projectSlug?: string,
 ): Promise<ResolvedConfig> {
-  if (projectSlug) return { ...await resolveConfigWithAuth(projectDir), projectSlug };
+  // An explicit reference, even an empty one, is never replaced by the
+  // folder's: `project delete -- ""` must reach the empty-reference check.
+  if (projectSlug !== undefined) {
+    return { ...await resolveConfigWithAuth(projectDir), projectSlug };
+  }
   const { config } = await resolveConfigBase(
     projectDir,
     getEnvironmentConfig(),
