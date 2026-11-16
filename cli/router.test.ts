@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { _resetEnvironmentConfig } from "#veryfront/config/environment-config.ts";
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { makeTempDirWithOptions } from "#veryfront/testing/deno-compat.ts";
 import { COMMANDS } from "./help/command-definitions.ts";
 import { parseLoginMethod } from "./auth/utils.ts";
 import { classifyCliError, routeCommand, safeJsonErrorContext } from "./router.ts";
@@ -768,6 +769,8 @@ describe("cli/router helpers", () => {
       const environmentNames = [
         "VERYFRONT_API_URL",
         "VERYFRONT_API_TOKEN",
+        "VERYFRONT_API_TOKEN_FILE",
+        "VERYFRONT_API_KEY",
         "VERYFRONT_PROJECT_SLUG",
         "XDG_CONFIG_HOME",
       ] as const;
@@ -785,6 +788,8 @@ describe("cli/router helpers", () => {
         );
         Deno.env.delete("VERYFRONT_API_URL");
         Deno.env.delete("VERYFRONT_API_TOKEN");
+        Deno.env.delete("VERYFRONT_API_TOKEN_FILE");
+        Deno.env.delete("VERYFRONT_API_KEY");
         Deno.env.delete("VERYFRONT_PROJECT_SLUG");
         Deno.env.set("XDG_CONFIG_HOME", configHome);
         _resetEnvironmentConfig();
@@ -822,11 +827,13 @@ describe("cli/router helpers", () => {
     });
 
     it("names the missing credential and its fix in terminal output", async () => {
-      const projectDir = await Deno.makeTempDir({ prefix: "vf-human-auth-" });
-      const configHome = await Deno.makeTempDir({ prefix: "vf-human-auth-config-" });
+      const projectDir = await makeTempDirWithOptions({ prefix: "vf-human-auth-" });
+      const configHome = await makeTempDirWithOptions({ prefix: "vf-human-auth-config-" });
       const environmentNames = [
         "VERYFRONT_API_URL",
         "VERYFRONT_API_TOKEN",
+        "VERYFRONT_API_TOKEN_FILE",
+        "VERYFRONT_API_KEY",
         "VERYFRONT_PROJECT_SLUG",
         "XDG_CONFIG_HOME",
         "NO_COLOR",
@@ -844,6 +851,8 @@ describe("cli/router helpers", () => {
         );
         Deno.env.delete("VERYFRONT_API_URL");
         Deno.env.delete("VERYFRONT_API_TOKEN");
+        Deno.env.delete("VERYFRONT_API_TOKEN_FILE");
+        Deno.env.delete("VERYFRONT_API_KEY");
         Deno.env.delete("VERYFRONT_PROJECT_SLUG");
         Deno.env.set("XDG_CONFIG_HOME", configHome);
         Deno.env.set("NO_COLOR", "1");

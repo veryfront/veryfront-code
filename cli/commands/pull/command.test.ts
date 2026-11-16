@@ -6,10 +6,12 @@ import "#veryfront/schemas/_test-setup.ts";
 
 import {
   assertEquals,
+  assertInstanceOf,
   assertRejects,
   assertStringIncludes,
   assertThrows,
 } from "#veryfront/testing/assert.ts";
+import { VeryfrontError } from "veryfront/errors";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { cliLogger, VERSION } from "#cli/utils";
 import { _resetEnvironmentConfig } from "#veryfront/config/environment-config.ts";
@@ -2815,10 +2817,12 @@ describe("pullCommand", () => {
   });
 
   it("classes a missing credential in the --projects fallback as authentication-required", async () => {
-    const tempDir = await Deno.makeTempDir();
-    const configHome = await Deno.makeTempDir();
+    const tempDir = await makeTempDir();
+    const configHome = await makeTempDir();
     const names = [
       "VERYFRONT_API_TOKEN",
+      "VERYFRONT_API_TOKEN_FILE",
+      "VERYFRONT_API_KEY",
       "VERYFRONT_API_URL",
       "VERYFRONT_PROJECT_SLUG",
       "TENANT_PROJECT_SLUG",
@@ -2845,7 +2849,8 @@ describe("pullCommand", () => {
           () => pullCommand({ projectDir: tempDir, quiet: true }),
           Error,
         );
-        assertEquals((error as { slug?: string }).slug, "authentication-required");
+        assertInstanceOf(error, VeryfrontError);
+        assertEquals(error.slug, "authentication-required");
       });
       assertEquals(requests, 0);
     } finally {

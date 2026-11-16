@@ -109,7 +109,8 @@ describe("resolveConfig", () => {
       () => resolveConfig("/tmp/test-dir", env),
       VeryfrontError,
       MISSING_API_CREDENTIAL_MESSAGE,
-    ) as VeryfrontError;
+    );
+    assertInstanceOf(error, VeryfrontError);
     assertEquals(error.slug, "authentication-required");
   });
 
@@ -1147,7 +1148,8 @@ describe("resolveConfigWithAuth", () => {
       () => resolveConfigWithAuth("/tmp/test-dir", env),
       VeryfrontError,
       "No Veryfront credential found.",
-    ) as VeryfrontError;
+    );
+    assertInstanceOf(error, VeryfrontError);
     assertEquals(error.slug, "authentication-required");
   });
 
@@ -2102,7 +2104,8 @@ describe("nonprompting management configuration", () => {
           ),
         VeryfrontError,
         MISSING_API_CREDENTIAL_MESSAGE,
-      ) as VeryfrontError;
+      );
+      assertInstanceOf(error, VeryfrontError);
       assertEquals(error.slug, "authentication-required");
     });
   });
