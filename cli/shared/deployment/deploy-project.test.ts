@@ -341,6 +341,40 @@ describe("DeployProject", () => {
       });
     });
 
+    it("classifies a confirmed folder name another project holds as project-slug-taken", async () => {
+      await withUnlinkedFolder(async (projectDir) => {
+        const controlPlane = new InMemoryDeployControlPlane();
+        controlPlane.getProjectError = Object.assign(new Error("API request failed: 404"), {
+          status: 404,
+        });
+        const reservations: string[] = [];
+        const error = await expectDeployError(() =>
+          withFetchStub((input, init) => {
+            const request = input instanceof Request ? input : new Request(input, init);
+            if (request.method === "POST") {
+              reservations.push(new URL(request.url).pathname);
+              return Response.json({ error: "slug taken" }, { status: 409 });
+            }
+            return new Response("ready");
+          }, () =>
+            createDeployment(controlPlane).execute({
+              projectDir,
+              environment: "production",
+              mode: "apply",
+              source: { kind: "already-pushed" },
+              inferredProject: () => Promise.resolve(true),
+            }))
+        );
+
+        assertInstanceOf(error, VeryfrontError);
+        assertEquals(error.slug, "project-slug-taken");
+        assertStringIncludes(error.detail ?? "", "is already in use.");
+        assertStringIncludes(error.detail ?? "", "then run veryfront deploy again.");
+        assertEquals(reservations.length, 1);
+        assertEquals(controlPlane.createdReleases, []);
+      });
+    });
+
     it("plans the project a caller settled on a dry run, and pushes with it", async () => {
       await withUnlinkedFolder(async (projectDir) => {
         const controlPlane = new InMemoryDeployControlPlane();

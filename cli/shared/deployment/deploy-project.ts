@@ -32,6 +32,7 @@ import {
   INVALID_ARGUMENT,
   PREVIEW_DEPLOYMENT_NOT_ALLOWED,
   PROJECT_LINK_STALE,
+  PROJECT_SLUG_TAKEN,
   RELEASE_MISSING_VERSION,
   SOURCE_DIGEST_MISMATCH,
   VeryfrontError,
@@ -48,7 +49,7 @@ import {
   validatePushReceipt,
 } from "../deployment-provenance.ts";
 import { normalizeProjectSlug } from "../slug.ts";
-import { reserveProjectSlug } from "../reserve-slug.ts";
+import { ProjectSlugConflictError, reserveProjectSlug } from "../reserve-slug.ts";
 import {
   describeStaleProjectReference,
   getErrorStatus,
@@ -60,6 +61,7 @@ import {
   type ProjectResolutionOutcome,
   resolveOrCreateProject,
   shouldPersistProjectLink,
+  slugConflictAction,
   staleProjectReferenceContext,
   UnlinkedProjectError,
   unlinkedProjectMessage,
@@ -390,6 +392,17 @@ async function ensureProjectLinkedForDeploy(
       throw INVALID_ARGUMENT.create({
         detail: unlinkedProjectMessage("deploy"),
         context: { inferredSlug: error.inferredSlug, declined: error.declined },
+        cause: error,
+      });
+    }
+    // A confirmed folder name is created under exactly that slug, so a slug
+    // another project already holds fails here, as it does for push.
+    if (error instanceof ProjectSlugConflictError) {
+      throw PROJECT_SLUG_TAKEN.create({
+        detail: `${error.message} ${
+          slugConflictAction(projectReferenceSource)
+        }, then run veryfront deploy again.`,
+        context: { projectSlug: error.slug },
         cause: error,
       });
     }
