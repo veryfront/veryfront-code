@@ -63,7 +63,7 @@ export const pullHelp: CommandHelp = {
     "veryfront pull --yes",
   ],
   notes: [
-    "Requires VERYFRONT_API_TOKEN env var or veryfront.json config",
+    "Requires VERYFRONT_API_KEY or veryfront.json config",
     "A self-hosted apiUrl in veryfront.json or a project .env file needs a token from that same file, or VERYFRONT_API_URL set in your shell or CI environment to confirm the host",
     "Project slug is inferred from package.json name or directory",
     "With --projects, each project is pulled into a subdirectory named after the slug",

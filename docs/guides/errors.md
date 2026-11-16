@@ -903,7 +903,7 @@ Veryfront API blocked by network egress policy.
 Veryfront Cloud rejected the eval credential.
 
 - **HTTP status:** 401
-- **What to do:** Run `veryfront login` to refresh your session, or set VERYFRONT_API_TOKEN to a valid token, then run the eval again
+- **What to do:** Run `veryfront login` to refresh your session, or set VERYFRONT_API_KEY to a valid API key, then run the eval again
 
 ### eval-model-project-access-denied
 
@@ -963,7 +963,7 @@ Unknown/unclassified error.
 Authentication required.
 
 - **HTTP status:** 401
-- **What to do:** Set VERYFRONT_API_TOKEN or run 'veryfront login'
+- **What to do:** Set VERYFRONT_API_KEY or run 'veryfront login'
 
 ### permission-denied
 

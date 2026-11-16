@@ -312,8 +312,8 @@ To reach a self-hosted API host, pair the host and the credential from one
 source:
 
 - Put both `apiUrl` and `apiToken` in `veryfront.json`.
-- Or set both `VERYFRONT_API_URL` and `VERYFRONT_API_TOKEN` in the same project
-  `.env` file. A token that `$NAME` expansion copied out of your shell does not
+- Or set both `VERYFRONT_API_URL` and `VERYFRONT_API_KEY` in the same project
+  `.env` file. A key that `$NAME` expansion copied out of your shell does not
   count as coming from the file, because the secret is still yours.
 - Or confirm the host yourself: set `VERYFRONT_API_URL` in your shell for
   GraphQL commands, or set `VERYFRONT_API_BASE_URL` for REST consumers such as
@@ -335,11 +335,11 @@ Origin-bound API transports reject redirects; other outbound requests keep their
 is on a private network you control.
 
 In CI, set the API URL variable used by the command next to
-`VERYFRONT_API_TOKEN` in the job environment whenever the project uses a
+`VERYFRONT_API_KEY` in the job environment whenever the project uses a
 self-hosted API host, so a non-interactive run has a confirmed host. See
 [Deploy from CI](./deploy-from-ci.md) for the surrounding workflow.
 
-Use an API key as the `VERYFRONT_API_TOKEN` value in CI. See
+Set `VERYFRONT_API_KEY` to an API key in CI. See
 [API keys](https://veryfront.com/docs/cloud/apis/identity-and-access#api-keys) to create one.
 
 ### Provider stream idle deadline

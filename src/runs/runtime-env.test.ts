@@ -4,6 +4,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   buildTaskContextEnv,
   INJECTED_TASK_ENV_JSON,
+  isReservedTaskEnvKey,
   mergeInjectedWorkflowEnv,
   readInjectedProjectEnv,
 } from "./runtime-env.ts";
@@ -34,6 +35,34 @@ describe("runs/runtime-env", () => {
 
     assertEquals(buildTaskContextEnv(unsafeEnv), { SAFE_VALUE: "ok" });
     assertEquals(mergeInjectedWorkflowEnv(unsafeEnv, {}), { SAFE_VALUE: "ok" });
+  });
+
+  it("reserves VERYFRONT_API_KEY like the token it can supply", () => {
+    // The CLI and SDK accept the key as the credential, so a task or skill
+    // script must never receive it through ambient or injected env.
+    assertEquals(isReservedTaskEnvKey("VERYFRONT_API_KEY"), true);
+    assertEquals(buildTaskContextEnv({ SAFE_VALUE: "ok", VERYFRONT_API_KEY: "<KEY>" }), {
+      SAFE_VALUE: "ok",
+    });
+    assertEquals(
+      readInjectedProjectEnv({
+        [INJECTED_TASK_ENV_JSON]: '{"SAFE_VALUE":"ok","VERYFRONT_API_KEY":"<KEY>"}',
+      }),
+      { SAFE_VALUE: "ok" },
+    );
+  });
+
+  it("reserves credential names in any letter case", () => {
+    // On Windows the env loader case-folds names, so a project .env entry
+    // spelled in lower case supplies the same credential.
+    for (const key of ["veryfront_api_key", "Veryfront_Api_Token", "tenant_secret"]) {
+      assertEquals(isReservedTaskEnvKey(key), true, key);
+    }
+    assertEquals(
+      buildTaskContextEnv({ SAFE_VALUE: "ok", veryfront_api_key: "<KEY>" }),
+      { SAFE_VALUE: "ok" },
+    );
+    assertEquals(isReservedTaskEnvKey("VERYFRONT_API_KEY_HINT"), false);
   });
 
   it("builds task context env from visible and allowlisted injected values", () => {

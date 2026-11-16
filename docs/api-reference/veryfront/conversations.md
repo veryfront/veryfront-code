@@ -24,7 +24,7 @@ import { Conversation, createConversationsApiTransport } from "veryfront/convers
 
 const transport = createConversationsApiTransport({
   baseUrl: "<API_ORIGIN>",
-  getToken: () => process.env.VERYFRONT_API_TOKEN!,
+  getToken: () => process.env.VERYFRONT_API_KEY!,
 });
 
 const conversation = await Conversation.create(
@@ -44,7 +44,7 @@ import { Conversation, createConversationsApiTransport } from "veryfront/convers
 
 const transport = createConversationsApiTransport({
   baseUrl: "<API_ORIGIN>",
-  getToken: () => process.env.VERYFRONT_API_TOKEN!,
+  getToken: () => process.env.VERYFRONT_API_KEY!,
 });
 
 const page = await Conversation.list({ projectReference: "<PROJECT_ID>", limit: 20 }, {
@@ -65,7 +65,7 @@ import { Conversation, createConversationsApiTransport } from "veryfront/convers
 
 const transport = createConversationsApiTransport({
   baseUrl: "<API_ORIGIN>",
-  getToken: () => process.env.VERYFRONT_API_TOKEN!,
+  getToken: () => process.env.VERYFRONT_API_KEY!,
 });
 // attach() uses a known conversation ID without reading the conversation first.
 const conversation = Conversation.attach("<CONVERSATION_ID>", { transport });
@@ -99,7 +99,7 @@ import {
 
 const transport = createConversationsApiTransport({
   baseUrl: "<API_ORIGIN>",
-  getToken: () => process.env.VERYFRONT_API_TOKEN!,
+  getToken: () => process.env.VERYFRONT_API_KEY!,
 });
 const conversation = Conversation.attach("<CONVERSATION_ID>", { transport });
 

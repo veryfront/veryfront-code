@@ -14,6 +14,7 @@ import type { MCPTool } from "veryfront/mcp";
 import { getEnvironmentConfig } from "veryfront/config";
 import { cwd } from "veryfront/platform";
 import { getHostEnv } from "#cli/process-env";
+import { MISSING_API_CREDENTIAL_MESSAGE } from "../../shared/config.ts";
 import { createDeployProject, type DeployProject } from "../../shared/deployment/deploy-project.ts";
 import type { DeployResult } from "../../shared/deployment/result.ts";
 
@@ -112,7 +113,7 @@ export async function triggerDeploy(
       : undefined;
 
     if (
-      message.includes("Missing API token") ||
+      message.includes(MISSING_API_CREDENTIAL_MESSAGE) ||
       message.includes("Authentication required") ||
       status === 401
     ) {
@@ -144,7 +145,7 @@ export const vfTriggerDeploy: MCPTool<TriggerDeployInput, TriggerDeployResult> =
     "Check the returned urlVerification field to tell what the readiness probe established: " +
     "'served' means the app itself answered, 'gated' means only its access gate answered so the " +
     "app was never observed, and 'unprobed' means the project has no static page route to check. " +
-    "Requires a valid API token (set VERYFRONT_API_TOKEN or run 'veryfront login'). " +
+    "Requires a valid API key (set VERYFRONT_API_KEY or run 'veryfront login'). " +
     "Do not use for local builds; use vf_build instead. " +
     "Do not use for running tests before deploy; use vf_run_tests instead.",
   inputSchema: triggerDeployInput,

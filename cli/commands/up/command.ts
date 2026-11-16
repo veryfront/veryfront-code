@@ -242,7 +242,7 @@ export async function upCommand(
   const userInfo = await ensureAuthenticated(env, projectDir);
   if (!userInfo) {
     if (jsonOutput) {
-      const message = "Not authenticated. Set VERYFRONT_API_TOKEN or run veryfront login.";
+      const message = "Not authenticated. Set VERYFRONT_API_KEY or run veryfront login.";
       const authError = AUTHENTICATION_REQUIRED.create({ detail: message });
       streamJsonLine(
         createStreamErrorResult({

@@ -13,7 +13,7 @@ export const AUTHENTICATION_REQUIRED = defineError({
   category: "GENERAL",
   status: 401,
   title: "Authentication required",
-  suggestion: "Set VERYFRONT_API_TOKEN or run 'veryfront login'",
+  suggestion: "Set VERYFRONT_API_KEY or run 'veryfront login'",
 });
 
 export const PERMISSION_DENIED = defineError({
