@@ -35,6 +35,7 @@ interface InitCommandDependencies {
   deployProject?: (projectDir: string) => Promise<string>;
   runWizard?: typeof runInteractiveWizard;
   shouldRunWizard?: typeof shouldRunWizard;
+  chooseCloudProject?: typeof chooseCloudProject;
 }
 
 const AUTH_REQUIRED_DEPLOY_MESSAGE = "Authentication required for --deploy.";
@@ -171,12 +172,11 @@ function validateInitProjectName(name: string): string | null {
 /**
  * The provider settings `veryfront dev` in the new folder will see, as far as
  * `init` knows them: the shell's own values, then the values `init` wrote to
- * the new `.env` (an integration such as the experimental `openai` one writes
- * `OPENAI_API_KEY`). A value the invoking folder's `.env` loaded into this
- * process does not count, since `dev` in the new folder never loads that file.
- * A written value with a `$` reference is not counted: `dev` expands it against
- * an environment `init` cannot see. A key `init` cannot see only leaves the
- * advice in.
+ * the new `.env` for the variables the template and integrations declare. A
+ * value the invoking folder's `.env` loaded into this process does not count,
+ * since `dev` in the new folder never loads that file. A written value with a
+ * `$` reference is not counted: `dev` expands it against an environment `init`
+ * cannot see. A key `init` cannot see only leaves the advice in.
  */
 export function newProjectEnv(
   writtenValues: Readonly<Record<string, string>>,
@@ -335,7 +335,7 @@ export async function initCommand(
           await offerCloudProjectAfterInit(
             projectDir,
             log,
-            chooseCloudProject,
+            dependencies.chooseCloudProject ?? chooseCloudProject,
             newProjectEnv(writtenEnvValues),
           );
         }

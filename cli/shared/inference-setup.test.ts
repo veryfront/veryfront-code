@@ -62,6 +62,23 @@ describe("shared/inference-setup", () => {
     assertEquals(DEFAULT_AGENT_MODEL_NAME, DEFAULT_AGENT_MODEL);
   });
 
+  it("lists every key the default model cannot use in one sentence", () => {
+    const prefix = 'Agents that set no model use "openai/gpt-5-nano", which needs OPENAI_API_KEY.';
+    assertEquals(
+      defaultModelKeyMismatchLine(["ANTHROPIC_API_KEY", "MISTRAL_API_KEY"], {
+        autoRunsDirect: true,
+      }),
+      `${prefix} To use ANTHROPIC_API_KEY or MISTRAL_API_KEY, set the agent's model to "auto" or "<provider>/<model>".`,
+    );
+    assertEquals(
+      defaultModelKeyMismatchLine(
+        ["ANTHROPIC_API_KEY", "GOOGLE_GENERATIVE_AI_API_KEY", "MISTRAL_API_KEY"],
+        { autoRunsDirect: false },
+      ),
+      `${prefix} To use ANTHROPIC_API_KEY, GOOGLE_GENERATIVE_AI_API_KEY or MISTRAL_API_KEY, set the agent's model to "<provider>/<model>".`,
+    );
+  });
+
   it("follows the public copy rules", () => {
     assert(!/[–—]/.test(text), "copy must not use en or em dashes");
     assert(

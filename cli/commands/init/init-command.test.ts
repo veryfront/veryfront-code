@@ -372,7 +372,7 @@ describe("offerCloudProjectAfterInit", () => {
   });
 
   it("counts a key init wrote to the new .env", async () => {
-    // For example the experimental openai integration writes OPENAI_API_KEY.
+    // A template or integration that declares OPENAI_API_KEY writes its value.
     const env = newProjectEnv({ OPENAI_API_KEY: "<API_KEY>" }, () => undefined);
     const logged: string[] = [];
     await offerCloudProjectAfterInit(
@@ -402,12 +402,39 @@ describe("offerCloudProjectAfterInit", () => {
     assertEquals(env("GOOGLE_API_KEY"), undefined);
   });
 
-  it("still names both ways when only a key the scaffolded agents cannot use is set", async () => {
-    const logged = await run(() => Promise.resolve("declined"), {
-      ANTHROPIC_API_KEY: "<API_KEY>",
+  for (
+    const key of [
+      "ANTHROPIC_API_KEY",
+      "GOOGLE_API_KEY",
+      "GOOGLE_GENERATIVE_AI_API_KEY",
+      "MISTRAL_API_KEY",
+    ]
+  ) {
+    it(`still names both ways when only ${key}, which the scaffolded agents cannot use, is set`, async () => {
+      const logged = await run(() => Promise.resolve("declined"), { [key]: "<API_KEY>" });
+      assertEquals(logged.length, 1);
+      assertStringIncludes(logged[0]!, "set up inference in one of these ways");
     });
+  }
+
+  it("still names both ways when the OpenAI key is blank", async () => {
+    const logged = await run(() => Promise.resolve("declined"), { OPENAI_API_KEY: "  " });
     assertEquals(logged.length, 1);
     assertStringIncludes(logged[0]!, "set up inference in one of these ways");
+  });
+
+  it("names only the failure when Cloud setup throws and an OpenAI key is set", async () => {
+    const logged = await run(
+      () => Promise.reject(new Error("Network unavailable")),
+      { OPENAI_API_KEY: "<API_KEY>" },
+    );
+    assertEquals(logged, ["  Cloud setup could not finish: Network unavailable"]);
+  });
+
+  it("falls back to the trimmed written value when the shell sets none", () => {
+    const env = newProjectEnv({ OPENAI_API_KEY: " <WRITTEN_KEY> " }, () => undefined);
+    assertEquals(env("OPENAI_API_KEY"), "<WRITTEN_KEY>");
+    assertEquals(env("ANTHROPIC_API_KEY"), undefined);
   });
 
   it("names the failure, then both ways to get inference, when Cloud setup throws", async () => {
@@ -415,5 +442,57 @@ describe("offerCloudProjectAfterInit", () => {
     assertEquals(logged.length, 2);
     assertEquals(logged[0], "  Cloud setup could not finish: Network unavailable");
     assertStringIncludes(logged[1]!, "set up inference in one of these ways");
+  });
+});
+
+describe("initCommand inference advice", () => {
+  // initCommand offers Cloud only in an interactive terminal, so each run
+  // reports a terminal and answers the offer with "declined".
+  async function adviceAfterInit(shellOpenAIKey: string | undefined): Promise<boolean> {
+    const parentDir = await makeTempDir({ prefix: "veryfront-init-advice-" });
+    const output: string[] = [];
+    const originalLog = console.log;
+    const originalIsTerminal = Deno.stdout.isTerminal;
+    const savedKey = Deno.env.get("OPENAI_API_KEY");
+    let offered = false;
+    try {
+      if (shellOpenAIKey === undefined) Deno.env.delete("OPENAI_API_KEY");
+      else Deno.env.set("OPENAI_API_KEY", shellOpenAIKey);
+      Deno.stdout.isTerminal = () => true;
+      console.log = (...args: unknown[]) => output.push(args.map(String).join(" "));
+      await initCommand(
+        {
+          name: `advice-${crypto.randomUUID()}`,
+          parentDir,
+          template: "minimal",
+          skipInstall: true,
+          skipEnvPrompt: true,
+        },
+        {
+          chooseCloudProject: () => {
+            offered = true;
+            return Promise.resolve("declined");
+          },
+        },
+      );
+    } finally {
+      console.log = originalLog;
+      Deno.stdout.isTerminal = originalIsTerminal;
+      if (savedKey === undefined) Deno.env.delete("OPENAI_API_KEY");
+      else Deno.env.set("OPENAI_API_KEY", savedKey);
+      await remove(parentDir, { recursive: true }).catch(() => {});
+    }
+    assertEquals(offered, true, "initCommand must offer Cloud in an interactive terminal");
+    return output.map(stripAnsi).some((line) =>
+      line.includes("set up inference in one of these ways")
+    );
+  }
+
+  it("prints no setup advice after a declined offer when the shell sets OPENAI_API_KEY", async () => {
+    assertEquals(await adviceAfterInit("<API_KEY>"), false);
+  });
+
+  it("names both ways after a declined offer when no OpenAI key is set", async () => {
+    assertEquals(await adviceAfterInit(undefined), true);
   });
 });

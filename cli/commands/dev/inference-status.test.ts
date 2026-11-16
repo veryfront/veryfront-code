@@ -210,5 +210,39 @@ describe("commands/dev/inference-status", () => {
       );
       assertEquals(readProviderKeys(read({})).googleApiKey, undefined);
     });
+
+    it("names neither an OpenAI key nor a blank key", () => {
+      // The default model uses an OpenAI key, and a blank key is not a key.
+      assertEquals(
+        defaultModelMismatchKeys({
+          openaiApiKey: "<API_KEY>",
+          anthropicApiKey: " ",
+          googleApiKey: "",
+          mistralApiKey: "\t",
+          agentModels: [undefined],
+        }, false),
+        [],
+      );
+    });
+
+    it("reads every provider variable the Inference line lists", () => {
+      // The dev banner builds its Inference line from this read, so each
+      // variable must keep reaching the field listInferenceOptions checks.
+      const values: Record<string, string> = {
+        OPENAI_API_KEY: "<OPENAI_KEY>",
+        OPENAI_BASE_URL: "http://127.0.0.1:11434/v1",
+        ANTHROPIC_API_KEY: "<ANTHROPIC_KEY>",
+        GOOGLE_API_KEY: "<GOOGLE_KEY>",
+        MISTRAL_API_KEY: "<MISTRAL_KEY>",
+      };
+      assertEquals(readProviderKeys((name) => values[name]), {
+        openaiApiKey: "<OPENAI_KEY>",
+        openaiBaseUrl: "http://127.0.0.1:11434/v1",
+        anthropicApiKey: "<ANTHROPIC_KEY>",
+        googleApiKey: "<GOOGLE_KEY>",
+        googleApiKeyName: "GOOGLE_API_KEY",
+        mistralApiKey: "<MISTRAL_KEY>",
+      });
+    });
   });
 });
