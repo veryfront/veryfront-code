@@ -162,4 +162,17 @@ describe("commands in a folder with no linked project", () => {
       ]);
     });
   });
+
+  it("project delete deletes the --project project when no project is linked", async () => {
+    await withUnlinkedFolder(async (projectDir, requests) => {
+      await projectCommand({
+        _: ["project", "delete"],
+        "project-dir": projectDir,
+        project: "support-desk",
+        force: true,
+        json: true,
+      });
+      assertEquals(requests, ["/projects/support-desk"]);
+    });
+  });
 });

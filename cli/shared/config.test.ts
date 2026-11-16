@@ -2315,6 +2315,45 @@ describe("resolveLinkedProjectConfigWithAuth", () => {
     }, { VERYFRONT_API_KEY: "test-token", VERYFRONT_PROJECT_SLUG: "env-project" });
   });
 
+  it("refuses a project named only by the package.json name", async () => {
+    await withUnlinkedFolder(async (dir) => {
+      await Deno.writeTextFile(
+        join(dir, "package.json"),
+        JSON.stringify({ name: "@acme/support-desk" }),
+      );
+      const requests: string[] = [];
+      await withMockFetch((input) => {
+        requests.push(String(input));
+        return Promise.resolve(Response.json({}));
+      }, async () => {
+        await assertRejects(
+          () => resolveLinkedProjectConfigWithAuth(dir),
+          VeryfrontError,
+          NO_LINKED_PROJECT_MESSAGE,
+        );
+      });
+      assertEquals(requests, []);
+    }, { VERYFRONT_API_KEY: "test-token" });
+  });
+
+  it("uses the project veryfront.json names", async () => {
+    await withUnlinkedFolder(async (dir) => {
+      await Deno.writeTextFile(
+        join(dir, "veryfront.json"),
+        JSON.stringify({ projectSlug: "configured-project" }),
+      );
+      const requests: string[] = [];
+      await withMockFetch((input) => {
+        requests.push(String(input));
+        return Promise.resolve(Response.json({}));
+      }, async () => {
+        const config = await resolveLinkedProjectConfigWithAuth(dir);
+        assertEquals(config.projectSlug, "configured-project");
+      });
+      assertEquals(requests, []);
+    }, { VERYFRONT_API_KEY: "test-token" });
+  });
+
   it("still requires a credential once the folder names a project", async () => {
     await withUnlinkedFolder(async (dir) => {
       await writeRawProjectLink(dir);
