@@ -4,6 +4,7 @@ const logger = baseLogger.component("run-runtime-env");
 const reflectApply = Reflect.apply;
 const setHas = Set.prototype.has;
 const stringStartsWith = String.prototype.startsWith;
+const stringToUpperCase = String.prototype.toUpperCase;
 
 export const INJECTED_TASK_ENV_JSON = "VERYFRONT_TASK_ENV_JSON";
 
@@ -11,6 +12,7 @@ const UNSAFE_INJECTED_ENV_KEYS = new Set(["__proto__", "constructor", "prototype
 
 export const RESERVED_TASK_ENV_KEYS = Object.freeze([
   "VERYFRONT_API_TOKEN",
+  "VERYFRONT_API_KEY",
   "VERYFRONT_API_TOKEN_FILE",
   "VERYFRONT_API_URL",
   "VERYFRONT_PROJECT_API_URL",
@@ -26,9 +28,15 @@ export const RESERVED_TASK_ENV_KEYS = Object.freeze([
 ]);
 const reservedTaskEnvKeys = new Set(RESERVED_TASK_ENV_KEYS);
 
+/**
+ * True when `key` names a credential or platform value that project code must
+ * not receive. The check ignores letter case: on Windows the env loader
+ * case-folds names, so `veryfront_api_key` supplies the same credential.
+ */
 export function isReservedTaskEnvKey(key: string): boolean {
-  return reflectApply(stringStartsWith, key, ["TENANT_"]) ||
-    reflectApply(setHas, reservedTaskEnvKeys, [key]);
+  const normalized = reflectApply(stringToUpperCase, key, []) as string;
+  return reflectApply(stringStartsWith, normalized, ["TENANT_"]) ||
+    reflectApply(setHas, reservedTaskEnvKeys, [normalized]);
 }
 
 function filterSafeWorkflowEnv(

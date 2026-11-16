@@ -9,6 +9,6 @@ export const logoutHelp: CommandHelp = {
   examples: ["veryfront logout"],
   notes: [
     "Removes token from ~/.config/veryfront/token",
-    "Does not affect VERYFRONT_API_TOKEN environment variable",
+    "Does not affect the VERYFRONT_API_KEY or VERYFRONT_API_TOKEN environment variables",
   ],
 };

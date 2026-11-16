@@ -248,7 +248,68 @@ export function getHostEnv(key: string): string | undefined {
   // Only a registered credential displaces the blank host value; without one
   // the host environment is still reported verbatim.
   const secret = getHostSecret(key);
-  return secret !== undefined ? secret : value;
+  if (secret !== undefined) return secret;
+  if (key === VERYFRONT_API_TOKEN_ENV) {
+    const apiKey = readUnloadedVeryfrontApiKey(readHostProcessEnv);
+    if (apiKey !== undefined) return apiKey;
+  }
+  return value;
+}
+
+const VERYFRONT_API_TOKEN_ENV = "VERYFRONT_API_TOKEN";
+const VERYFRONT_API_TOKEN_FILE_ENV = "VERYFRONT_API_TOKEN_FILE";
+
+function isNonBlank(value: string | undefined): value is string {
+  return value !== undefined && apply(stringTrim, value, []) !== "";
+}
+
+/**
+ * `VERYFRONT_API_KEY` as the credential, for a process the env loader has not
+ * resolved, such as a script using the SDK. Every reader of the token slot
+ * uses this one rule, so a key-only process behaves like a token-only one.
+ *
+ * Returns nothing once the loader resolved the key (a token it removed on
+ * purpose stays removed) or while a token file is set (the token file is the
+ * credential, even blank: a blank selector fails closed in the token file resolver).
+ */
+export function readUnloadedVeryfrontApiKey(
+  readEnv: (key: string) => string | undefined,
+): string | undefined {
+  if (veryfrontApiKeyAliasSettled) return undefined;
+  // Any defined token file selector is authoritative, a blank one included: the token file resolver rejects it,
+  // and a misconfigured renewable credential must fail closed, never fall back to the key.
+  if (readEnv(VERYFRONT_API_TOKEN_FILE_ENV) !== undefined) return undefined;
+  const apiKey = readEnv(VERYFRONT_API_KEY_ENV);
+  return isNonBlank(apiKey) ? apiKey : undefined;
+}
+
+/**
+ * The name Veryfront tells users to set for their API key.
+ *
+ * `VERYFRONT_API_TOKEN` stays the slot for whatever credential is in use, and
+ * it wins when both are set. A process that loads env files copies the key
+ * into that slot once, with the key's provenance (see `env-loader`). A process
+ * that never does, such as a script using the SDK, reads the key through
+ * {@link getHostEnv} instead.
+ */
+export const VERYFRONT_API_KEY_ENV = "VERYFRONT_API_KEY";
+
+let veryfrontApiKeyAliasSettled = false;
+
+/**
+ * Record that the env loader resolved `VERYFRONT_API_KEY` for this process.
+ *
+ * After this, {@link getHostEnv} no longer falls back to the key: a token the
+ * CLI removed on purpose, for example because it must not reach a
+ * repository-steered API URL, must not come back through the key.
+ */
+export function settleVeryfrontApiKeyAlias(): void {
+  veryfrontApiKeyAliasSettled = true;
+}
+
+/** Test-only: forget that the env loader resolved `VERYFRONT_API_KEY`. */
+export function __resetVeryfrontApiKeyAliasForTests(): void {
+  veryfrontApiKeyAliasSettled = false;
 }
 
 /** Read host environment while excluding values copied from project env files. */

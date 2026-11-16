@@ -306,7 +306,7 @@ export default agent({
 });
 ```
 
-`VERYFRONT_API_URL` selects the endpoint, while `VERYFRONT_API_TOKEN` and
+`VERYFRONT_API_URL` selects the endpoint, while `VERYFRONT_API_KEY` and
 `VERYFRONT_PROJECT_SLUG` provide server-side identity. Environment variables
 never grant tools: only explicitly named unresolved tools are requested, and
 the remote `tools/list` response defines their schemas. Use `mcpServers: []`

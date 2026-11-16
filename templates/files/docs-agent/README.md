@@ -17,7 +17,7 @@ A chatbot that answers questions from your own documents using Retrieval-Augment
 1. Set your Veryfront Cloud bootstrap vars:
 
    ```bash
-   export VERYFRONT_API_TOKEN=vf_...
+   export VERYFRONT_API_KEY=vf_...
    export VERYFRONT_PROJECT_SLUG=my-project
    ```
 
@@ -39,7 +39,7 @@ If you are using a self-hosted Veryfront API, also set `VERYFRONT_API_URL`.
 
 ## Cloud mode
 
-With `VERYFRONT_API_TOKEN` and `VERYFRONT_PROJECT_SLUG` set, the template uses
+With `VERYFRONT_API_KEY` and `VERYFRONT_PROJECT_SLUG` set, the template uses
 Veryfront Cloud automatically:
 
 - Agent generation routes through Veryfront Cloud model routing.

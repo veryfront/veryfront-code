@@ -8,7 +8,7 @@
  * import { VeryfrontRunsClient } from "veryfront/runs";
  *
  * const runs = new VeryfrontRunsClient({
- *   authToken: process.env.VERYFRONT_API_TOKEN,
+ *   authToken: process.env.VERYFRONT_API_KEY,
  *   projectReference: "my-project",
  * });
  *
@@ -23,6 +23,8 @@
  */
 
 export {
+  type ActivatedSourceSchedule,
+  type ActivateSourceSchedulesInput,
   type CreateEvalRunInput,
   createRunsClient,
   type CreateScheduleRunFromSourceInput,
