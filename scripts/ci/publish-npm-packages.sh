@@ -277,6 +277,38 @@ recover_publish_rejection_after_conflict() {
   return 1
 }
 
+# npm reports a rejected trusted-publishing write as a bare E404, the same
+# answer it gives for a missing package. The reason (a failed OIDC token
+# exchange, or an exchanged token the registry refused) is only in npm's debug
+# log, which the runner discards, so a rejected publish prints those lines.
+# Diagnostics only: never changes the publish status.
+print_npm_trusted_publishing_diagnostics() {
+  local package_name="$1"
+  local publish_output="$2"
+  local debug_log oidc_lines grep_status
+  debug_log="$(printf '%s\n' "${publish_output}" \
+    | sed -nE 's/^npm (error|ERR!) A complete log of this run can be found in: (.+)$/\2/p' \
+    | tail -n 1)"
+  if [[ -z "${debug_log}" || ! -r "${debug_log}" ]]; then
+    echo "No npm debug log is available for the rejected ${package_name}@${VERSION} publish; trusted publishing diagnostics are skipped."
+    return 0
+  fi
+  oidc_lines="$(grep -iE '(^|[[:space:]])oidc([[:space:]]|$)|oidc/token/exchange|http fetch PUT' "${debug_log}")" \
+    && grep_status=0 || grep_status=$?
+  if [[ "${grep_status}" -gt 1 ]]; then
+    echo "The npm debug log for the rejected ${package_name}@${VERSION} publish could not be read (grep status ${grep_status})."
+    return 0
+  fi
+  if [[ -z "${oidc_lines}" ]]; then
+    echo "The npm debug log for the rejected ${package_name}@${VERSION} publish has no trusted publishing (OIDC) lines: npm did not attempt a token exchange."
+    return 0
+  fi
+  echo "npm trusted publishing (OIDC) log lines for the rejected ${package_name}@${VERSION} publish:"
+  sanitize_npm_lookup_output "${oidc_lines}" \
+    | sed -E 's#eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_.-]+#<REDACTED>#g' \
+    | tail -n 20
+}
+
 # Never toggles errexit: `set -e` is process-global, so flipping it here would
 # clobber a caller that disabled it to capture this helper's status.
 #
@@ -318,6 +350,7 @@ publish_npm_package_with_retry() {
         && recover_publish_rejection_after_conflict "${PUBLISH_PACKAGE_NAME}" "${PUBLISH_OUTPUT}"; then
         return 0
       fi
+      print_npm_trusted_publishing_diagnostics "${PUBLISH_PACKAGE_NAME}" "${PUBLISH_OUTPUT}"
       return "${PUBLISH_STATUS}"
     fi
     if ! is_identity_token_read_failure "${PUBLISH_OUTPUT}"; then
