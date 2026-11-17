@@ -2,6 +2,7 @@ import base64
 from copy import deepcopy
 import importlib.util
 from pathlib import Path
+import re
 import unittest
 
 spec=importlib.util.spec_from_file_location('component_publisher',Path(__file__).with_name('publish-component.py'))
@@ -108,3 +109,14 @@ class ReleaseReadinessTests(unittest.TestCase):
         facts=Facts();facts.release['assets'][0]['digest']=None
         with self.assertRaises(ValueError):
             publisher.witness_when_ready(VERSION,ENV,facts.public,facts.source,sleep=no_sleep)
+
+
+class PublicationRetentionTests(unittest.TestCase):
+    def test_receipt_survives_the_90_day_idle_service_window(self):
+        workflow = Path(__file__).parents[2] / '.github/workflows/cicd.yml'
+        job = workflow.read_text().split('  publish-platform-component:\n', 1)[1].split('\n  update-homebrew:', 1)[0]
+        upload = job.split('          path: platform-component.json\n', 1)[1]
+        retention = re.search(r'^          retention-days: (\d+)$', upload, re.MULTILINE)
+        self.assertIsNotNone(retention, 'Publication retention must be explicit')
+        self.assertGreaterEqual(int(retention[1]), 90,
+            'An idle service must not lose its complete-cohort receipt after seven days')
