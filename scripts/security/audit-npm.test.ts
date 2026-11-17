@@ -82,7 +82,16 @@ describe("audit task", () => {
 
     assertEquals(
       denoConfig.tasks.audit.includes(
-        "npm --prefix storybook audit --package-lock-only --audit-level=high",
+        "deno run --allow-read --allow-run=npm scripts/security/audit-storybook.ts",
+      ),
+      true,
+    );
+    const storybookAudit = await Deno.readTextFile(
+      "scripts/security/audit-storybook.ts",
+    );
+    assertEquals(
+      storybookAudit.includes(
+        '["--prefix", "storybook", "audit", "--package-lock-only", "--json"]',
       ),
       true,
     );

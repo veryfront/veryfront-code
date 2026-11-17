@@ -52,6 +52,7 @@ Required controls:
 - Keep `scripts/build/build-npm-dnt.ts` npm install calls on `--ignore-scripts`.
 - Keep first-party extension implementation dependencies out of the root `veryfront` package. Feature-specific runtime packages such as `jose`, `esbuild`, `bash-tool`, `better-sqlite3`, `@kreuzberg/*`, `tailwindcss`, `@mdx-js/*`, Babel, and OpenTelemetry packages must live in the matching generated `@veryfront/ext-*` package.
 - Keep `deno task lint:deps` and `deno task audit` in CI.
+- Exempt a Storybook advisory only in `scripts/security/audit-storybook.ts`, pinned to its advisory id, package and vulnerable range, and only while no patched version exists. The shipped-dependency audit takes no exemptions.
 
 ## GitHub App release credentials
 
