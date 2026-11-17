@@ -1960,6 +1960,100 @@ describe("npm package publishing", () => {
     });
   });
 
+  it("prints npm's trusted publishing log lines when a publish is rejected", async () => {
+    await withPackageFixture("veryfront", async ({ packageDir, npmLog }) => {
+      const debugLog = `${packageDir}/npm-debug.log`;
+      await Deno.writeTextFile(
+        debugLog,
+        [
+          "10 verbose title npm publish",
+          "11 verbose oidc Failed token exchange request with body message: no trusted publisher eyJhbGciOi.eyJzdWIiOiJ4In0.c2ln",
+          "12 http fetch POST 404 https://registry.npmjs.org/-/npm/v1/oidc/token/exchange/package/veryfront 120ms",
+          "13 http fetch PUT 404 https://registry.npmjs.org/veryfront 900ms",
+          "14 verbose stack HttpErrorGeneral: 404 Not Found",
+        ].join("\n"),
+      );
+
+      const output = await runBash(
+        [
+          "set -euo pipefail",
+          'source "$SCRIPT_PATH"',
+          "npm() {",
+          LOG_NPM_CALL,
+          '  if [ "$1" = "publish" ]; then',
+          '    printf "%s\\n" "npm error code E404"',
+          '    printf "%s\\n" "npm error A complete log of this run can be found in: $NPM_DEBUG_LOG"',
+          "    return 1",
+          "  fi",
+          '  if [ "$1" = "view" ]; then return 1; fi',
+          "}",
+          'rc_publish_package_dir "$PACKAGE_DIR" || echo "EXIT=$?"',
+        ].join("\n"),
+        {
+          GITHUB_SHA: "0".repeat(40),
+          NPM_DEBUG_LOG: debugLog,
+          NPM_LOG: npmLog,
+          NPM_PUBLISH_CONFLICT_DELAY_SECONDS: "0",
+          PACKAGE_DIR: packageDir,
+          VERSION: "0.1.0",
+        },
+      );
+
+      const stdout = decoder.decode(output.stdout);
+      const diagnostics = shellFailureDiagnostics(output, packageDir, npmLog);
+      assertStringIncludes(stdout, "EXIT=1", diagnostics);
+      assertStringIncludes(
+        stdout,
+        "npm trusted publishing (OIDC) log lines for the rejected veryfront@0.1.0 publish:",
+        diagnostics,
+      );
+      assertStringIncludes(
+        stdout,
+        "verbose oidc Failed token exchange request with body message: no trusted publisher <REDACTED>",
+        diagnostics,
+      );
+      assertStringIncludes(stdout, "oidc/token/exchange/package/veryfront", diagnostics);
+      assertStringIncludes(stdout, "http fetch PUT 404", diagnostics);
+      assertEquals(stdout.includes("eyJhbGciOi"), false, diagnostics);
+      assertEquals(stdout.includes("verbose stack"), false, diagnostics);
+      assertEquals(stdout.includes(debugLog), false, diagnostics);
+    });
+  });
+
+  it("says so when a rejected publish leaves no npm debug log", async () => {
+    await withPackageFixture("veryfront", async ({ packageDir, npmLog }) => {
+      const output = await runBash(
+        [
+          "set -euo pipefail",
+          'source "$SCRIPT_PATH"',
+          "npm() {",
+          LOG_NPM_CALL,
+          '  if [ "$1" = "publish" ]; then',
+          '    printf "%s\\n" "npm error code E404"',
+          "    return 1",
+          "  fi",
+          '  if [ "$1" = "view" ]; then return 1; fi',
+          "}",
+          'rc_publish_package_dir "$PACKAGE_DIR" || echo "EXIT=$?"',
+        ].join("\n"),
+        {
+          GITHUB_SHA: "0".repeat(40),
+          NPM_LOG: npmLog,
+          NPM_PUBLISH_CONFLICT_DELAY_SECONDS: "0",
+          PACKAGE_DIR: packageDir,
+          VERSION: "0.1.0",
+        },
+      );
+
+      const stdout = decoder.decode(output.stdout);
+      assertStringIncludes(stdout, "EXIT=1");
+      assertStringIncludes(
+        stdout,
+        "No npm debug log is available for the rejected veryfront@0.1.0 publish",
+      );
+    });
+  });
+
   it("gives up after the bounded number of conflict retries", async () => {
     await withTempDir(async (stateDir) => {
       const packageDir = `${stateDir}/package`;
