@@ -4014,7 +4014,9 @@ function createLocalEvalAgentFetch(input: {
 function readEvalAgentEnvironmentContext(init: RequestInit | undefined): string | undefined {
   if (typeof init?.body !== "string") return undefined;
   try {
-    const body = JSON.parse(init.body) as Partial<AgentServiceEvalRequestBody> | null;
+    // Parsed with the parser captured at load: the project eval module has
+    // loaded by now and may have replaced the global JSON.parse.
+    const body = privateJsonParse(init.body) as Partial<AgentServiceEvalRequestBody> | null;
     const value = body?.forwardedProps?.veryfront?.environmentContext;
     return typeof value === "string" && value.trim() !== "" ? value : undefined;
   } catch {

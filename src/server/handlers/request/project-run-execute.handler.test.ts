@@ -6975,6 +6975,85 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     }
   });
 
+  it("reads the eval environment context after project code replaces JSON.parse", async () => {
+    const model = scriptedModel([{ text: "Paris" }], { modelId: "hosted/eval-context-json" });
+    const sourceAgent = agent({
+      id: "context-json-researcher",
+      model: "hosted/eval-context-json",
+      system: "Answer briefly.",
+      skills: false,
+      environmentContext: "configured context",
+      resolveModelTransport: () => ({ model }),
+    });
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: runTaskDefinition,
+      findEvalById: async (target) =>
+        target === "eval:context-json"
+          ? {
+            id: "eval:context-json",
+            name: "Studio context",
+            filePath: "evals/context.eval.ts",
+            exportName: "default",
+            definition: evalAgent({
+              id: "eval:context-json",
+              target: "agent:context-json-researcher",
+              environmentContext: "active tab: app/page.tsx",
+              dataset: datasets.inline([{ id: "q1", input: "France capital?" }]),
+            }),
+          }
+          : null,
+      runEval: runEvalDefinition,
+      createEvalAgentAdapter: (config) =>
+        createAgentServiceEvalAdapter({ ...config, requestTimeoutMs: 250 }),
+    }));
+    const body = {
+      runId: "run_eval_context_json_agent",
+      kind: "task",
+      target: "task:eval",
+      projectId: "proj-1",
+      runtimeAgUiEndpoint: "http://localhost:4311/api/ag-ui",
+      config: { eval_id: "eval:context-json" },
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_eval_context_json_agent/execute",
+      body,
+      { "x-token": "runtime-token" },
+      "http://localhost:4311",
+    );
+    const originalParse = JSON.parse;
+    try {
+      const result = await withEnvValue(
+        "PORT",
+        "4311",
+        () => {
+          // A project eval module can replace the global during discovery.
+          JSON.parse = (text: string, reviver?: Parameters<typeof JSON.parse>[1]) => {
+            if (typeof text === "string" && text.includes('"environmentContext"')) {
+              throw new Error("project JSON.parse");
+            }
+            return originalParse(text, reviver);
+          };
+          return handler.handle(request, createCtx(publicKeyPem));
+        },
+      );
+      JSON.parse = originalParse;
+
+      assertExists(result.response);
+      assertEquals((await result.response.json()).success, true);
+      const [call] = model.calls;
+      assertExists(call);
+      const system = JSON.stringify(call.prompt.filter((message) => message.role === "system"));
+      assertStringIncludes(
+        system,
+        "<environment_context>\\nactive tab: app/page.tsx\\n</environment_context>",
+      );
+      assertEquals(system.includes("configured context"), false);
+    } finally {
+      JSON.parse = originalParse;
+      agentRegistry.delete(sourceAgent.id);
+    }
+  });
+
   it("applies forwarded eval tool restrictions to local source agent runs", async () => {
     let sourceAgentStreamCalls = 0;
     let observedToolNames: string[] = [];
