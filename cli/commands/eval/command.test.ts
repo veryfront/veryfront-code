@@ -87,9 +87,9 @@ import {
 
 const MISSING_PROJECT_NOTICE = "No Veryfront project is configured";
 const MISSING_PROJECT_WARNING =
-  "No Veryfront project is configured, so veryfront-cloud model calls use your account's credits " +
-  "without a project. To bill a project, set VERYFRONT_PROJECT_SLUG in .env or add projectSlug to " +
-  "veryfront.config.ts.";
+  "No Veryfront project is configured, so veryfront-cloud model calls bill the project your API " +
+  "key is bound to, or your account's credits when the credential is not a project key. To choose " +
+  "the project, set VERYFRONT_PROJECT_SLUG in .env or add projectSlug to veryfront.config.ts.";
 const originalApiToken = Deno.env.get("VERYFRONT_API_TOKEN");
 const originalApiBaseUrl = Deno.env.get("VERYFRONT_API_BASE_URL");
 const originalProjectSlug = Deno.env.get("VERYFRONT_PROJECT_SLUG");
@@ -2662,6 +2662,10 @@ describe("eval CLI command helpers", () => {
     // so the notice must not predict a rejection the run never meets.
     assertEquals(warning, MISSING_PROJECT_WARNING);
     assertEquals(warning?.includes("reject"), false);
+    // A project API key bills its own project with no slug set, so the notice
+    // must not say the calls run without a project.
+    assertEquals(warning?.includes("without a project"), false);
+    assertEquals(warning?.includes("the project your API key is bound to"), true);
     assertEquals(warning?.includes("veryfront link"), false);
     assertEquals(
       formatMissingEvalProjectWarning({ apiToken: "token", projectSlug: "eval-project" }),
