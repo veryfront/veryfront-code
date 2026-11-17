@@ -267,8 +267,19 @@ async function writeKnowledgeFile(
       existing = await Deno.readTextFile(path);
     } catch (error) {
       if (!(error instanceof Deno.errors.NotFound)) throw error;
-      await Deno.writeTextFile(path, markdown, { createNew: true, signal });
-      return { slug: candidate, path };
+      try {
+        await Deno.writeTextFile(path, markdown, { createNew: true, signal });
+        return { slug: candidate, path };
+      } catch (writeError) {
+        if (!(writeError instanceof Deno.errors.AlreadyExists)) throw writeError;
+        // Re-read the winner once; a dangling link or deleted winner cannot be reused.
+        try {
+          existing = await Deno.readTextFile(path);
+        } catch (readError) {
+          if (!(readError instanceof Deno.errors.NotFound)) throw readError;
+          continue;
+        }
+      }
     }
     const metadata = inspectOkfDocument(path, existing).metadata;
     const storedKey = readKnowledgeIngestSourceKey(metadata);
