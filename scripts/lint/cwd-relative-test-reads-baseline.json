@@ -7,7 +7,7 @@
   "scripts/build/sentry-runtime-packages.test.ts": 1,
   "scripts/ci/setup-deno-workflow.test.ts": 1,
   "scripts/lint/lint-config.test.ts": 1,
-  "scripts/security/audit-npm.test.ts": 3,
+  "scripts/security/audit-npm.test.ts": 2,
   "src/integrations/_data.test.ts": 7,
   "src/oauth/providers/atlassian.test.ts": 1,
   "src/oauth/providers/common.test.ts": 5,

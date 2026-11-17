@@ -7,6 +7,14 @@
  * Usage: deno run --allow-read --allow-run=npm scripts/security/audit-storybook.ts
  */
 
+export const STORYBOOK_AUDIT_NPM_ARGS = [
+  "--prefix",
+  "storybook",
+  "audit",
+  "--package-lock-only",
+  "--json",
+] as const;
+
 export interface AuditExemption {
   /** GitHub advisory id, the last path segment of the advisory URL. */
   id: string;
@@ -14,11 +22,19 @@ export interface AuditExemption {
   package: string;
   /**
    * The advisory's vulnerable range exactly as npm reports it. The exemption
-   * stops applying when the advisory changes this range, which is what happens
-   * when a patched version ships, so the audit fails again until the dependency
-   * is upgraded and the entry is removed.
+   * stops applying when the advisory changes this range.
    */
   range: string;
+  /**
+   * The package's `latest` release when the exemption was written, which the
+   * advisory still covers. A patched release does not have to change the
+   * advisory's range (`<=4.0.7` already excludes 4.0.8), and npm's
+   * `fixAvailable` is no signal either: it is set as soon as downgrading a
+   * parent package would drop the dependency. So the exemption stops applying
+   * when the registry's `latest` moves past this version, and the audit fails
+   * until someone upgrades or confirms the new release is still vulnerable.
+   */
+  unpatchedLatest: string;
   reason: string;
 }
 
@@ -32,6 +48,7 @@ export const STORYBOOK_AUDIT_EXEMPTIONS: readonly AuditExemption[] = [
     id: "GHSA-fc5q-39xc-vjpf",
     package: "picomatch",
     range: "<=4.0.7",
+    unpatchedLatest: "4.0.7",
     reason:
       "ReDoS in glob matching with no patched picomatch release. Reached only through Storybook's build tooling (vite, tinyglobby, @rollup/pluginutils, unplugin), which matches globs from this repository's own configuration.",
   },
@@ -96,6 +113,8 @@ function parseAdvisory(value: Record<string, unknown>): Advisory | undefined {
 export function evaluateStorybookAudit(
   report: unknown,
   exemptions: readonly AuditExemption[],
+  /** The registry's current `latest` version of each exempted package. */
+  latestVersions: Readonly<Record<string, string>>,
 ): StorybookAuditResult {
   if (!isRecord(report) || report.auditReportVersion !== 2) {
     throw new Error("npm audit report is not auditReportVersion 2.");
@@ -112,7 +131,8 @@ export function evaluateStorybookAudit(
   const findExemption = (advisory: Advisory): AuditExemption | undefined =>
     exemptions.find((exemption) =>
       exemption.id === advisory.id && exemption.package === advisory.package &&
-      exemption.range === advisory.range
+      exemption.range === advisory.range &&
+      latestVersions[exemption.package] === exemption.unpatchedLatest
     );
 
   // A package's `via` lists its own advisories as objects and the packages it
@@ -176,12 +196,33 @@ export function evaluateStorybookAudit(
 }
 
 if (import.meta.main) {
+  // npm audit exits non-zero whenever it finds a vulnerability, so its exit
+  // status is ignored on purpose: the JSON report decides, and anything that
+  // is not a readable report fails below.
   const output = await new Deno.Command("npm", {
-    args: ["--prefix", "storybook", "audit", "--package-lock-only", "--json"],
+    args: [...STORYBOOK_AUDIT_NPM_ARGS],
     stdout: "piped",
     stderr: "piped",
   }).output();
   const stdout = new TextDecoder().decode(output.stdout);
+
+  const latestVersions: Record<string, string> = {};
+  for (const exemption of STORYBOOK_AUDIT_EXEMPTIONS) {
+    const lookup = await new Deno.Command("npm", {
+      args: ["view", exemption.package, "dist-tags.latest"],
+      stdout: "piped",
+      stderr: "piped",
+    }).output();
+    const latest = new TextDecoder().decode(lookup.stdout).trim();
+    if (!lookup.success || !/^\d+\.\d+\.\d+/.test(latest)) {
+      console.error(
+        `❌ Storybook npm audit failed: could not read the latest ${exemption.package} version, so the ${exemption.id} exemption cannot be checked.`,
+      );
+      console.error("stderr:", new TextDecoder().decode(lookup.stderr).slice(0, 500));
+      Deno.exit(1);
+    }
+    latestVersions[exemption.package] = latest;
+  }
 
   let report: unknown;
   try {
@@ -195,7 +236,7 @@ if (import.meta.main) {
 
   let result: StorybookAuditResult;
   try {
-    result = evaluateStorybookAudit(report, STORYBOOK_AUDIT_EXEMPTIONS);
+    result = evaluateStorybookAudit(report, STORYBOOK_AUDIT_EXEMPTIONS, latestVersions);
   } catch (error) {
     console.error(`❌ Storybook npm audit failed: ${error instanceof Error ? error.message : error}`);
     Deno.exit(1);
@@ -208,7 +249,7 @@ if (import.meta.main) {
   }
   for (const exemption of result.unusedExemptions) {
     console.error(
-      `❌ Exemption ${exemption.id} (${exemption.package} ${exemption.range}) no longer matches the audit. Upgrade ${exemption.package} if a patched version exists, then remove the entry from scripts/security/audit-storybook.ts.`,
+      `❌ Exemption ${exemption.id} (${exemption.package} ${exemption.range}, unpatched through ${exemption.unpatchedLatest}) no longer applies: the advisory changed, or ${exemption.package} released ${latestVersions[exemption.package]}. Upgrade ${exemption.package} if that release is patched and remove the entry from scripts/security/audit-storybook.ts, or update the entry if it is still vulnerable.`,
     );
   }
   for (const finding of result.blocking) {

@@ -10,8 +10,11 @@ const PICOMATCH_EXEMPTION: AuditExemption = {
   id: "GHSA-fc5q-39xc-vjpf",
   package: "picomatch",
   range: "<=4.0.7",
+  unpatchedLatest: "4.0.7",
   reason: "test",
 };
+
+const LATEST = { picomatch: "4.0.7" };
 
 function advisory(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
@@ -43,7 +46,7 @@ function picomatchReport(picomatchVia: unknown[] = [advisory()]): Record<string,
 
 describe("evaluateStorybookAudit", () => {
   it("blocks every affected package when the advisory is not exempted", () => {
-    const result = evaluateStorybookAudit(picomatchReport(), []);
+    const result = evaluateStorybookAudit(picomatchReport(), [], LATEST);
 
     assertEquals(result.blocking.map((finding) => finding.package), [
       "fdir",
@@ -55,7 +58,7 @@ describe("evaluateStorybookAudit", () => {
   });
 
   it("passes when the only high advisory is exempted, including inherited findings", () => {
-    const result = evaluateStorybookAudit(picomatchReport(), [PICOMATCH_EXEMPTION]);
+    const result = evaluateStorybookAudit(picomatchReport(), [PICOMATCH_EXEMPTION], LATEST);
 
     assertEquals(result.blocking, []);
     assertEquals(result.appliedExemptions, [PICOMATCH_EXEMPTION]);
@@ -66,10 +69,27 @@ describe("evaluateStorybookAudit", () => {
     const result = evaluateStorybookAudit(
       picomatchReport([advisory({ range: "<4.0.8" })]),
       [PICOMATCH_EXEMPTION],
+      LATEST,
     );
 
     assertEquals(result.blocking.length, 4);
     assertEquals(result.unusedExemptions, [PICOMATCH_EXEMPTION]);
+  });
+
+  it("stops exempting the advisory once the package ships a newer release", () => {
+    const result = evaluateStorybookAudit(picomatchReport(), [PICOMATCH_EXEMPTION], {
+      picomatch: "4.0.8",
+    });
+
+    assertEquals(result.blocking.length, 4);
+    assertEquals(result.blocking[1]!.advisories.map((entry) => entry.id), ["GHSA-fc5q-39xc-vjpf"]);
+    assertEquals(result.unusedExemptions, [PICOMATCH_EXEMPTION]);
+  });
+
+  it("does not exempt when the package's latest release is unknown", () => {
+    const result = evaluateStorybookAudit(picomatchReport(), [PICOMATCH_EXEMPTION], {});
+
+    assertEquals(result.blocking.length, 4);
   });
 
   it("does not exempt the same advisory id filed against another package", () => {
@@ -82,6 +102,7 @@ describe("evaluateStorybookAudit", () => {
         },
       }),
       [PICOMATCH_EXEMPTION],
+      LATEST,
     );
 
     assertEquals(result.blocking.map((finding) => finding.package), ["micromatch"]);
@@ -95,6 +116,7 @@ describe("evaluateStorybookAudit", () => {
     const result = evaluateStorybookAudit(
       picomatchReport([advisory(), other]),
       [PICOMATCH_EXEMPTION],
+      LATEST,
     );
 
     assertEquals(result.blocking.length, 4);
@@ -116,6 +138,7 @@ describe("evaluateStorybookAudit", () => {
         },
       }),
       [PICOMATCH_EXEMPTION],
+      LATEST,
     );
 
     assertEquals(result.blocking.map((finding) => finding.package), ["esbuild"]);
@@ -131,6 +154,7 @@ describe("evaluateStorybookAudit", () => {
         },
       }),
       [],
+      LATEST,
     );
 
     assertEquals(result.blocking, []);
@@ -149,6 +173,7 @@ describe("evaluateStorybookAudit", () => {
       const result = evaluateStorybookAudit(
         report({ picomatch: { name: "picomatch", severity: "high", via } }),
         [PICOMATCH_EXEMPTION],
+        LATEST,
       );
       assertEquals(
         result.blocking.map((finding) => finding.package),
@@ -162,6 +187,7 @@ describe("evaluateStorybookAudit", () => {
     const result = evaluateStorybookAudit(
       report({ picomatch: { name: "picomatch", severity: "high", via: [advisory(), {}] } }),
       [PICOMATCH_EXEMPTION],
+      LATEST,
     );
 
     assertEquals(result.blocking.map((finding) => finding.package), ["picomatch"]);
@@ -170,7 +196,7 @@ describe("evaluateStorybookAudit", () => {
   it("blocks an entry without a severity", () => {
     const result = evaluateStorybookAudit(report({ picomatch: { via: [advisory()] } }), [
       PICOMATCH_EXEMPTION,
-    ]);
+    ], LATEST);
 
     assertEquals(result.blocking.map((finding) => finding.package), ["picomatch"]);
   });
@@ -187,12 +213,12 @@ describe("evaluateStorybookAudit", () => {
         { auditReportVersion: 2, vulnerabilities: {}, error: { code: "ENOLOCK" } },
       ]
     ) {
-      assertThrows(() => evaluateStorybookAudit(invalid, []), Error, undefined, JSON.stringify(invalid));
+      assertThrows(() => evaluateStorybookAudit(invalid, [], LATEST), Error, undefined, JSON.stringify(invalid));
     }
   });
 
   it("reports an exemption that matches nothing as unused", () => {
-    const result = evaluateStorybookAudit(report({}), [PICOMATCH_EXEMPTION]);
+    const result = evaluateStorybookAudit(report({}), [PICOMATCH_EXEMPTION], LATEST);
 
     assertEquals(result.blocking, []);
     assertEquals(result.unusedExemptions, [PICOMATCH_EXEMPTION]);
@@ -205,6 +231,7 @@ describe("STORYBOOK_AUDIT_EXEMPTIONS", () => {
       assertEquals(/^GHSA(-[0-9a-z]{4}){3}$/.test(exemption.id), true, exemption.id);
       assertEquals(exemption.package.length > 0, true, exemption.id);
       assertEquals(exemption.range.length > 0 && exemption.range !== "*", true, exemption.id);
+      assertEquals(/^\d+\.\d+\.\d+$/.test(exemption.unpatchedLatest), true, exemption.id);
       assertEquals(exemption.reason.length > 20, true, exemption.id);
     }
   });

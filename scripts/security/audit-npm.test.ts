@@ -2,6 +2,7 @@ import { parse } from "#std/yaml/parse";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { buildAuditPackageJson, collectNpmDependencies } from "./audit-npm.ts";
+import { STORYBOOK_AUDIT_NPM_ARGS } from "./audit-storybook.ts";
 
 describe("collectNpmDependencies", () => {
   it("collects pinned npm imports across root and extension manifests", () => {
@@ -86,15 +87,13 @@ describe("audit task", () => {
       ),
       true,
     );
-    const storybookAudit = await Deno.readTextFile(
-      "scripts/security/audit-storybook.ts",
-    );
-    assertEquals(
-      storybookAudit.includes(
-        '["--prefix", "storybook", "audit", "--package-lock-only", "--json"]',
-      ),
-      true,
-    );
+    assertEquals([...STORYBOOK_AUDIT_NPM_ARGS], [
+      "--prefix",
+      "storybook",
+      "audit",
+      "--package-lock-only",
+      "--json",
+    ]);
     assertEquals(pullRequestPaths.includes("package.json"), true);
     assertEquals(pullRequestPaths.includes("storybook/package.json"), true);
     assertEquals(
