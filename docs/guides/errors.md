@@ -875,7 +875,7 @@ Provider replay checkpoint is invalid.
 No model access for eval run.
 
 - **HTTP status:** 402
-- **What to do:** Veryfront Cloud refused the model request for billing or entitlement reasons, not authentication. Add AI credits or upgrade the plan for the account that owns the linked project at https://veryfront.com/settings/billing, then run the eval again. See https://veryfront.com/docs/api/errors/insufficient-credits
+- **What to do:** Veryfront Cloud refused the model request for billing or entitlement reasons, not authentication. Add AI credits or upgrade the plan at https://veryfront.com/settings/billing for the account that owns the linked project, or for your credential's account when no project is set, then run the eval again. See https://veryfront.com/docs/api/errors/insufficient-credits
 
 ### eval-project-required
 
