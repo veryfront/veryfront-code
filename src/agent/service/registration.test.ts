@@ -17,6 +17,7 @@ import {
   heartbeatRetrySchedule,
   resolveAgentServiceRegistrationInput,
 } from "./registration.ts";
+import { parseHostedAgentServiceConfig } from "./config.ts";
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -196,6 +197,28 @@ describe("agent/agent-service-registration", () => {
 
     assertEquals(withoutToken, null);
     assertEquals(withoutUrl, null);
+  });
+
+  it("skips auto registration from VERYFRONT_API_KEY while a token file selector is set", async () => {
+    const env = {
+      VERYFRONT_API_URL: "https://api.example.com",
+      VERYFRONT_API_KEY: "key-1",
+      VERYFRONT_AGENT_SERVICE_URL: "https://agent.example.com",
+      VERYFRONT_AGENT_SERVICE_REGISTRATION: "auto",
+    };
+    const resolve = (config: Record<string, string>) =>
+      resolveAgentServiceRegistrationInput({
+        config: parseHostedAgentServiceConfig(config),
+        serviceName: "docs-agent",
+        agentId: "support",
+        version: undefined,
+        runtime: "node",
+      });
+
+    // The documented auto example registers from the key alone.
+    assertEquals((await resolve(env))?.authToken, "key-1");
+    // A token file selector, a blank one included, stops the key from being read.
+    assertEquals(await resolve({ ...env, VERYFRONT_API_TOKEN_FILE: "" }), null);
   });
 
   it("fails explicit registration when required connection settings are missing", async () => {

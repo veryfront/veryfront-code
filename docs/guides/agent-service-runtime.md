@@ -147,8 +147,11 @@ For non-standard project layouts, configure discovery paths in
 
 Control-plane registration is convention-first. In `auto` mode, the service
 registers only when `VERYFRONT_API_KEY` and
-`VERYFRONT_AGENT_SERVICE_URL` are present. Registration also requires the
-immutable `runtimeSource` binding described below.
+`VERYFRONT_AGENT_SERVICE_URL` are present. Leave `VERYFRONT_API_TOKEN_FILE`
+unset: when it is set, even to an empty value, the service does not read
+`VERYFRONT_API_KEY`, so `auto` mode skips registration and `enabled` mode fails
+at startup. Registration also requires the immutable `runtimeSource` binding
+described below.
 
 ```bash
 VERYFRONT_API_URL=https://api.example.com
