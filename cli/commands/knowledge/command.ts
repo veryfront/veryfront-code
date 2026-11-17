@@ -837,7 +837,9 @@ export async function ingestResolvedSources(
       rootPath: string;
       resource: string;
       legacySource: string;
+      sourceKey: string;
     }) => Promise<{ path: string; versionId: string } | undefined>;
+    listRemoteKnowledgeSuffixPaths?: (stem: string) => Promise<ReadonlySet<string> | undefined>;
     /** Reads a remote knowledge file, or `undefined` when it does not exist. */
     readRemoteKnowledgeFile?: (
       remotePath: string,
@@ -857,6 +859,8 @@ export async function ingestResolvedSources(
     throw new Error("--slug can only be used with a single explicit source.");
   }
 
+  const rootPath = normalizeKnowledgeInputPath(options.knowledgePath).replace(/\/+$/, "");
+  const canonicalRoot = rootPath === "knowledge" || rootPath.startsWith("knowledge/");
   const okfRelativePaths = buildOkfBundleRelativePaths(sources, options);
   const okfCompanionPaths = options.okfBundle && options.path
     ? await collectReferencedOkfCompanionPaths(sources, options.path)
@@ -872,12 +876,16 @@ export async function ingestResolvedSources(
       } else hasBinaryCompanion = true;
     }
   }
-  const parserSourceFields = (source: KnowledgeSource) => ({
-    slug: options.slug,
-    sourceName: commandHelpers.buildKnowledgeSourceFileName(source),
-    resource: commandHelpers.buildKnowledgeResource(source),
-    sourceReference: buildSourceReference(source),
-  });
+  const parserSourceFields = (source: KnowledgeSource) => {
+    const identity = commandHelpers.buildKnowledgeIngestIdentity(source);
+    return {
+      slug: options.slug,
+      sourceName: commandHelpers.buildKnowledgeSourceFileName(source),
+      resource: canonicalRoot ? identity.resource : commandHelpers.buildKnowledgeResource(source),
+      sourceKey: identity.sourceKey,
+      sourceReference: buildSourceReference(source),
+    };
+  };
   const preflightParsers = new Map<KnowledgeSource, KnowledgeParserResult>();
   if (options.okfBundle && hasBinaryCompanion) {
     // Validate the complete bundle before committing any immutable absent-only asset.
@@ -932,7 +940,8 @@ export async function ingestResolvedSources(
 
   for (const [index, source] of sources.entries()) {
     deps.signal?.throwIfAborted();
-    const sourceReference = buildSourceReference(source);
+    const parserFields = parserSourceFields(source);
+    const { sourceReference, resource, sourceKey } = parserFields;
 
     const sourceName = buildKnowledgeSourceName(source);
     const sourceType = classifyKnowledgeSourceType(sourceName);
@@ -977,7 +986,7 @@ export async function ingestResolvedSources(
         filePath: source.localPath,
         outputDir: deps.outputDir,
         description: options.description,
-        ...parserSourceFields(source),
+        ...parserFields,
         okfRelativePath: okfRelativePaths.get(source),
         ...(okfCompanionPaths.has(okfRelativePaths.get(source) ?? "")
           ? { okfRole: "companion" as const }
@@ -997,14 +1006,17 @@ export async function ingestResolvedSources(
       const okfRelativePath = okfRelativePaths.get(source);
       // A pinned --slug and OKF bundle paths are exact; derived names must not overwrite another source.
       const claimsPath = okfRelativePath === undefined && !options.slug;
-      const derivedRemotePath = okfRelativePath === undefined
+      const parserRemotePath = okfRelativePath === undefined
         ? deriveKnowledgeRemotePath(
           parser.sandbox_output_path,
           deps.outputDir,
           options.knowledgePath,
         )
         : deriveOkfBundleRemotePath(okfRelativePath, options.knowledgePath);
-      const preferredRemotePath = claimsPath && parser.preferred_slug
+      const derivedRemotePath = claimsPath && !canonicalRoot
+        ? `${rootPath}/${await commandHelpers.buildCustomKnowledgeSlug(source)}.md`
+        : parserRemotePath;
+      const preferredRemotePath = claimsPath && canonicalRoot && parser.preferred_slug
         ? deriveKnowledgeRemotePath(
           join(deps.outputDir, `${parser.preferred_slug}.md`),
           deps.outputDir,
@@ -1014,16 +1026,11 @@ export async function ingestResolvedSources(
       const uploadMetadata = options.okfBundle
         ? buildOkfBundleUploadMetadata(options.knowledgePath)
         : undefined;
-      const resource = commandHelpers.buildKnowledgeResource(source);
-      const legacySource = commandHelpers.buildSourceReference(source);
-      const rootPath = normalizeKnowledgeInputPath(options.knowledgePath).replace(/\/+$/, "");
-      const findSource =
-        claimsPath && (rootPath === "knowledge" || rootPath.startsWith("knowledge/"))
-          ? deps.findRemoteKnowledgeSource
-          : undefined;
-      const currentSource = await findSource?.({ rootPath, resource, legacySource });
+      const legacySource = sourceReference;
+      const findSource = claimsPath && canonicalRoot ? deps.findRemoteKnowledgeSource : undefined;
+      const currentSource = await findSource?.({ rootPath, resource, legacySource, sourceKey });
       const newSourcePath = findSource && !currentSource
-        ? `${rootPath}/source-${await computeHash(resource)}.md`
+        ? `${rootPath}/source-${await computeHash(sourceKey)}.md`
         : undefined;
       if (
         currentSource &&
@@ -1047,6 +1054,10 @@ export async function ingestResolvedSources(
             preferredRemotePath,
             resource,
             legacySource,
+            sourceKey,
+            sourceKind: source.kind,
+            scanSuffixGaps: !canonicalRoot,
+            listSuffixPaths: deps.listRemoteKnowledgeSuffixPaths,
             absenceConflicts,
             readRemoteFile: deps.readRemoteKnowledgeFile,
           })
@@ -1072,7 +1083,7 @@ export async function ingestResolvedSources(
           absenceConflicts.set(remotePath, error);
         }
       }
-      if (remotePath !== derivedRemotePath) {
+      if (remotePath !== parserRemotePath) {
         parser = { ...parser, slug: basename(remotePath).replace(/\.md$/i, "") };
       }
       published = uploaded;
@@ -1218,6 +1229,13 @@ export async function knowledgeCommand(args: ParsedArgs): Promise<void> {
                 client,
                 projectSlug: config.projectSlug,
                 branch: options.branch,
+              }),
+            listRemoteKnowledgeSuffixPaths: (stem) =>
+              commandHelpers.listRemoteKnowledgeSuffixPaths({
+                client,
+                projectSlug: config.projectSlug,
+                branch: options.branch,
+                stem,
               }),
             readRemoteKnowledgeFile: (remotePath) =>
               readRemoteFileIfExists(client, config.projectSlug, remotePath, {

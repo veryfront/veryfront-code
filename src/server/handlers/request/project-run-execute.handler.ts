@@ -4885,7 +4885,7 @@ async function executeKnowledgeIngestRun(input: {
     const { putBinaryKnowledgeAsset } = await import(
       "../../../../cli/commands/knowledge/binary-assets.ts"
     );
-    const { findRemoteKnowledgeIngestSource } = await import(
+    const { findRemoteKnowledgeIngestSource, listRemoteKnowledgeSuffixPaths } = await import(
       "../../../../cli/commands/knowledge/command-helpers.ts"
     );
     const { indexKnowledgeDocument } = await import(
@@ -5052,6 +5052,14 @@ async function executeKnowledgeIngestRun(input: {
               client,
               projectSlug: projectReference,
               branchId: outputDestination?.branchId,
+              signal: input.signal,
+            }),
+          listRemoteKnowledgeSuffixPaths: (stem) =>
+            listRemoteKnowledgeSuffixPaths({
+              client,
+              projectSlug: projectReference,
+              branchId: outputDestination?.branchId,
+              stem,
               signal: input.signal,
             }),
           readRemoteKnowledgeFile: (remotePath) =>

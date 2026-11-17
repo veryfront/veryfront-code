@@ -1,7 +1,7 @@
 import type { ApiClient } from "#cli/shared/config";
 import { INVALID_ARGUMENT } from "veryfront/errors";
 import { createFileSystem } from "veryfront/platform";
-import { basename, join, normalize, relative } from "veryfront/platform/path";
+import { basename, extname, isAbsolute, join, normalize, relative } from "veryfront/platform/path";
 import { inspectOkfDocument } from "veryfront/knowledge";
 import { computeHash } from "veryfront/utils";
 import type { RemoteFileWriteExpectation } from "../files/command.ts";
@@ -280,10 +280,83 @@ export function buildKnowledgeResource(source: KnowledgeSource): string {
   return KNOWLEDGE_INGEST_STAGING_RE.exec(reference)?.[1] ?? reference;
 }
 
+/** Stable origin-specific identity for generated documents. Studio's batch ID is transient. */
+export function buildKnowledgeIngestIdentity(
+  source: KnowledgeSource,
+): { resource: string; sourceKey: string } {
+  if (source.kind === "local") {
+    const resource = normalize(source.localPath);
+    return { resource, sourceKey: JSON.stringify(["local", resource]) };
+  }
+  const reference = buildSourceReference(source);
+  const stagedReference = KNOWLEDGE_INGEST_STAGING_RE.exec(reference)?.[1];
+  const resource = stagedReference ?? reference;
+  const kind = stagedReference === undefined ? "upload" : "staged-upload";
+  return { resource, sourceKey: JSON.stringify([kind, resource]) };
+}
+
+export function readKnowledgeIngestSourceKey(
+  metadata: Record<string, unknown>,
+): string | undefined {
+  const generated = metadata.generated;
+  return generated && typeof generated === "object" && "source_key" in generated &&
+      typeof generated.source_key === "string"
+    ? generated.source_key
+    : undefined;
+}
+
 /** The file name the user gave the source, without a chat upload prefix. */
 export function buildKnowledgeSourceFileName(source: KnowledgeSource): string {
   const name = basename(source.kind === "upload" ? source.uploadPath : source.localPath);
   return stripChatUploadPrefix(name) || name;
+}
+
+const CUSTOM_SOURCE_HASH_LENGTH = 16;
+// Leave room in a 255-byte filesystem component for the longest collision suffix.
+const MAX_CUSTOM_SLUG_LENGTH = 255 - "-source-".length - CUSTOM_SOURCE_HASH_LENGTH - ".md".length;
+
+/** Keep generated files at the source-derived paths used by custom destinations. */
+export async function buildCustomKnowledgeSlug(source: KnowledgeSource): Promise<string> {
+  const stagedReference = source.kind === "upload"
+    ? KNOWLEDGE_INGEST_STAGING_RE.exec(buildSourceReference(source))?.[1]
+    : undefined;
+  const sourcePath = source.kind === "upload" ? source.uploadPath : source.localPath;
+  const normalized = normalize(stagedReference ?? sourcePath).replaceAll("\\", "/");
+
+  let stem: string;
+  if (stagedReference !== undefined) {
+    stem = normalized.replace(/\.[^.]+$/, "");
+  } else if (source.kind === "upload") {
+    stem = normalized
+      .replace(/^\/workspace\/uploads\//, "")
+      .replace(/^\/workspace\//, "")
+      .replace(/^uploads\//, "")
+      .replace(/\.[^.]+$/, "");
+  } else if (normalized.startsWith("/workspace/uploads/")) {
+    stem = normalized.replace(/^\/workspace\/uploads\//, "").replace(/\.[^.]+$/, "");
+  } else if (normalized.startsWith("/workspace/")) {
+    stem = normalized.replace(/^\/workspace\//, "").replace(/\.[^.]+$/, "");
+  } else if (isAbsolute(normalized)) {
+    stem = basename(normalized, extname(normalized));
+  } else {
+    stem = normalized.replace(/\.[^.]+$/, "");
+  }
+
+  const lastSlash = stem.lastIndexOf("/");
+  const directory = stem.slice(0, lastSlash + 1);
+  const filename = stripChatUploadPrefix(stem.slice(lastSlash + 1));
+  const name = `${directory}${filename}` || basename(normalized, extname(normalized));
+  const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|(?<!-)-+$/g, "") ||
+    "document";
+  if (slug.length <= MAX_CUSTOM_SLUG_LENGTH) return escapeReservedKnowledgeSlug(slug);
+  const prefix = slug.slice(0, MAX_CUSTOM_SLUG_LENGTH - CUSTOM_SOURCE_HASH_LENGTH - 1)
+    .replace(/-+$/, "");
+  return `${prefix}-${(await computeHash(name)).slice(0, CUSTOM_SOURCE_HASH_LENGTH)}`;
+}
+
+/** OKF reserves index.md and log.md for bundle structure. */
+export function escapeReservedKnowledgeSlug(slug: string): string {
+  return slug === "index" || slug === "log" ? `${slug}-document` : slug;
 }
 
 /** Query a writable branch for a current document with this exact source identity. */
@@ -295,6 +368,7 @@ export async function findRemoteKnowledgeIngestSource(input: {
   rootPath: string;
   resource: string;
   legacySource: string;
+  sourceKey?: string;
   signal?: AbortSignal;
 }): Promise<{ path: string; versionId: string } | undefined> {
   const query = new URLSearchParams();
@@ -308,14 +382,21 @@ export async function findRemoteKnowledgeIngestSource(input: {
       root_path: input.rootPath,
       resource: input.resource,
       legacy_source: input.legacySource,
+      ...(input.sourceKey === undefined ? {} : { source_key: input.sourceKey }),
     },
     input.signal ? { signal: input.signal } : undefined,
   );
   input.signal?.throwIfAborted();
   if (result && typeof result === "object" && "status" in result) {
     if (result.status === "absent") return undefined;
+    if (result.status === "ambiguous") {
+      throw new Error("Multiple current documents match this knowledge source");
+    }
     if (result.status === "unresolved") {
-      throw new Error("Cannot establish the current destination for this knowledge source");
+      throw new Error(
+        "Cannot establish the current destination for this knowledge source. " +
+          "Check the branch index and resolve any existing generated document with an ambiguous source origin.",
+      );
     }
     if (
       result.status === "matched" && "path" in result && typeof result.path === "string" &&
@@ -325,6 +406,35 @@ export async function findRemoteKnowledgeIngestSource(input: {
     }
   }
   throw new Error("Invalid knowledge source lookup response");
+}
+
+/** Read a bounded, path-only listing to avoid probing absent collision suffixes individually. */
+export async function listRemoteKnowledgeSuffixPaths(input: {
+  client: ApiClient;
+  projectSlug: string;
+  branch?: string;
+  branchId?: string;
+  stem: string;
+  signal?: AbortSignal;
+}): Promise<ReadonlySet<string> | undefined> {
+  const params: Record<string, string> = {
+    pattern: `${normalizeKnowledgeInputPath(input.stem)}-*.md`,
+    fields: "(path)",
+    limit: "100",
+  };
+  if (input.branch !== undefined) params.ref = `branch:${input.branch}`;
+  else if (input.branchId !== undefined) params.branch_id = input.branchId;
+  const page = await input.client.get<{
+    data: { path: string }[];
+    page_info?: { next: string | null };
+  }>(
+    `/projects/${encodeURIComponent(input.projectSlug)}/files`,
+    params,
+    input.signal ? { signal: input.signal } : undefined,
+  );
+  // A partial response cannot prove absence. The caller can probe exact allocator paths instead.
+  if (page.page_info?.next !== null) return undefined;
+  return new Set(page.data.map(({ path }) => normalizeKnowledgeInputPath(path)));
 }
 
 const MAX_KNOWLEDGE_PATH_SUFFIX = 100;
@@ -345,6 +455,10 @@ export async function claimGeneratedKnowledgePath(input: {
   preferredRemotePath?: string;
   resource: string;
   legacySource: string;
+  sourceKey?: string;
+  sourceKind?: KnowledgeSource["kind"];
+  scanSuffixGaps?: boolean;
+  listSuffixPaths?: (stem: string) => Promise<ReadonlySet<string> | undefined>;
   absenceConflicts: ReadonlyMap<string, unknown>;
   readRemoteFile?: (
     remotePath: string,
@@ -356,7 +470,35 @@ export async function claimGeneratedKnowledgePath(input: {
     const existing = await readRemoteFile(path);
     const metadata = existing && inspectOkfDocument(path, existing.content).metadata;
     const legacySource = metadata?.resource === undefined ? metadata?.source : undefined;
-    const sameSource = metadata?.resource === input.resource || legacySource === input.legacySource;
+    const storedKey = metadata && readKnowledgeIngestSourceKey(metadata);
+    const storedSource = metadata?.resource === undefined ? legacySource : metadata.resource;
+    const sameLocalPath = input.sourceKind === "local" && typeof storedSource === "string" &&
+      normalize(storedSource) === normalize(input.resource);
+    const legacyMatch = metadata?.resource === input.resource ||
+      legacySource === input.legacySource;
+    let sameSource = storedKey !== undefined ? storedKey === input.sourceKey : legacyMatch;
+    if (input.scanSuffixGaps && storedKey === undefined && (legacyMatch || sameLocalPath)) {
+      const generated = metadata?.generated;
+      const legacyPath = typeof storedSource === "string"
+        ? normalize(storedSource).replaceAll("\\", "/")
+        : undefined;
+      // Upload references cannot retain an explicit disk prefix or an absolute path.
+      // Check the original spelling before normalization removes that evidence.
+      const explicitLocalPath = typeof storedSource === "string" &&
+        (/^\.{1,2}[\\/]/.test(storedSource) || isAbsolute(storedSource));
+      const sourceOnlyLocalPath = metadata?.resource === undefined &&
+        legacyPath !== undefined && legacyPath !== "uploads" && !legacyPath.startsWith("uploads/");
+      const provableLegacyLocal = sameLocalPath &&
+        (explicitLocalPath || sourceOnlyLocalPath) && generated && typeof generated === "object" &&
+        "by" in generated && typeof generated.by === "string" &&
+        /^veryfront\/\d/.test(generated.by);
+      if (!provableLegacyLocal) {
+        throw new Error(
+          `Cannot update ${path}: the existing document's source origin is ambiguous.`,
+        );
+      }
+      sameSource = true;
+    }
     return { existing, metadata, legacySource, sameSource };
   };
   if (input.preferredRemotePath && input.preferredRemotePath !== input.remotePath) {
@@ -366,14 +508,19 @@ export async function claimGeneratedKnowledgePath(input: {
     }
   }
   const stem = input.remotePath.replace(/\.md$/i, "");
+  let firstAbsent: string | undefined;
+  let listedSuffixPaths: ReadonlySet<string> | undefined;
   for (let attempt = 1; attempt <= MAX_KNOWLEDGE_PATH_SUFFIX + 1; attempt += 1) {
     let candidate = input.remotePath;
     if (attempt > MAX_KNOWLEDGE_PATH_SUFFIX) {
       // A crowded title can still accept another source without an unbounded probe.
       const sourceDigest = await computeHash(input.resource);
-      candidate = `${stem}-source-${sourceDigest.slice(0, 16)}.md`;
+      candidate = `${stem}-source-${sourceDigest.slice(0, CUSTOM_SOURCE_HASH_LENGTH)}.md`;
     } else if (attempt > 1) {
       candidate = `${stem}-${attempt}.md`;
+    }
+    if (listedSuffixPaths && !listedSuffixPaths.has(normalizeKnowledgeInputPath(candidate))) {
+      continue;
     }
     const { existing, metadata, legacySource, sameSource } = await readCandidate(candidate);
     if (
@@ -382,11 +529,22 @@ export async function claimGeneratedKnowledgePath(input: {
     ) {
       throw input.absenceConflicts.get(candidate);
     }
-    if (!existing) return { remotePath: candidate, expected: { absent: true } };
+    if (!existing) {
+      if (!input.scanSuffixGaps) return { remotePath: candidate, expected: { absent: true } };
+      if (firstAbsent === undefined) {
+        firstAbsent = candidate;
+        const paths = await input.listSuffixPaths?.(normalizeKnowledgeInputPath(stem));
+        listedSuffixPaths = paths === undefined
+          ? undefined
+          : new Set([...paths].map(normalizeKnowledgeInputPath));
+      }
+      continue;
+    }
     if (existing.versionId && sameSource) {
       return { remotePath: candidate, expected: { versionId: existing.versionId } };
     }
   }
+  if (firstAbsent !== undefined) return { remotePath: firstAbsent, expected: { absent: true } };
   throw new Error(`No free knowledge path for ${input.remotePath}`);
 }
 

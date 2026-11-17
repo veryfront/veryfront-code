@@ -4113,7 +4113,12 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       const paths = new Map(
         await Promise.all(
           sources.map(async (name) =>
-            [name, `knowledge/source-${await computeHash(`uploads/${name}.md`)}.md`] as const
+            [
+              name,
+              `knowledge/source-${await computeHash(
+                JSON.stringify(["upload", `uploads/${name}.md`]),
+              )}.md`,
+            ] as const
           ),
         ),
       );
@@ -4154,9 +4159,11 @@ describe("server/handlers/request/project-run-execute.handler", () => {
         const url = input instanceof Request ? input.url : String(input);
         if (new URL(url).pathname.endsWith("/knowledge/ingest-source")) {
           assertEquals(new URL(url).searchParams.get("branch_id"), "branch-retained");
-          const resource = requestJsonBody(init)?.resource;
+          const request = requestJsonBody(init);
+          const resource = request?.resource;
           const name = sources.find((source) => resource === `uploads/${source}.md`);
           assertExists(name);
+          assertEquals(request?.source_key, JSON.stringify(["upload", `uploads/${name}.md`]));
           const path = paths.get(name);
           assertExists(path);
           return Response.json(
