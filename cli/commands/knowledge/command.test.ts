@@ -4125,6 +4125,61 @@ describe("runKnowledgeParser", () => {
   });
 });
 
+describe("concurrent local knowledge allocation", () => {
+  it("rejects a guarded dangling output symlink without writing its target", async () => {
+    const root = await makeTempDir({ prefix: "veryfront-knowledge-dangling-output-" });
+    try {
+      const filePath = join(root, "source.md");
+      const outputDir = join(root, "out");
+      const missingTarget = join(root, "missing.md");
+      const danglingPath = join(outputDir, "shared-heading.md");
+      await Deno.writeTextFile(filePath, "# Shared heading\n\nOriginal source.\n");
+      await Deno.mkdir(outputDir);
+      await Deno.symlink(missingTarget, danglingPath);
+      await assertRejects(() => runKnowledgeParser({ filePath, outputDir }), Error);
+      await assertRejects(
+        () => Deno.lstat(join(outputDir, "shared-heading-2.md")),
+        Deno.errors.NotFound,
+      );
+      assertEquals((await Deno.lstat(danglingPath)).isSymlink, true);
+      await assertRejects(() => Deno.lstat(missingTarget), Deno.errors.NotFound);
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
+  });
+
+  it("preserves every distinct source sharing one title and output directory", async () => {
+    const root = await makeTempDir({ prefix: "veryfront-knowledge-concurrent-output-" });
+    try {
+      const outputDir = join(root, "out");
+      const files = ["a", "b", "c", "d"].map((name) => join(root, `${name}.md`));
+      await Promise.all(
+        files.map((path, index) =>
+          Deno.writeTextFile(path, `# Shared heading\n\nBody ${index}.\n`)
+        ),
+      );
+      const results = await Promise.allSettled(
+        files.map((filePath) => runKnowledgeParser({ filePath, outputDir })),
+      );
+      assertEquals(results.filter((result) => result.status === "fulfilled").length, files.length);
+      const outputs = results.flatMap((result) =>
+        result.status === "fulfilled" ? [result.value] : []
+      );
+      assertEquals(new Set(outputs.map((result) => result.sandbox_output_path)).size, files.length);
+      for (const [index, path] of files.entries()) {
+        const matches = await Promise.all(
+          outputs.map(async (result) =>
+            (await Deno.readTextFile(result.sandbox_output_path)).includes(`Body ${index}.`)
+          ),
+        );
+        assertEquals(matches.filter(Boolean).length, 1, path);
+      }
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
+  });
+});
+
 describe("runKnowledgeParsers", () => {
   it("uses Kreuzberg for multiple supported rich documents", async () => {
     const tempDir = await makeTempDir({ prefix: "veryfront-knowledge-parser-batch-" });
