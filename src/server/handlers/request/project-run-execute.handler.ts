@@ -161,6 +161,7 @@ import {
 import { bindTrustedLocalEvalFetch } from "#veryfront/eval/agent-service/trusted-fetch.ts";
 import { type AgUiRuntimeRestrictions, createAgUiHandler } from "#veryfront/agent/ag-ui/handler.ts";
 import { runWithEvalEnvironmentContext } from "#veryfront/agent/runtime/eval-environment-context-scope.ts";
+import { getAgUiRuntimeContextItemSchema } from "#veryfront/agent/runtime/ag-ui-contract.ts";
 import { hostedChatRuntimeOverridesSchema } from "#veryfront/agent/hosted/chat-request.ts";
 import { resolveConversationRunTargets } from "#veryfront/agent/conversation/durable-contracts.ts";
 import type {
@@ -4108,6 +4109,17 @@ function createDurableEvalAgentRunBody(
     return { type: "main_branch" };
   }
   const environmentContext = request.forwardedProps?.veryfront?.environmentContext;
+  // Durable runs also read the environment context from the `studio_context`
+  // item, the same item a Studio message carries. Run admission caps each item
+  // at 16 KB, so a larger context travels only in the forwarded props, which
+  // the runtime reads in place of the agent's configured context.
+  const studioContextItem = environmentContext === undefined
+    ? undefined
+    : { type: "json" as const, title: "studio_context", data: { environmentContext } };
+  const context = studioContextItem !== undefined &&
+      getAgUiRuntimeContextItemSchema().safeParse(studioContextItem).success
+    ? [...request.context, studioContextItem]
+    : request.context;
   return {
     project_id: input.projectId,
     target: { type: "agent", id: input.agentId },
@@ -4121,12 +4133,7 @@ function createDurableEvalAgentRunBody(
       // account's owner is attribution, not authority to own a conversation.
       conversation_mode: "none",
       tools: request.tools,
-      // Durable runs read the environment context from the `studio_context`
-      // item, the same item a Studio message carries.
-      context: environmentContext === undefined ? request.context : [
-        ...request.context,
-        { type: "json", title: "studio_context", data: { environmentContext } },
-      ],
+      context,
       forwarded_props: createDurableEvalAgentForwardedProps(input, request),
     },
   };

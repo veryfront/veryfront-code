@@ -7563,7 +7563,10 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertEquals(previewInput.forwarded_props, agentInput.forwarded_props);
   });
 
-  it("sends the eval environment context as the durable run's studio_context item", async () => {
+  /** Execute a one-example durable project-run eval and return the durable run config. */
+  async function executeDurableContextEval(
+    environmentContext: string,
+  ): Promise<Record<string, unknown>> {
     const requests: Array<{ pathname: string; body: Record<string, unknown> | null }> = [];
     const handler = new ProjectRunExecuteHandler(createDeps({
       runTask: runTaskDefinition,
@@ -7577,7 +7580,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
             definition: evalAgent({
               id: "eval:context",
               target: "agent:researcher",
-              environmentContext: "active tab: app/page.tsx",
+              environmentContext,
               dataset: datasets.inline([{ id: "q1", input: "France capital?" }]),
             }),
           }
@@ -7644,7 +7647,14 @@ describe("server/handlers/request/project-run-execute.handler", () => {
         ),
     );
 
-    const config = requests[0]?.body?.config as Record<string, unknown>;
+    const config = requests[0]?.body?.config;
+    assertExists(config);
+    return config as Record<string, unknown>;
+  }
+
+  it("sends the eval environment context as the durable run's studio_context item", async () => {
+    const config = await executeDurableContextEval("active tab: app/page.tsx");
+
     assertEquals(config.context, [
       {
         type: "json",
@@ -7657,6 +7667,19 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       (config.forwarded_props as { veryfront?: Record<string, unknown> }).veryfront
         ?.environmentContext,
       "active tab: app/page.tsx",
+    );
+  });
+
+  it("forwards an environment context too large for a context item without the item", async () => {
+    // Run admission caps each JSON context item at 16 KB; forwarded props allow 192 KB.
+    const environmentContext = `<studio_tabs>\n${"a".repeat(20_000)}\n</studio_tabs>`;
+    const config = await executeDurableContextEval(environmentContext);
+
+    assertEquals(config.context, []);
+    assertEquals(
+      (config.forwarded_props as { veryfront?: Record<string, unknown> }).veryfront
+        ?.environmentContext,
+      environmentContext,
     );
   });
 
