@@ -4236,7 +4236,11 @@ describe("server/handlers/request/project-run-execute.handler", () => {
         assertEquals(failed.success, false);
         if (cancel) {
           assertStringIncludes(failed.error, "Run cancelled");
-          assertEquals(attempts, [paths.get("first"), paths.get("second")]);
+          const firstPath = paths.get("first");
+          const secondPath = paths.get("second");
+          assert(firstPath);
+          assert(secondPath);
+          assertEquals(attempts, [firstPath, secondPath]);
           assertEquals(outputs.size, 1);
           assertEquals(stoppedAcknowledgements, 1);
         } else {
