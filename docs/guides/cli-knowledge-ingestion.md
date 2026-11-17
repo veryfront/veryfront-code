@@ -171,6 +171,7 @@ Each source becomes a Markdown document. Its title comes from the first
 level-one heading, with the filename as the fallback. In canonical knowledge
 directories, a new document gets a stable path derived from its source identity.
 Re-ingesting that source updates its existing document after a title change.
+Custom destinations derive filenames from the input path.
 Pass `--slug` to set the path for a single source yourself.
 
 Use `--path ... --all` only when you want everything under that uploads prefix

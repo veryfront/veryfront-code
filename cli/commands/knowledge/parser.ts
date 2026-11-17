@@ -7,6 +7,7 @@ import type {
 } from "veryfront/extensions/compat";
 import { inspectOkfDocument, type OkfDocumentDiagnostic } from "veryfront/knowledge";
 import { VERSION } from "#cli/utils";
+import { escapeReservedKnowledgeSlug, readKnowledgeIngestSourceKey } from "./command-helpers.ts";
 import { isTextKnowledgeCompanionPath } from "./source-policy.ts";
 
 export interface KnowledgeParserResult {
@@ -44,6 +45,7 @@ export interface KnowledgeParserInput {
   sourceName?: string;
   /** The OKF `resource`: the path the user uploaded; defaults to `sourceReference`. */
   resource?: string;
+  sourceKey?: string;
   okfRelativePath?: string;
   okfRole?: "companion";
 }
@@ -192,6 +194,7 @@ function buildFrontmatter(input: {
   title: string;
   description: string;
   resource: string;
+  sourceKey?: string;
   tags: string[];
   source: string;
   sourceType: string;
@@ -210,6 +213,7 @@ function buildFrontmatter(input: {
     `added: ${yamlQuote(now)}`,
     "generated:",
     `  by: ${yamlQuote(`veryfront/${VERSION}`)}`,
+    ...(input.sourceKey === undefined ? [] : [`  source_key: ${yamlQuote(input.sourceKey)}`]),
     "---",
   ].join("\n");
 }
@@ -241,18 +245,17 @@ const MAX_TITLE_SLUG_LENGTH = 80;
 function slugifyTitle(title: string): string {
   const slug = slugifyKnowledgeValue(title.replace(/^\d+[.)]\s+/, ""))
     .slice(0, MAX_TITLE_SLUG_LENGTH).replace(/-+$/, "") || "document";
-  // OKF reserves index.md and log.md for bundle structure.
-  return slug === "index" || slug === "log" ? `${slug}-document` : slug;
+  return escapeReservedKnowledgeSlug(slug);
 }
 
 /**
  * Write `<slug>.md`, adding `-2`, `-3` when that name holds another source's document.
- * A file that already holds the same resource is rewritten under its name.
+ * A file that already holds the same generated source is rewritten under its name.
  */
 async function writeKnowledgeFile(
   outputDir: string,
   slug: string,
-  resource: string,
+  identity: { resource: string; sourceKey?: string },
   markdown: string,
   signal?: AbortSignal,
 ): Promise<{ slug: string; path: string }> {
@@ -267,7 +270,12 @@ async function writeKnowledgeFile(
       await Deno.writeTextFile(path, markdown, { createNew: true, signal });
       return { slug: candidate, path };
     }
-    if (inspectOkfDocument(path, existing).metadata.resource === resource) {
+    const metadata = inspectOkfDocument(path, existing).metadata;
+    const storedKey = readKnowledgeIngestSourceKey(metadata);
+    const sameSource = storedKey !== undefined || identity.sourceKey !== undefined
+      ? storedKey === identity.sourceKey
+      : metadata.resource === identity.resource;
+    if (sameSource) {
       await Deno.writeTextFile(path, markdown, { signal });
       return { slug: candidate, path };
     }
@@ -788,6 +796,7 @@ export async function runKnowledgeParsers(input: {
           title,
           description,
           resource,
+          sourceKey: file.sourceKey,
           tags: sourceReference.startsWith("uploads/")
             ? ["upload", definition.sourceType]
             : [definition.sourceType],
@@ -812,7 +821,7 @@ export async function runKnowledgeParsers(input: {
         ({ slug, path: outputPath } = await writeKnowledgeFile(
           input.outputDir,
           preferredSlug,
-          resource,
+          { resource, sourceKey: file.sourceKey },
           markdown,
           deps.signal,
         ));
