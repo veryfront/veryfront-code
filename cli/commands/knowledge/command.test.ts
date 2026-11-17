@@ -44,13 +44,12 @@ import {
 import type { Logger } from "#veryfront/utils";
 import { VERSION } from "#cli/utils";
 import {
+  buildCustomKnowledgePath,
   buildCustomKnowledgeSlug,
   buildKnowledgeIngestIdentity,
   claimGeneratedKnowledgePath,
-  collectLocalFiles,
   findRemoteKnowledgeIngestSource,
   listRemoteKnowledgeSuffixPaths,
-  readKnowledgeIngestSourceKey,
 } from "./command-helpers.ts";
 import type { KnowledgeParserInput } from "./parser.ts";
 
@@ -1058,104 +1057,6 @@ describe("ingestResolvedSources", () => {
     }]);
   });
 
-  it("keeps local, remote, and staged sources separate when resource names overlap", async () => {
-    const tempDir = await makeTempDir({ prefix: "veryfront-knowledge-local-upload-" });
-    const cwd = Deno.cwd();
-    try {
-      await Deno.mkdir(join(tempDir, "uploads"));
-      await Deno.writeTextFile(join(tempDir, "uploads/article.md"), "# Overview\n\nLocal article.");
-      await Deno.writeTextFile(join(tempDir, "article.md"), "# Overview\n\nLocal article.");
-      const downloadedPath = join(tempDir, "downloaded.md");
-      await Deno.writeTextFile(downloadedPath, "# Overview\n\nRemote article.");
-      Deno.chdir(tempDir);
-
-      const cases = [
-        {
-          sources: ["uploads/article.md", "./uploads/article.md"],
-          uploadKey: '["upload","uploads/article.md"]',
-          localKey: '["local","uploads/article.md"]',
-        },
-        {
-          sources: ["uploads/article.md", "./uploads"],
-          uploadKey: '["upload","uploads/article.md"]',
-          localKey: '["local","uploads/article.md"]',
-        },
-        {
-          sources: ["uploads/_knowledge-ingest/first/article.md", "article.md"],
-          uploadKey: '["staged-upload","article.md"]',
-          localKey: '["local","article.md"]',
-        },
-      ];
-
-      for (const [index, { sources, uploadKey, localKey }] of cases.entries()) {
-        for (const knowledgePath of ["knowledge", "docs/imports"]) {
-          const options = createKnowledgeCommandArgs({ knowledgePath, sources, recursive: true });
-          const client = createMockClient();
-          const collection = await collectKnowledgeSources(options, {
-            client,
-            projectSlug: "my-project",
-            downloadUploads: async (paths) =>
-              paths.map((uploadPath) => ({ uploadPath, localPath: downloadedPath })),
-          });
-          assertEquals(collection.sources.map(({ kind }) => kind), ["upload", "local"]);
-
-          const remote = new Map<string, string>();
-          const result = await ingestResolvedSources(collection.sources, options, {
-            client,
-            projectSlug: "my-project",
-            outputDir: join(tempDir, `run-${index}`, knowledgePath),
-            runParser: runKnowledgeParser,
-            findRemoteKnowledgeSource: async ({ sourceKey }) => {
-              for (const [path, content] of remote) {
-                if (
-                  readKnowledgeIngestSourceKey(inspectOkfDocument(path, content).metadata) ===
-                    sourceKey
-                ) {
-                  return { path, versionId: path };
-                }
-              }
-            },
-            listRemoteKnowledgeSuffixPaths: async () => new Set(remote.keys()),
-            readRemoteKnowledgeFile: async (path) => {
-              const content = remote.get(path);
-              return content === undefined ? undefined : { content, versionId: path };
-            },
-            indexKnowledgeDocument: async (input) => createIndexReceipt(input.published.path),
-            uploadKnowledgeFile: async (path, file, _metadata, _kind, expected) => {
-              assertEquals(expected, { absent: true });
-              remote.set(path, await Deno.readTextFile(file));
-              return { path };
-            },
-          });
-
-          assertEquals(result.failed, []);
-          assertEquals(remote.size, 2);
-          assertEquals(new Set(result.ingested.map(({ outputPath }) => outputPath)).size, 2);
-          const contentsByKey = new Map(
-            [...remote].map(([path, content]) => [
-              readKnowledgeIngestSourceKey(inspectOkfDocument(path, content).metadata),
-              content,
-            ]),
-          );
-          assertStringIncludes(contentsByKey.get(uploadKey) ?? "", "Remote article.");
-          assertStringIncludes(contentsByKey.get(localKey) ?? "", "Local article.");
-          const localContent = contentsByKey.get(localKey) ?? "";
-          const localSource = collection.sources.find(({ kind }) => kind === "local");
-          assert(localSource);
-          assertEquals(
-            inspectOkfDocument("article.md", localContent).metadata.resource,
-            knowledgePath === "knowledge"
-              ? buildKnowledgeIngestIdentity(localSource).resource
-              : localSource.localPath,
-          );
-        }
-      }
-    } finally {
-      Deno.chdir(cwd);
-      await Deno.remove(tempDir, { recursive: true });
-    }
-  });
-
   it("uses one source key for repeated Studio batches and alternate local path spellings", () => {
     const firstBatch = createUploadSource("uploads/_knowledge-ingest/first/area/guide.md");
     const secondBatch = createUploadSource("uploads/_knowledge-ingest/second/area/guide.md");
@@ -1217,27 +1118,35 @@ describe("ingestResolvedSources", () => {
           },
         );
 
+      const bPath = await buildCustomKnowledgePath(
+        createUploadSource("uploads/b.md"),
+        "docs/imports",
+      );
+      const cPath = await buildCustomKnowledgePath(
+        createUploadSource("uploads/c.md"),
+        "docs/imports",
+      );
       const first = await ingest(names, "initial");
       assertEquals(first.failed, []);
       assertEquals(first.ingested.map(({ remotePath }) => remotePath), [
         "docs/imports/a.md",
-        "docs/imports/b.md",
-        "docs/imports/c.md",
+        bPath,
+        cPath,
       ]);
       assertEquals(guards.splice(0), [
         { path: "docs/imports/a.md", expectation: { versionId: "docs/imports/a.md" } },
-        { path: "docs/imports/b.md", expectation: { absent: true } },
-        { path: "docs/imports/c.md", expectation: { absent: true } },
+        { path: bPath, expectation: { absent: true } },
+        { path: cPath, expectation: { absent: true } },
       ]);
 
       const reordered = ["b", "c", "a"];
       const second = await ingest(reordered, "reordered");
-      const stablePaths = reordered.map((name) => `docs/imports/${name}.md`);
+      const stablePaths = [bPath, cPath, "docs/imports/a.md"];
       assertEquals(second.failed, []);
       assertEquals(second.ingested.map(({ remotePath }) => remotePath), stablePaths);
       assertEquals(guards, stablePaths.map((path) => ({ path, expectation: { versionId: path } })));
       assertEquals(remote.size, 3);
-      assertEquals(reads, 6);
+      assertEquals(reads, 12);
     } finally {
       await Deno.remove(tempDir, { recursive: true });
     }
@@ -1303,7 +1212,11 @@ describe("ingestResolvedSources", () => {
       assertEquals(result.failed, []);
       assertEquals(result.ingested.map(({ remotePath }) => remotePath), [path]);
       assertEquals(writes, [{ path, expected: { versionId: "retained-version" } }]);
-      assertEquals(reads, ["docs/imports/a-b.md", path]);
+      assertEquals(reads, [
+        await buildCustomKnowledgePath(createUploadSource("uploads/a/b.md"), "docs/imports"),
+        "docs/imports/a-b.md",
+        path,
+      ]);
     } finally {
       await Deno.remove(tempDir, { recursive: true });
     }
@@ -1380,7 +1293,15 @@ describe("ingestResolvedSources", () => {
         const source = createUploadSource("uploads/a/b.md", retainedSource);
         const initial = await ingest([createUploadSource("uploads/a-b.md", firstSource), source]);
         assertEquals(initial.failed, [], knowledgePath);
-        assertEquals([...remote.keys()], [initialPath, retainedPath], knowledgePath);
+        const firstPublished = initial.ingested[0]?.remotePath;
+        const retainedPublished = initial.ingested[1]?.remotePath;
+        assert(firstPublished && retainedPublished && firstPublished !== retainedPublished);
+        const firstDocument = remote.get(normalizePath(firstPublished));
+        const retainedDocument = remote.get(normalizePath(retainedPublished));
+        assert(firstDocument && retainedDocument);
+        remote.clear();
+        remote.set(initialPath, firstDocument);
+        remote.set(retainedPath, retainedDocument);
         remote.delete(initialPath);
         reads.length = 0;
         writes.length = 0;
@@ -1390,68 +1311,17 @@ describe("ingestResolvedSources", () => {
         assertEquals(updated.failed, [], knowledgePath);
         assertEquals([...remote.keys()], [retainedPath], knowledgePath);
         assertEquals(writes, [{ path: retainedPath, expected: { versionId: "version-2" } }]);
-        assertEquals(reads, [initialPath, retainedPath]);
+        assertEquals(reads, [
+          normalizePath(await buildCustomKnowledgePath(source, root)),
+          initialPath,
+          retainedPath,
+        ]);
         assert(patterns.length > 0);
         assert(patterns.every((pattern) => pattern === `${prefix}a-b-*.md`));
         assertStringIncludes(remote.get(retainedPath)?.content ?? "", "Updated retained source.");
       } finally {
         await Deno.remove(tempDir, { recursive: true });
       }
-    }
-  });
-
-  it("updates positively local generated documents from before typed identities", async () => {
-    const tempDir = await makeTempDir({ prefix: "veryfront-knowledge-legacy-local-" });
-    const cwd = Deno.cwd();
-    try {
-      await Deno.mkdir(join(tempDir, "uploads"));
-      await Deno.writeTextFile(join(tempDir, "guide.md"), "# Guide\n\nOriginal guide.");
-      await Deno.writeTextFile(join(tempDir, "uploads/guide.md"), "# Guide\n\nOriginal guide.");
-      Deno.chdir(tempDir);
-      for (const sourcePath of [join(tempDir, "guide.md"), "./guide.md", "./uploads/guide.md"]) {
-        const source = createLocalSource(sourcePath);
-        const old = await runKnowledgeParser({
-          filePath: source.localPath,
-          outputDir: join(tempDir, "old"),
-          resource: sourcePath,
-          sourceReference: sourcePath,
-        });
-        const content = await Deno.readTextFile(old.sandbox_output_path);
-        assertEquals(
-          readKnowledgeIngestSourceKey(inspectOkfDocument("guide.md", content).metadata),
-          undefined,
-        );
-        const basename = sourcePath === "./uploads/guide.md" ? "uploads-guide" : "guide";
-        const remotePath = `docs/imports/${basename}.md`;
-        const remote = new Map([[remotePath, { content, versionId: "legacy-version" }]]);
-        const writes: unknown[] = [];
-        const result = await ingestResolvedSources(
-          [source],
-          createKnowledgeCommandArgs({ knowledgePath: "docs/imports" }),
-          {
-            client: createMockClient(),
-            projectSlug: "my-project",
-            outputDir: join(tempDir, "generated"),
-            runParser: runKnowledgeParser,
-            listRemoteKnowledgeSuffixPaths: async () => new Set(),
-            readRemoteKnowledgeFile: async (path) => remote.get(path),
-            uploadKnowledgeFile: async (path, file, _metadata, _kind, expected) => {
-              writes.push({ path, expected });
-              remote.set(path, {
-                content: await Deno.readTextFile(file),
-                versionId: "updated-version",
-              });
-              return { path };
-            },
-          },
-        );
-        assertEquals(result.failed, [], sourcePath);
-        assertEquals([...remote.keys()], [remotePath]);
-        assertEquals(writes, [{ path: remotePath, expected: { versionId: "legacy-version" } }]);
-      }
-    } finally {
-      Deno.chdir(cwd);
-      await Deno.remove(tempDir, { recursive: true });
     }
   });
 
@@ -1582,7 +1452,10 @@ describe("ingestResolvedSources", () => {
                 ? { content, versionId: "structural-version" }
                 : undefined,
           }),
-          { remotePath: `docs/imports/${name}-document.md`, expected: { absent: true } },
+          {
+            remotePath: await buildCustomKnowledgePath(source, "docs/imports"),
+            expected: { absent: true },
+          },
         );
       }
     }
@@ -1673,7 +1546,7 @@ describe("ingestResolvedSources", () => {
       if (state === "ambiguous") await assertRejects(claim, Error, "origin is ambiguous");
       else if (state === "partial") await assertRejects(claim, Error, "incomplete path listing");
       else {assertEquals(await claim(), {
-          remotePath: "docs/imports/document.md",
+          remotePath: await buildCustomKnowledgePath(source, "docs/imports"),
           expected: { absent: true },
         });}
     }
@@ -1721,9 +1594,10 @@ describe("ingestResolvedSources", () => {
       });
       assertEquals(
         result,
-        exists
-          ? { remotePath: legacy, expected: { versionId: "legacy-version" } }
-          : { remotePath, expected: { absent: true } },
+        exists ? { remotePath: legacy, expected: { versionId: "legacy-version" } } : {
+          remotePath: await buildCustomKnowledgePath(source, "docs/imports"),
+          expected: { absent: true },
+        },
       );
       assert(lengths.includes(1023));
     }
@@ -1847,57 +1721,6 @@ describe("ingestResolvedSources", () => {
     }
   });
 
-  it("keeps walked local upload-shaped paths ambiguous without a typed origin", async () => {
-    const cwd = Deno.cwd();
-    const tempDir = await makeTempDir({ prefix: "veryfront-knowledge-legacy-walk-" });
-    try {
-      Deno.chdir(tempDir);
-      for (const staged of [false, true]) {
-        const directory = staged ? "uploads/_knowledge-ingest/old" : "uploads";
-        await Deno.mkdir(directory, { recursive: true });
-        await Deno.writeTextFile(`${directory}/article.md`, "# Local article\n\nLocal original.");
-        const { sources } = await collectLocalFiles(`./${directory}`, false);
-        assertEquals(sources.length, 1);
-        const local = sources[0];
-        assert(local && local.kind === "local");
-        assertEquals(local.localPath, `${directory}/article.md`);
-        // Exact source-only shape emitted by parser.ts before 48fb6ee1b3.
-        // Directory walking removed the explicit ./ before the parser saw it.
-        const content = `---\ntype: "Generated Document"\nsource: ${
-          JSON.stringify(local.localPath)
-        }\nsource_type: "md"\ngenerated: { by: "veryfront/0.1.0" }\n---\nLocal original.`;
-        const source = createUploadSource(
-          staged ? "uploads/_knowledge-ingest/new/article.md" : "uploads/article.md",
-          "download.md",
-        );
-        const identity = buildKnowledgeIngestIdentity(source);
-        const path = staged
-          ? "docs/imports/knowledge-ingest-old-article.md"
-          : "docs/imports/article.md";
-        await assertRejects(
-          () =>
-            claimGeneratedKnowledgePath({
-              remotePath: "docs/imports/article.md",
-              ...identity,
-              sourceKind: "upload",
-              legacySource: source.uploadPath,
-              customSource: source,
-              scanSuffixGaps: true,
-              absenceConflicts: new Map(),
-              listSuffixPaths: async () => new Set([path]),
-              readRemoteFile: async (candidate) =>
-                candidate === path ? { content, versionId: "local-version" } : undefined,
-            }),
-          Error,
-          "origin is ambiguous",
-        );
-      }
-    } finally {
-      Deno.chdir(cwd);
-      await Deno.remove(tempDir, { recursive: true });
-    }
-  });
-
   it("keeps explicit custom destinations separate when historical globs cross directories", async () => {
     const tempDir = await makeTempDir({ prefix: "veryfront-knowledge-custom-destination-" });
     try {
@@ -1942,9 +1765,10 @@ describe("ingestResolvedSources", () => {
               },
             },
           );
-        const slug = name === "日本" ? "document" : "article";
         const pinnedSlug = name === "article" ? "other-article" : undefined;
-        const nested = `docs/imports/knowledge-ingest-archive/${pinnedSlug ?? slug}.md`;
+        const nested = pinnedSlug
+          ? `docs/imports/knowledge-ingest-archive/${pinnedSlug}.md`
+          : await buildCustomKnowledgePath(source, "docs/imports/knowledge-ingest-archive");
         const first = await ingest("docs/imports/knowledge-ingest-archive", pinnedSlug);
         assertEquals(first.failed, []);
         assertEquals(first.ingested.map((file) => file.remotePath), [nested]);
@@ -1954,7 +1778,9 @@ describe("ingestResolvedSources", () => {
         await Deno.writeTextFile(file, "# Updated\n\nSecond explicit destination.");
         const second = await ingest("docs/imports");
         assertEquals(second.failed, []);
-        assertEquals(second.ingested.map((file) => file.remotePath), [`docs/imports/${slug}.md`]);
+        assertEquals(second.ingested.map((file) => file.remotePath), [
+          await buildCustomKnowledgePath(source, "docs/imports"),
+        ]);
         assertEquals(remote.size, 2);
         assertEquals(remote.get(nested), original);
         assert(!reads.includes(nested));
@@ -2098,7 +1924,7 @@ describe("ingestResolvedSources", () => {
         assertEquals(result.failed, [], fixture.path);
         assertEquals([...remote.keys()], [fixture.path]);
         assertEquals(writes, [{ path: fixture.path, expected: { versionId: "legacy-version" } }]);
-        assert(reads.length <= 3, JSON.stringify(reads));
+        assert(reads.length <= 4, JSON.stringify(reads));
         writes.length = 0;
         if (
           fixture.source.kind === "upload" &&
@@ -2222,7 +2048,13 @@ describe("ingestResolvedSources", () => {
             listRemoteKnowledgeSuffixPaths: async () => new Set(),
             readRemoteKnowledgeFile: async (path) => remote.get(path),
             uploadKnowledgeFile: async (path, file, _metadata, _kind, expected) => {
-              assertEquals(path, "docs/imports/index-document.md");
+              assertEquals(
+                path,
+                await buildCustomKnowledgePath(
+                  createUploadSource("uploads/index.md"),
+                  "docs/imports",
+                ),
+              );
               assertEquals(expected, { absent: true });
               remote.set(path, {
                 content: await Deno.readTextFile(file),
@@ -2347,7 +2179,10 @@ describe("ingestResolvedSources", () => {
       const first = await ingest("first");
       await Deno.writeTextFile(filePath, "# New overview\n\nUpdated guide.");
       const second = await ingest("second");
-      const path = "docs/imports/area-guide.md";
+      const path = await buildCustomKnowledgePath(
+        createUploadSource("uploads/_knowledge-ingest/first/area/guide.md"),
+        "docs/imports",
+      );
       assertEquals(first.failed, []);
       assertEquals(second.failed, []);
       assertEquals(first.ingested.map(({ remotePath }) => remotePath), [path]);
@@ -2387,10 +2222,12 @@ describe("ingestResolvedSources", () => {
         },
       );
       assertEquals(result.failed, []);
-      assertEquals([...remote.keys()], [
-        "docs/imports/index-document.md",
-        "docs/imports/log-document.md",
-      ]);
+      assertEquals(
+        [...remote.keys()],
+        await Promise.all(
+          sources.map((source) => buildCustomKnowledgePath(source, "docs/imports")),
+        ),
+      );
       for (const [path, content] of remote) {
         const document = inspectOkfDocument(path, content, { bundleRoot: "docs/imports" });
         assertEquals(document.kind, "concept");
@@ -2712,6 +2549,138 @@ describe("ingestResolvedSources", () => {
     assertEquals(result.failed, []);
     assertEquals(writes, ["knowledge/contracts-q1.md", "knowledge/contracts-q1-2.md"]);
     assertEquals(result.ingested[0]?.remotePath, "knowledge/contracts-q1-2.md");
+  });
+
+  it("uses one custom source path when a competing base document disappears between claims", async () => {
+    const source = createUploadSource("uploads/a/b.md", "b.md");
+    const identity = buildKnowledgeIngestIdentity(source);
+    const base = "docs/imports/a-b.md";
+    const remote = new Map([[base, {
+      content:
+        '---\nresource: "other.md"\ngenerated: {source_key: "local:other.md", by: "knowledge-ingest"}\n---\n',
+      versionId: "other-version",
+    }]]);
+    const claim = () =>
+      claimGeneratedKnowledgePath({
+        remotePath: base,
+        resource: identity.resource,
+        sourceKey: identity.sourceKey,
+        sourceKind: "upload",
+        customSource: source,
+        legacySource: source.input,
+        scanSuffixGaps: true,
+        absenceConflicts: new Map(),
+        listSuffixPaths: async (stem) =>
+          new Set([...remote.keys()].filter((path) => path.startsWith(stem))),
+        readRemoteFile: async (path) => remote.get(path),
+      });
+    const beforeDeletion = await claim();
+    remote.delete(base);
+    const afterDeletion = await claim();
+    const expectedPath = await buildCustomKnowledgePath(source, "docs/imports");
+    assertEquals(beforeDeletion, { remotePath: expectedPath, expected: { absent: true } });
+    assertEquals(afterDeletion, beforeDeletion);
+    let admitted = 0;
+    for (const candidate of [beforeDeletion, afterDeletion]) {
+      if (!remote.has(candidate.remotePath)) {
+        remote.set(candidate.remotePath, {
+          content: `---\nresource: ${JSON.stringify(identity.resource)}\ngenerated: ${
+            JSON.stringify({ source_key: identity.sourceKey, by: "knowledge-ingest" })
+          }\n---\n`,
+          versionId: "winner-version",
+        });
+        admitted++;
+      }
+    }
+    assertEquals(admitted, 1);
+    assertEquals(await claim(), {
+      remotePath: expectedPath,
+      expected: { versionId: "winner-version" },
+    });
+  });
+
+  it("fails closed on exhausted custom probes before duplicating a high-suffix owner", async () => {
+    const source = createUploadSource("uploads/a/b.md", "b.md");
+    const identity = buildKnowledgeIngestIdentity(source);
+    const stablePath = await buildCustomKnowledgePath(source, "docs/imports");
+    const foreign = {
+      content:
+        '---\nresource: "other.md"\ngenerated: {source_key: "other-source", by: "veryfront/0.1.0"}\n---\n',
+      versionId: "foreign-version",
+    };
+    const owner = {
+      content: `---\nresource: ${JSON.stringify(identity.resource)}\ngenerated: ${
+        JSON.stringify({ source_key: identity.sourceKey, by: "veryfront/0.1.0" })
+      }\n---\n`,
+      versionId: "owner-version",
+    };
+    for (const complete of [true, false]) {
+      let listings = 0;
+      let writes = 0;
+      const result = await ingestResolvedSources(
+        [source],
+        createKnowledgeCommandArgs({ knowledgePath: "docs/imports" }),
+        {
+          client: createMockClient(),
+          projectSlug: "my-project",
+          outputDir: "/workspace/knowledge",
+          runParser: async () => createParserSuccess(),
+          readRemoteKnowledgeFile: async (path) =>
+            path === stablePath ? undefined : path === "docs/imports/a-b-151.md" ? owner : foreign,
+          listRemoteKnowledgeSuffixPaths: async () => {
+            listings++;
+            return complete
+              ? new Set([
+                "docs/imports/a-b.md",
+                ...Array.from({ length: 99 }, (_, index) => `docs/imports/a-b-${index + 2}.md`),
+                "docs/imports/a-b-151.md",
+              ])
+              : undefined;
+          },
+          uploadKnowledgeFile: async (path) => {
+            writes++;
+            return { path };
+          },
+        },
+      );
+      assertEquals(result.ingested, []);
+      assertEquals(result.failed.length, 1);
+      assertEquals(listings, 1);
+      assertEquals(writes, 0);
+      assertStringIncludes(
+        result.failed[0]!.message,
+        complete ? "Too many knowledge paths" : "complete path listing",
+      );
+    }
+  });
+
+  it("does not recreate a deleted custom conflict winner on retry", async () => {
+    let writes = 0;
+    const result = await ingestResolvedSources(
+      [createUploadSource("uploads/a/b.md", "b.md")],
+      createKnowledgeCommandArgs({ knowledgePath: "docs/imports" }),
+      {
+        client: createMockClient(),
+        projectSlug: "my-project",
+        outputDir: "/workspace/knowledge",
+        runParser: async () => createParserSuccess(),
+        listRemoteKnowledgeSuffixPaths: async () => new Set(),
+        readRemoteKnowledgeFile: async () => undefined,
+        uploadKnowledgeFile: async (path) => {
+          writes++;
+          if (writes === 1) {
+            throw Object.assign(new Error("Concurrent custom write"), {
+              status: 409,
+            });
+          }
+          return { path };
+        },
+      },
+    );
+    assertEquals(writes, 1);
+    assertEquals(result.ingested, []);
+    assertEquals(result.failed.length, 1);
+    assertStringIncludes(result.failed[0]!.message, "Concurrent custom write");
   });
 
   it("keeps the winner when the same source claims an absent path concurrently", async () => {

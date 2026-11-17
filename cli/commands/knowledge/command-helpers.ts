@@ -365,6 +365,18 @@ export async function buildCustomKnowledgeSlug(source: KnowledgeSource): Promise
   return `${prefix}-${(await computeHash(name)).slice(0, CUSTOM_SOURCE_HASH_LENGTH)}`;
 }
 
+/** One automatic custom destination per typed source, independent of occupancy. */
+export async function buildCustomKnowledgePath(
+  source: KnowledgeSource,
+  rootPath: string,
+): Promise<string> {
+  const slug = await buildCustomKnowledgeSlug(source);
+  const prefix = slug.slice(0, 180).replace(/-+$/, "");
+  return `${rootPath}/${prefix}-source-${await computeHash(
+    buildKnowledgeIngestIdentity(source).sourceKey,
+  )}.md`;
+}
+
 function buildLegacyCustomKnowledgeSlug(source: KnowledgeSource): string {
   return slugifyCustomKnowledgeName(buildCustomKnowledgeName(source, true));
 }
@@ -654,6 +666,17 @@ export async function claimGeneratedKnowledgePath(input: {
     }
     return { existing, metadata, legacySource, sameSource, structural };
   };
+  const customPath = input.customSource
+    ? await buildCustomKnowledgePath(
+      input.customSource,
+      input.remotePath.slice(0, input.remotePath.lastIndexOf("/")),
+    )
+    : undefined;
+  if (customPath) {
+    if (input.absenceConflicts.has(customPath)) throw input.absenceConflicts.get(customPath);
+    const { existing, sameSource } = await readCandidate(customPath);
+    if (existing && sameSource) retainOwner(customPath, existing);
+  }
   if (input.preferredRemotePath && input.preferredRemotePath !== input.remotePath) {
     const { existing, sameSource } = await readCandidate(input.preferredRemotePath);
     if (existing && sameSource) {
@@ -699,6 +722,9 @@ export async function claimGeneratedKnowledgePath(input: {
       }
     }
   }
+  if (input.customSource && listedSuffixPaths === undefined) {
+    listedSuffixPaths = await listFamily(stem);
+  }
   // Listings can contain historical numeric suffixes beyond today's allocator
   // range. Inspect those actual paths too before choosing any custom owner.
   if (input.scanSuffixGaps && listedSuffixPaths) {
@@ -711,7 +737,7 @@ export async function claimGeneratedKnowledgePath(input: {
       if (existing && sameSource) retainOwner(candidate, existing);
     }
   }
-  if (firstAbsent !== undefined || retained !== undefined) {
+  if (firstAbsent !== undefined || retained !== undefined || input.customSource !== undefined) {
     if (input.customSource !== undefined) {
       const rootPath = input.remotePath.slice(0, input.remotePath.lastIndexOf("/"));
       const staged = input.customSource.kind === "upload" &&
@@ -801,6 +827,15 @@ export async function claimGeneratedKnowledgePath(input: {
       }
     }
     if (retained) return retained;
+    if (customPath) {
+      const { existing } = await readCandidate(customPath);
+      if (existing) {
+        throw new Error(
+          "Cannot allocate the deterministic knowledge path: another or unverified source occupies it",
+        );
+      }
+      return { remotePath: customPath, expected: { absent: true } };
+    }
     if (firstAbsent !== undefined) return { remotePath: firstAbsent, expected: { absent: true } };
   }
   throw new Error(`No free knowledge path for ${input.remotePath}`);
