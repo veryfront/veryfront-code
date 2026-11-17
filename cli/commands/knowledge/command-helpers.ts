@@ -315,16 +315,18 @@ const CUSTOM_SOURCE_HASH_LENGTH = 16;
 // Leave room in a 255-byte filesystem component for the longest collision suffix.
 const MAX_CUSTOM_SLUG_LENGTH = 255 - "-source-".length - CUSTOM_SOURCE_HASH_LENGTH - ".md".length;
 
-/** Keep generated files at the source-derived paths used by custom destinations. */
-export async function buildCustomKnowledgeSlug(source: KnowledgeSource): Promise<string> {
+function buildCustomKnowledgeName(source: KnowledgeSource, legacy: boolean): string {
   const stagedReference = source.kind === "upload"
     ? KNOWLEDGE_INGEST_STAGING_RE.exec(buildSourceReference(source))?.[1]
     : undefined;
   const sourcePath = source.kind === "upload" ? source.uploadPath : source.localPath;
-  const normalized = normalize(stagedReference ?? sourcePath).replaceAll("\\", "/");
+  const normalized = normalize((legacy ? undefined : stagedReference) ?? sourcePath).replaceAll(
+    "\\",
+    "/",
+  );
 
   let stem: string;
-  if (stagedReference !== undefined) {
+  if (!legacy && stagedReference !== undefined) {
     stem = normalized.replace(/\.[^.]+$/, "");
   } else if (source.kind === "upload") {
     stem = normalized
@@ -336,7 +338,7 @@ export async function buildCustomKnowledgeSlug(source: KnowledgeSource): Promise
     stem = normalized.replace(/^\/workspace\/uploads\//, "").replace(/\.[^.]+$/, "");
   } else if (normalized.startsWith("/workspace/")) {
     stem = normalized.replace(/^\/workspace\//, "").replace(/\.[^.]+$/, "");
-  } else if (isAbsolute(normalized)) {
+  } else if (legacy ? normalized.startsWith("/") : isAbsolute(normalized)) {
     stem = basename(normalized, extname(normalized));
   } else {
     stem = normalized.replace(/\.[^.]+$/, "");
@@ -345,13 +347,26 @@ export async function buildCustomKnowledgeSlug(source: KnowledgeSource): Promise
   const lastSlash = stem.lastIndexOf("/");
   const directory = stem.slice(0, lastSlash + 1);
   const filename = stripChatUploadPrefix(stem.slice(lastSlash + 1));
-  const name = `${directory}${filename}` || basename(normalized, extname(normalized));
-  const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|(?<!-)-+$/g, "") ||
+  return `${directory}${filename}` || basename(normalized, extname(normalized));
+}
+
+function slugifyCustomKnowledgeName(name: string): string {
+  return name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|(?<!-)-+$/g, "") ||
     "document";
+}
+
+/** Keep generated files at source-derived paths while bounding new filenames. */
+export async function buildCustomKnowledgeSlug(source: KnowledgeSource): Promise<string> {
+  const name = buildCustomKnowledgeName(source, false);
+  const slug = slugifyCustomKnowledgeName(name);
   if (slug.length <= MAX_CUSTOM_SLUG_LENGTH) return escapeReservedKnowledgeSlug(slug);
   const prefix = slug.slice(0, MAX_CUSTOM_SLUG_LENGTH - CUSTOM_SOURCE_HASH_LENGTH - 1)
     .replace(/-+$/, "");
   return `${prefix}-${(await computeHash(name)).slice(0, CUSTOM_SOURCE_HASH_LENGTH)}`;
+}
+
+function buildLegacyCustomKnowledgeSlug(source: KnowledgeSource): string {
+  return slugifyCustomKnowledgeName(buildCustomKnowledgeName(source, true));
 }
 
 /** OKF reserves index.md and log.md for bundle structure. */
@@ -417,24 +432,111 @@ export async function listRemoteKnowledgeSuffixPaths(input: {
   stem: string;
   signal?: AbortSignal;
 }): Promise<ReadonlySet<string> | undefined> {
-  const params: Record<string, string> = {
-    pattern: `${normalizeKnowledgeInputPath(input.stem)}-*.md`,
-    fields: "(path)",
-    limit: "100",
-  };
-  if (input.branch !== undefined) params.ref = `branch:${input.branch}`;
-  else if (input.branchId !== undefined) params.branch_id = input.branchId;
-  const page = await input.client.get<{
-    data: { path: string }[];
-    page_info?: { next: string | null };
-  }>(
-    `/projects/${encodeURIComponent(input.projectSlug)}/files`,
-    params,
-    input.signal ? { signal: input.signal } : undefined,
-  );
-  // A partial response cannot prove absence. The caller can probe exact allocator paths instead.
-  if (page.page_info?.next !== null) return undefined;
-  return new Set(page.data.map(({ path }) => normalizeKnowledgeInputPath(path)));
+  const stem = normalizeKnowledgeInputPath(input.stem);
+  // Historical staging names vary by batch. Scope both old allocator forms to
+  // this source before asking for a bounded, exhaustive path-only page.
+  const patterns = /(?:^|\/)knowledge-ingest-\*-/u.test(stem)
+    ? [`${stem}.md`, `${stem}-*.md`]
+    : [`${stem}-*.md`];
+  const paths = new Set<string>();
+  for (const requestedPattern of new Set(patterns)) {
+    // Stored paths are unbounded, but the files API caps glob patterns at 1,024
+    // characters. Exhaust a bounded prefix family, then let the caller apply
+    // its exact full-path/ownership filters before reading document contents.
+    const pattern = requestedPattern.length > 1024
+      ? `${requestedPattern.slice(0, 1019)}*.md`
+      : requestedPattern;
+    const params: Record<string, string> = { pattern, fields: "(path)", limit: "100" };
+    if (input.branch !== undefined) params.ref = `branch:${input.branch}`;
+    else if (input.branchId !== undefined) params.branch_id = input.branchId;
+    const page = await input.client.get<{
+      data: { path: string }[];
+      page_info?: { next: string | null };
+    }>(
+      `/projects/${encodeURIComponent(input.projectSlug)}/files`,
+      params,
+      input.signal ? { signal: input.signal } : undefined,
+    );
+    // A partial response cannot prove absence. Do not inspect a partial family.
+    if (page.page_info?.next !== null) return undefined;
+    for (const { path } of page.data) paths.add(normalizeKnowledgeInputPath(path));
+  }
+  return paths;
+}
+
+function matchesLegacyCustomKnowledgePath(path: string, basePath: string): boolean {
+  const normalized = normalizeKnowledgeInputPath(path);
+  const base = normalizeKnowledgeInputPath(basePath);
+  if (normalized === base) return true;
+  const stem = base.replace(/\.md$/i, "");
+  const suffix = normalized.slice(stem.length);
+  return normalized.startsWith(stem) && /^-(?:[2-9]|[1-9]\d+)\.md$/.test(suffix);
+}
+
+/** Apply the old full-path allocator before removing its synthetic batch prefix. */
+function legacyStagedKnowledgeSuffix(source: KnowledgeSource): string {
+  const resource = buildKnowledgeIngestIdentity(source).resource;
+  const prefix = "knowledge-ingest-legacy";
+  const slug = buildLegacyCustomKnowledgeSlug({
+    kind: "upload",
+    input: resource,
+    uploadPath: `uploads/_knowledge-ingest/legacy/${resource}`,
+    localPath: source.localPath,
+  });
+  return slug.slice(prefix.length).replace(/^-/, "");
+}
+
+function matchesLegacyStagedKnowledgePath(
+  path: string,
+  rootPath: string,
+  source: KnowledgeSource,
+): boolean {
+  const suffix = legacyStagedKnowledgeSuffix(source);
+  const normalized = normalizeKnowledgeInputPath(path);
+  const prefix = `${normalizeKnowledgeInputPath(rootPath)}/knowledge-ingest-`;
+  const rootPrefix = normalizeKnowledgeInputPath(rootPath) === "." ? "knowledge-ingest-" : prefix;
+  if (!normalized.startsWith(rootPrefix) || !/\.md$/i.test(normalized)) return false;
+  const relativeName = normalized.slice(rootPrefix.length);
+  // The API glob can cross directories; the historical allocator never did.
+  if (relativeName.includes("/")) return false;
+  if (!suffix) return true;
+  const name = relativeName.replace(/\.md$/i, "");
+  return new RegExp(`^.+-${suffix}(?:-(?:[2-9]|[1-9]\\d+))?$`).test(name);
+}
+
+// Local directory walking can erase ./ from uploads/... too. These historical
+// source/path pairs identify ambiguity to reject, never proof of upload origin.
+function matchesAmbiguousLegacyUploadCandidate(input: {
+  metadata: Record<string, unknown>;
+  path: string;
+  rootPath: string;
+  source: KnowledgeSource;
+  sourceKey?: string;
+}): boolean {
+  const generated = input.metadata.generated;
+  if (
+    !generated || typeof generated !== "object" || !("by" in generated) ||
+    typeof generated.by !== "string" || !/^veryfront\/\d/.test(generated.by)
+  ) return false;
+  if ("source_key" in generated || input.source.kind !== "upload") return false;
+  const resource = input.metadata.resource;
+  const storedSource = resource === undefined ? input.metadata.source : resource;
+  if (typeof storedSource !== "string") return false;
+  if (resource === undefined) {
+    if (
+      !storedSource.startsWith("uploads/") ||
+      formatKnowledgeUploadSource(storedSource) !== storedSource
+    ) return false;
+    const stored = { ...input.source, uploadPath: storedSource };
+    return buildKnowledgeIngestIdentity(stored).sourceKey === input.sourceKey &&
+      matchesLegacyCustomKnowledgePath(
+        input.path,
+        `${input.rootPath}/${buildLegacyCustomKnowledgeSlug(stored)}.md`,
+      );
+  }
+  // A bare resource names the content, not its origin. Explicit local slugs can
+  // imitate every historical staging filename, so naming cannot upgrade it.
+  return false;
 }
 
 const MAX_KNOWLEDGE_PATH_SUFFIX = 100;
@@ -458,6 +560,7 @@ export async function claimGeneratedKnowledgePath(input: {
   sourceKey?: string;
   sourceKind?: KnowledgeSource["kind"];
   scanSuffixGaps?: boolean;
+  customSource?: KnowledgeSource;
   listSuffixPaths?: (stem: string) => Promise<ReadonlySet<string> | undefined>;
   absenceConflicts: ReadonlyMap<string, unknown>;
   readRemoteFile?: (
@@ -466,9 +569,45 @@ export async function claimGeneratedKnowledgePath(input: {
 }): Promise<ClaimedKnowledgePath> {
   if (!input.readRemoteFile) return { remotePath: input.remotePath };
   const readRemoteFile = input.readRemoteFile;
+  if (input.customSource && !input.listSuffixPaths) {
+    throw new Error("Cannot establish custom knowledge ownership without a complete path listing");
+  }
+  const listFamily = async (stem: string) => {
+    const paths = await input.listSuffixPaths?.(normalizeKnowledgeInputPath(stem));
+    if (input.customSource && paths === undefined) {
+      throw new Error(
+        "Cannot establish custom knowledge ownership from an incomplete path listing",
+      );
+    }
+    return paths === undefined ? undefined : new Set([...paths].map(normalizeKnowledgeInputPath));
+  };
+  const reads = new Map<string, Awaited<ReturnType<typeof readRemoteFile>>>();
+  let retained: ClaimedKnowledgePath | undefined;
+  const retainOwner = (path: string, existing: { versionId?: string }) => {
+    if (!existing.versionId) {
+      throw new Error("Cannot update a knowledge path without its current version");
+    }
+    if (
+      retained &&
+      normalizeKnowledgeInputPath(retained.remotePath) !== normalizeKnowledgeInputPath(path)
+    ) {
+      throw new Error("Multiple current documents match this knowledge source");
+    }
+    for (const conflict of input.absenceConflicts.values()) throw conflict;
+    retained = { remotePath: path, expected: { versionId: existing.versionId } };
+    return retained;
+  };
   const readCandidate = async (path: string) => {
-    const existing = await readRemoteFile(path);
-    const metadata = existing && inspectOkfDocument(path, existing.content).metadata;
+    const normalizedPath = normalizeKnowledgeInputPath(path);
+    if (!reads.has(normalizedPath)) reads.set(normalizedPath, await readRemoteFile(path));
+    const existing = reads.get(normalizedPath);
+    const inspected = existing && inspectOkfDocument(path, existing.content, {
+      bundleRoot: input.remotePath.slice(0, input.remotePath.lastIndexOf("/")),
+    });
+    const metadata = inspected?.metadata;
+    const structural = inspected?.envelopeConforms && inspected.kind !== "concept" &&
+      metadata?.generated === undefined && metadata?.resource === undefined &&
+      metadata?.source === undefined;
     const legacySource = metadata?.resource === undefined ? metadata?.source : undefined;
     const storedKey = metadata && readKnowledgeIngestSourceKey(metadata);
     const storedSource = metadata?.resource === undefined ? legacySource : metadata.resource;
@@ -476,9 +615,23 @@ export async function claimGeneratedKnowledgePath(input: {
       normalize(storedSource) === normalize(input.resource);
     const legacyMatch = metadata?.resource === input.resource ||
       legacySource === input.legacySource;
+    const ambiguousLegacyUploadMatch = metadata !== undefined && input.customSource !== undefined &&
+      matchesAmbiguousLegacyUploadCandidate({
+        metadata,
+        path,
+        rootPath: input.remotePath.slice(0, input.remotePath.lastIndexOf("/")),
+        source: input.customSource,
+        sourceKey: input.sourceKey,
+      });
     let sameSource = storedKey !== undefined ? storedKey === input.sourceKey : legacyMatch;
-    if (input.scanSuffixGaps && storedKey === undefined && (legacyMatch || sameLocalPath)) {
+    if (
+      input.scanSuffixGaps && storedKey === undefined &&
+      (legacyMatch || sameLocalPath || ambiguousLegacyUploadMatch)
+    ) {
       const generated = metadata?.generated;
+      if (generated && typeof generated === "object" && "source_key" in generated) {
+        throw new Error("Cannot establish knowledge ownership from an invalid source key");
+      }
       const legacyPath = typeof storedSource === "string"
         ? normalize(storedSource).replaceAll("\\", "/")
         : undefined;
@@ -499,12 +652,13 @@ export async function claimGeneratedKnowledgePath(input: {
       }
       sameSource = true;
     }
-    return { existing, metadata, legacySource, sameSource };
+    return { existing, metadata, legacySource, sameSource, structural };
   };
   if (input.preferredRemotePath && input.preferredRemotePath !== input.remotePath) {
     const { existing, sameSource } = await readCandidate(input.preferredRemotePath);
-    if (existing?.versionId && sameSource) {
-      return { remotePath: input.preferredRemotePath, expected: { versionId: existing.versionId } };
+    if (existing && sameSource) {
+      const owner = retainOwner(input.preferredRemotePath, existing);
+      if (!input.scanSuffixGaps) return owner;
     }
   }
   const stem = input.remotePath.replace(/\.md$/i, "");
@@ -533,18 +687,122 @@ export async function claimGeneratedKnowledgePath(input: {
       if (!input.scanSuffixGaps) return { remotePath: candidate, expected: { absent: true } };
       if (firstAbsent === undefined) {
         firstAbsent = candidate;
-        const paths = await input.listSuffixPaths?.(normalizeKnowledgeInputPath(stem));
-        listedSuffixPaths = paths === undefined
-          ? undefined
-          : new Set([...paths].map(normalizeKnowledgeInputPath));
+        listedSuffixPaths = await listFamily(stem);
       }
       continue;
     }
-    if (existing.versionId && sameSource) {
-      return { remotePath: candidate, expected: { versionId: existing.versionId } };
+    if (sameSource) {
+      const owner = retainOwner(candidate, existing);
+      if (!input.scanSuffixGaps) return owner;
+      if (listedSuffixPaths === undefined && input.listSuffixPaths) {
+        listedSuffixPaths = await listFamily(stem);
+      }
     }
   }
-  if (firstAbsent !== undefined) return { remotePath: firstAbsent, expected: { absent: true } };
+  // Listings can contain historical numeric suffixes beyond today's allocator
+  // range. Inspect those actual paths too before choosing any custom owner.
+  if (input.scanSuffixGaps && listedSuffixPaths) {
+    if (listedSuffixPaths.size > MAX_KNOWLEDGE_PATH_SUFFIX) {
+      throw new Error("Too many knowledge paths to establish a unique source");
+    }
+    for (const candidate of listedSuffixPaths) {
+      if (!matchesLegacyCustomKnowledgePath(candidate, input.remotePath)) continue;
+      const { existing, sameSource } = await readCandidate(candidate);
+      if (existing && sameSource) retainOwner(candidate, existing);
+    }
+  }
+  if (firstAbsent !== undefined || retained !== undefined) {
+    if (input.customSource !== undefined) {
+      const rootPath = input.remotePath.slice(0, input.remotePath.lastIndexOf("/"));
+      const staged = input.customSource.kind === "upload" &&
+        KNOWLEDGE_INGEST_STAGING_RE.test(buildSourceReference(input.customSource));
+      if (staged && rootPath.includes("*")) {
+        throw new Error(
+          "Cannot scope legacy staging discovery to a destination containing a wildcard",
+        );
+      }
+      const legacyStem = `${rootPath}/${buildLegacyCustomKnowledgeSlug(input.customSource)}`;
+      const candidates = new Set<string>();
+      let unlistedLegacyFamily = false;
+      const addFamily = async (stem: string) => {
+        candidates.add(`${normalizeKnowledgeInputPath(stem)}.md`);
+        if (input.listSuffixPaths) {
+          const paths = await input.listSuffixPaths(normalizeKnowledgeInputPath(stem));
+          if (paths === undefined) {
+            throw new Error(
+              "Cannot establish legacy knowledge ownership from an incomplete path listing",
+            );
+          }
+          for (const path of paths) {
+            if (matchesLegacyCustomKnowledgePath(path, `${stem}.md`)) {
+              candidates.add(normalizeKnowledgeInputPath(path));
+            }
+          }
+        } else unlistedLegacyFamily = true;
+      };
+      if (
+        normalizeKnowledgeInputPath(`${legacyStem}.md`) !==
+          normalizeKnowledgeInputPath(input.remotePath)
+      ) {
+        await addFamily(legacyStem);
+      }
+      if (staged) {
+        if (!input.listSuffixPaths) {
+          throw new Error(
+            "Cannot establish legacy staged knowledge ownership without a complete path listing",
+          );
+        }
+        const legacySuffix = legacyStagedKnowledgeSuffix(input.customSource);
+        // When legacy slugging erased the resource, only a bounded complete
+        // family can recover a typed key or an exact old generated source.
+        const paths = await input.listSuffixPaths(
+          normalizeKnowledgeInputPath(
+            legacySuffix
+              ? `${rootPath}/knowledge-ingest-*-${legacySuffix}`
+              : `${rootPath}/knowledge-ingest`,
+          ),
+        );
+        if (paths === undefined) {
+          throw new Error(
+            "Cannot establish legacy knowledge ownership from an incomplete path listing",
+          );
+        }
+        for (const path of paths) {
+          if (matchesLegacyStagedKnowledgePath(path, rootPath, input.customSource)) {
+            candidates.add(normalizeKnowledgeInputPath(path));
+          }
+        }
+      }
+      if (candidates.size > MAX_KNOWLEDGE_PATH_SUFFIX) {
+        throw new Error("Too many legacy knowledge paths to establish a unique source");
+      }
+      for (const candidate of candidates) {
+        const { existing, sameSource, metadata, structural } = await readCandidate(candidate);
+        if (!existing || structural) continue;
+        if (sameSource) {
+          retainOwner(candidate, existing);
+        } else if (
+          metadata === undefined ||
+          (typeof metadata.resource !== "string" &&
+            !(metadata.resource === undefined && typeof metadata.source === "string")) ||
+          (metadata.generated && typeof metadata.generated === "object" &&
+            "source_key" in metadata.generated &&
+            typeof metadata.generated.source_key !== "string")
+        ) {
+          throw new Error(
+            "Cannot establish the source origin of an existing legacy knowledge path",
+          );
+        }
+      }
+      if (unlistedLegacyFamily) {
+        throw new Error(
+          "Cannot establish legacy knowledge ownership without a complete path listing",
+        );
+      }
+    }
+    if (retained) return retained;
+    if (firstAbsent !== undefined) return { remotePath: firstAbsent, expected: { absent: true } };
+  }
   throw new Error(`No free knowledge path for ${input.remotePath}`);
 }
 

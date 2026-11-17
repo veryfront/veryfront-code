@@ -1053,6 +1053,7 @@ export async function ingestResolvedSources(
             sourceKey,
             sourceKind: source.kind,
             scanSuffixGaps: !canonicalRoot,
+            customSource: canonicalRoot ? undefined : source,
             listSuffixPaths: deps.listRemoteKnowledgeSuffixPaths,
             absenceConflicts,
             readRemoteFile: deps.readRemoteKnowledgeFile,

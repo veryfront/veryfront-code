@@ -47,6 +47,7 @@ import {
   buildCustomKnowledgeSlug,
   buildKnowledgeIngestIdentity,
   claimGeneratedKnowledgePath,
+  collectLocalFiles,
   findRemoteKnowledgeIngestSource,
   listRemoteKnowledgeSuffixPaths,
   readKnowledgeIngestSourceKey,
@@ -1114,6 +1115,7 @@ describe("ingestResolvedSources", () => {
                 }
               }
             },
+            listRemoteKnowledgeSuffixPaths: async () => new Set(remote.keys()),
             readRemoteKnowledgeFile: async (path) => {
               const content = remote.get(path);
               return content === undefined ? undefined : { content, versionId: path };
@@ -1544,12 +1546,698 @@ describe("ingestResolvedSources", () => {
             sourceKind: "local",
             scanSuffixGaps: true,
             absenceConflicts: new Map(),
-            readRemoteFile: async () => ({ content, versionId: "legacy-version" }),
+            readRemoteFile: async (candidate) =>
+              candidate === path ? ({ content, versionId: "legacy-version" }) : undefined,
           }),
           { remotePath: path, expected: { versionId: "legacy-version" } },
           `${field}: ${resource}`,
         );
       }
+    }
+  });
+
+  it("keeps structural bundle files separate from generated custom destinations", async () => {
+    for (const name of ["index", "log"]) {
+      for (const kind of ["local", "upload"] as const) {
+        const source = kind === "local"
+          ? createLocalSource(`${name}.md`)
+          : createUploadSource(`uploads/${name}.md`, `${name}.md`);
+        const identity = buildKnowledgeIngestIdentity(source);
+        const content = name === "index"
+          ? "---\nokf_version: '0.2'\n---\n# Bundle\n"
+          : "# Log\n\nCreated bundle.\n";
+        assertEquals(
+          await claimGeneratedKnowledgePath({
+            remotePath: `docs/imports/${name}-document.md`,
+            resource: identity.resource,
+            sourceKey: identity.sourceKey,
+            sourceKind: kind,
+            legacySource: source.input,
+            scanSuffixGaps: true,
+            customSource: source,
+            absenceConflicts: new Map(),
+            listSuffixPaths: async () => new Set(),
+            readRemoteFile: async (path) =>
+              path === `docs/imports/${name}.md`
+                ? { content, versionId: "structural-version" }
+                : undefined,
+          }),
+          { remotePath: `docs/imports/${name}-document.md`, expected: { absent: true } },
+        );
+      }
+    }
+  });
+
+  it("scopes historical staging discovery before bounding unrelated catalog paths", async () => {
+    const source = createUploadSource(
+      "uploads/_knowledge-ingest/new-batch/article.md",
+      "article.md",
+    );
+    const identity = buildKnowledgeIngestIdentity(source);
+    const retained = "docs/imports/knowledge-ingest-old-batch-article-12.md";
+    const unrelated = Array.from(
+      { length: 101 },
+      (_, i) => `docs/imports/knowledge-ingest-batch-other-${i}.md`,
+    );
+    const patterns: string[] = [];
+    const reads: string[] = [];
+    const client = createMockClient({
+      get: async (_url, params) => {
+        const pattern = params?.pattern;
+        assert(pattern);
+        assert(pattern !== "docs/imports/knowledge-ingest-*.md");
+        patterns.push(pattern);
+        const matcher = new RegExp(`^${pattern.replaceAll(".", "\\.").replaceAll("*", ".*")}$`);
+        const matching = [...unrelated, retained].filter((path) => matcher.test(path));
+        return { data: matching.map((path) => ({ path })), page_info: { next: null } };
+      },
+    });
+    const result = await claimGeneratedKnowledgePath({
+      remotePath: "docs/imports/article.md",
+      resource: identity.resource,
+      sourceKey: identity.sourceKey,
+      sourceKind: "upload",
+      legacySource: source.uploadPath,
+      scanSuffixGaps: true,
+      customSource: source,
+      absenceConflicts: new Map(),
+      listSuffixPaths: (stem) =>
+        listRemoteKnowledgeSuffixPaths({ client, projectSlug: "test", stem }),
+      readRemoteFile: async (path) => {
+        reads.push(path);
+        return path === retained
+          ? {
+            content:
+              `---\nsource: uploads/_knowledge-ingest/old-batch/article.md\ngenerated: { by: "veryfront/0.1.0", source_key: ${
+                JSON.stringify(identity.sourceKey)
+              } }\n---\nRetained.`,
+            versionId: "retained-version",
+          }
+          : undefined;
+      },
+    });
+    assertEquals(result, { remotePath: retained, expected: { versionId: "retained-version" } });
+    assert(patterns.some((pattern) => pattern.endsWith("article.md")));
+    assert(patterns.some((pattern) => pattern.endsWith("article-*.md")));
+    assert(reads.every((path) => !unrelated.includes(path)));
+  });
+
+  it("bounds erased historical filenames and rejects missing origin proof", async () => {
+    const source = createUploadSource("uploads/_knowledge-ingest/new/日本.md", "article.md");
+    const identity = buildKnowledgeIngestIdentity(source);
+    const path = "docs/imports/knowledge-ingest-old.md";
+    for (const state of ["empty", "unrelated", "ambiguous", "partial"] as const) {
+      const claim = () =>
+        claimGeneratedKnowledgePath({
+          remotePath: "docs/imports/document.md",
+          ...identity,
+          sourceKind: "upload",
+          legacySource: source.uploadPath,
+          scanSuffixGaps: true,
+          customSource: source,
+          absenceConflicts: new Map(),
+          listSuffixPaths: async (stem) =>
+            stem === "docs/imports/knowledge-ingest"
+              ? state === "partial" ? undefined : new Set(state === "empty" ? [] : [path])
+              : new Set(),
+          readRemoteFile: async (candidate) =>
+            candidate === path
+              ? {
+                content: state === "ambiguous"
+                  ? '---\nresource: 日本.md\ngenerated: { by: "veryfront/0.1.0" }\n---\nUnknown origin.'
+                  : `---\nresource: article.md\ngenerated: { by: "veryfront/0.1.0", source_key: '["upload","uploads/article.md"]' }\n---\nDifferent source.`,
+                versionId: "existing-version",
+              }
+              : undefined,
+        });
+      if (state === "ambiguous") await assertRejects(claim, Error, "origin is ambiguous");
+      else if (state === "partial") await assertRejects(claim, Error, "incomplete path listing");
+      else {assertEquals(await claim(), {
+          remotePath: "docs/imports/document.md",
+          expected: { absent: true },
+        });}
+    }
+  });
+
+  it("uses bounded exhaustive globs for valid oversized historical paths", async () => {
+    const source = createLocalSource(`${Array(6).fill("a".repeat(180)).join("/")}/article.md`);
+    const identity = buildKnowledgeIngestIdentity(source);
+    const remotePath = `docs/imports/${await buildCustomKnowledgeSlug(source)}.md`;
+    const legacy = `docs/imports/${source.localPath.replace(/\.md$/, "").replaceAll("/", "-")}.md`;
+    for (const exists of [false, true]) {
+      const lengths: number[] = [];
+      const client = createMockClient({
+        get: async (_url, params) => {
+          const pattern = params?.pattern;
+          assert(pattern);
+          lengths.push(pattern.length);
+          assert(pattern.length <= 1024);
+          const matcher = new RegExp(`^${pattern.replaceAll(".", "\\.").replaceAll("*", ".*")}$`);
+          return {
+            data: exists && matcher.test(legacy) ? [{ path: legacy }] : [],
+            page_info: { next: null },
+          };
+        },
+      });
+      const result = await claimGeneratedKnowledgePath({
+        remotePath,
+        ...identity,
+        sourceKind: "local",
+        legacySource: source.input,
+        scanSuffixGaps: true,
+        customSource: source,
+        absenceConflicts: new Map(),
+        listSuffixPaths: (stem) =>
+          listRemoteKnowledgeSuffixPaths({ client, projectSlug: "test", stem }),
+        readRemoteFile: async (path) =>
+          exists && path === legacy
+            ? {
+              content: `---\nsource: ${
+                JSON.stringify(source.input)
+              }\ngenerated: { by: "veryfront/0.1.0" }\n---\nRetained long source.`,
+              versionId: "legacy-version",
+            }
+            : undefined,
+      });
+      assertEquals(
+        result,
+        exists
+          ? { remotePath: legacy, expected: { versionId: "legacy-version" } }
+          : { remotePath, expected: { absent: true } },
+      );
+      assert(lengths.includes(1023));
+    }
+  });
+
+  it("requires a version and one owner across every custom allocator family", async () => {
+    const source = createUploadSource("uploads/article.md", "article.md");
+    const identity = buildKnowledgeIngestIdentity(source);
+    const base = "docs/imports/article.md";
+    const legacy =
+      `---\nsource: uploads/article.md\ngenerated: { by: "veryfront/0.1.0", source_key: ${
+        JSON.stringify(identity.sourceKey)
+      } }\n---\nExisting.`;
+    for (const suffix of [undefined, 2, 151]) {
+      const paths = new Set([
+        base,
+        ...(suffix === undefined ? [] : [`docs/imports/article-${suffix}.md`]),
+      ]);
+      await assertRejects(
+        () =>
+          claimGeneratedKnowledgePath({
+            remotePath: base,
+            ...identity,
+            legacySource: source.uploadPath,
+            sourceKind: "upload",
+            scanSuffixGaps: true,
+            customSource: source,
+            absenceConflicts: new Map(),
+            listSuffixPaths: async () => paths,
+            readRemoteFile: async (path) =>
+              paths.has(path)
+                ? { content: legacy, ...(suffix === undefined ? {} : { versionId: path }) }
+                : undefined,
+          }),
+        Error,
+        suffix === undefined ? "current version" : "Multiple current documents",
+      );
+    }
+    for (const exists of [false, true]) {
+      await assertRejects(
+        () =>
+          claimGeneratedKnowledgePath({
+            remotePath: base,
+            ...identity,
+            legacySource: source.uploadPath,
+            sourceKind: "upload",
+            scanSuffixGaps: true,
+            customSource: source,
+            absenceConflicts: new Map(),
+            listSuffixPaths: async () => undefined,
+            readRemoteFile: async (path) =>
+              exists && path === base ? { content: legacy, versionId: "owner-version" } : undefined,
+          }),
+        Error,
+        "incomplete path listing",
+      );
+    }
+    const staged = createUploadSource("uploads/_knowledge-ingest/new/article.md", "article.md");
+    const stagedIdentity = buildKnowledgeIngestIdentity(staged);
+    const old = "docs/imports/knowledge-ingest-old-article.md";
+    const content = `---\nresource: article.md\ngenerated: { by: "veryfront/0.1.0", source_key: ${
+      JSON.stringify(stagedIdentity.sourceKey)
+    } }\n---\nExisting.`;
+    await assertRejects(
+      () =>
+        claimGeneratedKnowledgePath({
+          remotePath: base,
+          ...stagedIdentity,
+          legacySource: staged.uploadPath,
+          sourceKind: "upload",
+          scanSuffixGaps: true,
+          customSource: staged,
+          absenceConflicts: new Map(),
+          listSuffixPaths: async (stem) => new Set(stem.includes("knowledge-ingest") ? [old] : []),
+          readRemoteFile: async (path) =>
+            path === base || path === old ? { content, versionId: path } : undefined,
+        }),
+      Error,
+      "Multiple current documents",
+    );
+  });
+
+  it("does not promote a local explicit slug into legacy upload provenance", async () => {
+    const tempDir = await makeTempDir({ prefix: "veryfront-knowledge-forged-staging-name-" });
+    try {
+      const file = join(tempDir, "article.md");
+      await Deno.writeTextFile(file, "# Local article\n\nAuthored local content.");
+      const parsed = await runKnowledgeParser({
+        filePath: file,
+        outputDir: join(tempDir, "legacy"),
+        resource: "article.md",
+        sourceReference: "article.md",
+        slug: "knowledge-ingest-old-article",
+      });
+      const original = await Deno.readTextFile(parsed.sandbox_output_path);
+      let writes = 0;
+      const path = "docs/imports/knowledge-ingest-old-article.md";
+      const result = await ingestResolvedSources(
+        [createUploadSource("uploads/_knowledge-ingest/new/article.md", file)],
+        createKnowledgeCommandArgs({ knowledgePath: "docs/imports" }),
+        {
+          client: createMockClient(),
+          projectSlug: "test",
+          outputDir: join(tempDir, "new"),
+          runParser: runKnowledgeParser,
+          listRemoteKnowledgeSuffixPaths: async () => new Set([path]),
+          readRemoteKnowledgeFile: async (candidate) =>
+            candidate === path ? { content: original, versionId: "local-version" } : undefined,
+          uploadKnowledgeFile: async () => {
+            writes += 1;
+            throw new Error("Cannot publish ambiguous ownership");
+          },
+        },
+      );
+      assertEquals(result.failed.length, 1);
+      assert(result.failed[0]?.message?.includes("origin is ambiguous"));
+      assertEquals(writes, 0);
+      assertEquals(await Deno.readTextFile(parsed.sandbox_output_path), original);
+    } finally {
+      await Deno.remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("keeps walked local upload-shaped paths ambiguous without a typed origin", async () => {
+    const cwd = Deno.cwd();
+    const tempDir = await makeTempDir({ prefix: "veryfront-knowledge-legacy-walk-" });
+    try {
+      Deno.chdir(tempDir);
+      for (const staged of [false, true]) {
+        const directory = staged ? "uploads/_knowledge-ingest/old" : "uploads";
+        await Deno.mkdir(directory, { recursive: true });
+        await Deno.writeTextFile(`${directory}/article.md`, "# Local article\n\nLocal original.");
+        const { sources } = await collectLocalFiles(`./${directory}`, false);
+        assertEquals(sources.length, 1);
+        const local = sources[0];
+        assert(local && local.kind === "local");
+        assertEquals(local.localPath, `${directory}/article.md`);
+        // Exact source-only shape emitted by parser.ts before 48fb6ee1b3.
+        // Directory walking removed the explicit ./ before the parser saw it.
+        const content = `---\ntype: "Generated Document"\nsource: ${
+          JSON.stringify(local.localPath)
+        }\nsource_type: "md"\ngenerated: { by: "veryfront/0.1.0" }\n---\nLocal original.`;
+        const source = createUploadSource(
+          staged ? "uploads/_knowledge-ingest/new/article.md" : "uploads/article.md",
+          "download.md",
+        );
+        const identity = buildKnowledgeIngestIdentity(source);
+        const path = staged
+          ? "docs/imports/knowledge-ingest-old-article.md"
+          : "docs/imports/article.md";
+        await assertRejects(
+          () =>
+            claimGeneratedKnowledgePath({
+              remotePath: "docs/imports/article.md",
+              ...identity,
+              sourceKind: "upload",
+              legacySource: source.uploadPath,
+              customSource: source,
+              scanSuffixGaps: true,
+              absenceConflicts: new Map(),
+              listSuffixPaths: async () => new Set([path]),
+              readRemoteFile: async (candidate) =>
+                candidate === path ? { content, versionId: "local-version" } : undefined,
+            }),
+          Error,
+          "origin is ambiguous",
+        );
+      }
+    } finally {
+      Deno.chdir(cwd);
+      await Deno.remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("keeps explicit custom destinations separate when historical globs cross directories", async () => {
+    const tempDir = await makeTempDir({ prefix: "veryfront-knowledge-custom-destination-" });
+    try {
+      const file = join(tempDir, "article.md");
+      const remote = new Map<string, { content: string; versionId: string }>();
+      const reads: string[] = [];
+      const client = createMockClient({
+        get: async (_url, params) => {
+          const pattern = params?.pattern;
+          assert(pattern);
+          // The files API's wildcard deliberately includes slash characters.
+          const matcher = new RegExp(`^${pattern.replaceAll(".", "\\.").replaceAll("*", ".*")}$`);
+          return {
+            data: [...remote.keys()].filter((path) => matcher.test(path)).map((path) => ({ path })),
+            page_info: { next: null },
+          };
+        },
+      });
+      for (const name of ["日本", "article"]) {
+        remote.clear();
+        await Deno.writeTextFile(file, "# Original\n\nFirst explicit destination.");
+        const source = createUploadSource(`uploads/_knowledge-ingest/batch/${name}.md`, file);
+        const ingest = (knowledgePath: string, pinnedSlug?: string) =>
+          ingestResolvedSources(
+            [source],
+            createKnowledgeCommandArgs({ knowledgePath, slug: pinnedSlug }),
+            {
+              client,
+              projectSlug: "test",
+              outputDir: join(tempDir, "generated"),
+              runParser: runKnowledgeParser,
+              listRemoteKnowledgeSuffixPaths: (stem) =>
+                listRemoteKnowledgeSuffixPaths({ client, projectSlug: "test", stem }),
+              readRemoteKnowledgeFile: async (path) => {
+                reads.push(path);
+                return remote.get(path);
+              },
+              uploadKnowledgeFile: async (path, file, _metadata, _kind, expected) => {
+                assertEquals(expected, pinnedSlug ? undefined : { absent: true });
+                remote.set(path, { content: await Deno.readTextFile(file), versionId: path });
+                return { path };
+              },
+            },
+          );
+        const slug = name === "日本" ? "document" : "article";
+        const pinnedSlug = name === "article" ? "other-article" : undefined;
+        const nested = `docs/imports/knowledge-ingest-archive/${pinnedSlug ?? slug}.md`;
+        const first = await ingest("docs/imports/knowledge-ingest-archive", pinnedSlug);
+        assertEquals(first.failed, []);
+        assertEquals(first.ingested.map((file) => file.remotePath), [nested]);
+        const original = remote.get(nested);
+        assert(original);
+        reads.length = 0;
+        await Deno.writeTextFile(file, "# Updated\n\nSecond explicit destination.");
+        const second = await ingest("docs/imports");
+        assertEquals(second.failed, []);
+        assertEquals(second.ingested.map((file) => file.remotePath), [`docs/imports/${slug}.md`]);
+        assertEquals(remote.size, 2);
+        assertEquals(remote.get(nested), original);
+        assert(!reads.includes(nested));
+      }
+    } finally {
+      await Deno.remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("retains historical custom paths across staging batches and filename policy changes", async () => {
+    const tempDir = await makeTempDir({ prefix: "veryfront-knowledge-legacy-alias-" });
+    try {
+      const file = join(tempDir, "article.md");
+      const longName = "a".repeat(230);
+      const longFile = join(tempDir, `${longName}.md`);
+      await Deno.writeTextFile(file, "# Article\n\nUpdated article.");
+      await Deno.writeTextFile(longFile, "# Article\n\nUpdated long source.");
+      const fixtures = [
+        {
+          source: createUploadSource("uploads/_knowledge-ingest/batch-1/article.md", file),
+          reference: "uploads/_knowledge-ingest/batch-1/article.md",
+          path: "docs/imports/knowledge-ingest-batch-1-article.md",
+        },
+        {
+          source: createUploadSource("uploads/_knowledge-ingest/batch-2/article.md", file),
+          reference: "uploads/_knowledge-ingest/batch-1/article.md",
+          path: "docs/imports/knowledge-ingest-batch-1-article-12.md",
+        },
+        {
+          source: createUploadSource("uploads/_knowledge-ingest/batch-2/article.md", file),
+          reference: "article.md",
+          resource: "article.md",
+          path: "docs/imports/knowledge-ingest-batch-1-article.md",
+        },
+        {
+          source: createUploadSource("uploads/_knowledge-ingest/batch-1/日本.md", file),
+          reference: "uploads/_knowledge-ingest/batch-1/日本.md",
+          path: "docs/imports/knowledge-ingest-batch-1.md",
+        },
+        {
+          source: createUploadSource(
+            "uploads/_knowledge-ingest/batch-1/chat-11111111-2222-3333-4444-555555555555-1700000000000-xyz99-article.md",
+            file,
+          ),
+          reference:
+            "uploads/_knowledge-ingest/batch-1/chat-11111111-2222-3333-4444-555555555555-1700000000000-xyz99-article.md",
+          path: "docs/imports/knowledge-ingest-batch-1-article.md",
+        },
+        {
+          source: createLocalSource(longFile),
+          reference: longFile,
+          path: `docs/imports/${longName}.md`,
+        },
+        {
+          source: createUploadSource("uploads/index.md", file),
+          reference: "uploads/index.md",
+          path: "docs/imports/index.md",
+        },
+      ];
+      for (const fixture of fixtures) {
+        const content = [
+          "---",
+          'type: "Generated Document"',
+          `source: ${JSON.stringify(fixture.reference)}`,
+          ...(fixture.resource === undefined
+            ? []
+            : [`resource: ${JSON.stringify(fixture.resource)}`]),
+          'source_type: "md"',
+          `generated: ${
+            JSON.stringify({
+              by: "veryfront/0.1.0",
+              ...(fixture.source.kind === "upload" && fixture.resource === undefined
+                ? { source_key: buildKnowledgeIngestIdentity(fixture.source).sourceKey }
+                : {}),
+            })
+          }`,
+          "---",
+          "Original body.",
+        ].join("\n");
+        const remote = new Map([[fixture.path, { content, versionId: "legacy-version" }]]);
+        const reads: string[] = [];
+        const writes: unknown[] = [];
+        const client = createMockClient({
+          get: async (url, params) => {
+            assertEquals(url, "/projects/my-project/files");
+            assertEquals(params?.ref, "branch:selected");
+            assertEquals(params?.fields, "(path)");
+            assertEquals(params?.limit, "100");
+            const pattern = params?.pattern;
+            assert(pattern);
+            const matcher = new RegExp(`^${pattern.replaceAll(".", "\\.").replaceAll("*", ".*")}$`);
+            return {
+              data: [...remote.keys()].filter((path) => matcher.test(path)).map((path) => ({
+                path,
+              })),
+              page_info: { next: null },
+            };
+          },
+        });
+        const ingest = () =>
+          ingestResolvedSources(
+            [fixture.source],
+            createKnowledgeCommandArgs({ knowledgePath: "docs/imports" }),
+            {
+              client,
+              projectSlug: "my-project",
+              outputDir: join(tempDir, "generated"),
+              runParser: runKnowledgeParser,
+              findRemoteKnowledgeSource: async () => {
+                throw new Error("Custom paths cannot use the canonical catalog");
+              },
+              listRemoteKnowledgeSuffixPaths: (stem) =>
+                listRemoteKnowledgeSuffixPaths({
+                  client,
+                  projectSlug: "my-project",
+                  branch: "selected",
+                  stem,
+                }),
+              readRemoteKnowledgeFile: async (path) => {
+                reads.push(path);
+                return remote.get(path);
+              },
+              uploadKnowledgeFile: async (path, file, _metadata, _kind, expected) => {
+                writes.push({ path, expected });
+                remote.set(path, {
+                  content: await Deno.readTextFile(file),
+                  versionId: "updated-version",
+                });
+                return { path };
+              },
+            },
+          );
+        const result = await ingest();
+        if (fixture.resource !== undefined) {
+          assertEquals(result.failed.length, 1);
+          assert(result.failed[0]?.message?.includes("origin is ambiguous"));
+          assertEquals(writes, []);
+          assertEquals(remote.get(fixture.path), { content, versionId: "legacy-version" });
+          continue;
+        }
+        assertEquals(result.failed, [], fixture.path);
+        assertEquals([...remote.keys()], [fixture.path]);
+        assertEquals(writes, [{ path: fixture.path, expected: { versionId: "legacy-version" } }]);
+        assert(reads.length <= 3, JSON.stringify(reads));
+        writes.length = 0;
+        if (
+          fixture.source.kind === "upload" &&
+          fixture.source.uploadPath.includes("/_knowledge-ingest/")
+        ) {
+          fixture.source.uploadPath = fixture.source.uploadPath.replace(
+            /\/_knowledge-ingest\/[^/]+\//,
+            "/_knowledge-ingest/next-batch/",
+          );
+          fixture.source.input = fixture.source.uploadPath;
+        }
+        const repeated = await ingest();
+        assertEquals(repeated.failed, [], fixture.path);
+        assertEquals([...remote.keys()], [fixture.path]);
+        assertEquals(writes, [{ path: fixture.path, expected: { versionId: "updated-version" } }]);
+      }
+    } finally {
+      await Deno.remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("rejects incomplete or ambiguous historical custom ownership without publishing", async () => {
+    const tempDir = await makeTempDir({ prefix: "veryfront-knowledge-legacy-guards-" });
+    try {
+      const file = join(tempDir, "article.md");
+      await Deno.writeTextFile(file, "# Article\n\nUpdated body.");
+      for (
+        const failure of [
+          "partial",
+          "ambiguous",
+          "malformed",
+          "missing-version",
+          "missing-listing",
+          "null-resource",
+          "invalid-key",
+        ] as const
+      ) {
+        const content =
+          '---\nsource: "uploads/_knowledge-ingest/old/article.md"\ngenerated: { by: "veryfront/0.1.0" }\n---\nOriginal body.';
+        const path = "docs/imports/knowledge-ingest-old-article.md";
+        const storedContent = failure === "malformed"
+          ? "---\nsource: [\n---\n"
+          : failure === "null-resource"
+          ? content.replace("source:", "resource: null\nsource:")
+          : failure === "invalid-key"
+          ? content.replace('by: "veryfront/0.1.0"', 'by: "veryfront/0.1.0", source_key: 42')
+          : content;
+        const remote = new Map([
+          [path, {
+            content: storedContent,
+            versionId: failure === "missing-version" ? undefined : "version-old",
+          }],
+          ...(failure === "ambiguous"
+            ? [
+              ["docs/imports/knowledge-ingest-other-article.md", {
+                content: content.replace("/old/", "/other/"),
+                versionId: "version-other",
+              }] as const,
+            ]
+            : []),
+        ]);
+        let writes = 0;
+        const result = await ingestResolvedSources(
+          [createUploadSource("uploads/_knowledge-ingest/new/article.md", file)],
+          createKnowledgeCommandArgs({ knowledgePath: "docs/imports" }),
+          {
+            client: createMockClient(),
+            projectSlug: "my-project",
+            outputDir: join(tempDir, "generated"),
+            runParser: runKnowledgeParser,
+            ...(failure === "missing-listing" ? {} : {
+              listRemoteKnowledgeSuffixPaths: async () =>
+                failure === "partial" ? undefined : new Set(remote.keys()),
+            }),
+            readRemoteKnowledgeFile: async (path) => remote.get(path),
+            uploadKnowledgeFile: async (path) => {
+              writes++;
+              return { path };
+            },
+          },
+        );
+        assertEquals(result.ingested, [], failure);
+        assertEquals(result.failed.length, 1, failure);
+        assertEquals(writes, 0, failure);
+        assertEquals(
+          remote.get(path)?.content,
+          storedContent,
+        );
+      }
+    } finally {
+      await Deno.remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("does not adopt an unrelated local origin or conflicting typed key at a historical custom name", async () => {
+    const tempDir = await makeTempDir({ prefix: "veryfront-knowledge-legacy-origin-" });
+    try {
+      const file = join(tempDir, "index.md");
+      await Deno.writeTextFile(file, "# Index\n\nIncoming upload.");
+      for (
+        const generated of [{ by: "veryfront/0.1.0" }, {
+          by: "veryfront/0.1.0",
+          source_key: '["local","uploads/index.md"]',
+        }]
+      ) {
+        const content = `---\nsource: index.md\ngenerated: ${
+          JSON.stringify(generated)
+        }\n---\nLocal original.`;
+        const remote = new Map([["docs/imports/index.md", {
+          content,
+          versionId: "local-version",
+        }]]);
+        const result = await ingestResolvedSources(
+          [createUploadSource("uploads/index.md", file)],
+          createKnowledgeCommandArgs({ knowledgePath: "docs/imports" }),
+          {
+            client: createMockClient(),
+            projectSlug: "my-project",
+            outputDir: join(tempDir, "generated"),
+            runParser: runKnowledgeParser,
+            listRemoteKnowledgeSuffixPaths: async () => new Set(),
+            readRemoteKnowledgeFile: async (path) => remote.get(path),
+            uploadKnowledgeFile: async (path, file, _metadata, _kind, expected) => {
+              assertEquals(path, "docs/imports/index-document.md");
+              assertEquals(expected, { absent: true });
+              remote.set(path, {
+                content: await Deno.readTextFile(file),
+                versionId: "upload-version",
+              });
+              return { path };
+            },
+          },
+        );
+        assertEquals(result.failed, []);
+        assertEquals(remote.size, 2);
+        assertEquals(remote.get("docs/imports/index.md"), { content, versionId: "local-version" });
+      }
+    } finally {
+      await Deno.remove(tempDir, { recursive: true });
     }
   });
 
@@ -1578,6 +2266,7 @@ describe("ingestResolvedSources", () => {
           projectSlug: "my-project",
           outputDir: join(tempDir, "generated"),
           runParser: runKnowledgeParser,
+          listRemoteKnowledgeSuffixPaths: async () => new Set(),
           readRemoteKnowledgeFile: async (candidate) => {
             const content = remote.get(candidate);
             return content === undefined ? undefined : { content, versionId: path };
@@ -1646,6 +2335,7 @@ describe("ingestResolvedSources", () => {
             projectSlug: "my-project",
             outputDir: join(tempDir, batch),
             runParser: runKnowledgeParser,
+            listRemoteKnowledgeSuffixPaths: async () => new Set(remote.keys()),
             readRemoteKnowledgeFile: async (path) => remote.get(path),
             uploadKnowledgeFile: async (path, file, _metadata, _kind, expected) => {
               guards.push(expected);
@@ -1688,6 +2378,7 @@ describe("ingestResolvedSources", () => {
           projectSlug: "my-project",
           outputDir: join(tempDir, "generated"),
           runParser: runKnowledgeParser,
+          listRemoteKnowledgeSuffixPaths: async () => new Set(),
           readRemoteKnowledgeFile: async () => undefined,
           uploadKnowledgeFile: async (path, file) => {
             remote.set(path, await Deno.readTextFile(file));
