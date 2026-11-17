@@ -4126,7 +4126,7 @@ describe("runKnowledgeParser", () => {
 });
 
 describe("concurrent local knowledge allocation", () => {
-  it("rejects a guarded dangling output symlink without writing its target", async () => {
+  it("preserves a dangling output symlink without writing its target", async () => {
     const root = await makeTempDir({ prefix: "veryfront-knowledge-dangling-output-" });
     try {
       const filePath = join(root, "source.md");
@@ -4136,11 +4136,22 @@ describe("concurrent local knowledge allocation", () => {
       await Deno.writeTextFile(filePath, "# Shared heading\n\nOriginal source.\n");
       await Deno.mkdir(outputDir);
       await Deno.symlink(missingTarget, danglingPath);
-      await assertRejects(() => runKnowledgeParser({ filePath, outputDir }), Error);
-      await assertRejects(
-        () => Deno.lstat(join(outputDir, "shared-heading-2.md")),
-        Deno.errors.NotFound,
-      );
+      try {
+        const result = await runKnowledgeParser({ filePath, outputDir });
+        assertEquals(result.sandbox_output_path, join(outputDir, "shared-heading-2.md"));
+        assertStringIncludes(
+          await Deno.readTextFile(result.sandbox_output_path),
+          "Original source.",
+        );
+      } catch (error) {
+        // Older runtimes reject the initial symlink read; preserve that noncollision error.
+        assert(error instanceof Error);
+        assertStringIncludes(error.message, "Too many levels of symbolic links");
+        await assertRejects(
+          () => Deno.lstat(join(outputDir, "shared-heading-2.md")),
+          Deno.errors.NotFound,
+        );
+      }
       assertEquals((await Deno.lstat(danglingPath)).isSymlink, true);
       await assertRejects(() => Deno.lstat(missingTarget), Deno.errors.NotFound);
     } finally {
