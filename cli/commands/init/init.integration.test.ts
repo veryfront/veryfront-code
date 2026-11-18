@@ -17,7 +17,8 @@ import { exists, makeTempDir, readTextFile, remove, stat } from "#veryfront/test
 import { runCommand } from "#veryfront/compat/process.ts";
 import { STARTER_TEMPLATE_NAMES } from "../../../templates/types.ts";
 import type { InitOptions } from "./types.ts";
-import { offerCloudProjectAfterInit } from "./init-command.ts";
+import { initCommand, offerCloudProjectAfterInit } from "./init-command.ts";
+import { stripAnsi } from "../../ui/ansi.ts";
 import { markEnvFileSource, markProcessEnvSource } from "veryfront/utils/env-loader";
 
 const TEST_DIR = await makeTempDir({ prefix: "veryfront-init-test-" });
@@ -1349,5 +1350,57 @@ describe("init inference advice and the invoking folder's environment", () => {
 
   it("counts a key the shell sets", async () => {
     assertEquals(await adviceFor("process"), []);
+  });
+});
+
+describe("initCommand inference advice", () => {
+  // initCommand offers Cloud only in an interactive terminal, so each run
+  // reports a terminal and answers the offer with "declined".
+  async function adviceAfterInit(shellOpenAIKey: string | undefined): Promise<boolean> {
+    const parentDir = await makeTempDir({ prefix: "veryfront-init-advice-" });
+    const output: string[] = [];
+    const originalLog = console.log;
+    const originalIsTerminal = Deno.stdout.isTerminal;
+    const savedKey = Deno.env.get("OPENAI_API_KEY");
+    let offered = false;
+    try {
+      if (shellOpenAIKey === undefined) Deno.env.delete("OPENAI_API_KEY");
+      else Deno.env.set("OPENAI_API_KEY", shellOpenAIKey);
+      Deno.stdout.isTerminal = () => true;
+      console.log = (...args: unknown[]) => output.push(args.map(String).join(" "));
+      await initCommand(
+        {
+          name: `advice-${crypto.randomUUID()}`,
+          parentDir,
+          template: "minimal",
+          skipInstall: true,
+          skipEnvPrompt: true,
+        },
+        {
+          chooseCloudProject: () => {
+            offered = true;
+            return Promise.resolve("declined");
+          },
+        },
+      );
+    } finally {
+      console.log = originalLog;
+      Deno.stdout.isTerminal = originalIsTerminal;
+      if (savedKey === undefined) Deno.env.delete("OPENAI_API_KEY");
+      else Deno.env.set("OPENAI_API_KEY", savedKey);
+      await remove(parentDir, { recursive: true }).catch(() => {});
+    }
+    assertEquals(offered, true, "initCommand must offer Cloud in an interactive terminal");
+    return output.map(stripAnsi).some((line) =>
+      line.includes("set up inference in one of these ways")
+    );
+  }
+
+  it("prints no setup advice after a declined offer when the shell sets OPENAI_API_KEY", async () => {
+    assertEquals(await adviceAfterInit("<API_KEY>"), false);
+  });
+
+  it("names both ways after a declined offer when no OpenAI key is set", async () => {
+    assertEquals(await adviceAfterInit(undefined), true);
   });
 });
