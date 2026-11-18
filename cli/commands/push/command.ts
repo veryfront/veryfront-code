@@ -32,6 +32,8 @@ import {
   canPersistAlternativeSlug,
   describeStaleProjectReference,
   getErrorStatus,
+  type InferredProjectPolicy,
+  inferredProjectQuestion,
   projectApiReference,
   ProjectReferenceNotFoundError,
   type ProjectResolutionClient,
@@ -40,6 +42,8 @@ import {
   shouldPersistProjectLink,
   slugConflictAction,
   staleProjectReferenceContext,
+  UnlinkedProjectError,
+  unlinkedProjectMessage,
 } from "#cli/shared/project-resolution";
 import { ProjectSlugConflictError, reserveProjectSlug } from "#cli/shared/reserve-slug";
 import {
@@ -167,6 +171,12 @@ export function parsePushArgs(
 export interface PushOptions {
   /** Internal host transport supplied by an embedding command after project configuration. */
   transport?: typeof fetch;
+  /**
+   * Internal: how an embedding command that already settled an inferred
+   * project reference lets this push use it. Left unset, an interactive push
+   * asks, and any other push refuses.
+   */
+  inferredProject?: InferredProjectPolicy;
   /** Internal immutable target resolved by an embedding command; missing IDs fail closed. */
   projectId?: string;
   /** Project slug to push to (overrides config) */
@@ -1589,6 +1599,20 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
         },
       };
 
+      // A folder name names a project only by chance, so an inferred slug is
+      // used only after the operator says yes. `--yes`, JSON mode and a
+      // missing terminal leave no one to ask, so the push stops instead.
+      const canAskAboutInferredProject = isInteractive() && isTTY() && !quiet && !jsonOutput;
+      const inferredProject: InferredProjectPolicy | undefined = options.inferredProject ??
+        (canAskAboutInferredProject
+          ? async (choice) => {
+            spinner.stop();
+            const confirmed = await confirmPrompt(inferredProjectQuestion("push", choice), false);
+            if (confirmed) spinner = createSpinner("Resolving project...");
+            return confirmed;
+          }
+          : undefined);
+
       let outcome: ProjectResolutionOutcome;
       try {
         outcome = await resolveOrCreateProject({
@@ -1599,9 +1623,17 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
           createMissingReference: true,
           allowAlternativeSlug: canPersistAlternativeSlug(projectReferenceSource),
           dryRun,
+          ...(inferredProject ? { inferredProject } : {}),
         });
       } catch (error) {
         spinner.stop();
+        if (error instanceof UnlinkedProjectError) {
+          throw INVALID_ARGUMENT.create({
+            detail: unlinkedProjectMessage("push"),
+            context: { inferredSlug: error.inferredSlug, declined: error.declined },
+            cause: error,
+          });
+        }
         if (error instanceof ProjectSlugConflictError) {
           throw projectSlugConflictError(error, projectReferenceSource);
         }
@@ -1618,7 +1650,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
             });
           }
           throw new Error(
-            `Project "${error.reference}" was not found. Check ${projectReferenceSource.name} or remove it to let Veryfront create a project for this directory.`,
+            `Project "${error.reference}" was not found. Check ${projectReferenceSource.name} or remove it and run veryfront up to create a project for this directory.`,
           );
         }
         throw error;

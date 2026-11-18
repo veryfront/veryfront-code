@@ -7,7 +7,12 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { getBranchByName, MergeArgsSchema, mergeBranch, parseMergeArgs } from "./index.ts";
-import { getMergePreview } from "./command.ts";
+import {
+  buildMergeTargetSyncFiles,
+  getMergePreview,
+  receiptNamesProject,
+  selectMergeTargetBaselinePaths,
+} from "./command.ts";
 import type { ApiClient } from "#cli/shared/config";
 import type { ParsedArgs } from "#cli/shared/types";
 
@@ -368,5 +373,102 @@ describe("merge command path encoding", () => {
     assertEquals(requests, [
       { url: "/projects/my-project/branches/branch-123/merge-preview", params: {} },
     ]);
+  });
+});
+
+describe("buildMergeTargetSyncFiles", () => {
+  it("takes digests and versions from the target for the given paths only", async () => {
+    const files = [
+      { path: "app/page.tsx", content: "page\n", version_id: "v1" },
+      { path: "veryfront.json", content: "{}\n" },
+      { path: "app/remote-only.tsx", content: "remote\n", version_id: "v3" },
+    ];
+
+    const baseline = await buildMergeTargetSyncFiles(
+      ["app/page.tsx", "veryfront.json", "app/missing.tsx"],
+      files,
+    );
+
+    // A file the directory never pushed, and a path the target does not hold,
+    // stay out of the baseline.
+    assertEquals(Object.keys(baseline).sort(), ["app/page.tsx", "veryfront.json"]);
+    assertEquals(baseline["app/page.tsx"]?.versionId, "v1");
+    assertEquals(baseline["veryfront.json"]?.versionId, undefined);
+    assertEquals(/^sha256:|^[0-9a-f]{64}$/.test(baseline["app/page.tsx"]?.digest ?? ""), true);
+    assertEquals(await buildMergeTargetSyncFiles([], files), {});
+  });
+});
+
+describe("receiptNamesProject", () => {
+  const receipt = { projectId: "550e8400-e29b-41d4-a716-446655440000", projectSlug: "desk" };
+
+  it("matches the resolved project id when the configuration knows it", () => {
+    assertEquals(
+      receiptNamesProject(receipt, { projectSlug: "x", projectId: receipt.projectId }),
+      true,
+    );
+    assertEquals(receiptNamesProject(receipt, { projectSlug: "desk", projectId: "other" }), false);
+  });
+
+  it("matches a slug, or a project id given where the slug goes", () => {
+    assertEquals(receiptNamesProject(receipt, { projectSlug: "desk" }), true);
+    assertEquals(receiptNamesProject(receipt, { projectSlug: receipt.projectId }), true);
+    assertEquals(receiptNamesProject(receipt, { projectSlug: "other" }), false);
+  });
+});
+
+describe("selectMergeTargetBaselinePaths", () => {
+  it("keeps a source baseline to the paths this directory pushed", () => {
+    // The push recorded a remote-only file in its baseline; a later local edit
+    // to that path must still conflict on the merge target.
+    assertEquals(
+      selectMergeTargetBaselinePaths({
+        sourceBaselinePaths: ["app/page.tsx", "app/remote-only.tsx"],
+        localPaths: ["app/page.tsx", "veryfront.json"],
+        targetHasBaseline: true,
+      }),
+      ["app/page.tsx"],
+    );
+  });
+
+  it("uses the whole source baseline when the receipt lists no local paths", () => {
+    assertEquals(
+      selectMergeTargetBaselinePaths({
+        sourceBaselinePaths: ["app/page.tsx", "app/other.tsx"],
+        localPaths: undefined,
+        targetHasBaseline: false,
+      }),
+      ["app/page.tsx", "app/other.tsx"],
+    );
+  });
+
+  it("replaces a stale target baseline when the source has none", () => {
+    assertEquals(
+      selectMergeTargetBaselinePaths({
+        sourceBaselinePaths: null,
+        localPaths: ["app/page.tsx"],
+        targetHasBaseline: true,
+      }),
+      ["app/page.tsx"],
+    );
+    assertEquals(
+      selectMergeTargetBaselinePaths({
+        sourceBaselinePaths: null,
+        localPaths: undefined,
+        targetHasBaseline: true,
+      }),
+      [],
+    );
+  });
+
+  it("leaves a target without a baseline when neither branch has one", () => {
+    assertEquals(
+      selectMergeTargetBaselinePaths({
+        sourceBaselinePaths: null,
+        localPaths: ["app/page.tsx"],
+        targetHasBaseline: false,
+      }),
+      null,
+    );
   });
 });

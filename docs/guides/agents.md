@@ -9,7 +9,7 @@ optional memory, and optional skills. The runtime auto-discovers it on startup
 and exposes it via `getAgent(id)` or a route created with `createAgUiHandler()`.
 
 Omit `model` to use the default for your configured inference path. With
-`VERYFRONT_API_TOKEN` and project context, the default uses Veryfront Cloud.
+`VERYFRONT_API_KEY` and project context, the default uses Veryfront Cloud.
 
 ## Prerequisites
 
@@ -375,7 +375,7 @@ Explicitly named tools that are not local are resolved from the Veryfront API
 MCP server when `mcpServers` is omitted and the server bootstrap is available.
 This lets a project pulled from Studio run locally without repeating transport
 configuration. `VERYFRONT_API_URL` selects the API endpoint;
-`VERYFRONT_API_TOKEN` and `VERYFRONT_PROJECT_SLUG` provide server-side identity.
+`VERYFRONT_API_KEY` and `VERYFRONT_PROJECT_SLUG` provide server-side identity.
 These environment variables do not grant tools by themselves.
 
 ```ts

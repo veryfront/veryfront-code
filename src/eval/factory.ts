@@ -13,9 +13,12 @@ import {
   assertFiniteEvalNumber,
   createEvalValidationError,
   isEvalArray,
+  isEvalEnvironmentContext,
   isEvalRecord,
+  normalizeEvalEnvironmentContext,
   normalizeEvalString,
   normalizeEvalStringList,
+  readOwnEvalEnvironmentContext,
 } from "./validation.ts";
 
 const EVAL_DATASET_KINDS = new Set<EvalDataset["kind"]>(["inline", "json", "jsonl"]);
@@ -99,6 +102,10 @@ function createEvalDefinition(
   const name = normalizeOptionalLabel(input.name, "Eval name") ?? (id || target);
   const description = normalizeOptionalDescription(input.description);
   const tags = input.tags === undefined ? [] : normalizeEvalStringList(input.tags, "Eval tags");
+  // Only an agent eval declares the field; a tool eval's input has none.
+  const environmentContext = "environmentContext" in input
+    ? normalizeEvalEnvironmentContext(readOwnEvalEnvironmentContext(input), "Eval")
+    : undefined;
 
   return {
     kind: "eval",
@@ -117,6 +124,7 @@ function createEvalDefinition(
       : {}),
     ...("input" in input && input.input ? { input: input.input } : {}),
     ...("mockTools" in input && input.mockTools ? { mockTools: input.mockTools } : {}),
+    ...(environmentContext === undefined ? {} : { environmentContext }),
     ...(input.check ? { check: input.check } : {}),
   };
 }
@@ -158,5 +166,6 @@ export function isEvalDefinition(value: unknown): value is EvalDefinition {
     value.tags.every((tag) => typeof tag === "string" && tag.trim() !== "") &&
     isEvalRecord(value.metadata) &&
     (value.input === undefined || typeof value.input === "function") &&
+    isEvalEnvironmentContext(readOwnEvalEnvironmentContext(value)) &&
     (value.check === undefined || typeof value.check === "function");
 }

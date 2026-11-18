@@ -31,11 +31,14 @@ link. `veryfront dev` and `veryfront eval` load the stored login and linked
 project automatically.
 
 To authenticate without an interactive browser (CI, a container, a remote
-shell), set `VERYFRONT_API_TOKEN` instead. The environment variable takes
+shell), set `VERYFRONT_API_KEY` instead. The environment variable takes
 precedence over a stored login, so it also works as a temporary override on a
 machine that is already signed in. `veryfront whoami` reports which credential
 is active. This is a separate credential from a model provider key: it selects
 the AI Gateway, it does not authenticate you to a vendor.
+
+`VERYFRONT_API_TOKEN` still works for existing setups and takes precedence when
+both variables are set.
 
 Model selection follows these rules:
 
@@ -70,8 +73,8 @@ is refused.
 
 The key starts with `vf_` and is bound to its project.
 
-The examples read it from `VERYFRONT_API_KEY`, a name for your own code only.
-The Veryfront CLI and SDK read `VERYFRONT_API_TOKEN`, described above.
+The examples read it from `VERYFRONT_API_KEY`, the same variable the Veryfront
+CLI and SDK read, described above.
 
 For a one-snippet setup per tool, including Claude Code, Codex, and the Vercel
 AI SDK, see the [AI Gateway quickstart](./ai-gateway-quickstart.md).
@@ -254,7 +257,7 @@ envconsul -secret secret/veryfront -- veryfront dev   # HashiCorp Vault
 
 Veryfront does not resolve `op://` or similar references itself. An unresolved reference is treated as a literal value and reaches the provider as an invalid key, so run the wrapper rather than the bare command.
 
-The same applies to `VERYFRONT_API_TOKEN` if you keep the platform credential in a manager too.
+The same applies to `VERYFRONT_API_KEY` if you keep the platform credential in a manager too.
 
 If you would rather not manage a provider key at all, use the [Veryfront Cloud AI Gateway](#veryfront-cloud-ai-gateway) instead.
 

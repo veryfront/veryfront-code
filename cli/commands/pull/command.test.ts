@@ -6,10 +6,12 @@ import "#veryfront/schemas/_test-setup.ts";
 
 import {
   assertEquals,
+  assertInstanceOf,
   assertRejects,
   assertStringIncludes,
   assertThrows,
 } from "#veryfront/testing/assert.ts";
+import { VeryfrontError } from "veryfront/errors";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { cliLogger, VERSION } from "#cli/utils";
 import { _resetEnvironmentConfig } from "#veryfront/config/environment-config.ts";
@@ -2811,6 +2813,51 @@ describe("pullCommand", () => {
       restoreEnv("VERYFRONT_PROJECT_SLUG", originalProjectSlug);
       _resetEnvironmentConfig();
       await Deno.remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("classes a missing credential in the --projects fallback as authentication-required", async () => {
+    const tempDir = await makeTempDir();
+    const configHome = await makeTempDir();
+    const names = [
+      "VERYFRONT_API_TOKEN",
+      "VERYFRONT_API_TOKEN_FILE",
+      "VERYFRONT_API_KEY",
+      "VERYFRONT_API_URL",
+      "VERYFRONT_PROJECT_SLUG",
+      "TENANT_PROJECT_SLUG",
+      "TENANT_PROJECT_ID",
+      "XDG_CONFIG_HOME",
+    ];
+    const original = Object.fromEntries(names.map((name) => [name, Deno.env.get(name)]));
+    let requests = 0;
+
+    try {
+      await Deno.writeTextFile(
+        join(tempDir, "veryfront.json"),
+        JSON.stringify({ projects: ["alpha", "beta"] }),
+      );
+      for (const name of names) Deno.env.delete(name);
+      Deno.env.set("XDG_CONFIG_HOME", configHome);
+      _resetEnvironmentConfig();
+
+      await withMockFetch(() => {
+        requests++;
+        return Promise.resolve(Response.json({ data: [], page_info: {} }));
+      }, async () => {
+        const error = await assertRejects(
+          () => pullCommand({ projectDir: tempDir, quiet: true }),
+          Error,
+        );
+        assertInstanceOf(error, VeryfrontError);
+        assertEquals(error.slug, "authentication-required");
+      });
+      assertEquals(requests, 0);
+    } finally {
+      for (const name of names) restoreEnv(name, original[name]);
+      _resetEnvironmentConfig();
+      await Deno.remove(tempDir, { recursive: true });
+      await Deno.remove(configHome, { recursive: true });
     }
   });
 

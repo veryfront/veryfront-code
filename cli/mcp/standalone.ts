@@ -656,7 +656,7 @@ export class StandaloneMCPServer {
         name: "vf_trigger_deploy",
         description: "Deploy a project to an environment via the Veryfront API. " +
           "Creates a release from the specified branch and deploys it to the target environment. " +
-          "Requires a valid API token (set VERYFRONT_API_TOKEN or run 'veryfront login'). " +
+          "Requires a valid API key (set VERYFRONT_API_KEY or run 'veryfront login'). " +
           "Do not use for local builds. Use vf_build instead. " +
           "Do not use for running tests before deploy. Use vf_run_tests instead.",
         inputSchema: {

@@ -22,6 +22,11 @@ export type AgentServiceConfig = {
   VERYFRONT_PUBLIC_API_BASE_URL?: string;
   VERYFRONT_MCP_URL: string;
   VERYFRONT_API_TOKEN?: string;
+  /**
+   * The token file selector, when set. It makes the token file the credential,
+   * so `VERYFRONT_API_KEY` is not read.
+   */
+  VERYFRONT_API_TOKEN_FILE?: string;
   VERYFRONT_PROJECT_ID?: string;
   VERYFRONT_AGENT_SERVICE_URL?: string;
   VERYFRONT_AGENT_SERVICE_KEY?: string;
@@ -60,6 +65,10 @@ export function resolveAgentServiceInferenceApiBaseUrl(
   return config.VERYFRONT_PUBLIC_API_BASE_URL ?? config.VERYFRONT_API_URL;
 }
 
+/** A credential value, or undefined when it is unset or blank (empty or whitespace-only). */
+const present = (value: string | undefined): string | undefined =>
+  value?.trim() ? value : undefined;
+
 /** Input payload for agent service config. */
 export type AgentServiceConfigInput = Record<string, string | number | undefined>;
 
@@ -77,7 +86,12 @@ const getAgentServiceConfigSchema = defineSchema<AgentServiceConfig>((v) => {
   return v.object({
     VERYFRONT_API_URL: v.string().url().default("https://api.veryfront.com"),
     VERYFRONT_PUBLIC_API_BASE_URL: v.string().url().optional(),
-    VERYFRONT_API_TOKEN: v.string().min(1).optional(),
+    // Blank (empty or whitespace-only) reads as unset, as the CLI and SDK read it: see `present` below.
+    VERYFRONT_API_TOKEN: v.string().optional(),
+    // The name Veryfront tells users to set; the token wins when both are set (see `env-loader`).
+    VERYFRONT_API_KEY: v.string().optional(),
+    // Read only to tell whether a token file is the credential: then the key never stands in for it.
+    VERYFRONT_API_TOKEN_FILE: v.string().optional(),
     VERYFRONT_PROJECT_ID: v.string().min(1).optional(),
     VERYFRONT_AGENT_SERVICE_URL: v.string().url().optional(),
     VERYFRONT_AGENT_SERVICE_KEY: v.string().min(1).max(128).optional(),
@@ -127,7 +141,10 @@ const getAgentServiceConfigSchema = defineSchema<AgentServiceConfig>((v) => {
     VERYFRONT_API_URL: env.VERYFRONT_API_URL,
     VERYFRONT_PUBLIC_API_BASE_URL: env.VERYFRONT_PUBLIC_API_BASE_URL,
     VERYFRONT_MCP_URL: buildVeryfrontMcpUrl(env.VERYFRONT_API_URL),
-    VERYFRONT_API_TOKEN: env.VERYFRONT_API_TOKEN,
+    // Token first, then the key; any token file selector (a blank one included) is the credential, so no key.
+    VERYFRONT_API_TOKEN: present(env.VERYFRONT_API_TOKEN) ??
+      (env.VERYFRONT_API_TOKEN_FILE === undefined ? present(env.VERYFRONT_API_KEY) : undefined),
+    VERYFRONT_API_TOKEN_FILE: env.VERYFRONT_API_TOKEN_FILE,
     VERYFRONT_PROJECT_ID: env.VERYFRONT_PROJECT_ID,
     VERYFRONT_AGENT_SERVICE_URL: env.VERYFRONT_AGENT_SERVICE_URL,
     VERYFRONT_AGENT_SERVICE_KEY: env.VERYFRONT_AGENT_SERVICE_KEY,

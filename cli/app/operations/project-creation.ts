@@ -98,6 +98,8 @@ export async function createProject(
       projectDir: creation.projectDir,
       config,
       source: { kind: "inferred", name: "project files" },
+      // The TUI just reserved this project for the new directory.
+      inferredProject: "create",
       client: {
         getProject: (reference) => getProjectTarget(createApiClient(config), reference),
         // The slug is reserved before scaffolding so the directory can take

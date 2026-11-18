@@ -1,9 +1,27 @@
 import { INVALID_ARGUMENT } from "#veryfront/errors";
 import { isProxyWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
 import { MAX_TIMER_DELAY_MS } from "#veryfront/utils/timer.ts";
+import { privateByteLength } from "#veryfront/security/private-bytes.ts";
+import { privateJsonStringify } from "#veryfront/security/private-json.ts";
+import { encodePrivateText, privateTextTrim } from "#veryfront/security/private-text.ts";
 import type { EvalExample, EvalExampleInput } from "./types.ts";
 
 const ArrayIsArray = Array.isArray;
+const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const ObjectHasOwn = Object.hasOwn;
+
+/**
+ * The forwarded props budget of a hosted run, in bytes of JSON. Request
+ * validation and durable run admission both reject a larger envelope.
+ */
+export const MAX_EVAL_FORWARDED_PROPS_BYTES = 196_608;
+
+/**
+ * The size allowed for an eval `environmentContext`, in bytes of JSON. It
+ * travels in the forwarded props, so the cap leaves 64 KB of that budget for
+ * the request metadata and the prompt a durable run forwards beside it.
+ */
+export const MAX_EVAL_ENVIRONMENT_CONTEXT_BYTES = 131_072;
 
 export function createEvalValidationError(message: string): Error {
   return INVALID_ARGUMENT.create({ message });
@@ -52,6 +70,86 @@ export function normalizeEvalString(value: unknown, label: string): string {
     throw createEvalValidationError(`${label} must be a non-empty string`);
   }
   return value.trim();
+}
+
+/**
+ * Validate an optional `environmentContext`: the host facts an agent eval sends
+ * as `<environment_context>`, the way Studio does. Blank text is rejected
+ * rather than dropped, so a typo cannot silently run without the context.
+ */
+export function normalizeEvalEnvironmentContext(
+  value: unknown,
+  label: string,
+): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string" || privateTextTrim(value) === "") {
+    throw createEvalValidationError(`${label} environmentContext must be a non-empty string`);
+  }
+  if (!isEvalEnvironmentContextWithinBudget(value)) {
+    throw createEvalValidationError(
+      `${label} environmentContext must be at most ${MAX_EVAL_ENVIRONMENT_CONTEXT_BYTES} bytes as JSON`,
+    );
+  }
+  return value;
+}
+
+/** An eval definition, example or request that may carry an environment context. */
+export type EvalEnvironmentContextCarrier = { readonly environmentContext?: unknown };
+
+/**
+ * Read `environmentContext` as an own data property. Project code shares the
+ * realm and can extend Object.prototype, so an inherited value is not the
+ * eval's or the example's.
+ */
+export function readOwnEvalEnvironmentContext(value: EvalEnvironmentContextCarrier): unknown {
+  const descriptor = ObjectGetOwnPropertyDescriptor(value, "environmentContext");
+  return descriptor && ObjectHasOwn(descriptor, "value") ? descriptor.value : undefined;
+}
+
+/**
+ * The context an eval case runs with: the example's own value replaces the
+ * eval's own value.
+ */
+export function resolveEvalCaseEnvironmentContext(
+  example: EvalEnvironmentContextCarrier,
+  definition: EvalEnvironmentContextCarrier,
+): string | undefined {
+  return readOwnEvalEnvironmentContextText(example) ??
+    readOwnEvalEnvironmentContextText(definition);
+}
+
+/** The own `environmentContext` of an eval or example, when it is text. */
+export function readOwnEvalEnvironmentContextText(
+  value: EvalEnvironmentContextCarrier,
+): string | undefined {
+  const context = readOwnEvalEnvironmentContext(value);
+  return typeof context === "string" ? context : undefined;
+}
+
+/** Whether a value is an `environmentContext` the public contract accepts. */
+export function isEvalEnvironmentContext(value: unknown): boolean {
+  return value === undefined ||
+    (typeof value === "string" && privateTextTrim(value) !== "" &&
+      isEvalEnvironmentContextWithinBudget(value));
+}
+
+function isEvalEnvironmentContextWithinBudget(value: string): boolean {
+  return getEvalJsonByteLength(value) <= MAX_EVAL_ENVIRONMENT_CONTEXT_BYTES;
+}
+
+/**
+ * The UTF-8 size of a value as JSON, the form in which it crosses a request.
+ * A value that cannot be serialized counts as over any budget. Measured with
+ * the serializer and encoder captured at load, so project eval code that
+ * replaces the globals cannot change what fits.
+ */
+export function getEvalJsonByteLength(value: unknown): number {
+  try {
+    const json = privateJsonStringify(value);
+    return json === undefined ? 0 : privateByteLength(encodePrivateText(json));
+  } catch {
+    return Number.POSITIVE_INFINITY;
+  }
 }
 
 export function assertCanonicalEvalString(
@@ -152,6 +250,10 @@ export function normalizeEvalExamples(
     }
 
     assertMetadata(example.metadata, `${source}[${index}]`);
+    const environmentContext = normalizeEvalEnvironmentContext(
+      readOwnEvalEnvironmentContext(example),
+      `${source}[${index}]`,
+    );
 
     return {
       id,
@@ -159,6 +261,7 @@ export function normalizeEvalExamples(
       ...(example.expectedOutcome ? { expectedOutcome: example.expectedOutcome } : {}),
       ...(Object.hasOwn(example, "reference") ? { reference: example.reference } : {}),
       ...(example.metadata ? { metadata: { ...example.metadata } } : {}),
+      ...(environmentContext === undefined ? {} : { environmentContext }),
     };
   });
 }

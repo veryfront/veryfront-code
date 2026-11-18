@@ -15,6 +15,7 @@ import {
   withDeployEnv,
   withFetchStub,
 } from "../../test-utils/deploy-test-support.ts";
+import { MISSING_API_CREDENTIAL_MESSAGE } from "../../shared/config.ts";
 
 function toolDeployProject(controlPlane: InMemoryDeployControlPlane): DeployProject {
   return createDeployProject({
@@ -170,6 +171,30 @@ describe("mcp/tools/deploy-tool", () => {
         result.error,
         "Not authenticated. Run 'veryfront login' first.",
       );
+    });
+
+    it("reports the CLI's missing-credential error as not authenticated", async () => {
+      setHostSecret("VERYFRONT_API_TOKEN", "stored-login-token");
+      try {
+        const result = await withDeployEnv(
+          () =>
+            triggerDeploy(
+              { projectSlug: "my-app", environment: "production", branch: "main" },
+              { deployProject: throwingDeployProject(new Error(MISSING_API_CREDENTIAL_MESSAGE)) },
+            ),
+          { VERYFRONT_API_TOKEN: null },
+        );
+
+        assertEquals(result.success, false);
+        if (result.success) throw new Error("unreachable");
+        assertEquals(
+          result.error,
+          "Not authenticated. Run 'veryfront login' first.",
+          "the credential error keeps its classification when its wording changes",
+        );
+      } finally {
+        deleteHostSecret("VERYFRONT_API_TOKEN");
+      }
     });
 
     it("passes the auth gate with a host-private stored login token", async () => {

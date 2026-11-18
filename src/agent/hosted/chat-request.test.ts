@@ -26,6 +26,7 @@ import {
   type ParsedHostedChatRequest,
 } from "./chat-request-parser.ts";
 import {
+  buildHostedChatRequestInputFromRuntimeAgentInvocation,
   MAX_HOSTED_CHAT_REQUEST_MESSAGE_PARTS,
   MAX_HOSTED_CHAT_REQUEST_MESSAGES,
 } from "./chat-request.ts";
@@ -33,6 +34,7 @@ import { createHostedRunEventWriterCapabilityForRequest } from "./child-run-even
 import { createHostedInferenceModelResolver } from "./inference-credential.ts";
 import { hostedTerminalToolSourceFactory } from "./terminal-credential.ts";
 import type { ToolExposureCheckpoint } from "../runtime/tool-exposure.ts";
+import type { RuntimeAgentRunInvocation } from "../runtime/agent-invocation-contract.ts";
 import type { RemoteMCPToolSourceConfig, RemoteToolSource } from "#veryfront/tool";
 import { sealIngressCredentials } from "#veryfront/security/http/ingress-credentials.ts";
 
@@ -3499,5 +3501,42 @@ describe("agent/hosted-chat-request", () => {
     }
     assertEquals(requestedSources, [branchSource]);
     assertEquals(parsed.projectId, projectId);
+  });
+});
+
+describe("hosted runtime invocation environment context", () => {
+  const invocation = (overrides: Record<string, unknown>) =>
+    ({
+      run: {
+        conversationId: "10000000-1000-4000-8000-100000000001",
+        project: { projectId: "10000000-1000-4000-8000-100000000005", projectSlug: "project" },
+      },
+      messages: [],
+      tools: [],
+      context: [],
+      ...overrides,
+    }) as unknown as RuntimeAgentRunInvocation;
+
+  it("reads a forwarded eval context that has no studio_context item", () => {
+    // A context over the 16 KB item limit travels only in the forwarded props.
+    const large = "a".repeat(20_000);
+    const input = buildHostedChatRequestInputFromRuntimeAgentInvocation(
+      invocation({ forwardedProps: { veryfront: { environmentContext: large } } }),
+    );
+    assertEquals(input.context.environmentContext, large);
+  });
+
+  it("prefers the studio_context item over a forwarded eval context", () => {
+    const input = buildHostedChatRequestInputFromRuntimeAgentInvocation(
+      invocation({
+        context: [{
+          type: "json",
+          title: "studio_context",
+          data: { environmentContext: "from studio" },
+        }],
+        forwardedProps: { veryfront: { environmentContext: "from eval" } },
+      }),
+    );
+    assertEquals(input.context.environmentContext, "from studio");
   });
 });

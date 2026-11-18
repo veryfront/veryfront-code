@@ -2,6 +2,15 @@ import { defineSchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 import type { DiscoveredEval } from "./discovery.ts";
 import type { EvalDefinition, EvalExample } from "./types.ts";
+import {
+  type EvalEnvironmentContextCarrier,
+  readOwnEvalEnvironmentContextText,
+} from "./validation.ts";
+
+// Captured at load: project eval modules share the realm and can replace these.
+const ObjectHasOwn = Object.hasOwn;
+const ReflectDefineProperty = Reflect.defineProperty;
+const ReflectDeleteProperty = Reflect.deleteProperty;
 
 /** Schema for Eval Studio capabilities. */
 export const getEvalStudioCapabilitySchema = defineSchema((v) =>
@@ -48,6 +57,7 @@ export const getEvalSourceExampleSchema = defineSchema((v) =>
     expectedOutcome: v.enum(["success", "error"] as const).optional(),
     reference: v.unknown().optional(),
     metadata: v.record(v.string(), v.unknown()).optional(),
+    environmentContext: v.string().optional(),
   })
 );
 
@@ -176,6 +186,7 @@ export const getEvalSourceDocumentSchema = defineSchema((v) =>
     description: v.string().optional(),
     targetKind: getEvalTargetKindSchema(),
     target: v.string(),
+    environmentContext: v.string().optional(),
     source: getEvalSourceReferenceSchema(),
     dataset: getEvalSourceDatasetSchema(),
     metrics: v.array(getEvalSourceMetricSchema()),
@@ -198,6 +209,7 @@ export const getEvalSourcePatchSchema = defineSchema((v) =>
       name: v.string().optional(),
       description: v.string().optional(),
       target: v.string().optional(),
+      environmentContext: v.string().optional(),
       dataset: getEvalSourceDatasetSchema().optional(),
       repetitions: v.number().int().positive().optional(),
       tags: v.array(v.string()).optional(),
@@ -287,6 +299,17 @@ function normalizeDataset(definition: EvalDefinition): EvalSourceDocument["datas
   };
 }
 
+/**
+ * The context an eval or example itself declares, as the runner reads it. An
+ * inherited value is not sent to the agent, so it is not projected either.
+ */
+function withOwnEnvironmentContext(
+  value: EvalEnvironmentContextCarrier,
+): { environmentContext?: string } {
+  const environmentContext = readOwnEvalEnvironmentContextText(value);
+  return environmentContext === undefined ? {} : { environmentContext };
+}
+
 function copyExample(example: EvalExample): EvalExample {
   return {
     id: example.id,
@@ -294,6 +317,7 @@ function copyExample(example: EvalExample): EvalExample {
     ...(example.expectedOutcome ? { expectedOutcome: example.expectedOutcome } : {}),
     ...(example.reference !== undefined ? { reference: example.reference } : {}),
     ...(example.metadata ? { metadata: { ...example.metadata } } : {}),
+    ...withOwnEnvironmentContext(example),
   };
 }
 
@@ -325,17 +349,21 @@ export function createEvalSourceDocument(
   ];
   // A dataset eval's target is derived from its id/name, so editing it could
   // never round-trip through the source definition.
+  // `environmentContext` is not advertised yet: a Studio build whose editable
+  // field enum predates it rejects the whole document. The patch schema
+  // already accepts the field, so Studio can add it first.
   const editableFields = definition.targetKind === "dataset"
     ? BASE_EDITABLE_FIELDS.filter((field) => field !== "target")
     : BASE_EDITABLE_FIELDS;
 
-  return getEvalSourceDocumentSchema().parse({
+  const source = {
     kind: "eval-source-document",
     id: discovered.id,
     name: definition.name,
     ...(definition.description ? { description: definition.description } : {}),
     targetKind: definition.targetKind,
     target: definition.target,
+    ...withOwnEnvironmentContext(definition),
     source: {
       filePath: discovered.filePath,
       exportName: discovered.exportName,
@@ -349,5 +377,38 @@ export function createEvalSourceDocument(
     editableFields,
     dynamicFields,
     capabilities: options.capabilities ?? DEFAULT_EVAL_STUDIO_CAPABILITIES,
+  };
+  // Schema parsing reads optional fields through the prototype chain. Give the
+  // document and every example an own field, so an inherited value of any type
+  // is never read.
+  pinOwnEnvironmentContext(source);
+  for (const example of source.dataset.examples ?? []) pinOwnEnvironmentContext(example);
+  const document = getEvalSourceDocumentSchema().parse(source);
+  // A field pinned as undefined is removed from the parsed document again.
+  dropUndeclaredEnvironmentContext(document, definition);
+  const declaredExamples = definition.dataset.examples ?? [];
+  const examples = document.dataset.examples ?? [];
+  for (let index = 0; index < examples.length; index++) {
+    dropUndeclaredEnvironmentContext(examples[index]!, declaredExamples[index] ?? {});
+  }
+  return document;
+}
+
+function pinOwnEnvironmentContext(value: EvalEnvironmentContextCarrier): void {
+  if (ObjectHasOwn(value, "environmentContext")) return;
+  ReflectDefineProperty(value, "environmentContext", {
+    value: undefined,
+    enumerable: true,
+    writable: true,
+    configurable: true,
   });
+}
+
+function dropUndeclaredEnvironmentContext(
+  projected: EvalEnvironmentContextCarrier,
+  declared: EvalEnvironmentContextCarrier,
+): void {
+  if (readOwnEvalEnvironmentContextText(declared) === undefined) {
+    ReflectDeleteProperty(projected, "environmentContext");
+  }
 }

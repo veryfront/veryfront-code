@@ -2795,7 +2795,7 @@ jobs:
           name: platform-component-${{ github.run_id }}-${{ github.run_attempt }}
           path: platform-component.json
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 30
 
   update-homebrew:
     if: ${{ !cancelled() && needs.release.result == 'success' && needs.publish-public-release.result == 'success' && needs.version-check.result == 'success' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}

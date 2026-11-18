@@ -10,6 +10,7 @@ import {
   VeryfrontError,
 } from "#veryfront/errors";
 import { parseGatewayProblemBody, parseKnownProblemBody } from "#veryfront/chat/provider-errors.ts";
+import { GATEWAY_PROJECT_REQUIRED_ERROR } from "#veryfront/chat/provider-error-registry.ts";
 import {
   curatedProviderFailure,
   type CuratedProviderFailureCode,
@@ -115,8 +116,8 @@ function isVeryfrontGatewayRoute(requestUrl: string | undefined): boolean {
 }
 
 const GATEWAY_PROJECT_REQUIRED_CODE = "gateway_project_required";
-const GATEWAY_PROJECT_REQUIRED_MESSAGE =
-  "A project is required to use Veryfront-managed AI inference";
+/** The same fixed wording the chat surfaces use for this refusal. */
+const GATEWAY_PROJECT_REQUIRED_MESSAGE = GATEWAY_PROJECT_REQUIRED_ERROR.message;
 
 const PROJECT_REQUIRED_DENIAL: EvalModelAccessDenial = {
   kind: "project-required",

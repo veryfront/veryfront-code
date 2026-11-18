@@ -92,11 +92,16 @@ function usage(detail: string): never {
   throw INVALID_ARGUMENT.create({ detail });
 }
 
+/** Print a parsed option name the way the user typed it: `-p` or `--project`. */
+function flag(name: string): string {
+  return name.length === 1 ? `-${name}` : `--${name}`;
+}
+
 function stringOption(args: ParsedArgs, name: string, required = false): string | undefined {
   const value = args[name];
   if (value === undefined && !required) return undefined;
   if ((typeof value !== "string" && typeof value !== "number") || String(value).length === 0) {
-    usage(`Supply --${name} with a value.`);
+    usage(`Supply ${flag(name)} with a value.`);
   }
   return String(value);
 }
@@ -107,7 +112,7 @@ function jsonOption(args: ParsedArgs, name: string): unknown {
   try {
     return JSON.parse(text);
   } catch {
-    usage(`Supply valid JSON for --${name}.`);
+    usage(`Supply valid JSON for ${flag(name)}.`);
   }
 }
 
@@ -169,8 +174,29 @@ function assertKnownOptions(args: ParsedArgs, pathNames: string[]): void {
     ...pathNames.map((name) => name.replaceAll("_", "-")),
   ]);
   for (const name of Object.keys(args)) {
-    if (!allowed.has(name)) usage(`Unknown option --${name}.`);
+    if (!allowed.has(name)) usage(`Unknown option ${flag(name)}.`);
   }
+}
+
+/** The project family help lists these flags; runs reads them as --project-reference. */
+const PROJECT_FLAGS = ["project", "p", "project-slug"];
+
+function resolveProjectFlags(args: ParsedArgs, pathNames: string[]): ParsedArgs {
+  const supplied = PROJECT_FLAGS.filter((name) => args[name] !== undefined);
+  if (supplied.length === 0) return args;
+  if (!pathNames.includes("project_reference")) {
+    usage(
+      `veryfront project runs ${args._[2]} does not take a project. ` +
+        "To list the runs of a project, use veryfront project runs project-list --project <slug>.",
+    );
+  }
+  const references = new Set(supplied.map((name) => stringOption(args, name, true)));
+  const explicit = stringOption(args, "project-reference");
+  if (explicit !== undefined) references.add(explicit);
+  if (references.size > 1) usage("--project and --project-reference name different projects.");
+  const resolved: ParsedArgs = { ...args, "project-reference": [...references][0] };
+  for (const name of supplied) delete resolved[name];
+  return resolved;
 }
 
 function parseHeaders(args: ParsedArgs, operationId: RunsOperationId): Record<string, string> {
@@ -257,9 +283,10 @@ function parseStreamOptions(
 }
 
 /** Decode CLI syntax only; the shared contract and service own request validation. */
-export function parseRunsInvocation(args: ParsedArgs) {
-  const operationId = resolveOperation(args);
+export function parseRunsInvocation(rawArgs: ParsedArgs) {
+  const operationId = resolveOperation(rawArgs);
   const names = pathParameterNames(operationId);
+  const args = resolveProjectFlags(rawArgs, names);
   assertKnownOptions(args, names);
   const path = Object.fromEntries(names.map((name) => [
     name,

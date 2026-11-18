@@ -278,6 +278,12 @@ class RecoveryAssetsTests(unittest.TestCase):
         with self.assertRaises(ValueError): self.run_recovery()
         self.assertEqual(self.calls, [])
 
+    def test_local_asset_must_stay_inside_the_asset_directory(self):
+        assets = self.directory / 'assets'
+        assets.mkdir()
+        row = dict(self.row, name='../binary')
+        with self.assertRaises(ValueError): module().verify_local_asset(assets, row)
+
     def test_creates_only_after_exact_null_and_rejects_auth_failure(self):
         original = self.transport
         missing = True

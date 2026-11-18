@@ -224,7 +224,10 @@ export function hostedTerminalRunFinalizer(
 export function hostedTerminalToolSourceFactory(
   request: HostedPlatformDependencyOwner | undefined,
   apiMcpUrl: string,
-  fallback: (config: RemoteMCPToolSourceConfig) => RemoteToolSource,
+  fallback: (
+    config: RemoteMCPToolSourceConfig,
+    server?: AgentServiceMcpServerConfig,
+  ) => RemoteToolSource,
   getAuthToken?: () => string | undefined,
 ): (config: RemoteMCPToolSourceConfig, server?: AgentServiceMcpServerConfig) => RemoteToolSource {
   const authority = request ? credentials.get(request) : undefined;
@@ -232,7 +235,7 @@ export function hostedTerminalToolSourceFactory(
   const expectedEndpoint = createProjectScopedMcpUrl(apiMcpUrl, authority.projectId);
   const parentEventWriter = getActiveHostedRunEventWriterCapability();
   return (config, server) => {
-    if (server?.kind !== "veryfront-api") return fallback(config);
+    if (server?.kind !== "veryfront-api") return fallback(config, server);
     const liveHeaders: NonNullable<RemoteMCPToolSourceConfig["headers"]> = async (context) => {
       const original = typeof config.headers === "function"
         ? await config.headers(context)
@@ -250,7 +253,7 @@ export function hostedTerminalToolSourceFactory(
     // Only the ordinary source runs discovery; the credential-specialized
     // sources reuse the protocol and header annotations it records.
     const shared = shareRemoteMCPProtocolState(config);
-    const ordinary = fallback({ ...shared, headers: liveHeaders });
+    const ordinary = fallback({ ...shared, headers: liveHeaders }, server);
     // Project mutations by the verified current run need its exact-run event authority.
     const isCurrentRunProjectCall = (name: string, context: ToolExecutionContext | undefined) =>
       !!authority.eventToken && context?.projectId === authority.projectId &&
@@ -267,7 +270,7 @@ export function hostedTerminalToolSourceFactory(
           }
           return headers;
         },
-      })
+      }, server)
       : ordinary;
     const terminal = fallback({
       ...shared,
@@ -296,7 +299,7 @@ export function hostedTerminalToolSourceFactory(
         }
         return headers;
       },
-    });
+    }, server);
     return {
       id: ordinary.id,
       dispose: (context) => disposeRemoteToolSources([ordinary, mutation, terminal], context),

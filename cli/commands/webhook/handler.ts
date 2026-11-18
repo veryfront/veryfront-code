@@ -2,6 +2,7 @@ import { CommonArgs, createArgParser, parseArgsOrThrow } from "#cli/shared/args"
 import { withProjectSourceContext } from "#cli/shared/project-source-context";
 import type { ParsedArgs } from "#cli/shared/types";
 import { cliLogger, exitProcess } from "#cli/utils";
+import { trustOperatorConfiguredVeryfrontApiOrigins } from "#cli/outbound-fetch";
 import { defineSchema, lazySchema } from "veryfront/schemas";
 import type { InferSchema } from "veryfront/extensions/schema";
 import { runTriggerTarget } from "veryfront/trigger";
@@ -119,6 +120,9 @@ async function handleWebhookList(projectDir: string): Promise<void> {
 }
 
 export async function handleWebhookCommand(args: ParsedArgs): Promise<void> {
+  // A local command: trust the shell-exported Veryfront API origin, such as a
+  // staging API that resolves to a private address, before project code loads.
+  trustOperatorConfiguredVeryfrontApiOrigins();
   const opts: WebhookArgs = parseArgsOrThrow(parseWebhookArgs, "webhook", args);
   const projectDir = opts.projectDir ?? Deno.cwd();
 

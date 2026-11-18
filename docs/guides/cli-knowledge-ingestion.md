@@ -62,7 +62,7 @@ veryfront knowledge ingest --path ./bundle --all --okf-bundle --project my-proje
 Authenticate with the CLI and set the target project:
 
 ```bash
-export VERYFRONT_API_TOKEN=<TOKEN>
+export VERYFRONT_API_KEY=<API_KEY>
 export VERYFRONT_PROJECT_SLUG=my-project
 ```
 
@@ -270,10 +270,22 @@ cd veryfront-code
 deno run -A cli/main.ts knowledge ingest uploads/contracts/q1.pdf --json
 ```
 
-### `Missing API token`
+### `authentication-required`
 
-Set `VERYFRONT_API_TOKEN`, run `veryfront login`, or use a local CLI config with
+Set `VERYFRONT_API_KEY`, run `veryfront login`, or use a local CLI config with
 a saved token.
+
+### `No project is linked to this folder`
+
+The folder has no `.veryfront/project.json` link and no project in
+`veryfront.json` or `VERYFRONT_PROJECT_SLUG`. The CLI does not use the folder
+name as the project. Pass the project explicitly:
+
+```bash
+veryfront knowledge ingest uploads/contracts/q1.pdf --project my-project --json
+```
+
+Or link the folder to the project once with `veryfront pull my-project`.
 
 ### `Could not determine project slug`
 

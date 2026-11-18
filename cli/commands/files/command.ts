@@ -10,7 +10,11 @@ import { withSpan } from "veryfront/observability/otlp-setup";
 import { INVALID_ARGUMENT } from "veryfront/errors";
 import { cliLogger } from "#cli/utils";
 import { parseArgsOrThrow } from "#cli/shared/args";
-import { type ApiClient, createApiClient, resolveConfigWithAuth } from "#cli/shared/config";
+import {
+  type ApiClient,
+  createApiClient,
+  resolveLinkedProjectConfigWithAuth,
+} from "#cli/shared/config";
 import type { ParsedArgs } from "#cli/shared/types";
 import { printJson } from "../../shared/json-output.ts";
 import { getBooleanArg, getStringArg } from "../../shared/parsed-args.ts";
@@ -251,8 +255,10 @@ export async function filesCommand(args: ParsedArgs): Promise<void> {
     switch (subcommand) {
       case "list": {
         const options = parseArgsOrThrow(parseFilesListArgs, "files list", args);
-        let config = await resolveConfigWithAuth(options.projectDir);
-        if (options.projectSlug) config = { ...config, projectSlug: options.projectSlug };
+        const config = await resolveLinkedProjectConfigWithAuth(
+          options.projectDir,
+          options.projectSlug,
+        );
 
         const client = createApiClient(config);
         const files = await listRemoteFiles(client, config.projectSlug, options);
@@ -276,8 +282,10 @@ export async function filesCommand(args: ParsedArgs): Promise<void> {
 
       case "get": {
         const options = parseArgsOrThrow(parseFilesGetArgs, "files get", args);
-        let config = await resolveConfigWithAuth(options.projectDir);
-        if (options.projectSlug) config = { ...config, projectSlug: options.projectSlug };
+        const config = await resolveLinkedProjectConfigWithAuth(
+          options.projectDir,
+          options.projectSlug,
+        );
 
         const client = createApiClient(config);
         const content = await getRemoteFile(client, config.projectSlug, options.remotePath);
@@ -312,8 +320,10 @@ export async function filesCommand(args: ParsedArgs): Promise<void> {
 
       case "put": {
         const options = parseArgsOrThrow(parseFilesPutArgs, "files put", args);
-        let config = await resolveConfigWithAuth(options.projectDir);
-        if (options.projectSlug) config = { ...config, projectSlug: options.projectSlug };
+        const config = await resolveLinkedProjectConfigWithAuth(
+          options.projectDir,
+          options.projectSlug,
+        );
 
         const client = createApiClient(config);
         const result = await putRemoteFileFromLocal(
@@ -337,8 +347,10 @@ export async function filesCommand(args: ParsedArgs): Promise<void> {
       case "delete":
       case "rm": {
         const options = parseArgsOrThrow(parseFilesDeleteArgs, "files delete", args);
-        let config = await resolveConfigWithAuth(options.projectDir);
-        if (options.projectSlug) config = { ...config, projectSlug: options.projectSlug };
+        const config = await resolveLinkedProjectConfigWithAuth(
+          options.projectDir,
+          options.projectSlug,
+        );
 
         const client = createApiClient(config);
         await deleteRemoteFile(client, config.projectSlug, options.remotePath);

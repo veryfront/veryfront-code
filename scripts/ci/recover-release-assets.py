@@ -53,7 +53,9 @@ def discover_release(transport):
 
 
 def verify_local_asset(directory, row):
-    file = Path(directory) / row['name']
+    root = Path(directory).resolve(strict=True)
+    file = root / row['name']
+    require(file.parent == root, 'Asset must belong to the prepared asset directory')
     require(not file.is_symlink() and file.is_file(), 'Missing or symbolic asset')
     with file.open('rb') as stream:
         actual = hashlib.file_digest(stream, 'sha256').hexdigest()

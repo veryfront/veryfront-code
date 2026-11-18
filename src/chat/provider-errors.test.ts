@@ -301,7 +301,8 @@ describe("chat/provider-errors", () => {
       parseProviderError({ code: "gateway_project_required", error: "echoed secret text" }),
       {
         code: "GATEWAY_PROJECT_REQUIRED",
-        message: "A project is required to use Veryfront-managed AI inference",
+        message:
+          "Veryfront-managed AI inference refused the project: the request named none, or one that does not exist or that this credential cannot use",
         status: 400,
       },
     );
