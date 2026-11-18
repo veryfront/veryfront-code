@@ -2,6 +2,10 @@ import { defineSchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 import type { DiscoveredEval } from "./discovery.ts";
 import type { EvalDefinition, EvalExample } from "./types.ts";
+import {
+  type EvalEnvironmentContextCarrier,
+  readOwnEvalEnvironmentContextText,
+} from "./validation.ts";
 
 /** Schema for Eval Studio capabilities. */
 export const getEvalStudioCapabilitySchema = defineSchema((v) =>
@@ -291,6 +295,17 @@ function normalizeDataset(definition: EvalDefinition): EvalSourceDocument["datas
   };
 }
 
+/**
+ * The context an eval or example itself declares, as the runner reads it. An
+ * inherited value is not sent to the agent, so it is not projected either.
+ */
+function withOwnEnvironmentContext(
+  value: EvalEnvironmentContextCarrier,
+): { environmentContext?: string } {
+  const environmentContext = readOwnEvalEnvironmentContextText(value);
+  return environmentContext === undefined ? {} : { environmentContext };
+}
+
 function copyExample(example: EvalExample): EvalExample {
   return {
     id: example.id,
@@ -298,9 +313,7 @@ function copyExample(example: EvalExample): EvalExample {
     ...(example.expectedOutcome ? { expectedOutcome: example.expectedOutcome } : {}),
     ...(example.reference !== undefined ? { reference: example.reference } : {}),
     ...(example.metadata ? { metadata: { ...example.metadata } } : {}),
-    ...(example.environmentContext === undefined
-      ? {}
-      : { environmentContext: example.environmentContext }),
+    ...withOwnEnvironmentContext(example),
   };
 }
 
@@ -339,16 +352,14 @@ export function createEvalSourceDocument(
     ? [...BASE_EDITABLE_FIELDS, "environmentContext" as const]
     : BASE_EDITABLE_FIELDS;
 
-  return getEvalSourceDocumentSchema().parse({
+  const document = getEvalSourceDocumentSchema().parse({
     kind: "eval-source-document",
     id: discovered.id,
     name: definition.name,
     ...(definition.description ? { description: definition.description } : {}),
     targetKind: definition.targetKind,
     target: definition.target,
-    ...(definition.environmentContext === undefined
-      ? {}
-      : { environmentContext: definition.environmentContext }),
+    ...withOwnEnvironmentContext(definition),
     source: {
       filePath: discovered.filePath,
       exportName: discovered.exportName,
@@ -363,4 +374,22 @@ export function createEvalSourceDocument(
     dynamicFields,
     capabilities: options.capabilities ?? DEFAULT_EVAL_STUDIO_CAPABILITIES,
   });
+  // Schema parsing reads optional fields through the prototype chain, so a
+  // context nobody declared is removed from the parsed document again.
+  dropUndeclaredEnvironmentContext(document, definition);
+  const declaredExamples = definition.dataset.examples ?? [];
+  const examples = document.dataset.examples ?? [];
+  for (let index = 0; index < examples.length; index++) {
+    dropUndeclaredEnvironmentContext(examples[index]!, declaredExamples[index] ?? {});
+  }
+  return document;
+}
+
+function dropUndeclaredEnvironmentContext(
+  projected: EvalEnvironmentContextCarrier,
+  declared: EvalEnvironmentContextCarrier,
+): void {
+  if (readOwnEvalEnvironmentContextText(declared) === undefined) {
+    Reflect.deleteProperty(projected, "environmentContext");
+  }
 }

@@ -1,12 +1,14 @@
 import { INVALID_ARGUMENT } from "#veryfront/errors";
 import { isProxyWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
 import { MAX_TIMER_DELAY_MS } from "#veryfront/utils/timer.ts";
+import { privateByteLength } from "#veryfront/security/private-bytes.ts";
+import { privateJsonStringify } from "#veryfront/security/private-json.ts";
+import { encodePrivateText } from "#veryfront/security/private-text.ts";
 import type { EvalExample, EvalExampleInput } from "./types.ts";
 
 const ArrayIsArray = Array.isArray;
 const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const ObjectHasOwn = Object.hasOwn;
-const jsonByteEncoder = new TextEncoder();
 
 /**
  * The forwarded props budget of a hosted run, in bytes of JSON. Request
@@ -83,7 +85,7 @@ export function normalizeEvalEnvironmentContext(
   if (typeof value !== "string" || value.trim() === "") {
     throw createEvalValidationError(`${label} environmentContext must be a non-empty string`);
   }
-  if (getEvalJsonByteLength(value) > MAX_EVAL_ENVIRONMENT_CONTEXT_BYTES) {
+  if (!isEvalEnvironmentContextWithinBudget(value)) {
     throw createEvalValidationError(
       `${label} environmentContext must be at most ${MAX_EVAL_ENVIRONMENT_CONTEXT_BYTES} bytes as JSON`,
     );
@@ -91,12 +93,15 @@ export function normalizeEvalEnvironmentContext(
   return value;
 }
 
+/** An eval definition, example or request that may carry an environment context. */
+export type EvalEnvironmentContextCarrier = { readonly environmentContext?: unknown };
+
 /**
  * Read `environmentContext` as an own data property. Project code shares the
  * realm and can extend Object.prototype, so an inherited value is not the
  * eval's or the example's.
  */
-export function readOwnEvalEnvironmentContext(value: object): unknown {
+export function readOwnEvalEnvironmentContext(value: EvalEnvironmentContextCarrier): unknown {
   const descriptor = ObjectGetOwnPropertyDescriptor(value, "environmentContext");
   return descriptor && ObjectHasOwn(descriptor, "value") ? descriptor.value : undefined;
 }
@@ -106,22 +111,42 @@ export function readOwnEvalEnvironmentContext(value: object): unknown {
  * eval's own value.
  */
 export function resolveEvalCaseEnvironmentContext(
-  example: object,
-  definition: object,
+  example: EvalEnvironmentContextCarrier,
+  definition: EvalEnvironmentContextCarrier,
 ): string | undefined {
-  const value = readOwnEvalEnvironmentContext(example) ??
-    readOwnEvalEnvironmentContext(definition);
-  return typeof value === "string" ? value : undefined;
+  return readOwnEvalEnvironmentContextText(example) ??
+    readOwnEvalEnvironmentContextText(definition);
+}
+
+/** The own `environmentContext` of an eval or example, when it is text. */
+export function readOwnEvalEnvironmentContextText(
+  value: EvalEnvironmentContextCarrier,
+): string | undefined {
+  const context = readOwnEvalEnvironmentContext(value);
+  return typeof context === "string" ? context : undefined;
+}
+
+/** Whether a value is an `environmentContext` the public contract accepts. */
+export function isEvalEnvironmentContext(value: unknown): boolean {
+  return value === undefined ||
+    (typeof value === "string" && value.trim() !== "" &&
+      isEvalEnvironmentContextWithinBudget(value));
+}
+
+function isEvalEnvironmentContextWithinBudget(value: string): boolean {
+  return getEvalJsonByteLength(value) <= MAX_EVAL_ENVIRONMENT_CONTEXT_BYTES;
 }
 
 /**
  * The UTF-8 size of a value as JSON, the form in which it crosses a request.
- * A value that cannot be serialized counts as over any budget.
+ * A value that cannot be serialized counts as over any budget. Measured with
+ * the serializer and encoder captured at load, so project eval code that
+ * replaces the globals cannot change what fits.
  */
 export function getEvalJsonByteLength(value: unknown): number {
   try {
-    const json = JSON.stringify(value);
-    return json === undefined ? 0 : jsonByteEncoder.encode(json).byteLength;
+    const json = privateJsonStringify(value);
+    return json === undefined ? 0 : privateByteLength(encodePrivateText(json));
   } catch {
     return Number.POSITIVE_INFINITY;
   }

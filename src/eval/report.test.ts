@@ -145,6 +145,15 @@ describe("eval/report", () => {
       await hashOf([{ id: "q1", input: "hi", environmentContext: "node: Header" }]),
       header,
     );
+
+    // An inherited context is not sent to the agent, so it is not hashed.
+    const objectPrototype = Object.prototype as Record<string, unknown>;
+    objectPrototype.environmentContext = "node: Inherited";
+    try {
+      assertEquals(await hashOf([{ id: "q1", input: "hi" }]), plain);
+    } finally {
+      delete objectPrototype.environmentContext;
+    }
   });
 
   it("summarizes duration, usage, failures, and flaky examples", () => {
