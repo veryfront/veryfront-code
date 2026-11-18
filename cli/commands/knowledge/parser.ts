@@ -75,6 +75,7 @@ type DocumentKreuzbergExtensionModule = {
 };
 
 export interface RunKnowledgeParsersDeps {
+  allocationSession?: KnowledgeAllocationSession;
   signal?: AbortSignal;
   extractDocumentText?: ExtractDocumentText;
   onProgress?: (event: DocumentExtractionProgressEvent) => void | Promise<void>;
@@ -981,7 +982,7 @@ function findFirstH1(markdown: string, mdx = false): string | undefined {
         if (startsQuotedItem) continuesParagraph = false;
       }
       const quoteFence = markdownFenceStart(content);
-      const quoteHtml = mdx ? undefined : markdownHtmlBlockEnd(content, !quoteParagraph);
+      const quoteHtml = mdx ? undefined : markdownHtmlBlockEnd(content, !continuesParagraph);
       if (quoteFence) {
         fence = quoteFence;
         blockQuoteDepth = quoteDepth;
@@ -1075,49 +1076,128 @@ function slugifyTitle(title: string): string {
   return escapeReservedKnowledgeSlug(slug);
 }
 
-/**
- * Write `<slug>.md`, adding `-2`, `-3` when that name holds another source's document.
- * A file that already holds the same generated source is rewritten under its name.
- */
+interface KnowledgeTitleAllocation {
+  observed: Map<number, string | undefined>;
+  sources: Map<string, number>;
+  next: number;
+}
+
+interface KnowledgeDirectoryAllocation {
+  titles: Map<string, KnowledgeTitleAllocation>;
+  tail: Promise<void>;
+}
+
+/** Invocation-local observations only; never share this across ingestion runs. */
+export class KnowledgeAllocationSession {
+  private readonly directories = new Map<string, KnowledgeDirectoryAllocation>();
+
+  private async enqueue<T>(
+    outputDir: string,
+    write: (directory: KnowledgeDirectoryAllocation) => Promise<T>,
+  ): Promise<T> {
+    let directory = this.directories.get(outputDir);
+    if (!directory) {
+      directory = { titles: new Map(), tail: Promise.resolve() };
+      this.directories.set(outputDir, directory);
+    }
+    const allocation = directory;
+    const result = allocation.tail.then(() => write(allocation));
+    allocation.tail = result.then(() => undefined, () => undefined);
+    return await result;
+  }
+
+  async allocate<T>(
+    outputDir: string,
+    slug: string,
+    write: (state: KnowledgeTitleAllocation) => Promise<T>,
+  ): Promise<T> {
+    return await this.enqueue(outputDir, (directory) => {
+      let state = directory.titles.get(slug);
+      if (!state) {
+        state = { observed: new Map(), sources: new Map(), next: 1 };
+        directory.titles.set(slug, state);
+      }
+      return write(state);
+    });
+  }
+
+  /** Exact-path writers may replace any observed identity, even when they fail. */
+  async directWrite<T>(outputDir: string, write: () => Promise<T>): Promise<T> {
+    return await this.enqueue(outputDir, async (directory) => {
+      try {
+        return await write();
+      } finally {
+        directory.titles.clear();
+      }
+    });
+  }
+}
+
+/** Re-read every reuse candidate; cached conflicts only avoid redundant probes. */
 async function writeKnowledgeFile(
   outputDir: string,
   slug: string,
   identity: { resource: string; sourceKey?: string },
   markdown: string,
-  signal?: AbortSignal,
+  signal: AbortSignal | undefined,
+  session: KnowledgeAllocationSession,
 ): Promise<{ slug: string; path: string }> {
-  for (let attempt = 1;; attempt += 1) {
-    const candidate = attempt === 1 ? slug : `${slug}-${attempt}`;
-    const path = join(outputDir, `${candidate}.md`);
-    let existing: string;
-    try {
-      existing = await Deno.readTextFile(path);
-    } catch (error) {
-      if (!(error instanceof Deno.errors.NotFound)) throw error;
+  const sourceIdentity = (resource: string, sourceKey?: string) =>
+    JSON.stringify(
+      sourceKey === undefined ? ["resource", resource] : ["sourceKey", sourceKey],
+    );
+  const source = sourceIdentity(identity.resource, identity.sourceKey);
+  return await session.allocate(outputDir, slug, async (state) => {
+    for (let attempt = state.sources.get(source) ?? state.next;; attempt += 1) {
+      signal?.throwIfAborted();
+      if (state.observed.has(attempt) && state.observed.get(attempt) !== source) continue;
+      const remember = (owner: string | undefined) => {
+        state.observed.set(attempt, owner);
+        if (owner !== undefined && !state.sources.has(owner)) state.sources.set(owner, attempt);
+        while (state.observed.has(state.next)) state.next += 1;
+      };
+      const candidate = attempt === 1 ? slug : `${slug}-${attempt}`;
+      const path = join(outputDir, `${candidate}.md`);
+      let existing: string;
       try {
-        await Deno.writeTextFile(path, markdown, { createNew: true, signal });
-        return { slug: candidate, path };
-      } catch (writeError) {
-        if (!(writeError instanceof Deno.errors.AlreadyExists)) throw writeError;
-        // Re-read the winner once; a dangling link or deleted winner cannot be reused.
+        existing = await Deno.readTextFile(path);
+      } catch (error) {
+        if (!(error instanceof Deno.errors.NotFound)) throw error;
         try {
-          existing = await Deno.readTextFile(path);
-        } catch (readError) {
-          if (!(readError instanceof Deno.errors.NotFound)) throw readError;
-          continue;
+          await Deno.writeTextFile(path, markdown, { createNew: true, signal });
+          remember(source);
+          return { slug: candidate, path };
+        } catch (writeError) {
+          if (!(writeError instanceof Deno.errors.AlreadyExists)) throw writeError;
+          // Re-read the winner once; a dangling link or deleted winner cannot be reused.
+          try {
+            existing = await Deno.readTextFile(path);
+          } catch (readError) {
+            if (!(readError instanceof Deno.errors.NotFound)) throw readError;
+            remember(undefined);
+            continue;
+          }
         }
       }
+      const metadata = inspectOkfDocument(path, existing).metadata;
+      const storedKey = readKnowledgeIngestSourceKey(metadata);
+      const sameSource = storedKey !== undefined || identity.sourceKey !== undefined
+        ? storedKey === identity.sourceKey
+        : metadata.resource === identity.resource;
+      remember(
+        storedKey !== undefined
+          ? sourceIdentity("", storedKey)
+          : typeof metadata.resource === "string"
+          ? sourceIdentity(metadata.resource)
+          : undefined,
+      );
+      if (sameSource) {
+        signal?.throwIfAborted();
+        await Deno.writeTextFile(path, markdown, { signal });
+        return { slug: candidate, path };
+      }
     }
-    const metadata = inspectOkfDocument(path, existing).metadata;
-    const storedKey = readKnowledgeIngestSourceKey(metadata);
-    const sameSource = storedKey !== undefined || identity.sourceKey !== undefined
-      ? storedKey === identity.sourceKey
-      : metadata.resource === identity.resource;
-    if (sameSource) {
-      await Deno.writeTextFile(path, markdown, { signal });
-      return { slug: candidate, path };
-    }
-  }
+  });
 }
 
 function validateOkfBundleRelativePath(path: string): string {
@@ -1571,6 +1651,7 @@ export async function runKnowledgeParsers(input: {
 
   deps.signal?.throwIfAborted();
   await Deno.mkdir(input.outputDir, { recursive: true });
+  const allocationSession = deps.allocationSession ?? new KnowledgeAllocationSession();
   const results: KnowledgeParserResult[] = [];
 
   function preserveOkfFile(file: KnowledgeParserInput): Promise<KnowledgeParserResult> {
@@ -1609,7 +1690,10 @@ export async function runKnowledgeParsers(input: {
 
       deps.signal?.throwIfAborted();
       if (file.okfRelativePath !== undefined) {
-        const preserve = preserveOkfFile(file);
+        const preserve = allocationSession.directWrite(
+          input.outputDir,
+          () => preserveOkfFile(file),
+        );
         results.push(await preserve);
         continue;
       }
@@ -1663,7 +1747,10 @@ export async function runKnowledgeParsers(input: {
       if (file.slug) {
         slug = file.slug;
         outputPath = join(input.outputDir, `${slug}.md`);
-        await Deno.writeTextFile(outputPath, markdown, { signal: deps.signal });
+        await allocationSession.directWrite(
+          input.outputDir,
+          () => Deno.writeTextFile(outputPath, markdown, { signal: deps.signal }),
+        );
       } else {
         ({ slug, path: outputPath } = await writeKnowledgeFile(
           input.outputDir,
@@ -1671,6 +1758,7 @@ export async function runKnowledgeParsers(input: {
           { resource, sourceKey: file.sourceKey },
           markdown,
           deps.signal,
+          allocationSession,
         ));
       }
       results.push({

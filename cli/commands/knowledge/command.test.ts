@@ -4879,6 +4879,45 @@ describe("runKnowledgeParser", () => {
     }
   });
 
+  it("keeps lazy HTML paragraph continuations separate from root HTML blocks", async () => {
+    const root = await makeTempDir({ prefix: "veryfront-heading-lazy-html-" });
+    // Official cmark 0.31.1 and CommonMark §5.1 keep type-7 tags in lazy paragraphs.
+    const fixtures = [
+      { body: "> Note\n> > <span>\n<span>\n# Hidden\n\n# Real title", title: "Real title" },
+      { body: "> Note\n> - <span>\n<span>\n# Hidden\n\n# Real title", title: "Real title" },
+      { body: "> Note\n> - <span>\ntext\n===\n\n# Real title", title: "text" },
+      { body: "> Note\n<span>\n</span>\n# Hidden\n\n# Real title", title: "Hidden" },
+      { body: "- Item\n<span>\n</span>\n# Hidden\n\n# Real title", title: "Hidden" },
+      { body: "> Note\n<br/>\n<span>\n# Hidden\n</span>\n\n# Real title", title: "Hidden" },
+      { body: "- Item\n<br/>\n<span>\n# Hidden\n</span>\n\n# Real title", title: "Hidden" },
+      { body: "> Note\n> <span>\n> </span>\n# Hidden\n\n# Real title", title: "Hidden" },
+      { body: "- Item\n  <span>\n  </span>\n# Hidden\n\n# Real title", title: "Hidden" },
+      { body: "Intro\n<span>\n</span>\n# Hidden\n\n# Real title", title: "Hidden" },
+      { body: "> Note\n<br/>\n# Real title", title: "Real title" },
+      { body: "- Item\n<br/>\n# Real title", title: "Real title" },
+      { body: "> Note\n\n<span>\n# Hidden\n</span>\n\n# Real title", title: "Real title" },
+      { body: "- Item\n\n<span>\n# Hidden\n</span>\n\n# Real title", title: "Real title" },
+    ];
+    try {
+      for (const [index, fixture] of fixtures.entries()) {
+        for (const extension of ["md", "pdf", "html", "docx"]) {
+          const body = `${fixture.body}\n`;
+          const filePath = join(root, `source-${index}.${extension}`);
+          await Deno.writeTextFile(filePath, body);
+          const result = await runKnowledgeParser({
+            filePath,
+            outputDir: join(root, `out-${index}-${extension}`),
+          }, { extractDocumentText: () => Promise.resolve(body) });
+          assertEquals(result.title, fixture.title, fixture.body);
+          const output = await Deno.readTextFile(result.sandbox_output_path);
+          assertEquals(output.endsWith(body), true);
+        }
+      }
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
+  });
+
   it("keeps heading selection aligned with paragraph and container boundaries", async () => {
     const root = await makeTempDir({ prefix: "veryfront-knowledge-heading-context-" });
     const cases = [
