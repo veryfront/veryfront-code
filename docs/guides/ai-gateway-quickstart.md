@@ -59,7 +59,8 @@ curl https://api.veryfront.com/ai/v1/models \
   -H "Authorization: Bearer $VERYFRONT_API_KEY"
 ```
 
-With an account key, also send the project header. Client configuration does
+With an account key, also send the project header, so the request is attributed
+to that project and not to your account. Client configuration does
 not apply to `curl`, so every `curl` command on this page has an account-key
 form:
 
@@ -426,7 +427,10 @@ curl https://api.veryfront.com/ai/v1/chat/completions \
 ```
 
 A `401` means the key is missing or invalid. A `400` that asks for a project
-means an account key without the `x-veryfront-project-slug` header.
+means one of two things. The `x-veryfront-project-slug` header names a project
+that does not exist or that the key cannot use, or the credential is a login
+session, not an API key, and names no project. An account key that sends no
+header is not refused: it bills your account's credits.
 
 Every gateway response, including errors and streams, carries an
 `x-request-id` header. Include its value when you report a problem, so the
