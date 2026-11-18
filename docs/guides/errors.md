@@ -731,6 +731,13 @@ Push receipt not found.
 - **HTTP status:** 400
 - **What to do:** Run: veryfront push --branch main first
 
+### push-branch-mismatch
+
+Latest push is for a different branch.
+
+- **HTTP status:** 409
+- **What to do:** Run veryfront push --branch \<branch> for the branch you deploy, then deploy again
+
 ### push-conflict
 
 Push rejected because remote files changed.
