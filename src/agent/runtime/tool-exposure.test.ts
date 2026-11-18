@@ -1201,6 +1201,91 @@ it("exact names calls in one step share the loaded-tool limit", () => {
   assertEquals([...state.loadedToolNames], ["tool_a", "tool_b"]);
 });
 
+it("every loading mode in one step shares the reservations", () => {
+  const authorized = ["a", "b", "c"].map((name) => definition(`tool_${name}`, "A tool"));
+
+  // names first: a later query reports a miss instead of evicting a reported tool.
+  const namesFirst = createToolExposureState();
+  const namesStep = createToolExposurePlan({ authorized, mode: "deferred", state: namesFirst });
+  loadToolExposureNames({
+    names: ["tool_a", "tool_b"],
+    authorized,
+    state: namesFirst,
+    maxLoadedTools: 2,
+    step: namesStep,
+  });
+  const query = searchToolExposure({
+    query: "tool_c",
+    authorized,
+    state: namesFirst,
+    maxLoadedTools: 2,
+    step: namesStep,
+  });
+  assertEquals(query.matches, []);
+  assertEquals(query.miss, true);
+  assertEquals([...namesFirst.loadedToolNames].sort(), ["tool_a", "tool_b"]);
+
+  // query first: later names keep the query result and load only what fits.
+  const queryFirst = createToolExposureState();
+  const queryStep = createToolExposurePlan({ authorized, mode: "deferred", state: queryFirst });
+  const loaded = searchToolExposure({
+    query: "tool_c",
+    authorized: [authorized[2]!],
+    state: queryFirst,
+    maxLoadedTools: 2,
+    step: queryStep,
+  });
+  const names = loadToolExposureNames({
+    names: ["tool_a", "tool_b"],
+    authorized,
+    state: queryFirst,
+    maxLoadedTools: 2,
+    step: queryStep,
+  });
+  assertEquals(loaded.matches.map((match) => match.name), ["tool_c"]);
+  assertEquals(names.matches.map((match) => match.name), ["tool_a"]);
+  assertEquals(names.notLoaded, ["tool_b"]);
+  assertEquals([...queryFirst.loadedToolNames].sort(), ["tool_a", "tool_c"]);
+});
+
+it("a tool evicted earlier in the step is not reported as available", () => {
+  const oldTool = definition("old_tool", "Old tool");
+  const newTool = definition("new_tool", "New tool");
+  const state = createToolExposureState(["old_tool"]);
+  const step = createToolExposurePlan({
+    authorized: [oldTool, newTool],
+    mode: "deferred",
+    state,
+  });
+  // The step plan shows old_tool as visible for every call of the turn.
+  const call = (names: string[]) =>
+    loadToolExposureNames({
+      names,
+      authorized: [newTool],
+      available: [oldTool],
+      state,
+      maxLoadedTools: 1,
+      step,
+    });
+
+  assertEquals(call(["new_tool"]).matches.map((match) => match.name), ["new_tool"]);
+  const evicted = call(["old_tool"]);
+  assertEquals(evicted.matches, []);
+  assertEquals(evicted.notLoaded, ["old_tool"]);
+  assertEquals([...state.loadedToolNames], ["new_tool"]);
+
+  const search = searchToolExposure({
+    query: "old_tool",
+    authorized: [],
+    available: [oldTool],
+    state,
+    maxLoadedTools: 1,
+    step,
+  });
+  assertEquals(search.matches, []);
+  assertEquals(search.miss, true);
+});
+
 it("exact names resolve past the ranked-search candidate limit", () => {
   const authorized = Array.from(
     { length: 4_100 },

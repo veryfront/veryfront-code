@@ -1911,10 +1911,13 @@ function executeFrameworkToolSearch(input: {
       available: filterPrivateArray(available, (tool) => tool.name === contract.name),
       state: input.state,
       maxLoadedTools: input.plan.maxLoadedTools,
+      step: input.plan,
     });
+    // Read from the result, not the step plan: an earlier call in this step can
+    // have evicted a tool the plan still lists as visible.
     const isAvailable = somePrivateArray(
-      available,
-      (tool) => tool.name === contract.name,
+      result.matches,
+      (match) => match.name === contract.name && match.status === "available",
     );
     return {
       result: {
@@ -1997,6 +2000,7 @@ function executeFrameworkToolSearch(input: {
     available,
     state: input.state,
     maxLoadedTools: input.plan.maxLoadedTools,
+    step: input.plan,
   });
   const alreadyVisible =
     filterPrivateArray(result.matches, (match) => match.status === "available")[0];
