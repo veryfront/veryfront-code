@@ -140,8 +140,14 @@ export type ToolSearchMatch = {
 export type ToolSearchResult = {
   matches: ToolSearchMatch[];
   resultCount: number;
+  /**
+   * Matches that hold a loaded slot after this call. That includes a match an
+   * earlier call in the same step loaded.
+   */
   loadedCount: number;
   miss: boolean;
+  /** Matching tools the current tool limit leaves out of the next step. */
+  notLoaded?: string[];
 };
 
 type SearchableTool = ToolSearchMatch & {
@@ -1338,13 +1344,17 @@ export function searchToolExposure(input: {
     ? TOOL_SEARCH_RESULT_LIMIT
     : Math.max(0, Math.min(TOOL_SEARCH_RESULT_LIMIT, input.maxLoadedTools - kept.size));
   const matches: ToolSearchMatch[] = [];
+  const notLoaded: string[] = [];
   let loading = 0;
   for (let matchIndex = 0; matchIndex < ranked.length; matchIndex++) {
     if (matches.length === TOOL_SEARCH_RESULT_LIMIT) break;
     const match = ranked[matchIndex]!;
     if (match.status !== "loaded") continue;
     if (!setHas(kept, match.name)) {
-      if (loading === loadLimit) continue;
+      if (loading === loadLimit) {
+        if (notLoaded.length < TOOL_SEARCH_RESULT_LIMIT) pushPrivateArray(notLoaded, match.name);
+        continue;
+      }
       loading += 1;
       input.state.loadedToolNames.delete(match.name);
       input.state.loadedToolNames.add(match.name);
@@ -1357,13 +1367,73 @@ export function searchToolExposure(input: {
     (match) => input.state.loadedToolNames.has(match.name),
   );
   reserveReportedToolNames(input.state, reservation, loadedMatches);
+  const limited = notLoaded.length > 0 ? { notLoaded } : {};
+  if (loadedMatches.length === 0) {
+    // Nothing fit. A lower-ranked tool the model can already call still answers
+    // the query, so report it instead of a miss.
+    const available = slicePrivateArray(
+      filterPrivateArray(ranked, (match) => match.status === "available"),
+      0,
+      TOOL_SEARCH_RESULT_LIMIT,
+    );
+    if (available.length > 0) {
+      reserveReportedToolNames(input.state, reservation, available);
+      return {
+        matches: available,
+        resultCount: available.length,
+        loadedCount: 0,
+        miss: false,
+        ...limited,
+      };
+    }
+  }
 
   return {
     matches: loadedMatches,
     resultCount: loadedMatches.length,
     loadedCount: loadedMatches.length,
     miss: loadedMatches.length === 0,
+    ...limited,
   };
+}
+
+/**
+ * The step plan as the calls so far in the step have left it. A tool an
+ * earlier call evicted is no longer available: it is deferred again, so every
+ * mode reports and loads it the same way.
+ */
+export function readStepToolExposure(input: {
+  plan: ToolExposurePlan;
+  state: ToolExposureState;
+}): { available: ToolDefinition[]; deferred: ToolDefinition[] } {
+  const reservation = openStepReservation(input.state, input.plan);
+  const available: ToolDefinition[] = [];
+  const deferred: ToolDefinition[] = slicePrivateArray(input.plan.deferred, 0);
+  for (let index = 0; index < input.plan.visible.length; index++) {
+    const tool = input.plan.visible[index]!;
+    if (tool.name === TOOL_SEARCH_TOOL_NAME) continue;
+    const evicted = reservation !== undefined && setHas(reservation.startLoaded, tool.name) &&
+      !input.state.loadedToolNames.has(tool.name);
+    pushPrivateArray(evicted ? deferred : available, tool);
+  }
+  return { available, deferred };
+}
+
+/**
+ * Reserve the visible tools a metadata call reported as available, so a later
+ * loading call in the same step does not evict them.
+ */
+export function reserveStepToolNames(input: {
+  plan: ToolExposurePlan;
+  state: ToolExposureState;
+  names: readonly string[];
+}): void {
+  const reservation = openStepReservation(input.state, input.plan);
+  if (reservation === undefined) return;
+  for (let index = 0; index < input.names.length; index++) {
+    const name = input.names[index]!;
+    if (input.state.loadedToolNames.has(name)) ReflectApply(SetAdd, reservation.names, [name]);
+  }
 }
 
 /** Exact-name load output: matched tools plus the requested names that did not load. */

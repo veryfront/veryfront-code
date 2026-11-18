@@ -9,7 +9,9 @@ import {
   listToolExposure,
   loadToolExposureNames,
   parseToolSearchNames,
+  readStepToolExposure,
   readToolExposureContract,
+  reserveStepToolNames,
   restoreToolExposureState,
   searchToolExposure,
   searchToolExposureMetadata,
@@ -1223,6 +1225,8 @@ it("every loading mode in one step shares the reservations", () => {
   });
   assertEquals(query.matches, []);
   assertEquals(query.miss, true);
+  // The tool matched: the result says the limit kept it out, not that nothing matched.
+  assertEquals(query.notLoaded, ["tool_c"]);
   assertEquals([...namesFirst.loadedToolNames].sort(), ["tool_a", "tool_b"]);
 
   // query first: later names keep the query result and load only what fits.
@@ -1284,6 +1288,79 @@ it("a tool evicted earlier in the step is not reported as available", () => {
   });
   assertEquals(search.matches, []);
   assertEquals(search.miss, true);
+});
+
+it("a query blocked by the limit still returns a tool the model can call", () => {
+  const evictedTool = definition("release_reader", "Read a release");
+  const visibleTool = definition("release_reader_summary", "Read a release summary");
+  const newTool = definition("new_tool", "New tool");
+  const state = createToolExposureState(["release_reader"]);
+  const step = createToolExposurePlan({
+    authorized: [evictedTool, visibleTool, newTool],
+    mode: "deferred",
+    state,
+  });
+  loadToolExposureNames({
+    names: ["new_tool"],
+    authorized: [newTool],
+    available: [evictedTool, visibleTool],
+    state,
+    maxLoadedTools: 1,
+    step,
+  });
+
+  // release_reader was evicted and cannot load again; the other match is visible.
+  const result = searchToolExposure({
+    query: "read release",
+    authorized: [],
+    available: [evictedTool, visibleTool],
+    state,
+    maxLoadedTools: 1,
+    step,
+  });
+  assertEquals(result.matches.map((match) => [match.name, match.status]), [
+    ["release_reader_summary", "available"],
+  ]);
+  assertEquals(result.miss, false);
+  assertEquals(result.notLoaded, ["release_reader"]);
+});
+
+it("metadata modes read and reserve the step as earlier calls left it", () => {
+  const oldTool = definition("old_tool", "Old tool");
+  const newTool = definition("new_tool", "New tool");
+  const plan = (state: ReturnType<typeof createToolExposureState>) =>
+    createToolExposurePlan({ authorized: [oldTool, newTool], mode: "deferred", state });
+  const load = (
+    state: ReturnType<typeof createToolExposureState>,
+    step: ReturnType<typeof plan>,
+  ) =>
+    loadToolExposureNames({
+      names: ["new_tool"],
+      authorized: readStepToolExposure({ plan: step, state }).deferred,
+      available: readStepToolExposure({ plan: step, state }).available,
+      state,
+      maxLoadedTools: 1,
+      step,
+    });
+
+  // A metadata call reported old_tool as available: a later load does not evict it.
+  const reserved = createToolExposureState(["old_tool"]);
+  const reservedStep = plan(reserved);
+  reserveStepToolNames({ plan: reservedStep, state: reserved, names: ["old_tool"] });
+  assertEquals(load(reserved, reservedStep).notLoaded, ["new_tool"]);
+  assertEquals([...reserved.loadedToolNames], ["old_tool"]);
+
+  // Without that report the load evicts it, and it reads as deferred afterwards.
+  const evicted = createToolExposureState(["old_tool"]);
+  const evictedStep = plan(evicted);
+  assertEquals(
+    readStepToolExposure({ plan: evictedStep, state: evicted }).available.map((tool) => tool.name),
+    ["old_tool"],
+  );
+  assertEquals(load(evicted, evictedStep).notLoaded, []);
+  const after = readStepToolExposure({ plan: evictedStep, state: evicted });
+  assertEquals(after.available.map((tool) => tool.name), []);
+  assertEquals(after.deferred.map((tool) => tool.name).includes("old_tool"), true);
 });
 
 it("exact names resolve past the ranked-search candidate limit", () => {

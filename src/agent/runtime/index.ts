@@ -444,7 +444,9 @@ import {
   listToolExposure,
   loadToolExposureNames,
   parseToolSearchNames,
+  readStepToolExposure,
   readToolExposureContract,
+  reserveStepToolNames,
   searchToolExposure,
   searchToolExposureMetadata,
   TOOL_SEARCH_TOOL_NAME,
@@ -1858,10 +1860,18 @@ function executeFrameworkToolSearch(input: {
       } applies only with inventory`,
     );
   }
-  const available = filterPrivateArray(
-    input.plan.visible,
-    (tool) => tool.name !== TOOL_SEARCH_TOOL_NAME,
-  );
+  // Every call of one assistant turn runs against the same step plan, so read
+  // it as the earlier calls of the turn have left it.
+  const { available, deferred } = readStepToolExposure({ plan: input.plan, state: input.state });
+  const reserveAvailable = (matches: readonly { name: string; status: string }[]) =>
+    reserveStepToolNames({
+      plan: input.plan,
+      state: input.state,
+      names: mapPrivateArray(
+        filterPrivateArray(matches, (match) => match.status === "available"),
+        (match) => match.name,
+      ),
+    });
   const checkpoint = () => createToolExposureCheckpoint(input.plan.authorized, input.state);
   if (modes[0] === "search") {
     const phrase = readToolSearchArg(input.args, "search");
@@ -1873,9 +1883,10 @@ function executeFrameworkToolSearch(input: {
     }
     const result = searchToolExposureMetadata({
       query,
-      authorized: input.plan.deferred,
+      authorized: deferred,
       available,
     });
+    reserveAvailable(result.matches);
     return {
       result: {
         ...result,
@@ -1907,7 +1918,7 @@ function executeFrameworkToolSearch(input: {
     }
     const result = searchToolExposure({
       query: contract.name,
-      authorized: filterPrivateArray(input.plan.deferred, (tool) => tool.name === contract.name),
+      authorized: filterPrivateArray(deferred, (tool) => tool.name === contract.name),
       available: filterPrivateArray(available, (tool) => tool.name === contract.name),
       state: input.state,
       maxLoadedTools: input.plan.maxLoadedTools,
@@ -1956,7 +1967,7 @@ function executeFrameworkToolSearch(input: {
       throw new Error("Invalid tool inventory limit");
     }
     const result = listToolExposure({
-      authorized: input.plan.deferred,
+      authorized: deferred,
       available,
       cursor,
       limit,
@@ -1964,6 +1975,7 @@ function executeFrameworkToolSearch(input: {
       domain,
       resource,
     });
+    reserveAvailable(result.matches);
     return {
       result: {
         ...result,
@@ -1977,7 +1989,7 @@ function executeFrameworkToolSearch(input: {
   if (modes[0] === "names") {
     const result = loadToolExposureNames({
       names: parseToolSearchNames(readToolSearchArg(input.args, "names")),
-      authorized: input.plan.deferred,
+      authorized: deferred,
       available,
       state: input.state,
       maxLoadedTools: input.plan.maxLoadedTools,
@@ -1996,7 +2008,7 @@ function executeFrameworkToolSearch(input: {
   }
   const result: ToolSearchResult = searchToolExposure({
     query,
-    authorized: input.plan.deferred,
+    authorized: deferred,
     available,
     state: input.state,
     maxLoadedTools: input.plan.maxLoadedTools,
@@ -2011,8 +2023,10 @@ function executeFrameworkToolSearch(input: {
         ? "Matching candidates are already available. A search match does not establish that a tool can perform the request; check its contract before calling it."
         : result.loadedCount > 0
         ? toolSearchLoadedNextStep(result.matches)
+        : result.notLoaded !== undefined
+        ? "A matching tool could not be loaded within the current tool limit. Continue with the available tools, or load it by exact name in a later step."
         : somePrivateArray(
-            input.plan.deferred,
+            deferred,
             (tool) =>
               !IntrinsicReflectApply(IntrinsicSetHas, input.state.loadedToolNames, [tool.name]),
           )
