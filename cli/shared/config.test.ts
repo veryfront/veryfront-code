@@ -37,6 +37,7 @@ import {
   markConfigFileSource,
 } from "veryfront/utils/env-loader";
 import { deleteToken, saveToken } from "../auth/token-store.ts";
+import { VeryfrontError } from "veryfront/errors";
 
 describe("isRetryableApiReadError", () => {
   it("retries gateway and connection failures but not authoritative client statuses", () => {
@@ -101,14 +102,16 @@ async function writeRawProjectLink(
 }
 
 describe("resolveConfig", () => {
-  it("should throw when no token is available", async () => {
+  it("classes a missing credential as authentication-required", async () => {
     const env = createMockEnv({ projectSlug: "test-project" });
 
-    await assertRejects(
+    const error = await assertRejects(
       () => resolveConfig("/tmp/test-dir", env),
-      Error,
+      VeryfrontError,
       MISSING_API_CREDENTIAL_MESSAGE,
     );
+    assertInstanceOf(error, VeryfrontError);
+    assertEquals(error.slug, "authentication-required");
   });
 
   it("should use token from environment", async () => {
@@ -1141,11 +1144,13 @@ describe("resolveConfigWithAuth", () => {
     // In non-TTY mode without a token, ensureAuthenticated returns null
     const env = createMockEnv({ projectSlug: "test-project" });
 
-    await assertRejects(
+    const error = await assertRejects(
       () => resolveConfigWithAuth("/tmp/test-dir", env),
-      Error,
-      "Authentication required",
+      VeryfrontError,
+      "No Veryfront credential found.",
     );
+    assertInstanceOf(error, VeryfrontError);
+    assertEquals(error.slug, "authentication-required");
   });
 
   it("should use default API URL", async () => {
@@ -2091,15 +2096,17 @@ describe("resolveApiCredentialCandidatesForAuth", () => {
 describe("nonprompting management configuration", () => {
   it("requires an existing credential without starting a platform login", async () => {
     await withTempDir(async (dir) => {
-      await assertRejects(
+      const error = await assertRejects(
         () =>
           resolveManagementConfigNoModule(
             dir,
             createMockEnv({ xdgConfigHome: dir, projectSlug: "chosen" }),
           ),
-        Error,
+        VeryfrontError,
         MISSING_API_CREDENTIAL_MESSAGE,
       );
+      assertInstanceOf(error, VeryfrontError);
+      assertEquals(error.slug, "authentication-required");
     });
   });
   it("rejects repository-steered origins before any dispatch", async () => {

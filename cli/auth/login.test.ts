@@ -6,6 +6,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import {
   assertEquals,
   assertExists,
+  assertInstanceOf,
   assertRejects,
   assertStringIncludes,
 } from "#veryfront/testing/assert.ts";
@@ -18,6 +19,7 @@ import {
   it,
 } from "#veryfront/testing/bdd.ts";
 import { deleteEnv, getEnv, setEnv } from "#cli/process-env";
+import { VeryfrontError } from "veryfront/errors";
 import { deleteToken, readToken, saveToken } from "./token-store.ts";
 import { makeTempDir, remove } from "#veryfront/platform/compat/fs.ts";
 import {
@@ -666,14 +668,20 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
           return Promise.resolve(Response.json({ data: [], page_info: {} }));
         }) as typeof fetch;
 
-        const { resolveConfigWithAuth } = await import("../shared/config.ts");
+        const { MISSING_API_CREDENTIAL_MESSAGE, resolveConfigWithAuth } = await import(
+          "../shared/config.ts"
+        );
         const { withCwd } = await import("#veryfront/testing/cwd.ts");
 
-        await assertRejects(
+        // The cwd's veryfront.json token must not stand in for the target
+        // directory, so the target fails as a classified missing credential.
+        const error = await assertRejects(
           () => withCwd(cwdDir, () => resolveConfigWithAuth(targetDir, testEnv)),
-          Error,
-          "Authentication required",
+          VeryfrontError,
+          MISSING_API_CREDENTIAL_MESSAGE,
         );
+        assertInstanceOf(error, VeryfrontError);
+        assertEquals(error.slug, "authentication-required");
         assertEquals(requests, 0);
       } finally {
         globalThis.fetch = originalFetch;
