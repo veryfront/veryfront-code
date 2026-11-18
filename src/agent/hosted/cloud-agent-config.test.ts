@@ -1,4 +1,10 @@
-import { assert, assertEquals, assertNotEquals } from "#veryfront/testing/assert.ts";
+import {
+  assert,
+  assertEquals,
+  assertNotEquals,
+  assertRejects,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import type { CreateSandboxBashTool } from "#veryfront/sandbox";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { tool } from "#veryfront/tool";
@@ -239,5 +245,144 @@ describe("cloud agent service runtime options", () => {
     assertEquals("veryfront__load_skill" in tools, true);
     assertEquals("veryfront__sleep" in tools, true);
     assertEquals("veryfront__web_fetch" in tools, true);
+  });
+
+  describe("web_fetch ownership", () => {
+    function buildWebFetchTools(forwardedProps?: Record<string, unknown>) {
+      const context = createNodeVeryfrontCloudAgentServiceContext({
+        serviceName: "test-agent-service",
+        createBashTool: () => Promise.resolve({ tools: {} }),
+        env: {
+          VERYFRONT_API_URL: "https://api.example.test",
+          NODE_ENV: "test",
+          PORT: "3180",
+          ALLOWED_ORIGINS: "https://studio.example.test",
+        },
+      });
+      context.skillDocumentParserProvider = createStdYamlSkillDocumentParserProvider();
+      return buildLocalTools(
+        context,
+        {
+          projectId: "project-1",
+          authToken: "token",
+          instructions: "Synthetic instructions",
+          allowDelegation: false,
+        },
+        {
+          authToken: "token",
+          agentId: "agent-1",
+          projectId: "project-1",
+          branchId: null,
+          model: "anthropic/claude-sonnet-4-6",
+        },
+        forwardedProps === undefined ? undefined : { forwardedProps },
+      );
+    }
+
+    async function webFetchErrorFor(forwardedProps?: Record<string, unknown>): Promise<Error> {
+      const webFetch = buildWebFetchTools(forwardedProps).web_fetch;
+      assert(webFetch && typeof webFetch.execute === "function");
+      // A loopback URL keeps the test offline: the local fetch path refuses it at its egress guard.
+      const error = await assertRejects(() =>
+        Promise.resolve(webFetch.execute!({ url: "http://127.0.0.1/page" }))
+      );
+      assert(error instanceof Error);
+      return error;
+    }
+
+    it("waits for the API instead of fetching when the request tools include web_fetch", async () => {
+      for (const name of ["web_fetch", "veryfront__web_fetch"]) {
+        const webFetch = buildWebFetchTools({ runtimeTools: [{ name }] }).web_fetch;
+        assert(webFetch && typeof webFetch.execute === "function");
+        const controller = new AbortController();
+        const call = Promise.resolve(
+          webFetch.execute(
+            { url: "http://127.0.0.1/page" },
+            {
+              abortSignal: controller.signal,
+            } as Parameters<NonNullable<typeof webFetch.execute>>[1],
+          ),
+        );
+        // The call neither fetches nor fails: it stays open for the API to answer.
+        const settled = await Promise.race([
+          call.then(() => "settled", () => "settled"),
+          new Promise((resolve) => setTimeout(() => resolve("pending"), 10)),
+        ]);
+        assertEquals(settled, "pending");
+
+        // The API parks the run by cancelling the turn, which ends the wait.
+        const parked = new DOMException("Owning run parked", "AbortError");
+        controller.abort(parked);
+        assertEquals(await call.catch((error) => error), parked);
+      }
+    });
+
+    it("refuses an API-owned web_fetch call that cannot be cancelled", async () => {
+      const webFetch = buildWebFetchTools({ runtimeTools: [{ name: "web_fetch" }] }).web_fetch;
+      assert(webFetch && typeof webFetch.execute === "function");
+      const error = await assertRejects(async () =>
+        await webFetch.execute!({ url: "http://127.0.0.1/page" })
+      );
+      assert(error instanceof Error);
+      assertStringIncludes(error.message, "requires execution cancellation");
+    });
+
+    it("does not let a project web_fetch take an API-owned call", async () => {
+      let projectCalls = 0;
+      toolRegistryInternal.registerShared(
+        "web_fetch",
+        tool({
+          id: "web_fetch",
+          description: "Project-owned web_fetch",
+          inputSchema: defineSchema((v) => v.object({}))(),
+          execute: () => {
+            projectCalls++;
+            return { owner: "project" };
+          },
+        }),
+      );
+      try {
+        // The API treats a bare web_fetch call as its own, so the facade keeps the name.
+        const owned = buildWebFetchTools({ runtimeTools: [{ name: "web_fetch" }] });
+        assertEquals(hasTrustedHostToolProvenance(owned.web_fetch), true);
+        const controller = new AbortController();
+        const parked = new DOMException("Owning run parked", "AbortError");
+        controller.abort(parked);
+        assertEquals(
+          await Promise.resolve(
+            owned.web_fetch!.execute!(
+              { url: "http://127.0.0.1/page" },
+              {
+                abortSignal: controller.signal,
+              } as Parameters<NonNullable<NonNullable<typeof owned.web_fetch>["execute"]>>[1],
+            ),
+          ).catch((error) => error),
+          parked,
+        );
+        assertEquals(projectCalls, 0);
+
+        // Without API ownership the project tool keeps the bare name, as before.
+        const local = buildWebFetchTools();
+        assertEquals(hasTrustedHostToolProvenance(local.web_fetch), false);
+      } finally {
+        toolRegistryInternal.clearAll();
+      }
+    });
+
+    it("still offers web_fetch to the model when the API owns it", () => {
+      const tools = buildWebFetchTools({ runtimeTools: [{ name: "web_fetch" }] });
+
+      assertEquals(typeof tools.web_fetch?.description, "string");
+      assertEquals(hasTrustedHostToolProvenance(tools.web_fetch), true);
+      assertEquals("veryfront__web_fetch" in tools, true);
+    });
+
+    it("fetches locally when the request tools do not include web_fetch", async () => {
+      for (const forwardedProps of [undefined, { runtimeTools: [{ name: "web_search" }] }]) {
+        const error = await webFetchErrorFor(forwardedProps);
+
+        assertEquals(error.name, "WorkerEgressBlockedError");
+      }
+    });
   });
 });
