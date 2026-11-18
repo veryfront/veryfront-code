@@ -695,7 +695,11 @@ export default evalAgent({
 
 An example's `environmentContext` replaces the eval's value, and the eval's
 value replaces the agent's own `environmentContext` for that case. The text must
-be a non-empty string. Local CLI evals render it for the target agent only;
+be a non-empty string of at most 131,072 bytes as JSON (128 KB). The limit is
+the same for every way of running the eval, because a hosted run carries the
+text in its forwarded props, which are capped at 196,608 bytes. An agent-service
+eval also rejects an example whose context and input together exceed that cap.
+Local CLI evals render it for the target agent only;
 delegated child agents keep their own configuration. Live agent-service evals
 forward it to the endpoint as `forwardedProps.veryfront.environmentContext`.
 Evals that Veryfront runs for a project apply it too: a local runtime renders it

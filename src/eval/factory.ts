@@ -17,6 +17,7 @@ import {
   normalizeEvalEnvironmentContext,
   normalizeEvalString,
   normalizeEvalStringList,
+  readOwnEvalEnvironmentContext,
 } from "./validation.ts";
 
 const EVAL_DATASET_KINDS = new Set<EvalDataset["kind"]>(["inline", "json", "jsonl"]);
@@ -100,9 +101,10 @@ function createEvalDefinition(
   const name = normalizeOptionalLabel(input.name, "Eval name") ?? (id || target);
   const description = normalizeOptionalDescription(input.description);
   const tags = input.tags === undefined ? [] : normalizeEvalStringList(input.tags, "Eval tags");
-  const environmentContext = "environmentContext" in input
-    ? normalizeEvalEnvironmentContext(input.environmentContext, "Eval")
-    : undefined;
+  const environmentContext = normalizeEvalEnvironmentContext(
+    readOwnEvalEnvironmentContext(input),
+    "Eval",
+  );
 
   return {
     kind: "eval",

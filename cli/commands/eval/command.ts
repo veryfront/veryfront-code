@@ -6,6 +6,7 @@ import { dirname, isAbsolute, relative, resolve } from "veryfront/platform/path"
 import { INVALID_ARGUMENT } from "veryfront/errors";
 import { runWithEvalMockToolScope } from "../../../src/agent/runtime/eval-mock-tool-scope.ts";
 import { runWithEvalEnvironmentContext } from "../../../src/agent/runtime/eval-environment-context-scope.ts";
+import { resolveEvalCaseEnvironmentContext } from "../../../src/eval/validation.ts";
 import { MAX_TIMER_DELAY_MS, normalizeTimerDurationMs } from "../../../src/utils/timer.ts";
 import type { Agent, AgentResponse } from "veryfront/agent";
 import type { VeryfrontConfig } from "veryfront/config";
@@ -910,7 +911,7 @@ export function createAgentAdapter(agent: Agent, options: EvalOptions) {
         ? () => runWithEvalMockToolScope(mockTools ?? {}, generate)
         : generate;
       // The example's context replaces the eval's, which replaces the agent's own.
-      const environmentContext = example.environmentContext ?? definition.environmentContext;
+      const environmentContext = resolveEvalCaseEnvironmentContext(example, definition);
       const response = environmentContext === undefined
         ? await run()
         : await runWithEvalEnvironmentContext(agent.id, environmentContext, run);

@@ -155,6 +155,7 @@ import { type DiscoveredEval, findEvalById, resolveEvalById } from "#veryfront/e
 import { runEval } from "#veryfront/eval/runner.ts";
 import {
   type AgentServiceEvalAdapterConfig,
+  type AgentServiceEvalForwardedProps,
   type AgentServiceEvalRequestBody,
   createAgentServiceEvalAdapter,
 } from "#veryfront/eval/agent-service.ts";
@@ -352,7 +353,27 @@ const MAX_TIMER_DELAY_MS = 2_147_483_647;
 
 function getOwnDataProperty(value: Record<string, unknown>, key: string): unknown {
   const descriptor = ObjectGetOwnPropertyDescriptor(value, key);
-  return descriptor && "value" in descriptor ? descriptor.value : undefined;
+  return descriptor && ObjectHasOwn(descriptor, "value") ? descriptor.value : undefined;
+}
+
+/**
+ * The eval environment context in a request's forwarded props. Own data
+ * properties only, at each step: project code runs in this realm and can put
+ * `forwardedProps`, `veryfront` or `environmentContext` on Object.prototype.
+ */
+function readOwnEvalEnvironmentContext(body: unknown): string | undefined {
+  const value = readOwnRecordProperty(readOwnEvalForwardedVeryfront(body), "environmentContext");
+  return typeof value === "string" && value.trim() !== "" ? value : undefined;
+}
+
+/** The own `forwardedProps.veryfront` envelope of an eval request, if any. */
+function readOwnEvalForwardedVeryfront(body: unknown): unknown {
+  return readOwnRecordProperty(readOwnRecordProperty(body, "forwardedProps"), "veryfront");
+}
+
+function readOwnRecordProperty(value: unknown, key: string): unknown {
+  if (typeof value !== "object" || value === null || ArrayIsArray(value)) return undefined;
+  return getOwnDataProperty(value as Record<string, unknown>, key);
 }
 
 type CapturedRunSchemas = Extract<RunSchemaPairSnapshot, { state: "captured" }>;
@@ -4016,9 +4037,7 @@ function readEvalAgentEnvironmentContext(init: RequestInit | undefined): string 
   try {
     // Parsed with the parser captured at load: the project eval module has
     // loaded by now and may have replaced the global JSON.parse.
-    const body = privateJsonParse(init.body) as Partial<AgentServiceEvalRequestBody> | null;
-    const value = body?.forwardedProps?.veryfront?.environmentContext;
-    return typeof value === "string" && value.trim() !== "" ? value : undefined;
+    return readOwnEvalEnvironmentContext(privateJsonParse(init.body));
   } catch {
     return undefined;
   }
@@ -4077,7 +4096,10 @@ function createDurableEvalAgentForwardedProps(
   // The durable hosted runtime reads `model` and `runtimeOverrides` from the
   // top level of the forwarded props, so promote the eval overrides out of the
   // `veryfront` envelope while keeping the remaining metadata nested.
-  const veryfront = request.forwardedProps?.veryfront;
+  // Read as an own property: an inherited `veryfront` is not the eval's.
+  const veryfront = readOwnEvalForwardedVeryfront(request) as
+    | AgentServiceEvalForwardedProps
+    | undefined;
   return {
     ...request.forwardedProps,
     // The adapter body never carries agent selection (public AG-UI must not
@@ -4110,7 +4132,7 @@ function createDurableEvalAgentRunBody(
     }
     return { type: "main_branch" };
   }
-  const environmentContext = request.forwardedProps?.veryfront?.environmentContext;
+  const environmentContext = readOwnEvalEnvironmentContext(request);
   // Durable runs also read the environment context from the `studio_context`
   // item, the same item a Studio message carries. Run admission caps each item
   // at 16 KB, so a larger context travels only in the forwarded props, which

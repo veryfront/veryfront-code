@@ -174,6 +174,8 @@ import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.t
 import type { AgentManualPause } from "#veryfront/agent/runtime/manual-pause.ts";
 
 const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const ObjectHasOwn = Object.hasOwn;
+const ArrayIsArray = Array.isArray;
 
 const getAnyObjectSchema = defineSchema((v) => v.record(v.string(), v.unknown()));
 const anyObjectSchema = lazySchema(getAnyObjectSchema) as Schema<Record<string, unknown>>;
@@ -1440,10 +1442,17 @@ function createProviderReplayCheckpointRelay(): {
 function readForwardedEvalEnvironmentContext(
   forwardedProps: RuntimeRunAgentInput["forwardedProps"],
 ): string | undefined {
-  const veryfront = forwardedProps?.veryfront;
-  if (!veryfront || typeof veryfront !== "object" || Array.isArray(veryfront)) return undefined;
-  const value = ObjectGetOwnPropertyDescriptor(veryfront, "environmentContext")?.value;
+  // Own data properties only, at each step: project code runs in this realm
+  // and can put `veryfront` or `environmentContext` on Object.prototype.
+  const veryfront = readOwnDataProperty(forwardedProps, "veryfront");
+  const value = readOwnDataProperty(veryfront, "environmentContext");
   return typeof value === "string" && value.trim() !== "" ? value : undefined;
+}
+
+function readOwnDataProperty(value: unknown, key: string): unknown {
+  if (typeof value !== "object" || value === null || ArrayIsArray(value)) return undefined;
+  const descriptor = ObjectGetOwnPropertyDescriptor(value, key);
+  return descriptor && ObjectHasOwn(descriptor, "value") ? descriptor.value : undefined;
 }
 
 export async function createRuntimeAgentStreamResponse(

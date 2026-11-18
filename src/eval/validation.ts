@@ -4,6 +4,22 @@ import { MAX_TIMER_DELAY_MS } from "#veryfront/utils/timer.ts";
 import type { EvalExample, EvalExampleInput } from "./types.ts";
 
 const ArrayIsArray = Array.isArray;
+const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const ObjectHasOwn = Object.hasOwn;
+const jsonByteEncoder = new TextEncoder();
+
+/**
+ * The forwarded props budget of a hosted run, in bytes of JSON. Request
+ * validation and durable run admission both reject a larger envelope.
+ */
+export const MAX_EVAL_FORWARDED_PROPS_BYTES = 196_608;
+
+/**
+ * The size allowed for an eval `environmentContext`, in bytes of JSON. It
+ * travels in the forwarded props, so the cap leaves 64 KB of that budget for
+ * the request metadata and the prompt a durable run forwards beside it.
+ */
+export const MAX_EVAL_ENVIRONMENT_CONTEXT_BYTES = 131_072;
 
 export function createEvalValidationError(message: string): Error {
   return INVALID_ARGUMENT.create({ message });
@@ -67,7 +83,48 @@ export function normalizeEvalEnvironmentContext(
   if (typeof value !== "string" || value.trim() === "") {
     throw createEvalValidationError(`${label} environmentContext must be a non-empty string`);
   }
+  if (getEvalJsonByteLength(value) > MAX_EVAL_ENVIRONMENT_CONTEXT_BYTES) {
+    throw createEvalValidationError(
+      `${label} environmentContext must be at most ${MAX_EVAL_ENVIRONMENT_CONTEXT_BYTES} bytes as JSON`,
+    );
+  }
   return value;
+}
+
+/**
+ * Read `environmentContext` as an own data property. Project code shares the
+ * realm and can extend Object.prototype, so an inherited value is not the
+ * eval's or the example's.
+ */
+export function readOwnEvalEnvironmentContext(value: object): unknown {
+  const descriptor = ObjectGetOwnPropertyDescriptor(value, "environmentContext");
+  return descriptor && ObjectHasOwn(descriptor, "value") ? descriptor.value : undefined;
+}
+
+/**
+ * The context an eval case runs with: the example's own value replaces the
+ * eval's own value.
+ */
+export function resolveEvalCaseEnvironmentContext(
+  example: object,
+  definition: object,
+): string | undefined {
+  const value = readOwnEvalEnvironmentContext(example) ??
+    readOwnEvalEnvironmentContext(definition);
+  return typeof value === "string" ? value : undefined;
+}
+
+/**
+ * The UTF-8 size of a value as JSON, the form in which it crosses a request.
+ * A value that cannot be serialized counts as over any budget.
+ */
+export function getEvalJsonByteLength(value: unknown): number {
+  try {
+    const json = JSON.stringify(value);
+    return json === undefined ? 0 : jsonByteEncoder.encode(json).byteLength;
+  } catch {
+    return Number.POSITIVE_INFINITY;
+  }
 }
 
 export function assertCanonicalEvalString(
@@ -169,7 +226,7 @@ export function normalizeEvalExamples(
 
     assertMetadata(example.metadata, `${source}[${index}]`);
     const environmentContext = normalizeEvalEnvironmentContext(
-      example.environmentContext,
+      readOwnEvalEnvironmentContext(example),
       `${source}[${index}]`,
     );
 

@@ -2100,6 +2100,16 @@ describe("internal-agents/run-stream", () => {
     await run({});
     await run({ veryfront: { environmentContext: "   " } });
     await run({ veryfront: { environmentContext: 3 } });
+    // An inherited `veryfront` or `environmentContext` is not the eval's:
+    // project code runs in this realm and can extend Object.prototype.
+    await run({ veryfront: Object.create({ environmentContext: "inherited context" }) });
+    const objectPrototype = Object.prototype as Record<string, unknown>;
+    objectPrototype.veryfront = { environmentContext: "inherited context" };
+    try {
+      await run({});
+    } finally {
+      delete objectPrototype.veryfront;
+    }
 
     const prompts = await Promise.all(systems.map(async (system) =>
       flattenSystemInstructions(
@@ -2112,9 +2122,10 @@ describe("internal-agents/run-stream", () => {
     assertEquals(evalPrompt.includes("Factory environment context."), false);
     assertEquals(evalPrompt.split("<environment_context>").length, 2);
     // Without a usable eval override, the configured context keeps its precedence.
-    assertEquals(configuredPrompts.length, 3);
+    assertEquals(configuredPrompts.length, 5);
     for (const prompt of configuredPrompts) {
       assertStringIncludes(prompt, "Factory environment context.");
+      assertEquals(prompt.includes("inherited context"), false);
       assertEquals(prompt.split("<environment_context>").length, 2);
     }
   });

@@ -258,6 +258,62 @@ describe("eval/agent-service", () => {
     }
   });
 
+  it("rejects an environment context a hosted run cannot carry", () => {
+    // 131,072 bytes of JSON including the two quotes is the largest accepted.
+    const largest = "a".repeat(131_070);
+    assertEquals(
+      buildAgentServiceEvalRequestBody({
+        exampleId: "smoke",
+        input: "List files",
+        environmentContext: largest,
+      }).forwardedProps?.veryfront.environmentContext,
+      largest,
+    );
+    assertThrows(
+      () =>
+        buildAgentServiceEvalRequestBody({
+          exampleId: "smoke",
+          input: "List files",
+          environmentContext: `${largest}a`,
+        }),
+      Error,
+      "Agent-service eval environmentContext must be at most 131072 bytes as JSON",
+    );
+    // Escapes and multi-byte text count at their serialized size.
+    assertThrows(
+      () =>
+        buildAgentServiceEvalRequestBody({
+          exampleId: "smoke",
+          input: "List files",
+          environmentContext: `tabs:${"\n".repeat(35_000)}${"é".repeat(35_000)}`,
+        }),
+      Error,
+      "Agent-service eval environmentContext must be at most 131072 bytes as JSON",
+    );
+  });
+
+  it("rejects an environment context that overflows forwarded props with the input", () => {
+    // A durable run forwards the prompt beside the context, in one envelope.
+    assertThrows(
+      () =>
+        buildAgentServiceEvalRequestBody({
+          exampleId: "smoke",
+          input: "b".repeat(70_000),
+          environmentContext: "a".repeat(130_000),
+        }),
+      Error,
+      "must fit together in the 196608-byte forwarded props budget",
+    );
+    assertEquals(
+      buildAgentServiceEvalRequestBody({
+        exampleId: "smoke",
+        input: "b".repeat(60_000),
+        environmentContext: "a".repeat(130_000),
+      }).messages[0]?.parts[0]?.text.length,
+      60_000,
+    );
+  });
+
   it("does not clear allowed tools for maxSteps-only runtime overrides", () => {
     const body = buildAgentServiceEvalRequestBody({
       exampleId: "smoke",

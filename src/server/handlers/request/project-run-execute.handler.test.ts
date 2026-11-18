@@ -7054,6 +7054,77 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     }
   });
 
+  it("ignores an eval environment context inherited from Object.prototype", async () => {
+    const model = scriptedModel([{ text: "Paris" }], { modelId: "hosted/eval-context-own" });
+    const sourceAgent = agent({
+      id: "context-own-researcher",
+      model: "hosted/eval-context-own",
+      system: "Answer briefly.",
+      skills: false,
+      environmentContext: "configured context",
+      resolveModelTransport: () => ({ model }),
+    });
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: runTaskDefinition,
+      findEvalById: async (target) =>
+        target === "eval:context-own"
+          ? {
+            id: "eval:context-own",
+            name: "Studio context",
+            filePath: "evals/context.eval.ts",
+            exportName: "default",
+            // No environment context: the agent's configured one applies.
+            definition: evalAgent({
+              id: "eval:context-own",
+              target: "agent:context-own-researcher",
+              dataset: datasets.inline([{ id: "q1", input: "France capital?" }]),
+            }),
+          }
+          : null,
+      runEval: runEvalDefinition,
+      createEvalAgentAdapter: (config) =>
+        createAgentServiceEvalAdapter({ ...config, requestTimeoutMs: 250 }),
+    }));
+    const body = {
+      runId: "run_eval_context_own_agent",
+      kind: "task",
+      target: "task:eval",
+      projectId: "proj-1",
+      runtimeAgUiEndpoint: "http://localhost:4311/api/ag-ui",
+      config: { eval_id: "eval:context-own" },
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_eval_context_own_agent/execute",
+      body,
+      { "x-token": "runtime-token" },
+      "http://localhost:4311",
+    );
+    const objectPrototype = Object.prototype as Record<string, unknown>;
+    try {
+      const result = await withEnvValue(
+        "PORT",
+        "4311",
+        () => {
+          // A project eval module can extend the prototype during discovery.
+          objectPrototype.environmentContext = "inherited context";
+          return handler.handle(request, createCtx(publicKeyPem));
+        },
+      );
+      delete objectPrototype.environmentContext;
+
+      assertExists(result.response);
+      assertEquals((await result.response.json()).success, true);
+      const [call] = model.calls;
+      assertExists(call);
+      const system = JSON.stringify(call.prompt.filter((message) => message.role === "system"));
+      assertStringIncludes(system, "configured context");
+      assertEquals(system.includes("inherited context"), false);
+    } finally {
+      delete objectPrototype.environmentContext;
+      agentRegistry.delete(sourceAgent.id);
+    }
+  });
+
   it("applies forwarded eval tool restrictions to local source agent runs", async () => {
     let sourceAgentStreamCalls = 0;
     let observedToolNames: string[] = [];

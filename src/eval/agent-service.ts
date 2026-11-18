@@ -24,9 +24,13 @@ import {
   assertEvalTimerDuration,
   assertFiniteEvalNumber,
   createEvalValidationError,
+  getEvalJsonByteLength,
+  MAX_EVAL_FORWARDED_PROPS_BYTES,
   normalizeEvalEnvironmentContext,
   normalizeEvalString,
   normalizeEvalStringList,
+  readOwnEvalEnvironmentContext,
+  resolveEvalCaseEnvironmentContext,
   stringifyEvalError,
 } from "./validation.ts";
 import { trustedLocalEvalFetchAgentId } from "./agent-service/trusted-fetch.ts";
@@ -292,7 +296,7 @@ function createVeryfrontForwardedProps(
     veryfront.model = normalizeEvalString(overrides.model, "Agent-service eval model");
   }
   const environmentContext = normalizeEvalEnvironmentContext(
-    input.environmentContext,
+    readOwnEvalEnvironmentContext(input),
     "Agent-service eval",
   );
   if (environmentContext !== undefined) veryfront.environmentContext = environmentContext;
@@ -836,12 +840,46 @@ export function evaluateAgentServiceEvalEnvironment(
   return { ok: !hasBlockers, resolvedApiUrl, messages };
 }
 
+/** The longest agent id a durable run stamps into the forwarded props. */
+const MAX_FORWARDED_AGENT_ID_LENGTH = 128;
+
+/**
+ * Reject an environment context that cannot reach a hosted run. A durable run
+ * forwards the context beside the prompt, the promoted model and runtime
+ * overrides, and the resolved agent id, so the whole envelope is measured.
+ */
+function assertEnvironmentContextFitsForwardedProps(
+  veryfront: AgentServiceEvalForwardedProps,
+  prompt: string,
+): void {
+  const envelope = {
+    veryfront: {
+      ...veryfront,
+      agentId: veryfront.agentId ?? "a".repeat(MAX_FORWARDED_AGENT_ID_LENGTH),
+    },
+    ...(veryfront.model !== undefined ? { model: veryfront.model } : {}),
+    ...(veryfront.runtimeOverrides !== undefined
+      ? { runtimeOverrides: veryfront.runtimeOverrides }
+      : {}),
+    prompt,
+  };
+  if (getEvalJsonByteLength(envelope) > MAX_EVAL_FORWARDED_PROPS_BYTES) {
+    throw createEvalValidationError(
+      `Agent-service eval environmentContext and input must fit together in the ${MAX_EVAL_FORWARDED_PROPS_BYTES}-byte forwarded props budget of a hosted run`,
+    );
+  }
+}
+
 /** Build the AG-UI request body for a single eval example. */
 export function buildAgentServiceEvalRequestBody(
   input: BuildAgentServiceEvalRequestBodyInput,
 ): AgentServiceEvalRequestBody {
   const exampleId = normalizeEvalString(input.exampleId, "Agent-service eval example id");
   const veryfront = createVeryfrontForwardedProps(input);
+  const prompt = stringifyPromptInput(input.input);
+  if (veryfront && readOwnEvalEnvironmentContext(veryfront) !== undefined) {
+    assertEnvironmentContextFitsForwardedProps(veryfront, prompt);
+  }
   const metadata = {
     ...getInputMetadata(input.input),
     ...(input.metadata ?? {}),
@@ -861,7 +899,7 @@ export function buildAgentServiceEvalRequestBody(
       {
         id: crypto.randomUUID(),
         role: "user",
-        parts: [{ type: "text", text: stringifyPromptInput(input.input) }],
+        parts: [{ type: "text", text: prompt }],
       },
     ],
   };
@@ -911,8 +949,10 @@ export function createAgentServiceEvalAdapter(
         allowedTools: config.allowedTools,
         forceRuntimeOverrides: config.forceRuntimeOverrides,
         maxSteps: config.maxSteps,
-        environmentContext: context.example.environmentContext ??
-          context.definition.environmentContext,
+        environmentContext: resolveEvalCaseEnvironmentContext(
+          context.example,
+          context.definition,
+        ),
       });
       const parseOptions: ParseAgUiSseResponseOptions = {
         ...(config.progressThrottleMs !== undefined
