@@ -170,12 +170,34 @@ export function getMergePreview(
  * `VERYFRONT_PROJECT_ID` puts the project id where the slug usually goes,
  * while a push records the resolved slug and id, so either may match.
  */
-function receiptNamesProject(
+export function receiptNamesProject(
   receipt: { projectId: string; projectSlug: string },
   project: { projectSlug: string; projectId?: string },
 ): boolean {
   if (project.projectId !== undefined) return receipt.projectId === project.projectId;
   return receipt.projectSlug === project.projectSlug || receipt.projectId === project.projectSlug;
+}
+
+/**
+ * The sync baseline a merge target inherits: the given paths, with the
+ * target's own digests and versions. A path the target does not hold is left
+ * out.
+ */
+export async function buildMergeTargetSyncFiles(
+  paths: readonly string[],
+  targetFiles: ReadonlyArray<{ path: string; content: string; version_id?: string }>,
+): Promise<Record<string, SyncFileSnapshot>> {
+  const byPath = new Map(targetFiles.map((file) => [file.path, file]));
+  const baseline: Record<string, SyncFileSnapshot> = {};
+  for (const path of paths) {
+    const file = byPath.get(path);
+    if (!file) continue;
+    baseline[path] = {
+      digest: await computeContentDigest(file.content),
+      ...(file.version_id ? { versionId: file.version_id } : {}),
+    };
+  }
+  return baseline;
 }
 
 /**
@@ -232,29 +254,21 @@ export async function recordMergeInPushReceipt(input: {
   });
   // A source branch pushed by an older CLI has no baseline. The target's own
   // entry, if it has one, still describes its pre-merge tree, so it is rebuilt
-  // from the whole target: the digest check above proved that tree is exactly
-  // what this directory pushed. A target with no entry keeps none.
+  // from the paths the receipt proves this directory pushed. The digest covers
+  // the whole remote tree, including files the push only preserved, so those
+  // stay out: a later local edit to one must still conflict. A target with no
+  // entry keeps none.
   const baselinePaths = sourceBaseline
     ? Object.keys(sourceBaseline.files)
     : (await readSyncTarget(input.projectDir, { ...scope, branch: input.targetBranch }))
-    ? files.map((file) => file.path)
+    ? receipt.localPaths ?? []
     : null;
   if (baselinePaths) {
-    const targetFiles = new Map(files.map((file) => [file.path, file]));
-    const baseline: Record<string, SyncFileSnapshot> = {};
-    for (const path of baselinePaths) {
-      const file = targetFiles.get(path);
-      if (!file) continue;
-      baseline[path] = {
-        digest: await computeContentDigest(file.content),
-        ...(file.version_id ? { versionId: file.version_id } : {}),
-      };
-    }
     await writeSyncTarget(input.projectDir, {
       ...scope,
       projectSlug: receipt.projectSlug,
       branch: input.targetBranch,
-      files: baseline,
+      files: await buildMergeTargetSyncFiles(baselinePaths, files),
     });
   }
 

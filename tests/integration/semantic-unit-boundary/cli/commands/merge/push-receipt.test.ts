@@ -42,14 +42,19 @@ describe("recordMergeInPushReceipt", () => {
   const CONFIG = { path: "veryfront.json", content: "{}\n" };
   const PUSHED_FILES = [PAGE, CONFIG];
 
-  async function writeBranchReceipt(projectDir: string, branch: string): Promise<PushReceipt> {
+  async function writeBranchReceipt(
+    projectDir: string,
+    branch: string,
+    // Files the push left on the remote without uploading them.
+    preserved: ReadonlyArray<{ path: string; content: string }> = [],
+  ): Promise<PushReceipt> {
     return await writePushReceipt(projectDir, {
       controlPlane: CONTROL_PLANE,
       projectId: "550e8400-e29b-41d4-a716-446655440000",
       projectSlug: "support-desk",
       branch,
       commitSha: null,
-      sourceDigest: await computeSourceDigest(PUSHED_FILES),
+      sourceDigest: await computeSourceDigest([...PUSHED_FILES, ...preserved]),
       localSourceDigest: await computeSourceDigest(PUSHED_FILES),
       localPaths: PUSHED_FILES.map((file) => file.path),
       clean: false,
@@ -160,10 +165,13 @@ describe("recordMergeInPushReceipt", () => {
   it("replaces main's stale sync baseline when the merged branch recorded none", async () => {
     // An older CLI pushed new-headline without a baseline, while main has one
     // from before the merge. Left in place, the next push to main would
-    // compare against the pre-merge tree.
+    // compare against the pre-merge tree. The rebuilt baseline holds only the
+    // paths this directory pushed: the remote also keeps a file the push only
+    // preserved, and a later local edit to it must still conflict.
+    const PRESERVED = { path: "app/remote-only.tsx", content: "remote\n" };
     const projectDir = await makeTempDir();
     try {
-      const pushed = await writeBranchReceipt(projectDir, "new-headline");
+      const pushed = await writeBranchReceipt(projectDir, "new-headline", [PRESERVED]);
       const scope = { controlPlane: CONTROL_PLANE, projectId: pushed.projectId };
       await writeSyncTarget(projectDir, {
         ...scope,
@@ -174,10 +182,11 @@ describe("recordMergeInPushReceipt", () => {
           "app/removed.tsx": { digest: await computeContentDigest("removed\n") },
         },
       });
-      const mainFiles = PUSHED_FILES.map((file, index) => ({
+      const pushedOnMain = PUSHED_FILES.map((file, index) => ({
         ...file,
         version_id: `main-version-${index}`,
       }));
+      const mainFiles = [...pushedOnMain, { ...PRESERVED, version_id: "main-version-preserved" }];
 
       const recorded = await recordMergeInPushReceipt({
         client: filesClient(mainFiles, []),
@@ -190,7 +199,7 @@ describe("recordMergeInPushReceipt", () => {
 
       assertEquals(recorded, true);
       const expected: Record<string, { digest: string; versionId: string }> = {};
-      for (const file of mainFiles) {
+      for (const file of pushedOnMain) {
         expected[file.path] = {
           digest: await computeContentDigest(file.content),
           versionId: file.version_id,
