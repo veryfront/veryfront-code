@@ -841,7 +841,7 @@ export function evaluateAgentServiceEvalEnvironment(
 }
 
 /** The longest agent id a durable run stamps into the forwarded props. */
-const MAX_FORWARDED_AGENT_ID_LENGTH = 128;
+const MAX_FORWARDED_AGENT_ID_LENGTH = 512;
 
 /**
  * Reject an environment context that cannot reach a hosted run. A durable run
@@ -855,7 +855,8 @@ function assertEnvironmentContextFitsForwardedProps(
   const envelope = {
     veryfront: {
       ...veryfront,
-      agentId: veryfront.agentId ?? "a".repeat(MAX_FORWARDED_AGENT_ID_LENGTH),
+      // Sized for the longest id whose every character JSON escapes to six bytes.
+      agentId: veryfront.agentId ?? "\u0000".repeat(MAX_FORWARDED_AGENT_ID_LENGTH),
     },
     ...(veryfront.model !== undefined ? { model: veryfront.model } : {}),
     ...(veryfront.runtimeOverrides !== undefined

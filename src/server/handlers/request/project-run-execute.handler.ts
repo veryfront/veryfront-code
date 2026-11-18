@@ -4198,7 +4198,7 @@ function createDurableEvalAgentFetch(
           "Content-Type": "application/json",
           "Idempotency-Key": `eval:${input.parentRunId}:${requestBody.runId}`,
         },
-        body: JSON.stringify(createDurableEvalAgentRunBody(input, requestBody)),
+        body: privateJsonStringify(createDurableEvalAgentRunBody(input, requestBody)),
         signal: init?.signal,
       }),
     );

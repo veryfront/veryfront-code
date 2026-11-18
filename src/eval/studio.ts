@@ -7,6 +7,11 @@ import {
   readOwnEvalEnvironmentContextText,
 } from "./validation.ts";
 
+// Captured at load: project eval modules share the realm and can replace these.
+const ObjectHasOwn = Object.hasOwn;
+const ReflectDefineProperty = Reflect.defineProperty;
+const ReflectDeleteProperty = Reflect.deleteProperty;
+
 /** Schema for Eval Studio capabilities. */
 export const getEvalStudioCapabilitySchema = defineSchema((v) =>
   v.enum(["project.evals.read", "project.evals.write", "project.evals.run"] as const)
@@ -390,8 +395,8 @@ export function createEvalSourceDocument(
 }
 
 function pinOwnEnvironmentContext(value: EvalEnvironmentContextCarrier): void {
-  if (Object.hasOwn(value, "environmentContext")) return;
-  Reflect.defineProperty(value, "environmentContext", {
+  if (ObjectHasOwn(value, "environmentContext")) return;
+  ReflectDefineProperty(value, "environmentContext", {
     value: undefined,
     enumerable: true,
     writable: true,
@@ -404,6 +409,6 @@ function dropUndeclaredEnvironmentContext(
   declared: EvalEnvironmentContextCarrier,
 ): void {
   if (readOwnEvalEnvironmentContextText(declared) === undefined) {
-    Reflect.deleteProperty(projected, "environmentContext");
+    ReflectDeleteProperty(projected, "environmentContext");
   }
 }
