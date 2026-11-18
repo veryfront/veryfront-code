@@ -16,8 +16,12 @@ import {
   assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import type { AgentServiceMcpServerConfig } from "../service/mcp-server-config.ts";
 import type { ParsedHostedChatRequest } from "./chat-request-parser.ts";
-import type { RemoteMCPToolSourceConfig } from "#veryfront/tool/remote-mcp.ts";
+import {
+  getRemoteMCPSharedDiscoveryScope,
+  type RemoteMCPToolSourceConfig,
+} from "#veryfront/tool/remote-mcp.ts";
 import type { RemoteToolSource, ToolExecutionContext } from "#veryfront/tool/types.ts";
 import {
   acceptInheritedRunAdmission,
@@ -1122,4 +1126,32 @@ it("tool authorization rejects public identifiers, invalid terminal authority, a
     const spoofed = { ...target, runIdBindsToolAuthorization: true };
     assertEquals(hasHostedToolRunAuthorization(spoofed, target), false);
   }
+});
+
+Deno.test("terminal credential variants preserve the configured API server identity", () => {
+  const value = request();
+  registerHostedTerminalCredential(value, "synthetic-terminal", "synthetic-events");
+  const recorded: Array<AgentServiceMcpServerConfig | undefined> = [];
+  const scopes: Array<object | undefined> = [];
+  const server = {
+    kind: "veryfront-api",
+    id: "custom-platform-source",
+  } satisfies AgentServiceMcpServerConfig;
+  hostedTerminalToolSourceFactory(
+    value,
+    "https://api.example/mcp",
+    (config, metadata?: AgentServiceMcpServerConfig) => {
+      recorded.push(metadata);
+      scopes.push(getRemoteMCPSharedDiscoveryScope(config));
+      return {
+        id: config.id ?? "source",
+        listTools: async () => [],
+        executeTool: async () => ({ ok: true }),
+      };
+    },
+  )({ id: server.id, endpoint: "https://api.example/mcp" }, server);
+  assertEquals(recorded.length, 3);
+  for (const metadata of recorded) assertStrictEquals(metadata, server);
+  assertEquals(typeof scopes[0], "object");
+  for (const scope of scopes) assertStrictEquals(scope, scopes[0]);
 });

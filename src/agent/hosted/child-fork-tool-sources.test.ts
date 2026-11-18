@@ -1,3 +1,4 @@
+import type { AgentServiceMcpServerConfig } from "../service/mcp-server-config.ts";
 import { isToolAllowedBySourcePolicy } from "#veryfront/tool/platform-tool-policy.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import {
@@ -1155,4 +1156,30 @@ describe("child fork MCP source lifecycle", () => {
     assertEquals(sources.created.length, 2);
     assertEquals(sources.disposed.sort(), [...sources.created].sort());
   });
+});
+
+Deno.test("child fork discovery forwards configured server identity to the source factory", async () => {
+  const recorded: Array<AgentServiceMcpServerConfig | undefined> = [];
+  const server = {
+    kind: "veryfront-api",
+    id: "custom-child-source",
+  } satisfies AgentServiceMcpServerConfig;
+  const result = await prepareDefaultHostedChildForkToolSources({
+    authToken: "synthetic-token",
+    apiMcpUrl: "https://api.example/mcp",
+    mcpServers: [server],
+    getProjectId: () => "project-1",
+    createRemoteToolSource: (config, metadata?: AgentServiceMcpServerConfig) => {
+      recorded.push(metadata);
+      return {
+        id: config.id ?? "source",
+        listTools: async () => [],
+        executeTool: async () => ({ ok: true }),
+      };
+    },
+  });
+  assertEquals(result.ok, true);
+  assertEquals(recorded.length, 1);
+  assertStrictEquals(recorded[0], server);
+  if (result.ok) await result.closeStudioMcpTools?.();
 });

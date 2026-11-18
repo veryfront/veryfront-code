@@ -111,6 +111,7 @@ export type {
 export {
   createRemoteMCPToolSource,
   createRemoteMCPToolSourceFactoryWithTransport,
+  getRemoteMCPSharedDiscoveryScope,
   type RemoteMCPToolSourceTransportOptions,
 } from "./remote-mcp.ts";
 export { hasToolExecutionErrorMarker, isErroredToolExecutionResult } from "./result.ts";
