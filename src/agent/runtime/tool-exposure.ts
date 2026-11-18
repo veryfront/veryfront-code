@@ -897,20 +897,90 @@ export function createToolExposureState(
 }
 
 /**
- * The loaded names that `names` calls have reported to the model during one
- * step. Kept beside the state, not in it, so checkpoints never carry it.
+ * What the loading calls of one model step have told the model. A model can
+ * emit several tool search calls in one turn, in any mix of modes, and every
+ * one runs against the same step plan.
  */
-const reportedStepNames = createPrivateWeakStore<
+type ToolExposureStepReservation = {
+  step: ToolExposurePlan;
+  /** Loaded names a call in this step reported: later calls never evict them. */
+  names: Set<string>;
+  /** Loaded names when the step's first call ran, which the step plan shows as visible. */
+  startLoaded: Set<string>;
+};
+
+/** Kept beside the state, not in it, so checkpoints never carry it. */
+const stepReservations = createPrivateWeakStore<
   ToolExposureState,
-  { step: ToolExposurePlan; names: Set<string> }
+  ToolExposureStepReservation
 >();
 
-function readReportedStepNames(
+function openStepReservation(
   state: ToolExposureState,
   step: ToolExposurePlan | undefined,
+): ToolExposureStepReservation | undefined {
+  if (step === undefined) return undefined;
+  const entry = stepReservations.get(state);
+  if (entry !== undefined && entry.step === step) return entry;
+  const created = {
+    step,
+    names: createPrivateSet<string>(),
+    startLoaded: createPrivateSet(state.loadedToolNames),
+  };
+  stepReservations.set(state, created);
+  return created;
+}
+
+/**
+ * Refresh every reserved name still loaded, so loading other tools evicts
+ * older unreserved names first. Returns the names that hold a slot.
+ */
+function refreshReservedToolNames(
+  state: ToolExposureState,
+  reservation: ToolExposureStepReservation | undefined,
 ): Set<string> {
-  const entry = step === undefined ? undefined : reportedStepNames.get(state);
-  return entry !== undefined && entry.step === step ? entry.names : createPrivateSet<string>();
+  const kept = createPrivateSet<string>();
+  if (reservation === undefined) return kept;
+  for (const name of reservation.names) {
+    if (!state.loadedToolNames.has(name)) continue;
+    ReflectApply(SetAdd, kept, [name]);
+    state.loadedToolNames.delete(name);
+    state.loadedToolNames.add(name);
+  }
+  return kept;
+}
+
+/** Reserve the reported matches that hold a loaded slot. */
+function reserveReportedToolNames(
+  state: ToolExposureState,
+  reservation: ToolExposureStepReservation | undefined,
+  matches: readonly ToolSearchMatch[],
+): void {
+  if (reservation === undefined) return;
+  for (let index = 0; index < matches.length; index++) {
+    const name = matches[index]!.name;
+    if (state.loadedToolNames.has(name)) ReflectApply(SetAdd, reservation.names, [name]);
+  }
+}
+
+/**
+ * The step plan lists a tool as available when it was loaded at step start. An
+ * earlier call in the same step can have evicted it since, so the next model
+ * call no longer carries it: rank it as a tool that has to load again.
+ */
+function reconcileEvictedMatches(
+  matches: readonly ToolSearchMatch[],
+  state: ToolExposureState,
+  reservation: ToolExposureStepReservation | undefined,
+): ToolSearchMatch[] {
+  return mapPrivateArray(
+    matches,
+    (match) =>
+      reservation !== undefined && match.status === "available" &&
+        setHas(reservation.startLoaded, match.name) && !state.loadedToolNames.has(match.name)
+        ? { ...match, status: "loaded" as const }
+        : match,
+  );
 }
 
 function retainNewestLoadedToolNames(state: ToolExposureState, limit: number | undefined): void {
@@ -1230,18 +1300,29 @@ export function searchToolExposure(input: {
   available?: readonly ToolDefinition[];
   state: ToolExposureState;
   maxLoadedTools?: number;
+  /**
+   * The exposure plan of the model step this call belongs to. Calls that share
+   * a plan never evict a tool an earlier call in that step reported.
+   */
+  step?: ToolExposurePlan;
 }): ToolSearchResult {
-  const ranked = rankToolExposureMatches({
-    query: input.query,
-    available: input.available ?? [],
-    authorized: input.authorized,
-  });
+  const reservation = openStepReservation(input.state, input.step);
+  const ranked = reconcileEvictedMatches(
+    rankToolExposureMatches({
+      query: input.query,
+      available: input.available ?? [],
+      authorized: input.authorized,
+    }),
+    input.state,
+    reservation,
+  );
   if (ranked[0]?.status === "available") {
     const matches = slicePrivateArray(
       filterPrivateArray(ranked, (match) => match.status === "available"),
       0,
       TOOL_SEARCH_RESULT_LIMIT,
     );
+    reserveReportedToolNames(input.state, reservation, matches);
     return {
       matches,
       resultCount: matches.length,
@@ -1250,25 +1331,32 @@ export function searchToolExposure(input: {
     };
   }
 
-  const matches = slicePrivateArray(
-    filterPrivateArray(ranked, (match) => match.status === "loaded"),
-    0,
-    input.maxLoadedTools === undefined
-      ? TOOL_SEARCH_RESULT_LIMIT
-      : Math.min(TOOL_SEARCH_RESULT_LIMIT, input.maxLoadedTools),
-  );
-
-  for (let matchIndex = 0; matchIndex < matches.length; matchIndex++) {
-    if (!hasOwn(matches, matchIndex)) continue;
-    const match = matches[matchIndex]!;
-    input.state.loadedToolNames.delete(match.name);
-    input.state.loadedToolNames.add(match.name);
+  // A tool an earlier call in this step reported keeps its slot, so this call
+  // loads only what fits beside it.
+  const kept = refreshReservedToolNames(input.state, reservation);
+  const loadLimit = input.maxLoadedTools === undefined
+    ? TOOL_SEARCH_RESULT_LIMIT
+    : Math.max(0, Math.min(TOOL_SEARCH_RESULT_LIMIT, input.maxLoadedTools - kept.size));
+  const matches: ToolSearchMatch[] = [];
+  let loading = 0;
+  for (let matchIndex = 0; matchIndex < ranked.length; matchIndex++) {
+    if (matches.length === TOOL_SEARCH_RESULT_LIMIT) break;
+    const match = ranked[matchIndex]!;
+    if (match.status !== "loaded") continue;
+    if (!setHas(kept, match.name)) {
+      if (loading === loadLimit) continue;
+      loading += 1;
+      input.state.loadedToolNames.delete(match.name);
+      input.state.loadedToolNames.add(match.name);
+    }
+    pushPrivateArray(matches, match);
   }
   retainNewestLoadedToolNames(input.state, input.maxLoadedTools);
   const loadedMatches = filterPrivateArray(
     matches,
     (match) => input.state.loadedToolNames.has(match.name),
   );
+  reserveReportedToolNames(input.state, reservation, loadedMatches);
 
   return {
     matches: loadedMatches,
@@ -1380,7 +1468,7 @@ export function loadToolExposureNames(input: {
     candidateLimit: Number.POSITIVE_INFINITY,
   });
   const seen = createPrivateSet<string>();
-  const found: ToolSearchMatch[] = [];
+  const requested: ToolSearchMatch[] = [];
   const notFound: string[] = [];
   for (let index = 0; index < names.length; index++) {
     const name = names[index]!;
@@ -1400,24 +1488,18 @@ export function loadToolExposureNames(input: {
     }
     if (setHas(seen, match.name)) continue;
     ReflectApply(SetAdd, seen, [match.name]);
-    pushPrivateArray(found, match);
+    pushPrivateArray(requested, match);
   }
+  const reservation = openStepReservation(input.state, input.step);
+  const found = reconcileEvictedMatches(requested, input.state, reservation);
 
   // A requested tool that is visible only because an earlier search loaded it
   // takes a loaded slot too. Refresh it first and keep its slot, so loading the
   // other requested names never evicts it.
   //
-  // A model can emit several names calls in one turn, and every one runs
-  // against the same step. A tool an earlier call reported keeps its slot the
-  // same way, so a later call reports what does not fit instead of evicting it.
-  const reported = readReportedStepNames(input.state, input.step);
-  const kept = createPrivateSet<string>();
-  for (const name of reported) {
-    if (!input.state.loadedToolNames.has(name)) continue;
-    ReflectApply(SetAdd, kept, [name]);
-    input.state.loadedToolNames.delete(name);
-    input.state.loadedToolNames.add(name);
-  }
+  // A tool an earlier call in this step reported keeps its slot the same way,
+  // so a later call reports what does not fit instead of evicting it.
+  const kept = refreshReservedToolNames(input.state, reservation);
   const stateBacked = createPrivateSet<string>();
   for (let index = 0; index < found.length; index++) {
     const match = found[index]!;
@@ -1459,13 +1541,7 @@ export function loadToolExposureNames(input: {
       loadedCount += 1;
     } else pushPrivateArray(notLoaded, match.name);
   }
-  if (input.step !== undefined) {
-    for (let index = 0; index < matches.length; index++) {
-      const name = matches[index]!.name;
-      if (input.state.loadedToolNames.has(name)) ReflectApply(SetAdd, reported, [name]);
-    }
-    reportedStepNames.set(input.state, { step: input.step, names: reported });
-  }
+  reserveReportedToolNames(input.state, reservation, matches);
   return {
     matches,
     resultCount: matches.length,
