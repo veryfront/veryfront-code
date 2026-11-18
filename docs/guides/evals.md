@@ -702,6 +702,10 @@ eval also rejects an example whose context and input together exceed that cap.
 Local CLI evals render it for the target agent only;
 delegated child agents keep their own configuration. Live agent-service evals
 forward it to the endpoint as `forwardedProps.veryfront.environmentContext`.
+An AG-UI route you mount yourself with `createAgUiHandler` treats forwarded
+props as caller data and keeps the agent's configured `environmentContext`, so
+run an eval that depends on the context with `veryfront eval` or against a
+Veryfront project endpoint.
 Evals that Veryfront runs for a project apply it too: a local runtime renders it
 for the target agent, and a durable run receives it in its forwarded props.
 When the text fits in 16 KB, the durable run also receives it as the

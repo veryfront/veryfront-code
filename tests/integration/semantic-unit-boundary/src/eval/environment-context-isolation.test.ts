@@ -32,6 +32,33 @@ describe("eval environment context in a modified realm", () => {
     }
   });
 
+  it("checks for a blank context without calling a replaced String.prototype.trim", () => {
+    const definition = evalAgent({
+      target: "agent:researcher",
+      dataset: [{ id: "q1", input: "hi" }],
+      environmentContext: "active tab: app/page.tsx",
+    });
+    const originalTrim = String.prototype.trim;
+    try {
+      // Project code can key the replacement off the context text alone.
+      String.prototype.trim = function (this: string) {
+        const text = String(this);
+        return text.startsWith("active tab") ? "" : originalTrim.call(text);
+      };
+      assertEquals(isEvalDefinition(definition), true);
+      assertEquals(
+        evalAgent({
+          target: "agent:researcher",
+          dataset: [{ id: "q1", input: "hi" }],
+          environmentContext: "active tab: app/page.tsx",
+        }).environmentContext,
+        "active tab: app/page.tsx",
+      );
+    } finally {
+      String.prototype.trim = originalTrim;
+    }
+  });
+
   it("does not accept a definition mutated to hold an oversized or inherited context", () => {
     const definition = evalAgent({
       target: "agent:researcher",

@@ -3,7 +3,7 @@ import { isProxyWithoutHooks } from "#veryfront/platform/compat/error-introspect
 import { MAX_TIMER_DELAY_MS } from "#veryfront/utils/timer.ts";
 import { privateByteLength } from "#veryfront/security/private-bytes.ts";
 import { privateJsonStringify } from "#veryfront/security/private-json.ts";
-import { encodePrivateText } from "#veryfront/security/private-text.ts";
+import { encodePrivateText, privateTextTrim } from "#veryfront/security/private-text.ts";
 import type { EvalExample, EvalExampleInput } from "./types.ts";
 
 const ArrayIsArray = Array.isArray;
@@ -82,7 +82,7 @@ export function normalizeEvalEnvironmentContext(
   label: string,
 ): string | undefined {
   if (value === undefined) return undefined;
-  if (typeof value !== "string" || value.trim() === "") {
+  if (typeof value !== "string" || privateTextTrim(value) === "") {
     throw createEvalValidationError(`${label} environmentContext must be a non-empty string`);
   }
   if (!isEvalEnvironmentContextWithinBudget(value)) {
@@ -129,7 +129,7 @@ export function readOwnEvalEnvironmentContextText(
 /** Whether a value is an `environmentContext` the public contract accepts. */
 export function isEvalEnvironmentContext(value: unknown): boolean {
   return value === undefined ||
-    (typeof value === "string" && value.trim() !== "" &&
+    (typeof value === "string" && privateTextTrim(value) !== "" &&
       isEvalEnvironmentContextWithinBudget(value));
 }
 

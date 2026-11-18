@@ -10,7 +10,7 @@ import {
   resolvePrivatePromise,
 } from "#veryfront/security/private-promise.ts";
 import { privateByteLength } from "#veryfront/security/private-bytes.ts";
-import { encodePrivateText } from "#veryfront/security/private-text.ts";
+import { encodePrivateText, privateTextTrim } from "#veryfront/security/private-text.ts";
 import { MAX_CONVERSATION_RUN_EVENT_APPEND_REQUEST_BYTES } from "#veryfront/agent/conversation/run-event-limits.ts";
 import { runWithToolCallOccurrences } from "#veryfront/runtime/tool-call-occurrence.ts";
 import { runWithRecoveryToolExecutionPolicy } from "#veryfront/runtime/execution-ownership-guard.ts";
@@ -1449,7 +1449,7 @@ function readForwardedEvalEnvironmentContext(
   // and can put `veryfront` or `environmentContext` on Object.prototype.
   const veryfront = readOwnDataProperty(forwardedProps, "veryfront");
   const value = readOwnDataProperty(veryfront, "environmentContext");
-  return typeof value === "string" && value.trim() !== "" ? value : undefined;
+  return typeof value === "string" && privateTextTrim(value) !== "" ? value : undefined;
 }
 
 function readOwnDataProperty(value: unknown, key: string): unknown {

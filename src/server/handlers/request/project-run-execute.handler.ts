@@ -363,7 +363,9 @@ function getOwnDataProperty(value: Record<string, unknown>, key: string): unknow
  */
 function readOwnEvalEnvironmentContext(body: unknown): string | undefined {
   const value = readOwnRecordProperty(readOwnEvalForwardedVeryfront(body), "environmentContext");
-  return typeof value === "string" && value.trim() !== "" ? value : undefined;
+  return typeof value === "string" && ReflectApply(StringPrototypeTrim, value, []) !== ""
+    ? value
+    : undefined;
 }
 
 /** The own `forwardedProps.veryfront` envelope of an eval request, if any. */
