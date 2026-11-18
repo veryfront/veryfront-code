@@ -161,6 +161,9 @@ export function buildLocalTools(
 ): HostToolSet {
   const config = context.infrastructure.getConfig();
   const projectTools = getDiscoveredHostTools({ agentId: taskContext.agentId });
+  const apiOwnsWebFetch = API_OWNED_WEB_FETCH_NAMES.some((name) =>
+    hostedChatRequestIncludesTool(request?.forwardedProps, name)
+  );
   const platformTools = markTrustedHostToolSet({
     // Persist canonical form ownership so replay remains safe after project tools change.
     [CANONICAL_FORM_INPUT_TOOL_ID]: {
@@ -174,13 +177,14 @@ export function buildLocalTools(
     // When the API attaches its own web_fetch, under either name the model can
     // call, it parks the run on the call and applies its checks. The host
     // offers the definition and waits for that; it must never fetch itself.
-    web_fetch: API_OWNED_WEB_FETCH_NAMES.some((name) =>
-        hostedChatRequestIncludesTool(request?.forwardedProps, name)
-      )
-      ? createApiOwnedHostedWebFetchTool()
-      : createHostedWebFetchTool(),
+    web_fetch: apiOwnsWebFetch ? createApiOwnedHostedWebFetchTool() : createHostedWebFetchTool(),
   });
   const tools = withPlatformHostToolAliases(platformTools, projectTools);
+  if (apiOwnsWebFetch && platformTools.web_fetch !== undefined) {
+    // A project tool named web_fetch normally keeps the bare name. The API
+    // treats that call as its own, so the project's execute must not run it.
+    copyOwnDataTools(tools, { web_fetch: platformTools.web_fetch });
+  }
 
   if (options.allowDelegation !== false) {
     const agentConfig = options.liveProjectSteering?.agent;

@@ -327,6 +327,48 @@ describe("cloud agent service runtime options", () => {
       assertStringIncludes(error.message, "requires execution cancellation");
     });
 
+    it("does not let a project web_fetch take an API-owned call", async () => {
+      let projectCalls = 0;
+      toolRegistryInternal.registerShared(
+        "web_fetch",
+        tool({
+          id: "web_fetch",
+          description: "Project-owned web_fetch",
+          inputSchema: defineSchema((v) => v.object({}))(),
+          execute: () => {
+            projectCalls++;
+            return { owner: "project" };
+          },
+        }),
+      );
+      try {
+        // The API treats a bare web_fetch call as its own, so the facade keeps the name.
+        const owned = buildWebFetchTools({ runtimeTools: [{ name: "web_fetch" }] });
+        assertEquals(hasTrustedHostToolProvenance(owned.web_fetch), true);
+        const controller = new AbortController();
+        const parked = new DOMException("Owning run parked", "AbortError");
+        controller.abort(parked);
+        assertEquals(
+          await Promise.resolve(
+            owned.web_fetch!.execute!(
+              { url: "http://127.0.0.1/page" },
+              {
+                abortSignal: controller.signal,
+              } as Parameters<NonNullable<NonNullable<typeof owned.web_fetch>["execute"]>>[1],
+            ),
+          ).catch((error) => error),
+          parked,
+        );
+        assertEquals(projectCalls, 0);
+
+        // Without API ownership the project tool keeps the bare name, as before.
+        const local = buildWebFetchTools();
+        assertEquals(hasTrustedHostToolProvenance(local.web_fetch), false);
+      } finally {
+        toolRegistryInternal.clearAll();
+      }
+    });
+
     it("still offers web_fetch to the model when the API owns it", () => {
       const tools = buildWebFetchTools({ runtimeTools: [{ name: "web_fetch" }] });
 
