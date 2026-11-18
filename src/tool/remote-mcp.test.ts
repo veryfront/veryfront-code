@@ -16,6 +16,7 @@ import {
 import {
   createRemoteMCPToolSource,
   createRemoteMCPToolSourceFactoryWithTransport,
+  getRemoteMCPSharedDiscoveryScope,
   MAX_REMOTE_MCP_CALL_RESPONSE_BYTES,
   MAX_REMOTE_MCP_TOOL_DEFINITIONS,
   MAX_REMOTE_MCP_TOOL_LIST_PAGES,
@@ -3169,3 +3170,25 @@ describe("tool/remote-mcp", () => {
     });
   });
 }
+
+Deno.test("shared discovery scope is opaque, stable across variants and isolated", () => {
+  const config = { id: "scope-test", endpoint: "https://api.example/mcp" };
+  assertEquals(getRemoteMCPSharedDiscoveryScope(config), undefined);
+  const shared = shareRemoteMCPProtocolState(config);
+  const scope = getRemoteMCPSharedDiscoveryScope(shared);
+  assertEquals(typeof scope, "object");
+  assertEquals(Object.isFrozen(scope), true);
+  assertEquals(Object.keys(scope ?? {}), []);
+  assertEquals(
+    getRemoteMCPSharedDiscoveryScope({ ...shared, headers: { Authorization: "synthetic" } }) ===
+      scope,
+    true,
+  );
+  assertEquals(
+    getRemoteMCPSharedDiscoveryScope(shareRemoteMCPProtocolState(config)) === scope,
+    false,
+  );
+  const forged = Object.fromEntries(Reflect.ownKeys(shared).map((key) => [key, {}]));
+  assertEquals(getRemoteMCPSharedDiscoveryScope({ ...config, ...forged }), undefined);
+  assertEquals(getRemoteMCPSharedDiscoveryScope(Object.create(shared)), undefined);
+});

@@ -1532,6 +1532,20 @@ export function shareRemoteMCPProtocolState<T extends RemoteMCPToolSourceConfig>
   return { ...config, [SHARED_MCP_PROTOCOL_STATE]: token };
 }
 
+/** Return an opaque identity shared by credential variants, without exposing protocol or header state. */
+export function getRemoteMCPSharedDiscoveryScope(
+  config: RemoteMCPToolSourceConfig,
+): object | undefined {
+  if (!objectHasOwn(config, SHARED_MCP_PROTOCOL_STATE) || !(SHARED_MCP_PROTOCOL_STATE in config)) {
+    return undefined;
+  }
+  const token = config[SHARED_MCP_PROTOCOL_STATE];
+  return typeof token === "object" && token !== null &&
+      sharedMcpProtocolStates.get(token) !== undefined
+    ? token
+    : undefined;
+}
+
 function readSharedMcpProtocolState(
   config: RemoteMCPToolSourceConfig,
 ): SharedMcpProtocolState | undefined {
