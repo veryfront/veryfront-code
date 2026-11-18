@@ -4143,6 +4143,194 @@ describe("Proxy Handler", () => {
     });
   });
 
+  // `veryfront up` opens a protected Preview with an environment access token
+  // the API mints for the gate. The API refuses that token as a session, so the
+  // proxy must read the project with its service token while the gate still
+  // verifies the cookie (veryfront/veryfront-issue-inbox#4301).
+  describe("preview environment access tokens", () => {
+    const SERVICE_TOKEN = "preview-service-token";
+
+    function environmentAccessClaims(overrides: Record<string, unknown> = {}) {
+      return {
+        userId: "user-123",
+        sub: "user-123",
+        aud: "environment-gate",
+        tokenUse: "environment_access",
+        projectId: "proj-123",
+        environmentId: "env-1",
+        ...overrides,
+      };
+    }
+
+    async function processPreview(
+      cookieToken: string | undefined,
+      options: { protected?: boolean } = {},
+    ) {
+      const projectAuthorizations: string[] = [];
+      const recorder = createRecordingLogger();
+      const { server, port } = createMockServer((req: Request) => {
+        const { pathname } = new URL(req.url);
+        if (pathname === "/auth/token") {
+          return Response.json({
+            access_token: SERVICE_TOKEN,
+            token_type: "Bearer",
+            expires_in: 3600,
+          });
+        }
+        if (pathname.startsWith("/projects/")) {
+          const authorization = req.headers.get("authorization") ?? "";
+          projectAuthorizations.push(authorization);
+          if (authorization !== `Bearer ${SERVICE_TOKEN}`) {
+            return new Response("Unauthorized", { status: 401 });
+          }
+          return Response.json({
+            id: "proj-123",
+            slug: "protected-project",
+            name: "Protected Project",
+            users: [{ id: "user-123" }],
+            environments: [{
+              id: "env-1",
+              name: "preview",
+              active_release_id: null,
+              protected: options.protected ?? true,
+            }],
+          });
+        }
+        return createNotFoundResponse();
+      });
+
+      const handler = createHandler(port, "", recorder.logger);
+      const headers: Record<string, string> = {
+        host: "protected-project.preview.veryfront.com",
+      };
+      if (cookieToken) headers.cookie = `authToken=${cookieToken}; theme=dark`;
+      const req = new Request("http://protected-project.preview.veryfront.com/page", { headers });
+      try {
+        const ctx = await handler.processRequest(req);
+        return { ctx, req, projectAuthorizations, logEntries: recorder.entries };
+      } finally {
+        await handler.close();
+        await server.shutdown();
+      }
+    }
+
+    it("opens a protected preview and forwards only the service token to the runtime", async () => {
+      const accessToken = await signTestJwt(environmentAccessClaims());
+      const { ctx, req, projectAuthorizations, logEntries } = await processPreview(accessToken);
+
+      assertEquals(ctx.error, undefined);
+      assertEquals(ctx.projectId, "proj-123");
+      assertEquals(ctx.environmentId, "env-1");
+      assertEquals(ctx.token, SERVICE_TOKEN);
+      assertEquals(projectAuthorizations.length > 0, true);
+      assertEquals(projectAuthorizations.every((h) => h === `Bearer ${SERVICE_TOKEN}`), true);
+
+      const forwarded = injectContextHeaders(req, ctx).headers;
+      assertEquals(forwarded.get("x-token"), SERVICE_TOKEN);
+      assertEquals(forwarded.get("cookie"), "theme=dark");
+      for (const [name, value] of forwarded) {
+        assertEquals(value.includes(accessToken), false, `${name} carries the access token`);
+      }
+
+      const logged = JSON.stringify(logEntries);
+      assertEquals(logged.includes(SERVICE_TOKEN), false, "logs carry the service token");
+      assertEquals(logged.includes(accessToken), false, "logs carry the access token");
+    });
+
+    it("keeps a signed-in member's session token as the preview credential", async () => {
+      const sessionToken = await signTestJwt({ userId: "user-123", sub: "user-123" });
+      const { ctx, projectAuthorizations } = await processPreview(sessionToken);
+
+      assertEquals(ctx.error, undefined);
+      assertEquals(ctx.token, sessionToken);
+      assertEquals(projectAuthorizations.every((h) => h === `Bearer ${SERVICE_TOKEN}`), true);
+    });
+
+    it("sends a forged environment access token to sign-in on a protected preview", async () => {
+      const forged = await signTestJwt(environmentAccessClaims(), "HS256", "not-the-signing-key");
+      const { ctx } = await processPreview(forged);
+
+      assertEquals(ctx.error?.status, 302);
+      assertEquals(ctx.error?.message, "Authentication required");
+      assertEquals(ctx.error?.redirectUrl?.includes("/sign-in"), true);
+      assertEquals(JSON.stringify(ctx.error).includes(SERVICE_TOKEN), false);
+    });
+
+    it("sends an expired environment access token to sign-in on a protected preview", async () => {
+      const expired = await signTestJwt(
+        environmentAccessClaims({ exp: Math.floor(Date.now() / 1000) - 60 }),
+      );
+      const { ctx } = await processPreview(expired);
+
+      assertEquals(ctx.error?.status, 302);
+      assertEquals(ctx.error?.message, "Authentication required");
+    });
+
+    it("denies an environment access token bound to another project or environment", async () => {
+      for (
+        const overrides of [{ projectId: "proj-other" }, { environmentId: "env-other" }]
+      ) {
+        const boundElsewhere = await signTestJwt(environmentAccessClaims(overrides));
+        const { ctx } = await processPreview(boundElsewhere);
+
+        assertEquals(ctx.error?.status, 403, JSON.stringify(overrides));
+        assertEquals(ctx.error?.message, "Access denied");
+      }
+    });
+
+    it("denies an environment access token whose owner is not a project member", async () => {
+      const nonMember = await signTestJwt(
+        environmentAccessClaims({ userId: "user-999", sub: "user-999" }),
+      );
+      const { ctx } = await processPreview(nonMember);
+
+      assertEquals(ctx.error?.status, 403);
+      assertEquals(ctx.error?.message, "Access denied");
+    });
+
+    it("gives a forged claim on an unprotected preview the same service read as no cookie", async () => {
+      const forged = await signTestJwt(environmentAccessClaims(), "HS256", "not-the-signing-key");
+      const withClaim = await processPreview(forged, { protected: false });
+      const anonymous = await processPreview(undefined, { protected: false });
+
+      assertEquals(anonymous.ctx.error, undefined);
+      assertEquals(anonymous.ctx.token, SERVICE_TOKEN);
+      assertEquals(withClaim.ctx.error, undefined);
+      assertEquals(withClaim.ctx.token, anonymous.ctx.token);
+      assertEquals(withClaim.ctx.projectId, anonymous.ctx.projectId);
+    });
+
+    it("never returns the environment access token as the API proxy credential", async () => {
+      const accessToken = await signTestJwt(environmentAccessClaims());
+      const { server, port } = createMockServer((req: Request) =>
+        new URL(req.url).pathname === "/auth/token"
+          ? Response.json({ access_token: SERVICE_TOKEN, token_type: "Bearer", expires_in: 3600 })
+          : createNotFoundResponse()
+      );
+      const handler = createHandler(port);
+      try {
+        const apiRequest = (cookie?: string) =>
+          new Request("http://protected-project.preview.veryfront.com/_vf/api/projects", {
+            headers: {
+              host: "protected-project.preview.veryfront.com",
+              ...(cookie ? { cookie } : {}),
+            },
+          });
+
+        const withAccessToken = await handler.getTokenForApi(
+          apiRequest(`authToken=${accessToken}`),
+        );
+        const anonymous = await handler.getTokenForApi(apiRequest());
+
+        assertEquals(withAccessToken, SERVICE_TOKEN);
+        assertEquals(withAccessToken, anonymous);
+      } finally {
+        await handler.close();
+        await server.shutdown();
+      }
+    });
+  });
+
   describe("injectContextHeaders", () => {
     it("replaces client environment identity with the canonical proxy pair", () => {
       const req = new Request("http://example.com/api/test", {
