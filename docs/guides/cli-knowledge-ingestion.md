@@ -168,7 +168,7 @@ veryfront knowledge ingest --path ./contracts --all --recursive --json
 ```
 
 Each source becomes a Markdown document. Its title comes from the first
-level-one heading, with the filename as the fallback. In canonical knowledge
+level-one heading (a `#` heading or Setext underline) outside code and HTML blocks, with the filename as the fallback. An empty authored H1 keeps the filename title without adding another heading. In canonical knowledge
 directories, a new document gets a stable path derived from its source identity.
 Re-ingesting that source updates its existing document after a title change.
 Automatic custom destinations use a bounded source-derived prefix and the full
