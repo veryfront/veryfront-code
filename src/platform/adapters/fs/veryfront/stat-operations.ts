@@ -39,6 +39,8 @@ const API_SEARCH_CIRCUIT_BREAKER_COOLDOWN_MS = 30_000;
 const INDEX_AUTHORITY_LIMIT_MS = 5 * 60 * 1000;
 
 interface StatIndexSnapshot {
+  scopeKey: string;
+  generation: number;
   fileIndex: Map<string, ProjectFile>;
   directoryIndex: Set<string>;
   pathMapping: Map<string, string>;
@@ -60,9 +62,16 @@ export class StatOperations extends VeryfrontOperationsBase {
   private buildingIndex: Promise<StatIndexSnapshot> | null = null;
   private buildingIndexScopeKey: string | null = null;
   private buildingIndexGeneration: number | null = null;
+  private buildingIndexFresh = false;
   private indexScopeKey: string | null = null;
   private indexGeneration = 0;
   private indexBuiltAt = 0;
+  private refreshFailure: {
+    scopeKey: string;
+    generation: number;
+    error: unknown;
+    retryAt: number;
+  } | null = null;
 
   private pathMapping: Map<string, string> = new Map();
 
@@ -100,7 +109,19 @@ export class StatOperations extends VeryfrontOperationsBase {
 
     logger.debug("stat called", { path, normalizedPath, cacheKey });
 
-    const snapshot = await this.ensureIndexBuilt(ctx);
+    let snapshot = await this.ensureIndexBuilt(ctx);
+    if (
+      ctx && ctx.sourceType !== "branch" &&
+      !snapshot.fileIndex.has(normalizedPath) && !snapshot.directoryIndex.has(normalizedPath) &&
+      !this.isSnapshotAuthoritative(snapshot, ctx) &&
+      !isFrameworkSourcePath(normalizedPath) &&
+      EXTENSION_PRIORITY.some((ext) => normalizedPath.endsWith(ext)) &&
+      this.apiSearchCircuitBreaker.canSearch()
+    ) {
+      // Only a complete, verified listing can renew published absence authority.
+      // Keep that scoped snapshot, even if another request replaces the index.
+      snapshot = await this.ensureIndexBuilt(ctx, 1, true);
+    }
 
     const fileIdx = snapshot.fileIndex;
     const dirIdx = snapshot.directoryIndex;
@@ -157,7 +178,7 @@ export class StatOperations extends VeryfrontOperationsBase {
     // the index is the authoritative listing for this snapshot: it has already
     // answered, and asking again costs one file-listing request per probe.
     if (
-      !this.isIndexAuthoritative() && !isFrameworkSourcePath(normalizedPath) &&
+      !this.isSnapshotAuthoritative(snapshot, ctx) && !isFrameworkSourcePath(normalizedPath) &&
       this.apiSearchCircuitBreaker.canSearch()
     ) {
       const hasKnownExt = EXTENSION_PRIORITY.some((ext) => normalizedPath.endsWith(ext));
@@ -215,16 +236,26 @@ export class StatOperations extends VeryfrontOperationsBase {
   private async ensureIndexBuilt(
     contentContext: ResolvedContentContext | null | undefined,
     rebuildsLeft = 1,
+    forceRefresh = false,
   ): Promise<StatIndexSnapshot> {
     const scopeKey = scopeFileOperationToRequestAuthority(buildStatCacheKeyPrefix(contentContext));
+    if (
+      forceRefresh && this.refreshFailure?.scopeKey === scopeKey &&
+      this.refreshFailure.generation === this.indexGeneration &&
+      Date.now() < this.refreshFailure.retryAt
+    ) {
+      throw this.refreshFailure.error;
+    }
     const isScopeInvalidated = () =>
       this.contextProvider?.isPersistentCacheInvalidated?.(scopeKey) ?? false;
     if (
       this.fileIndex && this.directoryIndex && this.indexScopeKey === scopeKey &&
-      !isScopeInvalidated()
+      !isScopeInvalidated() && (!forceRefresh || this.isIndexAuthoritative())
     ) {
       logger.debug("ensureIndexBuilt - index already built");
       return {
+        scopeKey,
+        generation: this.indexGeneration,
         fileIndex: this.fileIndex,
         directoryIndex: this.directoryIndex,
         pathMapping: this.pathMapping,
@@ -238,28 +269,58 @@ export class StatOperations extends VeryfrontOperationsBase {
       const building = this.buildingIndex;
       const buildingScopeKey = this.buildingIndexScopeKey;
       const buildingGeneration = this.buildingIndexGeneration;
-      const snapshot = await building;
+      const buildingFresh = this.buildingIndexFresh;
+      let snapshot: StatIndexSnapshot;
+      try {
+        snapshot = await building;
+      } catch (error) {
+        if (buildingScopeKey !== scopeKey || buildingGeneration !== this.indexGeneration) {
+          return await this.ensureIndexBuilt(contentContext, rebuildsLeft, forceRefresh);
+        }
+        throw error;
+      }
       logger.debug("ensureIndexBuilt - concurrent build done", {
         waitMs: Math.round(performance.now() - waitStart),
       });
-      if (buildingScopeKey === scopeKey && buildingGeneration === this.indexGeneration) {
+      if (
+        buildingScopeKey === scopeKey && buildingGeneration === this.indexGeneration &&
+        (!forceRefresh || buildingFresh)
+      ) {
         return snapshot;
       }
-      return await this.ensureIndexBuilt(contentContext, rebuildsLeft);
+      return await this.ensureIndexBuilt(contentContext, rebuildsLeft, forceRefresh);
     }
 
     const generation = this.indexGeneration;
-    const building = this.buildIndex(generation, contentContext, scopeKey);
+    const building = this.buildIndex(generation, contentContext, scopeKey, forceRefresh);
     this.buildingIndex = building;
     this.buildingIndexScopeKey = scopeKey;
     this.buildingIndexGeneration = generation;
+    this.buildingIndexFresh = forceRefresh;
     let snapshot: StatIndexSnapshot;
     try {
       snapshot = await building;
+      if (
+        forceRefresh && this.refreshFailure?.scopeKey === scopeKey &&
+        this.refreshFailure.generation === generation
+      ) {
+        this.refreshFailure = null;
+      }
+    } catch (error) {
+      if (forceRefresh && generation === this.indexGeneration) {
+        this.refreshFailure = {
+          scopeKey,
+          generation,
+          error,
+          retryAt: Date.now() + API_SEARCH_CIRCUIT_BREAKER_COOLDOWN_MS,
+        };
+      }
+      throw error;
     } finally {
       this.buildingIndex = null;
       this.buildingIndexScopeKey = null;
       this.buildingIndexGeneration = null;
+      this.buildingIndexFresh = false;
     }
 
     // A warmup that publishes the very listing this build asked for bumps the
@@ -270,7 +331,7 @@ export class StatOperations extends VeryfrontOperationsBase {
     // snapshot; the listing is cached by then, so the retry costs no request.
     if (rebuildsLeft > 0 && this.indexScopeKey !== scopeKey && !isScopeInvalidated()) {
       logger.debug("ensureIndexBuilt - build superseded, rebuilding", { scopeKey });
-      return await this.ensureIndexBuilt(contentContext, rebuildsLeft - 1);
+      return await this.ensureIndexBuilt(contentContext, rebuildsLeft - 1, forceRefresh);
     }
 
     return snapshot;
@@ -280,12 +341,13 @@ export class StatOperations extends VeryfrontOperationsBase {
     generation: number,
     contentContext: ResolvedContentContext | null | undefined,
     scopeKey: string,
+    forceRefresh: boolean,
   ): Promise<StatIndexSnapshot> {
     const buildStart = performance.now();
     logger.debug("buildIndex START");
 
     const fetchStart = performance.now();
-    const allFiles = await this.getAllFilesRaw(contentContext);
+    const allFiles = await this.getAllFilesRaw(contentContext, forceRefresh);
     const fetchMs = Math.round(performance.now() - fetchStart);
     logger.debug("buildIndex - getAllFilesRaw done", {
       fetchMs,
@@ -340,10 +402,18 @@ export class StatOperations extends VeryfrontOperationsBase {
       indexMs,
       totalMs,
     });
-    return { fileIndex: fileIdx, directoryIndex: dirIdx, pathMapping: pathMap, builtAt };
+    return {
+      scopeKey,
+      generation,
+      fileIndex: fileIdx,
+      directoryIndex: dirIdx,
+      pathMapping: pathMap,
+      builtAt,
+    };
   }
 
   clearIndex(): void {
+    this.refreshFailure = null;
     this.indexGeneration += 1;
     this.fileIndex = null;
     this.directoryIndex = null;
@@ -400,6 +470,16 @@ export class StatOperations extends VeryfrontOperationsBase {
     return Date.now() - this.indexBuiltAt < INDEX_AUTHORITY_LIMIT_MS;
   }
 
+  private isSnapshotAuthoritative(
+    snapshot: StatIndexSnapshot,
+    contentContext: ResolvedContentContext | null | undefined,
+  ): boolean {
+    const scopeKey = scopeFileOperationToRequestAuthority(buildStatCacheKeyPrefix(contentContext));
+    return snapshot.scopeKey === scopeKey && snapshot.generation === this.indexGeneration &&
+      !(this.contextProvider?.isPersistentCacheInvalidated?.(scopeKey) ?? false) &&
+      Date.now() - snapshot.builtAt < INDEX_AUTHORITY_LIMIT_MS;
+  }
+
   getOriginalApiPath(normalizedPath: string): string {
     const scopeKey = scopeFileOperationToRequestAuthority(
       buildStatCacheKeyPrefix(this.contextProvider?.getContentContext()),
@@ -425,6 +505,7 @@ export class StatOperations extends VeryfrontOperationsBase {
 
   private async getAllFilesRaw(
     contentContext: ResolvedContentContext | null | undefined,
+    forceRefresh = false,
   ): Promise<ProjectFile[]> {
     return await loadAllProjectFiles({
       client: this.client,
@@ -433,6 +514,7 @@ export class StatOperations extends VeryfrontOperationsBase {
       logger,
       operationLabel: "stat",
       contentContext,
+      forceRefresh,
     });
   }
 

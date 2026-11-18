@@ -1,10 +1,12 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import type { ProjectFile } from "../../veryfront-api-client/index.ts";
+import { type ProjectFile, VeryfrontApiClient } from "../../veryfront-api-client/index.ts";
 import { FileCache } from "../cache/file-cache.ts";
 import { type ContentContextProvider, loadAllProjectFiles } from "./file-list-access.ts";
 import { runWithRequestContext } from "./request-context.ts";
+import { buildFileListCacheKey } from "./cache-keys.ts";
+import { FileSnapshotChangedError } from "../../file-snapshot-error.ts";
 
 function makeFile(path: string): ProjectFile {
   return {
@@ -24,6 +26,119 @@ function createLogger() {
 }
 
 describe("veryfront/file-list-access", () => {
+  it("forced refresh bypasses adapter and persistent listings without writing a new lease", async () => {
+    const cached = [makeFile("old.tsx")];
+    const fresh = [makeFile("fresh.tsx")];
+    const contextProvider: ContentContextProvider = {
+      isProductionMode: () => true,
+      getReleaseId: () => "release-1",
+      getContentContext: () => ({
+        sourceType: "release",
+        projectSlug: "test",
+        releaseId: "release-1",
+      }),
+      getFileList: () => Promise.resolve(cached),
+      isPersistentCacheInvalidated: () => false,
+    };
+    const cache = new FileCache({ enabled: true, ttl: 60_000, maxSize: 100 });
+    const cacheKey = buildFileListCacheKey(contextProvider.getContentContext());
+    cache.set(cacheKey, cached);
+    const client = new VeryfrontApiClient({
+      apiBaseUrl: "https://api.example.com",
+      apiToken: "test-token",
+      projectSlug: "test",
+    });
+    let apiCalls = 0;
+    client.listPublishedFiles = async () => {
+      apiCalls++;
+      return fresh;
+    };
+    const options = {
+      client,
+      cache,
+      contextProvider,
+      logger: createLogger(),
+      operationLabel: "test",
+    };
+    assertEquals(await loadAllProjectFiles(options), cached);
+    assertEquals(await loadAllProjectFiles({ ...options, forceRefresh: true }), fresh);
+    assertEquals(apiCalls, 1);
+    assertEquals(
+      await cache.getAsync(cacheKey),
+      cached,
+      "stat refresh must not rewrite the adapter snapshot cache",
+    );
+  });
+
+  it("forced refresh refuses negative authority after repeated snapshot changes", async () => {
+    let version = 1;
+    let apiCalls = 0;
+    const client = new VeryfrontApiClient({
+      apiBaseUrl: "https://api.example.com",
+      apiToken: "test-token",
+      projectSlug: "test",
+    });
+    client.listPublishedFiles = async () => {
+      version++;
+      apiCalls++;
+      return [];
+    };
+    await assertRejects(() =>
+      loadAllProjectFiles({
+        client,
+        cache: new FileCache({ enabled: true, ttl: 60_000, maxSize: 100 }),
+        contextProvider: {
+          isProductionMode: () => true,
+          getReleaseId: () => "release-1",
+          getContentContext: () => ({
+            sourceType: "release",
+            projectSlug: "test",
+            releaseId: "release-1",
+          }),
+          getSourceSnapshotVersion: () => version,
+          getSourceSnapshotIdentity: () => "release:test:release-1",
+          isPersistentCacheInvalidated: () => false,
+        },
+        logger: createLogger(),
+        operationLabel: "test",
+        forceRefresh: true,
+      }), FileSnapshotChangedError);
+    assertEquals(apiCalls, 4, "snapshot refresh stays bounded");
+  });
+
+  it("forced refresh cannot certify a listing invalidated during the fetch", async () => {
+    let invalidated = false;
+    let apiCalls = 0;
+    const client = new VeryfrontApiClient({
+      apiBaseUrl: "https://api.example.com",
+      apiToken: "test-token",
+      projectSlug: "test",
+    });
+    client.listPublishedFiles = async () => {
+      invalidated = true;
+      apiCalls++;
+      return [];
+    };
+    await assertRejects(() =>
+      loadAllProjectFiles({
+        client,
+        cache: new FileCache({ enabled: true, ttl: 60_000, maxSize: 100 }),
+        contextProvider: {
+          isProductionMode: () => true,
+          getReleaseId: () => "release-1",
+          getContentContext: () => ({
+            sourceType: "release",
+            projectSlug: "test",
+            releaseId: "release-1",
+          }),
+          isPersistentCacheInvalidated: () => invalidated,
+        },
+        logger: createLogger(),
+        operationLabel: "test",
+        forceRefresh: true,
+      }), FileSnapshotChangedError);
+    assertEquals(apiCalls, 4);
+  });
   it("prefers the adapter-provided file list when caches are valid", async () => {
     let apiCalls = 0;
     const files = [makeFile("pages/index.tsx")];
