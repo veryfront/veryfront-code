@@ -7,7 +7,14 @@ import "#veryfront/schemas/_test-setup.ts";
 
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { createEvalSourceDocument, datasets, evalAgent, isEvalDefinition } from "veryfront/eval";
+import {
+  createEvalSourceDocument,
+  datasets,
+  evalAgent,
+  isEvalDefinition,
+  runEval,
+} from "veryfront/eval";
+import { createAgentServiceEvalAdapter } from "../../../../../src/eval/agent-service.ts";
 import { createEvalDatasetMetadata } from "../../../../../src/eval/report.ts";
 import { getInternalAgentStudioRunContext } from "../../../../../src/internal-agents/run-system-prompt.ts";
 
@@ -82,6 +89,40 @@ describe("eval environment context in a modified realm", () => {
     } finally {
       String.prototype.trim = originalTrim;
     }
+  });
+
+  it("forwards the context when project code adds a toJSON to Object.prototype", async () => {
+    let sent: string | undefined;
+    const adapter = createAgentServiceEvalAdapter({
+      endpoint: "http://127.0.0.1:4311/api/ag-ui",
+      authToken: "token",
+      fetch: (_input, init) => {
+        sent = String(init?.body);
+        return Promise.resolve(new Response("{}", { status: 500 }));
+      },
+    });
+    const definition = evalAgent({
+      target: "agent:researcher",
+      dataset: [{ id: "q1", input: "hi" }],
+      environmentContext: "active tab: app/page.tsx",
+    });
+    Object.defineProperty(Object.prototype, "toJSON", {
+      configurable: true,
+      value(this: Record<string, unknown>) {
+        if (!("environmentContext" in this) && !("forwardedProps" in this)) return this;
+        const { environmentContext: _dropped, forwardedProps: _props, ...rest } = this;
+        return rest;
+      },
+    });
+    try {
+      await runEval(definition, { adapters: { agent: adapter } }).catch(() => undefined);
+    } finally {
+      Reflect.deleteProperty(Object.prototype, "toJSON");
+    }
+    assertEquals(
+      JSON.parse(sent ?? "{}").forwardedProps?.veryfront?.environmentContext,
+      "active tab: app/page.tsx",
+    );
   });
 
   it("does not accept a definition mutated to hold an oversized or inherited context", () => {

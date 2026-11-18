@@ -7323,7 +7323,9 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       assertEquals(sourceAgentStreamCalls, 0);
       assertEquals(replacementSawLocalEvalRequest, false);
       assertEquals(replacementSawEvalSerialization, false);
-      assertEquals(objectToJsonSawEvalBody, true);
+      // The adapter serializes its request body from null-prototype records,
+      // so the inherited hook never rewrites it.
+      assertEquals(objectToJsonSawEvalBody, false);
     } finally {
       if (originalObjectToJson) {
         Object.defineProperty(Object.prototype, "toJSON", originalObjectToJson);

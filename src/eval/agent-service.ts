@@ -58,6 +58,8 @@ export * from "./agent-service/durable-run-canaries/index.ts";
 const capturedFetch: typeof fetch = globalThis.fetch.bind(globalThis);
 const IntrinsicJSONParse = JSON.parse;
 const IntrinsicJSONStringify = JSON.stringify;
+const ObjectCreate = Object.create;
+const ObjectKeys = Object.keys;
 
 /** Default local AG-UI endpoint used by agent-service evals. */
 export const DEFAULT_AGENT_SERVICE_EVAL_ENDPOINT = "http://127.0.0.1:3001/api/ag-ui";
@@ -695,6 +697,35 @@ function getRunFinishedUsage(events: Array<Record<string, unknown>>): EvalUsage 
   return undefined;
 }
 
+/**
+ * Copy the request body, its forwarded props and their `veryfront` record onto
+ * null prototypes. Project eval code shares the realm and can put a `toJSON`
+ * on Object.prototype, which would otherwise rewrite those records, and drop
+ * the environment context, while the body is serialized.
+ */
+function shieldAgentServiceEvalRequestBody(
+  body: AgentServiceEvalRequestBody,
+): AgentServiceEvalRequestBody {
+  const shielded = nullPrototypeCopy(body);
+  if (body.forwardedProps !== undefined) {
+    const forwardedProps = nullPrototypeCopy(body.forwardedProps);
+    forwardedProps.veryfront = nullPrototypeCopy(body.forwardedProps.veryfront);
+    shielded.forwardedProps = forwardedProps;
+  }
+  return shielded;
+}
+
+function nullPrototypeCopy<T>(value: T): T {
+  const copy = ObjectCreate(null) as Record<string, unknown>;
+  const source = value as Record<string, unknown>;
+  const keys = ObjectKeys(source);
+  for (let index = 0; index < keys.length; index++) {
+    const key = keys[index]!;
+    copy[key] = source[key];
+  }
+  return copy as T;
+}
+
 function createRequestInit(
   config: AgentServiceEvalAdapterConfig,
   body: AgentServiceEvalRequestBody,
@@ -711,7 +742,7 @@ function createRequestInit(
   return createNativeRequestInit(undefined, {
     method: "POST",
     headers: createHeaders(config),
-    body: IntrinsicJSONStringify(body),
+    body: IntrinsicJSONStringify(shieldAgentServiceEvalRequestBody(body)),
     signal: requestSignal,
   });
 }
