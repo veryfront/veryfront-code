@@ -609,10 +609,11 @@ function mdxExpressionEnd(source: string, start: number, esm = false): number {
       continue;
     }
     const identifier = /^[\p{ID_Start}_$][\p{ID_Continue}$]*/u.exec(source.slice(cursor))?.[0];
+    const afterAsi = (identifier !== undefined || character === "{") &&
+      statementScopes.has(closers.length) &&
+      /[\r\n]/.test(source.slice(previousEnd, cursor)) &&
+      (!mdxCanStartExpression(previous) || previous === "return" || previous === "yield");
     if (identifier) {
-      const afterAsi = statementScopes.has(closers.length) &&
-        /[\r\n]/.test(source.slice(previousEnd, cursor)) &&
-        (!mdxCanStartExpression(previous) || previous === "return" || previous === "yield");
       const statementStart = afterAsi || !previous || previous === ";" ||
         previous === "{" && statementScopes.has(closers.length) ||
         /^(?:statement-end|control-end|label-colon|case-colon|else|do|export|default)$/.test(
@@ -700,7 +701,7 @@ function mdxExpressionEnd(source: string, start: number, esm = false): number {
         }
       }
       if (character === "{") {
-        const statementBlock =
+        const statementBlock = afterAsi && !classScopes.has(closers.length) ||
           /^(?:control-end|statement-end|function-declaration|label-colon|case-colon|else|try|catch|finally|do)$/
             .test(previous) ||
           /^[{;]$/.test(previous) && statementScopes.has(closers.length - 1);
