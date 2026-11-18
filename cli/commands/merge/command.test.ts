@@ -7,7 +7,12 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { getBranchByName, MergeArgsSchema, mergeBranch, parseMergeArgs } from "./index.ts";
-import { buildMergeTargetSyncFiles, getMergePreview, receiptNamesProject } from "./command.ts";
+import {
+  buildMergeTargetSyncFiles,
+  getMergePreview,
+  receiptNamesProject,
+  selectMergeTargetBaselinePaths,
+} from "./command.ts";
 import type { ApiClient } from "#cli/shared/config";
 import type { ParsedArgs } from "#cli/shared/types";
 
@@ -409,5 +414,61 @@ describe("receiptNamesProject", () => {
     assertEquals(receiptNamesProject(receipt, { projectSlug: "desk" }), true);
     assertEquals(receiptNamesProject(receipt, { projectSlug: receipt.projectId }), true);
     assertEquals(receiptNamesProject(receipt, { projectSlug: "other" }), false);
+  });
+});
+
+describe("selectMergeTargetBaselinePaths", () => {
+  it("keeps a source baseline to the paths this directory pushed", () => {
+    // The push recorded a remote-only file in its baseline; a later local edit
+    // to that path must still conflict on the merge target.
+    assertEquals(
+      selectMergeTargetBaselinePaths({
+        sourceBaselinePaths: ["app/page.tsx", "app/remote-only.tsx"],
+        localPaths: ["app/page.tsx", "veryfront.json"],
+        targetHasBaseline: true,
+      }),
+      ["app/page.tsx"],
+    );
+  });
+
+  it("uses the whole source baseline when the receipt lists no local paths", () => {
+    assertEquals(
+      selectMergeTargetBaselinePaths({
+        sourceBaselinePaths: ["app/page.tsx", "app/other.tsx"],
+        localPaths: undefined,
+        targetHasBaseline: false,
+      }),
+      ["app/page.tsx", "app/other.tsx"],
+    );
+  });
+
+  it("replaces a stale target baseline when the source has none", () => {
+    assertEquals(
+      selectMergeTargetBaselinePaths({
+        sourceBaselinePaths: null,
+        localPaths: ["app/page.tsx"],
+        targetHasBaseline: true,
+      }),
+      ["app/page.tsx"],
+    );
+    assertEquals(
+      selectMergeTargetBaselinePaths({
+        sourceBaselinePaths: null,
+        localPaths: undefined,
+        targetHasBaseline: true,
+      }),
+      [],
+    );
+  });
+
+  it("leaves a target without a baseline when neither branch has one", () => {
+    assertEquals(
+      selectMergeTargetBaselinePaths({
+        sourceBaselinePaths: null,
+        localPaths: ["app/page.tsx"],
+        targetHasBaseline: false,
+      }),
+      null,
+    );
   });
 });

@@ -179,6 +179,34 @@ export function receiptNamesProject(
 }
 
 /**
+ * Which paths a merge target's sync baseline may hold, or null to leave the
+ * target without one.
+ *
+ * A baseline entry lets the next push overwrite that path without a conflict,
+ * so it is kept to the paths the receipt says this directory pushed. A push
+ * also records files it only preserved on the remote, and the receipt's digest
+ * covers them too; a later local edit to one of those must still conflict. A
+ * receipt from an older CLI lists no local paths, so the source baseline is
+ * all the evidence there is.
+ *
+ * A source branch pushed by an older CLI has no baseline. The target's own
+ * entry, if it has one, still describes its pre-merge tree, so it is replaced
+ * with the pushed paths, or emptied when the receipt lists none.
+ */
+export function selectMergeTargetBaselinePaths(input: {
+  sourceBaselinePaths: readonly string[] | null;
+  localPaths: readonly string[] | undefined;
+  targetHasBaseline: boolean;
+}): string[] | null {
+  if (input.sourceBaselinePaths === null) {
+    return input.targetHasBaseline ? [...(input.localPaths ?? [])] : null;
+  }
+  if (input.localPaths === undefined) return [...input.sourceBaselinePaths];
+  const pushed = new Set(input.localPaths);
+  return input.sourceBaselinePaths.filter((path) => pushed.has(path));
+}
+
+/**
  * The sync baseline a merge target inherits: the given paths, with the
  * target's own digests and versions. A path the target does not hold is left
  * out.
@@ -252,17 +280,12 @@ export async function recordMergeInPushReceipt(input: {
     ...scope,
     branch: input.sourceBranch,
   });
-  // A source branch pushed by an older CLI has no baseline. The target's own
-  // entry, if it has one, still describes its pre-merge tree, so it is rebuilt
-  // from the paths the receipt proves this directory pushed. The digest covers
-  // the whole remote tree, including files the push only preserved, so those
-  // stay out: a later local edit to one must still conflict. A target with no
-  // entry keeps none.
-  const baselinePaths = sourceBaseline
-    ? Object.keys(sourceBaseline.files)
-    : (await readSyncTarget(input.projectDir, { ...scope, branch: input.targetBranch }))
-    ? receipt.localPaths ?? []
-    : null;
+  const baselinePaths = selectMergeTargetBaselinePaths({
+    sourceBaselinePaths: sourceBaseline ? Object.keys(sourceBaseline.files) : null,
+    localPaths: receipt.localPaths,
+    targetHasBaseline: sourceBaseline !== null ||
+      (await readSyncTarget(input.projectDir, { ...scope, branch: input.targetBranch })) !== null,
+  });
   if (baselinePaths) {
     await writeSyncTarget(input.projectDir, {
       ...scope,
