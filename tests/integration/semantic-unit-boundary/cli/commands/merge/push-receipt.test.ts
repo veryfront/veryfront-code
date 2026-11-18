@@ -157,6 +157,58 @@ describe("recordMergeInPushReceipt", () => {
     }
   });
 
+  it("replaces main's stale sync baseline when the merged branch recorded none", async () => {
+    // An older CLI pushed new-headline without a baseline, while main has one
+    // from before the merge. Left in place, the next push to main would
+    // compare against the pre-merge tree.
+    const projectDir = await makeTempDir();
+    try {
+      const pushed = await writeBranchReceipt(projectDir, "new-headline");
+      const scope = { controlPlane: CONTROL_PLANE, projectId: pushed.projectId };
+      await writeSyncTarget(projectDir, {
+        ...scope,
+        projectSlug: "support-desk",
+        branch: "main",
+        files: {
+          "app/page.tsx": { digest: await computeContentDigest("pre-merge\n") },
+          "app/removed.tsx": { digest: await computeContentDigest("removed\n") },
+        },
+      });
+      const mainFiles = PUSHED_FILES.map((file, index) => ({
+        ...file,
+        version_id: `main-version-${index}`,
+      }));
+
+      const recorded = await recordMergeInPushReceipt({
+        client: filesClient(mainFiles, []),
+        controlPlane: CONTROL_PLANE,
+        projectSlug: "support-desk",
+        projectDir,
+        sourceBranch: "new-headline",
+        targetBranch: "main",
+      });
+
+      assertEquals(recorded, true);
+      const expected: Record<string, { digest: string; versionId: string }> = {};
+      for (const file of mainFiles) {
+        expected[file.path] = {
+          digest: await computeContentDigest(file.content),
+          versionId: file.version_id,
+        };
+      }
+      assertEquals(
+        (await readSyncTarget(projectDir, { ...scope, branch: "main" }))?.files,
+        expected,
+      );
+      assertEquals(
+        await readSyncTarget(projectDir, { ...scope, branch: "new-headline" }),
+        null,
+      );
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
   it("matches a project selected by id, as VERYFRONT_PROJECT_ID selects it", async () => {
     // The config resolver puts the UUID in projectSlug for an id reference,
     // while the receipt records the resolved slug and the id.

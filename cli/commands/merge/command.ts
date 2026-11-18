@@ -230,10 +230,19 @@ export async function recordMergeInPushReceipt(input: {
     ...scope,
     branch: input.sourceBranch,
   });
-  if (sourceBaseline) {
+  // A source branch pushed by an older CLI has no baseline. The target's own
+  // entry, if it has one, still describes its pre-merge tree, so it is rebuilt
+  // from the whole target: the digest check above proved that tree is exactly
+  // what this directory pushed. A target with no entry keeps none.
+  const baselinePaths = sourceBaseline
+    ? Object.keys(sourceBaseline.files)
+    : (await readSyncTarget(input.projectDir, { ...scope, branch: input.targetBranch }))
+    ? files.map((file) => file.path)
+    : null;
+  if (baselinePaths) {
     const targetFiles = new Map(files.map((file) => [file.path, file]));
     const baseline: Record<string, SyncFileSnapshot> = {};
-    for (const path of Object.keys(sourceBaseline.files)) {
+    for (const path of baselinePaths) {
       const file = targetFiles.get(path);
       if (!file) continue;
       baseline[path] = {
