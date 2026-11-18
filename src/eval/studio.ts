@@ -351,7 +351,7 @@ export function createEvalSourceDocument(
     ? BASE_EDITABLE_FIELDS.filter((field) => field !== "target")
     : BASE_EDITABLE_FIELDS;
 
-  const document = getEvalSourceDocumentSchema().parse({
+  const source = {
     kind: "eval-source-document",
     id: discovered.id,
     name: definition.name,
@@ -372,9 +372,14 @@ export function createEvalSourceDocument(
     editableFields,
     dynamicFields,
     capabilities: options.capabilities ?? DEFAULT_EVAL_STUDIO_CAPABILITIES,
-  });
-  // Schema parsing reads optional fields through the prototype chain, so a
-  // context nobody declared is removed from the parsed document again.
+  };
+  // Schema parsing reads optional fields through the prototype chain. Give the
+  // document and every example an own field, so an inherited value of any type
+  // is never read.
+  pinOwnEnvironmentContext(source);
+  for (const example of source.dataset.examples ?? []) pinOwnEnvironmentContext(example);
+  const document = getEvalSourceDocumentSchema().parse(source);
+  // A field pinned as undefined is removed from the parsed document again.
   dropUndeclaredEnvironmentContext(document, definition);
   const declaredExamples = definition.dataset.examples ?? [];
   const examples = document.dataset.examples ?? [];
@@ -382,6 +387,16 @@ export function createEvalSourceDocument(
     dropUndeclaredEnvironmentContext(examples[index]!, declaredExamples[index] ?? {});
   }
   return document;
+}
+
+function pinOwnEnvironmentContext(value: EvalEnvironmentContextCarrier): void {
+  if (Object.hasOwn(value, "environmentContext")) return;
+  Reflect.defineProperty(value, "environmentContext", {
+    value: undefined,
+    enumerable: true,
+    writable: true,
+    configurable: true,
+  });
 }
 
 function dropUndeclaredEnvironmentContext(

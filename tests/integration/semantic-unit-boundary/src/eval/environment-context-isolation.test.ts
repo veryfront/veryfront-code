@@ -123,17 +123,20 @@ describe("eval environment context in a modified realm", () => {
     // The framework builds its schemas before any project module loads.
     createEvalSourceDocument(discovered);
     const objectPrototype = Object.prototype as Record<string, unknown>;
-    objectPrototype.environmentContext = "inherited context";
-    try {
-      const document = createEvalSourceDocument(discovered);
+    // A non-string inherited value must not fail the document either.
+    for (const inherited of ["inherited context", 3]) {
+      objectPrototype.environmentContext = inherited;
+      try {
+        const document = createEvalSourceDocument(discovered);
 
-      // The runner sends only an own context, so Studio shows only that.
-      assertEquals(Object.hasOwn(document, "environmentContext"), false);
-      const [projected] = document.dataset.examples ?? [];
-      assertEquals(projected === undefined, false);
-      assertEquals(Object.hasOwn(projected ?? {}, "environmentContext"), false);
-    } finally {
-      delete objectPrototype.environmentContext;
+        // The runner sends only an own context, so Studio shows only that.
+        assertEquals(Object.hasOwn(document, "environmentContext"), false);
+        const [projected] = document.dataset.examples ?? [];
+        assertEquals(projected === undefined, false);
+        assertEquals(Object.hasOwn(projected ?? {}, "environmentContext"), false);
+      } finally {
+        delete objectPrototype.environmentContext;
+      }
     }
   });
 
