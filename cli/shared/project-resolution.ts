@@ -52,6 +52,44 @@ export interface ProjectResolutionRequest {
   createMissingReference?: boolean;
   /** Defaults to true only for inferred references. */
   allowAlternativeSlug?: boolean;
+  /**
+   * What an inferred reference (the folder or package name) may do. Without
+   * it, resolution throws {@link UnlinkedProjectError}: a folder name names a
+   * project only by chance, so no command may act on it unasked.
+   */
+  inferredProject?: InferredProjectPolicy;
+}
+
+/** The project an inferred reference would use, offered for confirmation. */
+export interface InferredProjectChoice {
+  slug: string;
+  /** The caller's project with that slug, or null when it would be created. */
+  existing: ProjectTargetRef | null;
+}
+
+/**
+ * How an inferred reference is settled. `"create"` creates the project, and
+ * only commands whose job is to create one (`up`, `demo`) pass it. A function
+ * asks: it receives the project the slug would use and returns whether to use
+ * it.
+ */
+export type InferredProjectPolicy =
+  | "create"
+  | ((choice: InferredProjectChoice) => Promise<boolean>);
+
+/**
+ * No project is linked to the directory and the caller did not settle the
+ * inferred slug. Adapters translate this into their own wording.
+ */
+export class UnlinkedProjectError extends Error {
+  constructor(
+    readonly inferredSlug: string,
+    /** True when a confirmation was offered and declined. */
+    readonly declined: boolean,
+  ) {
+    super(`No project is linked to this directory (inferred "${inferredSlug}").`);
+    this.name = "UnlinkedProjectError";
+  }
 }
 
 export type ProjectResolutionOutcome =
@@ -118,6 +156,31 @@ export function describeStaleProjectReference(
   return `Project ${name} was not found. The reference came from ${error.source.name}; ` +
     "the project may have been deleted, or it may belong to an account other than the one " +
     "you are logged in as.";
+}
+
+/**
+ * The refusal `push` and `deploy` print in a folder with no linked project,
+ * when nobody can be asked or the answer was no. `veryfront up` stays the
+ * command that creates a project.
+ */
+export function unlinkedProjectMessage(command: "push" | "deploy"): string {
+  const existing = command === "push"
+    ? "push to an existing project"
+    : "deploy an existing project";
+  return "No Veryfront project is linked to this folder. " +
+    `Run veryfront up to create one, or pass --project <slug> to ${existing}.`;
+}
+
+/** The question `push` and `deploy` ask before they use an inferred slug. */
+export function inferredProjectQuestion(
+  command: "push" | "deploy",
+  choice: InferredProjectChoice,
+): string {
+  const lead = "No Veryfront project is linked to this folder.";
+  if (!choice.existing) return `${lead} Create project "${choice.slug}"?`;
+  return command === "push"
+    ? `${lead} Push to your existing project "${choice.existing.slug}"?`
+    : `${lead} Deploy your existing project "${choice.existing.slug}"?`;
 }
 
 /** The structured identity both adapters attach to the rendered error. */
@@ -234,10 +297,53 @@ async function createProject(
   };
 }
 
+async function findProject(
+  client: ProjectResolutionClient,
+  reference: string,
+): Promise<ProjectTargetRef | null> {
+  try {
+    return await client.getProject(reference);
+  } catch (error) {
+    if (error instanceof VeryfrontError) throw error;
+    if (getErrorStatus(error) === 404) return null;
+    throw error;
+  }
+}
+
 /**
- * Resolve the project this directory targets, creating it when the reference
- * is the directory's own inference (or when the caller opts in for a named
- * reference that no longer exists).
+ * Ask before an inferred slug is used. The answer names the exact project, so
+ * a confirmed create never swaps in an alternative slug, and a confirmed
+ * existing project is linked rather than duplicated.
+ */
+async function resolveConfirmedInferredProject(
+  request: ProjectResolutionRequest,
+  confirm: (choice: InferredProjectChoice) => Promise<boolean>,
+  plannedCreate: ProjectResolutionOutcome,
+): Promise<ProjectResolutionOutcome> {
+  const { projectDir, config, source, client, dryRun = false } = request;
+  const existing = await findProject(client, config.projectSlug);
+  if (!await confirm({ slug: config.projectSlug, existing })) {
+    throw new UnlinkedProjectError(config.projectSlug, true);
+  }
+  if (!existing) return dryRun ? plannedCreate : createProject(request, false);
+
+  const persisted = shouldPersistProjectLink(source) && !dryRun;
+  return {
+    kind: "existing",
+    config: persisted ? await persistProjectLink(projectDir, config, existing) : {
+      ...config,
+      projectId: existing.id,
+      projectSlug: existing.slug,
+    },
+    project: existing,
+    persisted,
+  };
+}
+
+/**
+ * Resolve the project this directory targets. An inferred reference is
+ * settled by `inferredProject` (create, ask, or refuse); a named reference
+ * that no longer exists is created only when the caller opts in.
  */
 export async function resolveOrCreateProject(
   request: ProjectResolutionRequest,
@@ -259,8 +365,13 @@ export async function resolveOrCreateProject(
   };
 
   if (source.kind === "inferred") {
-    // A dry run never reserves a slug, so the create can only be planned.
-    return dryRun ? plannedCreate : createProject(request, allowAlternativeSlug);
+    const policy = request.inferredProject;
+    if (policy === "create") {
+      // A dry run never reserves a slug, so the create can only be planned.
+      return dryRun ? plannedCreate : createProject(request, allowAlternativeSlug);
+    }
+    if (!policy) throw new UnlinkedProjectError(config.projectSlug, false);
+    return await resolveConfirmedInferredProject(request, policy, plannedCreate);
   }
 
   const reference = projectApiReference(config);

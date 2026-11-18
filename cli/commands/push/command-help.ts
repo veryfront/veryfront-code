@@ -53,6 +53,7 @@ export const pushHelp: CommandHelp = {
   ],
   notes: [
     "Pushes main by default and prints its stable cloud preview URL",
+    "In a folder with no linked project, asks before it creates or uses the project named after the folder, and stops when it cannot ask (--yes, --quiet, JSON, no terminal). Run veryfront up to create one",
     "Use --branch to create or update an isolated branch preview",
     "Preview branch names use lowercase letters, numbers, and hyphens",
     "By default, push uploads local files and preserves remote-only files",

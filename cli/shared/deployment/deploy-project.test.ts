@@ -24,6 +24,7 @@ import { withTempDir } from "#veryfront/testing/deno-compat.ts";
 import { fromFileUrl, relative } from "veryfront/platform/path";
 import { createApiClient } from "../config.ts";
 import { writeProjectLink } from "../project-link.ts";
+import { unlinkedProjectMessage } from "../project-resolution.ts";
 import {
   computeSourceDigest,
   resolveGitSource,
@@ -53,6 +54,7 @@ import {
   waitForReleaseAssetManifest,
 } from "./deploy-project.ts";
 import {
+  APP_ROUTE_CONTENT,
   commitProject,
   CONTROL_PLANE,
   createPushedProject,
@@ -287,6 +289,112 @@ describe("DeployProject", () => {
       } finally {
         await Deno.remove(projectDir, { recursive: true });
       }
+    });
+  });
+
+  describe("in a folder with no linked project", () => {
+    /** A folder whose only project reference is its own name, with no push receipt. */
+    async function withUnlinkedFolder(run: (projectDir: string) => Promise<void>) {
+      await withDeployEnv(() =>
+        withTempDir(async (projectDir) => {
+          await Deno.mkdir(`${projectDir}/app`, { recursive: true });
+          await Deno.writeTextFile(
+            `${projectDir}/veryfront.json`,
+            JSON.stringify({ apiUrl: CONTROL_PLANE }) + "\n",
+          );
+          await Deno.writeTextFile(`${projectDir}/app/page.tsx`, APP_ROUTE_CONTENT);
+          await run(projectDir);
+        })
+      );
+    }
+
+    it("refuses the folder name when no one settled it", async () => {
+      await withUnlinkedFolder(async (projectDir) => {
+        const controlPlane = new InMemoryDeployControlPlane();
+        const error = await expectDeployError(() => executeApply(projectDir, controlPlane));
+
+        assertInstanceOf(error, VeryfrontError);
+        assertEquals(error.slug, "invalid-argument");
+        assertEquals(error.detail, unlinkedProjectMessage("deploy"));
+        assertEquals((error.context as { declined?: boolean }).declined, false);
+        assertEquals(controlPlane.projectLookups, []);
+        assertEquals(controlPlane.createdReleases, []);
+      });
+    });
+
+    it("reports a declined folder name as declined", async () => {
+      await withUnlinkedFolder(async (projectDir) => {
+        const controlPlane = new InMemoryDeployControlPlane();
+        controlPlane.getProjectError = Object.assign(new Error("API request failed: 404"), {
+          status: 404,
+        });
+        const error = await expectDeployError(() =>
+          executeApply(projectDir, controlPlane, undefined, {
+            inferredProject: () => Promise.resolve(false),
+          })
+        );
+
+        assertInstanceOf(error, VeryfrontError);
+        assertEquals(error.slug, "invalid-argument");
+        assertEquals((error.context as { declined?: boolean }).declined, true);
+        assertEquals(controlPlane.createdReleases, []);
+      });
+    });
+
+    it("classifies a confirmed folder name another project holds as project-slug-taken", async () => {
+      await withUnlinkedFolder(async (projectDir) => {
+        const controlPlane = new InMemoryDeployControlPlane();
+        controlPlane.getProjectError = Object.assign(new Error("API request failed: 404"), {
+          status: 404,
+        });
+        const reservations: string[] = [];
+        const error = await expectDeployError(() =>
+          withFetchStub((input, init) => {
+            const request = input instanceof Request ? input : new Request(input, init);
+            if (request.method === "POST") {
+              reservations.push(new URL(request.url).pathname);
+              return Response.json({ error: "slug taken" }, { status: 409 });
+            }
+            return new Response("ready");
+          }, () =>
+            createDeployment(controlPlane).execute({
+              projectDir,
+              environment: "production",
+              mode: "apply",
+              source: { kind: "already-pushed" },
+              inferredProject: () => Promise.resolve(true),
+            }))
+        );
+
+        assertInstanceOf(error, VeryfrontError);
+        assertEquals(error.slug, "project-slug-taken");
+        assertStringIncludes(error.detail ?? "", "is already in use.");
+        assertStringIncludes(error.detail ?? "", "then run veryfront deploy again.");
+        assertEquals(reservations.length, 1);
+        assertEquals(controlPlane.createdReleases, []);
+      });
+    });
+
+    it("plans the project a caller settled on a dry run, and pushes with it", async () => {
+      await withUnlinkedFolder(async (projectDir) => {
+        const controlPlane = new InMemoryDeployControlPlane();
+        const outcome = await createDeployProject({
+          controlPlaneFactory: () => controlPlane,
+        }).execute({
+          projectDir,
+          environment: "production",
+          mode: "dry-run",
+          source: { kind: "ensure-pushed" },
+          inferredProject: "create",
+        });
+
+        assertEquals(outcome.kind, "dry-run");
+        assertEquals(controlPlane.createdReleases, []);
+        assertEquals(controlPlane.createdDeployments, []);
+        const linkExists = await Deno.stat(`${projectDir}/.veryfront/project.json`)
+          .then(() => true, () => false);
+        assertEquals(linkExists, false);
+      });
     });
   });
 
@@ -794,7 +902,7 @@ describe("DeployProject", () => {
         // rest of this test passes against a fully classified error.
         assertStringIncludes(
           (error as Error).message,
-          "Check the project reference or remove it to let deploy create a project",
+          "Check the project reference, or remove it and run veryfront up to create a project",
         );
         assertEquals(
           (error as Error).message.includes(".veryfront/project.json"),

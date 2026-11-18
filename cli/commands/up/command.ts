@@ -338,6 +338,8 @@ export async function upCommand(
         },
         allowAlternativeSlug: false,
         dryRun,
+        // up exists to create the project for this folder.
+        inferredProject: "create",
       });
       projectSpinner.stop();
 
@@ -389,6 +391,9 @@ export async function upCommand(
       environment: LIVE_PREVIEW_ENVIRONMENT,
       publish: "live-source",
       mode: dryRun ? "dry-run" : "apply",
+      // A dry run creates and links nothing above, so Deploy Execution still
+      // sees the folder name. up owns that project, so it may plan it.
+      inferredProject: "create",
       // up publishes what is on disk, so a receipt that no longer describes
       // this directory is refreshed rather than refused: refusing would leave
       // the preview serving source the operator already replaced.

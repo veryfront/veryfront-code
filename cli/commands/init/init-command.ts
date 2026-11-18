@@ -406,6 +406,8 @@ export async function initCommand(
             dryRun: false,
             quiet: true,
             suppressJsonOutput: true,
+            // init --deploy creates the project for the folder it scaffolded.
+            inferredProject: "create",
           });
 
           if (!deployResult) {
