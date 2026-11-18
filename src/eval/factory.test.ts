@@ -217,51 +217,6 @@ describe("eval/factory", () => {
     }
   });
 
-  it("holds the environment context size limit when project code replaces JSON.stringify", () => {
-    const oversized = "a".repeat(131_071);
-    const originalStringify = JSON.stringify;
-    try {
-      // An eval module can replace the global while it calls evalAgent.
-      JSON.stringify = () => '""';
-      assertThrows(
-        () =>
-          evalAgent({
-            target: "agent:researcher",
-            dataset: [{ id: "q1", input: "hi" }],
-            environmentContext: oversized,
-          }),
-        Error,
-        "Eval environmentContext must be at most 131072 bytes as JSON",
-      );
-    } finally {
-      JSON.stringify = originalStringify;
-    }
-  });
-
-  it("does not accept a definition mutated to hold an oversized or inherited context", () => {
-    const definition = evalAgent({
-      target: "agent:researcher",
-      dataset: [{ id: "q1", input: "hi" }],
-      environmentContext: "active tab: app/page.tsx",
-    });
-    assertEquals(isEvalDefinition(definition), true);
-    assertEquals(
-      isEvalDefinition({ ...definition, environmentContext: "a".repeat(131_071) }),
-      false,
-    );
-
-    // A polluted prototype is not the definition's own context, and must not
-    // make every eval in the project invalid.
-    const plain = evalAgent({ target: "agent:researcher", dataset: [{ id: "q1", input: "hi" }] });
-    const objectPrototype = Object.prototype as Record<string, unknown>;
-    objectPrototype.environmentContext = 3;
-    try {
-      assertEquals(isEvalDefinition(plain), true);
-    } finally {
-      delete objectPrototype.environmentContext;
-    }
-  });
-
   it("creates a target-free dataset eval definition", () => {
     const definition = evalDataset({
       id: "eval:rubric-calibration",

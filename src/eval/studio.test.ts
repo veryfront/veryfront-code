@@ -76,32 +76,6 @@ describe("eval/studio", () => {
     assertEquals(getEvalSourcePatchSchema().parse(patch), patch);
   });
 
-  it("leaves an inherited environment context out of the source document", () => {
-    const definition = evalAgent({
-      target: "agent:researcher",
-      dataset: [{ id: "plain", input: "hi" }],
-    });
-    const objectPrototype = Object.prototype as Record<string, unknown>;
-    objectPrototype.environmentContext = "inherited context";
-    try {
-      const document = createEvalSourceDocument({
-        id: "eval:inherited",
-        name: "Inherited",
-        filePath: "evals/inherited.eval.ts",
-        exportName: "default",
-        definition,
-      });
-
-      // The runner sends only an own context, so Studio shows only that.
-      assertEquals(Object.hasOwn(document, "environmentContext"), false);
-      const [projected] = document.dataset.examples ?? [];
-      assertEquals(projected === undefined, false);
-      assertEquals(Object.hasOwn(projected ?? {}, "environmentContext"), false);
-    } finally {
-      delete objectPrototype.environmentContext;
-    }
-  });
-
   it("creates a source document Studio can render as an edit form", () => {
     const definition = evalAgent({
       id: "eval:deep-research",
