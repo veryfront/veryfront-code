@@ -231,6 +231,89 @@ describe("eval/agent-service", () => {
     });
   });
 
+  it("forwards an environment context without other forwarded props", () => {
+    const body = buildAgentServiceEvalRequestBody({
+      exampleId: "smoke",
+      input: "List files",
+      environmentContext: "active tab: app/page.tsx",
+    });
+
+    assertEquals(body.forwardedProps, {
+      veryfront: { environmentContext: "active tab: app/page.tsx" },
+    });
+  });
+
+  it("rejects a blank environment context in the agent-service request", () => {
+    for (const environmentContext of ["", "   "]) {
+      assertThrows(
+        () =>
+          buildAgentServiceEvalRequestBody({
+            exampleId: "smoke",
+            input: "List files",
+            environmentContext,
+          }),
+        Error,
+        "Agent-service eval environmentContext must be a non-empty string",
+      );
+    }
+  });
+
+  it("rejects an environment context a hosted run cannot carry", () => {
+    // 131,072 bytes of JSON including the two quotes is the largest accepted.
+    const largest = "a".repeat(131_070);
+    assertEquals(
+      buildAgentServiceEvalRequestBody({
+        exampleId: "smoke",
+        input: "List files",
+        environmentContext: largest,
+      }).forwardedProps?.veryfront.environmentContext,
+      largest,
+    );
+    assertThrows(
+      () =>
+        buildAgentServiceEvalRequestBody({
+          exampleId: "smoke",
+          input: "List files",
+          environmentContext: `${largest}a`,
+        }),
+      Error,
+      "Agent-service eval environmentContext must be at most 131072 bytes as JSON",
+    );
+    // Escapes and multi-byte text count at their serialized size.
+    assertThrows(
+      () =>
+        buildAgentServiceEvalRequestBody({
+          exampleId: "smoke",
+          input: "List files",
+          environmentContext: `tabs:${"\n".repeat(35_000)}${"é".repeat(35_000)}`,
+        }),
+      Error,
+      "Agent-service eval environmentContext must be at most 131072 bytes as JSON",
+    );
+  });
+
+  it("rejects an environment context that overflows forwarded props with the input", () => {
+    // A durable run forwards the prompt beside the context, in one envelope.
+    assertThrows(
+      () =>
+        buildAgentServiceEvalRequestBody({
+          exampleId: "smoke",
+          input: "b".repeat(70_000),
+          environmentContext: "a".repeat(130_000),
+        }),
+      Error,
+      "must fit together in the 196608-byte forwarded props budget",
+    );
+    assertEquals(
+      buildAgentServiceEvalRequestBody({
+        exampleId: "smoke",
+        input: "b".repeat(60_000),
+        environmentContext: "a".repeat(130_000),
+      }).messages[0]?.parts[0]?.text.length,
+      60_000,
+    );
+  });
+
   it("does not clear allowed tools for maxSteps-only runtime overrides", () => {
     const body = buildAgentServiceEvalRequestBody({
       exampleId: "smoke",
@@ -732,6 +815,40 @@ describe("eval/agent-service", () => {
 
     assertEquals(report.records[0]?.completed, true);
     assertEquals(requestBody?.forwardedProps, undefined);
+  });
+
+  it("forwards the eval or example environment context to the agent service", async () => {
+    const forwarded: unknown[] = [];
+    const adapter = createAgentServiceEvalAdapter({
+      authToken: "token",
+      fetch: async (_input, init) => {
+        forwarded.push(JSON.parse(String(init?.body)).forwardedProps);
+        return createSseResponse([
+          { event: "RunStarted", data: { runId: "run_context" } },
+          { event: "RunFinished", data: {} },
+        ]);
+      },
+    });
+
+    const definition = evalAgent({
+      id: "eval:context",
+      target: "agent:researcher",
+      environmentContext: "active tab: app/page.tsx",
+      dataset: datasets.inline([
+        { id: "eval-context", input: "hi" },
+        { id: "example-context", input: "hi", environmentContext: "selected node: Header" },
+      ]),
+    });
+    await runEval(definition, {
+      adapters: { agent: adapter },
+      now: () => new Date("2026-06-20T10:00:00.000Z"),
+    });
+
+    // Records can run concurrently, so compare without relying on request order.
+    assertEquals(forwarded.map((props) => JSON.stringify(props)).toSorted(), [
+      JSON.stringify({ veryfront: { environmentContext: "active tab: app/page.tsx" } }),
+      JSON.stringify({ veryfront: { environmentContext: "selected node: Header" } }),
+    ]);
   });
 
   it("reads usage amounts sent as decimal strings", async () => {

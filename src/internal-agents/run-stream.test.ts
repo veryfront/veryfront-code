@@ -7,7 +7,12 @@ import {
 } from "#veryfront/tool/host-tool-provenance.ts";
 import { skillRegistryInternal } from "#veryfront/skill/registry.ts";
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { FakeTime } from "#std/testing/time";
 import {
@@ -2046,6 +2051,98 @@ describe("internal-agents/run-stream", () => {
     assertStringIncludes(prompt, "Current run tool inventory:");
     assertStringIncludes(prompt, "- create_file");
     assertStringIncludes(prompt, "- outlook__send_email");
+  });
+
+  it("lets a durable eval's environment context replace the agent's configured one", async () => {
+    const sessionManager = new AgentRunSessionManager();
+    const systems: Agent["config"]["system"][] = [];
+    const runtimeAgent = createAgent({
+      id: "eval-context-agent",
+      model: "anthropic/claude-opus-4-6",
+      skills: false,
+      environmentContext: "Factory environment context.",
+      system: "You are Custom Agent.",
+    });
+    const studioContext = [{
+      type: "json",
+      title: "studio_context",
+      data: { environmentContext: "active tab: app/page.tsx" },
+    }];
+    const run = (forwardedProps: Record<string, unknown>, context: unknown[] = studioContext) =>
+      createRuntimeAgentStreamResponse(
+        {
+          agentId: runtimeAgent.id,
+          threadId: crypto.randomUUID(),
+          runId: `run_eval_context_agent_${systems.length}`,
+          messages: [],
+          tools: [],
+          context,
+          forwardedProps,
+        } as Parameters<typeof createRuntimeAgentStreamResponse>[0],
+        runtimeAgent,
+        {
+          sessionManager,
+          projectAgentSandbox: { projectId: "project-1" },
+          createRuntime: (agent) => {
+            systems.push(agent.config.system);
+            return {
+              stream: async () =>
+                new ReadableStream<Uint8Array>({
+                  start(controller) {
+                    controller.close();
+                  },
+                }),
+            };
+          },
+        },
+      );
+
+    await run({ veryfront: { environmentContext: "active tab: app/page.tsx" } });
+    await run({});
+    await run({ veryfront: { environmentContext: "   " } });
+    await run({ veryfront: { environmentContext: 3 } });
+    // An inherited `veryfront` or `environmentContext` is not the eval's:
+    // project code runs in this realm and can extend Object.prototype.
+    await run({ veryfront: Object.create({ environmentContext: "inherited context" }) });
+    const objectPrototype = Object.prototype as Record<string, unknown>;
+    objectPrototype.veryfront = { environmentContext: "inherited context" };
+    try {
+      await run({});
+    } finally {
+      delete objectPrototype.veryfront;
+    }
+    // Without Studio's context item, the forwarded eval context is rendered.
+    await run({ veryfront: { environmentContext: "eval context" } }, []);
+    // With it, Studio's value is the one rendered, not a different eval value.
+    await run({ veryfront: { environmentContext: "eval context" } });
+
+    const prompts = await Promise.all(systems.map(async (system) =>
+      flattenSystemInstructions(
+        await resolveTestAgentSystem(system) as Parameters<typeof flattenSystemInstructions>[0],
+      )
+    ));
+    const [evalPrompt, ...rest] = prompts;
+    const configuredPrompts = rest.slice(0, 5);
+    const [forwardedOnlyPrompt, studioAndEvalPrompt] = rest.slice(5);
+    assertExists(forwardedOnlyPrompt);
+    assertStringIncludes(forwardedOnlyPrompt, "eval context");
+    assertEquals(forwardedOnlyPrompt.includes("Factory environment context."), false);
+    assertExists(studioAndEvalPrompt);
+    assertStringIncludes(studioAndEvalPrompt, "active tab: app/page.tsx");
+    assertEquals(studioAndEvalPrompt.includes("eval context"), false);
+    assertEquals(studioAndEvalPrompt.includes("Factory environment context."), false);
+    assertEquals(studioAndEvalPrompt.split("<environment_context>").length, 2);
+    assertExists(evalPrompt);
+    assertStringIncludes(evalPrompt, "active tab: app/page.tsx");
+    assertEquals(evalPrompt.includes("Factory environment context."), false);
+    assertEquals(evalPrompt.split("<environment_context>").length, 2);
+    // Without a usable eval override, the configured context keeps its precedence.
+    assertEquals(configuredPrompts.length, 5);
+    for (const prompt of configuredPrompts) {
+      assertStringIncludes(prompt, "Factory environment context.");
+      assertEquals(prompt.includes("inherited context"), false);
+      assertEquals(prompt.split("<environment_context>").length, 2);
+    }
   });
 
   it("preserves an agent factory marker through internal runtime dispatch", async () => {

@@ -24,8 +24,13 @@ import {
   assertEvalTimerDuration,
   assertFiniteEvalNumber,
   createEvalValidationError,
+  getEvalJsonByteLength,
+  MAX_EVAL_FORWARDED_PROPS_BYTES,
+  normalizeEvalEnvironmentContext,
   normalizeEvalString,
   normalizeEvalStringList,
+  readOwnEvalEnvironmentContext,
+  resolveEvalCaseEnvironmentContext,
   stringifyEvalError,
 } from "./validation.ts";
 import { trustedLocalEvalFetchAgentId } from "./agent-service/trusted-fetch.ts";
@@ -53,6 +58,8 @@ export * from "./agent-service/durable-run-canaries/index.ts";
 const capturedFetch: typeof fetch = globalThis.fetch.bind(globalThis);
 const IntrinsicJSONParse = JSON.parse;
 const IntrinsicJSONStringify = JSON.stringify;
+const ObjectCreate = Object.create;
+const ObjectKeys = Object.keys;
 
 /** Default local AG-UI endpoint used by agent-service evals. */
 export const DEFAULT_AGENT_SERVICE_EVAL_ENDPOINT = "http://127.0.0.1:3001/api/ag-ui";
@@ -85,6 +92,7 @@ export interface AgentServiceEvalForwardedProps {
   conversationId?: string;
   branchId?: string;
   model?: string;
+  environmentContext?: string;
   runtimeOverrides?: {
     allowedTools?: string[];
     maxSteps?: number;
@@ -104,6 +112,8 @@ export interface BuildAgentServiceEvalRequestBodyInput {
   allowedTools?: string[];
   forceRuntimeOverrides?: boolean;
   maxSteps?: number;
+  /** Host facts the agent service renders as `<environment_context>`. */
+  environmentContext?: string;
 }
 
 /** AG-UI request body sent to an agent-service endpoint. */
@@ -287,6 +297,11 @@ function createVeryfrontForwardedProps(
   if (overrides.model !== null) {
     veryfront.model = normalizeEvalString(overrides.model, "Agent-service eval model");
   }
+  const environmentContext = normalizeEvalEnvironmentContext(
+    readOwnEvalEnvironmentContext(input),
+    "Agent-service eval",
+  );
+  if (environmentContext !== undefined) veryfront.environmentContext = environmentContext;
 
   const shouldForwardRuntimeOverrides = allowedTools !== undefined ||
     overrides.forceRuntimeOverrides ||
@@ -682,6 +697,35 @@ function getRunFinishedUsage(events: Array<Record<string, unknown>>): EvalUsage 
   return undefined;
 }
 
+/**
+ * Copy the request body, its forwarded props and their `veryfront` record onto
+ * null prototypes. Project eval code shares the realm and can put a `toJSON`
+ * on Object.prototype, which would otherwise rewrite those records, and drop
+ * the environment context, while the body is serialized.
+ */
+function shieldAgentServiceEvalRequestBody(
+  body: AgentServiceEvalRequestBody,
+): AgentServiceEvalRequestBody {
+  const shielded = nullPrototypeCopy(body);
+  if (body.forwardedProps !== undefined) {
+    const forwardedProps = nullPrototypeCopy(body.forwardedProps);
+    forwardedProps.veryfront = nullPrototypeCopy(body.forwardedProps.veryfront);
+    shielded.forwardedProps = forwardedProps;
+  }
+  return shielded;
+}
+
+function nullPrototypeCopy<T>(value: T): T {
+  const copy = ObjectCreate(null) as Record<string, unknown>;
+  const source = value as Record<string, unknown>;
+  const keys = ObjectKeys(source);
+  for (let index = 0; index < keys.length; index++) {
+    const key = keys[index]!;
+    copy[key] = source[key];
+  }
+  return copy as T;
+}
+
 function createRequestInit(
   config: AgentServiceEvalAdapterConfig,
   body: AgentServiceEvalRequestBody,
@@ -698,7 +742,7 @@ function createRequestInit(
   return createNativeRequestInit(undefined, {
     method: "POST",
     headers: createHeaders(config),
-    body: IntrinsicJSONStringify(body),
+    body: IntrinsicJSONStringify(shieldAgentServiceEvalRequestBody(body)),
     signal: requestSignal,
   });
 }
@@ -827,12 +871,47 @@ export function evaluateAgentServiceEvalEnvironment(
   return { ok: !hasBlockers, resolvedApiUrl, messages };
 }
 
+/** The longest agent id a durable run stamps into the forwarded props. */
+const MAX_FORWARDED_AGENT_ID_LENGTH = 512;
+
+/**
+ * Reject an environment context that cannot reach a hosted run. A durable run
+ * forwards the context beside the prompt, the promoted model and runtime
+ * overrides, and the resolved agent id, so the whole envelope is measured.
+ */
+function assertEnvironmentContextFitsForwardedProps(
+  veryfront: AgentServiceEvalForwardedProps,
+  prompt: string,
+): void {
+  const envelope = {
+    veryfront: {
+      ...veryfront,
+      // Sized for the longest id whose every character JSON escapes to six bytes.
+      agentId: veryfront.agentId ?? "\u0000".repeat(MAX_FORWARDED_AGENT_ID_LENGTH),
+    },
+    ...(veryfront.model !== undefined ? { model: veryfront.model } : {}),
+    ...(veryfront.runtimeOverrides !== undefined
+      ? { runtimeOverrides: veryfront.runtimeOverrides }
+      : {}),
+    prompt,
+  };
+  if (getEvalJsonByteLength(envelope) > MAX_EVAL_FORWARDED_PROPS_BYTES) {
+    throw createEvalValidationError(
+      `Agent-service eval environmentContext and input must fit together in the ${MAX_EVAL_FORWARDED_PROPS_BYTES}-byte forwarded props budget of a hosted run`,
+    );
+  }
+}
+
 /** Build the AG-UI request body for a single eval example. */
 export function buildAgentServiceEvalRequestBody(
   input: BuildAgentServiceEvalRequestBodyInput,
 ): AgentServiceEvalRequestBody {
   const exampleId = normalizeEvalString(input.exampleId, "Agent-service eval example id");
   const veryfront = createVeryfrontForwardedProps(input);
+  const prompt = stringifyPromptInput(input.input);
+  if (veryfront && readOwnEvalEnvironmentContext(veryfront) !== undefined) {
+    assertEnvironmentContextFitsForwardedProps(veryfront, prompt);
+  }
   const metadata = {
     ...getInputMetadata(input.input),
     ...(input.metadata ?? {}),
@@ -852,7 +931,7 @@ export function buildAgentServiceEvalRequestBody(
       {
         id: crypto.randomUUID(),
         role: "user",
-        parts: [{ type: "text", text: stringifyPromptInput(input.input) }],
+        parts: [{ type: "text", text: prompt }],
       },
     ],
   };
@@ -902,6 +981,10 @@ export function createAgentServiceEvalAdapter(
         allowedTools: config.allowedTools,
         forceRuntimeOverrides: config.forceRuntimeOverrides,
         maxSteps: config.maxSteps,
+        environmentContext: resolveEvalCaseEnvironmentContext(
+          context.example,
+          context.definition,
+        ),
       });
       const parseOptions: ParseAgUiSseResponseOptions = {
         ...(config.progressThrottleMs !== undefined

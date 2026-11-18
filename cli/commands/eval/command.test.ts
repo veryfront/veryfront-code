@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { cliLogger } from "#cli/utils";
 import {
   assertEquals,
+  assertExists,
   assertInstanceOf,
   assertRejects,
   assertStringIncludes,
@@ -1054,6 +1055,93 @@ describe("eval CLI command helpers", () => {
     ]]);
     await assistant.generate({ input: "outside eval", tools: mocks });
     assertEquals(observed.at(-1), ["local_mock"]);
+  });
+
+  it("sends the eval or example environment context as the agent's environment_context", async () => {
+    const model = scriptedModel(
+      [{ text: "eval" }, { text: "example" }, { text: "outside" }],
+      { modelId: "hosted/eval-environment-context", only: "generate" },
+    );
+    const assistant = createAgent({
+      id: "eval-environment-context",
+      model: "hosted/eval-environment-context",
+      system: "Answer briefly.",
+      skills: false,
+      environmentContext: "configured context",
+      resolveModelTransport: () => ({ model }),
+    });
+    const definition = evalAgent({
+      id: "eval:environment-context",
+      target: "agent:eval-environment-context",
+      environmentContext: "<studio_tabs>\nactive: app/page.tsx\n</studio_tabs>",
+      dataset: [{ id: "one", input: "hi" }],
+    });
+    const adapter = createAgentAdapter(assistant, createEvalOptions());
+    const systemText = (index: number) => {
+      const call = model.calls[index];
+      assertExists(call);
+      return JSON.stringify(call.prompt.filter((message) => message.role === "system"));
+    };
+
+    await adapter({ definition, example: { id: "one", input: "hi" }, repetition: 1 });
+    await adapter({
+      definition,
+      example: { id: "two", input: "hi", environmentContext: "selected node: Header" },
+      repetition: 1,
+    });
+    await assistant.generate({ input: "outside eval" });
+
+    assertStringIncludes(
+      systemText(0),
+      "<environment_context>\\n<studio_tabs>\\nactive: app/page.tsx\\n</studio_tabs>\\n</environment_context>",
+    );
+    assertEquals(systemText(0).includes("configured context"), false);
+    assertStringIncludes(
+      systemText(1),
+      "<environment_context>\\nselected node: Header\\n</environment_context>",
+    );
+    assertEquals(systemText(1).includes("studio_tabs"), false);
+    assertStringIncludes(systemText(2), "configured context");
+    assertEquals(systemText(2).includes("studio_tabs"), false);
+  });
+
+  it("applies the eval environment context and mock tools in the same case", async () => {
+    const model = scriptedModel(
+      [{ text: "done" }],
+      { modelId: "hosted/eval-context-mocks", only: "generate" },
+    );
+    const assistant = createAgent({
+      id: "eval-context-mocks",
+      model: "hosted/eval-context-mocks",
+      system: "Answer briefly.",
+      skills: false,
+      tools: {},
+      environmentContext: "configured context",
+      resolveModelTransport: () => ({ model }),
+    });
+    const definition = evalAgent({
+      id: "eval:context-mocks",
+      target: "agent:eval-context-mocks",
+      environmentContext: "active tab: app/page.tsx",
+      dataset: [{ id: "one", input: "hi" }],
+      mockTools: { local_mock: makeEvalTool("local_mock") },
+    });
+
+    await createAgentAdapter(assistant, createEvalOptions())({
+      definition,
+      example: { id: "one", input: "hi" },
+      repetition: 1,
+    });
+
+    const [call] = model.calls;
+    assertExists(call);
+    assertEquals((call.tools ?? []).map((entry) => entry.name), ["local_mock"]);
+    const system = JSON.stringify(call.prompt.filter((message) => message.role === "system"));
+    assertStringIncludes(
+      system,
+      "<environment_context>\\nactive tab: app/page.tsx\\n</environment_context>",
+    );
+    assertEquals(system.includes("configured context"), false);
   });
 
   it("binds one runtime identity to each example repetition and its mock tools", async () => {
