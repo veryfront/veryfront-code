@@ -702,18 +702,26 @@ export async function hydrateEvalRuntimeAuth(
 }
 
 /**
- * Veryfront Cloud bills managed inference to a project, and its gateway
- * rejects every model request that names none. With a token but no project,
- * the run stops at its first `veryfront-cloud/...` request with
- * `EVAL_PROJECT_REQUIRED`, so name the fix before the run starts. The remedy
- * matches that error's suggestion.
+ * The Veryfront Cloud gateway accepts a model request that names no project
+ * from an API key: a project key bills its project, an account key bills the
+ * account's credits. A login session with no project is refused. With a token
+ * but no project, say
+ * where the run's `veryfront-cloud/...` calls bill before it starts, so the
+ * operator can point them at a project instead. A configured project the
+ * credential cannot use is still refused (`EVAL_PROJECT_REQUIRED`); that
+ * error's suggestion names the same settings.
  */
 export function formatMissingEvalProjectWarning(
   runtimeAuth: { apiToken?: string; projectSlug?: string },
 ): string | undefined {
   if (!runtimeAuth.apiToken || runtimeAuth.projectSlug) return undefined;
-  return "No Veryfront project is configured, so Veryfront Cloud will reject veryfront-cloud model requests " +
-    "(gateway_project_required). Set VERYFRONT_PROJECT_SLUG in .env or add projectSlug to veryfront.config.ts.";
+  // The CLI cannot tell a project API key from an account credential, and a
+  // project key bills its own project with no slug set, so name both cases
+  // rather than claim the calls bill the account.
+  return "No Veryfront project is configured, so veryfront-cloud model calls bill the project your API " +
+    "key is bound to, or your account's credits with an account API key. A login without an API key " +
+    "needs a project. To choose " +
+    "the project, set VERYFRONT_PROJECT_SLUG in .env or add projectSlug to veryfront.config.ts.";
 }
 
 /**
@@ -1549,8 +1557,7 @@ async function runEvalCommandWithProgress(
     // Emitted only once a run is certain and it can reach a model: listing,
     // usage errors, and model-free dataset evals never send a model request.
     const warnIfNoProject = (definitions: readonly EvalDefinition[]) => {
-      // JSON output must stay machine-readable; the refusal itself still
-      // arrives in the envelope if the run reaches the gateway.
+      // JSON output must stay machine-readable.
       if (isJsonMode() || !evalRunMayCallModel(definitions)) return;
       const warning = formatMissingEvalProjectWarning(runtimeAuth);
       if (warning) cliLogger.warn(warning);

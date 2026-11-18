@@ -12,7 +12,7 @@ inside a Veryfront project, see [Providers](./providers.md) instead.
 
 - A Veryfront API key with the Write permission. Inference requests are writes,
   so a Read-only key is refused.
-- The project slug, when you use an account key (see
+- The project slug, to attribute requests made with an account key (see
   [Base URLs and key types](#base-urls-and-key-types)).
 
 The snippets read the key from `VERYFRONT_API_KEY`:
@@ -44,8 +44,11 @@ send it in their native key header: `x-api-key` for Anthropic clients and
 | Account key | Your account. It is not bound to one project.                   | `x-veryfront-project-slug: <PROJECT_SLUG>` |
 
 Use a project key. It is bound to one project, so every request is attributed
-to that project without an extra header. An account key must name the project
-on every request, or the gateway refuses it.
+to that project without an extra header. An account key that names a project
+is attributed to that project. An account key that names none is billed to your
+account's credits, with no project on the usage, so the snippets on this page
+send the header. A login session is not a key: without a project the gateway
+refuses it.
 
 ## Choose a model
 
@@ -56,7 +59,8 @@ curl https://api.veryfront.com/ai/v1/models \
   -H "Authorization: Bearer $VERYFRONT_API_KEY"
 ```
 
-With an account key, also send the project header. Client configuration does
+With an account key, also send the project header, so the request is attributed
+to that project and not to your account. Client configuration does
 not apply to `curl`, so every `curl` command on this page has an account-key
 form:
 
@@ -423,7 +427,10 @@ curl https://api.veryfront.com/ai/v1/chat/completions \
 ```
 
 A `401` means the key is missing or invalid. A `400` that asks for a project
-means an account key without the `x-veryfront-project-slug` header.
+means one of two things. The `x-veryfront-project-slug` header names a project
+that does not exist or that the key cannot use, or the credential is a login
+session, not an API key, and names no project. An account key that sends no
+header is not refused: it bills your account's credits.
 
 Every gateway response, including errors and streams, carries an
 `x-request-id` header. Include its value when you report a problem, so the

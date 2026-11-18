@@ -85,6 +85,12 @@ import {
   trustOperatorConfiguredVeryfrontApiOrigins,
 } from "#cli/outbound-fetch";
 
+const MISSING_PROJECT_NOTICE = "No Veryfront project is configured";
+const MISSING_PROJECT_WARNING =
+  "No Veryfront project is configured, so veryfront-cloud model calls bill the project your API " +
+  "key is bound to, or your account's credits with an account API key. A login without an API key " +
+  "needs a project. To choose " +
+  "the project, set VERYFRONT_PROJECT_SLUG in .env or add projectSlug to veryfront.config.ts.";
 const originalApiToken = Deno.env.get("VERYFRONT_API_TOKEN");
 const originalApiBaseUrl = Deno.env.get("VERYFRONT_API_BASE_URL");
 const originalProjectSlug = Deno.env.get("VERYFRONT_PROJECT_SLUG");
@@ -424,6 +430,30 @@ function evalMetricLines(output: { stdout: string[] }): string[] {
     .map((line) => line.slice(4));
 }
 
+/** A dataset eval whose judge metric makes the run reach a model call. */
+function createJudgedDatasetRuntime(
+  projectDir: string,
+  onJudge: () => void,
+): ProjectAgentRuntimeDiscovery {
+  const definition = evalDataset({
+    id: "eval:judged-dataset",
+    dataset: [{ id: "case", input: "value" }],
+    metrics: [
+      metrics.judge.rubric({
+        rubric: "Is it good?",
+        judge: () => {
+          onJudge();
+          return Promise.resolve({ score: 1 });
+        },
+      }),
+    ],
+  });
+  definition.source = { filePath: `${projectDir}/evals/judged.eval.ts`, exportName: "default" };
+  const runtime = createProjectRuntimeDiscovery(normalizeSourceIntegrationPolicy({ allow: {} }));
+  runtime.evals.set(definition.id, definition);
+  return runtime;
+}
+
 function parseLastJsonEnvelope(output: { stdout: string[] }): {
   success: boolean;
   command: string;
@@ -733,7 +763,7 @@ describe("eval CLI command helpers", () => {
         cliLogger.warn = originalWarn;
       }
 
-      assertEquals(warnings.filter((line) => line.includes("gateway_project_required")), []);
+      assertEquals(warnings.filter((line) => line.includes(MISSING_PROJECT_NOTICE)), []);
     }, { prefix: "vf-eval-list-no-project-" });
   });
 
@@ -2626,12 +2656,17 @@ describe("eval CLI command helpers", () => {
     }
   });
 
-  it("warns before the run when a Veryfront token has no project to bill", () => {
+  it("says where model calls bill before the run when a Veryfront token has no project", () => {
     const warning = formatMissingEvalProjectWarning({ apiToken: "token" });
 
-    assertEquals(typeof warning, "string");
-    assertEquals(warning?.includes("gateway_project_required"), true);
-    assertEquals(warning?.includes("VERYFRONT_PROJECT_SLUG"), true);
+    // The gateway accepts a call that names no project and bills the account,
+    // so the notice must not predict a rejection the run never meets.
+    assertEquals(warning, MISSING_PROJECT_WARNING);
+    assertEquals(warning?.includes("reject"), false);
+    // A project API key bills its own project with no slug set, so the notice
+    // must not say the calls run without a project.
+    assertEquals(warning?.includes("without a project"), false);
+    assertEquals(warning?.includes("the project your API key is bound to"), true);
     assertEquals(warning?.includes("veryfront link"), false);
     assertEquals(
       formatMissingEvalProjectWarning({ apiToken: "token", projectSlug: "eval-project" }),
@@ -2954,7 +2989,8 @@ describe("eval CLI command helpers", () => {
       {
         kind: "project-required",
         code: "gateway_project_required",
-        message: "A project is required to use Veryfront-managed AI inference",
+        message:
+          "Veryfront-managed AI inference refused the project: the request named none, or one that does not exist or that this credential cannot use",
       },
       undefined,
     );
@@ -3035,7 +3071,8 @@ describe("eval CLI command helpers", () => {
       {
         kind: "project-required",
         code: "gateway_project_required",
-        message: "A project is required to use Veryfront-managed AI inference",
+        message:
+          "Veryfront-managed AI inference refused the project: the request named none, or one that does not exist or that this credential cannot use",
       },
       undefined,
     );
@@ -3571,98 +3608,133 @@ describe("eval CLI command helpers", () => {
         cliLogger.warn = originalWarn;
       }
 
-      assertEquals(warnings.filter((line) => line.includes("gateway_project_required")), []);
+      assertEquals(warnings.filter((line) => line.includes(MISSING_PROJECT_NOTICE)), []);
     }, { prefix: "vf-eval-dataset-no-project-" });
   });
 
-  it("warns about a missing project for a dataset suite with metrics", async () => {
+  it("warns once with the billing notice before a model run, for a suite and a single eval, when a token has no project", async () => {
     await withTempDir(async (projectDir) => {
-      const definition = evalDataset({
-        id: "eval:judged-dataset",
-        dataset: [{ id: "case", input: "value" }],
-        metrics: [
-          metrics.judge.rubric({
-            rubric: "Is it good?",
-            judge: () => Promise.resolve({ score: 1 }),
-          }),
-        ],
-      });
-      definition.source = { filePath: `${projectDir}/evals/judged.eval.ts`, exportName: "default" };
-      const runtime = createProjectRuntimeDiscovery(
-        normalizeSourceIntegrationPolicy({ allow: {} }),
-      );
-      runtime.evals.set(definition.id, definition);
-      const warnings: string[] = [];
-      const originalWarn = cliLogger.warn;
-      cliLogger.warn = (...args: unknown[]) => warnings.push(args.map(String).join(" "));
-      try {
-        await runEvalCommand(
-          {
-            list: false,
-            exporters: [],
-            debug: false,
-            candidateModels: [],
-            projectDir,
-            reportDir: `${projectDir}/reports`,
-          },
-          {
-            discoverProjectAgentRuntime: () => Promise.resolve(runtime),
-            hydrateEvalRuntimeAuth: () => Promise.resolve({ apiToken: "token" }),
-          },
-        );
-      } finally {
-        cliLogger.warn = originalWarn;
-      }
+      for (const id of [undefined, "eval:judged-dataset"]) {
+        // One timeline for warnings and judge calls pins the notice before the run's first model call.
+        const timeline: string[] = [];
+        const runtime = createJudgedDatasetRuntime(projectDir, () => timeline.push("judge called"));
+        const originalWarn = cliLogger.warn;
+        cliLogger.warn = (...args: unknown[]) => timeline.push(args.map(String).join(" "));
+        let exitCode: number | undefined;
+        try {
+          exitCode = await runEvalCommand(
+            {
+              ...(id ? { id } : {}),
+              list: false,
+              exporters: [],
+              debug: false,
+              candidateModels: [],
+              projectDir,
+              reportDir: `${projectDir}/reports-${id ?? "suite"}`,
+            },
+            {
+              discoverProjectAgentRuntime: () => Promise.resolve(runtime),
+              hydrateEvalRuntimeAuth: () => Promise.resolve({ apiToken: "token" }),
+            },
+          );
+        } finally {
+          cliLogger.warn = originalWarn;
+        }
 
-      assertEquals(
-        warnings.filter((line) => line.includes("gateway_project_required")).length,
-        1,
-      );
+        assertEquals(exitCode, 0, `exit code for ${id ?? "suite"}`);
+        assertEquals(
+          timeline.filter((line) =>
+            line === "judge called" || line.includes(MISSING_PROJECT_NOTICE)
+          ),
+          [MISSING_PROJECT_WARNING, "judge called"],
+          `timeline for ${id ?? "suite"}`,
+        );
+        assertEquals(timeline.some((line) => line.includes("gateway_project_required")), false);
+      }
     }, { prefix: "vf-eval-judged-no-project-" });
   });
 
-  it("does not warn about a missing project in JSON mode", async () => {
+  it("does not warn about a missing project when a project is configured", async () => {
     await withTempDir(async (projectDir) => {
-      const definition = evalDataset({
-        id: "eval:judged-dataset",
-        dataset: [{ id: "case", input: "value" }],
-        metrics: [
-          metrics.judge.rubric({
-            rubric: "Is it good?",
-            judge: () => Promise.resolve({ score: 1 }),
-          }),
-        ],
-      });
-      definition.source = { filePath: `${projectDir}/evals/judged.eval.ts`, exportName: "default" };
-      const runtime = createProjectRuntimeDiscovery(
-        normalizeSourceIntegrationPolicy({ allow: {} }),
-      );
-      runtime.evals.set(definition.id, definition);
-      const warnings: string[] = [];
-      const originalWarn = cliLogger.warn;
-      cliLogger.warn = (...args: unknown[]) => warnings.push(args.map(String).join(" "));
-      setJsonMode(true);
-      try {
-        await runEvalCommand(
-          {
-            list: false,
-            exporters: [],
-            debug: false,
-            candidateModels: [],
-            projectDir,
-            reportDir: `${projectDir}/reports`,
-          },
-          {
-            discoverProjectAgentRuntime: () => Promise.resolve(runtime),
-            hydrateEvalRuntimeAuth: () => Promise.resolve({ apiToken: "token" }),
-          },
-        );
-      } finally {
-        setJsonMode(false);
-        cliLogger.warn = originalWarn;
-      }
+      for (const id of [undefined, "eval:judged-dataset"]) {
+        let judgeCalls = 0;
+        const runtime = createJudgedDatasetRuntime(projectDir, () => judgeCalls++);
+        const warnings: string[] = [];
+        const originalWarn = cliLogger.warn;
+        cliLogger.warn = (...args: unknown[]) => warnings.push(args.map(String).join(" "));
+        try {
+          await runEvalCommand(
+            {
+              ...(id ? { id } : {}),
+              list: false,
+              exporters: [],
+              debug: false,
+              candidateModels: [],
+              projectDir,
+              reportDir: `${projectDir}/reports-${id ?? "suite"}`,
+            },
+            {
+              discoverProjectAgentRuntime: () => Promise.resolve(runtime),
+              hydrateEvalRuntimeAuth: () =>
+                Promise.resolve({ apiToken: "token", projectSlug: "eval-project" }),
+            },
+          );
+        } finally {
+          cliLogger.warn = originalWarn;
+        }
 
-      assertEquals(warnings.filter((line) => line.includes("gateway_project_required")), []);
+        // The run reached its model call, so the absent notice is not an early exit.
+        assertEquals(judgeCalls, 1, `judge calls for ${id ?? "suite"}`);
+        assertEquals(warnings.filter((line) => line.includes(MISSING_PROJECT_NOTICE)), []);
+      }
+    }, { prefix: "vf-eval-judged-with-project-" });
+  });
+
+  it("keeps the missing-project notice out of JSON mode output, with and without a project", async () => {
+    await withTempDir(async (projectDir) => {
+      const auths = [{ apiToken: "token" }, { apiToken: "token", projectSlug: "eval-project" }];
+      for (const [index, runtimeAuth] of auths.entries()) {
+        const runtime = createJudgedDatasetRuntime(projectDir, () => {});
+        const warnings: string[] = [];
+        const originalWarn = cliLogger.warn;
+        cliLogger.warn = (...args: unknown[]) => warnings.push(args.map(String).join(" "));
+        setJsonMode(true);
+        let output: { stdout: string[]; stderr: string[] };
+        try {
+          output = await captureConsoleOutput(() =>
+            runEvalCommand(
+              {
+                list: false,
+                exporters: [],
+                debug: false,
+                candidateModels: [],
+                projectDir,
+                reportDir: `${projectDir}/reports-${index}`,
+              },
+              {
+                discoverProjectAgentRuntime: () => Promise.resolve(runtime),
+                hydrateEvalRuntimeAuth: () => Promise.resolve(runtimeAuth),
+              },
+            )
+          );
+        } finally {
+          setJsonMode(false);
+          cliLogger.warn = originalWarn;
+        }
+
+        const label = "projectSlug" in runtimeAuth ? "with a project" : "without a project";
+        assertEquals(warnings.filter((line) => line.includes(MISSING_PROJECT_NOTICE)), [], label);
+        assertEquals(
+          [...output.stdout, ...output.stderr].some((line) =>
+            line.includes(MISSING_PROJECT_NOTICE)
+          ),
+          false,
+          label,
+        );
+        const envelope = parseLastJsonEnvelope(output);
+        assertEquals(envelope.success, true, label);
+        assertEquals(envelope.command, "eval", label);
+      }
     }, { prefix: "vf-eval-json-no-project-" });
   });
 });
