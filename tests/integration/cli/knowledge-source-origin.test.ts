@@ -110,6 +110,11 @@ describe("isolated knowledge source origins", () => {
           assertStringIncludes(contentsByKey.get(uploadKey) ?? "", "Remote article.");
           assertStringIncludes(contentsByKey.get(localKey) ?? "", "Local article.");
           const localContent = contentsByKey.get(localKey) ?? "";
+          assertEquals(inspectOkfDocument("article.md", localContent).metadata.tags, ["md"]);
+          assertEquals(
+            inspectOkfDocument("article.md", contentsByKey.get(uploadKey) ?? "").metadata.tags,
+            ["upload", "md"],
+          );
           const localSource = collection.sources.find(({ kind }) => kind === "local");
           assert(localSource);
           assertEquals(

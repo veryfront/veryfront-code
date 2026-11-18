@@ -883,6 +883,7 @@ export async function ingestResolvedSources(
       sourceName: commandHelpers.buildKnowledgeSourceFileName(source),
       resource: canonicalRoot ? identity.resource : commandHelpers.buildKnowledgeResource(source),
       sourceKey: identity.sourceKey,
+      sourceKind: source.kind,
       sourceReference: buildSourceReference(source),
     };
   };

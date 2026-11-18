@@ -1461,6 +1461,26 @@ describe("ingestResolvedSources", () => {
     }
   });
 
+  it("requires explicit terminal pagination evidence for bounded custom ownership", async () => {
+    for (const pageInfo of [undefined, {}, { next: "" }, { next: "more" }, { next: null }]) {
+      const client = createMockClient({
+        get: async () => ({
+          data: [{ path: "docs/imports/article-2.md" }],
+          ...(pageInfo === undefined ? {} : { page_info: pageInfo }),
+        }),
+      });
+      const result = await listRemoteKnowledgeSuffixPaths({
+        client,
+        projectSlug: "test",
+        stem: "docs/imports/article",
+      });
+      assertEquals(
+        result,
+        pageInfo?.next === null ? new Set(["docs/imports/article-2.md"]) : undefined,
+      );
+    }
+  });
+
   it("scopes historical staging discovery before bounding unrelated catalog paths", async () => {
     const source = createUploadSource(
       "uploads/_knowledge-ingest/new-batch/article.md",
@@ -3761,6 +3781,1208 @@ it("rejects OKF bundle paths that escape the declared root before writing", () =
 });
 
 describe("runKnowledgeParser", () => {
+  it("ignores H1-shaped lines inside Markdown HTML blocks", async () => {
+    const root = await makeTempDir({ prefix: "veryfront-knowledge-html-heading-" });
+    try {
+      const blocks = [
+        "1. - item\n    <widget>\ntext\n   # Visible title",
+        "1. - item\n    2. <widget>\ntext\n   # Visible title",
+        "1. - item\n\t<widget>\ntext\n   # Visible title",
+        "-\n\n  ~~~md\n# Internal example\n  ~~~\n\n# Visible title",
+        "-\n\n  ```md\n# Internal example\n  ```\n\n# Visible title",
+        "1. Item\n-\n  <div>Metadata</div>\n# Visible title",
+        "  2. Item\n    <div>Metadata</div>\n<span>\n# Visible title",
+        "===\n<span>\n# Visible title",
+        "- item\n2. <widget>\n    ```\n  # Visible title",
+        "- item\n1. <widget>\n    ```\n\n# Visible title",
+        "Intro\n- <widget>\n    ```\n\n# Visible title",
+        "    code\n\n2. <widget>\n# Visible title",
+        "- - -\n  ~~~js\nx\n~~~\n# Visible title",
+        "* * *\n  <script>\n</script>\n# Visible title",
+        "Section\n-\n  ~~~js\nx\n~~~\n# Visible title",
+        "- Item\n<br>\n  <div>Content</div>\n# Visible title",
+        "- Item\n<span>Label</span>\n  <div>Content</div>\n# Visible title",
+        "- Item\n<strong>Label</strong>\n  <div>Content</div>\n# Visible title",
+        "- <div>\n  First item\n  </div>\n- <div>\n  Second item\n  </div>\n# Visible title",
+        "- First item\ncontinued\n  <div>\n  Second line\n  </div>\n# Visible title",
+        "Intro\n2. <div>\n   # Visible title",
+        "Intro\n2. ```md\n   # Visible title",
+        "\uFEFF# Visible title",
+        "\uFEFF---\n# metadata comment\ntitle: doc\n---\n# Visible title",
+        "\n---\n# metadata comment\ntitle: doc\n---\n# Visible title",
+        "- item\n  ```js\n  x\n  ```\nSome prose\n<widget>\n# Visible title",
+        "- item\n  ```js\n  x\n  ```\n\nSome prose\n<widget>\n# Visible title",
+        "- <div>text</div>\n\nSome prose\n<span>\n# Visible title",
+        "- <!-- note -->\n\nSome prose\n<br>\n# Visible title",
+        "```md\n- ```\n# Internal note\n```",
+        "```md\n- item\n    ```\n# Internal note\n```",
+        "-\t<div>\n  # Visible title",
+        "<pre>\n</style>\n# Visible title",
+        "- item\n  <div>Nested content</div>\n# Visible title",
+        "<API_KEY>\n# Visible title",
+        "## Section\n<widget>\n# Internal note",
+        "---\n<widget>\n# Internal note",
+        "- ```\n  # Internal note\n  ```\n# Visible title",
+        "- <div>\n  # Internal note\n# Visible title",
+        "- - <div>\n    # Internal note\n# Visible title",
+        "  <div>\n# Internal note",
+        "<script>\n# Internal note\n</script >\n# Still internal\n</script>",
+        "    <div>\n# Visible title",
+        "<!--\n# Internal note\n-->",
+        "<script>\n# Internal note\n</script>",
+        "<pre>\n# Internal note\n</pre>",
+        "<style>\n# Internal note\n</style>",
+        "<textarea>\n# Internal note\n</textarea>",
+        "<div>\n# Internal note\n</div>",
+        "<?processing\n# Internal note\n?>",
+        "<!DOCTYPE\n# Internal note\n>",
+        "<![CDATA[\n# Internal note\n]]>",
+        '<custom-widget attr="value">\n# Internal note\n</custom-widget>',
+      ];
+      for (const [index, block] of blocks.entries()) {
+        const filePath = join(root, `source-${index}.md`);
+        const body = `${block}\n\n# Visible title\n\nOriginal body.\n`;
+        await Deno.writeTextFile(filePath, body);
+        const result = await runKnowledgeParser({
+          filePath,
+          outputDir: join(root, `out-${index}`),
+        });
+        assertEquals(result.title, "Visible title", block);
+        assertEquals(result.slug, "visible-title", block);
+        assertStringIncludes(
+          await Deno.readTextFile(result.sandbox_output_path),
+          body.replace(/^\uFEFF/, "").replace(/^(?:[ \t]*\n)+/, ""),
+        );
+      }
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
+  });
+
+  it("keeps Markdown headings following MDX components", async () => {
+    const root = await makeTempDir({ prefix: "veryfront-knowledge-mdx-heading-" });
+    try {
+      for (
+        const [index, component] of [
+          "<Banner />",
+          "<Banner>Intro</Banner>",
+          "<div />",
+          "<Header />",
+        ].entries()
+      ) {
+        const filePath = join(root, `source-${index}.mdx`);
+        await Deno.writeTextFile(filePath, `${component}\n# Visible title\n`);
+        const result = await runKnowledgeParser({
+          filePath,
+          outputDir: join(root, `out-${index}`),
+        });
+        assertEquals(result.title, "Visible title");
+      }
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
+  });
+
+  it("preserves extracted Markdown indentation when finding document titles", async () => {
+    const root = await makeTempDir({ prefix: "veryfront-knowledge-extracted-heading-" });
+    try {
+      for (const extension of ["pdf", "html", "docx"]) {
+        const filePath = join(root, `source.${extension}`);
+        await Deno.writeTextFile(filePath, "synthetic extractor input");
+        const content = "    <div>example</div>\n# Real title";
+        const result = await runKnowledgeParser({ filePath, outputDir: join(root, extension) }, {
+          extractDocumentText: () => Promise.resolve(content),
+        });
+        assertEquals(result.title, "Real title");
+        assertEquals(result.slug, "real-title");
+        assertStringIncludes(await Deno.readTextFile(result.sandbox_output_path), content);
+      }
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
+  });
+
+  it("preserves headings after nested containers and multiline definitions", async () => {
+    const root = await makeTempDir({ prefix: "veryfront-heading-nested-" });
+    const fixtures = [
+      {
+        name: "empty item fixed padding",
+        body: "-  \n  <div>\n# Real title",
+        formats: ["md", "pdf"],
+      },
+      {
+        name: "empty tab item fixed padding",
+        body: "-\t\n  ```\n# Real title",
+        formats: ["md", "pdf"],
+      },
+      {
+        name: "four-space destination continuation",
+        body: "[ref]:\n    /url\n===\n<span>\n# Real title",
+        formats: ["md", "pdf"],
+      },
+      {
+        name: "wrapped reference label",
+        body: "[wrapped\nlabel]: /url\n===\n<span>\n# Real title",
+        formats: ["md", "pdf"],
+      },
+      {
+        name: "quoted ordered-list fence indentation",
+        body: "> 10. ```\n>     code\n>     ```\n> Text\n<span>\n# Real title",
+        formats: ["md", "pdf", "html", "docx"],
+      },
+      {
+        name: "quoted nested-list fence indentation",
+        body: "> - - ```\n>     code\n>     ```\n> Text\n<span>\n# Real title",
+        formats: ["md", "pdf", "html", "docx"],
+      },
+      {
+        "name": "MDX exported template",
+        "body": "export const example = `\n    # Internal example\n`\n\n# Real title",
+        "formats": ["mdx"],
+      },
+      {
+        "name": "MDX JSX expression",
+        "body": "<Example code={`\n    # Internal example\n`} />\n\n# Real title",
+        "formats": ["mdx"],
+      },
+      {
+        "name": "MDX JSX quoted attribute",
+        "body": '<Example title="\n    # Internal example\n" />\n\n# Real title',
+        "formats": ["mdx"],
+      },
+      {
+        "name": "MDX nested template expression",
+        "body": "export const example = `${`inner ${1}`}`\n\n# Real title",
+        "formats": ["mdx"],
+      },
+      {
+        "name": "MDX standalone expression",
+        "body": "{`\n    # Internal example\n`}\n\n# Real title",
+        "formats": ["mdx"],
+      },
+      {
+        "name": "reference interrupted by heading",
+        "body": "[Roadmap\n# Real title\n]: /roadmap",
+        "formats": ["md", "mdx", "pdf"],
+      },
+      {
+        "name": "reference interrupted by list",
+        "body": "[Roadmap\n- item\n]: /roadmap\n# Real title",
+        "formats": ["md", "pdf"],
+      },
+      {
+        "name": "reference interrupted by quote",
+        "body": "[Roadmap\n> text\n]: /roadmap\n# Real title",
+        "formats": ["md", "pdf"],
+      },
+      {
+        "name": "label block boundary ===",
+        "title": "[ref",
+        "slug": "ref",
+        "body": "[ref\n===\n]: /url\n# Real title",
+        "formats": ["md", "pdf"],
+      },
+      {
+        "name": "label block boundary ---",
+        "body": "[ref\n---\n]: /url\n# Real title",
+        "formats": ["md", "pdf"],
+      },
+      {
+        "name": "label block boundary - item",
+        "body": "[ref\n- item\n]: /url\n# Real title",
+        "formats": ["md", "pdf"],
+      },
+      {
+        "name": "label block boundary > text",
+        "body": "[ref\n> text\n]: /url\n# Real title",
+        "formats": ["md", "pdf"],
+      },
+      {
+        "name": "label block boundary ```md",
+        "body": "[ref\n```md\n# Internal example\n```\n]: /url\n# Real title",
+        "formats": ["md", "pdf"],
+      },
+      {
+        "name": "destination block boundary ===",
+        "title": "[ref]:",
+        "slug": "ref",
+        "body": "[ref]:\n===\n# Real title",
+        "formats": ["md", "pdf"],
+      },
+      {
+        "name": "destination block boundary ---",
+        "body": "[ref]:\n---\n# Real title",
+        "formats": ["md", "pdf"],
+      },
+      {
+        "name": "destination block boundary - item",
+        "body": "[ref]:\n- item\n# Real title",
+        "formats": ["md", "pdf"],
+      },
+      {
+        "name": "destination block boundary > text",
+        "body": "[ref]:\n> text\n# Real title",
+        "formats": ["md", "pdf"],
+      },
+      {
+        "name": "destination block boundary ```md",
+        "body": "[ref]:\n```md\n# Internal example\n```\n# Real title",
+        "formats": ["md", "pdf"],
+      },
+      {
+        "name": "title block boundary ===",
+        "title": '[ref]: /url "title',
+        "slug": "ref-url-title",
+        "body": '[ref]: /url "title\n===\n"\n# Real title',
+        "formats": ["md", "pdf"],
+      },
+      {
+        "name": "title block boundary ---",
+        "body": '[ref]: /url "title\n---\n"\n# Real title',
+        "formats": ["md", "pdf"],
+      },
+      {
+        "name": "title block boundary - item",
+        "body": '[ref]: /url "title\n- item\n"\n# Real title',
+        "formats": ["md", "pdf"],
+      },
+      {
+        "name": "title block boundary > text",
+        "body": '[ref]: /url "title\n> text\n"\n# Real title',
+        "formats": ["md", "pdf"],
+      },
+      {
+        "name": "title block boundary ```md",
+        "body": '[ref]: /url "title\n```md\n# Internal example\n```\n"\n# Real title',
+        "formats": ["md", "pdf"],
+      },
+      {
+        "name": "MDX regex braces and template expressions",
+        "body": "{(() => { const r = /[}]/; return `nested ${`value ${1}`}` })()}\n\n# Real title",
+        "formats": ["mdx"],
+      },
+      {
+        "name": "MDX multiline ESM assignment",
+        "body": "export const example =\n`\n    # Internal example\n`\n\n# Real title",
+        "formats": ["mdx"],
+      },
+      {
+        "name": "MDX ESM JSX child",
+        "body":
+          "export const example = <Example>\n\n    # Internal example\n</Example>\n\n# Real title",
+        "formats": ["mdx"],
+      },
+      {
+        "name": "MDX expression JSX child",
+        "body": "{<Example>\n    # Internal example\n</Example>}\n\n# Real title",
+        "formats": ["mdx"],
+      },
+      {
+        "name": "MDX regex after return",
+        "body": "{(() => { return /[}]/ })()}\n\n# Real title",
+        "formats": ["mdx"],
+      },
+      {
+        "name": "MDX true indented child heading",
+        "body": "<Example>\n\n    # Real title\n\n</Example>",
+        "formats": ["mdx"],
+      },
+      {
+        "name": "MDX arrow JSX",
+        "body":
+          "export const Example = () => <div>\n\n    # Internal example\n</div>\n\n# Real title",
+        "formats": ["mdx"],
+      },
+      {
+        "name": "MDX regex after comment",
+        "body": '{/* comment */ /[{]/.test("x")}\n\n# Real title',
+        "formats": ["mdx"],
+      },
+      {
+        "name": "MDX regex after condition",
+        "body": '{(() => { if (true) /[{]/.test("x"); })()}\n\n# Real title',
+        "formats": ["mdx"],
+      },
+      {
+        "name": "MDX regex after conditional block",
+        "body": '{(() => { if (true) {} /[{]/.test("x"); })()}\n\n# Real title',
+        "formats": ["mdx"],
+      },
+      {
+        "name": "MDX component exits list",
+        "body": "- Item\n\n<Component />\n\n  # Real title",
+        "formats": ["mdx"],
+      },
+      {
+        "name": "MDX expression exits list",
+        "body": "- Item\n\n{null}\n\n  # Real title",
+        "formats": ["mdx"],
+      },
+      {
+        "name": "MDX export exits list",
+        "body": "- Item\n\nexport const x = 1\n\n  # Real title",
+        "formats": ["mdx"],
+      },
+      {
+        "name": "new nested item has no inherited paragraph",
+        "body": "Intro\n- -\ntext\n  # Real title",
+        "formats": ["md", "mdx", "pdf", "html", "docx"],
+      },
+      {
+        "name": "incomplete MDX ESM across blank line",
+        "body": "export const example =\n\n`\n    # Internal example\n`\n\n# Real title",
+        "formats": ["mdx"],
+      },
+      {
+        "name": "default exported JSX",
+        "body": "export default <Example>\n\n    # Internal example\n</Example>\n\n# Real title",
+        "formats": ["mdx"],
+      },
+      {
+        "name": "regex after function declaration",
+        "body": '{(() => { function f() {} /[{]/.test("x"); })()}\n\n# Real title',
+        "formats": ["mdx"],
+      },
+      {
+        "name": "regex in exported function",
+        "body":
+          'export const example = (() => { function f() {} /[{]/.test("x"); })()\n\n# Real title',
+        "formats": ["mdx"],
+      },
+      {
+        "name": "division after function expression",
+        "body": "{(() => { const f = function() {} / 2; return f; })()}\n\n# Real title",
+        "formats": ["mdx"],
+      },
+      {
+        "name": "regex after class declaration",
+        "body": '{(() => { class Example {} /[{]/.test("x"); })()}\n\n# Real title',
+        "formats": ["mdx"],
+      },
+      {
+        "name": "JSX raw quoted backslash",
+        "body": '<Example path="docs\\" />\n\n# Real title',
+        "formats": ["mdx"],
+      },
+      {
+        "name": "regex after async declaration",
+        "body":
+          'export function example() { async function f() {} /[{]/.test("x"); }\n\n# Real title',
+        "formats": ["mdx"],
+      },
+      {
+        "name": "regex after bare statement block",
+        "body": '{(() => { {} /[{]/.test("x"); })()}\n\n# Real title',
+        "formats": ["mdx"],
+      },
+      {
+        "name": "nested lazy quote-list-quote paragraph",
+        "body": "> - > Note\n<span>\n# Real title",
+        "formats": ["md", "pdf", "html", "docx"],
+      },
+      {
+        "name": "quoted inline span retains lazy paragraph",
+        "body": "> ```code```\n<span>\n# Real title",
+        "formats": ["md", "pdf", "html", "docx"],
+      },
+      {
+        "name": "quoted inline span does not create root Setext",
+        "body": "> ```code```\ncontinued\n===\n# Real title",
+        "formats": ["md", "pdf"],
+      },
+      {
+        "name": "optional catch body before regex",
+        "body": 'export function f() { try {} catch {} /[{]/.test("x"); }\n\n# Real title',
+        "formats": ["mdx"],
+      },
+      {
+        "name": "for-await body before regex",
+        "body":
+          'export async function f() { for await (const x of []) {} /[{]/.test("x"); }\n\n# Real title',
+        "formats": ["mdx"],
+      },
+      {
+        "name": "Unicode JSX tag ownership",
+        "body": "export const example = <Übersicht>It's text</Übersicht>\n\n# Real title",
+        "formats": ["mdx"],
+      },
+      {
+        "name": "underscore JSX tag ownership",
+        "body": "export const example = <_Banner>It's text</_Banner>\n\n# Real title",
+        "formats": ["mdx"],
+      },
+      {
+        "name": "dollar JSX tag ownership",
+        "body": "export const example = <$Banner>It's text</$Banner>\n\n# Real title",
+        "formats": ["mdx"],
+      },
+      {
+        "name": "contextual identifier ends export",
+        "body": 'import { from } from "pkg"\nexport const convert = from\n\n# Real title',
+        "formats": ["mdx"],
+      },
+      {
+        "name": "contextual identifier default export",
+        "body": "export default as\n\n# Real title",
+        "formats": ["mdx"],
+      },
+      {
+        "name": "list child reference definition before lazy HTML",
+        "body": "- [ref]: /url\n  ===\n<span>\n# Real title",
+        "formats": ["md", "pdf"],
+      },
+      {
+        "name": "ordered list child reference definition before lazy HTML",
+        "body": "1. [ref]: /url\n   ===\n<span>\n# Real title",
+        "formats": ["md", "pdf"],
+      },
+      { name: "MDX indented Setext heading", body: "    Real title\n    ===", formats: ["mdx"] },
+      { name: "MDX tab Setext heading", body: "\tReal title\n\t===", formats: ["mdx"] },
+      {
+        "name": "default exported regex",
+        "body": "export default /foo/\n\n# Real title",
+        "formats": ["mdx"],
+      },
+      {
+        "name": "regex after else",
+        "body": '{(() => { if (true) {} else /[{]/.test("x"); })()}\n\n# Real title',
+        "formats": ["mdx"],
+      },
+      {
+        "name": "regex after do",
+        "body": '{(() => { do /[{]/.test("x"); while(false); })()}\n\n# Real title',
+        "formats": ["mdx"],
+      },
+      {
+        "name": "JSX after typeof",
+        "body": "{typeof <div>It's content</div>}\n\n# Real title",
+        "formats": ["mdx"],
+      },
+      { "name": "bare import is Markdown", "body": "import\n\n# Real title", "formats": ["mdx"] },
+      { "name": "bare export is Markdown", "body": "export\n\n# Real title", "formats": ["mdx"] },
+      {
+        "name": "tab after export is Markdown",
+        "body": "export\tconst example =\n\n# Real title",
+        "formats": ["mdx"],
+      },
+      {
+        "name": "indented export is Markdown",
+        "body": "  export const example =\n\n# Real title",
+        "formats": ["mdx"],
+      },
+      {
+        "name": "export cannot interrupt paragraph",
+        "body": "Paragraph\nexport const example =\n\n# Real title",
+        "formats": ["mdx"],
+      },
+      {
+        "name": "postfix increment completes ESM",
+        "body": "export const value = counter++\n\n# Real title",
+        "formats": ["mdx"],
+      },
+      {
+        "name": "postfix decrement completes ESM",
+        "body": "export const value = counter--\n\n# Real title",
+        "formats": ["mdx"],
+      },
+      {
+        "name": "prefix increment still needs operand",
+        "body": "export const value = ++\n\ncounter\n\n# Real title",
+        "formats": ["mdx"],
+      },
+      {
+        "name": "postfix division keeps regex operand",
+        "body": 'export const value = counter++ / /[{]/.test("x")\n\n# Real title',
+        "formats": ["mdx"],
+      },
+      {
+        "name": "labelled block before regex",
+        "body": 'export function f() { label: {} /[{]/.test("x"); }\n\n# Real title',
+        "formats": ["mdx"],
+      },
+      {
+        "name": "case block before regex",
+        "body":
+          'export function f() { switch (1) { case 1: {} /[{]/.test("x"); } }\n\n# Real title',
+        "formats": ["mdx"],
+      },
+      {
+        "name": "ternary case label before regex",
+        "body":
+          'export function f() { switch (1) { case true ? 1 : 2: {} /[{]/.test("x"); } }\n\n# Real title',
+        "formats": ["mdx"],
+      },
+      {
+        "name": "object property is not a statement label",
+        "body": "export const value = ({ label: {} }) / 2\n\n# Real title",
+        "formats": ["mdx"],
+      },
+      {
+        "name": "method body owns labelled statements",
+        "body": 'export const value = { method() { label: {} /[{]/.test("x"); } }\n\n# Real title',
+        "formats": ["mdx"],
+      },
+      {
+        "name": "static body owns labelled statements",
+        "body": 'export class Example { static { label: {} /[{]/.test("x"); } }\n\n# Real title',
+        "formats": ["mdx"],
+      },
+      {
+        "name": "for-of separator before regex",
+        "body": 'export function f() { for (const x of /[{]/.exec("{")) {} }\n\n# Real title',
+        "formats": ["mdx"],
+      },
+      {
+        "name": "for-await-of separator before regex",
+        "body":
+          'export async function f() { for await (const x of /[{]/.exec("{")) {} }\n\n# Real title',
+        "formats": ["mdx"],
+      },
+      {
+        "name": "expression for-of separator before regex",
+        "body": '{(() => { for (const x of /[{]/.exec("{")) {} })()}\n\n# Real title',
+        "formats": ["mdx"],
+      },
+      {
+        "name": "JSX attribute for-of separator before regex",
+        "body":
+          '<Component value={(() => { for (const x of /[{]/.exec("{")) {} })()} />\n\n# Real title',
+        "formats": ["mdx"],
+      },
+      {
+        "name": "ordinary of identifier preserves division",
+        "body": "export const of = 4 / 2\n\n# Real title",
+        "formats": ["mdx"],
+      },
+      {
+        "name": "for initializer of identifier preserves division",
+        "body": "export function f() { for (of / 2; false;) {} }\n\n# Real title",
+        "formats": ["mdx"],
+      },
+      {
+        "name": "for member of preserves division",
+        "body": "export function f() { for (object.of / 2; false;) {} }\n\n# Real title",
+        "formats": ["mdx"],
+      },
+      {
+        "name": "bare reference destination greater-than",
+        "body": "[ref]: https://example.com/search?q=a>b\n===\n# Real title",
+        "formats": ["md", "mdx", "pdf", "html", "docx"],
+      },
+      {
+        "name": "bare reference destination less-than",
+        "body": "[ref]: https://example.com/search?q=a<b\n===\n# Real title",
+        "formats": ["md", "pdf", "html", "docx"],
+      },
+      {
+        "name": "continued bare reference destination angle",
+        "body": "[ref]:\n  https://example.com/search?q=a>b\n===\n# Real title",
+        "formats": ["md", "mdx", "pdf", "html", "docx"],
+      },
+      {
+        "name": "ASI declaration in ESM",
+        "body":
+          'export function f() {\nconst x = 1\nfunction helper() {}\n/[{]/.test("x")\n}\n\n# Real title',
+        "formats": ["mdx"],
+      },
+      {
+        "name": "ASI declaration in expression",
+        "body":
+          '{(() => {\nconst x = 1\nfunction helper() {}\n/[{]/.test("x")\n})()}\n\n# Real title',
+        "formats": ["mdx"],
+      },
+      {
+        "name": "ASI declaration in JSX attribute",
+        "body":
+          '<Component value={(() => {\nconst x = 1\nfunction helper() {}\n/[{]/.test("x")\n})()} />\n\n# Real title',
+        "formats": ["mdx"],
+      },
+      {
+        "name": "function expression retains division",
+        "body": 'export const value =\nfunction helper() {} / /[{]/.test("x")\n\n# Real title',
+        "formats": ["mdx"],
+      },
+      {
+        "name": "class after ASI is a declaration",
+        "body":
+          'export function f() { const x = 1\nclass Example {}\n/[{]/.test("x") }\n\n# Real title',
+        "formats": ["mdx"],
+      },
+      {
+        "name": "return ASI before declaration",
+        "body":
+          'export function f() { return\nfunction helper() {}\n/[{]/.test("x") }\n\n# Real title',
+        "formats": ["mdx"],
+      },
+      {
+        "name": "quoted empty * retains paragraph",
+        "body": "> Note\n> *\ncontinued\n===\n# Real title",
+        "formats": ["md", "mdx", "pdf", "html", "docx"],
+      },
+      {
+        "name": "quoted empty + retains paragraph",
+        "body": "> Note\n> +\ncontinued\n===\n# Real title",
+        "formats": ["md", "mdx", "pdf", "html", "docx"],
+      },
+      {
+        "name": "quoted empty 1. retains paragraph",
+        "body": "> Note\n> 1.\ncontinued\n===\n# Real title",
+        "formats": ["md", "mdx", "pdf", "html", "docx"],
+      },
+      {
+        "name": "quoted empty 2. retains paragraph",
+        "body": "> Note\n> 2.\ncontinued\n===\n# Real title",
+        "formats": ["md", "mdx", "pdf", "html", "docx"],
+      },
+      {
+        "name": "quote tab retains source column",
+        "body": "> \tNote\ncontinued\n===\n# Real title",
+        "formats": ["md", "mdx", "pdf", "html", "docx"],
+      },
+      {
+        "name": "MDX quote has no indented code",
+        "body": ">     Note\ncontinued\n===\n# Real title",
+        "formats": ["mdx"],
+      },
+      {
+        "name": "nested quote starts its own empty item",
+        "body": "> Note\n> > *\ncontinued\n===\n# Real title",
+        "title": "continued",
+        "slug": "continued",
+        "formats": ["md", "mdx", "pdf"],
+      },
+      {
+        "name": "missing quote prefix ends ```",
+        "body": "> ```\n\n> Note\n<span>\n# Real title",
+        "formats": ["md", "pdf", "html", "docx"],
+      },
+      {
+        "name": "missing quote prefix ends ~~~",
+        "body": "> ~~~\n\n> Note\n<span>\n# Real title",
+        "formats": ["md", "pdf", "html", "docx"],
+      },
+      {
+        "name": "missing quote prefix ends <script>",
+        "body": "> <script>\n\n> Note\n<span>\n# Real title",
+        "formats": ["md", "pdf", "html", "docx"],
+      },
+      {
+        "name": "missing quote prefix ends <!--",
+        "body": "> <!--\n\n> Note\n<span>\n# Real title",
+        "formats": ["md", "pdf", "html", "docx"],
+      },
+      {
+        "name": "ESM numeric atom 1.",
+        "body": "export const value = 1.\n\n# Real title",
+        "formats": ["mdx"],
+      },
+      {
+        "name": "ESM numeric atom 1.e2",
+        "body": "export const value = 1.e2\n\n# Real title",
+        "formats": ["mdx"],
+      },
+      {
+        "name": "ESM numeric atom 0x10n",
+        "body": "export const value = 0x10n\n\n# Real title",
+        "formats": ["mdx"],
+      },
+      {
+        "name": "ESM numeric atom 1..\n\ntoString()",
+        "body": "export const value = 1..\n\ntoString()\n\n# Real title",
+        "formats": ["mdx"],
+      },
+      {
+        "name": "ESM requires void operand",
+        "body":
+          "export const example = void\n\n    <Component>\n      # Internal example\n    </Component>\n\n# Real title",
+        "formats": ["mdx"],
+      },
+      {
+        "name": "expression requires void operand",
+        "body":
+          "{void\n\n    <Component>\n      # Internal example\n    </Component>}\n\n# Real title",
+        "formats": ["mdx"],
+      },
+      {
+        "name": "JSX attribute requires void operand",
+        "body":
+          "<Outer value={void\n\n    <Component>\n      # Internal example\n    </Component>} />\n\n# Real title",
+        "formats": ["mdx"],
+      },
+      {
+        "name": "ESM requires typeof operand",
+        "body":
+          "export const example = typeof\n\n    <Component>\n      # Internal example\n    </Component>\n\n# Real title",
+        "formats": ["mdx"],
+      },
+      {
+        "name": "expression requires typeof operand",
+        "body":
+          "{typeof\n\n    <Component>\n      # Internal example\n    </Component>}\n\n# Real title",
+        "formats": ["mdx"],
+      },
+      {
+        "name": "JSX attribute requires typeof operand",
+        "body":
+          "<Outer value={typeof\n\n    <Component>\n      # Internal example\n    </Component>} />\n\n# Real title",
+        "formats": ["mdx"],
+      },
+      {
+        "name": "ESM requires new operand",
+        "body":
+          "export const example = new\n\n    <Component>\n      # Internal example\n    </Component>\n\n# Real title",
+        "formats": ["mdx"],
+      },
+      {
+        "name": "expression requires new operand",
+        "body":
+          "{new\n\n    <Component>\n      # Internal example\n    </Component>}\n\n# Real title",
+        "formats": ["mdx"],
+      },
+      {
+        "name": "JSX attribute requires new operand",
+        "body":
+          "<Outer value={new\n\n    <Component>\n      # Internal example\n    </Component>} />\n\n# Real title",
+        "formats": ["mdx"],
+      },
+      {
+        "name": "ESM requires delete operand",
+        "body":
+          "export const example = delete\n\n    <Component>\n      # Internal example\n    </Component>\n\n# Real title",
+        "formats": ["mdx"],
+      },
+      {
+        "name": "expression requires delete operand",
+        "body":
+          "{delete\n\n    <Component>\n      # Internal example\n    </Component>}\n\n# Real title",
+        "formats": ["mdx"],
+      },
+      {
+        "name": "JSX attribute requires delete operand",
+        "body":
+          "<Outer value={delete\n\n    <Component>\n      # Internal example\n    </Component>} />\n\n# Real title",
+        "formats": ["mdx"],
+      },
+      {
+        "name": "class property is not a declaration",
+        "body": 'export const props = { class: "notice" }\n\n# Real title',
+        "formats": ["mdx"],
+      },
+      {
+        "name": "function property is not a declaration",
+        "body": 'export const props = { function: "handler" }\n\n# Real title',
+        "formats": ["mdx"],
+      },
+      {
+        "name": "commented class property is not a declaration",
+        "body": 'export const props = { class /* note */: "notice" }\n\n# Real title',
+        "formats": ["mdx"],
+      },
+      {
+        "name": "spread regex array",
+        "body": 'export const match = [.../[{]/.exec("{")]\n\n# Real title',
+        "formats": ["mdx"],
+      },
+      {
+        "name": "spread JSX operand",
+        "body": "export const value = { ...<A>It's text</A> }\n\n# Real title",
+        "formats": ["mdx"],
+      },
+      {
+        "name": "spread regex expression",
+        "body": '{collect(.../[{]/.exec("{"))}\n\n# Real title',
+        "formats": ["mdx"],
+      },
+      {
+        "name": "debugger ASI regex",
+        "body": 'export function run() { debugger\n/[{]/.test("{"); }\n\n# Real title',
+        "formats": ["mdx"],
+      },
+      {
+        "name": "debugger comment ASI regex attribute",
+        "body":
+          '<Component value={() => { debugger /* newline\n*/ /[{]/.test("{"); }} />\n\n# Real title',
+        "formats": ["mdx"],
+      },
+      {
+        "name": "reference preserves inline HTML interruption context",
+        "body": "[ref]: /url\n<span>\n# Real title",
+        "formats": ["md", "pdf", "html", "docx"],
+      },
+      {
+        "name": "lazy quote Setext-like continuation",
+        "body": "> Note\ncontinued\n===\n<span>\n</span>\n# Real title",
+        "formats": ["md", "pdf", "html", "docx"],
+      },
+      {
+        "name": "nested reference outdented empty sibling",
+        "body": "- Outer\n  - Parent\n    - [ref]:\n    1.\n      Child\n# Real title",
+        "formats": ["md", "pdf"],
+      },
+      {
+        "name": "comparison regex ESM",
+        "body": "export const matches = count > /[{]/.test(value)\n\n# Real title",
+        "formats": ["mdx"],
+      },
+      {
+        "name": "less than regex expression",
+        "body": "{count < /[{]/.test(value)}\n\n# Real title",
+        "formats": ["mdx"],
+      },
+      {
+        "name": "shift regex attribute",
+        "body": "<Component value={count >>> /[{]/.test(value)} />\n\n# Real title",
+        "formats": ["mdx"],
+      },
+      {
+        "name": "break ASI regex",
+        "body":
+          "export function run() { while (true) { break\n/[{]/.test(value); } }\n\n# Real title",
+        "formats": ["mdx"],
+      },
+      {
+        "name": "continue label ASI regex",
+        "body":
+          "{(() => { outer: while (true) { continue outer\n/[{]/.test(value); } })()}\n\n# Real title",
+        "formats": ["mdx"],
+      },
+      {
+        "name": "continue comment ASI regex attribute",
+        "body":
+          "<Component value={() => { while (true) { continue /* newline\n*/ /[{]/.test(value); } }} />\n\n# Real title",
+        "formats": ["mdx"],
+      },
+      {
+        "name": "reference destination outdented empty sibling",
+        "body": "- [ref]:\n1.\n  # Real title",
+        "formats": ["md", "pdf"],
+      },
+      {
+        "name": "reference label outdented empty sibling",
+        "body": "- [ref\n1.\n  # Real title",
+        "formats": ["md", "pdf"],
+      },
+      {
+        "name": "reference title outdented empty sibling",
+        "body": '- [ref]: /url "title\n1.\n  # Real title',
+        "formats": ["md", "pdf"],
+      },
+      {
+        "name": "completed reference before indented code",
+        "body": "[ref]: /url\n    # Internal example\n# Real title",
+        "formats": ["md", "pdf"],
+      },
+      {
+        "name": "completed reference before empty list",
+        "body": "[ref]: /url\n-\n  Internal example\n# Real title",
+        "formats": ["md", "pdf"],
+      },
+      {
+        "name": "named import keywords are not declarations",
+        "body": 'import { class as themeClass, function as handler } from "theme"\n\n# Real title',
+        "formats": ["mdx"],
+      },
+      {
+        "name": "named reexport keywords are not declarations",
+        "body": 'export { class as themeClass, function as handler } from "theme"\n\n# Real title',
+        "formats": ["mdx"],
+      },
+      {
+        "name": "decreased quote depth retains lazy paragraph",
+        "body": "> > Note\n>     Continued note\n<br>\n# Real title",
+        "formats": ["md", "pdf", "html", "docx"],
+      },
+      {
+        name: "class heritage expression retains keyword position",
+        body:
+          'export class Outer extends class Inner {} { static { label: {} /[{]/.test("x"); } }\n\n# Real title',
+        formats: ["mdx"],
+      },
+      { name: "MDX indented heading", body: "    # Real title", formats: ["mdx"] },
+      { name: "MDX tab heading", body: "\t# Real title", formats: ["mdx"] },
+      {
+        name: "MDX indented fence",
+        body: "    ```md\n# Internal example\n```\n\n# Real title",
+        formats: ["mdx"],
+      },
+      {
+        name: "indented reference title",
+        body: '[ref]: /url\n    "optional title"\n===\n<span>\n# Real title',
+        formats: ["md", "pdf", "html", "docx"],
+      },
+      {
+        name: "indented successive definition",
+        body: "[ref]: /url\n    [other]: /other\n===\n<span>\n# Real title",
+        formats: ["md", "pdf", "html", "docx"],
+      },
+      {
+        name: "quoted bullet paragraph",
+        body: "> - item\n<span>\n# Real title",
+        formats: ["md", "pdf", "html"],
+      },
+      {
+        name: "quoted ordered paragraph",
+        body: "> 1. item\n<span>\n# Real title",
+        formats: ["md", "pdf", "html"],
+      },
+      {
+        name: "nested quoted fence closure",
+        body: "> > ```\n> > ```\n> Text\n<span>\n# Real title",
+        formats: ["md", "pdf", "html"],
+      },
+      {
+        name: "nested quoted HTML depth exit",
+        body: "> > <div>\n> Text\n<span>\n# Real title",
+        formats: ["md", "pdf", "html"],
+      },
+      {
+        name: "does not parse definition-shaped text inside a paragraph",
+        title: "Intro [ref]: https://example.com",
+        slug: "intro-ref-https-example-com",
+        body: "Intro\n[ref]: https://example.com\n===\n- -\nProse\n  # Real title",
+        formats: ["md", "pdf"],
+      },
+      {
+        name: "resets blockquote context after a blank line",
+        body: "> Note\n\nIntroduction\n<span>\n</span>\n# Real title",
+        formats: ["md", "pdf"],
+      },
+      {
+        name: "recognizes setext headings after a closed blockquote",
+        body: "> Note\n\nOverview\n-\n  # Real title",
+        formats: ["md", "mdx", "pdf"],
+      },
+      {
+        name: "consumes link reference titles as part of the definition",
+        body: '[ref]: /url\n"reference title"\n===\n<span>\n# Real title',
+        formats: ["md", "pdf"],
+      },
+      {
+        name: "ends an empty nested list after a blockquote",
+        body: "> Note\n- -\nIntroduction\n  # Real title",
+        formats: ["md", "mdx", "pdf"],
+      },
+      {
+        name: "keeps HTML-shaped lazy lines inside nested-list paragraphs",
+        body: "   - - item\n    <span>\n</span>\n# Real title",
+        formats: ["md", "pdf"],
+      },
+      {
+        name: "retains nested blockquote paragraph context",
+        body: "> > text\n<span>\n# Real title",
+        formats: ["md", "pdf"],
+      },
+      {
+        name: "recognizes a nested blockquote before outdented prose",
+        body: "- item\n    >\nProse outside the list.\n  # Real title",
+        formats: ["md", "mdx", "pdf"],
+      },
+      {
+        name: "retains an outer list after an empty nested item",
+        body: "- -\n\n  <span>\n# Real title",
+        formats: ["md", "pdf"],
+      },
+      {
+        name: "tracks an empty sibling after an implicitly closed block",
+        body: "- <div>\n-\n\n  # Real title",
+        formats: ["md", "pdf"],
+      },
+      {
+        name: "tracks an empty sibling after an implicitly closed fence",
+        body: "- ```\n-\n\n  # Real title",
+        formats: ["md", "mdx", "pdf"],
+      },
+      {
+        name: "does not treat multiline link destinations as setext headings",
+        body: "[ref]:\nhttps://example.com\n===\n<span>\n# Real title",
+        formats: ["md", "pdf"],
+      },
+    ];
+    try {
+      for (const [index, fixture] of fixtures.entries()) {
+        for (const extension of fixture.formats) {
+          const filePath = join(root, `source-${index}.${extension}`);
+          await Deno.writeTextFile(filePath, fixture.body);
+          const result = await runKnowledgeParser({
+            filePath,
+            outputDir: join(root, `out-${index}-${extension}`),
+          }, { extractDocumentText: () => Promise.resolve(fixture.body) });
+          assertEquals(result.title, fixture.title ?? "Real title", fixture.name);
+          assertEquals(result.slug, fixture.slug ?? "real-title", fixture.name);
+        }
+      }
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
+  });
+
+  it("keeps heading selection aligned with paragraph and container boundaries", async () => {
+    const root = await makeTempDir({ prefix: "veryfront-knowledge-heading-context-" });
+    const cases = [
+      {
+        content: "- Item\n<span>\n  ~~~md\n# Example\n  ~~~\n</span>\n\n# Real title",
+        title: "Example",
+      },
+      { content: "- Item\n<span>\n</span>\n\n  # Real title" },
+      { content: "> Note\n</span>\n<script>\n\n# Real title" },
+      // CommonMark §5.2 permits an empty item after code; its fence closes on root dedent.
+      { content: "    /url\n-\n  > text\n<widget>\n  ````\n# Real title", title: "Real title" },
+      {
+        content: "    <script>\n-\n  - ```\n  > text\n\n    - item\n<widget>\n  ```\n# Real title",
+        title: "Real title",
+      },
+      { content: '    code\n\t\n- -\n[ref]: /url "\n  # Real title', title: "Real title" },
+      { content: "    code\n2. item\n   # Nested title" },
+      { content: "> ```\n> text\n<span>\n # Hidden" },
+      { content: "> <div>\n\n  ```\n # Hidden" },
+      {
+        content: "- > text\n    > text\n    <div>\n  > text\n\\\n\\\n   # Real title",
+        title: "Real title",
+      },
+      { content: '> \n    code\n\t\n- -\n[ref]: /url "\n  # Real title', title: "Real title" },
+      { content: "1. - item\n    <widget>\ntext\n   # Real title" },
+      { content: "[ref]:\n```js\n# Hidden" },
+      {
+        "content": "- <!-- -->\n  - <div>\n  -\n  </script>\n# Real title",
+        "title": "Real title",
+      },
+      {
+        "content": "  - item\n  </widget>\n</widget>\n<script>\n\n# Real title",
+      },
+      {
+        "content": "[ref]:\n<widget>\n===\n  </script>\n# Real title",
+        "title": "Real title",
+      },
+      {
+        "content": "    ```\n> text\n<widget />\n  </widget>\n# Real title",
+        title: "Real title",
+      },
+      {
+        "content": "    ```\n  - item\n<widget />\n  <widget>\n# Real title",
+        title: "Real title",
+      },
+      {
+        "content": "  > text\n</widget>\n  <widget>\n- <!-- -->\n  ```\n# Real title",
+        title: "Real title",
+      },
+      {
+        "content": "- item\n</script>\n<widget />\n  ````\n# Real title",
+        title: "Real title",
+      },
+      {
+        "content": "> text\n  -->\n===\n  </widget>\n# Real title",
+        "title": "Real title",
+      },
+      {
+        "content": "  2. item\n    ---\n<widget>\n# Real title",
+        "title": "Real title",
+      },
+      {
+        "content": "  > text\n</widget>\n===\n</script>\n# Real title",
+        "title": "Real title",
+      },
+      {
+        "content": "- item\n===\n  <div>\n# Real title",
+        "title": "Real title",
+      },
+    ];
+    try {
+      for (const [index, fixture] of cases.entries()) {
+        const filePath = join(root, `source-${index}.md`);
+        await Deno.writeTextFile(filePath, fixture.content);
+        const result = await runKnowledgeParser({
+          filePath,
+          outputDir: join(root, `out-${index}`),
+        });
+        assertEquals(result.title, fixture.title ?? `source-${index}`, fixture.content);
+      }
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
+  });
+
+  it("preserves root Setext H1 titles without adding a duplicate heading", async () => {
+    const root = await makeTempDir({ prefix: "veryfront-setext-heading-" });
+    const fixtures = [
+      { body: "Real title\n===\n", title: "Real title" },
+      { "body": "> Note\n<Component />\nTitle\n===\n", "title": "Title", "formats": ["mdx"] },
+      { "body": "> Note\n{1}\nTitle\n===\n", "title": "Title", "formats": ["mdx"] },
+
+      { "body": "{1} Intro\n===\n", "title": "{1} Intro", "formats": ["mdx"] },
+      { "body": "<Banner /> Intro\n===\n", "title": "<Banner /> Intro", "formats": ["mdx"] },
+      {
+        "body": "<Banner>Intro\nmore</Banner>\n===\n",
+        "title": "<Banner>Intro more</Banner>",
+        "formats": ["mdx"],
+      },
+      { "body": "{\n  1\n} Intro\n===\n", "title": "{ 1 } Intro", "formats": ["mdx"] },
+      { "body": "<Banner /> {1}\n===\n# Real title\n", "title": "Real title", "formats": ["mdx"] },
+
+      { body: "Foo\n-------------------------\n\nFoo\n=\n", title: "Foo" },
+      { body: "   Foo\n---\n\n  Foo\n-----\n\n  Foo\n  ===\n", title: "Foo" },
+      { body: "[foo]: /url\nbar\n===\n[foo]\n", title: "bar" },
+      { body: "A multiline\nauthored title\n===\n", title: "A multiline authored title" },
+      { body: '[ref]: /url\n"not a title" extra\n===\n', title: '"not a title" extra' },
+    ];
+    try {
+      for (const [index, fixture] of fixtures.entries()) {
+        for (const extension of fixture.formats ?? ["md", "mdx", "pdf", "html", "docx"]) {
+          for (const sourceKind of ["local", "upload"] as const) {
+            const filePath = join(root, `source-${index}.${extension}`);
+            await Deno.writeTextFile(filePath, fixture.body);
+            const result = await runKnowledgeParser({
+              filePath,
+              sourceKind,
+              outputDir: join(root, `out-${index}-${extension}-${sourceKind}`),
+            }, { extractDocumentText: () => Promise.resolve(fixture.body) });
+            assertEquals(result.title, fixture.title);
+            const output = await Deno.readTextFile(result.sandbox_output_path);
+            assertEquals(output.endsWith(fixture.body), true);
+            assertEquals(output.includes("# source-"), false);
+          }
+        }
+      }
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
+  });
+
+  it("keeps empty authored root H1s while using filename metadata", async () => {
+    const root = await makeTempDir({ prefix: "veryfront-empty-heading-" });
+    const fixtures = [
+      { body: "#\n", rootHeading: true },
+      { body: "#   \n\nBody\n", rootHeading: true },
+      { body: "# ###\n", rootHeading: true },
+      { body: "#\n\n# Later title\n", rootHeading: true },
+      { body: "- #\n", rootHeading: false },
+      { body: "> #\n", rootHeading: false },
+      { body: "```md\n#\n```\n", rootHeading: false },
+      { body: "<script>\n#\n</script>\n", rootHeading: false, formats: ["md", "pdf"] },
+    ];
+    try {
+      for (const [index, fixture] of fixtures.entries()) {
+        for (const extension of fixture.formats ?? ["md", "mdx", "pdf"]) {
+          const filePath = join(root, `source-${index}.${extension}`);
+          await Deno.writeTextFile(filePath, fixture.body);
+          const result = await runKnowledgeParser({
+            filePath,
+            outputDir: join(root, `out-${index}-${extension}`),
+          }, { extractDocumentText: () => Promise.resolve(fixture.body) });
+          assertEquals(result.title, `source-${index}`);
+          const output = await Deno.readTextFile(result.sandbox_output_path);
+          assertEquals(output.endsWith(fixture.body), true, `${extension}: ${fixture.body}`);
+          assertEquals(
+            output.includes(`\n# source-${index}\n`),
+            !fixture.rootHeading,
+            fixture.body,
+          );
+        }
+      }
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
+  });
+
   it("writes OKF Document frontmatter and titles a document without an H1 from its file name", async () => {
     const tempDir = await makeTempDir({ prefix: "veryfront-knowledge-parser-test-" });
     const filePath = join(tempDir, "q1-report.txt");
