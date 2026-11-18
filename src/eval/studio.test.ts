@@ -63,6 +63,8 @@ describe("eval/studio", () => {
     });
 
     assertEquals(document.environmentContext, "active tab: app/page.tsx");
+    // A form client shows and submits only the fields the document advertises.
+    assertEquals(document.editableFields.includes("environmentContext"), true);
     assertEquals(document.dataset.examples, [example, { id: "plain", input: "hi" }]);
     assertEquals(getEvalSourceDocumentSchema().parse(document), document);
     const patch = {
@@ -347,6 +349,8 @@ describe("eval/studio", () => {
     assertEquals(document.targetKind, "tool");
     assertEquals(document.target, "tool:lookup_order");
     assertEquals(document.dynamicFields, ["input"]);
+    // Only an agent eval sends an environment context.
+    assertEquals(document.editableFields.includes("environmentContext"), false);
 
     const run: EvalRun = {
       kind: "eval-run",

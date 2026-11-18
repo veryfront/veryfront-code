@@ -2063,7 +2063,12 @@ describe("internal-agents/run-stream", () => {
       environmentContext: "Factory environment context.",
       system: "You are Custom Agent.",
     });
-    const run = (forwardedProps: Record<string, unknown>) =>
+    const studioContext = [{
+      type: "json",
+      title: "studio_context",
+      data: { environmentContext: "active tab: app/page.tsx" },
+    }];
+    const run = (forwardedProps: Record<string, unknown>, context: unknown[] = studioContext) =>
       createRuntimeAgentStreamResponse(
         {
           agentId: runtimeAgent.id,
@@ -2071,11 +2076,7 @@ describe("internal-agents/run-stream", () => {
           runId: `run_eval_context_agent_${systems.length}`,
           messages: [],
           tools: [],
-          context: [{
-            type: "json",
-            title: "studio_context",
-            data: { environmentContext: "active tab: app/page.tsx" },
-          }],
+          context,
           forwardedProps,
         } as Parameters<typeof createRuntimeAgentStreamResponse>[0],
         runtimeAgent,
@@ -2110,13 +2111,27 @@ describe("internal-agents/run-stream", () => {
     } finally {
       delete objectPrototype.veryfront;
     }
+    // Without Studio's context item, the forwarded eval context is rendered.
+    await run({ veryfront: { environmentContext: "eval context" } }, []);
+    // With it, Studio's value is the one rendered, not a different eval value.
+    await run({ veryfront: { environmentContext: "eval context" } });
 
     const prompts = await Promise.all(systems.map(async (system) =>
       flattenSystemInstructions(
         await resolveTestAgentSystem(system) as Parameters<typeof flattenSystemInstructions>[0],
       )
     ));
-    const [evalPrompt, ...configuredPrompts] = prompts;
+    const [evalPrompt, ...rest] = prompts;
+    const configuredPrompts = rest.slice(0, 5);
+    const [forwardedOnlyPrompt, studioAndEvalPrompt] = rest.slice(5);
+    assertExists(forwardedOnlyPrompt);
+    assertStringIncludes(forwardedOnlyPrompt, "eval context");
+    assertEquals(forwardedOnlyPrompt.includes("Factory environment context."), false);
+    assertExists(studioAndEvalPrompt);
+    assertStringIncludes(studioAndEvalPrompt, "active tab: app/page.tsx");
+    assertEquals(studioAndEvalPrompt.includes("eval context"), false);
+    assertEquals(studioAndEvalPrompt.includes("Factory environment context."), false);
+    assertEquals(studioAndEvalPrompt.split("<environment_context>").length, 2);
     assertExists(evalPrompt);
     assertStringIncludes(evalPrompt, "active tab: app/page.tsx");
     assertEquals(evalPrompt.includes("Factory environment context."), false);

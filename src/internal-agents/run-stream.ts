@@ -148,7 +148,10 @@ import {
   type AgentRunSessionManager,
   type RunServingIdentity,
 } from "./session-manager.ts";
-import { composeInternalAgentRunSystemPrompt } from "./run-system-prompt.ts";
+import {
+  composeInternalAgentRunSystemPrompt,
+  getInternalAgentStudioRunContext,
+} from "./run-system-prompt.ts";
 import type { RuntimeRunAgentInput } from "./schema.ts";
 import { serverLogger } from "#veryfront/utils";
 import { compareStrings } from "#veryfront/utils/compare.ts";
@@ -1753,7 +1756,16 @@ export async function createRuntimeAgentStreamResponse(
       resolveAgentSystem(agent.config.system, undefined),
     );
     const effectiveAgentSystem = getEffectiveAgentSystem(agent);
-    const evalEnvironmentContext = readForwardedEvalEnvironmentContext(input.forwardedProps);
+    // The base system renders one environment context, and a later block for
+    // the same name is skipped. So when a run forwards an eval context and also
+    // carries Studio's context item, Studio's value is the one rendered.
+    const forwardedEvalEnvironmentContext = readForwardedEvalEnvironmentContext(
+      input.forwardedProps,
+    );
+    const evalEnvironmentContext = forwardedEvalEnvironmentContext === undefined
+      ? undefined
+      : getInternalAgentStudioRunContext(input.context).environmentContext ??
+        forwardedEvalEnvironmentContext;
     const resolveBaseSystem = async (providerOptionKey?: string) =>
       resolveAgentSystemFromResolvedBase(
         effectiveAgentSystem,

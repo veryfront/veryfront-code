@@ -20,6 +20,7 @@ export const getEvalEditableFieldSchema = defineSchema((v) =>
       "name",
       "description",
       "target",
+      "environmentContext",
       "dataset",
       "repetitions",
       "tags",
@@ -331,8 +332,11 @@ export function createEvalSourceDocument(
   ];
   // A dataset eval's target is derived from its id/name, so editing it could
   // never round-trip through the source definition.
+  // Only an agent eval sends an environment context, so only its form offers one.
   const editableFields = definition.targetKind === "dataset"
     ? BASE_EDITABLE_FIELDS.filter((field) => field !== "target")
+    : definition.targetKind === "agent"
+    ? [...BASE_EDITABLE_FIELDS, "environmentContext" as const]
     : BASE_EDITABLE_FIELDS;
 
   return getEvalSourceDocumentSchema().parse({
