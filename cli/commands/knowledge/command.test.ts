@@ -4443,6 +4443,149 @@ describe("runKnowledgeParser", () => {
         "formats": ["md", "mdx", "pdf", "html", "docx"],
       },
       {
+        "name": "ASI block in ESM",
+        "body": 'export function f() {\nconst a = 1\n{}\n/[{]/.test("x");\n}\n\n# Real title',
+        "formats": ["mdx"],
+      },
+      {
+        "name": "ASI block in expression",
+        "body": '{(() => {\nconst a = 1\n{}\n/[{]/.test("x");\n})()}\n\n# Real title',
+        "formats": ["mdx"],
+      },
+      {
+        "name": "ASI block in JSX attribute",
+        "body":
+          '<Component value={(() => {\nconst a = 1\n{}\n/[{]/.test("x");\n})()} />\n\n# Real title',
+        "formats": ["mdx"],
+      },
+      {
+        "name": "return ASI before block",
+        "body": 'export function f() { return\n{}\n/[{]/.test("x"); }\n\n# Real title',
+        "formats": ["mdx"],
+      },
+      {
+        "name": "yield ASI before block",
+        "body": 'export function* f() { yield\n{}\n/[{]/.test("x"); }\n\n# Real title',
+        "formats": ["mdx"],
+      },
+      {
+        "name": "newline object operand retains division",
+        "body": 'export function f() { const a =\n{} / /[{]/.test("x"); }\n\n# Real title',
+        "formats": ["mdx"],
+      },
+      {
+        "name": "newline return object retains division",
+        "body": 'export function f() { return (\n{} / /[{]/.test("x")); }\n\n# Real title',
+        "formats": ["mdx"],
+      },
+      {
+        "name": "newline arrow body remains an expression",
+        "body": 'export const f = (() =>\n{}) / /[{]/.test("x")\n\n# Real title',
+        "formats": ["mdx"],
+      },
+      {
+        "name": "newline parenthesized object retains division",
+        "body": 'export function f() { const a = (\n{}) / /[{]/.test("x"); }\n\n# Real title',
+        "formats": ["mdx"],
+      },
+      {
+        "name": "newline operator continuation keeps object operand",
+        "body": 'export function f() { const a = 1 +\n{} / /[{]/.test("x"); }\n\n# Real title',
+        "formats": ["mdx"],
+      },
+      {
+        "name": "multiline class expression ESM: class",
+        "body": 'export function f() { const C = class\n{} / /[{]/.test("x"); }\n\n# Real title',
+        "formats": ["mdx"],
+      },
+      {
+        "name": "multiline class expression expression: class",
+        "body": '{(() => { const C = class\n{} / /[{]/.test("x"); })()}\n\n# Real title',
+        "formats": ["mdx"],
+      },
+      {
+        "name": "multiline class expression attribute: class",
+        "body":
+          '<Component value={(() => { const C = class\n{} / /[{]/.test("x"); })()} />\n\n# Real title',
+        "formats": ["mdx"],
+      },
+      {
+        "name": "multiline class expression template: class",
+        "body":
+          'export const s = `${(() => { const C = class\n{} / /[{]/.test("x"); })()}`\n\n# Real title',
+        "formats": ["mdx"],
+      },
+      {
+        "name": "multiline class expression ESM: class C",
+        "body": 'export function f() { const C = class C\n{} / /[{]/.test("x"); }\n\n# Real title',
+        "formats": ["mdx"],
+      },
+      {
+        "name": "multiline class expression expression: class C",
+        "body": '{(() => { const C = class C\n{} / /[{]/.test("x"); })()}\n\n# Real title',
+        "formats": ["mdx"],
+      },
+      {
+        "name": "multiline class expression attribute: class C",
+        "body":
+          '<Component value={(() => { const C = class C\n{} / /[{]/.test("x"); })()} />\n\n# Real title',
+        "formats": ["mdx"],
+      },
+      {
+        "name": "multiline class expression template: class C",
+        "body":
+          'export const s = `${(() => { const C = class C\n{} / /[{]/.test("x"); })()}`\n\n# Real title',
+        "formats": ["mdx"],
+      },
+      {
+        "name": "multiline class expression ESM: class extends Object",
+        "body":
+          'export function f() { const C = class extends Object\n{} / /[{]/.test("x"); }\n\n# Real title',
+        "formats": ["mdx"],
+      },
+      {
+        "name": "multiline class expression expression: class extends Object",
+        "body":
+          '{(() => { const C = class extends Object\n{} / /[{]/.test("x"); })()}\n\n# Real title',
+        "formats": ["mdx"],
+      },
+      {
+        "name": "multiline class expression attribute: class extends Object",
+        "body":
+          '<Component value={(() => { const C = class extends Object\n{} / /[{]/.test("x"); })()} />\n\n# Real title',
+        "formats": ["mdx"],
+      },
+      {
+        "name": "multiline class expression template: class extends Object",
+        "body":
+          'export const s = `${(() => { const C = class extends Object\n{} / /[{]/.test("x"); })()}`\n\n# Real title',
+        "formats": ["mdx"],
+      },
+      {
+        "name": "multiline class expression ESM: class C extends Object",
+        "body":
+          'export function f() { const C = class C extends Object\n{} / /[{]/.test("x"); }\n\n# Real title',
+        "formats": ["mdx"],
+      },
+      {
+        "name": "multiline class expression expression: class C extends Object",
+        "body":
+          '{(() => { const C = class C extends Object\n{} / /[{]/.test("x"); })()}\n\n# Real title',
+        "formats": ["mdx"],
+      },
+      {
+        "name": "multiline class expression attribute: class C extends Object",
+        "body":
+          '<Component value={(() => { const C = class C extends Object\n{} / /[{]/.test("x"); })()} />\n\n# Real title',
+        "formats": ["mdx"],
+      },
+      {
+        "name": "multiline class expression template: class C extends Object",
+        "body":
+          'export const s = `${(() => { const C = class C extends Object\n{} / /[{]/.test("x"); })()}`\n\n# Real title',
+        "formats": ["mdx"],
+      },
+      {
         "name": "ASI declaration in ESM",
         "body":
           'export function f() {\nconst x = 1\nfunction helper() {}\n/[{]/.test("x")\n}\n\n# Real title',
