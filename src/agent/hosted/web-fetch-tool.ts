@@ -4,7 +4,8 @@ import {
   type ResolveWorkerHost,
 } from "#veryfront/security/sandbox/worker-egress-guard.ts";
 import { tool, type ToolExecutionContext } from "#veryfront/tool";
-import { INVALID_ARGUMENT, NETWORK_ERROR, NOT_SUPPORTED, TIMEOUT_ERROR } from "#veryfront/errors";
+import { INVALID_ARGUMENT, NETWORK_ERROR, TIMEOUT_ERROR } from "#veryfront/errors";
+import { waitForControlPlaneReplay } from "./control-plane-replay.ts";
 
 const DEFAULT_MAX_CONTENT_CHARS = 500_000;
 const DEFAULT_MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
@@ -330,17 +331,19 @@ export function createHostedWebFetchTool(options: HostedWebFetchToolOptions = {}
 
 /**
  * Create the `web_fetch` the model sees when the Veryfront API owns the call.
- * The API intercepts the call and applies its own checks, so this host never fetches.
+ * The API parks the run from the persisted call, applies its own checks and
+ * supplies the result on its next dispatch, so this host never fetches.
  */
 export function createApiOwnedHostedWebFetchTool() {
   return tool<HostedWebFetchToolInput, HostedWebFetchToolOutput>({
     id: "web_fetch",
     description: HOSTED_WEB_FETCH_DESCRIPTION,
     inputSchema: getHostedWebFetchInputSchema(DEFAULT_MAX_CONTENT_CHARS)(),
-    execute: () => {
-      throw NOT_SUPPORTED.create({
-        detail: "web_fetch is executed by the Veryfront API for this run, not by the runtime",
-      });
-    },
+    // Never settles with a result: the API answers the persisted call itself.
+    execute: (_input, context) =>
+      waitForControlPlaneReplay(
+        context?.abortSignal,
+        "API-owned web_fetch requires execution cancellation",
+      ),
   });
 }

@@ -290,12 +290,41 @@ describe("cloud agent service runtime options", () => {
       return error;
     }
 
-    it("does not fetch locally when the request tools include web_fetch", async () => {
-      const error = await webFetchErrorFor({
-        runtimeTools: [{ name: "web_fetch", description: "API-owned web_fetch" }],
-      });
+    it("waits for the API instead of fetching when the request tools include web_fetch", async () => {
+      for (const name of ["web_fetch", "veryfront__web_fetch"]) {
+        const webFetch = buildWebFetchTools({ runtimeTools: [{ name }] }).web_fetch;
+        assert(webFetch && typeof webFetch.execute === "function");
+        const controller = new AbortController();
+        const call = Promise.resolve(
+          webFetch.execute(
+            { url: "http://127.0.0.1/page" },
+            {
+              abortSignal: controller.signal,
+            } as Parameters<NonNullable<typeof webFetch.execute>>[1],
+          ),
+        );
+        // The call neither fetches nor fails: it stays open for the API to answer.
+        const settled = await Promise.race([
+          call.then(() => "settled", () => "settled"),
+          new Promise((resolve) => setTimeout(() => resolve("pending"), 10)),
+        ]);
+        assertEquals(settled, "pending");
 
-      assertStringIncludes(error.message, "executed by the Veryfront API");
+        // The API parks the run by cancelling the turn, which ends the wait.
+        const parked = new DOMException("Owning run parked", "AbortError");
+        controller.abort(parked);
+        assertEquals(await call.catch((error) => error), parked);
+      }
+    });
+
+    it("refuses an API-owned web_fetch call that cannot be cancelled", async () => {
+      const webFetch = buildWebFetchTools({ runtimeTools: [{ name: "web_fetch" }] }).web_fetch;
+      assert(webFetch && typeof webFetch.execute === "function");
+      const error = await assertRejects(async () =>
+        await webFetch.execute!({ url: "http://127.0.0.1/page" })
+      );
+      assert(error instanceof Error);
+      assertStringIncludes(error.message, "requires execution cancellation");
     });
 
     it("still offers web_fetch to the model when the API owns it", () => {

@@ -151,6 +151,8 @@ export type NodeVeryfrontCloudAgentServicePreparedExecution = PreparedHostedChat
 };
 
 /** Builds the local tool set for a root chat runtime task context. */
+const API_OWNED_WEB_FETCH_NAMES = ["web_fetch", "veryfront__web_fetch"] as const;
+
 export function buildLocalTools(
   context: NodeVeryfrontCloudAgentServiceContext,
   options: DefaultHostedChatRuntimeCreationOptions,
@@ -169,9 +171,12 @@ export function buildLocalTools(
     },
     load_skill: createLoadSkillTool(context, taskContext),
     sleep: sleepTool,
-    // When the API attaches its own web_fetch it intercepts the call and applies
-    // its checks, so the host offers the definition but must never fetch itself.
-    web_fetch: hostedChatRequestIncludesTool(request?.forwardedProps, "web_fetch")
+    // When the API attaches its own web_fetch, under either name the model can
+    // call, it parks the run on the call and applies its checks. The host
+    // offers the definition and waits for that; it must never fetch itself.
+    web_fetch: API_OWNED_WEB_FETCH_NAMES.some((name) =>
+        hostedChatRequestIncludesTool(request?.forwardedProps, name)
+      )
       ? createApiOwnedHostedWebFetchTool()
       : createHostedWebFetchTool(),
   });

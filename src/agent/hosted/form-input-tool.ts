@@ -20,6 +20,7 @@ import {
 } from "../input/request-protocol.ts";
 import { executeDurableHumanInputFlow, type HumanInputResult } from "../input/human-input.ts";
 import { CANONICAL_FORM_INPUT_TOOL_ID, FORM_INPUT_TOOL_ID } from "../platform-tool-names.ts";
+import { waitForControlPlaneReplay } from "./control-plane-replay.ts";
 
 import { createPrivateMap } from "#veryfront/security/private-map.ts";
 
@@ -85,24 +86,11 @@ export function createHostedFormInputTool(
         });
       }
       pendingControlPlaneForm = true;
-      return waitForControlPlaneFormReplay(execOptions?.abortSignal);
+      return waitForControlPlaneReplay(
+        execOptions?.abortSignal,
+        "Durable form suspension requires execution cancellation",
+      );
     },
-  });
-}
-
-function waitForControlPlaneFormReplay(signal: AbortSignal | undefined): Promise<never> {
-  if (!signal) {
-    throw INVALID_ARGUMENT.create({
-      detail: "Durable form suspension requires execution cancellation",
-    });
-  }
-  // The owning API parks from the persisted tool call and cancels this turn.
-  // Its next dispatch contains the private tool result in replay messages.
-  return new Promise((_resolve, reject) => {
-    const abort = () =>
-      reject(signal.reason ?? new DOMException("Execution suspended", "AbortError"));
-    if (signal.aborted) abort();
-    else signal.addEventListener("abort", abort, { once: true });
   });
 }
 
