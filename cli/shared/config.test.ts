@@ -13,12 +13,14 @@ import {
   isRetryableApiReadError,
   isUntrustedApiUrlCredentialError,
   MISSING_API_CREDENTIAL_MESSAGE,
+  NO_LINKED_PROJECT_MESSAGE,
   readConfigFile,
   resolveApiCredentialCandidatesForAuth,
   resolveConfig,
   resolveConfigWithAuth,
   resolveConfigWithAuthDetails,
   resolveConfigWithAuthNoModule,
+  resolveLinkedProjectConfigWithAuth,
   resolveManagementConfigNoModule,
 } from "./config.ts";
 import type { ResolvedConfig } from "./config.ts";
@@ -2241,5 +2243,133 @@ Deno.test("API management client keeps credentials on the supplied host transpor
       projectSlug: "demo",
     }, transport).get("/projects");
     assertEquals(requests, 1);
+  });
+});
+
+describe("resolveLinkedProjectConfigWithAuth", () => {
+  const ENV_NAMES = [
+    "VERYFRONT_API_URL",
+    "VERYFRONT_API_BASE_URL",
+    "VERYFRONT_API_KEY",
+    "VERYFRONT_API_TOKEN",
+    "VERYFRONT_API_TOKEN_FILE",
+    "XDG_CONFIG_HOME",
+    ...ENVIRONMENT_PROJECT_REFERENCE_NAMES,
+  ];
+
+  /** Runs `fn` in an empty folder with no project reference in the environment. */
+  async function withUnlinkedFolder(
+    fn: (dir: string) => Promise<void>,
+    env: Record<string, string> = {},
+  ): Promise<void> {
+    const original = ENV_NAMES.map((name) => [name, Deno.env.get(name)] as const);
+    try {
+      await withTempDir(async (dir) => {
+        for (const name of ENV_NAMES) Deno.env.delete(name);
+        Deno.env.set("XDG_CONFIG_HOME", dir);
+        for (const [name, value] of Object.entries(env)) Deno.env.set(name, value);
+        _resetEnvironmentConfig();
+        await fn(dir);
+      });
+    } finally {
+      for (const [name, value] of original) restoreEnv(name, value);
+      _resetEnvironmentConfig();
+    }
+  }
+
+  it("refuses a folder with no linked project before it asks for a credential", async () => {
+    await withUnlinkedFolder(async (dir) => {
+      const error = await assertRejects(
+        () => resolveLinkedProjectConfigWithAuth(dir),
+        VeryfrontError,
+        NO_LINKED_PROJECT_MESSAGE,
+      ) as VeryfrontError;
+      assertEquals(error.slug, "invalid-argument");
+    });
+  });
+
+  it("uses --project in a folder with no linked project", async () => {
+    await withUnlinkedFolder(async (dir) => {
+      const config = await resolveLinkedProjectConfigWithAuth(dir, "support-desk");
+      assertEquals(config.projectSlug, "support-desk");
+      assertEquals(config.apiToken, "test-token");
+    }, { VERYFRONT_API_KEY: "test-token" });
+  });
+
+  it("uses the project linked to the folder", async () => {
+    await withUnlinkedFolder(async (dir) => {
+      await writeRawProjectLink(dir);
+      const config = await resolveLinkedProjectConfigWithAuth(dir);
+      assertEquals(config.projectSlug, "linked-project");
+      assertEquals(projectIdOf(config), "linked-project-id");
+      assertEquals(config.apiToken, "test-token");
+    }, { VERYFRONT_API_KEY: "test-token" });
+  });
+
+  it("keeps an empty explicit reference instead of the linked project", async () => {
+    await withUnlinkedFolder(async (dir) => {
+      await writeRawProjectLink(dir);
+      const config = await resolveLinkedProjectConfigWithAuth(dir, "");
+      assertEquals(config.projectSlug, "");
+    }, { VERYFRONT_API_KEY: "test-token" });
+  });
+
+  it("uses the project the environment names", async () => {
+    await withUnlinkedFolder(async (dir) => {
+      const config = await resolveLinkedProjectConfigWithAuth(dir);
+      assertEquals(config.projectSlug, "env-project");
+    }, { VERYFRONT_API_KEY: "test-token", VERYFRONT_PROJECT_SLUG: "env-project" });
+  });
+
+  it("refuses a project named only by the package.json name", async () => {
+    await withUnlinkedFolder(async (dir) => {
+      await Deno.writeTextFile(
+        join(dir, "package.json"),
+        JSON.stringify({ name: "@acme/support-desk" }),
+      );
+      const requests: string[] = [];
+      await withMockFetch((input) => {
+        requests.push(String(input));
+        return Promise.resolve(Response.json({}));
+      }, async () => {
+        await assertRejects(
+          () => resolveLinkedProjectConfigWithAuth(dir),
+          VeryfrontError,
+          NO_LINKED_PROJECT_MESSAGE,
+        );
+      });
+      assertEquals(requests, []);
+    }, { VERYFRONT_API_KEY: "test-token" });
+  });
+
+  it("uses the project veryfront.json names", async () => {
+    await withUnlinkedFolder(async (dir) => {
+      await Deno.writeTextFile(
+        join(dir, "veryfront.json"),
+        JSON.stringify({ projectSlug: "configured-project" }),
+      );
+      const requests: string[] = [];
+      await withMockFetch((input) => {
+        requests.push(String(input));
+        return Promise.resolve(Response.json({}));
+      }, async () => {
+        const config = await resolveLinkedProjectConfigWithAuth(dir);
+        assertEquals(config.projectSlug, "configured-project");
+      });
+      assertEquals(requests, []);
+    }, { VERYFRONT_API_KEY: "test-token" });
+  });
+
+  it("still requires a credential once the folder names a project", async () => {
+    await withUnlinkedFolder(async (dir) => {
+      await writeRawProjectLink(dir);
+      // A non-interactive login finds no credential: the command stops on
+      // the credential, not on the project reference.
+      const error = await assertRejects(
+        () => resolveLinkedProjectConfigWithAuth(dir),
+        Error,
+      ) as Error;
+      assertEquals(error.message === NO_LINKED_PROJECT_MESSAGE, false);
+    });
   });
 });

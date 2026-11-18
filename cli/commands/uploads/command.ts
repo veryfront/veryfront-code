@@ -12,7 +12,11 @@ import { withSpan } from "veryfront/observability/otlp-setup";
 import { INVALID_ARGUMENT } from "veryfront/errors";
 import { cliLogger } from "#cli/utils";
 import { parseArgsOrThrow } from "#cli/shared/args";
-import { type ApiClient, createApiClient, resolveConfigWithAuth } from "#cli/shared/config";
+import {
+  type ApiClient,
+  createApiClient,
+  resolveLinkedProjectConfigWithAuth,
+} from "#cli/shared/config";
 import type { ParsedArgs } from "#cli/shared/types";
 import { printJson } from "../../shared/json-output.ts";
 import { getBooleanArg, getStringArg } from "../../shared/parsed-args.ts";
@@ -380,8 +384,10 @@ export async function uploadsCommand(args: ParsedArgs): Promise<void> {
     switch (subcommand) {
       case "list": {
         const options = parseArgsOrThrow(parseUploadsListArgs, "uploads list", args);
-        let config = await resolveConfigWithAuth(options.projectDir);
-        if (options.projectSlug) config = { ...config, projectSlug: options.projectSlug };
+        const config = await resolveLinkedProjectConfigWithAuth(
+          options.projectDir,
+          options.projectSlug,
+        );
 
         const client = createApiClient(config);
         const uploads = await listAllUploads(client, config.projectSlug, options);
@@ -407,8 +413,10 @@ export async function uploadsCommand(args: ParsedArgs): Promise<void> {
 
       case "pull": {
         const options = parseArgsOrThrow(parseUploadsPullArgs, "uploads pull", args);
-        let config = await resolveConfigWithAuth(options.projectDir);
-        if (options.projectSlug) config = { ...config, projectSlug: options.projectSlug };
+        const config = await resolveLinkedProjectConfigWithAuth(
+          options.projectDir,
+          options.projectSlug,
+        );
 
         const client = createApiClient(config);
         let targets = options.uploads;
@@ -453,8 +461,10 @@ export async function uploadsCommand(args: ParsedArgs): Promise<void> {
 
       case "put": {
         const options = parseArgsOrThrow(parseUploadsPutArgs, "uploads put", args);
-        let config = await resolveConfigWithAuth(options.projectDir);
-        if (options.projectSlug) config = { ...config, projectSlug: options.projectSlug };
+        const config = await resolveLinkedProjectConfigWithAuth(
+          options.projectDir,
+          options.projectSlug,
+        );
 
         const client = createApiClient(config);
         const result = await uploadLocalFileToUploads(
@@ -479,8 +489,10 @@ export async function uploadsCommand(args: ParsedArgs): Promise<void> {
       case "delete":
       case "rm": {
         const options = parseArgsOrThrow(parseUploadsDeleteArgs, "uploads delete", args);
-        let config = await resolveConfigWithAuth(options.projectDir);
-        if (options.projectSlug) config = { ...config, projectSlug: options.projectSlug };
+        const config = await resolveLinkedProjectConfigWithAuth(
+          options.projectDir,
+          options.projectSlug,
+        );
 
         const client = createApiClient(config);
         await deleteUpload(client, config.projectSlug, options.uploadPath);

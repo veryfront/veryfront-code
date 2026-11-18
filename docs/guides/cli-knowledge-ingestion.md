@@ -275,6 +275,18 @@ deno run -A cli/main.ts knowledge ingest uploads/contracts/q1.pdf --json
 Set `VERYFRONT_API_KEY`, run `veryfront login`, or use a local CLI config with
 a saved token.
 
+### `No project is linked to this folder`
+
+The folder has no `.veryfront/project.json` link and no project in
+`veryfront.json` or `VERYFRONT_PROJECT_SLUG`. The CLI does not use the folder
+name as the project. Pass the project explicitly:
+
+```bash
+veryfront knowledge ingest uploads/contracts/q1.pdf --project my-project --json
+```
+
+Or link the folder to the project once with `veryfront pull my-project`.
+
 ### `Could not determine project slug`
 
 Set `VERYFRONT_PROJECT_SLUG` or pass the project explicitly:
