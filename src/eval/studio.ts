@@ -24,7 +24,6 @@ export const getEvalEditableFieldSchema = defineSchema((v) =>
       "name",
       "description",
       "target",
-      "environmentContext",
       "dataset",
       "repetitions",
       "tags",
@@ -345,11 +344,11 @@ export function createEvalSourceDocument(
   ];
   // A dataset eval's target is derived from its id/name, so editing it could
   // never round-trip through the source definition.
-  // Only an agent eval sends an environment context, so only its form offers one.
+  // `environmentContext` is not advertised yet: a Studio build whose editable
+  // field enum predates it rejects the whole document. The patch schema
+  // already accepts the field, so Studio can add it first.
   const editableFields = definition.targetKind === "dataset"
     ? BASE_EDITABLE_FIELDS.filter((field) => field !== "target")
-    : definition.targetKind === "agent"
-    ? [...BASE_EDITABLE_FIELDS, "environmentContext" as const]
     : BASE_EDITABLE_FIELDS;
 
   const document = getEvalSourceDocumentSchema().parse({
