@@ -902,10 +902,13 @@ export function createToolExposureState(
  */
 const reportedStepNames = createPrivateWeakStore<
   ToolExposureState,
-  { step: object; names: Set<string> }
+  { step: ToolExposurePlan; names: Set<string> }
 >();
 
-function readReportedStepNames(state: ToolExposureState, step: object | undefined): Set<string> {
+function readReportedStepNames(
+  state: ToolExposureState,
+  step: ToolExposurePlan | undefined,
+): Set<string> {
   const entry = step === undefined ? undefined : reportedStepNames.get(state);
   return entry !== undefined && entry.step === step ? entry.names : createPrivateSet<string>();
 }
@@ -1361,11 +1364,11 @@ export function loadToolExposureNames(input: {
   state: ToolExposureState;
   maxLoadedTools?: number;
   /**
-   * The identity of the model step this call belongs to, such as its exposure
-   * plan. Calls that share a step never evict a tool an earlier call in that
-   * step reported as loaded or kept.
+   * The exposure plan of the model step this call belongs to. Calls that share
+   * a plan never evict a tool an earlier call in that step reported as loaded
+   * or kept.
    */
-  step?: object;
+  step?: ToolExposurePlan;
 }): ToolNamesLoadResult {
   const names = parseToolSearchNames(input.names);
   const candidates = collectSearchCandidates({

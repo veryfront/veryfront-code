@@ -1147,7 +1147,7 @@ it("exact names calls in one step never evict what an earlier call reported", ()
   // on its way to the model, so a later call must not unload an earlier one's.
   const authorized = ["a", "b", "c", "d"].map((name) => definition(`tool_${name}`, "A tool"));
   const state = createToolExposureState();
-  const step = {};
+  const step = createToolExposurePlan({ authorized, mode: "deferred", state });
   const first = loadToolExposureNames({
     names: ["tool_a", "tool_b"],
     authorized,
@@ -1174,7 +1174,7 @@ it("exact names calls in one step never evict what an earlier call reported", ()
     authorized,
     state,
     maxLoadedTools: 2,
-    step: {},
+    step: createToolExposurePlan({ authorized, mode: "deferred", state }),
   });
   assertEquals(next.matches.map((match) => match.name), ["tool_c"]);
   assertEquals(next.notLoaded, []);
@@ -1184,8 +1184,8 @@ it("exact names calls in one step never evict what an earlier call reported", ()
 
 it("exact names calls in one step share the loaded-tool limit", () => {
   const authorized = ["a", "b", "c"].map((name) => definition(`tool_${name}`, "A tool"));
-  const state = createToolExposureState(["tool_old"]);
-  const step = {};
+  const state = createToolExposureState(["tool_c"]);
+  const step = createToolExposurePlan({ authorized, mode: "deferred", state });
   loadToolExposureNames({ names: ["tool_a"], authorized, state, maxLoadedTools: 2, step });
   const second = loadToolExposureNames({
     names: ["tool_b", "tool_c"],
