@@ -1325,6 +1325,67 @@ describe("ingestResolvedSources", () => {
     }
   });
 
+  it("preserves the first absent conflict while closing its iterator", async () => {
+    const sourceKey = '["local","guide.md"]';
+    const conflicts = new Map<string, unknown>([["knowledge/previous-conflict.md", undefined]]);
+    let closed = false;
+    Object.defineProperty(conflicts, "values", {
+      value: () => {
+        const entries = (function* () {
+          try {
+            yield undefined;
+          } finally {
+            closed = true;
+          }
+        })();
+        return {
+          [Symbol.iterator]() {
+            return this;
+          },
+          next: () => {
+            const entry = entries.next();
+            return {
+              done: entry.done,
+              get value() {
+                assertEquals(closed, false);
+                return entry.value;
+              },
+            };
+          },
+          return: () => {
+            entries.return();
+            throw new Error("iterator close must not replace the original conflict");
+          },
+        };
+      },
+    });
+    let rejected = false;
+    try {
+      await claimGeneratedKnowledgePath({
+        remotePath: "knowledge/guide.md",
+        resource: "guide.md",
+        legacySource: "./guide.md",
+        sourceKey,
+        sourceKind: "local",
+        absenceConflicts: conflicts,
+        readRemoteFile: async () => ({
+          content: `---\nresource: guide.md\ngenerated: ${
+            JSON.stringify({
+              by: "veryfront/0.1.0",
+              source_key: sourceKey,
+            })
+          }\n---\nExisting body.`,
+          versionId: "current-version",
+        }),
+      });
+    } catch (error) {
+      rejected = true;
+      assertEquals(error, undefined);
+    }
+    assert(rejected);
+    assert(closed);
+  });
+
   it("classifies legacy local origins without losing resource or typed-key precedence", async () => {
     const generated = { by: "veryfront/0.1.0" };
     const resource = "./uploads/guide.md";
@@ -3785,6 +3846,8 @@ describe("runKnowledgeParser", () => {
     const root = await makeTempDir({ prefix: "veryfront-knowledge-html-heading-" });
     try {
       const blocks = [
+        `${" \t".repeat(20_000)}1234567890. not a list marker`,
+        `${"> \t- ".repeat(100)}# Nested heading`,
         "1. - item\n    <widget>\ntext\n   # Visible title",
         "1. - item\n    2. <widget>\ntext\n   # Visible title",
         "1. - item\n\t<widget>\ntext\n   # Visible title",
