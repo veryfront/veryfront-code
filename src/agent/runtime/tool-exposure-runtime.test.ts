@@ -564,6 +564,55 @@ it("veryfront__tool_search does not recommend executing the first available phra
   );
 });
 for (const mode of ["generate", "stream"] as const) {
+  it(`veryfront__tool_search names loads several exact tools in one call (${mode})`, async () => {
+    const model = scriptedModel([
+      {
+        toolCalls: [{
+          id: "load",
+          name: "veryfront__tool_search",
+          input: { names: ["get_run", "list_run_events", "get_run_log"] },
+        }],
+      },
+      { text: "done" },
+    ], { modelId: "hosted/tool-search-names", only: mode });
+    const assistant = agent({
+      id: "tool-search-names-test",
+      model: "hosted/tool-search-names",
+      system: "Use tools when needed.",
+      skills: false,
+      tools: {
+        get_run: noopTool("get_run", "Read a run"),
+        list_run_events: noopTool("list_run_events", "List a run's events"),
+        cancel_run: noopTool("cancel_run", "Cancel a run"),
+      },
+      maxSteps: 2,
+      resolveModelTransport: () => ({ model }),
+      toolLoading: "deferred",
+    } as AgentConfig);
+    if (mode === "generate") {
+      await assistant.generate({ input: "Analyze this run" });
+    } else {
+      await (await assistant.stream({ input: "Analyze this run" })).toDataStreamResponse().text();
+    }
+
+    assertEquals(model.toolNames(1), ["get_run", "list_run_events", "veryfront__tool_search"]);
+    const resultContext = JSON.stringify(model.calls[1]);
+    assert(resultContext.includes('"notFound":["get_run_log"]'), resultContext);
+    assert(
+      resultContext.includes(
+        'Loaded tools: \\"get_run\\", \\"list_run_events\\".',
+      ),
+    );
+    assert(
+      resultContext.includes(
+        "No authorized executable tool is named \\\"get_run_log\\\". Use search with a short capability phrase, or inventory: 'all', to find the exact name.",
+      ),
+      resultContext,
+    );
+  });
+}
+
+for (const mode of ["generate", "stream"] as const) {
   it(`browses authorized executable names before exact loading and execution (${mode})`, async () => {
     const model = scriptedModel([
       {

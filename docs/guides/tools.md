@@ -174,8 +174,8 @@ Use an explicit map such as `tools: { getWeather: true }` when the model needs a
 selected schema on its first step. Schema loading and tool authorization stay
 separate, and execution rechecks authorization.
 
-`veryfront__tool_search` accepts exactly one of four mode fields. All arguments are
-top-level strings or integers:
+`veryfront__tool_search` accepts exactly one of five mode fields. All arguments are
+top-level strings, integers, or a list of strings:
 
 - `schema: "<exact name>"` returns one exact tool's input schema and declared
   output schema, then loads it for the next model step. A `null` output schema
@@ -186,6 +186,11 @@ top-level strings or integers:
   only Veryfront platform tools. The inventory-only fields `domain` and
   `resource` match a tool's `discovery` metadata exactly, and `cursor` and
   `limit` page through results.
+- `names: ["<exact name>", ...]` loads one to five exact tools for the next
+  model step in one call. Use it when the model needs two or more known tools.
+  Names never match by substring or phrase. Already visible tools return as
+  `available`, unknown names return in `notFound`, and tools the step's tool
+  limit leaves unloaded return in `notLoaded`.
 - `query: "<name or phrase>"` searches and loads matching schemas for the next
   model step.
 
