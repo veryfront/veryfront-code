@@ -35,6 +35,7 @@ import {
 import { classifyKnowledgeDirectoryPath, classifyKnowledgeSourcePath } from "./source-policy.ts";
 import {
   isOkfTextCompanion,
+  KnowledgeAllocationSession,
   type KnowledgeParserResult,
   runKnowledgeParser,
   validateOkfTextCompanionBytes,
@@ -850,6 +851,7 @@ export async function ingestResolvedSources(
   ingested: KnowledgeIngestFileResult[];
   failed: KnowledgeIngestFailedFileResult[];
 }> {
+  const allocationSession = new KnowledgeAllocationSession();
   validateOkfBundleOptions(options);
   if (options.slug && sources.length !== 1) {
     throw new Error("--slug can only be used with a single explicit source.");
@@ -899,7 +901,7 @@ export async function ingestResolvedSources(
           ...(okfCompanionPaths.has(okfRelativePaths.get(source) ?? "")
             ? { okfRole: "companion" as const }
             : {}),
-        }, { signal: deps.signal }),
+        }, { signal: deps.signal, allocationSession }),
       );
     }
   }
@@ -966,6 +968,7 @@ export async function ingestResolvedSources(
       });
       const eventLogger = deps.eventLogger;
       const parserDeps = {
+        allocationSession,
         signal: deps.signal,
         ...(eventLogger
           ? {
