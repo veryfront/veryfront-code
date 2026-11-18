@@ -3969,6 +3969,26 @@ describe("runKnowledgeParser", () => {
     const root = await makeTempDir({ prefix: "veryfront-heading-nested-" });
     const fixtures = [
       {
+        name: "empty frontmatter later separator",
+        body: "---\n---\n# Real title\n\n---\n# Later title",
+        formats: ["md", "mdx", "pdf", "html", "docx"],
+      },
+      {
+        name: "empty frontmatter no later separator",
+        body: "---\n---\n# Real title",
+        formats: ["md", "mdx", "pdf", "html", "docx"],
+      },
+      {
+        name: "nonempty frontmatter later separator",
+        body: "---\ntitle: Metadata title\n---\n# Real title\n\n---\n# Later title",
+        formats: ["md", "mdx", "pdf", "html", "docx"],
+      },
+      {
+        name: "empty frontmatter CRLF later separator",
+        body: "---\r\n---\r\n# Real title\r\n\r\n---\r\n# Later title",
+        formats: ["md", "mdx", "pdf", "html", "docx"],
+      },
+      {
         name: "empty item fixed padding",
         body: "-  \n  <div>\n# Real title",
         formats: ["md", "pdf"],

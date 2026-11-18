@@ -830,7 +830,7 @@ function findFirstH1(markdown: string, mdx = false): string | undefined {
   let mdxThrough = -1;
   let sourceOffset = 0;
   const indents: number[] = [];
-  const body = markdown.replace(/^---\n[\s\S]*?\n---(?:\n|$)/, "");
+  const body = markdown.replace(/^---\n(?:---|[\s\S]*?\n---)(?:\n|$)/, "");
   const lines = body.split("\n");
   for (const [lineIndex, sourceLine] of lines.entries()) {
     const lineOffset = sourceOffset;
