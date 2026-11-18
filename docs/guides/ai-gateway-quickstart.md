@@ -12,7 +12,7 @@ inside a Veryfront project, see [Providers](./providers.md) instead.
 
 - A Veryfront API key with the Write permission. Inference requests are writes,
   so a Read-only key is refused.
-- The project slug, when you use an account key (see
+- The project slug, to attribute requests made with an account key (see
   [Base URLs and key types](#base-urls-and-key-types)).
 
 The snippets read the key from `VERYFRONT_API_KEY`:
@@ -44,8 +44,11 @@ send it in their native key header: `x-api-key` for Anthropic clients and
 | Account key | Your account. It is not bound to one project.                   | `x-veryfront-project-slug: <PROJECT_SLUG>` |
 
 Use a project key. It is bound to one project, so every request is attributed
-to that project without an extra header. An account key must name the project
-on every request, or the gateway refuses it.
+to that project without an extra header. An account key that names a project
+is attributed to that project. An account key that names none is billed to your
+account's credits, with no project on the usage, so the snippets on this page
+send the header. A login session is not a key: without a project the gateway
+refuses it.
 
 ## Choose a model
 

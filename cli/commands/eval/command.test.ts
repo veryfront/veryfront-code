@@ -88,7 +88,8 @@ import {
 const MISSING_PROJECT_NOTICE = "No Veryfront project is configured";
 const MISSING_PROJECT_WARNING =
   "No Veryfront project is configured, so veryfront-cloud model calls bill the project your API " +
-  "key is bound to, or your account's credits when the credential is not a project key. To choose " +
+  "key is bound to, or your account's credits with an account API key. A login without an API key " +
+  "needs a project. To choose " +
   "the project, set VERYFRONT_PROJECT_SLUG in .env or add projectSlug to veryfront.config.ts.";
 const originalApiToken = Deno.env.get("VERYFRONT_API_TOKEN");
 const originalApiBaseUrl = Deno.env.get("VERYFRONT_API_BASE_URL");

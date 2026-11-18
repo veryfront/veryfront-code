@@ -703,7 +703,9 @@ export async function hydrateEvalRuntimeAuth(
 
 /**
  * The Veryfront Cloud gateway accepts a model request that names no project
- * and bills it to the credential's project (a project API key) or account. With a token but no project, say
+ * from an API key: a project key bills its project, an account key bills the
+ * account's credits. A login session with no project is refused. With a token
+ * but no project, say
  * where the run's `veryfront-cloud/...` calls bill before it starts, so the
  * operator can point them at a project instead. A configured project the
  * credential cannot use is still refused (`EVAL_PROJECT_REQUIRED`); that
@@ -717,7 +719,8 @@ export function formatMissingEvalProjectWarning(
   // project key bills its own project with no slug set, so name both cases
   // rather than claim the calls bill the account.
   return "No Veryfront project is configured, so veryfront-cloud model calls bill the project your API " +
-    "key is bound to, or your account's credits when the credential is not a project key. To choose " +
+    "key is bound to, or your account's credits with an account API key. A login without an API key " +
+    "needs a project. To choose " +
     "the project, set VERYFRONT_PROJECT_SLUG in .env or add projectSlug to veryfront.config.ts.";
 }
 
