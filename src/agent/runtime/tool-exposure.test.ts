@@ -1142,6 +1142,65 @@ it("exact names keep a requested state-loaded tool when loading another at capac
   assertEquals([...state.loadedToolNames], ["old_tool", "new_tool"]);
 });
 
+it("exact names calls in one step never evict what an earlier call reported", () => {
+  // A model can emit several names calls in one turn. Each result is already
+  // on its way to the model, so a later call must not unload an earlier one's.
+  const authorized = ["a", "b", "c", "d"].map((name) => definition(`tool_${name}`, "A tool"));
+  const state = createToolExposureState();
+  const step = {};
+  const first = loadToolExposureNames({
+    names: ["tool_a", "tool_b"],
+    authorized,
+    state,
+    maxLoadedTools: 2,
+    step,
+  });
+  const second = loadToolExposureNames({
+    names: ["tool_c", "tool_a", "tool_d"],
+    authorized,
+    state,
+    maxLoadedTools: 2,
+    step,
+  });
+
+  assertEquals(first.matches.map((match) => match.name), ["tool_a", "tool_b"]);
+  assertEquals(second.matches.map((match) => match.name), ["tool_a"]);
+  assertEquals(second.notLoaded, ["tool_c", "tool_d"]);
+  assertEquals([...state.loadedToolNames].sort(), ["tool_a", "tool_b"]);
+
+  // The next step is a new batch: its calls replace the oldest loaded names.
+  const next = loadToolExposureNames({
+    names: ["tool_c"],
+    authorized,
+    state,
+    maxLoadedTools: 2,
+    step: {},
+  });
+  assertEquals(next.matches.map((match) => match.name), ["tool_c"]);
+  assertEquals(next.notLoaded, []);
+  assertEquals(state.loadedToolNames.size, 2);
+  assertEquals(state.loadedToolNames.has("tool_c"), true);
+});
+
+it("exact names calls in one step share the loaded-tool limit", () => {
+  const authorized = ["a", "b", "c"].map((name) => definition(`tool_${name}`, "A tool"));
+  const state = createToolExposureState(["tool_old"]);
+  const step = {};
+  loadToolExposureNames({ names: ["tool_a"], authorized, state, maxLoadedTools: 2, step });
+  const second = loadToolExposureNames({
+    names: ["tool_b", "tool_c"],
+    authorized,
+    state,
+    maxLoadedTools: 2,
+    step,
+  });
+
+  // One slot was left after the first call; it goes to the first new name.
+  assertEquals(second.matches.map((match) => match.name), ["tool_b"]);
+  assertEquals(second.notLoaded, ["tool_c"]);
+  assertEquals([...state.loadedToolNames], ["tool_a", "tool_b"]);
+});
+
 it("exact names resolve past the ranked-search candidate limit", () => {
   const authorized = Array.from(
     { length: 4_100 },

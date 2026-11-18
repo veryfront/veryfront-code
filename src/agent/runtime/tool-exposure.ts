@@ -17,6 +17,7 @@ import {
   somePrivateArray,
 } from "#veryfront/security/private-array.ts";
 import { createPrivateSet } from "#veryfront/security/private-set.ts";
+import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
 import { replacePrivateRegExp, testPrivateRegExp } from "#veryfront/security/private-regexp.ts";
 import { privateByteLength } from "#veryfront/security/private-bytes.ts";
 import { type BoundedJsonValue, snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
@@ -895,6 +896,20 @@ export function createToolExposureState(
   return { loadedToolNames: createPrivateSet(loadedToolNames) };
 }
 
+/**
+ * The loaded names that `names` calls have reported to the model during one
+ * step. Kept beside the state, not in it, so checkpoints never carry it.
+ */
+const reportedStepNames = createPrivateWeakStore<
+  ToolExposureState,
+  { step: object; names: Set<string> }
+>();
+
+function readReportedStepNames(state: ToolExposureState, step: object | undefined): Set<string> {
+  const entry = step === undefined ? undefined : reportedStepNames.get(state);
+  return entry !== undefined && entry.step === step ? entry.names : createPrivateSet<string>();
+}
+
 function retainNewestLoadedToolNames(state: ToolExposureState, limit: number | undefined): void {
   if (limit === undefined) return;
   while (state.loadedToolNames.size > limit) {
@@ -1345,6 +1360,12 @@ export function loadToolExposureNames(input: {
   available?: readonly ToolDefinition[];
   state: ToolExposureState;
   maxLoadedTools?: number;
+  /**
+   * The identity of the model step this call belongs to, such as its exposure
+   * plan. Calls that share a step never evict a tool an earlier call in that
+   * step reported as loaded or kept.
+   */
+  step?: object;
 }): ToolNamesLoadResult {
   const names = parseToolSearchNames(input.names);
   const candidates = collectSearchCandidates({
@@ -1382,21 +1403,37 @@ export function loadToolExposureNames(input: {
   // A requested tool that is visible only because an earlier search loaded it
   // takes a loaded slot too. Refresh it first and keep its slot, so loading the
   // other requested names never evicts it.
+  //
+  // A model can emit several names calls in one turn, and every one runs
+  // against the same step. A tool an earlier call reported keeps its slot the
+  // same way, so a later call reports what does not fit instead of evicting it.
+  const reported = readReportedStepNames(input.state, input.step);
+  const kept = createPrivateSet<string>();
+  for (const name of reported) {
+    if (!input.state.loadedToolNames.has(name)) continue;
+    ReflectApply(SetAdd, kept, [name]);
+    input.state.loadedToolNames.delete(name);
+    input.state.loadedToolNames.add(name);
+  }
   const stateBacked = createPrivateSet<string>();
   for (let index = 0; index < found.length; index++) {
     const match = found[index]!;
     if (match.status !== "available" || !input.state.loadedToolNames.has(match.name)) continue;
     ReflectApply(SetAdd, stateBacked, [match.name]);
+    ReflectApply(SetAdd, kept, [match.name]);
     input.state.loadedToolNames.delete(match.name);
     input.state.loadedToolNames.add(match.name);
   }
   const loadLimit = input.maxLoadedTools === undefined
     ? TOOL_SEARCH_RESULT_LIMIT
-    : Math.max(0, Math.min(TOOL_SEARCH_RESULT_LIMIT, input.maxLoadedTools - stateBacked.size));
+    : Math.max(0, Math.min(TOOL_SEARCH_RESULT_LIMIT, input.maxLoadedTools - kept.size));
   let loading = 0;
   for (let index = 0; index < found.length; index++) {
     const match = found[index]!;
-    if (match.status !== "loaded" || loading === loadLimit) continue;
+    if (match.status !== "loaded") continue;
+    // Already loaded by an earlier call in this step: it holds a kept slot.
+    if (setHas(kept, match.name)) continue;
+    if (loading === loadLimit) continue;
     loading += 1;
     input.state.loadedToolNames.delete(match.name);
     input.state.loadedToolNames.add(match.name);
@@ -1418,6 +1455,13 @@ export function loadToolExposureNames(input: {
       pushPrivateArray(matches, match);
       loadedCount += 1;
     } else pushPrivateArray(notLoaded, match.name);
+  }
+  if (input.step !== undefined) {
+    for (let index = 0; index < matches.length; index++) {
+      const name = matches[index]!.name;
+      if (input.state.loadedToolNames.has(name)) ReflectApply(SetAdd, reported, [name]);
+    }
+    reportedStepNames.set(input.state, { step: input.step, names: reported });
   }
   return {
     matches,

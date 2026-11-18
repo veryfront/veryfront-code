@@ -1978,6 +1978,8 @@ function executeFrameworkToolSearch(input: {
       available,
       state: input.state,
       maxLoadedTools: input.plan.maxLoadedTools,
+      // Every call of one assistant turn runs against the same step plan.
+      step: input.plan,
     });
     return {
       result: { ...result, nextStep: toolSearchNamesNextStep(result) },
