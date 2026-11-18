@@ -12,6 +12,7 @@ import {
   type RuntimeAgentRunInvocation,
 } from "../runtime/agent-invocation-contract.ts";
 import { getHostedChatUiToolIdentity } from "./chat-request-tool-part.ts";
+import { privateTextTrim } from "#veryfront/security/private-text.ts";
 
 const getDurableRootRunIdSchema = defineSchema((v) =>
   v.string().min(1).max(128).regex(/^[a-zA-Z0-9_-]+$/)
@@ -610,7 +611,7 @@ function getStudioRuntimeEnvironmentContext(input: RuntimeAgentRunInvocation): s
     if (item.type !== "json" || item.title !== "studio_context") continue;
 
     const environmentContext = item.data.environmentContext;
-    if (typeof environmentContext === "string" && environmentContext.trim().length > 0) {
+    if (typeof environmentContext === "string" && privateTextTrim(environmentContext).length > 0) {
       return environmentContext;
     }
   }

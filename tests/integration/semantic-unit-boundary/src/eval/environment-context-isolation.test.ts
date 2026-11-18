@@ -9,6 +9,7 @@ import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createEvalSourceDocument, datasets, evalAgent, isEvalDefinition } from "veryfront/eval";
 import { createEvalDatasetMetadata } from "../../../../../src/eval/report.ts";
+import { getInternalAgentStudioRunContext } from "../../../../../src/internal-agents/run-system-prompt.ts";
 
 describe("eval environment context in a modified realm", () => {
   it("holds the environment context size limit when project code replaces JSON.stringify", () => {
@@ -52,6 +53,30 @@ describe("eval environment context in a modified realm", () => {
           dataset: [{ id: "q1", input: "hi" }],
           environmentContext: "active tab: app/page.tsx",
         }).environmentContext,
+        "active tab: app/page.tsx",
+      );
+    } finally {
+      String.prototype.trim = originalTrim;
+    }
+  });
+
+  it("reads the generated Studio context item without calling a replaced trim", () => {
+    const originalTrim = String.prototype.trim;
+    try {
+      String.prototype.trim = function (this: string) {
+        const text = String(this);
+        return text.startsWith("active tab") ? "" : originalTrim.call(text);
+      };
+      assertEquals(
+        getInternalAgentStudioRunContext(
+          [
+            {
+              type: "json",
+              title: "studio_context",
+              data: { environmentContext: "active tab: app/page.tsx" },
+            },
+          ] as Parameters<typeof getInternalAgentStudioRunContext>[0],
+        ).environmentContext,
         "active tab: app/page.tsx",
       );
     } finally {
