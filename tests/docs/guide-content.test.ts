@@ -777,6 +777,30 @@ describe("guide content contracts", () => {
     );
   });
 
+  it("names VERYFRONT_API_KEY in every agent service setup surface", async () => {
+    const runtimeGuide = await Deno.readTextFile(
+      new URL("docs/guides/agent-service-runtime.md", repoRoot),
+    );
+    const configurationGuide = await Deno.readTextFile(
+      new URL("docs/guides/configuration.md", repoRoot),
+    );
+    const envExample = await Deno.readTextFile(new URL(".env.example", repoRoot));
+
+    assertStringIncludes(
+      runtimeGuide,
+      "For Veryfront Cloud registration: `VERYFRONT_API_KEY`",
+    );
+    assertStringIncludes(runtimeGuide, "registers only when `VERYFRONT_API_KEY` and");
+    assertStringIncludes(runtimeGuide, "\nVERYFRONT_API_KEY=<API_KEY>\n");
+    // The token file selector stops the key from being read, so the guide says to leave it unset.
+    assertStringIncludes(runtimeGuide, "Leave `VERYFRONT_API_TOKEN_FILE`\nunset");
+    assertStringIncludes(runtimeGuide, "`auto` mode skips registration");
+    assertEquals(/VERYFRONT_API_TOKEN(?!_FILE)/.test(runtimeGuide), false);
+    assertStringIncludes(configurationGuide, "**Cloud bootstrap**: `VERYFRONT_API_KEY`");
+    assert(/^VERYFRONT_API_KEY=$/m.test(envExample), ".env.example must offer VERYFRONT_API_KEY");
+    assertEquals(/^VERYFRONT_API_TOKEN=/m.test(envExample), false);
+  });
+
   it("keeps privileged MCP transport limited to deployment-owned exact endpoints", async () => {
     const guide = await Deno.readTextFile(
       "docs/guides/agent-service-runtime.md",

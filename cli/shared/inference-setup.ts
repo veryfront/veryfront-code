@@ -26,6 +26,31 @@ export const NO_INFERENCE_HEADING =
   "No provider key or linked Cloud project found. To use hosted models, choose one:";
 
 /**
+ * The model the runtime gives an agent that sets none (`DEFAULT_AGENT_MODEL`
+ * in the agent runtime). Without the gateway it needs `OPENAI_API_KEY`.
+ */
+export const DEFAULT_AGENT_MODEL_NAME = "openai/gpt-5-nano";
+
+/**
+ * The `dev` banner warning for provider keys the default model cannot use: an
+ * agent sets no model, and the runtime cannot serve the default, so its first
+ * request fails with `default-model-credential-mismatch`. The keys stay listed
+ * under Inference: a request can still pick a model of their provider.
+ * `"auto"` is offered only when it resolves to direct inference here: with
+ * Veryfront Cloud selected, it prefers the gateway.
+ */
+export function defaultModelKeyMismatchLine(
+  keyNames: readonly string[],
+  options: { autoRunsDirect: boolean },
+): string {
+  const names = keyNames.length > 1
+    ? `${keyNames.slice(0, -1).join(", ")} or ${keyNames.at(-1)}`
+    : keyNames[0];
+  const models = options.autoRunsDirect ? '"auto" or "<provider>/<model>"' : '"<provider>/<model>"';
+  return `Agents that set no model use "${DEFAULT_AGENT_MODEL_NAME}", which needs OPENAI_API_KEY. To use ${names}, set the agent's model to ${models}.`;
+}
+
+/**
  * Shown after the options in `dev` only: `dev` reads `.env` once at startup
  * (`loadDevProjectEnv`), so a key added while it runs needs a restart.
  */

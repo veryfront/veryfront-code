@@ -440,6 +440,62 @@ describe("deploy --project", () => {
     assertEquals(humanOutput.includes("push source"), false);
   });
 
+  describe("in a folder with no linked project", () => {
+    function recordingDeployment(requests: DeployProjectRequest[]): DeployProject {
+      return {
+        execute(request) {
+          requests.push(request);
+          return Promise.resolve({
+            kind: "dry-run",
+            plan: {
+              branch: "main",
+              projectId: null,
+              projectSlug: "unrelated-checkout",
+              environment: request.environment,
+              environmentId: null,
+              controlPlane: "https://control.example.test/api",
+              plannedActions: ["create-release", "deploy"],
+            },
+          });
+        },
+      };
+    }
+
+    it("leaves an inferred project to Deploy Execution to refuse when no one can be asked", async () => {
+      const requests: DeployProjectRequest[] = [];
+      await captureConsole(() =>
+        deployCommand({
+          projectDir: UNRELATED_PROJECT_DIR,
+          env: "production",
+          dryRun: true,
+          force: false,
+          quiet: true,
+          deployProject: recordingDeployment(requests),
+        })
+      );
+
+      assertEquals(requests.length, 1);
+      assertEquals(requests[0]?.inferredProject, undefined);
+    });
+
+    it("passes an embedding command's inferred-project policy through", async () => {
+      const requests: DeployProjectRequest[] = [];
+      await captureConsole(() =>
+        deployCommand({
+          projectDir: UNRELATED_PROJECT_DIR,
+          env: "production",
+          dryRun: true,
+          force: false,
+          quiet: true,
+          inferredProject: "create",
+          deployProject: recordingDeployment(requests),
+        })
+      );
+
+      assertEquals(requests[0]?.inferredProject, "create");
+    });
+  });
+
   it("parses -p as the project slug", () => {
     const parsed = parseDeployArgs(parseCliArgs(["deploy", "-p", "codersociety"]));
     assertEquals(parsed.success, true);

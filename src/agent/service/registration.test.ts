@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import {
   assert,
   assertEquals,
+  assertInstanceOf,
   assertRejects,
   assertStrictEquals,
 } from "#veryfront/testing/assert.ts";
@@ -16,6 +17,7 @@ import {
   heartbeatRetrySchedule,
   resolveAgentServiceRegistrationInput,
 } from "./registration.ts";
+import { parseHostedAgentServiceConfig } from "./config.ts";
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -197,8 +199,30 @@ describe("agent/agent-service-registration", () => {
     assertEquals(withoutUrl, null);
   });
 
+  it("skips auto registration from VERYFRONT_API_KEY while a token file selector is set", async () => {
+    const env = {
+      VERYFRONT_API_URL: "https://api.example.com",
+      VERYFRONT_API_KEY: "key-1",
+      VERYFRONT_AGENT_SERVICE_URL: "https://agent.example.com",
+      VERYFRONT_AGENT_SERVICE_REGISTRATION: "auto",
+    };
+    const resolve = (config: Record<string, string>) =>
+      resolveAgentServiceRegistrationInput({
+        config: parseHostedAgentServiceConfig(config),
+        serviceName: "docs-agent",
+        agentId: "support",
+        version: undefined,
+        runtime: "node",
+      });
+
+    // The documented auto example registers from the key alone.
+    assertEquals((await resolve(env))?.authToken, "key-1");
+    // A token file selector, a blank one included, stops the key from being read.
+    assertEquals(await resolve({ ...env, VERYFRONT_API_TOKEN_FILE: "" }), null);
+  });
+
   it("fails explicit registration when required connection settings are missing", async () => {
-    await assertRejects(
+    const missingCredential = await assertRejects(
       () =>
         resolveAgentServiceRegistrationInput({
           config: {
@@ -217,7 +241,35 @@ describe("agent/agent-service-registration", () => {
           runtime: "node",
         }),
       Error,
-      "VERYFRONT_API_TOKEN is required",
+      "Agent service registration is enabled but no credential is set: set VERYFRONT_API_KEY to an API key.",
+    );
+    assertInstanceOf(missingCredential, Error);
+    // Setup guidance names the one credential name, never the deprecated one.
+    assertEquals(missingCredential.message.includes("VERYFRONT_API_TOKEN"), false);
+
+    // A token file selector keeps VERYFRONT_API_KEY from being read, so the
+    // guidance says to unset it before the key can work.
+    await assertRejects(
+      () =>
+        resolveAgentServiceRegistrationInput({
+          config: {
+            VERYFRONT_API_URL: "https://api.example.com",
+            VERYFRONT_API_TOKEN: undefined,
+            VERYFRONT_API_TOKEN_FILE: "/run/secrets/veryfront-token",
+            VERYFRONT_PROJECT_ID: undefined,
+            VERYFRONT_AGENT_SERVICE_URL: undefined,
+            VERYFRONT_AGENT_SERVICE_KEY: undefined,
+            VERYFRONT_AGENT_SERVICE_REGISTRATION: "enabled",
+            VERYFRONT_AGENT_SERVICE_HEARTBEAT_INTERVAL_MS: 30_000,
+            VERYFRONT_AGENT_SERVICE_REGION: undefined,
+          },
+          serviceName: "docs-agent",
+          agentId: "support",
+          version: undefined,
+          runtime: "node",
+        }),
+      Error,
+      "Agent service registration is enabled but no credential is set: VERYFRONT_API_TOKEN_FILE is set, so VERYFRONT_API_KEY is not read. Unset VERYFRONT_API_TOKEN_FILE and set VERYFRONT_API_KEY to an API key.",
     );
 
     await assertRejects(

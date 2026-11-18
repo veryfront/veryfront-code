@@ -26,6 +26,7 @@ import {
   trimTrailingSlashes,
 } from "./constants.ts";
 import { readProjectLink, readProjectLinkForControlPlane } from "./project-link.ts";
+import { AUTHENTICATION_REQUIRED } from "veryfront/errors";
 import { isConnectionRefusedError, isRetryableConnectionError } from "../../src/proxy/retry.ts";
 
 // Delays for exponential backoff with jitter: attempt 1 = ~300ms, 2 = ~1s, 3 = ~3s
@@ -452,13 +453,14 @@ function isRepositorySuppliedCredential(
 }
 
 /**
- * The error a management command throws when no credential is available.
+ * The message of the `authentication-required` error a management command
+ * throws when no credential is available.
  *
  * Exported so callers that classify it (such as the MCP deploy tool) match this
  * constant instead of copying its wording.
  */
 export const MISSING_API_CREDENTIAL_MESSAGE =
-  "Missing API key. Run 'veryfront login' or set VERYFRONT_API_KEY.";
+  `No Veryfront credential found. ${AUTHENTICATION_REQUIRED.suggestion}.`;
 
 function apiBaseUrlForRequest(apiUrl: string): string {
   const normalized = trimTrailingSlashes(apiUrl);
@@ -705,6 +707,15 @@ export async function resolveApiCredentialForFallback(
   return { apiUrl: trust.apiUrl, apiToken: candidate?.apiToken ?? null };
 }
 
+/**
+ * A command that needs a credential and has none. The message carries the fix
+ * for JSON and MCP callers; the terminal shows the same fix as the registry
+ * suggestion, so the error sets no separate detail.
+ */
+function missingCredentialError() {
+  return AUTHENTICATION_REQUIRED.create({ message: MISSING_API_CREDENTIAL_MESSAGE });
+}
+
 interface ProjectReferenceResolution {
   projectSlug: string;
   projectId?: string;
@@ -818,14 +829,14 @@ async function resolveConfigBase(
 
   if (!apiToken && interactive && allowAuthPrompt) {
     const userInfo = await ensureAuthenticated(env, dir, authOptions);
-    if (!userInfo) throw new Error("Authentication required for this operation.");
+    if (!userInfo) throw missingCredentialError();
     apiToken = (await readToken(env)) ?? null;
     apiTokenSource = apiToken ? "token-store" : undefined;
     if (!apiToken) throw new Error("Authentication failed. Please try again.");
   }
 
   if (!apiToken) {
-    throw new Error(MISSING_API_CREDENTIAL_MESSAGE);
+    throw missingCredentialError();
   }
 
   const { projectSlug, projectId, projectReferenceSource } = earlyReference ??

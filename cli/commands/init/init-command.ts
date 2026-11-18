@@ -23,6 +23,7 @@ import { isTTY } from "#cli/utils";
 import { isInteractive } from "../../shared/interactive.ts";
 import { chooseCloudProject, type CloudProjectChoice } from "../../shared/cloud-project.ts";
 import { inferenceSetupOptionLines } from "../../shared/inference-setup.ts";
+import { processEnvValue } from "../dev/display-options.ts";
 import { DEFAULT_TEMPLATE } from "./catalog.ts";
 
 type StructureNode = {
@@ -34,6 +35,7 @@ interface InitCommandDependencies {
   deployProject?: (projectDir: string) => Promise<string>;
   runWizard?: typeof runInteractiveWizard;
   shouldRunWizard?: typeof shouldRunWizard;
+  chooseCloudProject?: typeof chooseCloudProject;
 }
 
 const AUTH_REQUIRED_DEPLOY_MESSAGE = "Authentication required for --deploy.";
@@ -168,14 +170,47 @@ function validateInitProjectName(name: string): string | null {
 }
 
 /**
+ * The provider settings `veryfront dev` in the new folder will see, as far as
+ * `init` knows them: the shell's own values, then the values `init` wrote to
+ * the new `.env` for the variables the template and integrations declare. A
+ * value the invoking folder's `.env` loaded into this process does not count,
+ * since `dev` in the new folder never loads that file. A written value with a
+ * `$` reference is not counted: `dev` expands it against an environment `init`
+ * cannot see. A key `init` cannot see only leaves the advice in.
+ */
+export function newProjectEnv(
+  writtenValues: Readonly<Record<string, string>>,
+  hostValue: (name: string) => string | undefined = processEnvValue,
+): (name: string) => string | undefined {
+  return (name) => {
+    const host = hostValue(name);
+    if (host !== undefined) return host;
+    const written = writtenValues[name]?.trim();
+    return written && !written.includes("$") ? written : undefined;
+  };
+}
+
+/**
+ * Whether the new project can already reach a model without Cloud. The
+ * scaffolded agents set no model, so they run the default OpenAI model, and
+ * only an OpenAI key serves it: another provider's key alone fails with
+ * `default-model-credential-mismatch`, which is what the advice's model line
+ * is for.
+ */
+function newProjectHasInference(env: (name: string) => string | undefined): boolean {
+  return Boolean(env("OPENAI_API_KEY")?.trim());
+}
+
+/**
  * Offer to link the new project to Veryfront Cloud. When the folder stays
- * unlinked (No, a dismissed prompt, or a failed setup), name both ways to get
- * inference. The advice does not claim a key is missing.
+ * unlinked (No, a dismissed prompt, or a failed setup) and no provider key can
+ * serve the scaffolded agents, name both ways to get inference.
  */
 export async function offerCloudProjectAfterInit(
   projectDir: string,
   log: (message: string) => void,
   choose: (projectDir: string) => Promise<CloudProjectChoice> = chooseCloudProject,
+  env: (name: string) => string | undefined = newProjectEnv({}),
 ): Promise<void> {
   let linked = false;
   try {
@@ -186,6 +221,7 @@ export async function offerCloudProjectAfterInit(
     );
   }
   if (linked) return;
+  if (newProjectHasInference(env)) return;
   // One log entry, so the logger marks the block once, not every line.
   log(
     [
@@ -277,6 +313,8 @@ export async function initCommand(
     },
   };
 
+  // The values written to the new `.env`, for the inference check after it.
+  let writtenEnvValues: Record<string, string> = {};
   const result = await createProject(
     {
       name: projectName,
@@ -294,14 +332,22 @@ export async function initCommand(
       observer: installObserver,
       beforeGitInitialization: async (projectDir) => {
         if (!quiet && !options.deploy && isTTY() && isInteractive()) {
-          await offerCloudProjectAfterInit(projectDir, log);
+          await offerCloudProjectAfterInit(
+            projectDir,
+            log,
+            dependencies.chooseCloudProject ?? chooseCloudProject,
+            newProjectEnv(writtenEnvValues),
+          );
         }
       },
-      resolveEnvironmentFiles: (variables, values) =>
-        promptForEnvVars(variables, {
+      resolveEnvironmentFiles: async (variables, values) => {
+        const resolved = await promptForEnvVars(variables, {
           skipPrompt: options.skipEnvPrompt,
           prefilledValues: values,
-        }),
+        });
+        writtenEnvValues = resolved.values;
+        return resolved;
+      },
     },
   );
 
@@ -360,6 +406,8 @@ export async function initCommand(
             dryRun: false,
             quiet: true,
             suppressJsonOutput: true,
+            // init --deploy creates the project for the folder it scaffolded.
+            inferredProject: "create",
           });
 
           if (!deployResult) {

@@ -56,7 +56,9 @@ or committed config. Project reference precedence is
 `VERYFRONT_PROJECT_SLUG` or environment configuration, then
 `veryfront.config.ts`, then legacy `veryfront.json`, then lower-level tenant or
 project-ID environment references such as `VERYFRONT_PROJECT_ID`, then the
-ignored local link in `.veryfront/project.json`.
+ignored local link in `.veryfront/project.json`. With none of these, `push` and
+`deploy` stop instead of using the folder or package name as the project. Run
+`veryfront up` once to create and link a project.
 
 ## Define the managed source set
 

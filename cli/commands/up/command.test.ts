@@ -448,6 +448,7 @@ describe("Up Command", () => {
           environment: "preview",
           publish: "live-source",
           mode: "apply",
+          inferredProject: "create",
           source: { kind: "ensure-pushed", refreshStaleSource: true },
         }]);
 

@@ -11,7 +11,20 @@ import { defineSchema, lazySchema } from "veryfront/schemas";
 import type { InferSchema } from "veryfront/extensions/schema";
 import { cwd } from "veryfront/platform";
 import { CommonArgs, createArgParser } from "#cli/shared/args";
-import { exitProcess, isVerbose, logInfo, logSuccess, logWarning } from "#cli/utils";
+import {
+  confirmPrompt,
+  exitProcess,
+  isTTY,
+  isVerbose,
+  logInfo,
+  logSuccess,
+  logWarning,
+} from "#cli/utils";
+import { isInteractive } from "../../shared/interactive.ts";
+import {
+  type InferredProjectPolicy,
+  inferredProjectQuestion,
+} from "../../shared/project-resolution.ts";
 import { DEPLOYMENT_ERROR, UNKNOWN_ERROR, VeryfrontError } from "veryfront/errors";
 import { brand, createNoopSpinner, createSpinner, dim, formatDuration } from "#cli/ui";
 import { createStreamErrorResult, isJsonMode, streamJsonLine } from "../../shared/json-output.ts";
@@ -57,6 +70,12 @@ export type DeployOptions = Omit<ParsedDeployOptions, "skipSourcePush"> & {
   suppressJsonOutput?: boolean;
   /** Deploy Execution override for tests; production uses createDeployProject(). */
   deployProject?: DeployProject;
+  /**
+   * Internal: how an inferred project reference is settled, for embedding
+   * commands and tests. Left unset, an interactive deploy asks and any other
+   * deploy refuses.
+   */
+  inferredProject?: InferredProjectPolicy;
 };
 
 /**
@@ -90,7 +109,7 @@ function deployRunner(options: DeployOptions): DeployProject {
   return options.deployProject ?? createDeployProject();
 }
 
-function toDeployRequest(options: DeployOptions) {
+function toDeployRequest(options: DeployOptions, inferredProject?: InferredProjectPolicy) {
   // Naming a project promotes what that project already has. Deploy must never
   // upload the working directory into a project the caller only named by slug:
   // the directory is unrelated to that project by construction.
@@ -99,6 +118,9 @@ function toDeployRequest(options: DeployOptions) {
   return {
     projectDir: options.projectDir ?? cwd(),
     ...(options.projectSlug === undefined ? {} : { projectSlug: options.projectSlug }),
+    ...(options.inferredProject ?? inferredProject
+      ? { inferredProject: options.inferredProject ?? inferredProject }
+      : {}),
     branch: options.branch,
     environment: options.env,
     releaseName: options.releaseName,
@@ -143,7 +165,18 @@ async function deployCommandHuman(options: DeployOptions): Promise<DeployResult 
   const startedAt = Date.now();
   const verbose = isVerbose();
   let progressText = initialDeployProgressText(verbose);
-  const spinner = quiet ? createNoopSpinner() : createSpinner(progressText);
+  let spinner = quiet ? createNoopSpinner() : createSpinner(progressText);
+  // A folder name names a project only by chance, so deploy uses an inferred
+  // slug only after the operator says yes. `--yes`, `--quiet` and a missing
+  // terminal leave no one to ask, so Deploy Execution refuses instead.
+  const inferredProject: InferredProjectPolicy | undefined = isInteractive() && isTTY() && !quiet
+    ? async (choice) => {
+      spinner.stop();
+      const confirmed = await confirmPrompt(inferredProjectQuestion("deploy", choice), false);
+      if (confirmed) spinner = createSpinner(progressText);
+      return confirmed;
+    }
+    : undefined;
   const updateProgress = (next: string | null): void => {
     if (!next) return;
     if (next === progressText) return;
@@ -155,7 +188,7 @@ async function deployCommandHuman(options: DeployOptions): Promise<DeployResult 
   const warnings: string[] = [];
   let outcome: DeployProjectOutcome;
   try {
-    outcome = await deployRunner(options).execute(toDeployRequest(options), {
+    outcome = await deployRunner(options).execute(toDeployRequest(options, inferredProject), {
       onEvent(event) {
         if (event.kind === "warning") {
           warnings.push(event.message);
@@ -274,16 +307,19 @@ async function deployCommandJson(options: DeployOptions): Promise<DeployResult |
     if (options.suppressJsonOutput) {
       throw vfErr;
     }
+    // A usage error (exit code 2, such as an unlinked folder) keeps its
+    // classification and exit code, as the human and router paths do.
+    const usageError = vfErr.exitCode === 2;
     if (!options.suppressJsonOutput) {
       streamJsonLine(
         createStreamErrorResult({
-          code: "RUNTIME_ERROR",
+          code: usageError ? "USAGE_ERROR" : "RUNTIME_ERROR",
           slug: vfErr.slug,
           message: vfErr.detail ?? vfErr.message,
         }),
       );
     }
-    exitProcess(1);
+    exitProcess(usageError ? 2 : 1);
     return null;
   }
 }
