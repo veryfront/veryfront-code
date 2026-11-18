@@ -269,16 +269,33 @@ function startsInterruptingBlock(line: string): boolean {
 }
 
 function expandHeadingIndentation(raw: string): string {
-  return raw.replace(/^(?:[ \t]*>|[ \t]*(?:[-+*]|\d{1,9}[.)])(?:[ \t]+|$))*[ \t]*/, (prefix) => {
-    let width = 0;
-    let expanded = "";
-    for (const character of prefix) {
-      const count = character === "\t" ? 4 - width % 4 : 1;
-      expanded += character === "\t" ? " ".repeat(count) : character;
-      width += count;
+  let end = 0;
+  for (;;) {
+    while (raw[end] === " " || raw[end] === "\t") end += 1;
+    if (raw[end] === ">") {
+      end += 1;
+      continue;
     }
-    return expanded;
-  });
+    let markerEnd = end;
+    if (/[-+*]/.test(raw[markerEnd] ?? "")) markerEnd += 1;
+    else {
+      while (/\d/.test(raw[markerEnd] ?? "") && markerEnd - end < 10) markerEnd += 1;
+      if (markerEnd === end || markerEnd - end > 9 || !/[.)]/.test(raw[markerEnd] ?? "")) {
+        break;
+      }
+      markerEnd += 1;
+    }
+    if (markerEnd < raw.length && raw[markerEnd] !== " " && raw[markerEnd] !== "\t") break;
+    end = markerEnd;
+  }
+  let width = 0;
+  let expanded = "";
+  for (const character of raw.slice(0, end)) {
+    const count = character === "\t" ? 4 - width % 4 : 1;
+    expanded += character === "\t" ? " ".repeat(count) : character;
+    width += count;
+  }
+  return expanded + raw.slice(end);
 }
 
 /** Track only positively identified list containers; ordinary indentation is not a container. */

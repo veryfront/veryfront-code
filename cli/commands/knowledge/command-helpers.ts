@@ -605,7 +605,19 @@ export async function claimGeneratedKnowledgePath(input: {
     ) {
       throw new Error("Multiple current documents match this knowledge source");
     }
-    for (const conflict of input.absenceConflicts.values()) throw conflict;
+    const conflicts: Iterator<unknown, unknown, undefined> = input.absenceConflicts.values();
+    const conflict = conflicts.next();
+    if (!conflict.done) {
+      const firstConflict = conflict.value;
+      // Preserve IteratorClose's throw-completion rule: closing must not replace
+      // the original conflict, including an explicitly stored undefined value.
+      try {
+        conflicts.return?.();
+      } catch {
+        // The original conflict takes precedence over an iterator-close error.
+      }
+      throw firstConflict;
+    }
     retained = { remotePath: path, expected: { versionId: existing.versionId } };
     return retained;
   };
