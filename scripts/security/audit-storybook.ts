@@ -43,16 +43,7 @@ export interface AuditExemption {
  * development tool: nothing here ships in the published packages, which
  * scripts/security/audit-npm.ts audits without exemptions.
  */
-export const STORYBOOK_AUDIT_EXEMPTIONS: readonly AuditExemption[] = [
-  {
-    id: "GHSA-fc5q-39xc-vjpf",
-    package: "picomatch",
-    range: "<=4.0.7",
-    unpatchedLatest: "4.0.7",
-    reason:
-      "ReDoS in glob matching with no patched picomatch release. Reached only through Storybook's build tooling (vite, tinyglobby, @rollup/pluginutils, unplugin), which matches globs from this repository's own configuration.",
-  },
-];
+export const STORYBOOK_AUDIT_EXEMPTIONS: readonly AuditExemption[] = [];
 
 interface Advisory {
   id: string;
