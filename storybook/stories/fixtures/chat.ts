@@ -102,6 +102,22 @@ export const erroredToolPart: ChatToolPart<"trigger_deploy"> = {
   errorText: "Missing deploy token",
 };
 
+/** A Salesforce call that stopped because the project hasn't connected Salesforce (the API's answer, 19 Nov 2026). */
+export const notConnectedToolPart: ChatToolPart<"salesforce__list_cases"> = {
+  type: "tool-salesforce__list_cases",
+  toolCallId: "tool-salesforce-list-cases-1",
+  toolName: "salesforce__list_cases",
+  state: "output-available",
+  input: { q: "SELECT Id, CaseNumber FROM Case WHERE IsClosed = false ORDER BY CreatedDate DESC LIMIT 1" },
+  output: {
+    error: "authentication_required",
+    integration: "salesforce",
+    connectUrl:
+      "https://api.veryfront.com/oauth/connect/salesforce?project_reference=agentic-case-processing&scope=user&redirect=%2F",
+    message: "Authentication required for Salesforce.",
+  },
+};
+
 export const runningToolPart: ChatToolPart<"search_docs"> = {
   type: "tool-search_docs",
   toolCallId: "tool-search-docs-running",

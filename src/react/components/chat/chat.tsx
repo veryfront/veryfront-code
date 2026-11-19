@@ -175,6 +175,8 @@ export {
   type InlineCitationCardProps,
   type InlineCitationProps,
   type InlineCitationTriggerProps,
+  IntegrationConnectCard,
+  type IntegrationConnectCardProps,
   isReasoningPart,
   isSkillToolPart,
   isToolPart,

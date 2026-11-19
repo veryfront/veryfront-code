@@ -81,6 +81,10 @@ export {
 } from "./components/chat-messages-skeleton.tsx";
 export { SkillBadge, type SkillBadgeProps } from "./components/skill-badge.tsx";
 export {
+  IntegrationConnectCard,
+  type IntegrationConnectCardProps,
+} from "./components/integration-connect-card.tsx";
+export {
   ToolCall,
   type ToolCallContextValue,
   type ToolCallProps,

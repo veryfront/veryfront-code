@@ -31,6 +31,8 @@ import {
   INVOKE_AGENT_STREAM_EVENT_NAME,
 } from "#veryfront/chat/invoke-agent-stream.ts";
 import { ChatMarkdown } from "../../chat-markdown.tsx";
+import { isIntegrationAuthenticationActionResult } from "#veryfront/tool/result.ts";
+import { IntegrationConnectCard } from "./integration-connect-card.tsx";
 
 const TOOL_VALUE_LIMITS = Object.freeze({
   maxContainerEntries: 500,
@@ -655,6 +657,37 @@ function InvokeAgentToolCall(
   );
 }
 
+interface IntegrationConnectAction {
+  integration: string;
+  message?: string;
+  projectReference?: string;
+  reconnect: boolean;
+}
+
+/** A tool result that stopped because its app isn't connected, as the Connect card reads it. */
+function readIntegrationConnectAction(output: unknown): IntegrationConnectAction | undefined {
+  if (!isIntegrationAuthenticationActionResult(output)) return undefined;
+  const record = output as JsonRecord;
+  const integration = stringValue(record, "integration");
+  const connectUrl = stringValue(record, "connectUrl");
+  if (!integration || !connectUrl) return undefined;
+  let projectReference: string | undefined;
+  try {
+    projectReference = new URL(connectUrl).searchParams.get("project_reference") ?? undefined;
+  } catch {
+    projectReference = undefined;
+  }
+  return {
+    integration,
+    message: stringValue(record, "message"),
+    // A tool-supplied value only reaches a shell command when it is a plain id.
+    projectReference: projectReference && /^[A-Za-z0-9_-]{1,128}$/.test(projectReference)
+      ? projectReference
+      : undefined,
+    reconnect: stringValue(record, "error") === "reconnect_required",
+  };
+}
+
 /** Props accepted by `ToolCall` / `ToolCall.Root`. */
 export interface ToolCallProps {
   /** The tool part to render (invocation name, state, input, output, error). */
@@ -686,6 +719,7 @@ export interface ToolCallProps {
 function ToolCallRoot(
   { tool, className, icon, variant, defaultExpanded, onToggle, children, ref }: ToolCallProps,
 ): React.ReactElement {
+  const chat = useChatContextOptional();
   const hasOutput = hasVisibleToolOutput(tool.output);
   const hasError = Boolean(tool.errorText);
   const usesDefaultInvokeRenderer = variant === undefined && children === undefined &&
@@ -721,6 +755,25 @@ function ToolCallRoot(
     hasOutput,
     hasError,
   };
+
+  const connectAction = variant === undefined && children === undefined
+    ? readIntegrationConnectAction(tool.output)
+    : undefined;
+  if (connectAction && /^[a-z0-9][a-z0-9_-]{0,63}$/.test(connectAction.integration)) {
+    return (
+      <ToolCallContext.Provider value={context}>
+        <IntegrationConnectCard
+          ref={ref}
+          className={className}
+          integration={connectAction.integration}
+          message={connectAction.message}
+          projectReference={connectAction.projectReference}
+          reconnect={connectAction.reconnect}
+          onRetry={chat?.onReload}
+        />
+      </ToolCallContext.Provider>
+    );
+  }
 
   if (usesDefaultInvokeRenderer) {
     return (

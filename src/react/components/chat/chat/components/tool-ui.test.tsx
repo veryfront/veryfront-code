@@ -85,6 +85,83 @@ function installDom(): { host: HTMLElement; restore: () => void } {
 }
 
 describe("ToolCall", () => {
+  const authRequiredTool: ChatDynamicToolPart = {
+    type: "dynamic-tool",
+    toolCallId: "tool-salesforce-list-cases",
+    toolName: "salesforce__list_cases",
+    state: "output-available",
+    input: { q: "SELECT Id FROM Case LIMIT 1" },
+    output: {
+      error: "authentication_required",
+      integration: "salesforce",
+      connectUrl:
+        "https://api.veryfront.org/oauth/connect/salesforce?project_reference=091d662b-f8b7-47a4-8e8a-ee5a81811bee&scope=user&redirect=%2F",
+      message: "Authentication required for Salesforce.",
+    },
+  };
+
+  it("renders an app that is not connected as a Connect card with the command that connects it", () => {
+    const html = renderToString(<ToolCall tool={authRequiredTool} />);
+    assertStringIncludes(html, "Salesforce");
+    assertStringIncludes(html, "Not connected");
+    assertStringIncludes(
+      html,
+      "npx veryfront integration connect salesforce --project 091d662b-f8b7-47a4-8e8a-ee5a81811bee",
+    );
+    assertEquals(html.includes("Parameters"), false);
+    assertEquals(html.includes("connectUrl"), false);
+  });
+
+  it("names an expired connection and leaves the project out when the connect URL has none", () => {
+    const tool: ChatDynamicToolPart = {
+      ...authRequiredTool,
+      output: {
+        error: "reconnect_required",
+        integration: "google_calendar",
+        connectUrl: "https://api.veryfront.org/oauth/connect/google_calendar",
+        message: "Google Calendar needs to be reconnected before this tool can run.",
+      },
+    };
+    const html = renderToString(<ToolCall tool={tool} />);
+    assertStringIncludes(html, "Google Calendar");
+    assertStringIncludes(html, "Connection expired");
+    assertStringIncludes(html, "npx veryfront integration connect google_calendar</");
+  });
+
+  it("keeps an incomplete authentication result on the ordinary tool card", () => {
+    const tool: ChatDynamicToolPart = {
+      ...authRequiredTool,
+      output: { error: "authentication_required", integration: "salesforce" },
+    };
+    const html = renderToString(<ToolCall tool={tool} />);
+    assertStringIncludes(html, "salesforce__list_cases");
+    assertEquals(html.includes("npx veryfront integration connect"), false);
+  });
+
+  it("runs the turn again from the card once the app is connected", async () => {
+    const { host, restore } = installDom();
+    const root = createRoot(host);
+    let reloads = 0;
+    try {
+      flushSync(() => {
+        root.render(
+          <ChatContextProvider value={chatContext({ onReload: () => reloads++ })}>
+            <ToolCall tool={authRequiredTool} />
+          </ChatContextProvider>,
+        );
+      });
+      const button = [...host.querySelectorAll("button")].find((element) =>
+        element.textContent === "Try again"
+      );
+      assert(button, "Try again button");
+      flushSync(() => button.click());
+      assertEquals(reloads, 1);
+    } finally {
+      await unmountReactRoot(root);
+      restore();
+    }
+  });
+
   for (const name of ["load_skill", "load_skill_reference", "execute_skill_script"]) {
     for (const prefix of ["", "veryfront__"]) {
       it(`renders ${prefix}${name} as a compact skill row`, () => {
