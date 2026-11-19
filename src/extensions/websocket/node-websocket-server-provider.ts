@@ -35,6 +35,7 @@ export interface NodeWebSocketConnection extends EventTarget {
   send(data: string | ArrayBuffer): void;
   close(code?: number, reason?: string): void;
   terminate?(): void;
+  ping?(): void;
 }
 
 /** Exact no-server options supplied by core for an existing HTTP listener. */
@@ -64,6 +65,9 @@ export interface NodeWebSocketServer {
 }
 
 export interface NodeWebSocketServerProvider {
+  readonly supportsIdleTimeout?: true;
+  /** Actual transport send-buffer size, required by the Deno DOM facade. */
+  readonly getBufferedAmount?: (connection: NodeWebSocketConnection) => number;
   readonly createServer: (
     options: NodeWebSocketServerOptions,
   ) => NodeWebSocketServer;
@@ -177,7 +181,7 @@ export function captureNodeWebSocketServer(
 
 function providerInspectionError(cause?: unknown): TypeError {
   return new TypeError(
-    "Node WebSocket server provider must be a plain object with one enumerable createServer data property",
+    "Node WebSocket server provider must contain an enumerable createServer data function and optional supportsIdleTimeout: true",
     cause === undefined ? undefined : { cause },
   );
 }
@@ -210,7 +214,16 @@ export function snapshotNodeWebSocketServerProvider(
   const descriptor = descriptors.createServer;
   if (
     (prototype !== Object.prototype && prototype !== null) ||
-    keys.length !== 1 || keys[0] !== "createServer" ||
+    keys.some((key) =>
+      key !== "createServer" && key !== "supportsIdleTimeout" && key !== "getBufferedAmount"
+    ) ||
+    (descriptors.supportsIdleTimeout !== undefined &&
+      (!("value" in descriptors.supportsIdleTimeout) ||
+        !descriptors.supportsIdleTimeout.enumerable ||
+        descriptors.supportsIdleTimeout.value !== true)) ||
+    (descriptors.getBufferedAmount !== undefined &&
+      (!("value" in descriptors.getBufferedAmount) || !descriptors.getBufferedAmount.enumerable ||
+        typeof descriptors.getBufferedAmount.value !== "function")) ||
     !descriptor?.enumerable || !("value" in descriptor) ||
     typeof descriptor.value !== "function"
   ) {
@@ -220,7 +233,20 @@ export function snapshotNodeWebSocketServerProvider(
   const createServer = descriptor.value as (
     options: NodeWebSocketServerOptions,
   ) => NodeWebSocketServer;
+  const getBufferedAmount = descriptors.getBufferedAmount?.value;
   return Object.freeze({
+    ...(descriptors.supportsIdleTimeout === undefined
+      ? {}
+      : { supportsIdleTimeout: true as const }),
+    ...(getBufferedAmount === undefined ? {} : {
+      getBufferedAmount(connection: NodeWebSocketConnection): number {
+        const amount = Reflect.apply(getBufferedAmount, undefined, [connection]);
+        if (typeof amount !== "number" || !Number.isFinite(amount) || amount < 0) {
+          throw new TypeError("WebSocket buffered amount must be a finite nonnegative number");
+        }
+        return amount;
+      },
+    }),
     createServer(options: NodeWebSocketServerOptions): NodeWebSocketServer {
       return Reflect.apply(createServer, undefined, [options]);
     },
@@ -232,6 +258,24 @@ export function createNodeWebSocketServerProvider(
   createServer: (
     options: NodeWebSocketServerOptions,
   ) => NodeWebSocketServer,
+  capabilities?: {
+    readonly supportsIdleTimeout: true;
+    readonly getBufferedAmount?: (connection: NodeWebSocketConnection) => number;
+  },
 ): Readonly<NodeWebSocketServerProvider> {
-  return snapshotNodeWebSocketServerProvider({ createServer });
+  if (capabilities === undefined) return snapshotNodeWebSocketServerProvider({ createServer });
+  if (typeof capabilities !== "object" || capabilities === null || isProxy(capabilities)) {
+    throw providerInspectionError();
+  }
+  const descriptors = Object.getOwnPropertyDescriptors(capabilities);
+  if (
+    Reflect.ownKeys(descriptors).some((key) =>
+      key !== "supportsIdleTimeout" && key !== "getBufferedAmount"
+    )
+  ) {
+    throw providerInspectionError();
+  }
+  return snapshotNodeWebSocketServerProvider(
+    Object.defineProperties({ createServer }, descriptors),
+  );
 }

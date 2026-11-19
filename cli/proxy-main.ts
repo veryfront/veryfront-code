@@ -34,6 +34,7 @@ import "../extensions/ext-observability-opentelemetry/src/index.ts";
 import "../extensions/ext-observability-sentry/src/index.ts";
 import "../extensions/ext-redis/src/index.ts";
 import "../extensions/ext-schema-zod/src/index.ts";
+import "../extensions/ext-node-websocket-ws/src/index.ts";
 
 setLoggerPreset("cli");
 

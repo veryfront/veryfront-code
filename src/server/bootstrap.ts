@@ -85,7 +85,7 @@ export interface BootstrapResult {
   extensionLoader: ExtensionLoader;
 
   /** Immutable Node WebSocket implementation selected by this extension generation. */
-  nodeWebSocketServerProvider?: Readonly<NodeWebSocketServerProvider>;
+  nodeWebSocketServerProvider?: Readonly<NodeWebSocketServerProvider> | null;
 
   /**
    * Dispose bootstrap resources: tears down extensions (reverse order),
@@ -386,7 +386,7 @@ export async function bootstrap(
         config,
         usingFSAdapter: false,
         extensionLoader,
-        ...(nodeWebSocketServerProvider === undefined ? {} : { nodeWebSocketServerProvider }),
+        nodeWebSocketServerProvider: nodeWebSocketServerProvider ?? null,
         dispose: combineDispose(extensionLoader, undefined, fileLog, telemetryDispose),
       };
     }
@@ -439,7 +439,7 @@ export async function bootstrap(
         config,
         usingFSAdapter: false,
         extensionLoader,
-        ...(nodeWebSocketServerProvider === undefined ? {} : { nodeWebSocketServerProvider }),
+        nodeWebSocketServerProvider: nodeWebSocketServerProvider ?? null,
         dispose: combineDispose(extensionLoader, undefined, fileLog, telemetryDispose),
       };
     }
@@ -524,7 +524,7 @@ export async function bootstrap(
       usingFSAdapter: true,
       fsAdapterType: fsType,
       extensionLoader,
-      ...(nodeWebSocketServerProvider === undefined ? {} : { nodeWebSocketServerProvider }),
+      nodeWebSocketServerProvider: nodeWebSocketServerProvider ?? null,
       dispose: combineDispose(extensionLoader, fsDispose, fileLog, telemetryDispose),
     };
   } catch (err) {

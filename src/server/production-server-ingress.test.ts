@@ -26,7 +26,7 @@ describe("production server ingress", () => {
     ignore: !isDeno,
   }, async () => {
     const adapter = createMockAdapter();
-    let servedHandler: ((request: Request) => Response | Promise<Response>) | undefined;
+    let servedHandler: Parameters<RuntimeAdapter["serve"]>[0] | undefined;
     adapter.serve = (handler, options) => {
       servedHandler = handler;
       options.onListen?.({ hostname: "127.0.0.1", port: options.port ?? 0 });
@@ -66,7 +66,9 @@ describe("production server ingress", () => {
     let response: Response;
     try {
       if (!servedHandler) throw new Error("production listener did not receive a handler");
-      response = await servedHandler(request);
+      const result = await servedHandler(request);
+      if (!(result instanceof Response)) throw new Error("Expected an ordinary HTTP response");
+      response = result;
     } finally {
       probes.restore();
       await server.stop();

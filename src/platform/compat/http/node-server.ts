@@ -52,6 +52,7 @@ function detachExternalSignal(
  * transport implementation.
  */
 export class NodeHttpServer implements HttpServer {
+  constructor(private readonly createServer = createNodeServerWithStartupOwner) {}
   private pending?: PendingNodeServer;
   private active?: ActiveNodeServer;
 
@@ -79,7 +80,7 @@ export class NodeHttpServer implements HttpServer {
         "AbortError",
       ),
       startPromise: Promise.resolve().then(() =>
-        createNodeServerWithStartupOwner(
+        this.createServer(
           handler,
           {
             ...options,

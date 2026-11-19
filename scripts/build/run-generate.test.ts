@@ -86,6 +86,7 @@ describe("UNITS", () => {
       "dev-ui",
       "embedded-npm-packages",
       "hydration-runtime",
+      "portable-websocket-runtime",
       "rsc-scripts",
       "templates-manifest",
       "yaml-runtime",
