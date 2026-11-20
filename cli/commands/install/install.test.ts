@@ -103,6 +103,12 @@ describe("installTargets", () => {
     assertEquals(content.includes("Veryfront"), true);
   });
 
+  it("installs an AGENTS.md that tells the coding agent how to install the Veryfront skill", async () => {
+    await installTargets(["agents"], { cwd: tempDir, force: true });
+    const content = await readTextFile(`${tempDir}/AGENTS.md`);
+    assertEquals(content.includes("`npx skills add veryfront/skills -y`"), true);
+  });
+
   it("should install multiple targets", async () => {
     await installTargets(["cursor", "claude-code", "skill"], { cwd: tempDir, force: true });
     assertEquals(await exists(`${tempDir}/.cursorrules`), true);
