@@ -94,6 +94,22 @@ describe("createProject", () => {
     }
   });
 
+  it("writes an AGENTS.md that tells the coding agent how to install the Veryfront skill", async () => {
+    // init, the MCP create tool, demo and the app shell all scaffold through
+    // createProject, so this is the one place every new project gets its guide.
+    const parentDir = await makeTempDir({ prefix: "veryfront-create-agents-guide-" });
+
+    try {
+      for (const template of STARTER_TEMPLATE_NAMES) {
+        const result = await createProject({ ...baseRequest(parentDir), name: template, template });
+        const guide = await Deno.readTextFile(join(result.projectDir, "AGENTS.md"));
+        assertStringIncludes(guide, "`npx skills add veryfront/skills -y`");
+      }
+    } finally {
+      await remove(parentDir, { recursive: true }).catch(() => {});
+    }
+  });
+
   it("fails or overwrites an existing project directory from the conflict policy", async () => {
     const parentDir = await makeTempDir({ prefix: "veryfront-create-conflict-" });
     const request = baseRequest(parentDir);
@@ -669,6 +685,26 @@ describe("createProject into the current directory", () => {
 
       assertEquals(await Deno.readTextFile(readme), "mine\n");
       assertEquals(await Deno.readTextFile(packageJson), '{"name":"mine"}\n');
+      assertEquals(await exists(join(parentDir, "app")), false);
+    } finally {
+      await remove(parentDir, { recursive: true }).catch(() => {});
+    }
+  });
+
+  it("keeps the folder's own AGENTS.md when the policy is fail", async () => {
+    const parentDir = await makeTempDir({ prefix: "veryfront-create-cwd-agents-" });
+    const agentsGuide = join(parentDir, "AGENTS.md");
+
+    try {
+      await Deno.writeTextFile(agentsGuide, "# My agent rules\n");
+
+      await assertRejects(
+        () => createProject(cwdRequest(parentDir)),
+        Error,
+        "AGENTS.md",
+      );
+
+      assertEquals(await Deno.readTextFile(agentsGuide), "# My agent rules\n");
       assertEquals(await exists(join(parentDir, "app")), false);
     } finally {
       await remove(parentDir, { recursive: true }).catch(() => {});

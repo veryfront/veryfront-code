@@ -15,7 +15,12 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { exists, makeTempDir, remove } from "#veryfront/testing/deno-compat.ts";
 import { join } from "veryfront/platform/path";
 import { stripAnsi } from "../../ui/ansi.ts";
-import { initCommand, newProjectEnv, offerCloudProjectAfterInit } from "./init-command.ts";
+import {
+  CODING_AGENT_SKILL_COMMAND,
+  initCommand,
+  newProjectEnv,
+  offerCloudProjectAfterInit,
+} from "./init-command.ts";
 import type { InitOptions, InitTemplate } from "./types.ts";
 
 describe("InitCommand Types", () => {
@@ -58,6 +63,100 @@ describe("InitCommand Types", () => {
           false,
         );
       } finally {
+        await remove(parentDir, { recursive: true }).catch(() => {});
+      }
+    });
+
+    it("prints the command that installs the Veryfront skill into coding agents", async () => {
+      const parentDir = await makeTempDir({ prefix: "veryfront-init-skill-" });
+      const name = `skill-target-${crypto.randomUUID()}`;
+      const output: string[] = [];
+      const originalLog = console.log;
+
+      try {
+        console.log = (...args: unknown[]) => output.push(args.map(String).join(" "));
+
+        await initCommand({
+          name,
+          parentDir,
+          template: "minimal",
+          skipInstall: true,
+          skipEnvPrompt: true,
+        });
+
+        const lines = output.map(stripAnsi);
+        const expectedLine = "  Coding agent: npx skills add veryfront/skills";
+        const skillLineIndex = lines.indexOf(expectedLine);
+        assertEquals(skillLineIndex > 0, true, "expected the coding agent line");
+        // The skill command closes the deploy block, right after the Deploy line.
+        assertStringIncludes(lines[skillLineIndex - 1] ?? "", "  Deploy: ");
+        const agentsGuide = await Deno.readTextFile(join(parentDir, name, "AGENTS.md"));
+        assertEquals(agentsGuide.includes("`npx skills add veryfront/skills -y`"), true);
+        // The guide is for an agent, which cannot answer the agent picker, so it
+        // must carry the printed command plus `-y` and never drift from it.
+        assertStringIncludes(agentsGuide, `\`${CODING_AGENT_SKILL_COMMAND} -y\``);
+      } finally {
+        console.log = originalLog;
+        await remove(parentDir, { recursive: true }).catch(() => {});
+      }
+    });
+
+    it("prints the skill command after the Live URL when the project deploys", async () => {
+      const parentDir = await makeTempDir({ prefix: "veryfront-init-skill-deploy-" });
+      const name = `skill-deploy-target-${crypto.randomUUID()}`;
+      const deployedUrl = "https://verified.example.test/";
+      const output: string[] = [];
+      const originalLog = console.log;
+
+      try {
+        console.log = (...args: unknown[]) => output.push(args.map(String).join(" "));
+
+        await initCommand(
+          {
+            name,
+            parentDir,
+            template: "minimal",
+            skipInstall: true,
+            skipEnvPrompt: true,
+            deploy: true,
+          },
+          { deployProject: () => Promise.resolve(deployedUrl) },
+        );
+
+        const lines = output.map(stripAnsi);
+        const liveLineIndex = lines.indexOf(`  Live: ${deployedUrl}`);
+        assertEquals(liveLineIndex >= 0, true, "expected the Live line");
+        assertEquals(lines[liveLineIndex + 1], "  Coding agent: npx skills add veryfront/skills");
+      } finally {
+        console.log = originalLog;
+        await remove(parentDir, { recursive: true }).catch(() => {});
+      }
+    });
+
+    it("keeps the skill command out of quiet output, which JSON mode uses", async () => {
+      const parentDir = await makeTempDir({ prefix: "veryfront-init-skill-quiet-" });
+      const name = `skill-quiet-target-${crypto.randomUUID()}`;
+      const output: string[] = [];
+      const originalLog = console.log;
+
+      try {
+        console.log = (...args: unknown[]) => output.push(args.map(String).join(" "));
+
+        await initCommand({
+          name,
+          parentDir,
+          template: "minimal",
+          skipInstall: true,
+          skipEnvPrompt: true,
+          quiet: true,
+        });
+
+        assertEquals(output.some((line) => line.includes(CODING_AGENT_SKILL_COMMAND)), false);
+        // Quiet changes only the console: the new project's agent still gets the command.
+        const agentsGuide = await Deno.readTextFile(join(parentDir, name, "AGENTS.md"));
+        assertStringIncludes(agentsGuide, `\`${CODING_AGENT_SKILL_COMMAND} -y\``);
+      } finally {
+        console.log = originalLog;
         await remove(parentDir, { recursive: true }).catch(() => {});
       }
     });
