@@ -21,7 +21,10 @@ import {
   type PreparedHostedConfigContext,
 } from "#veryfront/config/loader.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
-import { isConfigOptionalControlPlaneRunRequest } from "#veryfront/channels/control-plane.ts";
+import {
+  isConfigOptionalControlPlaneRunRequest,
+  isControlPlaneRuntimeCapabilitiesRequest,
+} from "#veryfront/channels/control-plane.ts";
 import { isWithinDirectory, joinPath } from "#veryfront/utils/path-utils.ts";
 import { timeAsync } from "./request-lifecycle.ts";
 import {
@@ -370,6 +373,17 @@ export async function resolveAdapter(
     : undefined;
 
   const isLocalProject = !!localProjectPath;
+
+  // This host metadata operation needs no source token, tenant configuration or local adapter bootstrap.
+  if (isControlPlaneRuntimeCapabilitiesRequest(opts.req.method, opts.pathname)) {
+    return {
+      projectDir: localProjectPath ?? effectiveProjectDir,
+      adapter: effectiveAdapter,
+      config: undefined,
+      configOutcome: "deferred",
+      isLocalProject,
+    };
+  }
 
   if (isLocalProject && localProjectPath) {
     effectiveProjectDir = localProjectPath;

@@ -11,7 +11,9 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { registerSkill } from "#veryfront/skill/registry.ts";
 import type { HandlerContext } from "#veryfront/types";
 import {
+  isConfigOptionalControlPlaneRequest,
   isConfigOptionalControlPlaneRunRequest,
+  isControlPlaneSurfaceRoute,
   listRuntimeAgents,
   resolveAgentSkills,
   RuntimeAgentListResponseSchema,
@@ -71,6 +73,32 @@ function createAgent(overrides: {
 }
 
 describe("control-plane run route classification", () => {
+  it("reserves only the exact signed runtime capabilities operation", () => {
+    assertEquals(
+      isControlPlaneSurfaceRoute("POST", "/api/control-plane/runtime/capabilities"),
+      true,
+    );
+    assertEquals(
+      isControlPlaneSurfaceRoute("GET", "/api/control-plane/runtime/capabilities"),
+      false,
+    );
+    assertEquals(
+      isControlPlaneSurfaceRoute("POST", "/api/control-plane/runtime/capabilities/extra"),
+      false,
+    );
+    assertEquals(
+      isConfigOptionalControlPlaneRequest("POST", "/api/control-plane/runtime/capabilities"),
+      true,
+    );
+    assertEquals(
+      isConfigOptionalControlPlaneRunRequest("POST", "/api/control-plane/runtime/capabilities"),
+      false,
+    );
+    assertEquals(
+      isConfigOptionalControlPlaneRequest("POST", "/api/control-plane/runtime/capabilities/extra"),
+      false,
+    );
+  });
   for (
     const { method, pathname } of [
       { method: "POST", pathname: "/api/control-plane/runs/run_1/stream" },

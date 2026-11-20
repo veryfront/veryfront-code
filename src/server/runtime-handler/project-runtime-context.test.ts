@@ -1650,15 +1650,17 @@ describe("resolveProjectRuntimeContext", () => {
   });
 
   for (
-    const [method, suffix, expectedLoads] of [
-      ["POST", "/execute", 1],
-      ["POST", "/stream", 0],
-      ["POST", "/resume", 0],
-      ["DELETE", "", 0],
+    const [method, suffix, expectedLoads, isProxyMode] of [
+      ["POST", "/execute", 1, true],
+      ["POST", "/stream", 0, true],
+      ["POST", "/resume", 0, true],
+      ["DELETE", "", 0, true],
+      ["POST", "/api/control-plane/runtime/capabilities", 0, true],
+      ["POST", "/api/control-plane/runtime/capabilities", 0, false],
     ] as const
   ) {
-    it(`preserves the environment loading contract for ${method} run${suffix} without a production release`, async () => {
-      const path = `/api/control-plane/runs/run_1${suffix}`;
+    it(`preserves environment loading for ${method} ${suffix} (proxy=${isProxyMode})`, async () => {
+      const path = suffix.startsWith("/api/") ? suffix : `/api/control-plane/runs/run_1${suffix}`;
       const adapter = createExtendedMockAdapter();
       const body = method === "POST" && suffix === "/execute"
         ? JSON.stringify({
@@ -1702,9 +1704,9 @@ describe("resolveProjectRuntimeContext", () => {
         req,
         url,
         adapter,
-        headers: extractRequestHeaders(req, url, true, true),
+        headers: extractRequestHeaders(req, url, isProxyMode, true),
         requestContext: createRequestContext(req, { proxyTrusted: true }),
-        isProxyMode: true,
+        isProxyMode,
         projectIdentity: {
           projectSlug: "proxy-project",
           projectId: "proj-proxy",

@@ -22,6 +22,7 @@ type DiscoverySettings = {
 
 type ProjectDiscoveryConfigInput = {
   projectDir: string;
+  agentEntrypoint?: { path: string };
   cacheNamespace?: string;
   config?: VeryfrontConfig | null;
   fsAdapter?: FileSystemAdapter;
@@ -72,6 +73,7 @@ export function createProjectDiscoveryConfig(
 
   return {
     baseDir: resolveProjectDiscoveryBaseDir(input.projectDir, input.config),
+    ...(input.agentEntrypoint ? { agentEntrypoint: input.agentEntrypoint } : {}),
     cacheNamespace: input.cacheNamespace,
     toolDirs: resolveDiscoveryPaths(
       aiConfig?.tools?.discovery,

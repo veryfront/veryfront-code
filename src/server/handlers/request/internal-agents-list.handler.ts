@@ -2,16 +2,13 @@ import { BaseHandler } from "../response/base.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
 import {
   CONTROL_PLANE_AGENTS_LIST_PATH,
-  type ControlPlaneAgentsListRequest,
-  ControlPlaneAgentsListRequestSchema,
-  type ControlPlaneSurface,
   listRuntimeAgents,
   type RuntimeAgentDiscoveryDeps,
 } from "../../../channels/control-plane.ts";
 import { defaultChannelInvokeDeps } from "#veryfront/channels/invoke.ts";
 import {
+  authenticateControlPlaneProjectMetadataRequest,
   ControlPlaneRequestError,
-  verifyControlPlaneRequest,
 } from "#veryfront/internal-agents/control-plane-auth.ts";
 import {
   INTERNAL_AGENT_CONTROL_PLANE_MAX_BODY_BYTES,
@@ -48,29 +45,7 @@ export class InternalAgentsListHandler extends BaseHandler {
           req,
           INTERNAL_AGENT_CONTROL_PLANE_MAX_BODY_BYTES,
         );
-        const payload: ControlPlaneAgentsListRequest = ControlPlaneAgentsListRequestSchema.parse(
-          JSON.parse(rawBody),
-        );
-        const claims = await verifyControlPlaneRequest(req, ctx, rawBody, {
-          expectedSubject: payload.requestId,
-          // Validated by `.parse()` above; narrow back to the union (object inference widens it to `string`).
-          expectedSurface: payload.surface as ControlPlaneSurface,
-        });
-
-        if (
-          payload.projectId !== claims.project_id ||
-          (ctx.projectId !== undefined && payload.projectId !== ctx.projectId)
-        ) {
-          this.logWarn("Internal agents list request body did not match signed claims", {
-            projectSlug: ctx.projectSlug,
-            projectId: ctx.projectId,
-            requestId: payload.requestId,
-            signedRequestId: claims.sub,
-            surface: payload.surface,
-            signedSurface: claims.surface,
-          });
-          return this.respond(builder.json({ error: "Invalid control-plane signature" }, 401));
-        }
+        await authenticateControlPlaneProjectMetadataRequest(req, ctx, rawBody);
         const response = await listRuntimeAgents(ctx, this.deps);
         return this.respond(builder.json(response, 200));
       } catch (error) {

@@ -1905,3 +1905,77 @@ describe(
     });
   },
 );
+
+Deno.test("exact entrypoints keep separate cached selections and retire with their source scope", async () => {
+  const slug = `entrypoints-${crypto.randomUUID()}`;
+  const ctx = createHandlerContext(`/project/${slug}`, slug, "production", "release-exact");
+  await ctx.adapter.fs.writeFile(
+    `${ctx.projectDir}/agents/first.md`,
+    "---\nname: First\n---\nFirst source.",
+  );
+  await ctx.adapter.fs.writeFile(
+    `${ctx.projectDir}/agents/second.md`,
+    "---\nname: Second\n---\nSecond source.",
+  );
+  try {
+    const first = await ensureProjectDiscovery(ctx, undefined, {
+      agentEntrypoint: { path: "agents/first.md" },
+    });
+    const second = await ensureProjectDiscovery(ctx, undefined, {
+      agentEntrypoint: { path: "agents/second.md" },
+    });
+    assertEquals([...first.agents.keys()], ["first"]);
+    assertEquals([...second.agents.keys()], ["second"]);
+    assertEquals([
+      ...(await ensureProjectDiscovery(ctx, undefined, {
+        agentEntrypoint: { path: "agents/first.md" },
+      })).agents.keys(),
+    ], ["first"]);
+    assertEquals(agentRegistry.getAllIds(), ["first"]);
+    clearProjectDiscoveryCacheForScope(`${slug}:release:release-exact`);
+    await ctx.adapter.fs.writeFile(
+      `${ctx.projectDir}/agents/first.md`,
+      "---\nname: Refreshed\n---\nRefreshed source.",
+    );
+    const refreshed = await ensureProjectDiscovery(ctx, undefined, {
+      agentEntrypoint: { path: "agents/first.md" },
+    });
+    assertEquals(refreshed.agents.get("first")?.config.name, "Refreshed");
+  } finally {
+    clearProjectDiscoveryCacheForScope(`${slug}:release:release-exact`);
+  }
+});
+
+Deno.test("concurrent exact entrypoints never join another selection after fingerprinting", async () => {
+  const slug = `concurrent-entrypoints-${crypto.randomUUID()}`;
+  const ctx = createHandlerContext(`/project/${slug}`, slug, "production", "release-exact");
+  await ctx.adapter.fs.writeFile(
+    `${ctx.projectDir}/agents/first.md`,
+    "---\nname: First\n---\nFirst source.",
+  );
+  await ctx.adapter.fs.writeFile(
+    `${ctx.projectDir}/agents/second.md`,
+    "---\nname: Second\n---\nSecond source.",
+  );
+  let release!: () => void;
+  let arrivals = 0;
+  const bothFingerprinting = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  ctx.adapter.fs.getSourceSnapshotFingerprint = async () => {
+    if (++arrivals === 2) release();
+    await bothFingerprinting;
+    return "same-immutable-source";
+  };
+  try {
+    const [first, second] = await Promise.all([
+      ensureProjectDiscovery(ctx, undefined, { agentEntrypoint: { path: "agents/first.md" } }),
+      ensureProjectDiscovery(ctx, undefined, { agentEntrypoint: { path: "agents/second.md" } }),
+    ]);
+    assertEquals([...first.agents.keys()], ["first"]);
+    assertEquals([...second.agents.keys()], ["second"]);
+  } finally {
+    release();
+    clearProjectDiscoveryCacheForScope(`${slug}:release:release-exact`);
+  }
+});
