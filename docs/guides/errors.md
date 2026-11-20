@@ -117,6 +117,13 @@ Unknown project template.
 - **CLI exit code:** 2
 - **What to do:** Run 'veryfront init --help' to see the available templates
 
+### project-api-url
+
+This project uses a different Veryfront API.
+
+- **HTTP status:** 400
+- **What to do:** Remove VERYFRONT_API_URL from the project's .env to use production, or set it in your shell to use the project's API
+
 ## Build
 
 Raised while compiling, bundling, or transforming project source.

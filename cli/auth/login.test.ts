@@ -1874,7 +1874,7 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
                     }, projectDir),
                 ),
               Error,
-              "sets VERYFRONT_API_URL to a repository-configured API endpoint",
+              "sets VERYFRONT_API_URL to a different API, so your login isn't sent there",
             ),
         );
 

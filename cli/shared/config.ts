@@ -11,7 +11,7 @@ import { basename, join } from "veryfront/platform/path";
 import { createFileSystem, cwd, getEnv } from "veryfront/platform";
 import { type EnvironmentConfig, getApiTokenEnv, getEnvironmentConfig } from "veryfront/config";
 import { getEnvSource, veryfrontApiCredentialEnvName } from "veryfront/utils/env-loader";
-import { INVALID_ARGUMENT } from "veryfront/errors";
+import { INVALID_ARGUMENT, PROJECT_API_URL, VeryfrontError } from "veryfront/errors";
 import { cliLogger, VERSION } from "#cli/utils";
 import { readToken } from "../auth/token-store.ts";
 import { ensureAuthenticated } from "../auth/login.ts";
@@ -370,14 +370,63 @@ function withoutRepositoryApiUrls(env: EnvironmentConfig): EnvironmentConfig {
  * Raised when a repository-supplied API host would receive a credential the
  * repository did not also supply.
  */
-export class UntrustedApiUrlCredentialError extends Error {
+export class UntrustedApiUrlCredentialError extends VeryfrontError {
   override readonly name = "UntrustedApiUrlCredentialError";
+
+  constructor(detail: string) {
+    // Its own slug and docs anchor, so the CLI never reports it as unknown-error.
+    super(detail, {
+      slug: PROJECT_API_URL.slug,
+      category: PROJECT_API_URL.category,
+      status: PROJECT_API_URL.status,
+      title: PROJECT_API_URL.title,
+      suggestion: PROJECT_API_URL.suggestion,
+      detail,
+    });
+  }
 }
 
 /** True for the refusal above, which callers must never fall back around. */
 export function isUntrustedApiUrlCredentialError(error: unknown): boolean {
   return error instanceof UntrustedApiUrlCredentialError ||
     (error instanceof Error && error.name === "UntrustedApiUrlCredentialError");
+}
+
+/** Veryfront's own API hosts: the only endpoint text a refusal may echo. */
+const VERYFRONT_API_ORIGINS = ["https://api.veryfront.com", "https://api.veryfront.org"];
+
+/** The project's endpoint when it is exactly one of Veryfront's own API hosts. */
+function knownVeryfrontApiUrl(apiUrl: string): string | undefined {
+  try {
+    const url = new URL(apiUrl);
+    const bare = url.username === "" && url.password === "" && url.search === "" &&
+      url.hash === "" && (url.pathname === "/" || url.pathname === "");
+    return bare && VERYFRONT_API_ORIGINS.includes(url.origin) ? url.origin : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Explain the refusal to a command that would mint a new credential (`login`).
+ * A credential in the project files can't help, so offer production first, then
+ * the shell override for the project's own API.
+ */
+function describeUntrustedApiUrlForNewCredential(trust: ApiUrlTrust): string {
+  const key = trust.steeringEnvKey ?? "VERYFRONT_API_URL";
+  const known = knownVeryfrontApiUrl(trust.apiUrl);
+  const file = trust.steeringEnvFile === undefined
+    ? "veryfront.json"
+    : basename(trust.steeringEnvFile);
+  const setting = trust.steeringEnvFile === undefined ? "apiUrl" : key;
+  const sets = `${file} sets ${setting} to ${
+    known ?? "a different API"
+  }, so your login isn't sent there.`;
+  const production = `To use production, remove ${setting} from ${file}.`;
+  const override = `To use ${known ?? "the API this project sets"}, run: ${key}=${
+    known ?? "<its URL>"
+  } npx veryfront login`;
+  return `${sets} ${production} ${override}`;
 }
 
 /**
@@ -648,7 +697,7 @@ export async function assertApiUrlAcceptsNewCredential(
   if (trust.steeringEnvFile === undefined && !configEndpointHydrated) return;
 
   throw new UntrustedApiUrlCredentialError(
-    describeUntrustedApiUrl(trust),
+    describeUntrustedApiUrlForNewCredential(trust),
   );
 }
 
