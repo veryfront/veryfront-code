@@ -22,6 +22,20 @@ const config = {
 describe("exact agent entrypoint discovery", () => {
   afterEach(() => agentRegistry.clear());
   afterAll(() => stopEsbuild());
+  it("keeps the reserved top-level AGENT.md form unsupported", async () => {
+    const adapter = createMockAdapter();
+    await adapter.fs.writeFile(
+      "/project/agents/AGENT.md",
+      "---\nname: Invalid flat source\n---\nNot a directory agent.",
+    );
+    const result = await discoverAll({
+      ...config,
+      fsAdapter: adapter.fs,
+      agentEntrypoint: { path: "agents/AGENT.md" },
+    });
+    assertEquals([...result.agents.keys()], []);
+    assertEquals(result.errors.length > 0, true);
+  });
   it("loads the selected markdown file without evaluating other agent modules", async () => {
     const adapter = createMockAdapter();
     await adapter.fs.writeFile(
@@ -89,18 +103,20 @@ describe("exact agent entrypoint discovery", () => {
     assertEquals([...result.agents.keys()], ["selected"]);
     assertEquals(result.agents.get("selected")?.config.system, "Code source.");
   });
-  it("loads a selected directory-agent definition", async () => {
-    const adapter = createMockAdapter();
-    await adapter.fs.writeFile(
-      "/project/agents/selected/AGENT.md",
-      "---\nname: Directory agent\n---\nDirectory source.",
-    );
-    const result = await discoverAll({
-      ...config,
-      fsAdapter: adapter.fs,
-      agentEntrypoint: { path: "agents/selected/AGENT.md" },
+  for (const id of ["selected", "agents"]) {
+    it(`loads a selected directory-agent definition named ${id}`, async () => {
+      const adapter = createMockAdapter();
+      await adapter.fs.writeFile(
+        `/project/agents/${id}/AGENT.md`,
+        "---\nname: Directory agent\n---\nDirectory source.",
+      );
+      const result = await discoverAll({
+        ...config,
+        fsAdapter: adapter.fs,
+        agentEntrypoint: { path: `agents/${id}/AGENT.md` },
+      });
+      assertEquals(result.errors, []);
+      assertEquals([...result.agents.keys()], [id]);
     });
-    assertEquals(result.errors, []);
-    assertEquals([...result.agents.keys()], ["selected"]);
-  });
+  }
 });

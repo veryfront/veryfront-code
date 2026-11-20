@@ -82,6 +82,7 @@ const EXPECTED_HANDLER_NAMES = [
   "OpenAPIHandler",
   "OpenAPIDocsHandler",
   "InternalAgentsListHandler",
+  "RuntimeCapabilitiesHandler",
   "PublicAgentsListHandler",
   "PublicAgentMetadataHandler",
   "AgentStreamHandler",

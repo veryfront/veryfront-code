@@ -1707,6 +1707,7 @@ describe("adapter-factory", () => {
 
     for (
       const { method, pathname } of [
+        { method: "POST", pathname: "/api/control-plane/runtime/capabilities" },
         { method: "POST", pathname: "/api/control-plane/runs/run_1/stream" },
         { method: "POST", pathname: "/api/control-plane/runs/run_1/resume" },
         { method: "DELETE", pathname: "/api/control-plane/runs/run_1" },
@@ -1734,7 +1735,7 @@ describe("adapter-factory", () => {
           config: undefined,
           projectSlug: "proxy-slug",
           projectId: "proj_proxy",
-          proxyToken: "tok-123",
+          proxyToken: pathname.endsWith("/capabilities") ? undefined : "tok-123",
           releaseId: undefined,
           proxyEnv: "production",
           branch: null,

@@ -52,6 +52,11 @@ const ADMITTED_ROUTES: ReadonlyArray<{
 }> = [
   {
     method: "POST",
+    path: "/api/control-plane/runtime/capabilities",
+    owner: "RuntimeCapabilitiesHandler",
+  },
+  {
+    method: "POST",
     path: "/api/control-plane/agents/list",
     owner: "InternalAgentsListHandler",
   },
@@ -196,6 +201,7 @@ describe("signed-dispatch exemptions: handler ordering invariant", () => {
     // learns a new route, this catches the omission rather than leaving the new
     // route's ordering unchecked.
     const probes: ReadonlyArray<{ method: string; path: string }> = [
+      { method: "POST", path: "/api/control-plane/runtime/capabilities" },
       { method: "POST", path: "/api/control-plane/agents/list" },
       { method: "POST", path: `/api/control-plane/runs/${RUN_ID}/execute` },
       { method: "POST", path: `/api/control-plane/runs/${RUN_ID}/stream` },

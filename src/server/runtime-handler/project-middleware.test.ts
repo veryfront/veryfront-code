@@ -1143,6 +1143,7 @@ describe("ProjectMiddlewareRuntime", () => {
       return Promise.resolve(new Response("route"));
     };
     const requests = [
+      new Request("https://example.com/api/control-plane/runtime/capabilities", { method: "POST" }),
       new Request("https://example.com/api/control-plane/runs/run_1/stream", {
         method: "POST",
       }),
@@ -1161,7 +1162,7 @@ describe("ProjectMiddlewareRuntime", () => {
     }
 
     assertEquals(loads, 0);
-    assertEquals(routeCalls, 3);
+    assertEquals(routeCalls, requests.length);
   });
 
   it("bypasses project middleware for proxy HMR websockets without request context", async () => {

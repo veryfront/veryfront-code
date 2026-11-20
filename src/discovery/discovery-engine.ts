@@ -342,7 +342,12 @@ export async function discoverAll(config: DiscoveryConfig): Promise<DiscoveryRes
     if (/\.tsx?$/.test(file)) {
       await discoverItems(dir, result, context, agentHandler, config.verbose, [`file://${file}`]);
     } else if (file.endsWith(".md")) {
-      await discoverRuntimeAgentMarkdownEntrypoint(file, result, context);
+      await discoverRuntimeAgentMarkdownEntrypoint(
+        file,
+        result,
+        context,
+        config.agentEntrypoint.path,
+      );
     } else {
       result.errors.push({ file, error: new TypeError("Unsupported agent source file") });
     }

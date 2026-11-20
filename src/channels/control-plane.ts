@@ -54,6 +54,15 @@ const hostImportKey = hostSubtle.importKey.bind(hostSubtle);
 
 /** Shared control plane agents list path value. */
 export const CONTROL_PLANE_AGENTS_LIST_PATH = "/api/control-plane/agents/list";
+/** Host-owned metadata; this operation never discovers or evaluates project code. */
+export const CONTROL_PLANE_RUNTIME_CAPABILITIES_PATH = "/api/control-plane/runtime/capabilities";
+
+export function isControlPlaneRuntimeCapabilitiesRequest(
+  method: string,
+  pathname: string | undefined,
+): boolean {
+  return method.toUpperCase() === "POST" && pathname === CONTROL_PLANE_RUNTIME_CAPABILITIES_PATH;
+}
 /** Shared control plane runs path prefix value. */
 export const CONTROL_PLANE_RUNS_PATH_PREFIX = "/api/control-plane/runs/";
 /** Shared control plane run stream path value. */
@@ -79,6 +88,7 @@ export const CHANNEL_INVOKE_PATH = "/channels/invoke";
  * operation envelope through `verifyControlPlaneRequest`:
  *
  * - `POST /api/control-plane/agents/list`
+ * - `POST /api/control-plane/runtime/capabilities`
  * - `POST /api/control-plane/runs/{runId}/execute`
  * - `POST /api/control-plane/runs/{runId}/stream`
  * - `POST /api/control-plane/runs/{runId}/resume`
@@ -103,6 +113,7 @@ export function isControlPlaneSurfaceRoute(
 
   if (normalizedMethod === "POST") {
     return requestPath === CONTROL_PLANE_AGENTS_LIST_PATH ||
+      isControlPlaneRuntimeCapabilitiesRequest(normalizedMethod, requestPath) ||
       CONTROL_PLANE_RUN_OPERATION_PATH.test(requestPath);
   }
   if (normalizedMethod === "DELETE") {
@@ -242,6 +253,15 @@ export function isConfigOptionalControlPlaneRunRequest(
   ).test(requestPath);
 }
 
+/** Host metadata and exact-source run handlers authenticate before loading tenant configuration. */
+export function isConfigOptionalControlPlaneRequest(
+  method: string,
+  pathname: string | undefined,
+): boolean {
+  return isControlPlaneRuntimeCapabilitiesRequest(method, pathname) ||
+    isConfigOptionalControlPlaneRunRequest(method, pathname);
+}
+
 const getCompactJwsHeaderSchema = defineSchema((v) =>
   v.object({
     alg: v.literal("EdDSA"),
@@ -260,13 +280,18 @@ export const getControlPlaneSurfaceSchema = defineSchema((v) => v.enum(CONTROL_P
 export const ControlPlaneSurfaceSchema = lazySchema(getControlPlaneSurfaceSchema);
 
 /** Zod schema for get control plane agents list request. */
-export const getControlPlaneAgentsListRequestSchema = defineSchema((v) =>
+export const getControlPlaneProjectMetadataRequestSchema = defineSchema((v) =>
   v.object({
     requestId: v.string().min(1),
     projectId: v.string().min(1),
     surface: getControlPlaneSurfaceSchema(),
   })
 );
+export const ControlPlaneProjectMetadataRequestSchema = lazySchema(
+  getControlPlaneProjectMetadataRequestSchema,
+);
+/** Compatibility name for the agents-list metadata envelope. */
+export const getControlPlaneAgentsListRequestSchema = getControlPlaneProjectMetadataRequestSchema;
 /** Zod schema for control plane agents list request. */
 export const ControlPlaneAgentsListRequestSchema = lazySchema(
   getControlPlaneAgentsListRequestSchema,

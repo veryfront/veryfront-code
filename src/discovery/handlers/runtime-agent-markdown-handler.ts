@@ -209,13 +209,14 @@ export async function discoverRuntimeAgentMarkdownEntrypoint(
   file: string,
   result: DiscoveryResult,
   context: FileDiscoveryContext,
+  sourcePath: string,
 ): Promise<void> {
   const separator = file.lastIndexOf("/");
   const dir = file.slice(0, separator);
   const name = file.slice(separator + 1);
   const directoryName = dir.slice(dir.lastIndexOf("/") + 1);
   const candidate = name === DIRECTORY_AGENT_FILENAME && isSafePathSegment(directoryName) &&
-      directoryName !== "agents"
+      sourcePath.split("/").length > 2
     ? { id: directoryName, file, rootPath: dir }
     : getFlatAgentCandidate(dir, name);
   if (!candidate) {
