@@ -195,7 +195,7 @@ import {
 } from "#veryfront/runtime/run-event-sink-context.ts";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
 import * as otelApi from "npm:@opentelemetry/api@1.9.1";
-import { AsyncLocalStorageContextManager } from "npm:@opentelemetry/context-async-hooks@2.10.0";
+import { AsyncLocalStorageContextManager } from "npm:@opentelemetry/context-async-hooks@2.12.1";
 import { sealIngressCredentials } from "#veryfront/security/http/ingress-credentials.ts";
 import {
   HEADER_METHODS,
@@ -207,8 +207,8 @@ import {
   type ReadableSpan,
   SimpleSpanProcessor,
   type SpanExporter,
-} from "npm:@opentelemetry/sdk-trace-base@2.10.0";
-import { ExportResultCode } from "npm:@opentelemetry/core@2.10.0";
+} from "npm:@opentelemetry/sdk-trace-base@2.12.1";
+import { ExportResultCode } from "npm:@opentelemetry/core@2.12.1";
 import {
   _resetShimForTests,
   setGlobalActiveSpanAccessor,
