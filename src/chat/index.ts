@@ -265,6 +265,8 @@ export {
   type ChatInputToolbarProps,
   ChatInputVoice,
   type ChatInputVoiceProps,
+  IntegrationConnectCard,
+  type IntegrationConnectCardProps,
   Reasoning,
   type ReasoningContextValue,
   type ReasoningProps,

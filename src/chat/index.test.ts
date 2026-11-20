@@ -40,6 +40,7 @@ const expectedRuntimeExports = [
   "Reasoning",
   "ToolCall",
   "useToolCall",
+  "IntegrationConnectCard",
   "useReasoning",
   "ChatInput",
   "ChatInputAttach",
