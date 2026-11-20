@@ -126,7 +126,6 @@ export const TEMPLATE_NOT_FOUND = defineError({
   exitCode: 2,
 });
 
-/** Registry fragment for CONFIG errors (slug → definition). */
 /**
  * The project chose the API endpoint (in its `.env` or `veryfront.json`), so the
  * CLI won't send the developer's own credential there.
@@ -140,6 +139,7 @@ export const PROJECT_API_URL = defineError({
     "Remove VERYFRONT_API_URL from the project's .env to use production, or set it in your shell to use the project's API",
 });
 
+/** Registry fragment for CONFIG errors (slug → definition). */
 export const CONFIG_REGISTRY = {
   "config-not-found": CONFIG_NOT_FOUND,
   "config-invalid": CONFIG_INVALID,

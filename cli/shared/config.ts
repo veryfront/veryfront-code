@@ -392,14 +392,6 @@ export function isUntrustedApiUrlCredentialError(error: unknown): boolean {
     (error instanceof Error && error.name === "UntrustedApiUrlCredentialError");
 }
 
-/**
- * Explain the refusal to the developer running the command.
- *
- * Repository-controlled URL text is never echoed. Project `.env` values can
- * expand any process variable, including credentials the resolver does not
- * know about, and an expanded secret can land in any URL component or in an
- * unparseable value. Only the env file's name is shown, never its path.
- */
 /** Veryfront's own API hosts: the only endpoint text a refusal may echo. */
 const VERYFRONT_API_ORIGINS = ["https://api.veryfront.com", "https://api.veryfront.org"];
 
@@ -437,6 +429,14 @@ function describeUntrustedApiUrlForNewCredential(trust: ApiUrlTrust): string {
   return `${sets} ${production} ${override}`;
 }
 
+/**
+ * Explain the refusal to the developer running the command.
+ *
+ * Repository-controlled URL text is never echoed. Project `.env` values can
+ * expand any process variable, including credentials the resolver does not
+ * know about, and an expanded secret can land in any URL component or in an
+ * unparseable value. Only the env file's name is shown, never its path.
+ */
 function describeUntrustedApiUrl(trust: ApiUrlTrust): string {
   const steer = trust.steeringEnvFile === undefined
     ? "veryfront.json selects a repository-configured API endpoint"
