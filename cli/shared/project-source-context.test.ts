@@ -1,6 +1,8 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { installMockFetch, restoreMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import { VeryfrontError } from "veryfront/errors";
 import type { VeryfrontConfig } from "veryfront/config";
 import {
   deleteHostSecret,
@@ -39,6 +41,20 @@ const ENV_KEYS = [
 ] as const;
 
 const originalEnv = new Map(ENV_KEYS.map((key) => [key, getEnv(key)]));
+
+/** Answers the stored-login check with `status`, recording each request URL. */
+function installStoredLoginCheck(status: number): string[] {
+  const urls: string[] = [];
+  installMockFetch(
+    ((input: URL | Request | string, init?: RequestInit) => {
+      urls.push(new Request(input, init).url);
+      return Promise.resolve(
+        status === 200 ? Response.json({ id: "user-1" }) : new Response(null, { status }),
+      );
+    }) as typeof fetch,
+  );
+  return urls;
+}
 
 function restoreEnv(): void {
   for (const key of ENV_KEYS) {
@@ -143,6 +159,7 @@ describe("project source runtime auth", () => {
       const config = {
         fs: { veryfront: { projectSlug: "configured-fs-project" } },
       } satisfies VeryfrontConfig;
+      const requests = installStoredLoginCheck(200);
 
       await applyProjectSourceRuntimeAuth(projectDir, config);
 
@@ -152,7 +169,10 @@ describe("project source runtime auth", () => {
       assertEquals(getHostEnv("VERYFRONT_API_TOKEN"), "stored-token");
       assertEquals(getEnv("VERYFRONT_PROJECT_SLUG"), "configured-fs-project");
       assertEquals(getEnv("VERYFRONT_SERVICE_LAYER"), "cloud");
+      // The linked project's stored login is checked before the command runs.
+      assertEquals(requests, ["https://api.veryfront.com/me"]);
     } finally {
+      restoreMockFetch();
       await remove(projectDir, { recursive: true });
       await remove(configHome, { recursive: true });
     }
@@ -174,12 +194,58 @@ describe("project source runtime auth", () => {
         'export default { projectSlug: "configured-source-project" };\n',
       );
 
+      installStoredLoginCheck(200);
+
       await withProjectSourceContext(projectDir, async () => {
         assertEquals(getEnv("VERYFRONT_API_TOKEN"), undefined);
         assertEquals(getHostEnv("VERYFRONT_API_TOKEN"), "stored-token");
         assertEquals(getEnv("VERYFRONT_PROJECT_SLUG"), "configured-source-project");
       });
     } finally {
+      restoreMockFetch();
+      await remove(projectDir, { recursive: true });
+      await remove(configHome, { recursive: true });
+    }
+  });
+
+  it("stops before the project callback runs when a linked project's stored login expired", async () => {
+    const projectDir = await makeTempDir({ prefix: "vf-project-source-" });
+    const configHome = await makeTempDir({ prefix: "vf-project-source-auth-" });
+
+    try {
+      deleteEnv("VERYFRONT_API_TOKEN");
+      deleteEnv("VERYFRONT_PROJECT_SLUG");
+      deleteEnv("VERYFRONT_SERVICE_LAYER");
+      setEnv("XDG_CONFIG_HOME", configHome);
+      _resetEnvironmentConfig();
+      // A rejection is remembered per process, so this case stores its own login.
+      await saveToken(
+        `expired-${crypto.randomUUID()}`,
+        createTestEnvironmentConfig({ xdgConfigHome: configHome }),
+      );
+      await writeTextFile(
+        `${projectDir}/veryfront.config.ts`,
+        'export default { projectSlug: "configured-source-project" };\n',
+      );
+      const requests = installStoredLoginCheck(401);
+      let callbackRan = false;
+
+      const error = await assertRejects(
+        () =>
+          withProjectSourceContext(projectDir, () => {
+            callbackRan = true;
+            return Promise.resolve();
+          }),
+        VeryfrontError,
+      ) as VeryfrontError;
+
+      assertEquals(error.slug, "authentication-required");
+      assertEquals(error.detail, "Your Veryfront login expired. Run `veryfront login`.");
+      // `task`, `workflow`, schedules and webhooks run inside this callback.
+      assertEquals(callbackRan, false);
+      assertEquals(requests, ["https://api.veryfront.com/me"]);
+    } finally {
+      restoreMockFetch();
       await remove(projectDir, { recursive: true });
       await remove(configHome, { recursive: true });
     }
@@ -202,13 +268,20 @@ describe("project source runtime auth", () => {
           'export default { projectSlug: "configured-source-project" };\n',
       );
 
+      const requests = installStoredLoginCheck(200);
+
       await withProjectSourceContext(projectDir, async () => {
         assertEquals(
           getHostEnvExcludingEnvFile("VERYFRONT_API_URL"),
           "https://trusted-api.example",
         );
       });
+
+      // Project config moved the API URL, so the linked project's login check
+      // does not send the stored login anywhere.
+      assertEquals(requests, []);
     } finally {
+      restoreMockFetch();
       await remove(projectDir, { recursive: true });
       await remove(configHome, { recursive: true });
     }

@@ -8,7 +8,11 @@ import { exitProcess, registerTerminationSignals } from "#cli/utils";
 import { generateDefaultProjectId } from "../../utils/project.ts";
 import { clearAllLocalCaches } from "veryfront/transforms/mdx-cache";
 import { startCliDevServer, startCliProxyModeServer } from "#cli/shared/server-startup";
-import { applyQualifiedRuntimeAuth, resolveLinkedProjectSlug } from "#cli/shared/runtime-auth";
+import {
+  applyQualifiedRuntimeAuth,
+  assertLinkedLoginAccepted,
+  resolveLinkedProjectSlug,
+} from "#cli/shared/runtime-auth";
 import { INITIALIZATION_ERROR, isVeryfrontError } from "veryfront/errors";
 
 const logger = cliLogger.component("global");
@@ -146,7 +150,8 @@ export async function hydrateStartRuntimeAuth(
   selectedProject: StartProjectSelection,
 ): Promise<string | undefined> {
   const linkedProjectSlug = await resolveLinkedProjectSlug(selectedProject.projectDir);
-  await applyQualifiedRuntimeAuth(selectedProject.projectDir, linkedProjectSlug);
+  const context = await applyQualifiedRuntimeAuth(selectedProject.projectDir, linkedProjectSlug);
+  await assertLinkedLoginAccepted(context);
   return linkedProjectSlug;
 }
 

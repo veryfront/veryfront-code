@@ -6,6 +6,8 @@ import {
   assertStringIncludes,
 } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import { VeryfrontError } from "veryfront/errors";
 import { deleteHostSecret, getHostEnv } from "#cli/process-env";
 import { saveToken } from "../../auth/token-store.ts";
 import {
@@ -215,20 +217,76 @@ describe("commands/start/command", () => {
       assertEquals(Deno.env.get("VERYFRONT_SERVICE_LAYER"), "cloud");
     });
 
-    it("uses a persisted project link for cloud authorization scope", async () => {
+    /** Answers the stored-login check with `status`, recording each request path. */
+    async function withLoginCheck<T>(
+      status: number,
+      fn: (paths: string[]) => Promise<T>,
+    ): Promise<T> {
+      const paths: string[] = [];
+      return await withMockFetch((input) => {
+        paths.push(new URL(input instanceof Request ? input.url : String(input)).pathname);
+        return Promise.resolve(
+          status === 200 ? Response.json({ id: "user-1" }) : new Response(null, { status }),
+        );
+      }, () => fn(paths));
+    }
+
+    async function setupLinkedProject(token: string): Promise<string> {
       const projectDir = await setupProject();
+      // A rejection is remembered per process, so each case stores its own login.
+      await saveToken(
+        token,
+        createTestEnvironmentConfig({ xdgConfigHome: Deno.env.get("XDG_CONFIG_HOME") }),
+      );
       await Deno.writeTextFile(
         `${projectDir}/veryfront.json`,
         JSON.stringify({ projectSlug: "linked-project" }),
       );
+      return projectDir;
+    }
 
-      const linkedProjectSlug = await hydrateStartRuntimeAuth({
-        projectDir,
-        projectSlug: "directory-slug",
-      });
+    it("uses a persisted project link for cloud authorization scope", async () => {
+      const projectDir = await setupLinkedProject(`accepted-${crypto.randomUUID()}`);
+
+      const { linkedProjectSlug, paths } = await withLoginCheck(200, async (paths) => ({
+        linkedProjectSlug: await hydrateStartRuntimeAuth({
+          projectDir,
+          projectSlug: "directory-slug",
+        }),
+        paths,
+      }));
 
       assertEquals(linkedProjectSlug, "linked-project");
       assertEquals(Deno.env.get("VERYFRONT_PROJECT_SLUG"), "linked-project");
+      // The linked project's stored login is checked once before the server starts.
+      assertEquals(paths, ["/me"]);
+    });
+
+    it("stops before the server starts when a linked project's stored login expired", async () => {
+      const projectDir = await setupLinkedProject(`expired-${crypto.randomUUID()}`);
+
+      const paths = await withLoginCheck(401, async (paths) => {
+        const error = await assertRejects(
+          () => hydrateStartRuntimeAuth({ projectDir, projectSlug: "directory-slug" }),
+          VeryfrontError,
+        ) as VeryfrontError;
+        assertEquals(error.slug, "authentication-required");
+        assertEquals(error.detail, "Your Veryfront login expired. Run `veryfront login`.");
+        return paths;
+      });
+
+      assertEquals(paths, ["/me"]);
+    });
+
+    it("does not check the stored login of an unlinked project", async () => {
+      const projectDir = await setupProject();
+
+      const paths = await withLoginCheck(401, async (paths) => {
+        await hydrateStartRuntimeAuth({ projectDir, projectSlug: "directory-slug" });
+        return paths;
+      });
+
+      assertEquals(paths, []);
     });
   });
 
