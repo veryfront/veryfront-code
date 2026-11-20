@@ -357,6 +357,16 @@ function parseCompletedCodexSummary(comment) {
     if (!stateMetadata) return undefined;
     lines.splice(1, 1);
   }
+  // The connector changed only its display heading to a collapsible block.
+  // Normalize that exact wrapper; retain metadata, row, SHA, epoch and reaction
+  // authentication below instead of treating presentation text as a verdict.
+  if (
+    lines[2] === "<details>" &&
+    lines[3] ===
+      "<summary><strong>Codex Review Summary</strong>: ✅ Completed</summary>"
+  ) {
+    lines.splice(2, 2, "## Codex Review Summary");
+  }
   // The connector now includes its separate security-review display in this
   // comment. It is never code-review proof: retain the exact Code Review row,
   // head resolution, pinned identity, epoch and later reaction requirements.
