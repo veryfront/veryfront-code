@@ -4,6 +4,7 @@ import type { RunsCallOptions, RunsOutput } from "./target/client.ts";
 
 export type ApplicationWorkflowRun = RunsOutput<"getRun">;
 export interface ApplicationWorkflowRuns {
+  owns(runId: string): boolean;
   start(input: CreateWorkflowRunInput): Promise<ApplicationWorkflowRun>;
   read(runId: string, options?: RunsCallOptions): Promise<ApplicationWorkflowRun>;
   cancel(runId: string): Promise<ApplicationWorkflowRun>;

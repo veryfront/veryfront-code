@@ -568,7 +568,7 @@ export class VeryfrontRunsClient {
   /** Read the grouped resource by canonical UUID, retaining headers through onHeaders. */
   getRun(runId: string, options?: RunsCallOptions): Promise<RunsOutput<"getRun">> {
     const hosted = this.hostedWorkflows();
-    if (hosted) return hosted.read(runId, options);
+    if (hosted?.owns(runId)) return hosted.read(runId, options);
     return this.sdk().getRun({ path: { run_id: runId } }, options);
   }
 
@@ -613,7 +613,7 @@ export class VeryfrontRunsClient {
     idempotencyKey: string = crypto.randomUUID(),
   ): Promise<CancelRunResponse> {
     const hosted = this.hostedWorkflows();
-    const run = hosted ? await hosted.cancel(runId) : await this.sdk().cancelRun({
+    const run = hosted?.owns(runId) ? await hosted.cancel(runId) : await this.sdk().cancelRun({
       path: { run_id: runId },
       headers: { "Idempotency-Key": idempotencyKey },
     });

@@ -1,3 +1,4 @@
+import { completeOnResponseBodyConsumption } from "#veryfront/platform/compat/http/response-lifecycle.ts";
 import type { HandlerContext } from "#veryfront/types";
 import {
   getHostApiOriginExcludingEnvFile,
@@ -18,6 +19,7 @@ import {
 } from "#veryfront/runs/application-workflow-context.ts";
 import { getApplicationWorkflowIdentity } from "./application-workflow-source.ts";
 
+const NativeResponse = Response;
 const NativeHeaders = Headers;
 const freeze = Object.freeze;
 const setPrototypeOf = Object.setPrototypeOf;
@@ -73,11 +75,14 @@ export function createHostApplicationWorkflowRunner(
     const lifetime = new NativeAbortController();
     const baseSignal = combineSignals([requestSignal, lifetime.signal]);
     let active = true;
+    let acceptingStarts = true;
+    let startedWorkflow = false;
     const post = async (path: string, proof: Proof, input?: unknown, options?: RunsCallOptions) => {
       if (!active || !transport || !headers || !source) {
         throw new Error("Hosted workflow admission is unavailable for this request.");
       }
       const signal = options?.signal ? combineSignals([baseSignal, options.signal]) : baseSignal;
+      signal.throwIfAborted();
       const maxBytes = requireSuccessResponseByteLimit(options?.maxResponseBytes);
       const response = await transport(`${origin}/internal/application-workflows/runs${path}`, {
         method: "POST",
@@ -126,8 +131,9 @@ export function createHostApplicationWorkflowRunner(
       return run;
     };
     const runs: ApplicationWorkflowRuns = {
+      owns: (id) => proofs.has(id),
       async start(input) {
-        if (!identity) {
+        if (!identity || !acceptingStarts) {
           throw new Error("Hosted workflow admission is unavailable for this request.");
         }
         if (input.projectId !== undefined && projectId !== input.projectId) {
@@ -153,6 +159,7 @@ export function createHostApplicationWorkflowRunner(
             "Hosted workflow idempotencyKey requires an explicitly authenticated Runs client.",
           );
         }
+        startedWorkflow = true;
         const proof = { workflowId, requestId: randomUUID() };
         const run = await post("", proof, input.input);
         proofs.set(run.id, proof);
@@ -161,11 +168,30 @@ export function createHostApplicationWorkflowRunner(
       read: (id, options) => forRun(id, "read", options),
       cancel: (id) => forRun(id, "cancel"),
     };
-    try {
-      return await withApplicationWorkflowRuns(runs, action);
-    } finally {
+    const release = () => {
       active = false;
       lifetime.abort();
+    };
+    let streaming = false;
+    try {
+      const result = await withApplicationWorkflowRuns(runs, action);
+      acceptingStarts = false;
+      if (startedWorkflow && result instanceof NativeResponse && result.body !== null) {
+        // Deferred pulls may poll an admitted run, but returning headers closes new admissions.
+        const response = completeOnResponseBodyConsumption(result, release, requestSignal, {
+          highWaterMark: 0,
+        }, {
+          runDeferredOperation: (op) => withApplicationWorkflowRuns(runs, op),
+          cancellationTimeoutMs: 0,
+          errorOnAbort: true,
+        });
+        streaming = true;
+        return response as typeof result;
+      }
+      return result;
+    } finally {
+      acceptingStarts = false;
+      if (!streaming) release();
     }
   };
 }

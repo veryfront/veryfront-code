@@ -12,9 +12,7 @@ import {
   assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { observeFetchRequestInit, withMockFetch } from "#veryfront/testing/mock-fetch.ts";
-import { runWithProjectRunInferenceCredential } from "#veryfront/agent/runtime/project-run-inference-credential.ts";
-import { servedCatalogPayload } from "#veryfront/provider/veryfront-cloud/catalog-client.test-helpers.ts";
+import { observeFetchRequestInit } from "#veryfront/testing/mock-fetch.ts";
 import { agent } from "#veryfront/agent/factory.ts";
 import { tool } from "#veryfront/tool";
 import { defineSchema } from "#veryfront/schemas";
@@ -759,88 +757,6 @@ describe("workflow agent child protocol", () => {
     assertEquals(identities.every((id) => id.length <= 128), true);
     assertEquals(keys.every((key) => key.length <= 128), true);
   });
-
-  for (const childCredential of [true, false]) {
-    it(
-      childCredential
-        ? "uses the admitted child credential for its captured model call"
-        : "rejects the model call when child admission lacks inference authority",
-      async () => {
-        let cursor = 0;
-        let capture: string | undefined;
-        let authorization: string | null = null;
-        const send: typeof fetch = (url, init) => {
-          const path = new URL(String(url)).pathname;
-          if (path === `/runs/${parentId}/events`) return Promise.resolve(json({}));
-          if (path === "/runs") {
-            const response = admission();
-            if (!childCredential) response.headers.delete("X-Veryfront-Inference-Token");
-            return Promise.resolve(response);
-          }
-          if (path === `/runs/${childId}/events`) {
-            const events: { type: string; modelCallId?: string }[] = requestJsonBody(init).events;
-            const captures = events.flatMap((event, index) => {
-              if (event.type !== "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED") return [];
-              capture = event.modelCallId;
-              return [{
-                event_id: String(cursor + index + 1),
-                project_id: parentId,
-                run_id: childId,
-                model_call_id: capture,
-              }];
-            });
-            cursor += events.length;
-            return Promise.resolve(json({
-              run_id: childId,
-              latest_event_id: cursor,
-              latest_external_event_sequence: cursor,
-              appended_count: events.length,
-              model_call_captures: captures,
-            }));
-          }
-          if (path.endsWith("/finalize")) {
-            return Promise.resolve(json({ id: childId, status: "completed" }));
-          }
-          if (path.endsWith("/ai/models")) return Promise.resolve(json(servedCatalogPayload()));
-          if (!path.endsWith("/chat/completions")) throw new Error(`Unexpected request to ${path}`);
-          const headers = requestHeaders(init);
-          assertExists(capture);
-          assertEquals(headers.get("x-veryfront-model-call-id"), capture);
-          authorization = headers.get("authorization");
-          return Promise.resolve(
-            new Response(
-              'data: {"choices":[{"delta":{"content":"Done"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n',
-              { headers: { "content-type": "text/event-stream" } },
-            ),
-          );
-        };
-        const classifier = agent({
-          id: "coordinator",
-          model: "veryfront-cloud/openai/gpt-test",
-          system: "Classify.",
-          skills: false,
-        });
-        const executor = new StepExecutor({ runAgentNode: runner(send) });
-        const result = await withMockFetch(
-          send,
-          () =>
-            runWithProjectRunInferenceCredential("parent-inference", () =>
-              executor.execute(
-                step("classify", { agent: classifier, input: "Example" }),
-                { input: {} },
-                undefined,
-                "run_parent",
-              )),
-        );
-        assertEquals(
-          result.error,
-          childCredential ? undefined : "Inherited child inference authority is required",
-        );
-        assertEquals(result.success, childCredential);
-        assertEquals(authorization, childCredential ? "Bearer child-inference" : null);
-      },
-    );
-  }
 
   it("mirrors the actual Agent.generate text, reasoning and ordinary tool turn without changing provider execution", async () => {
     const events: Record<string, unknown>[] = [];

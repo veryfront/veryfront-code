@@ -4,13 +4,14 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import type { HandlerContext } from "#veryfront/types";
 import { runWithProjectEnv } from "#veryfront/server/project-env/storage.ts";
+import { runWithVeryfrontCloudContext } from "#veryfront/provider/veryfront-cloud/context.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import {
   bindApplicationWorkflowIdentity,
   resolveApplicationWorkflowSource,
-} from "./application-workflow-source.ts";
+} from "#veryfront/server/handlers/request/api/application-workflow-source.ts";
 import { createRunsClient } from "#veryfront/runs/runs-client.ts";
-import { createHostApplicationWorkflowRunner } from "./application-workflow-runs.ts";
+import { createHostApplicationWorkflowRunner } from "#veryfront/server/handlers/request/api/application-workflow-runs.ts";
 
 const projectId = "11111111-1111-4111-8111-111111111111";
 const releaseId = "22222222-2222-4222-8222-222222222222";
@@ -145,6 +146,47 @@ describe("hosted app workflow Runs client", () => {
       }));
   });
 
+  it("keeps task creation, status and cancellation on the same ambient public SDK credential", async () => {
+    const runner = createHostApplicationWorkflowRunner(request, context, {
+      getHostEnv: () => "synthetic-internal",
+      createOriginBoundFetch: () => () => {
+        throw new Error("Unexpected workflow admission");
+      },
+    });
+    assert(runner);
+    const paths: string[] = [];
+    await withMockFetch(
+      (url, init) => {
+        assertEquals(new Headers(init?.headers).get("authorization"), "Bearer ordinary-run-token");
+        const path = new URL(String(url)).pathname;
+        paths.push(path);
+        return Promise.resolve(
+          Response.json({
+            id: unrelatedRunId,
+            project_id: projectId,
+            target: { type: "task", id: "import" },
+            status: path.endsWith("/cancel") ? "cancelled" : "pending",
+            input: {},
+            created_at: createdAt,
+            updated_at: createdAt,
+          }),
+        );
+      },
+      () =>
+        runWithVeryfrontCloudContext({
+          apiToken: "ordinary-run-token",
+          apiBaseUrl: "https://93.184.216.34",
+        }, () =>
+          runner(async () => {
+            const runs = createRunsClient();
+            const accepted = await runs.createTaskRun({ projectId, target: "task:import" });
+            assertEquals((await runs.getRun(accepted.run.run_id)).id, unrelatedRunId);
+            assertEquals((await runs.cancel(accepted.run.run_id)).cancelled, true);
+          })),
+    );
+    assertEquals(paths, ["/runs", `/runs/${unrelatedRunId}`, `/runs/${unrelatedRunId}/cancel`]);
+  });
+
   it("uses a configured project key to read existing runs and create runs with public options", async () => {
     const runner = createHostApplicationWorkflowRunner(request, context, {
       getHostEnv: () => "synthetic-internal",
@@ -256,10 +298,73 @@ describe("hosted app workflow Runs client", () => {
         Error,
         "source",
       );
-      await assertRejects(() => runs.cancel(unrelatedRunId), Error, "not started");
-      await assertRejects(() => runs.getRun(unrelatedRunId), Error, "not started");
+      await assertRejects(() => runs.cancel(unrelatedRunId), Error, "Runs auth not configured");
+      await assertRejects(
+        async () => await runs.getRun(unrelatedRunId),
+        Error,
+        "Runs auth not configured",
+      );
     });
     assertEquals(calls, 0);
+  });
+
+  it("polls a started workflow while streaming, then revokes it when the response settles", async () => {
+    for (const terminal of ["complete", "pending-start", "cancel", "abort"] as const) {
+      const controller = new AbortController();
+      const paths: string[] = [];
+      const admission = Promise.withResolvers<void>();
+      const runner = createHostApplicationWorkflowRunner(
+        new Request(request, { signal: controller.signal }),
+        context,
+        {
+          getHostEnv: () => "synthetic",
+          createOriginBoundFetch: () => async (url) => {
+            paths.push(String(url));
+            if (terminal === "pending-start") await admission.promise;
+            return Promise.resolve(
+              Response.json({
+                id: runId,
+                project_id: projectId,
+                target: { type: "workflow", id: workflowId },
+                status: "completed",
+                input: null,
+                output: "done",
+                created_at: createdAt,
+                updated_at: createdAt,
+              }),
+            );
+          },
+        },
+      );
+      assert(runner);
+      const latePoll = Promise.withResolvers<void>();
+      let deferred: Promise<unknown> | undefined;
+      const res = await runner(async () => {
+        const runs = createRunsClient();
+        const started = runs.createWorkflowRun(input);
+        if (terminal !== "pending-start") await started;
+        deferred = latePoll.promise.then(async () => runs.getRun((await started).run.run_id));
+        return new Response(
+          new ReadableStream<Uint8Array>({
+            async pull(stream) {
+              const state = await runs.getRun((await started).run.run_id);
+              stream.enqueue(new TextEncoder().encode(String(state.output)));
+              stream.close();
+            },
+          }, { highWaterMark: 0 }),
+        );
+      });
+      admission.resolve();
+      if (terminal === "complete" || terminal === "pending-start") {
+        assertEquals(await res.text(), "done");
+      } else if (terminal === "cancel") await res.body!.cancel();
+      else controller.abort();
+      assert(deferred);
+      const rejected = assertRejects(() => deferred!, Error);
+      latePoll.resolve();
+      await rejected;
+      assertEquals(paths.length, terminal === "complete" || terminal === "pending-start" ? 2 : 1);
+    }
   });
 
   it("does not start deferred work after the application request finishes", async () => {
