@@ -4,7 +4,11 @@ import {
   invokeGlobalErrorHandler,
   normalizeGlobalError,
 } from "./global-error.ts";
-import { getNodeCompatibilityProcess, runtimeProcess } from "./runtime-process.ts";
+import {
+  getNodeCompatibilityProcess,
+  type RuntimeProcess,
+  runtimeProcess,
+} from "./runtime-process.ts";
 
 /** Get command-line arguments (cross-runtime: Deno.args or process.argv). */
 export function getArgs(): string[] {
@@ -29,10 +33,15 @@ export function exit(code?: number): never {
  * and `process.exit()` drops what is still queued, so `veryfront ... | jq` read
  * a cut answer. With blocking writes, every exit path keeps the whole output.
  * Terminals and files are already synchronous in Node; Deno needs nothing.
+ *
+ * @param host The Node process to change. Defaults to the host process; tests
+ * pass a stand-in.
  */
-export function makeStdioWritesBlocking(): void {
-  if (!runtimeProcess) return;
-  for (const stream of [runtimeProcess.stdout, runtimeProcess.stderr]) {
+export function makeStdioWritesBlocking(
+  host: Pick<RuntimeProcess, "stdout" | "stderr"> | null = runtimeProcess,
+): void {
+  if (!host) return;
+  for (const stream of [host.stdout, host.stderr]) {
     const handle = (stream as { _handle?: { setBlocking?: (blocking: boolean) => number } })
       ._handle;
     if (typeof handle?.setBlocking === "function") handle.setBlocking(true);
