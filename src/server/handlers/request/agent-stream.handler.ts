@@ -1,3 +1,4 @@
+import { INITIALIZATION_ERROR } from "#veryfront/errors";
 import {
   type CachedSourceObservation,
   observeCachedSource,
@@ -1826,7 +1827,16 @@ export class AgentStreamHandler extends BaseHandler {
       ) =>
       async () => {
         await assertRecoveryActive();
-        await this.deps.ensureProjectDiscovery(projectScopedContext, assertRecoveryActive);
+        const discovery = payload.agentEntrypoint
+          ? await this.deps.ensureProjectDiscovery(projectScopedContext, assertRecoveryActive, {
+            agentEntrypoint: payload.agentEntrypoint,
+          })
+          : await this.deps.ensureProjectDiscovery(projectScopedContext, assertRecoveryActive);
+        if (payload.agentEntrypoint && discovery.errors.length > 0) {
+          throw INITIALIZATION_ERROR.create({
+            detail: "The selected agent source could not be loaded",
+          });
+        }
         await assertRecoveryActive();
         if (requestSourceFingerprint !== undefined) {
           const discoverySourceFingerprint = await requireAgentSourceSnapshotFingerprint(
@@ -1838,7 +1848,9 @@ export class AgentStreamHandler extends BaseHandler {
         }
 
         await assertRecoveryActive();
-        const agent = this.deps.getAgent(payload.agentId);
+        const agent = payload.agentEntrypoint
+          ? discovery.agents.get(payload.agentId)
+          : this.deps.getAgent(payload.agentId);
         if (!agent) {
           logger.warn("Internal agent stream request referenced unknown agent", {
             runId: payload.runId,
@@ -2031,7 +2043,9 @@ export class AgentStreamHandler extends BaseHandler {
           () =>
             runWithVerifiedCacheApiCredential(verifiedClaims, async () => {
               await assertRecoveryActive();
-              if (payload.sourceProject) sharedRegistryScope = tryGetRegistryScopeId();
+              if (payload.sourceProject || payload.agentEntrypoint) {
+                sharedRegistryScope = tryGetRegistryScopeId();
+              }
               // Resolved before the config load because hosted evaluation binds
               // config to the same environment the run will execute with.
               const envVarsForAgent = payload.sourceProject ? {} : await (
@@ -2113,7 +2127,9 @@ export class AgentStreamHandler extends BaseHandler {
               };
               const executeInAgentSourceContext = async () => {
                 await assertRecoveryActive();
-                if (payload.sourceProject) sharedRegistryScope = tryGetRegistryScopeId();
+                if (payload.sourceProject || payload.agentEntrypoint) {
+                  sharedRegistryScope = tryGetRegistryScopeId();
+                }
                 const sourceIntegrationPolicy = (
                   this.deps.normalizeSourceIntegrationPolicy ?? normalizeSourceIntegrationPolicy
                 )(sourceConfig.integrations);
@@ -2150,7 +2166,35 @@ export class AgentStreamHandler extends BaseHandler {
               )();
             }),
         );
-      if (!payload.sourceProject || !executionProject) return await runWithAgentSourceContext();
+      const runWithInvocationCleanup = async () => {
+        const cleanup = () => {
+          if (!sharedRegistryScope) return;
+          const retired = sharedRegistryScope;
+          sharedRegistryScope = null;
+          clearProjectDiscoveryCacheForScope(retired);
+          clearTranspileCacheForNamespace(retired);
+          clearRegistryScope(retired);
+        };
+        try {
+          const result = await runWithAgentSourceContext();
+          if (!result.response) {
+            cleanup();
+            return result;
+          }
+          return { ...result, response: withResponseCleanup(result.response, cleanup, req.signal) };
+        } catch (error) {
+          cleanup();
+          throw error;
+        }
+      };
+      if (!payload.sourceProject || !executionProject) {
+        return payload.agentEntrypoint
+          ? await runWithRegistryScopeNamespace(
+            createInvocationNamespace(),
+            runWithInvocationCleanup,
+          )
+          : await runWithAgentSourceContext();
+      }
       // Evaluated modules may capture credentials or environment values. Never
       // reuse ordinary source-project closures or another invocation's closures.
       return await runWithRegistryScopeNamespace(
@@ -2163,31 +2207,7 @@ export class AgentStreamHandler extends BaseHandler {
             productionMode: executionProject.runtimeTargetKind === "environment",
             branch: executionProject.runtimeTargetBranchName ?? null,
             environmentName: executionProject.runtimeTargetEnvironmentName ?? null,
-          }, () =>
-            runWithProjectEnv({}, async () => {
-              const cleanup = () => {
-                if (!sharedRegistryScope) return;
-                const retired = sharedRegistryScope;
-                sharedRegistryScope = null;
-                clearProjectDiscoveryCacheForScope(retired);
-                clearTranspileCacheForNamespace(retired);
-                clearRegistryScope(retired);
-              };
-              try {
-                const result = await runWithAgentSourceContext();
-                if (!result.response) {
-                  cleanup();
-                  return result;
-                }
-                return {
-                  ...result,
-                  response: withResponseCleanup(result.response, cleanup, req.signal),
-                };
-              } catch (error) {
-                cleanup();
-                throw error;
-              }
-            })),
+          }, () => runWithProjectEnv({}, runWithInvocationCleanup)),
       );
     } catch (error_) {
       return this.respondToStreamFailure(error_, req, ctx, builder);

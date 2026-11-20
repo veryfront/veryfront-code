@@ -22,6 +22,8 @@ const logger = serverLogger.component("api-wrapper");
  * allows retry on failure (the key is deleted if discovery rejects).
  */
 interface DiscoveryRecord {
+  /** One source registry owns one active selection; switching selection must rebuild it. */
+  entrypointPath?: string;
   promise: Promise<DiscoveryResult>;
   sourceSnapshotVersion?: number;
   sourceFingerprint?: string;
@@ -174,6 +176,7 @@ function shouldCacheCompletedDiscovery(ctx: HandlerContext): boolean {
 export async function ensureProjectDiscovery(
   ctx: HandlerContext,
   assertCurrent?: () => Promise<void>,
+  options: { agentEntrypoint?: { path: string } } = {},
 ): Promise<DiscoveryResult> {
   await assertCurrent?.();
   if (requiresIsolatedProjectRuntime(ctx)) {
@@ -199,6 +202,11 @@ export async function ensureProjectDiscovery(
     sourceSnapshotVersion !== undefined;
 
   const existing = discoveredProjects.get<DiscoveryRecord>(key);
+  if (existing && existing.entrypointPath !== options.agentEntrypoint?.path) {
+    await existing.promise;
+    if (discoveredProjects.get(key) === existing) discoveredProjects.delete(key);
+    return await ensureProjectDiscovery(ctx, assertCurrent, options);
+  }
   const existingWithinRetryWindow = existing &&
     (existing.retryAt === undefined || now() < existing.retryAt);
   if (
@@ -220,15 +228,21 @@ export async function ensureProjectDiscovery(
     // The adapter invalidates a fingerprint when its snapshot changes during
     // hashing. Restart from the current generation so the fallback namespace
     // and completed record cannot be labeled with the stale generation.
-    return await ensureProjectDiscovery(ctx, assertCurrent);
+    return await ensureProjectDiscovery(ctx, assertCurrent, options);
   }
 
   // Fingerprinting is asynchronous. A scope eviction or newer invocation can
   // replace this key while the hash is pending. Join a replacement only when
   // its concrete fingerprint proves it owns the same source bytes.
   const currentExisting = discoveredProjects.get<DiscoveryRecord>(key);
+  // Fingerprinting awaited tenant data. A different selection may now own this source's registry.
+  if (currentExisting && currentExisting.entrypointPath !== options.agentEntrypoint?.path) {
+    await currentExisting.promise;
+    if (discoveredProjects.get(key) === currentExisting) discoveredProjects.delete(key);
+    return await ensureProjectDiscovery(ctx, assertCurrent, options);
+  }
   if (currentExisting === undefined && existing?.discardedAfterCompletion === true) {
-    return await ensureProjectDiscovery(ctx, assertCurrent);
+    return await ensureProjectDiscovery(ctx, assertCurrent, options);
   }
   if (currentExisting !== existing) {
     if (
@@ -266,14 +280,14 @@ export async function ensureProjectDiscovery(
           settledExisting === undefined &&
           currentExisting.discardedAfterCompletion === true
         ) {
-          return await ensureProjectDiscovery(ctx, assertCurrent);
+          return await ensureProjectDiscovery(ctx, assertCurrent, options);
         }
         throwProjectDiscoveryFailure(
           ctx,
           new Error("Primitive discovery cache changed while awaiting the current generation"),
         );
       }
-      return await ensureProjectDiscovery(ctx, assertCurrent);
+      return await ensureProjectDiscovery(ctx, assertCurrent, options);
     }
     throwProjectDiscoveryFailure(
       ctx,
@@ -290,6 +304,7 @@ export async function ensureProjectDiscovery(
   }
 
   const discovery: DiscoveryRecord = {
+    entrypointPath: options.agentEntrypoint?.path,
     sourceSnapshotVersion,
     sourceFingerprint,
     promise: (async () => {
@@ -322,6 +337,7 @@ export async function ensureProjectDiscovery(
           : `${key}:snapshot:${sourceSnapshotVersion}`;
         const discoveryOptions = createProjectDiscoveryConfig({
           projectDir: ctx.projectDir,
+          agentEntrypoint: options.agentEntrypoint,
           cacheNamespace,
           config: ctx.config,
           fsAdapter: ctx.adapter.fs,
@@ -418,5 +434,9 @@ export function clearProjectDiscoveryCacheForProject(projectId: string): void {
 
 /** Retire the completed discovery promise owned by one invocation scope. */
 export function clearProjectDiscoveryCacheForScope(scopeId: string): void {
-  discoveredProjects.delete(scopeId);
+  for (const key of discoveredProjects.keys()) {
+    if (key === scopeId || key.startsWith(`${scopeId}:agent-entrypoint:`)) {
+      discoveredProjects.delete(key);
+    }
+  }
 }

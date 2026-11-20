@@ -428,6 +428,7 @@ export interface RuntimeAgentDiscoveryDeps {
   ensureProjectDiscovery: (
     ctx: HandlerContext,
     assertCurrent?: () => Promise<void>,
+    options?: { agentEntrypoint?: { path: string } },
   ) => Promise<DiscoveryResult>;
   getAgent: (id: string) => Agent | undefined;
   getAllAgentIds: () => string[];

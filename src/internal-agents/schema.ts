@@ -17,6 +17,7 @@ import { stripLeadingEmptyObjectPlaceholder } from "#veryfront/agent/streaming/d
 import { getRuntimeAgentMarkdownDefinitionSchema } from "#veryfront/agent/runtime/agent-definition.ts";
 import {
   getRuntimeAgentCredentialsSchema,
+  getRuntimeAgentEntrypointSchema,
   getRuntimeAgentProjectContextSchema,
   getRuntimeAgentSourceContextSchema,
   getRuntimeAgentTargetKindSchema,
@@ -101,6 +102,7 @@ export const getInternalAgentControlPlaneStreamRequestSchema = defineSchema((v) 
     sourceTargetEnvironmentId: v.string().uuid().nullable().optional(),
     sourceTargetBranchId: v.string().uuid().nullable().optional(),
     agentSource: getRuntimeAgentSourceContextSchema(),
+    agentEntrypoint: getRuntimeAgentEntrypointSchema().optional(),
     sourceProject: getRuntimeAgentProjectContextSchema().optional(),
     executionProject: getRuntimeAgentProjectContextSchema().optional(),
     agentConfig: getRuntimeAgentMarkdownDefinitionSchema().optional().refine(

@@ -52,6 +52,8 @@ export interface DiscoveryConfig {
   cacheNamespace?: string;
   toolDirs?: string[];
   agentDirs?: string[];
+  /** Select one exact agent file instead of scanning agent directories. */
+  agentEntrypoint?: { path: string };
   skillDirs?: string[];
   resourceDirs?: string[];
   promptDirs?: string[];
