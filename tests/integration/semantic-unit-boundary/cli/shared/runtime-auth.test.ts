@@ -19,7 +19,9 @@ import {
   assertLinkedLoginAccepted,
   resolveLinkedProjectSlug,
   resolveRuntimeAuthContext,
+  type RuntimeAuthContext,
 } from "#cli/shared/runtime-auth";
+import { VeryfrontError } from "veryfront/errors";
 import { DEFAULT_AGENT_MODEL } from "#veryfront/agent/runtime/model-resolution.ts";
 
 const ENV_KEYS = [
@@ -602,42 +604,203 @@ describe("cli/shared/runtime-auth", () => {
       assertEquals(paths, []);
     });
 
-    it("stops a linked project whose stored login the API rejects, with a re-login message", async () => {
-      const projectDir = await storedLoginProject();
-      setEnv("OPENAI_API_KEY", "<API_KEY>");
-      setEnv("VERYFRONT_PROJECT_SLUG", "env-linked-project");
-      const paths = installLoginCheck(401);
+    describe("assertLinkedLoginAccepted", () => {
+      const EXPIRED_LOGIN_DETAIL = "Your Veryfront login expired. Run `veryfront login`.";
 
-      const context = await applyQualifiedRuntimeAuth(projectDir);
-      await assertRejects(
-        () => assertLinkedLoginAccepted(context),
-        Error,
-        "Your Veryfront login expired. Run `veryfront login`.",
-      );
+      /** Answers every request with `status`, recording its URL and bearer token. */
+      function installApi(status: number): Array<{ url: string; token: string | null }> {
+        const requests: Array<{ url: string; token: string | null }> = [];
+        installMockFetch(
+          ((input: URL | Request | string, init?: RequestInit) => {
+            const request = new Request(input, init);
+            requests.push({
+              url: request.url,
+              token: request.headers.get("authorization")?.replace(/^Bearer /, "") ?? null,
+            });
+            return Promise.resolve(
+              status === 200
+                ? Response.json({ id: "user-1", email: "dev@example.test" })
+                : new Response(null, { status }),
+            );
+          }) as typeof fetch,
+        );
+        return requests;
+      }
 
-      // The one request is the login check: no model or provider call is made.
-      assertEquals(paths.length, 1);
-    });
+      async function assertExpiredLogin(context: RuntimeAuthContext): Promise<void> {
+        const error = await assertRejects(
+          () => assertLinkedLoginAccepted(context),
+          VeryfrontError,
+        ) as VeryfrontError;
+        assertEquals(error.slug, "authentication-required");
+        assertEquals(error.detail, EXPIRED_LOGIN_DETAIL);
+      }
 
-    it("lets a linked project with an accepted stored login run", async () => {
-      const projectDir = await storedLoginProject();
-      setEnv("VERYFRONT_PROJECT_SLUG", "env-linked-project");
-      installLoginCheck(200);
+      for (const status of [401, 403]) {
+        it(`stops a linked project whose stored login the API answers ${status}`, async () => {
+          const projectDir = await storedLoginProject();
+          // A provider key is present, yet a linked project must not fall back to it.
+          setEnv("OPENAI_API_KEY", "<API_KEY>");
+          setEnv("VERYFRONT_PROJECT_SLUG", "env-linked-project");
+          const requests = installApi(status);
 
-      const context = await applyQualifiedRuntimeAuth(projectDir);
-      await assertLinkedLoginAccepted(context);
+          const context = await applyQualifiedRuntimeAuth(projectDir);
+          await assertExpiredLogin(context);
 
-      assertEquals(context.apiToken, storedToken);
-    });
+          // The one request is the login check: no model or provider call is made.
+          assertEquals(requests, [{ url: "https://api.veryfront.com/me", token: storedToken }]);
+          // The command stops; the stored login is left for `veryfront login` to replace.
+          assertEquals(await readToken(), storedToken);
+        });
+      }
 
-    it("leaves an unlinked project's login to the provider-key fallback", async () => {
-      const projectDir = await storedLoginProject();
-      const paths = installLoginCheck(401);
+      it("stops a project linked through veryfront.json or a project link", async () => {
+        for (const link of ["config", "project-link"] as const) {
+          const projectDir = await storedLoginProject();
+          if (link === "config") {
+            await Deno.writeTextFile(
+              join(projectDir, "veryfront.json"),
+              JSON.stringify({ projectSlug: "config-linked-project" }),
+            );
+          } else {
+            await writeRawProjectLink(projectDir, "persisted-project");
+          }
+          const requests = installApi(401);
 
-      const context = await applyQualifiedRuntimeAuth(projectDir);
-      await assertLinkedLoginAccepted(context);
+          const context = await applyQualifiedRuntimeAuth(
+            projectDir,
+            await resolveLinkedProjectSlug(projectDir),
+          );
+          await assertExpiredLogin(context);
 
-      assertEquals(paths, []);
+          assertEquals(requests.length, 1, link);
+          restoreMockFetch();
+        }
+      });
+
+      it("lets a linked project with an accepted stored login run, then trusts the answer", async () => {
+        const projectDir = await storedLoginProject();
+        setEnv("VERYFRONT_PROJECT_SLUG", "env-linked-project");
+        const requests = installApi(200);
+
+        const context = await applyQualifiedRuntimeAuth(projectDir);
+        await assertLinkedLoginAccepted(context);
+        await assertLinkedLoginAccepted(context);
+
+        assertEquals(context.apiToken, storedToken);
+        // Checked once: the accepted answer is remembered, so a second command
+        // (eval runs the check twice) makes no further request.
+        assertEquals(requests.map((request) => new URL(request.url).pathname), ["/me"]);
+      });
+
+      it("keeps stopping after a rejection when a later check cannot reach the API", async () => {
+        const projectDir = await storedLoginProject();
+        setEnv("VERYFRONT_PROJECT_SLUG", "env-linked-project");
+        installApi(401);
+        const context = await applyQualifiedRuntimeAuth(projectDir);
+        await assertExpiredLogin(context);
+        restoreMockFetch();
+        const requests = installApi(503);
+
+        await assertExpiredLogin(context);
+
+        assertEquals(requests, []);
+      });
+
+      it("lets a linked project run when the login cannot be checked", async () => {
+        for (const answer of ["unknown", "offline"] as const) {
+          const projectDir = await storedLoginProject();
+          setEnv("VERYFRONT_PROJECT_SLUG", "env-linked-project");
+          if (answer === "unknown") installApi(503);
+          else installMockFetch((() => Promise.reject(new TypeError("offline"))) as typeof fetch);
+
+          const context = await applyQualifiedRuntimeAuth(projectDir);
+          await assertLinkedLoginAccepted(context);
+
+          assertEquals(context.apiToken, storedToken, answer);
+          restoreMockFetch();
+        }
+      });
+
+      it("leaves an exported token to the API, unchecked, even beside an expired login", async () => {
+        const projectDir = await storedLoginProject();
+        setEnv("VERYFRONT_API_TOKEN", "exported-token");
+        setEnv("VERYFRONT_PROJECT_SLUG", "env-linked-project");
+        const requests = installApi(401);
+
+        const context = await applyQualifiedRuntimeAuth(projectDir);
+        await assertLinkedLoginAccepted(context);
+
+        assertEquals(context.apiToken, "exported-token");
+        assertEquals(context.apiTokenSource, "env");
+        assertEquals(requests, []);
+      });
+
+      it("makes no check for a linked project with no stored login", async () => {
+        await useTempConfigHome();
+        const projectDir = await makeTempDir({ prefix: "vf-runtime-auth-direct-" });
+        tempDirs.push(projectDir);
+        setEnv("VERYFRONT_PROJECT_SLUG", "env-linked-project");
+        const requests = installApi(401);
+
+        const context = await applyQualifiedRuntimeAuth(projectDir);
+        await assertLinkedLoginAccepted(context);
+
+        assertEquals(context.apiToken, undefined);
+        assertEquals(requests, []);
+      });
+
+      it("leaves an unlinked project's login to the provider-key fallback", async () => {
+        const projectDir = await storedLoginProject();
+        const requests = installApi(401);
+
+        const context = await applyQualifiedRuntimeAuth(projectDir);
+        await assertLinkedLoginAccepted(context);
+
+        assertEquals(requests, []);
+      });
+
+      it("checks the login only at the API it was resolved for, never a project .env host", async () => {
+        const projectDir = await storedLoginProject();
+        setEnv("VERYFRONT_API_BASE_URL", "https://operator-api.example/api");
+        setEnv("VERYFRONT_PROJECT_SLUG", "env-linked-project");
+        await Deno.writeTextFile(
+          join(projectDir, ".env"),
+          "VERYFRONT_API_URL=https://repository-api.example\n",
+        );
+        __resetEnvLoaderForTests();
+        _resetEnvironmentConfig();
+        await loadEnv({ cwd: projectDir });
+        const requests = installApi(401);
+
+        const context = await applyQualifiedRuntimeAuth(projectDir);
+        await assertExpiredLogin(context);
+
+        assertEquals(context.apiBaseUrl, "https://operator-api.example/api");
+        assertEquals(requests, [{
+          url: "https://operator-api.example/api/me",
+          token: storedToken,
+        }]);
+      });
+
+      it("sends no login for a context it did not resolve", async () => {
+        await storedLoginProject();
+        const requests = installApi(401);
+
+        await assertLinkedLoginAccepted({
+          apiToken: storedToken,
+          apiTokenSource: "token-store",
+          projectSlug: "hand-built-project",
+        });
+
+        assertEquals(requests, []);
+      });
+
+      it("words the stop as a direct instruction", () => {
+        assertEquals(/[–—]/.test(EXPIRED_LOGIN_DETAIL), false);
+        assertEquals(/\b(we|our|please)\b/i.test(EXPIRED_LOGIN_DETAIL), false);
+        assertEquals(EXPIRED_LOGIN_DETAIL.endsWith("Run `veryfront login`."), true);
+      });
     });
 
     it("keeps a rejected login, unchecked, when no provider key can serve runs", async () => {

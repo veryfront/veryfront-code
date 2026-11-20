@@ -19,6 +19,7 @@ import {
 } from "../../../src/integrations/source-policy.ts";
 import { deleteHostSecret, getHostEnv } from "#cli/process-env";
 import { saveToken } from "../../auth/token-store.ts";
+import { installMockFetch, restoreMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import {
   _resetEnvironmentConfig,
   createTestEnvironmentConfig,
@@ -254,6 +255,15 @@ describe("workflow command", () => {
         `${projectDir}/veryfront.config.ts`,
         'export default { projectSlug: "configured-workflow-project" };\n',
       );
+      // A linked project's stored login is checked before the run. Answer the
+      // check here so the test never reaches the live API.
+      const loginChecks: string[] = [];
+      installMockFetch(
+        ((input: URL | Request | string, init?: RequestInit) => {
+          loginChecks.push(new URL(new Request(input, init).url).pathname);
+          return Promise.resolve(Response.json({ id: "user-1" }));
+        }) as typeof fetch,
+      );
 
       const echoTool = tool({
         id: "echo",
@@ -293,7 +303,10 @@ describe("workflow command", () => {
       assertEquals(Deno.env.get("VERYFRONT_API_TOKEN"), undefined);
       assertEquals(getHostEnv("VERYFRONT_API_TOKEN"), "stored-token");
       assertEquals(Deno.env.get("VERYFRONT_PROJECT_SLUG"), "configured-workflow-project");
+      // The linked project's stored login is checked once, against a stub.
+      assertEquals(loginChecks, ["/me"]);
     } finally {
+      restoreMockFetch();
       await Deno.remove(projectDir, { recursive: true });
       await Deno.remove(configHome, { recursive: true });
     }

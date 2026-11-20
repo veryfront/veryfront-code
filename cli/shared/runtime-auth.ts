@@ -1,4 +1,11 @@
-import { deleteEnv, deleteHostSecret, getEnv, setEnv, setHostSecret } from "#cli/process-env";
+import {
+  deleteEnv,
+  deleteHostSecret,
+  getEnv,
+  getHostEnvExcludingEnvFile,
+  setEnv,
+  setHostSecret,
+} from "#cli/process-env";
 import { readToken } from "#cli/auth/token-store";
 import { getEnvironmentConfig } from "veryfront/config";
 import { refreshEnvironmentConfig } from "#cli/environment-config";
@@ -194,6 +201,12 @@ export async function applyQualifiedRuntimeAuth(
     apiBaseUrl: preservesImplicitDefault ? undefined : candidateApiBaseUrl,
     linkedProjectSlug,
   });
+  if (runtimeCandidate?.apiTokenSource === "token-store") {
+    applyIntrinsic(weakMapSet, storedLoginApiUrls, [
+      context,
+      getApiUrl(runtimeCandidate.validationEnv),
+    ]);
+  }
   markTrustedRuntimeEndpoint(context, trust, runtimeCandidate?.apiTokenSource, projectDir);
   updateRuntimeAuthProvenance(
     apiBaseSource.source,
@@ -225,6 +238,17 @@ const rejectedStoredLogins = new Set<string>();
 // Captured before project code runs: the set holds stored login tokens.
 const setHas = Set.prototype.has;
 const setAdd = Set.prototype.add;
+
+/**
+ * API URL each qualified context's stored login was resolved for. The login
+ * check must go to this URL: the environment can name another one (a project
+ * `.env` `VERYFRONT_API_URL` next to an operator `VERYFRONT_API_BASE_URL`)
+ * that credential resolution deliberately ignored.
+ */
+const storedLoginApiUrls = new WeakMap<RuntimeAuthContext, string>();
+// Captured before project code runs: the map is read after project config loads.
+const weakMapGet = WeakMap.prototype.get;
+const weakMapSet = WeakMap.prototype.set;
 
 /**
  * Drop a stored login the API rejects when a direct provider key serves the
@@ -286,17 +310,36 @@ async function isStoredLoginRejected(apiUrl: string, apiToken: string): Promise<
  * stored login. A linked project runs through its Cloud project and never
  * falls back to a provider key, so without this every model call fails with a
  * bare gateway 401. An exported token or an unlinked project is left alone.
+ * The login is sent only to the API it was resolved for, and only when that
+ * is the API the developer's own environment names. Otherwise the command
+ * runs unchecked, as for a login that cannot be checked.
  */
 export async function assertLinkedLoginAccepted(context: RuntimeAuthContext): Promise<void> {
   if (context.apiTokenSource !== "token-store" || !context.apiToken || !context.projectSlug) {
     return;
   }
-  const apiUrl = getApiUrl(getEnvironmentConfig());
+  const apiUrl = applyIntrinsic(weakMapGet, storedLoginApiUrls, [context]) as string | undefined;
+  if (!apiUrl || apiUrl !== hostApiUrl()) return;
   if (await isStoredLoginRejected(apiUrl, context.apiToken)) {
     throw AUTHENTICATION_REQUIRED.create({
       detail: "Your Veryfront login expired. Run `veryfront login`.",
     });
   }
+}
+
+/**
+ * API URL the developer's own environment names. A project `.env` file, or
+ * project config that sets `VERYFRONT_API_URL` after the CLI captured host
+ * routing, does not count: framework code sends the stored login only to
+ * this routing too.
+ */
+function hostApiUrl(): string {
+  return getApiUrl({
+    ...getEnvironmentConfig(),
+    apiUrl: normalizeEnvValue(getHostEnvExcludingEnvFile("VERYFRONT_API_URL")),
+    apiBaseUrl: normalizeEnvValue(getHostEnvExcludingEnvFile("VERYFRONT_API_BASE_URL")) ??
+      DEFAULT_API_URL,
+  });
 }
 
 function updateRuntimeAuthProvenance(

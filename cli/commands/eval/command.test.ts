@@ -182,6 +182,20 @@ function restoreEnv(): void {
   restoreMockFetch();
 }
 
+/** Answers the stored-login check with `status`, recording each request path. */
+function installStoredLoginCheck(status: number): string[] {
+  const paths: string[] = [];
+  installMockFetch(
+    ((input: URL | Request | string, init?: RequestInit) => {
+      paths.push(new URL(new Request(input, init).url).pathname);
+      return Promise.resolve(
+        status === 200 ? Response.json({ id: "user-1" }) : new Response(null, { status }),
+      );
+    }) as typeof fetch,
+  );
+  return paths;
+}
+
 function createReport(): EvalReport {
   return {
     kind: "eval-report",
@@ -2727,6 +2741,7 @@ describe("eval CLI command helpers", () => {
       Deno.env.set("XDG_CONFIG_HOME", configHome);
       _resetEnvironmentConfig();
       await saveToken("stored-token", createTestEnvironmentConfig({ xdgConfigHome: configHome }));
+      const paths = installStoredLoginCheck(200);
 
       await hydrateEvalRuntimeAuth(projectDir, {
         projectSlug: "configured-eval-project",
@@ -2738,7 +2753,45 @@ describe("eval CLI command helpers", () => {
       assertEquals(Deno.env.get("VERYFRONT_API_BASE_URL"), undefined);
       assertEquals(Deno.env.get("VERYFRONT_PROJECT_SLUG"), "configured-eval-project");
       assertEquals(Deno.env.get("VERYFRONT_SERVICE_LAYER"), "cloud");
+      // The linked project's stored login is checked before any model request.
+      assertEquals(paths, ["/me"]);
     } finally {
+      restoreMockFetch();
+      await Deno.remove(projectDir, { recursive: true });
+      await Deno.remove(configHome, { recursive: true });
+    }
+  });
+
+  it("stops before the eval runs when a linked project's stored login expired", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-eval-command-" });
+    const configHome = await Deno.makeTempDir({ prefix: "vf-eval-auth-" });
+
+    try {
+      Deno.env.delete("VERYFRONT_API_TOKEN");
+      Deno.env.delete("VERYFRONT_PROJECT_SLUG");
+      Deno.env.delete("VERYFRONT_SERVICE_LAYER");
+      Deno.env.set("XDG_CONFIG_HOME", configHome);
+      _resetEnvironmentConfig();
+      // A rejection is remembered per process, so this case stores its own login.
+      await saveToken(
+        `expired-${crypto.randomUUID()}`,
+        createTestEnvironmentConfig({ xdgConfigHome: configHome }),
+      );
+      const paths = installStoredLoginCheck(401);
+
+      const error = await assertRejects(
+        () => hydrateEvalRuntimeAuth(projectDir, { projectSlug: "configured-eval-project" }),
+        VeryfrontError,
+      ) as VeryfrontError;
+
+      assertEquals(error.slug, "authentication-required");
+      assertEquals(error.detail, "Your Veryfront login expired. Run `veryfront login`.");
+      // Only the login check: no model or provider request is made.
+      assertEquals(paths, ["/me"]);
+    } finally {
+      restoreMockFetch();
+      Deno.env.delete("VERYFRONT_PROJECT_SLUG");
+      Deno.env.delete("VERYFRONT_SERVICE_LAYER");
       await Deno.remove(projectDir, { recursive: true });
       await Deno.remove(configHome, { recursive: true });
     }
@@ -2775,7 +2828,12 @@ describe("eval CLI command helpers", () => {
       Deno.env.set("XDG_CONFIG_HOME", configHome);
       _resetEnvironmentConfig();
       await saveToken("stored-token", createTestEnvironmentConfig({ xdgConfigHome: configHome }));
-      await hydrateEvalRuntimeAuth(projectDir, { projectSlug: "eval-project" });
+      installStoredLoginCheck(200);
+      try {
+        await hydrateEvalRuntimeAuth(projectDir, { projectSlug: "eval-project" });
+      } finally {
+        restoreMockFetch();
+      }
 
       assertEquals(getHostEnv("VERYFRONT_API_TOKEN"), "stored-token");
       const context = createEvalToolExecutionContext({ projectSlug: "eval-project" });
