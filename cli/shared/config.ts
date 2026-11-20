@@ -10,7 +10,8 @@ import type { InferSchema } from "veryfront/extensions/schema";
 import { basename, join } from "veryfront/platform/path";
 import { createFileSystem, cwd, getEnv } from "veryfront/platform";
 import { type EnvironmentConfig, getApiTokenEnv, getEnvironmentConfig } from "veryfront/config";
-import { getEnvSource } from "veryfront/utils/env-loader";
+import { getEnvSource, veryfrontApiCredentialEnvName } from "veryfront/utils/env-loader";
+import { INVALID_ARGUMENT } from "veryfront/errors";
 import { cliLogger, VERSION } from "#cli/utils";
 import { readToken } from "../auth/token-store.ts";
 import { ensureAuthenticated } from "../auth/login.ts";
@@ -25,6 +26,7 @@ import {
   trimTrailingSlashes,
 } from "./constants.ts";
 import { readProjectLink, readProjectLinkForControlPlane } from "./project-link.ts";
+import { AUTHENTICATION_REQUIRED } from "veryfront/errors";
 import { isConnectionRefusedError, isRetryableConnectionError } from "../../src/proxy/retry.ts";
 
 // Delays for exponential backoff with jitter: attempt 1 = ~300ms, 2 = ~1s, 3 = ~3s
@@ -398,7 +400,7 @@ function describeUntrustedApiUrl(trust: ApiUrlTrust): string {
     endpointSource.expandedFromProcessEnv;
   const repositoryCredential = trust.steeringEnvFile === undefined
     ? "Add a matching apiToken to the same veryfront.json"
-    : `Add a literal VERYFRONT_API_TOKEN to the same ${basename(trust.steeringEnvFile)} file`;
+    : `Add a literal VERYFRONT_API_KEY to the same ${basename(trust.steeringEnvFile)} file`;
   const confirmationKey = trust.steeringEnvKey ?? "VERYFRONT_API_URL";
   const remedy = endpointExpandedFromProcess
     ? `Replace ${confirmationKey} with a literal endpoint in the same file, or, if you trust the `
@@ -449,6 +451,16 @@ function isRepositorySuppliedCredential(
   // which secret to name; it never owned the secret itself.
   return !tokenSource.expandedFromProcessEnv;
 }
+
+/**
+ * The message of the `authentication-required` error a management command
+ * throws when no credential is available.
+ *
+ * Exported so callers that classify it (such as the MCP deploy tool) match this
+ * constant instead of copying its wording.
+ */
+export const MISSING_API_CREDENTIAL_MESSAGE =
+  `No Veryfront credential found. ${AUTHENTICATION_REQUIRED.suggestion}.`;
 
 function apiBaseUrlForRequest(apiUrl: string): string {
   const normalized = trimTrailingSlashes(apiUrl);
@@ -695,48 +707,28 @@ export async function resolveApiCredentialForFallback(
   return { apiUrl: trust.apiUrl, apiToken: candidate?.apiToken ?? null };
 }
 
-async function resolveConfigBase(
-  projectDir: string | undefined,
+/**
+ * A command that needs a credential and has none. The message carries the fix
+ * for JSON and MCP callers; the terminal shows the same fix as the registry
+ * suggestion, so the error sets no separate detail.
+ */
+function missingCredentialError() {
+  return AUTHENTICATION_REQUIRED.create({ message: MISSING_API_CREDENTIAL_MESSAGE });
+}
+
+interface ProjectReferenceResolution {
+  projectSlug: string;
+  projectId?: string;
+  projectReferenceSource: ProjectReferenceSource;
+}
+
+/** Which project the directory names, and where that name came from. Needs no credential. */
+async function resolveProjectReference(
+  dir: string,
   env: EnvironmentConfig,
-  interactive: boolean,
-  allowModuleConfigExecution: boolean,
-  allowAuthPrompt: boolean,
-  authOptions: { transport?: typeof fetch } = {},
-): Promise<ResolvedConfigDetails> {
-  const dir = projectDir ?? cwd();
-  const configFileResolution = await readConfigFileResolution(dir, allowModuleConfigExecution);
-  const configFile = configFileResolution.config;
-
-  const trust = resolveApiUrlTrust(env, configFile, join(dir, "veryfront.json"));
-  const apiUrl = trust.apiUrl;
-
-  let { apiToken, apiTokenSource } = await resolveApiTokenForMode(
-    env,
-    configFile,
-    interactive,
-    trust,
-  );
-
-  if (!apiToken && trust.repositorySteered) {
-    throw new UntrustedApiUrlCredentialError(
-      describeUntrustedApiUrl(trust),
-    );
-  }
-
-  if (!apiToken && interactive && allowAuthPrompt) {
-    const userInfo = await ensureAuthenticated(env, dir, authOptions);
-    if (!userInfo) throw new Error("Authentication required for this operation.");
-    apiToken = (await readToken(env)) ?? null;
-    apiTokenSource = apiToken ? "token-store" : undefined;
-    if (!apiToken) throw new Error("Authentication failed. Please try again.");
-  }
-
-  if (!apiToken) {
-    throw new Error(
-      "Missing API token. Run 'veryfront login' or set VERYFRONT_API_TOKEN environment variable",
-    );
-  }
-
+  configFileResolution: Awaited<ReturnType<typeof readConfigFileResolution>>,
+  apiUrl: string,
+): Promise<ProjectReferenceResolution> {
   let projectSlug: string | null | undefined;
   let projectId: string | undefined;
   let projectReferenceSource: ProjectReferenceSource;
@@ -793,6 +785,62 @@ async function resolveConfigBase(
       "Could not determine project reference. Set VERYFRONT_PROJECT_SLUG, TENANT_PROJECT_SLUG, VERYFRONT_PROJECT_ID, or add projectSlug to veryfront.config.ts",
     );
   }
+
+  return { projectSlug, ...(projectId ? { projectId } : {}), projectReferenceSource };
+}
+
+async function resolveConfigBase(
+  projectDir: string | undefined,
+  env: EnvironmentConfig,
+  interactive: boolean,
+  allowModuleConfigExecution: boolean,
+  allowAuthPrompt: boolean,
+  authOptions: { transport?: typeof fetch } = {},
+  options: { refuseInferredReference?: boolean } = {},
+): Promise<ResolvedConfigDetails> {
+  const dir = projectDir ?? cwd();
+  const configFileResolution = await readConfigFileResolution(dir, allowModuleConfigExecution);
+  const configFile = configFileResolution.config;
+
+  const trust = resolveApiUrlTrust(env, configFile, join(dir, "veryfront.json"));
+  const apiUrl = trust.apiUrl;
+
+  // A command that refuses a guessed project says so before it asks anyone
+  // to log in: the reference needs no credential.
+  const earlyReference = options.refuseInferredReference
+    ? await resolveProjectReference(dir, env, configFileResolution, apiUrl)
+    : undefined;
+  if (earlyReference?.projectReferenceSource.kind === "inferred") {
+    throw INVALID_ARGUMENT.create({ detail: NO_LINKED_PROJECT_MESSAGE });
+  }
+
+  let { apiToken, apiTokenSource } = await resolveApiTokenForMode(
+    env,
+    configFile,
+    interactive,
+    trust,
+  );
+
+  if (!apiToken && trust.repositorySteered) {
+    throw new UntrustedApiUrlCredentialError(
+      describeUntrustedApiUrl(trust),
+    );
+  }
+
+  if (!apiToken && interactive && allowAuthPrompt) {
+    const userInfo = await ensureAuthenticated(env, dir, authOptions);
+    if (!userInfo) throw missingCredentialError();
+    apiToken = (await readToken(env)) ?? null;
+    apiTokenSource = apiToken ? "token-store" : undefined;
+    if (!apiToken) throw new Error("Authentication failed. Please try again.");
+  }
+
+  if (!apiToken) {
+    throw missingCredentialError();
+  }
+
+  const { projectSlug, projectId, projectReferenceSource } = earlyReference ??
+    await resolveProjectReference(dir, env, configFileResolution, apiUrl);
 
   return {
     config: {
@@ -857,6 +905,38 @@ export function resolveConfigWithAuthDetails(
   authOptions: { transport?: typeof fetch } = {},
 ): Promise<ResolvedConfigDetails> {
   return resolveConfigByMode(projectDir, env, true, true, true, authOptions);
+}
+
+export const NO_LINKED_PROJECT_MESSAGE =
+  "No project is linked to this folder. Pass `--project <slug>` (the slug is on the project's Settings page), or run `veryfront pull <slug>` to link one.";
+
+/**
+ * Resolve config for a command that reads or writes one existing project
+ * (`files`, `knowledge`, `uploads`). `projectSlug` is the command's
+ * `--project` value. Without it, the project must come from a link,
+ * configuration, or the environment: the folder or package name is a guess
+ * that names a project only by chance, so the command stops before it reaches
+ * the API.
+ */
+export async function resolveLinkedProjectConfigWithAuth(
+  projectDir?: string,
+  projectSlug?: string,
+): Promise<ResolvedConfig> {
+  // An explicit reference, even an empty one, is never replaced by the
+  // folder's: `project delete -- ""` must reach the empty-reference check.
+  if (projectSlug !== undefined) {
+    return { ...await resolveConfigWithAuth(projectDir), projectSlug };
+  }
+  const { config } = await resolveConfigBase(
+    projectDir,
+    getEnvironmentConfig(),
+    true,
+    true,
+    true,
+    {},
+    { refuseInferredReference: true },
+  );
+  return config;
 }
 
 function resolveConfigByMode(
@@ -936,7 +1016,7 @@ export function createApiClient(
     if (config.apiTokenSource !== "env-file") return message;
     if (status !== 401 && status !== 403 && status !== 404) return message;
 
-    return `${message}. VERYFRONT_API_TOKEN was loaded from a project .env file. For management commands, run 'veryfront login' and remove or rename the project runtime token, or pass a management token explicitly in the shell.`;
+    return `${message}. ${veryfrontApiCredentialEnvName()} was loaded from a project .env file. For management commands, run 'veryfront login' and remove or rename the project runtime token, or pass a management token explicitly in the shell.`;
   }
 
   async function requestOnce<T>(

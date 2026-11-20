@@ -1,6 +1,6 @@
-import { cwd as getCwd, env as getProcessEnv, setEnv } from "#veryfront/platform/compat/process.ts";
-import { load as loadDotenv } from "#veryfront/platform/compat/std/dotenv.ts";
-import { markEnvFileValue } from "#veryfront/platform/compat/process/env.ts";
+import { cwd as getCwd } from "#veryfront/platform/compat/process.ts";
+import { loadWithProvenance } from "#veryfront/platform/compat/std/dotenv.ts";
+import { applyVeryfrontApiKeyAlias, startEnvFileLoad } from "#veryfront/utils/env-loader.ts";
 
 const DEFAULT_AGENT_SERVICE_ENV_FILES = [".env", ".env.local"] as const;
 
@@ -29,20 +29,28 @@ function joinEnvPath(cwd: string, file: string): string {
   return `${cwd.replace(/\/$/, "")}/${file}`;
 }
 
-/** Loads agent service env files. */
+/**
+ * Loads agent service env files.
+ *
+ * Entries go through the env loader's writer: a value defined before the load
+ * wins (an empty one too), in any letter case on Windows, and each written
+ * value carries its file provenance and expansion taint. `VERYFRONT_API_KEY`
+ * then fills the token slot by the env loader's rule, so a credential from
+ * these files is judged the same whichever name holds it.
+ */
 export async function loadAgentServiceEnvFiles(
   options: AgentServiceEnvFileLoadOptions = {},
 ): Promise<AgentServiceEnvFileLoadResult> {
   const cwd = options.cwd ?? getCwd();
   const files = options.files ?? DEFAULT_AGENT_SERVICE_ENV_FILES;
-  const protectedKeys = new Set(Object.keys(getProcessEnv()));
+  const writeEntry = startEnvFileLoad({ override: false, keepDefined: true });
   const loadedFiles: string[] = [];
   let loadedVariables = 0;
 
   for (const file of files) {
     const envPath = joinEnvPath(cwd, file);
-    const parsed = await loadDotenv({ envPath, allowEmptyValues: true });
-    const entries = Object.entries(parsed);
+    const { values, expandedFromProcessEnv } = await loadWithProvenance({ envPath });
+    const entries = Object.entries(values);
 
     if (entries.length === 0) {
       continue;
@@ -51,16 +59,11 @@ export async function loadAgentServiceEnvFiles(
     loadedFiles.push(envPath);
 
     for (const [key, value] of entries) {
-      if (protectedKeys.has(key)) {
-        continue;
-      }
-
-      setEnv(key, value);
-      markEnvFileValue(key);
-      loadedVariables++;
+      if (writeEntry(key, value, envPath, expandedFromProcessEnv.has(key))) loadedVariables++;
     }
   }
 
+  applyVeryfrontApiKeyAlias();
   return { loadedFiles, loadedVariables };
 }
 

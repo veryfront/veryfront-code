@@ -731,6 +731,13 @@ Push receipt not found.
 - **HTTP status:** 400
 - **What to do:** Run: veryfront push --branch main first
 
+### push-branch-mismatch
+
+Latest push is for a different branch.
+
+- **HTTP status:** 409
+- **What to do:** Run veryfront push --branch \<branch> for the branch you deploy, then deploy again
+
 ### push-conflict
 
 Push rejected because remote files changed.
@@ -875,11 +882,11 @@ Provider replay checkpoint is invalid.
 No model access for eval run.
 
 - **HTTP status:** 402
-- **What to do:** Veryfront Cloud refused the model request for billing or entitlement reasons, not authentication. Add AI credits or upgrade the plan for the account that owns the linked project at https://veryfront.com/settings/billing, then run the eval again. See https://veryfront.com/docs/api/errors/insufficient-credits
+- **What to do:** Veryfront Cloud refused the model request for billing or entitlement reasons, not authentication. Add AI credits or upgrade the plan at https://veryfront.com/settings/billing for the account that owns the linked project, or for your credential's account when no project is set, then run the eval again. See https://veryfront.com/docs/api/errors/insufficient-credits
 
 ### eval-project-required
 
-No project for eval model requests.
+No usable project for eval model requests.
 
 - **HTTP status:** 400
 - **What to do:** Set VERYFRONT_PROJECT_SLUG in .env or projectSlug in veryfront.config.ts to a project you can edit, then run veryfront eval again
@@ -903,7 +910,7 @@ Veryfront API blocked by network egress policy.
 Veryfront Cloud rejected the eval credential.
 
 - **HTTP status:** 401
-- **What to do:** Run `veryfront login` to refresh your session, or set VERYFRONT_API_TOKEN to a valid token, then run the eval again
+- **What to do:** Run `veryfront login` to refresh your session, or set VERYFRONT_API_KEY to a valid API key, then run the eval again
 
 ### eval-model-project-access-denied
 
@@ -963,7 +970,7 @@ Unknown/unclassified error.
 Authentication required.
 
 - **HTTP status:** 401
-- **What to do:** Set VERYFRONT_API_TOKEN or run 'veryfront login'
+- **What to do:** Set VERYFRONT_API_KEY or run 'veryfront login'
 
 ### permission-denied
 

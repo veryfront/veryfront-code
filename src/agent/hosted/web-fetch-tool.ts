@@ -5,6 +5,7 @@ import {
 } from "#veryfront/security/sandbox/worker-egress-guard.ts";
 import { tool, type ToolExecutionContext } from "#veryfront/tool";
 import { INVALID_ARGUMENT, NETWORK_ERROR, TIMEOUT_ERROR } from "#veryfront/errors";
+import { waitForControlPlaneReplay } from "./control-plane-replay.ts";
 
 const DEFAULT_MAX_CONTENT_CHARS = 500_000;
 const DEFAULT_MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
@@ -295,6 +296,9 @@ async function executeHostedWebFetch(
   };
 }
 
+const HOSTED_WEB_FETCH_DESCRIPTION =
+  "Fetch the content of an explicit http or https URL directly. Use this for canonical documentation or pages named in the task or available context; no prior web_search is required. Returns complete, truncated, and page_info.next metadata when a response is sliced; pass cursor to continue.";
+
 /** Create hosted web_fetch tool that allows direct explicit URL fetches. */
 export function createHostedWebFetchTool(options: HostedWebFetchToolOptions = {}) {
   const resolvedOptions: ResolvedHostedWebFetchToolOptions = {
@@ -319,9 +323,27 @@ export function createHostedWebFetchTool(options: HostedWebFetchToolOptions = {}
 
   return tool<HostedWebFetchToolInput, HostedWebFetchToolOutput>({
     id: "web_fetch",
-    description:
-      "Fetch the content of an explicit http or https URL directly. Use this for canonical documentation or pages named in the task or available context; no prior web_search is required. Returns complete, truncated, and page_info.next metadata when a response is sliced; pass cursor to continue.",
+    description: HOSTED_WEB_FETCH_DESCRIPTION,
     inputSchema: getHostedWebFetchInputSchema(resolvedOptions.maxContentChars)(),
     execute: (input, context) => executeHostedWebFetch(input, resolvedOptions, context),
+  });
+}
+
+/**
+ * Create the `web_fetch` the model sees when the Veryfront API owns the call.
+ * The API parks the run from the persisted call, applies its own checks and
+ * supplies the result on its next dispatch, so this host never fetches.
+ */
+export function createApiOwnedHostedWebFetchTool() {
+  return tool<HostedWebFetchToolInput, HostedWebFetchToolOutput>({
+    id: "web_fetch",
+    description: HOSTED_WEB_FETCH_DESCRIPTION,
+    inputSchema: getHostedWebFetchInputSchema(DEFAULT_MAX_CONTENT_CHARS)(),
+    // Never settles with a result: the API answers the persisted call itself.
+    execute: (_input, context) =>
+      waitForControlPlaneReplay(
+        context?.abortSignal,
+        "API-owned web_fetch requires execution cancellation",
+      ),
   });
 }

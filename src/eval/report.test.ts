@@ -128,6 +128,25 @@ describe("eval/report", () => {
     assertEquals(aliasPathMetadata.hash, pathMetadata.hash);
   });
 
+  it("fingerprints each example's environment context", async () => {
+    const hashOf = async (examples: Parameters<typeof datasets.inline>[0]) => {
+      const dataset = datasets.inline(examples);
+      return (await createEvalDatasetMetadata(dataset, await dataset.load({ baseDir: "." })))
+        .hash;
+    };
+
+    const plain = await hashOf([{ id: "q1", input: "hi" }]);
+    const header = await hashOf([{ id: "q1", input: "hi", environmentContext: "node: Header" }]);
+    const footer = await hashOf([{ id: "q1", input: "hi", environmentContext: "node: Footer" }]);
+
+    assertNotEquals(header, plain);
+    assertNotEquals(footer, header);
+    assertEquals(
+      await hashOf([{ id: "q1", input: "hi", environmentContext: "node: Header" }]),
+      header,
+    );
+  });
+
   it("summarizes duration, usage, failures, and flaky examples", () => {
     const summary = summarizeEvalRecords([
       createRecord({

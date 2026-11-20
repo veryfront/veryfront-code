@@ -254,7 +254,7 @@ the RAG ingestion route returns document metadata, not the runtime-fetchable
 Set Veryfront Cloud bootstrap variables before starting the app:
 
 ```bash title="Terminal"
-export VERYFRONT_API_TOKEN=<TOKEN>
+export VERYFRONT_API_KEY=<API_KEY>
 export VERYFRONT_PROJECT_SLUG=<PROJECT_SLUG>
 npx veryfront@latest dev
 ```
@@ -333,7 +333,7 @@ Run `veryfront dev`, open the app, and check these behaviors:
   title.
 - Ask an unrelated question. The response says the retrieved context does not
   contain a clear answer.
-- In cloud mode, confirm API requests use `VERYFRONT_API_TOKEN` and the target
+- In cloud mode, confirm API requests use `VERYFRONT_API_KEY` and the target
   project slug.
 
 If retrieval returns no results, check that the uploaded file has extractable

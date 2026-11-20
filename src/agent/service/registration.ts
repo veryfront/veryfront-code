@@ -15,6 +15,8 @@ export type AgentServiceRegistrationMode = "auto" | "enabled" | "disabled";
 export type AgentServiceRegistrationConfig = {
   VERYFRONT_API_URL: string;
   VERYFRONT_API_TOKEN?: string;
+  /** The token file selector, when set: `VERYFRONT_API_KEY` is then not read. */
+  VERYFRONT_API_TOKEN_FILE?: string;
   VERYFRONT_PROJECT_ID?: string;
   VERYFRONT_AGENT_SERVICE_URL?: string;
   VERYFRONT_AGENT_SERVICE_KEY?: string;
@@ -95,6 +97,7 @@ export const agentServiceRegistrationConfigSchema = lazySchema(
     v.object({
       VERYFRONT_API_URL: v.string().url(),
       VERYFRONT_API_TOKEN: v.string().min(1).optional(),
+      VERYFRONT_API_TOKEN_FILE: v.string().optional(),
       VERYFRONT_PROJECT_ID: v.string().min(1).optional(),
       VERYFRONT_AGENT_SERVICE_URL: v.string().url().optional(),
       VERYFRONT_AGENT_SERVICE_KEY: v.string().min(1).max(128).optional(),
@@ -301,16 +304,23 @@ async function stableServiceKey(input: {
   return `${input.serviceName}:${hash}`.slice(0, 128);
 }
 
-function requireExplicitRegistrationValue(
-  value: string | undefined,
-  envName: string,
-): string {
+function requireExplicitRegistrationValue(value: string | undefined, detail: string): string {
   if (!value) {
-    throw CONFIG_INVALID.create({
-      detail: `${envName} is required when VERYFRONT_AGENT_SERVICE_REGISTRATION=enabled`,
-    });
+    throw CONFIG_INVALID.create({ detail });
   }
   return value;
+}
+
+/**
+ * The credential slot is `VERYFRONT_API_TOKEN`, but the name operators set is
+ * `VERYFRONT_API_KEY`, so the error names that one. A token file selector
+ * stops the key from being read, so then the error says to unset it first.
+ */
+function missingRegistrationCredential(config: AgentServiceRegistrationConfig): string {
+  const lead = "Agent service registration is enabled but no credential is set: ";
+  return config.VERYFRONT_API_TOKEN_FILE === undefined
+    ? `${lead}set VERYFRONT_API_KEY to an API key.`
+    : `${lead}VERYFRONT_API_TOKEN_FILE is set, so VERYFRONT_API_KEY is not read. Unset VERYFRONT_API_TOKEN_FILE and set VERYFRONT_API_KEY to an API key.`;
 }
 
 /** Input payload for resolve agent service registration. */
@@ -320,12 +330,15 @@ export async function resolveAgentServiceRegistrationInput(
   const config = agentServiceRegistrationConfigSchema.parse(options.config);
   const enabled = config.VERYFRONT_AGENT_SERVICE_REGISTRATION === "enabled";
   const token = enabled
-    ? requireExplicitRegistrationValue(config.VERYFRONT_API_TOKEN, "VERYFRONT_API_TOKEN")
+    ? requireExplicitRegistrationValue(
+      config.VERYFRONT_API_TOKEN,
+      missingRegistrationCredential(config),
+    )
     : config.VERYFRONT_API_TOKEN;
   const serviceUrl = enabled
     ? requireExplicitRegistrationValue(
       config.VERYFRONT_AGENT_SERVICE_URL,
-      "VERYFRONT_AGENT_SERVICE_URL",
+      "VERYFRONT_AGENT_SERVICE_URL is required when VERYFRONT_AGENT_SERVICE_REGISTRATION=enabled",
     )
     : config.VERYFRONT_AGENT_SERVICE_URL;
 

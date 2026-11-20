@@ -215,7 +215,10 @@ function shouldCacheReleaseVersionedModule(
   options: ModuleServerOptions,
   isSSR: boolean,
 ): boolean {
-  if (options.dev || options.mode === "preview" || isSSR || !options.releaseId) return false;
+  if (
+    options.dev || options.mode === "preview" || isSSR || !options.releaseId ||
+    options.releaseId === "standalone-dev"
+  ) return false;
   if (url.searchParams.get("studio_embed") === "true" || url.searchParams.has("t")) return false;
   return url.searchParams.get(RELEASE_MODULE_VERSION_PARAM) === options.releaseId &&
     url.searchParams.get(RELEASE_MODULE_RUNTIME_VERSION_PARAM) === VERSION;

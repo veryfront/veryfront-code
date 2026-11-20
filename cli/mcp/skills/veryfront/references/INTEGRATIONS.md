@@ -5,11 +5,11 @@ Full guide: https://veryfront.com/docs/code/guides/integrations
 
 ## Two separate logins
 
-- **Platform login** (`veryfront login`, `VERYFRONT_API_TOKEN`) authenticates
+- **Platform login** (`veryfront login`, `VERYFRONT_API_KEY`) authenticates
   you to Veryfront. It never connects a provider.
 - **Provider consent** (`veryfront integration connect "<NAME>" --project "<PROJECT_SLUG>"`) authorizes one
   provider account for one project. It needs a person in a browser and an
-  existing platform credential: a login session or `VERYFRONT_API_TOKEN`.
+  existing platform credential: a login session or `VERYFRONT_API_KEY`.
 
 Never ask for, print, or store provider passwords, OAuth tokens, API keys, or
 the Veryfront token in prompts, tool arguments, files, or logs.

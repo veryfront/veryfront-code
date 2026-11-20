@@ -30,6 +30,7 @@ import { withRuntimeToolInventory } from "#veryfront/agent/runtime/tool-inventor
 import type { ChatSystemMessage } from "#veryfront/chat/types.ts";
 import type { RuntimeRunAgentInput } from "./schema.ts";
 import type { ModelRuntime } from "#veryfront/provider";
+import { privateTextTrim } from "#veryfront/security/private-text.ts";
 
 const STUDIO_CONTEXT_ITEM_TITLE = "studio_context";
 const DEFAULT_SYSTEM_PROMPT = "You are a helpful assistant.";
@@ -49,7 +50,7 @@ function getNonEmptyString(value: unknown): string | undefined {
   if (typeof value !== "string") {
     return undefined;
   }
-  const trimmed = value.trim();
+  const trimmed = privateTextTrim(value);
   return trimmed.length > 0 ? trimmed : undefined;
 }
 

@@ -29,8 +29,10 @@ import {
   DEPLOYMENT_ERROR,
   ENVIRONMENT_NOT_FOUND,
   ENVIRONMENT_NOT_ROUTABLE,
+  INVALID_ARGUMENT,
   PREVIEW_DEPLOYMENT_NOT_ALLOWED,
   PROJECT_LINK_STALE,
+  PROJECT_SLUG_TAKEN,
   RELEASE_MISSING_VERSION,
   SOURCE_DIGEST_MISMATCH,
   VeryfrontError,
@@ -47,18 +49,22 @@ import {
   validatePushReceipt,
 } from "../deployment-provenance.ts";
 import { normalizeProjectSlug } from "../slug.ts";
-import { reserveProjectSlug } from "../reserve-slug.ts";
+import { ProjectSlugConflictError, reserveProjectSlug } from "../reserve-slug.ts";
 import {
   describeStaleProjectReference,
   getErrorStatus,
   inferProjectSlugFromDirectory,
+  type InferredProjectPolicy,
   projectApiReference,
   ProjectReferenceNotFoundError,
   type ProjectResolutionClient,
   type ProjectResolutionOutcome,
   resolveOrCreateProject,
   shouldPersistProjectLink,
+  slugConflictAction,
   staleProjectReferenceContext,
+  UnlinkedProjectError,
+  unlinkedProjectMessage,
 } from "../project-resolution.ts";
 import {
   isRetryableApiReadError,
@@ -78,6 +84,7 @@ import {
   type EnvironmentAccessTarget,
 } from "./control-plane.ts";
 import type { DeployResult, LiveSourceResult } from "./result.ts";
+import { veryfrontApiCredentialEnvName } from "veryfront/utils/env-loader";
 
 export interface DeployProjectRequest {
   projectDir: string;
@@ -89,6 +96,13 @@ export interface DeployProjectRequest {
    * pushes local sources on the caller's behalf.
    */
   projectSlug?: string;
+  /**
+   * How a project reference inferred from the folder or package name is
+   * settled: `"create"` (only `veryfront up`, which exists to create the
+   * project), a confirmation callback (an interactive `veryfront deploy`), or
+   * unset to refuse with the unlinked-folder error.
+   */
+  inferredProject?: InferredProjectPolicy;
   branch?: string;
   environment: string;
   releaseName?: string;
@@ -316,11 +330,14 @@ async function ensureProjectLinkedForDeploy(
   mode: DeployProjectRequest["mode"],
   controlPlaneFactory: (config: ResolvedConfig) => DeployControlPlane,
   explicitProjectSlug?: string,
+  inferredProject?: InferredProjectPolicy,
 ): Promise<{
   config: ResolvedConfig;
   controlPlane: DeployControlPlane;
   project: ProjectTarget | null;
   plannedProjectSlug: string;
+  /** Whether an inferred reference was settled, so the bootstrap push may use it. */
+  inferredReferenceSettled: boolean;
 }> {
   const details = await resolveConfigWithAuthDetails(projectDir, env);
   const initial = details.config;
@@ -368,8 +385,27 @@ async function ensureProjectLinkedForDeploy(
       client: resolutionClient,
       createMissingReference: false,
       dryRun: mode === "dry-run",
+      ...(inferredProject ? { inferredProject } : {}),
     });
   } catch (error) {
+    if (error instanceof UnlinkedProjectError) {
+      throw INVALID_ARGUMENT.create({
+        detail: unlinkedProjectMessage("deploy"),
+        context: { inferredSlug: error.inferredSlug, declined: error.declined },
+        cause: error,
+      });
+    }
+    // A confirmed folder name is created under exactly that slug, so a slug
+    // another project already holds fails here, as it does for push.
+    if (error instanceof ProjectSlugConflictError) {
+      throw PROJECT_SLUG_TAKEN.create({
+        detail: `${error.message} ${
+          slugConflictAction(projectReferenceSource)
+        }, then run veryfront deploy again.`,
+        context: { projectSlug: error.slug },
+        cause: error,
+      });
+    }
     if (error instanceof ProjectReferenceNotFoundError) {
       // Only the local link owns `.veryfront/project.json`, and that file is
       // what PROJECT_LINK_STALE's title and suggestion talk about. Deploy's
@@ -389,7 +425,7 @@ async function ensureProjectLinkedForDeploy(
         });
       }
       throw new Error(
-        `Project "${projectReference}" was not found. Check the project reference or remove it to let deploy create a project for this directory.`,
+        `Project "${projectReference}" was not found. Check the project reference, or remove it and run veryfront up to create a project for this directory.`,
       );
     }
     if (isInferredReference || error instanceof VeryfrontError) throw error;
@@ -407,6 +443,7 @@ async function ensureProjectLinkedForDeploy(
       controlPlane: controlPlaneFactory(dryRunConfig),
       project: null,
       plannedProjectSlug: outcome.plannedSlug,
+      inferredReferenceSettled: isInferredReference,
     };
   }
 
@@ -420,6 +457,7 @@ async function ensureProjectLinkedForDeploy(
     controlPlane: controlPlaneFactory(resolvedConfig),
     project: outcome.project,
     plannedProjectSlug: outcome.project.slug,
+    inferredReferenceSettled: isInferredReference,
   };
 }
 
@@ -1710,7 +1748,7 @@ function getProbeCredentialRemedy(
 ): string {
   const again = retryInstruction(retry);
   if (source === "env") {
-    return `VERYFRONT_API_TOKEN is set in this shell and is resolved ahead of any stored session, so veryfront login does not change what the probe sends. Open the URL signed in, or unset that variable, run veryfront login, and ${again}, to confirm the app responds.`;
+    return `${veryfrontApiCredentialEnvName()} is set in this shell and is resolved ahead of any stored session, so veryfront login does not change what the probe sends. Open the URL signed in, or unset that variable, run veryfront login, and ${again}, to confirm the app responds.`;
   }
   if (source === "config-file") {
     return `The apiToken in veryfront.json is resolved ahead of any stored session, so veryfront login does not change what the probe sends. Open the URL signed in, or remove that token, run veryfront login, and ${again}, to confirm the app responds.`;
@@ -1909,6 +1947,7 @@ export function createDeployProject(options: {
         request.mode,
         createControlPlane,
         request.projectSlug,
+        request.inferredProject,
       );
       let { config, controlPlane, project } = setup;
       // Whether this directory is the source of the project being deployed.
@@ -1976,6 +2015,12 @@ export function createDeployProject(options: {
               : undefined,
             dryRun: request.mode === "dry-run",
             quiet: true,
+            // This deploy already settled the inferred reference (created,
+            // confirmed, or linked it). A dry run links nothing, so the push
+            // would otherwise meet the same folder name and refuse it.
+            ...(setup.inferredReferenceSettled
+              ? { inferredProject: () => Promise.resolve(true) }
+              : {}),
           });
         });
         config = await resolveConfigWithAuth(request.projectDir, environmentConfig);

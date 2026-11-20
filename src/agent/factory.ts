@@ -74,6 +74,7 @@ import {
   INVOKE_AGENT_TOOL_ID,
 } from "./runtime/agent-delegation.ts";
 import { normalizeAgentDelegateIds } from "./runtime/agent-delegation-names.ts";
+import { readEvalEnvironmentContext } from "./runtime/eval-environment-context-scope.ts";
 import {
   buildAgentCallContext,
   type BuildAgentCallContextInput,
@@ -474,6 +475,7 @@ function resolveToolsConfiguration(input: {
  * stay current across a long-lived process.
  */
 function createAugmentedSystem(input: {
+  agentId: string;
   config: AgentConfig;
   skillLoaderToolName: BuildAgentCallContextInput["skillLoaderToolName"];
   resolveSkillSnapshot: () => Pick<ResolvedSkillSelectorSnapshot<Skill>, "definitions">;
@@ -496,6 +498,9 @@ function createAugmentedSystem(input: {
     }).__vfPreassembledSkillContext === true;
     const anthropicProviderAlias = providerOptionKey ??
       resolveModelProviderOptionKey(resolveRuntimeModel(config.model));
+    // A local eval case can send what Studio sends in place of the configured facts.
+    const environmentContext = readEvalEnvironmentContext(input.agentId) ??
+      config.environmentContext;
 
     const contextInput = {
       // A denied or absent loader suppresses the catalog: advertising skills
@@ -504,7 +509,7 @@ function createAugmentedSystem(input: {
         ? {}
         : { skills: snapshot.definitions.map(toRuntimeSkillDefinition), skillLoaderToolName }),
       ...(config.projectContext ? { projectContext: config.projectContext } : {}),
-      ...(config.environmentContext ? { environmentContext: config.environmentContext } : {}),
+      ...(environmentContext ? { environmentContext } : {}),
     };
 
     const buildCallContext = options?.preserveRuntimeContextMarker
@@ -685,6 +690,7 @@ function createAgent<TOutput = never>(
   }
 
   const augmentedSystem = createAugmentedSystem({
+    agentId: id,
     config,
     skillLoaderToolName: resolveTrustedSkillLoaderToolName(mergedToolsConfig),
     resolveSkillSnapshot,

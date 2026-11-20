@@ -382,6 +382,8 @@ async function executeStepAction(
           projectDir,
           config: demoConfig,
           source: { kind: "inferred", name: "project files" },
+          // The demo registers the project it just scaffolded.
+          inferredProject: "create",
           client: {
             getProject: (reference) => getProjectTarget(createApiClient(demoConfig), reference),
             reserveSlug: async (reserveSlug, options) => {

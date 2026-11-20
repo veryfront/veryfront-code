@@ -163,6 +163,60 @@ describe("eval/factory", () => {
     assertEquals(isEvalDefinition(resolverDefinition), true);
   });
 
+  it("keeps the environment context of an agent eval and of each example", async () => {
+    const definition = evalAgent({
+      id: "eval:studio-context",
+      target: "agent:researcher",
+      environmentContext: "<studio_tabs>\nactive: app/page.tsx\n</studio_tabs>",
+      dataset: datasets.inline([
+        { id: "eval-context", input: "hi" },
+        { id: "example-context", input: "hi", environmentContext: "selected node: Header" },
+      ]),
+    });
+
+    assertEquals(
+      definition.environmentContext,
+      "<studio_tabs>\nactive: app/page.tsx\n</studio_tabs>",
+    );
+    assertEquals(isEvalDefinition(definition), true);
+    assertEquals(
+      (await definition.dataset.load({ baseDir: "." })).map((example) => [
+        example.id,
+        example.environmentContext,
+      ]),
+      [["eval-context", undefined], ["example-context", "selected node: Header"]],
+    );
+    assertEquals(
+      isEvalDefinition({ ...definition, environmentContext: 3 }),
+      false,
+    );
+  });
+
+  it("rejects an environment context that is not a non-empty string", () => {
+    for (const environmentContext of ["", "   ", 3]) {
+      assertThrows(
+        () =>
+          evalAgent({
+            target: "agent:researcher",
+            dataset: [{ id: "q1", input: "hi" }],
+            environmentContext: environmentContext as string,
+          }),
+        Error,
+        "Eval environmentContext must be a non-empty string",
+      );
+      assertThrows(
+        () =>
+          datasets.inline([{
+            id: "q1",
+            input: "hi",
+            environmentContext: environmentContext as string,
+          }]),
+        Error,
+        "inline dataset[0] environmentContext must be a non-empty string",
+      );
+    }
+  });
+
   it("creates a target-free dataset eval definition", () => {
     const definition = evalDataset({
       id: "eval:rubric-calibration",

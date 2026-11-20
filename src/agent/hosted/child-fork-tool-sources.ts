@@ -74,7 +74,10 @@ export type PrepareDefaultHostedChildForkToolSourcesInput = {
   globalTools?: HostToolSet;
   abortSignal?: AbortSignal;
   onConfirmedStudioProjectSwitch?: HostedChildProjectSwitchHandler;
-  createRemoteToolSource?: (config: RemoteMCPToolSourceConfig) => RemoteToolSource;
+  createRemoteToolSource?: (
+    config: RemoteMCPToolSourceConfig,
+    server?: AgentServiceMcpServerConfig,
+  ) => RemoteToolSource;
   createToolsFromRemoteDefinitions?: typeof createToolsFromRemoteDefinitions;
   createLiveStudioTools?: (input: LiveStudioMcpToolsOptions) => Promise<{
     tools: HostToolSet;
@@ -124,8 +127,10 @@ export async function prepareDefaultHostedChildForkToolSources(
   // every failure path release them together with the Studio tools.
   const remoteSources = createRemoteToolSourceOwner();
   const createSource = input.createRemoteToolSource ?? createRemoteMCPToolSource;
-  const createRemoteToolSource = (config: RemoteMCPToolSourceConfig) =>
-    remoteSources.own(createSource(config));
+  const createRemoteToolSource = (
+    config: RemoteMCPToolSourceConfig,
+    server?: AgentServiceMcpServerConfig,
+  ) => remoteSources.own(createSource(config, server));
   const closeMcpTools = async (): Promise<void> => {
     // Every closer starts before any is awaited; the first failure wins.
     const closers: Array<() => Promise<void>> = [];
@@ -208,7 +213,7 @@ export async function prepareDefaultHostedChildForkToolSources(
       if (!remoteConfig) {
         continue;
       }
-      const rawSource = createRemoteToolSource(remoteConfig);
+      const rawSource = createRemoteToolSource(remoteConfig, server);
       const rawDefinitions = await rawSource.listTools();
       const accessFilteredDefinitions = server.kind === "veryfront-api"
         ? await filterVeryfrontApiToolDefinitionsWithAccessProfile({

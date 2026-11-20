@@ -100,6 +100,34 @@ describe("agent/agent-service-config", () => {
     assertEquals(config.VERYFRONT_MODEL_STREAM_SEMANTIC_IDLE_TIMEOUT_MS, undefined);
   });
 
+  it("takes VERYFRONT_API_KEY as the token when VERYFRONT_API_TOKEN is unset, the token first, a token file blocking it", () => {
+    assertEquals(
+      parseHostedAgentServiceConfig({ VERYFRONT_API_KEY: "key-1" }).VERYFRONT_API_TOKEN,
+      "key-1",
+    );
+    assertEquals(
+      parseHostedAgentServiceConfig({ VERYFRONT_API_TOKEN: "token-1", VERYFRONT_API_KEY: "key-1" })
+        .VERYFRONT_API_TOKEN,
+      "token-1",
+    );
+    // A blank token, empty or whitespace-only, is unset, as the CLI and SDK read it: the key stands in.
+    for (const blank of ["", "   "]) {
+      assertEquals(
+        parseHostedAgentServiceConfig({ VERYFRONT_API_TOKEN: blank, VERYFRONT_API_KEY: "key-1" })
+          .VERYFRONT_API_TOKEN,
+        "key-1",
+      );
+    }
+    // Any token file selector, a blank one included, is the credential: the key never stands in for it.
+    const withTokenFile = parseHostedAgentServiceConfig({
+      VERYFRONT_API_TOKEN_FILE: "",
+      VERYFRONT_API_KEY: "key-1",
+    });
+    assertEquals(withTokenFile.VERYFRONT_API_TOKEN, undefined);
+    // Registration reads the selector to say why the key was not used.
+    assertEquals(withTokenFile.VERYFRONT_API_TOKEN_FILE, "");
+  });
+
   it("parses optional host-owned model stream budgets", () => {
     const config = parseAgentServiceConfig({
       VERYFRONT_MODEL_STREAM_FIRST_PROGRESS_TIMEOUT_MS: "90000",

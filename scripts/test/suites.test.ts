@@ -44,6 +44,18 @@ describe("leaf test suite registry", () => {
     for (const key of PROVIDER_ENV_KEYS) assertEquals(env[key], undefined);
   });
 
+  it("scrubs the VERYFRONT_API_KEY alias the CLI and SDK accept as a credential", () => {
+    const env = buildTestProcessEnv({
+      VERYFRONT_API_KEY: "test-only-value",
+      VERYFRONT_API_TOKEN: "test-only-value",
+      PATH: "/test/bin",
+    });
+
+    assertEquals(env.VERYFRONT_API_KEY, undefined);
+    assertEquals(env.VERYFRONT_API_TOKEN, undefined);
+    assertEquals(env.PATH, "/test/bin");
+  });
+
   it("scrubs credentials whose inherited names differ only by case", () => {
     // Windows environment names are case-insensitive, so an exact-case delete
     // would leave OpenAI_Api_Key readable through Deno.env.get("OPENAI_API_KEY").

@@ -10,7 +10,7 @@ control over the source and environment that Veryfront Cloud serves.
 ## Prerequisites
 
 - A project that works with `veryfront dev`.
-- A Veryfront login or `VERYFRONT_API_TOKEN`.
+- A Veryfront login or `VERYFRONT_API_KEY`.
 - A page, API route, or agent request that you can verify after deployment.
 
 For a first deployment, use [Deploy with Veryfront Cloud](../getting-started/deploy-project.md).

@@ -5,19 +5,22 @@ import "#veryfront/schemas/_test-setup.ts";
  */
 
 import { assertEquals, assertInstanceOf, assertRejects } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
   assertApiUrlAcceptsNewCredential,
   createApiClient,
   ENVIRONMENT_PROJECT_REFERENCE_NAMES,
   isRetryableApiReadError,
   isUntrustedApiUrlCredentialError,
+  MISSING_API_CREDENTIAL_MESSAGE,
+  NO_LINKED_PROJECT_MESSAGE,
   readConfigFile,
   resolveApiCredentialCandidatesForAuth,
   resolveConfig,
   resolveConfigWithAuth,
   resolveConfigWithAuthDetails,
   resolveConfigWithAuthNoModule,
+  resolveLinkedProjectConfigWithAuth,
   resolveManagementConfigNoModule,
 } from "./config.ts";
 import type { ResolvedConfig } from "./config.ts";
@@ -36,6 +39,7 @@ import {
   markConfigFileSource,
 } from "veryfront/utils/env-loader";
 import { deleteToken, saveToken } from "../auth/token-store.ts";
+import { VeryfrontError } from "veryfront/errors";
 
 describe("isRetryableApiReadError", () => {
   it("retries gateway and connection failures but not authoritative client statuses", () => {
@@ -100,14 +104,16 @@ async function writeRawProjectLink(
 }
 
 describe("resolveConfig", () => {
-  it("should throw when no token is available", async () => {
+  it("classes a missing credential as authentication-required", async () => {
     const env = createMockEnv({ projectSlug: "test-project" });
 
-    await assertRejects(
+    const error = await assertRejects(
       () => resolveConfig("/tmp/test-dir", env),
-      Error,
-      "Missing API token",
+      VeryfrontError,
+      MISSING_API_CREDENTIAL_MESSAGE,
     );
+    assertInstanceOf(error, VeryfrontError);
+    assertEquals(error.slug, "authentication-required");
   });
 
   it("should use token from environment", async () => {
@@ -660,7 +666,7 @@ describe("resolveConfig", () => {
       assertInstanceOf(error, Error);
       assertEquals(error.message.includes(ciSecret), false);
       assertEquals(error.message.includes("attacker.example"), false);
-      assertEquals(error.message.includes("Add a literal VERYFRONT_API_TOKEN"), false);
+      assertEquals(error.message.includes("Add a literal VERYFRONT_API_KEY"), false);
     } finally {
       __resetEnvLoaderForTests();
       await Deno.remove(tempDir, { recursive: true });
@@ -736,7 +742,12 @@ describe("resolveConfig", () => {
   ) {
     it(`keeps a token file ${label} away from the .env API URL`, async () => {
       const tempDir = await makeTempDir();
-      const keys = ["VERYFRONT_API_URL", "VERYFRONT_API_TOKEN", "VERYFRONT_API_TOKEN_FILE"];
+      const keys = [
+        "VERYFRONT_API_URL",
+        "VERYFRONT_API_TOKEN",
+        "VERYFRONT_API_KEY",
+        "VERYFRONT_API_TOKEN_FILE",
+      ];
       const originals = keys.map((key) => [key, Deno.env.get(key)] as const);
       const operatorSecret = "token_file_secret_do_not_forward";
       const tokenFile = join(tempDir, "operator-token");
@@ -772,6 +783,115 @@ describe("resolveConfig", () => {
       }
     });
   }
+  describe("VERYFRONT_API_KEY under the same repository trust rules", () => {
+    const saved: Record<string, string | undefined> = {};
+    const names = ["VERYFRONT_API_URL", "VERYFRONT_API_TOKEN", "VERYFRONT_API_KEY", "GITHUB_TOKEN"];
+    let tempDir: string;
+
+    beforeEach(async () => {
+      tempDir = await makeTempDir();
+      for (const name of names) {
+        saved[name] = Deno.env.get(name);
+        Deno.env.delete(name);
+      }
+      __resetEnvLoaderForTests();
+    });
+
+    afterEach(async () => {
+      __resetEnvLoaderForTests();
+      await Deno.remove(tempDir, { recursive: true });
+      for (const name of names) restoreEnv(name, saved[name]);
+    });
+
+    it("accepts a literal key written beside the API URL, like a literal token", async () => {
+      await Deno.writeTextFile(
+        join(tempDir, ".env"),
+        "VERYFRONT_API_URL=https://api.self-hosted.test\nVERYFRONT_API_KEY=<FILE_KEY>\n",
+      );
+      await loadEnv({ cwd: tempDir });
+      assertEquals(Deno.env.get("VERYFRONT_API_TOKEN"), "<FILE_KEY>", "the key fills the token");
+
+      const config = await resolveConfig(
+        tempDir,
+        createMockEnv({
+          apiUrl: "https://api.self-hosted.test",
+          apiToken: "<FILE_KEY>",
+          projectSlug: "test-project",
+        }),
+      );
+
+      assertEquals(config.apiUrl, "https://api.self-hosted.test");
+      assertEquals(config.apiToken, "<FILE_KEY>", "the repository supplied both URL and key");
+    });
+
+    it("refuses a .env key that expands a shell secret for the steered endpoint", async () => {
+      const ciSecret = "ghs_shell_secret_do_not_forward";
+      Deno.env.set("GITHUB_TOKEN", ciSecret);
+      await Deno.writeTextFile(
+        join(tempDir, ".env"),
+        "VERYFRONT_API_URL=https://attacker.example\nVERYFRONT_API_KEY=$GITHUB_TOKEN\n",
+      );
+      await loadEnv({ cwd: tempDir });
+
+      const error = await assertRejects(
+        () =>
+          resolveConfig(
+            tempDir,
+            createMockEnv({
+              apiUrl: "https://attacker.example",
+              apiToken: ciSecret,
+              projectSlug: "test-project",
+            }),
+          ),
+        Error,
+      );
+
+      assertEquals(isUntrustedApiUrlCredentialError(error), true, "the expansion stays tainted");
+      assertEquals(
+        (error as Error).message.includes(ciSecret),
+        false,
+        "the secret is never echoed",
+      );
+    });
+
+    it("never sends a shell key to a repository-steered endpoint", async () => {
+      Deno.env.set("VERYFRONT_API_KEY", "<SHELL_KEY>");
+      await Deno.writeTextFile(
+        join(tempDir, ".env"),
+        "VERYFRONT_API_URL=https://attacker.example\n",
+      );
+      await loadEnv({ cwd: tempDir });
+
+      const error = await assertRejects(
+        () =>
+          resolveConfig(
+            tempDir,
+            createMockEnv({
+              apiUrl: "https://attacker.example",
+              apiToken: "<SHELL_KEY>",
+              projectSlug: "test-project",
+            }),
+          ),
+        Error,
+      );
+
+      assertEquals(isUntrustedApiUrlCredentialError(error), true, "a shell key is the developer's");
+      assertEquals((error as Error).message.includes("<SHELL_KEY>"), false);
+    });
+
+    it("keeps an exported key on the default host when the repository steers nothing", async () => {
+      Deno.env.set("VERYFRONT_API_KEY", "<SHELL_KEY>");
+      await loadEnv({ cwd: tempDir });
+
+      const config = await resolveConfig(
+        tempDir,
+        createMockEnv({ apiToken: "<SHELL_KEY>", projectSlug: "test-project" }),
+      );
+
+      assertEquals(config.apiToken, "<SHELL_KEY>");
+      assertEquals(config.apiTokenSource, "env", "an exported key is a shell credential");
+    });
+  });
 
   it("names the confirmation variable without echoing the configured endpoint", async () => {
     const tempDir = await makeTempDir();
@@ -1026,11 +1146,13 @@ describe("resolveConfigWithAuth", () => {
     // In non-TTY mode without a token, ensureAuthenticated returns null
     const env = createMockEnv({ projectSlug: "test-project" });
 
-    await assertRejects(
+    const error = await assertRejects(
       () => resolveConfigWithAuth("/tmp/test-dir", env),
-      Error,
-      "Authentication required",
+      VeryfrontError,
+      "No Veryfront credential found.",
     );
+    assertInstanceOf(error, VeryfrontError);
+    assertEquals(error.slug, "authentication-required");
   });
 
   it("should use default API URL", async () => {
@@ -1976,15 +2098,17 @@ describe("resolveApiCredentialCandidatesForAuth", () => {
 describe("nonprompting management configuration", () => {
   it("requires an existing credential without starting a platform login", async () => {
     await withTempDir(async (dir) => {
-      await assertRejects(
+      const error = await assertRejects(
         () =>
           resolveManagementConfigNoModule(
             dir,
             createMockEnv({ xdgConfigHome: dir, projectSlug: "chosen" }),
           ),
-        Error,
-        "Missing API token",
+        VeryfrontError,
+        MISSING_API_CREDENTIAL_MESSAGE,
       );
+      assertInstanceOf(error, VeryfrontError);
+      assertEquals(error.slug, "authentication-required");
     });
   });
   it("rejects repository-steered origins before any dispatch", async () => {
@@ -2119,5 +2243,133 @@ Deno.test("API management client keeps credentials on the supplied host transpor
       projectSlug: "demo",
     }, transport).get("/projects");
     assertEquals(requests, 1);
+  });
+});
+
+describe("resolveLinkedProjectConfigWithAuth", () => {
+  const ENV_NAMES = [
+    "VERYFRONT_API_URL",
+    "VERYFRONT_API_BASE_URL",
+    "VERYFRONT_API_KEY",
+    "VERYFRONT_API_TOKEN",
+    "VERYFRONT_API_TOKEN_FILE",
+    "XDG_CONFIG_HOME",
+    ...ENVIRONMENT_PROJECT_REFERENCE_NAMES,
+  ];
+
+  /** Runs `fn` in an empty folder with no project reference in the environment. */
+  async function withUnlinkedFolder(
+    fn: (dir: string) => Promise<void>,
+    env: Record<string, string> = {},
+  ): Promise<void> {
+    const original = ENV_NAMES.map((name) => [name, Deno.env.get(name)] as const);
+    try {
+      await withTempDir(async (dir) => {
+        for (const name of ENV_NAMES) Deno.env.delete(name);
+        Deno.env.set("XDG_CONFIG_HOME", dir);
+        for (const [name, value] of Object.entries(env)) Deno.env.set(name, value);
+        _resetEnvironmentConfig();
+        await fn(dir);
+      });
+    } finally {
+      for (const [name, value] of original) restoreEnv(name, value);
+      _resetEnvironmentConfig();
+    }
+  }
+
+  it("refuses a folder with no linked project before it asks for a credential", async () => {
+    await withUnlinkedFolder(async (dir) => {
+      const error = await assertRejects(
+        () => resolveLinkedProjectConfigWithAuth(dir),
+        VeryfrontError,
+        NO_LINKED_PROJECT_MESSAGE,
+      ) as VeryfrontError;
+      assertEquals(error.slug, "invalid-argument");
+    });
+  });
+
+  it("uses --project in a folder with no linked project", async () => {
+    await withUnlinkedFolder(async (dir) => {
+      const config = await resolveLinkedProjectConfigWithAuth(dir, "support-desk");
+      assertEquals(config.projectSlug, "support-desk");
+      assertEquals(config.apiToken, "test-token");
+    }, { VERYFRONT_API_KEY: "test-token" });
+  });
+
+  it("uses the project linked to the folder", async () => {
+    await withUnlinkedFolder(async (dir) => {
+      await writeRawProjectLink(dir);
+      const config = await resolveLinkedProjectConfigWithAuth(dir);
+      assertEquals(config.projectSlug, "linked-project");
+      assertEquals(projectIdOf(config), "linked-project-id");
+      assertEquals(config.apiToken, "test-token");
+    }, { VERYFRONT_API_KEY: "test-token" });
+  });
+
+  it("keeps an empty explicit reference instead of the linked project", async () => {
+    await withUnlinkedFolder(async (dir) => {
+      await writeRawProjectLink(dir);
+      const config = await resolveLinkedProjectConfigWithAuth(dir, "");
+      assertEquals(config.projectSlug, "");
+    }, { VERYFRONT_API_KEY: "test-token" });
+  });
+
+  it("uses the project the environment names", async () => {
+    await withUnlinkedFolder(async (dir) => {
+      const config = await resolveLinkedProjectConfigWithAuth(dir);
+      assertEquals(config.projectSlug, "env-project");
+    }, { VERYFRONT_API_KEY: "test-token", VERYFRONT_PROJECT_SLUG: "env-project" });
+  });
+
+  it("refuses a project named only by the package.json name", async () => {
+    await withUnlinkedFolder(async (dir) => {
+      await Deno.writeTextFile(
+        join(dir, "package.json"),
+        JSON.stringify({ name: "@acme/support-desk" }),
+      );
+      const requests: string[] = [];
+      await withMockFetch((input) => {
+        requests.push(String(input));
+        return Promise.resolve(Response.json({}));
+      }, async () => {
+        await assertRejects(
+          () => resolveLinkedProjectConfigWithAuth(dir),
+          VeryfrontError,
+          NO_LINKED_PROJECT_MESSAGE,
+        );
+      });
+      assertEquals(requests, []);
+    }, { VERYFRONT_API_KEY: "test-token" });
+  });
+
+  it("uses the project veryfront.json names", async () => {
+    await withUnlinkedFolder(async (dir) => {
+      await Deno.writeTextFile(
+        join(dir, "veryfront.json"),
+        JSON.stringify({ projectSlug: "configured-project" }),
+      );
+      const requests: string[] = [];
+      await withMockFetch((input) => {
+        requests.push(String(input));
+        return Promise.resolve(Response.json({}));
+      }, async () => {
+        const config = await resolveLinkedProjectConfigWithAuth(dir);
+        assertEquals(config.projectSlug, "configured-project");
+      });
+      assertEquals(requests, []);
+    }, { VERYFRONT_API_KEY: "test-token" });
+  });
+
+  it("still requires a credential once the folder names a project", async () => {
+    await withUnlinkedFolder(async (dir) => {
+      await writeRawProjectLink(dir);
+      // A non-interactive login finds no credential: the command stops on
+      // the credential, not on the project reference.
+      const error = await assertRejects(
+        () => resolveLinkedProjectConfigWithAuth(dir),
+        Error,
+      ) as Error;
+      assertEquals(error.message === NO_LINKED_PROJECT_MESSAGE, false);
+    });
   });
 });

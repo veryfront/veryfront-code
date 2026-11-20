@@ -10,7 +10,11 @@ import { withSpan } from "veryfront/observability/otlp-setup";
 import { INVALID_ARGUMENT } from "veryfront/errors";
 import { cliLogger, confirmPrompt } from "#cli/utils";
 import { parseArgsOrThrow } from "#cli/shared/args";
-import { type ApiClient, createApiClient, resolveConfigWithAuth } from "#cli/shared/config";
+import {
+  type ApiClient,
+  createApiClient,
+  resolveLinkedProjectConfigWithAuth,
+} from "#cli/shared/config";
 import type { ParsedArgs } from "#cli/shared/types";
 import { createSuccessEnvelope, outputJson } from "../../shared/json-output.ts";
 import { getBooleanArg, getStringArg } from "../../shared/parsed-args.ts";
@@ -84,8 +88,11 @@ export async function projectCommand(args: ParsedArgs): Promise<void> {
       case "delete":
       case "rm": {
         const options = parseArgsOrThrow(parseProjectDeleteArgs, "project delete", args);
-        const config = await resolveConfigWithAuth(options.projectDir);
-        const projectSlug = options.projectSlug ?? config.projectSlug;
+        const config = await resolveLinkedProjectConfigWithAuth(
+          options.projectDir,
+          options.projectSlug,
+        );
+        const projectSlug = config.projectSlug;
 
         if (!options.force) {
           const confirmed = await confirmPrompt(

@@ -18,6 +18,7 @@ import { stripAnsi } from "../../ui/ansi.ts";
 import {
   CODING_AGENT_SKILL_COMMAND,
   initCommand,
+  newProjectEnv,
   offerCloudProjectAfterInit,
 } from "./init-command.ts";
 import type { InitOptions, InitTemplate } from "./types.ts";
@@ -429,9 +430,17 @@ describe("initCommand into the current directory", () => {
 });
 
 describe("offerCloudProjectAfterInit", () => {
-  async function run(choose: () => Promise<"linked" | "declined" | "cancelled">) {
+  async function run(
+    choose: () => Promise<"linked" | "declined" | "cancelled">,
+    environment: Record<string, string> = {},
+  ) {
     const logged: string[] = [];
-    await offerCloudProjectAfterInit("/unused", (message) => logged.push(message), choose);
+    await offerCloudProjectAfterInit(
+      "/unused",
+      (message) => logged.push(message),
+      choose,
+      (name) => environment[name],
+    );
     return logged;
   }
 
@@ -451,6 +460,81 @@ describe("offerCloudProjectAfterInit", () => {
       assertEquals(logged[0]!.includes("restart veryfront dev"), false);
     });
   }
+
+  it("prints no setup advice when an OpenAI key is already set", async () => {
+    // The scaffolded agents leave their model unset, so the default OpenAI
+    // model serves them with this key, the same check the dev banner makes.
+    assertEquals(
+      await run(() => Promise.resolve("declined"), { OPENAI_API_KEY: "<API_KEY>" }),
+      [],
+    );
+  });
+
+  it("counts a key init wrote to the new .env", async () => {
+    // A template or integration that declares OPENAI_API_KEY writes its value.
+    const env = newProjectEnv({ OPENAI_API_KEY: "<API_KEY>" }, () => undefined);
+    const logged: string[] = [];
+    await offerCloudProjectAfterInit(
+      "/unused",
+      (message) => logged.push(message),
+      () => Promise.resolve("declined"),
+      env,
+    );
+    assertEquals(logged, []);
+  });
+
+  it("ranks the shell's value first and skips written values dev would expand", () => {
+    const shell = { OPENAI_API_KEY: "<SHELL_KEY>" } as Record<string, string>;
+    const env = newProjectEnv(
+      {
+        OPENAI_API_KEY: "<WRITTEN_KEY>",
+        ANTHROPIC_API_KEY: " ",
+        MISTRAL_API_KEY: "$PARENT_KEY",
+        GOOGLE_API_KEY: "${PARENT_KEY}",
+      },
+      (name) => shell[name],
+    );
+    assertEquals(env("OPENAI_API_KEY"), "<SHELL_KEY>");
+    assertEquals(env("ANTHROPIC_API_KEY"), undefined);
+    // dev expands a reference against an environment init cannot see.
+    assertEquals(env("MISTRAL_API_KEY"), undefined);
+    assertEquals(env("GOOGLE_API_KEY"), undefined);
+  });
+
+  for (
+    const key of [
+      "ANTHROPIC_API_KEY",
+      "GOOGLE_API_KEY",
+      "GOOGLE_GENERATIVE_AI_API_KEY",
+      "MISTRAL_API_KEY",
+    ]
+  ) {
+    it(`still names both ways when only ${key}, which the scaffolded agents cannot use, is set`, async () => {
+      const logged = await run(() => Promise.resolve("declined"), { [key]: "<API_KEY>" });
+      assertEquals(logged.length, 1);
+      assertStringIncludes(logged[0]!, "set up inference in one of these ways");
+    });
+  }
+
+  it("still names both ways when the OpenAI key is blank", async () => {
+    const logged = await run(() => Promise.resolve("declined"), { OPENAI_API_KEY: "  " });
+    assertEquals(logged.length, 1);
+    assertStringIncludes(logged[0]!, "set up inference in one of these ways");
+  });
+
+  it("names only the failure when Cloud setup throws and an OpenAI key is set", async () => {
+    const logged = await run(
+      () => Promise.reject(new Error("Network unavailable")),
+      { OPENAI_API_KEY: "<API_KEY>" },
+    );
+    assertEquals(logged, ["  Cloud setup could not finish: Network unavailable"]);
+  });
+
+  it("falls back to the trimmed written value when the shell sets none", () => {
+    const env = newProjectEnv({ OPENAI_API_KEY: " <WRITTEN_KEY> " }, () => undefined);
+    assertEquals(env("OPENAI_API_KEY"), "<WRITTEN_KEY>");
+    assertEquals(env("ANTHROPIC_API_KEY"), undefined);
+  });
 
   it("names the failure, then both ways to get inference, when Cloud setup throws", async () => {
     const logged = await run(() => Promise.reject(new Error("Network unavailable")));
