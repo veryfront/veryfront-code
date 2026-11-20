@@ -365,6 +365,16 @@ function parseCompletedCodexSummary(comment) {
     securityDisplay = parseCompletedSecurityReviewDisplay(lines);
     if (!securityDisplay) return undefined;
   }
+  // The connector changed only its display heading to a collapsible block.
+  // Normalize that exact wrapper; retain metadata, row, SHA, epoch and reaction
+  // authentication below instead of treating presentation text as a verdict.
+  if (
+    lines[2] === "<details>" &&
+    lines[3] ===
+      "<summary><strong>Codex Review Summary</strong>: ✅ Completed</summary>"
+  ) {
+    lines.splice(2, 2, "## Codex Review Summary");
+  }
   const expectedPrefix = [
     CODEX_REVIEW_SUMMARY_MARKER,
     "",
