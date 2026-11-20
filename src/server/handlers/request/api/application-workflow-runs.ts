@@ -1,4 +1,5 @@
 import { completeOnResponseBodyConsumption } from "#veryfront/platform/compat/http/response-lifecycle.ts";
+import { primordialPromiseCatch } from "#veryfront/platform/compat/primordials/promise.ts";
 import { retryWithBackoff } from "#veryfront/errors/error-handlers.ts";
 import {
   type BoundedRetryConfig,
@@ -14,7 +15,10 @@ import { createHostInternalOriginBoundOutboundFetch } from "#veryfront/security/
 import { createPrivateMap } from "#veryfront/security/private-map.ts";
 import { privateJsonParse, privateJsonStringify } from "#veryfront/security/private-json.ts";
 import { cancelPrivateStream, getPrivateStreamReader } from "#veryfront/security/private-stream.ts";
-import { readResponseTextPrefix } from "#veryfront/utils/response-body.ts";
+import {
+  InvalidResponseBodyError,
+  readResponseTextPrefix,
+} from "#veryfront/utils/response-body.ts";
 import { requireSuccessResponseByteLimit } from "#veryfront/platform/adapters/veryfront-api-transport.ts";
 import type { RunsCallOptions } from "#veryfront/runs/target/client.ts";
 import {
@@ -103,36 +107,36 @@ export function createHostApplicationWorkflowRunner(
       const maxBytes = requireSuccessResponseByteLimit(options?.maxResponseBytes);
       const { maxRetries, initialDelay, maxDelay } = requireVeryfrontApiRetryConfig(retry);
       const requestBody = privateJsonStringify({ projectId, projectSlug, source, ...proof, input });
-      const response = await retryWithBackoff(async () => {
-        const result = await transport(`${origin}/internal/application-workflows/runs${path}`, {
+      const { response, result } = await retryWithBackoff(async () => {
+        const response = await transport(`${origin}/internal/application-workflows/runs${path}`, {
           method: "POST",
           redirect: "error",
           signal,
           headers,
           body: requestBody,
         });
-        if (!apply(okGetter, result, [])) {
-          const body = apply(bodyGetter, result, []) as ReadableStream<Uint8Array> | null;
-          if (body) await cancelPrivateStream(body);
-          throw new HostedWorkflowHttpError(apply(statusGetter, result, []));
+        const body = apply(bodyGetter, response, []) as ReadableStream<Uint8Array> | null;
+        if (!apply(okGetter, response, [])) {
+          if (body) void primordialPromiseCatch(cancelPrivateStream(body), () => {});
+          throw new HostedWorkflowHttpError(apply(statusGetter, response, []));
         }
-        return result;
+        const result = await readResponseTextPrefix(
+          { body: body ? { getReader: () => getPrivateStreamReader(body) } : null },
+          maxBytes + 1,
+          signal,
+          { fatalUtf8: true },
+        );
+        return { __proto__: null, response, result };
       }, {
         maxAttempts: maxRetries + 1,
         initialDelay,
         maxDelay,
         abortSignal: signal,
         shouldRetry: (error) =>
-          !(error instanceof HostedWorkflowHttpError) || error.status === 429 ||
-          error.status >= 500,
+          !(error instanceof InvalidResponseBodyError) &&
+          (!(error instanceof HostedWorkflowHttpError) || error.status === 429 ||
+            error.status >= 500),
       });
-      const body = apply(bodyGetter, response, []) as ReadableStream<Uint8Array> | null;
-      const result = await readResponseTextPrefix(
-        { body: body ? { getReader: () => getPrivateStreamReader(body) } : null },
-        maxBytes,
-        signal,
-        { fatalUtf8: true },
-      );
       if (result.truncated) throw new Error("Hosted workflow response exceeded its limit.");
       const run = privateJsonParse(result.text) as ApplicationWorkflowRun;
       if (

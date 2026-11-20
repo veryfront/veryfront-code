@@ -125,6 +125,18 @@ describe("hosted app workflow Runs client", () => {
           if (path.endsWith("/read")) throw new TypeError("Connection reset");
           return new Response(null, { status: path.endsWith("/cancel") ? 429 : 503 });
         }
+        if (bodies.length === 2) {
+          return new Response(
+            new ReadableStream({
+              start(controller) {
+                controller.enqueue(Uint8Array.of(123));
+              },
+              pull(controller) {
+                controller.error(new TypeError("Connection reset while reading the body"));
+              },
+            }),
+          );
+        }
         return Response.json({
           id: runId,
           project_id: projectId,
@@ -137,13 +149,13 @@ describe("hosted app workflow Runs client", () => {
     });
     assert(runner);
     await runner(async () => {
-      const runs = createRunsClient({ retry: { maxRetries: 1, initialDelay: 0, maxDelay: 0 } });
+      const runs = createRunsClient({ retry: { maxRetries: 2, initialDelay: 0, maxDelay: 0 } });
       const started = await runs.createWorkflowRun(input);
       assertEquals((await runs.getRun(started.run.run_id)).id, runId);
       assert((await runs.cancel(runId)).cancelled);
     });
     assertEquals(attempts.size, 3);
-    for (const bodies of attempts.values()) assertEquals(bodies, [bodies[0], bodies[0]]);
+    for (const bodies of attempts.values()) assertEquals(bodies, [bodies[0], bodies[0], bodies[0]]);
   });
 
   it("stops hosted retries on permanent rejection or when the client's budget is spent", async () => {
@@ -153,7 +165,16 @@ describe("hosted app workflow Runs client", () => {
         getHostEnv: () => "test-only",
         createOriginBoundFetch: () => () => {
           attempts++;
-          return Promise.resolve(new Response(null, { status }));
+          return Promise.resolve(
+            new Response(
+              new ReadableStream({
+                cancel() {
+                  throw new Error("Response cleanup failed");
+                },
+              }),
+              { status },
+            ),
+          );
         },
       });
       assert(runner);
@@ -163,6 +184,62 @@ describe("hosted app workflow Runs client", () => {
       });
       assertEquals(attempts, expected);
     }
+  });
+
+  it("accepts exact-limit responses and stops on invalid bodies or caller abort", async () => {
+    const json = JSON.stringify({
+      id: runId,
+      project_id: projectId,
+      target: { type: "workflow", id: workflowId },
+      status: "pending",
+      created_at: createdAt,
+      updated_at: createdAt,
+    });
+    const byteLength = new TextEncoder().encode(json).length;
+    let respond = () => new Response(json);
+    let attempts = 0;
+    const runner = createHostApplicationWorkflowRunner(request, context, {
+      getHostEnv: () => "test-only",
+      createOriginBoundFetch: () => () => {
+        attempts++;
+        return Promise.resolve(respond());
+      },
+    });
+    assert(runner);
+    await runner(async () => {
+      const runs = createRunsClient({ retry: { maxRetries: 1, initialDelay: 0, maxDelay: 0 } });
+      await runs.createWorkflowRun(input);
+      assertEquals((await runs.getRun(runId, { maxResponseBytes: byteLength })).id, runId);
+      await assertRejects(
+        () => runs.getRun(runId, { maxResponseBytes: byteLength - 1 }),
+        Error,
+        "exceeded",
+      );
+      respond = () => new Response(Uint8Array.of(0xff));
+      await assertRejects(() => runs.getRun(runId), Error, "UTF-8");
+      respond = () => new Response("invalid");
+      await assertRejects(() => runs.getRun(runId), SyntaxError);
+      const controller = new AbortController();
+      let cancelled = false;
+      respond = () =>
+        new Response(
+          new ReadableStream({
+            pull() {
+              controller.abort(new Error("Caller aborted"));
+            },
+            cancel() {
+              cancelled = true;
+            },
+          }, { highWaterMark: 0 }),
+        );
+      await assertRejects(
+        () => runs.getRun(runId, { signal: controller.signal }),
+        Error,
+        "Caller aborted",
+      );
+      assert(cancelled);
+      assertEquals(attempts, 6);
+    });
   });
 
   it("binds the default preview branch and preserves the name of a feature branch", () => {
