@@ -4,7 +4,12 @@ import "#veryfront/schemas/_test-setup.ts";
  * @module cli/shared/config.test
  */
 
-import { assertEquals, assertInstanceOf, assertRejects } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertInstanceOf,
+  assertRejects,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
   assertApiUrlAcceptsNewCredential,
@@ -676,6 +681,68 @@ describe("resolveConfig", () => {
     }
   });
 
+  it("gives the login refusal its own error code and offers production before the project's API", async () => {
+    const tempDir = await makeTempDir();
+    const originalApiUrl = Deno.env.get("VERYFRONT_API_URL");
+    try {
+      __resetEnvLoaderForTests();
+      Deno.env.delete("VERYFRONT_API_URL");
+      await Deno.writeTextFile(
+        join(tempDir, ".env"),
+        "VERYFRONT_API_URL=https://api.veryfront.org\n",
+      );
+      await loadEnv({ cwd: tempDir });
+      const env = createMockEnv({ apiUrl: Deno.env.get("VERYFRONT_API_URL") });
+
+      const error = await assertRejects(
+        () => assertApiUrlAcceptsNewCredential(env, tempDir),
+        Error,
+      );
+
+      assertEquals(isUntrustedApiUrlCredentialError(error), true);
+      assertEquals((error as { slug?: string }).slug, "project-api-url");
+      assertStringIncludes(error.message, "To use production, remove VERYFRONT_API_URL from .env.");
+      assertStringIncludes(
+        error.message,
+        "VERYFRONT_API_URL=https://api.veryfront.org npx veryfront login",
+      );
+    } finally {
+      __resetEnvLoaderForTests();
+      await Deno.remove(tempDir, { recursive: true });
+      restoreEnv("VERYFRONT_API_URL", originalApiUrl);
+    }
+  });
+
+  it("never echoes a project-chosen host that isn't Veryfront's in the login refusal", async () => {
+    const tempDir = await makeTempDir();
+    const originalApiUrl = Deno.env.get("VERYFRONT_API_URL");
+    try {
+      __resetEnvLoaderForTests();
+      Deno.env.delete("VERYFRONT_API_URL");
+      await Deno.writeTextFile(
+        join(tempDir, ".env"),
+        "VERYFRONT_API_URL=https://attacker.example\n",
+      );
+      await loadEnv({ cwd: tempDir });
+      const env = createMockEnv({ apiUrl: Deno.env.get("VERYFRONT_API_URL") });
+
+      const error = await assertRejects(
+        () => assertApiUrlAcceptsNewCredential(env, tempDir),
+        Error,
+      );
+
+      assertEquals(error.message.includes("attacker.example"), false);
+      assertStringIncludes(
+        error.message,
+        "VERYFRONT_API_URL=<its URL> npx veryfront login",
+      );
+    } finally {
+      __resetEnvLoaderForTests();
+      await Deno.remove(tempDir, { recursive: true });
+      restoreEnv("VERYFRONT_API_URL", originalApiUrl);
+    }
+  });
+
   it("refuses a config-derived endpoint hydrated from another project", async () => {
     const tempDir = await makeTempDir();
     try {
@@ -685,7 +752,7 @@ describe("resolveConfig", () => {
       await assertRejects(
         () => assertApiUrlAcceptsNewCredential(env, tempDir),
         Error,
-        "repository-configured API endpoint",
+        "so your login isn't sent there",
       );
     } finally {
       __resetEnvLoaderForTests();
