@@ -364,47 +364,50 @@ describe("automated review evidence", () => {
   });
 
   it("recognizes the live details-wrapped summary for the exact reviewed head", async () => {
-    const summary = codexReviewSummary();
-    const metadata = {
-      code_review: {
-        commit_sha: HEAD,
-        has_any_findings: false,
-        has_unresolved_findings: false,
-        status: "completed",
-      },
-      security_review: {
-        commit_sha: null,
-        has_any_findings: null,
-        has_unresolved_findings: null,
-        status: null,
-      },
-    };
-    summary.body = summary.body.replace(
-      "## Codex Review Summary",
-      "<details>\n<summary><strong>Codex Review Summary</strong>: ✅ Completed</summary>",
-    ).replace(
-      "<!-- codex-pull-request-review-summary -->",
-      "<!-- codex-pull-request-review-summary -->\n<!-- codex-review-state:v1 " +
-        JSON.stringify(metadata) + " -->",
-    ) + "\n</details>";
-    const evidence = {
-      reviews: [],
-      comments: [summary],
-      reactions: [codexCompletionReaction()],
-    };
-    assertEquals(
-      (await findAutomatedReview(evidence, HEAD, () => Promise.resolve(HEAD)))
-        ?.source,
-      "codex-summary",
-    );
-    assertEquals(
-      await findAutomatedReview(
-        evidence,
-        OTHER_HEAD,
-        () => Promise.resolve(HEAD),
-      ),
-      undefined,
-    );
+    for (
+      const summary of [codexReviewSummary(), codexSecurityReviewSummary()]
+    ) {
+      const metadata = {
+        code_review: {
+          commit_sha: HEAD,
+          has_any_findings: false,
+          has_unresolved_findings: false,
+          status: "completed",
+        },
+        security_review: {
+          commit_sha: null,
+          has_any_findings: null,
+          has_unresolved_findings: null,
+          status: null,
+        },
+      };
+      summary.body = summary.body.replace(
+        "## Codex Review Summary",
+        "<details>\n<summary><strong>Codex Review Summary</strong>: ✅ Completed</summary>",
+      ).replace(
+        "<!-- codex-pull-request-review-summary -->",
+        "<!-- codex-pull-request-review-summary -->\n<!-- codex-review-state:v1 " +
+          JSON.stringify(metadata) + " -->",
+      ) + "\n</details>";
+      const evidence = {
+        reviews: [],
+        comments: [summary],
+        reactions: [codexCompletionReaction()],
+      };
+      assertEquals(
+        (await findAutomatedReview(evidence, HEAD, () => Promise.resolve(HEAD)))
+          ?.source,
+        "codex-summary",
+      );
+      assertEquals(
+        await findAutomatedReview(
+          evidence,
+          OTHER_HEAD,
+          () => Promise.resolve(HEAD),
+        ),
+        undefined,
+      );
+    }
   });
 
   it("accepts versioned summary state only for a clean completed matching code review", async () => {
