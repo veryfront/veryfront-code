@@ -31,7 +31,10 @@ import {
   INVOKE_AGENT_STREAM_EVENT_NAME,
 } from "#veryfront/chat/invoke-agent-stream.ts";
 import { ChatMarkdown } from "../../chat-markdown.tsx";
-import { isIntegrationAuthenticationActionResult } from "#veryfront/tool/result.ts";
+import {
+  isIntegrationAuthenticationActionResult,
+  readToolResultOwnDataProperty,
+} from "#veryfront/tool/result.ts";
 import { IntegrationConnectCard } from "./integration-connect-card.tsx";
 
 const TOOL_VALUE_LIMITS = Object.freeze({
@@ -664,12 +667,17 @@ interface IntegrationConnectAction {
   reconnect: boolean;
 }
 
+/** A trimmed, non-blank own data string from a tool result, without invoking an accessor. */
+function ownStringValue(output: unknown, key: string): string | undefined {
+  const value = readToolResultOwnDataProperty(output, key);
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
 /** A tool result that stopped because its app isn't connected, as the Connect card reads it. */
 function readIntegrationConnectAction(output: unknown): IntegrationConnectAction | undefined {
   if (!isIntegrationAuthenticationActionResult(output)) return undefined;
-  const record = output as JsonRecord;
-  const integration = stringValue(record, "integration");
-  const connectUrl = stringValue(record, "connectUrl");
+  const integration = ownStringValue(output, "integration");
+  const connectUrl = ownStringValue(output, "connectUrl");
   if (!integration || !connectUrl) return undefined;
   let projectReference: string | undefined;
   try {
@@ -679,12 +687,12 @@ function readIntegrationConnectAction(output: unknown): IntegrationConnectAction
   }
   return {
     integration,
-    message: stringValue(record, "message"),
+    message: ownStringValue(output, "message"),
     // A tool-supplied value only reaches a shell command when it is a plain id.
     projectReference: projectReference && /^[A-Za-z0-9_-]{1,128}$/.test(projectReference)
       ? projectReference
       : undefined,
-    reconnect: stringValue(record, "error") === "reconnect_required",
+    reconnect: ownStringValue(output, "error") === "reconnect_required",
   };
 }
 
@@ -719,7 +727,9 @@ export interface ToolCallProps {
 function ToolCallRoot(
   { tool, className, icon, variant, defaultExpanded, onToggle, children, ref }: ToolCallProps,
 ): React.ReactElement {
-  const chat = useChatContextOptional();
+  // Try again reruns the turn the way the message's Regenerate action does.
+  const chatReload = useChatContextOptional()?.onReload;
+  const retry = useMessageContextOptional()?.onRegenerate ?? chatReload;
   const hasOutput = hasVisibleToolOutput(tool.output);
   const hasError = Boolean(tool.errorText);
   const usesDefaultInvokeRenderer = variant === undefined && children === undefined &&
@@ -769,7 +779,7 @@ function ToolCallRoot(
           message={connectAction.message}
           projectReference={connectAction.projectReference}
           reconnect={connectAction.reconnect}
-          onRetry={chat?.onReload}
+          onRetry={retry}
         />
       </ToolCallContext.Provider>
     );
