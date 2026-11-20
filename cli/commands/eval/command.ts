@@ -49,7 +49,11 @@ import {
   runWithVeryfrontCloudContextAsync,
 } from "../../../src/provider/veryfront-cloud/context.ts";
 import { readRuntimeAmount } from "../../../src/provider/runtime-usage.ts";
-import { applyQualifiedRuntimeAuth, resolveLinkedProjectSlug } from "#cli/shared/runtime-auth";
+import {
+  applyQualifiedRuntimeAuth,
+  assertLinkedLoginAccepted,
+  resolveLinkedProjectSlug,
+} from "#cli/shared/runtime-auth";
 import { getEnv } from "#cli/process-env";
 import { brand, dim } from "#cli/ui";
 import { cliLogger, exitProcess, isQuiet, VERSION } from "#cli/utils";
@@ -694,13 +698,15 @@ export async function hydrateEvalRuntimeAuth(
   projectDir: string,
   config: EvalRuntimeAuthConfig | null | undefined,
 ) {
-  return await applyQualifiedRuntimeAuth(
+  const context = await applyQualifiedRuntimeAuth(
     projectDir,
     await resolveLinkedProjectSlug(
       projectDir,
       resolveEvalRuntimeProjectSlug(config),
     ),
   );
+  await assertLinkedLoginAccepted(context);
+  return context;
 }
 
 /**

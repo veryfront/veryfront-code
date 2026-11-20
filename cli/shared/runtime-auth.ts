@@ -27,6 +27,7 @@ import { readProjectLink } from "./project-link.ts";
 import { createVeryfrontApiOriginBoundOutboundFetch } from "#cli/outbound-fetch";
 import { checkCredential } from "./credential-check.ts";
 import { rememberAcceptedLogin, wasLoginAcceptedRecently } from "#cli/auth/token-store";
+import { AUTHENTICATION_REQUIRED } from "veryfront/errors";
 
 export interface RuntimeAuthOptions {
   linkedProjectSlug?: string;
@@ -247,24 +248,54 @@ async function dropRejectedStoredLogin(
   ) {
     return candidate;
   }
+  const rejected = await isStoredLoginRejected(
+    getApiUrl(candidate.validationEnv),
+    candidate.apiToken,
+  );
+  return rejected ? undefined : candidate;
+}
+
+/**
+ * Whether the API rejects a stored login (401 or 403). A login that is
+ * accepted, cannot be checked, or was accepted recently counts as not rejected;
+ * a rejection is remembered for this process.
+ */
+async function isStoredLoginRejected(apiUrl: string, apiToken: string): Promise<boolean> {
   try {
-    const apiUrl = getApiUrl(candidate.validationEnv);
-    const loginKey = `${apiUrl}\n${candidate.apiToken}`;
-    if (applyIntrinsic(setHas, rejectedStoredLogins, [loginKey])) return undefined;
-    if (await wasLoginAcceptedRecently(apiUrl, candidate.apiToken)) return candidate;
+    const loginKey = `${apiUrl}\n${apiToken}`;
+    if (applyIntrinsic(setHas, rejectedStoredLogins, [loginKey])) return true;
+    if (await wasLoginAcceptedRecently(apiUrl, apiToken)) return false;
     const transport = createVeryfrontApiOriginBoundOutboundFetch(apiUrl);
     const answer = await checkCredential(
-      candidate.apiToken,
+      apiToken,
       apiUrl,
       transport,
       STORED_LOGIN_CHECK_TIMEOUT_MS,
     );
-    if (answer === "accepted") await rememberAcceptedLogin(apiUrl, candidate.apiToken);
-    if (answer !== "rejected") return candidate;
+    if (answer === "accepted") await rememberAcceptedLogin(apiUrl, apiToken);
+    if (answer !== "rejected") return false;
     applyIntrinsic(setAdd, rejectedStoredLogins, [loginKey]);
-    return undefined;
+    return true;
   } catch {
-    return candidate;
+    return false;
+  }
+}
+
+/**
+ * Stop a linked project's command before it runs when the API rejects the
+ * stored login. A linked project runs through its Cloud project and never
+ * falls back to a provider key, so without this every model call fails with a
+ * bare gateway 401. An exported token or an unlinked project is left alone.
+ */
+export async function assertLinkedLoginAccepted(context: RuntimeAuthContext): Promise<void> {
+  if (context.apiTokenSource !== "token-store" || !context.apiToken || !context.projectSlug) {
+    return;
+  }
+  const apiUrl = getApiUrl(getEnvironmentConfig());
+  if (await isStoredLoginRejected(apiUrl, context.apiToken)) {
+    throw AUTHENTICATION_REQUIRED.create({
+      detail: "Your Veryfront login expired. Run `veryfront login`.",
+    });
   }
 }
 

@@ -7,7 +7,11 @@ import {
 } from "veryfront/platform";
 import { captureHostApiEnvironment, getHostEnv } from "#cli/process-env";
 import { runtime } from "#cli/runtime-adapter";
-import { applyQualifiedRuntimeAuth, resolveLinkedProjectSlug } from "./runtime-auth.ts";
+import {
+  applyQualifiedRuntimeAuth,
+  assertLinkedLoginAccepted,
+  resolveLinkedProjectSlug,
+} from "./runtime-auth.ts";
 
 interface ProxyProjectSourceContext {
   projectSlug: string;
@@ -79,13 +83,15 @@ export async function applyProjectSourceRuntimeAuth(
   projectDir: string,
   config: VeryfrontConfig,
 ) {
-  return await applyQualifiedRuntimeAuth(
+  const context = await applyQualifiedRuntimeAuth(
     projectDir,
     await resolveLinkedProjectSlug(
       projectDir,
       config.projectSlug ?? config.fs?.veryfront?.projectSlug,
     ),
   );
+  await assertLinkedLoginAccepted(context);
+  return context;
 }
 
 export async function withProjectSourceContext<T>(

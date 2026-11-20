@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { installMockFetch, restoreMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { deleteEnv, env, getEnv, setEnv } from "#veryfront/compat/process.ts";
@@ -16,6 +16,7 @@ import { __resetEnvLoaderForTests, getEnvSource, loadEnv } from "veryfront/utils
 import {
   applyQualifiedRuntimeAuth,
   applyRuntimeAuthContext,
+  assertLinkedLoginAccepted,
   resolveLinkedProjectSlug,
   resolveRuntimeAuthContext,
 } from "#cli/shared/runtime-auth";
@@ -598,6 +599,44 @@ describe("cli/shared/runtime-auth", () => {
       const context = await applyQualifiedRuntimeAuth(projectDir);
 
       assertEquals(context.apiToken, storedToken);
+      assertEquals(paths, []);
+    });
+
+    it("stops a linked project whose stored login the API rejects, with a re-login message", async () => {
+      const projectDir = await storedLoginProject();
+      setEnv("OPENAI_API_KEY", "<API_KEY>");
+      setEnv("VERYFRONT_PROJECT_SLUG", "env-linked-project");
+      const paths = installLoginCheck(401);
+
+      const context = await applyQualifiedRuntimeAuth(projectDir);
+      await assertRejects(
+        () => assertLinkedLoginAccepted(context),
+        Error,
+        "Your Veryfront login expired. Run `veryfront login`.",
+      );
+
+      // The one request is the login check: no model or provider call is made.
+      assertEquals(paths.length, 1);
+    });
+
+    it("lets a linked project with an accepted stored login run", async () => {
+      const projectDir = await storedLoginProject();
+      setEnv("VERYFRONT_PROJECT_SLUG", "env-linked-project");
+      installLoginCheck(200);
+
+      const context = await applyQualifiedRuntimeAuth(projectDir);
+      await assertLinkedLoginAccepted(context);
+
+      assertEquals(context.apiToken, storedToken);
+    });
+
+    it("leaves an unlinked project's login to the provider-key fallback", async () => {
+      const projectDir = await storedLoginProject();
+      const paths = installLoginCheck(401);
+
+      const context = await applyQualifiedRuntimeAuth(projectDir);
+      await assertLinkedLoginAccepted(context);
+
       assertEquals(paths, []);
     });
 
