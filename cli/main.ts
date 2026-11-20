@@ -9,6 +9,11 @@
  * ```
  */
 
+// Under Node (the npm package), a pipe write that outlives `process.exit()` is
+// lost, so piped output stopped at 64 KiB. Writes must finish before any exit.
+const { makeStdioWritesBlocking } = await import("#cli/process-lifecycle");
+makeStdioWritesBlocking();
+
 if (Deno.args[0] === "__veryfront_internal_scaffold_writer") {
   const { runSecureScaffoldWriterProcess } = await import("./scaffold/secure-writer.ts");
   Deno.exit(await runSecureScaffoldWriterProcess());

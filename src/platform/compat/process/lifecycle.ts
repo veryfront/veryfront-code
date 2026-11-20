@@ -22,6 +22,23 @@ export function exit(code?: number): never {
   throw new Error("exit() is not supported in this runtime");
 }
 
+/**
+ * Make Node finish each stdout and stderr write before it returns, as Deno does.
+ *
+ * Node writes to a pipe asynchronously once the pipe buffer (64 KiB) is full,
+ * and `process.exit()` drops what is still queued, so `veryfront ... | jq` read
+ * a cut answer. With blocking writes, every exit path keeps the whole output.
+ * Terminals and files are already synchronous in Node; Deno needs nothing.
+ */
+export function makeStdioWritesBlocking(): void {
+  if (!runtimeProcess) return;
+  for (const stream of [runtimeProcess.stdout, runtimeProcess.stderr]) {
+    const handle = (stream as { _handle?: { setBlocking?: (blocking: boolean) => number } })
+      ._handle;
+    if (typeof handle?.setBlocking === "function") handle.setBlocking(true);
+  }
+}
+
 /** Return the current working directory. */
 export function cwd(): string {
   const deno = IS_DENO ? getDenoRuntime() : undefined;
