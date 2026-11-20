@@ -1832,7 +1832,10 @@ export class AgentStreamHandler extends BaseHandler {
             agentEntrypoint: payload.agentEntrypoint,
           })
           : await this.deps.ensureProjectDiscovery(projectScopedContext, assertRecoveryActive);
-        if (payload.agentEntrypoint && discovery.errors.length > 0) {
+        if (
+          payload.agentEntrypoint &&
+          (discovery.agentEntrypointErrors ?? discovery.errors).length > 0
+        ) {
           throw INITIALIZATION_ERROR.create({
             detail: "The selected agent source could not be loaded",
           });

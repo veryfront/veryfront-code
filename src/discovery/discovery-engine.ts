@@ -335,7 +335,8 @@ export async function discoverAll(config: DiscoveryConfig): Promise<DiscoveryRes
     );
   }
 
-  // Discover agents
+  // Discover agents. Keep this phase separate from unrelated global primitive diagnostics.
+  const agentErrorStart = result.errors.length;
   if (config.agentEntrypoint) {
     const file = resolveDiscoveryDir(baseDir, config.agentEntrypoint.path);
     const dir = file.slice(0, file.lastIndexOf("/"));
@@ -358,6 +359,8 @@ export async function discoverAll(config: DiscoveryConfig): Promise<DiscoveryRes
       await discoverRuntimeAgentMarkdownDefinitions(agentDir, result, context);
     }
   }
+
+  if (config.agentEntrypoint) result.agentEntrypointErrors = result.errors.slice(agentErrorStart);
 
   // Discover resources
   await discoverConfiguredItems(

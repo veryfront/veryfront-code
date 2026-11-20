@@ -85,6 +85,8 @@ export interface DiscoveryResult {
   webhooks: Map<string, WebhookDefinition>;
   evals: Map<string, EvalDefinition>;
   errors: Array<{ file: string; error: Error }>;
+  /** Diagnostics from the exact agent source and capabilities discovered within that source. */
+  agentEntrypointErrors?: Array<{ file: string; error: Error }>;
 }
 
 /**

@@ -242,7 +242,14 @@ describe("server/handlers/request/agent-stream.handler", () => {
               projectSlug: getVeryfrontCloudProjectSlug(),
             };
             const result = createEmptyDiscoveryResult();
-            if (exactEntrypoint) result.agents.set("assistant-1", createAgent("assistant-1"));
+            if (exactEntrypoint) {
+              result.agents.set("assistant-1", createAgent("assistant-1"));
+              result.errors.push({
+                file: "/project/tools/unused.ts",
+                error: new Error("Unrelated tool failed"),
+              });
+              result.agentEntrypointErrors = [];
+            }
             return result;
           },
           getAgent: () => {

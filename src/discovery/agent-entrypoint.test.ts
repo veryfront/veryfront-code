@@ -35,6 +35,7 @@ describe("exact agent entrypoint discovery", () => {
     });
     assertEquals([...result.agents.keys()], []);
     assertEquals(result.errors.length > 0, true);
+    assertEquals((result.agentEntrypointErrors?.length ?? 0) > 0, true);
   });
   it("loads the selected markdown file without evaluating other agent modules", async () => {
     const adapter = createMockAdapter();
@@ -54,6 +55,26 @@ describe("exact agent entrypoint discovery", () => {
     assertEquals(result.errors, []);
     assertEquals([...result.agents.keys()], ["selected"]);
     assertEquals(result.agents.get("selected")?.config.system, "Selected instructions.");
+  });
+  it("separates unrelated tool failures from the selected source diagnostics", async () => {
+    const adapter = createMockAdapter();
+    await adapter.fs.writeFile(
+      "/project/agents/selected.md",
+      "---\nname: Selected\n---\nSelected instructions.",
+    );
+    await adapter.fs.writeFile(
+      "/project/tools/unused.ts",
+      "throw new Error('Unused tool cannot load');",
+    );
+    const result = await discoverAll({
+      ...config,
+      fsAdapter: adapter.fs,
+      toolDirs: ["tools"],
+      agentEntrypoint: { path: "agents/selected.md" },
+    });
+    assertEquals(result.errors.length > 0, true);
+    assertEquals(result.agentEntrypointErrors, []);
+    assertEquals([...result.agents.keys()], ["selected"]);
   });
   it("does not substitute another file when the selected entrypoint is missing", async () => {
     const adapter = createMockAdapter();

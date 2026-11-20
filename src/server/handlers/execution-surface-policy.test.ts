@@ -37,6 +37,7 @@ const CAPABILITY_GATED_SURFACES = [
   "request/module/module.handler.ts",
   "request/public-agent-metadata.handler.ts",
   "request/public-agents-list.handler.ts",
+  "request/runtime-capabilities.handler.ts",
   "request/snippet.handler.ts",
   "request/ssr/ssr.handler.ts",
   "response/cors.ts",
