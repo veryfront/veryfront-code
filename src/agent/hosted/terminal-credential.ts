@@ -741,7 +741,9 @@ export function hostedInheritedInvocationCredentialReader(
   };
 }
 
-function readInheritedInferenceCredential(descriptor: object): string {
+function readInheritedInferenceCredential(
+  descriptor: HostedTerminalDescriptor | InheritedRunResult,
+): string {
   const token = credentials.get(descriptor)?.inferenceToken;
   if (!token) throw new Error("Inherited child inference authority is required");
   return token;
