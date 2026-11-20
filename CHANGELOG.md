@@ -6,6 +6,18 @@ versions are listed at
 
 ## Unreleased
 
+### Breaking: refused integration calls in workflow tool steps throw
+
+`runRemoteIntegrationTool` called with a workflow tool step's context now
+throws when the call does not return a result: the API refuses it, the
+integration answers with a tool error, or no Veryfront API token is available.
+The message names the integration, the tool, and the reason, for example
+`Salesforce refused list_cases for this workflow run: <reason>`, so the step and
+the run fail. Before, the call returned an error object and the run completed
+with nothing done. Agent tool calls still return the error object. A local
+`veryfront workflow run` now authenticates these calls with
+`VERYFRONT_API_TOKEN` or the `veryfront login` token.
+
 ### Added: attachment budgets with explicit omissions
 
 `planFileParts` from `veryfront/llm` applies per-file, total, and count byte

@@ -40,6 +40,7 @@ import {
 } from "#veryfront/schemas/json-value.ts";
 import { logger } from "#veryfront/utils";
 import { resolveStudioOrigin } from "./studio-origin.ts";
+import { integrationDisplayName } from "./unconnected.ts";
 import {
   hasProjectIdentityControlCharacters,
   isCanonicalProjectSlug,
@@ -101,8 +102,20 @@ const INTEGRATION_TOOL_LIST_REQUEST_FAILED = defineError({
   suggestion: "Check the integration API base URL and credential, then retry",
 });
 
+/** A workflow tool step's integration call that did not return a result. */
+const INTEGRATION_TOOL_CALL_REFUSED = defineError({
+  slug: "integration-tool-call-refused",
+  category: "RUNTIME",
+  status: 502,
+  title: "Integration tool call refused",
+  suggestion:
+    "Check that the integration is connected and the project may use the tool, then retry the run",
+});
+
 interface RemoteIntegrationExecutionContext {
   readonly hasExplicitCredential: boolean;
+  /** Set by workflow tool steps: a refused call throws instead of returning an error result. */
+  readonly throwOnRefusal: boolean;
   readonly authToken: unknown;
   readonly projectSlug: unknown;
   readonly runId: unknown;
@@ -141,6 +154,7 @@ const requestIntegrationToolDiscoveryScopes = new WeakMap<
 const utf8Encoder = new TextEncoder();
 const EMPTY_REMOTE_INTEGRATION_CONTEXT: RemoteIntegrationExecutionContext = Object.freeze({
   hasExplicitCredential: false,
+  throwOnRefusal: false,
   authToken: undefined,
   projectSlug: undefined,
   runId: undefined,
@@ -208,6 +222,7 @@ function snapshotToolExecutionContext(
     const runIdBinds = includeCallMetadata
       ? readOwnDataProperty("runIdBindsToolAuthorization")
       : { present: false, value: undefined };
+    const workflowStep = readOwnDataProperty("workflowStep");
     const abortSignal = readOwnDataProperty("abortSignal");
     if (
       abortSignal.value !== undefined &&
@@ -218,6 +233,7 @@ function snapshotToolExecutionContext(
 
     return Object.freeze({
       hasExplicitCredential: authToken.present,
+      throwOnRefusal: workflowStep.value === true,
       authToken: authToken.value,
       projectSlug: projectSlug.value,
       runId: runIdBinds.value === false ? undefined : runId.value,
@@ -735,6 +751,45 @@ function decodeRemoteToolResult(result: BoundedJsonValue): unknown {
   return result;
 }
 
+/** The reason in a refused call's error result: the API or provider message, else the status. */
+function readRefusalReason(result: unknown): string {
+  if (!isRecord(result)) return "the integration returned an error";
+  let payload: unknown = result;
+  if (result.error === "api_error" && typeof result.message === "string") {
+    payload = parseJsonText(result.message) ?? { message: result.message };
+  }
+  if (isRecord(payload)) {
+    for (const key of ["message", "error"] as const) {
+      const value = payload[key];
+      if (typeof value === "string" && privateTextTrim(value).length > 0) {
+        return privateTextTrim(value);
+      }
+    }
+  }
+  return typeof result.status === "number"
+    ? `the API answered ${result.status}`
+    : "the integration returned an error";
+}
+
+/**
+ * Agents read a refused call's error result as the tool output. A workflow tool
+ * step has no model to read it, so the call throws with the reason instead.
+ */
+function refuseIntegrationToolCall(
+  integration: string,
+  toolId: string,
+  result: unknown,
+  context: RemoteIntegrationExecutionContext,
+): unknown {
+  if (!context.throwOnRefusal) return result;
+  throw INTEGRATION_TOOL_CALL_REFUSED.create({
+    message: `${integrationDisplayName(integration)} refused ${toolId} for this workflow run: ${
+      readRefusalReason(result)
+    }`,
+    ...(isRecord(result) && typeof result.status === "number" ? { status: result.status } : {}),
+  });
+}
+
 async function callRemoteTool(
   baseUrl: string,
   token: string,
@@ -767,7 +822,12 @@ async function callRemoteTool(
         requestScope.signal,
         { fatalUtf8: true },
       );
-      return { error: "api_error", status: response.status, message: text };
+      return refuseIntegrationToolCall(
+        integration,
+        toolId,
+        { error: "api_error", status: response.status, message: text },
+        context,
+      );
     }
 
     const rawResult = await readBoundedResponseJson(
@@ -788,7 +848,10 @@ async function callRemoteTool(
     }
     const result = resultSnapshot.value;
 
-    return decodeRemoteToolResult(result);
+    const decoded = decodeRemoteToolResult(result);
+    return isRecord(result) && result.isError === true
+      ? refuseIntegrationToolCall(integration, toolId, decoded, context)
+      : decoded;
   } finally {
     requestScope.dispose();
   }
@@ -936,6 +999,16 @@ export async function runRemoteIntegrationTool(
 
   const { baseUrl, token } = resolveRequestAuth(requestContext);
   if (!baseUrl || !token) {
+    if (requestContext.throwOnRefusal) {
+      throw INTEGRATION_TOOL_CALL_REFUSED.create({
+        message:
+          `${
+            integrationDisplayName(identity.integration)
+          } ${identity.toolId} did not run for this workflow run: no Veryfront API token. ` +
+          "Set VERYFRONT_API_TOKEN or run `veryfront login`.",
+        status: 401,
+      });
+    }
     return { error: "no_api_token", message: "No API token available" };
   }
 
