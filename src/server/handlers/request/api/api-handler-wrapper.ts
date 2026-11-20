@@ -22,6 +22,7 @@ import { requiresIsolatedProjectRuntime } from "#veryfront/security/project-loca
 import { isPreflightRequest } from "#veryfront/security/http/cors/preflight.ts";
 import { getApplicationPreflightHeaders } from "#veryfront/security/http/application-request.ts";
 import { DEFAULT_CORS_METHODS, handleCORSPreflight } from "#veryfront/security";
+import { createHostApplicationWorkflowRunner } from "./application-workflow-runs.ts";
 import { createHostApplicationInferenceAdmission } from "./application-inference-admission.ts";
 import { runWithApplicationInferenceAdmission } from "#veryfront/agent/runtime/application-inference-admission.ts";
 
@@ -308,6 +309,7 @@ export class ApiHandlerWrapper extends BaseHandler {
     // route module is loaded or executed.
     const isOptionsRequest = req.method.toUpperCase() === "OPTIONS";
     const admitInference = createHostApplicationInferenceAdmission(req, ctx);
+    const withWorkflows = createHostApplicationWorkflowRunner(req, ctx);
     if (!isOptionsRequest) {
       // Lazy per-project primitive discovery (agents, tools) on first
       // access. Must run within runWithContext so VFS and registry scope
@@ -333,10 +335,11 @@ export class ApiHandlerWrapper extends BaseHandler {
         { sourceSnapshotReady: true },
       );
 
-    if (admitInference) {
-      return await runWithApplicationInferenceAdmission(admitInference, executeRoute, req.signal);
-    }
-    return await executeRoute();
+    const run = () =>
+      admitInference
+        ? runWithApplicationInferenceAdmission(admitInference, executeRoute, req.signal)
+        : executeRoute();
+    return await (withWorkflows ? withWorkflows(run) : run());
   }
 
   private async handleDeniedProjectExecution(

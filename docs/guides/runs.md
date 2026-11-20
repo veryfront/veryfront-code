@@ -24,7 +24,7 @@ runs through the built-in eval task.
 
 ## Prerequisites
 
-- A Veryfront Cloud project and a `VERYFRONT_API_KEY`. Set
+- A Veryfront Cloud project. For scripts outside the project, use a `VERYFRONT_API_KEY` and set
   `VERYFRONT_PROJECT_ID` or `VERYFRONT_PROJECT_SLUG` to identify the project
   (see [Configuration](./configuration.md)).
 - A task, workflow, or eval definition the run should execute.
@@ -100,6 +100,13 @@ stores, declared schemas, rejected input, `null` output, and JSON
 serialization.
 
 ## Create a workflow run
+
+In a hosted server-side API route, use `createRunsClient()` with your own
+project ID. Preview runs the workflow from the branch serving the route.
+Production runs it from the published release. The route needs no API key.
+Within the same request, use the returned run ID to read the result or cancel the run.
+For retries across requests with an explicit `idempotencyKey`, use a client
+configured with your own credentials.
 
 ```ts
 await runs.createWorkflowRun({

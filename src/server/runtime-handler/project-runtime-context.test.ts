@@ -1,3 +1,4 @@
+import { getApplicationWorkflowIdentity } from "../handlers/request/api/application-workflow-source.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import {
   assertEquals,
@@ -1157,6 +1158,28 @@ describe("resolveProjectRuntimeContext", () => {
     assertEquals(ctx.isProxyMode, false);
     assertEquals(ctx.requestContext?.mode, "preview");
     assertEquals(result.environment.resolvedEnvironment, "preview");
+  });
+
+  it("only binds workflow admission to authenticated proxy identity in an uninstalled runtime", async () => {
+    for (
+      const [isProxyMode, proxyTrusted, expected] of [
+        [false, undefined, false],
+        [false, true, false],
+        [true, false, false],
+        [true, true, true],
+      ] as const
+    ) {
+      const result = await resolveProjectRuntimeContext(
+        makeRuntimeContextInput({ isProxyMode, proxyTrust: { proxyTrusted } }),
+      );
+      const ctx = result.handlerContext;
+      if (!ctx) throw new Error("Missing fixture handler context");
+      assertEquals(Boolean(getApplicationWorkflowIdentity(ctx)), expected);
+      if (expected) {
+        ctx.projectId = "changed-after-composition";
+        assertEquals(getApplicationWorkflowIdentity(ctx)?.projectId, "proj-remote");
+      }
+    }
   });
 
   it("carries the trusted browser-visible request origin into handler context", async () => {

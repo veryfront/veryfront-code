@@ -33,6 +33,7 @@ import {
 import { createTaskChildRunner } from "./task-child.ts";
 import { readProjectExecutionParent } from "./project-run-parent.ts";
 import { createWorkflowAgentNodeRunner } from "./workflow-agent-child.ts";
+import { resolveApplicationWorkflowSource } from "./api/application-workflow-source.ts";
 import { adaptManagedEvalRunStream } from "./managed-eval-run-stream.ts";
 import { RunStopRegistry } from "#veryfront/internal-agents/run-stop-registry.ts";
 import { agentRunSessionManager } from "#veryfront/internal-agents/session-manager.ts";
@@ -891,12 +892,31 @@ function parseSchemaSnapshotProtocol(value: unknown): 1 {
   return 1;
 }
 
+function assertApplicationWorkflowSource(raw: unknown, ctx: HandlerContext): void {
+  if (readOwnRecordProperty(raw, "kind") !== "application_workflow") return;
+  const source = readOwnRecordProperty(raw, "applicationWorkflowSource");
+  const serving = resolveApplicationWorkflowSource(ctx);
+  const sourceType = readOwnRecordProperty(source, "type");
+  const branchId = readOwnRecordProperty(raw, "runtimeTargetBranchId");
+  const matches = serving?.type === "branch"
+    ? sourceType === "branch" &&
+      readOwnRecordProperty(source, "branchName") === serving.branchName &&
+      (!ctx.branchId || !branchId || ctx.branchId === branchId)
+    : serving?.type === "environment" && sourceType === "environment" &&
+      readOwnRecordProperty(source, "environmentName") === serving.environmentName &&
+      readOwnRecordProperty(source, "releaseId") === serving.releaseId;
+  if (!matches || ctx.projectId !== readOwnRecordProperty(raw, "projectId")) {
+    throw new ControlPlaneRequestError(409, "Application workflow source changed");
+  }
+}
+
 function parseExecuteRequest(value: unknown, pathRunId: string): ProjectRunExecuteRequest {
   if (!isRecord(value)) throw INPUT_VALIDATION_FAILED.create({ detail: "Expected object" });
 
   const runId = value.runId;
   const canonicalRunId = parseCanonicalProjectRunId(value.canonicalRunId);
-  const kind = value.kind;
+  const wireKind = getOwnDataProperty(value, "kind");
+  const kind = wireKind === "application_workflow" ? "workflow" : wireKind;
   const target = value.target;
   const projectId = value.projectId;
 
@@ -6307,7 +6327,8 @@ export class ProjectRunExecuteHandler extends BaseHandler {
           req,
           INTERNAL_AGENT_CONTROL_PLANE_MAX_BODY_BYTES,
         );
-        const request = parseExecuteRequest(JSON.parse(rawBody), runId);
+        const raw: unknown = privateJsonParse(rawBody);
+        const request = parseExecuteRequest(raw, runId);
         const claims = ingress?.claims ?? await verifyControlPlaneRequest(req, ctx, rawBody, {
           expectedSubject: runId,
           expectedSurface: "studio",
@@ -6319,6 +6340,7 @@ export class ProjectRunExecuteHandler extends BaseHandler {
         ) {
           return this.respond(builder.json({ error: "Invalid control-plane signature" }, 401));
         }
+        assertApplicationWorkflowSource(raw, ctx);
         const inferenceToken = readProjectRunInferenceToken(req);
         const eventToken = readIngressCredential(req, INGRESS_RUN_EVENT_TOKEN_HEADER) ?? undefined;
         const stopController = new TaskAbortController();

@@ -2601,6 +2601,45 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     });
   }
 
+  it("executes hosted workflows only on the admitted preview branch or production release", async () => {
+    const handler = new ProjectRunExecuteHandler(createDeps());
+    const production = {
+      resolvedEnvironment: "production",
+      environmentName: "Production",
+    } as const;
+    const preview = (branch: string | null): Partial<HandlerContext> => ({
+      requestContext: { mode: "preview", branch, slug: "demo-project", token: "" },
+    });
+    const release = { type: "environment", environmentName: "Production", releaseId: "release-a" };
+    const feature = { type: "branch", branchName: "feature" };
+    const main = { type: "branch", branchName: null };
+    for (
+      const [source, serving, status] of [
+        [release, { ...production, releaseId: "release-a" }, 200],
+        [release, { ...production, releaseId: "release-b" }, 409],
+        [release, preview(null), 409],
+        [main, preview(null), 200],
+        [feature, preview("feature"), 200],
+        [feature, preview(null), 409],
+      ] as const
+    ) {
+      const { request, publicKeyPem } = await signedRequest(
+        "/api/control-plane/runs/run_application_workflow/execute",
+        {
+          runId: "run_application_workflow",
+          kind: "application_workflow",
+          target: "workflow:publish",
+          projectId: "proj-1",
+          applicationWorkflowSource: source,
+        },
+      );
+      const result = await handler.handle(request, { ...createCtx(publicKeyPem), ...serving });
+      assertExists(result.response);
+      assertEquals(result.response.status, status);
+      if (status === 200) assertEquals((await result.response.json()).result, { deployed: true });
+    }
+  });
+
   it("#2105 starts a workflow with {} when its input is null", async () => {
     let startedInput: unknown = "unset";
     const handler = new ProjectRunExecuteHandler(createDeps({
