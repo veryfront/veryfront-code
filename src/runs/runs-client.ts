@@ -331,7 +331,16 @@ export class VeryfrontRunsClient {
   private hostedWorkflows() {
     if (this.config.apiUrl || this.config.authToken || this.requestToken) return undefined;
     const hosted = currentApplicationWorkflowRuns();
-    if (hosted && !getTrustedProjectEnvSnapshot()?.VERYFRONT_API_KEY) return hosted;
+    if (hosted && !this.hostedConnection()) return hosted;
+  }
+
+  private hostedConnection(): { apiUrl: string; authToken: string } | undefined {
+    const projectKey = getTrustedProjectEnvSnapshot()?.VERYFRONT_API_KEY;
+    if (projectKey) {
+      return { apiUrl: getVeryfrontCloudHostBootstrap().apiBaseUrl, authToken: projectKey };
+    }
+    const scoped = getVeryfrontCloudBootstrap("explicit");
+    if (scoped.apiToken) return { apiUrl: scoped.apiBaseUrl, authToken: scoped.apiToken };
   }
 
   private sdk(): RunsSdk {
@@ -389,7 +398,9 @@ export class VeryfrontRunsClient {
 
   async createWorkflowRun(input: CreateWorkflowRunInput): Promise<CreateRunResponse> {
     const hosted = this.hostedWorkflows();
-    if (hosted) return { accepted: true, run: compatibilityRun(await hosted.start(input)) };
+    if (hosted) {
+      return { accepted: true, run: compatibilityRun(await hosted.start(input, this.retryConfig)) };
+    }
     if (input.startMode) {
       throw new Error("Workflow startMode is not supported by canonical run creation.");
     }
@@ -568,7 +579,7 @@ export class VeryfrontRunsClient {
   /** Read the grouped resource by canonical UUID, retaining headers through onHeaders. */
   getRun(runId: string, options?: RunsCallOptions): Promise<RunsOutput<"getRun">> {
     const hosted = this.hostedWorkflows();
-    if (hosted?.owns(runId)) return hosted.read(runId, options);
+    if (hosted?.owns(runId)) return hosted.read(runId, this.retryConfig, options);
     return this.sdk().getRun({ path: { run_id: runId } }, options);
   }
 
@@ -613,10 +624,12 @@ export class VeryfrontRunsClient {
     idempotencyKey: string = crypto.randomUUID(),
   ): Promise<CancelRunResponse> {
     const hosted = this.hostedWorkflows();
-    const run = hosted?.owns(runId) ? await hosted.cancel(runId) : await this.sdk().cancelRun({
-      path: { run_id: runId },
-      headers: { "Idempotency-Key": idempotencyKey },
-    });
+    const run = hosted?.owns(runId)
+      ? await hosted.cancel(runId, this.retryConfig)
+      : await this.sdk().cancelRun({
+        path: { run_id: runId },
+        headers: { "Idempotency-Key": idempotencyKey },
+      });
     return {
       cancelled: run.status === "cancelled" || run.control?.cancellation?.requested_at != null,
       run: compatibilityRun(run),
@@ -685,10 +698,8 @@ export class VeryfrontRunsClient {
       return { apiUrl: host.apiBaseUrl, authToken: this.requestToken };
     }
 
-    // A key explicitly configured on the served project retains normal Runs API semantics.
-    const projectKey = currentApplicationWorkflowRuns() &&
-      getTrustedProjectEnvSnapshot()?.VERYFRONT_API_KEY;
-    if (projectKey) return { apiUrl: host.apiBaseUrl, authToken: projectKey };
+    const hostedConnection = currentApplicationWorkflowRuns() && this.hostedConnection();
+    if (hostedConnection) return hostedConnection;
     const bootstrap = getVeryfrontCloudBootstrap();
     if (bootstrap.apiToken) {
       return { apiUrl: bootstrap.apiBaseUrl, authToken: bootstrap.apiToken };

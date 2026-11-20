@@ -5,6 +5,8 @@ import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import type { HandlerContext } from "#veryfront/types";
 import { runWithProjectEnv } from "#veryfront/server/project-env/storage.ts";
 import { runWithVeryfrontCloudContext } from "#veryfront/provider/veryfront-cloud/context.ts";
+import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
+import { runWithRuntimeRequestContext } from "#veryfront/platform/runtime-request-context.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import {
   bindApplicationWorkflowIdentity,
@@ -107,6 +109,62 @@ describe("hosted app workflow Runs client", () => {
     }
   });
 
+  it("retries transient hosted requests with the same admission receipt and client budget", async () => {
+    const ctx = { ...context };
+    bindApplicationWorkflowIdentity(ctx);
+    const attempts = new Map<string, string[]>();
+    const runner = createHostApplicationWorkflowRunner(request, ctx, {
+      getHostEnv: () => "test-only",
+      createOriginBoundFetch: () => async (url, init) => {
+        const outbound = new Request(url, init);
+        const path = new URL(outbound.url).pathname;
+        const bodies = attempts.get(path) ?? [];
+        bodies.push(await outbound.text());
+        attempts.set(path, bodies);
+        if (bodies.length === 1) {
+          if (path.endsWith("/read")) throw new TypeError("Connection reset");
+          return new Response(null, { status: path.endsWith("/cancel") ? 429 : 503 });
+        }
+        return Response.json({
+          id: runId,
+          project_id: projectId,
+          target: { type: "workflow", id: workflowId },
+          status: path.endsWith("/cancel") ? "cancelled" : "pending",
+          created_at: createdAt,
+          updated_at: createdAt,
+        });
+      },
+    });
+    assert(runner);
+    await runner(async () => {
+      const runs = createRunsClient({ retry: { maxRetries: 1, initialDelay: 0, maxDelay: 0 } });
+      const started = await runs.createWorkflowRun(input);
+      assertEquals((await runs.getRun(started.run.run_id)).id, runId);
+      assert((await runs.cancel(runId)).cancelled);
+    });
+    assertEquals(attempts.size, 3);
+    for (const bodies of attempts.values()) assertEquals(bodies, [bodies[0], bodies[0]]);
+  });
+
+  it("stops hosted retries on permanent rejection or when the client's budget is spent", async () => {
+    for (const [status, maxRetries, expected] of [[403, 1, 1], [503, 0, 1], [503, 1, 2]]) {
+      let attempts = 0;
+      const runner = createHostApplicationWorkflowRunner(request, context, {
+        getHostEnv: () => "test-only",
+        createOriginBoundFetch: () => () => {
+          attempts++;
+          return Promise.resolve(new Response(null, { status }));
+        },
+      });
+      assert(runner);
+      await runner(() => {
+        const runs = createRunsClient({ retry: { maxRetries, initialDelay: 0, maxDelay: 0 } });
+        return assertRejects(() => runs.createWorkflowRun(input), Error, `HTTP ${status}`);
+      });
+      assertEquals(attempts, expected);
+    }
+  });
+
   it("binds the default preview branch and preserves the name of a feature branch", () => {
     for (
       const [branch, expected] of [["main", null], ["00000000-0000-0000-0000-000000000000", null], [
@@ -189,7 +247,7 @@ describe("hosted app workflow Runs client", () => {
     assertEquals(paths, ["/runs", `/runs/${unrelatedRunId}`, `/runs/${unrelatedRunId}/cancel`]);
   });
 
-  it("uses a configured project key to read existing runs and create runs with public options", async () => {
+  it("preserves public workflow options for project keys and scoped credentials in a proxied app request", async () => {
     const runner = createHostApplicationWorkflowRunner(request, context, {
       getHostEnv: () => "synthetic-internal",
       createOriginBoundFetch: () => () => {
@@ -197,48 +255,56 @@ describe("hosted app workflow Runs client", () => {
       },
     });
     assert(runner);
+    const testCredential = crypto.randomUUID();
     const methods: string[] = [];
+    const start = () =>
+      createRunsClient().createWorkflowRun({
+        ...input,
+        runtimeTargetKind: "main_branch",
+        idempotencyKey: "stable",
+      });
     await withMockFetch(
-      (url, init) => {
-        assertEquals(new URL(String(url)).origin, "https://api.veryfront.com");
-        assertEquals(
-          new Headers(init?.headers).get("authorization"),
-          "Bearer synthetic-project-key",
-        );
-        methods.push(init?.method ?? "GET");
-        if (init?.method === "POST") {
-          assertEquals(
-            new Headers(init.headers).get("idempotency-key"),
-            "stable",
-          );
+      async (url, init) => {
+        const outbound = new Request(url, init);
+        assertEquals(new URL(outbound.url).origin, "https://api.veryfront.com");
+        assertEquals(outbound.headers.get("authorization"), `Bearer ${testCredential}`);
+        methods.push(outbound.method);
+        if (outbound.method === "POST") {
+          assertEquals(new URL(outbound.url).pathname, "/runs");
+          assertEquals(outbound.headers.get("idempotency-key"), "stable");
+          assertEquals((await outbound.json()).execution.runtime, { type: "main_branch" });
         }
-        return Promise.resolve(
-          Response.json({
-            id: unrelatedRunId,
-            project_id: projectId,
-            target: { type: "workflow", id: workflowId },
-            status: "pending",
-            input: null,
-            created_at: createdAt,
-            updated_at: createdAt,
-          }),
-        );
+        return Response.json({
+          id: unrelatedRunId,
+          project_id: projectId,
+          target: { type: "workflow", id: workflowId },
+          status: "pending",
+          input: null,
+          created_at: createdAt,
+          updated_at: createdAt,
+        });
       },
       () =>
-        runner(() =>
-          runWithProjectEnv({ VERYFRONT_API_KEY: "synthetic-project-key" }, async () => {
-            const runs = createRunsClient();
-            const run = await runs.getRun(unrelatedRunId);
-            assertEquals(run.id, unrelatedRunId);
-            await runs.createWorkflowRun({
-              ...input,
-              runtimeTargetKind: "main_branch",
-              idempotencyKey: "stable",
-            });
-          })
+        runWithRequestContext(
+          { projectSlug, token: crypto.randomUUID() },
+          () =>
+            runner(async () => {
+              await assertRejects(start, Error, "source");
+              await runWithProjectEnv({ VERYFRONT_API_KEY: testCredential }, async () => {
+                const run = await createRunsClient().getRun(unrelatedRunId);
+                assertEquals(run.id, unrelatedRunId);
+                await start();
+              });
+              await runWithVeryfrontCloudContext({ apiToken: testCredential }, start);
+              await runWithRuntimeRequestContext({
+                projectSlug,
+                productionMode: true,
+                token: testCredential,
+              }, start);
+            }),
         ),
     );
-    assertEquals(methods, ["GET", "POST"]);
+    assertEquals(methods, ["GET", "POST", "POST", "POST"]);
   });
 
   it("reports when a caller asks for an idempotency key across hosted requests", async () => {

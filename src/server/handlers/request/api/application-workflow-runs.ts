@@ -1,4 +1,9 @@
 import { completeOnResponseBodyConsumption } from "#veryfront/platform/compat/http/response-lifecycle.ts";
+import { retryWithBackoff } from "#veryfront/errors/error-handlers.ts";
+import {
+  type BoundedRetryConfig,
+  requireVeryfrontApiRetryConfig,
+} from "#veryfront/utils/config-resource-limits.ts";
 import type { HandlerContext } from "#veryfront/types";
 import {
   getHostApiOriginExcludingEnvFile,
@@ -37,6 +42,12 @@ const host = Object.freeze({
   getHostEnv,
   createOriginBoundFetch: createHostInternalOriginBoundOutboundFetch,
 });
+
+class HostedWorkflowHttpError extends Error {
+  constructor(readonly status: number) {
+    super(`Hosted workflow admission failed (HTTP ${status}).`);
+  }
+}
 
 interface Proof {
   workflowId: string;
@@ -77,27 +88,45 @@ export function createHostApplicationWorkflowRunner(
     let active = true;
     let acceptingStarts = true;
     let startedWorkflow = false;
-    const post = async (path: string, proof: Proof, input?: unknown, options?: RunsCallOptions) => {
+    const post = async (
+      path: string,
+      proof: Proof,
+      retry: BoundedRetryConfig,
+      input?: unknown,
+      options?: RunsCallOptions,
+    ) => {
       if (!active || !transport || !headers || !source) {
         throw new Error("Hosted workflow admission is unavailable for this request.");
       }
       const signal = options?.signal ? combineSignals([baseSignal, options.signal]) : baseSignal;
       signal.throwIfAborted();
       const maxBytes = requireSuccessResponseByteLimit(options?.maxResponseBytes);
-      const response = await transport(`${origin}/internal/application-workflows/runs${path}`, {
-        method: "POST",
-        redirect: "error",
-        signal,
-        headers,
-        body: privateJsonStringify({ projectId, projectSlug, source, ...proof, input }),
+      const { maxRetries, initialDelay, maxDelay } = requireVeryfrontApiRetryConfig(retry);
+      const requestBody = privateJsonStringify({ projectId, projectSlug, source, ...proof, input });
+      const response = await retryWithBackoff(async () => {
+        const result = await transport(`${origin}/internal/application-workflows/runs${path}`, {
+          method: "POST",
+          redirect: "error",
+          signal,
+          headers,
+          body: requestBody,
+        });
+        if (!apply(okGetter, result, [])) {
+          const body = apply(bodyGetter, result, []) as ReadableStream<Uint8Array> | null;
+          if (body) await cancelPrivateStream(body);
+          throw new HostedWorkflowHttpError(apply(statusGetter, result, []));
+        }
+        return result;
+      }, {
+        maxAttempts: maxRetries + 1,
+        initialDelay,
+        maxDelay,
+        abortSignal: signal,
+        shouldRetry: (error) =>
+          !(error instanceof HostedWorkflowHttpError) || error.status === 429 ||
+          error.status >= 500,
       });
       const body = apply(bodyGetter, response, []) as ReadableStream<Uint8Array> | null;
-      if (!apply(okGetter, response, [])) {
-        if (body) await cancelPrivateStream(body);
-        throw new Error(
-          `Hosted workflow admission failed (HTTP ${apply(statusGetter, response, [])}).`,
-        );
-      }
       const result = await readResponseTextPrefix(
         { body: body ? { getReader: () => getPrivateStreamReader(body) } : null },
         maxBytes,
@@ -122,17 +151,18 @@ export function createHostApplicationWorkflowRunner(
     const forRun = async (
       runId: string,
       operation: "read" | "cancel",
+      retry: BoundedRetryConfig,
       options?: RunsCallOptions,
     ) => {
       const proof = proofs.get(runId);
       if (!proof) throw new Error("This workflow run was not started by this application request.");
-      const run = await post(`/${runId}/${operation}`, proof, undefined, options);
+      const run = await post(`/${runId}/${operation}`, proof, retry, undefined, options);
       if (run.id !== runId) throw new Error("Invalid hosted workflow run ID.");
       return run;
     };
     const runs: ApplicationWorkflowRuns = {
       owns: (id) => proofs.has(id),
-      async start(input) {
+      async start(input, retry) {
         if (!identity || !acceptingStarts) {
           throw new Error("Hosted workflow admission is unavailable for this request.");
         }
@@ -161,12 +191,12 @@ export function createHostApplicationWorkflowRunner(
         }
         startedWorkflow = true;
         const proof = { workflowId, requestId: randomUUID() };
-        const run = await post("", proof, input.input);
+        const run = await post("", proof, retry, input.input);
         proofs.set(run.id, proof);
         return run;
       },
-      read: (id, options) => forRun(id, "read", options),
-      cancel: (id) => forRun(id, "cancel"),
+      read: (id, retry, options) => forRun(id, "read", retry, options),
+      cancel: (id, retry) => forRun(id, "cancel", retry),
     };
     const release = () => {
       active = false;

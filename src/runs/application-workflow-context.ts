@@ -1,3 +1,4 @@
+import type { BoundedRetryConfig } from "#veryfront/utils/config-resource-limits.ts";
 import { createPrivateAsyncLocalStorage } from "#veryfront/security/private-async-context.ts";
 import type { CreateWorkflowRunInput } from "./runs-client.ts";
 import type { RunsCallOptions, RunsOutput } from "./target/client.ts";
@@ -5,9 +6,13 @@ import type { RunsCallOptions, RunsOutput } from "./target/client.ts";
 export type ApplicationWorkflowRun = RunsOutput<"getRun">;
 export interface ApplicationWorkflowRuns {
   owns(runId: string): boolean;
-  start(input: CreateWorkflowRunInput): Promise<ApplicationWorkflowRun>;
-  read(runId: string, options?: RunsCallOptions): Promise<ApplicationWorkflowRun>;
-  cancel(runId: string): Promise<ApplicationWorkflowRun>;
+  start(input: CreateWorkflowRunInput, retry: BoundedRetryConfig): Promise<ApplicationWorkflowRun>;
+  read(
+    runId: string,
+    retry: BoundedRetryConfig,
+    options?: RunsCallOptions,
+  ): Promise<ApplicationWorkflowRun>;
+  cancel(runId: string, retry: BoundedRetryConfig): Promise<ApplicationWorkflowRun>;
 }
 
 const scopes = createPrivateAsyncLocalStorage<ApplicationWorkflowRuns>();
