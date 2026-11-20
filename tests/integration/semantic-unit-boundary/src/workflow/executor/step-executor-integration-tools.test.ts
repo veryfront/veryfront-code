@@ -16,7 +16,11 @@ import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import type { ToolExecutionContext } from "#veryfront/tool";
 import { tool } from "#veryfront/tool/factory.ts";
 import { step } from "#veryfront/workflow/dsl/step.ts";
-import type { CapturedTenantContext, WorkflowContext } from "#veryfront/workflow/types.ts";
+import type {
+  CapturedTenantContext,
+  RetryConfig,
+  WorkflowContext,
+} from "#veryfront/workflow/types.ts";
 import { runWithWorkflowTenant, StepExecutor } from "#veryfront/workflow/executor/step-executor.ts";
 
 function makeContext(): WorkflowContext {
@@ -50,9 +54,12 @@ describe("StepExecutor integration tool calls", () => {
   });
 
   /** A workflow step whose tool calls `salesforce__list_cases` with the step context. */
-  function runListCasesStep(): Promise<{ success: boolean; output?: unknown; error?: string }> {
+  function runListCasesStep(
+    retry?: RetryConfig,
+  ): Promise<{ success: boolean; output?: unknown; error?: string }> {
     const executor = new StepExecutor({});
     const node = step("list-cases", {
+      ...(retry ? { retry } : {}),
       tool: {
         id: "list-cases",
         description: "List Salesforce cases",
@@ -134,6 +141,55 @@ describe("StepExecutor integration tool calls", () => {
       result.error,
       "Salesforce refused list_cases for this workflow run: Insufficient permissions to use this integration tool",
     );
+  });
+
+  it("does not retry a permanent refusal under the step's retry policy", async () => {
+    setIntegrationEnv({
+      VERYFRONT_API_BASE_URL: "https://api.test",
+      VERYFRONT_API_TOKEN: "env-token",
+    });
+
+    let calls = 0;
+    const result = await withMockFetch(
+      () => {
+        calls++;
+        return Promise.resolve(Response.json({
+          error: "authorization-denied",
+          status: 403,
+          message: "Insufficient permissions to use this integration tool",
+        }, { status: 403 }));
+      },
+      () => runListCasesStep({ maxAttempts: 3, backoff: "fixed", initialDelay: 1 }),
+    );
+
+    assertEquals(result.success, false);
+    assertEquals(calls, 1);
+  });
+
+  it("retries a transient refusal under the step's retry policy", async () => {
+    setIntegrationEnv({
+      VERYFRONT_API_BASE_URL: "https://api.test",
+      VERYFRONT_API_TOKEN: "env-token",
+    });
+
+    let calls = 0;
+    const result = await withMockFetch(
+      () => {
+        calls++;
+        if (calls < 3) {
+          return Promise.resolve(Response.json({
+            error: "service-unavailable",
+            status: 503,
+            message: "Integration temporarily unavailable",
+          }, { status: 503 }));
+        }
+        return Promise.resolve(Response.json({ structuredContent: { data: [] } }));
+      },
+      () => runListCasesStep({ maxAttempts: 3, backoff: "fixed", initialDelay: 1 }),
+    );
+
+    assertEquals(result.success, true);
+    assertEquals(calls, 3);
   });
 
   it("fails the step with the reason when the integration returns a tool error", async () => {
