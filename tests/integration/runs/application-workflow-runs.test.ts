@@ -51,12 +51,14 @@ describe("hosted app workflow Runs client", () => {
       bindApplicationWorkflowIdentity(ctx);
       const paths: string[] = [];
       const bodies: Record<string, unknown>[] = [];
+      const testCredential = crypto.randomUUID();
+      const expectedAuthorization = `Basic ${btoa(`${testCredential}:${testCredential}`)}`;
       const runner = createHostApplicationWorkflowRunner(request, ctx, {
-        getHostEnv: () => "synthetic",
+        getHostEnv: () => testCredential,
         createOriginBoundFetch: () => async (url, init) => {
           const outbound = new Request(url, init);
           const path = new URL(outbound.url).pathname;
-          assertEquals(outbound.headers.get("authorization"), "Basic c3ludGhldGljOnN5bnRoZXRpYw==");
+          assert(outbound.headers.get("authorization") === expectedAuthorization);
           paths.push(path);
           bodies.push(await outbound.json());
           return Response.json({
