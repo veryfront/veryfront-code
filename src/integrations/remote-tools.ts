@@ -751,6 +751,14 @@ function decodeRemoteToolResult(result: BoundedJsonValue): unknown {
   return result;
 }
 
+/** A string property with visible text, trimmed. */
+function readNonBlankText(record: Record<string, unknown>, key: string): string | undefined {
+  const value = record[key];
+  return typeof value === "string" && privateTextTrim(value).length > 0
+    ? privateTextTrim(value)
+    : undefined;
+}
+
 /** The reason in a refused call's error result: the API or provider message, else the status. */
 function readRefusalReason(result: unknown): string {
   if (!isRecord(result)) return "the integration returned an error";
@@ -759,12 +767,11 @@ function readRefusalReason(result: unknown): string {
     payload = parseJsonText(result.message) ?? { message: result.message };
   }
   if (isRecord(payload)) {
-    for (const key of ["message", "error"] as const) {
-      const value = payload[key];
-      if (typeof value === "string" && privateTextTrim(value).length > 0) {
-        return privateTextTrim(value);
-      }
-    }
+    const error = readNonBlankText(payload, "error");
+    // `tool_error` is this module's own wrapper code, not a reason from the provider.
+    const reason = readNonBlankText(payload, "message") ??
+      (error === "tool_error" ? undefined : error);
+    if (reason !== undefined) return reason;
   }
   return typeof result.status === "number"
     ? `the API answered ${result.status}`
@@ -782,11 +789,20 @@ function refuseIntegrationToolCall(
   context: RemoteIntegrationExecutionContext,
 ): unknown {
   if (!context.throwOnRefusal) return result;
+  const displayName = integrationDisplayName(integration);
+  // A workflow run has no chat to show a connect card, so an authentication
+  // refusal names the connect URL in the message and in the error context.
+  const connectUrl = isRecord(result) && isIntegrationAuthenticationActionResult(result)
+    ? readNonBlankText(result, "connectUrl")
+    : undefined;
+  const reason = connectUrl === undefined || !isRecord(result)
+    ? readRefusalReason(result)
+    : `${readNonBlankText(result, "message") ?? `${displayName} is not connected.`} ` +
+      `Connect it at ${connectUrl}, then retry the run.`;
   throw INTEGRATION_TOOL_CALL_REFUSED.create({
-    message: `${integrationDisplayName(integration)} refused ${toolId} for this workflow run: ${
-      readRefusalReason(result)
-    }`,
+    message: `${displayName} refused ${toolId} for this workflow run: ${reason}`,
     ...(isRecord(result) && typeof result.status === "number" ? { status: result.status } : {}),
+    ...(connectUrl === undefined ? {} : { context: { connectUrl } }),
   });
 }
 

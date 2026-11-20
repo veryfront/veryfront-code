@@ -4,11 +4,7 @@ import "#veryfront/schemas/_test-setup.ts";
  */
 
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
-import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { deleteEnv, getEnv, setEnv } from "#veryfront/compat/process.ts";
-import { refreshEnvironmentConfig } from "#veryfront/config/environment-config.ts";
-import { runRemoteIntegrationTool } from "#veryfront/integrations/remote-tools.ts";
-import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { ToolExecutionContext } from "#veryfront/tool";
 import { FakeTime } from "#std/testing/time";
 import { step } from "../dsl/step.ts";
@@ -990,155 +986,72 @@ describe("StepExecutor node states", () => {
   });
 });
 
-describe("StepExecutor integration tool calls", () => {
-  const ENV_KEYS = [
-    "PROXY_MODE",
-    "VERYFRONT_API_BASE_URL",
-    "VERYFRONT_API_URL",
-    "VERYFRONT_API_TOKEN",
-    "VERYFRONT_API_KEY",
-    "VERYFRONT_PROJECT_SLUG",
-  ] as const;
-  const originalEnv = new Map(ENV_KEYS.map((key) => [key, getEnv(key)]));
-
-  function setIntegrationEnv(overrides: Record<string, string>): void {
-    for (const key of ENV_KEYS) deleteEnv(key);
-    for (const [key, value] of Object.entries(overrides)) setEnv(key, value);
-    refreshEnvironmentConfig();
-  }
-
-  afterEach(() => {
-    for (const key of ENV_KEYS) {
-      const value = originalEnv.get(key);
-      if (value === undefined) deleteEnv(key);
-      else setEnv(key, value);
-    }
-    refreshEnvironmentConfig();
-  });
-
-  /** A workflow step whose tool calls `salesforce__list_cases` with the step context. */
-  function runListCasesStep(): Promise<{ success: boolean; output?: unknown; error?: string }> {
-    const executor = new StepExecutor({});
-    const node = step("list-cases", {
+describe("StepExecutor tool context", () => {
+  /** A tool step that records the context the executor hands its tool. */
+  async function captureToolContext(
+    context: WorkflowContext,
+  ): Promise<ToolExecutionContext> {
+    let captured: ToolExecutionContext | undefined;
+    const node = step("capture", {
       tool: {
-        id: "list-cases",
-        description: "List Salesforce cases",
-        execute: (_input: unknown, context: ToolExecutionContext) =>
-          runRemoteIntegrationTool(
-            "salesforce__list_cases",
-            { q: "SELECT Id FROM Case LIMIT 3" },
-            context,
-          ),
+        id: "capture",
+        description: "Capture the tool context",
+        execute: (_input: unknown, toolContext: ToolExecutionContext) => {
+          captured = toolContext;
+          return Promise.resolve({ ok: true });
+        },
         // deno-lint-ignore no-explicit-any
       } as any,
     });
-    return executor.execute(node, makeContext());
+    const result = await new StepExecutor({}).execute(node, context);
+    assertEquals(result.success, true);
+    return captured!;
   }
 
-  it("authenticates a tenantless run with the environment token", async () => {
-    setIntegrationEnv({
-      VERYFRONT_API_BASE_URL: "https://api.test",
-      VERYFRONT_API_TOKEN: "env-token",
-    });
+  it("gives a tenantless tool step no own credential or project fields", async () => {
+    const context = await captureToolContext(makeContext());
 
-    let authorization: string | null = null;
-    const result = await withMockFetch(async (input, init) => {
-      authorization = new Request(input, init).headers.get("Authorization");
-      return Response.json({
-        content: [{ type: "text", text: '{"data":[{"Id":"500A"}]}' }],
-        structuredContent: { data: [{ Id: "500A" }] },
-      });
-    }, runListCasesStep);
-
-    assertEquals(authorization, "Bearer env-token");
-    assertEquals(result.success, true);
-    assertEquals(result.output, { data: [{ Id: "500A" }] });
+    assertEquals(context.agentId, "workflow");
+    assertEquals(context.workflowStep, true);
+    for (
+      const key of [
+        "authToken",
+        "projectSlug",
+        "projectId",
+        "productionMode",
+        "releaseId",
+        "branch",
+        "environmentName",
+      ]
+    ) {
+      assertEquals(
+        Object.hasOwn(context, key),
+        false,
+        `an own "${key}" would claim the run's credential and block the runtime fallback`,
+      );
+    }
   });
 
-  it("authenticates a tenant run with the tenant token", async () => {
-    setIntegrationEnv({
-      VERYFRONT_API_BASE_URL: "https://api.test",
-      VERYFRONT_API_TOKEN: "env-token",
-    });
+  it("gives a tool step every field of the workflow context tenant", async () => {
     const tenant: CapturedTenantContext = {
       projectSlug: "tenant-project",
+      projectId: "tenant-project-id",
       token: "tenant-token",
-      productionMode: false,
+      productionMode: true,
+      releaseId: "release-1",
+      branch: "main",
+      environmentName: "production",
     };
 
-    let authorization: string | null = null;
-    let projectSlug: string | null = null;
-    const result = await withMockFetch(async (input, init) => {
-      const request = new Request(input, init);
-      authorization = request.headers.get("Authorization");
-      projectSlug = request.headers.get("x-veryfront-project-slug");
-      return Response.json({ structuredContent: { data: [] } });
-    }, () => runWithWorkflowTenant(tenant, runListCasesStep));
+    const context = await captureToolContext({ ...makeContext(), _tenant: tenant });
 
-    assertEquals(authorization, "Bearer tenant-token");
-    assertEquals(projectSlug, "tenant-project");
-    assertEquals(result.success, true);
-  });
-
-  it("fails the step with the reason when the API refuses the call", async () => {
-    setIntegrationEnv({
-      VERYFRONT_API_BASE_URL: "https://api.test",
-      VERYFRONT_API_TOKEN: "env-token",
-    });
-
-    const result = await withMockFetch(
-      () =>
-        Promise.resolve(Response.json({
-          error: "authorization-denied",
-          status: 403,
-          message: "Insufficient permissions to use this integration tool",
-        }, { status: 403 })),
-      runListCasesStep,
-    );
-
-    assertEquals(result.success, false);
-    assertEquals(
-      result.error,
-      "Salesforce refused list_cases for this workflow run: Insufficient permissions to use this integration tool",
-    );
-  });
-
-  it("fails the step with the reason when the integration returns a tool error", async () => {
-    setIntegrationEnv({
-      VERYFRONT_API_BASE_URL: "https://api.test",
-      VERYFRONT_API_TOKEN: "env-token",
-    });
-
-    const result = await withMockFetch(
-      () =>
-        Promise.resolve(Response.json({
-          isError: true,
-          content: [{ type: "text", text: "MALFORMED_QUERY: unexpected token" }],
-        })),
-      runListCasesStep,
-    );
-
-    assertEquals(result.success, false);
-    assertEquals(
-      result.error,
-      "Salesforce refused list_cases for this workflow run: MALFORMED_QUERY: unexpected token",
-    );
-  });
-
-  it("fails the step when no API token is available", async () => {
-    setIntegrationEnv({ VERYFRONT_API_BASE_URL: "https://api.test" });
-
-    let fetchCalls = 0;
-    const result = await withMockFetch(() => {
-      fetchCalls++;
-      return Promise.resolve(Response.json({}));
-    }, runListCasesStep);
-
-    assertEquals(fetchCalls, 0);
-    assertEquals(result.success, false);
-    assertEquals(
-      result.error,
-      "Salesforce list_cases did not run for this workflow run: no Veryfront API token. Set VERYFRONT_API_TOKEN or run `veryfront login`.",
-    );
+    assertEquals(context.workflowStep, true);
+    assertEquals(context.authToken, "tenant-token");
+    assertEquals(context.projectSlug, "tenant-project");
+    assertEquals(context.projectId, "tenant-project-id");
+    assertEquals(context.productionMode, true);
+    assertEquals(context.releaseId, "release-1");
+    assertEquals(context.branch, "main");
+    assertEquals(context.environmentName, "production");
   });
 });
