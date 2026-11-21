@@ -167,8 +167,17 @@ To recurse through a local directory:
 veryfront knowledge ingest --path ./contracts --all --recursive --json
 ```
 
-Each source document becomes its own markdown file in the project knowledge
-tree.
+Each source becomes a Markdown document. Its title comes from the first
+level-one heading (a `#` heading or Setext underline) outside code and HTML blocks, with the filename as the fallback. An empty authored H1 keeps the filename title without adding another heading. In canonical knowledge
+directories, a new document gets a stable path derived from its source identity.
+Re-ingesting that source updates its existing document after a title change.
+Automatic custom destinations use a bounded source-derived prefix and the full
+source identity hash: `<SOURCE_STEM>-source-<SOURCE_HASH>.md`. This path stays
+stable when other documents are added or removed. Re-ingestion retains an
+existing custom path when its metadata identifies one owner and its current
+version is available. Local files and uploads have separate source identities;
+temporary Studio upload batch prefixes do not change the uploaded source identity.
+Pass `--slug` to set the path for a single source yourself.
 
 Use `--path ... --all` only when you want everything under that uploads prefix
 or local directory. For an exact file list, pass the file paths as positional
@@ -201,8 +210,8 @@ With `--json`, the command returns a machine-readable run result with
       "source": "uploads/demo/notes.txt",
       "localSourcePath": "<LOCAL_SOURCE_PATH>",
       "outputPath": "<OUTPUT_PATH>",
-      "remotePath": "knowledge/demo-notes.md",
-      "slug": "demo-notes",
+      "remotePath": "knowledge/source-<SOURCE_HASH>.md",
+      "slug": "source-<SOURCE_HASH>",
       "sourceType": "txt",
       "summary": "Converted document to markdown (87 chars).",
       "stats": {
@@ -259,6 +268,20 @@ download step, while local paths skip it.
 - `mdx`
 
 ## Troubleshooting
+
+### Custom destination ownership conflicts
+
+The CLI stops rather than overwriting a document or creating a second copy when
+it cannot establish a unique source owner. This includes incomplete path
+listings, multiple matching documents, missing version information, and older
+upload documents without a typed source identity. A filename or an upload-shaped
+path alone does not prove that a document came from an upload.
+
+Inspect the conflicting documents and verify their original sources before
+removing duplicates or migrating metadata. Do not assign an upload identity to a
+local document. If the bounded historical lookup is incomplete, narrow the
+custom destination or migrate the verified documents before retrying. An
+explicit `--slug` pins the single-source destination you specify.
 
 ### `Unknown command: knowledge`
 

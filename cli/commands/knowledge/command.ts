@@ -20,9 +20,14 @@ import { printJson } from "../../shared/json-output.ts";
 import { getBooleanArg, getStringArg } from "../../shared/parsed-args.ts";
 import { downloadUploadToFile, listAllUploads, type UploadItem } from "../uploads/command.ts";
 import { putBinaryKnowledgeAsset } from "./binary-assets.ts";
-import { type PublishedFileReceipt, putRemoteFileFromLocal } from "../files/command.ts";
+import {
+  type PublishedFileReceipt,
+  putRemoteFileFromLocal,
+  readRemoteFileIfExists,
+  type RemoteFileWriteExpectation,
+} from "../files/command.ts";
 import * as commandHelpers from "./command-helpers.ts";
-import { createRunUserLogger, type Logger, serverLogger } from "veryfront/utils";
+import { computeHash, createRunUserLogger, type Logger, serverLogger } from "veryfront/utils";
 import type { DocumentExtractionProgressEvent } from "veryfront/extensions/compat";
 import { writeRunResultIfConfigured } from "../../utils/write-run-result.ts";
 import { inspectOkfDocument } from "veryfront/knowledge";
@@ -34,6 +39,7 @@ import {
 import { classifyKnowledgeDirectoryPath, classifyKnowledgeSourcePath } from "./source-policy.ts";
 import {
   isOkfTextCompanion,
+  KnowledgeAllocationSession,
   type KnowledgeParserResult,
   runKnowledgeParser,
   validateOkfTextCompanionBytes,
@@ -291,8 +297,7 @@ export const formatKnowledgeUploadSource = commandHelpers.formatKnowledgeUploadS
 export const isLikelyLocalPath = commandHelpers.isLikelyLocalPath;
 export const stripChatUploadPrefix = commandHelpers.stripChatUploadPrefix;
 export const resolveKnowledgeDownloadOutputDir = commandHelpers.resolveKnowledgeDownloadOutputDir;
-export const buildSuggestedSlug = commandHelpers.buildSuggestedSlug;
-export const ensureUniqueSlugs = commandHelpers.ensureUniqueSlugs;
+export const buildKnowledgeResource = commandHelpers.buildKnowledgeResource;
 export const deriveKnowledgeRemotePath = commandHelpers.deriveKnowledgeRemotePath;
 export const deriveOkfBundleRelativePath = commandHelpers.deriveOkfBundleRelativePath;
 export const createKnowledgeIngestResult = commandHelpers.createKnowledgeIngestResult;
@@ -806,6 +811,12 @@ export async function collectKnowledgeSources(
   );
 }
 
+const MAX_PATH_CLAIM_ATTEMPTS = 3;
+
+function isConflict(error: unknown): boolean {
+  return !!error && typeof error === "object" && "status" in error && error.status === 409;
+}
+
 export async function ingestResolvedSources(
   sources: KnowledgeSource[],
   options: KnowledgeIngestExecutionOptions,
@@ -819,8 +830,21 @@ export async function ingestResolvedSources(
       localPath: string,
       metadata?: Record<string, unknown>,
       storageKind?: "binary",
+      expected?: RemoteFileWriteExpectation,
     ) => Promise<PublishedFileReceipt>;
     destinationBranch?: string;
+    /** Resolves a source's current canonical document in the selected writable scope. */
+    findRemoteKnowledgeSource?: (input: {
+      rootPath: string;
+      resource: string;
+      legacySource: string;
+      sourceKey: string;
+    }) => Promise<{ path: string; versionId: string } | undefined>;
+    listRemoteKnowledgeSuffixPaths?: (stem: string) => Promise<ReadonlySet<string> | undefined>;
+    /** Reads a remote knowledge file, or `undefined` when it does not exist. */
+    readRemoteKnowledgeFile?: (
+      remotePath: string,
+    ) => Promise<{ content: string; versionId?: string } | undefined>;
     indexKnowledgeDocument?: (
       input: IndexKnowledgeDocumentInput,
     ) => Promise<CanonicalKnowledgeIndexReceipt>;
@@ -831,11 +855,14 @@ export async function ingestResolvedSources(
   ingested: KnowledgeIngestFileResult[];
   failed: KnowledgeIngestFailedFileResult[];
 }> {
+  const allocationSession = new KnowledgeAllocationSession();
   validateOkfBundleOptions(options);
   if (options.slug && sources.length !== 1) {
     throw new Error("--slug can only be used with a single explicit source.");
   }
 
+  const rootPath = normalizeKnowledgeInputPath(options.knowledgePath).replace(/\/+$/, "");
+  const canonicalRoot = rootPath === "knowledge" || rootPath.startsWith("knowledge/");
   const okfRelativePaths = buildOkfBundleRelativePaths(sources, options);
   const okfCompanionPaths = options.okfBundle && options.path
     ? await collectReferencedOkfCompanionPaths(sources, options.path)
@@ -851,11 +878,21 @@ export async function ingestResolvedSources(
       } else hasBinaryCompanion = true;
     }
   }
-  const slugs = options.slug ? [options.slug] : ensureUniqueSlugs(sources);
+  const parserSourceFields = (source: KnowledgeSource) => {
+    const identity = commandHelpers.buildKnowledgeIngestIdentity(source);
+    return {
+      slug: options.slug,
+      sourceName: commandHelpers.buildKnowledgeSourceFileName(source),
+      resource: canonicalRoot ? identity.resource : commandHelpers.buildKnowledgeResource(source),
+      sourceKey: identity.sourceKey,
+      sourceKind: source.kind,
+      sourceReference: buildSourceReference(source),
+    };
+  };
   const preflightParsers = new Map<KnowledgeSource, KnowledgeParserResult>();
   if (options.okfBundle && hasBinaryCompanion) {
     // Validate the complete bundle before committing any immutable absent-only asset.
-    for (const [index, source] of sources.entries()) {
+    for (const source of sources) {
       deps.signal?.throwIfAborted();
       preflightParsers.set(
         source,
@@ -863,13 +900,12 @@ export async function ingestResolvedSources(
           filePath: source.localPath,
           outputDir: deps.outputDir,
           description: options.description,
-          slug: slugs[index],
-          sourceReference: buildSourceReference(source),
+          ...parserSourceFields(source),
           okfRelativePath: okfRelativePaths.get(source),
           ...(okfCompanionPaths.has(okfRelativePaths.get(source) ?? "")
             ? { okfRole: "companion" as const }
             : {}),
-        }, { signal: deps.signal }),
+        }, { signal: deps.signal, allocationSession }),
       );
     }
   }
@@ -907,7 +943,8 @@ export async function ingestResolvedSources(
 
   for (const [index, source] of sources.entries()) {
     deps.signal?.throwIfAborted();
-    const sourceReference = buildSourceReference(source);
+    const parserFields = parserSourceFields(source);
+    const { sourceReference, resource, sourceKey } = parserFields;
 
     const sourceName = buildKnowledgeSourceName(source);
     const sourceType = classifyKnowledgeSourceType(sourceName);
@@ -935,6 +972,7 @@ export async function ingestResolvedSources(
       });
       const eventLogger = deps.eventLogger;
       const parserDeps = {
+        allocationSession,
         signal: deps.signal,
         ...(eventLogger
           ? {
@@ -952,8 +990,7 @@ export async function ingestResolvedSources(
         filePath: source.localPath,
         outputDir: deps.outputDir,
         description: options.description,
-        slug: slugs[index],
-        sourceReference,
+        ...parserFields,
         okfRelativePath: okfRelativePaths.get(source),
         ...(okfCompanionPaths.has(okfRelativePaths.get(source) ?? "")
           ? { okfRole: "companion" as const }
@@ -971,22 +1008,89 @@ export async function ingestResolvedSources(
     let failureReason: KnowledgeIngestFailureReason = "upload_error";
     try {
       const okfRelativePath = okfRelativePaths.get(source);
-      const remotePath = okfRelativePath === undefined
+      // A pinned --slug and OKF bundle paths are exact; derived names must not overwrite another source.
+      const claimsPath = okfRelativePath === undefined && !options.slug;
+      const parserRemotePath = okfRelativePath === undefined
         ? deriveKnowledgeRemotePath(
           parser.sandbox_output_path,
           deps.outputDir,
           options.knowledgePath,
         )
         : deriveOkfBundleRemotePath(okfRelativePath, options.knowledgePath);
+      const derivedRemotePath = claimsPath && !canonicalRoot
+        ? `${rootPath}/${await commandHelpers.buildCustomKnowledgeSlug(source)}.md`
+        : parserRemotePath;
+      const preferredRemotePath = claimsPath && canonicalRoot && parser.preferred_slug
+        ? deriveKnowledgeRemotePath(
+          join(deps.outputDir, `${parser.preferred_slug}.md`),
+          deps.outputDir,
+          options.knowledgePath,
+        )
+        : undefined;
       const uploadMetadata = options.okfBundle
         ? buildOkfBundleUploadMetadata(options.knowledgePath)
         : undefined;
-      const uploaded = await deps.uploadKnowledgeFile(
-        remotePath,
-        parser.sandbox_output_path,
-        uploadMetadata,
-        parser.storage_kind,
-      );
+      const legacySource = sourceReference;
+      const findSource = claimsPath && canonicalRoot ? deps.findRemoteKnowledgeSource : undefined;
+      const currentSource = await findSource?.({ rootPath, resource, legacySource, sourceKey });
+      const newSourcePath = findSource && !currentSource
+        ? `${rootPath}/source-${await computeHash(sourceKey)}.md`
+        : undefined;
+      if (
+        currentSource &&
+        (normalizeKnowledgeInputPath(currentSource.path) !== currentSource.path ||
+          !currentSource.path.startsWith(`${rootPath}/`) ||
+          !currentSource.path.toLowerCase().endsWith(".md"))
+      ) {
+        throw new Error("Source lookup returned a path outside the requested Markdown scope");
+      }
+      let remotePath = derivedRemotePath;
+      let uploaded: PublishedFileReceipt | undefined;
+      const absenceConflicts = new Map<string, unknown>();
+      for (let attempt = 1; !uploaded; attempt += 1) {
+        const claim = currentSource
+          ? { remotePath: currentSource.path, expected: { versionId: currentSource.versionId } }
+          : newSourcePath
+          ? { remotePath: newSourcePath, expected: { absent: true as const } }
+          : claimsPath
+          ? await commandHelpers.claimGeneratedKnowledgePath({
+            remotePath: derivedRemotePath,
+            preferredRemotePath,
+            resource,
+            legacySource,
+            sourceKey,
+            sourceKind: source.kind,
+            scanSuffixGaps: !canonicalRoot,
+            customSource: canonicalRoot ? undefined : source,
+            listSuffixPaths: deps.listRemoteKnowledgeSuffixPaths,
+            absenceConflicts,
+            readRemoteFile: deps.readRemoteKnowledgeFile,
+          })
+          : { remotePath: derivedRemotePath };
+        remotePath = claim.remotePath;
+        try {
+          uploaded = await deps.uploadKnowledgeFile(
+            remotePath,
+            parser.sandbox_output_path,
+            uploadMetadata,
+            parser.storage_kind,
+            claim.expected,
+          );
+        } catch (error) {
+          // Another source took a free path after it was read: choose again. A conflict on
+          // this source's own document means a newer write won, so it must not be overwritten.
+          if (
+            newSourcePath || !claim.expected || !("absent" in claim.expected) ||
+            attempt >= MAX_PATH_CLAIM_ATTEMPTS || !isConflict(error)
+          ) {
+            throw error;
+          }
+          absenceConflicts.set(remotePath, error);
+        }
+      }
+      if (remotePath !== parserRemotePath) {
+        parser = { ...parser, slug: basename(remotePath).replace(/\.md$/i, "") };
+      }
       published = uploaded;
       deps.signal?.throwIfAborted();
 
@@ -1124,6 +1228,24 @@ export async function knowledgeCommand(args: ParsedArgs): Promise<void> {
             projectSlug: config.projectSlug,
             outputDir,
             runParser: runKnowledgeParser,
+            findRemoteKnowledgeSource: (source) =>
+              commandHelpers.findRemoteKnowledgeIngestSource({
+                ...source,
+                client,
+                projectSlug: config.projectSlug,
+                branch: options.branch,
+              }),
+            listRemoteKnowledgeSuffixPaths: (stem) =>
+              commandHelpers.listRemoteKnowledgeSuffixPaths({
+                client,
+                projectSlug: config.projectSlug,
+                branch: options.branch,
+                stem,
+              }),
+            readRemoteKnowledgeFile: (remotePath) =>
+              readRemoteFileIfExists(client, config.projectSlug, remotePath, {
+                branch: options.branch,
+              }),
             eventLogger,
             indexKnowledgeDocument: (indexInput) =>
               runWithVeryfrontCloudContextAsync({
@@ -1132,7 +1254,7 @@ export async function knowledgeCommand(args: ParsedArgs): Promise<void> {
                 projectSlug: config.projectSlug,
                 serviceLayer: "cloud",
               }, () => indexKnowledgeDocument(indexInput)),
-            uploadKnowledgeFile: (remotePath, localPath, metadata, storageKind) =>
+            uploadKnowledgeFile: (remotePath, localPath, metadata, storageKind, expected) =>
               storageKind === "binary"
                 ? putBinaryKnowledgeAsset({
                   client,
@@ -1152,6 +1274,7 @@ export async function knowledgeCommand(args: ParsedArgs): Promise<void> {
                     branch: options.branch,
                   },
                   metadata,
+                  expected,
                 ),
           });
           const runResult = buildKnowledgeIngestRunResult({
