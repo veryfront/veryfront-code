@@ -1,4 +1,7 @@
-import { getRuntimeRequestContext } from "#veryfront/platform/runtime-request-context.ts";
+import {
+  getRuntimeRequestContext,
+  hasRuntimeRequestContextOverride,
+} from "#veryfront/platform/runtime-request-context.ts";
 import {
   peekVeryfrontCloudCatalog,
   type VeryfrontCloudCatalogScopeKey,
@@ -183,15 +186,20 @@ function resolveHostCredential(): { apiToken?: string; usesHostCredential: boole
   };
 }
 
-function getResolvedVeryfrontCloudContext():
+function getResolvedVeryfrontCloudContext(credentialScope?: "explicit"):
   & Omit<VeryfrontCloudBootstrap, "apiBaseUrl">
   & { usesHostCredential: boolean } {
-  const requestContext = getRuntimeRequestContext();
+  const requestContext = credentialScope === "explicit" && !hasRuntimeRequestContextOverride()
+    ? null
+    : getRuntimeRequestContext();
   const scopedContext = getCurrentVeryfrontCloudContext();
   const runtimeBootstrap = getRuntimeBootstrap();
   const scopedToken = requestContext?.token ?? scopedContext?.apiToken;
-  const hostCredential = scopedToken === undefined ? resolveHostCredential() : undefined;
-  const apiToken = scopedToken ?? hostCredential?.apiToken ?? runtimeBootstrap.apiToken;
+  const hostCredential = scopedToken === undefined && credentialScope !== "explicit"
+    ? resolveHostCredential()
+    : undefined;
+  const apiToken = scopedToken ?? hostCredential?.apiToken ??
+    (credentialScope === "explicit" ? undefined : runtimeBootstrap.apiToken);
 
   return {
     apiToken,
@@ -216,10 +224,13 @@ export function getVeryfrontCloudProjectSlug(): string | undefined {
   return getResolvedVeryfrontCloudContext().projectSlug;
 }
 
-export function getVeryfrontCloudBootstrap(): VeryfrontCloudBootstrap {
+/** Explicit credentials come from a bound execution or Cloud scope, excluding the host and filesystem proxy. */
+export function getVeryfrontCloudBootstrap(credentialScope?: "explicit"): VeryfrontCloudBootstrap {
   const scopedContext = getCurrentVeryfrontCloudContext();
   const scopedApiBaseUrl = scopedContext?.apiBaseUrl?.trim();
-  const { usesHostCredential, ...resolvedContext } = getResolvedVeryfrontCloudContext();
+  const { usesHostCredential, ...resolvedContext } = getResolvedVeryfrontCloudContext(
+    credentialScope,
+  );
 
   // A scoped endpoint is a different credential domain. Never attach a
   // request- or host-owned platform token to it: callers that select an

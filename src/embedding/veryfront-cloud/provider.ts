@@ -22,7 +22,7 @@ export function createVeryfrontCloudEmbeddingModel(modelId: string): EmbeddingRu
 /** @internal Build an embedding transport with private signed inference authority. */
 export function createVeryfrontCloudInferenceEmbeddingModel(
   modelId: string,
-  inferenceCredential: string,
+  inferenceCredential: string | (() => string),
   options: { apiBaseUrl: string; assertInferenceCredentialActive: () => void },
 ): EmbeddingRuntime {
   return createCloudEmbeddingModel(modelId, inferenceCredential, options);
@@ -30,13 +30,13 @@ export function createVeryfrontCloudInferenceEmbeddingModel(
 
 function createCloudEmbeddingModel(
   modelId: string,
-  inferenceCredential?: string,
+  inferenceCredential?: string | (() => string),
   options?: { apiBaseUrl: string; assertInferenceCredentialActive: () => void },
 ): EmbeddingRuntime {
   options?.assertInferenceCredentialActive();
   const { provider, modelId: upstreamModelId } = parseVeryfrontCloudModelId(modelId, "embedding");
   const { apiBaseUrl, apiToken, projectSlug } = requireVeryfrontCloudBootstrap(
-    inferenceCredential,
+    typeof inferenceCredential === "function" ? inferenceCredential() : inferenceCredential,
     options?.apiBaseUrl,
   );
   const { baseURL, neutral, wireModelProvider } = resolveVeryfrontCloudGatewayRoute(
@@ -52,6 +52,9 @@ function createCloudEmbeddingModel(
         ? { neutralRoute: true, ...(wireModelProvider ? { wireModelProvider } : {}) }
         : {}),
       inferenceCredential: inferenceCredential !== undefined,
+      ...(typeof inferenceCredential === "function"
+        ? { getInferenceCredential: inferenceCredential }
+        : {}),
       ...(options
         ? { assertInferenceCredentialActive: options.assertInferenceCredentialActive }
         : {}),

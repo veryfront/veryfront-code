@@ -33,6 +33,7 @@ import {
 } from "../utils/request-host.ts";
 import { resolveAdapter } from "./adapter-factory.ts";
 import { resolveEnvironment } from "./environment-resolution.ts";
+import { bindApplicationWorkflowIdentity } from "../handlers/request/api/application-workflow-source.ts";
 import { buildHandlerContext } from "./handler-context-builder.ts";
 import { parseProxyEnvironment } from "./proxy-environment.ts";
 import { extractRequestHeaders, resolveProject } from "./project-resolution.ts";
@@ -547,6 +548,10 @@ export async function resolveProjectRuntimeContext(
       }
       : {}),
   });
+
+  if (input.installedProject || (input.isProxyMode && input.proxyTrust.proxyTrusted === true)) {
+    bindApplicationWorkflowIdentity(handlerContext);
+  }
 
   if (adapterRes.previewDocumentSourceSnapshot !== undefined) {
     seedPreviewDocumentSourceSnapshot(
