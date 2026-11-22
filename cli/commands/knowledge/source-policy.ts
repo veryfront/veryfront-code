@@ -66,6 +66,8 @@ const TEXT_FALLBACK_FILENAMES = new Set([
   "changelog",
 ]);
 
+export const KNOWLEDGE_OUTPUT_CLAIM_DIRECTORY = ".veryfront/knowledge-output-claims";
+
 const IGNORED_DIRECTORY_NAMES = new Set([
   ".git",
   ".hg",
@@ -134,6 +136,17 @@ function classifyCommonKnowledgePath(
   allowHidden = false,
 ): KnowledgeIngestSourceDecision | null {
   const segments = normalizePathSegments(path);
+  if (
+    segments.some((segment, index) =>
+      segment === ".veryfront" && segments[index + 1] === "knowledge-output-claims"
+    )
+  ) {
+    return {
+      kind: "skip",
+      reason: "ignored_directory",
+      message: `Ignored directory skipped: ${KNOWLEDGE_OUTPUT_CLAIM_DIRECTORY}`,
+    };
+  }
   const hiddenSegment = findHiddenSegment(segments);
   if (!allowHidden && hiddenSegment != null) {
     return {
