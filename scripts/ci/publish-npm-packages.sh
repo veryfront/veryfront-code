@@ -20,11 +20,41 @@
 #                    fail closed: a name@version that already exists on npm is
 #                    never accepted as this workflow's publish. Requires:
 #                    VERSION, GITHUB_SHA, NPM_PACK_DIR.
+#   core-release-assets <dir>
+#                    Copy the verified canonical `veryfront` tarball to
+#                    <dir>/veryfront-$VERSION.tgz and write its provenance record
+#                    to <dir>/veryfront-$VERSION.npm-provenance.json, for
+#                    publication as GitHub release assets while npm publication
+#                    of the core is suspended. Requires: VERSION, GITHUB_SHA,
+#                    NPM_PACK_DIR.
+#
+# NPM_CORE_PUBLISH_SUSPENDED=true removes the root `veryfront` package from npm
+# publication while every @veryfront/ext-* package still publishes. The release
+# workflow sets it from an owner-controlled repository variable when npm refuses
+# the core package. Stable publication fails closed in that state.
 set -euo pipefail
 
+CORE_RELEASE_REPOSITORY="https://github.com/veryfront/veryfront-code"
+
 usage() {
-  echo "Usage: $0 <rc-publish|preflight|release-publish>" >&2
+  echo "Usage: $0 <rc-publish|preflight|release-publish|core-release-assets <dir>>" >&2
   exit 2
+}
+
+# Accept only the two values the workflow writes. Anything else is a
+# configuration error, never a silent default.
+validate_npm_core_publish_suspended() {
+  case "${NPM_CORE_PUBLISH_SUSPENDED:-false}" in
+    true|false) ;;
+    *)
+      echo "::error::NPM_CORE_PUBLISH_SUSPENDED must be true or false." >&2
+      return 1
+      ;;
+  esac
+}
+
+npm_core_publish_suspended() {
+  [[ "${NPM_CORE_PUBLISH_SUSPENDED:-false}" == "true" ]]
 }
 
 require_env() {
@@ -47,6 +77,10 @@ package_dirs() {
     fi
     printf '%s\n' "${PACKAGE_DIR}"
   done
+  if npm_core_publish_suspended; then
+    echo "::notice::npm publication of veryfront is suspended; publishing extensions only" >&2
+    return 0
+  fi
   printf '%s\n' npm
 }
 
@@ -91,7 +125,11 @@ update_package_version() {
 
 canonical_tarball_for_package_dir() {
   PACKAGE_DIR="$1"
-  PACKAGE_NAME="$(jq -r '.name' "${PACKAGE_DIR}/package.json")"
+  canonical_tarball_for_package_name "$(jq -r '.name' "${PACKAGE_DIR}/package.json")"
+}
+
+canonical_tarball_for_package_name() {
+  PACKAGE_NAME="$1"
   PACKAGE_FILE="$(
     jq -er --arg name "${PACKAGE_NAME}" --arg version "${VERSION}" '
       [.packages[] | select(.name == $name and .version == $version) | .file]
@@ -277,6 +315,38 @@ recover_publish_rejection_after_conflict() {
   return 1
 }
 
+# npm reports a rejected trusted-publishing write as a bare E404, the same
+# answer it gives for a missing package. The reason (a failed OIDC token
+# exchange, or an exchanged token the registry refused) is only in npm's debug
+# log, which the runner discards, so a rejected publish prints those lines.
+# Diagnostics only: never changes the publish status.
+print_npm_trusted_publishing_diagnostics() {
+  local package_name="$1"
+  local publish_output="$2"
+  local debug_log oidc_lines grep_status
+  debug_log="$(printf '%s\n' "${publish_output}" \
+    | sed -nE 's/^npm (error|ERR!) A complete log of this run can be found in: (.+)$/\2/p' \
+    | tail -n 1)"
+  if [[ -z "${debug_log}" || ! -r "${debug_log}" ]]; then
+    echo "No npm debug log is available for the rejected ${package_name}@${VERSION} publish; trusted publishing diagnostics are skipped."
+    return 0
+  fi
+  oidc_lines="$(grep -iE '(^|[[:space:]])oidc([[:space:]]|$)|oidc/token/exchange|http fetch PUT' "${debug_log}")" \
+    && grep_status=0 || grep_status=$?
+  if [[ "${grep_status}" -gt 1 ]]; then
+    echo "The npm debug log for the rejected ${package_name}@${VERSION} publish could not be read (grep status ${grep_status})."
+    return 0
+  fi
+  if [[ -z "${oidc_lines}" ]]; then
+    echo "The npm debug log for the rejected ${package_name}@${VERSION} publish has no trusted publishing (OIDC) lines: npm did not attempt a token exchange."
+    return 0
+  fi
+  echo "npm trusted publishing (OIDC) log lines for the rejected ${package_name}@${VERSION} publish:"
+  sanitize_npm_lookup_output "${oidc_lines}" \
+    | sed -E 's#eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_.-]+#<REDACTED>#g' \
+    | tail -n 20
+}
+
 # Never toggles errexit: `set -e` is process-global, so flipping it here would
 # clobber a caller that disabled it to capture this helper's status.
 #
@@ -318,6 +388,7 @@ publish_npm_package_with_retry() {
         && recover_publish_rejection_after_conflict "${PUBLISH_PACKAGE_NAME}" "${PUBLISH_OUTPUT}"; then
         return 0
       fi
+      print_npm_trusted_publishing_diagnostics "${PUBLISH_PACKAGE_NAME}" "${PUBLISH_OUTPUT}"
       return "${PUBLISH_STATUS}"
     fi
     if ! is_identity_token_read_failure "${PUBLISH_OUTPUT}"; then
@@ -602,6 +673,7 @@ rc_tag_for_package() {
 
 run_rc_publish() {
   require_env VERSION GITHUB_SHA NPM_PACK_DIR
+  validate_npm_core_publish_suspended
   verify_npm_compatibility_artifact
 
   if [[ "${NPM_MAINTENANCE_RELEASE:-false}" == "true" ]]; then
@@ -626,7 +698,12 @@ run_rc_publish() {
 # Each child uses its own shell state and the parent's verified canonical artifact.
 run_rc_publish_package() {
   require_env VERSION GITHUB_SHA NPM_PACK_DIR
+  validate_npm_core_publish_suspended
   PACKAGE_DIR="$1"
+  if [[ "${PACKAGE_DIR}" == "npm" ]] && npm_core_publish_suspended; then
+    echo "::error::npm publication of veryfront is suspended; refusing to publish the root package." >&2
+    return 1
+  fi
   PUBLISH_SPEC="$(canonical_tarball_for_package_dir "${PACKAGE_DIR}")" || PUBLISH_SPEC=""
   if [[ -z "${PUBLISH_SPEC}" ]]; then
     PACKAGE_NAME="$(jq -r '.name' "${PACKAGE_DIR}/package.json")"
@@ -741,6 +818,11 @@ run_preflight() {
 run_release_publish() {
   local published_packages=()
   require_env VERSION GITHUB_SHA NPM_PACK_DIR
+  validate_npm_core_publish_suspended
+  if npm_core_publish_suspended; then
+    echo "::error::Stable releases are not supported while npm publication of veryfront is suspended. Restore npm publication of the core package or clear NPM_CORE_PUBLISH_SUSPENDED first." >&2
+    return 1
+  fi
   verify_npm_compatibility_artifact
 
   for PACKAGE_DIR in $(package_dirs); do
@@ -756,12 +838,61 @@ run_release_publish() {
   wait_for_stable_npm_git_heads "${published_packages[@]}"
 }
 
+# Publish the canonical core tarball as release assets while npm refuses it.
+# The provenance record carries the same identity the npm registry would:
+# exact name, exact version, SHA-512 integrity of the bytes, source commit and
+# source repository. Consumers verify the tarball against it before installing.
+run_core_release_assets() {
+  local output_dir="${1:-}" tarball manifest integrity target
+  require_env VERSION GITHUB_SHA NPM_PACK_DIR
+  if [[ -z "${output_dir}" || ! -d "${output_dir}" ]]; then
+    echo "::error::core-release-assets requires an existing output directory." >&2
+    return 1
+  fi
+  if [[ ! "${GITHUB_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
+    echo "::error::GITHUB_SHA must be a full lowercase commit SHA." >&2
+    return 1
+  fi
+  verify_npm_compatibility_artifact
+  tarball="$(canonical_tarball_for_package_name veryfront)"
+  if [[ ! -f "${tarball}" ]]; then
+    echo "::error::Canonical veryfront tarball is missing." >&2
+    return 1
+  fi
+  manifest="$(tar -xzOf "${tarball}" package/package.json)"
+  if ! jq -e --arg version "${VERSION}" \
+    '.name == "veryfront" and .version == $version' <<<"${manifest}" >/dev/null; then
+    echo "::error::Canonical veryfront tarball does not contain veryfront@${VERSION}." >&2
+    return 1
+  fi
+  integrity="sha512-$(openssl dgst -sha512 -binary "${tarball}" | base64 | tr -d '\n')"
+  if [[ ! "${integrity}" =~ ^sha512-[A-Za-z0-9+/]{86}==$ ]]; then
+    echo "::error::Computed veryfront tarball integrity is malformed." >&2
+    return 1
+  fi
+  target="${output_dir}/veryfront-${VERSION}.tgz"
+  cp -- "${tarball}" "${target}"
+  jq -n \
+    --arg version "${VERSION}" \
+    --arg integrity "${integrity}" \
+    --arg git_head "${GITHUB_SHA}" \
+    --arg repository "${CORE_RELEASE_REPOSITORY}" \
+    '{
+      schema_version: 1,
+      package: {name: "veryfront", version: $version, integrity: $integrity},
+      git_head: $git_head,
+      repository: $repository
+    }' > "${output_dir}/veryfront-${VERSION}.npm-provenance.json"
+  echo "Prepared veryfront@${VERSION} release assets (${integrity})."
+}
+
 if [[ "${BASH_SOURCE[0]}" = "$0" ]]; then
   MODE="${1:-}"
   case "${MODE}" in
     rc-publish) run_rc_publish ;;
     preflight) run_preflight ;;
     release-publish) run_release_publish ;;
+    core-release-assets) run_core_release_assets "${2:-}" ;;
     *) usage ;;
   esac
 fi

@@ -4,6 +4,7 @@ import { buildFileCacheKeyPrefix, buildFileListCacheKey } from "./cache-keys.ts"
 import { withRetryOnTransient } from "./retry.ts";
 import type { ResolvedContentContext } from "./types.ts";
 import { currentRequestContext } from "#veryfront/platform/request-context-access.ts";
+import { FileSnapshotChangedError } from "../../file-snapshot-error.ts";
 
 export interface ContentContextProvider {
   isProductionMode: () => boolean;
@@ -39,6 +40,7 @@ interface LoadAllProjectFilesOptions {
   operationLabel: string;
   contentContext?: ResolvedContentContext | null;
   snapshotRetryCount?: number;
+  forceRefresh?: boolean;
 }
 
 const MAX_SNAPSHOT_RETRIES = 3;
@@ -62,6 +64,7 @@ export async function loadAllProjectFiles({
   operationLabel,
   contentContext,
   snapshotRetryCount = 0,
+  forceRefresh = false,
 }: LoadAllProjectFilesOptions): Promise<ProjectFile[]> {
   const snapshotVersion = contextProvider?.getSourceSnapshotVersion?.();
   const cacheStart = performance.now();
@@ -72,9 +75,10 @@ export async function loadAllProjectFiles({
     contextProvider?.isPersistentCacheInvalidated?.(cacheKeyPrefix) ?? false;
   // The adapter keys its own listing to the request credential, so a hosted
   // request may reuse it. The fallback key below is shared, so it may not.
-  const skipPersistentCache = !!currentRequestContext()?.token || persistentCacheInvalidated;
+  const skipPersistentCache = forceRefresh || !!currentRequestContext()?.token ||
+    persistentCacheInvalidated;
 
-  const adapterFiles = !persistentCacheInvalidated
+  const adapterFiles = !forceRefresh && !persistentCacheInvalidated
     ? await contextProvider?.getFileList?.(ctx)
     : undefined;
 
@@ -141,7 +145,7 @@ export async function loadAllProjectFiles({
     (snapshotIdentity === undefined || currentSnapshotIdentity === undefined ||
       snapshotIdentity === currentSnapshotIdentity);
   const invalidated = contextProvider?.isPersistentCacheInvalidated?.(cacheKeyPrefix) ?? false;
-  const invalidatedDuringFetch = !skipPersistentCache && invalidated;
+  const invalidatedDuringFetch = (forceRefresh || !skipPersistentCache) && invalidated;
   if (snapshotChanged || invalidatedDuringFetch) {
     logger.debug("getAllFilesRaw - discarding fallback fetch across snapshot change", {
       cacheKey,
@@ -158,7 +162,11 @@ export async function loadAllProjectFiles({
         operationLabel,
         contentContext: ctx,
         snapshotRetryCount: snapshotRetryCount + 1,
+        forceRefresh,
       });
+    }
+    if (forceRefresh) {
+      throw new FileSnapshotChangedError("File listing changed during authority refresh");
     }
     logger.warn("getAllFilesRaw - snapshot kept changing, returning uncached API result", {
       cacheKey,

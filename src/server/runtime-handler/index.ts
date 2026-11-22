@@ -38,7 +38,7 @@ import type { SourceIntegrationPolicyManifest } from "#veryfront/integrations/so
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { isTruthyEnvValue } from "#veryfront/utils/constants/env.ts";
 import {
-  isConfigOptionalControlPlaneRunRequest,
+  isConfigOptionalControlPlaneRequest,
   isSignedChannelDispatch,
   isSignedControlPlaneDispatch,
 } from "#veryfront/channels/control-plane.ts";
@@ -94,6 +94,7 @@ import { HMRHandler } from "../handlers/preview/hmr.handler.ts";
 import { MarkdownPreviewHandler } from "../handlers/preview/markdown-preview.handler.ts";
 import { OpenAPIHandler } from "../handlers/request/openapi.handler.ts";
 import { OpenAPIDocsHandler } from "../handlers/request/openapi-docs.handler.ts";
+import { RuntimeCapabilitiesHandler } from "../handlers/request/runtime-capabilities.handler.ts";
 import { InternalAgentsListHandler } from "../handlers/request/internal-agents-list.handler.ts";
 import { PublicAgentMetadataHandler } from "../handlers/request/public-agent-metadata.handler.ts";
 import { PublicAgentsListHandler } from "../handlers/request/public-agents-list.handler.ts";
@@ -248,7 +249,7 @@ function skipsApplicationAuth(
     isCspReportRequest(request.method, pathname) ||
     isSignedControlPlaneDispatch(request) ||
     isSignedChannelDispatch(request) ||
-    isConfigOptionalControlPlaneRunRequest(request.method, pathname);
+    isConfigOptionalControlPlaneRequest(request.method, pathname);
 }
 
 function applyApplicationAuthResult(
@@ -453,6 +454,7 @@ export const HANDLER_NAMES = [
   "OpenAPIHandler",
   "OpenAPIDocsHandler",
   "InternalAgentsListHandler",
+  "RuntimeCapabilitiesHandler",
   "PublicAgentsListHandler",
   "PublicAgentMetadataHandler",
   "AgentStreamHandler",
@@ -526,6 +528,7 @@ const handlerFactories: Record<
   OpenAPIHandler: () => new OpenAPIHandler(),
   OpenAPIDocsHandler: () => new OpenAPIDocsHandler(),
   InternalAgentsListHandler: () => new InternalAgentsListHandler(),
+  RuntimeCapabilitiesHandler: () => new RuntimeCapabilitiesHandler(),
   PublicAgentsListHandler: () => new PublicAgentsListHandler(),
   PublicAgentMetadataHandler: () => new PublicAgentMetadataHandler(),
   AgentStreamHandler: () => new AgentStreamHandler(),

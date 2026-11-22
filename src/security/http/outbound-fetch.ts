@@ -17,8 +17,10 @@ import { createNativeRequestInit } from "#veryfront/platform/compat/http/native-
 import { isBun, isNode } from "#veryfront/platform/compat/runtime.ts";
 import {
   guardedEgressFetch,
+  isAllowlistablePrivateAddressEgressBlock,
   isInternalEgressOverrideEnabled,
   type ResolveWorkerHost,
+  WORKER_INTERNAL_EGRESS_ALLOWED_HOSTS_ENV,
   WorkerEgressBlockedError,
   type WorkerEgressFetch,
   type WorkerEgressPinnedFetch,
@@ -119,6 +121,7 @@ const RequestUrlGet = Object.getOwnPropertyDescriptor(NativeRequest.prototype, "
 const StringPrototypeIndexOf = String.prototype.indexOf;
 const StringPrototypeSlice = String.prototype.slice;
 const StringPrototypeTrim = String.prototype.trim;
+const StringPrototypeEndsWith = String.prototype.endsWith;
 const NativeSet = Set;
 const ObjectCreate = Object.create;
 const SetPrototypeAdd = NativeSet.prototype.add;
@@ -496,12 +499,31 @@ function snapshotOutboundFetchTransport(
   });
 }
 
+/**
+ * The fix for a hostname whose DNS answer is private. Staging, VPN, and
+ * self-hosted APIs resolve that way legitimately; only the operator can vouch
+ * for one, so the hint names the host-environment allowlist rather than a
+ * project setting.
+ */
+const PRIVATE_DNS_ANSWER_HINT =
+  `The host resolves to a private network address. If you trust this host, add it to ${WORKER_INTERNAL_EGRESS_ALLOWED_HOSTS_ENV} (comma-separated hostnames) in the environment that starts this process.`;
+
+/**
+ * The same fix for an origin-bound transport. It names the origin-scoped
+ * allowlist, because the worker host list would also open every port on the
+ * hostname to project workers.
+ */
+function privateDnsAnswerOriginHint(origin: string): string {
+  return `The host resolves to a private network address. If you trust this origin, add ${origin} to ${HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS_ENV} (comma-separated origins) in the environment that starts this process.`;
+}
+
 async function fetchWithBoundaryErrors(
   input: RequestInfo | URL,
   init: RequestInit | undefined,
   options: GuardedOutboundFetchOptions,
   transport: OutboundFetchTransport,
   allowInternalEgress = false,
+  privateDnsAnswerHint = PRIVATE_DNS_ANSWER_HINT,
 ): Promise<Response> {
   try {
     return await fetchWithHostTransport(
@@ -513,8 +535,13 @@ async function fetchWithBoundaryErrors(
     );
   } catch (error) {
     if (error instanceof WorkerEgressBlockedError) {
+      const message = error.message.replace(/^Worker\s+/u, "Outbound ");
       throw new OutboundRequestBlockedError(
-        error.message.replace(/^Worker\s+/u, "Outbound "),
+        isAllowlistablePrivateAddressEgressBlock(error)
+          ? `${message}${
+            IntrinsicReflectApply(StringPrototypeEndsWith, message, ["."]) ? "" : "."
+          } ${privateDnsAnswerHint}`
+          : message,
         { cause: error },
       );
     }
@@ -707,6 +734,7 @@ function createOriginBoundFetchWithTransport(
         },
         requestTransport,
         allowInternalEgress,
+        privateDnsAnswerOriginHint(baseOrigin),
       );
     } finally {
       // Aborting the guard does not prove a non-cooperative transport has stopped.

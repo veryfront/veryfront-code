@@ -132,6 +132,7 @@ export async function startServer(
         USERPROFILE: homeDir,
         XDG_CONFIG_HOME: configDir,
         VERYFRONT_API_TOKEN: "",
+        VERYFRONT_API_KEY: "",
         VERYFRONT_PROJECT_SLUG: "",
         OPENAI_API_KEY: "",
         ANTHROPIC_API_KEY: "",

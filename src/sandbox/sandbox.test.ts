@@ -104,6 +104,12 @@ async function countTextDecoderFlushes(action: () => Promise<void>): Promise<num
   }
 }
 
+/** The API's wording when a sandbox create call names no project. */
+const MISSING_PROJECT_DETAIL =
+  "project_id (or an environment_id that belongs to a project) is required to create a sandbox session";
+const MISSING_PROJECT_HINT =
+  "Pass projectReference (REST field project_reference) with the project slug or ID";
+
 describe("Sandbox", () => {
   it("connects to an explicitly authenticated HTTP loopback sandbox", async () => {
     mockFetch([
@@ -1156,6 +1162,100 @@ describe("Sandbox", () => {
       );
     });
 
+    describe("when the API requires a project", () => {
+      const missingProjectProblem = (detail = MISSING_PROJECT_DETAIL) => ({
+        status: 400,
+        type: "https://api.veryfront.com/errors/validation-failed",
+        title: "Validation failed",
+        slug: "validation-failed",
+        category: "VALIDATION",
+        detail,
+        instance: "/sandboxes",
+      });
+
+      it("names projectReference when the create call selects no project", async () => {
+        mockFetch([jsonResponse(missingProjectProblem(), 400)]);
+
+        const error = (await assertRejects(
+          () => Sandbox.create({ authToken: "<TOKEN>", apiUrl: "https://api.test.com" }),
+          VeryfrontError,
+          MISSING_PROJECT_HINT,
+        )) as VeryfrontError;
+
+        assertEquals(error.slug, "request-error", "keeps the request error contract");
+        assertEquals(error.status, 400, "keeps the HTTP status");
+        assertStringIncludes(error.message, MISSING_PROJECT_DETAIL, "keeps the API detail");
+        assertEquals(
+          (error.context as { responseProblem?: { slug?: string } }).responseProblem?.slug,
+          "validation-failed",
+          "keeps the API problem in the error context",
+        );
+        assertEquals(fetchCalls.length, 1, "sends exactly one create request");
+      });
+
+      it("leaves the error unchanged when the call selected a project or an environment", async () => {
+        for (
+          const selection of [
+            { projectReference: "<PROJECT_SLUG>" },
+            { environmentId: "<ENVIRONMENT_ID>" },
+          ]
+        ) {
+          mockFetch([jsonResponse(missingProjectProblem(), 400)]);
+
+          const error = (await assertRejects(
+            () =>
+              Sandbox.create({
+                authToken: "<TOKEN>",
+                apiUrl: "https://api.test.com",
+                ...selection,
+              }),
+            VeryfrontError,
+          )) as VeryfrontError;
+
+          assertEquals(
+            error.message.includes("projectReference"),
+            false,
+            `no hint for ${Object.keys(selection)[0]}`,
+          );
+        }
+      });
+
+      it("leaves other validation failures unchanged", async () => {
+        mockFetch([jsonResponse(missingProjectProblem("ttl_hours must be positive"), 400)]);
+
+        const error = (await assertRejects(
+          () => Sandbox.create({ authToken: "<TOKEN>", apiUrl: "https://api.test.com" }),
+          VeryfrontError,
+        )) as VeryfrontError;
+
+        assertEquals(error.message.includes("projectReference"), false, "no hint");
+        assertStringIncludes(error.message, "ttl_hours must be positive");
+      });
+
+      it("leaves another validation failure that mentions project_id unchanged", async () => {
+        mockFetch([jsonResponse(missingProjectProblem("project_id must be a UUID"), 400)]);
+
+        const error = (await assertRejects(
+          () => Sandbox.create({ authToken: "<TOKEN>", apiUrl: "https://api.test.com" }),
+          VeryfrontError,
+        )) as VeryfrontError;
+
+        assertEquals(error.message.includes("projectReference"), false, "no hint");
+        assertStringIncludes(error.message, "project_id must be a UUID");
+      });
+
+      it("leaves a different status with the same wording unchanged", async () => {
+        mockFetch([jsonResponse({ ...missingProjectProblem(), status: 422 }, 422)]);
+
+        const error = (await assertRejects(
+          () => Sandbox.create({ authToken: "<TOKEN>", apiUrl: "https://api.test.com" }),
+          VeryfrontError,
+        )) as VeryfrontError;
+
+        assertEquals(error.message.includes("projectReference"), false, "no hint for 422");
+      });
+    });
+
     it("should use VERYFRONT_API_TOKEN when authToken is omitted", async () => {
       setEnv("VERYFRONT_API_TOKEN", "vf_env_token");
       setEnv("VERYFRONT_API_URL", "https://api.test.com");
@@ -1173,6 +1273,44 @@ describe("Sandbox", () => {
 
       assertStringIncludes(fetchCalls[0]!.url, "https://api.test.com/sandboxes");
       assertEquals(headerValue(fetchCalls, 0, "Authorization"), "Bearer vf_env_token");
+    });
+
+    it("uses VERYFRONT_API_KEY when no token or authToken is set", async () => {
+      setEnv("VERYFRONT_API_KEY", "<API_KEY>");
+      setEnv("VERYFRONT_API_URL", "https://api.test.com");
+      mockFetch([
+        jsonResponse({
+          id: "session-env-key",
+          endpoint: "https://sandbox.example.com",
+          status: "running",
+        }),
+      ]);
+
+      const sandbox = await Sandbox.create();
+
+      assertEquals(sandbox.id, "session-env-key");
+      assertEquals(
+        headerValue(fetchCalls, 0, "Authorization"),
+        "Bearer <API_KEY>",
+        "the name Studio prints is enough for the SDK",
+      );
+    });
+
+    it("prefers VERYFRONT_API_TOKEN over VERYFRONT_API_KEY", async () => {
+      setEnv("VERYFRONT_API_TOKEN", "<API_TOKEN>");
+      setEnv("VERYFRONT_API_KEY", "<API_KEY>");
+      setEnv("VERYFRONT_API_URL", "https://api.test.com");
+      mockFetch([
+        jsonResponse({
+          id: "session-env-both",
+          endpoint: "https://sandbox.example.com",
+          status: "running",
+        }),
+      ]);
+
+      await Sandbox.create();
+
+      assertEquals(headerValue(fetchCalls, 0, "Authorization"), "Bearer <API_TOKEN>");
     });
 
     it("prefers a scoped cloud credential over ambient host auth", async () => {
@@ -2551,6 +2689,30 @@ describe("Sandbox", () => {
   });
 
   describe("createLazy()", () => {
+    it("names projectReference when a lazy create selects no project", async () => {
+      mockFetch([
+        jsonResponse({
+          status: 400,
+          type: "https://api.veryfront.com/errors/validation-failed",
+          title: "Validation failed",
+          slug: "validation-failed",
+          category: "VALIDATION",
+          detail: MISSING_PROJECT_DETAIL,
+          instance: "/sandboxes",
+        }, 400),
+      ]);
+      const sandbox = Sandbox.createLazy({ authToken: "<TOKEN>", apiUrl: "https://api.test.com" });
+
+      const error = (await assertRejects(
+        () => sandbox.ensure(),
+        VeryfrontError,
+        MISSING_PROJECT_HINT,
+      )) as VeryfrontError;
+
+      assertEquals(error.slug, "request-error", "keeps the request error contract");
+      assertEquals(error.status, 400, "keeps the HTTP status");
+    });
+
     it("does not provision when its creation signal is already aborted", async () => {
       const controller = new AbortController();
       controller.abort(new Error("creation cancelled"));

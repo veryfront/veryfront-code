@@ -63,7 +63,7 @@ HTTP 200 SSE responses. Error responses omit it.
 - At least one agent in `agents/` that the service should expose (see
   [Agents](./agents.md)).
 - A deployment target you can run a long-running Node process on.
-- For Veryfront Cloud registration: `VERYFRONT_API_TOKEN`,
+- For Veryfront Cloud registration: `VERYFRONT_API_KEY`,
   `VERYFRONT_PROJECT_ID` or `VERYFRONT_PROJECT_SLUG`, and a publicly
   reachable `VERYFRONT_AGENT_SERVICE_URL`. See
   [Configuration](./configuration.md) for the full list.
@@ -146,13 +146,16 @@ For non-standard project layouts, configure discovery paths in
 ## Configure registration
 
 Control-plane registration is convention-first. In `auto` mode, the service
-registers only when `VERYFRONT_API_TOKEN` and
-`VERYFRONT_AGENT_SERVICE_URL` are present. Registration also requires the
-immutable `runtimeSource` binding described below.
+registers only when `VERYFRONT_API_KEY` and
+`VERYFRONT_AGENT_SERVICE_URL` are present. Leave `VERYFRONT_API_TOKEN_FILE`
+unset: when it is set, even to an empty value, the service does not read
+`VERYFRONT_API_KEY`, so `auto` mode skips registration and `enabled` mode fails
+at startup. Registration also requires the immutable `runtimeSource` binding
+described below.
 
 ```bash
 VERYFRONT_API_URL=https://api.example.com
-VERYFRONT_API_TOKEN=<TOKEN>
+VERYFRONT_API_KEY=<API_KEY>
 VERYFRONT_PROJECT_ID=<PROJECT_ID>
 VERYFRONT_AGENT_SERVICE_URL=https://agent.example.com
 VERYFRONT_AGENT_SERVICE_REGISTRATION=auto
@@ -268,6 +271,23 @@ for third-party servers.
 
 This service startup config uses `endpoint` and `headers`. Per-agent config in
 `agent({ mcpServers })` uses `transport`, `auth`, and `toolPolicy`.
+
+An agent exposes every tool of its MCP server that the server's `toolPolicy`
+allows. To use some of a server's tools, name them in `tools`. The agent then
+exposes only the named tools of that server. Set a name to `false` to exclude
+it, or set `tools: false` to turn off every tool.
+
+```ts
+import { agent } from "veryfront/agent";
+
+export default agent({
+  id: "wiki-assistant",
+  system: "Answer questions about open source projects.",
+  mcpServers: [
+    { id: "deepwiki", transport: { type: "http", url: "https://mcp.deepwiki.com/mcp" } },
+  ],
+});
+```
 
 ```ts
 import {

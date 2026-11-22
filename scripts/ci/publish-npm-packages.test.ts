@@ -1960,6 +1960,100 @@ describe("npm package publishing", () => {
     });
   });
 
+  it("prints npm's trusted publishing log lines when a publish is rejected", async () => {
+    await withPackageFixture("veryfront", async ({ packageDir, npmLog }) => {
+      const debugLog = `${packageDir}/npm-debug.log`;
+      await Deno.writeTextFile(
+        debugLog,
+        [
+          "10 verbose title npm publish",
+          "11 verbose oidc Failed token exchange request with body message: no trusted publisher eyJhbGciOi.eyJzdWIiOiJ4In0.c2ln",
+          "12 http fetch POST 404 https://registry.npmjs.org/-/npm/v1/oidc/token/exchange/package/veryfront 120ms",
+          "13 http fetch PUT 404 https://registry.npmjs.org/veryfront 900ms",
+          "14 verbose stack HttpErrorGeneral: 404 Not Found",
+        ].join("\n"),
+      );
+
+      const output = await runBash(
+        [
+          "set -euo pipefail",
+          'source "$SCRIPT_PATH"',
+          "npm() {",
+          LOG_NPM_CALL,
+          '  if [ "$1" = "publish" ]; then',
+          '    printf "%s\\n" "npm error code E404"',
+          '    printf "%s\\n" "npm error A complete log of this run can be found in: $NPM_DEBUG_LOG"',
+          "    return 1",
+          "  fi",
+          '  if [ "$1" = "view" ]; then return 1; fi',
+          "}",
+          'rc_publish_package_dir "$PACKAGE_DIR" || echo "EXIT=$?"',
+        ].join("\n"),
+        {
+          GITHUB_SHA: "0".repeat(40),
+          NPM_DEBUG_LOG: debugLog,
+          NPM_LOG: npmLog,
+          NPM_PUBLISH_CONFLICT_DELAY_SECONDS: "0",
+          PACKAGE_DIR: packageDir,
+          VERSION: "0.1.0",
+        },
+      );
+
+      const stdout = decoder.decode(output.stdout);
+      const diagnostics = shellFailureDiagnostics(output, packageDir, npmLog);
+      assertStringIncludes(stdout, "EXIT=1", diagnostics);
+      assertStringIncludes(
+        stdout,
+        "npm trusted publishing (OIDC) log lines for the rejected veryfront@0.1.0 publish:",
+        diagnostics,
+      );
+      assertStringIncludes(
+        stdout,
+        "verbose oidc Failed token exchange request with body message: no trusted publisher <REDACTED>",
+        diagnostics,
+      );
+      assertStringIncludes(stdout, "oidc/token/exchange/package/veryfront", diagnostics);
+      assertStringIncludes(stdout, "http fetch PUT 404", diagnostics);
+      assertEquals(stdout.includes("eyJhbGciOi"), false, diagnostics);
+      assertEquals(stdout.includes("verbose stack"), false, diagnostics);
+      assertEquals(stdout.includes(debugLog), false, diagnostics);
+    });
+  });
+
+  it("says so when a rejected publish leaves no npm debug log", async () => {
+    await withPackageFixture("veryfront", async ({ packageDir, npmLog }) => {
+      const output = await runBash(
+        [
+          "set -euo pipefail",
+          'source "$SCRIPT_PATH"',
+          "npm() {",
+          LOG_NPM_CALL,
+          '  if [ "$1" = "publish" ]; then',
+          '    printf "%s\\n" "npm error code E404"',
+          "    return 1",
+          "  fi",
+          '  if [ "$1" = "view" ]; then return 1; fi',
+          "}",
+          'rc_publish_package_dir "$PACKAGE_DIR" || echo "EXIT=$?"',
+        ].join("\n"),
+        {
+          GITHUB_SHA: "0".repeat(40),
+          NPM_LOG: npmLog,
+          NPM_PUBLISH_CONFLICT_DELAY_SECONDS: "0",
+          PACKAGE_DIR: packageDir,
+          VERSION: "0.1.0",
+        },
+      );
+
+      const stdout = decoder.decode(output.stdout);
+      assertStringIncludes(stdout, "EXIT=1");
+      assertStringIncludes(
+        stdout,
+        "No npm debug log is available for the rejected veryfront@0.1.0 publish",
+      );
+    });
+  });
+
   it("gives up after the bounded number of conflict retries", async () => {
     await withTempDir(async (stateDir) => {
       const packageDir = `${stateDir}/package`;
@@ -3039,4 +3133,149 @@ describe("RC dependency scheduling", () => {
       false,
     );
   });
+});
+
+describe("npm core publication suspension", () => {
+  const sha = "0123456789abcdef0123456789abcdef01234567";
+
+  it("omits only the root package while suspended", async () => {
+    for (
+      const [suspended, expected] of [
+        ["false", "npm/extensions/ext-a\nnpm\n"],
+        ["true", "npm/extensions/ext-a\n"],
+      ]
+    ) {
+      await withTempDir(async (stateDir) => {
+        await Deno.mkdir(`${stateDir}/npm/extensions/ext-a`, { recursive: true });
+        await Deno.writeTextFile(
+          `${stateDir}/npm/extensions/ext-a/package.json`,
+          JSON.stringify({ name: "@veryfront/ext-a" }),
+        );
+        const output = await new Deno.Command("bash", {
+          args: ["-c", 'set -euo pipefail; source "$SCRIPT_PATH"; package_dirs'],
+          cwd: stateDir,
+          env: {
+            SCRIPT_PATH: scriptPath,
+            NPM_CORE_PUBLISH_SUSPENDED: suspended,
+            PATH: Deno.env.get("PATH") ?? "",
+          },
+          stdout: "piped",
+          stderr: "piped",
+        }).output();
+        assertEquals(output.code, 0, decoder.decode(output.stderr));
+        assertEquals(decoder.decode(output.stdout), expected);
+      });
+    }
+  });
+
+  it("refuses the root package and stable releases while suspended", async () => {
+    for (
+      const [call, message] of [
+        ["run_rc_publish_package npm", "suspended"],
+        ["run_release_publish", "Stable releases are not supported"],
+      ]
+    ) {
+      const output = await runBash(
+        [
+          "set -euo pipefail",
+          'source "$SCRIPT_PATH"',
+          'npm() { echo "unexpected npm $*"; }',
+          "verify_npm_compatibility_artifact() { echo unexpected-verify; }",
+          call,
+        ].join("\n"),
+        {
+          NPM_CORE_PUBLISH_SUSPENDED: "true",
+          VERSION: "0.1.0",
+          GITHUB_SHA: sha,
+          NPM_PACK_DIR: "/nonexistent",
+          PATH: Deno.env.get("PATH") ?? "",
+        },
+      );
+      assertEquals(output.code === 0, false);
+      assertStringIncludes(decoder.decode(output.stderr), message);
+      assertEquals(decoder.decode(output.stdout).includes("unexpected"), false);
+    }
+  });
+
+  it("rejects an invalid suspension switch", async () => {
+    const output = await runBash(
+      'set -euo pipefail; source "$SCRIPT_PATH"; validate_npm_core_publish_suspended',
+      { NPM_CORE_PUBLISH_SUSPENDED: "yes" },
+    );
+    assertEquals(output.code, 1);
+    assertStringIncludes(decoder.decode(output.stderr), "must be true or false");
+  });
+
+  it("writes the tested core tarball and its provenance as release assets", async () => {
+    await withTempDir(async (stateDir) => {
+      const artifactDir = `${stateDir}/artifact`;
+      const outputDir = `${stateDir}/release`;
+      await writeCanonicalTarballArtifact(stateDir, artifactDir);
+      await Deno.mkdir(outputDir);
+      const output = await runBash(
+        [
+          "set -euo pipefail",
+          'source "$SCRIPT_PATH"',
+          "verify_npm_compatibility_artifact() { :; }",
+          'run_core_release_assets "$OUTPUT_DIR"',
+        ].join("\n"),
+        {
+          VERSION: "0.1.0",
+          GITHUB_SHA: sha,
+          NPM_PACK_DIR: artifactDir,
+          OUTPUT_DIR: outputDir,
+          PATH: Deno.env.get("PATH") ?? "",
+        },
+      );
+      assertEquals(output.code, 0, decoder.decode(output.stderr));
+      const tarball = await Deno.readFile(`${outputDir}/veryfront-0.1.0.tgz`);
+      assertEquals(tarball, await Deno.readFile(`${artifactDir}/veryfront-0.1.0.tgz`));
+      const digest = new Uint8Array(await crypto.subtle.digest("SHA-512", tarball));
+      const integrity = `sha512-${btoa(String.fromCharCode(...digest))}`;
+      assertEquals(
+        JSON.parse(await Deno.readTextFile(`${outputDir}/veryfront-0.1.0.npm-provenance.json`)),
+        {
+          schema_version: 1,
+          package: { name: "veryfront", version: "0.1.0", integrity },
+          git_head: sha,
+          repository: "https://github.com/veryfront/veryfront-code",
+        },
+      );
+    });
+  });
+
+  for (
+    const [label, env, message] of [
+      ["a short commit", { GITHUB_SHA: "0123456" }, "full lowercase commit SHA"],
+      ["another version", { VERSION: "0.2.0" }, "Canonical artifact file"],
+    ] as const
+  ) {
+    it(`refuses release assets for ${label}`, async () => {
+      await withTempDir(async (stateDir) => {
+        const artifactDir = `${stateDir}/artifact`;
+        const outputDir = `${stateDir}/release`;
+        await writeCanonicalTarballArtifact(stateDir, artifactDir);
+        await Deno.mkdir(outputDir);
+        const output = await runBash(
+          [
+            "set -euo pipefail",
+            'source "$SCRIPT_PATH"',
+            "verify_npm_compatibility_artifact() { :; }",
+            'run_core_release_assets "$OUTPUT_DIR"',
+          ].join("\n"),
+          {
+            VERSION: "0.1.0",
+            GITHUB_SHA: sha,
+            NPM_PACK_DIR: artifactDir,
+            OUTPUT_DIR: outputDir,
+            PATH: Deno.env.get("PATH") ?? "",
+            ...env,
+          },
+        );
+        assertEquals(output.code === 0, false);
+        assertStringIncludes(decoder.decode(output.stderr), message);
+        assertEquals([...Deno.readDirSync(outputDir)], []);
+      });
+    });
+  }
 });

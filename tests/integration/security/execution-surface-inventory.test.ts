@@ -180,6 +180,10 @@ const GUARDED_SURFACES: Record<
     surface: "Project run execution capability",
     guards: 4,
   },
+  "src/server/handlers/request/runtime-capabilities.handler.ts": {
+    surface: "Selected-agent capability advertisement requires project execution isolation",
+    guards: 1,
+  },
   "src/server/handlers/request/public-agent-metadata.handler.ts": {
     surface: "Public agent metadata",
     guards: 1,

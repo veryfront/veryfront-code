@@ -78,7 +78,10 @@ cookie unreadable to the already-open HTTP app. The default header is
 Cookie/header names and token lifetimes are
 bounded both in configuration and at the public helper boundary.
 State-changing requests are checked unless an exact, schema-validated exclusion
-applies.
+applies, or the request is a cookieless bearer request: it sends
+`Authorization: Bearer`, no `Cookie` header, and no `Sec-Fetch-Site` or
+`Origin` that marks it as cross-site or cross-origin. That request carries no
+ambient credential, so the route's own auth decides it.
 
 Use `csrfMutationHeaders` for a browser mutation that does not use a Veryfront
 client hook. The helper adds the default CSRF header for same-origin requests
@@ -354,6 +357,16 @@ without a path. The exception applies only to an origin-bound provider
 transport configured for the same origin. Redirects remain rejected, and all
 other internal destinations remain blocked. Project environment overlays
 cannot add origins to this host-owned list.
+
+`VERYFRONT_WORKER_ALLOWED_INTERNAL_HOSTS` is the broader, host-wide exception.
+Its value is a comma-separated list of exact DNS hostnames. A listed hostname
+may resolve to a private address for every guarded host fetch, not only an
+origin-bound one, and for project-worker fetches and raw socket connections on
+any port. IP literals and `localhost` names are ignored. Subdomains, parent
+domains, and the trailing-dot form are not covered. Prefer the origin list above
+when one origin is enough. When the guard blocks a hostname because its DNS
+answer is private, the error names the variable to set: the origin list for an
+origin-bound transport, and this host list for any other fetch.
 
 The API transport permits exact operator-configured origins. CLI commands seal
 `VERYFRONT_API_URL` and `VERYFRONT_API_BASE_URL` before loading project config,

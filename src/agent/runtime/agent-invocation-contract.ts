@@ -1,3 +1,4 @@
+import { isNormalizedAgentEntrypointPath } from "#veryfront/discovery/agent-entrypoint-path.ts";
 import { snapshotHostedTaskInput } from "../hosted/task-input.ts";
 import { encodePrivateText, PrivateTextEncoder } from "#veryfront/security/private-text.ts";
 import { privateByteLength } from "#veryfront/security/private-bytes.ts";
@@ -413,10 +414,20 @@ export const getRuntimeAgentRuntimeOverridesSchema = defineSchema((v) =>
   }).strip()
 );
 
+/** Exact release-relative agent source selected by the signed control-plane invocation. */
+export const getRuntimeAgentEntrypointSchema = defineSchema((v) =>
+  v.object({
+    path: v.string().min(1).max(1000).refine(isNormalizedAgentEntrypointPath, {
+      message: "Expected a normalized agent source file",
+    }),
+  }).strict()
+);
+
 export const getRuntimeAgentRunInvocationSchema = defineSchema((v) =>
   v.object({
     run: getRuntimeAgentRunContextSchema(),
     sourceProject: getRuntimeAgentProjectContextSchema().optional(),
+    agentEntrypoint: getRuntimeAgentEntrypointSchema().optional(),
     taskId: getRuntimeAgentTaskIdSchema().optional(),
     taskInput: v.unknown().optional().refine((value) => {
       if (value === undefined) return true;
@@ -1048,6 +1059,7 @@ export type RuntimeAgentControlPlaneStreamRequest = {
   credentials?: RuntimeAgentRunInvocation["credentials"];
   agentSource: RuntimeAgentRunInvocation["agentSource"];
   sourceProject?: RuntimeAgentRunInvocation["sourceProject"];
+  agentEntrypoint?: RuntimeAgentRunInvocation["agentEntrypoint"];
   executionProject?: RuntimeAgentProjectContext;
   agentConfig?: RuntimeAgentRunInvocation["agentConfig"];
   forwardedProps?: RuntimeAgentRunInvocation["forwardedProps"];
@@ -1067,6 +1079,7 @@ export function buildRuntimeAgentControlPlaneStreamRequestFromInvocation(
   const sourceProject = input.sourceProject ?? input.run.project;
   return {
     agentId: input.run.agentId,
+    ...(input.agentEntrypoint ? { agentEntrypoint: input.agentEntrypoint } : {}),
     threadId: input.run.conversationId,
     runId: input.run.runId,
     messageId: input.run.messageId,

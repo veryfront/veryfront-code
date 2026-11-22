@@ -34,7 +34,13 @@ import { createStagedPushOptions, pushCommand, type PushOptions } from "../push/
 import { createProjectSelector } from "./project-selector.ts";
 import { createDevLogController } from "./log-controller.ts";
 import { findAvailablePort, isPortAvailable, isPortInUseError } from "./port-fallback.ts";
-import { advertisesCloudGateway, listInferenceOptions } from "./inference-status.ts";
+import {
+  advertisesCloudGateway,
+  devInferenceHintLines,
+  listInferenceOptions,
+  readProviderKeys,
+} from "./inference-status.ts";
+import { defaultModelMismatchWarning, registeredAgentModels } from "./default-model-check.ts";
 import {
   findUnconnectedIntegrationLines,
   type IntegrationDiagnosticSnapshot,
@@ -598,15 +604,13 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
         const runtimeId = getConnectedLocalRuntime()?.runtimeId;
         if (runtimeId) console.log(`    ${dim("Runtime")} ${runtimeId}`);
       }
-      const inferenceOptions = listInferenceOptions({
+      const inferenceEnvironment = {
         apiToken: runtimeAuth.apiToken,
         projectSlug: runtimeAuth.projectSlug,
-        openaiApiKey: getEnv("OPENAI_API_KEY"),
-        openaiBaseUrl: getEnv("OPENAI_BASE_URL"),
-        anthropicApiKey: getEnv("ANTHROPIC_API_KEY"),
-        googleApiKey: getEnv("GOOGLE_API_KEY") ?? getEnv("GOOGLE_GENERATIVE_AI_API_KEY"),
-        mistralApiKey: getEnv("MISTRAL_API_KEY"),
-      });
+        ...readProviderKeys(getEnv),
+        agentModels: registeredAgentModels(),
+      };
+      const inferenceOptions = listInferenceOptions(inferenceEnvironment);
       if (inferenceOptions.length > 0) {
         console.log(
           `  ${dim("Inference")} ${
@@ -628,6 +632,11 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
           );
         }
       }
+      const mismatchWarning = defaultModelMismatchWarning(inferenceEnvironment);
+      if (mismatchWarning) console.log(`  ${warning("!")} ${mismatchWarning}`);
+      const [hintHeading, ...hintLines] = devInferenceHintLines(inferenceOptions);
+      if (hintHeading) console.log(`  ${warning("!")} ${hintHeading}`);
+      for (const line of hintLines) console.log(`    ${line}`);
       // The banner reports configured paths, and it must not block Ready on a
       // network round-trip (see `void authReady` above). But an expired stored
       // session still has a nonempty token, so the gateway would be advertised

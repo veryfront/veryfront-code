@@ -402,6 +402,35 @@ describe("prepareProjectRequest", () => {
     });
   });
 
+  it("delegates exact signed capability probes to their signature-verifying handler", async () => {
+    for (
+      const [method, path, signature, trusted, allowed] of [
+        ["POST", "/api/control-plane/runtime/capabilities", "signed-envelope", true, true],
+        ["POST", "/api/control-plane/runtime/capabilities", "", true, false],
+        ["GET", "/api/control-plane/runtime/capabilities", "signed-envelope", true, false],
+        ["POST", "/api/control-plane/runtime/capabilities/extra", "signed-envelope", true, false],
+        ["POST", "/api/control-plane/agents/list", "signed-envelope", true, false],
+        ["POST", "/api/control-plane/runtime/capabilities", "signed-envelope", false, false],
+      ] as const
+    ) {
+      const req = new Request(`https://project.production.example.com${path}`, {
+        method,
+        headers: { "x-project-slug": "project", "X-Veryfront-Control-Plane-JWS": signature },
+      });
+      const prepared = await prepareProjectRequest({
+        req,
+        url: new URL(req.url),
+        isProxyMode: true,
+        trustProxy: () => Promise.resolve(trusted),
+      });
+      assertEquals(
+        prepared.proxyGuard === undefined,
+        allowed,
+        `${method} ${path}: signed=${!!signature}, trusted=${trusted}`,
+      );
+    }
+  });
+
   it("rejects every untrusted proxy identity, not only x-project-path", async () => {
     const forwardedOnly = new Request("http://localhost/page", {
       headers: {
@@ -1650,15 +1679,17 @@ describe("resolveProjectRuntimeContext", () => {
   });
 
   for (
-    const [method, suffix, expectedLoads] of [
-      ["POST", "/execute", 1],
-      ["POST", "/stream", 0],
-      ["POST", "/resume", 0],
-      ["DELETE", "", 0],
+    const [method, suffix, expectedLoads, isProxyMode] of [
+      ["POST", "/execute", 1, true],
+      ["POST", "/stream", 0, true],
+      ["POST", "/resume", 0, true],
+      ["DELETE", "", 0, true],
+      ["POST", "/api/control-plane/runtime/capabilities", 0, true],
+      ["POST", "/api/control-plane/runtime/capabilities", 0, false],
     ] as const
   ) {
-    it(`preserves the environment loading contract for ${method} run${suffix} without a production release`, async () => {
-      const path = `/api/control-plane/runs/run_1${suffix}`;
+    it(`preserves environment loading for ${method} ${suffix} (proxy=${isProxyMode})`, async () => {
+      const path = suffix.startsWith("/api/") ? suffix : `/api/control-plane/runs/run_1${suffix}`;
       const adapter = createExtendedMockAdapter();
       const body = method === "POST" && suffix === "/execute"
         ? JSON.stringify({
@@ -1702,9 +1733,9 @@ describe("resolveProjectRuntimeContext", () => {
         req,
         url,
         adapter,
-        headers: extractRequestHeaders(req, url, true, true),
+        headers: extractRequestHeaders(req, url, isProxyMode, true),
         requestContext: createRequestContext(req, { proxyTrusted: true }),
-        isProxyMode: true,
+        isProxyMode,
         projectIdentity: {
           projectSlug: "proxy-project",
           projectId: "proj-proxy",

@@ -490,6 +490,19 @@ function parseRegistryConfiguration(): {
   if (authority === "" || authority.includes("@")) {
     fail("registry URL authority is invalid");
   }
+  // While npm refuses the core package, the release ships it as a tested
+  // tarball. The core then installs from that exact file; every other package
+  // still installs from the registry at the same exact version.
+  const coreTarball = Deno.env.get("VF_NPM_REGISTRY_CORE_TARBALL") ?? "";
+  if (
+    coreTarball !== "" &&
+    (!coreTarball.startsWith("/") ||
+      coreTarball.split("/").at(-1) !== `veryfront-${version}.tgz`)
+  ) {
+    fail(
+      "core tarball must be an absolute path to the exact veryfront version",
+    );
+  }
 
   const rootSpecs: string[] = [];
   const packageNames: string[] = [];
@@ -503,7 +516,9 @@ function parseRegistryConfiguration(): {
     ) {
       fail("registry package list contains an invalid package name");
     }
-    const spec = `${packageName}@${version}`;
+    const spec = packageName === "veryfront" && coreTarball !== ""
+      ? coreTarball
+      : `${packageName}@${version}`;
     packageNames.push(packageName);
     if (packageName === AUTH_PACKAGE) {
       authSpec = spec;
@@ -517,17 +532,42 @@ function parseRegistryConfiguration(): {
   if (!authSpec) {
     fail(`registry package list is missing ${AUTH_PACKAGE}`);
   }
+  if (coreTarball !== "" && !rootSpecs.includes(coreTarball)) {
+    fail(
+      "core tarball was given but the registry package list has no veryfront",
+    );
+  }
   return { registryUrl, rootSpecs, authSpec, packageNames, version };
 }
+
+/** How the Deno load checks treat the consumer's node_modules. */
+let denoNodeModulesDir: "auto" | "manual" = "auto";
 
 async function prepareArtifacts(workDir: string): Promise<InstallPlan> {
   if (Deno.env.get("VF_NPM_REGISTRY_VERSION")) {
     smokeFailureStatus = 22;
     const { registryUrl, rootSpecs, authSpec, packageNames, version } =
       parseRegistryConfiguration();
+    const coreSpec = rootSpecs.find((spec) => spec.startsWith("/"));
+    let installSpecs = rootSpecs;
+    if (coreSpec) {
+      const stat = await Deno.stat(coreSpec).catch(() => undefined);
+      if (!stat?.isFile) fail("core tarball is missing");
+      // The tested core installs from a local tarball and every extension
+      // still installs from the registry, as a consumer would while npm lacks
+      // the core. Deno must then use that npm-built node_modules (manual):
+      // its auto mode re-resolves package.json, links node_modules/veryfront
+      // to the .tgz file itself and fails with os error 20.
+      const name = coreSpec.split("/").at(-1)!;
+      await Deno.copyFile(coreSpec, `${workDir}/${name}`);
+      installSpecs = rootSpecs.map((spec) =>
+        spec === coreSpec ? `./${name}` : spec
+      );
+      denoNodeModulesDir = "manual";
+    }
     smokeFailureStatus = 21;
     return {
-      rootInstallSpecs: rootSpecs,
+      rootInstallSpecs: installSpecs,
       authInstallSpecs: [authSpec],
       npmEnv: { NPM_CONFIG_REGISTRY: registryUrl },
       registryMode: true,
@@ -899,7 +939,7 @@ if (p.dependencies?.['@veryfront/ext-node-websocket-ws'] !== p.version) process.
   );
   const denoLoad = await run("deno", [
     "eval",
-    "--node-modules-dir=auto",
+    `--node-modules-dir=${denoNodeModulesDir}`,
     DENO_BUNDLER_SCRIPT,
   ], { cwd: workDir, timeoutMs: 120_000 });
   if (denoLoad.code !== 0) {
@@ -909,7 +949,7 @@ if (p.dependencies?.['@veryfront/ext-node-websocket-ws'] !== p.version) process.
   }
   const denoNotFound = await run("deno", [
     "eval",
-    "--node-modules-dir=auto",
+    `--node-modules-dir=${denoNodeModulesDir}`,
     DENO_NOT_FOUND_SCRIPT,
   ], { cwd: workDir, timeoutMs: 120_000 });
   if (denoNotFound.code !== 0) {

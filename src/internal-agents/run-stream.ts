@@ -4,6 +4,10 @@ import {
 } from "./source-observation.ts";
 import { getProjectEventWriter } from "./project-event-writer.ts";
 import {
+  readForwardedEvalEnvironmentContext,
+  runWithEvalEnvironmentContext,
+} from "#veryfront/agent/runtime/eval-environment-context-scope.ts";
+import {
   chainPrivatePromise,
   observePrivatePromise,
   resolvePrivatePromise,
@@ -147,7 +151,10 @@ import {
   type AgentRunSessionManager,
   type RunServingIdentity,
 } from "./session-manager.ts";
-import { composeInternalAgentRunSystemPrompt } from "./run-system-prompt.ts";
+import {
+  composeInternalAgentRunSystemPrompt,
+  getInternalAgentStudioRunContext,
+} from "./run-system-prompt.ts";
 import type { RuntimeRunAgentInput } from "./schema.ts";
 import { serverLogger } from "#veryfront/utils";
 import { compareStrings } from "#veryfront/utils/compare.ts";
@@ -630,6 +637,10 @@ export function buildMergedTools(
     return { ...merged, ...injectedTools };
   }
 
+  const declaresExternalMcpServer =
+    agent.config.mcpServers?.some((server) =>
+      isRecord(server) && Object.hasOwn(server, "transport")
+    ) === true;
   const merged: Record<string, Tool | boolean> = {};
   for (const [toolName, entry] of Object.entries(agent.config.tools)) {
     if (entry === true) {
@@ -651,6 +662,12 @@ export function buildMergedTools(
       } else if (sourceAllowedRemoteToolNames.includes(`veryfront__${toolName}`)) {
         // Platform discovery publishes canonical names for legacy boolean selectors.
         merged[`veryfront__${toolName}`] = true;
+      } else if (declaresExternalMcpServer) {
+        // No local, forwarded or platform tool serves this name, but the agent's
+        // own external MCP server may: the runtime lists it per step. Keep the
+        // selection so the step resolves it there, or reports it as unknown,
+        // exactly as a local run does, instead of dropping it silently here.
+        merged[toolName] = true;
       }
       continue;
     }
@@ -1721,14 +1738,33 @@ export async function createRuntimeAgentStreamResponse(
       resolveAgentSystem(agent.config.system, undefined),
     );
     const effectiveAgentSystem = getEffectiveAgentSystem(agent);
-    const resolveSystemPrompt = async (providerOptionKey?: string) => {
-      const authoredSystem = await authoredSystemPromise;
-      const resolvedBaseSystem = await resolveAgentSystemFromResolvedBase(
+    // The base system renders one environment context, and a later block for
+    // the same name is skipped. So when a run forwards an eval context and also
+    // carries Studio's context item, Studio's value is the one rendered.
+    const forwardedEvalEnvironmentContext = readForwardedEvalEnvironmentContext(
+      input.forwardedProps,
+    );
+    const evalEnvironmentContext = forwardedEvalEnvironmentContext === undefined
+      ? undefined
+      : getInternalAgentStudioRunContext(input.context).environmentContext ??
+        forwardedEvalEnvironmentContext;
+    const resolveBaseSystem = async (providerOptionKey?: string) =>
+      resolveAgentSystemFromResolvedBase(
         effectiveAgentSystem,
-        authoredSystem,
+        await authoredSystemPromise,
         providerOptionKey,
         { preserveRuntimeContextMarker: true },
       );
+    const resolveSystemPrompt = async (providerOptionKey?: string) => {
+      // An eval's environment context replaces the agent's configured one, as
+      // it does in a local eval. Studio's own context item keeps its precedence.
+      const resolvedBaseSystem = evalEnvironmentContext === undefined
+        ? await resolveBaseSystem(providerOptionKey)
+        : await runWithEvalEnvironmentContext(
+          agent.id,
+          evalEnvironmentContext,
+          () => resolveBaseSystem(providerOptionKey),
+        );
       return composeInternalAgentRunSystemPrompt({
         agent: { ...agent, config: { ...agent.config, model: executionModel } },
         resolvedBaseSystem,
@@ -1774,6 +1810,8 @@ export async function createRuntimeAgentStreamResponse(
         model: executionModel,
         system: createProviderAwareAgentSystemResolver(resolveSystemPrompt),
         tools: mergedTools,
+        // Default MCP exposure follows the authored selection, not the merged map.
+        __vfAuthoredTools: agent.config.tools,
         ...(managedRecovery?.snapshot
           ? { __vfToolExposureCheckpoint: managedRecovery.snapshot.toolExposureCheckpoint }
           : {}),

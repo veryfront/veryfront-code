@@ -59,6 +59,7 @@ import { createAgentServiceEvalAdapter } from "#veryfront/eval/agent-service.ts"
 import { runEval as runEvalDefinition } from "#veryfront/eval/runner.ts";
 import { datasets, evalAgent, evalDataset, type EvalReport, metrics } from "veryfront/eval";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
+import { EVAL_LOAD_FAILED } from "#veryfront/errors/error-registry/agent.ts";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 import { runWithExactSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
@@ -194,7 +195,7 @@ import {
 } from "#veryfront/runtime/run-event-sink-context.ts";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
 import * as otelApi from "npm:@opentelemetry/api@1.9.1";
-import { AsyncLocalStorageContextManager } from "npm:@opentelemetry/context-async-hooks@2.10.0";
+import { AsyncLocalStorageContextManager } from "npm:@opentelemetry/context-async-hooks@2.12.1";
 import { sealIngressCredentials } from "#veryfront/security/http/ingress-credentials.ts";
 import {
   HEADER_METHODS,
@@ -206,8 +207,8 @@ import {
   type ReadableSpan,
   SimpleSpanProcessor,
   type SpanExporter,
-} from "npm:@opentelemetry/sdk-trace-base@2.10.0";
-import { ExportResultCode } from "npm:@opentelemetry/core@2.10.0";
+} from "npm:@opentelemetry/sdk-trace-base@2.12.1";
+import { ExportResultCode } from "npm:@opentelemetry/core@2.12.1";
 import {
   _resetShimForTests,
   setGlobalActiveSpanAccessor,
@@ -6034,6 +6035,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
   }
 
   it("reports a clear error when task:eval names an unknown eval", async () => {
+    // No `resolveEvalById` override: the handler's own default resolves the miss.
     const handler = new ProjectRunExecuteHandler(createDeps({ runTask: runTaskDefinition }));
     const { request, publicKeyPem } = await signedRequest(
       "/api/control-plane/runs/run_task_eval_missing/execute",
@@ -6045,15 +6047,89 @@ describe("server/handlers/request/project-run-execute.handler", () => {
         config: { eval_id: "eval:missing" },
       },
     );
+    const ctx = createCtx(publicKeyPem);
+    ctx.adapter = { ...ctx.adapter, fs: { exists: async () => false } } as never;
 
-    const result = await handler.handle(request, createCtx(publicKeyPem));
+    const result = await handler.handle(request, ctx);
 
     assertExists(result.response);
     assertEquals(await result.response.json(), {
       success: false,
-      error: "Eval not found: eval:missing",
+      error:
+        "Eval not found: eval:missing. Veryfront looks for it in evals/missing.eval.ts (or a .tsx, .js or .jsx file at that path), exported with evalAgent, evalTool or evalDataset. Ensure the file is in the source this run uses, or use the ID that the evals list shows.",
       logs: null,
       duration_ms: 0,
+    });
+  });
+
+  describe("task:eval when the eval lookup misses", () => {
+    async function executeEval(deps: Partial<ProjectRunExecuteHandlerDeps>, evalId: string) {
+      const handler = new ProjectRunExecuteHandler(createDeps({
+        runTask: runTaskDefinition,
+        findEvalById: async () => null,
+        ...deps,
+      }));
+      const { request, publicKeyPem } = await signedRequest(
+        "/api/control-plane/runs/run_task_eval_lookup/execute",
+        {
+          runId: "run_task_eval_lookup",
+          kind: "task",
+          target: "task:eval",
+          projectId: "proj-1",
+          config: { eval_id: evalId },
+        },
+        { "x-token": "project-runtime-token" },
+      );
+      const result = await handler.handle(request, createCtx(publicKeyPem));
+      assertExists(result.response);
+      return await result.response.json();
+    }
+
+    it("reports the load error that resolveEvalById names", async () => {
+      const message =
+        "Eval eval:by-hand failed to load from evals/by-hand.eval.ts: answer.contains text must be a non-empty string. Fix the file, then run the eval again.";
+      const lookups: string[] = [];
+
+      const body = await executeEval({
+        resolveEvalById: async (evalId) => {
+          lookups.push(evalId);
+          throw EVAL_LOAD_FAILED.create({ detail: message });
+        },
+      }, "eval:by-hand");
+
+      assertEquals(lookups, ["eval:by-hand"], "the miss is resolved once, for the requested id");
+      assertEquals(body, { success: false, error: message, logs: null, duration_ms: 0 });
+    });
+
+    it("runs the eval when the second lookup finds it", async () => {
+      const body = await executeEval({
+        resolveEvalById: async (evalId) => ({
+          id: evalId,
+          name: "By hand",
+          filePath: "evals/by-hand.eval.ts",
+          exportName: "default",
+          definition: evalAgent({
+            id: evalId,
+            target: "agent:researcher",
+            dataset: datasets.inline([{ id: "q1", input: "France capital?" }]),
+            metrics: [metrics.answer.contains({ text: "Paris" })],
+          }),
+        }),
+      }, "eval:by-hand");
+
+      assertEquals(body.success, true, JSON.stringify(body));
+    });
+
+    it("does not report an unrelated lookup failure as a missing eval", async () => {
+      const body = await executeEval({
+        resolveEvalById: async () => {
+          throw new Error("<UNEXPECTED_FAILURE>");
+        },
+      }, "eval:by-hand");
+
+      assertEquals(body.success, false);
+      assertEquals(String(body.error).includes("Eval not found"), false);
+      assertEquals(String(body.error).includes("failed to load"), false);
     });
   });
 
@@ -6832,6 +6908,223 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     }
   });
 
+  it("renders the eval environment context for local source agent runs", async () => {
+    const model = scriptedModel([{ text: "Paris" }], { modelId: "hosted/eval-context" });
+    const sourceAgent = agent({
+      id: "context-researcher",
+      model: "hosted/eval-context",
+      system: "Answer briefly.",
+      skills: false,
+      environmentContext: "configured context",
+      resolveModelTransport: () => ({ model }),
+    });
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: runTaskDefinition,
+      findEvalById: async (target) =>
+        target === "eval:context"
+          ? {
+            id: "eval:context",
+            name: "Studio context",
+            filePath: "evals/context.eval.ts",
+            exportName: "default",
+            definition: evalAgent({
+              id: "eval:context",
+              target: "agent:context-researcher",
+              environmentContext: "active tab: app/page.tsx",
+              dataset: datasets.inline([{ id: "q1", input: "France capital?" }]),
+            }),
+          }
+          : null,
+      runEval: runEvalDefinition,
+      createEvalAgentAdapter: (config) =>
+        createAgentServiceEvalAdapter({ ...config, requestTimeoutMs: 250 }),
+    }));
+    const body = {
+      runId: "run_eval_context_agent",
+      kind: "task",
+      target: "task:eval",
+      projectId: "proj-1",
+      runtimeAgUiEndpoint: "http://localhost:4311/api/ag-ui",
+      config: { eval_id: "eval:context" },
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_eval_context_agent/execute",
+      body,
+      { "x-token": "runtime-token" },
+      "http://localhost:4311",
+    );
+    try {
+      const result = await withEnvValue(
+        "PORT",
+        "4311",
+        () => handler.handle(request, createCtx(publicKeyPem)),
+      );
+
+      assertExists(result.response);
+      assertEquals((await result.response.json()).success, true);
+      const [call] = model.calls;
+      assertExists(call);
+      const system = JSON.stringify(call.prompt.filter((message) => message.role === "system"));
+      assertStringIncludes(
+        system,
+        "<environment_context>\\nactive tab: app/page.tsx\\n</environment_context>",
+      );
+      assertEquals(system.includes("configured context"), false);
+    } finally {
+      agentRegistry.delete(sourceAgent.id);
+    }
+  });
+
+  it("reads the eval environment context after project code replaces JSON.parse", async () => {
+    const model = scriptedModel([{ text: "Paris" }], { modelId: "hosted/eval-context-json" });
+    const sourceAgent = agent({
+      id: "context-json-researcher",
+      model: "hosted/eval-context-json",
+      system: "Answer briefly.",
+      skills: false,
+      environmentContext: "configured context",
+      resolveModelTransport: () => ({ model }),
+    });
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: runTaskDefinition,
+      findEvalById: async (target) =>
+        target === "eval:context-json"
+          ? {
+            id: "eval:context-json",
+            name: "Studio context",
+            filePath: "evals/context.eval.ts",
+            exportName: "default",
+            definition: evalAgent({
+              id: "eval:context-json",
+              target: "agent:context-json-researcher",
+              environmentContext: "active tab: app/page.tsx",
+              dataset: datasets.inline([{ id: "q1", input: "France capital?" }]),
+            }),
+          }
+          : null,
+      runEval: runEvalDefinition,
+      createEvalAgentAdapter: (config) =>
+        createAgentServiceEvalAdapter({ ...config, requestTimeoutMs: 250 }),
+    }));
+    const body = {
+      runId: "run_eval_context_json_agent",
+      kind: "task",
+      target: "task:eval",
+      projectId: "proj-1",
+      runtimeAgUiEndpoint: "http://localhost:4311/api/ag-ui",
+      config: { eval_id: "eval:context-json" },
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_eval_context_json_agent/execute",
+      body,
+      { "x-token": "runtime-token" },
+      "http://localhost:4311",
+    );
+    const originalParse = JSON.parse;
+    try {
+      const result = await withEnvValue(
+        "PORT",
+        "4311",
+        () => {
+          // A project eval module can replace the global during discovery.
+          JSON.parse = (text: string, reviver?: Parameters<typeof JSON.parse>[1]) => {
+            if (typeof text === "string" && text.includes('"environmentContext"')) {
+              throw new Error("project JSON.parse");
+            }
+            return originalParse(text, reviver);
+          };
+          return handler.handle(request, createCtx(publicKeyPem));
+        },
+      );
+      JSON.parse = originalParse;
+
+      assertExists(result.response);
+      assertEquals((await result.response.json()).success, true);
+      const [call] = model.calls;
+      assertExists(call);
+      const system = JSON.stringify(call.prompt.filter((message) => message.role === "system"));
+      assertStringIncludes(
+        system,
+        "<environment_context>\\nactive tab: app/page.tsx\\n</environment_context>",
+      );
+      assertEquals(system.includes("configured context"), false);
+    } finally {
+      JSON.parse = originalParse;
+      agentRegistry.delete(sourceAgent.id);
+    }
+  });
+
+  it("ignores an eval environment context inherited from Object.prototype", async () => {
+    const model = scriptedModel([{ text: "Paris" }], { modelId: "hosted/eval-context-own" });
+    const sourceAgent = agent({
+      id: "context-own-researcher",
+      model: "hosted/eval-context-own",
+      system: "Answer briefly.",
+      skills: false,
+      environmentContext: "configured context",
+      resolveModelTransport: () => ({ model }),
+    });
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: runTaskDefinition,
+      findEvalById: async (target) =>
+        target === "eval:context-own"
+          ? {
+            id: "eval:context-own",
+            name: "Studio context",
+            filePath: "evals/context.eval.ts",
+            exportName: "default",
+            // No environment context: the agent's configured one applies.
+            definition: evalAgent({
+              id: "eval:context-own",
+              target: "agent:context-own-researcher",
+              dataset: datasets.inline([{ id: "q1", input: "France capital?" }]),
+            }),
+          }
+          : null,
+      runEval: runEvalDefinition,
+      createEvalAgentAdapter: (config) =>
+        createAgentServiceEvalAdapter({ ...config, requestTimeoutMs: 250 }),
+    }));
+    const body = {
+      runId: "run_eval_context_own_agent",
+      kind: "task",
+      target: "task:eval",
+      projectId: "proj-1",
+      runtimeAgUiEndpoint: "http://localhost:4311/api/ag-ui",
+      config: { eval_id: "eval:context-own" },
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_eval_context_own_agent/execute",
+      body,
+      { "x-token": "runtime-token" },
+      "http://localhost:4311",
+    );
+    const objectPrototype = Object.prototype as Record<string, unknown>;
+    try {
+      const result = await withEnvValue(
+        "PORT",
+        "4311",
+        () => {
+          // A project eval module can extend the prototype during discovery.
+          objectPrototype.environmentContext = "inherited context";
+          return handler.handle(request, createCtx(publicKeyPem));
+        },
+      );
+      delete objectPrototype.environmentContext;
+
+      assertExists(result.response);
+      assertEquals((await result.response.json()).success, true);
+      const [call] = model.calls;
+      assertExists(call);
+      const system = JSON.stringify(call.prompt.filter((message) => message.role === "system"));
+      assertStringIncludes(system, "configured context");
+      assertEquals(system.includes("inherited context"), false);
+    } finally {
+      delete objectPrototype.environmentContext;
+      agentRegistry.delete(sourceAgent.id);
+    }
+  });
+
   it("applies forwarded eval tool restrictions to local source agent runs", async () => {
     let sourceAgentStreamCalls = 0;
     let observedToolNames: string[] = [];
@@ -7030,7 +7323,9 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       assertEquals(sourceAgentStreamCalls, 0);
       assertEquals(replacementSawLocalEvalRequest, false);
       assertEquals(replacementSawEvalSerialization, false);
-      assertEquals(objectToJsonSawEvalBody, true);
+      // The adapter serializes its request body from null-prototype records,
+      // so the inherited hook never rewrites it.
+      assertEquals(objectToJsonSawEvalBody, false);
     } finally {
       if (originalObjectToJson) {
         Object.defineProperty(Object.prototype, "toJSON", originalObjectToJson);
@@ -7191,6 +7486,8 @@ describe("server/handlers/request/project-run-execute.handler", () => {
         "none",
       );
       const agentInput = createRequest?.body?.config as Record<string, unknown>;
+      // Without an eval environment context, no studio_context item is added.
+      assertEquals(agentInput.context, []);
       assertEquals(agentInput.forwarded_props, {
         prompt: "France capital?",
         runtimeOverrides: {
@@ -7416,6 +7713,126 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       runtime: { type: "preview_branch", id: branchId },
     });
     assertEquals(previewInput.forwarded_props, agentInput.forwarded_props);
+  });
+
+  /** Execute a one-example durable project-run eval and return the durable run config. */
+  async function executeDurableContextEval(
+    environmentContext: string,
+  ): Promise<Record<string, unknown>> {
+    const requests: Array<{ pathname: string; body: Record<string, unknown> | null }> = [];
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: runTaskDefinition,
+      findEvalById: async (target) =>
+        target === "eval:context"
+          ? {
+            id: "eval:context",
+            name: "Studio context",
+            filePath: "evals/context.eval.ts",
+            exportName: "default",
+            definition: evalAgent({
+              id: "eval:context",
+              target: "agent:researcher",
+              environmentContext,
+              dataset: datasets.inline([{ id: "q1", input: "France capital?" }]),
+            }),
+          }
+          : null,
+      runEval: runEvalDefinition,
+      createEvalAgentAdapter: (config) =>
+        createAgentServiceEvalAdapter({ ...config, requestTimeoutMs: 250 }),
+    }));
+    const body = {
+      runId: "run_eval_durable_context",
+      canonicalRunId: "88888888-8888-4888-8888-888888888888",
+      kind: "task",
+      target: "task:eval",
+      projectId: "55555555-5555-4555-8555-555555555555",
+      runtimeAgUiEndpoint: "https://demo-project.preview.veryfront.org/api/ag-ui",
+      config: { eval_id: "eval:context" },
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_eval_durable_context/execute",
+      body,
+      { "x-token": "runtime-token" },
+      "https://veryfront.org",
+    );
+    await withEnvValue(
+      "VERYFRONT_API_BASE_URL",
+      "https://api.example.test/",
+      () =>
+        withMockFetch(
+          async (input, init) => {
+            const url = new URL(String(input));
+            const method = observeFetchRequestInit(init).method ?? "GET";
+            requests.push({ pathname: url.pathname, body: requestJsonBody(init) });
+            if (method === "POST" && url.pathname.endsWith("/runs")) {
+              return Response.json({ id: "77777777-7777-4777-8777-777777777777" }, {
+                status: 202,
+              });
+            }
+            if (method === "GET" && url.pathname.endsWith("/stream")) {
+              return new Response(
+                [
+                  { type: "RUN_STARTED", runId: "eval-child-run" },
+                  { type: "RUN_FINISHED", runId: "eval-child-run" },
+                ].map((payload, index) =>
+                  `id: ${index + 1}\nevent: ${payload.type}\ndata: ${
+                    JSON.stringify({
+                      event_id: index + 1,
+                      event_type: payload.type,
+                      payload,
+                      is_error: false,
+                      created_at: "2026-10-04T20:00:00.000Z",
+                    })
+                  }\n\n`
+                ).join(""),
+                { headers: { "content-type": "text/event-stream" } },
+              );
+            }
+            return new Response("not found", { status: 404 });
+          },
+          () =>
+            handler.handle(request, {
+              ...createCtx(publicKeyPem),
+              projectId: "55555555-5555-4555-8555-555555555555",
+            }),
+        ),
+    );
+
+    const config = requests[0]?.body?.config;
+    assertExists(config);
+    return config as Record<string, unknown>;
+  }
+
+  it("sends the eval environment context as the durable run's studio_context item", async () => {
+    const config = await executeDurableContextEval("active tab: app/page.tsx");
+
+    assertEquals(config.context, [
+      {
+        type: "json",
+        title: "studio_context",
+        data: { environmentContext: "active tab: app/page.tsx" },
+      },
+    ]);
+    // The durable runtime replaces the agent's configured context with this value.
+    assertEquals(
+      (config.forwarded_props as { veryfront?: Record<string, unknown> }).veryfront
+        ?.environmentContext,
+      "active tab: app/page.tsx",
+    );
+  });
+
+  it("forwards an environment context too large for a context item without the item", async () => {
+    // Run admission caps each JSON context item at 16 KB; forwarded props allow 192 KB.
+    const environmentContext = `<studio_tabs>\n${"a".repeat(20_000)}\n</studio_tabs>`;
+    const config = await executeDurableContextEval(environmentContext);
+
+    assertEquals(config.context, []);
+    assertEquals(
+      (config.forwarded_props as { veryfront?: Record<string, unknown> }).veryfront
+        ?.environmentContext,
+      environmentContext,
+    );
   });
 
   it("forwards managed AG-UI endpoint host context when localizing from a generic control-plane host", async () => {
@@ -12002,6 +12419,90 @@ describe("project run inference credential header", () => {
           : { message: "Provider stream failed" },
       );
       assertEquals(JSON.stringify(appended).includes(privateDetail), false);
+    }
+  });
+
+  it("records a delegated child's rejected model request with its status and safe cause", async () => {
+    const privateDetail = "Private provider wording <REDACTED> <PROMPT>";
+    const rejection =
+      "The model provider rejected the request with HTTP 400 (invalid_request_error, invalid_value, parameter max_tokens).";
+    const cases = [
+      { error: rejection, expected: { code: "PROVIDER_REQUEST_REJECTED", message: rejection } },
+      // The code alone never forwards text: anything off the grammar stays private.
+      { error: `${rejection} ${privateDetail}`, expected: { message: "Provider stream failed" } },
+      {
+        error: "The model provider rejected the request with HTTP 400 (<REDACTED>).",
+        expected: { message: "Provider stream failed" },
+      },
+      {
+        error: "The model provider rejected the request with HTTP 500.",
+        expected: { message: "Provider stream failed" },
+      },
+    ];
+    for (const { error, expected } of cases) {
+      const code = "PROVIDER_REQUEST_REJECTED";
+      const runId = "run_nested_private_failure";
+      const canonicalRunId = "11111111-1111-4111-8111-111111111111";
+      const projectId = "22222222-2222-4222-8222-222222222222";
+      const appended: Record<string, unknown>[] = [];
+      const handler = new ProjectRunExecuteHandler(createDeps({
+        runTask: async () => {
+          await executeLocalChild({
+            agentId: "nested-finalization-failure",
+            input: "test",
+            toolName: "invoke_agent",
+            toolInput: {},
+            execute: async (control) => {
+              assertExists(control?.onEvent);
+              await control.onEvent({
+                type: "error",
+                error,
+                code,
+              });
+              return { text: "done", toolCalls: 0, status: "completed" };
+            },
+          });
+          return { success: true, result: "done", durationMs: 0 };
+        },
+      }));
+      const signed = await signedRequest(`/api/control-plane/runs/${runId}/execute`, {
+        ...taskBody,
+        runId,
+        canonicalRunId,
+        projectId,
+      }, {
+        "X-Veryfront-Inference-Token": INFERENCE_TOKEN,
+        "x-veryfront-run-event-token": createProjectRunEventToken({
+          runId,
+          projectId,
+          canonicalRunId,
+        }),
+      });
+      const ctx = createCtx(signed.publicKeyPem);
+      ctx.projectId = projectId;
+      const result = await withEnv(
+        { VERYFRONT_API_BASE_URL: "https://api.veryfront.com" },
+        () =>
+          withMockFetch(async (_input, init) => {
+            const payload = requestJsonBody(init);
+            assert(Array.isArray(payload?.events));
+            appended.push(...payload.events);
+            return Response.json({
+              run_id: canonicalRunId,
+              latest_event_id: appended.length,
+              appended_count: payload.events.length,
+            });
+          }, () => handler.handle(signed.request, ctx)),
+      );
+      assertExists(result.response);
+      assertEquals((await result.response.json()).success, true);
+      const errors = appended.filter((event) =>
+        event.type === "RUNTIME_EVENT_RECORDED" && event.kind === "agent_error"
+      );
+      assertEquals(errors.length, 1);
+      assertEquals(errors[0]?.value, expected, error);
+      assertEquals(JSON.stringify(appended).includes("<REDACTED>"), false, error);
+      assertEquals(JSON.stringify(appended).includes("<PROMPT>"), false, error);
     }
   });
 

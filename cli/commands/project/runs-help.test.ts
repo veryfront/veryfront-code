@@ -41,6 +41,11 @@ describe("project runs discovery", () => {
 
   it("advertises SDK-backed run commands in the existing project family", () => {
     assert(projectHelp.examples?.some((example) => example.includes("project runs list")));
+    assert(
+      projectHelp.examples?.some((example) =>
+        example.includes("project runs project-list --project <slug>")
+      ),
+    );
     for (const command of Object.values(RUNS_COMMANDS)) {
       assert(projectHelp.notes?.some((note) => note.includes(command)), command);
     }

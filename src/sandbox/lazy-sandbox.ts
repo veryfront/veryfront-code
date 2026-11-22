@@ -14,7 +14,7 @@ import {
   buildSandboxCreateInput,
 } from "./create-input.ts";
 import { CONFIG_INVALID, isVeryfrontError, REQUEST_ERROR } from "#veryfront/errors";
-import { createSandboxHttpError } from "./http-error.ts";
+import { createSandboxHttpError, withMissingProjectSelectorHint } from "./http-error.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { logger, sleep } from "#veryfront/utils";
 import { awaitAbortable, throwIfAborted } from "#veryfront/utils/abort.ts";
@@ -714,7 +714,13 @@ export class LazySandbox {
     );
 
     if (!res.ok) {
-      throw await createSandboxHttpError(res, "Failed to create sandbox");
+      throw withMissingProjectSelectorHint(
+        await createSandboxHttpError(res, "Failed to create sandbox"),
+        {
+          projectReference: projectId ?? undefined,
+          environmentId: this.creationPolicy.environmentId,
+        },
+      );
     }
 
     const session = await res.json();

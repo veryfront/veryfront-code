@@ -1,3 +1,4 @@
+import { isNormalizedAgentEntrypointPath } from "./agent-entrypoint-path.ts";
 /**
  * Discovery Engine
  *
@@ -30,7 +31,10 @@ import {
   webhookHandler,
   workflowHandler,
 } from "./handlers/index.ts";
-import { discoverRuntimeAgentMarkdownDefinitions } from "./handlers/runtime-agent-markdown-handler.ts";
+import {
+  discoverRuntimeAgentMarkdownDefinitions,
+  discoverRuntimeAgentMarkdownEntrypoint,
+} from "./handlers/runtime-agent-markdown-handler.ts";
 import { filenameToId } from "./discovery-utils.ts";
 
 const logger = agentLogger.component("discovery");
@@ -105,8 +109,11 @@ async function discoverItems<T, Candidate, Prepared>(
   context: FileDiscoveryContext,
   handler: DiscoveryHandler<T, Candidate, Prepared>,
   verbose?: boolean,
+  selectedFiles?: readonly string[],
 ): Promise<void> {
-  const files = (await findTypeScriptFiles(dir, context)).sort(compareDiscoveryFiles);
+  const files = [...(selectedFiles ?? await findTypeScriptFiles(dir, context))].sort(
+    compareDiscoveryFiles,
+  );
   const resultMap = handler.getResultMap(result);
 
   if (verbose) {
@@ -262,6 +269,9 @@ export async function discoverAll(config: DiscoveryConfig): Promise<DiscoveryRes
     );
   }
 
+  if (config.agentEntrypoint && !isNormalizedAgentEntrypointPath(config.agentEntrypoint.path)) {
+    throw new TypeError("Expected a normalized agent source file");
+  }
   const baseDir = config.baseDir;
 
   const context: FileDiscoveryContext = {
@@ -325,12 +335,32 @@ export async function discoverAll(config: DiscoveryConfig): Promise<DiscoveryRes
     );
   }
 
-  // Discover agents
-  for (const dir of config.agentDirs ?? ["agents"]) {
-    const agentDir = resolveDiscoveryDir(baseDir, dir);
-    await discoverItems(agentDir, result, context, agentHandler, config.verbose);
-    await discoverRuntimeAgentMarkdownDefinitions(agentDir, result, context);
+  // Discover agents. Keep this phase separate from unrelated global primitive diagnostics.
+  const agentErrorStart = result.errors.length;
+  if (config.agentEntrypoint) {
+    const file = resolveDiscoveryDir(baseDir, config.agentEntrypoint.path);
+    const dir = file.slice(0, file.lastIndexOf("/"));
+    if (/\.tsx?$/.test(file)) {
+      await discoverItems(dir, result, context, agentHandler, config.verbose, [`file://${file}`]);
+    } else if (file.endsWith(".md")) {
+      await discoverRuntimeAgentMarkdownEntrypoint(
+        file,
+        result,
+        context,
+        config.agentEntrypoint.path,
+      );
+    } else {
+      result.errors.push({ file, error: new TypeError("Unsupported agent source file") });
+    }
+  } else {
+    for (const dir of config.agentDirs ?? ["agents"]) {
+      const agentDir = resolveDiscoveryDir(baseDir, dir);
+      await discoverItems(agentDir, result, context, agentHandler, config.verbose);
+      await discoverRuntimeAgentMarkdownDefinitions(agentDir, result, context);
+    }
   }
+
+  if (config.agentEntrypoint) result.agentEntrypointErrors = result.errors.slice(agentErrorStart);
 
   // Discover resources
   await discoverConfiguredItems(

@@ -24,6 +24,8 @@ export interface ReserveResult {
 
 export interface ReserveProjectSlugOptions {
   allowAlternativeSlug?: boolean;
+  /** Display name for the created project. Defaults to a name derived from the slug. */
+  name?: string;
   transport?: typeof fetch;
 }
 
@@ -50,7 +52,7 @@ export async function reserveProjectSlug(
   apiUrl: string = getApiUrl(env),
   options: ReserveProjectSlugOptions = {},
 ): Promise<ReserveResult> {
-  const name = slugToName(slug);
+  const name = options.name?.trim() || slugToName(slug);
   let currentSlug = slug;
 
   for (let attempt = 1; attempt <= MAX_SLUG_ATTEMPTS; attempt++) {

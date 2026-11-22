@@ -41,6 +41,7 @@ import { shareRemoteMCPProtocolState } from "#veryfront/tool/remote-mcp.ts";
 import { disposeRemoteToolSources } from "#veryfront/tool/remote-tool-source-owner.ts";
 import { INGRESS_RUN_EVENT_TOKEN_HEADER } from "#veryfront/security/http/ingress-credentials.ts";
 import { createVeryfrontCloudInferenceModelResolver } from "./inference-credential.ts";
+import { runWithProjectRunInferenceCredential } from "../runtime/project-run-inference-credential.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
 import type {
   BoundConversationAgentRunFinalizer,
@@ -224,7 +225,10 @@ export function hostedTerminalRunFinalizer(
 export function hostedTerminalToolSourceFactory(
   request: HostedPlatformDependencyOwner | undefined,
   apiMcpUrl: string,
-  fallback: (config: RemoteMCPToolSourceConfig) => RemoteToolSource,
+  fallback: (
+    config: RemoteMCPToolSourceConfig,
+    server?: AgentServiceMcpServerConfig,
+  ) => RemoteToolSource,
   getAuthToken?: () => string | undefined,
 ): (config: RemoteMCPToolSourceConfig, server?: AgentServiceMcpServerConfig) => RemoteToolSource {
   const authority = request ? credentials.get(request) : undefined;
@@ -232,7 +236,7 @@ export function hostedTerminalToolSourceFactory(
   const expectedEndpoint = createProjectScopedMcpUrl(apiMcpUrl, authority.projectId);
   const parentEventWriter = getActiveHostedRunEventWriterCapability();
   return (config, server) => {
-    if (server?.kind !== "veryfront-api") return fallback(config);
+    if (server?.kind !== "veryfront-api") return fallback(config, server);
     const liveHeaders: NonNullable<RemoteMCPToolSourceConfig["headers"]> = async (context) => {
       const original = typeof config.headers === "function"
         ? await config.headers(context)
@@ -250,7 +254,7 @@ export function hostedTerminalToolSourceFactory(
     // Only the ordinary source runs discovery; the credential-specialized
     // sources reuse the protocol and header annotations it records.
     const shared = shareRemoteMCPProtocolState(config);
-    const ordinary = fallback({ ...shared, headers: liveHeaders });
+    const ordinary = fallback({ ...shared, headers: liveHeaders }, server);
     // Project mutations by the verified current run need its exact-run event authority.
     const isCurrentRunProjectCall = (name: string, context: ToolExecutionContext | undefined) =>
       !!authority.eventToken && context?.projectId === authority.projectId &&
@@ -267,7 +271,7 @@ export function hostedTerminalToolSourceFactory(
           }
           return headers;
         },
-      })
+      }, server)
       : ordinary;
     const terminal = fallback({
       ...shared,
@@ -296,7 +300,7 @@ export function hostedTerminalToolSourceFactory(
         }
         return headers;
       },
-    });
+    }, server);
     return {
       id: ordinary.id,
       dispose: (context) => disposeRemoteToolSources([ordinary, mutation, terminal], context),
@@ -737,6 +741,26 @@ export function hostedInheritedInvocationCredentialReader(
   };
 }
 
+function readInheritedInferenceCredential(
+  descriptor: HostedTerminalDescriptor | InheritedRunResult,
+): string {
+  const token = credentials.get(descriptor)?.inferenceToken;
+  if (!token) throw new Error("Inherited child inference authority is required");
+  return token;
+}
+
+/** Keep workflow agent calls bound to the admitted child's current lease. */
+export function runWithWorkflowChildInference<T>(
+  child: ConversationRunProjection | InheritedRunResult,
+  signal: AbortSignal | undefined,
+  execute: (signal?: AbortSignal) => Promise<T>,
+): Promise<T> {
+  return runWithProjectRunInferenceCredential(() => {
+    signal?.throwIfAborted();
+    return readInheritedInferenceCredential(child);
+  }, () => execute(signal));
+}
+
 /** Create inference transport only from this inherited child's private admission authority. */
 export function hostedInheritedInferenceModelResolver(
   descriptor: HostedTerminalDescriptor,
@@ -747,16 +771,13 @@ export function hostedInheritedInferenceModelResolver(
   if (!authority.inferenceToken || !authority.apiUrl) {
     throw new Error("Inherited child inference authority is required");
   }
-  const resolver = createVeryfrontCloudInferenceModelResolver(() => {
-    const current = credentials.get(descriptor);
-    if (!current?.inferenceToken) {
-      throw new Error("Inherited child inference authority is required");
-    }
-    return current.inferenceToken;
-  }, {
-    apiBaseUrl: authority.apiUrl,
-    assertParentActive: () => options.signal?.throwIfAborted(),
-  });
+  const resolver = createVeryfrontCloudInferenceModelResolver(
+    () => readInheritedInferenceCredential(descriptor),
+    {
+      apiBaseUrl: authority.apiUrl,
+      assertParentActive: () => options.signal?.throwIfAborted(),
+    },
+  );
   return options.projectModels
     ? (model: string) =>
       resolver(model.startsWith("veryfront-cloud/") ? model : `veryfront-cloud/${model}`)

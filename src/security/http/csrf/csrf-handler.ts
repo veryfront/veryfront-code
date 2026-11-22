@@ -7,11 +7,17 @@
  * resolves that default identically in local development and in production, so
  * a browser mutation that passes locally passes after deploy.
  *
+ * A request that carries an `Authorization: Bearer` token and no cookie, and is
+ * not a browser request from another site or origin, is not checked. It holds
+ * no ambient credential for a cross-site request to use, and the route's own
+ * auth answers it.
+ *
  * ## Server Actions integration
  *
  * When `security.csrf` is enabled, Server Action POSTs to `/_veryfront/rsc/action`
- * are **not** exempt and require a valid CSRF token. Client-side code that calls
- * Server Actions must:
+ * have no route exemption and require a valid CSRF token whenever they carry a
+ * cookie. Only a cookieless bearer request, as described above, skips the
+ * check. Browser code that calls Server Actions must:
  *
  * 1. Import `csrfMutationHeaders` from `veryfront/index.client`
  * 2. Use it to include the CSRF token on every POST
@@ -113,6 +119,52 @@ function isExcludedCsrfPath(csrfConfig: CsrfSetting, pathname: string): boolean 
 function isFrameworkLocalControlSurface(method: string, pathname: string): boolean {
   if (method === "POST" && pathname === INTERNAL_ENDPOINTS.CLIENT_LOG) return true;
   return pathname.startsWith(DEV_DASHBOARD_API_PREFIX);
+}
+
+/**
+ * A request whose only credential is an explicit bearer token.
+ *
+ * CSRF protects ambient credentials, the ones a browser attaches on its own to
+ * a cross-site request. A bearer token in `Authorization` is not ambient: a
+ * browser never adds it to a cross-site request, and a page that tries to add
+ * it triggers a CORS preflight. A caller that holds no cookie at all (curl, a
+ * script, an external MCP client) therefore has nothing for a forged request to
+ * ride on, and the route's own auth decides the outcome.
+ *
+ * Any cookie keeps the double-submit check. A request that carries both a
+ * cookie session and a bearer token could be a browser, and the cookie may be
+ * the credential the route accepts. The check does not guess which cookie is
+ * the CSRF cookie: project-configured and origin-isolated names make that
+ * unreliable, and refusing on any cookie is the conservative side.
+ *
+ * A browser request from another site keeps the check too. A project that
+ * allows any origin in its CORS policy lets a hostile page pass the preflight
+ * for `authorization`, and that page could then send any bearer value with no
+ * cookie to a route that has no auth of its own, such as a local development
+ * endpoint that spends the developer's Cloud session. Browsers always send
+ * `Sec-Fetch-Site` and `Origin` on such a request and page script cannot set
+ * either. A non-browser caller sends neither.
+ *
+ * The token is not validated here. A wrong bearer must reach the route so the
+ * route answers 401 instead of this handler answering 403.
+ */
+function isCookielessBearerRequest(req: Request): boolean {
+  const authorization = req.headers.get("authorization");
+  if (!authorization || !/^bearer\s+\S/i.test(authorization)) return false;
+
+  const cookie = req.headers.get("cookie");
+  if (cookie !== null && cookie.trim() !== "") return false;
+
+  const fetchSite = req.headers.get("sec-fetch-site")?.trim().toLowerCase();
+  if (fetchSite && fetchSite !== "same-origin" && fetchSite !== "none") return false;
+
+  const origin = req.headers.get("origin");
+  if (origin === null) return true;
+  try {
+    return origin === browserFacingOrigin(req, isProxyTopologyTrusted());
+  } catch {
+    return false;
+  }
 }
 
 function csrfValidationOptions(csrfConfig: CsrfSetting, req: Request) {
@@ -264,6 +316,8 @@ export class CsrfHandler extends BaseHandler {
     }
 
     if (isExcludedCsrfPath(csrfConfig, pathname)) return this.continue();
+
+    if (isCookielessBearerRequest(req)) return this.continue();
 
     if (!validateCsrf(req, csrfValidationOptions(csrfConfig, req))) {
       // `isLocalProject` is filesystem topology, not environment: a deployed

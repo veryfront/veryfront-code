@@ -77,6 +77,39 @@ function createInvocation(overrides: Record<string, unknown> = {}) {
 }
 
 describe("agent/runtime-agent-invocation-contract", () => {
+  it("preserves an exact agent entrypoint through the signed invocation and stream adapter", () => {
+    const parsed = RuntimeAgentRunInvocationSchema.parse(createInvocation({
+      agentEntrypoint: { path: "agents/shared/selected.ts" },
+    }));
+    assertEquals(parsed.agentEntrypoint, { path: "agents/shared/selected.ts" });
+    assertEquals(buildRuntimeAgentControlPlaneStreamRequestFromInvocation(parsed).agentEntrypoint, {
+      path: "agents/shared/selected.ts",
+    });
+  });
+
+  it("rejects entrypoint traversal, ambiguous separators and extra selector fields", () => {
+    for (
+      const path of [
+        "../agents/selected.ts",
+        "agents/../private.ts",
+        "agents//selected.ts",
+        "agents/./selected.ts",
+        "agents/child\\selected.ts",
+        "/agents/selected.ts",
+        "agents/",
+      ]
+    ) {
+      assertThrows(() =>
+        RuntimeAgentRunInvocationSchema.parse(createInvocation({ agentEntrypoint: { path } }))
+      );
+    }
+    assertThrows(() =>
+      RuntimeAgentRunInvocationSchema.parse(createInvocation({
+        agentEntrypoint: { path: "agents/selected.ts", agentId: "another" },
+      }))
+    );
+  });
+
   it("keeps an exact pending tool invocation in the trusted envelope", () => {
     const parsed = RuntimeAgentRunInvocationSchema.parse(createInvocation({
       resumeToolCall: {

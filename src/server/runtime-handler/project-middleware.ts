@@ -2,7 +2,7 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { isExtendedFSAdapter } from "#veryfront/platform/adapters/fs/wrapper.ts";
 import { registerLRUCache } from "#veryfront/cache";
 import {
-  isConfigOptionalControlPlaneRunRequest,
+  isConfigOptionalControlPlaneRequest,
   isSignedChannelDispatch,
   isSignedControlPlaneDispatch,
 } from "#veryfront/channels/control-plane.ts";
@@ -218,7 +218,7 @@ export class ProjectMiddlewareRuntime {
     }
 
     if (
-      isConfigOptionalControlPlaneRunRequest(
+      isConfigOptionalControlPlaneRequest(
         request.method,
         pathname,
       )

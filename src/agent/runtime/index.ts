@@ -442,7 +442,11 @@ import {
   createToolExposureState,
   createToolSearchDefinition,
   listToolExposure,
+  loadToolExposureNames,
+  parseToolSearchNames,
+  readStepToolExposure,
   readToolExposureContract,
+  reserveStepToolNames,
   searchToolExposure,
   searchToolExposureMetadata,
   TOOL_SEARCH_TOOL_NAME,
@@ -452,6 +456,7 @@ import {
   type ToolExposureState,
   type ToolInventoryPage,
   type ToolMetadataSearchResult,
+  type ToolNamesLoadResult,
   type ToolSearchMatch,
   type ToolSearchResult,
 } from "./tool-exposure.ts";
@@ -1751,16 +1756,61 @@ function toolSearchLoadedNextStep(matches: readonly ToolSearchMatch[]): string {
     names += `${listed === 0 ? "" : ", "}"${match.name}"`;
     listed += 1;
   }
-  return `Loaded tools: ${names}. Call the loaded tool that fits the request in the next step to complete it.`;
+  return `Loaded tools: ${names}. Use the tool definitions supplied on the next model call. Call the matching loaded tool directly; no separate schema lookup is needed.`;
+}
+
+function quotedToolNames(names: readonly string[], conjunction: "and" | "or"): string {
+  let quoted = "";
+  for (let index = 0; index < names.length; index++) {
+    if (!ObjectHasOwn(names, index)) continue;
+    const separator = index === 0 ? "" : index === names.length - 1 ? ` ${conjunction} ` : ", ";
+    quoted += `${separator}"${names[index]}"`;
+  }
+  return quoted;
+}
+
+function toolSearchNamesNextStep(result: ToolNamesLoadResult): string {
+  const steps: string[] = [];
+  if (result.loadedCount > 0) pushPrivateArray(steps, toolSearchLoadedNextStep(result.matches));
+  const available: string[] = [];
+  for (let index = 0; index < result.matches.length; index++) {
+    if (!ObjectHasOwn(result.matches, index)) continue;
+    const match = result.matches[index]!;
+    if (match.status === "available") pushPrivateArray(available, match.name);
+  }
+  if (available.length > 0) {
+    pushPrivateArray(
+      steps,
+      `Already available: ${quotedToolNames(available, "and")}. Call them directly.`,
+    );
+  }
+  if (result.notLoaded.length > 0) {
+    pushPrivateArray(
+      steps,
+      `Not loaded within the current tool limit: ${
+        quotedToolNames(result.notLoaded, "and")
+      }. Load them in a later call once a loaded tool is no longer needed.`,
+    );
+  }
+  if (result.notFound.length > 0) {
+    pushPrivateArray(
+      steps,
+      `No authorized executable tool is named ${
+        quotedToolNames(result.notFound, "or")
+      }. Use search with a short capability phrase, or inventory: 'all', to find the exact name.`,
+    );
+  }
+  return joinPrivateArray(steps, " ");
 }
 
 type FrameworkToolSearchResult =
   | ToolSearchResult
   | ToolInventoryPage
   | ToolMetadataSearchResult
+  | ToolNamesLoadResult
   | (ToolSearchResult & { contract: ToolExposureContract });
 
-const TOOL_SEARCH_MODES = ["schema", "search", "inventory", "query"] as const;
+const TOOL_SEARCH_MODES = ["schema", "search", "inventory", "names", "query"] as const;
 const TOOL_SEARCH_INVENTORY_OPTIONS = ["domain", "resource", "cursor", "limit"] as const;
 
 function readToolSearchArg(args: Record<string, unknown>, key: string): unknown {
@@ -1794,7 +1844,7 @@ function executeFrameworkToolSearch(input: {
   );
   if (modes.length !== 1) {
     throw new Error(
-      `veryfront__tool_search requires exactly one of schema, search, inventory, or query; received ${
+      `veryfront__tool_search requires exactly one of schema, search, inventory, names, or query; received ${
         modes.length === 0 ? "none" : joinPrivateArray(modes, ", ")
       }`,
     );
@@ -1810,10 +1860,18 @@ function executeFrameworkToolSearch(input: {
       } applies only with inventory`,
     );
   }
-  const available = filterPrivateArray(
-    input.plan.visible,
-    (tool) => tool.name !== TOOL_SEARCH_TOOL_NAME,
-  );
+  // Every call of one assistant turn runs against the same step plan, so read
+  // it as the earlier calls of the turn have left it.
+  const { available, deferred } = readStepToolExposure({ plan: input.plan, state: input.state });
+  const reserveAvailable = (matches: readonly { name: string; status: string }[]) =>
+    reserveStepToolNames({
+      plan: input.plan,
+      state: input.state,
+      names: mapPrivateArray(
+        filterPrivateArray(matches, (match) => match.status === "available"),
+        (match) => match.name,
+      ),
+    });
   const checkpoint = () => createToolExposureCheckpoint(input.plan.authorized, input.state);
   if (modes[0] === "search") {
     const phrase = readToolSearchArg(input.args, "search");
@@ -1825,9 +1883,10 @@ function executeFrameworkToolSearch(input: {
     }
     const result = searchToolExposureMetadata({
       query,
-      authorized: input.plan.deferred,
+      authorized: deferred,
       available,
     });
+    reserveAvailable(result.matches);
     return {
       result: {
         ...result,
@@ -1859,14 +1918,17 @@ function executeFrameworkToolSearch(input: {
     }
     const result = searchToolExposure({
       query: contract.name,
-      authorized: filterPrivateArray(input.plan.deferred, (tool) => tool.name === contract.name),
+      authorized: filterPrivateArray(deferred, (tool) => tool.name === contract.name),
       available: filterPrivateArray(available, (tool) => tool.name === contract.name),
       state: input.state,
       maxLoadedTools: input.plan.maxLoadedTools,
+      step: input.plan,
     });
+    // Read from the result, not the step plan: an earlier call in this step can
+    // have evicted a tool the plan still lists as visible.
     const isAvailable = somePrivateArray(
-      available,
-      (tool) => tool.name === contract.name,
+      result.matches,
+      (match) => match.name === contract.name && match.status === "available",
     );
     return {
       result: {
@@ -1905,7 +1967,7 @@ function executeFrameworkToolSearch(input: {
       throw new Error("Invalid tool inventory limit");
     }
     const result = listToolExposure({
-      authorized: input.plan.deferred,
+      authorized: deferred,
       available,
       cursor,
       limit,
@@ -1913,6 +1975,7 @@ function executeFrameworkToolSearch(input: {
       domain,
       resource,
     });
+    reserveAvailable(result.matches);
     return {
       result: {
         ...result,
@@ -1923,6 +1986,21 @@ function executeFrameworkToolSearch(input: {
       checkpoint: checkpoint(),
     };
   }
+  if (modes[0] === "names") {
+    const result = loadToolExposureNames({
+      names: parseToolSearchNames(readToolSearchArg(input.args, "names")),
+      authorized: deferred,
+      available,
+      state: input.state,
+      maxLoadedTools: input.plan.maxLoadedTools,
+      // Every call of one assistant turn runs against the same step plan.
+      step: input.plan,
+    });
+    return {
+      result: { ...result, nextStep: toolSearchNamesNextStep(result) },
+      checkpoint: checkpoint(),
+    };
+  }
   const phrase = readToolSearchArg(input.args, "query");
   const query = typeof phrase === "string" ? privateTextTrim(phrase) : "";
   if (!query) {
@@ -1930,10 +2008,11 @@ function executeFrameworkToolSearch(input: {
   }
   const result: ToolSearchResult = searchToolExposure({
     query,
-    authorized: input.plan.deferred,
+    authorized: deferred,
     available,
     state: input.state,
     maxLoadedTools: input.plan.maxLoadedTools,
+    step: input.plan,
   });
   const alreadyVisible =
     filterPrivateArray(result.matches, (match) => match.status === "available")[0];
@@ -1944,8 +2023,10 @@ function executeFrameworkToolSearch(input: {
         ? "Matching candidates are already available. A search match does not establish that a tool can perform the request; check its contract before calling it."
         : result.loadedCount > 0
         ? toolSearchLoadedNextStep(result.matches)
+        : result.notLoaded !== undefined
+        ? "A matching tool could not be loaded within the current tool limit. Continue with the available tools, or load it by exact name in a later step."
         : somePrivateArray(
-            input.plan.deferred,
+            deferred,
             (tool) =>
               !IntrinsicReflectApply(IntrinsicSetHas, input.state.loadedToolNames, [tool.name]),
           )

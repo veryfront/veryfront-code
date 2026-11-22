@@ -5,12 +5,17 @@ import "#veryfront/schemas/_test-setup.ts";
  * Tests the init command types and options validation.
  */
 
-import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { exists, makeTempDir, remove } from "#veryfront/testing/deno-compat.ts";
 import { join } from "veryfront/platform/path";
 import { stripAnsi } from "../../ui/ansi.ts";
-import { initCommand } from "./init-command.ts";
+import { initCommand, newProjectEnv, offerCloudProjectAfterInit } from "./init-command.ts";
 import type { InitOptions, InitTemplate } from "./types.ts";
 
 describe("InitCommand Types", () => {
@@ -322,5 +327,120 @@ describe("initCommand into the current directory", () => {
     } finally {
       await remove(parentDir, { recursive: true }).catch(() => {});
     }
+  });
+});
+
+describe("offerCloudProjectAfterInit", () => {
+  async function run(
+    choose: () => Promise<"linked" | "declined" | "cancelled">,
+    environment: Record<string, string> = {},
+  ) {
+    const logged: string[] = [];
+    await offerCloudProjectAfterInit(
+      "/unused",
+      (message) => logged.push(message),
+      choose,
+      (name) => environment[name],
+    );
+    return logged;
+  }
+
+  it("prints nothing more once the folder is linked", async () => {
+    assertEquals(await run(() => Promise.resolve("linked")), []);
+  });
+
+  for (const choice of ["declined", "cancelled"] as const) {
+    it(`names both ways to get inference, in one log entry, when ${choice}`, async () => {
+      const logged = await run(() => Promise.resolve(choice));
+      assertEquals(logged.length, 1);
+      assertStringIncludes(logged[0]!, "set up inference in one of these ways");
+      assertStringIncludes(logged[0]!, "Veryfront Cloud AI Gateway");
+      assertStringIncludes(logged[0]!, "OPENAI_API_KEY");
+      assertEquals(logged[0]!.includes("veryfront push"), false);
+      // init does not run dev, so it does not say to restart it.
+      assertEquals(logged[0]!.includes("restart veryfront dev"), false);
+    });
+  }
+
+  it("prints no setup advice when an OpenAI key is already set", async () => {
+    // The scaffolded agents leave their model unset, so the default OpenAI
+    // model serves them with this key, the same check the dev banner makes.
+    assertEquals(
+      await run(() => Promise.resolve("declined"), { OPENAI_API_KEY: "<API_KEY>" }),
+      [],
+    );
+  });
+
+  it("counts a key init wrote to the new .env", async () => {
+    // A template or integration that declares OPENAI_API_KEY writes its value.
+    const env = newProjectEnv({ OPENAI_API_KEY: "<API_KEY>" }, () => undefined);
+    const logged: string[] = [];
+    await offerCloudProjectAfterInit(
+      "/unused",
+      (message) => logged.push(message),
+      () => Promise.resolve("declined"),
+      env,
+    );
+    assertEquals(logged, []);
+  });
+
+  it("ranks the shell's value first and skips written values dev would expand", () => {
+    const shell = { OPENAI_API_KEY: "<SHELL_KEY>" } as Record<string, string>;
+    const env = newProjectEnv(
+      {
+        OPENAI_API_KEY: "<WRITTEN_KEY>",
+        ANTHROPIC_API_KEY: " ",
+        MISTRAL_API_KEY: "$PARENT_KEY",
+        GOOGLE_API_KEY: "${PARENT_KEY}",
+      },
+      (name) => shell[name],
+    );
+    assertEquals(env("OPENAI_API_KEY"), "<SHELL_KEY>");
+    assertEquals(env("ANTHROPIC_API_KEY"), undefined);
+    // dev expands a reference against an environment init cannot see.
+    assertEquals(env("MISTRAL_API_KEY"), undefined);
+    assertEquals(env("GOOGLE_API_KEY"), undefined);
+  });
+
+  for (
+    const key of [
+      "ANTHROPIC_API_KEY",
+      "GOOGLE_API_KEY",
+      "GOOGLE_GENERATIVE_AI_API_KEY",
+      "MISTRAL_API_KEY",
+    ]
+  ) {
+    it(`still names both ways when only ${key}, which the scaffolded agents cannot use, is set`, async () => {
+      const logged = await run(() => Promise.resolve("declined"), { [key]: "<API_KEY>" });
+      assertEquals(logged.length, 1);
+      assertStringIncludes(logged[0]!, "set up inference in one of these ways");
+    });
+  }
+
+  it("still names both ways when the OpenAI key is blank", async () => {
+    const logged = await run(() => Promise.resolve("declined"), { OPENAI_API_KEY: "  " });
+    assertEquals(logged.length, 1);
+    assertStringIncludes(logged[0]!, "set up inference in one of these ways");
+  });
+
+  it("names only the failure when Cloud setup throws and an OpenAI key is set", async () => {
+    const logged = await run(
+      () => Promise.reject(new Error("Network unavailable")),
+      { OPENAI_API_KEY: "<API_KEY>" },
+    );
+    assertEquals(logged, ["  Cloud setup could not finish: Network unavailable"]);
+  });
+
+  it("falls back to the trimmed written value when the shell sets none", () => {
+    const env = newProjectEnv({ OPENAI_API_KEY: " <WRITTEN_KEY> " }, () => undefined);
+    assertEquals(env("OPENAI_API_KEY"), "<WRITTEN_KEY>");
+    assertEquals(env("ANTHROPIC_API_KEY"), undefined);
+  });
+
+  it("names the failure, then both ways to get inference, when Cloud setup throws", async () => {
+    const logged = await run(() => Promise.reject(new Error("Network unavailable")));
+    assertEquals(logged.length, 2);
+    assertEquals(logged[0], "  Cloud setup could not finish: Network unavailable");
+    assertStringIncludes(logged[1]!, "set up inference in one of these ways");
   });
 });

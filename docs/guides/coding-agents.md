@@ -93,7 +93,7 @@ vf_run_lint()
 ```
 
 Run `veryfront dev` after credentials are configured. The app needs model access
-through `veryfront login`, `VERYFRONT_API_TOKEN`, or provider keys such as
+through `veryfront login`, `VERYFRONT_API_KEY`, or provider keys such as
 `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`.
 
 ## Choose a transport

@@ -731,6 +731,13 @@ Push receipt not found.
 - **HTTP status:** 400
 - **What to do:** Run: veryfront push --branch main first
 
+### push-branch-mismatch
+
+Latest push is for a different branch.
+
+- **HTTP status:** 409
+- **What to do:** Run veryfront push --branch \<branch> for the branch you deploy, then deploy again
+
 ### push-conflict
 
 Push rejected because remote files changed.
@@ -773,6 +780,14 @@ Linked project not found.
 - **HTTP status:** 404
 - **CLI exit code:** 1
 - **What to do:** Run veryfront whoami to check which account is signed in, or remove .veryfront/project.json to unlink this directory and let veryfront push create and link a project for the signed-in account
+
+### project-slug-taken
+
+Project slug already in use.
+
+- **HTTP status:** 409
+- **CLI exit code:** 1
+- **What to do:** Choose a slug no other project uses, then run the command again. With veryfront up, pass --name \<name>
 
 ## Agents
 
@@ -867,11 +882,11 @@ Provider replay checkpoint is invalid.
 No model access for eval run.
 
 - **HTTP status:** 402
-- **What to do:** Veryfront Cloud refused the model request for billing or entitlement reasons, not authentication. Add AI credits or upgrade the plan for the account that owns the linked project at https://veryfront.com/settings/billing, then run the eval again. See https://veryfront.com/docs/api/errors/insufficient-credits
+- **What to do:** Veryfront Cloud refused the model request for billing or entitlement reasons, not authentication. Add AI credits or upgrade the plan at https://veryfront.com/settings/billing for the account that owns the linked project, or for your credential's account when no project is set, then run the eval again. See https://veryfront.com/docs/api/errors/insufficient-credits
 
 ### eval-project-required
 
-No project for eval model requests.
+No usable project for eval model requests.
 
 - **HTTP status:** 400
 - **What to do:** Set VERYFRONT_PROJECT_SLUG in .env or projectSlug in veryfront.config.ts to a project you can edit, then run veryfront eval again
@@ -895,7 +910,7 @@ Veryfront API blocked by network egress policy.
 Veryfront Cloud rejected the eval credential.
 
 - **HTTP status:** 401
-- **What to do:** Run `veryfront login` to refresh your session, or set VERYFRONT_API_TOKEN to a valid token, then run the eval again
+- **What to do:** Run `veryfront login` to refresh your session, or set VERYFRONT_API_KEY to a valid API key, then run the eval again
 
 ### eval-model-project-access-denied
 
@@ -925,6 +940,20 @@ Eval record timed out.
 - **HTTP status:** 504
 - **What to do:** The limit covers the whole record: target execution, tools, model requests, metrics, and checks. Run the eval again with LOG_LEVEL=DEBUG to see which phase stopped making progress, and check the record report for the phase that did not finish. If the record legitimately needs longer, raise the limit with --record-timeout \<seconds>, or pass --record-timeout 0 to disable it.
 
+### eval-not-found
+
+Eval not found.
+
+- **HTTP status:** 404
+- **What to do:** Put the eval in evals/\<name>.eval.ts with an export made by evalAgent, evalTool or evalDataset, ensure the file is in the source the run uses, then run the eval again with the ID that the evals list shows.
+
+### eval-load-failed
+
+Eval file failed to load.
+
+- **HTTP status:** 422
+- **What to do:** Fix the error the message names in the eval file, then run the eval again.
+
 ## General
 
 Raised anywhere; these are not specific to one subsystem.
@@ -941,7 +970,7 @@ Unknown/unclassified error.
 Authentication required.
 
 - **HTTP status:** 401
-- **What to do:** Set VERYFRONT_API_TOKEN or run 'veryfront login'
+- **What to do:** Set VERYFRONT_API_KEY or run 'veryfront login'
 
 ### permission-denied
 

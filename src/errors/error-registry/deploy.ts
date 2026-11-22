@@ -94,6 +94,21 @@ export const PUSH_RECEIPT_MISSING = defineError({
   suggestion: "Run: veryfront push --branch main first",
 });
 
+/**
+ * The push receipt in this directory names a different branch than the one the
+ * deploy targets, so the source the deploy would promote was never pushed from
+ * here. `veryfront merge` leaves this state when it cannot prove the target
+ * branch now holds the pushed source. The detail names both branches and the
+ * push that fixes it.
+ */
+export const PUSH_BRANCH_MISMATCH = defineError({
+  slug: "push-branch-mismatch",
+  category: "DEPLOY",
+  status: 409,
+  title: "Latest push is for a different branch",
+  suggestion: "Run veryfront push --branch <branch> for the branch you deploy, then deploy again",
+});
+
 export const PUSH_CONFLICT = defineError({
   slug: "push-conflict",
   category: "DEPLOY",
@@ -182,6 +197,22 @@ export const CONFIG_NOT_DEPLOYABLE = defineError({
   exitCode: 2,
 });
 
+/**
+ * The project slug the CLI tried to create is already in use. Project slugs are
+ * unique across Veryfront, so another account often already owns the slug of a
+ * common folder name. The detail names the slug and the fix for the command that
+ * raised it.
+ */
+export const PROJECT_SLUG_TAKEN = defineError({
+  slug: "project-slug-taken",
+  category: "DEPLOY",
+  status: 409,
+  title: "Project slug already in use",
+  suggestion:
+    "Choose a slug no other project uses, then run the command again. With veryfront up, pass --name <name>",
+  exitCode: 1,
+});
+
 /** Registry fragment for DEPLOY errors (slug → definition). */
 export const DEPLOY_REGISTRY = {
   "config-not-deployable": CONFIG_NOT_DEPLOYABLE,
@@ -196,10 +227,12 @@ export const DEPLOY_REGISTRY = {
   "release-build-timeout": RELEASE_BUILD_TIMEOUT,
   "deployment-verification-timeout": DEPLOYMENT_VERIFICATION_TIMEOUT,
   "push-receipt-missing": PUSH_RECEIPT_MISSING,
+  "push-branch-mismatch": PUSH_BRANCH_MISMATCH,
   "push-conflict": PUSH_CONFLICT,
   "sync-state-invalid": SYNC_STATE_INVALID,
   "source-digest-mismatch": SOURCE_DIGEST_MISMATCH,
   "preview-hostname-too-long": PREVIEW_HOSTNAME_TOO_LONG,
   "branch-not-found": BRANCH_NOT_FOUND,
   "project-link-stale": PROJECT_LINK_STALE,
+  "project-slug-taken": PROJECT_SLUG_TAKEN,
 } as const;

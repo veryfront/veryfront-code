@@ -17,6 +17,7 @@ import type {
   LocalEvalReport,
 } from "./types.ts";
 import { computeHash } from "#veryfront/utils";
+import { readOwnEvalEnvironmentContextText } from "./validation.ts";
 import { compareStrings } from "#veryfront/utils/compare.ts";
 
 /** Additive eval report contract version written by new reports and summary artifacts. */
@@ -70,6 +71,10 @@ function createDatasetHashInput(dataset: EvalDataset, examples: EvalExample[]) {
       ...(example.expectedOutcome ? { expectedOutcome: example.expectedOutcome } : {}),
       ...(Object.hasOwn(example, "reference") ? { reference: example.reference } : {}),
       ...(example.metadata ? { metadata: example.metadata } : {}),
+      // The own value, as the runner reads it: the hash names what ran.
+      ...(readOwnEvalEnvironmentContextText(example) === undefined
+        ? {}
+        : { environmentContext: readOwnEvalEnvironmentContextText(example) }),
     })),
   };
 }

@@ -73,6 +73,61 @@ describe("EnvironmentConfig", () => {
       expect(retrieved).toBe(initialized);
     });
 
+    it("reads VERYFRONT_API_KEY like the token only before env files load", () => {
+      // An SDK script never runs the env loader. Its key must resolve like an
+      // exported token, so every consumer picks the same endpoint for both.
+      const names = [
+        "VERYFRONT_API_TOKEN",
+        "VERYFRONT_API_TOKEN_FILE",
+        "VERYFRONT_API_KEY",
+      ] as const;
+      const saved = names.map((name) => [name, Deno.env.get(name)] as const);
+      const apiTokenWith = (values: Partial<Record<(typeof names)[number], string>>) => {
+        for (const name of names) {
+          const value = values[name];
+          if (value === undefined) deleteEnv(name);
+          else setEnv(name, value);
+        }
+        return refreshEnvironmentConfig().apiToken;
+      };
+
+      try {
+        __resetEnvLoaderForTests();
+        expect(apiTokenWith({ VERYFRONT_API_KEY: "<KEY>" })).toBe("<KEY>");
+        expect(apiTokenWith({ VERYFRONT_API_TOKEN: "<TOKEN>", VERYFRONT_API_KEY: "<KEY>" }))
+          .toBe("<TOKEN>");
+        expect(apiTokenWith({ VERYFRONT_API_KEY: "  " })).toBeUndefined();
+        expect(
+          apiTokenWith({ VERYFRONT_API_TOKEN: "   ", VERYFRONT_API_KEY: "<KEY>" }),
+          "a blank token is unset, as getHostEnv and the env loader treat it",
+        ).toBe("<KEY>");
+
+        // A project scope reads its own variables. Its VERYFRONT_API_KEY is a
+        // project value, and the host key is out of its reach: neither becomes
+        // the snapshot token.
+        apiTokenWith({ VERYFRONT_API_KEY: "<HOST_KEY>" });
+        runWithProjectEnv({ VERYFRONT_API_KEY: "<PROJECT_KEY>" }, () => {
+          expect(refreshEnvironmentConfig().apiToken).toBeUndefined();
+        });
+        runWithProjectEnv({}, () => {
+          expect(refreshEnvironmentConfig().apiToken).toBeUndefined();
+        });
+        // A set token file beats the key: "does not read the key while a token
+        // file is set" in src/platform/compat/process/env.test.ts covers it.
+
+        // Once the loader resolved the key, a token it removed stays removed.
+        markEnvLoaded();
+        expect(apiTokenWith({ VERYFRONT_API_KEY: "<KEY>" })).toBeUndefined();
+      } finally {
+        __resetEnvLoaderForTests();
+        for (const [name, value] of saved) {
+          if (value === undefined) deleteEnv(name);
+          else setEnv(name, value);
+        }
+        _resetEnvironmentConfig();
+      }
+    });
+
     it("keeps early snapshots immutable and uncached until environment loading completes", async () => {
       __resetEnvLoaderForTests();
       const originalWarn = logger.warn;

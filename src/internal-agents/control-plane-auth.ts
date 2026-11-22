@@ -3,6 +3,7 @@ import type { HostedServiceRunEventAppendTokenResult } from "#veryfront/agent/se
 import { readOwnDataProperty } from "#veryfront/agent/runtime/data-property-descriptor.ts";
 import {
   type ControlPlaneClaims,
+  ControlPlaneProjectMetadataRequestSchema,
   type ControlPlaneSurface,
   verifyControlPlaneJws,
 } from "#veryfront/channels/control-plane.ts";
@@ -27,6 +28,26 @@ const CONTROL_PLANE_JWS_HEADER = "x-veryfront-control-plane-jws";
 const MAX_CONTROL_PLANE_SIGNATURE_AGE_SECONDS = 60;
 const CONTROL_PLANE_SIGNING_KEY_ENV = "CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY";
 const logger = serverLogger.component("internal-agents-auth");
+
+/** Authenticate host metadata against the exact body, operation, subject and source project. */
+export async function authenticateControlPlaneProjectMetadataRequest(
+  req: Request,
+  ctx: HandlerContext,
+  rawBody: string,
+) {
+  const payload = ControlPlaneProjectMetadataRequestSchema.parse(JsonParse(rawBody));
+  const claims = await verifyControlPlaneRequest(req, ctx, rawBody, {
+    expectedSubject: payload.requestId,
+    expectedSurface: payload.surface as ControlPlaneSurface,
+  });
+  if (
+    payload.projectId !== claims.project_id ||
+    (ctx.projectId !== undefined && payload.projectId !== ctx.projectId)
+  ) {
+    throw new ControlPlaneRequestError(401, "Invalid control-plane signature");
+  }
+  return payload;
+}
 const IntrinsicReflectApply = Reflect.apply;
 const JsonParse = JSON.parse;
 const DateNow = Date.now;

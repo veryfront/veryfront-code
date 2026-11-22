@@ -1,6 +1,11 @@
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { publishPackages, relayPackageOutput } from "./publish-rc-packages.ts";
+import {
+  parseCoreSuspended,
+  publishPackages,
+  relayPackageOutput,
+  SUSPENDED_RC_MARKER_PACKAGE,
+} from "./publish-rc-packages.ts";
 
 describe("bounded RC publication", () => {
   it("publishes independent extensions together, dependencies first and root last", async () => {
@@ -86,6 +91,74 @@ describe("bounded RC publication", () => {
         () => publishPackages(entries, () => Promise.resolve()),
         Error,
       );
+    }
+  });
+
+  it("publishes extensions only, completion marker last, while the root is suspended", async () => {
+    const started: string[] = [];
+    await publishPackages([
+      { name: SUSPENDED_RC_MARKER_PACKAGE, directory: "auth", dependencies: [] },
+      { name: "base", directory: "base", dependencies: [] },
+      { name: "dependent", directory: "dependent", dependencies: ["base"] },
+    ], ({ name }) => {
+      started.push(name);
+      return Promise.resolve();
+    }, { coreSuspended: true });
+    assertEquals(started, ["base", "dependent", SUSPENDED_RC_MARKER_PACKAGE]);
+  });
+
+  it("does not move the completion marker after a failed extension while suspended", async () => {
+    const started: string[] = [];
+    await assertRejects(
+      () =>
+        publishPackages([
+          { name: SUSPENDED_RC_MARKER_PACKAGE, directory: "auth", dependencies: [] },
+          { name: "bad", directory: "bad", dependencies: [] },
+        ], ({ name }) => {
+          started.push(name);
+          return name === "bad" ? Promise.reject(new Error("registry refused")) : Promise.resolve();
+        }, { coreSuspended: true }),
+      Error,
+      "registry refused",
+    );
+    assertEquals(started, ["bad"]);
+  });
+
+  it("refuses the root while suspended before publishing anything", async () => {
+    const started: string[] = [];
+    await assertRejects(
+      () =>
+        publishPackages([
+          { name: "base", directory: "base", dependencies: [] },
+          { name: "veryfront", directory: "npm", dependencies: [] },
+        ], ({ name }) => {
+          started.push(name);
+          return Promise.resolve();
+        }, { coreSuspended: true }),
+      Error,
+      "must not include the veryfront root",
+    );
+    assertEquals(started, []);
+  });
+
+  it("refuses a suspended publication without the completion marker", async () => {
+    for (const entries of [[], [{ name: "base", directory: "base", dependencies: [] }]]) {
+      await assertRejects(
+        () => publishPackages(entries, () => Promise.resolve(), { coreSuspended: true }),
+        Error,
+        "completion marker",
+      );
+    }
+  });
+});
+
+describe("core suspension switch", () => {
+  it("accepts only unset, true and false", () => {
+    assertEquals(parseCoreSuspended(undefined), false);
+    assertEquals(parseCoreSuspended("false"), false);
+    assertEquals(parseCoreSuspended("true"), true);
+    for (const value of ["", "TRUE", "1", "yes", " true"]) {
+      assertThrows(() => parseCoreSuspended(value), Error, "must be true or false");
     }
   });
 });

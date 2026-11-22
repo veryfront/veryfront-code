@@ -1940,7 +1940,7 @@ describe("agent/ag-ui-handler", () => {
     assertEquals(await response.json(), {
       code: "NO_AI_AVAILABLE",
       error:
-        "No model credentials configured. Run veryfront login or set VERYFRONT_API_TOKEN, OPENAI_API_KEY, ANTHROPIC_API_KEY, or GOOGLE_API_KEY.",
+        "No model credentials configured. Run veryfront login or set VERYFRONT_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY, or GOOGLE_API_KEY.",
     });
   });
 
@@ -1974,7 +1974,7 @@ describe("agent/ag-ui-handler", () => {
     assertEquals(await response.json(), {
       code: "NO_MODEL_CREDENTIALS",
       error:
-        "No model credentials configured. Run veryfront login or set VERYFRONT_API_TOKEN, OPENAI_API_KEY, ANTHROPIC_API_KEY, or GOOGLE_API_KEY.",
+        "No model credentials configured. Run veryfront login or set VERYFRONT_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY, or GOOGLE_API_KEY.",
     });
   });
 

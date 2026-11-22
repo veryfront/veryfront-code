@@ -161,6 +161,6 @@ export function resolveSandboxAuthToken(options: SandboxClientOptions = {}): str
 
   throw CONFIG_INVALID.create({
     detail:
-      "Sandbox auth not configured. Set VERYFRONT_API_TOKEN, provide request-scoped Veryfront credentials, or pass authToken explicitly.",
+      "Sandbox auth not configured. Set VERYFRONT_API_KEY, provide request-scoped Veryfront credentials, or pass authToken explicitly.",
   });
 }

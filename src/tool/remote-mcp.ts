@@ -11,6 +11,7 @@ import {
 import { createPrivateSet } from "#veryfront/security/private-set.ts";
 import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
 import { NETWORK_ERROR, TIMEOUT_ERROR } from "#veryfront/errors";
+import { agentLogger } from "#veryfront/utils/logger/index.ts";
 import { readMcpToolDiscoveryMetadata } from "./discovery-metadata.ts";
 import { getApiBaseUrlEnv } from "#veryfront/config/env.ts";
 import type { ToolAnnotations } from "#veryfront/mcp/types.ts";
@@ -119,7 +120,11 @@ const urlPathnameGetter = Object.getOwnPropertyDescriptor(
 )?.get;
 
 class RemoteMCPHttpError extends Error {
-  constructor(readonly status: number, readonly modernError = false) {
+  constructor(
+    readonly status: number,
+    readonly modernError = false,
+    readonly unsupportedVersion = false,
+  ) {
     super(`Remote MCP request failed (${status})`);
     this.name = "RemoteMCPHttpError";
   }
@@ -261,11 +266,7 @@ function isJsonStructureWithin(
   return true;
 }
 
-function normalizeParameters(
-  schema: unknown,
-  toolName: string,
-  kind: "input" | "output" = "input",
-): JsonSchema {
+function snapshotToolSchema(schema: unknown): Record<string, unknown> | undefined {
   const snapshot = snapshotBoundedJsonValue(schema);
   if (
     !snapshot.success ||
@@ -277,16 +278,35 @@ function normalizeParameters(
     ) ||
     serializedByteLength(snapshot.value) > MAX_REMOTE_MCP_TOOL_SCHEMA_BYTES
   ) {
+    return undefined;
+  }
+  return snapshot.value;
+}
+
+function normalizeParameters(schema: unknown, toolName: string): JsonSchema {
+  const snapshot = snapshotToolSchema(schema);
+  if (!snapshot) {
     throw protocolError(
-      `Remote MCP tools/list returned a malformed ${kind} schema for tool "${toolName}"`,
+      `Remote MCP tools/list returned a malformed input schema for tool "${toolName}"`,
     );
   }
 
-  if (kind === "input" && Object.keys(snapshot.value).length === 0) {
+  if (Object.keys(snapshot).length === 0) {
     return { type: "object", properties: {} };
   }
 
-  return snapshot.value;
+  return snapshot;
+}
+
+// Output schemas are disclosure metadata, so one that cannot be kept must not reject the catalog.
+function normalizeOutputSchema(schema: unknown, toolName: string): JsonSchema | undefined {
+  const snapshot = snapshotToolSchema(schema);
+  if (!snapshot) {
+    agentLogger.warn("Ignoring a remote MCP tool output schema that cannot be disclosed", {
+      toolName,
+    });
+  }
+  return snapshot;
 }
 
 function normalizeToolDefinition(entry: unknown, index: number): ToolDefinition {
@@ -307,13 +327,14 @@ function normalizeToolDefinition(entry: unknown, index: number): ToolDefinition 
     );
   }
 
+  const outputSchema = entry.outputSchema === undefined
+    ? undefined
+    : normalizeOutputSchema(entry.outputSchema, entry.name);
   const definition: ToolDefinition = {
     name: entry.name,
     description: entry.description,
     parameters: normalizeParameters(entry.inputSchema, entry.name),
-    ...(entry.outputSchema === undefined
-      ? {}
-      : { outputSchema: normalizeParameters(entry.outputSchema, entry.name, "output") }),
+    ...(outputSchema === undefined ? {} : { outputSchema }),
   };
 
   // Navigation hints only. Invalid metadata is ignored rather than rejecting the tool.
@@ -921,13 +942,25 @@ async function postJsonRpc(
         throw new RemoteMCPOAuthExpiredHttpError(response.status);
       }
       let modernError = false;
+      let unsupportedVersion = false;
       try {
         const payload = JSON.parse(text);
         modernError = isRecord(payload) && isRecord(payload.error) &&
           (payload.error.code === -32020 || payload.error.code === -32021 ||
             payload.error.code === -32022 || payload.error.code === -32601);
+        // The MCP SDK transport rejects an unknown MCP-Protocol-Version with
+        // this exact envelope before it dispatches the message, so the request
+        // never ran. Anything looser could be a failure after a side effect.
+        const sentVersion = reflectApply(HeadersPrototypeGet, headers, ["MCP-Protocol-Version"]);
+        unsupportedVersion = response.status === 400 && typeof sentVersion === "string" &&
+          isRecord(payload) && payload.id === null && isRecord(payload.error) &&
+          payload.error.code === -32000 && typeof payload.error.message === "string" &&
+          privateTextStartsWith(
+            payload.error.message,
+            `Bad Request: Unsupported protocol version: ${sentVersion} `,
+          );
       } catch { /* Legacy servers can return plain text errors. */ }
-      throw new RemoteMCPHttpError(response.status, modernError);
+      throw new RemoteMCPHttpError(response.status, modernError, unsupportedVersion);
     }
 
     onResponse?.(response);
@@ -1197,8 +1230,11 @@ function shouldNegotiateSession(
     error instanceof RemoteMCPOAuthExpiredHttpError || error.modernError
   ) return false;
   // Only discovery may treat an unrecognized 400 as a legacy server; a tool
-  // call could have taken effect before failing, so it is never replayed.
-  if (!session) return operation !== "execution" && error.status === 400;
+  // call could have taken effect before failing, so it is replayed only when
+  // the server says it rejected the protocol version and so never ran it.
+  if (!session) {
+    return error.status === 400 && (operation !== "execution" || error.unsupportedVersion);
+  }
   return !!session.sessionId && error.status === 404;
 }
 
@@ -1494,6 +1530,20 @@ export function shareRemoteMCPProtocolState<T extends RemoteMCPToolSourceConfig>
     parameterHeaders: createPrivateMcpMap(),
   });
   return { ...config, [SHARED_MCP_PROTOCOL_STATE]: token };
+}
+
+/** Return an opaque identity shared by credential variants, without exposing protocol or header state. */
+export function getRemoteMCPSharedDiscoveryScope(
+  config: RemoteMCPToolSourceConfig,
+): object | undefined {
+  if (!objectHasOwn(config, SHARED_MCP_PROTOCOL_STATE) || !(SHARED_MCP_PROTOCOL_STATE in config)) {
+    return undefined;
+  }
+  const token = config[SHARED_MCP_PROTOCOL_STATE];
+  return typeof token === "object" && token !== null &&
+      sharedMcpProtocolStates.get(token) !== undefined
+    ? token
+    : undefined;
 }
 
 function readSharedMcpProtocolState(

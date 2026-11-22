@@ -6,7 +6,7 @@ order: 300
 
 Define and run an ordered sequence of agents and tools. Start with a sequential workflow, then add branches, parallel steps, or approvals where the task requires them.
 
-For the distinction between a workflow definition and its executions, see [Workflow](../concepts/workflow.md).
+For the distinction between a workflow definition and its executions, see [Workflow](../concepts/workflow.md). To delete old run records from a persistent backend, see [Remove old workflow runs](./workflow-retention.md).
 
 ## Prerequisites
 

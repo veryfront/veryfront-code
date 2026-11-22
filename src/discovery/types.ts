@@ -52,6 +52,8 @@ export interface DiscoveryConfig {
   cacheNamespace?: string;
   toolDirs?: string[];
   agentDirs?: string[];
+  /** Select one exact agent file instead of scanning agent directories. */
+  agentEntrypoint?: { path: string };
   skillDirs?: string[];
   resourceDirs?: string[];
   promptDirs?: string[];
@@ -83,6 +85,8 @@ export interface DiscoveryResult {
   webhooks: Map<string, WebhookDefinition>;
   evals: Map<string, EvalDefinition>;
   errors: Array<{ file: string; error: Error }>;
+  /** Diagnostics from the exact agent source and capabilities discovered within that source. */
+  agentEntrypointErrors?: Array<{ file: string; error: Error }>;
 }
 
 /**

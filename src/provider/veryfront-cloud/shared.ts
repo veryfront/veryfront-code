@@ -336,7 +336,7 @@ export function requireVeryfrontCloudBootstrap(
       createError({
         type: "config",
         message:
-          "VERYFRONT_API_TOKEN not set. Set the environment variable or provide request-scoped " +
+          "VERYFRONT_API_KEY not set. Set the environment variable or provide request-scoped " +
           "Veryfront credentials before using veryfront-cloud providers.",
       }),
     );

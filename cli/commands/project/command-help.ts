@@ -18,7 +18,8 @@ export const projectHelp: CommandHelp = {
     },
     {
       flag: "--project, -p <slug>",
-      description: "Project slug override (otherwise inferred from env/config)",
+      description:
+        "Project slug or ID. delete infers it from env/config; runs project-list, webhook-list and eval-list require it",
     },
     {
       flag: "--force, -f",
@@ -36,6 +37,7 @@ export const projectHelp: CommandHelp = {
   examples: [
     "veryfront project runs list --json",
     "veryfront project runs list --ndjson",
+    "veryfront project runs project-list --project <slug> --json",
     "veryfront project runs get --run-id <RUN_ID> --json",
     "veryfront project runs stream --run-id <RUN_ID> --json",
     "veryfront project runs succeed --run-id <RUN_ID> --idempotency-key <KEY> --body '{\"output\":null}' --json",
@@ -47,7 +49,7 @@ export const projectHelp: CommandHelp = {
   notes: [
     "Subcommands: delete, runs",
     `Runs commands: ${Object.values(RUNS_COMMANDS).join(", ")}`,
-    "Runs: supply route identifiers with --run-id, --event-id, --project-reference, --conversation-id, --webhook-definition-id, --eval-id, or --input-request-id.",
+    "Runs: supply route identifiers with --run-id, --event-id, --project-reference (or --project, -p), --conversation-id, --webhook-definition-id, --eval-id, or --input-request-id.",
     "Runs: heartbeat --accept-dispatch atomically accepts the detached dispatch before execution. A duplicate returns 409.",
     "Runs: --body and --query accept contract JSON; --idempotency-key, --if-match and --last-event-id map to request headers.",
     "Runs: --ndjson follows SDK pagination and writes one success envelope per item to stdout with bounded memory; --output is not supported.",

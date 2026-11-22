@@ -213,171 +213,194 @@ describe("server/handlers/request/agent-stream.handler", () => {
       },
     ]
   ) {
-    it(`executes shared source with consuming ${executionTarget.runtimeTargetKind} identity and no source secrets`, async () => {
-      const sourceId = "20000000-1000-4000-8000-100000000005";
-      const executionId = "10000000-1000-4000-8000-100000000005";
-      let discoveredProject: string | undefined;
-      let discoveryCloudIdentity: unknown;
-      let executionIdentity: unknown;
-      let executionToken: unknown;
-      let executionEnvironmentToken: unknown;
-      let executionSourceToken: unknown;
-      let executionSourceSecret: unknown;
-      let cloudIdentity: unknown;
-      let executionBranch: unknown;
-      let executionEnvironment: unknown;
-      let loadedSourceSecrets = false;
-      const handler = createTestAgentStreamHandler({
-        loadAgentSourceEnvironment: async () => {
-          loadedSourceSecrets = true;
-          return { SOURCE_SECRET: "must-not-be-exposed" };
-        },
-        ensureProjectDiscovery: async (ctx) => {
-          discoveredProject = ctx.projectId;
-          discoveryCloudIdentity = {
-            token: getVeryfrontCloudAuthToken(),
-            projectSlug: getVeryfrontCloudProjectSlug(),
-          };
-          return createEmptyDiscoveryResult();
-        },
-        getAgent: () => createAgent("assistant-1"),
-        getAllAgentIds: () => ["assistant-1"],
-        sessionManager: new AgentRunSessionManager(),
-        createRuntime: () => ({
-          stream: async (_messages, context) => {
-            executionIdentity = getTrustedProjectEnvIdentity();
-            executionToken = context?.authToken;
-            executionEnvironmentToken = getEnv("VERYFRONT_API_TOKEN");
-            executionSourceToken = getCurrentRequestContext()?.token;
-            executionSourceSecret = getEnv("SOURCE_SECRET");
-            cloudIdentity = {
+    for (const exactEntrypoint of [false, true]) {
+      it(`executes ${exactEntrypoint ? "exact" : "discovered"} shared source with consuming ${executionTarget.runtimeTargetKind} identity and no source secrets`, async () => {
+        const sourceId = "20000000-1000-4000-8000-100000000005";
+        const executionId = "10000000-1000-4000-8000-100000000005";
+        let discoverySelection: unknown;
+        let discoveredProject: string | undefined;
+        let discoveryCloudIdentity: unknown;
+        let executionIdentity: unknown;
+        let executionToken: unknown;
+        let executionEnvironmentToken: unknown;
+        let executionSourceToken: unknown;
+        let executionSourceSecret: unknown;
+        let cloudIdentity: unknown;
+        let executionBranch: unknown;
+        let executionEnvironment: unknown;
+        let loadedSourceSecrets = false;
+        const handler = createTestAgentStreamHandler({
+          loadAgentSourceEnvironment: async () => {
+            loadedSourceSecrets = true;
+            return { SOURCE_SECRET: "must-not-be-exposed" };
+          },
+          ensureProjectDiscovery: async (ctx, _assertCurrent, options) => {
+            discoverySelection = options;
+            discoveredProject = ctx.projectId;
+            discoveryCloudIdentity = {
               token: getVeryfrontCloudAuthToken(),
               projectSlug: getVeryfrontCloudProjectSlug(),
             };
-            executionBranch = getRuntimeRequestContext()?.branch;
-            executionEnvironment = getRuntimeRequestContext()?.environmentName;
-            return new ReadableStream<Uint8Array>({
-              start(controller) {
-                controller.close();
-              },
-            });
+            const result = createEmptyDiscoveryResult();
+            if (exactEntrypoint) {
+              result.agents.set("assistant-1", createAgent("assistant-1"));
+              result.errors.push({
+                file: "/project/tools/unused.ts",
+                error: new Error("Unrelated tool failed"),
+              });
+              result.agentEntrypointErrors = [];
+            }
+            return result;
           },
-        }),
-      });
-      const body = createAgentStreamRequestBody({
-        project: executionTarget,
-        sourceProject: {
-          projectId: sourceId,
-          projectSlug: "source-project",
-          runtimeTargetKind: "environment",
-          runtimeTargetEnvironmentId: "20000000-1000-4000-8000-100000000007",
-        },
-        agentSource: { type: "environment", environmentName: "staging", releaseId: "release-1" },
-        credentials: { authToken: "execution-token", sourceAuthToken: "source-read-token" },
-      });
-      const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
-        requestId: "run_1",
-        projectId: sourceId,
-        audience: "source-project",
-      });
-      const req = new Request(
-        "https://source-project.staging.example.com/api/control-plane/runs/run_1/stream",
-        {
-          method: "POST",
-          headers: {
-            "x-veryfront-control-plane-jws": jws,
-            "x-project-id": sourceId,
-            "x-project-slug": "source-project",
-            "x-release-id": "release-1",
-            "x-environment": "production",
-            "x-environment-name": "staging",
-            "x-environment-id": "20000000-1000-4000-8000-100000000007",
-            "x-token": "execution-token",
+          getAgent: () => {
+            if (exactEntrypoint) {
+              throw new Error("Exact selection must not read the fallback registry");
+            }
+            return createAgent("assistant-1");
           },
-          body,
-        },
-      );
-      const url = new URL(req.url);
-      const previousKey = Deno.env.get("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY");
-      Deno.env.set("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY", publicKeyPem);
-      try {
-        assertEquals(
-          await resolveVerifiedControlPlaneBranchBinding(req, url, {
-            audience: "source-project",
-            expectedProjectId: sourceId,
+          getAllAgentIds: () => ["assistant-1"],
+          sessionManager: new AgentRunSessionManager(),
+          createRuntime: () => ({
+            stream: async (_messages, context) => {
+              executionIdentity = getTrustedProjectEnvIdentity();
+              executionToken = context?.authToken;
+              executionEnvironmentToken = getEnv("VERYFRONT_API_TOKEN");
+              executionSourceToken = getCurrentRequestContext()?.token;
+              executionSourceSecret = getEnv("SOURCE_SECRET");
+              cloudIdentity = {
+                token: getVeryfrontCloudAuthToken(),
+                projectSlug: getVeryfrontCloudProjectSlug(),
+              };
+              executionBranch = getRuntimeRequestContext()?.branch;
+              executionEnvironment = getRuntimeRequestContext()?.environmentName;
+              return new ReadableStream<Uint8Array>({
+                start(controller) {
+                  controller.close();
+                },
+              });
+            },
           }),
-          {},
-        );
-      } finally {
-        if (previousKey === undefined) Deno.env.delete("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY");
-        else Deno.env.set("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY", previousKey);
-      }
-      const prepared = await prepareProjectRequest({
-        req,
-        url,
-        isProxyMode: true,
-        trustProxy: async () => true,
-      });
-      const base = createCtx(publicKeyPem);
-      const projectIdentity = await resolveProjectIdentity({
-        req,
-        url,
-        headers: prepared.headers,
-        requestContext: prepared.requestContext,
-        config: undefined,
-        defaultProjectSlug: undefined,
-        defaultProjectId: undefined,
-        defaultReleaseId: undefined,
-        wsSlugOverride: undefined,
-        proxyTrust: { proxyTrusted: true },
-      });
-      let outerEnvLoads = 0;
-      const resolved = await resolveProjectRuntimeContext({
-        req,
-        url,
-        projectDir: base.projectDir,
-        adapter: base.adapter,
-        config: undefined,
-        projectIdentity,
-        headers: prepared.headers,
-        requestContext: prepared.requestContext,
-        isProxyMode: true,
-        proxyTrust: { proxyTrusted: true },
-        securityConfig: null,
-        debug: false,
-        routeRegistry: new RouteRegistry(),
-        moduleServerUrl: undefined,
-        envVarCache: {
-          get: async () => {
-            outerEnvLoads++;
-            throw new Error("B environment access denied for A credential");
+        });
+        const body = createAgentStreamRequestBody({
+          project: executionTarget,
+          ...(exactEntrypoint ? { agentEntrypoint: { path: "agents/assistant-1.ts" } } : {}),
+          sourceProject: {
+            projectId: sourceId,
+            projectSlug: "source-project",
+            runtimeTargetKind: "environment",
+            runtimeTargetEnvironmentId: "20000000-1000-4000-8000-100000000007",
           },
-        },
+          agentSource: { type: "environment", environmentName: "staging", releaseId: "release-1" },
+          credentials: { authToken: "execution-token", sourceAuthToken: "source-read-token" },
+        });
+        const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
+          requestId: "run_1",
+          projectId: sourceId,
+          audience: "source-project",
+        });
+        const req = new Request(
+          "https://source-project.staging.example.com/api/control-plane/runs/run_1/stream",
+          {
+            method: "POST",
+            headers: {
+              "x-veryfront-control-plane-jws": jws,
+              "x-project-id": sourceId,
+              "x-project-slug": "source-project",
+              "x-release-id": "release-1",
+              "x-environment": "production",
+              "x-environment-name": "staging",
+              "x-environment-id": "20000000-1000-4000-8000-100000000007",
+              "x-token": "execution-token",
+            },
+            body,
+          },
+        );
+        const url = new URL(req.url);
+        const previousKey = Deno.env.get("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY");
+        Deno.env.set("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY", publicKeyPem);
+        try {
+          assertEquals(
+            await resolveVerifiedControlPlaneBranchBinding(req, url, {
+              audience: "source-project",
+              expectedProjectId: sourceId,
+            }),
+            {},
+          );
+        } finally {
+          if (previousKey === undefined) Deno.env.delete("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY");
+          else Deno.env.set("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY", previousKey);
+        }
+        const prepared = await prepareProjectRequest({
+          req,
+          url,
+          isProxyMode: true,
+          trustProxy: async () => true,
+        });
+        const base = createCtx(publicKeyPem);
+        const projectIdentity = await resolveProjectIdentity({
+          req,
+          url,
+          headers: prepared.headers,
+          requestContext: prepared.requestContext,
+          config: undefined,
+          defaultProjectSlug: undefined,
+          defaultProjectId: undefined,
+          defaultReleaseId: undefined,
+          wsSlugOverride: undefined,
+          proxyTrust: { proxyTrusted: true },
+        });
+        let outerEnvLoads = 0;
+        const resolved = await resolveProjectRuntimeContext({
+          req,
+          url,
+          projectDir: base.projectDir,
+          adapter: base.adapter,
+          config: undefined,
+          projectIdentity,
+          headers: prepared.headers,
+          requestContext: prepared.requestContext,
+          isProxyMode: true,
+          proxyTrust: { proxyTrusted: true },
+          securityConfig: null,
+          debug: false,
+          routeRegistry: new RouteRegistry(),
+          moduleServerUrl: undefined,
+          envVarCache: {
+            get: async () => {
+              outerEnvLoads++;
+              throw new Error("B environment access denied for A credential");
+            },
+          },
+        });
+        assertExists(resolved.handlerContext);
+        assertEquals(resolved.adapter.configOutcome, "deferred");
+        assertEquals(resolved.rawEnvVars, {});
+        const result = await handler.handle(req, resolved.handlerContext);
+        assertEquals(outerEnvLoads, 0);
+        assertExists(result.response);
+        assertEquals(result.response.status, 200);
+        await result.response.text();
+        assertEquals(
+          discoverySelection,
+          exactEntrypoint ? { agentEntrypoint: { path: "agents/assistant-1.ts" } } : undefined,
+        );
+        assertEquals(discoveredProject, sourceId);
+        assertEquals(discoveryCloudIdentity, {
+          token: "execution-token",
+          projectSlug: "test-project",
+        });
+        assertEquals((executionIdentity as { projectId: string }).projectId, executionId);
+        assertEquals((executionIdentity as { projectSlug: string }).projectSlug, "test-project");
+        assertEquals(executionToken, "execution-token");
+        assertEquals(executionEnvironmentToken, "execution-token");
+        assertEquals(executionSourceToken, "source-read-token");
+        assertEquals(cloudIdentity, { token: "execution-token", projectSlug: "test-project" });
+        assertEquals(executionBranch, executionTarget.runtimeTargetBranchName ?? null);
+        assertEquals(executionEnvironment, executionTarget.runtimeTargetEnvironmentName ?? null);
+        assertEquals(executionSourceSecret, undefined);
+        assertEquals(loadedSourceSecrets, false);
       });
-      assertExists(resolved.handlerContext);
-      assertEquals(resolved.adapter.configOutcome, "deferred");
-      assertEquals(resolved.rawEnvVars, {});
-      const result = await handler.handle(req, resolved.handlerContext);
-      assertEquals(outerEnvLoads, 0);
-      assertExists(result.response);
-      assertEquals(result.response.status, 200);
-      await result.response.text();
-      assertEquals(discoveredProject, sourceId);
-      assertEquals(discoveryCloudIdentity, {
-        token: "execution-token",
-        projectSlug: "test-project",
-      });
-      assertEquals((executionIdentity as { projectId: string }).projectId, executionId);
-      assertEquals((executionIdentity as { projectSlug: string }).projectSlug, "test-project");
-      assertEquals(executionToken, "execution-token");
-      assertEquals(executionEnvironmentToken, "execution-token");
-      assertEquals(executionSourceToken, "source-read-token");
-      assertEquals(cloudIdentity, { token: "execution-token", projectSlug: "test-project" });
-      assertEquals(executionBranch, executionTarget.runtimeTargetBranchName ?? null);
-      assertEquals(executionEnvironment, executionTarget.runtimeTargetEnvironmentName ?? null);
-      assertEquals(executionSourceSecret, undefined);
-      assertEquals(loadedSourceSecrets, false);
-    });
+    }
   }
 
   it("parses run credentials with framework-captured JSON intrinsics", async () => {

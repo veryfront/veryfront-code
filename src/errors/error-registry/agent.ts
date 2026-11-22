@@ -123,18 +123,20 @@ export const EVAL_MODEL_ACCESS_DENIED = defineError({
   status: 402,
   title: "No model access for eval run",
   suggestion:
-    "Veryfront Cloud refused the model request for billing or entitlement reasons, not authentication. Add AI credits or upgrade the plan for the account that owns the linked project at https://veryfront.com/settings/billing, then run the eval again. See https://veryfront.com/docs/api/errors/insufficient-credits",
+    "Veryfront Cloud refused the model request for billing or entitlement reasons, not authentication. Add AI credits or upgrade the plan at https://veryfront.com/settings/billing for the account that owns the linked project, or for your credential's account when no project is set, then run the eval again. See https://veryfront.com/docs/api/errors/insufficient-credits",
 });
 
 /**
- * An eval stopped because the Veryfront Cloud gateway rejected its model
- * requests for naming no project (HTTP 400, `gateway_project_required`).
+ * An eval stopped because the Veryfront Cloud gateway refused the project of
+ * its model requests (HTTP 400, `gateway_project_required`): none was sent
+ * where one is required, or the configured one does not exist or the
+ * credential cannot use it.
  */
 export const EVAL_PROJECT_REQUIRED = defineError({
   slug: "eval-project-required",
   category: "AGENT",
   status: 400,
-  title: "No project for eval model requests",
+  title: "No usable project for eval model requests",
   suggestion:
     "Set VERYFRONT_PROJECT_SLUG in .env or projectSlug in veryfront.config.ts to a project you can edit, then run veryfront eval again",
 });
@@ -162,7 +164,7 @@ export const EVAL_MODEL_UNAUTHORIZED = defineError({
   status: 401,
   title: "Veryfront Cloud rejected the eval credential",
   suggestion:
-    "Run `veryfront login` to refresh your session, or set VERYFRONT_API_TOKEN to a valid token, then run the eval again",
+    "Run `veryfront login` to refresh your session, or set VERYFRONT_API_KEY to a valid API key, then run the eval again",
 });
 
 /**
@@ -234,6 +236,31 @@ export const EVAL_RECORD_TIMEOUT = defineError({
     "The limit covers the whole record: target execution, tools, model requests, metrics, and checks. Run the eval again with LOG_LEVEL=DEBUG to see which phase stopped making progress, and check the record report for the phase that did not finish. If the record legitimately needs longer, raise the limit with --record-timeout <seconds>, or pass --record-timeout 0 to disable it.",
 });
 
+/**
+ * An eval run named an eval ID that no file in the project's evals directory
+ * defines.
+ */
+export const EVAL_NOT_FOUND = defineError({
+  slug: "eval-not-found",
+  category: "AGENT",
+  status: 404,
+  title: "Eval not found",
+  suggestion:
+    "Put the eval in evals/<name>.eval.ts with an export made by evalAgent, evalTool or evalDataset, ensure the file is in the source the run uses, then run the eval again with the ID that the evals list shows.",
+});
+
+/**
+ * An eval run named an eval whose file exists but does not load, or whose ID
+ * more than one file declares.
+ */
+export const EVAL_LOAD_FAILED = defineError({
+  slug: "eval-load-failed",
+  category: "AGENT",
+  status: 422,
+  title: "Eval file failed to load",
+  suggestion: "Fix the error the message names in the eval file, then run the eval again.",
+});
+
 /** Registry fragment for AGENT errors (slug → definition). */
 export const AGENT_REGISTRY = {
   "agent-error": AGENT_ERROR,
@@ -257,4 +284,6 @@ export const AGENT_REGISTRY = {
   "eval-model-inference-policy-denied": EVAL_MODEL_INFERENCE_POLICY_DENIED,
   "eval-inference-policy-denied": EVAL_INFERENCE_POLICY_DENIED,
   "eval-record-timeout": EVAL_RECORD_TIMEOUT,
+  "eval-not-found": EVAL_NOT_FOUND,
+  "eval-load-failed": EVAL_LOAD_FAILED,
 } as const;

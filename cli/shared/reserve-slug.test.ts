@@ -29,6 +29,41 @@ describe("reserveProjectSlug", () => {
     });
   });
 
+  it("sends the supplied display name and derives one from the slug otherwise", async () => {
+    const bodies: unknown[] = [];
+    const record = async (input: string | URL | Request, init?: RequestInit) => {
+      const request = input instanceof Request ? input : new Request(input, init);
+      bodies.push(await request.json());
+      return Response.json({ id: "<PROJECT_ID>" });
+    };
+
+    await withMockFetch(
+      record,
+      () =>
+        reserveProjectSlug("acme-support", "<TOKEN>", undefined, "https://control.example.test", {
+          name: "ACME Support",
+        }),
+    );
+    await withMockFetch(
+      record,
+      () =>
+        reserveProjectSlug("acme-support", "<TOKEN>", undefined, "https://control.example.test", {
+          name: "   ",
+        }),
+    );
+    await withMockFetch(
+      record,
+      () =>
+        reserveProjectSlug("acme-support", "<TOKEN>", undefined, "https://control.example.test"),
+    );
+
+    assertEquals(bodies, [
+      { slug: "acme-support", name: "ACME Support" },
+      { slug: "acme-support", name: "Acme Support" },
+      { slug: "acme-support", name: "Acme Support" },
+    ], "a blank name falls back to the slug-derived name");
+  });
+
   it("does not create an alternative project for an explicit slug", async () => {
     let requests = 0;
     await assertRejects(

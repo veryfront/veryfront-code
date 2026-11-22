@@ -66,14 +66,34 @@ describe("eval/factory", () => {
     assertThrows(
       () =>
         evalAgent({
-          id: "eval:blank-description",
+          id: "eval:numeric-description",
           target: "agent:researcher",
           dataset: datasets.inline([{ id: "q1", input: "hello" }]),
-          description: "   ",
+          description: 42 as never,
         }),
       Error,
-      "Eval description must be a non-empty string",
+      "Eval description must be a string",
     );
+  });
+
+  it("treats an empty description as no description", () => {
+    // The Veryfront API writes `description: ""` for an eval made in Studio with
+    // the Description field left empty.
+    for (const description of ["", "   "]) {
+      for (const define of [evalAgent, evalTool]) {
+        const definition = define({
+          id: "eval:empty-description",
+          target: define === evalAgent ? "agent:researcher" : "tool:lookup_order",
+          dataset: datasets.inline([{ id: "q1", input: "hello" }]),
+          description,
+        });
+        assertEquals(
+          Object.hasOwn(definition, "description"),
+          false,
+          `description ${JSON.stringify(description)} is dropped`,
+        );
+      }
+    }
   });
 
   it("creates a first-class tool eval definition", async () => {
@@ -141,6 +161,60 @@ describe("eval/factory", () => {
     assertEquals(resolverDefinition.mockTools, resolver);
     assertEquals(isEvalDefinition(staticDefinition), true);
     assertEquals(isEvalDefinition(resolverDefinition), true);
+  });
+
+  it("keeps the environment context of an agent eval and of each example", async () => {
+    const definition = evalAgent({
+      id: "eval:studio-context",
+      target: "agent:researcher",
+      environmentContext: "<studio_tabs>\nactive: app/page.tsx\n</studio_tabs>",
+      dataset: datasets.inline([
+        { id: "eval-context", input: "hi" },
+        { id: "example-context", input: "hi", environmentContext: "selected node: Header" },
+      ]),
+    });
+
+    assertEquals(
+      definition.environmentContext,
+      "<studio_tabs>\nactive: app/page.tsx\n</studio_tabs>",
+    );
+    assertEquals(isEvalDefinition(definition), true);
+    assertEquals(
+      (await definition.dataset.load({ baseDir: "." })).map((example) => [
+        example.id,
+        example.environmentContext,
+      ]),
+      [["eval-context", undefined], ["example-context", "selected node: Header"]],
+    );
+    assertEquals(
+      isEvalDefinition({ ...definition, environmentContext: 3 }),
+      false,
+    );
+  });
+
+  it("rejects an environment context that is not a non-empty string", () => {
+    for (const environmentContext of ["", "   ", 3]) {
+      assertThrows(
+        () =>
+          evalAgent({
+            target: "agent:researcher",
+            dataset: [{ id: "q1", input: "hi" }],
+            environmentContext: environmentContext as string,
+          }),
+        Error,
+        "Eval environmentContext must be a non-empty string",
+      );
+      assertThrows(
+        () =>
+          datasets.inline([{
+            id: "q1",
+            input: "hi",
+            environmentContext: environmentContext as string,
+          }]),
+        Error,
+        "inline dataset[0] environmentContext must be a non-empty string",
+      );
+    }
   });
 
   it("creates a target-free dataset eval definition", () => {

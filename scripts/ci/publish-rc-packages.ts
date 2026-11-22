@@ -34,21 +34,54 @@ export interface PackageEntry {
   dependencies: string[];
 }
 
+/** Package whose rc tag the dispatch gate reads while veryfront is suspended. */
+export const SUSPENDED_RC_MARKER_PACKAGE = "@veryfront/ext-auth-jwt";
+
+export interface PublishOptions {
+  /** npm refuses the root package; publish extensions only, never the root. */
+  coreSuspended?: boolean;
+}
+
+/** Read NPM_CORE_PUBLISH_SUSPENDED strictly: unset, "true" or "false". */
+export function parseCoreSuspended(value: string | undefined): boolean {
+  if (value === undefined || value === "false") return false;
+  if (value === "true") return true;
+  throw new Error("NPM_CORE_PUBLISH_SUSPENDED must be true or false");
+}
+
 /** Publish independent extensions together; keep dependency barriers and root last. */
 export async function publishPackages(
   entries: PackageEntry[],
   publish: (entry: PackageEntry) => Promise<void>,
+  options: PublishOptions = {},
 ): Promise<void> {
   const names = new Set(entries.map((entry) => entry.name));
-  if (names.size !== entries.length || !names.has("veryfront")) {
+  if (names.size !== entries.length) {
+    throw new Error("RC publication requires unique packages");
+  }
+  // The final package's rc tag marks a completed publication for the dispatch
+  // gate, so it publishes only after every other package succeeded.
+  const finalPackage = options.coreSuspended ? SUSPENDED_RC_MARKER_PACKAGE : "veryfront";
+  if (options.coreSuspended) {
+    if (names.has("veryfront")) {
+      throw new Error(
+        "RC publication must not include the veryfront root while its npm publication is suspended",
+      );
+    }
+    if (!names.has(finalPackage)) {
+      throw new Error(
+        `RC publication requires ${finalPackage} as the completion marker while veryfront is suspended`,
+      );
+    }
+  } else if (!names.has("veryfront")) {
     throw new Error(
       "RC publication requires unique packages and one veryfront root",
     );
   }
   const remaining = entries.map((entry) => ({
     ...entry,
-    dependencies: entry.name === "veryfront"
-      ? [...names].filter((name) => name !== "veryfront")
+    dependencies: entry.name === finalPackage
+      ? [...names].filter((name) => name !== finalPackage)
       : entry.dependencies.filter((name) => names.has(name)),
   }));
   const planned = new Set<string>();
@@ -78,6 +111,9 @@ export async function publishPackages(
 }
 
 if (import.meta.main) {
+  const coreSuspended = parseCoreSuspended(
+    Deno.env.get("NPM_CORE_PUBLISH_SUSPENDED"),
+  );
   const entries: PackageEntry[] = [];
   for (const directory of Deno.args) {
     const manifest = JSON.parse(
@@ -135,7 +171,7 @@ if (import.meta.main) {
           `RC publication failed for ${name} (status ${status.code})`,
         );
       }
-    });
+    }, { coreSuspended });
   } finally {
     await Deno.remove(budgetDirectory, { recursive: true });
   }

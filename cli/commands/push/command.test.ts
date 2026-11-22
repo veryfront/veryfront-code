@@ -44,8 +44,10 @@ import {
   readPushReceipt,
   writePushReceipt,
 } from "../../shared/deployment-provenance.ts";
+import { resetInteractiveMode, setAutoConfirm } from "../../shared/interactive.ts";
 import { setJsonMode } from "../../shared/json-output.ts";
 import { readProjectLink, writeProjectLink } from "../../shared/project-link.ts";
+import type { InferredProjectChoice } from "../../shared/project-resolution.ts";
 import { stripAnsi } from "../../ui/ansi.ts";
 import { computeContentDigest, readSyncTarget, writeSyncTarget } from "../../sync/state.ts";
 
@@ -1263,7 +1265,7 @@ describe("push receipt source snapshot", () => {
     });
   });
 
-  it("persists a renamed inferred project link for later push and deploy commands", async () => {
+  it("persists a renamed inferred project link that the caller creates, for later push and deploy commands", async () => {
     const originalFetch = globalThis.fetch;
     const envKeys = [
       "VERYFRONT_API_TOKEN",
@@ -1348,7 +1350,7 @@ describe("push receipt source snapshot", () => {
           throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
         }) as typeof fetch;
 
-        await pushCommand({ projectDir, quiet: true });
+        await pushCommand({ projectDir, quiet: true, inferredProject: "create" });
 
         const link = await readProjectLink(projectDir);
         assertEquals(link?.projectId, "project-123");
@@ -1378,7 +1380,7 @@ describe("push receipt source snapshot", () => {
     });
   });
 
-  it("creates a new project instead of linking an inferred existing-project slug", async () => {
+  it("creates a new project for an inferred existing-project slug when the caller creates it", async () => {
     const originalFetch = globalThis.fetch;
     const envKeys = [
       "VERYFRONT_API_TOKEN",
@@ -1438,7 +1440,7 @@ describe("push receipt source snapshot", () => {
         }) as typeof fetch;
 
         await assertRejects(
-          () => pushCommand({ projectDir, quiet: true }),
+          () => pushCommand({ projectDir, quiet: true, inferredProject: "create" }),
           Error,
           "failed",
         );
@@ -1461,7 +1463,65 @@ describe("push receipt source snapshot", () => {
     });
   });
 
-  it("persists an accepted inferred slug before uploading project files", async () => {
+  it("reports a taken slug for a configured reference as project-slug-taken", async () => {
+    const envKeys = [
+      "VERYFRONT_API_TOKEN",
+      "VERYFRONT_API_URL",
+      "VERYFRONT_API_BASE_URL",
+      "VERYFRONT_PROJECT_SLUG",
+      "TENANT_PROJECT_SLUG",
+      "VERYFRONT_PROJECT_ID",
+      "TENANT_PROJECT_ID",
+    ];
+    const savedEnv = envKeys.map((key) => Deno.env.get(key));
+
+    await withGitProject(async ({ projectDir }) => {
+      const createSlugs: string[] = [];
+
+      try {
+        Deno.env.set("VERYFRONT_API_TOKEN", "<TOKEN>");
+        Deno.env.set("VERYFRONT_API_URL", "https://control.example.test");
+        Deno.env.delete("VERYFRONT_API_BASE_URL");
+        for (const key of envKeys.slice(3)) Deno.env.delete(key);
+        Deno.env.set("VERYFRONT_PROJECT_SLUG", "taken-slug");
+        await Deno.writeTextFile(`${projectDir}/package.json`, "{}\n");
+        _resetEnvironmentConfig();
+
+        const mock = (async (input: string | URL | Request, init?: RequestInit) => {
+          const request = input instanceof Request ? input : new Request(input, init);
+          const url = new URL(request.url);
+          if (request.method === "POST" && url.pathname === "/projects") {
+            createSlugs.push((await request.json() as { slug: string }).slug);
+            return Response.json({ error: "slug taken" }, { status: 409 });
+          }
+          if (url.pathname.startsWith("/projects/taken-slug")) {
+            return Response.json({ error: "not found" }, { status: 404 });
+          }
+          throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
+        }) as typeof fetch;
+
+        const error = await withMockFetch(
+          mock,
+          () => assertRejects(() => pushCommand({ projectDir, quiet: true }), VeryfrontError),
+        );
+        assertInstanceOf(error, VeryfrontError, "the failure is a typed Veryfront error");
+
+        assertEquals(createSlugs, ["taken-slug"], "push tries the configured slug once");
+        assertEquals(error.slug, "project-slug-taken", "the collision has its own registry slug");
+        assertEquals(error.exitCode, 1, "a taken slug is a runtime failure, not a usage error");
+        assertEquals(
+          error.message,
+          'Project slug "taken-slug" is already in use. Update or remove VERYFRONT_PROJECT_SLUG, then run veryfront push again.',
+          "the message names where the slug came from and how to change it",
+        );
+      } finally {
+        envKeys.forEach((key, index) => restoreEnv(key, savedEnv[index]));
+        _resetEnvironmentConfig();
+      }
+    });
+  });
+
+  it("persists an inferred slug the caller creates before uploading project files", async () => {
     const originalFetch = globalThis.fetch;
     const envKeys = [
       "VERYFRONT_API_TOKEN",
@@ -1519,7 +1579,7 @@ describe("push receipt source snapshot", () => {
         }) as typeof fetch;
 
         await assertRejects(
-          () => pushCommand({ projectDir, quiet: true }),
+          () => pushCommand({ projectDir, quiet: true, inferredProject: "create" }),
           Error,
           "failed",
         );
@@ -1857,6 +1917,265 @@ describe("push receipt source snapshot", () => {
       envKeys.forEach((key, index) => restoreEnv(key, savedEnv[index]));
       _resetEnvironmentConfig();
     }
+  });
+});
+
+describe("push in a folder with no linked project", () => {
+  const ENV_KEYS = [
+    "VERYFRONT_API_TOKEN",
+    "VERYFRONT_API_URL",
+    "VERYFRONT_API_BASE_URL",
+    "VERYFRONT_PROJECT_SLUG",
+    "TENANT_PROJECT_SLUG",
+    "VERYFRONT_PROJECT_ID",
+    "TENANT_PROJECT_ID",
+  ];
+  const UNLINKED_MESSAGE =
+    "No Veryfront project is linked to this folder. Run veryfront up to create one, or pass --project <slug> to push to an existing project.";
+
+  async function withUnlinkedProject(
+    test: (projectDir: string, requests: string[]) => Promise<void>,
+    respond: (request: Request, url: URL) => Promise<Response | null> | Response | null = () =>
+      null,
+  ): Promise<void> {
+    const savedEnv = ENV_KEYS.map((key) => Deno.env.get(key));
+    await withGitProject(async ({ projectDir }) => {
+      const requests: string[] = [];
+      try {
+        Deno.env.set("VERYFRONT_API_TOKEN", "<TOKEN>");
+        Deno.env.set("VERYFRONT_API_URL", "https://control.example.test");
+        for (const key of ENV_KEYS.slice(2)) Deno.env.delete(key);
+        await Deno.writeTextFile(
+          `${projectDir}/package.json`,
+          `${JSON.stringify({ name: "my-project" }, null, 2)}\n`,
+        );
+        _resetEnvironmentConfig();
+        await withMockFetch(async (input: string | URL | Request, init?: RequestInit) => {
+          const request = input instanceof Request ? input : new Request(input, init);
+          const url = new URL(request.url);
+          requests.push(`${request.method} ${url.pathname}`);
+          const response = await respond(request, url);
+          if (response) return response;
+          throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
+        }, () => test(projectDir, requests));
+      } finally {
+        ENV_KEYS.forEach((key, index) => restoreEnv(key, savedEnv[index]));
+        _resetEnvironmentConfig();
+      }
+    });
+  }
+
+  /** Run `test` with stdout as a terminal, answering every prompt with `answer`. */
+  async function withTerminalAnswer(
+    answer: string,
+    test: (questions: string[]) => Promise<void>,
+  ): Promise<void> {
+    const questions: string[] = [];
+    const originalPrompt = globalThis.prompt;
+    const ownIsTerminal = Object.getOwnPropertyDescriptor(Deno.stdout, "isTerminal");
+    globalThis.prompt = (message?: string) => {
+      questions.push(stripAnsi(message ?? ""));
+      return answer;
+    };
+    Object.defineProperty(Deno.stdout, "isTerminal", { value: () => true, configurable: true });
+    try {
+      await test(questions);
+    } finally {
+      globalThis.prompt = originalPrompt;
+      if (ownIsTerminal) Object.defineProperty(Deno.stdout, "isTerminal", ownIsTerminal);
+      else delete (Deno.stdout as { isTerminal?: unknown }).isTerminal;
+    }
+  }
+
+  it("stops before any request when nobody can be asked", async () => {
+    await withUnlinkedProject(async (projectDir, requests) => {
+      for (const dryRun of [false, true]) {
+        const error = await assertRejects(
+          () => pushCommand({ projectDir, quiet: true, dryRun }),
+          VeryfrontError,
+        );
+        assertInstanceOf(error, VeryfrontError);
+        assertEquals(error.slug, "invalid-argument");
+        assertEquals(error.exitCode, 2);
+        assertEquals(error.message, UNLINKED_MESSAGE);
+      }
+      assertEquals(requests, []);
+      assertEquals(await readProjectLink(projectDir), null);
+    });
+  });
+
+  it("names the existing project it would use, and links it without creating one", async () => {
+    const choices: InferredProjectChoice[] = [];
+    const uploaded = new Map<string, string>();
+    await withUnlinkedProject(
+      async (projectDir, requests) => {
+        await pushCommand({
+          projectDir,
+          quiet: true,
+          inferredProject: (choice) => {
+            choices.push(choice);
+            return Promise.resolve(true);
+          },
+        });
+
+        assertEquals(choices, [{
+          slug: "my-project",
+          existing: { id: "project-123", slug: "my-project" },
+        }]);
+        assertEquals(requests.includes("POST /projects"), false);
+        const link = await readProjectLink(projectDir);
+        assertEquals(link?.projectId, "project-123");
+        assertEquals(link?.projectSlug, "my-project");
+      },
+      async (request, url) => {
+        if (request.method === "GET" && url.pathname === "/projects/my-project") {
+          return Response.json({ id: "project-123", slug: "my-project" });
+        }
+        if (request.method === "GET" && url.pathname === "/projects/project-123/files") {
+          return Response.json({
+            data: [...uploaded].map(([path, content], index) => ({
+              path,
+              content,
+              version_id: `00000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
+            })),
+            page_info: {},
+          });
+        }
+        if (request.method === "PUT" && url.pathname.startsWith("/projects/project-123/files/")) {
+          const body = await request.json() as { content: string };
+          uploaded.set(decodeURIComponent(url.pathname.split("/").at(-1) ?? ""), body.content);
+          return Response.json({});
+        }
+        if (request.method === "GET" && url.pathname === "/projects/project-123") {
+          return Response.json({ id: "project-123", slug: "my-project" });
+        }
+        return null;
+      },
+    );
+  });
+
+  it("stops without creating a project when the answer is no", async () => {
+    await withUnlinkedProject(
+      async (projectDir, requests) => {
+        const error = await assertRejects(
+          () =>
+            pushCommand({
+              projectDir,
+              quiet: true,
+              inferredProject: () => Promise.resolve(false),
+            }),
+          VeryfrontError,
+        );
+        assertInstanceOf(error, VeryfrontError);
+        assertEquals(error.message, UNLINKED_MESSAGE);
+        assertEquals(requests, ["GET /projects/my-project"]);
+        assertEquals(await readProjectLink(projectDir), null);
+      },
+      (request, url) =>
+        request.method === "GET" && url.pathname === "/projects/my-project"
+          ? Response.json({ error: "not found" }, { status: 404 })
+          : null,
+    );
+  });
+
+  it("asks in a terminal and stops with nothing created when the answer is no", async () => {
+    await withUnlinkedProject(
+      (projectDir, requests) =>
+        withTerminalAnswer("n", async (questions) => {
+          const error = await assertRejects(() => pushCommand({ projectDir }), VeryfrontError);
+
+          assertInstanceOf(error, VeryfrontError);
+          assertEquals(error.exitCode, 2);
+          assertEquals(error.message, UNLINKED_MESSAGE);
+          assertEquals(error.context, { inferredSlug: "my-project", declined: true });
+          assertEquals(questions, [
+            'No Veryfront project is linked to this folder. Create project "my-project"? [y/N] ',
+          ]);
+          assertEquals(requests, ["GET /projects/my-project"]);
+          assertEquals(await readProjectLink(projectDir), null);
+        }),
+      (request, url) =>
+        request.method === "GET" && url.pathname === "/projects/my-project"
+          ? Response.json({ error: "not found" }, { status: 404 })
+          : null,
+    );
+  });
+
+  it("asks in a terminal and pushes to the existing project once the answer is yes", async () => {
+    const uploaded = new Map<string, string>();
+    await withUnlinkedProject(
+      (projectDir, requests) =>
+        withTerminalAnswer("y", async (questions) => {
+          // `force` skips the remote-conflict check, whose spinner replaces the
+          // running one without stopping it in a terminal.
+          await pushCommand({ projectDir, force: true });
+
+          assertEquals(questions, [
+            'No Veryfront project is linked to this folder. Push to your existing project "my-project"? [y/N] ',
+          ]);
+          assertEquals(requests.includes("POST /projects"), false);
+          assertEquals(uploaded.has("package.json"), true);
+          const link = await readProjectLink(projectDir);
+          assertEquals(link?.projectId, "project-123");
+          assertEquals(link?.projectSlug, "my-project");
+        }),
+      async (request, url) => {
+        if (request.method === "GET" && url.pathname === "/projects/my-project") {
+          return Response.json({ id: "project-123", slug: "my-project" });
+        }
+        if (request.method === "GET" && url.pathname === "/projects/project-123/files") {
+          return Response.json({
+            data: [...uploaded].map(([path, content], index) => ({
+              path,
+              content,
+              version_id: `00000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
+            })),
+            page_info: {},
+          });
+        }
+        if (request.method === "PUT" && url.pathname.startsWith("/projects/project-123/files/")) {
+          const body = await request.json() as { content: string };
+          uploaded.set(decodeURIComponent(url.pathname.split("/").at(-1) ?? ""), body.content);
+          return Response.json({});
+        }
+        if (request.method === "GET" && url.pathname === "/projects/project-123") {
+          return Response.json({ id: "project-123", slug: "my-project" });
+        }
+        return null;
+      },
+    );
+  });
+
+  it("does not ask under --yes, --quiet or JSON mode, even in a terminal", async () => {
+    const modes: Array<{ name: string; quiet: boolean; enter: () => void }> = [
+      // The router turns `--yes` into auto-confirm, which must not answer this.
+      { name: "--yes", quiet: false, enter: () => setAutoConfirm(true) },
+      { name: "--quiet", quiet: true, enter: () => {} },
+      { name: "--json", quiet: false, enter: () => setJsonMode(true) },
+    ];
+    await withUnlinkedProject((projectDir, requests) =>
+      withTerminalAnswer("y", async (questions) => {
+        for (const mode of modes) {
+          mode.enter();
+          try {
+            const error = await assertRejects(
+              () => pushCommand({ projectDir, quiet: mode.quiet }),
+              VeryfrontError,
+            );
+            assertInstanceOf(error, VeryfrontError);
+            assertEquals(error.exitCode, 2, mode.name);
+            assertEquals(error.message, UNLINKED_MESSAGE, mode.name);
+            assertEquals(error.context, { inferredSlug: "my-project", declined: false }, mode.name);
+          } finally {
+            resetInteractiveMode();
+            setJsonMode(false);
+          }
+        }
+        assertEquals(questions, []);
+        assertEquals(requests, []);
+        assertEquals(await readProjectLink(projectDir), null);
+      })
+    );
   });
 });
 

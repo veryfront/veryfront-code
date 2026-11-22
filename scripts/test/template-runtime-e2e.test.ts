@@ -95,6 +95,7 @@ describe("template runtime E2E commands", () => {
         SSR_TRANSFORM_PER_PROJECT_LIMIT: "0",
         VF_DISABLE_LRU_INTERVAL: "1",
         VERYFRONT_API_TOKEN: "",
+        VERYFRONT_API_KEY: "",
         ANTHROPIC_BASE_URL: "http://127.0.0.1:4312/v1",
       },
       "Dev server environment should blank competing credentials and isolate scenario overrides in the child process",

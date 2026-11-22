@@ -60,6 +60,363 @@ function createStatOps(
 }
 
 describe("StatOperations", () => {
+  describe("published index authority", () => {
+    it("retains a fresh scoped snapshot when another credential replaces the shared index", async () => {
+      const listing = Promise.withResolvers<ProjectFile[]>();
+      const started = Promise.withResolvers<void>();
+      let refreshes = 0;
+      const files = [makeFile("existing.tsx")];
+      const statOps = createStatOps(
+        createMockClient({
+          listPublishedFiles: () => {
+            refreshes++;
+            return Promise.reject(new Error("unexpected refresh"));
+          },
+        }),
+        new PathNormalizer(),
+        {
+          isProductionMode: () => true,
+          getReleaseId: () => "release-1",
+          getContentContext: () => ({
+            sourceType: "release",
+            projectSlug: "test",
+            releaseId: "release-1",
+          }),
+          getFileList: () => {
+            if (getCurrentRequestContext()?.token === "token-b") {
+              started.resolve();
+              return listing.promise;
+            }
+            return Promise.resolve(files);
+          },
+          isPersistentCacheInvalidated: () => false,
+        },
+      );
+      const request = (token: string, path: string) =>
+        runWithRequestContext(
+          { projectSlug: "test", token, releaseId: "release-1" },
+          () => statOps.exists(path),
+        );
+      await request("token-a", "existing.tsx");
+      const other = request("token-b", "existing.tsx");
+      await started.promise;
+      listing.resolve(files);
+      await Promise.resolve();
+      await Promise.resolve();
+      assertEquals(await request("token-a", "missing.tsx"), false);
+      assertEquals(await other, true);
+      assertEquals(refreshes, 0);
+    });
+    it("isolates refresh errors by credential and invalidation generation", async () => {
+      const originalNow = Date.now;
+      let now = originalNow();
+      Date.now = () => now;
+      const oldRefresh = Promise.withResolvers<ProjectFile[]>();
+      const oldError = new Error("obsolete refresh failed");
+      const currentError = new Error("current refresh failed");
+      let currentCalls = 0;
+      let pending: Promise<unknown> | undefined;
+      try {
+        const statOps = createStatOps(
+          createMockClient({
+            listPublishedFiles: () => {
+              if (getCurrentRequestContext()?.token === "token-a") return oldRefresh.promise;
+              currentCalls++;
+              return Promise.reject(currentError);
+            },
+          }),
+          new PathNormalizer(),
+          {
+            isProductionMode: () => true,
+            getReleaseId: () => "release-1",
+            getContentContext: () => ({
+              sourceType: "release",
+              projectSlug: "test",
+              releaseId: "release-1",
+            }),
+            getFileList: () => Promise.resolve([makeFile("pages/index.tsx")]),
+            isPersistentCacheInvalidated: () => false,
+          },
+        );
+        const request = (token: string, path: string) =>
+          runWithRequestContext(
+            { projectSlug: "test", token, releaseId: "release-1" },
+            () => statOps.stat(path),
+          );
+        await request("token-a", "pages/index.tsx");
+        now += 5 * 60_000 + 1;
+        pending = request("token-a", "missing.tsx").catch((error) => error);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        statOps.clearIndex();
+        const fresh = request("token-b", "pages/index.tsx");
+        oldRefresh.reject(oldError);
+        assertEquals(await pending, oldError);
+        assertEquals((await fresh).isFile, true, "obsolete errors cannot reject a new generation");
+        now += 5 * 60_000 + 1;
+        assertEquals(await request("token-b", "missing.tsx").catch((error) => error), currentError);
+        assertEquals(await request("token-b", "other.tsx").catch((error) => error), currentError);
+        assertEquals(currentCalls, 1, "backoff retains the original scoped error");
+        assertEquals((await request("token-c", "pages/index.tsx")).isFile, true);
+        assertEquals(statOps.isIndexAuthoritative(), true);
+      } finally {
+        oldRefresh.resolve([]);
+        await pending;
+        Date.now = originalNow;
+      }
+    });
+    it("refreshes an expired published index once for concurrent and repeated missing paths", async () => {
+      const originalNow = Date.now;
+      let now = originalNow();
+      Date.now = () => now;
+      const refreshed = Promise.withResolvers<void>();
+      let misses: Promise<boolean[]> | undefined;
+      try {
+        let listings = 0;
+        let searches = 0;
+        const files = [makeFile("pages/index.tsx")];
+        const contextProvider: ContentContextProvider = {
+          isProductionMode: () => true,
+          getReleaseId: () => "release-1",
+          getContentContext: () => ({
+            sourceType: "release",
+            projectSlug: "test",
+            releaseId: "release-1",
+          }),
+          getFileList: () => Promise.resolve(files),
+          getSourceSnapshotVersion: () => 1,
+          isPersistentCacheInvalidated: () => false,
+        };
+        const statOps = createStatOps(
+          createMockClient({
+            async listPublishedFiles(pattern: string | undefined, releaseId: string) {
+              listings++;
+              assertEquals(pattern, undefined, "refresh must fetch a complete listing");
+              assertEquals(releaseId, "release-1");
+              await refreshed.promise;
+              return [...files, makeFile("components/Late.tsx")];
+            },
+            searchFiles: () => {
+              searches++;
+              return Promise.resolve([]);
+            },
+          }),
+          new PathNormalizer(),
+          contextProvider,
+        );
+        await statOps.stat("pages/index.tsx");
+        now += 5 * 60_000 + 1;
+        misses = Promise.all(
+          ["tsx", "jsx", "ts", "js"].map((ext) => statOps.exists(`components/app.${ext}`)),
+        );
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        assertEquals(listings, 1, "expired misses must coalesce one verified listing refresh");
+        refreshed.resolve();
+        assertEquals(await misses, [false, false, false, false]);
+        assertEquals(await statOps.exists("components/app.tsx"), false);
+        assertEquals((await statOps.stat("components/Late.tsx")).isFile, true);
+        assertEquals(listings, 1);
+        assertEquals(searches, 0);
+        assertEquals(statOps.isIndexAuthoritative(), true);
+      } finally {
+        refreshed.resolve();
+        await misses;
+        Date.now = originalNow;
+      }
+    });
+
+    it("does not renew environment authority after a failed verified refresh", async () => {
+      const originalNow = Date.now;
+      let now = originalNow();
+      Date.now = () => now;
+      try {
+        let denied = true;
+        let listings = 0;
+        const files = [makeFile("pages/index.tsx")];
+        const statOps = createStatOps(
+          createMockClient({
+            listPublishedFiles: (
+              _: undefined,
+              releaseId: string | undefined,
+              environment: string,
+            ) => {
+              listings++;
+              assertEquals(releaseId, "release-1");
+              assertEquals(environment, "production");
+              return denied ? Promise.reject(new Error("Refresh denied")) : Promise.resolve([]);
+            },
+            searchFiles: () => {
+              throw new Error("An exact search cannot replace a failed refresh");
+            },
+          }),
+          new PathNormalizer(),
+          {
+            isProductionMode: () => true,
+            getReleaseId: () => "release-1",
+            getContentContext: () => ({
+              sourceType: "environment",
+              projectSlug: "test",
+              environmentName: "production",
+              releaseId: "release-1",
+            }),
+            getFileList: () => Promise.resolve(files),
+            isPersistentCacheInvalidated: () => false,
+          },
+        );
+        await statOps.stat("pages/index.tsx");
+        now += 5 * 60_000 + 1;
+        await assertRejects(() => statOps.stat("components/app.tsx"), Error, "Refresh denied");
+        assertEquals(statOps.isIndexAuthoritative(), false);
+        denied = false;
+        await assertRejects(() => statOps.stat("components/app.jsx"), Error, "Refresh denied");
+        assertEquals(listings, 1, "refresh errors back off without certifying absence");
+        now += 30_001;
+        assertEquals(await statOps.exists("components/app.tsx"), false);
+        assertEquals(listings, 2, "a failed refresh must not create a negative lease");
+        assertEquals(
+          statOps.isIndexAuthoritative(),
+          true,
+          "a verified empty listing is authoritative",
+        );
+        now += 5 * 60_000 + 1;
+        assertEquals(await statOps.exists("components/app.jsx"), false);
+        assertEquals(listings, 3, "the renewed authority must still expire");
+      } finally {
+        Date.now = originalNow;
+      }
+    });
+
+    it("discards a refresh superseded by index invalidation before admitting negative authority", async () => {
+      const originalNow = Date.now;
+      let now = originalNow();
+      Date.now = () => now;
+      const firstListing = Promise.withResolvers<ProjectFile[]>();
+      let pending: Promise<boolean> | undefined;
+      try {
+        let version = 1;
+        let listings = 0;
+        const files = [makeFile("pages/index.tsx")];
+        const statOps = createStatOps(
+          createMockClient({
+            listPublishedFiles: () => {
+              listings++;
+              return listings === 1
+                ? firstListing.promise
+                : Promise.resolve([makeFile("components/app.tsx")]);
+            },
+          }),
+          new PathNormalizer(),
+          {
+            isProductionMode: () => true,
+            getReleaseId: () => "release-1",
+            getContentContext: () => ({
+              sourceType: "release",
+              projectSlug: "test",
+              releaseId: "release-1",
+            }),
+            getFileList: () => Promise.resolve(files),
+            getSourceSnapshotVersion: () => version,
+            getSourceSnapshotIdentity: () => "release:test:release-1",
+            isPersistentCacheInvalidated: () => false,
+          },
+        );
+        await statOps.stat("pages/index.tsx");
+        now += 5 * 60_000 + 1;
+        pending = statOps.exists("components/app.tsx");
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        assertEquals(listings, 1);
+        version++;
+        statOps.clearIndex();
+        firstListing.resolve([]);
+        assertEquals(await pending, true, "an orphaned empty listing must not hide the new file");
+        assertEquals(
+          listings,
+          3,
+          "snapshot and generation retries must also bypass stale cached listings",
+        );
+        assertEquals((await statOps.stat("components/app.tsx")).isFile, true);
+      } finally {
+        firstListing.resolve([]);
+        await pending;
+        Date.now = originalNow;
+      }
+    });
+
+    it("does not join a published refresh or index across request credentials", async () => {
+      const originalNow = Date.now;
+      let now = originalNow();
+      Date.now = () => now;
+      const firstListing = Promise.withResolvers<ProjectFile[]>();
+      const pending: Promise<boolean>[] = [];
+      try {
+        const requestedTokens: Array<string | undefined> = [];
+        const statOps = createStatOps(
+          createMockClient({
+            listPublishedFiles: () => {
+              requestedTokens.push(getCurrentRequestContext()?.token);
+              return firstListing.promise;
+            },
+          }),
+          new PathNormalizer(),
+          {
+            isProductionMode: () => true,
+            getReleaseId: () => "release-1",
+            getContentContext: () => ({
+              sourceType: "release",
+              projectSlug: "test",
+              releaseId: "release-1",
+            }),
+            getFileList: () =>
+              Promise.resolve([makeFile(`${getCurrentRequestContext()?.token}.tsx`)]),
+            isPersistentCacheInvalidated: () => false,
+          },
+        );
+        const request = (token: string, fn: () => Promise<boolean>) =>
+          runWithRequestContext({
+            projectSlug: "test",
+            token,
+            productionMode: true,
+            releaseId: "release-1",
+          }, fn);
+        assertEquals(await request("token-a", () => statOps.exists("token-a.tsx")), true);
+        now += 5 * 60_000 + 1;
+        pending.push(request("token-a", () => statOps.exists("components/app.tsx")));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        pending.push(request("token-b", () => statOps.exists("token-a.tsx")));
+        firstListing.resolve([makeFile("token-a.tsx")]);
+        assertEquals(await Promise.all(pending), [false, false]);
+        assertEquals(await request("token-b", () => statOps.exists("token-b.tsx")), true);
+        assertEquals(requestedTokens, ["token-a"]);
+      } finally {
+        firstListing.resolve([]);
+        await Promise.all(pending);
+        Date.now = originalNow;
+      }
+    });
+  });
+  it("does not certify an invalidated branch snapshot with another credential's index", async () => {
+    const searchedTokens: Array<string | undefined> = [];
+    const statOps = createStatOps(
+      createMockClient({
+        searchFiles: () => {
+          searchedTokens.push(getCurrentRequestContext()?.token);
+          return Promise.resolve([makeFile("components/private.tsx")]);
+        },
+      }),
+      new PathNormalizer(),
+      {
+        ...createBranchContextWithFiles([makeFile("pages/index.tsx")]),
+        isPersistentCacheInvalidated: () => getCurrentRequestContext()?.token === "token-b",
+      },
+    );
+    const request = (token: string, path: string) =>
+      runWithRequestContext(
+        { projectSlug: "test", token, branch: "main" },
+        () => statOps.exists(path),
+      );
+    assertEquals(await request("token-a", "pages/index.tsx"), true);
+    assertEquals(await request("token-b", "components/private.tsx"), true);
+    assertEquals(searchedTokens, ["token-b"]);
+  });
   describe("class", () => {
     it("should export StatOperations class", () => {
       assertExists(StatOperations);
