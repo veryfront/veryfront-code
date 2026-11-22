@@ -2,7 +2,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
-import { join } from "veryfront/platform/path";
+import { join, normalize } from "veryfront/platform/path";
 import { computeHash } from "veryfront/utils";
 import { inspectOkfDocument } from "veryfront/knowledge";
 import {
@@ -15,11 +15,285 @@ import { KnowledgeAllocationSession } from "../../../cli/commands/knowledge/pars
 import {
   createIndexReceipt,
   createKnowledgeCommandArgs,
+  createLocalSource,
   createMockClient,
   createUploadSource,
 } from "../../../cli/commands/knowledge/command.test-helpers.ts";
 
 describe("local allocation sessions", () => {
+  for (const sourceOnlyFirst of [false, true]) {
+    for (const keyed of [false, true]) {
+      it(`reuses the earliest mixed legacy local owner (${sourceOnlyFirst ? "source" : "resource"} first, ${keyed ? "typed" : "keyless"} caller)`, async () => {
+        const root = await makeTempDir({ prefix: "knowledge-mixed-local-legacy-" });
+        try {
+          const filePath = join(root, "article.md"), outputDir = join(root, "output");
+          await Deno.writeTextFile(filePath, "# Article\n\nUpdated body.");
+          await Deno.mkdir(outputDir);
+          const resourceSlug = sourceOnlyFirst ? "article-2" : "article",
+            sourceSlug = sourceOnlyFirst ? "article" : "article-2";
+          await runKnowledgeParser({ filePath, outputDir, resource: filePath, slug: resourceSlug });
+          await Deno.writeTextFile(
+            join(outputDir, `${sourceSlug}.md`),
+            `---\ntype: "Generated Document"\nsource: ${
+              JSON.stringify(filePath)
+            }\ngenerated:\n  by: "veryfront/0.1.1289-rc"\n---\n\n# Article\n\nOriginal.`,
+          );
+          const second = await Deno.readTextFile(join(outputDir, "article-2.md"));
+          assertEquals(
+            (await runKnowledgeParser({
+              filePath,
+              outputDir,
+              resource: filePath,
+              sourceReference: filePath,
+              sourceKey: keyed ? JSON.stringify(["local", filePath]) : undefined,
+            })).slug,
+            "article",
+          );
+          assertEquals(await Deno.readTextFile(join(outputDir, "article-2.md")), second);
+        } finally {
+          await Deno.remove(root, { recursive: true });
+        }
+      });
+    }
+  }
+  for (const reference of ["absolute", "article.md", "./uploads/article.md"]) {
+    it(`reuses a source-only legacy output for a keyless local ${reference} caller`, async () => {
+      const root = await makeTempDir({ prefix: "knowledge-keyless-local-" });
+      try {
+        const source = reference === "absolute" ? join(root, "article.md") : reference;
+        const filePath = source;
+        const outputDir = join(root, "output");
+        await Deno.mkdir(outputDir);
+        // Relative file paths are resolved by the parser; keep its input outside the output tree.
+        const cwd = Deno.cwd();
+        try {
+          Deno.chdir(root);
+          await Deno.mkdir("uploads", { recursive: true });
+          await Deno.writeTextFile(filePath, "# Article\n\nUpdated body.");
+          await Deno.writeTextFile(
+            join(outputDir, "article.md"),
+            `---\ntype: "Generated Document"\nsource: ${
+              JSON.stringify(source)
+            }\ngenerated:\n  by: "veryfront/0.1.1289-rc"\n---\n\n# Article\n\nOriginal.`,
+          );
+          assertEquals(
+            (await runKnowledgeParser({ filePath, outputDir, sourceReference: source })).slug,
+            "article",
+          );
+        } finally {
+          Deno.chdir(cwd);
+        }
+      } finally {
+        await Deno.remove(root, { recursive: true });
+      }
+    });
+  }
+  it("prefers an existing typed local owner over an earlier source-only legacy owner", async () => {
+    const root = await makeTempDir({ prefix: "knowledge-source-only-preference-" });
+    try {
+      const filePath = join(root, "article.md"),
+        outputDir = join(root, "output"),
+        sourceKey = JSON.stringify(["local", filePath]);
+      await Deno.writeTextFile(filePath, "# Article\n\nUpdated body.");
+      await Deno.mkdir(outputDir);
+      const original = `---\ntype: "Generated Document"\nsource: ${
+        JSON.stringify(filePath)
+      }\ngenerated:\n  by: "veryfront/0.1.1289-rc"\n---\n\n# Article\n\nOriginal.`;
+      await Deno.writeTextFile(join(outputDir, "article.md"), original);
+      await runKnowledgeParser({
+        filePath,
+        outputDir,
+        resource: filePath,
+        sourceKey,
+        sourceKind: "local",
+        slug: "article-2",
+      });
+      assertEquals(
+        (await runKnowledgeParser({
+          filePath,
+          outputDir,
+          resource: filePath,
+          sourceKey,
+          sourceKind: "local",
+        })).slug,
+        "article-2",
+      );
+      assertEquals(await Deno.readTextFile(join(outputDir, "article.md")), original);
+      // Keyless callers can adopt legacy provenance, but cannot adopt an already typed owner.
+      await Deno.remove(join(outputDir, "article.md"));
+      assertEquals(
+        (await runKnowledgeParser({ filePath, outputDir, sourceReference: filePath })).slug,
+        "article",
+      );
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
+  });
+  it("upgrades a source-only local output through actual ingestion", async () => {
+    const root = await makeTempDir({ prefix: "knowledge-source-only-ingest-" });
+    try {
+      const filePath = join(root, "article.md"), outputDir = join(root, "output");
+      await Deno.writeTextFile(filePath, "# Article\n\nUpdated body.");
+      await Deno.mkdir(outputDir);
+      await Deno.writeTextFile(
+        join(outputDir, "article.md"),
+        `---\ntype: "Generated Document"\nsource: ${
+          JSON.stringify(filePath)
+        }\nsource_type: "markdown"\ndescription: "Original body."\ngenerated:\n  by: "veryfront/0.1.1289-rc"\n---\n\n# Article\n\nOriginal body.`,
+      );
+      const result = await ingestResolvedSources(
+        [createLocalSource(filePath)],
+        createKnowledgeCommandArgs(),
+        {
+          client: createMockClient(),
+          projectSlug: "my-project",
+          outputDir,
+          runParser: runKnowledgeParser,
+          uploadKnowledgeFile: async (path) => ({ path }),
+          indexKnowledgeDocument: async (input) => createIndexReceipt(input.published.path),
+        },
+      );
+      assertEquals(result.failed, []);
+      assertEquals(result.ingested.length, 1);
+      const content = await Deno.readTextFile(join(outputDir, "article.md"));
+      assert(content.includes("Updated body."));
+      assertEquals(
+        readKnowledgeIngestSourceKey(inspectOkfDocument("article.md", content).metadata),
+        JSON.stringify(["local", filePath]),
+      );
+      assertEquals(
+        (await Array.fromAsync(Deno.readDir(outputDir))).filter((entry) => entry.isFile).map((
+          entry,
+        ) => entry.name),
+        ["article.md"],
+      );
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
+  });
+  it("upgrades source-only generated outputs with a proven local origin", async () => {
+    const root = await makeTempDir({ prefix: "knowledge-source-only-local-" });
+    try {
+      const filePath = join(root, "input.md");
+      await Deno.writeTextFile(filePath, "# Article\n\nUpdated body.");
+      for (
+        const source of [
+          "article.md",
+          "./article.md",
+          "./uploads/article.md",
+          join(root, "article.md"),
+        ]
+      ) {
+        const outputDir = join(root, `out-${Math.random()}`);
+        await Deno.mkdir(outputDir);
+        // Exact source-only envelope produced by the base parser before typed identities.
+        await Deno.writeTextFile(
+          join(outputDir, "article.md"),
+          `---\ntype: "Generated Document"\nsource: ${
+            JSON.stringify(source)
+          }\nsource_type: "markdown"\ndescription: "Original body."\ngenerated:\n  by: "veryfront/0.1.1289-rc"\n---\n\n# Article\n\nOriginal body.`,
+        );
+        const sourceKey = JSON.stringify(["local", normalize(source)]);
+        const result = await runKnowledgeParser({
+          filePath,
+          outputDir,
+          resource: normalize(source),
+          sourceKey,
+          sourceKind: "local",
+        });
+        assertEquals(result.slug, "article", source);
+        const content = await Deno.readTextFile(result.sandbox_output_path);
+        assert(content.includes("Updated body."));
+        assertEquals(
+          readKnowledgeIngestSourceKey(inspectOkfDocument("article.md", content).metadata),
+          sourceKey,
+        );
+      }
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
+  });
+  it("classifies source-only owners independently of the first caller's origin", async () => {
+    const root = await makeTempDir({ prefix: "knowledge-source-only-origins-" });
+    try {
+      const filePath = join(root, "input.md"),
+        outputDir = join(root, "output"),
+        source = join(root, "article.md");
+      await Deno.writeTextFile(filePath, "# Article\n\nUpdated body.");
+      await Deno.mkdir(outputDir);
+      const legacy = `---\ntype: "Generated Document"\nsource: ${
+        JSON.stringify(source)
+      }\ngenerated:\n  by: "veryfront/0.1.1289-rc"\n---\n\n# Article\n\nLegacy.`;
+      await Deno.writeTextFile(join(outputDir, "article.md"), legacy);
+      const allocationSession = new KnowledgeAllocationSession();
+      assertEquals(
+        (await runKnowledgeParser({
+          filePath,
+          outputDir,
+          resource: source,
+          sourceKey: JSON.stringify(["upload", source]),
+          sourceKind: "upload",
+        }, { allocationSession })).slug,
+        "article-2",
+      );
+      assertEquals(await Deno.readTextFile(join(outputDir, "article.md")), legacy);
+      assertEquals(
+        (await runKnowledgeParser({
+          filePath,
+          outputDir,
+          resource: source,
+          sourceKey: JSON.stringify(["local", source]),
+          sourceKind: "local",
+        }, { allocationSession })).slug,
+        "article",
+      );
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
+  });
+  for (
+    const variant of ["ambiguous upload", "web URL", "authored", "malformed key", "foreign key"]
+  ) {
+    it(`preserves source-only ${variant} ownership`, async () => {
+      const root = await makeTempDir({ prefix: "knowledge-source-only-control-" });
+      try {
+        const filePath = join(root, "input.md"), outputDir = join(root, "output");
+        await Deno.writeTextFile(filePath, "# Article\n\nUpdated body.");
+        await Deno.mkdir(outputDir);
+        const source = variant === "ambiguous upload"
+          ? "uploads/article.md"
+          : variant === "web URL"
+          ? "https://example.test/article.md"
+          : "article.md";
+        const generated = variant === "authored"
+          ? ""
+          : `generated:\n  by: "veryfront/0.1.1289-rc"\n${
+            variant === "malformed key"
+              ? "  source_key: null\n"
+              : variant === "foreign key"
+              ? '  source_key: "other-key"\n'
+              : ""
+          }`;
+        const original = `---\ntype: "Generated Document"\nsource: ${
+          JSON.stringify(source)
+        }\n${generated}---\n\n# Article\n\nOriginal body.`;
+        await Deno.writeTextFile(join(outputDir, "article.md"), original);
+        assertEquals(
+          (await runKnowledgeParser({
+            filePath,
+            outputDir,
+            resource: normalize(source),
+            sourceKey: JSON.stringify(["local", normalize(source)]),
+            sourceKind: "local",
+          })).slug,
+          "article-2",
+        );
+        assertEquals(await Deno.readTextFile(join(outputDir, "article.md")), original);
+      } finally {
+        await Deno.remove(root, { recursive: true });
+      }
+    });
+  }
   for (const discovered of [false, true]) {
     it(`registers automatic writes in a ${discovered ? "discovered" : "new"} parent family`, async () => {
       const root = await makeTempDir({ prefix: "knowledge-family-write-" });

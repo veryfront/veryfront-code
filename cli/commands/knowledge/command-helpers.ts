@@ -305,6 +305,38 @@ export function readKnowledgeIngestSourceKey(
     : undefined;
 }
 
+/** A legacy owner is local only when its stored spelling and generator prove that origin. */
+export function readProvableLegacyLocalKnowledgeSource(
+  metadata: Record<string, unknown>,
+): string | undefined {
+  const generated = metadata.generated;
+  if (
+    !generated || typeof generated !== "object" || "source_key" in generated ||
+    !("by" in generated) || typeof generated.by !== "string" || !/^veryfront\/\d/.test(generated.by)
+  ) return undefined;
+  const stored = metadata.resource === undefined ? metadata.source : metadata.resource;
+  return typeof stored === "string"
+    ? normalizeProvableLegacyLocalKnowledgePath(stored, metadata.resource === undefined)
+    : undefined;
+}
+
+/** Preserve explicit local spelling before normalization removes upload-prefix evidence. */
+export function normalizeProvableLegacyLocalKnowledgePath(
+  stored: string,
+  sourceOnly: boolean,
+): string | undefined {
+  if (
+    !stored.trim() ||
+    (/^[a-z][a-z\d+.-]*:/i.test(stored) && !/^[a-z]:[\\/]/i.test(stored))
+  ) return undefined;
+  const normalized = normalize(stored);
+  const legacyPath = normalized.replaceAll("\\", "/");
+  const explicitLocal = /^\.{1,2}[\\/]/.test(stored) || isAbsolute(stored);
+  const sourceOnlyLocal = sourceOnly && legacyPath !== "uploads" &&
+    !legacyPath.startsWith("uploads/");
+  return explicitLocal || sourceOnlyLocal ? normalized : undefined;
+}
+
 /** The file name the user gave the source, without a chat upload prefix. */
 export function buildKnowledgeSourceFileName(source: KnowledgeSource): string {
   const name = basename(source.kind === "upload" ? source.uploadPath : source.localPath);
@@ -656,19 +688,8 @@ export async function claimGeneratedKnowledgePath(input: {
       if (generated && typeof generated === "object" && "source_key" in generated) {
         throw new Error("Cannot establish knowledge ownership from an invalid source key");
       }
-      const legacyPath = typeof storedSource === "string"
-        ? normalize(storedSource).replaceAll("\\", "/")
-        : undefined;
-      // Upload references cannot retain an explicit disk prefix or an absolute path.
-      // Check the original spelling before normalization removes that evidence.
-      const explicitLocalPath = typeof storedSource === "string" &&
-        (/^\.{1,2}[\\/]/.test(storedSource) || isAbsolute(storedSource));
-      const sourceOnlyLocalPath = metadata?.resource === undefined &&
-        legacyPath !== undefined && legacyPath !== "uploads" && !legacyPath.startsWith("uploads/");
-      const provableLegacyLocal = sameLocalPath &&
-        (explicitLocalPath || sourceOnlyLocalPath) && generated && typeof generated === "object" &&
-        "by" in generated && typeof generated.by === "string" &&
-        /^veryfront\/\d/.test(generated.by);
+      const provableLegacyLocal = sameLocalPath && metadata !== undefined &&
+        readProvableLegacyLocalKnowledgeSource(metadata) !== undefined;
       if (!provableLegacyLocal) {
         throw new Error(
           `Cannot update ${path}: the existing document's source origin is ambiguous.`,

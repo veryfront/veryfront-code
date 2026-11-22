@@ -9,7 +9,7 @@ import {
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
-import { basename, dirname, join } from "veryfront/platform/path";
+import { basename, dirname, join, normalize } from "veryfront/platform/path";
 import { VeryfrontError } from "veryfront/errors";
 import { inspectOkfDocument } from "veryfront/knowledge";
 import { parseCliArgs } from "../../shared/args.ts";
@@ -50,8 +50,67 @@ import {
   claimGeneratedKnowledgePath,
   findRemoteKnowledgeIngestSource,
   listRemoteKnowledgeSuffixPaths,
+  readProvableLegacyLocalKnowledgeSource,
 } from "./command-helpers.ts";
 import type { KnowledgeParserInput } from "./parser.ts";
+
+describe("provable legacy local knowledge sources", () => {
+  it("uses stored provenance and path spelling without inferring URL or upload origins", () => {
+    const generated = { by: "veryfront/0.1.1289-rc" };
+    for (
+      const source of [
+        "article.md",
+        "./article.md",
+        "./uploads/article.md",
+        "/workspace/article.md",
+      ]
+    ) {
+      assertEquals(
+        readProvableLegacyLocalKnowledgeSource({ source, generated }),
+        normalize(source),
+      );
+    }
+    for (
+      const source of [
+        "uploads",
+        "uploads/article.md",
+        "https://example.test/article.md",
+        "HTTP://example.test/article.md",
+        "https:article",
+        "ftp://example.test/article.md",
+        "file:///workspace/article.md",
+        "",
+      ]
+    ) {
+      assertEquals(readProvableLegacyLocalKnowledgeSource({ source, generated }), undefined);
+    }
+    assertEquals(
+      readProvableLegacyLocalKnowledgeSource({
+        resource: "article.md",
+        source: "article.md",
+        generated,
+      }),
+      undefined,
+    );
+    assertEquals(readProvableLegacyLocalKnowledgeSource({ source: "article.md" }), undefined);
+    assertEquals(
+      readProvableLegacyLocalKnowledgeSource({
+        source: "article.md",
+        generated: { by: "authored/1" },
+      }),
+      undefined,
+    );
+    for (const source_key of [null, 42, "other-key"]) {
+      assertEquals(
+        readProvableLegacyLocalKnowledgeSource({
+          source: "article.md",
+          generated: { ...generated, source_key },
+        }),
+        undefined,
+      );
+    }
+  });
+});
 
 type LoggedEvent = {
   level: string;

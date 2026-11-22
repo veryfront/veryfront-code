@@ -1,5 +1,5 @@
 import { lstat as inspectLink } from "node:fs/promises";
-import { basename, dirname, extname, join } from "veryfront/platform/path";
+import { basename, dirname, extname, join, normalize } from "veryfront/platform/path";
 import { importFirstPartyExtensionModule } from "veryfront/extensions/first-party-import";
 import type {
   DocumentExtractionOptions,
@@ -11,7 +11,9 @@ import { VERSION } from "#cli/utils";
 import {
   escapeReservedKnowledgeSlug,
   type KnowledgeSource,
+  normalizeProvableLegacyLocalKnowledgePath,
   readKnowledgeIngestSourceKey,
+  readProvableLegacyLocalKnowledgeSource,
 } from "./command-helpers.ts";
 import { isTextKnowledgeCompanionPath, KNOWLEDGE_OUTPUT_CLAIM_DIRECTORY } from "./source-policy.ts";
 import { computeHash } from "veryfront/utils";
@@ -1288,7 +1290,7 @@ async function acquireKnowledgeCandidate(
 async function writeKnowledgeFile(
   outputDir: string,
   slug: string,
-  identity: { resource: string; sourceKey?: string },
+  identity: { resource: string; sourceKey?: string; localPath?: string },
   markdown: string,
   signal: AbortSignal | undefined,
   session: KnowledgeAllocationSession,
@@ -1299,6 +1301,22 @@ async function writeKnowledgeFile(
     );
   const source = sourceIdentity(identity.resource, identity.sourceKey);
   const legacySource = sourceIdentity(identity.resource);
+  let localPath = identity.sourceKey === undefined ? identity.localPath : undefined;
+  if (identity.sourceKey !== undefined) {
+    try {
+      const key: unknown = JSON.parse(identity.sourceKey);
+      if (
+        Array.isArray(key) && key.length === 2 && key[0] === "local" &&
+        typeof key[1] === "string"
+      ) localPath = normalize(key[1]);
+    } catch { /* Opaque typed keys still retain their exact identity. */ }
+  }
+  const legacyLocalSource = localPath === undefined
+    ? undefined
+    : JSON.stringify(["legacy-local", localPath]);
+  const matchesOwner = (owner: string | undefined) =>
+    owner === source || owner === legacySource ||
+    (legacyLocalSource !== undefined && owner === legacyLocalSource);
   const reservationOwner = await computeHash(source);
   return await session.allocate(outputDir, slug, async (state, listSiblings, recordWrite) => {
     const ownerFromContent = (path: string, content: string): string | undefined => {
@@ -1307,6 +1325,10 @@ async function writeKnowledgeFile(
       const generated = metadata.generated;
       if (generated !== null && typeof generated === "object" && "source_key" in generated) {
         return storedKey === undefined ? undefined : sourceIdentity("", storedKey);
+      }
+      if (metadata.resource === undefined) {
+        const local = readProvableLegacyLocalKnowledgeSource(metadata);
+        return local === undefined ? undefined : JSON.stringify(["legacy-local", local]);
       }
       const legacyGenerated = generated !== null && typeof generated === "object" &&
         "by" in generated && typeof generated.by === "string" &&
@@ -1390,15 +1412,24 @@ async function writeKnowledgeFile(
       for (const sibling of siblings) await discover(sibling.attempt, sibling.path);
       state.discoveryComplete = true;
     }
-    const firstCandidate = state.sources.get(source) ?? state.sources.get(legacySource) ??
-      state.next;
+    const preferredCandidate = () => {
+      const typed = identity.sourceKey === undefined ? undefined : state.sources.get(source);
+      if (typed !== undefined) return typed;
+      const resourceOwner = state.sources.get(legacySource);
+      const localOwner = legacyLocalSource === undefined
+        ? undefined
+        : state.sources.get(legacyLocalSource);
+      if (resourceOwner === undefined) return localOwner;
+      return localOwner === undefined ? resourceOwner : Math.min(resourceOwner, localOwner);
+    };
+    const firstCandidate = preferredCandidate() ?? state.next;
     for (let attempt = firstCandidate;; attempt += 1) {
       signal?.throwIfAborted();
       if (!Number.isSafeInteger(attempt) || attempt < 1) {
         throw new Error(`Knowledge output suffix exhausted: ${slug}.md`);
       }
       const observed = state.owners.get(attempt);
-      if (observed !== undefined && observed !== source && observed !== legacySource) continue;
+      if (observed !== undefined && !matchesOwner(observed)) continue;
       const remember = (owner: string | undefined) => {
         observe(attempt, owner);
       };
@@ -1406,8 +1437,8 @@ async function writeKnowledgeFile(
       const path = join(outputDir, `${candidate}.md`);
       const priorOwner = state.owners.get(attempt);
       const reselectLostHint = () => {
-        if (priorOwner !== source && priorOwner !== legacySource) return false;
-        const fallback = state.sources.get(source) ?? state.sources.get(legacySource);
+        if (!matchesOwner(priorOwner)) return false;
+        const fallback = preferredCandidate();
         if (fallback === undefined || fallback === attempt) return false;
         attempt = fallback - 1;
         return true;
@@ -1416,7 +1447,7 @@ async function writeKnowledgeFile(
         const owner = ownerFromContent(path, content);
         remember(owner);
         return {
-          matches: owner === source || owner === legacySource,
+          matches: matchesOwner(owner),
           keyed: owner !== undefined && owner !== legacySource,
         };
       };
@@ -2009,6 +2040,12 @@ export async function runKnowledgeParsers(input: {
       const title = heading || stem;
       const sourceReference = file.sourceReference ?? fileName;
       const resource = file.resource ?? sourceReference;
+      const localReference = file.sourceReference ?? resource;
+      const localPath = file.sourceKind !== "upload" &&
+          normalize(resource) === normalize(file.filePath) &&
+          normalize(localReference) === normalize(file.filePath)
+        ? normalizeProvableLegacyLocalKnowledgePath(localReference, true)
+        : undefined;
       const markdown = [
         buildFrontmatter({
           title,
@@ -2044,7 +2081,7 @@ export async function runKnowledgeParsers(input: {
         ({ slug, path: outputPath } = await writeKnowledgeFile(
           input.outputDir,
           preferredSlug,
-          { resource, sourceKey: file.sourceKey },
+          { resource, sourceKey: file.sourceKey, localPath },
           markdown,
           deps.signal,
           allocationSession,
