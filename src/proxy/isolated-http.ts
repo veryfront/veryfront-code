@@ -63,7 +63,7 @@ export function createProxyHttpIsolation(host: HostedHttpComposition) {
   async function route(
     request: Request,
     context: ProxyContext,
-    lookupAssignedOrigin: () => Promise<string | null>,
+    lookupAssignedOrigin: (environmentId: string) => Promise<string | null>,
   ): Promise<ProxyHttpRoute> {
     request.signal.throwIfAborted();
     if (!isHostedHttpApplicationRequest(request)) return { kind: "framework" };
@@ -97,7 +97,7 @@ export function createProxyHttpIsolation(host: HostedHttpComposition) {
     const assigned = await waitForSharedPromise(
       Promise.resolve().then(() => {
         signal.throwIfAborted();
-        return lookupAssignedOrigin();
+        return lookupAssignedOrigin(binding.environmentId);
       }),
       signal,
     );
@@ -131,7 +131,7 @@ export function createProxyHttpIsolation(host: HostedHttpComposition) {
     route(
       request: Request,
       context: ProxyContext,
-      lookupAssignedOrigin: () => Promise<string | null>,
+      lookupAssignedOrigin: (environmentId: string) => Promise<string | null>,
     ) {
       const operation = route(request, context, lookupAssignedOrigin);
       pending.add(operation);

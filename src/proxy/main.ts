@@ -577,11 +577,11 @@ function forwardToServer(req: Request, url: URL): Promise<Response> {
             const route = await proxyHttpIsolation.route(
               req,
               ctx,
-              () =>
+              (environmentId) =>
                 profileProxyServerTimingPhase(
                   proxyTiming,
                   "proxy.resolve_server",
-                  () => serverResolver.resolve(ctx.environmentId),
+                  () => serverResolver.resolve(environmentId),
                 ),
             );
             if (route.kind === "response") {

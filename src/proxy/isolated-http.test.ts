@@ -296,6 +296,30 @@ describe("Proxy isolated HTTP composition", () => {
     await isolation.shutdown();
   });
 
+  it("binds assignment lookup to the captured environment before caller mutation", async () => {
+    const fixture = composition();
+    const isolation = createProxyHttpIsolation(fixture.host);
+    const ctx = context();
+    const environments: (string | undefined)[] = [];
+    const result = isolation.route(
+      new Request("https://app.example/proof"),
+      ctx,
+      (environmentId?: string) => {
+        environments.push(environmentId);
+        return Promise.resolve("http://dedicated.example");
+      },
+    );
+    ctx.environmentId = "foreign-environment";
+    try {
+      assertEquals(await result, { kind: "assigned", origin: "http://dedicated.example" });
+      assertEquals(environments, ["environment-a"]);
+      assertEquals(fixture.resolutions, 0);
+      assertEquals(fixture.dispatches, 0);
+    } finally {
+      await isolation.shutdown();
+    }
+  });
+
   it("detaches a canceled lookup while the shared resolver keeps ownership", async () => {
     const fixture = composition();
     const isolation = createProxyHttpIsolation(fixture.host);
