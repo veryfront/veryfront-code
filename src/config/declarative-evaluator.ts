@@ -8,6 +8,8 @@
  * @module
  */
 
+import { DeclarativeConfigEvaluationError } from "./declarative-config-error.ts";
+export { DeclarativeConfigEvaluationError } from "./declarative-config-error.ts";
 import type { ASTNode, CodeParser } from "#veryfront/extensions/parser/index.ts";
 import { importFirstPartyExtensionModule } from "#veryfront/extensions/first-party-import.ts";
 import { FIRST_PARTY_EXTENSION_POLICIES } from "#veryfront/extensions/first-party-defaults.ts";
@@ -264,33 +266,6 @@ export type DeclarativeConfigErrorReason =
   | "worker-memory-limit-unavailable"
   | "worker-timeout"
   | "worker-unavailable";
-
-/** Typed failure emitted for every rejected source or bounded-resource case. */
-export class DeclarativeConfigEvaluationError extends Error {
-  readonly code: DeclarativeConfigErrorCode;
-  readonly phase: DeclarativeConfigErrorPhase;
-  readonly reason: DeclarativeConfigErrorReason;
-  readonly location: DeclarativeConfigSourceLocation | null;
-  readonly retryable: boolean;
-
-  constructor(options: {
-    code: DeclarativeConfigErrorCode;
-    phase: DeclarativeConfigErrorPhase;
-    reason: DeclarativeConfigErrorReason;
-    location?: DeclarativeConfigSourceLocation | null;
-    retryable?: boolean;
-  }) {
-    super(
-      `Hosted configuration rejected (${options.code}: ${options.reason})`,
-    );
-    this.name = "DeclarativeConfigEvaluationError";
-    this.code = options.code;
-    this.phase = options.phase;
-    this.reason = options.reason;
-    this.location = options.location ?? null;
-    this.retryable = options.retryable ?? false;
-  }
-}
 
 /** Explicit environment data used to prepare a hosted evaluation context. */
 export interface PrepareDeclarativeConfigContextOptions {

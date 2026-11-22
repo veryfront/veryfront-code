@@ -1,4 +1,4 @@
-import { createDeclarativeConfigWorkerInfrastructureError } from "#veryfront/config/declarative-evaluator-worker-protocol.ts";
+import { createDeclarativeConfigWorkerInfrastructureError } from "#veryfront/config/declarative-config-error.ts";
 
 // Keep cancellation ownership outside error fields that another error could imitate.
 const requestCancellations = new WeakSet<object>();

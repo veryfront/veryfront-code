@@ -10,7 +10,7 @@
  */
 
 import { type ExtensionLoader, orchestrateExtensions } from "veryfront/extensions";
-import { getEnvironmentConfig } from "#veryfront/config/environment-config.ts";
+import { getEnvironmentConfig } from "veryfront/config";
 import { cliLogger } from "#cli/utils";
 import { wireTracingShim } from "../../src/server/tracing-shim.ts";
 import { isJsonMode } from "./json-output.ts";
