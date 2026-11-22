@@ -6,6 +6,8 @@
 
 import { type AgentConfig, type RuntimeReasoningOption } from "../types.ts";
 import { type ModelRuntime, resolveModel } from "#veryfront/provider";
+import { resolveModelWithCredential } from "#veryfront/provider/model-registry.ts";
+import { createError, toError } from "#veryfront/errors";
 import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
 import { warmVeryfrontCloudCatalog } from "#veryfront/provider/veryfront-cloud/provider.ts";
 import { isVeryfrontCloudEnabled } from "#veryfront/platform/cloud/resolver.ts";
@@ -316,8 +318,25 @@ export async function resolveAgentModelTransport(
     return undefined;
   }
   const providerOptions = resolveTransportProviderOptions();
+  // A hook credential replaces the environment key for this call only. It is
+  // consumed here and never copied onto the returned transport, so it cannot
+  // reach headers, traces or logs. It cannot apply to a runtime the hook built
+  // itself, so that combination fails instead of dropping the credential.
+  const hookCredential = transport?.credential;
+  if (hookCredential !== undefined && transport?.model) {
+    throw toError(
+      createError({
+        type: "config",
+        message: `resolveModelTransport for agent "${input.agentId}" returned both "model" and ` +
+          `"credential". A credential applies only to a built-in provider runtime; ` +
+          `configure the returned model runtime with its own credential instead.`,
+      }),
+    );
+  }
   const languageModel = privatelyResolvedModel ?? transport?.model ??
-    resolveModel(resolvedModelString);
+    (hookCredential !== undefined
+      ? resolveModelWithCredential(resolvedModelString, hookCredential)
+      : resolveModel(resolvedModelString));
   // A Veryfront Cloud model settles its protocol and capabilities on its first
   // async step. Settle it here, before anything reads them: the provider option
   // key below and the runtime's tool-calling, structured-output and replay

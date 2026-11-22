@@ -410,6 +410,10 @@ port, but do not include `/v1` or another path. Other internal destinations
 remain blocked. Only the runtime operator can set this policy. A project
 environment cannot grant itself access.
 
+This list applies to model and embedding providers only. For a remote MCP
+server on a private network, see
+[MCP servers on a private network](./agents.md#mcp-servers-on-a-private-network).
+
 ### Ollama
 
 Start Ollama and download a model. This example uses a model with tool-use
@@ -470,6 +474,40 @@ Veryfront still requires a non-empty `OPENAI_API_KEY`. See
 
 Model behavior varies in both runtimes. Select a model with native tool-use
 support when the agent uses tools.
+
+## Per-agent provider credentials
+
+Agents in one process share the provider key from the environment. When a
+gateway in front of the model identifies callers by their credential, return a
+`credential` from the agent's `resolveModelTransport` hook. That agent's model
+calls then present it instead of the environment key:
+
+```ts
+// agents/policies.ts
+import { agent } from "veryfront/agent";
+
+export default agent({
+  id: "policies",
+  model: "openai/gpt-5.4-nano",
+  system: "Answer questions about company policies.",
+  resolveModelTransport: () => ({
+    credential: process.env.GATEWAY_KEY_POLICIES,
+  }),
+});
+```
+
+The credential applies to that call only. Agents whose hook returns no
+credential keep using the environment key. The base URL still comes from the
+provider's base URL variable.
+
+- The built-in `openai`, `anthropic`, `google`, and `mistral` providers accept a
+  credential. A provider registered with `registerModelProvider()` does not.
+- A hook cannot return both `credential` and `model`.
+- The credential must be a non-empty string of visible ASCII characters without
+  surrounding whitespace. An invalid value fails the call. It does not fall
+  back to the environment key.
+- An `authorization` or API-key header in the hook's `headers` does not replace
+  the credential.
 
 ## Custom provider registration
 

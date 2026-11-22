@@ -27,6 +27,7 @@ import { tryGetRegistryScopeId } from "#veryfront/cache/cache-key-builder.ts";
 import { DEFAULT_GOOGLE_BASE_URL } from "#veryfront/provider/runtime-loader/provider-endpoints.ts";
 import { isOpenAIBaseURL } from "#veryfront/provider/runtime-loader/inline-file.ts";
 import { createOriginBoundOutboundFetch } from "#veryfront/security/http/outbound-fetch.ts";
+import { requireProviderCredential } from "./runtime-loader/provider-request-init.ts";
 import { createLocalModel } from "./local/model-runtime-adapter.ts";
 import { createVeryfrontCloudModel } from "./veryfront-cloud/provider.ts";
 import type { ModelRuntime } from "./types.ts";
@@ -39,6 +40,19 @@ const manager = new ProjectScopedRegistryManager<ModelProviderFactory>(
   "model-provider",
 );
 const bootstrapProviders = new Map<string, ModelProviderFactory>();
+
+/**
+ * A built-in provider factory. Without `credential` it reads the provider key
+ * from the environment; with one it uses that key for the runtime it returns
+ * and reads only the base URL from the environment.
+ */
+type CredentialModelProviderFactory = (modelId: string, credential?: string) => ModelRuntime;
+const credentialProviders = new Map<string, CredentialModelProviderFactory>();
+
+function registerCredentialProvider(name: string, factory: CredentialModelProviderFactory): void {
+  credentialProviders.set(name, factory);
+  manager.registerShared(name, (id) => factory(id));
+}
 let autoInitialized = false;
 
 function normalizeProviderName(name: string): string {
@@ -190,9 +204,10 @@ function autoInitializeFromEnv(): void {
   // createOpenAI/createAnthropic/createGoogleGenerativeAI are lightweight
   // constructors (no network calls), so instantiating per-resolution is fine.
 
-  manager.registerShared("openai", (id) => {
+  registerCredentialProvider("openai", (id, credential) => {
     const config = getOpenAIEnvConfig();
-    if (!config.apiKey) {
+    const apiKey = credential ?? config.apiKey;
+    if (!apiKey) {
       throw toError(
         createError({
           type: "config",
@@ -204,7 +219,7 @@ function autoInitializeFromEnv(): void {
     const provider = registry.get("openai");
     if (provider) {
       return provider.createModel(id, {
-        credential: config.apiKey,
+        credential: apiKey,
         baseURL: config.baseURL,
         fetch: createOriginBoundOutboundFetch(
           config.baseURL ?? "https://api.openai.com/v1",
@@ -219,9 +234,10 @@ function autoInitializeFromEnv(): void {
     }));
   });
 
-  manager.registerShared("anthropic", (id) => {
+  registerCredentialProvider("anthropic", (id, credential) => {
     const config = getAnthropicEnvConfig();
-    if (!config.apiKey) {
+    const apiKey = credential ?? config.apiKey;
+    if (!apiKey) {
       throw toError(
         createError({
           type: "config",
@@ -233,7 +249,7 @@ function autoInitializeFromEnv(): void {
     const provider = registry.get("anthropic");
     if (provider) {
       return provider.createModel(id, {
-        credential: config.apiKey,
+        credential: apiKey,
         baseURL: config.baseURL,
         fetch: createOriginBoundOutboundFetch(
           config.baseURL ?? "https://api.anthropic.com/v1",
@@ -247,9 +263,10 @@ function autoInitializeFromEnv(): void {
     }));
   });
 
-  manager.registerShared("google", (id) => {
+  registerCredentialProvider("google", (id, credential) => {
     const config = getGoogleGenAIEnvConfig();
-    if (!config.apiKey) {
+    const apiKey = credential ?? config.apiKey;
+    if (!apiKey) {
       throw toError(
         createError({
           type: "config",
@@ -265,7 +282,7 @@ function autoInitializeFromEnv(): void {
     const provider = registry.get("google");
     if (provider) {
       return provider.createModel(id, {
-        credential: config.apiKey,
+        credential: apiKey,
         baseURL: config.baseURL,
         // The outbound fetch is origin-bound, so it has to track the same base
         // URL the request builders use. Pinning it to the default would reject
@@ -282,9 +299,10 @@ function autoInitializeFromEnv(): void {
     );
   });
 
-  manager.registerShared("mistral", (id) => {
+  registerCredentialProvider("mistral", (id, credential) => {
     const config = getMistralEnvConfig();
-    if (!config.apiKey) {
+    const apiKey = credential ?? config.apiKey;
+    if (!apiKey) {
       throw toError(
         createError({
           type: "config",
@@ -296,7 +314,7 @@ function autoInitializeFromEnv(): void {
     const provider = registry.get("openai");
     if (provider) {
       return provider.createModel(id, {
-        credential: config.apiKey,
+        credential: apiKey,
         baseURL: config.baseURL,
         fetch: createOriginBoundOutboundFetch(
           config.baseURL ?? "https://api.mistral.ai/v1",
@@ -337,6 +355,72 @@ function autoInitializeFromEnv(): void {
  * ```
  */
 export function resolveModel(modelString: string): ModelRuntime {
+  const { providerName, modelId } = parseModelString(modelString);
+
+  autoInitializeFromEnv();
+  const factory = manager.getOwn(providerName) ??
+    bootstrapProviders.get(providerName) ??
+    manager.get(providerName);
+  if (!factory) {
+    const available = getRegisteredModelProviders().join(", ") || "none";
+    throw toError(
+      createError({
+        type: "agent",
+        message:
+          `Model provider "${providerName}" not registered. Register it during application ` +
+          `composition with registerModelProvider() before resolving models. Available: ${available}`,
+      }),
+    );
+  }
+
+  return requireModelRuntime(factory(modelId), modelString);
+}
+
+/**
+ * @internal Resolve a built-in provider model that presents `credential`
+ * instead of the provider key from the environment.
+ *
+ * Only the built-in key-based providers take a credential. A provider the
+ * application registered itself, and a provider that takes no key, fail here
+ * instead of silently calling with a different identity. Messages name the
+ * model, never the credential.
+ */
+export function resolveModelWithCredential(modelString: string, credential: unknown): ModelRuntime {
+  const { providerName, modelId } = parseModelString(modelString);
+
+  let validated: string;
+  try {
+    validated = requireProviderCredential(credential, "Model transport credential");
+  } catch (error) {
+    throw toError(
+      createError({
+        type: "config",
+        message: error instanceof Error ? error.message : "Model transport credential is invalid",
+      }),
+    );
+  }
+
+  autoInitializeFromEnv();
+  const factory = hasApplicationModelProvider(providerName)
+    ? undefined
+    : credentialProviders.get(providerName);
+  if (!factory) {
+    const supported = Array.from(credentialProviders.keys()).join(", ");
+    throw toError(
+      createError({
+        type: "config",
+        message: `Model "${modelString}" cannot take a credential from resolveModelTransport. ` +
+          `Only the built-in providers (${supported}) accept one, and only when the ` +
+          `application has not registered its own runtime for that provider. ` +
+          `Return a model runtime from the hook instead.`,
+      }),
+    );
+  }
+
+  return requireModelRuntime(factory(modelId, validated), modelString);
+}
+
+function parseModelString(modelString: string): { providerName: string; modelId: string } {
   if (typeof modelString !== "string") {
     throw new TypeError('Model must be a string in "provider/model" format');
   }
@@ -370,23 +454,7 @@ export function resolveModel(modelString: string): ModelRuntime {
     );
   }
 
-  autoInitializeFromEnv();
-  const factory = manager.getOwn(providerName) ??
-    bootstrapProviders.get(providerName) ??
-    manager.get(providerName);
-  if (!factory) {
-    const available = getRegisteredModelProviders().join(", ") || "none";
-    throw toError(
-      createError({
-        type: "agent",
-        message:
-          `Model provider "${providerName}" not registered. Register it during application ` +
-          `composition with registerModelProvider() before resolving models. Available: ${available}`,
-      }),
-    );
-  }
-
-  return requireModelRuntime(factory(modelId), modelString);
+  return { providerName, modelId };
 }
 
 /**
@@ -449,5 +517,6 @@ export async function ensureModelReady(
 export function clearModelProviders(): void {
   manager.clearAll();
   bootstrapProviders.clear();
+  credentialProviders.clear();
   autoInitialized = false;
 }

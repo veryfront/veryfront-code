@@ -448,6 +448,21 @@ Open [http://localhost:3000](http://localhost:3000). Add an Ingress or service
 load balancer according to your cluster platform after the local tunnel works.
 Keep TLS and public access policy at that boundary.
 
+### Reach in-cluster services
+
+Veryfront blocks outbound requests to hosts that resolve to private addresses,
+which includes every Service in the cluster. Set these variables on the
+Deployment, not in the project environment:
+
+| Destination                             | Variable                                           | Value                                    |
+| --------------------------------------- | -------------------------------------------------- | ---------------------------------------- |
+| Model or embedding provider             | `VERYFRONT_HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS` | Exact origins, such as `http://llm:8080` |
+| Remote MCP server or other host request | `VERYFRONT_WORKER_ALLOWED_INTERNAL_HOSTS`          | Exact DNS hostnames                      |
+
+Both values are comma-separated. See
+[OpenAI-compatible services](./providers.md#openai-compatible-services) and
+[MCP servers on a private network](./agents.md#mcp-servers-on-a-private-network).
+
 ## Verify it worked
 
 Open [http://localhost:3000](http://localhost:3000) and send a message to the
