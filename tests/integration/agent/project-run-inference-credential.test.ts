@@ -16,6 +16,9 @@ import {
 } from "#veryfront/provider/veryfront-cloud/catalog-client.test-helpers.ts";
 import { __resetVeryfrontCloudCatalogForTests } from "#veryfront/provider/veryfront-cloud/catalog-client.ts";
 import { installMockFetch, restoreMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import { createWorkflowAgentNodeRunner } from "#veryfront/server/handlers/request/workflow-agent-child.ts";
+import { StepExecutor } from "#veryfront/workflow/executor/step-executor.ts";
+import { step } from "#veryfront/workflow/dsl/step.ts";
 import { createEmptyDiscoveryResult } from "#veryfront/discovery";
 import { runWithVeryfrontCloudContextAsync } from "#veryfront/provider/veryfront-cloud/context.ts";
 import {
@@ -64,9 +67,11 @@ function captureModelAuthorizations(
     projectId?: string;
     onCapture?: (modelCallId: string) => void;
     onReceiptResponse?: (response: Response) => void;
+    onModelCall?: (request: Request) => void;
   } = {},
 ): Array<string | null> {
   const authorizations: Array<string | null> = [];
+  let eventCursor = 0;
   installMockFetch(
     (async (input: URL | Request | string, init?: RequestInit) => {
       const request = new Request(input, init);
@@ -74,28 +79,30 @@ function captureModelAuthorizations(
       if (runEventsPath) {
         const payload: unknown = await request.json();
         const events = isRecord(payload) && ArrayIsArray(payload.events) ? payload.events : [];
-        const captures = events.filter(isRecord)
-          .filter((event) => event.type === "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED")
-          .flatMap((event, index) =>
+        const captures = events.flatMap((event, index) =>
+          isRecord(event) && event.type === "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED" &&
             typeof event.modelCallId === "string" && options.projectId
-              ? [{
-                event_id: String(index + 1),
-                project_id: options.projectId,
-                run_id: runEventsPath[1],
-                model_call_id: event.modelCallId,
-              }]
-              : []
-          );
+            ? [{
+              event_id: String(eventCursor + index + 1),
+              project_id: options.projectId,
+              run_id: runEventsPath[1],
+              model_call_id: event.modelCallId,
+            }]
+            : []
+        );
         for (const capture of captures) options.onCapture?.(capture.model_call_id);
+        eventCursor += events.length;
         const response = Response.json({
           run_id: runEventsPath[1],
-          latest_event_id: 1,
+          latest_event_id: eventCursor,
+          latest_external_event_sequence: eventCursor,
           appended_count: events.length,
           ...(captures.length > 0 ? { model_call_captures: captures } : {}),
         });
         options.onReceiptResponse?.(response);
         return response;
       }
+      options.onModelCall?.(request);
       authorizations.push(request.headers.get("Authorization"));
       return new Response(
         new ReadableStream({
@@ -185,6 +192,97 @@ describe("project-run inference credential", () => {
       return Promise.resolve();
     });
   });
+
+  for (const childCredential of [true, false]) {
+    it(
+      childCredential
+        ? "uses the admitted child credential for its captured workflow model call"
+        : "rejects the workflow model call when child admission lacks inference authority",
+      async () => {
+        const projectId = "11111111-1111-4111-8111-111111111111";
+        const parentId = "22222222-2222-4222-8222-222222222222";
+        const childId = "33333333-3333-4333-8333-333333333333";
+        let capture: string | undefined;
+        const authorizations = captureModelAuthorizations({
+          projectId,
+          onCapture: (id) => {
+            capture = id;
+          },
+          onModelCall(request) {
+            assertExists(capture);
+            assertEquals(request.headers.get("x-veryfront-model-call-id"), capture);
+          },
+        });
+        const terminalToken = `test.${
+          btoa(JSON.stringify({
+            tokenUse: "run_event_writer",
+            writerPurpose: "current_run_terminal",
+            projectId,
+            runId: "run_child",
+            canonicalRunId: childId,
+            dispatchNonce: "nonce",
+          }))
+        }.signature`;
+        const runAgentNode = createWorkflowAgentNodeRunner({
+          runId: "run_parent",
+          projectId,
+          apiUrl: "https://api.example.test",
+          eventToken: createProjectRunEventToken({
+            runId: "run_parent",
+            projectId,
+            canonicalRunId: parentId,
+          }),
+          authToken: "parent-invocation",
+          fetch(url, init) {
+            const path = new URL(String(url)).pathname;
+            if (path === `/runs/${childId}/events`) return globalThis.fetch(url, init);
+            if (path === `/runs/${parentId}/events`) return Promise.resolve(Response.json({}));
+            if (path === `/runs/${childId}/finalize`) {
+              return Promise.resolve(Response.json({ id: childId, status: "completed" }));
+            }
+            assertEquals(path, "/runs");
+            return Promise.resolve(Response.json({
+              id: childId,
+              status: "running",
+              project_id: projectId,
+              parent_run_id: parentId,
+              target: { type: "agent", id: "classifier" },
+              conversation_id: parentId,
+              output_message_id: childId,
+            }, {
+              status: 202,
+              headers: {
+                "Cache-Control": "no-store",
+                "X-Veryfront-Run-Terminal-Token": terminalToken,
+                "X-Veryfront-Run-Invocation-Token": "child-invocation",
+                ...(childCredential ? { "X-Veryfront-Inference-Token": "child-inference" } : {}),
+                "X-Veryfront-Run-Event-Token": "child-event",
+                "X-Veryfront-Run-Renewal-Token": "child-renewal",
+                "X-Veryfront-Run-Lease-Expires-At": new Date(Date.now() + 60_000).toISOString(),
+                "X-Veryfront-Run-Event-Sequence": "0",
+                "X-Veryfront-Run-External-Event-Sequence": "0",
+              },
+            }));
+          },
+        });
+        const executor = new StepExecutor({ runAgentNode });
+        const node = step("classify", {
+          agent: createManagedModelAgent("classifier"),
+          input: "Example",
+        });
+        const result = await runWithProjectRunInferenceCredential(
+          "parent-inference",
+          () => executor.execute(node, { input: {} }, undefined, "run_parent"),
+        );
+        assertEquals(
+          result.error,
+          childCredential ? undefined : "Inherited child inference authority is required",
+        );
+        assertEquals(result.success, childCredential);
+        assertEquals(authorizations, childCredential ? ["Bearer child-inference"] : []);
+      },
+    );
+  }
 
   it("routes a task agent's model call through the execute request's inference header", async () => {
     const projectId = "22222222-2222-4222-8222-222222222222";
